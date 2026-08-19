@@ -321,10 +321,10 @@ services:
       ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS: ${ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS:-60}
       ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW: ${ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW:-10m}
       # Master switch for self-service signup. Default true so local dev and the
-      # e2e suites can register freely. FIRST-BOOT WARNING for real deployments:
-      # the FIRST account created on an empty users table is granted admin, so a
-      # public instance should ship with this false, register the owner account,
-      # and only then flip it on.
+      # e2e suites can register freely. First-boot note: signups stay closed
+      # (403 owner_claim_required) on a fresh instance until the operator redeems
+      # the boot-logged setup token at POST /api/v1/setup/claim-owner — the owner
+      # account is claimed, never won by registering first.
       REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-true}
       # When true, signups file a pending registration request an admin must
       # approve (the registration approval queue). Overridable so approval-mode
@@ -404,6 +404,12 @@ services:
       # addresses so backed e2e can import from a loopback/compose-network origin (a
       # public origin isn't reachable in CI). NEVER enable in production. Default off.
       HTTP_IMPORT_ALLOW_PRIVATE_URLS: ${HTTP_IMPORT_ALLOW_PRIVATE_URLS:-false}
+      # DEV/TEST-ONLY: pins the first-run owner-claim mint to a fixed value so a
+      # test harness can redeem POST /api/v1/setup/claim-owner deterministically
+      # instead of scraping the boot log (config enforces >=16 chars and refuses
+      # the variable outright in production). Empty (default) keeps the random
+      # per-boot mint.
+      OWNER_CLAIM_TOKEN: ${OWNER_CLAIM_TOKEN:-}
       # Malware scanning: when MALWARE_SCAN_ENABLED=true, uploaded originals are
       # streamed to the clamd at CLAMAV_ADDR before publish. Run the bundled clamd
       # with the "scan" profile (CLAMAV_ADDR=clamav:3310) or point at your own.

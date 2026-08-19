@@ -399,8 +399,41 @@ func run() error {
 			return mailWired && settingssvc.Bool(instancesettings.KeyRegistrationRequireEmailVerification)
 		}),
 	)
+	// OWNER_CLAIM_TOKEN (dev/test-only; config refuses it in production) pins the
+	// owner-claim mint to a deterministic value so harnesses can claim the owner
+	// without scraping the boot log.
+	if cfg.OwnerClaimToken != "" {
+		authOpts = append(authOpts, auth.WithFixedOwnerClaimToken(cfg.OwnerClaimToken))
+	}
 	authsvc := auth.NewService(db.Queries(), issuer, cfg.JWTRefreshTTL, authOpts...)
 	opts = append(opts, httpapi.WithAuthService(authsvc, cfg.JWTAccessTTL))
+
+	// First-run owner bootstrap (0104): the admin account is claimed with a
+	// one-time setup token — never by winning the registration race. A fresh
+	// token is minted on every boot while a claim is outstanding (only its
+	// hash is stored, so the raw value is unrecoverable and each re-mint
+	// invalidates the previous log line) — even once users exist, because an
+	// unclaimed token in an old boot log must never stay a live admin
+	// credential. Instances with users and no unclaimed token are implicitly
+	// claimed and skip this entirely. The token appears in the log MESSAGE by
+	// deliberate exception to the never-log-secrets rule: like WordPress/
+	// Jupyter bootstrap secrets, the operator console is its one delivery
+	// channel, and it grants nothing once claimed or re-minted.
+	setupToken, minted, hadUsers, err := authsvc.EnsureOwnerClaimToken(startCtx)
+	if err != nil {
+		return fmt.Errorf("owner-claim bootstrap: %w", err)
+	}
+	if minted {
+		if cfg.OwnerClaimToken != "" {
+			logger.Warn("OWNER_CLAIM_TOKEN override active: the owner-claim token is the FIXED value from the environment, not a random mint (dev/test only — production refuses this variable)")
+		}
+		if hadUsers {
+			logger.Warn("OWNER STILL UNCLAIMED: this instance has users but the owner (admin) account was never claimed — the previous setup token has been invalidated and a fresh one minted; claim it now: " + setupToken)
+		} else {
+			logger.Warn("FIRST-RUN SETUP REQUIRED: no accounts exist yet — claim the owner (admin) account with the one-time setup token (sign-ups stay closed with 403 owner_claim_required until claimed): " + setupToken)
+		}
+		logger.Warn("claim the owner account with: curl -X POST <public-base-url>/api/v1/setup/claim-owner -H 'Content-Type: application/json' -d '{\"token\":\"<setup token above>\",\"username\":\"...\",\"email\":\"...\",\"password\":\"...\"}' — restarting mints a fresh token and invalidates this one")
+	}
 	if captureMailer != nil {
 		opts = append(opts, httpapi.WithDevMailCapture(captureMailer))
 	}

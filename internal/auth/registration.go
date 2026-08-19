@@ -43,6 +43,11 @@ type RegistrationRequest struct {
 // request; the account is created later, on approval. A username/email already
 // taken by a user or an existing pending request → ErrConflict.
 func (s *Service) RequestRegistration(ctx context.Context, in RegisterInput, note string) (RegistrationRequest, error) {
+	// While the instance awaits its owner there is nobody to approve a request
+	// anyway — refuse like every other signup path (ownerclaim.go).
+	if err := s.refuseIfOwnerUnclaimed(ctx); err != nil {
+		return RegistrationRequest{}, err
+	}
 	hash, err := HashPassword(in.Password)
 	if err != nil {
 		return RegistrationRequest{}, err

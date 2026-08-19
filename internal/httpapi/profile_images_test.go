@@ -107,16 +107,10 @@ func profileImageServerWith(t *testing.T, cfg *config.Config, opts ...Option) *S
 }
 
 // registerUser registers an account and returns its access token and user id.
+// See registerTokens for the empty-instance owner-claim routing.
 func registerUser(t *testing.T, srv *Server, body string) (token, userID string) {
 	t.Helper()
-	rec := postTo(srv, "/api/v1/auth/register", body)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("register status = %d, want 201; body=%s", rec.Code, rec.Body.String())
-	}
-	var ar authResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &ar); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	ar := registerTokens(t, srv, body)
 	return ar.Token, ar.User.ID
 }
 

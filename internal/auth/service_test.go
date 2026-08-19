@@ -35,6 +35,10 @@ type fakeRepo struct {
 	resets   map[string]*sqlcgen.PasswordResetToken     // keyed by token hash
 	verifs   map[string]*sqlcgen.EmailVerificationToken // keyed by token hash
 	regReqs  []*fakeRegReq
+	// ownerClaim mirrors the single-row owner_claim_tokens table (0104). Nil =
+	// never minted, so most tests register freely, exactly like a database
+	// that predates the owner-claim flow.
+	ownerClaim *sqlcgen.OwnerClaimToken
 }
 
 func newFakeRepo() *fakeRepo {
@@ -113,6 +117,42 @@ func (f *fakeRepo) RejectRegistrationRequest(_ context.Context, a sqlcgen.Reject
 		}
 	}
 	return 0, nil
+}
+
+func (f *fakeRepo) UpsertOwnerClaimToken(_ context.Context, tokenHash string) (sqlcgen.OwnerClaimToken, error) {
+	f.ownerClaim = &sqlcgen.OwnerClaimToken{ID: true, TokenHash: tokenHash, CreatedAt: time.Now()}
+	return *f.ownerClaim, nil
+}
+
+func (f *fakeRepo) GetUnclaimedOwnerClaimToken(context.Context) (sqlcgen.OwnerClaimToken, error) {
+	if f.ownerClaim == nil || f.ownerClaim.ClaimedAt.Valid {
+		return sqlcgen.OwnerClaimToken{}, pgx.ErrNoRows
+	}
+	return *f.ownerClaim, nil
+}
+
+// ClaimOwnerAndCreateAdmin mirrors the single-statement CTE: the
+// claimed_at-IS-NULL guard is the single-winner gate (loser gets ErrNoRows)
+// and a unique violation leaves the token unclaimed.
+func (f *fakeRepo) ClaimOwnerAndCreateAdmin(ctx context.Context, a sqlcgen.ClaimOwnerAndCreateAdminParams) (sqlcgen.ClaimOwnerAndCreateAdminRow, error) {
+	if f.ownerClaim == nil || f.ownerClaim.TokenHash != a.TokenHash || f.ownerClaim.ClaimedAt.Valid {
+		return sqlcgen.ClaimOwnerAndCreateAdminRow{}, pgx.ErrNoRows
+	}
+	u, err := f.CreateUser(ctx, sqlcgen.CreateUserParams{
+		Username: a.Username, Email: a.Email, PasswordHash: a.PasswordHash,
+		Role: "admin", HistoryEnabled: a.HistoryEnabled,
+	})
+	if err != nil {
+		return sqlcgen.ClaimOwnerAndCreateAdminRow{}, err
+	}
+	f.ownerClaim.ClaimedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	return sqlcgen.ClaimOwnerAndCreateAdminRow{
+		ID: u.ID, Username: u.Username, Email: u.Email, PasswordHash: u.PasswordHash,
+		Role: u.Role, EmailVerified: u.EmailVerified, IsActive: u.IsActive,
+		CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt, DisplayName: u.DisplayName,
+		Bio: u.Bio, PendingEmailVerification: u.PendingEmailVerification,
+		HistoryEnabled: u.HistoryEnabled,
+	}, nil
 }
 
 func (f *fakeRepo) CreateEmailVerificationToken(_ context.Context, a sqlcgen.CreateEmailVerificationTokenParams) (sqlcgen.EmailVerificationToken, error) {
@@ -355,10 +395,12 @@ func register(t *testing.T, svc *Service, name, email string) (sqlcgen.User, Tok
 	return u, tok
 }
 
-func TestRegisterFirstUserIsAdmin(t *testing.T) {
+func TestRegisterFirstUserIsPlainUser(t *testing.T) {
+	// Registration never mints admins (0104): even the very first registered
+	// account is a plain user — the admin exists only via ClaimOwner.
 	user, tok := register(t, newTestService(newFakeRepo()), "ada", "ada@example.test")
-	if user.Role != "admin" {
-		t.Errorf("first user role = %q, want admin", user.Role)
+	if user.Role != "user" {
+		t.Errorf("first user role = %q, want user", user.Role)
 	}
 	if tok.AccessToken == "" || tok.RefreshToken == "" {
 		t.Error("expected both access and refresh tokens")

@@ -509,6 +509,13 @@ type OauthIdentity struct {
 	Handle    *string   `json:"handle"`
 }
 
+type OwnerClaimToken struct {
+	ID        bool               `json:"id"`
+	TokenHash string             `json:"token_hash"`
+	CreatedAt time.Time          `json:"created_at"`
+	ClaimedAt pgtype.Timestamptz `json:"claimed_at"`
+}
+
 type PasswordResetToken struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    uuid.UUID          `json:"user_id"`

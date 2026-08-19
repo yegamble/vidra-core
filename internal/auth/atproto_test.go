@@ -125,9 +125,10 @@ func TestATProtoCompleteCreatesThenLogsIn(t *testing.T) {
 	if err != nil || outcome != OAuthCreated {
 		t.Fatalf("create: outcome=%v err=%v", outcome, err)
 	}
-	// Username derives from the handle's first label; first account bootstraps admin.
-	if user.Username != "alice" || user.Role != "admin" {
-		t.Errorf("created user = %+v; want username alice, admin", user)
+	// Username derives from the handle's first label; always a plain user
+	// (0104: the admin exists only via the owner-claim flow).
+	if user.Username != "alice" || user.Role != "user" {
+		t.Errorf("created user = %+v; want username alice, user", user)
 	}
 	// Passwordless, synthetic non-routable email, NOT marked verified.
 	if user.PasswordHash != "" {

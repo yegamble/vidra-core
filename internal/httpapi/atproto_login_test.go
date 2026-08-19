@@ -238,10 +238,12 @@ func TestATProtoLoginFullFlow(t *testing.T) {
 		}
 	}
 
-	// The session works and the account was created from the handle/DID.
+	// The session works and the account was created from the handle/DID —
+	// always a plain user (0104: the admin exists only via the owner-claim
+	// flow, never a signup path).
 	me := env.meViaRefresh(t, session)
-	if me.Username != "alice" || me.Email != "did-plc-alice@atproto.invalid" || me.Role != "admin" {
-		t.Errorf("me = %+v; want alice / did-plc-alice@atproto.invalid / admin", me)
+	if me.Username != "alice" || me.Email != "did-plc-alice@atproto.invalid" || me.Role != "user" {
+		t.Errorf("me = %+v; want alice / did-plc-alice@atproto.invalid / user", me)
 	}
 
 	// A replay after the cookie was cleared (browser no longer has it) is a 400.

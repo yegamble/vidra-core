@@ -8,11 +8,18 @@ Detailed feature-by-feature reference; the README links here.
 
 Auth: `POST /api/v1/auth/register` and `POST /api/v1/auth/login` create an account /
 verify credentials and return an HS256 JWT access token plus a rotating refresh token
-(`{token, refresh_token, token_type, expires_in, user}`). Passwords are bcrypt-hashed;
-the first account on a fresh instance is granted the `admin` role. Login reports
-unknown-account and wrong-password identically (`401`) to prevent enumeration. Configure
-signing via `JWT_SECRET` (required in production), `JWT_ISSUER`, `JWT_AUDIENCE`,
-`JWT_ACCESS_TTL`, `JWT_REFRESH_TTL`.
+(`{token, refresh_token, token_type, expires_in, user}`). Passwords are bcrypt-hashed.
+Accounts never gain the `admin` role by registering first: on a fresh instance boot
+mints a one-time setup token (printed to the server log; only its hash is stored) and
+every signup path answers `403 owner_claim_required` until the operator redeems it at
+`POST /api/v1/setup/claim-owner`, which creates THE `admin` account. A restart while
+the claim is outstanding re-mints the token and invalidates the previous one — even
+once users exist — and `GET /api/v1/instance` reports the first-run state as
+`owner_claim_pending`. `OWNER_CLAIM_TOKEN` pins the token to a fixed value for dev/test
+harnesses (refused in production). Login reports unknown-account and wrong-password
+identically (`401`) to prevent enumeration. Configure signing via `JWT_SECRET`
+(required in production), `JWT_ISSUER`, `JWT_AUDIENCE`, `JWT_ACCESS_TTL`,
+`JWT_REFRESH_TTL`.
 
 ### Sessions
 

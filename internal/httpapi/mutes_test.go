@@ -84,17 +84,11 @@ func (f *muteFakeRepo) ListMutedAccounts(_ context.Context, a sqlcgen.ListMutedA
 	return rows, nil
 }
 
-// registerAndUser registers an account and returns its (token, user id).
+// registerAndUser registers an account and returns its (token, user id). See
+// registerTokens for the empty-instance owner-claim routing.
 func registerAndUser(t *testing.T, srv *Server, body string) (string, string) {
 	t.Helper()
-	rec := postTo(srv, "/api/v1/auth/register", body)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("register = %d; body=%s", rec.Code, rec.Body.String())
-	}
-	var ar authResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &ar); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	ar := registerTokens(t, srv, body)
 	return ar.Token, ar.User.ID
 }
 

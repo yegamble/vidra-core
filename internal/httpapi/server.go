@@ -179,6 +179,14 @@ type Server struct {
 	userCountMu      sync.Mutex
 	userCount        int64
 	userCountFetched time.Time
+
+	// ownerClaimSettled latches the /instance owner_claim_pending signal once
+	// it has been observed false: pending is monotone within a process (claim
+	// tokens are minted only at boot, so it can go true→false but never back),
+	// so a settled instance never pays the DB reads again and the hot
+	// /instance path stays DB-free for the post-claim life of the process.
+	ownerClaimMu      sync.Mutex
+	ownerClaimSettled bool
 }
 
 // uploadRoutePath is the Echo route template for the original-file upload. It is
@@ -1024,6 +1032,11 @@ func (s *Server) routes() {
 		}
 		authGroup.POST("/register", s.handleRegister, authMW...)
 		authGroup.POST("/login", s.handleLogin, authMW...)
+		// First-run owner claim (0104): redeems the boot-logged setup token for
+		// THE admin account. Unauthenticated by design (the token is the
+		// credential) and behind the strict auth limiter — it is a
+		// token-guessing surface exactly like login.
+		api.POST("/setup/claim-owner", s.handleClaimOwner, authMW...)
 		authGroup.POST("/refresh", s.handleRefresh)
 		authGroup.POST("/logout", s.handleLogout)
 		authGroup.POST("/password-reset", s.handleRequestPasswordReset, authMW...)

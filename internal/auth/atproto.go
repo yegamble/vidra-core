@@ -346,11 +346,11 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 	if err != nil {
 		return sqlcgen.User{}, Tokens{}, "", err
 	}
-	role := "user"
-	if n, err := s.repo.CountUsers(ctx); err == nil && n == 0 {
-		// Bootstrap parity with password registration: the first account on a fresh
-		// instance is the operator.
-		role = "admin"
+	// Signup parity with password registration: while the instance awaits its
+	// owner (ownerclaim.go), no path may create an account — least of all one
+	// that used to mint the admin.
+	if err := s.auth.refuseIfOwnerUnclaimed(ctx); err != nil {
+		return sqlcgen.User{}, Tokens{}, "", err
 	}
 	user, err := s.repo.CreateUser(ctx, sqlcgen.CreateUserParams{
 		Username: username,
@@ -361,7 +361,7 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 		// verify (bcrypt rejects it), so password login stays impossible until the
 		// user sets one via the password-reset flow.
 		PasswordHash:   "",
-		Role:           role,
+		Role:           "user",
 		HistoryEnabled: s.auth.newUserHistoryEnabled(),
 	})
 	if err != nil {

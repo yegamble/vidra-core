@@ -55,6 +55,9 @@ type authFakeRepo struct {
 	statAllStorage   func() int64
 	statComments     func() int64
 	statPeers        func() int64
+	// ownerClaim mirrors the single-row owner_claim_tokens table (0104). Nil =
+	// never minted, so most tests register freely.
+	ownerClaim *sqlcgen.OwnerClaimToken
 }
 
 func newAuthFakeRepo() *authFakeRepo {
@@ -204,6 +207,42 @@ func (f *authFakeRepo) RevokeAllUserSessions(_ context.Context, userID uuid.UUID
 		}
 	}
 	return nil
+}
+
+func (f *authFakeRepo) UpsertOwnerClaimToken(_ context.Context, tokenHash string) (sqlcgen.OwnerClaimToken, error) {
+	f.ownerClaim = &sqlcgen.OwnerClaimToken{ID: true, TokenHash: tokenHash, CreatedAt: time.Now()}
+	return *f.ownerClaim, nil
+}
+
+func (f *authFakeRepo) GetUnclaimedOwnerClaimToken(context.Context) (sqlcgen.OwnerClaimToken, error) {
+	if f.ownerClaim == nil || f.ownerClaim.ClaimedAt.Valid {
+		return sqlcgen.OwnerClaimToken{}, pgx.ErrNoRows
+	}
+	return *f.ownerClaim, nil
+}
+
+// ClaimOwnerAndCreateAdmin mirrors the single-statement CTE: the
+// claimed_at-IS-NULL guard is the single-winner gate (loser gets ErrNoRows)
+// and a unique violation leaves the token unclaimed.
+func (f *authFakeRepo) ClaimOwnerAndCreateAdmin(ctx context.Context, a sqlcgen.ClaimOwnerAndCreateAdminParams) (sqlcgen.ClaimOwnerAndCreateAdminRow, error) {
+	if f.ownerClaim == nil || f.ownerClaim.TokenHash != a.TokenHash || f.ownerClaim.ClaimedAt.Valid {
+		return sqlcgen.ClaimOwnerAndCreateAdminRow{}, pgx.ErrNoRows
+	}
+	u, err := f.CreateUser(ctx, sqlcgen.CreateUserParams{
+		Username: a.Username, Email: a.Email, PasswordHash: a.PasswordHash,
+		Role: "admin", HistoryEnabled: a.HistoryEnabled,
+	})
+	if err != nil {
+		return sqlcgen.ClaimOwnerAndCreateAdminRow{}, err
+	}
+	f.ownerClaim.ClaimedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	return sqlcgen.ClaimOwnerAndCreateAdminRow{
+		ID: u.ID, Username: u.Username, Email: u.Email, PasswordHash: u.PasswordHash,
+		Role: u.Role, EmailVerified: u.EmailVerified, IsActive: u.IsActive,
+		CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt, DisplayName: u.DisplayName,
+		Bio: u.Bio, PendingEmailVerification: u.PendingEmailVerification,
+		HistoryEnabled: u.HistoryEnabled,
+	}, nil
 }
 
 func (f *authFakeRepo) CreateUser(_ context.Context, a sqlcgen.CreateUserParams) (sqlcgen.User, error) {
@@ -525,8 +564,10 @@ func TestRegisterEndpointCreatesAccount(t *testing.T) {
 	if body.Token == "" || body.TokenType != "Bearer" || body.ExpiresIn <= 0 {
 		t.Errorf("unexpected auth response: %+v", body)
 	}
-	if body.User.Role != "admin" {
-		t.Errorf("first user role = %q, want admin", body.User.Role)
+	// Registration never mints admins (0104): even the first registered
+	// account is a plain user — the admin exists only via /setup/claim-owner.
+	if body.User.Role != "user" {
+		t.Errorf("first registered user role = %q, want user", body.User.Role)
 	}
 	// The password hash must never appear in the response.
 	if strings.Contains(rec.Body.String(), "password_hash") {
@@ -562,18 +603,41 @@ func TestRegisterEndpointDuplicateConflict(t *testing.T) {
 	}
 }
 
-// registerAndToken registers an account and returns its access token.
+// registerAndToken creates an account and returns its access token. See
+// registerTokens for the empty-instance owner-claim routing.
 func registerAndToken(t *testing.T, srv *Server, body string) string {
 	t.Helper()
-	rec := postTo(srv, "/api/v1/auth/register", body)
+	return registerTokens(t, srv, body).Token
+}
+
+// claimOwnerTokens bootstraps THE admin through the real first-run flow
+// (0104): mint the owner-claim token via the service seam (exactly as boot
+// does), then redeem it over the API. body is a register-shaped JSON object;
+// the token field is injected.
+func claimOwnerTokens(t *testing.T, srv *Server, body string) authResponse {
+	t.Helper()
+	raw, minted, _, err := srv.authsvc.EnsureOwnerClaimToken(context.Background())
+	if err != nil || !minted {
+		t.Fatalf("EnsureOwnerClaimToken: minted=%v err=%v", minted, err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(body), &fields); err != nil {
+		t.Fatalf("unmarshal register body: %v", err)
+	}
+	fields["token"] = raw
+	claimBody, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("marshal claim body: %v", err)
+	}
+	rec := postTo(srv, "/api/v1/setup/claim-owner", string(claimBody))
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("register status = %d, want 201; body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("claim-owner status = %d, want 201; body=%s", rec.Code, rec.Body.String())
 	}
 	var ar authResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &ar); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	return ar.Token
+	return ar
 }
 
 func getWithAuth(srv *Server, path, token string) *httptest.ResponseRecorder {
@@ -770,8 +834,17 @@ func TestLoginEndpointSuccessAndFailure(t *testing.T) {
 }
 
 // registerTokens registers an account and returns the full token pair.
+// registerTokens creates an account and returns the full auth response. On an
+// EMPTY instance it goes through the first-run owner-claim flow instead of
+// plain registration, mirroring production since 0104: the first account is
+// THE admin, created by redeeming the boot-minted setup token — registration
+// never mints admins. Tests that relied on "first registered account becomes
+// admin" keep working unchanged through these helpers.
 func registerTokens(t *testing.T, srv *Server, body string) authResponse {
 	t.Helper()
+	if n, err := srv.authsvc.CountUsers(context.Background()); err == nil && n == 0 {
+		return claimOwnerTokens(t, srv, body)
+	}
 	rec := postTo(srv, "/api/v1/auth/register", body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("register status = %d, want 201; body=%s", rec.Code, rec.Body.String())

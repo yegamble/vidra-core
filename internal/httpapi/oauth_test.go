@@ -455,10 +455,11 @@ func TestOAuthFullFlowCreatesAccountAndSession(t *testing.T) {
 	}
 
 	// The session works: cookie → refresh → me. Username derived from the
-	// name claim; email_verified inherited; first account bootstraps admin.
+	// name claim; email_verified inherited; always a plain user (0104: the
+	// admin exists only via the owner-claim flow, never a signup path).
 	me := env.meViaRefresh(t, session)
-	if me.Username != "new-person" || me.Email != "New.Person@example.com" || !me.EmailVerified || me.Role != "admin" {
-		t.Errorf("me = %+v; want new-person / verified / admin", me)
+	if me.Username != "new-person" || me.Email != "New.Person@example.com" || !me.EmailVerified || me.Role != "user" {
+		t.Errorf("me = %+v; want new-person / verified / user", me)
 	}
 
 	// Audit: an oauth register + login success, naming the provider.

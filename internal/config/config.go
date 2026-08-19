@@ -5,6 +5,7 @@ package config
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -326,6 +327,15 @@ type Config struct {
 	// loudly when on. See internal/urlsafety.Guard.AllowPrivate.
 	ImportAllowPrivateURLs bool
 
+	// OwnerClaimToken pins the first-run owner-claim token (0104) to this FIXED
+	// value instead of the high-entropy random minted at boot, so test harnesses
+	// and local dev can claim the owner (admin) account deterministically without
+	// scraping the boot log. DEVELOPMENT/TEST-ONLY: a fixed, environment-visible
+	// admin-bootstrap credential defeats the point of the random token, so
+	// production refuses to boot when it is set. Empty (default) keeps the random
+	// mint; at least 16 characters when set.
+	OwnerClaimToken string
+
 	// Rate limiting (Redis fixed-window) applied to the /api surface.
 	RateLimitEnabled  bool
 	RateLimitRequests int
@@ -587,41 +597,44 @@ const devJWTSecret = "dev-insecure-jwt-secret-change-me-0000000000000000"
 // to local Docker Compose service addresses.
 func Load() (*Config, error) {
 	env := getEnv("VIDRA_ENV", "development")
+	// Typed getters record malformed values on p; checked via p.Err() below
+	// before semantic validation so every bad variable is reported at once.
+	p := &envParser{}
 
 	cfg := &Config{
 		Environment:                    env,
 		LogLevel:                       strings.ToLower(getEnv("LOG_LEVEL", "info")),
 		LogFormat:                      strings.ToLower(getEnv("LOG_FORMAT", "json")),
-		OTelEnabled:                    getEnvBool("OTEL_ENABLED", false),
+		OTelEnabled:                    p.Bool("OTEL_ENABLED", false),
 		OTelExporterEndpoint:           getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		OTelExporterProtocol:           strings.ToLower(getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")),
 		OTelServiceName:                getEnv("OTEL_SERVICE_NAME", "vidra-core"),
-		MetricsEnabled:                 getEnvBool("METRICS_ENABLED", false),
+		MetricsEnabled:                 p.Bool("METRICS_ENABLED", false),
 		HTTPHost:                       getEnv("HTTP_HOST", "0.0.0.0"),
 		InstanceName:                   getEnv("INSTANCE_NAME", "Vidra (dev)"),
 		PublicBaseURL:                  strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
-		FederationEnabled:              getEnvBool("FEDERATION_ENABLED", false),
+		FederationEnabled:              p.Bool("FEDERATION_ENABLED", false),
 		FederationKeyKEK:               getEnv("FEDERATION_KEY_KEK", ""),
-		ATProtoEnabled:                 getEnvBool("ATPROTO_ENABLED", false),
+		ATProtoEnabled:                 p.Bool("ATPROTO_ENABLED", false),
 		ATProtoKeyKEK:                  getEnv("ATPROTO_KEY_KEK", ""),
-		ATProtoLoginEnabled:            getEnvBool("ATPROTO_LOGIN_ENABLED", false),
+		ATProtoLoginEnabled:            p.Bool("ATPROTO_LOGIN_ENABLED", false),
 		MFAKeyKEK:                      getEnv("MFA_KEY_KEK", ""),
 		TOTPIssuer:                     getEnv("TOTP_ISSUER", ""),
-		MalwareScanEnabled:             getEnvBool("MALWARE_SCAN_ENABLED", false),
+		MalwareScanEnabled:             p.Bool("MALWARE_SCAN_ENABLED", false),
 		ClamAVAddr:                     getEnv("CLAMAV_ADDR", ""),
-		ClamAVTimeout:                  getEnvDuration("CLAMAV_TIMEOUT", 60*time.Second),
+		ClamAVTimeout:                  p.Duration("CLAMAV_TIMEOUT", 60*time.Second),
 		MalwareScanMode:                getEnv("MALWARE_SCAN_MODE", "fail-closed"),
-		TranscodingEnabled:             getEnvBool("TRANSCODING_ENABLED", true),
-		TranscodingVP9Enabled:          getEnvBool("TRANSCODING_VP9_ENABLED", false),
-		TranscodingAV1Enabled:          getEnvBool("TRANSCODING_AV1_ENABLED", false),
-		TranscodeHoldTimeout:           getEnvDuration("TRANSCODE_HOLD_TIMEOUT", 12*time.Hour),
-		WhisperEnabled:                 getEnvBool("WHISPER_ENABLED", false),
+		TranscodingEnabled:             p.Bool("TRANSCODING_ENABLED", true),
+		TranscodingVP9Enabled:          p.Bool("TRANSCODING_VP9_ENABLED", false),
+		TranscodingAV1Enabled:          p.Bool("TRANSCODING_AV1_ENABLED", false),
+		TranscodeHoldTimeout:           p.Duration("TRANSCODE_HOLD_TIMEOUT", 12*time.Hour),
+		WhisperEnabled:                 p.Bool("WHISPER_ENABLED", false),
 		WhisperEndpoint:                strings.TrimRight(getEnv("WHISPER_ENDPOINT", ""), "/"),
 		WhisperDefaultLanguage:         strings.TrimSpace(getEnv("WHISPER_DEFAULT_LANGUAGE", "en")),
 		SearchServiceURL:               strings.TrimRight(getEnv("SEARCH_SERVICE_URL", ""), "/"),
 		SearchInternalSecret:           getEnv("SEARCH_INTERNAL_SECRET", ""),
-		SearchReconcileInterval:        getEnvDuration("SEARCH_RECONCILE_INTERVAL", 24*time.Hour),
-		SearchHealthInterval:           getEnvDuration("SEARCH_HEALTH_INTERVAL", 15*time.Second),
+		SearchReconcileInterval:        p.Duration("SEARCH_RECONCILE_INTERVAL", 24*time.Hour),
+		SearchHealthInterval:           p.Duration("SEARCH_HEALTH_INTERVAL", 15*time.Second),
 		LiveRTMPURL:                    getEnv("LIVE_RTMP_URL", ""),
 		LiveIngestSecret:               getEnv("LIVE_INGEST_SECRET", ""),
 		LiveHLSRoot:                    strings.TrimRight(getEnv("LIVE_HLS_ROOT", ""), "/"),
@@ -629,36 +642,37 @@ func Load() (*Config, error) {
 		InstanceTermsURL:               getEnv("INSTANCE_TERMS_URL", ""),
 		InstancePrivacyURL:             getEnv("INSTANCE_PRIVACY_URL", ""),
 		InstanceContactEmail:           getEnv("INSTANCE_CONTACT_EMAIL", ""),
-		RegistrationEnabled:            getEnvBool("REGISTRATION_ENABLED", true),
-		RegistrationRequireApproval:    getEnvBool("REGISTRATION_REQUIRE_APPROVAL", false),
-		QuarantineNewUploads:           getEnvBool("QUARANTINE_NEW_UPLOADS", false),
-		UploadsEnabled:                 getEnvBool("FEATURE_UPLOADS_ENABLED", true),
-		ImportsEnabled:                 getEnvBool("FEATURE_IMPORTS_ENABLED", true),
-		LiveEnabled:                    getEnvBool("FEATURE_LIVE_ENABLED", true),
-		CommentsEnabled:                getEnvBool("FEATURE_COMMENTS_ENABLED", true),
-		MailEnabled:                    getEnvBool("MAIL_ENABLED", false),
+		RegistrationEnabled:            p.Bool("REGISTRATION_ENABLED", true),
+		RegistrationRequireApproval:    p.Bool("REGISTRATION_REQUIRE_APPROVAL", false),
+		QuarantineNewUploads:           p.Bool("QUARANTINE_NEW_UPLOADS", false),
+		UploadsEnabled:                 p.Bool("FEATURE_UPLOADS_ENABLED", true),
+		ImportsEnabled:                 p.Bool("FEATURE_IMPORTS_ENABLED", true),
+		LiveEnabled:                    p.Bool("FEATURE_LIVE_ENABLED", true),
+		CommentsEnabled:                p.Bool("FEATURE_COMMENTS_ENABLED", true),
+		MailEnabled:                    p.Bool("MAIL_ENABLED", false),
 		SMTPHost:                       getEnv("SMTP_HOST", ""),
 		SMTPUsername:                   getEnv("SMTP_USERNAME", ""),
 		SMTPPassword:                   getEnv("SMTP_PASSWORD", ""),
 		SMTPFrom:                       getEnv("SMTP_FROM", ""),
-		DevMailCaptureEnabled:          getEnvBool("DEV_MAIL_CAPTURE_ENABLED", false),
-		ImportAllowPrivateURLs:         getEnvBool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
+		DevMailCaptureEnabled:          p.Bool("DEV_MAIL_CAPTURE_ENABLED", false),
+		ImportAllowPrivateURLs:         p.Bool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
+		OwnerClaimToken:                getEnv("OWNER_CLAIM_TOKEN", ""),
 		DatabaseURL:                    getEnv("DATABASE_URL", "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable"),
 		RedisURL:                       getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		CORSAllowedOrigins:             splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
-		HTTPReadTimeout:                getEnvDuration("HTTP_READ_TIMEOUT", 15*time.Second),
-		HTTPWriteTimeout:               getEnvDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
-		HTTPShutdownTimeout:            getEnvDuration("HTTP_SHUTDOWN_TIMEOUT", 20*time.Second),
-		HTTPRequestTimeout:             getEnvDuration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
-		HTTPStreamRequestTimeout:       getEnvDuration("HTTP_STREAM_REQUEST_TIMEOUT", time.Hour),
+		HTTPReadTimeout:                p.Duration("HTTP_READ_TIMEOUT", 15*time.Second),
+		HTTPWriteTimeout:               p.Duration("HTTP_WRITE_TIMEOUT", 30*time.Second),
+		HTTPShutdownTimeout:            p.Duration("HTTP_SHUTDOWN_TIMEOUT", 20*time.Second),
+		HTTPRequestTimeout:             p.Duration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
+		HTTPStreamRequestTimeout:       p.Duration("HTTP_STREAM_REQUEST_TIMEOUT", time.Hour),
 		HTTPBodyLimit:                  getEnv("HTTP_BODY_LIMIT", "8M"),
-		RateLimitEnabled:               getEnvBool("RATE_LIMIT_ENABLED", true),
-		RateLimitWindow:                getEnvDuration("RATE_LIMIT_WINDOW", time.Minute),
+		RateLimitEnabled:               p.Bool("RATE_LIMIT_ENABLED", true),
+		RateLimitWindow:                p.Duration("RATE_LIMIT_WINDOW", time.Minute),
 		JWTSecret:                      getEnv("JWT_SECRET", devJWTSecret),
 		JWTIssuer:                      getEnv("JWT_ISSUER", "vidra"),
 		JWTAudience:                    getEnv("JWT_AUDIENCE", "vidra"),
-		JWTAccessTTL:                   getEnvDuration("JWT_ACCESS_TTL", 15*time.Minute),
-		JWTRefreshTTL:                  getEnvDuration("JWT_REFRESH_TTL", 720*time.Hour),
+		JWTAccessTTL:                   p.Duration("JWT_ACCESS_TTL", 15*time.Minute),
+		JWTRefreshTTL:                  p.Duration("JWT_REFRESH_TTL", 720*time.Hour),
 		StorageBackend:                 getEnv("STORAGE_BACKEND", "local"),
 		StorageLocalRoot:               getEnv("STORAGE_LOCAL_ROOT", "./data/media"),
 		StorageS3Endpoint:              getEnv("STORAGE_S3_ENDPOINT", ""),
@@ -666,28 +680,28 @@ func Load() (*Config, error) {
 		StorageS3AccessKey:             getEnv("STORAGE_S3_ACCESS_KEY", ""),
 		StorageS3SecretKey:             getEnv("STORAGE_S3_SECRET_KEY", ""),
 		StorageS3Region:                getEnv("STORAGE_S3_REGION", ""),
-		StorageS3UseSSL:                getEnvBool("STORAGE_S3_USE_SSL", true),
-		StorageS3ForcePathStyle:        getEnvBool("STORAGE_S3_FORCE_PATH_STYLE", false),
-		IPFSEnabled:                    getEnvBool("IPFS_ENABLED", false),
+		StorageS3UseSSL:                p.Bool("STORAGE_S3_USE_SSL", true),
+		StorageS3ForcePathStyle:        p.Bool("STORAGE_S3_FORCE_PATH_STYLE", false),
+		IPFSEnabled:                    p.Bool("IPFS_ENABLED", false),
 		IPFSAPIURL:                     strings.TrimRight(getEnv("IPFS_API_URL", ""), "/"),
 		IPFSGatewayURL:                 strings.TrimRight(getEnv("IPFS_GATEWAY_URL", ""), "/"),
-		IPFSAddTimeout:                 getEnvDuration("IPFS_ADD_TIMEOUT", 60*time.Second),
-		IPFSReconcileInterval:          getEnvDuration("IPFS_RECONCILE_INTERVAL", 5*time.Minute),
-		IPFSMirrorPrivate:              getEnvBool("IPFS_MIRROR_PRIVATE", false),
+		IPFSAddTimeout:                 p.Duration("IPFS_ADD_TIMEOUT", 60*time.Second),
+		IPFSReconcileInterval:          p.Duration("IPFS_RECONCILE_INTERVAL", 5*time.Minute),
+		IPFSMirrorPrivate:              p.Bool("IPFS_MIRROR_PRIVATE", false),
 		IPFSClusterAPIURL:              strings.TrimRight(getEnv("IPFS_CLUSTER_API_URL", ""), "/"),
 		IPFSClusterToken:               getEnv("IPFS_CLUSTER_TOKEN", ""),
 		IPFSPrivateAPIURL:              strings.TrimRight(getEnv("IPFS_PRIVATE_API_URL", ""), "/"),
 		IPFSPrivateClusterAPIURL:       strings.TrimRight(getEnv("IPFS_PRIVATE_CLUSTER_API_URL", ""), "/"),
 		IPFSPrivateClusterToken:        getEnv("IPFS_PRIVATE_CLUSTER_TOKEN", ""),
 		UploadMaxSize:                  getEnv("UPLOAD_MAX_SIZE", "2G"),
-		YtdlpImportEnabled:             getEnvBool("YTDLP_IMPORT_ENABLED", false),
+		YtdlpImportEnabled:             p.Bool("YTDLP_IMPORT_ENABLED", false),
 		YtdlpPath:                      getEnv("YTDLP_PATH", "yt-dlp"),
-		YtdlpTimeout:                   getEnvDuration("YTDLP_TIMEOUT", 15*time.Minute),
+		YtdlpTimeout:                   p.Duration("YTDLP_TIMEOUT", 15*time.Minute),
 		YtdlpProxy:                     strings.TrimSpace(getEnv("YTDLP_PROXY", "")),
-		ChannelSyncEnabled:             getEnvBool("CHANNEL_SYNC_ENABLED", false),
-		ChannelSyncInterval:            getEnvDuration("CHANNEL_SYNC_INTERVAL", time.Hour),
-		ChannelSyncCooldown:            getEnvDuration("CHANNEL_SYNC_COOLDOWN", time.Minute),
-		PeerTubeImportEnabled:          getEnvBool("PEERTUBE_IMPORT_ENABLED", false),
+		ChannelSyncEnabled:             p.Bool("CHANNEL_SYNC_ENABLED", false),
+		ChannelSyncInterval:            p.Duration("CHANNEL_SYNC_INTERVAL", time.Hour),
+		ChannelSyncCooldown:            p.Duration("CHANNEL_SYNC_COOLDOWN", time.Minute),
+		PeerTubeImportEnabled:          p.Bool("PEERTUBE_IMPORT_ENABLED", false),
 		PeerTubeSourceDatabaseURL:      getEnv("PEERTUBE_SOURCE_DATABASE_URL", ""),
 		PeerTubeSourceStorageBackend:   getEnv("PEERTUBE_SOURCE_STORAGE_BACKEND", "local"),
 		PeerTubeSourceStorageLocalRoot: getEnv("PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT", ""),
@@ -696,112 +710,39 @@ func Load() (*Config, error) {
 		PeerTubeSourceS3AccessKey:      getEnv("PEERTUBE_SOURCE_S3_ACCESS_KEY", ""),
 		PeerTubeSourceS3SecretKey:      getEnv("PEERTUBE_SOURCE_S3_SECRET_KEY", ""),
 		PeerTubeSourceS3Region:         getEnv("PEERTUBE_SOURCE_S3_REGION", ""),
-		PeerTubeSourceS3UseSSL:         getEnvBool("PEERTUBE_SOURCE_S3_USE_SSL", true),
-		PeerTubeSourceS3ForcePathStyle: getEnvBool("PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE", false),
+		PeerTubeSourceS3UseSSL:         p.Bool("PEERTUBE_SOURCE_S3_USE_SSL", true),
+		PeerTubeSourceS3ForcePathStyle: p.Bool("PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE", false),
 		PeerTubeImportConflictPolicy:   strings.ToLower(getEnv("PEERTUBE_IMPORT_CONFLICT_POLICY", "skip")),
 		PeerTubeImportMediaMode:        strings.ToLower(getEnv("PEERTUBE_IMPORT_MEDIA_MODE", "copy")),
 	}
 
-	port, err := getEnvInt("HTTP_PORT", 8080)
-	if err != nil {
-		return nil, err
-	}
-	cfg.HTTPPort = port
-
-	reqs, err := getEnvInt("RATE_LIMIT_REQUESTS", 120)
-	if err != nil {
-		return nil, err
-	}
-	cfg.RateLimitRequests = reqs
-
-	authReqs, err := getEnvInt("AUTH_RATE_LIMIT_REQUESTS", 10)
-	if err != nil {
-		return nil, err
-	}
-	cfg.AuthRateLimitRequests = authReqs
+	cfg.HTTPPort = p.Int("HTTP_PORT", 8080)
+	cfg.RateLimitRequests = p.Int("RATE_LIMIT_REQUESTS", 120)
+	cfg.AuthRateLimitRequests = p.Int("AUTH_RATE_LIMIT_REQUESTS", 10)
 
 	// The media budget is deliberately an order of magnitude above the API one:
 	// see MediaRateLimitRequests. 3000/min is ~50 blob reads a second from one
 	// IP — far above any single viewer, far below a useful scrape rate.
-	mediaReqs, err := getEnvInt("MEDIA_RATE_LIMIT_REQUESTS", 3000)
-	if err != nil {
-		return nil, err
-	}
-	cfg.MediaRateLimitRequests = mediaReqs
+	cfg.MediaRateLimitRequests = p.Int("MEDIA_RATE_LIMIT_REQUESTS", 3000)
 
-	attachReqs, err := getEnvInt("ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS", 60)
-	if err != nil {
-		return nil, err
-	}
-	cfg.AttachmentUploadRateLimitRequests = attachReqs
-	cfg.AttachmentUploadRateLimitWindow = getEnvDuration("ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW", 10*time.Minute)
-
-	smtpPort, err := getEnvInt("SMTP_PORT", 587)
-	if err != nil {
-		return nil, err
-	}
-	cfg.SMTPPort = smtpPort
-
-	ytdlpHeight, err := getEnvInt("YTDLP_MAX_HEIGHT", 1080)
-	if err != nil {
-		return nil, err
-	}
-	cfg.YtdlpMaxHeight = ytdlpHeight
-
-	channelSyncMax, err := getEnvInt("CHANNEL_SYNC_MAX_PER_USER", 5)
-	if err != nil {
-		return nil, err
-	}
-	cfg.ChannelSyncMaxPerUser = channelSyncMax
-
-	channelSyncBatch, err := getEnvInt("CHANNEL_SYNC_BATCH", 15)
-	if err != nil {
-		return nil, err
-	}
-	cfg.ChannelSyncBatch = channelSyncBatch
-
-	maxActiveUploads, err := getEnvInt("UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER", 5)
-	if err != nil {
-		return nil, err
-	}
-	cfg.UploadMaxActiveSessionsPerUser = maxActiveUploads
-
-	quotaBytes, err := getEnvInt64("INSTANCE_DEFAULT_QUOTA_BYTES", 0)
-	if err != nil {
-		return nil, err
-	}
-	cfg.InstanceDefaultQuotaBytes = quotaBytes
-
-	pinConcurrency, err := getEnvInt("IPFS_PIN_CONCURRENCY", 2)
-	if err != nil {
-		return nil, err
-	}
-	cfg.IPFSPinConcurrency = pinConcurrency
+	cfg.AttachmentUploadRateLimitRequests = p.Int("ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS", 60)
+	cfg.AttachmentUploadRateLimitWindow = p.Duration("ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW", 10*time.Minute)
+	cfg.SMTPPort = p.Int("SMTP_PORT", 587)
+	cfg.YtdlpMaxHeight = p.Int("YTDLP_MAX_HEIGHT", 1080)
+	cfg.ChannelSyncMaxPerUser = p.Int("CHANNEL_SYNC_MAX_PER_USER", 5)
+	cfg.ChannelSyncBatch = p.Int("CHANNEL_SYNC_BATCH", 15)
+	cfg.UploadMaxActiveSessionsPerUser = p.Int("UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER", 5)
+	cfg.InstanceDefaultQuotaBytes = p.Int64("INSTANCE_DEFAULT_QUOTA_BYTES", 0)
+	cfg.IPFSPinConcurrency = p.Int("IPFS_PIN_CONCURRENCY", 2)
 
 	// Search client per-endpoint deadline overrides (ms; 0 = client defaults).
-	searchSuggestMS, err := getEnvInt("SEARCH_SUGGEST_TIMEOUT_MS", 0)
-	if err != nil {
-		return nil, err
-	}
-	cfg.SearchSuggestTimeoutMS = searchSuggestMS
-	searchQueryMS, err := getEnvInt("SEARCH_QUERY_TIMEOUT_MS", 0)
-	if err != nil {
-		return nil, err
-	}
-	cfg.SearchQueryTimeoutMS = searchQueryMS
-	searchRecsMS, err := getEnvInt("SEARCH_RECS_TIMEOUT_MS", 0)
-	if err != nil {
-		return nil, err
-	}
-	cfg.SearchRecsTimeoutMS = searchRecsMS
+	cfg.SearchSuggestTimeoutMS = p.Int("SEARCH_SUGGEST_TIMEOUT_MS", 0)
+	cfg.SearchQueryTimeoutMS = p.Int("SEARCH_QUERY_TIMEOUT_MS", 0)
+	cfg.SearchRecsTimeoutMS = p.Int("SEARCH_RECS_TIMEOUT_MS", 0)
 
 	// Private-tier worker tuning INHERITS the public defaults when unset (spec §2).
-	cfg.IPFSPrivateAddTimeout = getEnvDuration("IPFS_PRIVATE_ADD_TIMEOUT", cfg.IPFSAddTimeout)
-	privatePinConcurrency, err := getEnvInt("IPFS_PRIVATE_PIN_CONCURRENCY", pinConcurrency)
-	if err != nil {
-		return nil, err
-	}
-	cfg.IPFSPrivatePinConcurrency = privatePinConcurrency
+	cfg.IPFSPrivateAddTimeout = p.Duration("IPFS_PRIVATE_ADD_TIMEOUT", cfg.IPFSAddTimeout)
+	cfg.IPFSPrivatePinConcurrency = p.Int("IPFS_PRIVATE_PIN_CONCURRENCY", cfg.IPFSPinConcurrency)
 
 	for _, name := range splitAndTrim(getEnv("OAUTH_PROVIDERS", "")) {
 		prefix := "OAUTH_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
@@ -820,6 +761,11 @@ func Load() (*Config, error) {
 		cfg.TOTPIssuer = cfg.InstanceName
 	}
 
+	// Refuse to boot on ANY malformed typed variable before semantic
+	// validation — every bad variable is reported, not just the first.
+	if err := p.Err(); err != nil {
+		return nil, err
+	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -936,7 +882,7 @@ func (c *Config) validate() error {
 		if len(c.JWTSecret) < 32 {
 			return fmt.Errorf("config: JWT_SECRET must be at least 32 bytes in production")
 		}
-		// The two development-only escape hatches are REFUSED in production, not
+		// The development-only escape hatches are REFUSED in production, not
 		// merely warned about (deploy/README.md already documents this refusal).
 		// DEV_MAIL_CAPTURE_ENABLED mounts GET /api/v1/dev/email-token, which hands
 		// out a live password-reset token for ANY address — an admin-takeover
@@ -952,6 +898,14 @@ func (c *Config) validate() error {
 		if c.ImportAllowPrivateURLs {
 			return fmt.Errorf("config: HTTP_IMPORT_ALLOW_PRIVATE_URLS must not be set in production")
 		}
+		// A fixed owner-claim token is a deterministic admin-bootstrap credential
+		// sitting in the environment — dev/test-only by construction.
+		if c.OwnerClaimToken != "" {
+			return fmt.Errorf("config: OWNER_CLAIM_TOKEN must not be set in production")
+		}
+	}
+	if c.OwnerClaimToken != "" && len(c.OwnerClaimToken) < 16 {
+		return fmt.Errorf("config: OWNER_CLAIM_TOKEN must be at least 16 characters when set")
 	}
 	if c.Environment == "production" {
 		for _, o := range c.CORSAllowedOrigins {
@@ -1324,6 +1278,10 @@ func (c *Config) MFAKEK() string {
 	return c.FederationKeyKEK
 }
 
+// getEnv and the envParser getters share one contract: an UNSET or EMPTY
+// variable means "use the default" (so `KEY=` in an env file is the same as
+// omitting KEY). getEnv returns strings verbatim and so can never fail; every
+// typed getter lives on envParser so a malformed value is fatal at load time.
 func getEnv(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		return v
@@ -1331,49 +1289,70 @@ func getEnv(key, def string) string {
 	return def
 }
 
-func getEnvInt(key string, def int) (int, error) {
+// envParser reads the typed (int/int64/bool/duration) environment variables
+// for Load. A malformed — non-empty but unparseable — value is FATAL at config
+// load, never a silent fall-back to the default: env files may be generated,
+// and a typo must refuse to boot rather than boot in the wrong configuration.
+// Each getter records the error (in validate()'s "config: VAR ..." idiom) and
+// returns the default so parsing can continue; Load checks Err() once every
+// variable has been read, reporting all malformed variables at once.
+type envParser struct {
+	errs []error
+}
+
+// Err returns every malformed-variable error recorded while parsing, joined,
+// or nil when the environment parsed cleanly.
+func (p *envParser) Err() error {
+	return errors.Join(p.errs...)
+}
+
+func (p *envParser) Int(key string, def int) int {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {
-		return def, nil
+		return def
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
-		return 0, fmt.Errorf("config: %s must be an integer: %w", key, err)
+		p.errs = append(p.errs, fmt.Errorf("config: %s must be an integer: %w", key, err))
+		return def
 	}
-	return n, nil
+	return n
 }
 
-func getEnvInt64(key string, def int64) (int64, error) {
+func (p *envParser) Int64(key string, def int64) int64 {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {
-		return def, nil
+		return def
 	}
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("config: %s must be an integer: %w", key, err)
+		p.errs = append(p.errs, fmt.Errorf("config: %s must be an integer: %w", key, err))
+		return def
 	}
-	return n, nil
+	return n
 }
 
-func getEnvBool(key string, def bool) bool {
+func (p *envParser) Bool(key string, def bool) bool {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {
 		return def
 	}
 	b, err := strconv.ParseBool(v)
 	if err != nil {
+		p.errs = append(p.errs, fmt.Errorf("config: %s must be a boolean (true|false): %w", key, err))
 		return def
 	}
 	return b
 }
 
-func getEnvDuration(key string, def time.Duration) time.Duration {
+func (p *envParser) Duration(key string, def time.Duration) time.Duration {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {
 		return def
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil {
+		p.errs = append(p.errs, fmt.Errorf("config: %s must be a duration (e.g. 30s, 5m, 12h): %w", key, err))
 		return def
 	}
 	return d

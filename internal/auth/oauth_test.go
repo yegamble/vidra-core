@@ -159,16 +159,17 @@ func TestResolveIdentityLoginLinkCreate(t *testing.T) {
 	s := newOAuthTestService(repo)
 	ctx := context.Background()
 
-	// CREATE: unknown identity, no matching account. First account bootstraps
-	// as admin (parity with password registration) and inherits email_verified.
+	// CREATE: unknown identity, no matching account. Always a plain user —
+	// the admin exists only via the owner-claim flow (parity with password
+	// registration, 0104) — and inherits email_verified.
 	user, tokens, outcome, err := s.resolveIdentity(ctx, "fake", "sub-1", oidcClaims{
 		Email: "new@example.com", EmailVerified: true, Name: "New Person",
 	}, "ua")
 	if err != nil || outcome != OAuthCreated {
 		t.Fatalf("create: outcome=%v err=%v", outcome, err)
 	}
-	if user.Username != "new-person" || !user.EmailVerified || user.Role != "admin" {
-		t.Errorf("created user = %+v; want username new-person, verified, admin", user)
+	if user.Username != "new-person" || !user.EmailVerified || user.Role != "user" {
+		t.Errorf("created user = %+v; want username new-person, verified, user", user)
 	}
 	if user.PasswordHash != "" {
 		t.Errorf("oauth-created account must have no password hash")
