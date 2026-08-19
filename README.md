@@ -4,22 +4,45 @@
   </a>
 </p>
 
-# Vidra Core
+<h1 align="center">vidra-core</h1>
+
+<h3 align="center">The Go engine behind Vidra — run your own video platform.</h3>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#api-contract">API contract</a> ·
+  <a href="#observability">Observability</a> ·
+  <a href="#migrating-from-peertube">Migrate from PeerTube</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/yegamble/vidra-core/actions/workflows/backend-ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/yegamble/vidra-core/backend-ci.yml?label=backend-ci" alt="backend-ci"></a>
+  <a href="https://github.com/yegamble/vidra-core/releases"><img src="https://img.shields.io/github/v/release/yegamble/vidra-core?label=release" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/yegamble/vidra-core" alt="License: AGPL-3.0"></a>
+  <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="Go 1.26">
+  <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL">
+  <img src="https://img.shields.io/badge/Redis-7-FF4438?logo=redis&logoColor=white" alt="Redis">
+  <img src="https://img.shields.io/badge/FFmpeg-transcoding-007808?logo=ffmpeg&logoColor=white" alt="FFmpeg">
+</p>
 
 The Go backend for **Vidra** — a clean-room, PeerTube-inspired federated video
-platform. This repository (`vidra-core`) exposes the Vidra HTTP API. The Next.js
-frontend lives in a separate `vidra-user` repository and consumes this API.
+platform you install yourself. This repository (`vidra-core`) exposes the Vidra
+HTTP API; the Next.js frontend lives in the separate
+[`vidra-user`](https://github.com/yegamble/vidra-user) repository and consumes it.
 
-Vidra Core serves a 209-path OpenAPI 3.1 contract backed by 98 SQL migrations. It
-runs the full creator pipeline — upload → transcode → HLS/VP9 — plus live streaming
-over RTMP with replay-to-VOD, end-to-end-encrypted DMs, OAuth/OIDC and TOTP auth,
-ATProto (Bluesky) identity, dual-tier IPFS mirroring, Whisper auto-captions, and a
-one-way PeerTube importer. Auth, sessions, storage, health/readiness probes,
-observability, and CI are all in place.
+Vidra Core serves a **209-path OpenAPI 3.1 contract** backed by **98 SQL
+migrations**. It runs the full creator pipeline — upload → transcode → HLS/VP9 —
+plus live streaming over RTMP with replay-to-VOD, end-to-end-encrypted DMs,
+OAuth/OIDC and TOTP auth, ATProto (Bluesky) identity, dual-tier IPFS mirroring,
+Whisper auto-captions, and a one-way PeerTube importer. Auth, sessions, storage,
+health/readiness probes, observability, and CI are all in place — `make ci` runs
+the exact gate GitHub runs, race detector included.
 
 **Related repos:** frontend <https://github.com/yegamble/vidra-user> · search
 <https://github.com/yegamble/vidra-search> · meta-repo
-<https://github.com/yegamble/vidra>.
+<https://github.com/yegamble/vidra> · brand
+<https://github.com/yegamble/vidra-branding>.
 
 ## Prerequisites
 
