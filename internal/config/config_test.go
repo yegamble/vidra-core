@@ -1368,3 +1368,76 @@ func TestYtdlpImportConfig(t *testing.T) {
 		}
 	})
 }
+
+// Malformed (non-empty, unparseable) typed env values must be FATAL at load —
+// env files may be generated, and a typo must never boot with a silently
+// substituted default. Empty still means "use the default" (KEY= == unset).
+func TestLoadRejectsMalformedTypedEnv(t *testing.T) {
+	cases := []struct {
+		name string
+		key  string
+		val  string
+	}{
+		{"bool typo", "REGISTRATION_ENABLED", "ture"},
+		{"bool yes-word", "OTEL_ENABLED", "yes"},
+		{"bool trailing junk", "FEDERATION_ENABLED", "false "},
+		{"duration missing unit", "HTTP_READ_TIMEOUT", "15"},
+		{"duration word", "RATE_LIMIT_WINDOW", "soon"},
+		{"duration bad unit", "JWT_ACCESS_TTL", "15 minutes"},
+		{"int word", "HTTP_PORT", "eighty"},
+		{"int trailing junk", "SMTP_PORT", "587x"},
+		{"int float", "IPFS_PIN_CONCURRENCY", "2.5"},
+		{"int64 size suffix", "INSTANCE_DEFAULT_QUOTA_BYTES", "5G"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(tc.key, tc.val)
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load() expected error for %s=%q, got nil", tc.key, tc.val)
+			}
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Errorf("error %q should name the offending variable %s", err, tc.key)
+			}
+		})
+	}
+}
+
+func TestLoadReportsAllMalformedTypedEnv(t *testing.T) {
+	t.Setenv("OTEL_ENABLED", "definitely")
+	t.Setenv("HTTP_READ_TIMEOUT", "fast")
+	t.Setenv("HTTP_PORT", "eighty-eighty")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error for three malformed variables, got nil")
+	}
+	for _, key := range []string{"OTEL_ENABLED", "HTTP_READ_TIMEOUT", "HTTP_PORT"} {
+		if !strings.Contains(err.Error(), key) {
+			t.Errorf("error should report every malformed variable; %s missing from %q", key, err)
+		}
+	}
+}
+
+func TestLoadEmptyTypedEnvMeansUnset(t *testing.T) {
+	// KEY= in a generated env file is the same as omitting KEY entirely.
+	t.Setenv("REGISTRATION_ENABLED", "")
+	t.Setenv("HTTP_READ_TIMEOUT", "")
+	t.Setenv("HTTP_PORT", "")
+	t.Setenv("INSTANCE_DEFAULT_QUOTA_BYTES", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.RegistrationEnabled {
+		t.Error("RegistrationEnabled should default to true when empty")
+	}
+	if cfg.HTTPReadTimeout != 15*time.Second {
+		t.Errorf("HTTPReadTimeout = %v, want 15s default", cfg.HTTPReadTimeout)
+	}
+	if cfg.HTTPPort != 8080 {
+		t.Errorf("HTTPPort = %d, want 8080 default", cfg.HTTPPort)
+	}
+	if cfg.InstanceDefaultQuotaBytes != 0 {
+		t.Errorf("InstanceDefaultQuotaBytes = %d, want 0 default", cfg.InstanceDefaultQuotaBytes)
+	}
+}
