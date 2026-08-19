@@ -321,13 +321,76 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/setup/claim-owner:
+    post:
+      operationId: claimOwner
+      summary: Redeem the first-run setup token for the owner (admin) account
+      description: >-
+        First-run owner bootstrap. While an instance has no accounts, boot
+        mints a one-time high-entropy setup token and prints it to the server
+        log (only its hash is stored; each restart while unclaimed mints a
+        fresh token and invalidates the previous one). This endpoint redeems
+        that token for THE admin account plus a session, atomically and
+        exactly once — of two concurrent claims, one wins and the other
+        answers 403 `owner_claim_invalid`. While the claim is pending, every
+        normal signup path (register, OIDC, ATProto) answers 403
+        `owner_claim_required`. Instances that already have accounts are
+        implicitly claimed: the token never exists and this endpoint always
+        answers 403 `owner_claim_invalid`. Unauthenticated by design — the
+        token is the credential — and rate limited like login. With
+        `cookie_mode: true` (or an existing `vidra_refresh` cookie) the
+        refresh token is delivered as an httpOnly `vidra_refresh` cookie
+        instead of in the response body.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimOwnerRequest"
+      responses:
+        "201":
+          description: Owner account created and claimed; session issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Malformed request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Invalid, already-redeemed, or absent setup token (stable code
+            `owner_claim_invalid` — one non-probing answer for all three).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Username or email already taken.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/auth/register:
     post:
       operationId: register
       summary: Register a new account
       description: >-
-        Creates an account and returns it with an access token. The first
-        account created on a fresh instance is granted the admin role. Rate
+        Creates an account and returns it with an access token. On a fresh
+        instance (no accounts yet) every signup path answers 403 with the
+        stable code `owner_claim_required` until the operator redeems the
+        boot-logged setup token at POST /api/v1/setup/claim-owner — accounts
+        never gain the admin role by registering first. Rate
         limited; subject to the standard request guards. When the instance
         requires registration approval, no account is created: a pending
         registration request is filed and 202 is returned with no token. When
@@ -378,8 +441,10 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: >-
-            Registration is disabled on this instance, or the
-            registration_user_limit is reached.
+            Registration is disabled on this instance, the
+            registration_user_limit is reached, or (stable code
+            `owner_claim_required`) the instance is awaiting its owner —
+            complete first-run setup at POST /api/v1/setup/claim-owner.
           content:
             application/json:
               schema:
@@ -17895,6 +17960,38 @@ components:
             registration_minimum_age setting is active (GET /api/v1/instance
             reports the threshold); no birthdate is collected. Missing/false
             while active is a 422 field error on `age_attestation`.
+        cookie_mode:
+          type: boolean
+          default: false
+          description: >-
+            Opt the new session into cookie mode (browser clients): the rotating
+            refresh token is set as an httpOnly `vidra_refresh` cookie
+            (Path=/api/v1/auth, SameSite=Lax, Secure on https instances,
+            Max-Age = the refresh TTL) and omitted from the response body.
+    ClaimOwnerRequest:
+      type: object
+      required: [token, username, email, password]
+      properties:
+        token:
+          type: string
+          format: password
+          description: >-
+            The one-time setup token from the server log. Compared in constant
+            time against its stored hash; unrecoverable once the log line is
+            lost (restart the server to mint a fresh one).
+        username:
+          type: string
+          minLength: 3
+          maxLength: 30
+          example: ada
+        email:
+          type: string
+          example: ada@example.test
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+          format: password
         cookie_mode:
           type: boolean
           default: false

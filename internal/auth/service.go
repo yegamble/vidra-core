@@ -33,6 +33,14 @@ var (
 	// unverified — the session is withheld until the verification link is
 	// followed (config-parity W7).
 	ErrEmailVerificationRequired = errors.New("auth: email verification required")
+	// ErrOwnerClaimRequired means the instance is awaiting its owner: the users
+	// table is empty and an unclaimed owner-claim token exists, so every normal
+	// signup path refuses until POST /setup/claim-owner creates the admin.
+	ErrOwnerClaimRequired = errors.New("auth: owner claim required")
+	// ErrOwnerClaimInvalid means the presented owner-claim token is wrong,
+	// already redeemed, or no claim is pending. Deliberately one error for all
+	// three so the endpoint is non-probing.
+	ErrOwnerClaimInvalid = errors.New("auth: invalid or already-used owner-claim token")
 )
 
 // Repository is the data access the auth service needs. *sqlcgen.Queries
@@ -68,6 +76,11 @@ type Repository interface {
 	ListRegistrationRequests(ctx context.Context, arg sqlcgen.ListRegistrationRequestsParams) ([]sqlcgen.ListRegistrationRequestsRow, error)
 	ApproveRegistrationRequest(ctx context.Context, arg sqlcgen.ApproveRegistrationRequestParams) (sqlcgen.ApproveRegistrationRequestRow, error)
 	RejectRegistrationRequest(ctx context.Context, arg sqlcgen.RejectRegistrationRequestParams) (int64, error)
+
+	// Owner-claim bootstrap (0104) — see ownerclaim.go.
+	UpsertOwnerClaimToken(ctx context.Context, tokenHash string) (sqlcgen.OwnerClaimToken, error)
+	GetUnclaimedOwnerClaimToken(ctx context.Context) (sqlcgen.OwnerClaimToken, error)
+	ClaimOwnerAndCreateAdmin(ctx context.Context, arg sqlcgen.ClaimOwnerAndCreateAdminParams) (sqlcgen.ClaimOwnerAndCreateAdminRow, error)
 }
 
 // defaultResetTTL is how long a password-reset token stays valid.
@@ -231,25 +244,23 @@ type LoginInput struct {
 }
 
 // Register creates an account and returns it with a fresh access + refresh token
-// pair. The very first account on a fresh instance is granted the admin role
-// (bootstrap owner); all others default to "user". Username/email uniqueness is
-// enforced by the database; a violation maps to ErrConflict.
+// pair. Every account registers as "user" — the admin is created only via the
+// owner-claim flow (ownerclaim.go), never by registering first. Username/email
+// uniqueness is enforced by the database; a violation maps to ErrConflict.
 func (s *Service) Register(ctx context.Context, in RegisterInput, userAgent string) (sqlcgen.User, Tokens, error) {
+	if err := s.refuseIfOwnerUnclaimed(ctx); err != nil {
+		return sqlcgen.User{}, Tokens{}, err
+	}
 	hash, err := HashPassword(in.Password)
 	if err != nil {
 		return sqlcgen.User{}, Tokens{}, err
-	}
-
-	role := "user"
-	if n, err := s.repo.CountUsers(ctx); err == nil && n == 0 {
-		role = "admin"
 	}
 
 	user, err := s.repo.CreateUser(ctx, sqlcgen.CreateUserParams{
 		Username:     strings.TrimSpace(in.Username),
 		Email:        strings.TrimSpace(in.Email),
 		PasswordHash: hash,
-		Role:         role,
+		Role:         "user",
 		// Seed the per-user watch-history preference from the instance setting
 		// (new_user_history_enabled, config-parity W7).
 		HistoryEnabled: s.newUserHistoryEnabled(),
@@ -273,25 +284,22 @@ func (s *Service) Register(ctx context.Context, in RegisterInput, userAgent stri
 // pending_email_verification set, no session is issued, and a verification
 // message is sent. Login is refused (ErrEmailVerificationRequired) until the
 // link is followed. The caller decides when to use this instead of Register
-// (the gate is effective). The bootstrap rule still applies: the very first
-// account is the admin (and still held — the gate is only reachable when a
-// mail path exists, so the operator gets the message).
+// (the gate is effective). Like Register, the account is always "user" — the
+// admin exists only via the owner-claim flow (ownerclaim.go).
 func (s *Service) RegisterPendingVerification(ctx context.Context, in RegisterInput) (sqlcgen.User, error) {
+	if err := s.refuseIfOwnerUnclaimed(ctx); err != nil {
+		return sqlcgen.User{}, err
+	}
 	hash, err := HashPassword(in.Password)
 	if err != nil {
 		return sqlcgen.User{}, err
-	}
-
-	role := "user"
-	if n, err := s.repo.CountUsers(ctx); err == nil && n == 0 {
-		role = "admin"
 	}
 
 	user, err := s.repo.CreateUser(ctx, sqlcgen.CreateUserParams{
 		Username:                 strings.TrimSpace(in.Username),
 		Email:                    strings.TrimSpace(in.Email),
 		PasswordHash:             hash,
-		Role:                     role,
+		Role:                     "user",
 		PendingEmailVerification: true,
 		HistoryEnabled:           s.newUserHistoryEnabled(),
 	})

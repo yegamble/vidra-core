@@ -401,6 +401,24 @@ func run() error {
 	)
 	authsvc := auth.NewService(db.Queries(), issuer, cfg.JWTRefreshTTL, authOpts...)
 	opts = append(opts, httpapi.WithAuthService(authsvc, cfg.JWTAccessTTL))
+
+	// First-run owner bootstrap (0104): while the users table is empty, the
+	// admin account is claimed with a one-time setup token — never by winning
+	// the registration race. A fresh token is minted on every boot while
+	// unclaimed (only its hash is stored, so the raw value is unrecoverable
+	// and each re-mint invalidates the previous log line); instances with any
+	// user are implicitly claimed and skip this entirely. The token appears in
+	// the log MESSAGE by deliberate exception to the never-log-secrets rule:
+	// like WordPress/Jupyter bootstrap secrets, the operator console is its
+	// one delivery channel, and it grants nothing once claimed or re-minted.
+	setupToken, minted, err := authsvc.EnsureOwnerClaimToken(startCtx)
+	if err != nil {
+		return fmt.Errorf("owner-claim bootstrap: %w", err)
+	}
+	if minted {
+		logger.Warn("FIRST-RUN SETUP REQUIRED: no accounts exist yet — claim the owner (admin) account with the one-time setup token: " + setupToken)
+		logger.Warn("claim the owner account with: curl -X POST <public-base-url>/api/v1/setup/claim-owner -H 'Content-Type: application/json' -d '{\"token\":\"<setup token above>\",\"username\":\"...\",\"email\":\"...\",\"password\":\"...\"}' — sign-ups stay closed (403 owner_claim_required) until claimed; restarting mints a fresh token and invalidates this one")
+	}
 	if captureMailer != nil {
 		opts = append(opts, httpapi.WithDevMailCapture(captureMailer))
 	}

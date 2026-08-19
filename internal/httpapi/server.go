@@ -1024,6 +1024,11 @@ func (s *Server) routes() {
 		}
 		authGroup.POST("/register", s.handleRegister, authMW...)
 		authGroup.POST("/login", s.handleLogin, authMW...)
+		// First-run owner claim (0104): redeems the boot-logged setup token for
+		// THE admin account. Unauthenticated by design (the token is the
+		// credential) and behind the strict auth limiter — it is a
+		// token-guessing surface exactly like login.
+		api.POST("/setup/claim-owner", s.handleClaimOwner, authMW...)
 		authGroup.POST("/refresh", s.handleRefresh)
 		authGroup.POST("/logout", s.handleLogout)
 		authGroup.POST("/password-reset", s.handleRequestPasswordReset, authMW...)

@@ -384,11 +384,11 @@ func (s *OAuthService) resolveIdentity(ctx context.Context, provider, subject st
 	if err != nil {
 		return sqlcgen.User{}, Tokens{}, "", err
 	}
-	role := "user"
-	if n, err := s.repo.CountUsers(ctx); err == nil && n == 0 {
-		// Bootstrap parity with password registration: the very first account on
-		// a fresh instance is the operator.
-		role = "admin"
+	// Signup parity with password registration: while the instance awaits its
+	// owner (ownerclaim.go), no path may create an account — least of all one
+	// that used to mint the admin.
+	if err := s.auth.refuseIfOwnerUnclaimed(ctx); err != nil {
+		return sqlcgen.User{}, Tokens{}, "", err
 	}
 	user, err := s.repo.CreateUser(ctx, sqlcgen.CreateUserParams{
 		Username: username,
@@ -397,7 +397,7 @@ func (s *OAuthService) resolveIdentity(ctx context.Context, provider, subject st
 		// never verify (bcrypt rejects it), so password login stays impossible
 		// until the user sets one via the password-reset flow.
 		PasswordHash: "",
-		Role:         role,
+		Role:         "user",
 		// OAuth accounts are never held pending email verification: the IdP
 		// attests the identity (claims.email_verified is honored below), so the
 		// W7 registration gate deliberately does not apply here.

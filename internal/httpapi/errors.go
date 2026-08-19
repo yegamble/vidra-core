@@ -53,6 +53,8 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var qe *QuotaExceededError
 	var dqe *DailyQuotaExceededError
 	var evr *EmailVerificationRequiredError
+	var ocr *OwnerClaimRequiredError
+	var oci *OwnerClaimInvalidError
 	var fd *FeatureDisabledError
 	var id *IPFSDisabledError
 	var pr *PasswordRequiredError
@@ -102,6 +104,14 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusForbidden
 		message = "verify your email address to sign in; check your inbox for the verification link"
 		code = "email_verification_required"
+	case errors.As(err, &ocr):
+		status = http.StatusForbidden
+		message = "this instance is awaiting its owner; sign-ups open once first-run setup is complete"
+		code = "owner_claim_required"
+	case errors.As(err, &oci):
+		status = http.StatusForbidden
+		message = "invalid or already-used setup token"
+		code = "owner_claim_invalid"
 	case errors.As(err, &fd):
 		status = http.StatusForbidden
 		message = "this feature is disabled on this instance"
@@ -200,6 +210,22 @@ func (e *DailyQuotaExceededError) Error() string { return "daily upload quota ex
 type EmailVerificationRequiredError struct{}
 
 func (e *EmailVerificationRequiredError) Error() string { return "email verification required" }
+
+// OwnerClaimRequiredError renders as 403 with the stable code
+// "owner_claim_required": the instance is awaiting its owner (empty users
+// table + an unclaimed owner-claim token), so every normal signup path refuses
+// until POST /setup/claim-owner redeems the boot-logged token for the admin
+// account.
+type OwnerClaimRequiredError struct{}
+
+func (e *OwnerClaimRequiredError) Error() string { return "owner claim required" }
+
+// OwnerClaimInvalidError renders as 403 with the stable code
+// "owner_claim_invalid": the presented owner-claim token is wrong, already
+// redeemed, or no claim is pending — one non-probing answer for all three.
+type OwnerClaimInvalidError struct{}
+
+func (e *OwnerClaimInvalidError) Error() string { return "invalid owner-claim token" }
 
 // FeatureDisabledError renders as 403 with the stable code "feature_disabled":
 // the instance operator has turned off this feature via the admin

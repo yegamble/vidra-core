@@ -281,6 +281,9 @@ func (s *Server) handleRegister(c echo.Context) error {
 	// verified), applied in ApproveRegistration.
 	if s.registrationRequiresApproval() {
 		if _, err := s.authsvc.RequestRegistration(c.Request().Context(), regInput, in.Note); err != nil {
+			if errors.Is(err, auth.ErrOwnerClaimRequired) {
+				return &OwnerClaimRequiredError{}
+			}
 			if errors.Is(err, auth.ErrConflict) {
 				return echo.NewHTTPError(http.StatusConflict, "username or email already taken")
 			}
@@ -296,6 +299,9 @@ func (s *Server) handleRegister(c echo.Context) error {
 	if s.registrationRequiresEmailVerification() {
 		user, err := s.authsvc.RegisterPendingVerification(c.Request().Context(), regInput)
 		if err != nil {
+			if errors.Is(err, auth.ErrOwnerClaimRequired) {
+				return &OwnerClaimRequiredError{}
+			}
 			if errors.Is(err, auth.ErrConflict) {
 				return echo.NewHTTPError(http.StatusConflict, "username or email already taken")
 			}
@@ -314,6 +320,9 @@ func (s *Server) handleRegister(c echo.Context) error {
 
 	user, tokens, err := s.authsvc.Register(c.Request().Context(), regInput, c.Request().UserAgent())
 	if err != nil {
+		if errors.Is(err, auth.ErrOwnerClaimRequired) {
+			return &OwnerClaimRequiredError{}
+		}
 		if errors.Is(err, auth.ErrConflict) {
 			return echo.NewHTTPError(http.StatusConflict, "username or email already taken")
 		}

@@ -54,8 +54,11 @@ func TestAuditLogPersistsAndLists(t *testing.T) {
 		WithAuditLog(audit.NewService(&httpAuditFakeRepo{})),
 	)
 
-	// The first account becomes admin; registering audits an auth.register success.
+	// The first account is THE admin via the owner-claim flow (0104), which
+	// audits an auth.owner_claim success; the second account registers normally
+	// and audits an auth.register success.
 	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	registerAndToken(t, srv, `{"username":"carol","email":"carol@example.test","password":"supersecret"}`)
 	// A login audits an auth.login success (used for the action filter below).
 	postTo(srv, "/api/v1/auth/login", `{"email":"ada@example.test","password":"supersecret"}`)
 

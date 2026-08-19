@@ -22,6 +22,7 @@ const (
 	ActionLogout                = "auth.logout"
 	ActionLogoutAll             = "auth.logout_all"
 	ActionRegister              = "auth.register"
+	ActionOwnerClaim            = "auth.owner_claim"
 	ActionRegistrationRequest   = "auth.registration.request"
 	ActionRegistrationApprove   = "auth.registration.approve"
 	ActionRegistrationReject    = "auth.registration.reject"

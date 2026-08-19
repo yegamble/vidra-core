@@ -236,6 +236,9 @@ func (s *Server) handleATProtoLoginCallback(c echo.Context) error {
 		case errors.Is(err, auth.ErrAccountDisabled):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "account_disabled")
 			return oauthErrorRedirect(c, returnTo, "account_disabled")
+		case errors.Is(err, auth.ErrOwnerClaimRequired):
+			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "owner_claim_required")
+			return oauthErrorRedirect(c, returnTo, "owner_claim_required")
 		case errors.Is(err, auth.ErrConflict):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "atproto_conflict")
 			return oauthErrorRedirect(c, returnTo, "conflict")
