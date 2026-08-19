@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 // Owner-claim bootstrap tests (0104). The fake repo mirrors the SQL semantics:
@@ -15,7 +18,7 @@ import (
 // token the operator would read off the console.
 func mintOwnerClaim(t *testing.T, svc *Service) string {
 	t.Helper()
-	raw, minted, err := svc.EnsureOwnerClaimToken(context.Background())
+	raw, minted, _, err := svc.EnsureOwnerClaimToken(context.Background())
 	if err != nil {
 		t.Fatalf("EnsureOwnerClaimToken: %v", err)
 	}
@@ -46,8 +49,21 @@ func TestEnsureOwnerClaimTokenStoresOnlyTheHash(t *testing.T) {
 func TestEnsureOwnerClaimTokenNoopOnceUsersExist(t *testing.T) {
 	svc := newTestService(newFakeRepo())
 	register(t, svc, "ada", "ada@example.test") // no token minted → registration open
-	if _, minted, err := svc.EnsureOwnerClaimToken(context.Background()); err != nil || minted {
-		t.Fatalf("minted=%v err=%v, want no-op on an instance with users (implicitly claimed)", minted, err)
+	if _, minted, _, err := svc.EnsureOwnerClaimToken(context.Background()); err != nil || minted {
+		t.Fatalf("minted=%v err=%v, want no-op on an instance with users and no token (implicitly claimed)", minted, err)
+	}
+}
+
+func TestEnsureOwnerClaimTokenNoopOnceClaimed(t *testing.T) {
+	// A claimed row + users is the normal post-bootstrap state: later boots
+	// must never mint a new token (the admin exists).
+	svc := newTestService(newFakeRepo())
+	raw := mintOwnerClaim(t, svc)
+	if _, _, err := svc.ClaimOwner(context.Background(), claimInput(raw), "ua"); err != nil {
+		t.Fatalf("ClaimOwner: %v", err)
+	}
+	if _, minted, _, err := svc.EnsureOwnerClaimToken(context.Background()); err != nil || minted {
+		t.Fatalf("minted=%v err=%v, want no-op once the owner is claimed", minted, err)
 	}
 }
 
@@ -60,6 +76,78 @@ func TestEnsureOwnerClaimTokenRemintInvalidatesTheOld(t *testing.T) {
 	}
 	if user, _, err := svc.ClaimOwner(context.Background(), claimInput(fresh), "ua"); err != nil || user.Role != "admin" {
 		t.Fatalf("claim with the fresh token: role=%q err=%v, want admin/nil", user.Role, err)
+	}
+}
+
+func TestEnsureOwnerClaimTokenRotatesUnclaimedTokenEvenWithUsers(t *testing.T) {
+	// The leaked-boot-log fix: an UNCLAIMED token must rotate on every boot
+	// even once users exist (e.g. accounts restored from a dump, or created
+	// through the approval queue before the owner ever claimed) — otherwise a
+	// token printed to an old log stays a permanent admin credential.
+	repo := newFakeRepo()
+	svc := newTestService(repo)
+	old := mintOwnerClaim(t, svc)
+	if _, err := repo.CreateUser(context.Background(), sqlcgen.CreateUserParams{
+		Username: "restored", Email: "restored@example.test", PasswordHash: "x", Role: "user",
+	}); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	fresh, minted, hadUsers, err := svc.EnsureOwnerClaimToken(context.Background())
+	if err != nil || !minted || !hadUsers {
+		t.Fatalf("minted=%v hadUsers=%v err=%v, want a re-mint flagged hadUsers on a populated unclaimed instance", minted, hadUsers, err)
+	}
+	if _, _, err := svc.ClaimOwner(context.Background(), claimInput(old), "ua"); !errors.Is(err, ErrOwnerClaimInvalid) {
+		t.Fatalf("claim with the superseded token: err = %v, want ErrOwnerClaimInvalid", err)
+	}
+	if user, _, err := svc.ClaimOwner(context.Background(), claimInput(fresh), "ua"); err != nil || user.Role != "admin" {
+		t.Fatalf("claim with the rotated token: role=%q err=%v, want admin/nil", user.Role, err)
+	}
+}
+
+func TestEnsureOwnerClaimTokenFixedOverride(t *testing.T) {
+	// OWNER_CLAIM_TOKEN (dev/test-only): the mint uses the fixed value
+	// verbatim and still stores only its hash.
+	const fixed = "fixed-owner-claim-token-0001"
+	repo := newFakeRepo()
+	svc := NewService(repo, newTestIssuer(), time.Hour, WithFixedOwnerClaimToken(fixed))
+
+	raw, minted, _, err := svc.EnsureOwnerClaimToken(context.Background())
+	if err != nil || !minted {
+		t.Fatalf("minted=%v err=%v, want a mint on an empty instance", minted, err)
+	}
+	if raw != fixed {
+		t.Fatalf("raw = %q, want the fixed override %q verbatim", raw, fixed)
+	}
+	if repo.ownerClaim == nil || repo.ownerClaim.TokenHash != hashOwnerClaimToken(fixed) {
+		t.Fatal("stored hash is not sha256 of the fixed token")
+	}
+	if repo.ownerClaim.TokenHash == fixed {
+		t.Error("the raw token must never be persisted, only its hash")
+	}
+	if user, _, err := svc.ClaimOwner(context.Background(), claimInput(fixed), "ua"); err != nil || user.Role != "admin" {
+		t.Fatalf("claim with the fixed token: role=%q err=%v, want admin/nil", user.Role, err)
+	}
+}
+
+func TestOwnerClaimPending(t *testing.T) {
+	// The first-run signal behind /instance owner_claim_pending: false before
+	// any mint (a repo that never minted behaves as before), true while the
+	// claim is outstanding on an empty instance, false the moment it resolves.
+	svc := newTestService(newFakeRepo())
+	ctx := context.Background()
+	if pending, err := svc.OwnerClaimPending(ctx); err != nil || pending {
+		t.Fatalf("pending=%v err=%v, want false before any mint", pending, err)
+	}
+	raw := mintOwnerClaim(t, svc)
+	if pending, err := svc.OwnerClaimPending(ctx); err != nil || !pending {
+		t.Fatalf("pending=%v err=%v, want true while minted and unclaimed", pending, err)
+	}
+	if _, _, err := svc.ClaimOwner(ctx, claimInput(raw), "ua"); err != nil {
+		t.Fatalf("ClaimOwner: %v", err)
+	}
+	if pending, err := svc.OwnerClaimPending(ctx); err != nil || pending {
+		t.Fatalf("pending=%v err=%v, want false once claimed", pending, err)
 	}
 }
 

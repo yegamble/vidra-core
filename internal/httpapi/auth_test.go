@@ -616,7 +616,7 @@ func registerAndToken(t *testing.T, srv *Server, body string) string {
 // the token field is injected.
 func claimOwnerTokens(t *testing.T, srv *Server, body string) authResponse {
 	t.Helper()
-	raw, minted, err := srv.authsvc.EnsureOwnerClaimToken(context.Background())
+	raw, minted, _, err := srv.authsvc.EnsureOwnerClaimToken(context.Background())
 	if err != nil || !minted {
 		t.Fatalf("EnsureOwnerClaimToken: minted=%v err=%v", minted, err)
 	}

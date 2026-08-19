@@ -235,6 +235,12 @@ type instanceResponse struct {
 	// otherwise registration requires the "I am at least N years old"
 	// attestation flag (PeerTube parity — no birthdate is collected; W7).
 	RegistrationMinimumAge int64 `json:"registration_minimum_age"`
+	// OwnerClaimPending reports first-run state (0104): true while the
+	// instance awaits its owner — zero accounts and an unclaimed boot-minted
+	// setup token — so the frontend can route to the claim-owner wizard
+	// without probing register. Every signup path answers 403
+	// owner_claim_required while this is true.
+	OwnerClaimPending bool `json:"owner_claim_pending"`
 	// OAuthProviders lists the configured OIDC login provider names so the
 	// frontend can render "continue with …" buttons pointing at
 	// GET /api/v1/auth/oauth/{provider}. Empty array when OAuth is off.
@@ -301,6 +307,9 @@ type instanceResponse struct {
 // overlay, document hashes, branding image metadata, the TTL-cached account
 // count behind the registration user limit) — no DB round trip while
 // registration_user_limit is unset, at most one every userCountTTL otherwise.
+// The one exception is the owner_claim_pending probe, which hits the DB only
+// until it settles false (see ownerClaimPending) — i.e. only on a first-run
+// instance that has no traffic yet.
 func (s *Server) handleInstance(c echo.Context) error {
 	body, err := json.Marshal(s.instanceDocument(c.Request().Context()))
 	if err != nil {
@@ -337,6 +346,7 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 		RegistrationDisabledReason:            regReason,
 		RegistrationRequiresEmailVerification: s.registrationRequiresEmailVerification(),
 		RegistrationMinimumAge:                s.registrationMinimumAge(),
+		OwnerClaimPending:                     s.ownerClaimPending(ctx),
 		OAuthProviders:                        s.cfg.OAuthProviderNames(),
 		ATProtoLogin:                          s.atprotologinsvc != nil && s.atprotologinsvc.Enabled(),
 		FederationEnabled:                     s.cfg.FederationEnabled,
@@ -407,6 +417,32 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 			SearchHistoryEnabled:               s.instanceSearchHistoryEnabled(),
 		},
 	}
+}
+
+// ownerClaimPending resolves the first-run signal for the public instance
+// document. Pending is monotone within a process (claim tokens are minted only
+// at boot, so it can go true→false but never back), which makes the latch
+// safe: once false is observed the DB is never asked again. While pending — a
+// zero-user instance whose only traffic is the operator — each read re-checks
+// so the flag clears the moment the owner claims. Errors report false: the
+// setup wizard must never engage on a transient DB error.
+func (s *Server) ownerClaimPending(ctx context.Context) bool {
+	if s.authsvc == nil {
+		return false
+	}
+	s.ownerClaimMu.Lock()
+	defer s.ownerClaimMu.Unlock()
+	if s.ownerClaimSettled {
+		return false
+	}
+	pending, err := s.authsvc.OwnerClaimPending(ctx)
+	if err != nil {
+		return false
+	}
+	if !pending {
+		s.ownerClaimSettled = true
+	}
+	return pending
 }
 
 // instanceAsset resolves one branding slot to its public URL (the dedicated

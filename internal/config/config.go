@@ -327,6 +327,15 @@ type Config struct {
 	// loudly when on. See internal/urlsafety.Guard.AllowPrivate.
 	ImportAllowPrivateURLs bool
 
+	// OwnerClaimToken pins the first-run owner-claim token (0104) to this FIXED
+	// value instead of the high-entropy random minted at boot, so test harnesses
+	// and local dev can claim the owner (admin) account deterministically without
+	// scraping the boot log. DEVELOPMENT/TEST-ONLY: a fixed, environment-visible
+	// admin-bootstrap credential defeats the point of the random token, so
+	// production refuses to boot when it is set. Empty (default) keeps the random
+	// mint; at least 16 characters when set.
+	OwnerClaimToken string
+
 	// Rate limiting (Redis fixed-window) applied to the /api surface.
 	RateLimitEnabled  bool
 	RateLimitRequests int
@@ -647,6 +656,7 @@ func Load() (*Config, error) {
 		SMTPFrom:                       getEnv("SMTP_FROM", ""),
 		DevMailCaptureEnabled:          p.Bool("DEV_MAIL_CAPTURE_ENABLED", false),
 		ImportAllowPrivateURLs:         p.Bool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
+		OwnerClaimToken:                getEnv("OWNER_CLAIM_TOKEN", ""),
 		DatabaseURL:                    getEnv("DATABASE_URL", "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable"),
 		RedisURL:                       getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		CORSAllowedOrigins:             splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
@@ -872,7 +882,7 @@ func (c *Config) validate() error {
 		if len(c.JWTSecret) < 32 {
 			return fmt.Errorf("config: JWT_SECRET must be at least 32 bytes in production")
 		}
-		// The two development-only escape hatches are REFUSED in production, not
+		// The development-only escape hatches are REFUSED in production, not
 		// merely warned about (deploy/README.md already documents this refusal).
 		// DEV_MAIL_CAPTURE_ENABLED mounts GET /api/v1/dev/email-token, which hands
 		// out a live password-reset token for ANY address — an admin-takeover
@@ -888,6 +898,14 @@ func (c *Config) validate() error {
 		if c.ImportAllowPrivateURLs {
 			return fmt.Errorf("config: HTTP_IMPORT_ALLOW_PRIVATE_URLS must not be set in production")
 		}
+		// A fixed owner-claim token is a deterministic admin-bootstrap credential
+		// sitting in the environment — dev/test-only by construction.
+		if c.OwnerClaimToken != "" {
+			return fmt.Errorf("config: OWNER_CLAIM_TOKEN must not be set in production")
+		}
+	}
+	if c.OwnerClaimToken != "" && len(c.OwnerClaimToken) < 16 {
+		return fmt.Errorf("config: OWNER_CLAIM_TOKEN must be at least 16 characters when set")
 	}
 	if c.Environment == "production" {
 		for _, o := range c.CORSAllowedOrigins {

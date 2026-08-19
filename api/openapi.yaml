@@ -328,19 +328,23 @@ paths:
       description: >-
         First-run owner bootstrap. While an instance has no accounts, boot
         mints a one-time high-entropy setup token and prints it to the server
-        log (only its hash is stored; each restart while unclaimed mints a
-        fresh token and invalidates the previous one). This endpoint redeems
+        log (only its hash is stored; each restart while a claim is
+        outstanding — even once accounts exist — mints a fresh token and
+        invalidates the previous one, so a leaked boot log never stays a live
+        admin credential). This endpoint redeems
         that token for THE admin account plus a session, atomically and
         exactly once — of two concurrent claims, one wins and the other
         answers 403 `owner_claim_invalid`. While the claim is pending, every
         normal signup path (register, OIDC, ATProto) answers 403
-        `owner_claim_required`. Instances that already have accounts are
-        implicitly claimed: the token never exists and this endpoint always
-        answers 403 `owner_claim_invalid`. Unauthenticated by design — the
+        `owner_claim_required` (GET /api/v1/instance reports it as
+        `owner_claim_pending`). Instances that already have accounts and no
+        outstanding claim are implicitly claimed: no token exists and this
+        endpoint always answers 403 `owner_claim_invalid`. Unauthenticated by design — the
         token is the credential — and rate limited like login. With
-        `cookie_mode: true` (or an existing `vidra_refresh` cookie) the
-        refresh token is delivered as an httpOnly `vidra_refresh` cookie
-        instead of in the response body.
+        `cookie_mode: true` the refresh token is delivered as an httpOnly
+        `vidra_refresh` cookie instead of in the response body (the explicit
+        flag is the only opt-in here: the cookie itself is scoped to
+        Path=/api/v1/auth, so it is never presented to this endpoint).
       tags: [auth]
       requestBody:
         required: true
@@ -12471,7 +12475,7 @@ components:
       required: [name, description, short_description, software, registration_enabled,
                  registration_requires_approval, registration_disabled_reason,
                  registration_requires_email_verification, registration_minimum_age,
-                 oauth_providers, federation_enabled,
+                 owner_claim_pending, oauth_providers, federation_enabled,
                  terms_url, privacy_url, contact_email, default_language, categories,
                  moderator_languages, server_country, is_sensitive,
                  sensitive_content_policy, contact_form_enabled, social_links, features,
@@ -12588,6 +12592,14 @@ components:
             Signup age-attestation threshold: 0 = off; otherwise registration
             requires `age_attestation: true` ("I am at least N years old" —
             PeerTube parity, no birthdate is collected).
+        owner_claim_pending:
+          type: boolean
+          description: >-
+            First-run signal: true while the instance awaits its owner (zero
+            accounts and an unclaimed boot-minted setup token) — route to the
+            claim-owner wizard instead of the signup form. Every signup path
+            answers 403 `owner_claim_required` while this is true; it flips to
+            false the moment POST /api/v1/setup/claim-owner succeeds.
         oauth_providers:
           type: array
           items:

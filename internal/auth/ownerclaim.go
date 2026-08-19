@@ -21,7 +21,9 @@ import (
 // becomes admin" rule handed a fresh public install to whichever bot signed up
 // first). While the claim is pending (empty users table + unclaimed token),
 // every normal signup path answers ErrOwnerClaimRequired. Instances that
-// already have users never mint a token and are implicitly claimed.
+// already have users are implicitly claimed and never mint a NEW token — but
+// an unclaimed leftover from an earlier boot still rotates (see
+// EnsureOwnerClaimToken).
 
 // ownerClaimTokenBytes is the entropy of a raw owner-claim token (256 bits) —
 // the same construction as a refresh token: high-entropy random, so a fast
@@ -46,50 +48,94 @@ func hashOwnerClaimToken(raw string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// EnsureOwnerClaimToken is the boot half of the bootstrap: while the users
-// table is EMPTY it mints a fresh claim token (replacing — and thereby
-// invalidating — any previous one, claimed or not) and returns the raw token
-// for the caller to log once. Once any user exists the instance is implicitly
-// claimed and this is a no-op, so existing deployments are unaffected.
-func (s *Service) EnsureOwnerClaimToken(ctx context.Context) (token string, minted bool, err error) {
+// WithFixedOwnerClaimToken pins every owner-claim mint to raw instead of a
+// fresh random token (OWNER_CLAIM_TOKEN — dev/test-only, config refuses it in
+// production), so harnesses and local dev claim the owner deterministically.
+// Only the token's hash is still stored. Empty is ignored (random mint).
+func WithFixedOwnerClaimToken(raw string) Option {
+	return func(s *Service) { s.fixedOwnerClaimToken = raw }
+}
+
+// newOwnerClaimToken is the raw+hash pair a mint stores: the fixed override
+// verbatim when configured (WithFixedOwnerClaimToken), else a fresh random.
+func (s *Service) newOwnerClaimToken() (raw, hash string, err error) {
+	if s.fixedOwnerClaimToken != "" {
+		return s.fixedOwnerClaimToken, hashOwnerClaimToken(s.fixedOwnerClaimToken), nil
+	}
+	return generateOwnerClaimToken()
+}
+
+// EnsureOwnerClaimToken is the boot half of the bootstrap: it mints a fresh
+// claim token (replacing — and thereby invalidating — any previous one) and
+// returns the raw token for the caller to log once, whenever the instance
+// still awaits its owner:
+//
+//   - users == 0: always mint, exactly as before (first run, or a restart
+//     while unclaimed).
+//   - users > 0 with an UNCLAIMED row: RE-MINT anyway — that token still
+//     redeems for THE admin account, so it must rotate on every boot or a
+//     leaked boot log stays a permanent admin credential. hadUsers reports
+//     this case so the caller can escalate the log.
+//   - users > 0 with no unclaimed row: strict no-op — the instance is
+//     implicitly claimed (upgraded installs must never get a token).
+func (s *Service) EnsureOwnerClaimToken(ctx context.Context) (token string, minted, hadUsers bool, err error) {
 	n, err := s.repo.CountUsers(ctx)
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	if n > 0 {
-		return "", false, nil
+		if _, err := s.repo.GetUnclaimedOwnerClaimToken(ctx); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", false, false, nil
+			}
+			return "", false, false, err
+		}
 	}
-	raw, hash, err := generateOwnerClaimToken()
+	raw, hash, err := s.newOwnerClaimToken()
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	if _, err := s.repo.UpsertOwnerClaimToken(ctx, hash); err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
-	return raw, true, nil
+	return raw, true, n > 0, nil
+}
+
+// OwnerClaimPending reports first-run state: an EMPTY users table AND an
+// unclaimed claim token (so a database that never minted one, e.g. an
+// in-memory test repo, reports false). It backs the public instance
+// document's owner_claim_pending flag and the signup gate below.
+func (s *Service) OwnerClaimPending(ctx context.Context) (bool, error) {
+	n, err := s.repo.CountUsers(ctx)
+	if err != nil {
+		return false, err
+	}
+	if n > 0 {
+		return false, nil // implicitly claimed
+	}
+	if _, err := s.repo.GetUnclaimedOwnerClaimToken(ctx); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // refuseIfOwnerUnclaimed is the signup gate: every account-creating path calls
 // it before touching the users table. It errors ErrOwnerClaimRequired while
-// the instance awaits its owner (empty users table AND an unclaimed token —
-// so a database that never minted one, e.g. an in-memory test repo, behaves
-// as before). Repository errors are returned, never swallowed: failing open
-// here is exactly the bug this flow replaces.
+// the instance awaits its owner (OwnerClaimPending). Repository errors are
+// returned, never swallowed: failing open here is exactly the bug this flow
+// replaces.
 func (s *Service) refuseIfOwnerUnclaimed(ctx context.Context) error {
-	n, err := s.repo.CountUsers(ctx)
+	pending, err := s.OwnerClaimPending(ctx)
 	if err != nil {
 		return err
 	}
-	if n > 0 {
-		return nil // implicitly claimed
+	if pending {
+		return ErrOwnerClaimRequired
 	}
-	if _, err := s.repo.GetUnclaimedOwnerClaimToken(ctx); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		return err
-	}
-	return ErrOwnerClaimRequired
+	return nil
 }
 
 // ClaimOwnerInput is validated, normalized owner-claim data.

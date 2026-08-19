@@ -80,6 +80,8 @@ func (s *Server) handleClaimOwner(c echo.Context) error {
 	}
 	s.invalidateUserCount()
 	s.audit(c, observability.ActionOwnerClaim, observability.ResultSuccess, user.ID.String(), "")
-	cookieMode := in.CookieMode || refreshCookieToken(c) != ""
-	return s.authResponse(http.StatusCreated, c, user, tokens, cookieMode)
+	// Cookie mode is opted into via the explicit flag only: the vidra_refresh
+	// cookie is scoped Path=/api/v1/auth, so it is never presented to this
+	// endpoint and the register/login cookie-detection fallback can't fire here.
+	return s.authResponse(http.StatusCreated, c, user, tokens, in.CookieMode)
 }

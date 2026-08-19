@@ -448,6 +448,57 @@ func TestProductionRefusesDevelopmentEscapeHatches(t *testing.T) {
 	})
 }
 
+// TestOwnerClaimTokenOverride locks down the dev/test-only fixed owner-claim
+// token (OWNER_CLAIM_TOKEN): accepted outside production when long enough,
+// refused when short, and REFUSED outright in production — a fixed,
+// environment-visible admin-bootstrap credential defeats the random mint.
+func TestOwnerClaimTokenOverride(t *testing.T) {
+	t.Run("default empty", func(t *testing.T) {
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load(): %v", err)
+		}
+		if cfg.OwnerClaimToken != "" {
+			t.Errorf("OwnerClaimToken = %q, want empty by default", cfg.OwnerClaimToken)
+		}
+	})
+
+	t.Run("development accepts 16+ characters", func(t *testing.T) {
+		t.Setenv("VIDRA_ENV", "development")
+		t.Setenv("OWNER_CLAIM_TOKEN", "fixed-owner-claim-token-0001")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load(): %v", err)
+		}
+		if cfg.OwnerClaimToken != "fixed-owner-claim-token-0001" {
+			t.Errorf("OwnerClaimToken = %q, want the env value verbatim", cfg.OwnerClaimToken)
+		}
+	})
+
+	t.Run("rejects fewer than 16 characters", func(t *testing.T) {
+		t.Setenv("OWNER_CLAIM_TOKEN", "too-short-15chr")
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "OWNER_CLAIM_TOKEN") {
+			t.Fatalf("Load() err = %v, want a boot failure naming OWNER_CLAIM_TOKEN", err)
+		}
+	})
+
+	t.Run("production refuses it", func(t *testing.T) {
+		t.Setenv("VIDRA_ENV", "production")
+		t.Setenv("DATABASE_URL", "postgres://x")
+		t.Setenv("REDIS_URL", "redis://x")
+		t.Setenv("CORS_ALLOWED_ORIGINS", "https://app.test")
+		t.Setenv("JWT_SECRET", "a-sufficiently-long-production-secret-0001")
+		t.Setenv("OWNER_CLAIM_TOKEN", "fixed-owner-claim-token-0001")
+		_, err := Load()
+		if err == nil {
+			t.Fatal("Load() accepted OWNER_CLAIM_TOKEN in production, want a boot failure")
+		}
+		if !strings.Contains(err.Error(), "OWNER_CLAIM_TOKEN") {
+			t.Errorf("error %q does not name OWNER_CLAIM_TOKEN — the operator has to be told which key to remove", err)
+		}
+	})
+}
+
 func TestLoadInvalidBodyLimit(t *testing.T) {
 	t.Setenv("HTTP_BODY_LIMIT", "not-a-size")
 	if _, err := Load(); err == nil {

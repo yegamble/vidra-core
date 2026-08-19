@@ -114,6 +114,10 @@ type Service struct {
 	// the grandfather clause).
 	verificationGateFn func() bool
 
+	// fixedOwnerClaimToken pins owner-claim mints to a deterministic value
+	// (WithFixedOwnerClaimToken — dev/test-only). "" = random mint.
+	fixedOwnerClaimToken string
+
 	// TOTP MFA collaborators (WithMFA). mfaRepo nil = feature not wired: the
 	// MFA endpoints answer ErrMFAUnavailable and login is unchanged.
 	mfaRepo       MFARepository

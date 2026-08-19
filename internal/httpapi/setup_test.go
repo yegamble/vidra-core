@@ -32,7 +32,7 @@ func claimServer(t *testing.T, buf *bytes.Buffer) *Server {
 // token the operator would read off the console.
 func mintSetupToken(t *testing.T, srv *Server) string {
 	t.Helper()
-	raw, minted, err := srv.authsvc.EnsureOwnerClaimToken(context.Background())
+	raw, minted, _, err := srv.authsvc.EnsureOwnerClaimToken(context.Background())
 	if err != nil || !minted {
 		t.Fatalf("EnsureOwnerClaimToken: minted=%v err=%v", minted, err)
 	}
@@ -140,6 +140,29 @@ func TestClaimOwnerEndpointWithoutPendingClaim(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &er)
 	if er.Error.Code != "owner_claim_invalid" {
 		t.Errorf("code = %q, want owner_claim_invalid", er.Error.Code)
+	}
+}
+
+func TestInstanceReportsOwnerClaimPending(t *testing.T) {
+	// A repo that never minted a token (e.g. an upgraded instance with users)
+	// is not pending — and the signal latches false once observed, so the
+	// pending case below needs its own server.
+	if publicInstance(t, claimServer(t, nil)).OwnerClaimPending {
+		t.Fatal("owner_claim_pending = true before any mint, want false")
+	}
+
+	srv := claimServer(t, nil)
+	raw := mintSetupToken(t, srv)
+	if !publicInstance(t, srv).OwnerClaimPending {
+		t.Fatal("owner_claim_pending = false while the claim is outstanding, want true")
+	}
+	rec := postTo(srv, "/api/v1/setup/claim-owner",
+		`{"token":"`+raw+`","username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("claim-owner = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	if publicInstance(t, srv).OwnerClaimPending {
+		t.Fatal("owner_claim_pending = true after the claim, want false")
 	}
 }
 
