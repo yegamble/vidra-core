@@ -80,6 +80,27 @@ func main() {
 	// logger (LOG_LEVEL/LOG_FORMAT) once config is loaded in run().
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
+	// Operator subcommands (see migrate.go). Dispatched before run() so the schema
+	// tooling ships in the same image as the server without paying for the
+	// server's config/dependency startup. Bare `api` (no argv) is the server, as
+	// it has always been.
+	//
+	// Anything else is REFUSED rather than ignored: `docker compose run --rm
+	// migrate <args>` replaces the service's command outright, so a mistyped
+	// subcommand on the migrate one-shot would otherwise boot a whole HTTP server
+	// in a container an operator believes is applying migrations.
+	if len(os.Args) > 1 {
+		if os.Args[1] != "migrate" {
+			slog.Error("unknown subcommand", "argv", os.Args[1], "usage", "api ["+migrateUsage+"] (no arguments runs the server)")
+			os.Exit(1)
+		}
+		if err := runMigrate(os.Args[2:]); err != nil {
+			slog.Error("migrate failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := run(); err != nil {
 		slog.Error("fatal", "error", err)
 		os.Exit(1)

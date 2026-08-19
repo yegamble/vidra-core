@@ -107,11 +107,15 @@ docs-check: openapi-verify ## Run the documentation stop guard (route<->spec dri
 	@echo "Reminder: confirm README.md and .ralph/specs/ reflect this change too."
 
 .PHONY: migrate-up
-migrate-up: ## Apply migrations against DATABASE_URL (requires migrate CLI)
-	migrate -path migrations -database "$(DATABASE_URL)" up
+migrate-up: ## Apply migrations against DATABASE_URL (embedded in the api binary; no CLI needed)
+	DATABASE_URL="$(DATABASE_URL)" go run ./cmd/api migrate up
+
+.PHONY: migrate-version
+migrate-version: ## Print the schema_migrations version + dirty flag (non-zero exit when dirty)
+	DATABASE_URL="$(DATABASE_URL)" go run ./cmd/api migrate version
 
 .PHONY: migrate-down
-migrate-down: ## Roll back one migration
+migrate-down: ## Roll back one migration (rollback is CLI-only: the binary ships `up`/`version`)
 	migrate -path migrations -database "$(DATABASE_URL)" down 1
 
 .PHONY: up

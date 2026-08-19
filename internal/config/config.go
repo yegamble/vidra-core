@@ -595,6 +595,13 @@ type OAuthProviderConfig struct {
 // Production must override JWT_SECRET; validate() rejects this value in prod.
 const devJWTSecret = "dev-insecure-jwt-secret-change-me-0000000000000000"
 
+// DefaultDatabaseURL is the development fallback for DATABASE_URL (the local
+// Compose postgres). Exported because cmd/api's `migrate` subcommand must
+// resolve the destination database EXACTLY as the server does — a migrator that
+// defaults somewhere else than the api is a data-loss bug — while deliberately
+// skipping the server's unrelated runtime validation.
+const DefaultDatabaseURL = "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable"
+
 // Load reads configuration from the process environment, applying safe
 // development defaults. It returns an error if a required value is missing or
 // malformed.
@@ -677,7 +684,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		DevMailCaptureEnabled:          p.Bool("DEV_MAIL_CAPTURE_ENABLED", false),
 		ImportAllowPrivateURLs:         p.Bool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
 		OwnerClaimToken:                getEnv("OWNER_CLAIM_TOKEN", ""),
-		DatabaseURL:                    getEnv("DATABASE_URL", "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable"),
+		DatabaseURL:                    getEnv("DATABASE_URL", DefaultDatabaseURL),
 		RedisURL:                       getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		CORSAllowedOrigins:             splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
 		HTTPReadTimeout:                p.Duration("HTTP_READ_TIMEOUT", 15*time.Second),
