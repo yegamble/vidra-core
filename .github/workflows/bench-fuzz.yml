@@ -66,15 +66,12 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: Install migrate CLI
-        run: |
-          curl -fsSL https://github.com/golang-migrate/migrate/releases/download/v4.17.1/migrate.linux-amd64.tar.gz \
-            | tar xz -C /usr/local/bin migrate
-
+      # Embedded-migration path (`api migrate up`), same as the published image —
+      # no golang-migrate CLI download, nothing to keep pinned in lock-step.
       - name: Run migrations against a fresh database
         env:
           DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
-        run: migrate -path migrations -database "$DATABASE_URL" up
+        run: go run ./cmd/api migrate up
 
       - name: Run benchmarks (pure + integration hot paths)
         env:
