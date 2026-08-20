@@ -308,7 +308,7 @@ cmd/api/               HTTP service entrypoint + `migrate up|version|force` (bui
 cmd/vidra/             host-side operator CLI: setup, doctor, status, logs, restart,
                        update, deploy/rollback/backup/restore/release; `make build-vidra`
 cmd/peertube-import/   one-way PeerTube importer CLI
-internal/              57 packages: httpapi, auth, video, transcode, live, storage,
+internal/              61 packages: httpapi, auth, video, transcode, live, storage,
                        messaging, e2ee, ipfs, atproto, config, store (sqlc), …
 migrations/            104 up/down migration pairs, embedded into the binary
 api/openapi.yaml       OpenAPI 3.1 contract (source of truth, 214 paths)
