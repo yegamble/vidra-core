@@ -115,7 +115,12 @@ var sourceOrder = []string{sourceDeployment, sourceContainers, sourceAPI, source
 // never print is a raw Go error at the moment an operator is trying to find out
 // why their site is off.
 func collectStatus(ctx context.Context, f wrapperFlags) statusReport {
-	r := statusReport{root: f.repo, envFile: f.envFile}
+	// The header names the file the ports below were actually read from, which
+	// is not always the --env flag's value: an exported ENV_FILE beats its
+	// default (effectiveEnvFile). It is computed here rather than taken from the
+	// deployment because resolve can fail, and a report about the wrong env file
+	// is worse than one about a directory that is not a deployment.
+	r := statusReport{root: f.repo, envFile: effectiveEnvFile(theRunner.Environ(), f)}
 
 	dep, composeScript, err := resolve("status", f, "compose.sh")
 	if err != nil {

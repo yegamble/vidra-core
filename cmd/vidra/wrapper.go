@@ -134,16 +134,57 @@ func resolve(command string, f wrapperFlags, script string) (deployment, string,
 			"%s: %s does not exist — -C/--repo must name the deployment directory, the checkout that holds docker-compose.yml, deploy/ and env/ (the same directory `vidra setup` writes into and `vidra doctor` reads)",
 			command, path)
 	}
-	envPath := f.envFile
+	// ONE resolution, used for both halves: the file vidra reads for itself and
+	// the ENV_FILE the child script reads have to be the same file, or every
+	// refusal this CLI prints is about a deployment it is not acting on.
+	base := theRunner.Environ()
+	envFile := effectiveEnvFile(base, f)
+	envPath := envFile
 	if !filepath.IsAbs(envPath) {
 		envPath = filepath.Join(root, envPath)
 	}
 	return deployment{
 		root:    root,
-		envFile: f.envFile,
+		envFile: envFile,
 		envPath: envPath,
-		env:     childEnv(theRunner.Environ(), f),
+		env:     childEnv(base, f),
 	}, path, nil
+}
+
+// effectiveEnvFile is the env file THIS RUN uses, for everything: what vidra
+// reads to decide a refusal, what it quotes in the message, and what the wrapped
+// script gets as ENV_FILE.
+//
+// The order is deploy/lib.sh's, and it is the same order childEnv already
+// exported to the child:
+//
+//  1. an explicit --env — the operator saying it twice, more recently;
+//  2. an ENV_FILE they exported (empty counts as unset, because
+//     `${ENV_FILE:-env/production.env}` treats it that way);
+//  3. the default.
+//
+// Reading the FLAG here instead was a real bug, not a tidiness one: with
+// `export ENV_FILE=env/staging.env`, `vidra restart` quoted production's
+// profiles at an operator looking at staging, an external-datastore refusal read
+// the wrong file and did not fire, and `vidra status` probed production's ports
+// under a header naming production — while the script underneath ran against
+// staging the whole time.
+func effectiveEnvFile(base []string, f wrapperFlags) string {
+	if f.explicit {
+		return f.envFile
+	}
+	const key = "ENV_FILE="
+	inherited := ""
+	for _, kv := range base {
+		if strings.HasPrefix(kv, key) {
+			// LAST wins, as it does in a real environment.
+			inherited = strings.TrimSpace(strings.TrimPrefix(kv, key))
+		}
+	}
+	if inherited != "" {
+		return inherited
+	}
+	return f.envFile
 }
 
 // childEnv is the environment a wrapped script runs with: this process's, plus
@@ -160,28 +201,27 @@ func resolve(command string, f wrapperFlags, script string) (deployment, string,
 // overwritten by our DEFAULT. `ENV_FILE=env/staging.env vidra deploy` has to
 // deploy staging, not silently deploy production because a flag has a default
 // value. An explicit --env does win — that is the operator saying it twice, more
-// recently.
+// recently. That rule is effectiveEnvFile, called rather than restated so the
+// child cannot end up on a different file from the one vidra just read.
 func childEnv(base []string, f wrapperFlags) []string {
 	const key = "ENV_FILE="
+	want := key + effectiveEnvFile(base, f)
 	out := make([]string, 0, len(base)+1)
-	at, inherited := -1, ""
+	found := false
 	for _, kv := range base {
 		if strings.HasPrefix(kv, key) {
-			at, inherited = len(out), strings.TrimSpace(strings.TrimPrefix(kv, key))
+			// EVERY copy, not just the last one. An environment with two
+			// ENV_FILE entries is pathological, but a child's getenv reads the
+			// first and effectiveEnvFile reads the last, so leaving the others
+			// alone would be the one case where vidra and its script disagree.
+			kv, found = want, true
 		}
 		out = append(out, kv)
 	}
-	// An exported-but-EMPTY ENV_FILE counts as unset, because that is how the
-	// scripts read it: `${ENV_FILE:-env/production.env}` falls back on empty as
-	// well as on absent.
-	if inherited != "" && !f.explicit {
+	if found {
 		return out
 	}
-	if at >= 0 {
-		out[at] = key + f.envFile
-		return out
-	}
-	return append(out, key+f.envFile)
+	return append(out, want)
 }
 
 // values reads the deployment's env file. The error is operator-facing: this is
