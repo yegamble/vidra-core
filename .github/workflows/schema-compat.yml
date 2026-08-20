@@ -1,0 +1,150 @@
+name: schema-compat
+
+# Executable proof of the one-release schema-compat policy (documented in the
+# vidra meta repo, deploy/README.md, "Release policy: schema changes stay
+# backward-compatible for one release"):
+# release N-1's CODE must keep running against release N's SCHEMA. That property
+# is the whole reason `rollback.sh` is a DB-untouched tag flip instead of a
+# restore-from-backup, so it is enforced here rather than trusted.
+#
+# WHAT THIS PROVES: HEAD's migrations are applied to a fresh database, then the
+# PREVIOUS RELEASE TAG's tree runs its own integration suite against that
+# already-migrated database. sqlc emits explicit column lists, so a column this
+# PR drops, renames, narrows, or makes NOT NULL fails N-1's store tests hard —
+# exactly the breakage an operator would hit mid-rollback.
+#
+# BLIND SPOT: this only checks the FIRST half of a two-release drop cycle. It
+# cannot verify that writes to a column were actually stopped one release
+# earlier, because it never runs N-1 code against N-1 schema with N-1 traffic —
+# it proves N-1 still READS/WRITES fine, not that release N-1 had already
+# stopped depending on whatever release N removes. Staged drops still need the
+# reviewer to confirm the write path went away in the prior release.
+#
+# `make migrate-lint` (in the canonical `make ci` gate) is the cheap static half
+# of the same policy; this job is the expensive dynamic half, so it is
+# path-filtered to migration changes only.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "migrations/**"
+      - ".github/workflows/schema-compat.yml"
+  pull_request:
+    paths:
+      - "migrations/**"
+      - ".github/workflows/schema-compat.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prev-release-against-new-schema:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Same service matrix as backend-integration.yml so the N-1 tree can run its
+    # FULL `make test-integration` with nothing silently self-skipping. Versions
+    # are the ones production runs (docker-compose.yml pins postgres:18-alpine /
+    # redis:8-alpine) — do NOT copy the stale 16/7 blocks from the other
+    # workflows; a rollback proof on the wrong major proves the wrong thing.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: vidra
+          POSTGRES_PASSWORD: vidra
+          POSTGRES_DB: vidra
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vidra"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      # Mirrors backend-integration.yml: without clamd the EICAR tests self-skip,
+      # and a suite that skips proves nothing. See that workflow for why the
+      # non-"_base" tag + CLAMAV_NO_FRESHCLAM keeps startup fast and offline.
+      clamav:
+        image: clamav/clamav:1.5
+        env:
+          CLAMAV_NO_FRESHCLAM: "true"
+        ports:
+          - 3310:3310
+        options: >-
+          --health-cmd "clamdcheck.sh"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 30
+          --health-start-period 60s
+
+    steps:
+      # Full history + tags: the job has to check out the previous release tag,
+      # which a shallow default clone does not carry.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: go.sum
+
+      # The N-1 media integration tests shell out to the real binary, same as
+      # backend-integration.yml.
+      - name: Install ffmpeg (media integration tests use the real binary)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      # `sort -V` is GNU coreutils, present on ubuntu-latest runners.
+      - name: Resolve the previous release tag (N-1)
+        id: prev
+        run: |
+          if [ -z "$(git tag -l 'v*')" ]; then
+            # Defensive: public repo, so an unauthenticated re-fetch is fine if
+            # checkout's fetch-tags ever stops delivering them.
+            git fetch --tags --force origin || true
+          fi
+          prev=$(git tag -l 'v*' | sort -V | tail -1)
+          if [ -z "$prev" ]; then
+            echo "::error::no v* release tag found — schema compat is measured against the previous RELEASE, so this job cannot prove anything without one." >&2
+            exit 1
+          fi
+          echo "previous release tag: $prev ($(git rev-parse --short "$prev"))"
+          echo "tag=$prev" >> "$GITHUB_OUTPUT"
+
+      # Runs from the HEAD checkout on purpose: the database must carry THIS
+      # branch's schema. Embedded-migration path (`api migrate up`), same as the
+      # published image — no golang-migrate CLI to keep pinned in lock-step.
+      - name: Apply HEAD migrations to a fresh database (the N schema)
+        env:
+          DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
+        run: go run ./cmd/api migrate up
+
+      - name: Check out the previous release into a worktree
+        run: git worktree add ../n-1 "${{ steps.prev.outputs.tag }}"
+
+      # The actual proof. No `migrate up` here — the N-1 tree deliberately runs
+      # against the schema the step above left behind. Every service the N-1
+      # suite knows about is provided, and DATABASE_URL is set, so nothing
+      # self-skips its way to a false green.
+      - name: Run the previous release's integration suite against the new schema
+        working-directory: ${{ github.workspace }}/../n-1
+        env:
+          DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
+          REDIS_URL: redis://localhost:6379/0
+          CLAMAV_TEST_ADDR: localhost:3310
+        run: make test-integration
