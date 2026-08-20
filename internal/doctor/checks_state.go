@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vidra/vidra-core/internal/dbmigrate"
+	"github.com/vidra/vidra-core/internal/setup"
 )
 
 // searchLedgerTable is vidra-search's golang-migrate ledger. It is pinned here
@@ -237,7 +238,7 @@ func checkBackupTimer(ctx context.Context, s *state) []Finding {
 // old and no timer to be missing. Reporting a permanent ✗ for a deployment whose
 // backups are the provider's would be teaching operators to ignore this section.
 func (s *state) externalPostgresSkip() (bool, string) {
-	if !isTrueish(s.value("VIDRA_EXTERNAL_POSTGRES")) {
+	if !setup.IsTrue(s.value("VIDRA_EXTERNAL_POSTGRES")) {
 		return false, ""
 	}
 	return true, "VIDRA_EXTERNAL_POSTGRES=true — deploy/backup.sh refuses to run against a managed database (it execs pg_dump inside the bundled container), so backups here are the provider's automated ones. Confirm they are on, and that point-in-time restore is enabled"

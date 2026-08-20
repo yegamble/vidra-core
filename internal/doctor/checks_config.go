@@ -11,12 +11,6 @@ import (
 	"github.com/vidra/vidra-core/internal/setup"
 )
 
-// caddyPlaceholders are the placeholder domains deploy.sh refuses to deploy
-// with. They are checked on NON-COMMENT lines only: the template's comments are
-// prose about example.com and rewriting them would produce sentences about the
-// operator's domain that were never true of it.
-var caddyPlaceholders = []string{"example.com", "your-domain", "YOUR_DOMAIN"}
-
 // checkCaddyfile audits the file the caddy container actually bind-mounts.
 //
 // deploy/Caddyfile is the committed TEMPLATE; docker-compose.prod.yml mounts
@@ -47,13 +41,16 @@ func checkCaddyfile(_ context.Context, s *state) []Finding {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		for _, ph := range caddyPlaceholders {
-			if strings.Contains(line, ph) {
-				findings = append(findings, failf(
-					fmt.Sprintf("%s still names the placeholder domain %s on a non-comment line", rel, ph),
-					"re-run `vidra setup --domain <your domain>` to regenerate it. Caddy would order a certificate for the placeholder, fail the challenge, and spend this host's Let's Encrypt validation budget doing it"))
-				break
-			}
+		// setup.PlaceholderDomain is deploy.sh's own anchored test, not a
+		// substring search: a real domain that merely CONTAINS one of the
+		// placeholders (myexample.com, video.example.company) is not a finding,
+		// and a subdomain of one (tube.example.org) is. A second opinion here is
+		// a doctor that refuses installs the deploy accepts, or blesses ones it
+		// refuses — both of which this check has done.
+		if ph, ok := setup.PlaceholderDomain(line); ok {
+			findings = append(findings, failf(
+				fmt.Sprintf("%s still names the placeholder domain %s on a non-comment line", rel, ph),
+				"re-run `vidra setup --domain <your domain>` to regenerate it. Caddy would order a certificate for the placeholder, fail the challenge, and spend this host's Let's Encrypt validation budget doing it. deploy/deploy.sh refuses to deploy this file at all"))
 		}
 		if site == "" {
 			if addr, ok := caddySiteAddress(raw); ok {
@@ -107,8 +104,16 @@ func caddySiteAddress(raw string) (string, bool) {
 	}
 	// Only the first address of a multi-address site block is compared: it is the
 	// one PUBLIC_BASE_URL has to be.
-	addr = strings.Fields(strings.ReplaceAll(addr, ",", " "))[0]
-	host, err := preflight.Host(addr)
+	//
+	// The emptiness check is not defensive programming, it is a crash that
+	// happened: a Caddyfile.local line of `,, {` reduces to no fields at all, and
+	// indexing [0] took the WHOLE report down — an operator debugging a broken
+	// proxy config lost every other finding to the file they were debugging.
+	fields := strings.Fields(strings.ReplaceAll(addr, ",", " "))
+	if len(fields) == 0 {
+		return "", false
+	}
+	host, err := preflight.Host(fields[0])
 	if err != nil {
 		return "", false
 	}
@@ -142,7 +147,7 @@ func checkDomainDNS(ctx context.Context, s *state) []Finding {
 	if mode != setup.TLSModeACME && mode != setup.TLSModeACMEStaging {
 		return []Finding{skipf(fmt.Sprintf("VIDRA_TLS_MODE=%s issues from Caddy's own CA, so no ACME order depends on this host's DNS", mode))}
 	}
-	skipped := isTrueish(s.opt.Host.Getenv(skipDNSPreflightVar)) || isTrueish(s.value(skipDNSPreflightVar))
+	skipped := dnsPreflightSkipped(s.opt.Host.Getenv(skipDNSPreflightVar)) || dnsPreflightSkipped(s.value(skipDNSPreflightVar))
 
 	res := s.opt.Prober.CheckDomain(ctx, preflight.DomainRequest{
 		Domain:   s.value("PUBLIC_BASE_URL"),
@@ -194,6 +199,18 @@ func checkEnvTemplateDrift(_ context.Context, s *state) []Finding {
 		return []Finding{skipf(rel + " could not be parsed")}
 	}
 
+	// The engine's OWN keys are not drift. Several of them appear in the template
+	// only as commented-out examples (DATABASE_URL, REDIS_URL, SEARCH_REDIS_URL
+	// are documented there, never assigned), so every external-service deployment
+	// used to carry a permanent ⚠ naming the three variables `vidra setup` had
+	// just written for it — a warning that is wrong on the deployments that need
+	// this report most, and the fastest way to teach an operator to stop reading
+	// the ⚠ column.
+	managed := map[string]bool{}
+	for _, k := range setup.ManagedKeys() {
+		managed[k] = true
+	}
+
 	var missing, extra []string
 	for _, k := range tmpl.Keys() {
 		if _, ok := s.vars[k]; !ok {
@@ -201,7 +218,7 @@ func checkEnvTemplateDrift(_ context.Context, s *state) []Finding {
 		}
 	}
 	for k := range s.vars {
-		if !tmpl.Has(k) {
+		if !tmpl.Has(k) && !managed[k] {
 			extra = append(extra, k)
 		}
 	}
@@ -263,13 +280,22 @@ func checkConfigValues(_ context.Context, s *state) []Finding {
 	return findings
 }
 
-// isTrueish reads an opt-out flag the permissive way a shell script does: any of
-// 1/true/yes turns it on, and anything else (including a blank) leaves it off.
-func isTrueish(v string) bool {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "1", "true", "yes", "y", "on":
-		return true
-	default:
+// dnsPreflightSkipped reads VIDRA_SKIP_DNS_PREFLIGHT exactly as deploy.sh's
+// require_dns_points_here does, which is NOT setup.IsTrue:
+//
+//	case "${VIDRA_SKIP_DNS_PREFLIGHT:-0}" in ""|0|false|no) ;; *) warn; return 0 ;; esac
+//
+// An opt-out is deliberately generous — anything that is not plainly "off" turns
+// it off — because an operator who wrote something into that variable meant to
+// disable the check, and a doctor that enforced what the deploy skips would
+// report a ✗ nobody can act on. The keys the two READ AND WRITE together
+// (VIDRA_EXTERNAL_*, MAIL_ENABLED) go through setup.IsTrue instead: there,
+// agreeing with the shell means the same list, spelling for spelling.
+func dnsPreflightSkipped(v string) bool {
+	switch strings.TrimSpace(v) {
+	case "", "0", "false", "no":
 		return false
+	default:
+		return true
 	}
 }

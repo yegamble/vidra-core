@@ -51,6 +51,7 @@ package doctor
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -203,7 +204,7 @@ func Run(ctx context.Context, opt Options) (Report, error) {
 		// budget is per check rather than per run so a slow-but-working object
 		// store cannot starve the checks queued behind it.
 		cctx, cancel := context.WithTimeout(ctx, st.opt.Timeout)
-		findings := c.run(cctx, st)
+		findings := runCheck(cctx, c, st)
 		cancel()
 		if len(findings) == 0 {
 			// A check that returns nothing is a bug in that check, not a pass.
@@ -216,6 +217,36 @@ func Run(ctx context.Context, opt Options) (Report, error) {
 	}
 	report.Elapsed = st.opt.Host.Now().Sub(started)
 	return report, nil
+}
+
+// runCheck runs one check and converts a panic into a ⚠ about that check.
+//
+// A diagnostic must not be killed by the deployment it is diagnosing. Every
+// input here is a file an operator edited by hand while something was already
+// wrong — a half-written Caddyfile, a truncated env file, output from a Docker
+// version nobody tested against — so a check that panics is a REPORT that never
+// prints: eighteen findings lost to the one file the operator was trying to
+// understand, with a Go stack trace where the answer should be. (That is not
+// hypothetical: a `,, {` line in Caddyfile.local did exactly this.)
+//
+// The remaining checks still run, and the crash is reported as itself — a ⚠
+// naming the check, never a ✗, because a check that crashed found nothing and
+// "I could not tell" is the honest status for it. It is deliberately not a
+// silent skip: an internal error the operator can report is the only way it gets
+// fixed.
+func runCheck(ctx context.Context, c check, s *state) (findings []Finding) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		findings = []Finding{{
+			Status: StatusWarn,
+			Detail: fmt.Sprintf("the %s check crashed, so this deployment was not checked for it (internal error — please report): %v", c.name, r),
+			Fix:    "the rest of this report is unaffected. Please open an issue with this line and the file the check reads — a crash here is a bug in `vidra doctor`, not a problem with your deployment",
+		}}
+	}()
+	return c.run(ctx, s)
 }
 
 // sortedSections returns the sections present in a report, in print order.

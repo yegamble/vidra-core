@@ -135,9 +135,9 @@ func (p *fakeProber) MigrationStatus(_ context.Context, _, table string) (dbmigr
 
 // healthyEnv is a minimal production env file that passes setup.Check.
 const healthyEnv = `VIDRA_ENV=production
-PUBLIC_BASE_URL=https://video.example.org
-NEXT_PUBLIC_API_BASE_URL=https://video.example.org
-CORS_ALLOWED_ORIGINS=https://video.example.org
+PUBLIC_BASE_URL=https://tube.vidra.test
+NEXT_PUBLIC_API_BASE_URL=https://tube.vidra.test
+CORS_ALLOWED_ORIGINS=https://tube.vidra.test
 JWT_SECRET=0123456789abcdef0123456789abcdef0123456789abcdef
 POSTGRES_USER=vidra
 POSTGRES_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -147,7 +147,7 @@ VIDRA_COMPOSE_PROFILES=core frontend
 VIDRA_EXTERNAL_POSTGRES=false
 VIDRA_EXTERNAL_REDIS=false
 VIDRA_TLS_MODE=acme
-VIDRA_ACME_EMAIL=ops@example.org
+VIDRA_ACME_EMAIL=ops@vidra.test
 STORAGE_BACKEND=local
 STORAGE_LOCAL_ROOT=/app/data/media
 MAIL_ENABLED=false
@@ -155,12 +155,20 @@ MAIL_ENABLED=false
 
 // healthyCaddyfile is what `vidra setup` renders: a site address that matches
 // PUBLIC_BASE_URL, and example.com surviving only in the comments.
+//
+// The fixture's domain is a .test one rather than the usual example.org
+// throughout this suite, and that is not cosmetic: deploy.sh refuses to deploy a
+// Caddyfile.local naming example.com/org/net on a non-comment line, subdomains
+// included, so `video.example.org` is not a healthy deployment — it is one the
+// deploy script would stop. A fixture that used it would be asserting doctor
+// passes a file the deploy refuses, which is the exact parity gap this suite
+// exists to hold.
 const healthyCaddyfile = `# Generated from deploy/Caddyfile — the comments still talk about example.com.
 {
-	email ops@example.org
+	email ops@vidra.test
 }
 
-video.example.org {
+tube.vidra.test {
 	reverse_proxy /api/* api:8080
 	reverse_proxy frontend:3000
 }
@@ -252,7 +260,7 @@ func (h *fakeHost) healthyRespond(name string, args []string) (Output, error) {
 
 func newFakeProber() *fakeProber {
 	return &fakeProber{
-		domain: preflight.DomainResult{Status: StatusOK, Domain: "video.example.org", Message: "video.example.org resolves to 203.0.113.10, which is this host"},
+		domain: preflight.DomainResult{Status: StatusOK, Domain: "tube.vidra.test", Message: "tube.vidra.test resolves to 203.0.113.10, which is this host"},
 		bucket: true,
 		banner: "220 smtp.example.net ESMTP ready",
 		ledgers: map[string]dbmigrate.Status{

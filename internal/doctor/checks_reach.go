@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/vidra/vidra-core/internal/setup"
 	"github.com/vidra/vidra-core/internal/storage"
 )
 
@@ -36,7 +37,7 @@ func checkObjectStorage(ctx context.Context, s *state) []Finding {
 		SecretKey:      s.value("STORAGE_S3_SECRET_KEY"),
 		Region:         s.value("STORAGE_S3_REGION"),
 		UseSSL:         !isFalseish(s.value("STORAGE_S3_USE_SSL")),
-		ForcePathStyle: isTrueish(s.value("STORAGE_S3_FORCE_PATH_STYLE")),
+		ForcePathStyle: setup.IsTrue(s.value("STORAGE_S3_FORCE_PATH_STYLE")),
 	}
 	exists, err := s.opt.Prober.CheckBucket(ctx, cfg)
 	switch {
@@ -62,7 +63,7 @@ func checkSMTP(ctx context.Context, s *state) []Finding {
 		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s)", s.envErr))}
 	}
 	host := s.value("SMTP_HOST")
-	if !isTrueish(s.value("MAIL_ENABLED")) || host == "" {
+	if !setup.IsTrue(s.value("MAIL_ENABLED")) || host == "" {
 		return []Finding{okf("mail is off (MAIL_ENABLED is not true, or SMTP_HOST is blank) — password reset and email verification are unavailable, which is a deliberate configuration and not a fault")}
 	}
 	port := s.value("SMTP_PORT")
@@ -152,8 +153,11 @@ func checkFFmpeg(ctx context.Context, s *state) []Finding {
 		"transcodes run inside the api container, not here — bring the stack up and re-run to check the binary that actually does the work")}
 }
 
-// isFalseish is isTrueish's opposite for a knob whose DEFAULT is on:
-// STORAGE_S3_USE_SSL is true unless the file says otherwise.
+// isFalseish is setup.IsTrue's opposite for a knob whose DEFAULT is on:
+// STORAGE_S3_USE_SSL is true unless the file says otherwise. It is its own
+// function because "unset means true" cannot be expressed by negating a
+// true-test — !IsTrue("") is true, which would turn SSL off on every file that
+// does not mention it.
 func isFalseish(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "0", "false", "no", "n", "off":

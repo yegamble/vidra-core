@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -258,7 +259,7 @@ func TestCaddyfile(t *testing.T) {
 		detailHas string
 		fixHas    string
 	}{
-		{name: "matches PUBLIC_BASE_URL", content: healthyCaddyfile, want: StatusOK, detailHas: "serves video.example.org"},
+		{name: "matches PUBLIC_BASE_URL", content: healthyCaddyfile, want: StatusOK, detailHas: "serves tube.vidra.test"},
 		{
 			name: "missing", absent: true, want: StatusFail,
 			detailHas: "is missing", fixHas: "created as an empty DIRECTORY",
@@ -273,21 +274,21 @@ func TestCaddyfile(t *testing.T) {
 		},
 		{
 			name:      "a different host from PUBLIC_BASE_URL",
-			content:   "other.example.org {\n\treverse_proxy api:8080\n}\n",
+			content:   "other.vidra.test {\n\treverse_proxy api:8080\n}\n",
 			want:      StatusFail,
-			detailHas: "serves other.example.org but PUBLIC_BASE_URL is https://video.example.org",
+			detailHas: "serves other.vidra.test but PUBLIC_BASE_URL is https://tube.vidra.test",
 			fixHas:    "federation actor ids",
 		},
 		{
 			// A comment about example.com is prose, not configuration: the renderer
 			// deliberately leaves it, and deploy.sh greps non-comment lines only.
 			name:    "example.com in a comment is fine",
-			content: "# the template's site block says example.com\nvideo.example.org {\n\treverse_proxy api:8080\n}\n",
+			content: "# the template's site block says example.com\ntube.vidra.test {\n\treverse_proxy api:8080\n}\n",
 			want:    StatusOK,
 		},
 		{
 			name:      "no site address at all",
-			content:   "{\n\temail ops@example.org\n}\n",
+			content:   "{\n\temail ops@vidra.test\n}\n",
 			want:      StatusWarn,
 			detailHas: "no site address could be found", fixHas: "vidra setup",
 		},
@@ -312,6 +313,108 @@ func TestCaddyfile(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The placeholder-domain test is deploy.sh's, exactly — the two either agree or
+// one of them is wrong about somebody's real domain.
+//
+// Both rows here are real installs: `myexample.com` was refused by doctor (two
+// ✗ and exit 1) on a deployment deploy.sh was perfectly happy with, and
+// `tube.example.org` was waved through by doctor right up to the deploy that
+// died on it. Neither operator had anything to fix.
+func TestCaddyfilePlaceholderMatchesTheDeployScript(t *testing.T) {
+	for _, tc := range []struct {
+		name, site string
+		want       Status
+	}{
+		{name: "a real domain that merely ends in one", site: "myexample.com", want: StatusOK},
+		{name: "a real domain that merely contains one", site: "video.example.company", want: StatusOK},
+		{name: "the placeholder itself", site: "example.com", want: StatusFail},
+		{name: "a subdomain of the placeholder", site: "tube.example.org", want: StatusFail},
+		{name: "the other reserved example", site: "vidra.example.net", want: StatusFail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newFakeHost()
+			// PUBLIC_BASE_URL moves with the site address: the host-match half of
+			// this check is not what is under test.
+			h.files[filepath.Join(testRoot, "env/production.env")] = strings.ReplaceAll(healthyEnv, "tube.vidra.test", tc.site)
+			h.files[filepath.Join(testRoot, "deploy/Caddyfile.local")] = tc.site + " {\n\treverse_proxy api:8080\n}\n"
+
+			findings := only(t, "reverse proxy", h, nil)
+			if hasStatus(findings, StatusFail) != (tc.want == StatusFail) {
+				t.Fatalf("statuses = %v for site %q, want a %s: %+v", statuses(findings), tc.site, tc.want, findings)
+			}
+			if tc.want == StatusFail && !hasAny(findings, "placeholder domain") {
+				t.Errorf("the failure is not about the placeholder: %+v", findings)
+			}
+		})
+	}
+}
+
+// A Caddyfile line nothing can parse must not take the report down with it.
+//
+// `,, {` looks like a site address (column zero, trailing brace) and reduces to
+// no fields at all, so reading "the first address" off it panicked — and an
+// operator debugging a broken proxy config lost all eighteen findings to the one
+// file they were trying to understand.
+func TestCaddyfileSurvivesAMalformedSiteLine(t *testing.T) {
+	h := newFakeHost()
+	h.files[filepath.Join(testRoot, "deploy/Caddyfile.local")] = ",, {\n\treverse_proxy api:8080\n}\n"
+
+	rep := run(t, h, nil)
+	// The whole run completed: every registered check said something.
+	seen := map[string]bool{}
+	for _, r := range rep.Results {
+		seen[r.Check] = true
+	}
+	for _, c := range checks {
+		if !seen[c.name] {
+			t.Errorf("check %q produced no result — the run did not complete", c.name)
+		}
+	}
+	if !hasAny(findingsOf(rep, "reverse proxy"), "no site address could be found") {
+		t.Errorf("the malformed line was not reported as an unreadable site address: %+v", findingsOf(rep, "reverse proxy"))
+	}
+}
+
+// And the general case: a check that panics becomes a ⚠ naming the check, and
+// the rest of the report still runs. Every input to this package is a file
+// somebody edited by hand while something was already wrong, so "no report at
+// all, plus a stack trace" is the one outcome that must be impossible.
+func TestAPanickingCheckBecomesAWarning(t *testing.T) {
+	st, err := newState(Options{Root: testRoot, Host: newFakeHost(), Prober: newFakeProber()})
+	if err != nil {
+		t.Fatalf("newState: %v", err)
+	}
+	boom := check{"exploding check", SectionStack, func(context.Context, *state) []Finding {
+		var nothing []string
+		return []Finding{okf(nothing[3])} // index out of range
+	}}
+	findings := runCheck(context.Background(), boom, st)
+
+	f := one(t, findings)
+	if f.Status != StatusWarn {
+		t.Errorf("status = %s, want a ⚠ — a check that crashed found nothing, it did not find a problem", f.Status)
+	}
+	for _, want := range []string{"exploding check", "internal error"} {
+		if !strings.Contains(f.Detail, want) {
+			t.Errorf("detail = %q, want it to mention %q", f.Detail, want)
+		}
+	}
+	if strings.TrimSpace(f.Fix) == "" {
+		t.Error("the crash report says nothing about what to do with it")
+	}
+}
+
+// findingsOf pulls one check's findings back out of a whole report.
+func findingsOf(rep Report, check string) []Finding {
+	var out []Finding
+	for _, r := range rep.Results {
+		if r.Check == check {
+			out = append(out, r.Finding)
+		}
+	}
+	return out
 }
 
 // The DNS check is gated exactly like deploy.sh's: only for the ACME modes, and
@@ -361,10 +464,10 @@ func TestDomainDNSGating(t *testing.T) {
 			p.domain.Status = tc.resStatus
 			switch tc.resStatus {
 			case StatusFail:
-				p.domain.Message = "video.example.org resolves to 198.51.100.7, which is not this host (203.0.113.10)"
-				p.domain.Fix = "point video.example.org at 203.0.113.10"
+				p.domain.Message = "tube.vidra.test resolves to 198.51.100.7, which is not this host (203.0.113.10)"
+				p.domain.Fix = "point tube.vidra.test at 203.0.113.10"
 			case StatusWarn:
-				p.domain.Message = "video.example.org resolves to 203.0.113.10, but this host's own public IP could not be determined"
+				p.domain.Message = "tube.vidra.test resolves to 203.0.113.10, but this host's own public IP could not be determined"
 			}
 			wantFinding(t, one(t, only(t, "domain DNS", h, p)), tc.want, tc.detailHas, "")
 		})
@@ -381,7 +484,7 @@ func TestDomainDNSHonoursVidraPublicIP(t *testing.T) {
 	if p.sawDomain.Expected != "203.0.113.10" {
 		t.Errorf("Expected = %q, want the env file's VIDRA_PUBLIC_IP passed through", p.sawDomain.Expected)
 	}
-	if p.sawDomain.Domain != "https://video.example.org" {
+	if p.sawDomain.Domain != "https://tube.vidra.test" {
 		t.Errorf("Domain = %q, want PUBLIC_BASE_URL", p.sawDomain.Domain)
 	}
 }
@@ -408,6 +511,37 @@ func TestEnvTemplateDrift(t *testing.T) {
 	h = newFakeHost()
 	delete(h.files, filepath.Join(testRoot, "env/production.env.example"))
 	wantFinding(t, one(t, only(t, "env file vs template", h, nil)), StatusWarn, "skipped:", "")
+}
+
+// The keys `vidra setup` writes are not template drift.
+//
+// DATABASE_URL, REDIS_URL and SEARCH_REDIS_URL appear in the meta template only
+// as COMMENTED-OUT examples, so an external-service deployment — every managed
+// database or managed Redis instance there is — used to carry a permanent ⚠
+// naming the three variables the engine had just written for it. A warning that
+// is always there and never actionable is how an operator learns to skip the ⚠
+// column, which is where the real findings live.
+func TestEnvTemplateDriftIgnoresTheEnginesOwnKeys(t *testing.T) {
+	h := newFakeHost()
+	managed := "\nDATABASE_URL=postgres://u:p@db.example.net:25060/defaultdb?sslmode=require\n" +
+		"REDIS_URL=rediss://:pw@r.example.net:6379/0\nSEARCH_REDIS_URL=rediss://:pw@r.example.net:6379/1\n"
+	// The env file assigns them; the template (as shipped) does not.
+	h.files[filepath.Join(testRoot, "env/production.env")] = strings.Replace(healthyEnv,
+		"VIDRA_EXTERNAL_POSTGRES=false\nVIDRA_EXTERNAL_REDIS=false",
+		"VIDRA_EXTERNAL_POSTGRES=true\nVIDRA_EXTERNAL_REDIS=true", 1) + managed
+
+	findings := only(t, "env file vs template", h, nil)
+	for _, key := range []string{"DATABASE_URL", "REDIS_URL", "SEARCH_REDIS_URL"} {
+		if hasAny(findings, key) {
+			t.Errorf("%s was reported as drift, but `vidra setup` wrote it: %+v", key, findings)
+		}
+	}
+	// A key that really IS unknown still gets through: the check is narrowed, not
+	// disabled.
+	h.files[filepath.Join(testRoot, "env/production.env")] += "JWT_SECRE=typo\n"
+	if findings := only(t, "env file vs template", h, nil); !hasAny(findings, "JWT_SECRE") {
+		t.Errorf("a genuinely unknown key stopped being reported: %+v", findings)
+	}
 }
 
 // The configuration check is the api's own boot validation, reported per
@@ -544,6 +678,57 @@ func TestBackups(t *testing.T) {
 		"DATABASE_URL=postgres://u:p@db.example.net:25060/defaultdb?sslmode=require\n"
 	delete(h.files, filepath.Join(testRoot, "backups/last_success"))
 	wantFinding(t, one(t, only(t, "backups", h, nil)), StatusWarn, "provider's automated ones", "")
+}
+
+// doctor reads the component switches through setup.IsTrue — the same list
+// deploy/deploy.sh's is_true accepts — and nothing else.
+//
+// It used to have a reader of its own that lower-cased and matched 1/true/yes/y/on,
+// which is a THIRD answer beside the engine's strconv.ParseBool and the shell's
+// case list. `VIDRA_EXTERNAL_POSTGRES=t` was the value that made all three
+// disagree: ParseBool called it true, doctor called it false, the shell called it
+// false — so the engine wrote a managed-database configuration for a deploy that
+// started the bundled one, and the diagnostic in between said nothing at all.
+func TestComponentSwitchesUseTheDeployScriptsBooleans(t *testing.T) {
+	for _, tc := range []struct {
+		value    string
+		external bool
+	}{
+		{value: "true", external: true},
+		{value: "yes", external: true}, // the shell accepts it; so must doctor
+		{value: "On", external: true},
+		{value: "false"},
+		{value: "t"}, // ParseBool's true, the shell's false: false here
+		{value: "T"},
+		{value: ""},
+	} {
+		t.Run("value="+tc.value, func(t *testing.T) {
+			h := newFakeHost()
+			h.files[filepath.Join(testRoot, "env/production.env")] = strings.Replace(healthyEnv,
+				"VIDRA_EXTERNAL_POSTGRES=false", "VIDRA_EXTERNAL_POSTGRES="+tc.value, 1) +
+				"DATABASE_URL=postgres://u:p@db.example.net:25060/defaultdb?sslmode=require\n"
+			delete(h.files, filepath.Join(testRoot, "backups/last_success"))
+
+			// The backup checks stand down only for a MANAGED database, so they
+			// are a clean read-out of how this value was understood.
+			f := one(t, only(t, "backups", h, nil))
+			skipped := strings.Contains(f.Detail, "provider's automated ones")
+			if skipped != tc.external {
+				t.Errorf("VIDRA_EXTERNAL_POSTGRES=%q read as external=%v, want %v: %+v", tc.value, skipped, tc.external, f)
+			}
+		})
+	}
+
+	// And a spelling outside the union of both lists is a ✗ on the configuration
+	// check, naming the variable: it is the operator, not the reader, who has to
+	// decide which of the two they meant.
+	h := newFakeHost()
+	h.files[filepath.Join(testRoot, "env/production.env")] = strings.Replace(healthyEnv,
+		"VIDRA_EXTERNAL_POSTGRES=false", "VIDRA_EXTERNAL_POSTGRES=t", 1)
+	findings := only(t, "configuration values", h, nil)
+	if !hasStatus(findings, StatusFail) || !hasAny(findings, "VIDRA_EXTERNAL_POSTGRES") {
+		t.Errorf("findings do not flag the ambiguous boolean: %+v", findings)
+	}
 }
 
 func TestBackupTimer(t *testing.T) {
@@ -737,6 +922,72 @@ func TestDevOverride(t *testing.T) {
 		return h.healthyRespond(name, args)
 	}
 	wantFinding(t, one(t, only(t, "dev override", h, nil)), StatusWarn, "would load it and turn rate limiting off", "deploy.sh")
+}
+
+// Every container-reading check is scoped to THIS deployment's compose project.
+//
+// `docker ps --filter label=com.docker.compose.project` (with no value) asks for
+// every compose container on the host, so a box running anything else beside
+// this deployment — a second instance, a staging stack, an unrelated project
+// with a service called `api` or `search` — fed its containers to these checks.
+// The findings were then about the wrong stack: the dev-override check read a
+// foreign project's config_files and called production a development stack, the
+// search probe exec'd into somebody else's container, and the ledger probe read
+// somebody else's migrations.
+func TestContainerChecksAreScopedToThisProject(t *testing.T) {
+	// The filter has to carry the project NAME, which is the rendered model's.
+	h := newFakeHost()
+	st, err := newState(Options{Root: testRoot, Host: h, Prober: newFakeProber()})
+	if err != nil {
+		t.Fatalf("newState: %v", err)
+	}
+	if _, why := st.containers(context.Background()); why != "" {
+		t.Fatalf("the healthy deployment could not list its containers: %s", why)
+	}
+	filtered := false
+	for _, cmd := range h.commands() {
+		if strings.Contains(cmd, "ps --filter label=com.docker.compose.project=vidra ") {
+			filtered = true
+		}
+	}
+	if !filtered {
+		t.Errorf("docker ps was not scoped to the compose project: %v", h.commands())
+	}
+
+	// And a daemon that hands back a foreign project anyway (an older engine, a
+	// filter syntax that changed) is not believed: the label is checked too.
+	h = newFakeHost()
+	h.files[filepath.Join(testRoot, "docker-compose.override.yml")] = "services: {}\n"
+	h.respond = func(name string, args []string) (Output, error) {
+		if name == "docker" && strings.HasPrefix(strings.Join(args, " "), "ps ") {
+			return Output{Stdout: "" +
+				"neighbour-api-1\tneighbour\tapi\t/srv/neighbour/docker-compose.yml,/srv/neighbour/docker-compose.override.yml\trunning\tUp 2 hours\n" +
+				"neighbour-search-1\tneighbour\tsearch\t/srv/neighbour/docker-compose.yml\trunning\tUp 2 hours (healthy)\n"}, nil
+		}
+		return h.healthyRespond(name, args)
+	}
+	// The neighbour loads docker-compose.override.yml; this deployment is not
+	// running at all, so the honest answer is the static one.
+	f := one(t, only(t, "dev override", h, nil))
+	if f.Status == StatusFail {
+		t.Errorf("another project's override file failed THIS deployment: %+v", f)
+	}
+	// The neighbour's search container is not this instance's search service.
+	wantFinding(t, one(t, only(t, "search service", h, nil)), StatusWarn, "is not running on this host", "")
+
+	// With no project name there is no honest answer at all, and every consumer
+	// says so rather than guessing.
+	h = newFakeHost()
+	h.respond = func(name string, args []string) (Output, error) {
+		if name == "docker" && strings.Contains(strings.Join(args, " "), "config --format json") {
+			return Output{ExitCode: 1, Stderr: "required variable JWT_SECRET is missing a value\n"}, nil
+		}
+		return h.healthyRespond(name, args)
+	}
+	f = one(t, only(t, "search service", h, nil))
+	if f.Status != StatusWarn || !strings.Contains(f.Detail, "compose project name") {
+		t.Errorf("finding = %+v, want a ⚠ saying the project could not be identified", f)
+	}
 }
 
 func TestLogCaps(t *testing.T) {

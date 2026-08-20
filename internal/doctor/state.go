@@ -253,9 +253,43 @@ type container struct {
 // evidence for the dev-override check.
 const psFormat = `{{.Names}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.service"}}	{{.Label "com.docker.compose.project.config_files"}}	{{.State}}	{{.Status}}`
 
+// containers is what THIS DEPLOYMENT is running, and the project filter is the
+// whole point.
+//
+// The filter used to be a bare `label=com.docker.compose.project`, which asks
+// for every compose container on the host — so a box running anything else
+// beside this deployment (a second instance, a staging stack, an unrelated
+// project that happens to define a service called `api` or `search`) fed its
+// containers to these checks. Every consumer then answered about the wrong
+// stack: the dev-override check read another project's config_files and
+// reported production as running with development overrides, the search probe
+// exec'd into a foreign container, and the ledger probe read a foreign
+// database's migrations. All three are ✓/✗ lines about a deployment that is not
+// the one being diagnosed, which is worse than no line at all.
+//
+// The project name comes from the RENDERED compose model — the same model the
+// deploy builds — because that is what compose itself will label the containers
+// with. When it cannot be rendered there is no honest answer to "which of these
+// containers are mine", so this reports the reason and every consumer degrades
+// to its own ⚠, exactly as it does when the daemon is down.
 func (s *state) containers(ctx context.Context) ([]container, string) {
 	s.psOnce.Do(func() {
-		out, err := s.opt.Host.Run(ctx, s.root, "docker", "ps", "--filter", "label=com.docker.compose.project", "--format", psFormat)
+		model, why := s.composeModel(ctx)
+		project := ""
+		if model != nil {
+			project = strings.TrimSpace(model.Name)
+		}
+		if project == "" {
+			// No nested parentheses: every consumer of this string wraps it in a
+			// pair of its own, and a reason inside a reason inside a finding is a
+			// line an operator stops reading before the useful half.
+			s.psErr = "this deployment's compose project name is not known, so its containers could not be told apart from any other compose project's on this host"
+			if why != "" {
+				s.psErr += " — " + why
+			}
+			return
+		}
+		out, err := s.opt.Host.Run(ctx, s.root, "docker", "ps", "--filter", "label=com.docker.compose.project="+project, "--format", psFormat)
 		if err != nil {
 			s.psErr = "docker is not on this host's PATH"
 			return
@@ -272,14 +306,23 @@ func (s *state) containers(ctx context.Context) ([]container, string) {
 			for len(f) < 6 {
 				f = append(f, "")
 			}
-			s.ps = append(s.ps, container{
+			c := container{
 				Name:        f[0],
 				Project:     f[1],
 				Service:     f[2],
 				ConfigFiles: splitConfigFiles(f[3]),
 				State:       f[4],
 				Health:      f[5],
-			})
+			}
+			// The label is checked as well as filtered on. The filter is the
+			// daemon's job and it does it, but this is the one invariant every
+			// consumer below silently assumes, and a container the daemon
+			// returned anyway (an old engine, a future --filter syntax) would
+			// otherwise be indistinguishable from one of ours.
+			if c.Project != project {
+				continue
+			}
+			s.ps = append(s.ps, c)
 		}
 	})
 	return s.ps, s.psErr
