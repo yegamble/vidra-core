@@ -1532,20 +1532,59 @@ func syncDir(dir string) error {
 //
 // Pass nil for the legacy base profiles only.
 func RenderCheckCommand(envPath string, values map[string]string) string {
-	cmd := "docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+	parts := RenderCheckArgs(envPath, values)
+	quoted := make([]string, 0, len(parts)+1)
+	quoted = append(quoted, "docker")
+	for _, p := range parts {
+		quoted = append(quoted, shellQuote(p))
+	}
+	return strings.Join(quoted, " ")
+}
+
+// RenderCheckArgs is RenderCheckCommand as an argv, for a caller that runs the
+// chain rather than printing it — `vidra doctor` renders the SAME model the
+// deploy will and reads the ports out of it. The returned slice starts at
+// "compose" (the docker sub-command), so it is appended to whatever "docker"
+// means on the host.
+//
+// tail replaces the trailing `config -q`, which is what lets doctor ask for
+// `config --format json` without rebuilding the -f/--env-file/--profile chain
+// beside the one that is already the deploy's definition of it. Pass nothing for
+// the default.
+//
+// This is the ONLY builder of that chain in the codebase, deliberately: a second
+// one is a second answer to "which overlays and profiles does this deployment
+// use", and the first symptom of them disagreeing is a check that passes against
+// a model nothing deploys.
+func RenderCheckArgs(envPath string, values map[string]string, tail ...string) []string {
+	args := []string{"compose", "-f", "docker-compose.yml", "-f", "docker-compose.prod.yml"}
 	// Order matters: a compose overlay only wins over what an EARLIER file said,
 	// so the external-service overlays go after docker-compose.prod.yml.
 	for _, c := range externalOverlays {
 		if isTrue(values[c.flag]) {
-			cmd += " -f " + c.overlay
+			args = append(args, "-f", c.overlay)
 		}
 	}
-	cmd += " --env-file " + shellQuote(envPath)
-	for _, p := range checkProfiles(values) {
-		cmd += " --profile " + shellQuote(p)
+	args = append(args, "--env-file", envPath)
+	for _, p := range EnabledProfiles(values) {
+		args = append(args, "--profile", p)
 	}
-	return cmd + " config -q"
+	if len(tail) == 0 {
+		tail = []string{"config", "-q"}
+	}
+	return append(args, tail...)
 }
+
+// EnabledProfiles is the compose profile list the deploy will enable for an env
+// file: the managed VIDRA_COMPOSE_PROFILES list (or the legacy core+frontend
+// when the file predates the key), plus the operator's EXTRA_COMPOSE_PROFILES,
+// deduplicated.
+//
+// Exported because it is also the answer to "is the RTMP edge supposed to be
+// public here?" — `vidra doctor` reads the rendered port map against it, and a
+// second opinion about which profiles are on would make that check wrong in the
+// one direction that matters.
+func EnabledProfiles(values map[string]string) []string { return checkProfiles(values) }
 
 // checkProfiles is the profile list the deploy will enable: the managed list, or
 // the legacy base when the file predates it, plus the operator's extras.

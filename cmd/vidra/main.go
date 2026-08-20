@@ -44,6 +44,11 @@ var commands = []command{
 		summary: "generate the production env file (and --check an existing one)",
 		run:     runSetup,
 	},
+	{
+		name:    "doctor",
+		summary: "check a deployment: compose, exposure, configuration, backups, reachability",
+		run:     runDoctor,
+	},
 }
 
 // errReported marks a failure the command has ALREADY printed in the shape the

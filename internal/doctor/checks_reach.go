@@ -1,0 +1,164 @@
+package doctor
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"strconv"
+	"strings"
+
+	"github.com/vidra/vidra-core/internal/storage"
+)
+
+// checkObjectStorage makes one authenticated call against the bucket the api
+// would write uploads into.
+//
+// It is HeadBucket and nothing else. A diagnostic must not create the bucket it
+// cannot find (that turns a typo in STORAGE_S3_BUCKET into a new, empty,
+// silently-wrong store), and it must not write an object either — the point is
+// to prove the credentials, the endpoint, the region and the bucket name agree
+// with each other, which one head request does.
+func checkObjectStorage(ctx context.Context, s *state) []Finding {
+	if s.envErr != nil {
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s)", s.envErr))}
+	}
+	backend := strings.ToLower(s.value("STORAGE_BACKEND"))
+	if backend != "s3" {
+		// Not a skip: the check ran, and found there is no object store in this
+		// deployment to reach. A permanent ⚠ on a correctly configured
+		// local-storage instance is how a report trains people to stop reading it.
+		return []Finding{okf(fmt.Sprintf("STORAGE_BACKEND=%s — media lives in the media_data volume, so there is no object store to reach (make sure that volume is in your backups)", orDefault(backend, "local")))}
+	}
+	cfg := storage.S3Config{
+		Endpoint:       s.value("STORAGE_S3_ENDPOINT"),
+		Bucket:         s.value("STORAGE_S3_BUCKET"),
+		AccessKey:      s.value("STORAGE_S3_ACCESS_KEY"),
+		SecretKey:      s.value("STORAGE_S3_SECRET_KEY"),
+		Region:         s.value("STORAGE_S3_REGION"),
+		UseSSL:         !isFalseish(s.value("STORAGE_S3_USE_SSL")),
+		ForcePathStyle: isTrueish(s.value("STORAGE_S3_FORCE_PATH_STYLE")),
+	}
+	exists, err := s.opt.Prober.CheckBucket(ctx, cfg)
+	switch {
+	case err != nil:
+		return []Finding{failf(
+			fmt.Sprintf("the object store at %s could not be reached or would not authenticate: %s", cfg.Endpoint, reachSummary(err)),
+			"check STORAGE_S3_ENDPOINT (host only, no scheme), STORAGE_S3_REGION and the access/secret key in "+s.envRel+". Every upload fails while this does, and the failure surfaces to users as a stuck upload rather than an error")}
+	case !exists:
+		return []Finding{failf(
+			fmt.Sprintf("the credentials work, but the bucket %q does not exist at %s", cfg.Bucket, cfg.Endpoint),
+			"create the bucket (Vidra does not create it for you in production, deliberately), or fix STORAGE_S3_BUCKET in "+s.envRel+" — a typo here reads as an empty library rather than an error")}
+	default:
+		return []Finding{okf(fmt.Sprintf("the bucket %q at %s answers an authenticated request", cfg.Bucket, cfg.Endpoint))}
+	}
+}
+
+// checkSMTP proves there is a relay at the address the api will hand password
+// resets and email verifications to. It dials and reads the greeting; it never
+// sends, and it never authenticates — a diagnostic that logs into the mail relay
+// on every run is a diagnostic that eventually gets the account rate-limited.
+func checkSMTP(ctx context.Context, s *state) []Finding {
+	if s.envErr != nil {
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s)", s.envErr))}
+	}
+	host := s.value("SMTP_HOST")
+	if !isTrueish(s.value("MAIL_ENABLED")) || host == "" {
+		return []Finding{okf("mail is off (MAIL_ENABLED is not true, or SMTP_HOST is blank) — password reset and email verification are unavailable, which is a deliberate configuration and not a fault")}
+	}
+	port := s.value("SMTP_PORT")
+	if port == "" {
+		port = "587"
+	}
+	if _, err := strconv.Atoi(port); err != nil {
+		return []Finding{failf(
+			fmt.Sprintf("SMTP_PORT is %q, which is not a port number", truncate(port, 20)),
+			"set SMTP_PORT in "+s.envRel+" (587 with STARTTLS is the usual answer)")}
+	}
+	addr := net.JoinHostPort(host, port)
+	banner, err := s.opt.Prober.CheckSMTP(ctx, addr)
+	switch {
+	case err != nil:
+		return []Finding{failf(
+			fmt.Sprintf("no SMTP relay answered at %s: %s", addr, reachSummary(err)),
+			"check SMTP_HOST/SMTP_PORT in "+s.envRel+" and that this host's egress on that port is open — most cloud providers block outbound 25 outright, which is why 587 (or the provider's 2525) is the port to use. Every password reset silently fails while this does")}
+	case !strings.HasPrefix(strings.TrimSpace(banner), "220"):
+		return []Finding{warnf(
+			fmt.Sprintf("something answered at %s but its greeting was not an SMTP 220: %q", addr, truncate(banner, 80)),
+			"confirm SMTP_HOST/SMTP_PORT name a mail relay and not, say, a proxy or a captive portal in front of one")}
+	default:
+		return []Finding{okf(fmt.Sprintf("the SMTP relay at %s answered %q", addr, truncate(banner, 60)))}
+	}
+}
+
+// checkSearchService probes vidra-search from INSIDE the compose network,
+// because in production it is reachable nowhere else: docker-compose.prod.yml
+// resets its `ports:` outright, deliberately — it is HMAC-authenticated and
+// called only by the api, never by a browser. So the probe is an exec into the
+// running container, and a stack that is not up is a skip rather than a failure.
+func checkSearchService(ctx context.Context, s *state) []Finding {
+	running, why := s.containers(ctx)
+	if why != "" {
+		return []Finding{skipf("the search service publishes no host port in production, so it is probed from inside the stack, and the running containers could not be inspected (" + why + ")")}
+	}
+	c, ok := serviceContainer(running, "search")
+	if !ok {
+		return []Finding{skipf("the search service is not running on this host (it publishes no host port, so there is no other way to reach it)")}
+	}
+	args := s.composeArgs("exec", "-T", "search", "wget", "-qO-", "http://127.0.0.1:8080/healthz")
+	out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
+	if err != nil {
+		return []Finding{skipf("docker is not on this host's PATH, so the search container could not be probed")}
+	}
+	if out.ExitCode != 0 {
+		detail := fmt.Sprintf("the search service is running (%s) but does not answer /healthz on its own loopback", orDefault(c.Health, c.State))
+		return []Finding{failf(detail,
+			"read its log (`"+s.composeCommand("logs", "--tail=50", "search")+"`). Search failing does not take the site down — the api degrades to database queries — but discovery and suggestions are wrong until it is back")}
+	}
+	return []Finding{okf(fmt.Sprintf("the search service answers /healthz inside the compose network (%s)", orDefault(c.Health, c.State)))}
+}
+
+// checkFFmpeg looks for the binary every transcode shells out to. It is checked
+// where it will be USED — inside the api container when that is running, on the
+// host PATH only as a fallback — because a host with ffmpeg installed says
+// nothing about an image built without it, and the two are routinely different.
+//
+// A ⚠ rather than a ✗: uploads still arrive and the site still serves. What
+// stops is every transcode, and the symptom is a video stuck at "processing"
+// with a job that retries forever.
+func checkFFmpeg(ctx context.Context, s *state) []Finding {
+	running, why := s.containers(ctx)
+	if why == "" {
+		if _, ok := serviceContainer(running, "api"); ok {
+			args := s.composeArgs("exec", "-T", "api", "ffmpeg", "-version")
+			out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
+			if err == nil && out.ExitCode == 0 {
+				return []Finding{okf("ffmpeg is present in the api container: " + firstLine(out.Stdout))}
+			}
+			if err == nil {
+				return []Finding{warnf(
+					"ffmpeg is not available inside the api container, so every transcode will fail",
+					"that binary is baked into the image, so this means the wrong image is deployed. Check VIDRA_CORE_TAG in "+s.envRel+" and re-deploy")}
+			}
+		}
+	}
+	path, err := s.opt.Host.LookPath("ffmpeg")
+	if err != nil {
+		return []Finding{warnf(
+			"ffmpeg is not on this host's PATH, and the api container was not available to check the one that matters",
+			"transcodes run INSIDE the api container, so a missing host ffmpeg is only a problem for running the tools by hand. Bring the stack up and re-run to check the real one")}
+	}
+	return []Finding{warnf(
+		"the api container is not running, so ffmpeg was only found on the host ("+path+")",
+		"transcodes run inside the api container, not here — bring the stack up and re-run to check the binary that actually does the work")}
+}
+
+// isFalseish is isTrueish's opposite for a knob whose DEFAULT is on:
+// STORAGE_S3_USE_SSL is true unless the file says otherwise.
+func isFalseish(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0", "false", "no", "n", "off":
+		return true
+	default:
+		return false
+	}
+}

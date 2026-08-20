@@ -987,14 +987,22 @@ func TestOutputPathDefault(t *testing.T) {
 	}
 }
 
+// The name here has to be one the dispatch table does NOT carry — it used to be
+// "doctor", which is now a real subcommand and would have run it against the
+// working directory instead.
 func TestUnknownCommandPrintsUsage(t *testing.T) {
 	var out, errBuf bytes.Buffer
-	err := run(streams{in: strings.NewReader(""), out: &out, err: &errBuf}, []string{"doctor"})
+	err := run(streams{in: strings.NewReader(""), out: &out, err: &errBuf}, []string{"deploy"})
 	if !errors.Is(err, errReported) {
 		t.Fatalf("err = %v, want errReported", err)
 	}
 	if !strings.Contains(errBuf.String(), "unknown command") || !strings.Contains(errBuf.String(), "setup") {
 		t.Errorf("usage not printed:\n%s", errBuf.String())
+	}
+	// The table's other entries are listed too, so an operator who typed the
+	// wrong name can see the right one.
+	if !strings.Contains(errBuf.String(), "doctor") {
+		t.Errorf("the usage list is missing a registered command:\n%s", errBuf.String())
 	}
 }
 
