@@ -105,10 +105,22 @@ openapi-verify sqlc-verify test-race` — the exact set `backend-ci.yml` runs, s
   `-ldflags`. It is a separate binary because it runs beside `docker compose` on the
   host, before any image exists. Its commands: `setup` (generate the production env
   file), `doctor` (check a deployment), `status` (what is running and whether it
-  answers), `logs`, `restart <service>`, and `deploy` / `rollback` / `backup` /
-  `restore` / `release` — those five exec the deployment's own `deploy/*.sh` with your
-  terminal attached and return the script's exit code unchanged, so every gate stays in
-  the scripts, in one copy. `vidra <command> -h` for each.
+  answers), `logs`, `restart <service>`, `update` (below), and `deploy` / `rollback` /
+  `backup` / `restore` / `release` — those five exec the deployment's own `deploy/*.sh`
+  with your terminal attached and return the script's exit code unchanged, so every gate
+  stays in the scripts, in one copy. `vidra <command> -h` for each.
+- `vidra update` is the one command that is not a wrapper, because choosing a release is
+  work no script does. It reads the releases of all three component repositories over
+  plain HTTPS (no `gh`, no credentials; `GITHUB_TOKEN` only raises the rate limit),
+  refuses a tag that is not published in all three, refuses an image whose embedded
+  migrations are OLDER than the running database (the target tag's `migrations/` read
+  out of the tag's tree, against the api's `/schemaz` — the one mistake `vidra deploy`
+  cannot notice, since it compares the ledger against the checkout it just moved to the
+  same tag), snapshots the env file into `backups/env-history/` and keeps ten
+  generations, then runs `deploy/deploy.sh`. If the deploy's health probes fail it flips
+  the tags back through `deploy/rollback.sh` — but only when the target is ONE release
+  ahead, which is exactly the span the schema-compat policy covers. `--check` reports
+  current vs latest and changes nothing.
 - `make migrate-up` / `make migrate-version` — apply the migrations embedded in the
   api binary (`api migrate up|version`), the same code path the published image runs;
   no `migrate` CLI needed. After a migration dies halfway, `api migrate force
@@ -291,7 +303,7 @@ and what is imported vs. regenerated afterwards live in the operator guide
 ```
 cmd/api/               HTTP service entrypoint + `migrate up|version|force` (build metadata via -ldflags)
 cmd/vidra/             host-side operator CLI: setup, doctor, status, logs, restart,
-                       deploy/rollback/backup/restore/release; `make build-vidra`
+                       update, deploy/rollback/backup/restore/release; `make build-vidra`
 cmd/peertube-import/   one-way PeerTube importer CLI
 internal/              57 packages: httpapi, auth, video, transcode, live, storage,
                        messaging, e2ee, ipfs, atproto, config, store (sqlc), …
