@@ -48,9 +48,22 @@ type fakeSearchGateway struct {
 	suggestErr  error
 	recsErr     error
 	historyErr  error
+	// readyErr is the on-demand /readyz probe's answer (admin status page), and
+	// readyHook runs inside it so a test can hold the probe open.
+	readyErr   error
+	readyHook  func()
+	readyCalls int
 }
 
 func (f *fakeSearchGateway) Healthy() bool { return f.healthy }
+
+func (f *fakeSearchGateway) Ready(context.Context) error {
+	f.readyCalls++
+	if f.readyHook != nil {
+		f.readyHook()
+	}
+	return f.readyErr
+}
 
 func (f *fakeSearchGateway) Suggestions(_ context.Context, _ searchclient.SuggestParams) (searchclient.SuggestionsResponse, error) {
 	f.suggestCalls++

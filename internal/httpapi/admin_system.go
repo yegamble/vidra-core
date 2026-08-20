@@ -49,7 +49,7 @@ type systemStatusResponse struct {
 // Behind requireRole(admin). Always 200 (even when degraded) so the admin can see
 // the degraded state, unlike the /readyz probe which 503s.
 func (s *Server) handleSystemStatus(c echo.Context) error {
-	components, healthy := s.componentHealth(c.Request().Context())
+	components, healthy := s.systemComponents(c.Request().Context())
 	status := "ok"
 	if !healthy {
 		status = "degraded"

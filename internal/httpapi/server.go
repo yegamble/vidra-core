@@ -7,6 +7,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"os/exec"
 	"sync"
 	"time"
 
@@ -162,6 +163,11 @@ type Server struct {
 	ipfsmirrorsvc       ipfsMirrorProvider
 	metrics             *observability.Metrics
 	media               storage.Backend
+	// lookPath is exec.LookPath, indirected so the admin status page's ffmpeg
+	// component can be tested on a machine that does — or does not — have ffmpeg
+	// installed. A probe whose answer depends on the developer's laptop is not a
+	// probe the suite can assert on. Set in New().
+	lookPath func(file string) (string, error)
 	// schemaLedger reads the golang-migrate ledger for GET /schemaz. It is the
 	// server's OWN pool (cmd/api passes store.Pool). Nil — unit tests, and any
 	// embedder that does not wire it — reports the ledger as unread; it never
@@ -725,7 +731,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	e.Server.WriteTimeout = cfg.HTTPWriteTimeout
 	e.Server.IdleTimeout = idleTimeout
 
-	s := &Server{echo: e, cfg: cfg, db: db, rdb: rdb, startedAt: time.Now(), logger: slog.Default()}
+	s := &Server{echo: e, cfg: cfg, db: db, rdb: rdb, startedAt: time.Now(), logger: slog.Default(), lookPath: exec.LookPath}
 	// Playback-token signer for password-protected videos (CORE-17). Its key is
 	// derived from the JWT secret via domain separation, so a playback token is
 	// cryptographically independent of an account access token.
