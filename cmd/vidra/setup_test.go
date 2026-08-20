@@ -37,6 +37,12 @@ VIDRA_COMPOSE_PROFILES=core frontend
 VIDRA_EXTERNAL_POSTGRES=false
 VIDRA_EXTERNAL_REDIS=false
 
+# The shipped template's TLS block, spelled exactly as env/production.env.example
+# ships it: a mode, and a contact address that is blank and OPTIONAL. A run that
+# refused this pair refused every unattended install.
+VIDRA_TLS_MODE=acme
+VIDRA_ACME_EMAIL=
+
 STORAGE_BACKEND=local
 STORAGE_S3_ENDPOINT=
 STORAGE_S3_REGION=
@@ -55,14 +61,19 @@ REGISTRATION_REQUIRE_APPROVAL=false
 // of routing this command never touches; what it has to exercise here is the
 // plumbing — the two markers, a comment that keeps example.com and a site line
 // that must not.
+// The marker sits at the TOP of the block it belongs to, with its explanation
+// under it — the position it holds in the real deploy/Caddyfile, so what the CLI
+// exercises is the file it will meet on a host.
 const cliCaddyfile = `# Reference reverse proxy (cli test fixture). Replace example.com with your domain.
 {
-	# email ops@example.com
 	# vidra:global-options
+	# ^ MARKER — the injected global options land immediately below it.
+	# email ops@example.com
 }
 
 example.com {
 	# vidra:tls
+	# ^ MARKER — the site-level TLS directive lands immediately below it.
 
 	reverse_proxy api:8080
 }
@@ -906,21 +917,47 @@ func TestSetupCaddyfileFollowsTheTLSMode(t *testing.T) {
 	}
 }
 
-// An acme mode with no contact address is refused, and refused BEFORE anything
-// is written: a rewritten env file beside a Caddyfile that was never regenerated
-// is the state an operator cannot reason about.
-func TestSetupAcmeNeedsAContactAddress(t *testing.T) {
+// An acme mode with NO contact address installs, and says what was given up.
+//
+// This is the shipped configuration: env/production.env.example sets
+// VIDRA_TLS_MODE=acme and leaves VIDRA_ACME_EMAIL blank, calling it "optional
+// but strongly recommended". A refusal here therefore did not protect anybody —
+// it stopped every `vidra setup --non-interactive`, on a first install AND on
+// every upgrade of a deployment this engine had itself configured, over a value
+// the template does not ask for. The cost of a blank address is a warning; the
+// cost of refusing it was the install.
+func TestSetupAcmeWithoutAContactAddressStillInstalls(t *testing.T) {
 	h := newHarness(t)
 	args := append([]string{
 		"setup", "--template", h.template, "--non-interactive",
 		"--domain", "video.example.org", "--release-tag", "v0.1.1", "--storage", "local",
 	}, h.caddyArgs()...)
-	err := h.run(args...)
-	if err == nil || !strings.Contains(err.Error(), "--acme-email") {
-		t.Fatalf("err = %v, want a refusal naming --acme-email", err)
+	if err := h.run(args...); err != nil {
+		t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
 	}
-	if _, statErr := os.Stat(h.output); statErr == nil {
-		t.Error("the env file was written even though the run failed")
+	if v := valueOf(t, h.readOutput(t), "VIDRA_ACME_EMAIL"); v != "" {
+		t.Errorf("VIDRA_ACME_EMAIL = %q, want it left blank", v)
+	}
+	caddy := h.readCaddyfile(t)
+	if strings.Contains(caddy, "\temail ") {
+		t.Errorf("an empty `email` directive was injected — that Caddyfile does not parse:\n%s", caddy)
+	}
+	// The warning is the whole compensation for not refusing, so it has to be
+	// there and it has to name the key rather than a flag nobody passed.
+	out := h.out.String()
+	for _, want := range []string{"no ACME contact address", "VIDRA_ACME_EMAIL"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the run did not mention %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "--acme-email") {
+		t.Errorf("the warning names a flag instead of the env key:\n%s", out)
+	}
+
+	// And the upgrade path: re-running over the file it just wrote must not
+	// start refusing because that file, too, has a blank contact address.
+	if err := h.run(append(args, "--yes")...); err != nil {
+		t.Fatalf("re-run: %v (stderr: %s)", err, h.err.String())
 	}
 }
 

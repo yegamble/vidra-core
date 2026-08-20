@@ -44,7 +44,7 @@ func runSetup(s streams, args []string) error {
 		releaseTag = fs.String("release-tag", "", "image `tag` to deploy for all three services, e.g. v0.1.1")
 
 		tlsMode       = fs.String("tls-mode", "", "certificate issuer for the managed Caddy: `acme|acme-staging|internal` (default acme)")
-		acmeEmail     = fs.String("acme-email", "", "contact `address` Let's Encrypt sends expiry notices to (required by the acme modes)")
+		acmeEmail     = fs.String("acme-email", "", "contact `address` Let's Encrypt sends expiry notices to (optional; without it there is no warning before a failed renewal)")
 		caddyTemplate = fs.String("caddy-template", setup.CaddyTemplatePath, "`path` to the Caddyfile template the reverse-proxy config is rendered from")
 		caddyOut      = fs.String("caddy-out", setup.CaddyOutputPath, "`path` to write the generated Caddyfile (the prod compose file bind-mounts it)")
 		noCaddy       = fs.Bool("no-caddy", false, "do not generate a Caddyfile (another reverse proxy terminates TLS)")
@@ -531,7 +531,9 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 		a.TLSMode = v
 	}
 	if a.AcmeEmail == "" && (a.TLSMode == setup.TLSModeACME || a.TLSMode == setup.TLSModeACMEStaging) {
-		v, err := ask(s, r, "Contact address for Let's Encrypt expiry notices", effective(tmpl, existing, "VIDRA_ACME_EMAIL"))
+		// Optional, and the prompt says so: an operator with no address to give
+		// presses enter and the install continues with the ⚠ the report prints.
+		v, err := ask(s, r, "Contact address for Let's Encrypt expiry notices (optional, enter to skip)", effective(tmpl, existing, "VIDRA_ACME_EMAIL"))
 		if err != nil {
 			return err
 		}

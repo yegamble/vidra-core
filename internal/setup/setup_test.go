@@ -1035,6 +1035,51 @@ func TestFeaturesFromProfilesRoundTrips(t *testing.T) {
 	}
 }
 
+// A profile this engine does not know is DROPPED from the managed list on the
+// next run — that is the design, since the list is computed rather than merged —
+// and the run has to say so. An operator who hand-added `ipfs-private` to
+// VIDRA_COMPOSE_PROFILES otherwise loses it during a re-run about the release
+// tag, and finds out when the containers it named are not there.
+func TestUnknownProfilesAreReportedWhenTheyAreDropped(t *testing.T) {
+	existing := mustParse(t, []byte(strings.Join([]string{
+		"MFA_KEY_KEK=" + base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		profilesKey + "=core frontend ipfs ipfs-private",
+	}, "\n")+"\n"))
+
+	answers := baseAnswers()
+	answers.Features = FeaturesFromProfiles("core frontend ipfs ipfs-private")
+	res := generate(t, Request{Existing: existing, Answers: answers})
+
+	if got := res.Values[profilesKey]; strings.Contains(got, "ipfs-private") {
+		t.Fatalf("%s = %q — this test is about the value being dropped", profilesKey, got)
+	}
+	if !warned(res.Warnings, "ipfs-private") {
+		t.Errorf("warnings = %v, want the dropped profile named", res.Warnings)
+	}
+	if !warned(res.Warnings, extraProfilesKey) {
+		t.Errorf("warnings = %v, want %s named as where it belongs", res.Warnings, extraProfilesKey)
+	}
+	// The profiles it DOES ask about are not "dropped", they are answered: a
+	// warning for `--scan=false` would be a warning for using the flag.
+	off := baseAnswers()
+	off.Features = FeatureAnswers{}
+	quiet := generate(t, Request{Existing: existing, Answers: off, Rand: &seqReader{n: 5}})
+	if warned(quiet.Warnings, "ipfs ") && !warned(quiet.Warnings, "ipfs-private") {
+		t.Errorf("warnings = %v, want silence about the ipfs profile the answers turned off", quiet.Warnings)
+	}
+	// And a profile the operator moved to EXTRA_COMPOSE_PROFILES is not dropped
+	// at all — it is still enabled, which is the whole point of that key.
+	moved := mustParse(t, []byte(strings.Join([]string{
+		"MFA_KEY_KEK=" + base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		profilesKey + "=core frontend ipfs-private",
+		extraProfilesKey + "=ipfs-private",
+	}, "\n")+"\n"))
+	fixed := generate(t, Request{Existing: moved, Answers: baseAnswers(), Rand: &seqReader{n: 6}})
+	if warned(fixed.Warnings, "ipfs-private") {
+		t.Errorf("warnings = %v, want silence once the profile lives in %s", fixed.Warnings, extraProfilesKey)
+	}
+}
+
 // What the engine actually WRITES, which is what the deploy scripts read.
 func TestGenerateWritesTheComponentKeys(t *testing.T) {
 	external := "postgresql://doadmin:pw@db.example.net:25060/defaultdb?sslmode=require"
@@ -1284,7 +1329,11 @@ func TestCheckHandlesTheComponentKeys(t *testing.T) {
 	}{
 		{"external postgres with no DSN", with(map[string]string{externalPostgresKey: "true"}), databaseURLKey},
 		{"external redis with no DSN", with(map[string]string{externalRedisKey: "true"}), redisURLKey},
-		{"a switch that is not a boolean", with(map[string]string{externalPostgresKey: "yes"}), externalPostgresKey},
+		// `t` is the split-brain value: strconv.ParseBool calls it TRUE and
+		// deploy.sh's is_true calls it false, so the engine that used ParseBool
+		// added the external-service overlay for a deploy that did not.
+		{"a switch only some readers accept", with(map[string]string{externalPostgresKey: "t"}), externalPostgresKey},
+		{"a switch that is not a boolean at all", with(map[string]string{externalPostgresKey: "maybe"}), externalPostgresKey},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := Check(tc.vars); !hasIssue(got, tc.wantVar) {
@@ -1305,6 +1354,98 @@ func TestCheckHandlesTheComponentKeys(t *testing.T) {
 	}
 	if !warned(Warnings(warnVars), "the deploy still starts the bundled one") {
 		t.Errorf("warnings = %v, want the bundled-service drift flagged", Warnings(warnVars))
+	}
+}
+
+// The boolean contract, spelled out: ONE reader, and it is deploy/deploy.sh's.
+//
+// The two used to disagree — the engine read the switches with
+// strconv.ParseBool, the deploy script with a `case` listing ten spellings — so
+// VIDRA_EXTERNAL_POSTGRES=t made the engine write a configuration for a managed
+// database while the deploy started the bundled one beside it. Nothing failed;
+// the instance simply had two databases and served the empty one whenever the
+// URL went away.
+func TestIsTrueMirrorsTheDeployScript(t *testing.T) {
+	// The exact list in deploy/deploy.sh's is_true(). If this table changes,
+	// that function changes with it, in the same release.
+	for _, v := range []string{"true", "TRUE", "True", "yes", "YES", "Yes", "1", "on", "ON", "On"} {
+		if !IsTrue(v) {
+			t.Errorf("IsTrue(%q) = false, want true (deploy.sh's is_true accepts it)", v)
+		}
+	}
+	for _, v := range []string{
+		"false", "FALSE", "False", "no", "NO", "No", "0", "off", "OFF", "Off",
+		// Everything strconv.ParseBool accepts that the SHELL does not. These
+		// are the whole reason this function exists rather than a ParseBool.
+		"t", "T", "f", "F",
+		// And the ordinary rubbish.
+		"", "  ", "maybe", "tRue", "YEs", "2",
+	} {
+		if IsTrue(v) {
+			t.Errorf("IsTrue(%q) = true, want false — the deploy script reads it as false", v)
+		}
+	}
+	// Surrounding whitespace is the parser's, not the value's: ParseEnvFile
+	// keeps the line verbatim, and `VIDRA_EXTERNAL_REDIS=true ` is a file an
+	// operator would swear says true.
+	if !IsTrue(" true ") {
+		t.Error("IsTrue does not trim the surrounding space the env parser keeps")
+	}
+}
+
+// What Check and Warnings do with each class of spelling. The engine only ever
+// writes the two literals, so anything else came from a hand edit and the
+// question is only how loudly to say so.
+func TestComponentSwitchSpellings(t *testing.T) {
+	base := map[string]string{"VIDRA_ENV": "production", "JWT_SECRET": strings.Repeat("k", 48)}
+	vars := func(v string) map[string]string {
+		out := map[string]string{externalRedisKey: v}
+		for k, bv := range base {
+			out[k] = bv
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		value     string
+		wantIssue bool
+		wantWarn  bool
+	}{
+		// Canonical: silence.
+		{value: "true", wantWarn: false},
+		{value: "false"},
+		{value: ""},
+		// Accepted by both readers, not what the engine writes: a warning.
+		{value: "yes", wantWarn: true},
+		{value: "on", wantWarn: true},
+		{value: "1", wantWarn: true},
+		{value: "no", wantWarn: true},
+		{value: "0", wantWarn: true},
+		// Outside the union of both lists: a problem, because whoever wrote it
+		// meant one of the two and only some readers will agree.
+		{value: "t", wantIssue: true},
+		{value: "T", wantIssue: true},
+		{value: "maybe", wantIssue: true},
+	} {
+		t.Run("value="+tc.value, func(t *testing.T) {
+			v := vars(tc.value)
+			// A true value needs its DSNs; supply them so the only finding under
+			// test is the spelling.
+			if IsTrue(tc.value) {
+				v[redisURLKey] = "rediss://:pw@r.example.net:6379/0"
+				v[searchRedisURLKey] = "rediss://:pw@r.example.net:6379/1"
+			}
+			if got := hasIssue(Check(v), externalRedisKey); got != tc.wantIssue {
+				t.Errorf("Check issue against %s = %v, want %v (%v)", externalRedisKey, got, tc.wantIssue, Check(v))
+			}
+			if got := warned(Warnings(v), "only ever writes the literal true or false"); got != tc.wantWarn {
+				t.Errorf("spelling warning = %v, want %v (%v)", got, tc.wantWarn, Warnings(v))
+			}
+		})
+	}
+	// The message has to name the fix, because the value is not obviously wrong
+	// to the operator who typed it.
+	if !warned(Warnings(vars("yes")), "use true or false") && !warned(Warnings(vars("yes")), "Write true") {
+		t.Errorf("warnings = %v, want the canonical spelling named", Warnings(vars("yes")))
 	}
 }
 
@@ -1513,6 +1654,69 @@ func TestExternalRedisPreservesAHandWrittenSearchDSN(t *testing.T) {
 	}
 	if warned(res.Warnings, "was derived from") {
 		t.Errorf("warnings = %v, want no derivation warning when nothing was derived", res.Warnings)
+	}
+}
+
+// Rotating a managed Redis's credentials has to move BOTH DSNs.
+//
+// SEARCH_REDIS_URL is only ever filled when it is blank, and on a re-run it is
+// not blank — it holds what the last run derived. So `--redis-url` with a new
+// password left the api on the new credentials and the search service on the
+// old ones: the env file looked right, `--check` was clean, and search failed
+// authentication at runtime against a password that is nowhere in the file.
+func TestChangingRedisURLReDerivesTheSearchDSN(t *testing.T) {
+	existing := mustParse(t, []byte(strings.Join([]string{
+		"MFA_KEY_KEK=" + base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"VIDRA_EXTERNAL_REDIS=true",
+		"REDIS_URL=rediss://default:OLDPASS@redis.example.net:25061/0",
+		searchRedisURLKey + "=rediss://default:OLDPASS@redis.example.net:25061/1",
+	}, "\n")+"\n"))
+
+	answers := baseAnswers()
+	answers.Redis = RedisAnswers{Mode: "external", URL: "rediss://default:NEWPASS@redis.example.net:25061/0"}
+	res := generate(t, Request{Existing: existing, Answers: answers})
+
+	if got, want := res.Values[searchRedisURLKey], "rediss://default:NEWPASS@redis.example.net:25061/1"; got != want {
+		t.Errorf("%s = %q, want the new credentials on its own logical database (%q)", searchRedisURLKey, got, want)
+	}
+	if !warned(res.Warnings, "re-derived") {
+		t.Errorf("warnings = %v, want the re-derivation said out loud", res.Warnings)
+	}
+	// It has to survive the render, like every other managed key.
+	back := mustParse(t, res.Content)
+	if v, _ := back.Value(searchRedisURLKey); v != res.Values[searchRedisURLKey] {
+		t.Errorf("re-parsed %s = %q, want %q", searchRedisURLKey, v, res.Values[searchRedisURLKey])
+	}
+}
+
+// The other half of the same rule: a value the engine did NOT derive is an
+// answer, and moving it would be the same bug in the other direction. It is kept
+// and the disagreement is reported — the operator is the only one who knows
+// whether the second instance was deliberate.
+func TestChangingRedisURLWarnsAboutAHandSetSearchDSN(t *testing.T) {
+	const searchDSN = "rediss://default:pw@search-redis.example.net:25061/0"
+	existing := mustParse(t, []byte(strings.Join([]string{
+		"MFA_KEY_KEK=" + base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"VIDRA_EXTERNAL_REDIS=true",
+		"REDIS_URL=rediss://default:OLDPASS@redis.example.net:25061/0",
+		searchRedisURLKey + "=" + searchDSN,
+	}, "\n")+"\n"))
+
+	answers := baseAnswers()
+	answers.Redis = RedisAnswers{Mode: "external", URL: "rediss://default:NEWPASS@redis.example.net:25061/0"}
+	res := generate(t, Request{Existing: existing, Answers: answers})
+
+	if got := res.Values[searchRedisURLKey]; got != searchDSN {
+		t.Errorf("%s = %q, want the hand-set value %q preserved", searchRedisURLKey, got, searchDSN)
+	}
+	if !warned(res.Warnings, "no longer agree") {
+		t.Errorf("warnings = %v, want the two DSNs flagged as out of step", res.Warnings)
+	}
+	// A re-run that does NOT change REDIS_URL says nothing at all: the pair has
+	// been in this state deliberately since it was written.
+	quiet := generate(t, Request{Existing: existing, Answers: baseAnswers(), Rand: &seqReader{n: 9}})
+	if warned(quiet.Warnings, "no longer agree") {
+		t.Errorf("warnings = %v, want silence on a re-run that did not touch %s", quiet.Warnings, redisURLKey)
 	}
 }
 

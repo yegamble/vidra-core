@@ -45,13 +45,20 @@
 #
 # A split-subdomain variant is kept at the bottom of this file, with the caveat.
 {
+	# vidra:global-options
+	email ops@example.org
+	acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+	# ^ MARKER — do not remove or reword. `vidra setup` renders
+	# deploy/Caddyfile.local from this file and replaces the marker line with
+	# the global options it manages (`email <VIDRA_ACME_EMAIL>`, and the
+	# staging CA endpoint when VIDRA_TLS_MODE=acme-staging). Everything else in
+	# this file is copied through verbatim, which is why the routing body below
+	# can be hand-tuned without fighting the generator.
+	#
 	# Uncomment and set a real address: Let's Encrypt uses it for expiry and
 	# revocation notices. Without it you get no warning before a renewal
 	# problem becomes an outage.
 	# email ops@example.com
-	# vidra:global-options
-	email ops@example.org
-	acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
 
 	# Caddy's admin API listens on 127.0.0.1:2019 INSIDE the container and is
 	# not published by docker-compose.prod.yml, so it is not reachable from the
@@ -61,6 +68,13 @@
 
 video.example.org {
 	# vidra:tls
+	# ^ MARKER — do not remove or reword. `vidra setup` replaces this line in
+	# deploy/Caddyfile.local with the site-level TLS directive implied by
+	# VIDRA_TLS_MODE: nothing at all for `acme` (Caddy's default is already
+	# Let's Encrypt production), and `tls internal` for `internal`, which
+	# issues from Caddy's own local CA for a LAN/VPN-only instance. The site
+	# ADDRESS above is rewritten from PUBLIC_BASE_URL at the same time —
+	# deploy.sh refuses to deploy while the two disagree.
 
 	# ---------------------------------------------------------------------
 	# 1. Hard 404 for the Prometheus scrape.

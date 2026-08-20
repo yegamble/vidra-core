@@ -7,10 +7,18 @@ import (
 	"testing"
 )
 
-// caddyTemplate is the marked template the renderer consumes. It is a COPY of
-// the meta repo's deploy/Caddyfile with the two markers added, kept here so a
-// drift between the two repos shows up as a failing test in this one rather than
-// as a deploy that quietly gets the wrong TLS.
+// caddyTemplate is the marked template the renderer consumes. It is a VERBATIM
+// copy of the meta repo's deploy/Caddyfile — byte for byte, markers, marker
+// documentation and all — kept here so a drift between the two repos shows up as
+// a failing test in this one rather than as a deploy that quietly gets the wrong
+// TLS.
+//
+// Verbatim is the whole point, and it is worth saying why: a hand-trimmed copy
+// tests the renderer against a file nothing deploys. The version of this fixture
+// that moved the global marker to the END of its comment block passed every test
+// here while the real template had it at the TOP, followed by six lines
+// explaining it — which is the position the injected directives actually land
+// in. Refresh it with a plain `cp`, never by hand.
 func caddyTemplate(t *testing.T) []byte {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("testdata", "Caddyfile.template"))
@@ -125,20 +133,25 @@ func TestRenderCaddyfileInjectsThePerModeTLSDirectives(t *testing.T) {
 		mode        string
 		want, unwan []string
 	}{
+		// The unwanted list names the INJECTED form (indented, on its own line),
+		// not the bare words: the template's own comments explain every mode, so
+		// `acme_ca` and `tls internal` both appear in the prose of a correctly
+		// rendered file and a substring test on the word alone would fail on the
+		// documentation rather than on a directive.
 		{
 			mode:  TLSModeACME,
 			want:  []string{"\temail ops@example.org\n"},
-			unwan: []string{"acme_ca", "tls internal"},
+			unwan: []string{"\tacme_ca ", "\ttls internal\n"},
 		},
 		{
 			mode:  TLSModeACMEStaging,
 			want:  []string{"\temail ops@example.org\n", "\tacme_ca " + acmeStagingCA + "\n"},
-			unwan: []string{"tls internal"},
+			unwan: []string{"\ttls internal\n"},
 		},
 		{
 			mode:  TLSModeInternal,
 			want:  []string{"\ttls internal\n"},
-			unwan: []string{"email ops@example.org", "acme_ca"},
+			unwan: []string{"\temail ops@example.org\n", "\tacme_ca "},
 		},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
@@ -172,8 +185,36 @@ func TestRenderCaddyfileInjectsThePerModeTLSDirectives(t *testing.T) {
 // yet: there is no ACME order, so there is nobody to send expiry notices to.
 func TestRenderCaddyfileInternalNeedsNoAcmeEmail(t *testing.T) {
 	got := renderCaddy(t, Answers{Domain: "video.example.org", TLSMode: TLSModeInternal})
-	if !strings.Contains(got, "tls internal") {
+	if !strings.Contains(got, "\ttls internal\n") {
 		t.Errorf("internal mode did not inject its issuer:\n%s", got)
+	}
+}
+
+// A BLANK contact address renders, in every mode, and injects no `email` line.
+//
+// This is the shipped configuration, not an edge case: env/production.env.example
+// ships VIDRA_ACME_EMAIL blank and calls it "optional but strongly recommended",
+// so a renderer that refused it refused every `vidra setup --non-interactive` —
+// every unattended install AND every upgrade of a deployment this engine had
+// itself configured. An empty `email` directive would be no better: `email` with
+// no argument does not parse, so the stack would come up with no proxy at all.
+func TestRenderCaddyfileAcceptsABlankAcmeEmail(t *testing.T) {
+	for _, mode := range tlsModes {
+		t.Run(mode, func(t *testing.T) {
+			got := renderCaddy(t, Answers{Domain: "video.example.org", TLSMode: mode})
+			if strings.Contains(got, "\temail ") {
+				t.Errorf("a blank contact address still injected an `email` directive:\n%s", got)
+			}
+			// The rest of the mode's contract is unchanged: staging still points
+			// at the staging directory, which is the half that costs a rate limit
+			// when it goes missing.
+			if mode == TLSModeACMEStaging && !strings.Contains(got, "\tacme_ca "+acmeStagingCA+"\n") {
+				t.Errorf("the staging CA was not injected without a contact address:\n%s", got)
+			}
+			if mode == TLSModeInternal && !strings.Contains(got, "\ttls internal\n") {
+				t.Errorf("the private CA was not injected without a contact address:\n%s", got)
+			}
+		})
 	}
 }
 
@@ -252,16 +293,6 @@ func TestRenderCaddyfileRefusesBadAnswers(t *testing.T) {
 			want:    "unsupported TLS mode",
 		},
 		{
-			name:    "acme with no contact address",
-			answers: Answers{Domain: "video.example.org", TLSMode: TLSModeACME},
-			want:    "--acme-email",
-		},
-		{
-			name:    "acme-staging with no contact address",
-			answers: Answers{Domain: "video.example.org", TLSMode: TLSModeACMEStaging},
-			want:    "--acme-email",
-		},
-		{
 			name:    "a contact address with a space in it",
 			answers: Answers{Domain: "video.example.org", TLSMode: TLSModeACME, AcmeEmail: "ops@example.org please"},
 			want:    "whitespace",
@@ -308,6 +339,49 @@ func TestRenderCaddyfileIsDeterministic(t *testing.T) {
 		if first, second := renderCaddy(t, a), renderCaddy(t, a); first != second {
 			t.Errorf("%s mode rendered differently twice", mode)
 		}
+	}
+}
+
+// The placeholder-domain test, against the cases that made the two repos
+// disagree. deploy/deploy.sh refuses a deploy on a match and `vidra doctor`
+// reports one, so every row here is a real install that either could not be
+// deployed or was waved through by the diagnostic that was supposed to catch it.
+func TestPlaceholderDomain(t *testing.T) {
+	for _, tc := range []struct {
+		in    string
+		want  string
+		match bool
+	}{
+		// The placeholders themselves, in the shapes they appear in a Caddyfile.
+		{in: "example.com {", want: "example.com", match: true},
+		{in: "\treverse_proxy https://example.org", want: "example.org", match: true},
+		{in: "example.net {", want: "example.net", match: true},
+		{in: "your-domain {", want: "your-domain", match: true},
+		{in: "yourdomain.tld {", want: "yourdomain", match: true},
+		{in: "YOUR_DOMAIN {", want: "YOUR_DOMAIN", match: true},
+		// A subdomain OF the example is still the example: '.' is deliberately
+		// not in the boundary class.
+		{in: "sub.example.com {", want: "example.com", match: true},
+		{in: "video.example.org {", want: "example.org", match: true},
+		// Real domains that merely CONTAIN the string. Both of these were
+		// refused (or silently accepted) by the unanchored `strings.Contains`
+		// this predicate replaced.
+		{in: "myexample.com {", match: false},
+		{in: "video.example.company {", match: false},
+		{in: "notyour-domain {", match: false},
+		// A real instance, which is the case that has to stay quiet.
+		{in: "tube.mysite.dev {", match: false},
+		{in: "", match: false},
+	} {
+		t.Run(tc.in, func(t *testing.T) {
+			got, ok := PlaceholderDomain(tc.in)
+			if ok != tc.match {
+				t.Fatalf("PlaceholderDomain(%q) = %q/%v, want match=%v", tc.in, got, ok, tc.match)
+			}
+			if ok && got != tc.want {
+				t.Errorf("PlaceholderDomain(%q) matched %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }
 

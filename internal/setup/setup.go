@@ -342,6 +342,16 @@ const searchRedisDefaultDB = 1
 // predates the key.
 var managedKeys = []string{profilesKey, externalPostgresKey, externalRedisKey, databaseURLKey, redisURLKey, searchRedisURLKey, tlsModeKey, acmeEmailKey}
 
+// ManagedKeys is that list, for a caller comparing a generated env file against
+// the template. These keys are the engine's OWN output and several of them
+// appear in the template only as commented-out examples (DATABASE_URL,
+// REDIS_URL, SEARCH_REDIS_URL are documented there, not assigned), so a naive
+// "the file assigns keys the template does not define" diff reports every
+// external-service deployment as drifted, for ever, by name — a permanent ⚠
+// about the engine having done its job. `vidra doctor` excludes them for exactly
+// that reason.
+func ManagedKeys() []string { return append([]string(nil), managedKeys...) }
+
 // externalOverlays pairs each external-service switch with the compose overlay
 // the deploy adds for it and the connection strings it cannot work without. The
 // ORDER is the order the overlays go on the command line.
@@ -552,6 +562,7 @@ func Generate(req Request) (*Result, error) {
 	applyStorageRule(req, res)
 	applyMailRule(res)
 	added := applyComponentRule(req, answers, res)
+	res.Warnings = append(res.Warnings, droppedProfileWarnings(req, res.Values)...)
 
 	// Line-shape before rendering: a value carrying a newline would not be a bad
 	// value, it would be EXTRA LINES — see lineShapeIssues.
@@ -1127,7 +1138,7 @@ func applyComponentRule(req Request, answers map[string]string, res *Result) []s
 				// compose chain derives both DSNs from REDIS_PASSWORD, and writing an
 				// override here would be the hand-written second value the template
 				// warns against ("do not set REDIS_URL/SEARCH_REDIS_URL by hand").
-				if !isTrue(res.Values[externalRedisKey]) {
+				if !IsTrue(res.Values[externalRedisKey]) {
 					continue
 				}
 				derived, db, ok := deriveSearchRedisURL(res.Values[redisURLKey])
@@ -1157,7 +1168,51 @@ func applyComponentRule(req Request, answers map[string]string, res *Result) []s
 			added = append(added, key)
 		}
 	}
+	applySearchRedisRule(req, res)
 	return added
+}
+
+// applySearchRedisRule keeps the search service's DSN in step with the api's
+// when THIS RUN changes REDIS_URL.
+//
+// The loop above only ever fills a BLANK SEARCH_REDIS_URL, and on a re-run it is
+// not blank — it holds the value the last run derived. So rotating a managed
+// Redis's credentials (`--redis-url` with the new password) left the api on the
+// new DSN and the search service on the old one: nothing in the env file looked
+// wrong, `--check` was clean, and search failed authentication at runtime with a
+// password that appears nowhere in the file any more.
+//
+// The engine may only re-derive a value IT derived. The test for that is exact:
+// the stored SEARCH_REDIS_URL equals deriveSearchRedisURL(the OLD REDIS_URL). An
+// operator who pointed search at a second instance, or at another database on
+// this one, wrote something else — and silently moving that onto the api's
+// instance would be the same class of bug in the other direction. That value is
+// preserved and the disagreement is said out loud instead.
+func applySearchRedisRule(req Request, res *Result) {
+	search := strings.TrimSpace(res.Values[searchRedisURLKey])
+	if search == "" {
+		return
+	}
+	oldRedis, ok := existingValue(req.Existing, redisURLKey)
+	if !ok {
+		return
+	}
+	newRedis := strings.TrimSpace(res.Values[redisURLKey])
+	if newRedis == "" || newRedis == strings.TrimSpace(oldRedis) {
+		return
+	}
+	derivedOld, _, wasDerivable := deriveSearchRedisURL(oldRedis)
+	if wasDerivable && search == derivedOld {
+		derivedNew, db, canDerive := deriveSearchRedisURL(newRedis)
+		if canDerive {
+			res.Values[searchRedisURLKey] = derivedNew
+			res.Warnings = append(res.Warnings, fmt.Sprintf("%s changed, so %s was re-derived from it (logical database %d) — it still held the value derived from the previous DSN, which would have left the search service authenticating with the old credentials against an instance that no longer accepts them. Set %s explicitly if it is meant to point somewhere else",
+				redisURLKey, searchRedisURLKey, db, searchRedisURLKey))
+			return
+		}
+	}
+	res.Warnings = append(res.Warnings, fmt.Sprintf("%s changed but %s did not, and the two no longer agree: the api would connect with the new DSN while the search service keeps the one already in the file. That is correct only if %s deliberately names a DIFFERENT instance — if it does not, set it to the new DSN on its own logical database (…/%d)",
+		redisURLKey, searchRedisURLKey, searchRedisURLKey, searchRedisDefaultDB))
 }
 
 // deriveSearchRedisURL is the default SEARCH_REDIS_URL for a managed Redis: the
@@ -1215,6 +1270,71 @@ func deriveSearchRedisURL(redisURL string) (string, int, bool) {
 	return u.String(), next, true
 }
 
+// droppedProfileWarnings names the compose profiles a re-run took OUT of
+// VIDRA_COMPOSE_PROFILES because this engine does not know them.
+//
+// The profile list is computed, not merged (see Answers.Features): Profiles()
+// emits core, frontend and one profile per feature it asks about, and anything
+// else in the previous value is gone from the new one. That is right for the
+// profiles it DOES ask about — `--scan=false` has to be able to turn one off —
+// and silently wrong for `ipfs-private`, `ipfs-private-cluster` or whatever a
+// later compose file grows: an operator who hand-added one to the managed list
+// loses it on the next run about something else entirely, and finds out when the
+// containers it named do not start.
+//
+// EXTRA_COMPOSE_PROFILES is the supported place for exactly that, and it is what
+// this points at. It is a warning rather than a refusal because the run is not
+// wrong: the value was moved, not corrupted, and the fix is one line.
+func droppedProfileWarnings(req Request, values map[string]string) []string {
+	previous := ""
+	if v, ok := existingValue(req.Existing, profilesKey); ok {
+		previous = v
+	} else if req.Template != nil {
+		if v, ok := req.Template.Value(profilesKey); ok && !needsValue(v) {
+			previous = v
+		}
+	}
+	if strings.TrimSpace(previous) == "" {
+		return nil
+	}
+	known := map[string]bool{}
+	for _, p := range baseProfiles {
+		known[p] = true
+	}
+	for _, fp := range featureProfiles {
+		known[fp.profile] = true
+	}
+	kept := map[string]bool{}
+	for _, p := range append(strings.Fields(values[profilesKey]), strings.Fields(values[extraProfilesKey])...) {
+		kept[p] = true
+	}
+	var dropped []string
+	seen := map[string]bool{}
+	for _, p := range strings.Fields(previous) {
+		if known[p] || kept[p] || seen[p] {
+			continue
+		}
+		seen[p] = true
+		dropped = append(dropped, p)
+	}
+	if len(dropped) == 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf("%s no longer enables %s: `vidra setup` writes that list from the components it asks about (%s), so a profile it does not know is dropped on every run. Add %s to %s in this file — that list is appended to the managed one and is never rewritten",
+		profilesKey, strings.Join(dropped, ", "), strings.Join(append(append([]string(nil), baseProfiles...), featureProfileNames()...), ", "),
+		strings.Join(dropped, " "), extraProfilesKey)}
+}
+
+// featureProfileNames is the optional-component profile list, in the order
+// Profiles emits it.
+func featureProfileNames() []string {
+	out := make([]string, 0, len(featureProfiles))
+	for _, fp := range featureProfiles {
+		out = append(out, fp.profile)
+	}
+	return out
+}
+
 func isManagedKey(key string) bool {
 	for _, k := range managedKeys {
 		if k == key {
@@ -1236,7 +1356,7 @@ func isManagedKey(key string) bool {
 func componentWarnings(vars map[string]string) []string {
 	var out []string
 	for _, c := range externalOverlays {
-		if isTrue(vars[c.flag]) {
+		if IsTrue(vars[c.flag]) {
 			continue
 		}
 		var set []string
@@ -1250,6 +1370,28 @@ func componentWarnings(vars map[string]string) []string {
 		}
 		out = append(out, fmt.Sprintf("%s is set but %s is not true: the api would use the managed %s while the deploy still starts the bundled one (its container, volume and password are all still there, unused). Set %s=true so the deploy adds %s and skips the bundled service, or remove %s to go back to it",
 			strings.Join(set, " and "), c.flag, c.service, c.flag, c.overlay, strings.Join(set, "/")))
+	}
+	return append(out, boolSpellingWarnings(vars)...)
+}
+
+// boolSpellingWarnings flags a switch written in a spelling that WORKS and is
+// not the one this engine writes. `VIDRA_EXTERNAL_REDIS=yes` is read as true by
+// the deploy script and by IsTrue, so nothing is broken today — but the engine
+// only ever writes the literal true/false, so the value came from a hand edit,
+// and the next reader added to this stack (a Makefile test, a systemd unit, a
+// helper in another language) is one `= "true"` away from disagreeing with it.
+// Saying so while it is still harmless is the cheap moment.
+func boolSpellingWarnings(vars map[string]string) []string {
+	var out []string
+	for _, c := range externalOverlays {
+		raw := strings.TrimSpace(vars[c.flag])
+		if raw == "" || raw == "true" || raw == "false" || !isBoolSpelling(raw) {
+			// Blank is "not external", the two literals are what the engine
+			// writes, and anything else is already an Issue in componentIssues.
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s is %q: it is read as %t, but `vidra setup` only ever writes the literal true or false, so this value was hand-edited and every reader of this file has its own list of the spellings it accepts. Write %t",
+			c.flag, raw, IsTrue(raw), IsTrue(raw)))
 	}
 	return out
 }
@@ -1291,11 +1433,12 @@ func componentIssues(vars map[string]string) []Issue {
 		if raw == "" {
 			continue
 		}
-		if _, err := strconv.ParseBool(raw); err != nil {
-			out = append(out, Issue{Var: c.flag, Msg: fmt.Sprintf("%q is not a boolean — write true or false. The deploy scripts and the setup engine read this value with different parsers, and a spelling only one of them accepts is how the overlay gets added without the bundled service being skipped (or the reverse)", raw)})
+		if !isBoolSpelling(raw) {
+			out = append(out, Issue{Var: c.flag, Msg: fmt.Sprintf("%q is not a spelling every reader of this file agrees about — use true or false. It is read as FALSE here and by deploy/deploy.sh (which accepts %s and nothing else), while a `t` or a `T` is exactly what Go's own strconv.ParseBool would have called TRUE. A value only some readers accept is how the external-service overlay gets added without the bundled service being skipped, or the reverse: two databases, one deployment, no error",
+				raw, strings.Join(trueSpellings, "|"))})
 			continue
 		}
-		if !isTrue(raw) {
+		if !IsTrue(raw) {
 			continue
 		}
 		for _, k := range c.urlKeys {
@@ -1319,11 +1462,16 @@ func componentIssues(vars map[string]string) []Issue {
 // feature it does not use. What cannot be waved through is a NON-BLANK value the
 // renderer would reject, because that file names a mode (or a contact address)
 // the next `vidra setup` refuses to act on.
+//
+// A blank VIDRA_ACME_EMAIL is explicitly NOT a problem, and the three surfaces
+// have to agree about that or an install stops working somewhere: the renderer
+// injects no `email` directive, this reports nothing, and tlsWarnings prints the
+// one ⚠ that says what was given up. The template ships the key blank.
 func tlsIssues(vars map[string]string) []Issue {
 	var out []Issue
 	if raw := strings.TrimSpace(vars[tlsModeKey]); raw != "" {
 		if _, err := tlsMode(raw); err != nil {
-			out = append(out, Issue{Var: tlsModeKey, Msg: fmt.Sprintf("%q is not a TLS mode — write one of %s (blank means %s). It decides what `vidra setup` writes into %s, so an unrecognised value is a Caddyfile that cannot be regenerated", raw, strings.Join(tlsModes, ", "), TLSModeACME, CaddyOutputPath)})
+			out = append(out, Issue{Var: tlsModeKey, Msg: fmt.Sprintf("%q is not a TLS mode — write %s=%s in env/production.env, or one of %s (blank means %s). It decides what `vidra setup` writes into %s, so an unrecognised value is a Caddyfile that cannot be regenerated", raw, tlsModeKey, TLSModeACME, strings.Join(tlsModes, ", "), TLSModeACME, CaddyOutputPath)})
 		}
 	}
 	if email := strings.TrimSpace(vars[acmeEmailKey]); email != "" {
@@ -1343,6 +1491,12 @@ func tlsIssues(vars map[string]string) []Issue {
 // saying now rather than then. An env file that does not mention the mode at all
 // gets nothing: it predates the managed Caddyfile, so there is no generated file
 // for either warning to be about.
+//
+// Both lines name the ENV KEY and the file it lives in, never a command-line
+// flag. The reader may be an operator who never typed `vidra setup` at all — the
+// installer, the web wizard and `vidra doctor` print these — and telling someone
+// to "re-run with --acme-email" when the answer is a line in
+// env/production.env is how a warning gets ignored instead of fixed.
 func tlsWarnings(vars map[string]string) []string {
 	raw := strings.TrimSpace(vars[tlsModeKey])
 	if raw == "" {
@@ -1354,21 +1508,64 @@ func tlsWarnings(vars map[string]string) []string {
 		return nil
 	}
 	if mode != TLSModeACME {
-		return []string{fmt.Sprintf("%s=%s does not produce a publicly trusted certificate: %s is a rehearsal/bring-up mode, and every browser reaching this instance will refuse the connection. Re-run `vidra setup --tls-mode %s` once DNS points at this host", tlsModeKey, mode, mode, TLSModeACME)}
+		return []string{fmt.Sprintf("%s=%s does not produce a publicly trusted certificate: %s is a rehearsal/bring-up mode, and every browser reaching this instance will refuse the connection. Set %s=%s in env/production.env and regenerate the Caddyfile once DNS points at this host", tlsModeKey, mode, mode, tlsModeKey, TLSModeACME)}
 	}
 	if strings.TrimSpace(vars[acmeEmailKey]) != "" {
 		return nil
 	}
-	return []string{fmt.Sprintf("%s is %s but %s is blank: Let's Encrypt sends expiry and revocation notices to that address and nowhere else, so the first sign of a renewal problem would be the outage. Re-run `vidra setup --acme-email ops@your-domain`", tlsModeKey, TLSModeACME, acmeEmailKey)}
+	return []string{fmt.Sprintf("%s=%s with no ACME contact address — Let's Encrypt cannot reach you about certificate problems. It sends expiry and revocation notices to %s and nowhere else, so with it blank the first sign of a failed renewal is the outage itself, 60 days after this install. Set %s=ops@your-domain in env/production.env (the deployment works either way, which is why this is a warning)",
+		tlsModeKey, TLSModeACME, acmeEmailKey, acmeEmailKey)}
 }
 
-// isTrue reads a component switch the way this engine writes it, tolerating the
-// spellings strconv.ParseBool accepts and treating everything else (including a
-// blank) as false. componentIssues is what tells an operator their unrecognised
-// spelling was read as false, rather than this silently doing it.
-func isTrue(v string) bool {
-	b, err := strconv.ParseBool(strings.TrimSpace(v))
-	return err == nil && b
+// trueSpellings is deploy/deploy.sh's is_true, character for character:
+//
+//	is_true() { case "$1" in true|TRUE|True|yes|YES|Yes|1|on|ON|On) return 0 ;; *) return 1 ;; esac }
+//
+// falseSpellings is its mirror image. The shell has no false list — anything
+// is_true does not accept is false — so this one is not a parsing rule but the
+// list of spellings an operator can write and BOTH readers agree about. See
+// componentIssues for what happens outside the two: `t` is a value
+// strconv.ParseBool reads as true and the shell reads as false, and a deployment
+// where the engine adds the external-service overlay and the deploy script does
+// not is one that comes up pointing at two different databases.
+var (
+	trueSpellings  = []string{"true", "TRUE", "True", "yes", "YES", "Yes", "1", "on", "ON", "On"}
+	falseSpellings = []string{"false", "FALSE", "False", "no", "NO", "No", "0", "off", "OFF", "Off"}
+)
+
+// IsTrue reads an env-file boolean the way deploy/deploy.sh reads it, and it is
+// the ONLY boolean reader for the keys the two share (VIDRA_EXTERNAL_POSTGRES,
+// VIDRA_EXTERNAL_REDIS, MAIL_ENABLED …). Everything outside trueSpellings —
+// including a blank, a `t`, and anything strconv.ParseBool would have accepted
+// that the shell does not — is FALSE, because that is what the deploy does with
+// it, and a library that disagreed with the script it feeds would be a split
+// brain nobody can see in the file.
+//
+// Exported so `vidra doctor`, the web wizard and the installer all ask the same
+// question rather than growing a third parser each.
+func IsTrue(v string) bool {
+	return matchesSpelling(v, trueSpellings)
+}
+
+// isBoolSpelling reports whether a value is one BOTH readers agree about. It is
+// the gate componentIssues fails on, and the reason it is a list rather than a
+// parse: the disagreement is per-spelling, not per-syntax.
+func isBoolSpelling(v string) bool {
+	return matchesSpelling(v, trueSpellings) || matchesSpelling(v, falseSpellings)
+}
+
+// matchesSpelling compares EXACTLY (after trimming the surrounding space the
+// env-file parser keeps): the spellings are case-sensitive on purpose, because
+// `tRue` is a value the shell reads as false and a case-insensitive Go reader
+// would read as true.
+func matchesSpelling(v string, list []string) bool {
+	t := strings.TrimSpace(v)
+	for _, s := range list {
+		if t == s {
+			return true
+		}
+	}
+	return false
 }
 
 // releaseTagWarnings flags image pins left at the template's example tag: the
@@ -1561,7 +1758,7 @@ func RenderCheckArgs(envPath string, values map[string]string, tail ...string) [
 	// Order matters: a compose overlay only wins over what an EARLIER file said,
 	// so the external-service overlays go after docker-compose.prod.yml.
 	for _, c := range externalOverlays {
-		if isTrue(values[c.flag]) {
+		if IsTrue(values[c.flag]) {
 			args = append(args, "-f", c.overlay)
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -20,8 +21,8 @@ import (
 //     comments keep the example (they are prose about example.com), which is
 //     also the rule deploy/deploy.sh enforces from the other side: it refuses to
 //     deploy while any non-comment line still names example.com.
-//  2. the TLS issuer at `# vidra:global-options` — the ACME contact address, and
-//     the staging directory when this is a rehearsal.
+//  2. the TLS issuer at `# vidra:global-options` — the ACME contact address when
+//     there is one, and the staging directory when this is a rehearsal.
 //  3. `tls internal` at `# vidra:tls` for the pre-TLS/loopback bring-up mode.
 //
 // Everything else — the single-origin routing decision, the /metrics 404, the
@@ -112,9 +113,18 @@ func RenderCaddyfile(template []byte, a Answers) ([]byte, error) {
 	if mode == "" {
 		mode = TLSModeACME
 	}
+	// A blank contact address is a legitimate answer, and the ONE thing this
+	// renderer must not do with it is refuse: the shipped template ships
+	// VIDRA_ACME_EMAIL blank ("Optional but strongly recommended"), so a refusal
+	// here would stop every unattended install and every upgrade on a file the
+	// engine itself wrote. It costs a warning (see tlsWarnings) and nothing else —
+	// Caddy orders certificates perfectly well from an account with no contact
+	// address, it just cannot be told when a renewal starts failing.
 	email := strings.TrimSpace(a.AcmeEmail)
-	if err := checkAcmeEmail(mode, email); err != nil {
-		return nil, err
+	if email != "" {
+		if err := checkAcmeEmailShape(email); err != nil {
+			return nil, err
+		}
 	}
 	host, err := caddyHost(a.Domain)
 	if err != nil {
@@ -190,9 +200,14 @@ func checkCaddyMarkers(seen map[string]int) error {
 // caddyInjections is the whole mapping from a TLS mode to the directives it
 // contributes, in one place so the two markers cannot disagree.
 //
-//	acme          global: email <contact>
-//	acme-staging  global: email <contact>, acme_ca <staging directory>
+//	acme          global: email <contact>, when there is one
+//	acme-staging  global: email <contact> when there is one, acme_ca <staging>
 //	internal      site:   tls internal
+//
+// A BLANK contact address injects no `email` line at all rather than an empty
+// one: `email` with no argument is a Caddyfile that does not parse, so the
+// deployment would come up with no reverse proxy — a far worse answer to "the
+// operator did not give us an address" than the warning tlsWarnings prints.
 //
 // Nothing is injected at the OTHER marker in each case, deliberately: `tls
 // internal` beside an `email` would be a site that ignores the ACME settings
@@ -201,9 +216,14 @@ func checkCaddyMarkers(seen map[string]int) error {
 func caddyInjections(mode, email string) (global, site []string) {
 	switch mode {
 	case TLSModeACME:
-		global = []string{"email " + email}
+		if email != "" {
+			global = []string{"email " + email}
+		}
 	case TLSModeACMEStaging:
-		global = []string{"email " + email, "acme_ca " + acmeStagingCA}
+		if email != "" {
+			global = append(global, "email "+email)
+		}
+		global = append(global, "acme_ca "+acmeStagingCA)
 	case TLSModeInternal:
 		site = []string{"tls internal"}
 	}
@@ -239,21 +259,44 @@ func tlsMode(v string) (string, error) {
 	}
 }
 
-// checkAcmeEmail requires a contact address for the modes that place an ACME
-// order, and checks the shape of any address given.
+// PlaceholderDomainPattern is the placeholder-domain test, spelled as the exact
+// POSIX extended regular expression deploy/deploy.sh's require_real_domain greps
+// deploy/Caddyfile.local with. It is a CROSS-REPO CONTRACT: the shell refuses to
+// deploy a file that matches it and `vidra doctor` reports one, so the two have
+// to be the same test — a doctor that is stricter fails a valid install, and one
+// that is laxer stays green right up to the deploy that refuses.
 //
-// The requirement is not ceremony. Let's Encrypt sends expiry and revocation
-// notices to that address and nowhere else, so an account without one gets no
-// warning before a renewal problem becomes an outage — and the failure lands 60
-// days after the install, when nobody is looking at the setup run.
-func checkAcmeEmail(mode, email string) error {
-	if email == "" {
-		if mode == TLSModeInternal {
-			return nil
-		}
-		return fmt.Errorf("setup: --tls-mode %s orders a certificate from Let's Encrypt, which needs a contact address: pass --acme-email ops@your-domain. Without one there is no warning before a failed renewal becomes an outage. Use --tls-mode %s to bring the stack up on a private CA instead, or --no-caddy if another proxy terminates TLS", mode, TLSModeInternal)
+// Both boundaries are load-bearing, and both exist for a real hostname:
+//
+//	myexample.com          NOT a placeholder — the left boundary rejects a match
+//	                       whose preceding character is a hostname character
+//	video.example.company  NOT a placeholder — the right boundary does the same
+//	                       for the character after it
+//	sub.example.com        IS a placeholder — '.' is deliberately absent from the
+//	                       boundary class, so a subdomain OF the example still
+//	                       matches
+//
+// '.' is what makes the two rules different from a plain word boundary, and it
+// is the whole reason the class is written out rather than spelled \b.
+const PlaceholderDomainPattern = `(^|[^A-Za-z0-9-])(example\.(com|org|net)|your-domain|yourdomain|YOUR_DOMAIN)([^A-Za-z0-9-]|$)`
+
+var placeholderDomainRE = regexp.MustCompile(PlaceholderDomainPattern)
+
+// PlaceholderDomain reports the placeholder domain s names, and which one it is
+// so a finding can quote it. It is the ONE implementation of
+// PlaceholderDomainPattern in this module: a second `strings.Contains` spelling
+// of the same idea is what made `myexample.com` an install doctor refused and
+// `tube.example.org` one it waved through.
+//
+// Call it on a NON-COMMENT line: the Caddyfile template's comments are prose
+// about example.com and are meant to keep it, which is the same line deploy.sh
+// filters out before it greps.
+func PlaceholderDomain(s string) (string, bool) {
+	m := placeholderDomainRE.FindStringSubmatch(s)
+	if m == nil {
+		return "", false
 	}
-	return checkAcmeEmailShape(email)
+	return m[2], true
 }
 
 // checkAcmeEmailShape rejects a value that would not survive being written as a
