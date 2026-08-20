@@ -53,7 +53,7 @@
 //	                           DATABASE_URL
 //	Redis     local            VIDRA_EXTERNAL_REDIS=false     (bundled redis, core)
 //	Redis     external+URL     VIDRA_EXTERNAL_REDIS=true      (+ external-redis overlay)
-//	                           REDIS_URL
+//	                           REDIS_URL, SEARCH_REDIS_URL
 //	Storage   local            STORAGE_BACKEND=local          NONE
 //	Storage   s3               STORAGE_BACKEND=s3             NONE
 //	                           STORAGE_S3_*
@@ -323,28 +323,54 @@ const (
 	externalRedisKey    = "VIDRA_EXTERNAL_REDIS"
 	databaseURLKey      = "DATABASE_URL"
 	redisURLKey         = "REDIS_URL"
+	searchRedisURLKey   = "SEARCH_REDIS_URL"
 	tlsModeKey          = "VIDRA_TLS_MODE"
 	acmeEmailKey        = "VIDRA_ACME_EMAIL"
 )
+
+// searchRedisDefaultDB is the logical Redis database vidra-search runs on when
+// the bundled Redis is used: the compose chain hands the search service
+// `redis://…/1` while the api gets `…/0`. It is the index deriveSearchRedisURL
+// aims at, and the reason a straight copy of REDIS_URL is not an acceptable
+// default — see that function.
+const searchRedisDefaultDB = 1
 
 // managedKeys are the keys the component and TLS answers own, in the order they
 // render. A template that does not define them yet gets them APPENDED (see
 // applyComponentRule): the deploy scripts must find VIDRA_COMPOSE_PROFILES in
 // every file this engine writes, including one generated from a template that
 // predates the key.
-var managedKeys = []string{profilesKey, externalPostgresKey, externalRedisKey, databaseURLKey, redisURLKey, tlsModeKey, acmeEmailKey}
+var managedKeys = []string{profilesKey, externalPostgresKey, externalRedisKey, databaseURLKey, redisURLKey, searchRedisURLKey, tlsModeKey, acmeEmailKey}
 
 // externalOverlays pairs each external-service switch with the compose overlay
-// the deploy adds for it and the connection string it cannot work without. The
+// the deploy adds for it and the connection strings it cannot work without. The
 // ORDER is the order the overlays go on the command line.
+//
+// urlKeys is a LIST because the redis overlay asserts TWO of them. It rewrites
+// the api's `REDIS_URL: ${REDIS_URL:?…}` and the search service's
+// `REDIS_URL: ${SEARCH_REDIS_URL:?…}`, both with the `:?` form, so an env file
+// that names only one of them fails the compose render — before a single
+// container starts — with an error about a variable this engine was supposed to
+// have written. The first entry is the PRIMARY: it is the one an operator
+// answers, and the one the others are derived from.
 var externalOverlays = []struct {
 	flag    string
-	urlKey  string
+	urlKeys []string
 	overlay string
 	service string
 }{
-	{externalPostgresKey, databaseURLKey, "docker-compose.external-postgres.yml", "PostgreSQL"},
-	{externalRedisKey, redisURLKey, "docker-compose.external-redis.yml", "Redis"},
+	{externalPostgresKey, []string{databaseURLKey}, "docker-compose.external-postgres.yml", "PostgreSQL"},
+	{externalRedisKey, []string{redisURLKey, searchRedisURLKey}, "docker-compose.external-redis.yml", "Redis"},
+}
+
+// urlKeyRoles says what each asserted connection string is FOR. The "it is
+// blank" half of the message is the same for all of them; what has to go in it
+// is not, and for SEARCH_REDIS_URL the difference is the whole point.
+var urlKeyRoles = map[string]string{
+	databaseURLKey: "the managed database's connection string (postgres://USER:PASSWORD@HOST:5432/DB?sslmode=require)",
+	redisURLKey:    "the api's Redis DSN (rediss://:PASSWORD@HOST:6379/0)",
+	searchRedisURLKey: "the SEARCH service's Redis DSN, which must name a DIFFERENT logical database from " + redisURLKey +
+		" (rediss://:PASSWORD@HOST:6379/1) — the two services share no keyspace, and pointing both at the same one lets search's index writes and the api's cache and rate-limit counters evict each other",
 }
 
 // baseProfiles are the profiles every deployment runs: the api and its bundled
@@ -715,6 +741,7 @@ func lineShapeIssues(values map[string]string) []Issue {
 func Warnings(vars map[string]string) []string {
 	out := append(interpolationWarnings(vars), quoteWarnings(vars)...)
 	out = append(out, componentWarnings(vars)...)
+	out = append(out, searchRedisWarnings(vars)...)
 	return append(out, tlsWarnings(vars)...)
 }
 
@@ -1095,6 +1122,24 @@ func applyComponentRule(req Request, answers map[string]string, res *Result) []s
 				v = strings.Join(Profiles(req.Answers), " ")
 			case externalPostgresKey, externalRedisKey:
 				v = "false"
+			case searchRedisURLKey:
+				// Only meaningful with an EXTERNAL Redis: with the bundled one the
+				// compose chain derives both DSNs from REDIS_PASSWORD, and writing an
+				// override here would be the hand-written second value the template
+				// warns against ("do not set REDIS_URL/SEARCH_REDIS_URL by hand").
+				if !isTrue(res.Values[externalRedisKey]) {
+					continue
+				}
+				derived, db, ok := deriveSearchRedisURL(res.Values[redisURLKey])
+				if !ok {
+					// Nothing safe to derive from. Leaving it ABSENT is deliberate:
+					// componentIssues then refuses the file by name, which is a better
+					// answer than inventing a DSN that shares a keyspace.
+					continue
+				}
+				v = derived
+				res.Warnings = append(res.Warnings, fmt.Sprintf("%s was derived from %s by moving to logical database %d, because the search service must not share a keyspace with the api. Check the managed instance exposes that database (some providers expose only /0, and some disable SELECT entirely) — if it does not, point %s at a SECOND instance and re-run",
+					searchRedisURLKey, redisURLKey, db, searchRedisURLKey))
 			case tlsModeKey:
 				// The deploy scripts read a blank mode as acme; writing it out is
 				// how an operator finds the knob at all.
@@ -1113,6 +1158,61 @@ func applyComponentRule(req Request, answers map[string]string, res *Result) []s
 		}
 	}
 	return added
+}
+
+// deriveSearchRedisURL is the default SEARCH_REDIS_URL for a managed Redis: the
+// api's own DSN moved to the NEXT logical database. It returns the derived URL
+// and the index it landed on, or ok=false when there is nothing safe to derive
+// from.
+//
+// It is not a copy of REDIS_URL, and that is the whole reason this function
+// exists. The compose model gives the api `…/0` and the search service `…/1`,
+// and both the base file and the external-redis overlay say why in as many
+// words: "Do NOT feed this from ${REDIS_URL}: that variable carries core's /0
+// and the two services would share a keyspace." Search's index writes and the
+// api's cache/rate-limit counters are two independent key populations under one
+// eviction policy (the bundled Redis runs allkeys-lru with a hard ceiling), so
+// sharing a database is not a tidiness question — it is each service quietly
+// evicting the other's data.
+//
+// The rule is deliberately narrow, because a derived DSN is a value nobody
+// typed: a redis:// or rediss:// URL whose path is empty or a plain database
+// index. Anything else — a unix socket, a provider's bespoke URL shape, a path
+// carrying something that is not an index — returns ok=false, and the caller
+// leaves the key absent so Check refuses the file by name rather than inventing
+// a connection string.
+func deriveSearchRedisURL(redisURL string) (string, int, bool) {
+	raw := strings.TrimSpace(redisURL)
+	if raw == "" {
+		return "", 0, false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "", 0, false
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "redis", "rediss":
+	default:
+		return "", 0, false
+	}
+	if u.Opaque != "" {
+		return "", 0, false
+	}
+	db := 0
+	if path := strings.TrimPrefix(u.Path, "/"); path != "" {
+		n, err := strconv.Atoi(path)
+		if err != nil || n < 0 {
+			return "", 0, false
+		}
+		db = n
+	}
+	// The NEXT index rather than a hard-coded 1: an operator who put the api on
+	// /3 gets /4, which is still a database of its own. searchRedisDefaultDB is
+	// what the ordinary /0 answer lands on, and is the value the compose model
+	// already uses.
+	next := db + searchRedisDefaultDB
+	u.Path = "/" + strconv.Itoa(next)
+	return u.String(), next, true
 }
 
 func isManagedKey(key string) bool {
@@ -1136,13 +1236,43 @@ func isManagedKey(key string) bool {
 func componentWarnings(vars map[string]string) []string {
 	var out []string
 	for _, c := range externalOverlays {
-		if strings.TrimSpace(vars[c.urlKey]) == "" || isTrue(vars[c.flag]) {
+		if isTrue(vars[c.flag]) {
+			continue
+		}
+		var set []string
+		for _, k := range c.urlKeys {
+			if strings.TrimSpace(vars[k]) != "" {
+				set = append(set, k)
+			}
+		}
+		if len(set) == 0 {
 			continue
 		}
 		out = append(out, fmt.Sprintf("%s is set but %s is not true: the api would use the managed %s while the deploy still starts the bundled one (its container, volume and password are all still there, unused). Set %s=true so the deploy adds %s and skips the bundled service, or remove %s to go back to it",
-			c.urlKey, c.flag, c.service, c.flag, c.overlay, c.urlKey))
+			strings.Join(set, " and "), c.flag, c.service, c.flag, c.overlay, strings.Join(set, "/")))
 	}
 	return out
+}
+
+// searchRedisWarnings flags the managed Redis whose two DSNs name the SAME
+// logical database. Nothing fails: both services connect, both work, and the
+// symptom arrives weeks later as search results that go missing under load, or
+// a rate limiter that forgets — because the bundled and managed configurations
+// alike run one eviction policy over what are now two key populations.
+//
+// A warning rather than a refusal, deliberately. A provider that exposes only
+// database 0 (or no SELECT at all) leaves an operator with exactly this file
+// until they provision a second instance, and refusing to write it would strand
+// a deployment that is running. The engine never PRODUCES this state — see
+// deriveSearchRedisURL — so a file with it in was hand-edited, which is also the
+// only way it gets fixed.
+func searchRedisWarnings(vars map[string]string) []string {
+	search := strings.TrimSpace(vars[searchRedisURLKey])
+	if search == "" || search != strings.TrimSpace(vars[redisURLKey]) {
+		return nil
+	}
+	return []string{fmt.Sprintf("%s and %s are the same DSN, so the api and the search service share one Redis keyspace: their keys evict each other under the instance's eviction policy, and neither failure looks like a configuration problem when it lands. Point %s at a different logical database (…/%d), or at a second instance if the provider does not expose SELECT",
+		redisURLKey, searchRedisURLKey, searchRedisURLKey, searchRedisDefaultDB)}
 }
 
 // componentIssues is the one combination that cannot boot: an external service
@@ -1165,11 +1295,16 @@ func componentIssues(vars map[string]string) []Issue {
 			out = append(out, Issue{Var: c.flag, Msg: fmt.Sprintf("%q is not a boolean — write true or false. The deploy scripts and the setup engine read this value with different parsers, and a spelling only one of them accepts is how the overlay gets added without the bundled service being skipped (or the reverse)", raw)})
 			continue
 		}
-		if !isTrue(raw) || strings.TrimSpace(vars[c.urlKey]) != "" {
+		if !isTrue(raw) {
 			continue
 		}
-		out = append(out, Issue{Var: c.urlKey, Msg: fmt.Sprintf("%s=true selects an external %s, so the deploy adds %s and the bundled service never starts — but %s is blank, leaving nothing to connect to. Set it to the managed connection string, or set %s=false to use the bundled service",
-			c.flag, c.service, c.overlay, c.urlKey, c.flag)})
+		for _, k := range c.urlKeys {
+			if strings.TrimSpace(vars[k]) != "" {
+				continue
+			}
+			out = append(out, Issue{Var: k, Msg: fmt.Sprintf("%s=true selects an external %s, so the deploy adds %s and the bundled service never starts — but %s is blank, leaving nothing to connect to. The overlay asserts it with the `:?` form, so the compose render fails before any container starts. Set it to %s, or set %s=false to use the bundled service",
+				c.flag, c.service, c.overlay, k, urlKeyRoles[k], c.flag)})
+		}
 	}
 	return out
 }

@@ -1454,6 +1454,191 @@ func TestCheckHandlesTheTLSKeys(t *testing.T) {
 	}
 }
 
+// The external-redis overlay asserts TWO DSNs with the `:?` form, so an env file
+// that names only REDIS_URL fails the compose render before a container starts.
+// The engine therefore writes SEARCH_REDIS_URL as well — on a DIFFERENT logical
+// database, because the compose model puts the api on /0 and search on /1 and
+// both files say in as many words not to feed one from the other.
+func TestExternalRedisWritesTheSearchDSNOnItsOwnDatabase(t *testing.T) {
+	answers := baseAnswers()
+	answers.Redis = RedisAnswers{Mode: "external", URL: "rediss://default:pw@redis.example.net:25061/0"}
+	res := generate(t, Request{Answers: answers})
+
+	if got, want := res.Values[searchRedisURLKey], "rediss://default:pw@redis.example.net:25061/1"; got != want {
+		t.Errorf("%s = %q, want %q", searchRedisURLKey, got, want)
+	}
+	if res.Values[searchRedisURLKey] == res.Values[redisURLKey] {
+		t.Errorf("%s and %s are the same DSN — the two services would share a keyspace", redisURLKey, searchRedisURLKey)
+	}
+	// It has to survive the render: this key is read by a shell script and by
+	// compose, one line at a time.
+	back := mustParse(t, res.Content)
+	if v, ok := back.Value(searchRedisURLKey); !ok || v != res.Values[searchRedisURLKey] {
+		t.Errorf("re-parsed %s = %q (present=%v), want %q", searchRedisURLKey, v, ok, res.Values[searchRedisURLKey])
+	}
+	if !warned(res.Warnings, "logical database 1") {
+		t.Errorf("warnings = %v, want the derived database called out", res.Warnings)
+	}
+
+	// A LOCAL Redis gets no override at all: the compose chain derives both DSNs
+	// from REDIS_PASSWORD, and a hand-written second value is what the template
+	// warns against.
+	local := generate(t, Request{Answers: baseAnswers()})
+	if v, ok := mustParse(t, local.Content).Value(searchRedisURLKey); ok {
+		t.Errorf("%s = %q was written for the bundled Redis; the compose chain owns that DSN", searchRedisURLKey, v)
+	}
+}
+
+// An existing distinct value is an ANSWER, not a leftover: an operator who put
+// the search service on a second managed instance must not have it silently
+// re-derived onto the api's instance by a re-run about something else.
+func TestExternalRedisPreservesAHandWrittenSearchDSN(t *testing.T) {
+	const searchDSN = "rediss://default:pw@search-redis.example.net:25061/0"
+	existing := mustParse(t, []byte(strings.Join([]string{
+		// A real re-run source: the KEK is what makes this an existing deployment
+		// rather than a first install, and the gate on minting one over it is why.
+		"MFA_KEY_KEK=" + base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"VIDRA_EXTERNAL_REDIS=true",
+		"REDIS_URL=rediss://default:pw@redis.example.net:25061/0",
+		searchRedisURLKey + "=" + searchDSN,
+	}, "\n")+"\n"))
+
+	// Nothing answered about Redis at all — the re-run is about the release tag.
+	res := generate(t, Request{Existing: existing, Answers: baseAnswers()})
+	if got := res.Values[searchRedisURLKey]; got != searchDSN {
+		t.Errorf("%s = %q, want the existing value %q preserved", searchRedisURLKey, got, searchDSN)
+	}
+	if contains(res.Carried, searchRedisURLKey) {
+		t.Errorf("%s was reported as carried; the managed block owns it (Carried=%v)", searchRedisURLKey, res.Carried)
+	}
+	if warned(res.Warnings, "was derived from") {
+		t.Errorf("warnings = %v, want no derivation warning when nothing was derived", res.Warnings)
+	}
+}
+
+func TestDeriveSearchRedisURL(t *testing.T) {
+	for _, tc := range []struct {
+		name, in, want string
+		wantDB         int
+		ok             bool
+	}{
+		{name: "no database index defaults to 0", in: "rediss://default:pw@r.example.net:25061", want: "rediss://default:pw@r.example.net:25061/1", wantDB: 1, ok: true},
+		{name: "trailing slash", in: "redis://r.example.net:6379/", want: "redis://r.example.net:6379/1", wantDB: 1, ok: true},
+		{name: "explicit 0", in: "redis://r.example.net:6379/0", want: "redis://r.example.net:6379/1", wantDB: 1, ok: true},
+		// An operator who moved the api off /0 still gets a database of its own.
+		{name: "non-zero index moves along", in: "redis://r.example.net:6379/3", want: "redis://r.example.net:6379/4", wantDB: 4, ok: true},
+		{name: "query parameters survive", in: "rediss://r.example.net:6379/0?ssl_cert_reqs=required", want: "rediss://r.example.net:6379/1?ssl_cert_reqs=required", wantDB: 1, ok: true},
+		{name: "blank", in: "", ok: false},
+		{name: "another protocol is not a redis DSN", in: "postgres://u:p@db.example.net:5432/x", ok: false},
+		{name: "a unix socket has no index to move", in: "unix:///var/run/redis.sock", ok: false},
+		{name: "a path that is not an index", in: "redis://r.example.net:6379/vidra", ok: false},
+		{name: "no host", in: "redis:///0", ok: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, db, ok := deriveSearchRedisURL(tc.in)
+			if ok != tc.ok {
+				t.Fatalf("ok = %v, want %v (got %q)", ok, tc.ok, got)
+			}
+			if !tc.ok {
+				return
+			}
+			if got != tc.want || db != tc.wantDB {
+				t.Errorf("= %q/%d, want %q/%d", got, db, tc.want, tc.wantDB)
+			}
+		})
+	}
+}
+
+// A DSN nothing safe can be derived from leaves the key ABSENT and the file
+// REFUSED by name — better than inventing a connection string that shares a
+// keyspace, and it names the one variable the operator has to write.
+func TestExternalRedisRefusesADSNItCannotDeriveFrom(t *testing.T) {
+	answers := baseAnswers()
+	answers.Redis = RedisAnswers{Mode: "external", URL: "unix:///var/run/redis.sock"}
+	_, err := Generate(Request{Template: fixtureTemplate(t), Answers: answers, Rand: &seqReader{}})
+	var invalid *ValidationError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("err = %v, want a refusal to write the file", err)
+	}
+	if !hasIssue(invalid.Issues, searchRedisURLKey) {
+		t.Errorf("issues = %v, want one against %s", invalid.Issues, searchRedisURLKey)
+	}
+	for _, is := range invalid.Issues {
+		if is.Var == searchRedisURLKey && !strings.Contains(is.Msg, "DIFFERENT logical database") {
+			t.Errorf("%s message does not say what makes it different from REDIS_URL: %q", searchRedisURLKey, is.Msg)
+		}
+	}
+}
+
+// Check is the other half: a hand-written file with an external Redis and no
+// search DSN is exactly what the overlay's `:?` assertion kills at render time,
+// so it has to be a problem here rather than a surprise on the deploy.
+func TestCheckRequiresBothRedisDSNsForAnExternalRedis(t *testing.T) {
+	base := func(extra map[string]string) map[string]string {
+		vars := map[string]string{
+			"VIDRA_ENV":            "production",
+			"PUBLIC_BASE_URL":      "https://video.example.org",
+			"CORS_ALLOWED_ORIGINS": "https://video.example.org",
+			"JWT_SECRET":           strings.Repeat("s", 48),
+			externalRedisKey:       "true",
+			redisURLKey:            "rediss://default:pw@r.example.net:25061/0",
+		}
+		for k, v := range extra {
+			vars[k] = v
+		}
+		return vars
+	}
+	if issues := Check(base(nil)); !hasIssue(issues, searchRedisURLKey) {
+		t.Errorf("issues = %v, want %s required by the external-redis overlay", issues, searchRedisURLKey)
+	}
+	whole := base(map[string]string{searchRedisURLKey: "rediss://default:pw@r.example.net:25061/1"})
+	if hasIssue(Check(whole), searchRedisURLKey) {
+		t.Errorf("issues = %v, want silence once both DSNs are set", Check(whole))
+	}
+	// Both set to the same value is a shared keyspace: a warning, not a refusal —
+	// a provider exposing only database 0 leaves an operator with this file.
+	same := base(map[string]string{searchRedisURLKey: "rediss://default:pw@r.example.net:25061/0"})
+	if hasIssue(Check(same), searchRedisURLKey) {
+		t.Errorf("issues = %v, want a shared keyspace warned about rather than refused", Check(same))
+	}
+	if !warned(Warnings(same), "share one Redis keyspace") {
+		t.Errorf("warnings = %v, want the shared keyspace flagged", Warnings(same))
+	}
+	// A half-configured managed Redis still warns, and names BOTH keys it found.
+	half := base(map[string]string{externalRedisKey: "false", searchRedisURLKey: "rediss://default:pw@r.example.net:25061/1"})
+	if !warned(Warnings(half), redisURLKey+" and "+searchRedisURLKey) {
+		t.Errorf("warnings = %v, want both DSNs named", Warnings(half))
+	}
+}
+
+// The passwords of the BUNDLED services must survive an external answer. Compose
+// interpolates docker-compose.prod.yml as it LOADS it — before profiles are
+// evaluated and before the overlay is merged — so the `${POSTGRES_PASSWORD:?}` /
+// `${REDIS_PASSWORD:?}` assertions on services that never start still fire, and
+// a blank one fails the render of a perfectly good managed-service deployment.
+func TestExternalDatastoresKeepTheBundledPasswordsNonEmpty(t *testing.T) {
+	answers := baseAnswers()
+	answers.Database = DatabaseAnswers{Mode: "external", URL: "postgresql://doadmin:pw@db.example.net:25060/defaultdb?sslmode=require"}
+	answers.Redis = RedisAnswers{Mode: "external", URL: "rediss://default:pw@r.example.net:25061/0"}
+	back := mustParse(t, generate(t, Request{Answers: answers}).Content)
+
+	for _, key := range []string{"POSTGRES_PASSWORD", "REDIS_PASSWORD"} {
+		v, ok := back.Value(key)
+		if !ok || strings.TrimSpace(v) == "" || IsPlaceholder(v) {
+			t.Errorf("%s = %q (present=%v): compose asserts it with `:?` while loading the prod overlay, so it must stay non-empty even though the bundled service never starts", key, v, ok)
+		}
+	}
+	// And the render-check command the engine prints must carry BOTH overlays, in
+	// the order the deploy applies them.
+	cmd := RenderCheckCommand("env/production.env", back.Values())
+	postgres := strings.Index(cmd, "docker-compose.external-postgres.yml")
+	redis := strings.Index(cmd, "docker-compose.external-redis.yml")
+	prod := strings.Index(cmd, "docker-compose.prod.yml")
+	if postgres < 0 || redis < 0 || !(prod < postgres && postgres < redis) {
+		t.Errorf("render check command does not apply prod, then postgres, then redis: %s", cmd)
+	}
+}
+
 func mustParse(t *testing.T, b []byte) *EnvFile {
 	t.Helper()
 	f, err := ParseEnvFile(b)
