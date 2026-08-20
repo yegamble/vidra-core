@@ -122,8 +122,17 @@ func runUpdate(s streams, args []string) error {
 		return fmt.Errorf("update: %s", gate.refuse)
 	}
 
-	armed, why := armRollback(dep, plan, uf.noRollback)
-	renderUpdatePlan(s.out, dep, plan, gate, armed, why)
+	// The floor is read once, before the confirm screen and before deploy.sh gets
+	// its hands on the deployment, and the same reading is used by the failure
+	// path: the two must not be able to disagree about whether a flip back was
+	// ever possible.
+	floor := readRollbackFloor(dep.root)
+	armed, why := armRollback(dep, plan, floor, uf.noRollback)
+	keep, keepNote := envHistoryKeepValue(processEnv, values)
+	renderUpdatePlan(s.out, dep, plan, gate, armed, why, keep)
+	if keepNote != "" {
+		fmt.Fprintf(s.err, "note: %s\n", keepNote)
+	}
 
 	if !uf.yes {
 		ok, err := confirmUpdate(s)
@@ -139,7 +148,7 @@ func runUpdate(s streams, args []string) error {
 	// From here on the deployment is being modified, and every step says what it
 	// did before the next one starts — an update interrupted by a dropped ssh
 	// session has to be reconstructable from what reached the terminal.
-	snapshot, snapErr := snapshotEnvFile(dep.root, dep.envPath, time.Now())
+	snapshot, snapErr := snapshotEnvFile(dep.root, dep.envPath, keep, time.Now())
 	if snapshot == "" {
 		return fmt.Errorf("update: %v", snapErr)
 	}
@@ -162,7 +171,7 @@ func runUpdate(s streams, args []string) error {
 		fmt.Fprintf(s.out, "\nvidra update: %s is deployed. The previous env file is %s.\n", plan.target, snapshot)
 		return nil
 	}
-	return recoverFromFailedDeploy(s, dep, plan, armed, why, snapshot, deployErr)
+	return recoverFromFailedDeploy(s, dep, plan, floor, armed, why, snapshot, deployErr)
 }
 
 // ---------------------------------------------------------------------------
@@ -911,12 +920,28 @@ func recoverFromFailedDeploy(s streams, dep deployment, p updatePlan, floor roll
 [update] THE ROLLBACK ALSO FAILED. THIS INSTANCE NEEDS A HUMAN.
 [update] The deploy of %s failed and the flip back to core=%s user=%s search=%s
 [update] did not come up either. Both of them printed why, above.
-[update] Roll the application back by hand:
+`, p.target, p.current["VIDRA_CORE_TAG"], p.current["VIDRA_USER_TAG"], p.current["VIDRA_SEARCH_TAG"])
+	// The by-hand rollback is offered only when the script would take it. Below
+	// the floor it is not a remedy at all — rollback.sh refuses that tag before it
+	// does anything — and printing it during a double failure would send the
+	// operator round the same loop that has just closed on them. (Arming already
+	// checks this, so reaching here below the floor takes a floor that moved under
+	// a running command; it is checked again because the cost of being wrong is a
+	// wasted attempt at the worst moment of the day.)
+	if floor.refuses(p.oldest) {
+		fmt.Fprintf(s.err, `[update] Do NOT flip back by hand: deploy/rollback.sh refuses a core or search
+[update] tag below %s, and this deployment came from %s. The way back is the dump
+[update] deploy.sh took before it started:
+[update]     ./deploy/restore.sh %s
+`, floor.tag, p.oldest, dump)
+	} else {
+		fmt.Fprintf(s.err, `[update] Roll the application back by hand:
 [update]     ./deploy/rollback.sh %s
 [update] If the failure is a schema change, restore the pre-deploy dump first:
 [update]     ./deploy/restore.sh %s
-[update] The env file as it was before this run: %s
-`, p.target, p.current["VIDRA_CORE_TAG"], p.current["VIDRA_USER_TAG"], p.current["VIDRA_SEARCH_TAG"], p.oldest, dump, snapshot)
+`, p.oldest, dump)
+	}
+	fmt.Fprintf(s.err, "[update] The env file as it was before this run: %s\n", snapshot)
 	return deployErr
 }
 
@@ -1017,7 +1042,7 @@ func plural(n int, one, many string) string {
 
 // renderUpdatePlan is the screen an operator confirms against. Everything on it
 // is something they would otherwise have to go and look up while deciding.
-func renderUpdatePlan(w io.Writer, dep deployment, p updatePlan, gate schemaCheck, armed bool, why string) {
+func renderUpdatePlan(w io.Writer, dep deployment, p updatePlan, gate schemaCheck, armed bool, why string, keep int) {
 	fmt.Fprintf(w, "vidra update — %s (%s)\n\n", dep.root, dep.envFile)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprint(tw, "  component\tcurrent\t\ttarget\n")
@@ -1038,7 +1063,10 @@ func renderUpdatePlan(w io.Writer, dep deployment, p updatePlan, gate schemaChec
 	} else {
 		fmt.Fprintf(w, "rollback: NOT ARMED — %s\n", why)
 	}
-	fmt.Fprintf(w, "history:  %s is copied to %s/ before it is rewritten\n", dep.envFile, envHistoryDirName)
+	// The resolved keep count, not the default: it is the one number on this screen
+	// an operator can have changed by hand, in an env file or an export, and a
+	// typo in it is otherwise invisible until snapshots start disappearing.
+	fmt.Fprintf(w, "history:  %s is copied to %s/ before it is rewritten (newest %d kept)\n", dep.envFile, envHistoryDirName, keep)
 	fmt.Fprintln(w, "then:     ./deploy/deploy.sh runs with its own gates — the pre-deploy dump, the migrations, the probes")
 }
 
@@ -1063,12 +1091,17 @@ api is down, or its image predates /schemaz, that is a note and not a refusal.
 The automatic rollback is a TAG FLIP through deploy/rollback.sh and it is armed
 only when the target is ONE release ahead of what is running. That is the exact
 span of the schema-compatibility policy: release N's schema keeps release N-1's
-code running. Skipping a release disarms it, out loud, before you confirm — the
-way back from there is deploy.sh's pre-deploy dump and ./deploy/restore.sh.
+code running. It is also armed only when rollback.sh would ACCEPT the tags it
+would flip back to — that script refuses a core or search tag below its own
+MIN_EMBEDDED_MIGRATE_TAG, which is read out of it rather than restated here.
+Either way the disarm is printed, out loud, before you confirm; the way back from
+there is deploy.sh's pre-deploy dump and ./deploy/restore.sh.
 
 The env file is copied to %s/<name>.<UTC timestamp> before it is
-rewritten, and ten generations are kept. deploy/rollback.sh keeps one .bak, which
-after two rollbacks holds the middle of the incident rather than the beginning.
+rewritten, and the newest ten are kept — VIDRA_ENV_HISTORY_KEEP changes that, and
+is the same variable deploy/lib.sh reads, because both halves prune the same
+directory. deploy/rollback.sh keeps one .bak, which after two rollbacks holds the
+middle of the incident rather than the beginning.
 
 flags:
   -C, --repo <dir>   the deployment directory (default ".")
