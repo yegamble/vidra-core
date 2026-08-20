@@ -121,9 +121,8 @@ func (st *updateStage) out() string { return st.h.out.String() }
 // are about where an update comes FROM.
 func (st *updateStage) pin(tag string) {
 	st.t.Helper()
-	path := filepath.Join(st.dir, "env", "production.env")
-	write(st.t, path, strings.ReplaceAll(st.envFile(), "_TAG=v0.2.0", "_TAG="+tag))
-	_ = path
+	write(st.t, filepath.Join(st.dir, "env", "production.env"),
+		strings.ReplaceAll(st.envFile(), "_TAG=v0.2.0", "_TAG="+tag))
 }
 
 // rollbackLine is the confirm screen's one-line verdict on the automatic
