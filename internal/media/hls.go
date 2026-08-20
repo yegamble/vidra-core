@@ -904,8 +904,35 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		return HLSResult{}, fmt.Errorf("media: trick-play ladder for %q: %w: %s", sourceKey, redactSource(src, trickErr), tailOf(trickStderr))
 	}
 
-	// Everything below is per-rung but decode-free: the remuxes are stream
-	// copies and the trick-play finalisation is playlist bookkeeping.
+	// The output prefix is derived from the SOURCE key (W14): a replacement
+	// source writes a fresh generation directory so the tree players are
+	// currently streaming is never disturbed; promotion is the DB-row swap in
+	// transcode.storeResult.
+	prefix := HLSPrefixForSource(videoID, sourceKey)
+	// A manual re-run of the same source version uses the same stable prefix, so
+	// the prior generation is cleared before the new one is written -- otherwise
+	// stale resolutions/segments survive the overwrite. Replacement uploads use a
+	// fresh rN prefix, preserving uninterrupted playback until DB promotion.
+	//
+	// This now runs BEFORE the per-rung uploads rather than immediately before a
+	// single bulk store, which widens the window during which a re-run of the
+	// SAME source has no serving tree by the remux time. Replacements (the common
+	// case) are unaffected because they write to a different prefix.
+	if deleter, ok := t.blobs.(storage.PrefixDeleter); ok {
+		if err := deleter.DeletePrefix(ctx, prefix); err != nil {
+			return HLSResult{}, err
+		}
+	}
+
+	// Everything below is per-rung but decode-free: the remuxes are stream copies
+	// and the trick-play finalisation is playlist bookkeeping.
+	//
+	// Each rung is uploaded and freed as soon as it is finished rather than
+	// accumulating the whole tree for one bulk store at the end. That matters
+	// because remuxHLSDownloads writes a full progressive video.mp4 AND a full
+	// video-only.mp4 per rung on top of its segments -- roughly three times the
+	// rung's own encoded size -- so holding every rung's derivatives at once was
+	// the single largest contributor to peak scratch.
 	rungSizes := make(map[int]int64, len(rungs))
 	trickPlay := make(map[int]hlsTrickPlayInfo, len(rungs))
 	for i, r := range rungs {
@@ -921,6 +948,7 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 			return HLSResult{}, fmt.Errorf("media: trick-play %s for %q: %w", r.Name(), sourceKey, err)
 		}
 		trickPlay[r.Height] = trickInfo
+		// Measured before the upload frees the directory.
 		rungSizes[r.Height], err = directorySize(dir)
 		if err != nil {
 			return HLSResult{}, err
@@ -928,49 +956,47 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		if i == 0 {
 			// Audio-only is an optional convenience asset. A silent source (or
 			// any extraction failure) must not fail the canonical HLS transcode.
+			// It is written at the TOP level, so it survives this rung's cleanup.
 			dst := filepath.Join(tmp, HLSAudioDownloadFilename)
 			cmd := exec.CommandContext(ctx, t.bin, hlsAudioM4AArgs(playlist, dst)...)
 			if err := cmd.Run(); err != nil {
 				_ = os.Remove(dst)
 			}
 		}
+		if err := t.storeTree(ctx, dir, prefix+"/"+r.Name()); err != nil {
+			reportProgress(progress, TranscodeProgress{
+				Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
+				State: ProgressFailed, Stage: "storing", Percent: 96,
+			})
+			return HLSResult{}, err
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			return HLSResult{}, err
+		}
 	}
+
 	master := renderMasterPlaylist(rungs, trickPlay)
 	if err := os.WriteFile(filepath.Join(tmp, "master.m3u8"), []byte(master), 0o644); err != nil {
 		return HLSResult{}, err
 	}
 	// Attribute top-level HLS assets (master playlist and optional audio-only
 	// download) to the top rendition so summing video_renditions.size_bytes is
-	// the exact stored HLS-tree size, not just the variant subdirectories.
-	totalSize, err := directorySize(tmp)
+	// the exact stored HLS-tree size, not just the variant subdirectories. The
+	// rung directories are already uploaded and removed, so what remains in tmp
+	// IS exactly the top-level extra.
+	extra, err := directorySize(tmp)
 	if err != nil {
 		return HLSResult{}, err
 	}
-	var rungTotal int64
-	for _, size := range rungSizes {
-		rungTotal += size
-	}
-	if extra := totalSize - rungTotal; extra > 0 {
+	if extra > 0 {
 		rungSizes[rungs[0].Height] += extra
 	}
 
-	// The output prefix is derived from the SOURCE key (W14): a replacement
-	// source writes a fresh generation directory so the tree players are
-	// currently streaming is never disturbed; promotion is the DB-row swap in
-	// transcode.storeResult.
-	prefix := HLSPrefixForSource(videoID, sourceKey)
-	// A manual re-run of the same source version uses the same stable prefix.
-	// Remove that prior generation immediately before promotion so stale
-	// resolutions/segments cannot survive the overwrite. Replacement uploads use
-	// a fresh rN prefix, preserving uninterrupted playback until DB promotion.
-	if deleter, ok := t.blobs.(storage.PrefixDeleter); ok {
-		if err := deleter.DeletePrefix(ctx, prefix); err != nil {
-			return HLSResult{}, err
-		}
-	}
 	// A replacement source may be silent even when the previous generation had
 	// audio. storeTree only overwrites files present in the new tree, so remove
 	// the old optional derivative before storing a generation that omits it.
+	// (Redundant when the backend is a PrefixDeleter -- the prefix was already
+	// cleared above -- but backends without that capability still need it.)
 	if _, statErr := os.Stat(filepath.Join(tmp, HLSAudioDownloadFilename)); os.IsNotExist(statErr) {
 		if err := t.blobs.Delete(ctx, prefix+"/"+HLSAudioDownloadFilename); err != nil {
 			return HLSResult{}, err
@@ -978,6 +1004,7 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	} else if statErr != nil {
 		return HLSResult{}, statErr
 	}
+	// Only the master playlist and the optional audio-only download are left.
 	if err := t.storeTree(ctx, tmp, prefix); err != nil {
 		for _, r := range rungs {
 			reportProgress(progress, TranscodeProgress{
@@ -987,6 +1014,15 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		}
 		return HLSResult{}, err
 	}
+	// The HLS tree is stored; free the scratch NOW rather than at the deferred
+	// cleanup. The VP9 encode below runs for minutes, and the deferred RemoveAll
+	// would otherwise hold the entire tree on disk for its whole duration on top
+	// of VP9's own output. RemoveAll on an already-removed path is not an error,
+	// so the defer stays correct.
+	if err := os.RemoveAll(tmp); err != nil {
+		return HLSResult{}, err
+	}
+
 	res := HLSResult{MasterKey: prefix + "/master.m3u8"}
 	for _, r := range rungs {
 		res.Renditions = append(res.Renditions, HLSRendition{

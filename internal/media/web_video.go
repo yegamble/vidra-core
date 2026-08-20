@@ -166,7 +166,8 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 			State: ProgressRunning, Stage: "storing", Percent: 97,
 		})
 		filename := r.Name() + ".mp4"
-		f, err := os.Open(filepath.Join(tmp, filename))
+		local := filepath.Join(tmp, filename)
+		f, err := os.Open(local)
 		if err != nil {
 			return nil, err
 		}
@@ -175,6 +176,13 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 		_ = f.Close()
 		if putErr != nil {
 			return nil, putErr
+		}
+		// Free each rendition as soon as it is stored. The single decode-once
+		// pass necessarily produces every rung before any can be uploaded, so
+		// this does not lower the peak — it shortens how long the peak is held,
+		// which is what matters when several jobs share one scratch volume.
+		if err := os.Remove(local); err != nil {
+			return nil, err
 		}
 		results = append(results, WebVideoResult{
 			Height: r.Height, Width: r.Width, StorageKey: key, SizeBytes: size,
