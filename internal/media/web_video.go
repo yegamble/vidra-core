@@ -53,11 +53,9 @@ func WebVideoPrefixForSource(videoID uuid.UUID, sourceKey string) string {
 
 // TranscodeWebVideos creates one independently tracked progressive MP4 per
 // planned resolution, always from the retained original sourceKey.
-func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, progress ProgressFunc) ([]WebVideoResult, error) {
-	md, err := t.probe.Probe(ctx, sourceKey)
-	if err != nil {
-		return nil, err
-	}
+// md is the caller's already-obtained probe of sourceKey; the worker probes once
+// per job and shares it across targets.
+func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, md Metadata, progress ProgressFunc) ([]WebVideoResult, error) {
 	settings := t.encodeSettings()
 	rungs := PlanHLSLadderWith(settings, md.Width, md.Height, md.FPS)
 	if len(rungs) == 0 {

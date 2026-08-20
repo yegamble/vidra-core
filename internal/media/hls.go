@@ -660,23 +660,34 @@ func DetectHLSTranscoder(blobs storage.Backend) (*HLSTranscoder, bool) {
 	return NewHLSTranscoder(blobs), true
 }
 
+// Probe reports the source's dimensions, duration and frame rate. It is exposed
+// so a caller running several targets against one source can probe ONCE and
+// hand the result to each — probing is a full source read on a backend without
+// local paths, so re-probing per target is pure waste.
+func (t *HLSTranscoder) Probe(ctx context.Context, sourceKey string) (Metadata, error) {
+	return t.probe.Probe(ctx, sourceKey)
+}
+
 // Transcode probes the source at sourceKey for its dimensions, encodes the
 // planned ladder into a temp dir, then stores every playlist/segment under
 // streaming-playlists/<videoID>/. All playlist URIs are relative, so the files
 // serve correctly through the authenticated proxy endpoints.
 func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, sourceKey string) (HLSResult, error) {
-	return t.TranscodeHLS(ctx, videoID, sourceKey, nil)
+	md, err := t.Probe(ctx, sourceKey)
+	if err != nil {
+		return HLSResult{}, err
+	}
+	return t.TranscodeHLS(ctx, videoID, sourceKey, md, nil)
 }
 
 // TranscodeHLS is the progress-aware HLS path used by the durable worker. Each
 // planned rung reports its own lifecycle so the operational job projection can
 // render one execution per resolution. The source is always sourceKey (the
 // retained original supplied by the queue), never a previous derivative.
-func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, progress ProgressFunc) (HLSResult, error) {
-	md, err := t.probe.Probe(ctx, sourceKey)
-	if err != nil {
-		return HLSResult{}, err
-	}
+//
+// md is the caller's already-obtained probe of sourceKey; the worker probes once
+// per job and shares it across targets.
+func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, md Metadata, progress ProgressFunc) (HLSResult, error) {
 	// Runtime encode knobs, resolved once per job (config-parity W10): a
 	// settings change applies to the next job, never mid-job.
 	settings := t.encodeSettings()

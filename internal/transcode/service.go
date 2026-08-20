@@ -81,9 +81,16 @@ type Transcoder interface {
 // manual operator actions rebuild HLS and Web Video outputs independently and
 // reports one progress stream per resolution. The narrow Transcoder interface
 // remains for test doubles and backwards-compatible adapters.
+//
+// Probe is separate from the two encode methods so a job running both targets
+// reads the source's metadata ONCE and hands it to each. On a backend with no
+// local paths (S3) a probe streams the whole source to a temp file, so the
+// previous shape — where each target probed independently — spent two full
+// source downloads answering the same question.
 type TargetTranscoder interface {
-	TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, progress media.ProgressFunc) (media.HLSResult, error)
-	TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, progress media.ProgressFunc) ([]media.WebVideoResult, error)
+	Probe(ctx context.Context, sourceKey string) (media.Metadata, error)
+	TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, md media.Metadata, progress media.ProgressFunc) (media.HLSResult, error)
+	TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, md media.Metadata, progress media.ProgressFunc) ([]media.WebVideoResult, error)
 }
 
 type stepRepository interface {
@@ -349,8 +356,15 @@ func (s *Service) runTarget(ctx context.Context, row sqlcgen.ClaimDueTranscodeJo
 			ProgressPercent: int16(p.Percent),
 		})
 	}
+	// One probe per job, shared by every target below. A probe is a full source
+	// read on a path-less backend, so this is the difference between one and two
+	// extra downloads of the original per 'all' job.
+	md, err := advanced.Probe(ctx, row.SourceKey)
+	if err != nil {
+		return err
+	}
 	if target == TargetAll || target == TargetHLS {
-		res, err := advanced.TranscodeHLS(ctx, row.VideoID, row.SourceKey, progress)
+		res, err := advanced.TranscodeHLS(ctx, row.VideoID, row.SourceKey, md, progress)
 		if err != nil {
 			return &targetRunError{target: TargetHLS, err: err}
 		}
@@ -359,7 +373,7 @@ func (s *Service) runTarget(ctx context.Context, row sqlcgen.ClaimDueTranscodeJo
 		}
 	}
 	if target == TargetAll || target == TargetWebVideo {
-		files, err := advanced.TranscodeWebVideos(ctx, row.VideoID, row.SourceKey, progress)
+		files, err := advanced.TranscodeWebVideos(ctx, row.VideoID, row.SourceKey, md, progress)
 		if err != nil {
 			return &targetRunError{target: TargetWebVideo, err: err}
 		}
