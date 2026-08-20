@@ -162,6 +162,11 @@ type Server struct {
 	ipfsmirrorsvc       ipfsMirrorProvider
 	metrics             *observability.Metrics
 	media               storage.Backend
+	// schemaLedger reads the golang-migrate ledger for GET /schemaz. It is the
+	// server's OWN pool (cmd/api passes store.Pool). Nil — unit tests, and any
+	// embedder that does not wire it — reports the ledger as unread; it never
+	// reports "fresh install", which would be a different and much worse lie.
+	schemaLedger schemaLedgerReader
 	// playbackSigner mints/verifies the short-lived, video-scoped playback tokens
 	// that unlock password-protected videos (CORE-17 / W1.C2). Derived in New()
 	// from the JWT secret via domain separation, so it is always present.
@@ -632,6 +637,15 @@ func WithMediaStorage(b storage.Backend) Option {
 	return func(s *Server) { s.media = b }
 }
 
+// WithSchemaLedger gives GET /schemaz a reader for the migration ledger. Pass
+// the pool the server is already using — the surface answers a probe, and
+// opening a connection per call (what dbmigrate.Version does, on top of creating
+// the ledger table when it is absent) is the wrong shape for one. When unset,
+// /schemaz still answers 200 and says the ledger could not be read.
+func WithSchemaLedger(r schemaLedgerReader) Option {
+	return func(s *Server) { s.schemaLedger = r }
+}
+
 // WithLogger overrides the structured logger (default: slog.Default()). Used to
 // route request/error/audit logs to a specific destination — and by tests to
 // capture audit events.
@@ -938,6 +952,7 @@ func (s *Server) routes() {
 	s.echo.GET("/healthz", s.handleLive)
 	s.echo.GET("/readyz", s.handleReady)
 	s.echo.GET("/version", s.handleVersion)
+	s.echo.GET("/schemaz", s.handleSchema)
 
 	// Prometheus RED-metrics scrape (request rate/errors/duration + queue-depth
 	// gauge), gated behind METRICS_ENABLED (s.metrics is nil otherwise). This is
@@ -991,8 +1006,10 @@ func (s *Server) routes() {
 	}
 
 	api := s.echo.Group("/api/v1")
-	// Rate limiting guards the API surface only; liveness/readiness/version are
-	// exempt so orchestrator probes are never throttled. One mount, two budgets:
+	// Rate limiting guards the API surface only; liveness/readiness/version/schema
+	// are root-mounted above and so exempt, which is what keeps an orchestrator
+	// probe — or `vidra update` asking the same question twice — from being
+	// throttled. One mount, two budgets:
 	// media GETs are routed to the much larger media budget (see rateLimit).
 	if s.limiter != nil {
 		api.Use(s.rateLimit(s.limiter))
