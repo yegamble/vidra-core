@@ -117,6 +117,28 @@ func (st *updateStage) run(args ...string) error {
 
 func (st *updateStage) out() string { return st.h.out.String() }
 
+// pin rewrites all three tags in the deployment's env file, for the tests that
+// are about where an update comes FROM.
+func (st *updateStage) pin(tag string) {
+	st.t.Helper()
+	path := filepath.Join(st.dir, "env", "production.env")
+	write(st.t, path, strings.ReplaceAll(st.envFile(), "_TAG=v0.2.0", "_TAG="+tag))
+	_ = path
+}
+
+// rollbackLine is the confirm screen's one-line verdict on the automatic
+// rollback. The reason has to be readable THERE — on the screen an operator
+// decides against — which is a different claim from "the words appear somewhere
+// in the output".
+func (st *updateStage) rollbackLine() string {
+	for _, line := range strings.Split(st.out(), "\n") {
+		if strings.HasPrefix(line, "rollback:") {
+			return line
+		}
+	}
+	return ""
+}
+
 // envFile is the deployment's env file as it stands now.
 func (st *updateStage) envFile() string {
 	st.t.Helper()
@@ -418,14 +440,18 @@ func TestUpdateDisarmsRollbackOnRequest(t *testing.T) {
 
 // A tag that is not in the release list at all — deleted, or never a release —
 // makes "how far back would a flip go" unanswerable, and unanswerable disarms.
+//
+// The deployment stays pinned at v0.2.0 and it is the RELEASE LIST that no longer
+// carries it, which is the deleted-release case. Pinning something older would
+// disarm for the floor instead (rollback.sh refuses a core tag below v0.2.0), and
+// this test would then be asserting the other reason's text.
 func TestUpdateDisarmsWhenTheRunningTagIsNotARelease(t *testing.T) {
 	st := newUpdateStage(t)
-	write(t, filepath.Join(st.dir, "env", "production.env"),
-		strings.ReplaceAll(fmt.Sprintf(updateEnv, "1"), "VIDRA_CORE_TAG=v0.2.0", "VIDRA_CORE_TAG=v0.1.5"))
+	st.github.releases[coreRepo] = published("v0.1.0", "v0.2.5", "v0.3.0")
 	if err := st.run("--yes"); err != nil {
 		t.Fatalf("update = %v", err)
 	}
-	contains(t, st.out(), "rollback: NOT ARMED", "v0.1.5", "published releases")
+	contains(t, st.out(), "rollback: NOT ARMED", "v0.2.0", "published releases")
 }
 
 // ---------------------------------------------------------------------------
