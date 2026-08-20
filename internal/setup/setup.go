@@ -34,6 +34,44 @@
 //     rendered, and refuses to hand back a file that would not boot. There is
 //     no second validation library to drift.
 //
+// COMPONENT ANSWERS MAP TO COMPOSE PROFILES, and the mapping is written into the
+// env file rather than remembered by the operator. The deploy scripts read
+// VIDRA_COMPOSE_PROFILES (which profiles to enable) and VIDRA_EXTERNAL_POSTGRES /
+// VIDRA_EXTERNAL_REDIS (whether to add the docker-compose.external-*.yml overlay
+// that keeps the bundled service from starting). The whole table:
+//
+//	answer                     env keys written              compose profiles
+//	----------------------------------------------------------------------------
+//	(always)                   VIDRA_COMPOSE_PROFILES         core, frontend
+//	Features.Scan              (profile list)                 + scan     (clamav)
+//	Features.Captions          (profile list)                 + captions (whisper)
+//	Features.Media             (profile list)                 + media    (rtmp)
+//	Features.Otel              (profile list)                 + otel     (collector, jaeger)
+//	Features.IPFS              (profile list)                 + ipfs     (kubo)
+//	Database  local            VIDRA_EXTERNAL_POSTGRES=false  (bundled postgres, core)
+//	Database  external+URL     VIDRA_EXTERNAL_POSTGRES=true   (+ external-postgres overlay)
+//	                           DATABASE_URL
+//	Redis     local            VIDRA_EXTERNAL_REDIS=false     (bundled redis, core)
+//	Redis     external+URL     VIDRA_EXTERNAL_REDIS=true      (+ external-redis overlay)
+//	                           REDIS_URL
+//	Storage   local            STORAGE_BACKEND=local          NONE
+//	Storage   s3               STORAGE_BACKEND=s3             NONE
+//	                           STORAGE_S3_*
+//
+// Two absences in that table are deliberate. NEITHER storage answer enables the
+// `storage` profile: its minio is a DEV convenience (the compose file says so),
+// and STORAGE_BACKEND=s3 in a deployment means a bucket at STORAGE_S3_ENDPOINT —
+// an endpoint HOST that is somebody else's service — so starting a local object
+// store would be a container nothing talks to. And the private-IPFS variants
+// (ipfs-private, ipfs-private-cluster) are not offered: the IPFS answer maps to
+// the plain `ipfs` profile only, and a private swarm stays a manual
+// EXTRA_COMPOSE_PROFILES choice.
+//
+// A profile turns a CONTAINER on; the api-side flag that makes the api USE it
+// (MALWARE_SCAN_ENABLED, WHISPER_ENABLED, OTEL_ENABLED, ...) is a separate value
+// in the template and stays the operator's, exactly as it was before this
+// mapping existed.
+//
 // What this package does NOT do: run docker. The compose render check is the
 // other half of the proof (compose substitution, required-variable assertions,
 // profiles) and it belongs to the operator or to deploy.sh — RenderCheckCommand
@@ -79,6 +117,24 @@ type Answers struct {
 	// S3 is consulted only for StorageBackend == "s3".
 	S3 S3Answers
 
+	// Database and Redis choose between the bundled container and a managed
+	// service. They are the answers the compose overlays hang off: external means
+	// the deploy adds docker-compose.external-postgres.yml /
+	// docker-compose.external-redis.yml, so the bundled service never starts and
+	// the connection string is the only way to reach a database.
+	Database DatabaseAnswers
+	Redis    RedisAnswers
+
+	// Features are the optional components, each one a compose profile. Unlike
+	// every other answer here, this one is AUTHORITATIVE rather than
+	// fall-through: Profiles(a) is written to VIDRA_COMPOSE_PROFILES on every
+	// run, because "off" and "unanswered" are the same zero value in a struct of
+	// bools and silently keeping a profile an operator just turned off would be
+	// the worse failure. A front-end offering a re-run therefore SEEDS this from
+	// the existing file — FeaturesFromProfiles does exactly that, and `vidra
+	// setup` calls it before applying flags or prompts.
+	Features FeatureAnswers
+
 	// Mail nil means "no SMTP answers": mail is turned OFF rather than left on
 	// with nowhere to send, because the template ships MAIL_ENABLED=true with a
 	// blank SMTP_HOST and the api refuses that combination.
@@ -97,6 +153,37 @@ type S3Answers struct {
 	Bucket    string
 	AccessKey string
 	SecretKey string
+}
+
+// DatabaseAnswers picks the PostgreSQL a deployment runs on. Mode is "local"
+// (the bundled container in the core profile), "external" (a managed service),
+// or "" for unanswered, which keeps whatever the existing file or the template
+// says. URL is the managed connection string; it is REQUIRED with external, and
+// an empty URL on a re-run keeps the one already in the file rather than
+// clearing it.
+type DatabaseAnswers struct {
+	Mode string
+	URL  string
+}
+
+// RedisAnswers is the same choice for Redis. It is its own type rather than a
+// shared one because the two are answered independently — a managed Postgres
+// with the bundled Redis beside it is the common droplet shape — and because a
+// single type would invite a single answer.
+type RedisAnswers struct {
+	Mode string
+	URL  string
+}
+
+// FeatureAnswers are the optional components, one bool per compose profile. See
+// the mapping table in the package doc; the private-IPFS variants are
+// deliberately not here.
+type FeatureAnswers struct {
+	Scan     bool
+	Captions bool
+	Media    bool
+	Otel     bool
+	IPFS     bool
 }
 
 // MailAnswers is the optional SMTP block. Port is a string so "unanswered" and
@@ -205,6 +292,98 @@ var releaseTagKeys = []string{"VIDRA_CORE_TAG", "VIDRA_USER_TAG", "VIDRA_SEARCH_
 // s3Keys are the STORAGE_S3_* keys the storage answer owns.
 var s3Keys = []string{"STORAGE_S3_ENDPOINT", "STORAGE_S3_REGION", "STORAGE_S3_BUCKET", "STORAGE_S3_ACCESS_KEY", "STORAGE_S3_SECRET_KEY"}
 
+// The component keys, spelled once. They are read by the DEPLOY SCRIPTS (and by
+// RenderCheckCommand, which has to render the same chain the deploy will), not
+// by the api — internal/config has never heard of them, which is why Check waves
+// them through and why this package has to validate their combinations itself.
+const (
+	profilesKey         = "VIDRA_COMPOSE_PROFILES"
+	extraProfilesKey    = "EXTRA_COMPOSE_PROFILES"
+	externalPostgresKey = "VIDRA_EXTERNAL_POSTGRES"
+	externalRedisKey    = "VIDRA_EXTERNAL_REDIS"
+	databaseURLKey      = "DATABASE_URL"
+	redisURLKey         = "REDIS_URL"
+)
+
+// managedKeys are the keys the component answers own, in the order they render.
+// A template that does not define them yet gets them APPENDED (see
+// applyComponentRule): the deploy scripts must find VIDRA_COMPOSE_PROFILES in
+// every file this engine writes, including one generated from a template that
+// predates the key.
+var managedKeys = []string{profilesKey, externalPostgresKey, externalRedisKey, databaseURLKey, redisURLKey}
+
+// externalOverlays pairs each external-service switch with the compose overlay
+// the deploy adds for it and the connection string it cannot work without. The
+// ORDER is the order the overlays go on the command line.
+var externalOverlays = []struct {
+	flag    string
+	urlKey  string
+	overlay string
+	service string
+}{
+	{externalPostgresKey, databaseURLKey, "docker-compose.external-postgres.yml", "PostgreSQL"},
+	{externalRedisKey, redisURLKey, "docker-compose.external-redis.yml", "Redis"},
+}
+
+// baseProfiles are the profiles every deployment runs: the api and its bundled
+// datastores, and the frontend.
+var baseProfiles = []string{"core", "frontend"}
+
+// featureProfiles is the ONE mapping from an optional component to its compose
+// profile, in the order the profile list is written. Both directions go through
+// it — Profiles and FeaturesFromProfiles — so a re-run round-trips a profile
+// list it wrote itself.
+var featureProfiles = []struct {
+	profile string
+	field   func(*FeatureAnswers) *bool
+}{
+	{"scan", func(f *FeatureAnswers) *bool { return &f.Scan }},
+	{"captions", func(f *FeatureAnswers) *bool { return &f.Captions }},
+	{"media", func(f *FeatureAnswers) *bool { return &f.Media }},
+	{"otel", func(f *FeatureAnswers) *bool { return &f.Otel }},
+	{"ipfs", func(f *FeatureAnswers) *bool { return &f.IPFS }},
+}
+
+// Profiles is the compose profile list an answer set implies: always core and
+// frontend, then one profile per enabled feature in a fixed order. It is pure —
+// no file, no environment — so the wizard can show the deployment's shape while
+// the operator is still answering, and it is what the engine writes to
+// VIDRA_COMPOSE_PROFILES.
+//
+// It never emits `storage`, and never the private-IPFS variants; see the mapping
+// table in the package doc for why.
+func Profiles(a Answers) []string {
+	out := append([]string(nil), baseProfiles...)
+	features := a.Features
+	for _, fp := range featureProfiles {
+		if *fp.field(&features) {
+			out = append(out, fp.profile)
+		}
+	}
+	return out
+}
+
+// FeaturesFromProfiles reads a VIDRA_COMPOSE_PROFILES value back into the
+// answers that would produce it. It is the inverse of Profiles for the profiles
+// Profiles emits, and it IGNORES everything else — core, frontend, a manual
+// ipfs-private, a profile a later version added — because those are not
+// questions this engine asks.
+//
+// It exists so a re-run preserves what the last one chose: Answers.Features is
+// authoritative, so a front-end that did not seed it from the current file would
+// silently turn every optional component off.
+func FeaturesFromProfiles(value string) FeatureAnswers {
+	var out FeatureAnswers
+	for _, name := range strings.Fields(value) {
+		for _, fp := range featureProfiles {
+			if fp.profile == name {
+				*fp.field(&out) = true
+			}
+		}
+	}
+	return out
+}
+
 // Generate resolves every value, renders the file, and validates the rendered
 // bytes with the api's own config engine. On a validation failure it returns a
 // *ValidationError and NO content.
@@ -283,11 +462,19 @@ func Generate(req Request) (*Result, error) {
 	}
 
 	// Keys the previous file set that this template does not define — a
-	// FEDERATION_KEY_KEK the operator uncommented, a managed DATABASE_URL, an
-	// EXTRA_COMPOSE_PROFILES line. Dropping them would silently change the
-	// deployment, so they are carried into their own block.
+	// FEDERATION_KEY_KEK the operator uncommented, an EXTRA_COMPOSE_PROFILES
+	// line. Dropping them would silently change the deployment, so they are
+	// carried into their own block.
 	for _, key := range existingKeys(req.Existing) {
 		if req.Template.Has(key) {
+			continue
+		}
+		// A component key an older template does not define is not "carried": it
+		// is resolved (answer first) and re-emitted by applyComponentRule below,
+		// in its own block. Carrying it as well would assign it TWICE in the
+		// rendered file, which ParseEnvFile rejects — and the file would be the
+		// one this run was supposed to produce.
+		if isManagedKey(key) {
 			continue
 		}
 		ev, _ := req.Existing.Value(key)
@@ -316,6 +503,7 @@ func Generate(req Request) (*Result, error) {
 
 	applyStorageRule(req, res)
 	applyMailRule(res)
+	added := applyComponentRule(req, answers, res)
 
 	// Line-shape before rendering: a value carrying a newline would not be a bad
 	// value, it would be EXTRA LINES — see lineShapeIssues.
@@ -325,7 +513,7 @@ func Generate(req Request) (*Result, error) {
 	res.Warnings = append(res.Warnings, releaseTagWarnings(req, res.Values)...)
 	res.Warnings = append(res.Warnings, Warnings(res.Values)...)
 
-	content := req.Template.Render(res.Values, res.Carried)
+	content := req.Template.Render(res.Values, res.Carried, added)
 	// Validate the BYTES that would be written, not the map that produced them:
 	// re-parsing is the only way to prove the file on disk is the file that
 	// passed validation.
@@ -386,6 +574,11 @@ func Check(vars map[string]string) []Issue {
 			issues = append(issues, Issue{Var: k, Msg: fmt.Sprintf("unfilled template placeholder %q — replace it with a real value (or blank the key if the feature is unused)", strings.TrimSpace(vars[k]))})
 		}
 	}
+	// The component combinations, before config: they are about which CONTAINERS
+	// exist, so a finding here explains a "required" failure config would report
+	// second-hand (or, worse, would not report at all because the fallback DSN is
+	// syntactically fine).
+	issues = append(issues, componentIssues(vars)...)
 	if env := strings.TrimSpace(vars["VIDRA_ENV"]); env != "production" {
 		got := strconv.Quote(env)
 		if env == "" {
@@ -497,7 +690,8 @@ func lineShapeIssues(values map[string]string) []Issue {
 // operator is expected to ignore. No warning ever quotes a value: several of
 // these variables are secrets.
 func Warnings(vars map[string]string) []string {
-	return append(interpolationWarnings(vars), quoteWarnings(vars)...)
+	out := append(interpolationWarnings(vars), quoteWarnings(vars)...)
+	return append(out, componentWarnings(vars)...)
 }
 
 // interpolationWarnings flags a value compose would rewrite before the container
@@ -636,6 +830,27 @@ func answerValues(a Answers) (map[string]string, error) {
 	default:
 		return nil, fmt.Errorf("setup: unsupported storage backend %q (want local|s3)", a.StorageBackend)
 	}
+	// The profile list is computed, never merged: see Answers.Features.
+	out[profilesKey] = strings.Join(Profiles(a), " ")
+	for _, c := range []struct {
+		field, mode, url, flagKey, urlKey string
+	}{
+		{"database", a.Database.Mode, a.Database.URL, externalPostgresKey, databaseURLKey},
+		{"redis", a.Redis.Mode, a.Redis.URL, externalRedisKey, redisURLKey},
+	} {
+		flag, err := componentMode(c.field, c.mode)
+		if err != nil {
+			return nil, err
+		}
+		if flag != "" {
+			out[c.flagKey] = flag
+		}
+		// An empty URL is "unanswered", not "clear it": a re-run that only
+		// re-confirms the mode must keep the connection string already in the file.
+		if c.url != "" {
+			out[c.urlKey] = c.url
+		}
+	}
 	if a.Mail != nil {
 		out["MAIL_ENABLED"] = "true"
 		for k, v := range map[string]string{
@@ -655,6 +870,22 @@ func answerValues(a Answers) (map[string]string, error) {
 		out["REGISTRATION_REQUIRE_APPROVAL"] = strconv.FormatBool(a.Registration.RequireApproval)
 	}
 	return out, nil
+}
+
+// componentMode turns a local|external answer into the env value the deploy
+// scripts test. "" stays "": an unanswered component keeps whatever the existing
+// file (or the template) already says, like every other unanswered field.
+func componentMode(field, mode string) (string, error) {
+	switch mode {
+	case "":
+		return "", nil
+	case "local":
+		return "false", nil
+	case "external":
+		return "true", nil
+	default:
+		return "", fmt.Errorf("setup: unsupported %s mode %q (want local|external)", field, mode)
+	}
 }
 
 // requireDomain refuses to generate a production file whose public origin is
@@ -786,6 +1017,124 @@ func applyMailRule(res *Result) {
 	}
 	res.Values["MAIL_ENABLED"] = "false"
 	res.Warnings = append(res.Warnings, "mail is disabled: no SMTP host/from was given, so password reset and email verification are unavailable — set SMTP_HOST and SMTP_FROM and re-run to enable them")
+}
+
+// applyComponentRule finishes the component answers and returns the managed keys
+// that have to be APPENDED because the template does not define them.
+//
+// The appending is the point. VIDRA_COMPOSE_PROFILES is read by deploy.sh, not by
+// the api, and a template that predates the key (every env file generated before
+// this feature, and every deployment still running one) would otherwise produce a
+// file with no profile list at all — the deploy would fall back to its own
+// hard-coded core+frontend and quietly drop the ipfs profile the operator chose.
+// So the engine writes the key wherever it lands: in place when the template has
+// it, in a labelled block at the end when it does not.
+//
+// The external-service switches are also NORMALISED to a concrete true/false. A
+// blank flag is a value shell scripts and Go both read as "not external", but
+// only by accident — `[ "$VIDRA_EXTERNAL_POSTGRES" = true ]` and a strconv.ParseBool
+// disagree about far too many other spellings for an empty one to be worth
+// keeping in a file two languages read.
+func applyComponentRule(req Request, answers map[string]string, res *Result) []string {
+	var added []string
+	for _, key := range managedKeys {
+		v, defined := res.Values[key]
+		if !defined {
+			// Not in the template, so the resolution loop never saw it: answer
+			// first, then whatever the previous file had.
+			v = answers[key]
+			if v == "" {
+				if ev, ok := existingValue(req.Existing, key); ok {
+					v = ev
+				}
+			}
+		}
+		if strings.TrimSpace(v) == "" {
+			switch key {
+			case profilesKey:
+				v = strings.Join(Profiles(req.Answers), " ")
+			case externalPostgresKey, externalRedisKey:
+				v = "false"
+			default:
+				// A connection string with no value is simply absent: the bundled
+				// service's DSN is derived by the compose chain.
+				continue
+			}
+		}
+		res.Values[key] = v
+		if !defined {
+			added = append(added, key)
+		}
+	}
+	return added
+}
+
+func isManagedKey(key string) bool {
+	for _, k := range managedKeys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
+// componentWarnings flags the half-configured managed service: a connection
+// string pointing at somebody else's database while the switch that stops the
+// bundled one from starting is off. Nothing fails — the api uses DATABASE_URL and
+// is perfectly happy — which is exactly the problem: the deployment also runs a
+// postgres container with a volume, a password and a backup nobody is taking,
+// and the day the URL is removed it silently starts serving the empty one.
+//
+// A warning rather than a refusal, because it is also what every pre-overlay
+// managed-database deployment looks like, and those are running fine.
+func componentWarnings(vars map[string]string) []string {
+	var out []string
+	for _, c := range externalOverlays {
+		if strings.TrimSpace(vars[c.urlKey]) == "" || isTrue(vars[c.flag]) {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s is set but %s is not true: the api would use the managed %s while the deploy still starts the bundled one (its container, volume and password are all still there, unused). Set %s=true so the deploy adds %s and skips the bundled service, or remove %s to go back to it",
+			c.urlKey, c.flag, c.service, c.flag, c.overlay, c.urlKey))
+	}
+	return out
+}
+
+// componentIssues is the one combination that cannot boot: an external service
+// selected with nowhere to connect. The overlay removes the bundled container
+// outright, so the api falls back to a DSN naming a host that is not in the
+// compose network any more — a deployment that comes up, fails every query, and
+// blames DNS.
+//
+// It is checked here rather than in internal/config because config has never
+// heard of these keys: they are read by the deploy scripts, and this package is
+// the only place that sees the env file and the compose chain at once.
+func componentIssues(vars map[string]string) []Issue {
+	var out []Issue
+	for _, c := range externalOverlays {
+		raw := strings.TrimSpace(vars[c.flag])
+		if raw == "" {
+			continue
+		}
+		if _, err := strconv.ParseBool(raw); err != nil {
+			out = append(out, Issue{Var: c.flag, Msg: fmt.Sprintf("%q is not a boolean — write true or false. The deploy scripts and the setup engine read this value with different parsers, and a spelling only one of them accepts is how the overlay gets added without the bundled service being skipped (or the reverse)", raw)})
+			continue
+		}
+		if !isTrue(raw) || strings.TrimSpace(vars[c.urlKey]) != "" {
+			continue
+		}
+		out = append(out, Issue{Var: c.urlKey, Msg: fmt.Sprintf("%s=true selects an external %s, so the deploy adds %s and the bundled service never starts — but %s is blank, leaving nothing to connect to. Set it to the managed connection string, or set %s=false to use the bundled service",
+			c.flag, c.service, c.overlay, c.urlKey, c.flag)})
+	}
+	return out
+}
+
+// isTrue reads a component switch the way this engine writes it, tolerating the
+// spellings strconv.ParseBool accepts and treating everything else (including a
+// blank) as false. componentIssues is what tells an operator their unrecognised
+// spelling was read as false, rather than this silently doing it.
+func isTrue(v string) bool {
+	b, err := strconv.ParseBool(strings.TrimSpace(v))
+	return err == nil && b
 }
 
 // releaseTagWarnings flags image pins left at the template's example tag: the
@@ -920,20 +1269,60 @@ func syncDir(dir string) error {
 // directory. This package never shells out to docker itself — the engine has to
 // work on a machine where the daemon is not up yet.
 //
-// values is the environment the file describes, and it is not decoration:
-// deploy.sh appends the space-separated EXTRA_COMPOSE_PROFILES from the env file
-// to its own --profile list, so an instance running the ipfs profile renders a
-// DIFFERENT compose chain than `--profile core --profile frontend`. A check
-// command that omitted the extra profiles would pass while the deploy it is
-// meant to pre-flight failed. Pass nil for the base profiles only.
+// values is the environment the file describes, and it is not decoration: the
+// deploy builds its compose chain FROM the env file, so an instance running the
+// ipfs profile or a managed database renders a DIFFERENT chain than `--profile
+// core --profile frontend`. A check command that ignored the file would pass
+// while the deploy it is meant to pre-flight failed. Three keys shape it:
+//
+//	VIDRA_COMPOSE_PROFILES   the profile list this engine writes; absent (an env
+//	                         file older than the key) falls back to core+frontend,
+//	                         which is what the deploy scripts hard-coded before it
+//	EXTRA_COMPOSE_PROFILES   the operator's own additions, appended and deduped
+//	VIDRA_EXTERNAL_POSTGRES  each true adds its docker-compose.external-*.yml
+//	VIDRA_EXTERNAL_REDIS     overlay, IMMEDIATELY after the prod overlay so it can
+//	                         remove the bundled service that overlay defines
+//
+// Pass nil for the legacy base profiles only.
 func RenderCheckCommand(envPath string, values map[string]string) string {
-	profiles := []string{"core", "frontend"}
-	profiles = append(profiles, strings.Fields(values["EXTRA_COMPOSE_PROFILES"])...)
-	cmd := "docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file " + shellQuote(envPath)
-	for _, p := range profiles {
+	cmd := "docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+	// Order matters: a compose overlay only wins over what an EARLIER file said,
+	// so the external-service overlays go after docker-compose.prod.yml.
+	for _, c := range externalOverlays {
+		if isTrue(values[c.flag]) {
+			cmd += " -f " + c.overlay
+		}
+	}
+	cmd += " --env-file " + shellQuote(envPath)
+	for _, p := range checkProfiles(values) {
 		cmd += " --profile " + shellQuote(p)
 	}
 	return cmd + " config -q"
+}
+
+// checkProfiles is the profile list the deploy will enable: the managed list, or
+// the legacy base when the file predates it, plus the operator's extras.
+//
+// Deduped because the two lists overlap by design — an operator who enabled ipfs
+// through EXTRA_COMPOSE_PROFILES before this key existed keeps that line after a
+// re-run puts `ipfs` in the managed list, and `--profile ipfs --profile ipfs` is
+// noise in a command an operator is being asked to read and paste.
+func checkProfiles(values map[string]string) []string {
+	profiles := strings.Fields(values[profilesKey])
+	if len(profiles) == 0 {
+		profiles = append([]string(nil), baseProfiles...)
+	}
+	profiles = append(profiles, strings.Fields(values[extraProfilesKey])...)
+	seen := make(map[string]bool, len(profiles))
+	out := make([]string, 0, len(profiles))
+	for _, p := range profiles {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
 }
 
 // shellQuote makes a value safe to paste into a shell, and leaves the ordinary

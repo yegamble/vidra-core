@@ -46,6 +46,11 @@ func runSetup(s streams, args []string) error {
 		userTag    = fs.String("user-tag", "", "override the frontend image `tag`")
 		searchTag  = fs.String("search-tag", "", "override the search image `tag`")
 
+		database    = fs.String("database", "", "PostgreSQL: `local|external` — external needs --database-url and makes the deploy skip the bundled container")
+		databaseURL = fs.String("database-url", "", "managed PostgreSQL connection string: `@file`, - for stdin, or the value itself (also $VIDRA_SETUP_DATABASE_URL)")
+		redis       = fs.String("redis", "", "Redis: `local|external` — external needs --redis-url and makes the deploy skip the bundled container")
+		redisURL    = fs.String("redis-url", "", "managed Redis connection string: `@file`, - for stdin, or the value itself (also $VIDRA_SETUP_REDIS_URL)")
+
 		storage     = fs.String("storage", "", "media storage backend: `local|s3`")
 		s3Endpoint  = fs.String("s3-endpoint", "", "S3 endpoint `host` WITHOUT a scheme, e.g. nyc3.digitaloceanspaces.com")
 		s3Region    = fs.String("s3-region", "", "S3 `region`, matching the endpoint")
@@ -63,6 +68,8 @@ func runSetup(s streams, args []string) error {
 	)
 	var rotate stringList
 	fs.Var(&rotate, "rotate", "re-generate the secret in this `VAR` even though it already has a value (repeatable)")
+	var features featureFlags
+	features.register(fs)
 
 	usage := func(w io.Writer) {
 		fmt.Fprint(w, `usage: vidra setup --template env/production.env.example [flags]
@@ -80,10 +87,17 @@ ever replaced when --rotate names it, and rotating a *_KEK additionally needs
 --yes-i-know because it orphans data already sealed in the database — that is a
 separate answer from --yes, which only confirms the in-place rewrite.
 
-Secrets do not have to appear on the command line: --s3-secret-key and
---smtp-password accept @path (read the file), - (read stdin, with
---non-interactive) or a VIDRA_SETUP_* environment variable, and the interactive
-prompts read them without echoing.
+Secrets do not have to appear on the command line: --s3-secret-key,
+--smtp-password, --database-url and --redis-url accept @path (read the file), -
+(read stdin, with --non-interactive) or a VIDRA_SETUP_* environment variable, and
+the interactive prompts read them without echoing. A managed connection string
+counts as a secret: it carries the password inside it.
+
+The optional components (--scan, --captions, --media, --otel, --ipfs) are compose
+profiles, written to VIDRA_COMPOSE_PROFILES for the deploy scripts to enable. Not
+passing one keeps whatever the env file already selects, so a re-run about
+something else cannot silently switch a component off; --scan=false turns one off
+deliberately.
 
 flags:
 `)
@@ -184,6 +198,17 @@ flags:
 	if err != nil {
 		return err
 	}
+	// A connection string is a secret like any other — postgres://user:PASSWORD@host
+	// is the whole point of the managed-service path — so it gets the same @file /
+	// stdin / environment indirections and stays out of argv.
+	databaseConn, err := readSecretFlag(s, "database-url", "VIDRA_SETUP_DATABASE_URL", *databaseURL, *nonInteractive, &stdinTaken)
+	if err != nil {
+		return err
+	}
+	redisConn, err := readSecretFlag(s, "redis-url", "VIDRA_SETUP_REDIS_URL", *redisURL, *nonInteractive, &stdinTaken)
+	if err != nil {
+		return err
+	}
 
 	answers := setup.Answers{
 		Domain:         *domain,
@@ -199,7 +224,25 @@ flags:
 			AccessKey: *s3AccessKey,
 			SecretKey: s3Secret,
 		},
+		Database: setup.DatabaseAnswers{Mode: *database, URL: databaseConn},
+		Redis:    setup.RedisAnswers{Mode: *redis, URL: redisConn},
 	}
+	// Giving the connection string IS the answer, the same way giving an SMTP host
+	// turns mail on: nobody passes --database-url to keep using the bundled
+	// Postgres, and requiring --database external beside it would make the
+	// difference between the two a silently-ignored flag.
+	if answers.Database.Mode == "" && answers.Database.URL != "" {
+		answers.Database.Mode = "external"
+	}
+	if answers.Redis.Mode == "" && answers.Redis.URL != "" {
+		answers.Redis.Mode = "external"
+	}
+	// SEEDED, then overlaid with the flags that were actually passed: the profile
+	// list is authoritative in the engine (see setup.Answers.Features), so an
+	// operator re-running setup to change the domain would otherwise lose the ipfs
+	// profile they turned on last time.
+	answers.Features = setup.FeaturesFromProfiles(effective(tmpl, existing, "VIDRA_COMPOSE_PROFILES"))
+	features.applyTo(&answers.Features)
 	if *smtpHost != "" || *smtpFrom != "" || *smtpUsername != "" || mailPassword != "" || *smtpPort != "" {
 		answers.Mail = &setup.MailAnswers{
 			Host:     *smtpHost,
@@ -448,6 +491,68 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 			*q.field = v
 		}
 	}
+	// The datastores come before the optional components: they decide whether the
+	// bundled containers start at all, and an external answer with no connection
+	// string is the one combination the engine refuses to write.
+	for _, q := range []struct {
+		label, urlLabel string
+		flagKey, urlKey string
+		mode, url       *string
+	}{
+		{"Use an external/managed PostgreSQL instead of the bundled one", "Managed PostgreSQL connection string",
+			"VIDRA_EXTERNAL_POSTGRES", "DATABASE_URL", &a.Database.Mode, &a.Database.URL},
+		{"Use an external/managed Redis instead of the bundled one", "Managed Redis connection string",
+			"VIDRA_EXTERNAL_REDIS", "REDIS_URL", &a.Redis.Mode, &a.Redis.URL},
+	} {
+		if *q.mode != "" {
+			continue
+		}
+		external, err := askYesNo(s, r, q.label, boolValue(effective(tmpl, existing, q.flagKey), false))
+		if err != nil {
+			return err
+		}
+		*q.mode = "local"
+		if !external {
+			continue
+		}
+		*q.mode = "external"
+		if *q.url != "" {
+			continue
+		}
+		// The connection string carries the password: hidden input, and the
+		// current one offered masked so enter keeps it without printing it.
+		v, err := askMaybeSecret(s, r, q.urlLabel, effective(tmpl, existing, q.urlKey), true)
+		if err != nil {
+			return err
+		}
+		*q.url = v
+	}
+	// The optional components sit behind ONE gate, like SMTP: they are off on a
+	// normal install, and an operator pressing enter through a re-run should not
+	// be walked through five questions to keep what is already running — a.Features
+	// arrives seeded from the env file's profile list, so declining changes
+	// nothing. Saying yes is how a component gets turned off again, since each
+	// question defaults to what is running today.
+	if on, err := askYesNo(s, r, "Configure optional components (virus scanning, captions, live streaming, tracing, IPFS)", a.Features != (setup.FeatureAnswers{})); err != nil {
+		return err
+	} else if on {
+		for _, q := range []struct {
+			label string
+			field *bool
+		}{
+			{"Run the bundled ClamAV upload scanner (profile scan; MALWARE_SCAN_ENABLED stays a separate setting)", &a.Features.Scan},
+			{"Run the bundled Whisper caption worker (profile captions)", &a.Features.Captions},
+			{"Run the bundled RTMP live-ingest server (profile media)", &a.Features.Media},
+			{"Run the bundled OpenTelemetry collector and Jaeger (profile otel)", &a.Features.Otel},
+			{"Run the bundled IPFS node (profile ipfs)", &a.Features.IPFS},
+		} {
+			v, err := askYesNo(s, r, q.label, *q.field)
+			if err != nil {
+				return err
+			}
+			*q.field = v
+		}
+	}
 	if a.Mail == nil {
 		// Already-working SMTP defaults to yes, so an operator pressing enter
 		// through a re-run is not offered "no" for something that is on. The
@@ -682,6 +787,85 @@ func report(s streams, path string, sources []string, res *setup.Result) {
 		fmt.Fprintf(s.out, "  ⚠ %s\n", w)
 	}
 	fmt.Fprintf(s.out, "\nNext, render the production compose chain with it (from the deployment directory):\n  %s\n", setup.RenderCheckCommand(path, res.Values))
+}
+
+// featureFlags is the optional-component block of the command line: one flag per
+// compose profile the engine knows how to enable.
+type featureFlags struct {
+	scan     optionalBool
+	captions optionalBool
+	media    optionalBool
+	otel     optionalBool
+	ipfs     optionalBool
+}
+
+func (f *featureFlags) register(fs *flag.FlagSet) {
+	for _, e := range f.entries() {
+		fs.Var(e.flag, e.name, e.usage)
+	}
+}
+
+// applyTo overlays the flags that were PASSED onto answers already seeded from
+// the env file, leaving the rest alone.
+func (f *featureFlags) applyTo(a *setup.FeatureAnswers) {
+	f.scan.applyTo(&a.Scan)
+	f.captions.applyTo(&a.Captions)
+	f.media.applyTo(&a.Media)
+	f.otel.applyTo(&a.Otel)
+	f.ipfs.applyTo(&a.IPFS)
+}
+
+func (f *featureFlags) entries() []struct {
+	name, usage string
+	flag        *optionalBool
+} {
+	return []struct {
+		name, usage string
+		flag        *optionalBool
+	}{
+		{"scan", "run the bundled ClamAV upload scanner (compose profile scan; MALWARE_SCAN_ENABLED is a separate setting)", &f.scan},
+		{"captions", "run the bundled Whisper caption worker (compose profile captions)", &f.captions},
+		{"media", "run the bundled RTMP live-ingest server (compose profile media)", &f.media},
+		{"otel", "run the bundled OpenTelemetry collector and Jaeger (compose profile otel)", &f.otel},
+		{"ipfs", "run the bundled IPFS node (compose profile ipfs)", &f.ipfs},
+	}
+}
+
+// optionalBool is a bool flag that remembers whether it was passed at all. The
+// distinction is the whole preservation story for the profile list: a plain bool
+// cannot say "leave it as it is", so `vidra setup --domain video.example.org` on
+// an instance running ClamAV would answer "scanning: no" without the operator
+// ever being asked. Unset means keep the env file's profile list; --scan and
+// --scan=false are the two ways to change it.
+type optionalBool struct {
+	set   bool
+	value bool
+}
+
+func (o *optionalBool) String() string {
+	if o == nil || !o.set {
+		return "false"
+	}
+	return strconv.FormatBool(o.value)
+}
+
+func (o *optionalBool) Set(v string) error {
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return fmt.Errorf("%q is neither true nor false", v)
+	}
+	o.set, o.value = true, b
+	return nil
+}
+
+// IsBoolFlag lets the flag package accept the bare `--scan` form (and keeps
+// `--scan=false` working); without it, `--scan` would swallow the NEXT argument.
+func (o *optionalBool) IsBoolFlag() bool { return true }
+
+func (o *optionalBool) applyTo(dst *bool) {
+	if o.set {
+		*dst = o.value
+	}
 }
 
 // stringList collects a repeatable flag.

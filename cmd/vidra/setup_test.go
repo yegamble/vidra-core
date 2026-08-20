@@ -33,6 +33,10 @@ MFA_KEY_KEK=<generate: openssl rand -base64 32>
 POSTGRES_PASSWORD=<generate: openssl rand -hex 32>
 REDIS_PASSWORD=
 
+VIDRA_COMPOSE_PROFILES=core frontend
+VIDRA_EXTERNAL_POSTGRES=false
+VIDRA_EXTERNAL_REDIS=false
+
 STORAGE_BACKEND=local
 STORAGE_S3_ENDPOINT=
 STORAGE_S3_REGION=
@@ -499,6 +503,27 @@ func TestSetupSecretsCanAvoidArgv(t *testing.T) {
 		}
 	})
 
+	// A managed connection string is a secret too: postgres://user:PASSWORD@host
+	// in argv is the same leak as the S3 key.
+	t.Run("a connection string takes the same indirections", func(t *testing.T) {
+		h := newHarness(t)
+		dsnFile := filepath.Join(h.dir, "db.url")
+		if err := os.WriteFile(dsnFile, []byte(managedDSN+"\n"), 0o600); err != nil {
+			t.Fatalf("write dsn file: %v", err)
+		}
+		if err := h.run(h.setupArgs("--database-url", "@"+dsnFile)...); err != nil {
+			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+		}
+		got := h.readOutput(t)
+		if v := valueOf(t, got, "DATABASE_URL"); v != managedDSN {
+			t.Errorf("DATABASE_URL = %q, want the file's contents without the trailing newline", v)
+		}
+		// Passing the connection string IS the answer, like an SMTP host is.
+		if v := valueOf(t, got, "VIDRA_EXTERNAL_POSTGRES"); v != "true" {
+			t.Errorf("VIDRA_EXTERNAL_POSTGRES = %q, want --database-url to have selected the external database", v)
+		}
+	})
+
 	t.Run("stdin needs non-interactive", func(t *testing.T) {
 		h := newHarness(t)
 		err := h.run("setup", "--template", h.template, "--domain", "video.example.org", "--s3-secret-key", "-")
@@ -569,8 +594,9 @@ func TestSetupHelpSucceedsOnStdout(t *testing.T) {
 
 func TestSetupInteractiveAnswersTheMinimalQuestions(t *testing.T) {
 	h := newHarness(t)
-	// domain, release tag, storage, SMTP?, open registration?
-	h.stdin = "video.example.org\nv0.1.1\nlocal\nn\nn\n"
+	// domain, release tag, storage, external Postgres?, external Redis?, optional
+	// components?, SMTP?, open registration?
+	h.stdin = "video.example.org\nv0.1.1\nlocal\nn\nn\nn\nn\nn\n"
 	if err := h.run("setup", "--template", h.template); err != nil {
 		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
 	}
@@ -601,8 +627,9 @@ func TestSetupInteractiveReRunKeepsTheRegistrationPolicy(t *testing.T) {
 	}
 
 	// Re-run interactively, pressing enter at every question: domain, release
-	// tag, storage, SMTP?, open registration?, approval?
-	h.stdin = "\n\n\n\n\n\n"
+	// tag, storage, external Postgres?, external Redis?, optional components?,
+	// SMTP?, open registration?, approval?
+	h.stdin = "\n\n\n\n\n\n\n\n\n"
 	if err := h.run("setup", "--template", h.template, "--yes"); err != nil {
 		t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
 	}
@@ -634,8 +661,9 @@ func TestSetupInteractiveSecretPromptDoesNotEchoTheCurrentValue(t *testing.T) {
 		t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
 	}
 
-	// domain, tag, storage, endpoint, region, bucket, access key, secret, SMTP?, reg?
-	h.stdin = "\n\n\n\n\n\n\n\nn\n\n"
+	// domain, tag, storage, endpoint, region, bucket, access key, secret,
+	// external Postgres?, external Redis?, optional components?, SMTP?, reg?
+	h.stdin = "\n\n\n\n\n\n\n\n\n\n\nn\n\n"
 	if err := h.run("setup", "--template", h.template, "--yes"); err != nil {
 		t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
 	}
@@ -657,8 +685,9 @@ func TestSetupInteractiveSecretPromptDoesNotEchoTheCurrentValue(t *testing.T) {
 // default, which is where it went missing.
 func TestSetupInteractiveWarnsWhenTheTemplateTagIsAccepted(t *testing.T) {
 	h := newHarness(t)
-	// domain, release tag (enter = the template's v0.1.0), storage, SMTP?, reg?
-	h.stdin = "video.example.org\n\nlocal\nn\nn\n"
+	// domain, release tag (enter = the template's v0.1.0), storage, external
+	// Postgres?, external Redis?, optional components?, SMTP?, reg?
+	h.stdin = "video.example.org\n\nlocal\nn\nn\nn\nn\nn\n"
 	if err := h.run("setup", "--template", h.template); err != nil {
 		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
 	}
@@ -667,6 +696,100 @@ func TestSetupInteractiveWarnsWhenTheTemplateTagIsAccepted(t *testing.T) {
 	}
 	if !strings.Contains(h.out.String(), "template's example tag") {
 		t.Errorf("accepting the template's example tag did not warn:\n%s", h.out.String())
+	}
+}
+
+const managedDSN = "postgresql://doadmin:pw@db.example.net:25060/defaultdb?sslmode=require"
+
+// The component answers have to reach BOTH halves of the deployment: the env
+// file the scripts read, and the render-check command the operator is told to
+// run before deploying.
+func TestSetupComponentFlagsSelectProfilesAndOverlays(t *testing.T) {
+	h := newHarness(t)
+	// `--scan` immediately before another flag: a bool flag that swallowed the
+	// next argument would silently drop --ipfs.
+	if err := h.run(h.setupArgs("--scan", "--ipfs", "--database", "external", "--database-url", managedDSN)...); err != nil {
+		t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+	}
+	got := h.readOutput(t)
+	for _, tc := range []struct{ key, want string }{
+		{"VIDRA_COMPOSE_PROFILES", "core frontend scan ipfs"},
+		{"VIDRA_EXTERNAL_POSTGRES", "true"},
+		{"VIDRA_EXTERNAL_REDIS", "false"},
+		{"DATABASE_URL", managedDSN},
+	} {
+		if v := valueOf(t, got, tc.key); v != tc.want {
+			t.Errorf("%s = %q, want %q", tc.key, v, tc.want)
+		}
+	}
+	stdout := h.out.String()
+	for _, want := range []string{"-f docker-compose.external-postgres.yml", "--profile scan", "--profile ipfs"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the printed render check is missing %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "docker-compose.external-redis.yml") {
+		t.Errorf("the redis overlay was added for a bundled Redis:\n%s", stdout)
+	}
+}
+
+// A re-run about something else must not turn a component off. The flags are
+// tri-state for this one reason: `vidra setup --yes` to change a tag would
+// otherwise answer "no" to five questions nobody asked.
+func TestSetupKeepsTheProfileListOnAReRun(t *testing.T) {
+	h := newHarness(t)
+	if err := h.run(h.setupArgs("--ipfs")...); err != nil {
+		t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
+	}
+	if v := valueOf(t, h.readOutput(t), "VIDRA_COMPOSE_PROFILES"); v != "core frontend ipfs" {
+		t.Fatalf("VIDRA_COMPOSE_PROFILES = %q after --ipfs", v)
+	}
+
+	if err := h.run(h.setupArgs("--yes", "--release-tag", "v0.2.0")...); err != nil {
+		t.Fatalf("re-run: %v (stderr: %s)", err, h.err.String())
+	}
+	after := h.readOutput(t)
+	if v := valueOf(t, after, "VIDRA_COMPOSE_PROFILES"); v != "core frontend ipfs" {
+		t.Errorf("VIDRA_COMPOSE_PROFILES = %q after a re-run that never mentioned ipfs, want it kept", v)
+	}
+	if v := valueOf(t, after, "VIDRA_CORE_TAG"); v != "v0.2.0" {
+		t.Errorf("VIDRA_CORE_TAG = %q, want the re-run's answer to have landed", v)
+	}
+
+	// Turning it off is deliberate and explicit.
+	if err := h.run(h.setupArgs("--yes", "--ipfs=false")...); err != nil {
+		t.Fatalf("third setup: %v (stderr: %s)", err, h.err.String())
+	}
+	if v := valueOf(t, h.readOutput(t), "VIDRA_COMPOSE_PROFILES"); v != "core frontend" {
+		t.Errorf("VIDRA_COMPOSE_PROFILES = %q after --ipfs=false, want the profile gone", v)
+	}
+}
+
+// A managed connection string carries the password inside it, so the interview
+// treats it as the secret it is.
+func TestSetupInteractiveAsksForAManagedDatabase(t *testing.T) {
+	h := newHarness(t)
+	// domain, tag, storage, external Postgres? y, its DSN, external Redis? n,
+	// optional components? n, SMTP? n, registration? n
+	h.stdin = "video.example.org\nv0.1.1\nlocal\ny\n" + managedDSN + "\nn\nn\nn\nn\n"
+	if err := h.run("setup", "--template", h.template); err != nil {
+		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
+	}
+	got := h.readOutput(t)
+	if v := valueOf(t, got, "VIDRA_EXTERNAL_POSTGRES"); v != "true" {
+		t.Errorf("VIDRA_EXTERNAL_POSTGRES = %q, want the answered external database", v)
+	}
+	if v := valueOf(t, got, "DATABASE_URL"); v != managedDSN {
+		t.Errorf("DATABASE_URL = %q, want the answered connection string", v)
+	}
+	if v := valueOf(t, got, "VIDRA_EXTERNAL_REDIS"); v != "false" {
+		t.Errorf("VIDRA_EXTERNAL_REDIS = %q, want the bundled Redis kept", v)
+	}
+	// The prompt is a secret prompt (piped stdin cannot hide the echo, so it says
+	// so rather than pretending), and the answer must not be echoed back in the
+	// summary.
+	if !strings.Contains(h.out.String(), "Managed PostgreSQL connection string (input is echoed)") {
+		t.Errorf("the DSN was not asked for as a secret:\n%s", h.out.String())
 	}
 }
 

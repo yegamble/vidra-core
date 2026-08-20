@@ -186,11 +186,27 @@ const carriedHeader = `
 # and a DATABASE_URL that disappears re-points the api at the bundled Postgres.
 # Move any of them into the sections above if a later template adopts the key.`
 
+// managedHeader introduces the block that holds the component keys this
+// template does not define. It is a SEPARATE block from the carried one on
+// purpose: these keys are not the previous operator's leftovers, they are values
+// `vidra setup` computed this run, and an env file that told an operator
+// otherwise would be inviting them to delete it.
+const managedHeader = `
+# ------------------------------------------------------------------------------
+# Component selection (managed by ` + "`vidra setup`" + `)
+# ------------------------------------------------------------------------------
+# Keys this template does not define yet: which docker compose profiles the
+# deploy scripts enable, whether Postgres/Redis are external (each true makes the
+# deploy add docker-compose.external-*.yml so the bundled service never starts),
+# and the connection strings those switches need. A newer template defines them
+# in place and setup fills them there instead, leaving this block empty.`
+
 // Render re-emits the file with values applied: comments, blank lines and
-// ordering untouched, each active assignment carrying values[key], and any
-// carried keys appended in their own labelled block. A key absent from values
-// keeps the value it was parsed with.
-func (f *EnvFile) Render(values map[string]string, carried []string) []byte {
+// ordering untouched, each active assignment carrying values[key], then two
+// appended blocks — the keys carried over from the previous env file, and the
+// component keys this template does not define. A key absent from values keeps
+// the value it was parsed with.
+func (f *EnvFile) Render(values map[string]string, carried, managed []string) []byte {
 	var buf bytes.Buffer
 	for _, ln := range f.lines {
 		if ln.key == "" {
@@ -213,10 +229,19 @@ func (f *EnvFile) Render(values map[string]string, carried []string) []byte {
 		buf.WriteString(v)
 		buf.WriteByte('\n')
 	}
-	if len(carried) > 0 {
-		buf.WriteString(carriedHeader)
+	for _, block := range []struct {
+		header string
+		keys   []string
+	}{
+		{carriedHeader, carried},
+		{managedHeader, managed},
+	} {
+		if len(block.keys) == 0 {
+			continue
+		}
+		buf.WriteString(block.header)
 		buf.WriteByte('\n')
-		for _, k := range carried {
+		for _, k := range block.keys {
 			buf.WriteString(k)
 			buf.WriteByte('=')
 			buf.WriteString(values[k])

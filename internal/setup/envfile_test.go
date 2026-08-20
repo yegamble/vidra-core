@@ -16,7 +16,7 @@ func TestParseRenderRoundTrip(t *testing.T) {
 		t.Fatalf("read fixture: %v", err)
 	}
 	f := mustParse(t, raw)
-	if got := f.Render(f.Values(), nil); string(got) != string(raw) {
+	if got := f.Render(f.Values(), nil, nil); string(got) != string(raw) {
 		t.Errorf("round-trip changed the file\n--- got ---\n%s--- want ---\n%s", got, raw)
 	}
 }
@@ -67,19 +67,19 @@ func TestParseRejectsDuplicateKeys(t *testing.T) {
 
 func TestRenderOnlyRewritesChangedLines(t *testing.T) {
 	f := mustParse(t, []byte("A=1\n# keep me\nB=2\n"))
-	got := f.Render(map[string]string{"A": "1", "B": "changed"}, nil)
+	got := f.Render(map[string]string{"A": "1", "B": "changed"}, nil, nil)
 	if string(got) != "A=1\n# keep me\nB=changed\n" {
 		t.Errorf("got %q", got)
 	}
 	// A key absent from the values map keeps the value it was parsed with.
-	if got := f.Render(map[string]string{}, nil); string(got) != "A=1\n# keep me\nB=2\n" {
+	if got := f.Render(map[string]string{}, nil, nil); string(got) != "A=1\n# keep me\nB=2\n" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestRenderAppendsCarriedKeysUnderAHeader(t *testing.T) {
 	f := mustParse(t, []byte("A=1\n"))
-	got := string(f.Render(map[string]string{"A": "1", "B": "2"}, []string{"B"}))
+	got := string(f.Render(map[string]string{"A": "1", "B": "2"}, []string{"B"}, nil))
 	if !strings.HasPrefix(got, "A=1\n") {
 		t.Errorf("template lines were disturbed: %q", got)
 	}
@@ -93,21 +93,53 @@ func TestRenderAppendsCarriedKeysUnderAHeader(t *testing.T) {
 	}
 }
 
+// The component keys a template does not define get their OWN block, not the
+// carried one: they were computed by this run, and a header telling an operator
+// they are the previous file's leftovers is an invitation to delete them.
+func TestRenderAppendsManagedKeysUnderTheirOwnHeader(t *testing.T) {
+	f := mustParse(t, []byte("A=1\n"))
+	got := string(f.Render(
+		map[string]string{"A": "1", "OLD": "kept", "VIDRA_COMPOSE_PROFILES": "core frontend ipfs"},
+		[]string{"OLD"},
+		[]string{"VIDRA_COMPOSE_PROFILES"},
+	))
+	if !strings.HasPrefix(got, "A=1\n") {
+		t.Errorf("template lines were disturbed: %q", got)
+	}
+	if !strings.Contains(got, "Carried over from the previous env file\n") || !strings.Contains(got, "\nOLD=kept\n") {
+		t.Errorf("carried block missing: %q", got)
+	}
+	if !strings.Contains(got, "Component selection (managed by `vidra setup`)") || !strings.HasSuffix(got, "\nVIDRA_COMPOSE_PROFILES=core frontend ipfs\n") {
+		t.Errorf("managed block missing or misplaced: %q", got)
+	}
+	if strings.Index(got, "OLD=kept") > strings.Index(got, "VIDRA_COMPOSE_PROFILES=") {
+		t.Errorf("the managed block must come after the carried one: %q", got)
+	}
+	// Both blocks round-trip as ordinary assignments, which is what makes a
+	// re-run see exactly what this one wrote.
+	back := mustParse(t, []byte(got))
+	for _, tc := range []struct{ key, want string }{{"OLD", "kept"}, {"VIDRA_COMPOSE_PROFILES", "core frontend ipfs"}} {
+		if v, ok := back.Value(tc.key); !ok || v != tc.want {
+			t.Errorf("%s did not survive a re-parse: %q %v", tc.key, v, ok)
+		}
+	}
+}
+
 func TestParseNormalisesLineEndingsAndEmptyInput(t *testing.T) {
 	f := mustParse(t, []byte("A=1\r\n# c\r\n"))
 	if v, _ := f.Value("A"); v != "1" {
 		t.Errorf("A = %q, want the trailing CR stripped", v)
 	}
-	if got := string(f.Render(f.Values(), nil)); got != "A=1\n# c\n" {
+	if got := string(f.Render(f.Values(), nil, nil)); got != "A=1\n# c\n" {
 		t.Errorf("got %q", got)
 	}
 	empty := mustParse(t, nil)
-	if len(empty.Keys()) != 0 || len(empty.Render(nil, nil)) != 0 {
+	if len(empty.Keys()) != 0 || len(empty.Render(nil, nil, nil)) != 0 {
 		t.Error("an empty file should parse and render as empty")
 	}
 	// A file with no trailing newline gains one rather than losing its last line.
 	f = mustParse(t, []byte("A=1"))
-	if got := string(f.Render(f.Values(), nil)); got != "A=1\n" {
+	if got := string(f.Render(f.Values(), nil, nil)); got != "A=1\n" {
 		t.Errorf("got %q", got)
 	}
 }

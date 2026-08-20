@@ -251,11 +251,17 @@ func TestMergeCarriesKeysTheTemplateDoesNotDefine(t *testing.T) {
 	for _, k := range []string{"FEDERATION_KEY_KEK", "DATABASE_URL"} {
 		want, _ := existing.Value(k)
 		if second.Values[k] != want {
-			t.Errorf("%s = %q, want the carried value %q", k, second.Values[k], want)
+			t.Errorf("%s = %q, want the preserved value %q", k, second.Values[k], want)
 		}
-		if !contains(second.Carried, k) {
-			t.Errorf("%s not reported as carried (Carried=%v)", k, second.Carried)
-		}
+	}
+	if !contains(second.Carried, "FEDERATION_KEY_KEK") {
+		t.Errorf("FEDERATION_KEY_KEK not reported as carried (Carried=%v)", second.Carried)
+	}
+	// DATABASE_URL is preserved just as hard, but it is a key this engine MANAGES
+	// (it is half of the external-Postgres answer), so it is re-emitted in the
+	// component block rather than reported as somebody's leftover.
+	if contains(second.Carried, "DATABASE_URL") {
+		t.Errorf("DATABASE_URL reported as carried (Carried=%v) — it is a managed component key", second.Carried)
 	}
 	if !strings.Contains(string(second.Content), "Carried over from the previous env file") {
 		t.Error("carried keys were not written under their explanatory header")
@@ -889,31 +895,416 @@ func TestWriteFileIsPrivate(t *testing.T) {
 	}
 }
 
+// The check command must be the compose chain the DEPLOY will build, character
+// for character — it is the only pre-flight, and one that renders a different
+// chain proves nothing. Every input that changes the chain is a row here.
 func TestRenderCheckCommandMirrorsTheDeployScript(t *testing.T) {
-	got := RenderCheckCommand("env/production.env", nil)
-	for _, want := range []string{"-f docker-compose.yml", "-f docker-compose.prod.yml", "--env-file env/production.env", "--profile core --profile frontend", "config -q"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("render-check command %q is missing %q", got, want)
-		}
-	}
-
-	// deploy.sh appends EXTRA_COMPOSE_PROFILES from the env file to its own
-	// profile list, so a check command without them renders a DIFFERENT compose
-	// chain than the deploy it is supposed to pre-flight.
-	got = RenderCheckCommand("env/production.env", map[string]string{"EXTRA_COMPOSE_PROFILES": "ipfs  observability"})
-	for _, want := range []string{"--profile core --profile frontend --profile ipfs --profile observability"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("render-check command %q is missing %q", got, want)
-		}
+	const base = "docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+	for _, tc := range []struct {
+		name   string
+		values map[string]string
+		want   string
+	}{
+		{
+			name: "an env file older than the profile key keeps the deploy's hard-coded pair",
+			want: base + " --env-file env/production.env --profile core --profile frontend config -q",
+		},
+		{
+			name:   "all local: the managed list is exactly the base profiles",
+			values: map[string]string{profilesKey: "core frontend", externalPostgresKey: "false", externalRedisKey: "false"},
+			want:   base + " --env-file env/production.env --profile core --profile frontend config -q",
+		},
+		{
+			name:   "features become profiles, in the list's order",
+			values: map[string]string{profilesKey: "core frontend scan captions media otel ipfs"},
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile scan --profile captions --profile media --profile otel --profile ipfs config -q",
+		},
+		{
+			name:   "external postgres only: its overlay goes straight after the prod one",
+			values: map[string]string{profilesKey: "core frontend", externalPostgresKey: "true"},
+			want:   base + " -f docker-compose.external-postgres.yml --env-file env/production.env --profile core --profile frontend config -q",
+		},
+		{
+			name:   "external redis only",
+			values: map[string]string{profilesKey: "core frontend", externalRedisKey: "true"},
+			want:   base + " -f docker-compose.external-redis.yml --env-file env/production.env --profile core --profile frontend config -q",
+		},
+		{
+			name:   "both external, postgres overlay first",
+			values: map[string]string{profilesKey: "core frontend ipfs", externalPostgresKey: "true", externalRedisKey: "true"},
+			want:   base + " -f docker-compose.external-postgres.yml -f docker-compose.external-redis.yml --env-file env/production.env --profile core --profile frontend --profile ipfs config -q",
+		},
+		{
+			// deploy.sh appends EXTRA_COMPOSE_PROFILES from the env file to its own
+			// profile list, so a check command without them renders a DIFFERENT
+			// chain than the deploy it is supposed to pre-flight.
+			name:   "the operator's extra profiles are appended",
+			values: map[string]string{"EXTRA_COMPOSE_PROFILES": "ipfs  observability"},
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile ipfs --profile observability config -q",
+		},
+		{
+			// The overlap is the ordinary case after an upgrade: the profile an
+			// operator enabled by hand is now in the managed list too.
+			name:   "a profile in both lists is enabled once",
+			values: map[string]string{profilesKey: "core frontend ipfs", "EXTRA_COMPOSE_PROFILES": "ipfs ipfs-private"},
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile ipfs --profile ipfs-private config -q",
+		},
+		{
+			// A spelling neither the shell nor ParseBool agrees on must not quietly
+			// add an overlay; componentIssues is what tells the operator.
+			name:   "an unparseable switch is not true",
+			values: map[string]string{externalPostgresKey: "yes please"},
+			want:   base + " --env-file env/production.env --profile core --profile frontend config -q",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RenderCheckCommand("env/production.env", tc.values); got != tc.want {
+				t.Errorf("render-check command\n got: %s\nwant: %s", got, tc.want)
+			}
+		})
 	}
 
 	// A path with a space is one the operator can paste, not a broken command.
-	got = RenderCheckCommand("/srv/my deploy/env/production.env", nil)
+	got := RenderCheckCommand("/srv/my deploy/env/production.env", nil)
 	if !strings.Contains(got, `--env-file '/srv/my deploy/env/production.env'`) {
 		t.Errorf("the env path was not shell-quoted: %s", got)
 	}
 	if !strings.Contains(RenderCheckCommand("env/it's.env", nil), `'env/it'\''s.env'`) {
 		t.Errorf("a quote in the path was not escaped: %s", RenderCheckCommand("env/it's.env", nil))
+	}
+}
+
+// Profiles is the mapping every front-end shares, so it is pinned answer by
+// answer: the base pair is unconditional, each feature adds exactly one profile,
+// and the ORDER is fixed (the value is written into an env file that gets diffed
+// between deploys).
+func TestProfilesMapsFeaturesToComposeProfiles(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		features FeatureAnswers
+		want     string
+	}{
+		{"all local, nothing optional", FeatureAnswers{}, "core frontend"},
+		{"scan", FeatureAnswers{Scan: true}, "core frontend scan"},
+		{"captions", FeatureAnswers{Captions: true}, "core frontend captions"},
+		{"media", FeatureAnswers{Media: true}, "core frontend media"},
+		{"otel", FeatureAnswers{Otel: true}, "core frontend otel"},
+		{"ipfs maps to the public profile only", FeatureAnswers{IPFS: true}, "core frontend ipfs"},
+		{"a pair keeps the fixed order", FeatureAnswers{IPFS: true, Scan: true}, "core frontend scan ipfs"},
+		{"everything", FeatureAnswers{Scan: true, Captions: true, Media: true, Otel: true, IPFS: true}, "core frontend scan captions media otel ipfs"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := strings.Join(Profiles(Answers{Features: tc.features}), " "); got != tc.want {
+				t.Errorf("Profiles = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// The storage answer is NOT a profile: minio is a dev convenience, and an s3
+	// deployment points at somebody else's endpoint.
+	for _, backend := range []string{"local", "s3"} {
+		if got := strings.Join(Profiles(Answers{StorageBackend: backend}), " "); got != "core frontend" {
+			t.Errorf("storage %q produced profiles %q, want just the base pair — nothing here starts the bundled minio", backend, got)
+		}
+	}
+}
+
+// The inverse: a re-run reads the profile list back into the answers that wrote
+// it, and ignores everything it does not own.
+func TestFeaturesFromProfilesRoundTrips(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  FeatureAnswers
+	}{
+		{"", FeatureAnswers{}},
+		{"core frontend", FeatureAnswers{}},
+		{"core frontend scan ipfs", FeatureAnswers{Scan: true, IPFS: true}},
+		{"  captions   otel  ", FeatureAnswers{Captions: true, Otel: true}},
+		// A manual private swarm is not a question this engine asks, so reading it
+		// back must not claim the ipfs answer was given.
+		{"core frontend ipfs-private", FeatureAnswers{}},
+		{"core frontend somethingnew", FeatureAnswers{}},
+	} {
+		if got := FeaturesFromProfiles(tc.value); got != tc.want {
+			t.Errorf("FeaturesFromProfiles(%q) = %+v, want %+v", tc.value, got, tc.want)
+		}
+	}
+	full := FeatureAnswers{Scan: true, Captions: true, Media: true, Otel: true, IPFS: true}
+	if got := FeaturesFromProfiles(strings.Join(Profiles(Answers{Features: full}), " ")); got != full {
+		t.Errorf("round trip lost an answer: %+v", got)
+	}
+}
+
+// What the engine actually WRITES, which is what the deploy scripts read.
+func TestGenerateWritesTheComponentKeys(t *testing.T) {
+	external := "postgresql://doadmin:pw@db.example.net:25060/defaultdb?sslmode=require"
+	for _, tc := range []struct {
+		name    string
+		answers func(*Answers)
+		want    map[string]string
+	}{
+		{
+			name:    "all local is the default",
+			answers: func(*Answers) {},
+			want:    map[string]string{profilesKey: "core frontend", externalPostgresKey: "false", externalRedisKey: "false"},
+		},
+		{
+			name: "external postgres only",
+			answers: func(a *Answers) {
+				a.Database = DatabaseAnswers{Mode: "external", URL: external}
+			},
+			want: map[string]string{profilesKey: "core frontend", externalPostgresKey: "true", externalRedisKey: "false", databaseURLKey: external},
+		},
+		{
+			name: "external redis only",
+			answers: func(a *Answers) {
+				a.Redis = RedisAnswers{Mode: "external", URL: "rediss://default:pw@redis.example.net:25061/0"}
+			},
+			want: map[string]string{profilesKey: "core frontend", externalPostgresKey: "false", externalRedisKey: "true", redisURLKey: "rediss://default:pw@redis.example.net:25061/0"},
+		},
+		{
+			name: "both external",
+			answers: func(a *Answers) {
+				a.Database = DatabaseAnswers{Mode: "external", URL: external}
+				a.Redis = RedisAnswers{Mode: "external", URL: "rediss://default:pw@redis.example.net:25061/0"}
+			},
+			want: map[string]string{externalPostgresKey: "true", externalRedisKey: "true", databaseURLKey: external, redisURLKey: "rediss://default:pw@redis.example.net:25061/0"},
+		},
+		{
+			name: "features and an external datastore are independent answers",
+			answers: func(a *Answers) {
+				a.Features = FeatureAnswers{Scan: true, IPFS: true}
+				a.Redis = RedisAnswers{Mode: "external", URL: "rediss://default:pw@redis.example.net:25061/0"}
+			},
+			want: map[string]string{profilesKey: "core frontend scan ipfs", externalPostgresKey: "false", externalRedisKey: "true"},
+		},
+		{
+			// The one storage answer that could plausibly want a container: it must
+			// not get one, and must not need a media volume either.
+			name: "s3 storage adds no profile",
+			answers: func(a *Answers) {
+				a.StorageBackend = "s3"
+				a.S3 = S3Answers{Endpoint: "fra1.example.net", Region: "fra1", Bucket: "media", AccessKey: "AKIA", SecretKey: "s3cret"}
+			},
+			want: map[string]string{profilesKey: "core frontend", "STORAGE_BACKEND": "s3"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			answers := baseAnswers()
+			tc.answers(&answers)
+			res := generate(t, Request{Answers: answers})
+			for k, want := range tc.want {
+				if res.Values[k] != want {
+					t.Errorf("%s = %q, want %q", k, res.Values[k], want)
+				}
+			}
+			// Whatever was written has to survive a re-parse of the BYTES: these
+			// keys are read by shell scripts, one line at a time.
+			back := mustParse(t, res.Content)
+			for k, want := range tc.want {
+				if v, _ := back.Value(k); v != want {
+					t.Errorf("re-parsed %s = %q, want %q", k, v, want)
+				}
+			}
+		})
+	}
+}
+
+// A template that predates the component keys must still produce a file the
+// deploy scripts can read: the keys are appended in their own block rather than
+// dropped, and a re-run over that file changes nothing.
+func TestGenerateAppendsComponentKeysToAnOlderTemplate(t *testing.T) {
+	old := mustParse(t, []byte(strings.Join([]string{
+		"VIDRA_ENV=production",
+		"PUBLIC_BASE_URL=https://example.com",
+		"JWT_SECRET=",
+		"STORAGE_BACKEND=local",
+		"MAIL_ENABLED=false",
+	}, "\n")+"\n"))
+
+	answers := baseAnswers()
+	answers.Features = FeatureAnswers{IPFS: true}
+	answers.Database = DatabaseAnswers{Mode: "external", URL: "postgresql://doadmin:pw@db.example.net:25060/defaultdb?sslmode=require"}
+	res := generate(t, Request{Template: old, Answers: answers})
+
+	if !strings.Contains(string(res.Content), "Component selection (managed by `vidra setup`)") {
+		t.Errorf("the appended keys got no explanatory header:\n%s", res.Content)
+	}
+	back := mustParse(t, res.Content)
+	for k, want := range map[string]string{
+		profilesKey:         "core frontend ipfs",
+		externalPostgresKey: "true",
+		externalRedisKey:    "false",
+		databaseURLKey:      "postgresql://doadmin:pw@db.example.net:25060/defaultdb?sslmode=require",
+	} {
+		if v, ok := back.Value(k); !ok || v != want {
+			t.Errorf("%s = %q (present=%v), want %q appended", k, v, ok, want)
+		}
+	}
+	// REDIS_URL has no value, so it is absent rather than blank: the bundled
+	// service's DSN is derived by the compose chain, and an empty override is a
+	// line for someone to misread later.
+	if _, ok := back.Value(redisURLKey); ok {
+		t.Errorf("%s was written with no value to write:\n%s", redisURLKey, res.Content)
+	}
+
+	// Re-running over the generated file is a no-op — including the block, which
+	// must not be duplicated or demoted to "carried".
+	again := generate(t, Request{Template: old, Existing: back, Answers: answers, Rand: &seqReader{n: 77}})
+	if string(again.Content) != string(res.Content) {
+		t.Errorf("re-running over an appended block is not idempotent\n--- again ---\n%s--- first ---\n%s", again.Content, res.Content)
+	}
+	for _, k := range managedKeys {
+		if contains(again.Carried, k) {
+			t.Errorf("%s was reported as carried; the component block owns it (Carried=%v)", k, again.Carried)
+		}
+	}
+}
+
+// The combination that cannot boot: the overlay deletes the bundled service, so
+// an external answer with no connection string leaves the api pointing at a host
+// that is not in the compose network any more.
+func TestGenerateRefusesAnExternalDatastoreWithNoConnectionString(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		answers func(*Answers)
+		wantVar string
+	}{
+		{"postgres", func(a *Answers) { a.Database = DatabaseAnswers{Mode: "external"} }, databaseURLKey},
+		{"redis", func(a *Answers) { a.Redis = RedisAnswers{Mode: "external"} }, redisURLKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			answers := baseAnswers()
+			tc.answers(&answers)
+			_, err := Generate(Request{Template: fixtureTemplate(t), Answers: answers, Rand: &seqReader{}})
+			var invalid *ValidationError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("err = %v, want a refusal to write the file", err)
+			}
+			if !hasIssue(invalid.Issues, tc.wantVar) {
+				t.Errorf("issues = %v, want one against %s", invalid.Issues, tc.wantVar)
+			}
+		})
+	}
+
+	// An unsupported mode is a typo, not a third option.
+	if _, err := Generate(Request{Template: fixtureTemplate(t), Answers: func() Answers {
+		a := baseAnswers()
+		a.Database.Mode = "managed"
+		return a
+	}()}); err == nil || !strings.Contains(err.Error(), "local|external") {
+		t.Errorf("err = %v, want the mode rejected with the allowed values", err)
+	}
+}
+
+// Preservation, the component edition: a re-run that answers nothing about the
+// datastores keeps the managed connection string and the external switch, and
+// re-confirming the mode without repeating the URL keeps it too. (The profile
+// list is the deliberate exception — see Answers.Features — and `vidra setup`
+// seeds it from the file for exactly this reason.)
+func TestComponentAnswersSurviveAReRun(t *testing.T) {
+	const dsn = "postgresql://doadmin:pw@db.example.net:25060/defaultdb?sslmode=require"
+	answers := baseAnswers()
+	answers.Features = FeatureAnswers{Scan: true}
+	answers.Database = DatabaseAnswers{Mode: "external", URL: dsn}
+	first := generate(t, Request{Answers: answers})
+
+	// Nothing answered about the datastores at all.
+	quiet := baseAnswers()
+	quiet.Features = FeaturesFromProfiles(first.Values[profilesKey])
+	second := generate(t, Request{Existing: mustParse(t, first.Content), Answers: quiet, Rand: &seqReader{n: 40}})
+	for k, want := range map[string]string{
+		databaseURLKey:      dsn,
+		externalPostgresKey: "true",
+		profilesKey:         "core frontend scan",
+	} {
+		if second.Values[k] != want {
+			t.Errorf("%s = %q after a re-run that did not mention it, want %q", k, second.Values[k], want)
+		}
+	}
+
+	// The mode re-confirmed, the URL not repeated (the interview offers it masked
+	// and the operator pressed enter): the string in the file stands.
+	third := generate(t, Request{Existing: mustParse(t, second.Content), Answers: func() Answers {
+		a := quiet
+		a.Database = DatabaseAnswers{Mode: "external"}
+		return a
+	}(), Rand: &seqReader{n: 50}})
+	if third.Values[databaseURLKey] != dsn {
+		t.Errorf("%s = %q, want the existing connection string kept", databaseURLKey, third.Values[databaseURLKey])
+	}
+
+	// And a component answer that CHANGES is not preservation: switching back to
+	// the bundled Postgres flips the switch (the URL stays, so the deployment can
+	// switch back without re-typing it — the warning below is what says so).
+	back := generate(t, Request{Existing: mustParse(t, third.Content), Answers: func() Answers {
+		a := quiet
+		a.Database = DatabaseAnswers{Mode: "local"}
+		return a
+	}(), Rand: &seqReader{n: 60}})
+	if back.Values[externalPostgresKey] != "false" {
+		t.Errorf("%s = %q, want the switch flipped back", externalPostgresKey, back.Values[externalPostgresKey])
+	}
+	if !warned(back.Warnings, "DATABASE_URL is set but VIDRA_EXTERNAL_POSTGRES is not true") {
+		t.Errorf("warnings = %v, want the half-configured managed database flagged", back.Warnings)
+	}
+}
+
+// The component keys are read by the deploy scripts, not by the api: Check must
+// pass them through untouched (blank included) and only report the combinations
+// that genuinely cannot work.
+func TestCheckHandlesTheComponentKeys(t *testing.T) {
+	valid := map[string]string{"VIDRA_ENV": "production", "JWT_SECRET": strings.Repeat("k", 48)}
+	with := func(extra map[string]string) map[string]string {
+		out := map[string]string{}
+		for k, v := range valid {
+			out[k] = v
+		}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return out
+	}
+
+	// internal/config has never heard of these keys; a filled-in file must not
+	// acquire problems by carrying them, and a blank one must not either.
+	for _, vars := range []map[string]string{
+		with(map[string]string{profilesKey: "core frontend scan ipfs", externalPostgresKey: "false", externalRedisKey: "false"}),
+		with(map[string]string{profilesKey: "", externalPostgresKey: "", externalRedisKey: ""}),
+	} {
+		if got := Check(vars); len(got) > 0 {
+			t.Errorf("Check(%v) = %v, want no problems", vars, got)
+		}
+	}
+
+	for _, tc := range []struct {
+		name    string
+		vars    map[string]string
+		wantVar string
+	}{
+		{"external postgres with no DSN", with(map[string]string{externalPostgresKey: "true"}), databaseURLKey},
+		{"external redis with no DSN", with(map[string]string{externalRedisKey: "true"}), redisURLKey},
+		{"a switch that is not a boolean", with(map[string]string{externalPostgresKey: "yes"}), externalPostgresKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Check(tc.vars); !hasIssue(got, tc.wantVar) {
+				t.Errorf("Check = %v, want an issue against %s", got, tc.wantVar)
+			}
+		})
+	}
+
+	// Satisfied, it says nothing.
+	if got := Check(with(map[string]string{externalPostgresKey: "true", databaseURLKey: "postgresql://u:p@db.example.net:25060/d?sslmode=require"})); len(got) > 0 {
+		t.Errorf("Check = %v, want an external database with its DSN accepted", got)
+	}
+	// A managed DSN with the switch off boots fine — it is a warning, not a
+	// problem, because it is also what every pre-overlay deployment looks like.
+	warnVars := with(map[string]string{databaseURLKey: "postgresql://u:p@db.example.net:25060/d?sslmode=require"})
+	if got := Check(warnVars); len(got) > 0 {
+		t.Errorf("Check = %v, want the pre-overlay managed database accepted", got)
+	}
+	if !warned(Warnings(warnVars), "the deploy still starts the bundled one") {
+		t.Errorf("warnings = %v, want the bundled-service drift flagged", Warnings(warnVars))
 	}
 }
 
