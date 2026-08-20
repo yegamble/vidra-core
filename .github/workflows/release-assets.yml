@@ -69,7 +69,14 @@ jobs:
           # The tag commit's own date, in the shape the Makefile's `date -u`
           # produces. Deriving it from the commit rather than from `now` is what
           # makes a re-run of this workflow produce identical binaries.
-          BUILD_DATE="$(TZ=UTC git show -s --date=format:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
+          #
+          # format-local, NOT format: git renders %cd in the COMMITTER's recorded
+          # timezone offset and format: honours that, so a commit made at 23:30
+          # +09:00 came out as "2026-08-20T23:30:00Z" — the local wall clock with
+          # a Z welded onto it, nine hours wrong and unfalsifiable, since the
+          # string looks exactly like a UTC one. TZ=UTC cannot fix that on its
+          # own: it selects the zone for format-local and is ignored by format.
+          BUILD_DATE="$(TZ=UTC git show -s --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
           mkdir -p dist
           # linux/{amd64,arm64} is where deployments run (a DigitalOcean droplet
           # is one or the other); darwin/{amd64,arm64} is where operators drive

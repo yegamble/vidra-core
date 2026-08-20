@@ -33,7 +33,7 @@ func TestSnapshotWritesThePreviousEnvFileAt0600(t *testing.T) {
 	envPath := filepath.Join(dir, "env", "production.env")
 	at := time.Date(2026, 8, 20, 13, 45, 0, 0, time.UTC)
 
-	path, err := snapshotEnvFile(dir, envPath, at)
+	path, err := snapshotEnvFile(dir, envPath, envHistoryKeepDefault, at)
 	if err != nil {
 		t.Fatalf("snapshotEnvFile: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestSnapshotUsesTheEnvFilesOwnName(t *testing.T) {
 	dir := fakeDeployment(t, historyEnv)
 	staging := filepath.Join(dir, "env", "staging.env")
 	write(t, staging, historyEnv)
-	path, err := snapshotEnvFile(dir, staging, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
+	path, err := snapshotEnvFile(dir, staging, envHistoryKeepDefault, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("snapshotEnvFile: %v", err)
 	}
@@ -93,13 +93,13 @@ func TestSnapshotPrunesToTenGenerations(t *testing.T) {
 	envPath := filepath.Join(dir, "env", "production.env")
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i := range 15 {
-		if _, err := snapshotEnvFile(dir, envPath, base.Add(time.Duration(i)*time.Hour)); err != nil {
+		if _, err := snapshotEnvFile(dir, envPath, envHistoryKeepDefault, base.Add(time.Duration(i)*time.Hour)); err != nil {
 			t.Fatalf("snapshot %d: %v", i, err)
 		}
 	}
 	names := historyNames(t, filepath.Join(dir, "backups", "env-history"))
-	if len(names) != envHistoryKeep {
-		t.Fatalf("%d snapshots kept, want %d: %v", len(names), envHistoryKeep, names)
+	if len(names) != envHistoryKeepDefault {
+		t.Fatalf("%d snapshots kept, want %d: %v", len(names), envHistoryKeepDefault, names)
 	}
 	// The names sort chronologically, so the survivors are hours 5..14.
 	if names[0] != "production.env.20260101T050000Z" || names[len(names)-1] != "production.env.20260101T140000Z" {
@@ -123,7 +123,7 @@ func TestPruneLeavesTheOtherEnvFilesHistoryAlone(t *testing.T) {
 	// rule for what it will delete is as narrow as it can be made.
 	write(t, filepath.Join(dir, "README"), "these are env file snapshots")
 
-	if err := pruneEnvHistory(dir, "production.env", envHistoryKeep); err != nil {
+	if err := pruneEnvHistory(dir, "production.env", envHistoryKeepDefault); err != nil {
 		t.Fatalf("pruneEnvHistory: %v", err)
 	}
 	names := historyNames(t, dir)
@@ -136,8 +136,8 @@ func TestPruneLeavesTheOtherEnvFilesHistoryAlone(t *testing.T) {
 			staging++
 		}
 	}
-	if production != envHistoryKeep {
-		t.Errorf("%d production snapshots left, want %d", production, envHistoryKeep)
+	if production != envHistoryKeepDefault {
+		t.Errorf("%d production snapshots left, want %d", production, envHistoryKeepDefault)
 	}
 	if staging != 3 {
 		t.Errorf("%d staging snapshots left, want all 3 — the other deployment's history was pruned", staging)

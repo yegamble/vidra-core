@@ -119,11 +119,15 @@ openapi-verify sqlc-verify test-race` — the exact set `backend-ci.yml` runs, s
   migrations are OLDER than the running database (the target tag's `migrations/` read
   out of the tag's tree, against the api's `/schemaz` — the one mistake `vidra deploy`
   cannot notice, since it compares the ledger against the checkout it just moved to the
-  same tag), snapshots the env file into `backups/env-history/` and keeps ten
-  generations, then runs `deploy/deploy.sh`. If the deploy's health probes fail it flips
-  the tags back through `deploy/rollback.sh` — but only when the target is ONE release
-  ahead, which is exactly the span the schema-compat policy covers. `--check` reports
-  current vs latest and changes nothing.
+  same tag), refuses a target older than ANY component's current tag (a partial
+  downgrade is still a downgrade), snapshots the env file into `backups/env-history/`
+  and keeps ten generations (`VIDRA_ENV_HISTORY_KEEP`, the same variable
+  `deploy/lib.sh` reads, since both prune that directory), then runs
+  `deploy/deploy.sh`. If the deploy's health probes fail it flips the tags back through
+  `deploy/rollback.sh` — but only when the target is ONE release ahead, which is exactly
+  the span the schema-compat policy covers, and only when the tags it would flip back to
+  clear that script's own `MIN_EMBEDDED_MIGRATE_TAG` floor, which it reads out of the
+  script rather than restating. `--check` reports current vs latest and changes nothing.
 - `make migrate-up` / `make migrate-version` — apply the migrations embedded in the
   api binary (`api migrate up|version`), the same code path the published image runs;
   no `migrate` CLI needed. After a migration dies halfway, `api migrate force
@@ -308,7 +312,7 @@ cmd/api/               HTTP service entrypoint + `migrate up|version|force` (bui
 cmd/vidra/             host-side operator CLI: setup, doctor, status, logs, restart,
                        update, deploy/rollback/backup/restore/release; `make build-vidra`
 cmd/peertube-import/   one-way PeerTube importer CLI
-internal/              61 packages: httpapi, auth, video, transcode, live, storage,
+internal/              62 packages: httpapi, auth, video, transcode, live, storage,
                        messaging, e2ee, ipfs, atproto, config, store (sqlc), …
 migrations/            104 up/down migration pairs, embedded into the binary
 api/openapi.yaml       OpenAPI 3.1 contract (source of truth, 214 paths)
