@@ -875,6 +875,35 @@ ipfs = true
 		}
 	})
 
+	// "Every line is validated whether or not it is applied" has to hold for the
+	// lines argv overrides, and it did not: those were skipped unchecked, so a
+	// malformed value sat in the file until the run where the operator stopped
+	// passing the flag — which is the run they were counting on the file for.
+	t.Run("a malformed value is caught on a line argv overrides", func(t *testing.T) {
+		h := newHarness(t)
+		path := write(t, h, "domain = video.example.org\nrelease-tag = v0.1.1\nstorage = local\nipfs = maybe\n")
+		err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive",
+			"--ipfs=false", "--answers", path}, h.caddyArgs()...)...)
+		if err == nil {
+			t.Fatal("a malformed value on a line the command line overrides was accepted")
+		}
+		for _, want := range []string{path + ":4", "ipfs", "maybe"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		}
+
+		// Validating the line does not APPLY it: argv still wins.
+		path = write(t, h, "domain = video.example.org\nrelease-tag = v0.1.1\nstorage = local\nipfs = true\n")
+		if err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive",
+			"--ipfs=false", "--answers", path}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "VIDRA_COMPOSE_PROFILES"); strings.Contains(v, "ipfs") {
+			t.Errorf("VIDRA_COMPOSE_PROFILES = %q, want the command line's --ipfs=false to have won", v)
+		}
+	})
+
 	t.Run("a missing file is an error, not an empty answer set", func(t *testing.T) {
 		h := newHarness(t)
 		missing := filepath.Join(h.dir, "nope")

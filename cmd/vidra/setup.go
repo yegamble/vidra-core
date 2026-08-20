@@ -27,60 +27,7 @@ func runSetup(s streams, args []string) error {
 	fs := flag.NewFlagSet("vidra setup", flag.ContinueOnError)
 	fs.SetOutput(s.err)
 
-	var (
-		checkPath = fs.String("check", "", "validate an existing env `file` and exit (no file is written)")
-		template  = fs.String("template", "", "`path` to the deployment template, e.g. env/production.env.example (required)")
-		output    = fs.String("output", "", "`path` to write (default: the template path without its .example suffix)")
-		from      = fs.String("from", "", "extra env `file` to merge: it fills keys the output file leaves blank, and never overrides it")
-
-		answersPath    = fs.String("answers", "", "`file` of \"flag-name = value\" lines to take answers from; anything also on the command line wins")
-		nonInteractive = fs.Bool("non-interactive", false, "never prompt; take every answer from flags (for unattended installs)")
-		yes            = fs.Bool("yes", false, "rewrite an existing --output in place (every value it sets is still preserved)")
-		// Deliberately NOT --yes: an operator confirming the routine in-place
-		// rewrite has not agreed to orphan every secret a KEK seals, and one flag
-		// for both would mean an everyday `--yes` silently pre-authorised a
-		// `--rotate MFA_KEY_KEK` in the same command line. The spelling matches the
-		// `api migrate force --yes-i-know` gate, which guards the same class of
-		// unrecoverable action.
-		yesIKnow = fs.Bool("yes-i-know", false, "confirm a DESTRUCTIVE *_KEK rotation: it orphans the data already sealed under that key")
-
-		domain       = fs.String("domain", "", "public origin of the instance, e.g. video.example.org (https is assumed)")
-		instanceName = fs.String("instance-name", "", "public `name` of this instance (INSTANCE_NAME): served at /api/v1/instance, in NodeInfo, and as the TOTP issuer")
-		releaseTag   = fs.String("release-tag", "", "image `tag` to deploy for all three services, e.g. v0.1.1")
-
-		tlsMode       = fs.String("tls-mode", "", "certificate issuer for the managed Caddy: `acme|acme-staging|internal` (default acme)")
-		acmeEmail     = fs.String("acme-email", "", "contact `address` Let's Encrypt sends expiry notices to (optional; without it there is no warning before a failed renewal)")
-		caddyTemplate = fs.String("caddy-template", setup.CaddyTemplatePath, "`path` to the Caddyfile template the reverse-proxy config is rendered from")
-		caddyOut      = fs.String("caddy-out", setup.CaddyOutputPath, "`path` to write the generated Caddyfile (the prod compose file bind-mounts it)")
-		noCaddy       = fs.Bool("no-caddy", false, "do not generate a Caddyfile (another reverse proxy terminates TLS)")
-		coreTag       = fs.String("core-tag", "", "override the api image `tag`")
-		userTag       = fs.String("user-tag", "", "override the frontend image `tag`")
-		searchTag     = fs.String("search-tag", "", "override the search image `tag`")
-
-		database    = fs.String("database", "", "PostgreSQL: `local|external` — external needs --database-url and makes the deploy skip the bundled container")
-		databaseURL = fs.String("database-url", "", "managed PostgreSQL connection string: `@file`, - for stdin, or the value itself (also $VIDRA_SETUP_DATABASE_URL)")
-		redis       = fs.String("redis", "", "Redis: `local|external` — external needs --redis-url and makes the deploy skip the bundled container")
-		redisURL    = fs.String("redis-url", "", "managed Redis connection string: `@file`, - for stdin, or the value itself (also $VIDRA_SETUP_REDIS_URL)")
-
-		storage     = fs.String("storage", "", "media storage backend: `local|s3`")
-		s3Endpoint  = fs.String("s3-endpoint", "", "S3 endpoint `host` WITHOUT a scheme, e.g. nyc3.digitaloceanspaces.com")
-		s3Region    = fs.String("s3-region", "", "S3 `region`, matching the endpoint")
-		s3Bucket    = fs.String("s3-bucket", "", "S3 `bucket` (pre-create it)")
-		s3AccessKey = fs.String("s3-access-key", "", "S3 access `key`")
-		s3SecretKey = fs.String("s3-secret-key", "", "S3 secret key: `@file`, - for stdin, or the value itself (also $VIDRA_SETUP_S3_SECRET_KEY)")
-
-		smtpHost     = fs.String("smtp-host", "", "SMTP relay `host` (enables mail)")
-		smtpPort     = fs.String("smtp-port", "", "SMTP `port` (587 with STARTTLS is the usual answer)")
-		smtpUsername = fs.String("smtp-username", "", "SMTP `username`")
-		smtpPassword = fs.String("smtp-password", "", "SMTP password: `@file`, - for stdin, or the value itself (also $VIDRA_SETUP_SMTP_PASSWORD)")
-		smtpFrom     = fs.String("smtp-from", "", "From `address` for outbound mail")
-
-		registration = fs.String("registration", "", "signup policy: `closed|open|approval`")
-	)
-	var rotate stringList
-	fs.Var(&rotate, "rotate", "re-generate the secret in this `VAR` even though it already has a value (repeatable)")
-	var features featureFlags
-	features.register(fs)
+	opt := registerSetupFlags(fs)
 
 	usage := func(w io.Writer) {
 		fmt.Fprint(w, `usage: vidra setup --template env/production.env.example [flags]
@@ -153,25 +100,25 @@ flags:
 	}
 	// AFTER the command line has been parsed, so "was this flag passed?" has an
 	// answer: the file fills what argv left unset, and never the other way round.
-	if *answersPath != "" {
-		if err := applyAnswersFile(fs, *answersPath); err != nil {
+	if opt.answersPath != "" {
+		if err := applyAnswersFile(fs, opt.answersPath); err != nil {
 			return err
 		}
 	}
 
-	if *checkPath != "" {
-		return checkFile(s, *checkPath)
+	if opt.checkPath != "" {
+		return checkFile(s, opt.checkPath)
 	}
-	if *template == "" {
+	if opt.template == "" {
 		usage(s.err)
 		return errors.New("setup: --template is required (the deployment template, env/production.env.example, is the input format)")
 	}
 
-	outPath, err := outputPath(*template, *output)
+	outPath, err := outputPath(opt.template, opt.output)
 	if err != nil {
 		return err
 	}
-	tmpl, err := readEnvFile(*template)
+	tmpl, err := readEnvFile(opt.template)
 	if err != nil {
 		return err
 	}
@@ -199,7 +146,7 @@ flags:
 	// are one file. Comparing the raw strings would both list the file twice and
 	// let `--from ./production.env` walk past the intent gate below, which is the
 	// one keystroke standing between a typo and a live deployment's env file.
-	fromPath := *from
+	fromPath := opt.from
 	if fromPath != "" && samePath(fromPath, outPath) {
 		fromPath = ""
 	}
@@ -214,7 +161,7 @@ flags:
 	// The remaining gate is intent, not safety: rewriting the env file a live
 	// deployment is running from is worth one deliberate keystroke, and --from
 	// (or --yes) is that keystroke.
-	if outExists && fromPath == "" && !*yes {
+	if outExists && fromPath == "" && !opt.yes {
 		return fmt.Errorf("setup: %s already exists and is the file a running deployment reads — re-run with --yes to rewrite it in place, "+
 			"or with --from <other env file> to merge that file into it as well (either way every value %s already sets, including the KEKs, is preserved), "+
 			"or pass a different --output", outPath, outPath)
@@ -222,45 +169,45 @@ flags:
 	existing := setup.MergeSources(sources...)
 
 	stdinTaken := false
-	s3Secret, err := readSecretFlag(s, "s3-secret-key", *s3SecretKey, *nonInteractive, &stdinTaken)
+	s3Secret, err := readSecretFlag(s, "s3-secret-key", opt.s3SecretKey, opt.nonInteractive, &stdinTaken)
 	if err != nil {
 		return err
 	}
-	mailPassword, err := readSecretFlag(s, "smtp-password", *smtpPassword, *nonInteractive, &stdinTaken)
+	mailPassword, err := readSecretFlag(s, "smtp-password", opt.smtpPassword, opt.nonInteractive, &stdinTaken)
 	if err != nil {
 		return err
 	}
 	// A connection string is a secret like any other — postgres://user:PASSWORD@host
 	// is the whole point of the managed-service path — so it gets the same @file /
 	// stdin / environment indirections and stays out of argv.
-	databaseConn, err := readSecretFlag(s, "database-url", *databaseURL, *nonInteractive, &stdinTaken)
+	databaseConn, err := readSecretFlag(s, "database-url", opt.databaseURL, opt.nonInteractive, &stdinTaken)
 	if err != nil {
 		return err
 	}
-	redisConn, err := readSecretFlag(s, "redis-url", *redisURL, *nonInteractive, &stdinTaken)
+	redisConn, err := readSecretFlag(s, "redis-url", opt.redisURL, opt.nonInteractive, &stdinTaken)
 	if err != nil {
 		return err
 	}
 
 	answers := setup.Answers{
-		Domain:         *domain,
-		InstanceName:   *instanceName,
-		TLSMode:        *tlsMode,
-		AcmeEmail:      *acmeEmail,
-		ReleaseTag:     *releaseTag,
-		CoreTag:        *coreTag,
-		UserTag:        *userTag,
-		SearchTag:      *searchTag,
-		StorageBackend: *storage,
+		Domain:         opt.domain,
+		InstanceName:   opt.instanceName,
+		TLSMode:        opt.tlsMode,
+		AcmeEmail:      opt.acmeEmail,
+		ReleaseTag:     opt.releaseTag,
+		CoreTag:        opt.coreTag,
+		UserTag:        opt.userTag,
+		SearchTag:      opt.searchTag,
+		StorageBackend: opt.storage,
 		S3: setup.S3Answers{
-			Endpoint:  *s3Endpoint,
-			Region:    *s3Region,
-			Bucket:    *s3Bucket,
-			AccessKey: *s3AccessKey,
+			Endpoint:  opt.s3Endpoint,
+			Region:    opt.s3Region,
+			Bucket:    opt.s3Bucket,
+			AccessKey: opt.s3AccessKey,
 			SecretKey: s3Secret,
 		},
-		Database: setup.DatabaseAnswers{Mode: *database, URL: databaseConn},
-		Redis:    setup.RedisAnswers{Mode: *redis, URL: redisConn},
+		Database: setup.DatabaseAnswers{Mode: opt.database, URL: databaseConn},
+		Redis:    setup.RedisAnswers{Mode: opt.redis, URL: redisConn},
 	}
 	// Giving the connection string IS the answer, the same way giving an SMTP host
 	// turns mail on: nobody passes --database-url to keep using the bundled
@@ -277,24 +224,24 @@ flags:
 	// operator re-running setup to change the domain would otherwise lose the ipfs
 	// profile they turned on last time.
 	answers.Features = setup.FeaturesFromProfiles(effective(tmpl, existing, "VIDRA_COMPOSE_PROFILES"))
-	features.applyTo(&answers.Features)
-	if *smtpHost != "" || *smtpFrom != "" || *smtpUsername != "" || mailPassword != "" || *smtpPort != "" {
+	opt.features.applyTo(&answers.Features)
+	if opt.smtpHost != "" || opt.smtpFrom != "" || opt.smtpUsername != "" || mailPassword != "" || opt.smtpPort != "" {
 		answers.Mail = &setup.MailAnswers{
-			Host:     *smtpHost,
-			Port:     *smtpPort,
-			Username: *smtpUsername,
+			Host:     opt.smtpHost,
+			Port:     opt.smtpPort,
+			Username: opt.smtpUsername,
 			Password: mailPassword,
-			From:     *smtpFrom,
+			From:     opt.smtpFrom,
 		}
 	}
-	if *registration != "" {
-		reg, rerr := registrationAnswer(*registration)
+	if opt.registration != "" {
+		reg, rerr := registrationAnswer(opt.registration)
 		if rerr != nil {
 			return rerr
 		}
 		answers.Registration = reg
 	}
-	if !*nonInteractive {
+	if !opt.nonInteractive {
 		if err := requireInteractiveStdin(s); err != nil {
 			return err
 		}
@@ -307,8 +254,8 @@ flags:
 		Template:           tmpl,
 		Existing:           existing,
 		Answers:            answers,
-		Rotate:             rotate,
-		ConfirmDestructive: *yesIKnow,
+		Rotate:             opt.rotate,
+		ConfirmDestructive: opt.yesIKnow,
 	})
 	if err != nil {
 		var invalid *setup.ValidationError
@@ -323,7 +270,7 @@ flags:
 	// acme mode with no contact address, a template someone stripped the markers
 	// out of) must stop the run, not leave a rewritten env file beside a proxy
 	// config that was never generated.
-	caddy, err := renderCaddyfile(*caddyTemplate, *noCaddy, res.Values)
+	caddy, err := renderCaddyfile(opt.caddyTemplate, opt.noCaddy, res.Values)
 	if err != nil {
 		return err
 	}
@@ -332,13 +279,114 @@ flags:
 	}
 	caddyPath := ""
 	if caddy != nil {
-		if err := setup.WriteCaddyfile(*caddyOut, caddy); err != nil {
+		if err := setup.WriteCaddyfile(opt.caddyOut, caddy); err != nil {
 			return err
 		}
-		caddyPath = *caddyOut
+		caddyPath = opt.caddyOut
 	}
 	report(s, outPath, caddyPath, sourcePaths, res)
 	return nil
+}
+
+// setupOptions is where every `vidra setup` flag lands. It exists so the flag
+// set can be built TWICE from one definition — once for the real run, and once
+// as the scratch copy applyAnswersFile validates the answers file against.
+type setupOptions struct {
+	checkPath      string
+	template       string
+	output         string
+	from           string
+	answersPath    string
+	nonInteractive bool
+	yes            bool
+	yesIKnow       bool
+	domain         string
+	instanceName   string
+	releaseTag     string
+	tlsMode        string
+	acmeEmail      string
+	caddyTemplate  string
+	caddyOut       string
+	noCaddy        bool
+	coreTag        string
+	userTag        string
+	searchTag      string
+	database       string
+	databaseURL    string
+	redis          string
+	redisURL       string
+	storage        string
+	s3Endpoint     string
+	s3Region       string
+	s3Bucket       string
+	s3AccessKey    string
+	s3SecretKey    string
+	smtpHost       string
+	smtpPort       string
+	smtpUsername   string
+	smtpPassword   string
+	smtpFrom       string
+	registration   string
+	rotate         stringList
+	features       featureFlags
+}
+
+// registerSetupFlags defines the command's whole interface on fs. It is the ONE
+// definition of it: a second, divergent list is how "every line is validated"
+// stops being true.
+func registerSetupFlags(fs *flag.FlagSet) *setupOptions {
+	o := &setupOptions{}
+	fs.StringVar(&o.checkPath, "check", "", "validate an existing env `file` and exit (no file is written)")
+	fs.StringVar(&o.template, "template", "", "`path` to the deployment template, e.g. env/production.env.example (required)")
+	fs.StringVar(&o.output, "output", "", "`path` to write (default: the template path without its .example suffix)")
+	fs.StringVar(&o.from, "from", "", "extra env `file` to merge: it fills keys the output file leaves blank, and never overrides it")
+
+	fs.StringVar(&o.answersPath, "answers", "", "`file` of \"flag-name = value\" lines to take answers from; anything also on the command line wins")
+	fs.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt; take every answer from flags (for unattended installs)")
+	fs.BoolVar(&o.yes, "yes", false, "rewrite an existing --output in place (every value it sets is still preserved)")
+	// Deliberately NOT --yes: an operator confirming the routine in-place
+	// rewrite has not agreed to orphan every secret a KEK seals, and one flag
+	// for both would mean an everyday `--yes` silently pre-authorised a
+	// `--rotate MFA_KEY_KEK` in the same command line. The spelling matches the
+	// `api migrate force --yes-i-know` gate, which guards the same class of
+	// unrecoverable action.
+	fs.BoolVar(&o.yesIKnow, "yes-i-know", false, "confirm a DESTRUCTIVE *_KEK rotation: it orphans the data already sealed under that key")
+
+	fs.StringVar(&o.domain, "domain", "", "public origin of the instance, e.g. video.example.org (https is assumed)")
+	fs.StringVar(&o.instanceName, "instance-name", "", "public `name` of this instance (INSTANCE_NAME): served at /api/v1/instance, in NodeInfo, and as the TOTP issuer")
+	fs.StringVar(&o.releaseTag, "release-tag", "", "image `tag` to deploy for all three services, e.g. v0.1.1")
+
+	fs.StringVar(&o.tlsMode, "tls-mode", "", "certificate issuer for the managed Caddy: `acme|acme-staging|internal` (default acme)")
+	fs.StringVar(&o.acmeEmail, "acme-email", "", "contact `address` Let's Encrypt sends expiry notices to (optional; without it there is no warning before a failed renewal)")
+	fs.StringVar(&o.caddyTemplate, "caddy-template", setup.CaddyTemplatePath, "`path` to the Caddyfile template the reverse-proxy config is rendered from")
+	fs.StringVar(&o.caddyOut, "caddy-out", setup.CaddyOutputPath, "`path` to write the generated Caddyfile (the prod compose file bind-mounts it)")
+	fs.BoolVar(&o.noCaddy, "no-caddy", false, "do not generate a Caddyfile (another reverse proxy terminates TLS)")
+	fs.StringVar(&o.coreTag, "core-tag", "", "override the api image `tag`")
+	fs.StringVar(&o.userTag, "user-tag", "", "override the frontend image `tag`")
+	fs.StringVar(&o.searchTag, "search-tag", "", "override the search image `tag`")
+
+	fs.StringVar(&o.database, "database", "", "PostgreSQL: `local|external` — external needs --database-url and makes the deploy skip the bundled container")
+	fs.StringVar(&o.databaseURL, "database-url", "", "managed PostgreSQL connection string: `@file`, - for stdin, or the value itself (also $VIDRA_SETUP_DATABASE_URL)")
+	fs.StringVar(&o.redis, "redis", "", "Redis: `local|external` — external needs --redis-url and makes the deploy skip the bundled container")
+	fs.StringVar(&o.redisURL, "redis-url", "", "managed Redis connection string: `@file`, - for stdin, or the value itself (also $VIDRA_SETUP_REDIS_URL)")
+
+	fs.StringVar(&o.storage, "storage", "", "media storage backend: `local|s3`")
+	fs.StringVar(&o.s3Endpoint, "s3-endpoint", "", "S3 endpoint `host` WITHOUT a scheme, e.g. nyc3.digitaloceanspaces.com")
+	fs.StringVar(&o.s3Region, "s3-region", "", "S3 `region`, matching the endpoint")
+	fs.StringVar(&o.s3Bucket, "s3-bucket", "", "S3 `bucket` (pre-create it)")
+	fs.StringVar(&o.s3AccessKey, "s3-access-key", "", "S3 access `key`")
+	fs.StringVar(&o.s3SecretKey, "s3-secret-key", "", "S3 secret key: `@file`, - for stdin, or the value itself (also $VIDRA_SETUP_S3_SECRET_KEY)")
+
+	fs.StringVar(&o.smtpHost, "smtp-host", "", "SMTP relay `host` (enables mail)")
+	fs.StringVar(&o.smtpPort, "smtp-port", "", "SMTP `port` (587 with STARTTLS is the usual answer)")
+	fs.StringVar(&o.smtpUsername, "smtp-username", "", "SMTP `username`")
+	fs.StringVar(&o.smtpPassword, "smtp-password", "", "SMTP password: `@file`, - for stdin, or the value itself (also $VIDRA_SETUP_SMTP_PASSWORD)")
+	fs.StringVar(&o.smtpFrom, "smtp-from", "", "From `address` for outbound mail")
+
+	fs.StringVar(&o.registration, "registration", "", "signup policy: `closed|open|approval`")
+	fs.Var(&o.rotate, "rotate", "re-generate the secret in this `VAR` even though it already has a value (repeatable)")
+	o.features.register(fs)
+	return o
 }
 
 // renderCaddyfile renders the managed reverse-proxy config from the values the
@@ -406,8 +454,13 @@ var secretFlagEnv = map[string]string{
 //     is therefore a PRE-SEEDED INTERVIEW: what it answers is not asked, what it
 //     leaves out still is.
 //
-// Every line is validated whether or not it is applied. A typo on a line argv
-// happens to override is still a typo, and finding it now costs one run.
+// Every line is validated whether or not it is applied, and it is a SCRATCH flag
+// set — the same command, built by the same constructor — that makes that true.
+// Validating by applying to the real one could only ever check the lines argv did
+// not override, so `--scan` on the command line beside `scan = maybe` in the file
+// used to hide the typo until the run where the operator stopped passing --scan.
+// A typo on a line argv happens to override is still a typo, and finding it now
+// costs one run.
 func applyAnswersFile(fs *flag.FlagSet, path string) error {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -415,6 +468,11 @@ func applyAnswersFile(fs *flag.FlagSet, path string) error {
 	}
 	onArgv := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { onArgv[f.Name] = true })
+	// Nothing reads what lands in it, and nothing prints from it: it exists to
+	// run each value through the same flag.Value.Set the real run would.
+	scratch := flag.NewFlagSet("vidra setup", flag.ContinueOnError)
+	scratch.SetOutput(io.Discard)
+	registerSetupFlags(scratch)
 
 	for i, raw := range strings.Split(string(b), "\n") {
 		line := strings.TrimSpace(strings.TrimSuffix(raw, "\r"))
@@ -443,7 +501,11 @@ func applyAnswersFile(fs *flag.FlagSet, path string) error {
 			// which is where it is enforced.
 			return fmt.Errorf("setup: %s:%d: `%s = -` reads the value from stdin, which belongs to the terminal and can only be claimed on the command line — write `%s = @<path>` to read a file, or set $%s",
 				path, lineNo, name, name, secretFlagEnv[name])
-		case onArgv[name]:
+		}
+		if err := scratch.Set(name, value); err != nil {
+			return fmt.Errorf("setup: %s:%d: --%s %q: %w", path, lineNo, name, value, err)
+		}
+		if onArgv[name] {
 			continue
 		}
 		if err := fs.Set(name, value); err != nil {
