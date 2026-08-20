@@ -33,7 +33,7 @@ func runSetup(s streams, args []string) error {
 		output    = fs.String("output", "", "`path` to write (default: the template path without its .example suffix)")
 		from      = fs.String("from", "", "extra env `file` to merge: it fills keys the output file leaves blank, and never overrides it")
 
-		answersPath    = fs.String("answers", "", "`file` of `flag-name = value` lines to take answers from; anything also on the command line wins")
+		answersPath    = fs.String("answers", "", "`file` of \"flag-name = value\" lines to take answers from; anything also on the command line wins")
 		nonInteractive = fs.Bool("non-interactive", false, "never prompt; take every answer from flags (for unattended installs)")
 		yes            = fs.Bool("yes", false, "rewrite an existing --output in place (every value it sets is still preserved)")
 		// Deliberately NOT --yes: an operator confirming the routine in-place
