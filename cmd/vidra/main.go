@@ -1,12 +1,12 @@
 // Command vidra is the operator CLI for a Vidra deployment.
 //
 // It is the whole day-to-day surface: `setup` generates the production env file
-// (phase-1 item 8), `doctor` checks a deployment (item 14), and `deploy`,
+// (phase-1 item 8), `doctor` checks a deployment (item 14), `deploy`,
 // `rollback`, `backup`, `restore`, `release`, `logs`, `restart` and `status`
-// (item 13) are the running-it half. `update` is the one still to come (item
-// 15). Each is one file next to this, sharing the same argument/stream
-// plumbing: adding a command is a table entry and a file, never a rewrite of how
-// the CLI is invoked.
+// (item 13) are the running-it half, and `update` (item 15) is the one that
+// moves a deployment to a new release. Each is one file next to this, sharing
+// the same argument/stream plumbing: adding a command is a table entry and a
+// file, never a rewrite of how the CLI is invoked.
 //
 // THE FIVE DEPLOY COMMANDS ARE WRAPPERS, NOT RE-IMPLEMENTATIONS. deploy,
 // rollback, backup, restore and release exec the deployment's own
@@ -15,6 +15,13 @@
 // dump, the confirmations — stays in the scripts, in one copy, because a Go
 // transcription of any of them would be a second opinion that has to be kept in
 // step by hand. See passthrough.go.
+//
+// `update` is the one command that is NOT a wrapper, and it is worth saying why
+// it is allowed not to be: choosing a release, refusing one whose migrations are
+// behind the database, keeping more than one generation of the env file and
+// flipping the tags back after a failed deploy are all things no script does at
+// all. It still runs deploy/deploy.sh for the deploy itself, gates and prompts
+// unchanged. See update.go.
 //
 // It is a separate binary from cmd/api on purpose: the api image runs a server
 // (and its `migrate` subcommand, which must ship inside that image), while this
@@ -66,6 +73,11 @@ var commands = []command{
 		name:    "logs",
 		summary: "follow the deployment's logs (all services, or the ones you name)",
 		run:     runLogs,
+	},
+	{
+		name:    "update",
+		summary: "move this deployment to the newest release: find it, pin it, deploy it, roll back if it fails",
+		run:     runUpdate,
 	},
 	{
 		name:    "deploy",
