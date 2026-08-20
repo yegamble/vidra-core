@@ -181,10 +181,21 @@ services:
   # repo's separate search-migrate service is the one that must carry
   # &x-migrations-table=vidra_search_migrations.)
   migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # Same image as api, by NAME rather than by a second build: block. The
+    # migrator IS the api binary, so one build serves both services, and a
+    # deployment overlay that swaps in a published tag has one name to pin on
+    # both — otherwise this one-shot would keep building from a source checkout
+    # the production host does not have. (Repeating build: here instead is what
+    # the CLI-era file effectively did, and it races: two build targets exporting
+    # the SAME tag concurrently fail with `image ... already exists` on a cold
+    # cache. api's build below is the single producer.)
+    image: vidra-core-api:local
     profiles: ["core"]
+    # The api image bakes a /healthz HEALTHCHECK for the SERVER; on a one-shot
+    # that exits as soon as the schema is current it is pure noise (a container
+    # marked unhealthy for not serving HTTP it was never asked to serve).
+    healthcheck:
+      disable: true
     depends_on:
       postgres:
         condition: service_healthy
@@ -205,10 +216,14 @@ services:
     # this command instead of appending to it — the subcommand must be repeated:
     #   docker compose run --rm migrate migrate version
     # (`run --rm migrate version` alone would pass "version" as argv[1], which the
-    # binary refuses rather than treating as a server start.)
+    # binary refuses rather than treating as a server start.) Dirty-ledger
+    # recovery, after a migration has died halfway, is the same shape:
+    #   docker compose run --rm migrate migrate force <version> --yes-i-know
     command: ["migrate", "up"]
 
   api:
+    # Shared with the migrate one-shot above — see the note there.
+    image: vidra-core-api:local
     build:
       context: .
       dockerfile: Dockerfile
