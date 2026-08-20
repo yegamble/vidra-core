@@ -691,6 +691,7 @@ func run() error {
 	var hlsTranscoder transcode.Transcoder
 	if tc, ok := media.DetectHLSTranscoder(blobs); ok {
 		tc.SetVP9(cfg.TranscodingVP9Enabled)
+		tc.SetStreamOutput(cfg.TranscodingStreamOutput)
 		// Encode knobs (ladder/FPS/threads/original-resolution) resolve from the
 		// settings overlay once per job, so changes apply without a restart.
 		tc.SetEncodeSettingsFunc(func() media.HLSEncodeSettings {
@@ -703,7 +704,8 @@ func run() error {
 		})
 		hlsTranscoder = tc
 		logger.Info("hls transcoding pipeline wired (ffmpeg + ffprobe found; runtime gate transcoding_enabled)",
-			"enabled_default", cfg.TranscodingEnabled, "vp9", cfg.TranscodingVP9Enabled)
+			"enabled_default", cfg.TranscodingEnabled, "vp9", cfg.TranscodingVP9Enabled,
+			"stream_output", cfg.TranscodingStreamOutput)
 	} else if cfg.TranscodingEnabled {
 		logger.Warn("TRANSCODING_ENABLED=true but ffmpeg/ffprobe not on PATH; transcoding disabled")
 	}

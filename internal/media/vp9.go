@@ -54,6 +54,18 @@ func VP9WebMKey(videoID uuid.UUID) string {
 // TRANSCODING_VP9_ENABLED.
 func (t *HLSTranscoder) SetVP9(enabled bool) { t.vp9 = enabled }
 
+// SetStreamOutput makes the HLS ladder write straight into the blob store
+// through a loopback blobsink, so segments never land on scratch. Off by
+// default; cmd/api enables it from TRANSCODING_STREAM_OUTPUT.
+//
+// This is a deliberate trade, not a free win. Peak scratch for the ladder drops
+// to roughly zero, but the pipeline reads its own output back to build the
+// progressive downloads and to probe the trick-play codec, so those reads become
+// object-store range requests. Worth it where scratch is scarce and egress is
+// cheap or free (a Backblaze B2 bucket fronted by a Bandwidth Alliance CDN);
+// not worth it where egress is metered and disk is plentiful.
+func (t *HLSTranscoder) SetStreamOutput(enabled bool) { t.streamOutput = enabled }
+
 // encodeVP9 renders the progressive VP9/WebM alternate for src (a local path)
 // at the top rung, stores it at <hlsPrefix>/vp9.webm (the same generation
 // directory as the HLS tree it accompanies — W14), and returns the stored key

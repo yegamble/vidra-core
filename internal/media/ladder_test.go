@@ -95,7 +95,7 @@ func TestHLSLadderArgsDecodesOnce(t *testing.T) {
 		t.Fatalf("need a multi-rung ladder to test, got %d", len(rungs))
 	}
 	root := filepath.Join("/out", "tree")
-	args := hlsLadderArgs(localSource("/in/src.mp4"), root, rungs, 0)
+	args := hlsLadderArgs(localSource("/in/src.mp4"), localOutput(root), rungs, 0)
 
 	if n := countArg(args, "-i"); n != 1 {
 		t.Errorf("-i appears %d times, want exactly 1 (the whole point is one decode)", n)
@@ -135,7 +135,7 @@ func TestHLSLadderArgsDecodesOnce(t *testing.T) {
 func TestHLSLadderRungSettingsMatchSingleRungForm(t *testing.T) {
 	rungs := testLadder()
 	root := "/out"
-	outputs := splitArgsByOutput(t, hlsLadderArgs(localSource("/in/src.mp4"), root, rungs, 0), root)
+	outputs := splitArgsByOutput(t, hlsLadderArgs(localSource("/in/src.mp4"), localOutput(root), rungs, 0), root)
 
 	for i, r := range rungs {
 		single := strings.Join(hlsRungArgs(localSource("/in/src.mp4"), filepath.Join(root, r.Name()), r, 0), " ")
@@ -172,7 +172,7 @@ func TestHLSLadderScalesEachBranchLikeTheSingleRungForm(t *testing.T) {
 	settings := DefaultHLSEncodeSettings()
 	settings.MaxFPS = 30
 	rungs := PlanHLSLadderWith(settings, 1920, 1080, 60)
-	graph := argValue(t, hlsLadderArgs(localSource("/in/src.mp4"), "/out", rungs, 0), "-filter_complex")
+	graph := argValue(t, hlsLadderArgs(localSource("/in/src.mp4"), localOutput("/out"), rungs, 0), "-filter_complex")
 	for _, r := range rungs {
 		if r.FPS == 0 {
 			t.Fatal("test is stale: a 60fps source under a 30fps cap must plan capped rungs")
@@ -188,7 +188,7 @@ func TestHLSLadderScalesEachBranchLikeTheSingleRungForm(t *testing.T) {
 // across the now-concurrent encoders rather than handed to each in full.
 func TestHLSLadderDividesThreadBudget(t *testing.T) {
 	rungs := testLadder()
-	args := hlsLadderArgs(localSource("/in/src.mp4"), "/out", rungs, 8)
+	args := hlsLadderArgs(localSource("/in/src.mp4"), localOutput("/out"), rungs, 8)
 	want := perOutputThreads(8, len(rungs))
 	if n := countArg(args, "-threads"); n != len(rungs) {
 		t.Errorf("-threads appears %d times, want once per output (%d)", n, len(rungs))
@@ -198,7 +198,7 @@ func TestHLSLadderDividesThreadBudget(t *testing.T) {
 			t.Errorf("-threads %s, want %d (the job budget split across %d encoders)", a, want, len(rungs))
 		}
 	}
-	if got := countArg(hlsLadderArgs(localSource("/in/src.mp4"), "/out", rungs, 0), "-threads"); got != 0 {
+	if got := countArg(hlsLadderArgs(localSource("/in/src.mp4"), localOutput("/out"), rungs, 0), "-threads"); got != 0 {
 		t.Errorf("-threads emitted %d times for the ffmpeg-default setting, want 0", got)
 	}
 }
@@ -208,7 +208,7 @@ func TestHLSLadderDividesThreadBudget(t *testing.T) {
 func TestTrickPlayLadderArgs(t *testing.T) {
 	rungs := testLadder()
 	root := "/out"
-	args := hlsTrickPlayLadderArgs(localSource("/in/src.mp4"), root, rungs, 0)
+	args := hlsTrickPlayLadderArgs(localSource("/in/src.mp4"), localOutput(root), rungs, 0)
 	if n := countArg(args, "-i"); n != 1 {
 		t.Errorf("-i appears %d times, want 1", n)
 	}
@@ -270,7 +270,7 @@ func TestSingleRungLadderOmitsSplit(t *testing.T) {
 	if len(rungs) != 1 {
 		t.Fatalf("test is stale: a 360p source should plan exactly one rung, got %d", len(rungs))
 	}
-	graph := argValue(t, hlsLadderArgs(localSource("/in/src.mp4"), "/out", rungs, 0), "-filter_complex")
+	graph := argValue(t, hlsLadderArgs(localSource("/in/src.mp4"), localOutput("/out"), rungs, 0), "-filter_complex")
 	if strings.Contains(graph, "split") {
 		t.Errorf("single-rung graph contains a split: %q", graph)
 	}

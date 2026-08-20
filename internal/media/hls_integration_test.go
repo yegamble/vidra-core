@@ -370,3 +370,108 @@ func TestHLSTranscoderFreesScratchAsItUploads(t *testing.T) {
 		t.Errorf("scratch tree %v survived TranscodeHLS; the VP9 encode would have run with it still on disk", leftover)
 	}
 }
+
+// TestHLSTranscoderStreamsLadderIntoStorage drives the whole TranscodeHLS path
+// with SetStreamOutput on: the ladder is PUT through the loopback sidecar
+// straight into the backend, so no segment ever lands on scratch, and the
+// decode-free post-processing reads its own output back over HTTP.
+//
+// It asserts the same stored-tree shape the scratch path produces, because the
+// streaming mode must be a storage-transport choice and nothing more.
+func TestHLSTranscoderStreamsLadderIntoStorage(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+	scratch := t.TempDir()
+	t.Setenv("TMPDIR", scratch)
+
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	videoID := uuid.New()
+	prefix := HLSKeyPrefix(videoID)
+	srcKey := "web-videos/" + videoID.String() + ".mp4"
+	path, err := blobs.Path(srcKey)
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	gen := exec.Command("ffmpeg", "-y", "-f", "lavfi",
+		"-i", "testsrc=duration=4:size=640x360:rate=24", path)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg generate: %v\n%s", err, out)
+	}
+
+	tc, ok := DetectHLSTranscoder(blobs)
+	if !ok {
+		t.Fatal("DetectHLSTranscoder = false with ffmpeg+ffprobe on PATH")
+	}
+	tc.SetStreamOutput(true)
+
+	res, err := tc.Transcode(context.Background(), videoID, srcKey)
+	if err != nil {
+		t.Fatalf("Transcode with streaming output: %v", err)
+	}
+	if res.MasterKey != prefix+"/master.m3u8" {
+		t.Errorf("MasterKey = %q, want %q", res.MasterKey, prefix+"/master.m3u8")
+	}
+	if len(res.Renditions) != 1 {
+		t.Fatalf("renditions = %+v, want one (cap-at-source)", res.Renditions)
+	}
+	if res.Renditions[0].SizeBytes <= 0 {
+		t.Errorf("rendition size = %d; a streamed ladder still has to be measured",
+			res.Renditions[0].SizeBytes)
+	}
+
+	// The canonical tree must be complete in storage: variant playlist, at least
+	// one segment, both progressive downloads, and the trick-play pair.
+	for _, name := range []string{
+		"master.m3u8",
+		"360p/playlist.m3u8",
+		"360p/" + HLSMuxedDownloadFilename,
+		"360p/" + HLSVideoOnlyDownloadFilename,
+		"360p/" + HLSIFramePlaylistFilename,
+		"360p/" + HLSIFrameMediaFilename,
+	} {
+		if ok, err := blobs.Exists(context.Background(), prefix+"/"+name); err != nil || !ok {
+			t.Errorf("streamed tree is missing %q (err=%v)", name, err)
+		}
+	}
+	keys, err := blobs.ListKeys(context.Background(), prefix+"/360p")
+	if err != nil {
+		t.Fatalf("ListKeys: %v", err)
+	}
+	var segments int
+	for _, k := range keys {
+		if strings.HasSuffix(k, ".ts") && strings.Contains(k, "seg_") {
+			segments++
+		}
+	}
+	if segments == 0 {
+		t.Errorf("no segments stored: %v", keys)
+	}
+
+	// The trick-play playlist must have been rewritten IN THE STORE, not only in
+	// a scratch copy — this is the read-modify-write path through the sidecar.
+	rc, err := blobs.Open(context.Background(), prefix+"/360p/"+HLSIFramePlaylistFilename)
+	if err != nil {
+		t.Fatalf("Open trick-play playlist: %v", err)
+	}
+	defer rc.Close()
+	body, _ := io.ReadAll(rc)
+	if !strings.Contains(string(body), "#EXT-X-I-FRAMES-ONLY") {
+		t.Errorf("stored trick-play playlist was never finalised: %q", body)
+	}
+
+	// Nothing may be left behind on scratch.
+	leftover, _ := filepath.Glob(filepath.Join(scratch, "vidra-hls-*"))
+	if len(leftover) != 0 {
+		t.Errorf("scratch tree %v survived a streaming transcode", leftover)
+	}
+}
