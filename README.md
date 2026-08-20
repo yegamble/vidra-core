@@ -69,6 +69,7 @@ Then:
 curl localhost:8080/healthz          # liveness
 curl localhost:8080/readyz           # readiness (postgres + redis)
 curl localhost:8080/version          # build version / commit / date
+curl localhost:8080/schemaz          # build + migration-ledger version (host-local tooling)
 curl localhost:8080/api/v1/nodeinfo  # instance discovery metadata
 curl localhost:8080/api/v1/instance  # public about/config (name, software, policy, features)
 curl localhost:8080/api/v1/instance/about # long-form markdown about-page content
