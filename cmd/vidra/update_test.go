@@ -294,6 +294,40 @@ func TestUpdateRefusesToGoBackwards(t *testing.T) {
 	contains(t, err.Error(), "vidra rollback v0.1.0", "OLDER")
 }
 
+// AND A PARTIAL DOWNGRADE IS STILL A DOWNGRADE. Comparing the target against the
+// OLDEST of the three tags only catches the case where all three move back. The
+// shape a partial rollback leaves behind — core flipped, user and search left
+// where they were — sailed through as an update and quietly rolled two of the
+// three components backwards under that name, with nothing downstream to notice:
+// deploy.sh deploys whatever the env file says, and the file said so in the
+// operator's own hand.
+func TestUpdateRefusesAPartialDowngrade(t *testing.T) {
+	st := newUpdateStage(t)
+	write(t, filepath.Join(st.dir, "env", "production.env"), strings.NewReplacer(
+		"VIDRA_USER_TAG=v0.2.0", "VIDRA_USER_TAG=v0.3.0",
+		"VIDRA_SEARCH_TAG=v0.2.0", "VIDRA_SEARCH_TAG=v0.3.0",
+	).Replace(st.envFile()))
+
+	err := st.run("--tag", "v0.2.0", "--yes")
+	if err == nil {
+		t.Fatal("an update that moves two of the three components backwards was accepted")
+	}
+	// It names the components that would move back, and only those: core is
+	// already on v0.2.0 and is not going anywhere.
+	contains(t, err.Error(), "OLDER", "user (v0.3.0)", "search (v0.3.0)", "vidra rollback v0.2.0")
+	if strings.Contains(err.Error(), "core (") {
+		t.Errorf("the refusal blames a component that does not move: %v", err)
+	}
+	st.wantCalls()
+	contains(t, st.envFile(), "VIDRA_USER_TAG=v0.3.0")
+
+	// --check says the same thing about the same tag, and still changes nothing.
+	if err := st.run("--check", "--tag", "v0.2.0"); err != nil {
+		t.Fatalf("--check = %v", err)
+	}
+	contains(t, st.out(), "OLDER", "user (v0.3.0)", "search (v0.3.0)")
+}
+
 // ---------------------------------------------------------------------------
 // The schema floor.
 
@@ -407,12 +441,139 @@ func TestHighestMigrationIsDeployShsArithmetic(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Arming.
 
+// The stage is pinned at v0.2.0, which is exactly the fake rollback.sh's
+// MIN_EMBEDDED_MIGRATE_TAG: at the floor arms, and the floor is read out of the
+// script past a commented-out decoy assignment and an interpolated $VARIABLE.
 func TestUpdateArmsRollbackForTheNextRelease(t *testing.T) {
 	st := newUpdateStage(t)
 	if err := st.run("--yes"); err != nil {
 		t.Fatalf("update = %v", err)
 	}
 	contains(t, st.out(), "rollback: ARMED", "core=v0.2.0 user=v0.2.0 search=v0.2.0")
+}
+
+// THE PROMISE THAT COULD NOT BE KEPT. deploy/rollback.sh refuses a core or search
+// tag below its MIN_EMBEDDED_MIGRATE_TAG before it reads anything else — those
+// images have no embedded `migrate` subcommand — so on a v0.1.x instance taking
+// v0.2.0 the tag flip was one release wide, armed, announced, and structurally
+// impossible. The deploy would fail, the handover would print a refusal, and the
+// operator would read "THE ROLLBACK ALSO FAILED" about a rollback that never
+// started.
+func TestUpdateDisarmsBelowTheRollbackFloor(t *testing.T) {
+	st := newUpdateStage(t)
+	st.pin("v0.1.0")
+	st.runner.onPassthrough = failingDeploy(1, nil)
+
+	err := st.run("--tag", "v0.2.0", "--yes")
+	if err == nil {
+		t.Fatal("a failed deploy reported success")
+	}
+	// One release ahead and every other condition met: only the floor disarms it.
+	line := st.rollbackLine()
+	contains(t, line, "NOT ARMED", "v0.2.0", "core=v0.1.0", "search=v0.1.0")
+	// vidra-user has no migrator and rollback.sh does not gate --user, so blaming
+	// it would disarm updates that script would have accepted.
+	if strings.Contains(line, "user=v0.1.0") {
+		t.Errorf("the floor blamed a component rollback.sh does not gate:\n%s", line)
+	}
+	// Nothing was handed to rollback.sh, and the failure text does not send the
+	// operator to run it by hand either: that command refuses this tag.
+	st.wantCalls("deploy/deploy.sh")
+	if strings.Contains(st.h.err.String(), "./deploy/rollback.sh") {
+		t.Errorf("a refused rollback was recommended during the failure:\n%s", st.h.err.String())
+	}
+	contains(t, st.h.err.String(), "./deploy/restore.sh", "core=v0.1.0 user=v0.1.0 search=v0.1.0")
+}
+
+// A floor that cannot be verified disarms, which is deliberately NOT what the
+// schema gate does with an unreadable /schemaz. Refusing there would block the
+// primary operation; disarming here downgrades a convenience and keeps the honest
+// fallback.
+func TestUpdateDisarmsWhenTheFloorCannotBeVerified(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		script string
+	}{
+		{"no assignment at all", "#!/usr/bin/env bash\n# the floor lives somewhere else now\nexit 0\n"},
+		{"a value that is not a release tag", "#!/usr/bin/env bash\nMIN_EMBEDDED_MIGRATE_TAG=\"latest\"\nexit 0\n"},
+		{"a renamed variable", "#!/usr/bin/env bash\nMIN_MIGRATE_TAG=\"v0.2.0\"\nexit 0\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newUpdateStage(t)
+			write(t, filepath.Join(st.dir, "deploy", "rollback.sh"), tc.script)
+			if err := st.run("--yes"); err != nil {
+				t.Fatalf("the update was refused over an unreadable floor: %v", err)
+			}
+			// Disarmed, not refused: the update still runs.
+			contains(t, st.rollbackLine(), "NOT ARMED", "MIN_EMBEDDED_MIGRATE_TAG could not be read")
+			st.wantCalls("deploy/deploy.sh")
+		})
+	}
+}
+
+// The floor is READ, not restated. It exists in three hand-synced shell copies
+// that the meta repository's CI holds to each other; a fourth copy here, in a
+// repository that CI cannot see, is the one that would drift at release time.
+func TestReadRollbackFloorReadsTheAssignmentAndNothingElse(t *testing.T) {
+	for _, tc := range []struct {
+		name, script, want string
+	}{
+		{"the shape the real script has", fakeRollbackScript, "v0.2.0"},
+		{"unquoted", "MIN_EMBEDDED_MIGRATE_TAG=v1.4.0\n", "v1.4.0"},
+		{"single-quoted and indented", "  MIN_EMBEDDED_MIGRATE_TAG='v1.4.0'\n", "v1.4.0"},
+		{"a trailing comment", "MIN_EMBEDDED_MIGRATE_TAG=\"v1.4.0\" # raised for the migrator\n", "v1.4.0"},
+		{"the last assignment wins, as it would in the shell", "MIN_EMBEDDED_MIGRATE_TAG=v1.0.0\nMIN_EMBEDDED_MIGRATE_TAG=v1.4.0\n", "v1.4.0"},
+		{"prose about the variable is not the variable", "# It REFUSES a tag below MIN_EMBEDDED_MIGRATE_TAG (set below)\ndie \"$what=$tag is older than $MIN_EMBEDDED_MIGRATE_TAG\"\n", ""},
+		{"a commented-out assignment", "#MIN_EMBEDDED_MIGRATE_TAG=\"v9.9.9\"\n", ""},
+		{"a value that is not a release tag", "MIN_EMBEDDED_MIGRATE_TAG=\"latest\"\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(dir, "deploy"), 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			write(t, filepath.Join(dir, "deploy", "rollback.sh"), tc.script)
+			got := readRollbackFloor(dir)
+			if got.known != (tc.want != "") || got.tag != tc.want {
+				t.Errorf("floor = %+v, want %q", got, tc.want)
+			}
+		})
+	}
+	// A deployment with no rollback.sh: unknown, and armRollback disarms on the
+	// missing script before it ever looks at the floor.
+	if got := readRollbackFloor(t.TempDir()); got.known {
+		t.Errorf("a floor was read out of a deployment with no rollback.sh: %+v", got)
+	}
+}
+
+// The floor gates the two components whose image runs as a migration one-shot,
+// which is the pair rollback.sh gates: require_embedded_migrate_tag on
+// VIDRA_CORE_TAG and VIDRA_SEARCH_TAG, and nothing on --user.
+func TestTheFloorGatesTheMigratorComponentsOnly(t *testing.T) {
+	floor := rollbackFloor{tag: "v0.2.0", known: true}
+	if got := floorBlocked(map[string]string{
+		"VIDRA_CORE_TAG":   "v0.2.0", // exactly at the floor: accepted
+		"VIDRA_USER_TAG":   "v0.1.0", // below it, and not gated
+		"VIDRA_SEARCH_TAG": "v0.2.1",
+	}, floor); len(got) != 0 {
+		t.Errorf("blocked %v, want nothing — user is not a migrator", got)
+	}
+	// A tag nobody can order is one rollback.sh dies on (its semver_ge returns 2),
+	// so it is refused here too.
+	got := floorBlocked(map[string]string{
+		"VIDRA_CORE_TAG":   "v0.1.9",
+		"VIDRA_USER_TAG":   "v0.3.0",
+		"VIDRA_SEARCH_TAG": "main",
+	}, floor)
+	if strings.Join(got, " ") != "core=v0.1.9 search=main" {
+		t.Errorf("blocked %v, want core=v0.1.9 and search=main", got)
+	}
+	// An unknown floor blocks nothing: the disarm for that case is armRollback's,
+	// and a "blocked" list computed from a floor nobody read would name components
+	// for a reason that does not exist.
+	if got := floorBlocked(map[string]string{"VIDRA_CORE_TAG": "v0.0.1"}, rollbackFloor{}); len(got) != 0 {
+		t.Errorf("an unread floor blocked %v", got)
+	}
 }
 
 // The schema-compat policy covers ONE release: release N's schema keeps release
@@ -550,6 +711,58 @@ func TestUpdateSnapshotsBumpsAndDeploys(t *testing.T) {
 		t.Errorf("deploy ran in %q, want the deployment root %q", spec.Dir, st.dir)
 	}
 	contains(t, st.out(), "snapshot:", "pinned: core=v0.3.0", "v0.3.0 is deployed")
+}
+
+// The retention count reaches the prune, and comes from the same variable
+// deploy/lib.sh reads. Both halves prune this directory, alternating over the
+// life of a deployment, so a Go side fixed at ten would delete the generations an
+// operator raised the shell side to keep — on the one host where somebody cared
+// enough to change the setting.
+func TestUpdateKeepsTheHistoryTheDeploymentAsksFor(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		env     string   // appended to the deployment's env file
+		environ []string // the process environment
+		want    int      // snapshots left afterwards, including the new one
+		note    string
+	}{
+		{name: "the env file", env: "VIDRA_ENV_HISTORY_KEEP=3\n", want: 3},
+		{name: "the process environment beats it", env: "VIDRA_ENV_HISTORY_KEEP=3\n", environ: []string{"VIDRA_ENV_HISTORY_KEEP=2"}, want: 2},
+		{name: "nobody set it", want: 6},
+		// lib.sh dies inside its own `$((keep + 1))` on this. Here the snapshot is
+		// already on disk by the time the count is used, so a typo in a retention
+		// knob defaults loudly rather than abandoning an update halfway.
+		{name: "a typo", env: "VIDRA_ENV_HISTORY_KEEP=ten\n", want: 6, note: "VIDRA_ENV_HISTORY_KEEP=ten"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newUpdateStage(t)
+			write(t, filepath.Join(st.dir, "env", "production.env"), st.envFile()+tc.env)
+			st.runner.environ = tc.environ
+			// Five generations already in the directory, older than the one this run
+			// is about to take.
+			dir := filepath.Join(st.dir, "backups", "env-history")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatalf("mkdir history: %v", err)
+			}
+			for i := range 5 {
+				write(t, filepath.Join(dir, fmt.Sprintf("production.env.202601%02dT000000Z", i+1)), "old")
+			}
+
+			if err := st.run("--yes"); err != nil {
+				t.Fatalf("update = %v", err)
+			}
+			if names := historyNames(t, dir); len(names) != tc.want {
+				t.Errorf("%d snapshots kept, want %d: %v", len(names), tc.want, names)
+			}
+			// The resolved count is on the confirm screen: it is the one number
+			// there that an operator can have set by hand, and a typo in it is
+			// otherwise invisible until snapshots start disappearing.
+			contains(t, st.out(), fmt.Sprintf("newest %d kept", map[bool]int{true: envHistoryKeepDefault, false: tc.want}[tc.note != "" || tc.env == ""]))
+			if tc.note != "" {
+				contains(t, st.h.err.String(), "note:", tc.note)
+			}
+		})
+	}
 }
 
 // The env file the operator named is the one that is snapshotted, bumped and
