@@ -164,21 +164,76 @@ func TestSetupRefusesToOverwriteWithoutIntent(t *testing.T) {
 	}
 }
 
-func TestSetupMergeIsByteIdentical(t *testing.T) {
+// A --from merge keeps every value the output already had — it is the first
+// preservation source — and adds only what --from brings that the output leaves
+// blank or does not have at all.
+func TestSetupMergeKeepsEveryExistingValue(t *testing.T) {
 	h := newHarness(t)
 	if err := h.run(h.setupArgs()...); err != nil {
 		t.Fatalf("first setup: %v", err)
 	}
 	first := h.readOutput(t)
 
-	if err := h.run(h.setupArgs("--from", h.output)...); err != nil {
+	extra := filepath.Join(h.dir, "extra.env")
+	if err := os.WriteFile(extra, []byte("PUBLIC_BASE_URL=https://other.example.org\nINSTANCE_NAME=Vidra\n"), 0o600); err != nil {
+		t.Fatalf("write extra env: %v", err)
+	}
+	if err := h.run(h.setupArgs("--from", extra)...); err != nil {
 		t.Fatalf("merge setup: %v (stderr: %s)", err, h.err.String())
 	}
-	if got := h.readOutput(t); got != first {
-		t.Errorf("re-running setup changed the file\n--- got ---\n%s--- want ---\n%s", got, first)
+	got := h.readOutput(t)
+	for _, key := range []string{"JWT_SECRET", "MFA_KEY_KEK", "POSTGRES_PASSWORD", "REDIS_PASSWORD", "PUBLIC_BASE_URL"} {
+		if valueOf(t, got, key) != valueOf(t, first, key) {
+			t.Errorf("%s was replaced by the --from file's value", key)
+		}
+	}
+	if !strings.Contains(got, "INSTANCE_NAME=Vidra") {
+		t.Errorf("the --from file's extra key was dropped:\n%s", got)
 	}
 	if !strings.Contains(h.out.String(), "preserved secrets") {
 		t.Errorf("the merge did not report preserved secrets:\n%s", h.out.String())
+	}
+}
+
+// --from pointing at the OUTPUT is not a second source and not a second
+// keystroke, however it is spelled. Comparing the raw strings let
+// `--from ./production.env` list the same file twice AND stand in for --yes, so
+// a mistyped path silently rewrote the file the gate exists to protect.
+func TestSetupFromTheOutputItselfIsNotIntent(t *testing.T) {
+	h := newHarness(t)
+	if err := h.run(h.setupArgs()...); err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+	before := h.readOutput(t)
+
+	for _, spelling := range []string{
+		h.output,
+		h.dir + "/./production.env",      // the same file: os.SameFile sees it
+		h.dir + "/sub/../production.env", // "sub" does not exist: only the resolved path sees it
+	} {
+		err := h.run(h.setupArgs("--from", spelling)...)
+		if err == nil {
+			t.Fatalf("--from %s rewrote the output with no --yes", spelling)
+		}
+		if !strings.Contains(err.Error(), "--yes") {
+			t.Errorf("refusal for --from %s does not ask for --yes: %v", spelling, err)
+		}
+		if h.readOutput(t) != before {
+			t.Fatalf("--from %s still rewrote the file", spelling)
+		}
+	}
+
+	// With the intent flag it goes through, and names the file ONCE.
+	if err := h.run(h.setupArgs("--yes", "--from", h.output)...); err != nil {
+		t.Fatalf("--yes with --from the output: %v (stderr: %s)", err, h.err.String())
+	}
+	if got := h.readOutput(t); got != before {
+		t.Errorf("the rewrite changed the file\n--- got ---\n%s--- want ---\n%s", got, before)
+	}
+	for _, line := range strings.Split(h.out.String(), "\n") {
+		if strings.Contains(line, "preserved values from") && strings.Count(line, h.output) != 1 {
+			t.Errorf("the output file is listed as two preservation sources: %q", line)
+		}
 	}
 }
 
@@ -260,7 +315,7 @@ func TestSetupRefusesToMintAKEKOverAnExistingFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("a blank KEK was minted over an existing env file")
 	}
-	for _, want := range []string{"MFA_KEY_KEK", "DESTRUCTIVE", "--rotate MFA_KEY_KEK --yes"} {
+	for _, want := range []string{"MFA_KEY_KEK", "DESTRUCTIVE", "--rotate MFA_KEY_KEK --yes-i-know"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal %q does not mention %q", err, want)
 		}
@@ -270,7 +325,7 @@ func TestSetupRefusesToMintAKEKOverAnExistingFile(t *testing.T) {
 	}
 
 	// The named escape hatch works.
-	if err := h.run(h.setupArgs("--rotate", "MFA_KEY_KEK", "--yes")...); err != nil {
+	if err := h.run(h.setupArgs("--rotate", "MFA_KEY_KEK", "--yes", "--yes-i-know")...); err != nil {
 		t.Fatalf("explicit rotation of a blank KEK: %v (stderr: %s)", err, h.err.String())
 	}
 	if v := valueOf(t, h.readOutput(t), "MFA_KEY_KEK"); v == "" {
@@ -278,22 +333,32 @@ func TestSetupRefusesToMintAKEKOverAnExistingFile(t *testing.T) {
 	}
 }
 
-func TestSetupRotateKEKRequiresYes(t *testing.T) {
+// Rotating a KEK needs its OWN confirmation. --yes is the everyday answer to
+// "rewrite the file in place", typed on every re-deploy; letting it double as the
+// destructive one meant a `--rotate MFA_KEY_KEK` sitting in the same command line
+// (a copied runbook line, a stale shell history entry) was pre-authorised, and
+// every enrolled TOTP secret went with it.
+func TestSetupRotateKEKRequiresItsOwnConfirmation(t *testing.T) {
 	h := newHarness(t)
 	if err := h.run(h.setupArgs()...); err != nil {
 		t.Fatalf("first setup: %v", err)
 	}
 	before := h.readOutput(t)
 
-	err := h.run(h.setupArgs("--from", h.output, "--rotate", "MFA_KEY_KEK")...)
-	if err == nil || !strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("err = %v, want the destructive-rotation refusal", err)
-	}
-	if h.readOutput(t) != before {
-		t.Fatal("the refused rotation still rewrote the file")
+	for _, args := range [][]string{
+		{"--yes", "--rotate", "MFA_KEY_KEK"},                     // the routine intent flag is not enough
+		{"--from", h.output, "--yes", "--rotate", "MFA_KEY_KEK"}, // nor is naming a --from
+	} {
+		err := h.run(h.setupArgs(args...)...)
+		if err == nil || !strings.Contains(err.Error(), "--yes-i-know") {
+			t.Fatalf("run %v: err = %v, want the destructive-rotation refusal", args, err)
+		}
+		if h.readOutput(t) != before {
+			t.Fatal("the refused rotation still rewrote the file")
+		}
 	}
 
-	if err := h.run(h.setupArgs("--from", h.output, "--rotate", "MFA_KEY_KEK", "--yes")...); err != nil {
+	if err := h.run(h.setupArgs("--yes", "--rotate", "MFA_KEY_KEK", "--yes-i-know")...); err != nil {
 		t.Fatalf("confirmed rotation: %v (stderr: %s)", err, h.err.String())
 	}
 	after := h.readOutput(t)

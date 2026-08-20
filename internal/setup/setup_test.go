@@ -281,9 +281,9 @@ func TestRotate(t *testing.T) {
 			Rotate: []string{"MFA_KEY_KEK"}, Rand: &seqReader{n: 200},
 		})
 		if err == nil {
-			t.Fatal("rotating MFA_KEY_KEK without --yes was allowed")
+			t.Fatal("rotating MFA_KEY_KEK without ConfirmDestructive was allowed")
 		}
-		for _, want := range []string{"DESTRUCTIVE", "TOTP", "--yes"} {
+		for _, want := range []string{"DESTRUCTIVE", "TOTP", "--yes-i-know"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("error %q does not mention %q", err, want)
 			}
@@ -527,6 +527,13 @@ func TestBlankKEKIsNeverMintedOverAnExistingSource(t *testing.T) {
 		{"KEK missing from the source entirely", "PUBLIC_BASE_URL=https://video.example.org\n"},
 		{"KEK present but blank", "PUBLIC_BASE_URL=https://video.example.org\nMFA_KEY_KEK=\n"},
 		{"KEK still a placeholder", "PUBLIC_BASE_URL=https://video.example.org\nMFA_KEY_KEK=<generate: openssl rand -base64 32>\n"},
+		// THE reproducer for deriving "first install" from the KEY COUNT: a
+		// production.env truncated to nothing (a full disk, an interrupted
+		// scp, a restore that wrote the header and died) parses to zero
+		// assignments and used to read as a first install — so the gate below
+		// stood down and the KEK was minted over a live database.
+		{"source truncated to nothing at all", ""},
+		{"source truncated to its header", "# ==========\n# VIDRA — PRODUCTION ENVIRONMENT\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Generate(Request{
@@ -536,7 +543,7 @@ func TestBlankKEKIsNeverMintedOverAnExistingSource(t *testing.T) {
 			if err == nil {
 				t.Fatal("a KEK was minted over an existing configuration")
 			}
-			for _, want := range []string{"MFA_KEY_KEK", "DESTRUCTIVE", "TOTP", "--rotate MFA_KEY_KEK --yes"} {
+			for _, want := range []string{"MFA_KEY_KEK", "DESTRUCTIVE", "TOTP", "--rotate MFA_KEY_KEK --yes-i-know"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error %q does not mention %q", err, want)
 				}
@@ -560,6 +567,13 @@ func TestBlankKEKIsNeverMintedOverAnExistingSource(t *testing.T) {
 	res = generate(t, Request{Answers: baseAnswers()})
 	if !contains(res.Generated, "MFA_KEY_KEK") {
 		t.Errorf("Generated = %v, want MFA_KEY_KEK minted on a first install", res.Generated)
+	}
+
+	// And the distinction survives the merge the CLI does: a file that EXISTS is
+	// a source even when it parses to nothing, so Generate sees a non-nil Existing
+	// and keeps the gate armed.
+	if got := MergeSources(mustParse(t, nil)); got == nil {
+		t.Fatal("MergeSources dropped a present-but-empty source — a truncated env file would read as a first install")
 	}
 }
 
@@ -776,6 +790,46 @@ func TestGenerateWarnsAboutInterpolatedValues(t *testing.T) {
 	}
 	if res.Values["SMTP_PASSWORD"] != "$ecret" {
 		t.Errorf("SMTP_PASSWORD = %q, want the value kept (a warning, not a rewrite)", res.Values["SMTP_PASSWORD"])
+	}
+}
+
+// A quoted value is the other half of the same problem: this package stores the
+// quote bytes verbatim (compose's dialect is not ours to invent), but compose
+// STRIPS a surrounding pair out of an --env-file value — and expands the
+// backslash escapes inside double quotes. So the container receives something
+// shorter, or with a real tab in it, than the file shows. Warn, never rewrite,
+// and never print the value.
+func TestGenerateWarnsAboutQuotedValues(t *testing.T) {
+	for _, tc := range []struct{ name, value, want string }{
+		{"double quotes", `"p@ss"`, "SMTP_PASSWORD is wrapped in double quotes"},
+		{"single quotes", `'p@ss'`, "SMTP_PASSWORD is wrapped in single quotes"},
+		{"escapes inside double quotes", `"a\tb"`, "expands the backslash escapes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			answers := baseAnswers()
+			answers.Mail = &MailAnswers{Host: "smtp.example.net", Password: tc.value, From: "hello@example.net"}
+			res := generate(t, Request{Answers: answers})
+			if !warned(res.Warnings, tc.want) {
+				t.Errorf("no quoting warning mentioning %q: %v", tc.want, res.Warnings)
+			}
+			if res.Values["SMTP_PASSWORD"] != tc.value {
+				t.Errorf("SMTP_PASSWORD = %q, want the value kept verbatim (a warning, not a rewrite)", res.Values["SMTP_PASSWORD"])
+			}
+			for _, w := range res.Warnings {
+				if strings.Contains(w, "p@ss") || strings.Contains(w, `a\tb`) {
+					t.Errorf("a warning printed the secret: %q", w)
+				}
+			}
+		})
+	}
+
+	// An unquoted value, and a value that merely CONTAINS a quote, are left alone:
+	// a warning nobody can act on is noise on every install.
+	answers := baseAnswers()
+	answers.Mail = &MailAnswers{Host: "smtp.example.net", Password: `p"ss'`, From: "hello@example.net"}
+	res := generate(t, Request{Answers: answers})
+	if warned(res.Warnings, "wrapped in") {
+		t.Errorf("warned about a value that is not quoted: %v", res.Warnings)
 	}
 }
 

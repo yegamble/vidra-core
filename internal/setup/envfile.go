@@ -109,6 +109,12 @@ func splitAssignment(raw string) (key, value string, ok bool) {
 // The result is a synthetic EnvFile — an index for lookups, not a document to
 // render. Only Generate's reads (Keys/Value/Has) are meaningful on it; the
 // rendered artifact always comes from the TEMPLATE.
+//
+// nil out means NO SOURCE EXISTED, and that is load-bearing rather than
+// cosmetic: it is how Generate tells a first install from a re-run, which is the
+// gate on minting a blank KEK. One real source therefore yields a non-nil result
+// even when the file it came from was EMPTY — a truncated production.env is
+// still a deployment that exists.
 func MergeSources(sources ...*EnvFile) *EnvFile {
 	var out *EnvFile
 	for _, src := range sources {

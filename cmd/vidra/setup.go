@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,7 +31,14 @@ func runSetup(s streams, args []string) error {
 		from      = fs.String("from", "", "extra env `file` to merge: it fills keys the output file leaves blank, and never overrides it")
 
 		nonInteractive = fs.Bool("non-interactive", false, "never prompt; take every answer from flags (for unattended installs)")
-		yes            = fs.Bool("yes", false, "confirm actions that touch a live deployment: rotating a *_KEK, and rewriting an existing --output in place")
+		yes            = fs.Bool("yes", false, "rewrite an existing --output in place (every value it sets is still preserved)")
+		// Deliberately NOT --yes: an operator confirming the routine in-place
+		// rewrite has not agreed to orphan every secret a KEK seals, and one flag
+		// for both would mean an everyday `--yes` silently pre-authorised a
+		// `--rotate MFA_KEY_KEK` in the same command line. The spelling matches the
+		// `api migrate force --yes-i-know` gate, which guards the same class of
+		// unrecoverable action.
+		yesIKnow = fs.Bool("yes-i-know", false, "confirm a DESTRUCTIVE *_KEK rotation: it orphans the data already sealed under that key")
 
 		domain     = fs.String("domain", "", "public origin of the instance, e.g. video.example.org (https is assumed)")
 		releaseTag = fs.String("release-tag", "", "image `tag` to deploy for all three services, e.g. v0.1.1")
@@ -69,7 +77,8 @@ Re-running is safe. The file being written is ALWAYS read back first and every
 value it sets is preserved, whether or not --from is given; --from adds a second
 source for the keys it leaves blank, and never overrides it. A secret is only
 ever replaced when --rotate names it, and rotating a *_KEK additionally needs
---yes because it orphans data already sealed in the database.
+--yes-i-know because it orphans data already sealed in the database — that is a
+separate answer from --yes, which only confirms the in-place rewrite.
 
 Secrets do not have to appear on the command line: --s3-secret-key and
 --smtp-password accept @path (read the file), - (read stdin, with
@@ -139,18 +148,27 @@ flags:
 		sources = append(sources, outFile)
 		sourcePaths = append(sourcePaths, outPath)
 	}
-	if *from != "" && *from != outPath {
-		fromFile, rerr := readEnvFile(*from)
+	// --from naming the output itself is not a second source, whatever it is
+	// spelled like: env/production.env, ./env/production.env and an absolute path
+	// are one file. Comparing the raw strings would both list the file twice and
+	// let `--from ./production.env` walk past the intent gate below, which is the
+	// one keystroke standing between a typo and a live deployment's env file.
+	fromPath := *from
+	if fromPath != "" && samePath(fromPath, outPath) {
+		fromPath = ""
+	}
+	if fromPath != "" {
+		fromFile, rerr := readEnvFile(fromPath)
 		if rerr != nil {
 			return rerr
 		}
 		sources = append(sources, fromFile)
-		sourcePaths = append(sourcePaths, *from)
+		sourcePaths = append(sourcePaths, fromPath)
 	}
 	// The remaining gate is intent, not safety: rewriting the env file a live
 	// deployment is running from is worth one deliberate keystroke, and --from
 	// (or --yes) is that keystroke.
-	if outExists && *from == "" && !*yes {
+	if outExists && fromPath == "" && !*yes {
 		return fmt.Errorf("setup: %s already exists and is the file a running deployment reads — re-run with --yes to rewrite it in place, "+
 			"or with --from <other env file> to merge that file into it as well (either way every value %s already sets, including the KEKs, is preserved), "+
 			"or pass a different --output", outPath, outPath)
@@ -209,7 +227,7 @@ flags:
 		Existing:           existing,
 		Answers:            answers,
 		Rotate:             rotate,
-		ConfirmDestructive: *yes,
+		ConfirmDestructive: *yesIKnow,
 	})
 	if err != nil {
 		var invalid *setup.ValidationError
@@ -283,13 +301,25 @@ func checkFile(s streams, path string) error {
 	}
 	vars := f.Values()
 	issues := setup.Check(vars)
+	warnings := setup.Warnings(vars)
 	if len(issues) == 0 {
 		fmt.Fprintf(s.out, "✓ %s: %d variables checked, no problems\n", path, len(vars))
+		printWarnings(s.out, warnings)
 		return nil
 	}
 	fmt.Fprintf(s.out, "%s: %d variables checked\n\n", path, len(vars))
 	printIssues(s.out, issues)
+	printWarnings(s.out, warnings)
 	return errReported
+}
+
+// printWarnings reports what the file would still do wrong after every problem
+// above is fixed — a value compose rewrites on the way to the container. It does
+// not change the exit code: the file boots.
+func printWarnings(w io.Writer, warnings []string) {
+	for _, warning := range warnings {
+		fmt.Fprintf(w, "  ⚠ %s\n", warning)
+	}
 }
 
 // printIssues renders one line per problem, attributed to the variable an
@@ -329,6 +359,26 @@ func outputPath(template, output string) (string, error) {
 		return trimmed, nil
 	}
 	return "", fmt.Errorf("setup: --output is required when the template path (%s) does not end in .example", template)
+}
+
+// samePath reports whether two path arguments name the same file. os.SameFile is
+// asked first because it is the only answer that sees through a symlink or a
+// bind mount — `--from /etc/vidra/production.env` really can be the output path
+// under another name. When one of them does not exist yet (the ordinary first
+// install), the comparison falls back to the resolved absolute paths, which
+// still catches the everyday case: the same file spelled relatively.
+func samePath(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if fa, err := os.Stat(a); err == nil {
+		if fb, err := os.Stat(b); err == nil {
+			return os.SameFile(fa, fb)
+		}
+	}
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	return errA == nil && errB == nil && absA == absB
 }
 
 func readEnvFile(path string) (*setup.EnvFile, error) {

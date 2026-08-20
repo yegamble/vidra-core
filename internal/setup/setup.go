@@ -50,6 +50,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/vidra/vidra-core/internal/config"
 )
@@ -130,7 +131,11 @@ type Request struct {
 	// value already exists. Every entry must be in the secret manifest.
 	Rotate []string
 	// ConfirmDestructive authorises rotating a *_KEK. Without it, a KEK in
-	// Rotate is an error that spells out what the rotation would destroy.
+	// Rotate is an error that spells out what the rotation would destroy. It is
+	// deliberately its OWN answer (the CLI spells it --yes-i-know, matching the
+	// migrate force gate) and not the routine "yes, rewrite the file" one: an
+	// operator confirming an in-place rewrite has not thereby agreed to orphan
+	// every TOTP secret in the database.
 	ConfirmDestructive bool
 
 	// Rand is the entropy source for generated secrets; nil means crypto/rand.
@@ -225,7 +230,15 @@ func Generate(req Request) (*Result, error) {
 	// minted: with no preservation source at all there is no database whose rows
 	// a fresh KEK could orphan. Any existing source — even one that does not
 	// mention the KEK — means this deployment already exists.
-	firstInstall := len(existingKeys(req.Existing)) == 0
+	//
+	// "No source" means NO FILE, not "a file with nothing in it". A truncated or
+	// half-restored production.env parses to zero assignments, and counting that
+	// as a first install disarms this gate for precisely the file it exists to
+	// protect: the KEK would be minted over a live database. MergeSources returns
+	// a non-nil (if empty) result as soon as one real source is passed, so the
+	// difference between "the file was empty" and "there was no file" survives
+	// the merge.
+	firstInstall := req.Existing == nil
 
 	// Resolution, in template order so secret generation is deterministic.
 	// Precedence: rotation > answer > existing value > template value >
@@ -310,7 +323,7 @@ func Generate(req Request) (*Result, error) {
 		return nil, &ValidationError{Issues: issues}
 	}
 	res.Warnings = append(res.Warnings, releaseTagWarnings(req, res.Values)...)
-	res.Warnings = append(res.Warnings, interpolationWarnings(res.Values)...)
+	res.Warnings = append(res.Warnings, Warnings(res.Values)...)
 
 	content := req.Template.Render(res.Values, res.Carried)
 	// Validate the BYTES that would be written, not the map that produced them:
@@ -429,7 +442,7 @@ func rotationSet(req Request) (map[string]bool, error) {
 			return nil, fmt.Errorf("setup: %s is not a generated secret, so there is nothing to rotate (rotatable: %s)", key, strings.Join(SecretVars(), ", "))
 		}
 		if spec.kek && !req.ConfirmDestructive {
-			return nil, fmt.Errorf("setup: rotating %s is DESTRUCTIVE: %s. Re-run with --yes if that is really what you want, and take a database dump first", key, spec.why)
+			return nil, fmt.Errorf("setup: rotating %s is DESTRUCTIVE: %s. Re-run with --yes-i-know if that is really what you want, and take a database dump first", key, spec.why)
 		}
 		out[key] = true
 	}
@@ -445,7 +458,7 @@ func rotationSet(req Request) (map[string]bool, error) {
 func blankKEKError(key string, spec secretSpec) error {
 	return fmt.Errorf("setup: %s is blank in the configuration being merged, and minting a new one is DESTRUCTIVE: %s. "+
 		"If the value was lost, restore it from a backup of the env file and re-run. If this deployment genuinely has nothing sealed under it yet "+
-		"(a KEK the template only just turned on), accept that with --rotate %s --yes", key, spec.why, key)
+		"(a KEK the template only just turned on), accept that with --rotate %s --yes-i-know", key, spec.why, key)
 }
 
 // lineShapeIssues rejects values that cannot survive a KEY=value line. A newline
@@ -473,6 +486,20 @@ func lineShapeIssues(values map[string]string) []Issue {
 	return out
 }
 
+// Warnings are the non-fatal findings about a candidate environment: values
+// docker compose REWRITES on the way to the container, so what the process
+// receives is not the string the file shows. None of them stops a deployment —
+// which is exactly why they are worth printing, since the symptom lands later as
+// "the password is wrong" with a file that looks right.
+//
+// Exported so `vidra setup --check` reports the same things a generation does;
+// Check itself stays the list of REAL problems, and never grows a finding an
+// operator is expected to ignore. No warning ever quotes a value: several of
+// these variables are secrets.
+func Warnings(vars map[string]string) []string {
+	return append(interpolationWarnings(vars), quoteWarnings(vars)...)
+}
+
 // interpolationWarnings flags a value compose would rewrite before the container
 // ever sees it: `--env-file` values go through variable interpolation, so a
 // leading '$' means the process gets an expansion (usually empty), not the
@@ -491,6 +518,48 @@ func interpolationWarnings(values map[string]string) []string {
 		}
 	}
 	return out
+}
+
+// quoteWarnings flags a value WRAPPED IN MATCHING QUOTES. ParseEnvFile counts
+// the quote bytes as part of the value — deliberately, because it must not
+// invent a second dialect — but compose does not: reading an `--env-file` it
+// STRIPS a surrounding pair of quotes, and inside double quotes it also expands
+// backslash escapes (\n, \t, \" and friends). So `SMTP_PASSWORD="p@ss"` reaches
+// the container as p@ss, six characters shorter than the file shows, and
+// `JWT_SECRET="a\tb"` arrives with a TAB in it.
+//
+// A warning rather than a refusal: quoting is legal, and an operator who meant
+// the quotes as delimiters has a working file. It is the operator who meant them
+// as part of a secret — the shape of a password pasted with its quotes — who
+// needs telling, because that deployment fails as an authentication error nobody
+// traces back to the env file.
+func quoteWarnings(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var out []string
+	for _, k := range keys {
+		v := strings.TrimSpace(values[k])
+		if len(v) < 2 || (v[0] != '"' && v[0] != '\'') || v[len(v)-1] != v[0] {
+			continue
+		}
+		inner := v[1 : len(v)-1]
+		msg := fmt.Sprintf("%s is wrapped in %s quotes: docker compose strips a surrounding pair from an --env-file value, so the container receives the value WITHOUT them — remove them if they were meant to be part of it", k, quoteName(v[0]))
+		if v[0] == '"' && strings.Contains(inner, `\`) {
+			msg += `, and double the backslashes: inside double quotes compose expands the backslash escapes too (\n becomes a newline)`
+		}
+		out = append(out, msg)
+	}
+	return out
+}
+
+func quoteName(q byte) string {
+	if q == '\'' {
+		return "single"
+	}
+	return "double"
 }
 
 // unusedRotations refuses a --rotate for a variable the generated file does not
@@ -810,6 +879,36 @@ func WriteFile(path string, content []byte) error {
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("setup: install %s: %w", path, err)
+	}
+	// The rename is a DIRECTORY write, and it is no more durable than the bytes
+	// were before tmp.Sync above: a crash before the filesystem flushes the
+	// directory can leave the deployment with the old file, or with neither name.
+	// Syncing the directory is what makes the new file's NAME survive, which is
+	// the other half of "a re-run that fails halfway cannot truncate a live env
+	// file".
+	if err := syncDir(dir); err != nil {
+		// The file IS installed: the rename succeeded and only the flush after it
+		// did not. Saying so is the difference between an operator re-running this
+		// (harmless — every value is preserved) and one hunting for a file that is
+		// already on disk.
+		return fmt.Errorf("setup: %s is written, but flushing %s — which is what makes the rename survive a crash — failed: %w", path, dir, err)
+	}
+	return nil
+}
+
+// syncDir flushes a directory entry, tolerating the filesystems that cannot do
+// it. Directory fsync is unsupported on some network and virtualised mounts
+// (ENOTSUP/ENOSYS) and rejected outright by others (EINVAL); neither says
+// anything about the file, which is already written and renamed, so failing the
+// run over it would turn a durability nicety into an install failure.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil && !errors.Is(err, errors.ErrUnsupported) && !errors.Is(err, syscall.ENOTSUP) && !errors.Is(err, syscall.EINVAL) {
+		return err
 	}
 	return nil
 }

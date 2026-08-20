@@ -116,7 +116,11 @@ func Force(dsn string, version int, logger *slog.Logger) (before, after Status, 
 	return before, after, nil
 }
 
-// Version reports the ledger state without changing anything.
+// Version reports the ledger state without changing the schema. (The ledger
+// table itself is created if missing — golang-migrate does that when it opens
+// the database, whichever direction it is asked about — so on a never-migrated
+// database this is a write, just not one that touches a single application
+// table.)
 func Version(dsn string) (Status, error) {
 	m, err := open(dsn, nil)
 	if err != nil {

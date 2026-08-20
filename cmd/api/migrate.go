@@ -19,7 +19,7 @@ import (
 // can never be pointed at different databases:
 //
 //	docker compose run --rm migrate                  # compose supplies: api migrate up
-//	docker compose run --rm migrate migrate version  # ledger check, changes nothing
+//	docker compose run --rm migrate migrate version  # ledger check, applies no migration
 //
 // (`compose run` REPLACES the service command, hence the repeated word in the
 // second form.)
