@@ -67,6 +67,10 @@ bench: ## Run the hot-path benchmarks (NOT in the gate); set DATABASE_URL for th
 build: ## Build the api binary into ./bin (injects version metadata)
 	go build -ldflags "$(LDFLAGS)" -o bin/api ./cmd/api
 
+.PHONY: build-vidra
+build-vidra: ## Build the vidra operator CLI into ./bin (host-side companion to the api image)
+	go build -ldflags "$(LDFLAGS)" -o bin/vidra ./cmd/vidra
+
 .PHONY: run
 run: ## Run the api server locally (needs Postgres + Redis)
 	go run ./cmd/api
@@ -115,7 +119,7 @@ migrate-version: ## Print the schema_migrations version + dirty flag (non-zero e
 	DATABASE_URL="$(DATABASE_URL)" go run ./cmd/api migrate version
 
 .PHONY: migrate-down
-migrate-down: ## Roll back one migration (rollback is CLI-only: the binary ships `up`/`version`)
+migrate-down: ## Roll back one migration (rollback is CLI-only: the binary ships `up`/`version`/`force` and only ever goes forward)
 	migrate -path migrations -database "$(DATABASE_URL)" down 1
 
 .PHONY: up

@@ -52,6 +52,9 @@ the exact gate GitHub runs, race detector included.
   `sqlc-verify`); `node`/`npx` (`openapi-lint`, `postman`); and `ffmpeg`/`ffprobe` on `PATH` for
   transcoding/thumbnails/probing (already inside the Docker image — a host without
   them degrades gracefully to originals-only).
+- **Optional:** the [`migrate`](https://github.com/golang-migrate/migrate) CLI —
+  needed by `make migrate-down` only. Forward migrations are embedded in the api
+  binary, so nothing else (including the container path) requires it.
 
 ## Quick start
 
@@ -97,9 +100,14 @@ sqlc-verify test-race` — the exact set `backend-ci.yml` runs, so "passes local
   exploratory signal, not part of the gate. The `bench-fuzz` workflow runs these
   plus a `go test -fuzz` pass on demand.
 - `make build` — build `./bin/api`, injecting version/commit/date via `-ldflags`.
+- `make build-vidra` — build `./bin/vidra`, the host-side operator CLI (`vidra setup`),
+  with the same `-ldflags`. It is a separate binary because it runs beside `docker
+  compose` on the host, before any image exists.
 - `make migrate-up` / `make migrate-version` — apply the migrations embedded in the
   api binary (`api migrate up|version`), the same code path the published image runs;
-  no `migrate` CLI needed. `make migrate-down` still uses the
+  no `migrate` CLI needed. After a migration dies halfway, `api migrate force
+  <version> --yes-i-know` re-stamps the `schema_migrations` ledger (it runs no SQL,
+  so the schema must already match the version you name). `make migrate-down` still uses the
   [`migrate`](https://github.com/golang-migrate/migrate) CLI — rollback is an
   operator-with-CLI operation, the shipped binary only goes forward.
 - `make help` — the full target list (fmt, vet, migrate-up/version/down, sqlc, up/down, …).
@@ -276,7 +284,8 @@ and what is imported vs. regenerated afterwards live in the operator guide
 ## Project layout
 
 ```
-cmd/api/               HTTP service entrypoint (build metadata via -ldflags)
+cmd/api/               HTTP service entrypoint + `migrate up|version|force` (build metadata via -ldflags)
+cmd/vidra/             host-side operator CLI (`vidra setup`); `make build-vidra`
 cmd/peertube-import/   one-way PeerTube importer CLI
 internal/              57 packages: httpapi, auth, video, transcode, live, storage,
                        messaging, e2ee, ipfs, atproto, config, store (sqlc), …
