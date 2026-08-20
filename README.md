@@ -108,7 +108,10 @@ openapi-verify sqlc-verify test-race` — the exact set `backend-ci.yml` runs, s
   answers), `logs`, `restart <service>`, `update` (below), and `deploy` / `rollback` /
   `backup` / `restore` / `release` — those five exec the deployment's own `deploy/*.sh`
   with your terminal attached and return the script's exit code unchanged, so every gate
-  stays in the scripts, in one copy. `vidra <command> -h` for each.
+  stays in the scripts, in one copy. `vidra <command> -h` for each. Releases cut after
+  `release-assets.yml` landed also carry prebuilt `vidra_<tag>_<os>_<arch>` binaries
+  (linux and darwin, amd64 and arm64) plus a `SHA256SUMS`, built from that tag with the
+  same `-ldflags`; older releases have no assets and are a `make build-vidra` away.
 - `vidra update` is the one command that is not a wrapper, because choosing a release is
   work no script does. It reads the releases of all three component repositories over
   plain HTTPS (no `gh`, no credentials; `GITHUB_TOKEN` only raises the rate limit),
