@@ -76,3 +76,39 @@ type PathProvider interface {
 	// exist.
 	Path(key string) (string, error)
 }
+
+// SizeUnknown is the size argument meaning "the caller cannot say how many bytes
+// r will yield". Backends must still store the object correctly; they just
+// cannot pick an upload strategy from the length.
+const SizeUnknown int64 = -1
+
+// SizedPutter is an optional capability implemented by backends that can upload
+// more efficiently when the object's exact byte length is known up front. The S3
+// backend implements it because the difference is large and non-obvious: with an
+// unknown length the SDK must assume the 5 TiB maximum and divide by the
+// 10,000-part limit, which yields a ~528 MiB part buffer per call AND turns even
+// a 4 KB thumbnail into a three-request multipart upload. With a known length at
+// or below the part size it is a single PUT and no buffer at all — and an HLS
+// ladder is thousands of small objects.
+//
+// Callers should prefer the package-level PutSized helper, which feature-detects
+// and degrades to plain Put.
+type SizedPutter interface {
+	// PutSized stores exactly size bytes read from r at key, overwriting any
+	// existing object, and returns the number of bytes written. size must be the
+	// exact length r will yield; pass SizeUnknown when it cannot be known.
+	PutSized(ctx context.Context, key string, r io.Reader, size int64) (int64, error)
+}
+
+// PutSized stores r at key, telling the backend the object's exact length when
+// the caller knows it. Backends that cannot use the hint fall back to Put, so
+// this is always safe to call. Pass SizeUnknown when the length is not known —
+// a wrong size is an error, not a hint.
+func PutSized(ctx context.Context, b Backend, key string, r io.Reader, size int64) (int64, error) {
+	if size >= 0 {
+		if sp, ok := b.(SizedPutter); ok {
+			return sp.PutSized(ctx, key, r, size)
+		}
+	}
+	return b.Put(ctx, key, r)
+}

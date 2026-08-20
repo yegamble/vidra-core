@@ -1,10 +1,12 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/minio/minio-go/v7"
@@ -63,6 +65,7 @@ var _ PrefixDeleter = (*S3)(nil)
 var _ PrefixDeleter = (*Local)(nil)
 var _ ObjectLister = (*S3)(nil)
 var _ ObjectLister = (*Local)(nil)
+var _ SizedPutter = (*S3)(nil)
 
 // NewS3 validates cfg and builds the client. No network calls are made here;
 // use EnsureBucket at startup to fail fast on unreachable/missing buckets.
@@ -151,18 +154,80 @@ func validateKey(key string) error {
 	return nil
 }
 
-// Put streams r to the object at key, overwriting any existing object.
+// unknownSizePartSize is the multipart part size used when an object's length
+// cannot be determined. It is minio's own minPartSize (16 MiB) and also sits
+// comfortably above the 5 MiB floor S3-compatible stores impose on non-final
+// parts (Backblaze B2 in particular).
+//
+// It exists because the SDK's default for an unknown length is catastrophic for
+// a media server: OptimalPartInfo(-1, 0) assumes the 5 TiB maximum object,
+// divides by the 10,000-part limit, and allocates a 553,648,128-byte (528 MiB)
+// buffer — on every call, for every object, however small. Naming an explicit
+// part size caps that at 16 MiB.
+const unknownSizePartSize = 16 * 1024 * 1024
+
+// Put streams r to the object at key, overwriting any existing object. When r's
+// length can be determined without consuming it (the common case in this
+// codebase: *os.File from storeTree, *bytes.Reader from generated thumbnails and
+// captions) the size is passed through to PutSized, which avoids multipart
+// entirely for small objects. Otherwise the upload streams with a bounded part
+// size.
 func (s *S3) Put(ctx context.Context, key string, r io.Reader) (int64, error) {
+	return s.PutSized(ctx, key, r, sniffSize(r))
+}
+
+// PutSized streams exactly size bytes from r to the object at key, implementing
+// storage.SizedPutter. size must be exact; pass storage.SizeUnknown when it is
+// not known, in which case the upload streams in unknownSizePartSize chunks.
+func (s *S3) PutSized(ctx context.Context, key string, r io.Reader, size int64) (int64, error) {
 	if err := validateKey(key); err != nil {
 		return 0, err
 	}
-	// Size -1 = unknown; the SDK streams in multipart chunks so large originals
-	// never need to be buffered wholly in memory.
-	info, err := s.client.PutObject(ctx, s.bucket, key, r, -1, minio.PutObjectOptions{})
+	opts := minio.PutObjectOptions{}
+	if size < 0 {
+		// Normalise any negative value to the SDK's "unknown" sentinel and bound
+		// the streaming buffer (see unknownSizePartSize).
+		size = -1
+		opts.PartSize = unknownSizePartSize
+	}
+	info, err := s.client.PutObject(ctx, s.bucket, key, r, size, opts)
 	if err != nil {
 		return 0, fmt.Errorf("storage: s3: put %q: %w", key, err)
 	}
 	return info.Size, nil
+}
+
+// sniffSize reports how many bytes r will yield, or SizeUnknown when that cannot
+// be established without consuming it. Only types whose remaining length is
+// exact and free to query are recognised — a wrong answer would fail the upload,
+// so anything uncertain must report unknown.
+func sniffSize(r io.Reader) int64 {
+	switch v := r.(type) {
+	case *bytes.Reader:
+		return int64(v.Len())
+	case *bytes.Buffer:
+		return int64(v.Len())
+	case *strings.Reader:
+		return int64(v.Len())
+	case *os.File:
+		info, err := v.Stat()
+		if err != nil || !info.Mode().IsRegular() {
+			// Pipes, devices and sockets report a meaningless size.
+			return SizeUnknown
+		}
+		// The caller may have already read part of the file, so the remaining
+		// length is size-minus-offset, not size.
+		offset, err := v.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return SizeUnknown
+		}
+		if remaining := info.Size() - offset; remaining >= 0 {
+			return remaining
+		}
+		return SizeUnknown
+	default:
+		return SizeUnknown
+	}
 }
 
 // Open returns a reader for the object at key, or ErrNotFound. The returned
