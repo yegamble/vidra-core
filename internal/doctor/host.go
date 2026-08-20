@@ -1,11 +1,9 @@
 package doctor
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -149,24 +147,12 @@ func (RealProber) CheckBucket(ctx context.Context, cfg storage.S3Config) (bool, 
 	return s3.BucketExists(ctx)
 }
 
-// CheckSMTP opens a TCP connection and reads the greeting line. No EHLO, no
-// AUTH, no message: the question is "is there a relay there and does it talk to
-// us", and anything more would be sending mail from a diagnostic.
+// CheckSMTP delegates to preflight so the dial exists exactly once: `vidra
+// doctor` and the api's own admin status page must ask the relay the same
+// question in the same way, or an operator gets two different answers about one
+// mail server.
 func (RealProber) CheckSMTP(ctx context.Context, addr string) (string, error) {
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return "", err
-	}
-	defer conn.Close()
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetReadDeadline(deadline)
-	}
-	line, err := bufio.NewReader(conn).ReadString('\n')
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimRight(line, "\r\n"), nil
+	return preflight.CheckSMTP(ctx, addr)
 }
 
 // MigrationStatus reads a ledger through dbmigrate — the same library, the same
