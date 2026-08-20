@@ -466,6 +466,11 @@ services:
       # TRANSCODING_VP9_ENABLED additionally emits a progressive VP9/WebM alternate
       # per video (surfaced via /download). AV1 is deferred and rejected if enabled.
       TRANSCODING_VP9_ENABLED: ${TRANSCODING_VP9_ENABLED:-false}
+      # TRANSCODING_STREAM_OUTPUT streams the HLS ladder into object storage
+      # instead of staging it on the scratch volume. Trades scratch disk for
+      # object-store egress (the pipeline reads its output back to build the
+      # progressive downloads). See .env.example. Off by default.
+      TRANSCODING_STREAM_OUTPUT: ${TRANSCODING_STREAM_OUTPUT:-false}
       # AV1 is DEFERRED (fix_plan P6.3): setting this true is a HARD boot failure,
       # not a no-op. Passed through only so the key has a compose consumer; leave
       # it false.

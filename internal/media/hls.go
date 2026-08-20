@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/blobsink"
 	"github.com/vidra/vidra-core/internal/storage"
 )
 
@@ -251,26 +252,206 @@ func evenDim(n int) int {
 // URI relative so the API can proxy them. A positive r.FPS appends an fps
 // filter (transcoding_max_fps); a positive threads adds -threads
 // (transcoding_threads; 0 leaves ffmpeg's own default).
-func hlsRungArgs(src, dir string, r HLSRung, threads int) []string {
+func hlsRungArgs(src source, dir string, r HLSRung, threads int) []string {
 	vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height)
 	if r.FPS > 0 {
 		vf += fmt.Sprintf(",fps=%d", r.FPS)
 	}
-	args := []string{
-		"-y",
-		"-i", src,
+	args := []string{"-y"}
+	args = append(args, src.inputArgs()...)
+	args = append(args,
 		"-map", "0:v:0",
 		"-map", "0:a:0?",
-	}
+	)
 	if threads > 0 {
 		args = append(args, "-threads", fmt.Sprintf("%d", threads))
 	}
+	args = append(args, hlsRungEncodeArgs(r, vf, localOutput(""))...)
 	return append(args,
+		"-hls_segment_filename", filepath.Join(dir, "seg_%05d.ts"),
+		filepath.Join(dir, "playlist.m3u8"),
+	)
+}
+
+// output is where an encoder's files go: a local scratch directory, or a
+// blobsink that streams each file straight into the object store as ffmpeg
+// writes it. A local output renders exactly the paths it always did, so the
+// default pipeline is unchanged.
+type output struct {
+	root string // local scratch root; empty when sink is set
+	sink *blobsink.Sink
+}
+
+func localOutput(root string) output        { return output{root: root} }
+func sinkOutput(s *blobsink.Sink) output    { return output{sink: s} }
+func (o output) streaming() bool            { return o.sink != nil }
+func (o output) rel(parts ...string) string { return path.Join(parts...) }
+
+// dest is the value ffmpeg writes to for a path relative to the output root.
+func (o output) dest(rel string) string {
+	if o.sink != nil {
+		return o.sink.URL(rel)
+	}
+	return filepath.Join(o.root, filepath.FromSlash(rel))
+}
+
+// muxerArgs are the extra per-output options an HTTP destination needs. They
+// must precede the output filename.
+func (o output) muxerArgs() []string {
+	if o.sink == nil {
+		return nil
+	}
+	return []string{"-method", "PUT", "-http_persistent", "1"}
+}
+
+// hlsFlags adapts an -hls_flags value to the destination. Over HTTP the muxer's
+// write-to-.tmp-then-rename dance is meaningless and would PUT a temp-named
+// object the sink stores verbatim, so it is switched off.
+func (o output) hlsFlags(base string) string {
+	if o.sink == nil {
+		return base
+	}
+	return base + "-temp_file"
+}
+
+// splitChain renders the filter-graph prologue that decodes the source's video
+// stream once and forks it into n identically-timed branches labelled [b0]..
+// [bN-1]. A single branch needs no split at all. Returns the chain (empty when
+// n <= 1 and the caller should read [0:v] directly) and the branch labels.
+func splitChain(n int) (chain string, labels []string) {
+	labels = make([]string, n)
+	if n == 1 {
+		labels[0] = "0:v"
+		return "", labels
+	}
+	var b strings.Builder
+	b.WriteString("[0:v]split=")
+	b.WriteString(strconv.Itoa(n))
+	for i := range labels {
+		labels[i] = fmt.Sprintf("b%d", i)
+		b.WriteString("[")
+		b.WriteString(labels[i])
+		b.WriteString("]")
+	}
+	return b.String(), labels
+}
+
+// perOutputThreads splits a job's thread budget across the encoders that now run
+// CONCURRENTLY inside one ffmpeg process. transcoding_threads is documented as a
+// per-job value, and before decode-once the rungs ran sequentially so the whole
+// budget belonged to whichever encoder was running. Handing every concurrent
+// encoder the full number instead would multiply a deliberately-restrained
+// setting by the ladder height. 0 (ffmpeg's own default) stays 0.
+func perOutputThreads(threads, outputs int) int {
+	if threads <= 0 || outputs <= 1 {
+		return threads
+	}
+	if per := threads / outputs; per > 0 {
+		return per
+	}
+	return 1
+}
+
+// hlsLadderArgs builds ONE ffmpeg argument vector that decodes the source a
+// single time and writes every planned rung's HLS variant. It replaces a loop of
+// one full decode per rung: a 4-rung ladder decoded the source four times to
+// produce four scalings of the same frames.
+//
+// Each rung keeps byte-for-byte the same encoder and muxer settings it had as a
+// standalone command (see hlsRungArgs, retained for the single-rung path and as
+// the reference the ladder is asserted against) — only the decode is shared.
+func hlsLadderArgs(src source, out output, rungs []HLSRung, threads int) []string {
+	args := []string{"-y"}
+	args = append(args, src.inputArgs()...)
+
+	chain, labels := splitChain(len(rungs))
+	chains := make([]string, 0, len(rungs)+1)
+	if chain != "" {
+		chains = append(chains, chain)
+	}
+	outLabels := make([]string, len(rungs))
+	for i, r := range rungs {
+		vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height)
+		if r.FPS > 0 {
+			vf += fmt.Sprintf(",fps=%d", r.FPS)
+		}
+		outLabels[i] = fmt.Sprintf("v%d", i)
+		chains = append(chains, fmt.Sprintf("[%s]%s[%s]", labels[i], vf, outLabels[i]))
+	}
+	args = append(args, "-filter_complex", strings.Join(chains, ";"))
+
+	per := perOutputThreads(threads, len(rungs))
+	for i, r := range rungs {
+		args = append(args,
+			"-map", "["+outLabels[i]+"]",
+			"-map", "0:a:0?",
+		)
+		if per > 0 {
+			args = append(args, "-threads", strconv.Itoa(per))
+		}
+		args = append(args, hlsRungEncodeArgs(r, "", out)...)
+		args = append(args, out.muxerArgs()...)
+		args = append(args,
+			"-hls_segment_filename", out.dest(out.rel(r.Name(), "seg_%05d.ts")),
+			out.dest(out.rel(r.Name(), "playlist.m3u8")),
+		)
+	}
+	return args
+}
+
+// hlsTrickPlayLadderArgs builds ONE ffmpeg argument vector emitting every rung's
+// dense I-frame trick-play rendition from a single decode, for the same reason
+// as hlsLadderArgs. It is a separate command from the variant ladder rather than
+// more outputs on it: trick-play is a packaging-stage nicety whose failure is
+// reported separately, and folding it in would double the number of encoders
+// running concurrently in one process.
+func hlsTrickPlayLadderArgs(src source, out output, rungs []HLSRung, threads int) []string {
+	args := []string{"-y"}
+	args = append(args, src.inputArgs()...)
+
+	chain, labels := splitChain(len(rungs))
+	chains := make([]string, 0, len(rungs)+1)
+	if chain != "" {
+		chains = append(chains, chain)
+	}
+	outLabels := make([]string, len(rungs))
+	for i, r := range rungs {
+		outLabels[i] = fmt.Sprintf("t%d", i)
+		chains = append(chains, fmt.Sprintf("[%s]scale=%d:%d,fps=1[%s]", labels[i], r.Width, r.Height, outLabels[i]))
+	}
+	args = append(args, "-filter_complex", strings.Join(chains, ";"))
+
+	per := perOutputThreads(threads, len(rungs))
+	for i, r := range rungs {
+		args = append(args, "-map", "["+outLabels[i]+"]", "-an")
+		if per > 0 {
+			args = append(args, "-threads", strconv.Itoa(per))
+		}
+		args = append(args, trickPlayEncodeArgs("", out)...)
+		args = append(args, out.muxerArgs()...)
+		args = append(args,
+			"-hls_segment_filename", out.dest(out.rel(r.Name(), HLSIFrameMediaFilename)),
+			out.dest(out.rel(r.Name(), HLSIFramePlaylistFilename)),
+		)
+	}
+	return args
+}
+
+// hlsRungEncodeArgs is one variant's encoder + HLS muxer configuration, shared
+// by the single-rung and ladder forms so they cannot drift. vf is the scale
+// filter chain for the single-rung form; the ladder passes "" because its
+// filter graph has already scaled the branch.
+func hlsRungEncodeArgs(r HLSRung, vf string, out output) []string {
+	args := []string{
 		"-c:v", "libx264",
 		"-profile:v", "main",
 		"-preset", "veryfast",
 		"-pix_fmt", "yuv420p",
-		"-vf", vf,
+	}
+	if vf != "" {
+		args = append(args, "-vf", vf)
+	}
+	return append(args,
 		"-b:v", fmt.Sprintf("%dk", r.VideoKbps),
 		"-maxrate", fmt.Sprintf("%dk", r.VideoKbps),
 		"-bufsize", fmt.Sprintf("%dk", 2*r.VideoKbps),
@@ -285,9 +466,33 @@ func hlsRungArgs(src, dir string, r HLSRung, threads int) []string {
 		"-hls_time", fmt.Sprintf("%d", hlsSegmentSeconds),
 		"-hls_playlist_type", "vod",
 		"-hls_list_size", "0",
-		"-hls_flags", "independent_segments",
-		"-hls_segment_filename", filepath.Join(dir, "seg_%05d.ts"),
-		filepath.Join(dir, "playlist.m3u8"),
+		"-hls_flags", out.hlsFlags("independent_segments"),
+	)
+}
+
+// trickPlayEncodeArgs is the dense-I-frame encoder + muxer configuration, shared
+// by the single-rung and ladder forms. vf is the filter chain for the
+// single-rung form; the ladder passes "" because its graph already scaled.
+func trickPlayEncodeArgs(vf string, out output) []string {
+	args := []string{
+		"-c:v", "libx264",
+		"-profile:v", "main",
+		"-preset", "veryfast",
+		"-pix_fmt", "yuv420p",
+	}
+	if vf != "" {
+		args = append(args, "-vf", vf)
+	}
+	return append(args,
+		"-g", "1",
+		"-keyint_min", "1",
+		"-sc_threshold", "0",
+		"-crf", "28",
+		"-f", "hls",
+		"-hls_time", "1",
+		"-hls_playlist_type", "vod",
+		"-hls_list_size", "0",
+		"-hls_flags", out.hlsFlags("single_file"),
 	)
 }
 
@@ -297,31 +502,18 @@ func hlsRungArgs(src, dir string, r HLSRung, threads int) []string {
 // currently emits incorrect repeated @0 offsets for an all-I-frame single-file
 // stream, so we generate the valid byte ranges with `single_file` and add the
 // standards tag after verifying the playlist shape (markIFramesOnlyPlaylist).
-func hlsTrickPlayArgs(src, dir string, r HLSRung, threads int) []string {
-	args := []string{
-		"-y",
-		"-i", src,
+func hlsTrickPlayArgs(src source, dir string, r HLSRung, threads int) []string {
+	args := []string{"-y"}
+	args = append(args, src.inputArgs()...)
+	args = append(args,
 		"-map", "0:v:0",
 		"-an",
-	}
+	)
 	if threads > 0 {
 		args = append(args, "-threads", fmt.Sprintf("%d", threads))
 	}
+	args = append(args, trickPlayEncodeArgs(fmt.Sprintf("scale=%d:%d,fps=1", r.Width, r.Height), localOutput(""))...)
 	return append(args,
-		"-c:v", "libx264",
-		"-profile:v", "main",
-		"-preset", "veryfast",
-		"-pix_fmt", "yuv420p",
-		"-vf", fmt.Sprintf("scale=%d:%d,fps=1", r.Width, r.Height),
-		"-g", "1",
-		"-keyint_min", "1",
-		"-sc_threshold", "0",
-		"-crf", "28",
-		"-f", "hls",
-		"-hls_time", "1",
-		"-hls_playlist_type", "vod",
-		"-hls_list_size", "0",
-		"-hls_flags", "single_file",
 		"-hls_segment_filename", filepath.Join(dir, HLSIFrameMediaFilename),
 		filepath.Join(dir, HLSIFramePlaylistFilename),
 	)
@@ -622,6 +814,12 @@ type HLSTranscoder struct {
 	probe *FFProbe
 	bin   string
 	vp9   bool // also emit a progressive VP9/WebM alternate (SetVP9)
+	// streamOutput sends the HLS ladder straight into the blob store through a
+	// loopback blobsink instead of writing it to scratch and uploading after
+	// (SetStreamOutput). Default OFF: it trades scratch disk for object-store
+	// bandwidth, because the pipeline reads its own output back to build the
+	// progressive downloads, and that trade is only right on some deployments.
+	streamOutput bool
 	// settingsFn resolves the runtime encode knobs (config-parity W10). nil =
 	// DefaultHLSEncodeSettings. Resolved once per Transcode call so an admin
 	// change applies to the next job without a restart and never mid-job.
@@ -660,23 +858,34 @@ func DetectHLSTranscoder(blobs storage.Backend) (*HLSTranscoder, bool) {
 	return NewHLSTranscoder(blobs), true
 }
 
+// Probe reports the source's dimensions, duration and frame rate. It is exposed
+// so a caller running several targets against one source can probe ONCE and
+// hand the result to each — probing is a full source read on a backend without
+// local paths, so re-probing per target is pure waste.
+func (t *HLSTranscoder) Probe(ctx context.Context, sourceKey string) (Metadata, error) {
+	return t.probe.Probe(ctx, sourceKey)
+}
+
 // Transcode probes the source at sourceKey for its dimensions, encodes the
 // planned ladder into a temp dir, then stores every playlist/segment under
 // streaming-playlists/<videoID>/. All playlist URIs are relative, so the files
 // serve correctly through the authenticated proxy endpoints.
 func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, sourceKey string) (HLSResult, error) {
-	return t.TranscodeHLS(ctx, videoID, sourceKey, nil)
+	md, err := t.Probe(ctx, sourceKey)
+	if err != nil {
+		return HLSResult{}, err
+	}
+	return t.TranscodeHLS(ctx, videoID, sourceKey, md, nil)
 }
 
 // TranscodeHLS is the progress-aware HLS path used by the durable worker. Each
 // planned rung reports its own lifecycle so the operational job projection can
 // render one execution per resolution. The source is always sourceKey (the
 // retained original supplied by the queue), never a previous derivative.
-func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, progress ProgressFunc) (HLSResult, error) {
-	md, err := t.probe.Probe(ctx, sourceKey)
-	if err != nil {
-		return HLSResult{}, err
-	}
+//
+// md is the caller's already-obtained probe of sourceKey; the worker probes once
+// per job and shares it across targets.
+func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, md Metadata, progress ProgressFunc) (HLSResult, error) {
 	// Runtime encode knobs, resolved once per job (config-parity W10): a
 	// settings change applies to the next job, never mid-job.
 	settings := t.encodeSettings()
@@ -691,7 +900,7 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		})
 	}
 
-	src, cleanup, err := objectPath(ctx, t.blobs, sourceKey)
+	src, cleanup, err := openSource(ctx, t.blobs, sourceKey)
 	if err != nil {
 		return HLSResult{}, err
 	}
@@ -703,82 +912,13 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
-	rungSizes := make(map[int]int64, len(rungs))
-	trickPlay := make(map[int]hlsTrickPlayInfo, len(rungs))
-	for i, r := range rungs {
-		dir := filepath.Join(tmp, r.Name())
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+	// Even when the ladder streams, the progressive MP4s need a real file:
+	// +faststart rewinds to move the moov atom to the front, and an HTTP PUT
+	// body cannot be rewound.
+	for _, r := range rungs {
+		if err := os.MkdirAll(filepath.Join(tmp, r.Name()), 0o755); err != nil {
 			return HLSResult{}, err
 		}
-		reportProgress(progress, TranscodeProgress{
-			Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
-			State: ProgressRunning, Stage: "encoding", Percent: 1,
-		})
-		stderr, runErr := runFFmpegWithProgress(ctx, t.bin, hlsRungArgs(src, dir, r, settings.Threads), md.DurationSeconds, func(percent int) {
-			reportProgress(progress, TranscodeProgress{
-				Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
-				State: ProgressRunning, Stage: "encoding", Percent: percent * 9 / 10,
-			})
-		})
-		if runErr != nil {
-			reportProgress(progress, TranscodeProgress{
-				Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
-				State: ProgressFailed, Stage: "encoding", Percent: 0,
-			})
-			return HLSResult{}, fmt.Errorf("media: ffmpeg hls %s for %q: %w: %s", r.Name(), sourceKey, runErr, tailOf(stderr))
-		}
-		reportProgress(progress, TranscodeProgress{
-			Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
-			State: ProgressRunning, Stage: "packaging", Percent: 92,
-		})
-		playlist := filepath.Join(dir, "playlist.m3u8")
-		if err := t.remuxHLSDownloads(ctx, sourceKey, playlist, dir, r); err != nil {
-			reportProgress(progress, TranscodeProgress{
-				Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
-				State: ProgressFailed, Stage: "packaging", Percent: 92,
-			})
-			return HLSResult{}, err
-		}
-		trickInfo, err := t.encodeHLSTrickPlay(ctx, src, dir, r, settings.Threads, md.DurationSeconds)
-		if err != nil {
-			reportProgress(progress, TranscodeProgress{
-				Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
-				State: ProgressFailed, Stage: "packaging", Percent: 92,
-			})
-			return HLSResult{}, fmt.Errorf("media: trick-play %s for %q: %w", r.Name(), sourceKey, err)
-		}
-		trickPlay[r.Height] = trickInfo
-		rungSizes[r.Height], err = directorySize(dir)
-		if err != nil {
-			return HLSResult{}, err
-		}
-		if i == 0 {
-			// Audio-only is an optional convenience asset. A silent source (or
-			// any extraction failure) must not fail the canonical HLS transcode.
-			dst := filepath.Join(tmp, HLSAudioDownloadFilename)
-			cmd := exec.CommandContext(ctx, t.bin, hlsAudioM4AArgs(playlist, dst)...)
-			if err := cmd.Run(); err != nil {
-				_ = os.Remove(dst)
-			}
-		}
-	}
-	master := renderMasterPlaylist(rungs, trickPlay)
-	if err := os.WriteFile(filepath.Join(tmp, "master.m3u8"), []byte(master), 0o644); err != nil {
-		return HLSResult{}, err
-	}
-	// Attribute top-level HLS assets (master playlist and optional audio-only
-	// download) to the top rendition so summing video_renditions.size_bytes is
-	// the exact stored HLS-tree size, not just the variant subdirectories.
-	totalSize, err := directorySize(tmp)
-	if err != nil {
-		return HLSResult{}, err
-	}
-	var rungTotal int64
-	for _, size := range rungSizes {
-		rungTotal += size
-	}
-	if extra := totalSize - rungTotal; extra > 0 {
-		rungSizes[rungs[0].Height] += extra
 	}
 
 	// The output prefix is derived from the SOURCE key (W14): a replacement
@@ -786,18 +926,162 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	// currently streaming is never disturbed; promotion is the DB-row swap in
 	// transcode.storeResult.
 	prefix := HLSPrefixForSource(videoID, sourceKey)
-	// A manual re-run of the same source version uses the same stable prefix.
-	// Remove that prior generation immediately before promotion so stale
-	// resolutions/segments cannot survive the overwrite. Replacement uploads use
-	// a fresh rN prefix, preserving uninterrupted playback until DB promotion.
+	// A manual re-run of the same source version uses the same stable prefix, so
+	// the prior generation is cleared before the new one is written -- otherwise
+	// stale resolutions/segments survive the overwrite. Replacement uploads use a
+	// fresh rN prefix, preserving uninterrupted playback until DB promotion.
+	//
+	// This runs BEFORE any output is written rather than immediately before a
+	// single bulk store, which widens the window during which a re-run of the
+	// SAME source has no serving tree. Replacements (the common case) are
+	// unaffected because they write to a different prefix.
 	if deleter, ok := t.blobs.(storage.PrefixDeleter); ok {
 		if err := deleter.DeletePrefix(ctx, prefix); err != nil {
 			return HLSResult{}, err
 		}
 	}
+
+	// Where the ladder writes. The default is scratch, uploaded afterwards. With
+	// SetStreamOutput the encoders PUT straight into a loopback blobsink that
+	// signs each object into the blob store, so no segment ever lands on disk.
+	out := localOutput(tmp)
+	if t.streamOutput {
+		sink, serr := blobsink.New(t.blobs, prefix)
+		if serr != nil {
+			return HLSResult{}, serr
+		}
+		defer func() { _ = sink.Close() }()
+		out = sinkOutput(sink)
+	}
+
+	// Every rung is encoded by ONE ffmpeg process that decodes the source a
+	// single time and forks the decoded frames through a filter graph. The
+	// previous shape ran one process per rung, each decoding the whole source
+	// again to produce a different scaling of the same frames — so a 4-rung
+	// ladder decoded a 30-minute video four times. Because the rungs now advance
+	// together rather than one after another, each reports the SHARED progress of
+	// the single pass; the per-resolution projection is unchanged in shape.
+	reportAll := func(stage string, state string, percent int) {
+		for _, r := range rungs {
+			reportProgress(progress, TranscodeProgress{
+				Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
+				State: state, Stage: stage, Percent: percent,
+			})
+		}
+	}
+	reportAll("encoding", ProgressRunning, 1)
+	stderr, runErr := runFFmpegWithProgress(ctx, t.bin, hlsLadderArgs(src, out, rungs, settings.Threads), md.DurationSeconds, func(percent int) {
+		reportAll("encoding", ProgressRunning, percent*9/10)
+	})
+	if runErr != nil {
+		reportAll("encoding", ProgressFailed, 0)
+		return HLSResult{}, fmt.Errorf("media: ffmpeg hls ladder for %q: %w: %s", sourceKey, redactSource(src, runErr), tailOf(stderr))
+	}
+
+	// Trick-play is a second single-decode pass rather than more outputs on the
+	// first: its failure belongs to the packaging stage, and folding it in would
+	// double the encoders running concurrently in one process.
+	reportAll("packaging", ProgressRunning, 92)
+	trickStderr, trickErr := runFFmpegWithProgress(ctx, t.bin, hlsTrickPlayLadderArgs(src, out, rungs, settings.Threads), md.DurationSeconds, nil)
+	if trickErr != nil {
+		reportAll("packaging", ProgressFailed, 92)
+		return HLSResult{}, fmt.Errorf("media: trick-play ladder for %q: %w: %s", sourceKey, redactSource(src, trickErr), tailOf(trickStderr))
+	}
+
+	// A streamed ladder is only durable once the coalesced playlists are written,
+	// and a PUT failure reaches ffmpeg as a generic write error, so check both
+	// before treating the encode as successful.
+	if out.streaming() {
+		if serr := out.sink.Err(); serr != nil {
+			reportAll("packaging", ProgressFailed, 92)
+			return HLSResult{}, fmt.Errorf("media: streaming hls output for %q: %w", sourceKey, serr)
+		}
+		if ferr := out.sink.Flush(ctx); ferr != nil {
+			reportAll("packaging", ProgressFailed, 92)
+			return HLSResult{}, fmt.Errorf("media: streaming hls output for %q: %w", sourceKey, ferr)
+		}
+	}
+
+	// Everything below is per-rung but decode-free: the remuxes are stream copies
+	// and the trick-play finalisation is playlist bookkeeping.
+	//
+	// When the ladder was written to scratch, each rung is uploaded and freed as
+	// soon as it is finished rather than accumulating the whole tree for one bulk
+	// store at the end. That matters because remuxHLSDownloads writes a full
+	// progressive video.mp4 AND a full video-only.mp4 per rung on top of its
+	// segments -- roughly three times the rung's own encoded size -- so holding
+	// every rung's derivatives at once was the single largest contributor to peak
+	// scratch. When the ladder streamed, only those MP4s were ever local.
+	rungSizes := make(map[int]int64, len(rungs))
+	trickPlay := make(map[int]hlsTrickPlayInfo, len(rungs))
+	for i, r := range rungs {
+		dir := filepath.Join(tmp, r.Name())
+		rio := rungIO{out: out, rung: r, scratch: dir}
+		playlist := rio.ref("playlist.m3u8")
+		if err := t.remuxHLSDownloads(ctx, sourceKey, playlist, dir, r); err != nil {
+			reportAll("packaging", ProgressFailed, 92)
+			return HLSResult{}, err
+		}
+		trickInfo, err := t.finalizeTrickPlay(ctx, rio)
+		if err != nil {
+			reportAll("packaging", ProgressFailed, 92)
+			return HLSResult{}, fmt.Errorf("media: trick-play %s for %q: %w", r.Name(), sourceKey, err)
+		}
+		trickPlay[r.Height] = trickInfo
+		if i == 0 {
+			// Audio-only is an optional convenience asset. A silent source (or
+			// any extraction failure) must not fail the canonical HLS transcode.
+			// It is written at the TOP level, so it survives this rung's cleanup.
+			dst := filepath.Join(tmp, HLSAudioDownloadFilename)
+			cmd := exec.CommandContext(ctx, t.bin, hlsAudioM4AArgs(playlist, dst)...)
+			if err := cmd.Run(); err != nil {
+				_ = os.Remove(dst)
+			}
+		}
+		// Measured before the upload frees the directory. A streamed ladder is
+		// already in the store, so only the local progressive MP4s remain to add.
+		local, err := directorySize(dir)
+		if err != nil {
+			return HLSResult{}, err
+		}
+		rungSizes[r.Height] = local
+		if out.streaming() {
+			rungSizes[r.Height] += out.sink.BytesUnder(r.Name())
+		}
+		if err := t.storeTree(ctx, dir, prefix+"/"+r.Name()); err != nil {
+			reportProgress(progress, TranscodeProgress{
+				Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
+				State: ProgressFailed, Stage: "storing", Percent: 96,
+			})
+			return HLSResult{}, err
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			return HLSResult{}, err
+		}
+	}
+
+	master := renderMasterPlaylist(rungs, trickPlay)
+	if err := os.WriteFile(filepath.Join(tmp, "master.m3u8"), []byte(master), 0o644); err != nil {
+		return HLSResult{}, err
+	}
+	// Attribute top-level HLS assets (master playlist and optional audio-only
+	// download) to the top rendition so summing video_renditions.size_bytes is
+	// the exact stored HLS-tree size, not just the variant subdirectories. The
+	// rung directories are already uploaded and removed, so what remains in tmp
+	// IS exactly the top-level extra.
+	extra, err := directorySize(tmp)
+	if err != nil {
+		return HLSResult{}, err
+	}
+	if extra > 0 {
+		rungSizes[rungs[0].Height] += extra
+	}
+
 	// A replacement source may be silent even when the previous generation had
 	// audio. storeTree only overwrites files present in the new tree, so remove
 	// the old optional derivative before storing a generation that omits it.
+	// (Redundant when the backend is a PrefixDeleter -- the prefix was already
+	// cleared above -- but backends without that capability still need it.)
 	if _, statErr := os.Stat(filepath.Join(tmp, HLSAudioDownloadFilename)); os.IsNotExist(statErr) {
 		if err := t.blobs.Delete(ctx, prefix+"/"+HLSAudioDownloadFilename); err != nil {
 			return HLSResult{}, err
@@ -805,6 +1089,7 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	} else if statErr != nil {
 		return HLSResult{}, statErr
 	}
+	// Only the master playlist and the optional audio-only download are left.
 	if err := t.storeTree(ctx, tmp, prefix); err != nil {
 		for _, r := range rungs {
 			reportProgress(progress, TranscodeProgress{
@@ -814,6 +1099,15 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		}
 		return HLSResult{}, err
 	}
+	// The HLS tree is stored; free the scratch NOW rather than at the deferred
+	// cleanup. The VP9 encode below runs for minutes, and the deferred RemoveAll
+	// would otherwise hold the entire tree on disk for its whole duration on top
+	// of VP9's own output. RemoveAll on an already-removed path is not an error,
+	// so the defer stays correct.
+	if err := os.RemoveAll(tmp); err != nil {
+		return HLSResult{}, err
+	}
+
 	res := HLSResult{MasterKey: prefix + "/master.m3u8"}
 	for _, r := range rungs {
 		res.Renditions = append(res.Renditions, HLSRendition{
@@ -861,24 +1155,52 @@ func directorySize(root string) (int64, error) {
 	return total, err
 }
 
-func (t *HLSTranscoder) encodeHLSTrickPlay(
-	ctx context.Context,
-	src, dir string,
-	r HLSRung,
-	threads, durationSeconds int,
-) (hlsTrickPlayInfo, error) {
-	stderr, err := runFFmpegWithProgress(
-		ctx,
-		t.bin,
-		hlsTrickPlayArgs(src, dir, r, threads),
-		durationSeconds,
-		nil,
-	)
-	if err != nil {
-		return hlsTrickPlayInfo{}, fmt.Errorf("ffmpeg: %w: %s", err, tailOf(stderr))
+// rungIO is where one rung's just-encoded output actually lives, so the
+// decode-free post-processing (progressive remux, trick-play finalisation, size
+// accounting) can read and rewrite it without caring whether the ladder was
+// written to scratch or streamed into the blob store.
+type rungIO struct {
+	out  output
+	rung HLSRung
+	// scratch is always a local directory: even in streaming mode the
+	// progressive MP4s must be written to a file, because +faststart rewinds to
+	// move the moov atom to the front and an HTTP PUT body cannot be rewound.
+	scratch string
+}
+
+// ref is what an external tool (ffmpeg/ffprobe) should open to read name.
+func (io rungIO) ref(name string) string {
+	if io.out.streaming() {
+		return io.out.sink.URL(path.Join(io.rung.Name(), name))
 	}
-	playlistPath := filepath.Join(dir, HLSIFramePlaylistFilename)
-	playlist, err := os.ReadFile(playlistPath)
+	return filepath.Join(io.scratch, name)
+}
+
+// read returns the bytes of one of this rung's outputs.
+func (io rungIO) read(ctx context.Context, name string) ([]byte, error) {
+	if io.out.streaming() {
+		return io.out.sink.Get(ctx, path.Join(io.rung.Name(), name))
+	}
+	return os.ReadFile(filepath.Join(io.scratch, name))
+}
+
+// write replaces one of this rung's outputs.
+func (io rungIO) write(ctx context.Context, name string, body []byte) error {
+	if io.out.streaming() {
+		return io.out.sink.Replace(ctx, path.Join(io.rung.Name(), name), body)
+	}
+	return os.WriteFile(filepath.Join(io.scratch, name), body, 0o644)
+}
+
+// finalizeTrickPlay turns one rung's freshly-encoded trick-play output into the
+// playlist clients can use: FFmpeg's `iframes_only` flag emits incorrect
+// repeated @0 offsets, so the byte ranges are generated with `single_file` and
+// the standards tag is added here after the playlist shape is verified. It also
+// measures the declared peak bandwidth and probes the codec string for the
+// master playlist. No decoding happens here, so it is cheap to run per rung
+// after a single shared encode pass.
+func (t *HLSTranscoder) finalizeTrickPlay(ctx context.Context, rio rungIO) (hlsTrickPlayInfo, error) {
+	playlist, err := rio.read(ctx, HLSIFramePlaylistFilename)
 	if err != nil {
 		return hlsTrickPlayInfo{}, err
 	}
@@ -886,14 +1208,14 @@ func (t *HLSTranscoder) encodeHLSTrickPlay(
 	if err != nil {
 		return hlsTrickPlayInfo{}, err
 	}
-	if err := os.WriteFile(playlistPath, playlist, 0o644); err != nil {
+	if err := rio.write(ctx, HLSIFramePlaylistFilename, playlist); err != nil {
 		return hlsTrickPlayInfo{}, err
 	}
 	bandwidth, err := trickPlayPeakBandwidth(playlist)
 	if err != nil {
 		return hlsTrickPlayInfo{}, err
 	}
-	codec, err := probeH264CodecString(ctx, t.probe.bin, filepath.Join(dir, HLSIFrameMediaFilename))
+	codec, err := probeH264CodecString(ctx, t.probe.bin, rio.ref(HLSIFrameMediaFilename))
 	if err != nil {
 		return hlsTrickPlayInfo{}, err
 	}

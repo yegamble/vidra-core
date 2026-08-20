@@ -77,19 +77,19 @@ func PlanStoryboard(durationSeconds int) (StoryboardPlan, bool) {
 // for src into dst: sample one frame every IntervalSeconds, scale each into a
 // TileW x TileH box (aspect-preserving with padding), and tile them ColsxRows
 // into a single JPEG. Pure (no exec) so it is unit-testable.
-func storyboardArgs(src, dst string, p StoryboardPlan) []string {
+func storyboardArgs(src source, dst string, p StoryboardPlan) []string {
 	vf := fmt.Sprintf(
 		"fps=1/%d,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,tile=%dx%d",
 		p.IntervalSeconds, p.TileW, p.TileH, p.TileW, p.TileH, p.Cols, p.Rows,
 	)
-	return []string{
-		"-y",
-		"-i", src,
+	args := []string{"-y"}
+	args = append(args, src.inputArgs()...)
+	return append(args,
 		"-frames:v", "1",
 		"-vf", vf,
 		"-q:v", "4",
 		dst,
-	}
+	)
 }
 
 // RenderStoryboardVTT renders the WebVTT sprite map for a plan: one cue per tile,
@@ -170,7 +170,7 @@ func (t *Storyboarder) Storyboard(ctx context.Context, key string, durationSecon
 		return nil, nil, fmt.Errorf("media: storyboard: source %q has no measurable duration", key)
 	}
 
-	src, cleanup, err := objectPath(ctx, t.blobs, key)
+	src, cleanup, err := openSource(ctx, t.blobs, key)
 	if err != nil {
 		return nil, nil, err
 	}

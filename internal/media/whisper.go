@@ -109,7 +109,7 @@ func (w *WhisperClient) Transcribe(ctx context.Context, sourceKey, languageHint 
 // ffmpegExtract is the default audioExtractor: it runs ffmpeg to write a 16 kHz
 // mono PCM WAV of the source's audio track to a temp file.
 func (w *WhisperClient) ffmpegExtract(ctx context.Context, sourceKey string) (string, func(), error) {
-	src, cleanupSrc, err := objectPath(ctx, w.blobs, sourceKey)
+	src, cleanupSrc, err := openSource(ctx, w.blobs, sourceKey)
 	if err != nil {
 		return "", func() {}, err
 	}
@@ -137,17 +137,17 @@ func (w *WhisperClient) ffmpegExtract(ctx context.Context, sourceKey string) (st
 // whisperWavArgs builds the ffmpeg argument vector extracting src's audio to a
 // 16 kHz mono signed-16-bit PCM WAV at dst — the canonical input Whisper models
 // expect. Pure (no exec) so it is unit-testable.
-func whisperWavArgs(src, dst string) []string {
-	return []string{
-		"-y",
-		"-i", src,
+func whisperWavArgs(src source, dst string) []string {
+	args := []string{"-y"}
+	args = append(args, src.inputArgs()...)
+	return append(args,
 		"-vn",      // drop any video track
 		"-ac", "1", // mono
 		"-ar", "16000", // 16 kHz
 		"-c:a", "pcm_s16le", // signed 16-bit little-endian PCM
 		"-f", "wav",
 		dst,
-	}
+	)
 }
 
 // transcribeWav POSTs the WAV at wavPath to <endpoint>/inference and renders the
