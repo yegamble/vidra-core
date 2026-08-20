@@ -723,16 +723,17 @@ func TestUpdateKeepsTheHistoryTheDeploymentAsksFor(t *testing.T) {
 		name    string
 		env     string   // appended to the deployment's env file
 		environ []string // the process environment
-		want    int      // snapshots left afterwards, including the new one
+		keep    int      // what the confirm screen should say it will keep
+		left    int      // snapshots left afterwards, including the new one
 		note    string
 	}{
-		{name: "the env file", env: "VIDRA_ENV_HISTORY_KEEP=3\n", want: 3},
-		{name: "the process environment beats it", env: "VIDRA_ENV_HISTORY_KEEP=3\n", environ: []string{"VIDRA_ENV_HISTORY_KEEP=2"}, want: 2},
-		{name: "nobody set it", want: 6},
+		{name: "the env file", env: "VIDRA_ENV_HISTORY_KEEP=3\n", keep: 3, left: 3},
+		{name: "the process environment beats it", env: "VIDRA_ENV_HISTORY_KEEP=3\n", environ: []string{"VIDRA_ENV_HISTORY_KEEP=2"}, keep: 2, left: 2},
+		{name: "nobody set it", keep: envHistoryKeepDefault, left: 6},
 		// lib.sh dies inside its own `$((keep + 1))` on this. Here the snapshot is
 		// already on disk by the time the count is used, so a typo in a retention
 		// knob defaults loudly rather than abandoning an update halfway.
-		{name: "a typo", env: "VIDRA_ENV_HISTORY_KEEP=ten\n", want: 6, note: "VIDRA_ENV_HISTORY_KEEP=ten"},
+		{name: "a typo", env: "VIDRA_ENV_HISTORY_KEEP=ten\n", keep: envHistoryKeepDefault, left: 6, note: "VIDRA_ENV_HISTORY_KEEP=ten"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newUpdateStage(t)
@@ -751,13 +752,13 @@ func TestUpdateKeepsTheHistoryTheDeploymentAsksFor(t *testing.T) {
 			if err := st.run("--yes"); err != nil {
 				t.Fatalf("update = %v", err)
 			}
-			if names := historyNames(t, dir); len(names) != tc.want {
-				t.Errorf("%d snapshots kept, want %d: %v", len(names), tc.want, names)
+			if names := historyNames(t, dir); len(names) != tc.left {
+				t.Errorf("%d snapshots kept, want %d: %v", len(names), tc.left, names)
 			}
 			// The resolved count is on the confirm screen: it is the one number
 			// there that an operator can have set by hand, and a typo in it is
 			// otherwise invisible until snapshots start disappearing.
-			contains(t, st.out(), fmt.Sprintf("newest %d kept", map[bool]int{true: envHistoryKeepDefault, false: tc.want}[tc.note != "" || tc.env == ""]))
+			contains(t, st.out(), fmt.Sprintf("newest %d kept", tc.keep))
 			if tc.note != "" {
 				contains(t, st.h.err.String(), "note:", tc.note)
 			}
