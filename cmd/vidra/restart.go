@@ -48,6 +48,14 @@ func runRestart(s streams, args []string) error {
 		restartUsage(s.err)
 		return errReported
 	default:
+		// vidra's flags come BEFORE the service name (parseWrapperFlags stops at
+		// the first argument it does not recognise), so `vidra restart whisper -C
+		// /srv/vidra` leaves -C and its value sitting in the positional list. They
+		// are this command's own flags, and telling the operator they are extra
+		// SERVICES sends them looking for a service called "-C".
+		if flagArg := firstFlagLike(f.rest); flagArg != "" {
+			return fmt.Errorf("restart: %s looks like a flag, not a service — vidra's flags come BEFORE the service name (`vidra restart %s <value> <service>`), and everything from the service name on is handed to the script", flagArg, flagArg)
+		}
 		return fmt.Errorf("restart: one service at a time (%s were given) — restarting several at once is a deploy without a deploy's gates, which is `vidra deploy`", strings.Join(f.rest, ", "))
 	}
 
@@ -87,6 +95,17 @@ func runRestart(s streams, args []string) error {
 		fmt.Fprintln(s.out, "note: an edit to deploy/Caddyfile.local is picked up by `vidra deploy` too, through a graceful `caddy reload` that drops nothing. A restart takes the TLS edge — the whole site — down for the second or two the container takes to come back.")
 	}
 	return theRunner.Passthrough(dep.bash(path, "restart", svc), s)
+}
+
+// firstFlagLike returns the first argument that is spelled like a flag, or "".
+// A bare "-" is not one: it is a legal, if odd, word.
+func firstFlagLike(args []string) string {
+	for _, a := range args {
+		if len(a) > 1 && strings.HasPrefix(a, "-") {
+			return a
+		}
+	}
+	return ""
 }
 
 // externalDatastore reports whether this service is the bundled container for a

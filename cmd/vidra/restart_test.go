@@ -187,3 +187,36 @@ func TestRestartUsage(t *testing.T) {
 		t.Errorf("stderr does not say what is missing:\n%s", h2.err.String())
 	}
 }
+
+// vidra's flags come BEFORE the service name — parseWrapperFlags stops at the
+// first argument it does not recognise — so `vidra restart whisper -C /srv/vidra`
+// leaves -C and its value in the positional list. Reporting them as extra
+// SERVICES ("whisper, -C, /srv/vidra were given") sends the operator looking for
+// a service called "-C"; the flags are this command's own.
+func TestRestartNamesAMisplacedFlag(t *testing.T) {
+	dir := fakeDeployment(t, defaultEnv)
+	swapRunner(t, &fakeRunner{})
+	h := newHarness(t)
+
+	err := h.run("restart", "whisper", "-C", dir)
+	if err == nil {
+		t.Fatal("`restart whisper -C <dir>` succeeded, want a refusal")
+	}
+	for _, want := range []string{"-C", "flag", "BEFORE the service name"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not mention %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "one service at a time") {
+		t.Errorf("a misplaced flag was reported as an extra service: %v", err)
+	}
+
+	// Two real services still get the message that IS about services.
+	err = h.run("restart", "-C", dir, "api", "frontend")
+	if err == nil || !strings.Contains(err.Error(), "one service at a time") {
+		t.Fatalf("err = %v, want the one-service-at-a-time refusal", err)
+	}
+	if strings.Contains(err.Error(), "BEFORE the service name") {
+		t.Errorf("two services were reported as a misplaced flag: %v", err)
+	}
+}
