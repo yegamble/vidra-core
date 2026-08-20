@@ -273,6 +273,9 @@ flags:
 		answers.Registration = reg
 	}
 	if !*nonInteractive {
+		if err := requireInteractiveStdin(s); err != nil {
+			return err
+		}
 		if err := interview(s, tmpl, existing, &answers); err != nil {
 			return err
 		}
@@ -347,6 +350,37 @@ func renderCaddyfile(templatePath string, skip bool, values map[string]string) (
 		TLSMode:   values["VIDRA_TLS_MODE"],
 		AcmeEmail: values["VIDRA_ACME_EMAIL"],
 	})
+}
+
+// requireInteractiveStdin refuses an interview that has nobody to ask.
+//
+// `curl … | sh` is the first install everyone tries, and with stdin held by the
+// pipe the interview used to print its first question, read EOF, and die with
+// "no answer for ..." — halfway through a run the operator had already watched
+// start, having written nothing. The mode is knowable up front, so it is
+// answered up front, with the two ways out named.
+//
+// The test is deliberately ONE-SIDED: only a stdin that is an *os.File AND says
+// it is not a character device is refused. Anything whose file-ness is not
+// positively known — a test's strings.Reader, an in-process pipe, a platform
+// whose Stat says something else — is left exactly as it was, because "not
+// provably a terminal" must never become "refuse the install".
+func requireInteractiveStdin(s streams) error {
+	f, ok := s.in.(*os.File)
+	if !ok || isTerminal(f) {
+		return nil
+	}
+	return errors.New("setup: stdin is not a terminal, so the interview has nobody to ask — this is what a piped install (`curl … | sh`) hits, and every question would fail at once. " +
+		"Either run `vidra setup` from a real terminal, or pass --non-interactive with the answers as flags")
+}
+
+// isTerminal reports whether f is a real terminal. It is the stdlib-only test —
+// a character device — and it is the ONE primitive both the echo-disabling
+// secret prompt and the refusal above are built on, so the two can never
+// disagree about what a terminal is.
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // readSecretFlag resolves a secret without requiring it on the command line.
@@ -744,11 +778,7 @@ func mask(v string) string {
 // handled by the caller.
 func disableEcho(s streams) (func(), bool) {
 	f, ok := s.in.(*os.File)
-	if !ok {
-		return nil, false
-	}
-	info, err := f.Stat()
-	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+	if !ok || !isTerminal(f) {
 		return nil, false
 	}
 	if err := stty(f, "-echo"); err != nil {

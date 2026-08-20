@@ -1002,6 +1002,49 @@ func TestSetupMissingCaddyTemplateNamesThePath(t *testing.T) {
 	}
 }
 
+// `curl … | sh` holds stdin, so the interview has nobody to ask. That used to be
+// discovered one question in, as an EOF failure the operator had no way to read
+// as "you needed a different command"; it is now refused up front, naming both
+// ways forward.
+func TestSetupRefusesAnInterviewOnAPipe(t *testing.T) {
+	h := newHarness(t)
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer r.Close()
+	// A pipe with answers in it is still refused: the point is that the file
+	// descriptor is not a terminal, not that it happens to be empty.
+	if _, err := w.WriteString("video.example.org\n"); err != nil {
+		t.Fatalf("write pipe: %v", err)
+	}
+	w.Close()
+
+	var out, errBuf bytes.Buffer
+	err = run(streams{in: r, out: &out, err: &errBuf},
+		append([]string{"setup", "--template", h.template}, h.caddyArgs()...))
+	if err == nil {
+		t.Fatal("an interview was started on a pipe")
+	}
+	for _, want := range []string{"--non-interactive", "terminal"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not name %q", err, want)
+		}
+	}
+	if _, statErr := os.Stat(h.output); !errors.Is(statErr, os.ErrNotExist) {
+		t.Error("the refused run wrote a file anyway")
+	}
+	if strings.Contains(out.String(), "Public domain") {
+		t.Errorf("a question was asked before the refusal:\n%s", out.String())
+	}
+
+	// The same pipe with --non-interactive is not refused: the flag is the
+	// answer the message asks for.
+	if err := h.run(h.setupArgs()...); err != nil {
+		t.Fatalf("--non-interactive on the same shape of input: %v (stderr: %s)", err, h.err.String())
+	}
+}
+
 // An unattended install must fail loudly rather than hang or invent an answer.
 func TestSetupNonInteractiveNeedsADomain(t *testing.T) {
 	h := newHarness(t)
