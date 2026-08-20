@@ -69,6 +69,78 @@ func TestSnapshotWritesThePreviousEnvFileAt0600(t *testing.T) {
 	}
 }
 
+// A directory deploy/lib.sh's env_snapshot created first, under a wide umask.
+// MkdirAll would leave it exactly as it found it — its mode argument only
+// applies to directories it creates — so the snapshot's own 0600 would sit inside
+// a world-readable directory for the life of the host. lib.sh chmods 700 on every
+// call for this reason; so does this.
+func TestSnapshotTightensADirectoryItDidNotCreate(t *testing.T) {
+	dir := fakeDeployment(t, historyEnv)
+	history := filepath.Join(dir, "backups", "env-history")
+	if err := os.MkdirAll(history, 0o755); err != nil {
+		t.Fatalf("mkdir history: %v", err)
+	}
+	// Explicitly, because MkdirAll's mode is masked by the process umask and the
+	// point of this test is a directory that really is 0755.
+	if err := os.Chmod(history, 0o755); err != nil {
+		t.Fatalf("chmod history: %v", err)
+	}
+	if _, err := snapshotEnvFile(dir, filepath.Join(dir, "env", "production.env"),
+		envHistoryKeepDefault, time.Date(2026, 8, 20, 13, 45, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("snapshotEnvFile: %v", err)
+	}
+	info, err := os.Stat(history)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o700 {
+		t.Errorf("history directory left at %o, want 700 — a pre-existing loose directory was not tightened", mode)
+	}
+}
+
+// The retention count is half of a cross-language contract: deploy/lib.sh prunes
+// the same directory with ${VIDRA_ENV_HISTORY_KEEP:-10}, so a Go side hardcoded
+// at ten deletes the generations an operator raised the shell side to keep.
+func TestEnvHistoryKeepFollowsTheSharedVariable(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		processEnv map[string]string
+		values     map[string]string
+		want       int
+		warn       string
+	}{
+		{name: "nobody set it", want: envHistoryKeepDefault},
+		{name: "the env file sets it", values: map[string]string{envHistoryKeepVar: "30"}, want: 30},
+		{name: "a quoted value in the env file", values: map[string]string{envHistoryKeepVar: `"3"`}, want: 3},
+		{
+			// envGet's precedence, which is lib.sh's: a real environment variable
+			// beats the file, because that is how the shell half would read it too.
+			name:       "the process environment beats the file",
+			processEnv: map[string]string{envHistoryKeepVar: "2"},
+			values:     map[string]string{envHistoryKeepVar: "30"},
+			want:       2,
+		},
+		{name: "a typo", values: map[string]string{envHistoryKeepVar: "ten"}, want: envHistoryKeepDefault, warn: "ten"},
+		{name: "zero", values: map[string]string{envHistoryKeepVar: "0"}, want: envHistoryKeepDefault, warn: "0"},
+		{name: "negative", values: map[string]string{envHistoryKeepVar: "-3"}, want: envHistoryKeepDefault, warn: "-3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, warn := envHistoryKeepValue(tc.processEnv, tc.values)
+			if got != tc.want {
+				t.Errorf("keep = %d, want %d", got, tc.want)
+			}
+			switch {
+			case tc.warn == "" && warn != "":
+				t.Errorf("a usable value warned: %s", warn)
+			case tc.warn != "":
+				// The warning names the value, not just the variable: an operator who
+				// has to go and find the typo needs to know what it looks like.
+				contains(t, warn, envHistoryKeepVar, tc.warn, "10")
+			}
+		})
+	}
+}
+
 // An operator on --env env/staging.env gets staging.env.<stamp>, so two
 // deployments out of one checkout keep two histories that do not pretend to be
 // each other.
