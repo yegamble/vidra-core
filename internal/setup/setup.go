@@ -337,6 +337,7 @@ const (
 	searchRedisURLKey   = "SEARCH_REDIS_URL"
 	tlsModeKey          = "VIDRA_TLS_MODE"
 	acmeEmailKey        = "VIDRA_ACME_EMAIL"
+	instanceNameKey     = "INSTANCE_NAME"
 )
 
 // searchRedisDefaultDB is the logical Redis database vidra-search runs on when
@@ -581,6 +582,7 @@ func Generate(req Request) (*Result, error) {
 		return nil, &ValidationError{Issues: issues}
 	}
 	res.Warnings = append(res.Warnings, releaseTagWarnings(req, res.Values)...)
+	res.Warnings = append(res.Warnings, instanceNameWarnings(req, res.Values)...)
 	res.Warnings = append(res.Warnings, Warnings(res.Values)...)
 
 	content := req.Template.Render(res.Values, res.Carried, added)
@@ -1619,6 +1621,35 @@ func releaseTagWarnings(req Request, values map[string]string) []string {
 		return nil
 	}
 	return []string{fmt.Sprintf("%s kept the template's example tag — pass a release tag to pin the images you validated", strings.Join(stale, ", "))}
+}
+
+// instanceNameWarnings flags an instance still called whatever the template
+// called it.
+//
+// Same shape as releaseTagWarnings, same reason: the interview offers the
+// template's INSTANCE_NAME as the bracketed default, so an operator pressing
+// enter has ANSWERED with the example, and nothing downstream catches it — a name
+// is free text, so Check has nothing to refuse. It then ships, to
+// /api/v1/instance, to NodeInfo, and into every user's authenticator app as the
+// TOTP issuer label, which is the one place it is expensive to change later.
+//
+// The template is the only reference used, and the warning is conditional on that
+// template value READING like an example. A fork that ships a template carrying
+// its own instance's name has configured it, not forgotten it, and must not be
+// nagged about the answer forever.
+func instanceNameWarnings(req Request, values map[string]string) []string {
+	tv, ok := req.Template.Value(instanceNameKey)
+	if !ok {
+		return nil
+	}
+	tv = strings.TrimSpace(tv)
+	if tv == "" || !strings.Contains(strings.ToLower(tv), "example") {
+		return nil
+	}
+	if strings.TrimSpace(values[instanceNameKey]) != tv {
+		return nil
+	}
+	return []string{instanceNameKey + " is still the template's example name — it is served at /api/v1/instance, published in NodeInfo, and is the issuer every user's authenticator app shows beside their TOTP code"}
 }
 
 // existingValue reads a value from the existing env file, treating blanks and
