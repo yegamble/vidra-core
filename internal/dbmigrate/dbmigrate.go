@@ -81,6 +81,41 @@ func Up(dsn string, logger *slog.Logger) error {
 	return nil
 }
 
+// Force overwrites the schema_migrations ledger with version and clears the
+// dirty flag, WITHOUT running any SQL — the golang-migrate CLI's `force`, which
+// the recovery runbook needs after a migration dies halfway. It touches nothing
+// but the ledger, so the caller is asserting that the schema really is at
+// version; getting that wrong leaves the database permanently out of step with
+// the code. The before/after states are returned so the caller can show the
+// operator exactly what changed.
+//
+// version is an int (not uint) because golang-migrate spells "no migration has
+// ever applied" as -1, which is the correct target when the very first migration
+// failed.
+func Force(dsn string, version int, logger *slog.Logger) (before, after Status, err error) {
+	m, err := open(dsn, logger)
+	if err != nil {
+		return Status{}, Status{}, err
+	}
+	defer closeMigrate(m, logger)
+
+	before, err = status(m)
+	if err != nil {
+		return Status{}, Status{}, err
+	}
+	if err := m.Force(version); err != nil {
+		return before, Status{}, fmt.Errorf("dbmigrate: force version %d: %w", version, err)
+	}
+	after, err = status(m)
+	if err != nil {
+		return before, Status{}, err
+	}
+	if logger != nil {
+		logger.Warn("schema_migrations forced", "from_version", before.Version, "from_dirty", before.Dirty, "to_version", after.Version)
+	}
+	return before, after, nil
+}
+
 // Version reports the ledger state without changing anything.
 func Version(dsn string) (Status, error) {
 	m, err := open(dsn, nil)
