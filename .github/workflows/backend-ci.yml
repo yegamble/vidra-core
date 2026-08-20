@@ -5,8 +5,9 @@ name: backend-ci
 # needed while core was a subdirectory of the vidra monorepo).
 #
 # Local/CI parity: run the SAME canonical gate developers run locally
-# (`make ci` = fmt-check + vet + openapi-verify + test-race). Do not add checks
-# here that aren't in `make ci`, or the two will drift (ci-guard.yml enforces this).
+# (`make ci` = fmt-check + vet + migrate-lint + openapi-verify + sqlc-verify +
+# test-race). Do not add checks here that aren't in `make ci`, or the two will
+# drift (ci-guard.yml enforces this).
 on:
   push:
     branches: [main]
