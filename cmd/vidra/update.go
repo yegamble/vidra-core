@@ -101,14 +101,14 @@ func runUpdate(s streams, args []string) error {
 		return nil
 	}
 
-	// A target older than what is running is a ROLLBACK, and rollback.sh is the
-	// command that knows how to do one (it re-probes afterwards, and its own
-	// header carries the restore-first sequence for a flip across an incompatible
-	// schema change). Doing it here under the name "update" would also skip the
-	// pre-deploy dump question entirely.
+	// A target older than what ANY component is running is a ROLLBACK, and
+	// rollback.sh is the command that knows how to do one (it re-probes
+	// afterwards, and its own header carries the restore-first sequence for a flip
+	// across an incompatible schema change). Doing it here under the name "update"
+	// would also skip the pre-deploy dump question entirely.
 	if plan.downgrade {
-		return fmt.Errorf("update: %s is OLDER than the %s this deployment is running. Going backwards is `vidra rollback %s`, which flips the tags and re-probes without pretending it is an update — and if the newer release migrated the database, deploy/README.md's restore-first sequence is the one to follow instead",
-			plan.target, plan.oldest, plan.target)
+		return fmt.Errorf("update: %s is OLDER than what this deployment already runs on %s, so an update to it would move %s BACKWARDS. Going backwards is `vidra rollback %s`, which flips the tags and re-probes without pretending it is an update — and if the newer release migrated the database, deploy/README.md's restore-first sequence is the one to follow instead",
+			plan.target, plan.backwardsList(), plural(len(plan.backwards), "that component", "those components"), plan.target)
 	}
 	if len(plan.missing) > 0 {
 		return fmt.Errorf("update: %s is released in %s/%s but NOT in %s. deploy/release.sh cuts all three components with one tag, so this release is only half cut — its missing image would fail the deploy's `pull` step after the pre-deploy dump had already been taken. Publish the missing release (or pass --tag with an older one) and re-run",
@@ -246,12 +246,20 @@ type updateComponent struct {
 	name string
 	key  string
 	repo string
+	// migrator marks the two components whose image runs as a migration one-shot,
+	// and therefore the two that deploy/rollback.sh gates against its
+	// MIN_EMBEDDED_MIGRATE_TAG floor (`require_embedded_migrate_tag
+	// VIDRA_CORE_TAG` / `VIDRA_SEARCH_TAG`, and nothing for --user, which its own
+	// comment spells out: "vidra-user has no migrator, so --user is not gated").
+	// The floor check below gates on exactly this pair, because gating on the
+	// third would disarm updates rollback.sh would have accepted.
+	migrator bool
 }
 
 var updateComponents = []updateComponent{
-	{name: "core", key: "VIDRA_CORE_TAG", repo: coreRepo},
+	{name: "core", key: "VIDRA_CORE_TAG", repo: coreRepo, migrator: true},
 	{name: "user", key: "VIDRA_USER_TAG", repo: userRepo},
-	{name: "search", key: "VIDRA_SEARCH_TAG", repo: searchRepo},
+	{name: "search", key: "VIDRA_SEARCH_TAG", repo: searchRepo, migrator: true},
 }
 
 // currentTags reads the three pinned tags OUT OF THE ENV FILE, and refuses when
@@ -305,10 +313,13 @@ type updatePlan struct {
 	owner string
 	// current is key -> tag, as the env file pins them.
 	current map[string]string
-	// oldest is the oldest of the three current tags, and the one every
-	// comparison uses. Three tags that disagree is not a normal state, but it is a
-	// reachable one — a `rollback.sh --user vX` leaves the other two alone — and
-	// the safe reading of "how far back would a flip go" is the FURTHEST one.
+	// oldest is the oldest of the three current tags, and the basis for DISTANCE:
+	// how many releases a flip back would have to cross. Three tags that disagree
+	// is not a normal state, but it is a reachable one — a `rollback.sh --user vX`
+	// leaves the other two alone — and the safe reading of "how far back would a
+	// flip go" is the FURTHEST one.
+	//
+	// It is deliberately NOT the basis for the downgrade refusal: see backwards.
 	oldest string
 	// tags is every eligible release, oldest first.
 	tags   []string
@@ -323,7 +334,23 @@ type updatePlan struct {
 	distanceKnown bool
 	uptodate      bool
 	downgrade     bool
+	// backwards names every component whose CURRENT tag is newer than the target,
+	// as "user (v0.3.0)". It is what downgrade is computed from.
+	//
+	// PER COMPONENT AND NOT AGAINST oldest. Comparing the target with the oldest
+	// of the three tags only catches the downgrade where ALL of them move back;
+	// with core=v0.2.0, user=v0.3.0 and search=v0.3.0 — the shape a partial
+	// rollback leaves behind — `--tag v0.2.0` is not older than the oldest of
+	// them, so it passed as an update and rolled two of the three components back
+	// under that name. Nothing downstream would have noticed either: deploy.sh
+	// deploys what the env file says, and the file would have said v0.2.0 in the
+	// operator's own hand.
+	backwards []string
 }
+
+// backwardsList renders the components an update would move back, for the one
+// sentence that has to name them.
+func (p updatePlan) backwardsList() string { return strings.Join(p.backwards, ", ") }
 
 // bump is the plan as the env-file rewrite it implies.
 func (p updatePlan) bump() map[string]string {
@@ -374,8 +401,17 @@ func discover(ctx context.Context, processEnv map[string]string, owner string, c
 		return p, nil
 	}
 
+	// EVERY component, not just the oldest one. A tag that does not parse is left
+	// out rather than assumed newer: it is already the reason oldestTag returns it
+	// and the reason the automatic rollback disarms, and inventing an ordering for
+	// it here would refuse updates on the hosts that most need one.
 	targetVersion, _ := parseReleaseTag(p.target)
-	if oldestVersion, ok := parseReleaseTag(p.oldest); ok && targetVersion.less(oldestVersion) {
+	for _, c := range updateComponents {
+		if v, ok := parseReleaseTag(current[c.key]); ok && targetVersion.less(v) {
+			p.backwards = append(p.backwards, fmt.Sprintf("%s (%s)", c.name, current[c.key]))
+		}
+	}
+	if len(p.backwards) > 0 {
 		p.downgrade = true
 		return p, nil
 	}
@@ -646,6 +682,100 @@ func (d deployment) git(repo string, args ...string) execSpec {
 // ---------------------------------------------------------------------------
 // Arming the rollback.
 
+// rollbackFloor is deploy/rollback.sh's MIN_EMBEDDED_MIGRATE_TAG: the oldest tag
+// that script will flip a migrator component back to.
+//
+// IT IS READ, NOT DECLARED. The floor already exists in three hand-synced shell
+// copies — deploy.sh, rollback.sh and restore.sh — and the meta repository's CI
+// asserts that the three agree. A fourth copy here, as a Go constant in a
+// different repository that CI cannot see, is the one nobody would remember to
+// raise at release time: `vidra update` would go on arming a flip back to tags
+// rollback.sh had started refusing, and the operator would discover the drift
+// during an incident, from a recovery that stops before it does anything.
+// Reading the assignment out of the script keeps the two in step by
+// construction — it is the number that script will enforce, on the host it will
+// enforce it on, including a host whose deploy/ is older than this binary.
+type rollbackFloor struct {
+	tag   string
+	known bool
+}
+
+// minEmbeddedMigrateTagAssign is the shell assignment this parses, spelled as the
+// scripts spell it.
+const minEmbeddedMigrateTagAssign = "MIN_EMBEDDED_MIGRATE_TAG="
+
+// readRollbackFloor parses `MIN_EMBEDDED_MIGRATE_TAG="vX.Y.Z"` out of the
+// deployment's own deploy/rollback.sh — the very script the automatic flip back
+// would hand over to.
+//
+// The shape it accepts is exactly the shell assignment: a line whose first
+// non-blank characters are the name and an `=`. That narrowness is the point.
+// The script mentions the variable five more times — in the paragraph of comment
+// above it, and interpolated as $MIN_EMBEDDED_MIGRATE_TAG into three `die`
+// sentences — and every one of those is prose about the floor rather than the
+// floor. The LAST assignment wins, as it would in the shell.
+//
+// A missing script, no assignment, or a value that is not a release tag all
+// leave known false, which DISARMS. See armRollback.
+func readRollbackFloor(root string) rollbackFloor {
+	b, err := os.ReadFile(filepath.Join(root, "deploy", "rollback.sh"))
+	if err != nil {
+		return rollbackFloor{}
+	}
+	var out rollbackFloor
+	for _, line := range strings.Split(string(b), "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), minEmbeddedMigrateTagAssign)
+		if !ok {
+			continue
+		}
+		// The value is a tag, so it holds no whitespace whether it is quoted or
+		// not: everything from the first space or `#` is a trailing comment.
+		if i := strings.IndexAny(rest, " \t#"); i >= 0 {
+			rest = rest[:i]
+		}
+		tag := unquote(rest)
+		if _, ok := parseReleaseTag(tag); !ok {
+			continue
+		}
+		out = rollbackFloor{tag: tag, known: true}
+	}
+	return out
+}
+
+// refuses reports whether rollback.sh would reject this tag on --core/--search.
+//
+// A tag that does not parse counts as refused. The script's own semver_ge is
+// LOOSER than parseReleaseTag — it ignores a -rc1 suffix, because a prerelease is
+// built from the same code — but anything it cannot order at all it dies on
+// (rc=2), so "unorderable" and "below the floor" are one outcome there and one
+// answer here. The one case the two disagree on is a deployment pinned to a
+// prerelease, where this disarms an automatic recovery rollback.sh would have
+// accepted; that is the safe direction, and pinning a prerelease in production is
+// already a deliberate act.
+func (f rollbackFloor) refuses(tag string) bool {
+	if !f.known || tag == "" {
+		return false
+	}
+	floor, _ := parseReleaseTag(f.tag)
+	v, ok := parseReleaseTag(tag)
+	return !ok || v.less(floor)
+}
+
+// floorBlocked names the migrator components whose CURRENT tag rollback.sh would
+// refuse to flip back to, as "core=v0.1.5".
+func floorBlocked(current map[string]string, f rollbackFloor) []string {
+	var out []string
+	for _, c := range updateComponents {
+		if !c.migrator {
+			continue
+		}
+		if tag := current[c.key]; f.refuses(tag) {
+			out = append(out, c.name+"="+tag)
+		}
+	}
+	return out
+}
+
 // armRollback decides whether a failed deploy will be flipped back
 // automatically, and returns the reason when it will not.
 //
@@ -660,15 +790,40 @@ func (d deployment) git(repo string, args ...string) execSpec {
 // by flipping tags back, and a command that did it anyway would be quietly
 // betting the instance on a guarantee nobody made.
 //
+// AND ONLY TO TAGS ROLLBACK.SH WILL ACCEPT. That script's first act, before it
+// reads the env file or touches a container, is to refuse a core or search tag
+// below MIN_EMBEDDED_MIGRATE_TAG — images with no embedded `migrate` subcommand,
+// which would boot API servers in place of the migration one-shots `up -d` waits
+// on and hang the run. Arming a flip back to a tag it will refuse promises a
+// recovery that cannot happen: the deploy fails, the handover prints a refusal,
+// and the operator reads "THE ROLLBACK ALSO FAILED" about a rollback that never
+// started. So the floor is read out of the script itself and checked here, up
+// front, on the confirm screen, where "not armed" is information rather than an
+// incident.
+//
+// AN UNREADABLE FLOOR DISARMS, which is the opposite of what schemaGate does
+// with an unreadable /schemaz, deliberately. There, refusing on what could not be
+// checked would block the PRIMARY operation — on every host whose stack is
+// currently down, which is most of the hosts anybody updates. Here, disarming
+// downgrades a convenience: the update still runs, every gate deploy.sh owns is
+// untouched, and the honest fallback is printed instead. Arming on unverifiable
+// safety is the one of those two mistakes that cannot be walked back.
+//
 // A disarmed update is not a refused one. It runs, deploy.sh's own gates and its
 // pre-deploy dump are unchanged, and the operator has been told up front that
 // the way back is ./deploy/restore.sh rather than a tag flip.
-func armRollback(dep deployment, p updatePlan, noRollback bool) (bool, string) {
+func armRollback(dep deployment, p updatePlan, floor rollbackFloor, noRollback bool) (bool, string) {
+	blocked := floorBlocked(p.current, floor)
 	switch {
 	case noRollback:
 		return false, "--no-rollback: a failed deploy will be left exactly as deploy.sh leaves it"
 	case !dep.hasRollbackScript():
 		return false, "deploy/rollback.sh is not in this deployment, so there is nothing to flip the tags back with"
+	case !floor.known:
+		return false, "deploy/rollback.sh's MIN_EMBEDDED_MIGRATE_TAG could not be read, so whether that script would ACCEPT the tags this deployment is running cannot be verified from here. It is the first check it makes, and a flip back it refuses is one that fails during the incident rather than before it. deploy.sh takes its pre-deploy dump either way; ./deploy/restore.sh is the way back"
+	case len(blocked) > 0:
+		return false, fmt.Sprintf("deploy/rollback.sh refuses a core or search tag below %s — its MIN_EMBEDDED_MIGRATE_TAG, the first release whose image carries the embedded `migrate` subcommand — and this deployment is running %s. The flip back would be refused at the moment it was needed, so it is not promised here. deploy.sh takes its pre-deploy dump either way; ./deploy/restore.sh is the way back",
+			floor.tag, strings.Join(blocked, ", "))
 	case !p.distanceKnown:
 		return false, fmt.Sprintf("%s is not one of %s/%s's published releases, so how far back a flip would go cannot be computed — and the one-release schema-compat policy is the only thing that would make it safe", p.oldest, p.owner, coreRepo)
 	case p.steps > 1:
@@ -702,11 +857,21 @@ func (d deployment) hasRollbackScript() bool {
 // installer that read 0 from a run that ended on the previous release would draw
 // exactly the wrong conclusion. The code passed up is deploy.sh's own, for the
 // same exit-code fidelity the wrapper commands promise.
-func recoverFromFailedDeploy(s streams, dep deployment, p updatePlan, armed bool, why, snapshot string, deployErr error) error {
+func recoverFromFailedDeploy(s streams, dep deployment, p updatePlan, floor rollbackFloor, armed bool, why, snapshot string, deployErr error) error {
 	if !armed {
+		// The previous tags are printed rather than left in a file: this is the
+		// state an operator reconstructs the incident from, and the reason they are
+		// held in memory at all. No `./deploy/rollback.sh` line to paste, though —
+		// when the disarm reason is the floor, that command is exactly the one that
+		// would refuse, and the whole point of saying so up front was to keep it
+		// out of an incident.
 		fmt.Fprintf(s.err, "\n[update] The tags in %s are still %s. Automatic rollback was NOT armed for this update: %s.\n",
 			dep.envFile, p.target, why)
+		fmt.Fprintf(s.err, "[update] What was running before this run: core=%s user=%s search=%s\n",
+			p.current["VIDRA_CORE_TAG"], p.current["VIDRA_USER_TAG"], p.current["VIDRA_SEARCH_TAG"])
 		fmt.Fprintf(s.err, "[update] The env file as it was before this run: %s\n", snapshot)
+		fmt.Fprintf(s.err, "[update] deploy.sh took a dump before it started, and that is the way back:\n[update]     ./deploy/restore.sh %s\n",
+			newestPreDeployDump(dep.root))
 		return deployErr
 	}
 	fmt.Fprintf(s.err, `
@@ -825,7 +990,7 @@ func renderUpdateCheck(w io.Writer, dep deployment, p updatePlan) {
 	case p.uptodate:
 		fmt.Fprintf(w, "Up to date: %s is the newest release of %s/%s.\n", p.target, p.owner, coreRepo)
 	case p.downgrade:
-		fmt.Fprintf(w, "%s is OLDER than the %s this deployment runs. Going backwards is `vidra rollback %s`, not an update.\n", p.target, p.oldest, p.target)
+		fmt.Fprintf(w, "%s is OLDER than what this deployment already runs on %s. Going backwards is `vidra rollback %s`, not an update.\n", p.target, p.backwardsList(), p.target)
 	default:
 		fmt.Fprintf(w, "An update is available: %s → %s.\n", p.oldest, p.target)
 		if p.target != p.latest {
