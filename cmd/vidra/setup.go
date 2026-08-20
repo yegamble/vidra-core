@@ -1136,6 +1136,28 @@ func report(s streams, path, caddyPath string, sources []string, res *setup.Resu
 		fmt.Fprintf(s.out, "  ⚠ %s\n", w)
 	}
 	fmt.Fprintf(s.out, "\nNext, render the production compose chain with it (from the deployment directory):\n  %s\n", setup.RenderCheckCommand(path, res.Values))
+
+	// The admin account is NOT in this file and cannot be. The api mints a
+	// one-time owner-claim token at boot and prints it to its own log, once; until
+	// it is redeemed every signup path answers 403 owner_claim_required. So the
+	// operator who has just generated an env file is two commands away from an
+	// instance they cannot log into, and this is the only place that tells them
+	// which two. `./deploy/compose.sh logs api` and never a bare `docker compose
+	// logs api`: on a deployment host the bare form silently picks up
+	// docker-compose.override.yml's dev defaults and addresses a different
+	// project than the deploy scripts do.
+	origin := strings.TrimSpace(res.Values["PUBLIC_BASE_URL"])
+	if origin == "" {
+		origin = "https://<your domain>"
+	}
+	fmt.Fprintf(s.out, `
+Then, once the stack is up, claim the admin account. The api mints a one-time
+owner-claim token at boot and prints it in its own log:
+  ./deploy/compose.sh logs api
+  %s/setup/claim
+Every api restart mints a fresh token and invalidates the previous one, so take
+the newest line in the log.
+`, origin)
 }
 
 // featureFlags is the optional-component block of the command line: one flag per

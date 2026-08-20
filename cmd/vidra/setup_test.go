@@ -288,6 +288,34 @@ func TestSetupWritesAPrivateFileAndPrintsTheRenderCheck(t *testing.T) {
 	}
 }
 
+// The env file cannot contain the admin account: the api mints a one-time
+// owner-claim token at boot and prints it to its own log, and until it is
+// redeemed every signup path answers 403. An operator who has just generated the
+// file is therefore two commands away from an instance nobody can log into, and
+// this report is the only place that says which two.
+func TestSetupReportsTheOwnerClaimHandoff(t *testing.T) {
+	h := newHarness(t)
+	if err := h.run(h.setupArgs()...); err != nil {
+		t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+	}
+	out := h.out.String()
+	for _, want := range []string{
+		"./deploy/compose.sh logs api",
+		"https://video.example.org/setup/claim",
+		"invalidates the previous one",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the owner-claim handoff is missing %q:\n%s", want, out)
+		}
+	}
+	// NEVER the bare form: on a deployment host it silently picks up
+	// docker-compose.override.yml's dev defaults and addresses a different
+	// project than the deploy scripts do.
+	if strings.Contains(out, "docker compose logs") {
+		t.Errorf("the report told the operator to run a bare `docker compose logs`:\n%s", out)
+	}
+}
+
 // Rewriting the env file a deployment is running from needs one deliberate
 // keystroke — --yes, or a --from that makes the merge explicit. The refusal names
 // both, and says nothing is lost either way.
