@@ -1024,12 +1024,24 @@ func TestOutputPathDefault(t *testing.T) {
 	}
 }
 
-// The name here has to be one the dispatch table does NOT carry — it used to be
-// "doctor", which is now a real subcommand and would have run it against the
-// working directory instead.
+// The name here has to be one the dispatch table does NOT carry, and the table
+// keeps growing: this test named "doctor" until doctor shipped, then "deploy"
+// until deploy did, and each time it stopped testing an unknown command and
+// started running a real one against the working directory. So the name is
+// DERIVED from the table instead of chosen — the next command to land cannot
+// silently take it over.
 func TestUnknownCommandPrintsUsage(t *testing.T) {
+	name := "not-a-command"
+	for taken := true; taken; {
+		taken = false
+		for _, c := range commands {
+			if c.name == name {
+				name, taken = name+"-x", true
+			}
+		}
+	}
 	var out, errBuf bytes.Buffer
-	err := run(streams{in: strings.NewReader(""), out: &out, err: &errBuf}, []string{"deploy"})
+	err := run(streams{in: strings.NewReader(""), out: &out, err: &errBuf}, []string{name})
 	if !errors.Is(err, errReported) {
 		t.Fatalf("err = %v, want errReported", err)
 	}
