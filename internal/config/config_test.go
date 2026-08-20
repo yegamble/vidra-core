@@ -927,6 +927,17 @@ func TestCookieSecureDerivation(t *testing.T) {
 		{"test env plain", Config{Environment: "test"}, false},
 		{"production fail-secure without base url", Config{Environment: "production"}, true},
 		{"production with https base url", Config{Environment: "production", PublicBaseURL: "https://videos.example"}, true},
+		// The consented plain-http deployment (VIDRA_TLS_MODE=plain-http). Secure
+		// must come OFF: the browser would never send a Secure cookie back over
+		// http, so leaving it on is a production instance nobody can log into.
+		{"production with consented http base url", Config{Environment: "production", PublicBaseURL: "http://videos.internal", AllowPlainHTTP: true}, false},
+		// The consent flag is about what validate() ACCEPTS, not about what the
+		// scheme means: an https origin stays Secure whether or not somebody also
+		// allowed plain http.
+		{"https base url with plain http allowed", Config{Environment: "production", PublicBaseURL: "https://videos.example", AllowPlainHTTP: true}, true},
+		// Development is unchanged, with or without the consent flag: the scheme
+		// already answered the question.
+		{"dev http without consent", Config{Environment: "development", PublicBaseURL: "http://localhost:8080"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
