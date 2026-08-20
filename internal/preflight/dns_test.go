@@ -327,6 +327,111 @@ func TestCheckDomain(t *testing.T) {
 	})
 }
 
+// The domain check is IPv4, end to end, because deploy/deploy.sh is.
+//
+// deploy.sh resolves A records and nothing else (getent ahostsv4, dig A, host -t
+// A), so an AAAA-only deployment that passed here would be refused by the deploy
+// minutes later — and this check is what an operator runs to find out WHY the
+// deploy refused. The escape hatches both sides honour are VIDRA_PUBLIC_IP and
+// VIDRA_SKIP_DNS_PREFLIGHT, and the finding says so.
+func TestCheckDomainIsIPv4Only(t *testing.T) {
+	ctx := context.Background()
+	client, _ := echoClient(t, map[string]struct {
+		status int
+		body   string
+	}{"https://echo.example/": {200, "203.0.113.10"}})
+	discovery := PublicIPOptions{Client: client, Endpoints: []string{"https://echo.example/"}}
+
+	t.Run("the resolver is asked for A records", func(t *testing.T) {
+		r := &fakeResolver{addrs: []string{"203.0.113.10"}}
+		CheckDomain(ctx, DomainRequest{Domain: "video.example.org", Resolver: r, PublicIP: discovery})
+		if len(r.asked) != 1 || r.asked[0] != "ip4 video.example.org" {
+			t.Errorf("resolver was asked %v, want one \"ip4 video.example.org\" — deploy.sh looks up A records only", r.asked)
+		}
+	})
+
+	t.Run("a dual-stack domain matches on its A record", func(t *testing.T) {
+		res := CheckDomain(ctx, DomainRequest{
+			Domain:   "video.example.org",
+			Resolver: &fakeResolver{addrs: []string{"2001:db8::1", "203.0.113.10"}},
+			PublicIP: discovery,
+		})
+		if res.Status != StatusOK || !res.Match {
+			t.Fatalf("status = %s, match = %v, want the A record compared (%+v)", res.Status, res.Match, res)
+		}
+		if len(res.Resolved) != 1 {
+			t.Errorf("Resolved = %v, want the AAAA answer filtered out", res.Resolved)
+		}
+	})
+
+	t.Run("an AAAA-only domain fails, and says how to deploy anyway", func(t *testing.T) {
+		res := CheckDomain(ctx, DomainRequest{
+			Domain:   "video.example.org",
+			Resolver: &fakeResolver{addrs: []string{"2001:db8::1"}},
+			PublicIP: discovery,
+		})
+		if res.Status != StatusFail {
+			t.Fatalf("status = %s, want the failure deploy.sh would also produce", res.Status)
+		}
+		for _, want := range []string{"IPv4", "VIDRA_PUBLIC_IP", "VIDRA_SKIP_DNS_PREFLIGHT"} {
+			if !strings.Contains(res.Message+res.Fix, want) {
+				t.Errorf("the operator is not told about %q: %q / %q", want, res.Message, res.Fix)
+			}
+		}
+	})
+
+	t.Run("an IPv6 public IP is not compared against A records", func(t *testing.T) {
+		v6Client, _ := echoClient(t, map[string]struct {
+			status int
+			body   string
+		}{"https://echo.example/": {200, "2001:db8::1"}})
+		res := CheckDomain(ctx, DomainRequest{
+			Domain:   "video.example.org",
+			Resolver: &fakeResolver{addrs: []string{"203.0.113.10"}},
+			PublicIP: PublicIPOptions{Client: v6Client, Endpoints: []string{"https://echo.example/"}},
+		})
+		// A dual-stack host that reached the echo service over IPv6 got its v6
+		// address back. No A record can name it, so calling the record wrong
+		// would send an operator to edit a correct zone file — and deploy.sh
+		// does not compare either, it warns and continues.
+		if res.Status != StatusWarn || res.Match {
+			t.Fatalf("status = %s, match = %v, want a ⚠ that made no comparison (%+v)", res.Status, res.Match, res)
+		}
+		if !strings.Contains(res.Fix, "VIDRA_PUBLIC_IP") {
+			t.Errorf("the fix does not offer the way out: %q", res.Fix)
+		}
+	})
+
+	t.Run("an explicit expectation is compared as given", func(t *testing.T) {
+		// VIDRA_PUBLIC_IP is the operator's answer, and deploy.sh compares it
+		// verbatim: an override that cannot match is a finding, not a shrug.
+		res := CheckDomain(ctx, DomainRequest{
+			Domain:   "video.example.org",
+			Expected: "2001:db8::1",
+			Resolver: &fakeResolver{addrs: []string{"203.0.113.10"}},
+			PublicIP: discovery,
+		})
+		if res.Status != StatusFail {
+			t.Fatalf("status = %s, want the mismatch reported for an explicit expectation", res.Status)
+		}
+	})
+}
+
+// The public-IP endpoints are a cross-repo contract: deploy/deploy.sh asks the
+// same two, in the same order, so doctor and the deploy that follows it compare
+// the domain against the same address.
+func TestPublicIPSourcesAreTheDeployScriptsEndpoints(t *testing.T) {
+	want := []string{"https://api.ipify.org", "https://icanhazip.com"}
+	if len(PublicIPSources) != len(want) {
+		t.Fatalf("PublicIPSources = %v, want %v", PublicIPSources, want)
+	}
+	for i, w := range want {
+		if PublicIPSources[i] != w {
+			t.Errorf("PublicIPSources[%d] = %q, want %q — change deploy/deploy.sh's discover_public_ip in the same release", i, PublicIPSources[i], w)
+		}
+	}
+}
+
 // An IPv4 answer that arrives IPv4-mapped still matches: it is the same host.
 func TestCheckDomainMatchesAcrossTheMappedForm(t *testing.T) {
 	client, _ := echoClient(t, map[string]struct {

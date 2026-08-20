@@ -37,10 +37,33 @@ const maxPublicIPBody = 64
 // PublicIPSources are the endpoints PublicIP asks when it is not told the
 // answer. Two, from different operators, because one being down (or blocked, or
 // hijacked by a captive portal) must not turn a DNS check into a warning.
+//
+// This list is a CROSS-REPO CONTRACT: deploy/deploy.sh's discover_public_ip asks
+// the same endpoints in the same order, so `vidra doctor` and the deploy that
+// follows it compare the domain against the same address. Two lists would be two
+// answers to "which host is this", and the disagreement would only ever show up
+// as a deploy refusing what doctor had just passed.
 var PublicIPSources = []string{
 	"https://api.ipify.org",
 	"https://icanhazip.com",
 }
+
+// domainNetwork is the address family the domain check resolves and compares.
+//
+// IPv4 ONLY, and deliberately: deploy/deploy.sh resolves A records and nothing
+// else (getent ahostsv4, dig A, host -t A), so a host reachable only over IPv6
+// would pass this check and then be refused by the deploy — the worst possible
+// split, because the diagnostic is what an operator runs to find out WHY the
+// deploy refused. An AAAA-only deployment is a real configuration, and it is
+// served by the two escape hatches both sides honour: VIDRA_PUBLIC_IP names this
+// host's address without asking an echo service, and VIDRA_SKIP_DNS_PREFLIGHT
+// turns the check off outright.
+//
+// The public-IP endpoints resolve the same way round: they answer with the
+// address the connection came FROM, and a dual-stack host reaching them over
+// IPv6 gets its v6 address back — which would never appear among A records. That
+// is the second reason this is not simply "ask for both and match either".
+const domainNetwork = "ip4"
 
 // Resolver is the DNS lookup this package needs. *net.Resolver satisfies it, and
 // it is an interface so the tests never touch a real nameserver: a preflight
@@ -88,7 +111,8 @@ type DomainResult struct {
 	Status Status
 	// Domain is the HOST that was looked up, after an origin was reduced to it.
 	Domain string
-	// Resolved is every A/AAAA address, deduplicated and sorted.
+	// Resolved is every A address, deduplicated and sorted. IPv4 only — see
+	// domainNetwork for why the check is that family and nothing else.
 	Resolved []netip.Addr
 	// PublicIP is this host's address; the zero value means it is not known.
 	PublicIP netip.Addr
@@ -107,6 +131,11 @@ type DomainResult struct {
 // host's public address is, and say whether they agree. It never returns an
 // error — an error IS one of the results — because every caller has to print
 // something either way.
+//
+// It is an IPv4 check end to end (domainNetwork), because deploy/deploy.sh is:
+// a diagnostic that passed what the deploy then refused would be worse than no
+// diagnostic, since it is the thing an operator runs to find out why the deploy
+// refused.
 func CheckDomain(ctx context.Context, req DomainRequest) DomainResult {
 	res := DomainResult{Domain: strings.TrimSpace(req.Domain)}
 
@@ -119,14 +148,14 @@ func CheckDomain(ctx context.Context, req DomainRequest) DomainResult {
 	}
 	res.Domain = host
 
-	res.Resolved, err = LookupHost(ctx, req.Resolver, host)
+	res.Resolved, err = lookupHostNetwork(ctx, req.Resolver, host, domainNetwork)
 	if err != nil || len(res.Resolved) == 0 {
 		res.Status, res.Err = StatusFail, err
 		if err == nil {
-			res.Err = fmt.Errorf("preflight: %s has no A or AAAA record", host)
+			res.Err = fmt.Errorf("preflight: %s has no A record", host)
 		}
-		res.Message = fmt.Sprintf("%s does not resolve to any address", host)
-		res.Fix = fmt.Sprintf("create an A record for %s pointing at this host's public IP (and an AAAA record if it has IPv6), then wait for it to propagate before deploying — Let's Encrypt validates over the public internet, and failed orders count against a per-hostname rate limit", host)
+		res.Message = fmt.Sprintf("%s does not resolve to an IPv4 address", host)
+		res.Fix = fmt.Sprintf("create an A record for %s pointing at this host's public IP, then wait for it to propagate before deploying — Let's Encrypt validates over the public internet, and failed orders count against a per-hostname rate limit. This check and deploy/deploy.sh both look at A records only: if this instance is IPv6-only, set VIDRA_PUBLIC_IP to its address or VIDRA_SKIP_DNS_PREFLIGHT=1 to skip the check on both sides", host)
 		return res
 	}
 
@@ -141,6 +170,18 @@ func CheckDomain(ctx context.Context, req DomainRequest) DomainResult {
 		return res
 	}
 	res.PublicIP = public
+	if !public.Is4() && strings.TrimSpace(req.Expected) == "" {
+		// A dual-stack host reaching the echo service over IPv6 gets its v6
+		// address back, and no A record can ever name it — so comparing them
+		// would report a wrong DNS record for a domain that is correct.
+		// deploy.sh does not compare either: discover_public_ip only accepts a
+		// dotted-quad answer, and an empty result there is a warning and a
+		// continue. This is the same answer.
+		res.Status, res.Err = StatusWarn, nil
+		res.Message = fmt.Sprintf("%s resolves to %s, but this host's own public address came back as IPv6 (%s), which an A record cannot name — so the two were not compared", host, joinAddrs(res.Resolved), public)
+		res.Fix = "set VIDRA_PUBLIC_IP to this host's IPv4 address (the one the A record should point at). deploy/deploy.sh reaches the same point and deploys anyway, so this is a check that could not run rather than a record that is wrong"
+		return res
+	}
 	res.Match = slices.Contains(res.Resolved, public)
 	if !res.Match {
 		res.Status = StatusFail
@@ -156,7 +197,15 @@ func CheckDomain(ctx context.Context, req DomainRequest) DomainResult {
 // LookupHost resolves a host's A and AAAA records, returning them deduplicated
 // and sorted so two runs of the same check produce the same message. It accepts
 // the same spellings Host does.
+//
+// CheckDomain does NOT use it: the domain-match check is IPv4-only, for the
+// reasons on domainNetwork. This is the general lookup, for a caller that wants
+// to see everything a name resolves to.
 func LookupHost(ctx context.Context, r Resolver, host string) ([]netip.Addr, error) {
+	return lookupHostNetwork(ctx, r, host, "ip")
+}
+
+func lookupHostNetwork(ctx context.Context, r Resolver, host, network string) ([]netip.Addr, error) {
 	name, err := Host(host)
 	if err != nil {
 		return nil, err
@@ -164,11 +213,26 @@ func LookupHost(ctx context.Context, r Resolver, host string) ([]netip.Addr, err
 	if r == nil {
 		r = net.DefaultResolver
 	}
-	addrs, err := r.LookupNetIP(ctx, "ip", name)
+	addrs, err := r.LookupNetIP(ctx, network, name)
 	if err != nil {
 		return nil, fmt.Errorf("preflight: resolve %s: %w", name, err)
 	}
-	return normalize(addrs), nil
+	// The family is filtered as well as asked for. A resolver is free to answer
+	// an "ip4" query with more than was asked (net.Resolver does not, a fake or a
+	// future implementation might), and one v6 address slipping into this list is
+	// a domain-match check that disagrees with the deploy script by exactly the
+	// address the deploy cannot see.
+	out := normalize(addrs)
+	if network != "ip4" {
+		return out, nil
+	}
+	kept := out[:0]
+	for _, a := range out {
+		if a.Is4() {
+			kept = append(kept, a)
+		}
+	}
+	return kept, nil
 }
 
 // PublicIP is this host's address as the internet sees it: the override if there
