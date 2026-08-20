@@ -10,13 +10,18 @@ import "github.com/labstack/echo/v4"
 //   - Cross-Origin-Opener-Policy: same-origin — isolate the browsing context.
 //   - X-Permitted-Cross-Domain-Policies: none — no Adobe cross-domain access.
 //
-// In production, HSTS is added so browsers pin HTTPS (only meaningful over TLS,
-// so it is omitted in development/test to avoid trapping localhost on HTTPS).
+// HSTS is added when the instance's public origin is HTTPS
+// (config.PublicOriginIsHTTPS — the same predicate that pins Secure cookies), so
+// browsers pin TLS for two years. It is omitted on a plain-http origin: a
+// browser ignores the header there anyway (RFC 6797 §8.1), but a deployment that
+// LATER puts a certificate in front of the same hostname would have trapped
+// every visitor who saw it on http, and the local-development case is the same
+// trap on localhost.
 //
 // A Content-Security-Policy is deliberately NOT set here: this service serves
 // JSON and media, not HTML, so a page CSP belongs to vidra-user. CORS remains
 // handled by the dedicated CORS middleware.
-func secureHeaders(production bool) echo.MiddlewareFunc {
+func secureHeaders(httpsOrigin bool) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			h := c.Response().Header()
@@ -25,7 +30,7 @@ func secureHeaders(production bool) echo.MiddlewareFunc {
 			h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 			h.Set("Cross-Origin-Opener-Policy", "same-origin")
 			h.Set("X-Permitted-Cross-Domain-Policies", "none")
-			if production {
+			if httpsOrigin {
 				// 2 years, apply to subdomains.
 				h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 			}
