@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,6 +81,7 @@ example.com {
 `
 
 type harness struct {
+	t             *testing.T
 	dir           string
 	template      string
 	output        string
@@ -88,11 +90,79 @@ type harness struct {
 	out           bytes.Buffer
 	err           bytes.Buffer
 	stdin         string
+	// script answers the interview by QUESTION instead of by position; when it
+	// is set it replaces stdin. asked is every prompt the run printed, in order.
+	script []promptAnswer
+	asked  []string
+}
+
+// promptAnswer is one scripted reply: the first entry whose match is a substring
+// of the prompt answers it, so an entry with an empty match is the catch-all
+// "press enter" and belongs last.
+type promptAnswer struct{ match, answer string }
+
+// prompter is stdin for an interview, answering by QUESTION rather than by
+// position.
+//
+// The tests used to script `"\n\n\n\n\n\n\n\n\n\n\n"` and count newlines against
+// a comment listing the questions. Adding ONE question therefore broke five
+// unrelated tests at once, and none of them said which answer had shifted — the
+// failure was a wrong value in a generated file, two layers from the cause. This
+// reads the prompt the command has just printed and replies to that, so a new
+// question changes only the tests that care about it, and an unanswered one
+// fails by name.
+type prompter struct {
+	t       *testing.T
+	out     *bytes.Buffer // everything the command has printed so far
+	script  []promptAnswer
+	asked   *[]string
+	seen    int    // bytes of out already consumed
+	pending string // the answer being handed over, one Read at a time
+}
+
+func (p *prompter) Read(b []byte) (int, error) {
+	if p.pending == "" {
+		prompt := p.nextPrompt()
+		answer, ok := p.answerFor(prompt)
+		if !ok {
+			p.t.Errorf("no scripted answer for the prompt %q", prompt)
+			return 0, io.EOF
+		}
+		*p.asked = append(*p.asked, prompt)
+		p.pending = answer + "\n"
+	}
+	n := copy(b, p.pending)
+	p.pending = p.pending[n:]
+	return n, nil
+}
+
+// nextPrompt is everything printed since the last answer, reduced to the last
+// line — which is the question, since a prompt is written without a newline.
+func (p *prompter) nextPrompt() string {
+	all := p.out.String()
+	if p.seen > len(all) {
+		p.seen = 0 // the buffer was reset between runs
+	}
+	fresh := all[p.seen:]
+	p.seen = len(all)
+	if i := strings.LastIndex(fresh, "\n"); i >= 0 {
+		fresh = fresh[i+1:]
+	}
+	return strings.TrimSpace(fresh)
+}
+
+func (p *prompter) answerFor(prompt string) (string, bool) {
+	for _, a := range p.script {
+		if a.match == "" || strings.Contains(prompt, a.match) {
+			return a.answer, true
+		}
+	}
+	return "", false
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	h := &harness{dir: t.TempDir()}
+	h := &harness{t: t, dir: t.TempDir()}
 	h.template = filepath.Join(h.dir, "production.env.example")
 	h.output = filepath.Join(h.dir, "production.env")
 	h.caddyTemplate = filepath.Join(h.dir, "Caddyfile")
@@ -108,7 +178,12 @@ func newHarness(t *testing.T) *harness {
 func (h *harness) run(args ...string) error {
 	h.out.Reset()
 	h.err.Reset()
-	return run(streams{in: strings.NewReader(h.stdin), out: &h.out, err: &h.err}, args)
+	h.asked = nil
+	var in io.Reader = strings.NewReader(h.stdin)
+	if h.script != nil {
+		in = &prompter{t: h.t, out: &h.out, script: h.script, asked: &h.asked}
+	}
+	return run(streams{in: in, out: &h.out, err: &h.err}, args)
 }
 
 func (h *harness) setupArgs(extra ...string) []string {
@@ -599,6 +674,155 @@ func TestSetupSecretsCanAvoidArgv(t *testing.T) {
 			"--smtp-password", "@"+filepath.Join(h.dir, "nope"))
 		if err == nil || !strings.Contains(err.Error(), "smtp-password") {
 			t.Fatalf("err = %v, want the unreadable secret file named", err)
+		}
+	})
+}
+
+// The flags ARE the unattended interface, and a real install needs a dozen of
+// them. --answers puts them in a file that can be reviewed, diffed and re-run
+// instead of an enormous shell line retyped at 3am.
+func TestSetupAnswersFile(t *testing.T) {
+	write := func(t *testing.T, h *harness, body string) string {
+		t.Helper()
+		path := filepath.Join(h.dir, "answers")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write answers file: %v", err)
+		}
+		return path
+	}
+
+	t.Run("the file answers the flags", func(t *testing.T) {
+		h := newHarness(t)
+		// Both spellings, a comment, a blank line and a bool — everything the
+		// format promises, in the file that proves it.
+		path := write(t, h, `# a production install, in a file
+domain = video.example.org
+release-tag=v0.1.1
+
+storage = local
+acme-email = ops@example.org
+ipfs = true
+`)
+		if err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive",
+			"--answers", path}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+		}
+		got := h.readOutput(t)
+		for _, tc := range []struct{ key, want string }{
+			{"PUBLIC_BASE_URL", "https://video.example.org"},
+			{"VIDRA_CORE_TAG", "v0.1.1"},
+			{"STORAGE_BACKEND", "local"},
+			{"VIDRA_ACME_EMAIL", "ops@example.org"},
+			{"VIDRA_COMPOSE_PROFILES", "core frontend ipfs"},
+		} {
+			if v := valueOf(t, got, tc.key); v != tc.want {
+				t.Errorf("%s = %q, want %q", tc.key, v, tc.want)
+			}
+		}
+	})
+
+	// A file that could overrule the command line would make the command line
+	// unreadable: whatever is typed has to be what happens.
+	t.Run("argv wins", func(t *testing.T) {
+		h := newHarness(t)
+		path := write(t, h, "domain = from-the-file.example.org\nrelease-tag = v0.1.1\nstorage = local\n")
+		if err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive",
+			"--answers", path, "--domain", "from-argv.example.org"}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "PUBLIC_BASE_URL"); v != "https://from-argv.example.org" {
+			t.Errorf("PUBLIC_BASE_URL = %q, want the command line's domain", v)
+		}
+	})
+
+	t.Run("an unknown name names the line", func(t *testing.T) {
+		h := newHarness(t)
+		path := write(t, h, "domain = video.example.org\n# the next line is a typo\ndomian = video.example.org\n")
+		err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive", "--answers", path}, h.caddyArgs()...)...)
+		if err == nil {
+			t.Fatal("an unknown answer was accepted")
+		}
+		for _, want := range []string{path + ":3", "domian", "-h"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		}
+	})
+
+	t.Run("a line that is not an assignment is refused", func(t *testing.T) {
+		h := newHarness(t)
+		path := write(t, h, "domain video.example.org\n")
+		err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive", "--answers", path}, h.caddyArgs()...)...)
+		if err == nil || !strings.Contains(err.Error(), path+":1") {
+			t.Fatalf("err = %v, want the malformed line named", err)
+		}
+	})
+
+	// stdin belongs to the terminal running the install, and only one flag may
+	// ever claim it. A file that could claim it would make that rule
+	// unenforceable from the command line, which is where it is enforced.
+	t.Run("a secret may not read stdin from the file", func(t *testing.T) {
+		h := newHarness(t)
+		h.stdin = "the-secret\n"
+		path := write(t, h, "domain = video.example.org\nstorage = local\ns3-secret-key = -\n")
+		err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive", "--answers", path}, h.caddyArgs()...)...)
+		if err == nil {
+			t.Fatal("an answers file claimed stdin")
+		}
+		for _, want := range []string{"stdin", "@<path>", "VIDRA_SETUP_S3_SECRET_KEY"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("refusal %q does not offer %q", err, want)
+			}
+		}
+		// The other indirections are untouched.
+		keyFile := filepath.Join(h.dir, "s3.secret")
+		if err := os.WriteFile(keyFile, []byte("from-a-file\n"), 0o600); err != nil {
+			t.Fatalf("write secret file: %v", err)
+		}
+		path = write(t, h, "domain = video.example.org\nrelease-tag = v0.1.1\nstorage = s3\n"+
+			"s3-endpoint = fra1.example.net\ns3-region = fra1\ns3-bucket = media\ns3-access-key = AKIA\n"+
+			"s3-secret-key = @"+keyFile+"\n")
+		if err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive", "--answers", path}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("setup with an @file secret in the answers file: %v (stderr: %s)", err, h.err.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "STORAGE_S3_SECRET_KEY"); v != "from-a-file" {
+			t.Errorf("STORAGE_S3_SECRET_KEY = %q, want the @file's contents", v)
+		}
+	})
+
+	// --answers implies NOTHING else — not --non-interactive, not --yes — so a
+	// partial file is a pre-seeded interview: what it answers is not asked, what
+	// it leaves out still is.
+	t.Run("a partial file is a pre-seeded interview", func(t *testing.T) {
+		h := newHarness(t)
+		path := write(t, h, "domain = video.example.org\nrelease-tag = v0.1.1\ntls-mode = internal\n")
+		h.script = []promptAnswer{{"", ""}} // press enter through whatever is left
+		if err := h.run(append([]string{"setup", "--template", h.template, "--answers", path}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+		}
+		asked := strings.Join(h.asked, "\n")
+		if strings.Contains(asked, "Public domain") || strings.Contains(asked, "Release tag") {
+			t.Errorf("a question the file answered was asked anyway:\n%s", asked)
+		}
+		if !strings.Contains(asked, "Media storage backend") {
+			t.Errorf("a question the file left out was not asked:\n%s", asked)
+		}
+		got := h.readOutput(t)
+		if v := valueOf(t, got, "PUBLIC_BASE_URL"); v != "https://video.example.org" {
+			t.Errorf("PUBLIC_BASE_URL = %q, want the file's domain", v)
+		}
+		if v := valueOf(t, got, "VIDRA_TLS_MODE"); v != "internal" {
+			t.Errorf("VIDRA_TLS_MODE = %q, want the file's mode", v)
+		}
+	})
+
+	t.Run("a missing file is an error, not an empty answer set", func(t *testing.T) {
+		h := newHarness(t)
+		missing := filepath.Join(h.dir, "nope")
+		err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive",
+			"--domain", "video.example.org", "--answers", missing}, h.caddyArgs()...)...)
+		if err == nil || !strings.Contains(err.Error(), missing) {
+			t.Fatalf("err = %v, want the unreadable answers file named", err)
 		}
 	})
 }

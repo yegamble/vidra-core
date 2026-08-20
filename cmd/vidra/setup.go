@@ -30,6 +30,7 @@ func runSetup(s streams, args []string) error {
 		output    = fs.String("output", "", "`path` to write (default: the template path without its .example suffix)")
 		from      = fs.String("from", "", "extra env `file` to merge: it fills keys the output file leaves blank, and never overrides it")
 
+		answersPath    = fs.String("answers", "", "`file` of `flag-name = value` lines to take answers from; anything also on the command line wins")
 		nonInteractive = fs.Bool("non-interactive", false, "never prompt; take every answer from flags (for unattended installs)")
 		yes            = fs.Bool("yes", false, "rewrite an existing --output in place (every value it sets is still preserved)")
 		// Deliberately NOT --yes: an operator confirming the routine in-place
@@ -99,6 +100,15 @@ Secrets do not have to appear on the command line: --s3-secret-key,
 the interactive prompts read them without echoing. A managed connection string
 counts as a secret: it carries the password inside it.
 
+Answers can come from a FILE as well as from argv: --answers <path> reads
+"flag-name = value" lines (the flag names below, without their dashes; # comments
+and blank lines ignored) and applies each one the command line did not already
+set — argv always wins, so --domain other.example.org beside a file overrides it.
+--answers implies nothing else: without --non-interactive, the questions it does
+not answer are still asked, which makes a partial file a pre-seeded interview. A
+secret's @path and $VIDRA_SETUP_* indirections work in there too; - (stdin) does
+not, because stdin belongs to the terminal.
+
 The optional components (--scan, --captions, --media, --otel, --ipfs) are compose
 profiles, written to VIDRA_COMPOSE_PROFILES for the deploy scripts to enable. Not
 passing one keeps whatever the env file already selects, so a re-run about
@@ -136,6 +146,13 @@ flags:
 		fmt.Fprintf(s.err, "vidra setup: unexpected argument %q\n\n", fs.Arg(0))
 		usage(s.err)
 		return errReported
+	}
+	// AFTER the command line has been parsed, so "was this flag passed?" has an
+	// answer: the file fills what argv left unset, and never the other way round.
+	if *answersPath != "" {
+		if err := applyAnswersFile(fs, *answersPath); err != nil {
+			return err
+		}
 	}
 
 	if *checkPath != "" {
@@ -201,22 +218,22 @@ flags:
 	existing := setup.MergeSources(sources...)
 
 	stdinTaken := false
-	s3Secret, err := readSecretFlag(s, "s3-secret-key", "VIDRA_SETUP_S3_SECRET_KEY", *s3SecretKey, *nonInteractive, &stdinTaken)
+	s3Secret, err := readSecretFlag(s, "s3-secret-key", *s3SecretKey, *nonInteractive, &stdinTaken)
 	if err != nil {
 		return err
 	}
-	mailPassword, err := readSecretFlag(s, "smtp-password", "VIDRA_SETUP_SMTP_PASSWORD", *smtpPassword, *nonInteractive, &stdinTaken)
+	mailPassword, err := readSecretFlag(s, "smtp-password", *smtpPassword, *nonInteractive, &stdinTaken)
 	if err != nil {
 		return err
 	}
 	// A connection string is a secret like any other — postgres://user:PASSWORD@host
 	// is the whole point of the managed-service path — so it gets the same @file /
 	// stdin / environment indirections and stays out of argv.
-	databaseConn, err := readSecretFlag(s, "database-url", "VIDRA_SETUP_DATABASE_URL", *databaseURL, *nonInteractive, &stdinTaken)
+	databaseConn, err := readSecretFlag(s, "database-url", *databaseURL, *nonInteractive, &stdinTaken)
 	if err != nil {
 		return err
 	}
-	redisConn, err := readSecretFlag(s, "redis-url", "VIDRA_SETUP_REDIS_URL", *redisURL, *nonInteractive, &stdinTaken)
+	redisConn, err := readSecretFlag(s, "redis-url", *redisURL, *nonInteractive, &stdinTaken)
 	if err != nil {
 		return err
 	}
@@ -352,6 +369,85 @@ func renderCaddyfile(templatePath string, skip bool, values map[string]string) (
 	})
 }
 
+// secretFlagEnv is every flag whose value is a SECRET, mapped to the environment
+// variable it falls back to. One list, read by both halves of the contract:
+// readSecretFlag resolves the fallback from it, and applyAnswersFile refuses the
+// stdin indirection for exactly these flags. Two lists would drift, and the drift
+// would show up as a secret that silently arrived from nowhere.
+var secretFlagEnv = map[string]string{
+	"s3-secret-key": "VIDRA_SETUP_S3_SECRET_KEY",
+	"smtp-password": "VIDRA_SETUP_SMTP_PASSWORD",
+	"database-url":  "VIDRA_SETUP_DATABASE_URL",
+	"redis-url":     "VIDRA_SETUP_REDIS_URL",
+}
+
+// applyAnswersFile fills in the flags an answers file names and the command line
+// did not.
+//
+// It exists because the flags ARE the unattended interface and a real install
+// needs a dozen of them: kept in a file they can be reviewed, diffed, put in
+// configuration management and re-run, instead of living in one enormous shell
+// line that has to be retyped correctly at 3am. The format is the flag names
+// themselves — `domain = video.example.org` — so there is no second vocabulary
+// to learn or to keep in step with `-h`.
+//
+// Two rules make it safe to reach for:
+//
+//   - ARGV ALWAYS WINS. The file is applied through fs.Set only for names
+//     fs.Visit did not report, so `--instance-name Other` beside a file that says
+//     something else is an override, not a conflict. A file that could overrule
+//     the command line would make the command line unreadable.
+//   - IT IMPLIES NOTHING ELSE. Not --non-interactive, not --yes. A partial file
+//     is therefore a PRE-SEEDED INTERVIEW: what it answers is not asked, what it
+//     leaves out still is.
+//
+// Every line is validated whether or not it is applied. A typo on a line argv
+// happens to override is still a typo, and finding it now costs one run.
+func applyAnswersFile(fs *flag.FlagSet, path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("setup: read --answers %s: %w", path, err)
+	}
+	onArgv := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { onArgv[f.Name] = true })
+
+	for i, raw := range strings.Split(string(b), "\n") {
+		line := strings.TrimSpace(strings.TrimSuffix(raw, "\r"))
+		lineNo := i + 1
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return fmt.Errorf("setup: %s:%d: %q is not an answer — every line is `flag-name = value`, a # comment, or blank", path, lineNo, line)
+		}
+		// Leading dashes are tolerated, not required: an operator copying a line
+		// out of `-h` has written the right answer, and refusing it would be
+		// pedantry with a re-run attached.
+		name = strings.TrimLeft(strings.TrimSpace(name), "-")
+		value = strings.TrimSpace(value)
+		switch {
+		case name == "answers":
+			return fmt.Errorf("setup: %s:%d: an answers file cannot set --answers — the file being read is already the answer to that question", path, lineNo)
+		case fs.Lookup(name) == nil:
+			return fmt.Errorf("setup: %s:%d: %q is not an answer this command knows — the names here are the flag names without their dashes, and `vidra setup -h` lists every one", path, lineNo, name)
+		case value == "-" && secretFlagEnv[name] != "":
+			// stdin belongs to the terminal running the install (and only ONE
+			// flag may ever read it — see readSecretFlag). A file that could
+			// claim it would make that rule unenforceable from the command line,
+			// which is where it is enforced.
+			return fmt.Errorf("setup: %s:%d: `%s = -` reads the value from stdin, which belongs to the terminal and can only be claimed on the command line — write `%s = @<path>` to read a file, or set $%s",
+				path, lineNo, name, name, secretFlagEnv[name])
+		case onArgv[name]:
+			continue
+		}
+		if err := fs.Set(name, value); err != nil {
+			return fmt.Errorf("setup: %s:%d: --%s %q: %w", path, lineNo, name, value, err)
+		}
+	}
+	return nil
+}
+
 // requireInteractiveStdin refuses an interview that has nobody to ask.
 //
 // `curl … | sh` is the first install everyone tries, and with stdin held by the
@@ -371,7 +467,7 @@ func requireInteractiveStdin(s streams) error {
 		return nil
 	}
 	return errors.New("setup: stdin is not a terminal, so the interview has nobody to ask — this is what a piped install (`curl … | sh`) hits, and every question would fail at once. " +
-		"Either run `vidra setup` from a real terminal, or pass --non-interactive with the answers as flags")
+		"Either run `vidra setup` from a real terminal, or pass --non-interactive with the answers as flags (or in an --answers file)")
 }
 
 // isTerminal reports whether f is a real terminal. It is the stdlib-only test —
@@ -395,10 +491,13 @@ func isTerminal(f *os.File) bool {
 //	unset  fall back to $envName, which is at least not in argv
 //
 // A literal value still works — it is the wrong default, not a forbidden one.
-func readSecretFlag(s streams, flagName, envName, value string, nonInteractive bool, stdinTaken *bool) (string, error) {
+//
+// The environment variable is looked up in secretFlagEnv rather than passed in,
+// so "which flags are secrets" is one list this file and applyAnswersFile share.
+func readSecretFlag(s streams, flagName, value string, nonInteractive bool, stdinTaken *bool) (string, error) {
 	switch {
 	case value == "":
-		v, ok := os.LookupEnv(envName)
+		v, ok := os.LookupEnv(secretFlagEnv[flagName])
 		if !ok {
 			return "", nil
 		}
