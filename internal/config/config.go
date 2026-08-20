@@ -1,6 +1,11 @@
 // Package config loads and validates Vidra backend configuration from the
 // environment. Configuration is the single source of truth for runtime wiring;
 // no other package should read os.Getenv directly.
+//
+// It is also the ONLY validation engine: Load boots from the process
+// environment, while LoadFrom / CheckEnv run the same parsing and validation
+// against candidate values (a generated env file, a wizard's answers) so setup
+// tooling can never drift from what actually boots.
 package config
 
 import (
@@ -590,16 +595,38 @@ type OAuthProviderConfig struct {
 // Production must override JWT_SECRET; validate() rejects this value in prod.
 const devJWTSecret = "dev-insecure-jwt-secret-change-me-0000000000000000"
 
-// Load reads configuration from the environment, applying safe development
-// defaults. It returns an error if a required value is missing or malformed.
+// DefaultDatabaseURL is the development fallback for DATABASE_URL (the local
+// Compose postgres). Exported because cmd/api's `migrate` subcommand must
+// resolve the destination database EXACTLY as the server does — a migrator that
+// defaults somewhere else than the api is a data-loss bug — while deliberately
+// skipping the server's unrelated runtime validation.
+const DefaultDatabaseURL = "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable"
+
+// Load reads configuration from the process environment, applying safe
+// development defaults. It returns an error if a required value is missing or
+// malformed.
 //
 // Required in production: DATABASE_URL, REDIS_URL. In development they default
 // to local Docker Compose service addresses.
 func Load() (*Config, error) {
+	return LoadFrom(os.LookupEnv)
+}
+
+// LoadFrom is Load against an arbitrary environment source: lookup answers one
+// variable at a time, reporting ok=false when it is not set. It exists so the
+// setup engine, wizard, and doctor can validate CANDIDATE values — a generated
+// env file, a half-finished wizard answer set — with EXACTLY the code that
+// boots the process, instead of a parallel validation library that drifts from
+// it (see docs/productionization/interfaces.md §1). CheckEnv is the map form.
+func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
+	// Every read below — plain string and typed alike — goes through p, so it
+	// sees the candidate environment and nothing else. Typed getters record
+	// malformed values on p; checked via p.Err() below before semantic
+	// validation so every bad variable is reported at once.
+	p := &envParser{lookup: lookup}
+	getEnv := p.Str
+
 	env := getEnv("VIDRA_ENV", "development")
-	// Typed getters record malformed values on p; checked via p.Err() below
-	// before semantic validation so every bad variable is reported at once.
-	p := &envParser{}
 
 	cfg := &Config{
 		Environment:                    env,
@@ -657,7 +684,7 @@ func Load() (*Config, error) {
 		DevMailCaptureEnabled:          p.Bool("DEV_MAIL_CAPTURE_ENABLED", false),
 		ImportAllowPrivateURLs:         p.Bool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
 		OwnerClaimToken:                getEnv("OWNER_CLAIM_TOKEN", ""),
-		DatabaseURL:                    getEnv("DATABASE_URL", "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable"),
+		DatabaseURL:                    getEnv("DATABASE_URL", DefaultDatabaseURL),
 		RedisURL:                       getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		CORSAllowedOrigins:             splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
 		HTTPReadTimeout:                p.Duration("HTTP_READ_TIMEOUT", 15*time.Second),
@@ -772,115 +799,164 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// CheckEnv validates a CANDIDATE environment — a generated env file, a wizard's
+// proposed answers — as if the process booted with exactly these variables and
+// nothing else: a key absent from vars is UNSET (its default applies), and an
+// empty value still means unset (`KEY=` == omitted). Keys this package does not
+// know (compose-only variables like VIDRA_CORE_TAG) are simply never looked up,
+// so they are ignored rather than rejected.
+//
+// The error is the one Load would have returned; errors attributable to a single
+// variable are *VarError, so a caller can map them back to fields with
+// errors.As over the joined tree.
+func CheckEnv(vars map[string]string) error {
+	_, err := LoadFrom(func(key string) (string, bool) {
+		v, ok := vars[key]
+		return v, ok
+	})
+	return err
+}
+
+// VarError is a configuration error attributable to a SINGLE environment
+// variable, so a caller (setup engine, wizard, doctor) can map it back to the
+// field the operator must fix — errors.As over the joined tree LoadFrom /
+// CheckEnv return, then read Var. Error() reproduces the boot-time message
+// verbatim: the wrapper adds attribution, it never changes what an operator
+// reads. Rules that span variables (a required combination, a mutual
+// exclusion) are deliberately NOT wrapped — they belong to no single field.
+type VarError struct {
+	// Var is the environment variable name, e.g. "HTTP_PORT".
+	Var string
+	// Msg is the operator-facing message, in the "config: VAR ..." idiom.
+	Msg string
+	// cause is the error the message wrapped (a strconv/time parse failure),
+	// or nil.
+	cause error
+}
+
+func (e *VarError) Error() string { return e.Msg }
+
+// Unwrap exposes the underlying parse failure, so errors.Is/As still reach it.
+func (e *VarError) Unwrap() error { return e.cause }
+
+// varErrorf builds a VarError attributed to v whose Error() is exactly the text
+// fmt.Errorf(format, args...) would have produced, keeping any %w cause
+// reachable. Callers pass the message unchanged — message-string equivalence is
+// the contract the existing tests and operator docs rely on.
+func varErrorf(v, format string, args ...any) *VarError {
+	err := fmt.Errorf(format, args...)
+	return &VarError{Var: v, Msg: err.Error(), cause: errors.Unwrap(err)}
+}
+
 func (c *Config) validate() error {
 	switch c.Environment {
 	case "development", "test", "production":
 	default:
-		return fmt.Errorf("config: invalid VIDRA_ENV %q (want development|test|production)", c.Environment)
+		return varErrorf("VIDRA_ENV", "config: invalid VIDRA_ENV %q (want development|test|production)", c.Environment)
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
-		return fmt.Errorf("config: invalid LOG_LEVEL %q (want debug|info|warn|error)", c.LogLevel)
+		return varErrorf("LOG_LEVEL", "config: invalid LOG_LEVEL %q (want debug|info|warn|error)", c.LogLevel)
 	}
 	switch c.LogFormat {
 	case "json", "text":
 	default:
-		return fmt.Errorf("config: invalid LOG_FORMAT %q (want json|text)", c.LogFormat)
+		return varErrorf("LOG_FORMAT", "config: invalid LOG_FORMAT %q (want json|text)", c.LogFormat)
 	}
 	if c.OTelEnabled {
 		switch c.OTelExporterProtocol {
 		case "grpc", "http/protobuf":
 		default:
-			return fmt.Errorf("config: invalid OTEL_EXPORTER_OTLP_PROTOCOL %q (want grpc|http/protobuf)", c.OTelExporterProtocol)
+			return varErrorf("OTEL_EXPORTER_OTLP_PROTOCOL", "config: invalid OTEL_EXPORTER_OTLP_PROTOCOL %q (want grpc|http/protobuf)", c.OTelExporterProtocol)
 		}
 		if strings.TrimSpace(c.OTelExporterEndpoint) == "" {
-			return fmt.Errorf("config: OTEL_EXPORTER_OTLP_ENDPOINT is required when OTEL_ENABLED is true")
+			return varErrorf("OTEL_EXPORTER_OTLP_ENDPOINT", "config: OTEL_EXPORTER_OTLP_ENDPOINT is required when OTEL_ENABLED is true")
 		}
 	}
 	if c.HTTPPort < 1 || c.HTTPPort > 65535 {
-		return fmt.Errorf("config: HTTP_PORT %d out of range", c.HTTPPort)
+		return varErrorf("HTTP_PORT", "config: HTTP_PORT %d out of range", c.HTTPPort)
 	}
 	if strings.TrimSpace(c.DatabaseURL) == "" {
-		return fmt.Errorf("config: DATABASE_URL is required")
+		return varErrorf("DATABASE_URL", "config: DATABASE_URL is required")
 	}
 	if strings.TrimSpace(c.RedisURL) == "" {
-		return fmt.Errorf("config: REDIS_URL is required")
+		return varErrorf("REDIS_URL", "config: REDIS_URL is required")
 	}
 	if c.HTTPRequestTimeout <= 0 {
-		return fmt.Errorf("config: HTTP_REQUEST_TIMEOUT must be positive")
+		return varErrorf("HTTP_REQUEST_TIMEOUT", "config: HTTP_REQUEST_TIMEOUT must be positive")
 	}
 	if c.HTTPStreamRequestTimeout <= 0 {
-		return fmt.Errorf("config: HTTP_STREAM_REQUEST_TIMEOUT must be positive")
+		return varErrorf("HTTP_STREAM_REQUEST_TIMEOUT", "config: HTTP_STREAM_REQUEST_TIMEOUT must be positive")
 	}
 	if _, err := bytes.Parse(c.HTTPBodyLimit); err != nil {
-		return fmt.Errorf("config: invalid HTTP_BODY_LIMIT %q: %w", c.HTTPBodyLimit, err)
+		return varErrorf("HTTP_BODY_LIMIT", "config: invalid HTTP_BODY_LIMIT %q: %w", c.HTTPBodyLimit, err)
 	}
 	if c.RateLimitEnabled {
 		if c.RateLimitRequests <= 0 {
-			return fmt.Errorf("config: RATE_LIMIT_REQUESTS must be positive when rate limiting is enabled")
+			return varErrorf("RATE_LIMIT_REQUESTS", "config: RATE_LIMIT_REQUESTS must be positive when rate limiting is enabled")
 		}
 		if c.RateLimitWindow <= 0 {
-			return fmt.Errorf("config: RATE_LIMIT_WINDOW must be positive when rate limiting is enabled")
+			return varErrorf("RATE_LIMIT_WINDOW", "config: RATE_LIMIT_WINDOW must be positive when rate limiting is enabled")
 		}
 		if c.AuthRateLimitRequests <= 0 {
-			return fmt.Errorf("config: AUTH_RATE_LIMIT_REQUESTS must be positive when rate limiting is enabled")
+			return varErrorf("AUTH_RATE_LIMIT_REQUESTS", "config: AUTH_RATE_LIMIT_REQUESTS must be positive when rate limiting is enabled")
 		}
 		if c.MediaRateLimitRequests <= 0 {
-			return fmt.Errorf("config: MEDIA_RATE_LIMIT_REQUESTS must be positive when rate limiting is enabled")
+			return varErrorf("MEDIA_RATE_LIMIT_REQUESTS", "config: MEDIA_RATE_LIMIT_REQUESTS must be positive when rate limiting is enabled")
 		}
 		if c.AttachmentUploadRateLimitRequests <= 0 {
-			return fmt.Errorf("config: ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS must be positive when rate limiting is enabled")
+			return varErrorf("ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS", "config: ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS must be positive when rate limiting is enabled")
 		}
 		if c.AttachmentUploadRateLimitWindow <= 0 {
-			return fmt.Errorf("config: ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW must be positive when rate limiting is enabled")
+			return varErrorf("ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW", "config: ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW must be positive when rate limiting is enabled")
 		}
 	}
 	if c.JWTAccessTTL <= 0 {
-		return fmt.Errorf("config: JWT_ACCESS_TTL must be positive")
+		return varErrorf("JWT_ACCESS_TTL", "config: JWT_ACCESS_TTL must be positive")
 	}
 	if c.JWTRefreshTTL <= 0 {
-		return fmt.Errorf("config: JWT_REFRESH_TTL must be positive")
+		return varErrorf("JWT_REFRESH_TTL", "config: JWT_REFRESH_TTL must be positive")
 	}
 	switch c.StorageBackend {
 	case "local":
 		if strings.TrimSpace(c.StorageLocalRoot) == "" {
-			return fmt.Errorf("config: STORAGE_LOCAL_ROOT is required for the local storage backend")
+			return varErrorf("STORAGE_LOCAL_ROOT", "config: STORAGE_LOCAL_ROOT is required for the local storage backend")
 		}
 	case "s3":
 		if strings.TrimSpace(c.StorageS3Endpoint) == "" {
-			return fmt.Errorf("config: STORAGE_S3_ENDPOINT is required for the s3 storage backend")
+			return varErrorf("STORAGE_S3_ENDPOINT", "config: STORAGE_S3_ENDPOINT is required for the s3 storage backend")
 		}
 		if strings.Contains(c.StorageS3Endpoint, "://") {
-			return fmt.Errorf("config: STORAGE_S3_ENDPOINT must be host[:port] without a scheme (got %q); use STORAGE_S3_USE_SSL to pick http/https", c.StorageS3Endpoint)
+			return varErrorf("STORAGE_S3_ENDPOINT", "config: STORAGE_S3_ENDPOINT must be host[:port] without a scheme (got %q); use STORAGE_S3_USE_SSL to pick http/https", c.StorageS3Endpoint)
 		}
 		if strings.TrimSpace(c.StorageS3Bucket) == "" {
-			return fmt.Errorf("config: STORAGE_S3_BUCKET is required for the s3 storage backend")
+			return varErrorf("STORAGE_S3_BUCKET", "config: STORAGE_S3_BUCKET is required for the s3 storage backend")
 		}
 		if strings.TrimSpace(c.StorageS3AccessKey) == "" {
-			return fmt.Errorf("config: STORAGE_S3_ACCESS_KEY is required for the s3 storage backend")
+			return varErrorf("STORAGE_S3_ACCESS_KEY", "config: STORAGE_S3_ACCESS_KEY is required for the s3 storage backend")
 		}
 		if strings.TrimSpace(c.StorageS3SecretKey) == "" {
-			return fmt.Errorf("config: STORAGE_S3_SECRET_KEY is required for the s3 storage backend")
+			return varErrorf("STORAGE_S3_SECRET_KEY", "config: STORAGE_S3_SECRET_KEY is required for the s3 storage backend")
 		}
 	default:
-		return fmt.Errorf("config: unsupported STORAGE_BACKEND %q (want local|s3)", c.StorageBackend)
+		return varErrorf("STORAGE_BACKEND", "config: unsupported STORAGE_BACKEND %q (want local|s3)", c.StorageBackend)
 	}
 	if _, err := bytes.Parse(c.UploadMaxSize); err != nil {
-		return fmt.Errorf("config: invalid UPLOAD_MAX_SIZE %q: %w", c.UploadMaxSize, err)
+		return varErrorf("UPLOAD_MAX_SIZE", "config: invalid UPLOAD_MAX_SIZE %q: %w", c.UploadMaxSize, err)
 	}
 	if c.UploadMaxActiveSessionsPerUser < 0 {
-		return fmt.Errorf("config: UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER must be >= 0 (0 = unlimited), got %d", c.UploadMaxActiveSessionsPerUser)
+		return varErrorf("UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER", "config: UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER must be >= 0 (0 = unlimited), got %d", c.UploadMaxActiveSessionsPerUser)
 	}
 	if c.InstanceDefaultQuotaBytes < 0 {
-		return fmt.Errorf("config: INSTANCE_DEFAULT_QUOTA_BYTES must be >= 0 (0 = unlimited), got %d", c.InstanceDefaultQuotaBytes)
+		return varErrorf("INSTANCE_DEFAULT_QUOTA_BYTES", "config: INSTANCE_DEFAULT_QUOTA_BYTES must be >= 0 (0 = unlimited), got %d", c.InstanceDefaultQuotaBytes)
 	}
 	if c.Environment == "production" {
 		if c.JWTSecret == devJWTSecret {
-			return fmt.Errorf("config: JWT_SECRET must be set in production (the dev default is not allowed)")
+			return varErrorf("JWT_SECRET", "config: JWT_SECRET must be set in production (the dev default is not allowed)")
 		}
 		if len(c.JWTSecret) < 32 {
-			return fmt.Errorf("config: JWT_SECRET must be at least 32 bytes in production")
+			return varErrorf("JWT_SECRET", "config: JWT_SECRET must be at least 32 bytes in production")
 		}
 		// The development-only escape hatches are REFUSED in production, not
 		// merely warned about (deploy/README.md already documents this refusal).
@@ -893,93 +969,93 @@ func (c *Config) validate() error {
 		// the environment in internal/httpapi (defence in depth) — a fail-secure
 		// this important should not rest on a single check.
 		if c.DevMailCaptureEnabled {
-			return fmt.Errorf("config: DEV_MAIL_CAPTURE_ENABLED must not be set in production")
+			return varErrorf("DEV_MAIL_CAPTURE_ENABLED", "config: DEV_MAIL_CAPTURE_ENABLED must not be set in production")
 		}
 		if c.ImportAllowPrivateURLs {
-			return fmt.Errorf("config: HTTP_IMPORT_ALLOW_PRIVATE_URLS must not be set in production")
+			return varErrorf("HTTP_IMPORT_ALLOW_PRIVATE_URLS", "config: HTTP_IMPORT_ALLOW_PRIVATE_URLS must not be set in production")
 		}
 		// A fixed owner-claim token is a deterministic admin-bootstrap credential
 		// sitting in the environment — dev/test-only by construction.
 		if c.OwnerClaimToken != "" {
-			return fmt.Errorf("config: OWNER_CLAIM_TOKEN must not be set in production")
+			return varErrorf("OWNER_CLAIM_TOKEN", "config: OWNER_CLAIM_TOKEN must not be set in production")
 		}
 	}
 	if c.OwnerClaimToken != "" && len(c.OwnerClaimToken) < 16 {
-		return fmt.Errorf("config: OWNER_CLAIM_TOKEN must be at least 16 characters when set")
+		return varErrorf("OWNER_CLAIM_TOKEN", "config: OWNER_CLAIM_TOKEN must be at least 16 characters when set")
 	}
 	if c.Environment == "production" {
 		for _, o := range c.CORSAllowedOrigins {
 			if o == "*" {
-				return fmt.Errorf("config: wildcard CORS origin is not allowed in production")
+				return varErrorf("CORS_ALLOWED_ORIGINS", "config: wildcard CORS origin is not allowed in production")
 			}
 		}
 	}
 	if c.MailEnabled {
 		if strings.TrimSpace(c.SMTPHost) == "" {
-			return fmt.Errorf("config: SMTP_HOST is required when MAIL_ENABLED=true")
+			return varErrorf("SMTP_HOST", "config: SMTP_HOST is required when MAIL_ENABLED=true")
 		}
 		if c.SMTPPort < 1 || c.SMTPPort > 65535 {
-			return fmt.Errorf("config: SMTP_PORT %d out of range", c.SMTPPort)
+			return varErrorf("SMTP_PORT", "config: SMTP_PORT %d out of range", c.SMTPPort)
 		}
 		from := strings.TrimSpace(c.SMTPFrom)
 		if from == "" {
-			return fmt.Errorf("config: SMTP_FROM is required when MAIL_ENABLED=true")
+			return varErrorf("SMTP_FROM", "config: SMTP_FROM is required when MAIL_ENABLED=true")
 		}
 		if !strings.Contains(from, "@") || strings.ContainsAny(from, "\r\n") {
-			return fmt.Errorf("config: SMTP_FROM must be a plain email address")
+			return varErrorf("SMTP_FROM", "config: SMTP_FROM must be a plain email address")
 		}
 	}
 	if c.MalwareScanEnabled && strings.TrimSpace(c.ClamAVAddr) == "" {
-		return fmt.Errorf("config: CLAMAV_ADDR is required when MALWARE_SCAN_ENABLED=true")
+		return varErrorf("CLAMAV_ADDR", "config: CLAMAV_ADDR is required when MALWARE_SCAN_ENABLED=true")
 	}
 	if c.MalwareScanEnabled && c.ClamAVTimeout <= 0 {
-		return fmt.Errorf("config: CLAMAV_TIMEOUT must be a positive duration when MALWARE_SCAN_ENABLED=true")
+		return varErrorf("CLAMAV_TIMEOUT", "config: CLAMAV_TIMEOUT must be a positive duration when MALWARE_SCAN_ENABLED=true")
 	}
 	switch c.MalwareScanMode {
 	case "", "fail-closed", "fail-open", "quarantine": // "" = default fail-closed
 	default:
-		return fmt.Errorf("config: MALWARE_SCAN_MODE %q must be one of fail-closed, fail-open, quarantine", c.MalwareScanMode)
+		return varErrorf("MALWARE_SCAN_MODE", "config: MALWARE_SCAN_MODE %q must be one of fail-closed, fail-open, quarantine", c.MalwareScanMode)
 	}
 	if c.TranscodingAV1Enabled {
-		return fmt.Errorf("config: TRANSCODING_AV1_ENABLED is not supported yet — AV1 transcoding is deferred (see fix_plan P6.3); leave it false")
+		return varErrorf("TRANSCODING_AV1_ENABLED", "config: TRANSCODING_AV1_ENABLED is not supported yet — AV1 transcoding is deferred (see fix_plan P6.3); leave it false")
 	}
 	if c.WhisperEnabled {
 		u, err := url.Parse(c.WhisperEndpoint)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-			return fmt.Errorf("config: WHISPER_ENDPOINT must be a valid http(s) URL when WHISPER_ENABLED=true")
+			return varErrorf("WHISPER_ENDPOINT", "config: WHISPER_ENDPOINT must be a valid http(s) URL when WHISPER_ENABLED=true")
 		}
 	}
 	if c.WhisperDefaultLanguage != "" && !languageTag.MatchString(c.WhisperDefaultLanguage) {
-		return fmt.Errorf("config: WHISPER_DEFAULT_LANGUAGE %q must be a BCP-47-ish language tag (e.g. en, pt-BR)", c.WhisperDefaultLanguage)
+		return varErrorf("WHISPER_DEFAULT_LANGUAGE", "config: WHISPER_DEFAULT_LANGUAGE %q must be a BCP-47-ish language tag (e.g. en, pt-BR)", c.WhisperDefaultLanguage)
 	}
 	// vidra-search integration (search-service W4): validate the URL shape when
 	// set, and require a strong shared secret in production.
 	if c.SearchServiceURL != "" {
 		u, err := url.Parse(c.SearchServiceURL)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-			return fmt.Errorf("config: SEARCH_SERVICE_URL must be a valid http(s) URL when set")
+			return varErrorf("SEARCH_SERVICE_URL", "config: SEARCH_SERVICE_URL must be a valid http(s) URL when set")
 		}
 		if c.Environment == "production" && len(c.SearchInternalSecret) < 32 {
-			return fmt.Errorf("config: SEARCH_INTERNAL_SECRET must be at least 32 characters when SEARCH_SERVICE_URL is set in production")
+			return varErrorf("SEARCH_INTERNAL_SECRET", "config: SEARCH_INTERNAL_SECRET must be at least 32 characters when SEARCH_SERVICE_URL is set in production")
 		}
 	}
 	// yt-dlp platform-URL import: validate the combination only when enabled so a
 	// default (disabled) deployment never trips these. YTDLP_MAX_HEIGHT is bounded
 	// even when disabled (a nonsensical value is always a config error).
 	if c.YtdlpMaxHeight < 0 || c.YtdlpMaxHeight > 4320 {
-		return fmt.Errorf("config: YTDLP_MAX_HEIGHT %d out of range (0 = no cap, else 144..4320)", c.YtdlpMaxHeight)
+		return varErrorf("YTDLP_MAX_HEIGHT", "config: YTDLP_MAX_HEIGHT %d out of range (0 = no cap, else 144..4320)", c.YtdlpMaxHeight)
 	}
 	if c.YtdlpImportEnabled {
 		if strings.TrimSpace(c.YtdlpPath) == "" {
-			return fmt.Errorf("config: YTDLP_PATH is required when YTDLP_IMPORT_ENABLED=true")
+			return varErrorf("YTDLP_PATH", "config: YTDLP_PATH is required when YTDLP_IMPORT_ENABLED=true")
 		}
 		if c.YtdlpTimeout <= 0 {
-			return fmt.Errorf("config: YTDLP_TIMEOUT must be a positive duration when YTDLP_IMPORT_ENABLED=true")
+			return varErrorf("YTDLP_TIMEOUT", "config: YTDLP_TIMEOUT must be a positive duration when YTDLP_IMPORT_ENABLED=true")
 		}
 		if c.YtdlpProxy != "" {
 			u, perr := url.Parse(c.YtdlpProxy)
 			if perr != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5" && u.Scheme != "socks5h") {
-				return fmt.Errorf("config: YTDLP_PROXY must be an http(s) or socks5 URL when set")
+				return varErrorf("YTDLP_PROXY", "config: YTDLP_PROXY must be an http(s) or socks5 URL when set")
 			}
 		}
 	}
@@ -988,18 +1064,18 @@ func (c *Config) validate() error {
 	// ChannelSyncEnabled AND YtdlpImportEnabled (checked/logged at wiring time).
 	if c.ChannelSyncEnabled {
 		if c.ChannelSyncInterval <= 0 {
-			return fmt.Errorf("config: CHANNEL_SYNC_INTERVAL must be a positive duration when CHANNEL_SYNC_ENABLED=true")
+			return varErrorf("CHANNEL_SYNC_INTERVAL", "config: CHANNEL_SYNC_INTERVAL must be a positive duration when CHANNEL_SYNC_ENABLED=true")
 		}
 		if c.ChannelSyncBatch < 1 || c.ChannelSyncBatch > 100 {
-			return fmt.Errorf("config: CHANNEL_SYNC_BATCH %d out of range (1..100)", c.ChannelSyncBatch)
+			return varErrorf("CHANNEL_SYNC_BATCH", "config: CHANNEL_SYNC_BATCH %d out of range (1..100)", c.ChannelSyncBatch)
 		}
 		if c.ChannelSyncCooldown < 0 {
-			return fmt.Errorf("config: CHANNEL_SYNC_COOLDOWN must not be negative")
+			return varErrorf("CHANNEL_SYNC_COOLDOWN", "config: CHANNEL_SYNC_COOLDOWN must not be negative")
 		}
 	}
 	if c.MFAKeyKEK != "" {
 		if k, err := base64.StdEncoding.DecodeString(c.MFAKeyKEK); err != nil || len(k) != 32 {
-			return fmt.Errorf("config: MFA_KEY_KEK must be base64 of exactly 32 bytes")
+			return varErrorf("MFA_KEY_KEK", "config: MFA_KEY_KEK must be base64 of exactly 32 bytes")
 		}
 	}
 	if err := c.validateOAuth(); err != nil {
@@ -1008,25 +1084,25 @@ func (c *Config) validate() error {
 	if c.FederationEnabled {
 		u, err := url.Parse(c.PublicBaseURL)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-			return fmt.Errorf("config: PUBLIC_BASE_URL must be a valid http(s) origin when FEDERATION_ENABLED=true")
+			return varErrorf("PUBLIC_BASE_URL", "config: PUBLIC_BASE_URL must be a valid http(s) origin when FEDERATION_ENABLED=true")
 		}
 		if u.Path != "" && u.Path != "/" {
-			return fmt.Errorf("config: PUBLIC_BASE_URL must not include a path (got %q)", c.PublicBaseURL)
+			return varErrorf("PUBLIC_BASE_URL", "config: PUBLIC_BASE_URL must not include a path (got %q)", c.PublicBaseURL)
 		}
 		if c.Environment == "production" && u.Scheme != "https" {
-			return fmt.Errorf("config: PUBLIC_BASE_URL must be https in production")
+			return varErrorf("PUBLIC_BASE_URL", "config: PUBLIC_BASE_URL must be https in production")
 		}
 		if c.FederationKeyKEK != "" {
 			if k, err := base64.StdEncoding.DecodeString(c.FederationKeyKEK); err != nil || len(k) != 32 {
-				return fmt.Errorf("config: FEDERATION_KEY_KEK must be base64 of exactly 32 bytes")
+				return varErrorf("FEDERATION_KEY_KEK", "config: FEDERATION_KEY_KEK must be base64 of exactly 32 bytes")
 			}
 		} else if c.Environment == "production" {
-			return fmt.Errorf("config: FEDERATION_KEY_KEK is required in production when FEDERATION_ENABLED=true")
+			return varErrorf("FEDERATION_KEY_KEK", "config: FEDERATION_KEY_KEK is required in production when FEDERATION_ENABLED=true")
 		}
 	}
 	if c.ATProtoKeyKEK != "" {
 		if k, err := base64.StdEncoding.DecodeString(c.ATProtoKeyKEK); err != nil || len(k) != 32 {
-			return fmt.Errorf("config: ATPROTO_KEY_KEK must be base64 of exactly 32 bytes")
+			return varErrorf("ATPROTO_KEY_KEK", "config: ATPROTO_KEY_KEK must be base64 of exactly 32 bytes")
 		}
 	}
 	if c.ATProtoEnabled && c.Environment == "production" && c.ATProtoKEK() == "" {
@@ -1061,23 +1137,23 @@ func (c *Config) validateIPFS() error {
 	for label, raw := range map[string]string{"IPFS_API_URL": c.IPFSAPIURL, "IPFS_GATEWAY_URL": c.IPFSGatewayURL} {
 		u, err := url.Parse(raw)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-			return fmt.Errorf("config: %s must be a valid http(s) URL when IPFS_ENABLED=true", label)
+			return varErrorf(label, "config: %s must be a valid http(s) URL when IPFS_ENABLED=true", label)
 		}
 	}
 	if c.IPFSClusterAPIURL != "" {
 		u, err := url.Parse(c.IPFSClusterAPIURL)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-			return fmt.Errorf("config: IPFS_CLUSTER_API_URL must be a valid http(s) URL")
+			return varErrorf("IPFS_CLUSTER_API_URL", "config: IPFS_CLUSTER_API_URL must be a valid http(s) URL")
 		}
 	}
 	if c.IPFSAddTimeout <= 0 {
-		return fmt.Errorf("config: IPFS_ADD_TIMEOUT must be positive")
+		return varErrorf("IPFS_ADD_TIMEOUT", "config: IPFS_ADD_TIMEOUT must be positive")
 	}
 	if c.IPFSPinConcurrency < 1 {
-		return fmt.Errorf("config: IPFS_PIN_CONCURRENCY must be >= 1")
+		return varErrorf("IPFS_PIN_CONCURRENCY", "config: IPFS_PIN_CONCURRENCY must be >= 1")
 	}
 	if c.IPFSReconcileInterval <= 0 {
-		return fmt.Errorf("config: IPFS_RECONCILE_INTERVAL must be positive")
+		return varErrorf("IPFS_RECONCILE_INTERVAL", "config: IPFS_RECONCILE_INTERVAL must be positive")
 	}
 	return nil
 }
@@ -1102,17 +1178,17 @@ func (c *Config) validateIPFSPrivate() error {
 		return fmt.Errorf("config: the private IPFS mirror must be a separate node from the public mirror (refusing to dual-home)")
 	}
 	if !isHTTPURL(privateURL) {
-		return fmt.Errorf("config: IPFS_PRIVATE_API_URL must be a valid http(s) URL")
+		return varErrorf("IPFS_PRIVATE_API_URL", "config: IPFS_PRIVATE_API_URL must be a valid http(s) URL")
 	}
 	if c.IPFSPrivateClusterAPIURL != "" && !isHTTPURL(c.IPFSPrivateClusterAPIURL) {
-		return fmt.Errorf("config: IPFS_PRIVATE_CLUSTER_API_URL must be a valid http(s) URL")
+		return varErrorf("IPFS_PRIVATE_CLUSTER_API_URL", "config: IPFS_PRIVATE_CLUSTER_API_URL must be a valid http(s) URL")
 	}
 	if c.IPFSMirrorPrivate {
 		if c.IPFSPrivateAddTimeout <= 0 {
-			return fmt.Errorf("config: IPFS_PRIVATE_ADD_TIMEOUT must be positive")
+			return varErrorf("IPFS_PRIVATE_ADD_TIMEOUT", "config: IPFS_PRIVATE_ADD_TIMEOUT must be positive")
 		}
 		if c.IPFSPrivatePinConcurrency < 1 {
-			return fmt.Errorf("config: IPFS_PRIVATE_PIN_CONCURRENCY must be >= 1")
+			return varErrorf("IPFS_PRIVATE_PIN_CONCURRENCY", "config: IPFS_PRIVATE_PIN_CONCURRENCY must be >= 1")
 		}
 	}
 	return nil
@@ -1132,27 +1208,27 @@ func (c *Config) validatePeerTubeImport() error {
 	switch c.PeerTubeImportConflictPolicy {
 	case "", "skip", "rename", "merge", "fail": // "" = default skip (Load defaults it)
 	default:
-		return fmt.Errorf("config: PEERTUBE_IMPORT_CONFLICT_POLICY %q must be one of skip, rename, merge, fail", c.PeerTubeImportConflictPolicy)
+		return varErrorf("PEERTUBE_IMPORT_CONFLICT_POLICY", "config: PEERTUBE_IMPORT_CONFLICT_POLICY %q must be one of skip, rename, merge, fail", c.PeerTubeImportConflictPolicy)
 	}
 	switch c.PeerTubeImportMediaMode {
 	case "", "copy", "reference", "none": // "" = default copy (Load defaults it)
 	default:
-		return fmt.Errorf("config: PEERTUBE_IMPORT_MEDIA_MODE %q must be one of copy, reference, none", c.PeerTubeImportMediaMode)
+		return varErrorf("PEERTUBE_IMPORT_MEDIA_MODE", "config: PEERTUBE_IMPORT_MEDIA_MODE %q must be one of copy, reference, none", c.PeerTubeImportMediaMode)
 	}
 	switch c.PeerTubeSourceStorageBackend {
 	case "", "local", "s3": // "" = default local (Load defaults it)
 	default:
-		return fmt.Errorf("config: PEERTUBE_SOURCE_STORAGE_BACKEND %q must be local or s3", c.PeerTubeSourceStorageBackend)
+		return varErrorf("PEERTUBE_SOURCE_STORAGE_BACKEND", "config: PEERTUBE_SOURCE_STORAGE_BACKEND %q must be local or s3", c.PeerTubeSourceStorageBackend)
 	}
 	if strings.Contains(c.PeerTubeSourceS3Endpoint, "://") {
-		return fmt.Errorf("config: PEERTUBE_SOURCE_S3_ENDPOINT must be host[:port] without a scheme (got %q)", c.PeerTubeSourceS3Endpoint)
+		return varErrorf("PEERTUBE_SOURCE_S3_ENDPOINT", "config: PEERTUBE_SOURCE_S3_ENDPOINT must be host[:port] without a scheme (got %q)", c.PeerTubeSourceS3Endpoint)
 	}
 	if !c.PeerTubeImportEnabled {
 		return nil
 	}
 	// The admin import path needs a source to read from.
 	if strings.TrimSpace(c.PeerTubeSourceDatabaseURL) == "" {
-		return fmt.Errorf("config: PEERTUBE_SOURCE_DATABASE_URL is required when PEERTUBE_IMPORT_ENABLED=true")
+		return varErrorf("PEERTUBE_SOURCE_DATABASE_URL", "config: PEERTUBE_SOURCE_DATABASE_URL is required when PEERTUBE_IMPORT_ENABLED=true")
 	}
 	if c.PeerTubeImportMediaMode != "reference" && c.PeerTubeImportMediaMode != "none" && c.PeerTubeSourceStorageBackend == "s3" {
 		if strings.TrimSpace(c.PeerTubeSourceS3Endpoint) == "" || strings.TrimSpace(c.PeerTubeSourceS3Bucket) == "" {
@@ -1195,33 +1271,33 @@ func (c *Config) validateOAuth() error {
 	}
 	u, err := url.Parse(c.PublicBaseURL)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return fmt.Errorf("config: PUBLIC_BASE_URL must be a valid http(s) origin when OAUTH_PROVIDERS is set (OAuth redirect URIs derive from it)")
+		return varErrorf("PUBLIC_BASE_URL", "config: PUBLIC_BASE_URL must be a valid http(s) origin when OAUTH_PROVIDERS is set (OAuth redirect URIs derive from it)")
 	}
 	if c.Environment == "production" && u.Scheme != "https" {
-		return fmt.Errorf("config: PUBLIC_BASE_URL must be https in production")
+		return varErrorf("PUBLIC_BASE_URL", "config: PUBLIC_BASE_URL must be https in production")
 	}
 	seen := map[string]bool{}
 	for _, p := range c.OAuthProviders {
 		if !oauthProviderName.MatchString(p.Name) {
-			return fmt.Errorf("config: invalid OAuth provider name %q (want lowercase letters/digits/dashes)", p.Name)
+			return varErrorf("OAUTH_PROVIDERS", "config: invalid OAuth provider name %q (want lowercase letters/digits/dashes)", p.Name)
 		}
 		if seen[p.Name] {
-			return fmt.Errorf("config: duplicate OAuth provider %q in OAUTH_PROVIDERS", p.Name)
+			return varErrorf("OAUTH_PROVIDERS", "config: duplicate OAuth provider %q in OAUTH_PROVIDERS", p.Name)
 		}
 		seen[p.Name] = true
 		envName := strings.ToUpper(strings.ReplaceAll(p.Name, "-", "_"))
 		iss, err := url.Parse(p.IssuerURL)
 		if err != nil || iss.Host == "" || (iss.Scheme != "http" && iss.Scheme != "https") {
-			return fmt.Errorf("config: OAUTH_%s_ISSUER must be a valid http(s) URL", envName)
+			return varErrorf("OAUTH_"+envName+"_ISSUER", "config: OAUTH_%s_ISSUER must be a valid http(s) URL", envName)
 		}
 		if c.Environment == "production" && iss.Scheme != "https" {
-			return fmt.Errorf("config: OAUTH_%s_ISSUER must be https in production", envName)
+			return varErrorf("OAUTH_"+envName+"_ISSUER", "config: OAUTH_%s_ISSUER must be https in production", envName)
 		}
 		if strings.TrimSpace(p.ClientID) == "" {
-			return fmt.Errorf("config: OAUTH_%s_CLIENT_ID is required", envName)
+			return varErrorf("OAUTH_"+envName+"_CLIENT_ID", "config: OAUTH_%s_CLIENT_ID is required", envName)
 		}
 		if strings.TrimSpace(p.ClientSecret) == "" {
-			return fmt.Errorf("config: OAUTH_%s_CLIENT_SECRET is required", envName)
+			return varErrorf("OAUTH_"+envName+"_CLIENT_SECRET", "config: OAUTH_%s_CLIENT_SECRET is required", envName)
 		}
 	}
 	return nil
@@ -1278,26 +1354,31 @@ func (c *Config) MFAKEK() string {
 	return c.FederationKeyKEK
 }
 
-// getEnv and the envParser getters share one contract: an UNSET or EMPTY
-// variable means "use the default" (so `KEY=` in an env file is the same as
-// omitting KEY). getEnv returns strings verbatim and so can never fail; every
-// typed getter lives on envParser so a malformed value is fatal at load time.
-func getEnv(key, def string) string {
-	if v, ok := os.LookupEnv(key); ok && v != "" {
+// envParser reads every environment variable Load needs, from one swappable
+// source. A malformed — non-empty but unparseable — typed value is FATAL at
+// config load, never a silent fall-back to the default: env files may be
+// generated, and a typo must refuse to boot rather than boot in the wrong
+// configuration. Each typed getter records the error (in validate()'s
+// "config: VAR ..." idiom, attributed via VarError) and returns the default so
+// parsing can continue; LoadFrom checks Err() once every variable has been
+// read, reporting all malformed variables at once.
+type envParser struct {
+	// lookup answers one variable, reporting ok=false when it is not set.
+	// os.LookupEnv for Load; a map read for CheckEnv.
+	lookup func(key string) (string, bool)
+	errs   []error
+}
+
+// Str and the typed getters share one contract: an UNSET or EMPTY variable
+// means "use the default" (so `KEY=` in an env file is the same as omitting
+// KEY). Str returns strings verbatim and so can never fail; every typed getter
+// can, which is why they all live on envParser. LoadFrom binds Str to the local
+// name getEnv, so a plain string read is one call shorter to write.
+func (p *envParser) Str(key, def string) string {
+	if v, ok := p.lookup(key); ok && v != "" {
 		return v
 	}
 	return def
-}
-
-// envParser reads the typed (int/int64/bool/duration) environment variables
-// for Load. A malformed — non-empty but unparseable — value is FATAL at config
-// load, never a silent fall-back to the default: env files may be generated,
-// and a typo must refuse to boot rather than boot in the wrong configuration.
-// Each getter records the error (in validate()'s "config: VAR ..." idiom) and
-// returns the default so parsing can continue; Load checks Err() once every
-// variable has been read, reporting all malformed variables at once.
-type envParser struct {
-	errs []error
 }
 
 // Err returns every malformed-variable error recorded while parsing, joined,
@@ -1307,52 +1388,52 @@ func (p *envParser) Err() error {
 }
 
 func (p *envParser) Int(key string, def int) int {
-	v, ok := os.LookupEnv(key)
+	v, ok := p.lookup(key)
 	if !ok || v == "" {
 		return def
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
-		p.errs = append(p.errs, fmt.Errorf("config: %s must be an integer: %w", key, err))
+		p.errs = append(p.errs, varErrorf(key, "config: %s must be an integer: %w", key, err))
 		return def
 	}
 	return n
 }
 
 func (p *envParser) Int64(key string, def int64) int64 {
-	v, ok := os.LookupEnv(key)
+	v, ok := p.lookup(key)
 	if !ok || v == "" {
 		return def
 	}
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
-		p.errs = append(p.errs, fmt.Errorf("config: %s must be an integer: %w", key, err))
+		p.errs = append(p.errs, varErrorf(key, "config: %s must be an integer: %w", key, err))
 		return def
 	}
 	return n
 }
 
 func (p *envParser) Bool(key string, def bool) bool {
-	v, ok := os.LookupEnv(key)
+	v, ok := p.lookup(key)
 	if !ok || v == "" {
 		return def
 	}
 	b, err := strconv.ParseBool(v)
 	if err != nil {
-		p.errs = append(p.errs, fmt.Errorf("config: %s must be a boolean (true|false): %w", key, err))
+		p.errs = append(p.errs, varErrorf(key, "config: %s must be a boolean (true|false): %w", key, err))
 		return def
 	}
 	return b
 }
 
 func (p *envParser) Duration(key string, def time.Duration) time.Duration {
-	v, ok := os.LookupEnv(key)
+	v, ok := p.lookup(key)
 	if !ok || v == "" {
 		return def
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil {
-		p.errs = append(p.errs, fmt.Errorf("config: %s must be a duration (e.g. 30s, 5m, 12h): %w", key, err))
+		p.errs = append(p.errs, varErrorf(key, "config: %s must be a duration (e.g. 30s, 5m, 12h): %w", key, err))
 		return def
 	}
 	return d

@@ -48,11 +48,13 @@ the exact gate GitHub runs, race detector included.
 
 - **Container path:** Docker + Docker Compose. Everything else (Go toolchain,
   ffmpeg/ffprobe, migrations) is baked into the images.
-- **Host development extras:** Go 1.26; the [`migrate`](https://github.com/golang-migrate/migrate)
-  CLI (schema migrations); [`sqlc`](https://sqlc.dev) v1.31.1 (codegen + `sqlc-verify`);
-  `node`/`npx` (`openapi-lint`, `postman`); and `ffmpeg`/`ffprobe` on `PATH` for
+- **Host development extras:** Go 1.26; [`sqlc`](https://sqlc.dev) v1.31.1 (codegen +
+  `sqlc-verify`); `node`/`npx` (`openapi-lint`, `postman`); and `ffmpeg`/`ffprobe` on `PATH` for
   transcoding/thumbnails/probing (already inside the Docker image — a host without
   them degrades gracefully to originals-only).
+- **Optional:** the [`migrate`](https://github.com/golang-migrate/migrate) CLI —
+  needed by `make migrate-down` only. Forward migrations are embedded in the api
+  binary, so nothing else (including the container path) requires it.
 
 ## Quick start
 
@@ -79,7 +81,7 @@ No-Docker path (run the API on the host against dockerised datastores):
 ```bash
 cp .env.example .env
 docker compose --profile core up postgres redis  # just the datastores
-make migrate-up                                   # requires the `migrate` CLI
+make migrate-up                                   # migrations are embedded in the binary
 make run                                           # API against local Postgres/Redis
 ```
 
@@ -98,7 +100,17 @@ sqlc-verify test-race` — the exact set `backend-ci.yml` runs, so "passes local
   exploratory signal, not part of the gate. The `bench-fuzz` workflow runs these
   plus a `go test -fuzz` pass on demand.
 - `make build` — build `./bin/api`, injecting version/commit/date via `-ldflags`.
-- `make help` — the full target list (fmt, vet, migrate-up/down, sqlc, up/down, …).
+- `make build-vidra` — build `./bin/vidra`, the host-side operator CLI (`vidra setup`),
+  with the same `-ldflags`. It is a separate binary because it runs beside `docker
+  compose` on the host, before any image exists.
+- `make migrate-up` / `make migrate-version` — apply the migrations embedded in the
+  api binary (`api migrate up|version`), the same code path the published image runs;
+  no `migrate` CLI needed. After a migration dies halfway, `api migrate force
+  <version> --yes-i-know` re-stamps the `schema_migrations` ledger (it runs no SQL,
+  so the schema must already match the version you name). `make migrate-down` still uses the
+  [`migrate`](https://github.com/golang-migrate/migrate) CLI — rollback is an
+  operator-with-CLI operation, the shipped binary only goes forward.
+- `make help` — the full target list (fmt, vet, migrate-up/version/down, sqlc, up/down, …).
 
 ## Configuration
 
@@ -272,11 +284,12 @@ and what is imported vs. regenerated afterwards live in the operator guide
 ## Project layout
 
 ```
-cmd/api/               HTTP service entrypoint (build metadata via -ldflags)
+cmd/api/               HTTP service entrypoint + `migrate up|version|force` (build metadata via -ldflags)
+cmd/vidra/             host-side operator CLI (`vidra setup`); `make build-vidra`
 cmd/peertube-import/   one-way PeerTube importer CLI
 internal/              57 packages: httpapi, auth, video, transcode, live, storage,
                        messaging, e2ee, ipfs, atproto, config, store (sqlc), …
-migrations/            98 up/down migration pairs
+migrations/            104 up/down migration pairs, embedded into the binary
 api/openapi.yaml       OpenAPI 3.1 contract (source of truth, 209 paths)
 deploy/                compose sidecar configs (ipfs, rtmp, otel, …)
 docs/                  operator + feature docs (this README links here)

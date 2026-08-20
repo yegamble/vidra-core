@@ -117,6 +117,23 @@ func (s *S3) EnsureBucket(ctx context.Context) error {
 	return nil
 }
 
+// BucketExists reports whether the configured bucket is there, and is the
+// cheapest AUTHENTICATED round trip this client can make: one HeadBucket, no
+// object read, no write, and nothing created. `vidra doctor` uses it as the
+// object-store reachability probe — EnsureBucket would be the wrong call there,
+// because a diagnostic that CREATES a bucket when it cannot find one turns a
+// typo in STORAGE_S3_BUCKET into a new, empty, silently-wrong store.
+//
+// An error means the store could not be asked (DNS, TLS, credentials, region);
+// false with no error means the credentials work and the bucket is not there.
+func (s *S3) BucketExists(ctx context.Context) (bool, error) {
+	ok, err := s.client.BucketExists(ctx, s.bucket)
+	if err != nil {
+		return false, fmt.Errorf("storage: s3: check bucket %q: %w", s.bucket, err)
+	}
+	return ok, nil
+}
+
 // validateKey enforces the Backend key contract for backends that don't
 // resolve keys to filesystem paths: keys are non-empty, relative, forward-slash
 // object paths — empty, absolute, NUL-bearing, or any-".."-segment keys are

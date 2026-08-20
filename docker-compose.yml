@@ -168,28 +168,62 @@ services:
       retries: 20
       start_period: 30s
 
+  # Schema one-shot. It runs the SAME image as the api (built here for dev; a
+  # production overlay pins the published tag on both services), which is what
+  # removes the runtime git dependence: migrations are compiled into the binary
+  # (migrations/embed.go), so there is no ./migrations bind-mount and no
+  # third-party migrate/migrate image whose golang-migrate version can drift from
+  # the one the binary was built against.
+  #
+  # The ledger is unchanged — golang-migrate's default `schema_migrations`, same
+  # table the CLI container wrote — so an existing instance upgrades in place and
+  # deploy/deploy.sh's post-migration ledger assertion keeps working. (The meta
+  # repo's separate search-migrate service is the one that must carry
+  # &x-migrations-table=vidra_search_migrations.)
   migrate:
-    image: migrate/migrate:v4.19.1
+    # Same image as api, by NAME rather than by a second build: block. The
+    # migrator IS the api binary, so one build serves both services, and a
+    # deployment overlay that swaps in a published tag has one name to pin on
+    # both — otherwise this one-shot would keep building from a source checkout
+    # the production host does not have. (Repeating build: here instead is what
+    # the CLI-era file effectively did, and it races: two build targets exporting
+    # the SAME tag concurrently fail with `image ... already exists` on a cold
+    # cache. api's build below is the single producer.)
+    image: vidra-core-api:local
     profiles: ["core"]
+    # The api image bakes a /healthz HEALTHCHECK for the SERVER; on a one-shot
+    # that exits as soon as the schema is current it is pure noise (a container
+    # marked unhealthy for not serving HTTP it was never asked to serve).
+    healthcheck:
+      disable: true
     depends_on:
       postgres:
         condition: service_healthy
-    volumes:
-      - ./migrations:/migrations:ro
-    command:
-      - "-path=/migrations"
+    environment:
       # DATABASE_URL is an OVERRIDE, not a construction: the default below is the
       # compose-network postgres this file defines, but a managed-Postgres
       # deployment (which needs its own host + ?sslmode=require) can replace the
-      # whole DSN from the env file. The migrate service and the api MUST resolve
-      # to the same database, so both read the same ${DATABASE_URL}.
-      # No x-migrations-table param here: core uses golang-migrate's default
-      # `schema_migrations` ledger (the meta repo's search-migrate service is the
-      # one that must carry &x-migrations-table=vidra_search_migrations).
-      - "-database=${DATABASE_URL:-postgres://${POSTGRES_USER:-vidra}:${POSTGRES_PASSWORD:-vidra}@postgres:5432/${POSTGRES_DB:-vidra}?sslmode=disable}"
-      - "up"
+      # whole DSN from the env file. The migrate one-shot and the api MUST resolve
+      # to the same database, so both read the same ${DATABASE_URL} — the binary
+      # reads the variable itself now, instead of taking a -database flag.
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-vidra}:${POSTGRES_PASSWORD:-vidra}@postgres:5432/${POSTGRES_DB:-vidra}?sslmode=disable}
+    # Applies all pending migrations and exits: 0 when the schema is current
+    # (including "nothing to do"), non-zero on any failure or a dirty ledger, so
+    # api's `service_completed_successfully` dependency and deploy.sh's
+    # exit-code-gated `run --rm migrate` gate on it exactly as before.
+    #
+    # To read the ledger without changing it, note that `compose run` REPLACES
+    # this command instead of appending to it — the subcommand must be repeated:
+    #   docker compose run --rm migrate migrate version
+    # (`run --rm migrate version` alone would pass "version" as argv[1], which the
+    # binary refuses rather than treating as a server start.) Dirty-ledger
+    # recovery, after a migration has died halfway, is the same shape:
+    #   docker compose run --rm migrate migrate force <version> --yes-i-know
+    command: ["migrate", "up"]
 
   api:
+    # Shared with the migrate one-shot above — see the note there.
+    image: vidra-core-api:local
     build:
       context: .
       dockerfile: Dockerfile
