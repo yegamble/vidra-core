@@ -6,6 +6,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -31,15 +33,65 @@ func webVideoArgs(src source, dst string, r HLSRung, threads int) []string {
 	if threads > 0 {
 		args = append(args, "-threads", fmt.Sprintf("%d", threads))
 	}
-	return append(args,
+	args = append(args, webVideoEncodeArgs(r, vf)...)
+	return append(args, dst)
+}
+
+// webVideoEncodeArgs is one progressive MP4's encoder configuration, shared by
+// the single-rung and ladder forms so they cannot drift. vf is the scale chain
+// for the single-rung form; the ladder passes "" because its filter graph has
+// already scaled the branch.
+func webVideoEncodeArgs(r HLSRung, vf string) []string {
+	args := []string{
 		"-c:v", "libx264", "-profile:v", "main", "-preset", "veryfast",
-		"-pix_fmt", "yuv420p", "-vf", vf,
+		"-pix_fmt", "yuv420p",
+	}
+	if vf != "" {
+		args = append(args, "-vf", vf)
+	}
+	return append(args,
 		"-b:v", fmt.Sprintf("%dk", r.VideoKbps),
 		"-maxrate", fmt.Sprintf("%dk", r.VideoKbps),
 		"-bufsize", fmt.Sprintf("%dk", 2*r.VideoKbps),
 		"-c:a", "aac", "-b:a", fmt.Sprintf("%dk", r.AudioKbps), "-ac", "2",
-		"-movflags", "+faststart", dst,
+		"-movflags", "+faststart",
 	)
+}
+
+// webVideoLadderArgs builds ONE ffmpeg argument vector that decodes the source a
+// single time and writes every rung's progressive MP4. Same reasoning as
+// hlsLadderArgs: the previous per-rung loop decoded the whole source once per
+// resolution to produce different scalings of identical frames.
+func webVideoLadderArgs(src source, root string, rungs []HLSRung, threads int) []string {
+	args := []string{"-y"}
+	args = append(args, src.inputArgs()...)
+
+	chain, labels := splitChain(len(rungs))
+	chains := make([]string, 0, len(rungs)+1)
+	if chain != "" {
+		chains = append(chains, chain)
+	}
+	outLabels := make([]string, len(rungs))
+	for i, r := range rungs {
+		vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height)
+		if r.FPS > 0 {
+			vf += fmt.Sprintf(",fps=%d", r.FPS)
+		}
+		outLabels[i] = fmt.Sprintf("w%d", i)
+		chains = append(chains, fmt.Sprintf("[%s]%s[%s]", labels[i], vf, outLabels[i]))
+	}
+	args = append(args, "-filter_complex", strings.Join(chains, ";"))
+
+	per := perOutputThreads(threads, len(rungs))
+	for i, r := range rungs {
+		args = append(args, "-map", "["+outLabels[i]+"]", "-map", "0:a:0?")
+		if per > 0 {
+			args = append(args, "-threads", strconv.Itoa(per))
+		}
+		args = append(args, webVideoEncodeArgs(r, "")...)
+		args = append(args, filepath.Join(root, r.Name()+".mp4"))
+	}
+	return args
 }
 
 // WebVideoPrefixForSource keeps manual reruns stable while source replacements
@@ -81,25 +133,24 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
-	for _, r := range rungs {
-		reportProgress(progress, TranscodeProgress{
-			Format: TranscodeFormatWebVideo, Height: r.Height, Width: r.Width,
-			State: ProgressRunning, Stage: "encoding", Percent: 1,
-		})
-		dst := filepath.Join(tmp, r.Name()+".mp4")
-		stderr, runErr := runFFmpegWithProgress(ctx, t.bin, webVideoArgs(src, dst, r, settings.Threads), md.DurationSeconds, func(percent int) {
+	// One decode for the whole set (see webVideoLadderArgs). The rungs advance
+	// together instead of one after another, so each reports the shared progress
+	// of the single pass.
+	reportAll := func(stage, state string, percent int) {
+		for _, r := range rungs {
 			reportProgress(progress, TranscodeProgress{
 				Format: TranscodeFormatWebVideo, Height: r.Height, Width: r.Width,
-				State: ProgressRunning, Stage: "encoding", Percent: percent * 95 / 100,
+				State: state, Stage: stage, Percent: percent,
 			})
-		})
-		if runErr != nil {
-			reportProgress(progress, TranscodeProgress{
-				Format: TranscodeFormatWebVideo, Height: r.Height, Width: r.Width,
-				State: ProgressFailed, Stage: "encoding", Percent: 0,
-			})
-			return nil, fmt.Errorf("media: ffmpeg web video %s for %q: %w: %s", r.Name(), sourceKey, runErr, tailOf(stderr))
 		}
+	}
+	reportAll("encoding", ProgressRunning, 1)
+	stderr, runErr := runFFmpegWithProgress(ctx, t.bin, webVideoLadderArgs(src, tmp, rungs, settings.Threads), md.DurationSeconds, func(percent int) {
+		reportAll("encoding", ProgressRunning, percent*95/100)
+	})
+	if runErr != nil {
+		reportAll("encoding", ProgressFailed, 0)
+		return nil, fmt.Errorf("media: ffmpeg web video ladder for %q: %w: %s", sourceKey, redactSource(src, runErr), tailOf(stderr))
 	}
 
 	prefix := WebVideoPrefixForSource(videoID, sourceKey)
