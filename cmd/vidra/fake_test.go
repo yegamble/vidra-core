@@ -105,6 +105,11 @@ func fakeDeployment(t *testing.T, env string) string {
 	for _, name := range []string{"deploy.sh", "rollback.sh", "backup.sh", "restore.sh", "release.sh", "compose.sh"} {
 		write(t, filepath.Join(dir, "deploy", name), "#!/usr/bin/env bash\nexit 0\n")
 	}
+	// rollback.sh is the one script whose CONTENT is read rather than executed:
+	// `vidra update` parses its MIN_EMBEDDED_MIGRATE_TAG floor out of it instead
+	// of carrying a fourth copy of that number. So the fake carries the assignment
+	// in the shape the real script has it, decoys and all.
+	write(t, filepath.Join(dir, "deploy", "rollback.sh"), fakeRollbackScript)
 	if env != "" {
 		if err := os.MkdirAll(filepath.Join(dir, "env"), 0o755); err != nil {
 			t.Fatalf("mkdir env: %v", err)
@@ -120,6 +125,24 @@ func write(t *testing.T, path, content string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// fakeRollbackScript is deploy/rollback.sh reduced to the part this CLI reads,
+// with the shapes that must NOT be read kept around it: the comment paragraph
+// that names the variable, and the `die` sentence that interpolates it. Both
+// appear in the real script above and below the assignment, and a parser that
+// took either of them would report a floor of "MIN_EMBEDDED_MIGRATE_TAG" or of
+// nothing at all.
+const fakeRollbackScript = `#!/usr/bin/env bash
+# It REFUSES a core/search tag below MIN_EMBEDDED_MIGRATE_TAG (set below): those
+# images have no embedded ` + "`migrate`" + ` subcommand.
+#MIN_EMBEDDED_MIGRATE_TAG="v9.9.9"
+MIN_EMBEDDED_MIGRATE_TAG="v0.2.0"   # ADJUST THIS AT RELEASE TIME
+require_embedded_migrate_tag() {
+  semver_ge "$tag" "$MIN_EMBEDDED_MIGRATE_TAG" || rc=$?
+  die "$what=$tag is older than $MIN_EMBEDDED_MIGRATE_TAG, the first release whose image carries the embedded migrator"
+}
+exit 0
+`
 
 // defaultEnv is an env file for a stock single-host deployment: bundled
 // datastores, the two profiles the deploy scripts default to.
