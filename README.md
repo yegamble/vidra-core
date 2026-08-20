@@ -21,8 +21,8 @@
   <a href="https://github.com/yegamble/vidra-core/releases"><img src="https://img.shields.io/github/v/release/yegamble/vidra-core?label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/yegamble/vidra-core" alt="License: AGPL-3.0"></a>
   <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="Go 1.26">
-  <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL">
-  <img src="https://img.shields.io/badge/Redis-7-FF4438?logo=redis&logoColor=white" alt="Redis">
+  <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL 18">
+  <img src="https://img.shields.io/badge/Redis-8-FF4438?logo=redis&logoColor=white" alt="Redis 8">
   <img src="https://img.shields.io/badge/FFmpeg-transcoding-007808?logo=ffmpeg&logoColor=white" alt="FFmpeg">
 </p>
 
@@ -31,7 +31,7 @@ platform you install yourself. This repository (`vidra-core`) exposes the Vidra
 HTTP API; the Next.js frontend lives in the separate
 [`vidra-user`](https://github.com/yegamble/vidra-user) repository and consumes it.
 
-Vidra Core serves a **209-path OpenAPI 3.1 contract** backed by **98 SQL
+Vidra Core serves a **214-path OpenAPI 3.1 contract** backed by **104 SQL
 migrations**. It runs the full creator pipeline — upload → transcode → HLS/VP9 —
 plus live streaming over RTMP with replay-to-VOD, end-to-end-encrypted DMs,
 OAuth/OIDC and TOTP auth, ATProto (Bluesky) identity, dual-tier IPFS mirroring,
@@ -123,7 +123,7 @@ openapi-verify sqlc-verify test-race` — the exact set `backend-ci.yml` runs, s
 
 ## Configuration
 
-`.env.example` documents the full configuration surface (123 keys) — this is not a
+`.env.example` documents the full configuration surface (138 keys) — this is not a
 full table. The load-bearing knobs:
 
 | Key | Default | Notes |
@@ -139,10 +139,6 @@ full table. The load-bearing knobs:
 
 Feature gates default **OFF**: yt-dlp URL import, channel auto-sync, ATProto
 cross-posting, Whisper captions, IPFS mirroring, and malware scanning are all opt-in.
-
-> **Honest note:** the `YTDLP_*` and `CHANNEL_SYNC_*` keys are real, wired config
-> (`internal/config`) but are not yet listed in `.env.example`. See
-> [docs/features.md](docs/features.md#video-pipeline) for their names and defaults.
 
 ## Compose profiles & ports
 
@@ -260,7 +256,7 @@ fail-open Redis rate limiter. See [Platform](docs/features.md#platform).
 
 ## API contract
 
-`api/openapi.yaml` (OpenAPI 3.1, 209 paths) is the source of truth for the HTTP API and
+`api/openapi.yaml` (OpenAPI 3.1, 214 paths) is the source of truth for the HTTP API and
 is consumed by the `vidra-user` frontend. A drift guard keeps it honest:
 `make openapi-verify` (the `TestOpenAPIContract` test) fails if a route is added,
 removed, or renamed without a matching spec edit, and the `openapi.yml` CI workflow
@@ -300,7 +296,7 @@ cmd/peertube-import/   one-way PeerTube importer CLI
 internal/              57 packages: httpapi, auth, video, transcode, live, storage,
                        messaging, e2ee, ipfs, atproto, config, store (sqlc), …
 migrations/            104 up/down migration pairs, embedded into the binary
-api/openapi.yaml       OpenAPI 3.1 contract (source of truth, 209 paths)
+api/openapi.yaml       OpenAPI 3.1 contract (source of truth, 214 paths)
 deploy/                compose sidecar configs (ipfs, rtmp, otel, …)
 docs/                  operator + feature docs (this README links here)
 .ralph/specs/          product/architecture specs, preserved as docs
