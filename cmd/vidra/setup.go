@@ -693,7 +693,18 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 		a.ReleaseTag = v
 	}
 	if a.StorageBackend == "" {
-		v, err := ask(s, r, "Media storage backend (local|s3)", effective(tmpl, existing, "STORAGE_BACKEND"))
+		def := effective(tmpl, existing, "STORAGE_BACKEND")
+		// A DEFAULT THAT CANNOT PASS Check IS NOT A DEFAULT. The shipped template
+		// says s3 next to <your Spaces access key> placeholders, so an operator
+		// pressing enter through the interview chose a backend with no
+		// credentials — and the run then refused to write anything, after every
+		// other question had been answered. The template's answer is still the
+		// RECOMMENDATION, so it stands the moment there are real keys behind it;
+		// what changes is which one is offered to somebody who has not got them.
+		if def == "s3" && !s3CredentialsAnswered(tmpl, existing) {
+			def = "local"
+		}
+		v, err := ask(s, r, "Media storage backend (local|s3)", def)
 		if err != nil {
 			return err
 		}
@@ -957,6 +968,37 @@ func boolValue(v string, def bool) bool {
 		return def
 	}
 	return b
+}
+
+// s3CredentialsAnswered reports whether the S3 key pair the interview would fall
+// back to is a real one rather than the template's <...> placeholders. It is the
+// test behind the storage prompt's default: with placeholders in both slots, an
+// s3 answer cannot be written at all (Check rejects a placeholder by name), so
+// offering it would be offering a run that fails.
+func s3CredentialsAnswered(tmpl, existing *setup.EnvFile) bool {
+	for _, key := range []string{"STORAGE_S3_ACCESS_KEY", "STORAGE_S3_SECRET_KEY"} {
+		if setup.IsPlaceholder(rawEffective(tmpl, existing, key)) {
+			return false
+		}
+	}
+	return true
+}
+
+// rawEffective is effective() WITHOUT the placeholder filter: it answers "what
+// does the file literally say", which is the only way to ask whether the value
+// there IS a placeholder — effective() has already turned those into "".
+func rawEffective(tmpl, existing *setup.EnvFile, key string) string {
+	if existing != nil {
+		if v, ok := existing.Value(key); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	if tmpl != nil {
+		if v, ok := tmpl.Value(key); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // effective is the value an operator would see today: the existing file's, else

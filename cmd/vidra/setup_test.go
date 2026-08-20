@@ -999,6 +999,90 @@ func TestSetupInteractiveReRunKeepsTheRegistrationPolicy(t *testing.T) {
 	}
 }
 
+// The shipped template says STORAGE_BACKEND=s3 next to <your Spaces access key>
+// placeholders, so an operator pressing enter through the interview used to
+// choose a backend with no credentials — and the run then refused to write
+// anything, after every other question had been answered. A default that cannot
+// pass Check is not a default.
+func TestSetupInteractiveStorageDefaultAvoidsThePlaceholderCredentials(t *testing.T) {
+	// The shipped template's storage block, spelled as env/production.env.example
+	// spells it.
+	s3Template := strings.NewReplacer(
+		"STORAGE_BACKEND=local", "STORAGE_BACKEND=s3",
+		"STORAGE_S3_ACCESS_KEY=", "STORAGE_S3_ACCESS_KEY=<your Spaces access key>",
+		"STORAGE_S3_SECRET_KEY=", "STORAGE_S3_SECRET_KEY=<your Spaces secret key>",
+	).Replace(cliTemplate)
+
+	script := []promptAnswer{
+		{"Public domain", "video.example.org"},
+		{"TLS certificates", "acme"},
+		{"Contact address", "ops@example.org"},
+		{"Name of this instance", "Cinema Vidra"},
+		{"Release tag", "v0.1.1"},
+		{"Media storage backend", ""}, // enter: whatever is offered
+		{"", "n"},
+	}
+
+	t.Run("placeholders offer local", func(t *testing.T) {
+		h := newHarness(t)
+		if err := os.WriteFile(h.template, []byte(s3Template), 0o644); err != nil {
+			t.Fatalf("write template: %v", err)
+		}
+		h.script = script
+		if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
+		}
+		if !strings.Contains(h.out.String(), "Media storage backend (local|s3) [local]") {
+			t.Errorf("the storage prompt offered a backend with no credentials:\n%s", h.out.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "STORAGE_BACKEND"); v != "local" {
+			t.Errorf("STORAGE_BACKEND = %q, want the offered default to have been accepted", v)
+		}
+	})
+
+	// The template's answer is the RECOMMENDATION, and it stands the moment there
+	// are real keys behind it — a re-run on an instance already serving from S3
+	// must not offer to move its media.
+	t.Run("real credentials keep s3", func(t *testing.T) {
+		h := newHarness(t)
+		if err := os.WriteFile(h.template, []byte(s3Template), 0o644); err != nil {
+			t.Fatalf("write template: %v", err)
+		}
+		if err := h.run(h.setupArgs("--storage", "s3", "--s3-endpoint", "fra1.example.net",
+			"--s3-region", "fra1", "--s3-bucket", "media", "--s3-access-key", "AKIA",
+			"--s3-secret-key", "the-live-secret")...); err != nil {
+			t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
+		}
+		h.script = []promptAnswer{{"", ""}}
+		if err := h.run(append([]string{"setup", "--template", h.template, "--yes"}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
+		}
+		if !strings.Contains(h.out.String(), "Media storage backend (local|s3) [s3]") {
+			t.Errorf("a working s3 backend was not offered back:\n%s", h.out.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "STORAGE_BACKEND"); v != "s3" {
+			t.Errorf("STORAGE_BACKEND = %q, want s3 kept", v)
+		}
+	})
+
+	// Non-interactive behaviour is untouched: the refusal that already exists is
+	// the answer there, because there is nobody to offer a different default to.
+	t.Run("non-interactive still refuses s3 with no credentials", func(t *testing.T) {
+		h := newHarness(t)
+		if err := os.WriteFile(h.template, []byte(s3Template), 0o644); err != nil {
+			t.Fatalf("write template: %v", err)
+		}
+		err := h.run("setup", "--template", h.template, "--non-interactive",
+			"--domain", "video.example.org", "--release-tag", "v0.1.1")
+		if err == nil {
+			t.Fatal("an unattended install accepted the template's placeholder credentials")
+		}
+		if !strings.Contains(h.err.String(), "STORAGE_S3_ACCESS_KEY") {
+			t.Errorf("the refusal did not name the placeholder credential:\n%s", h.err.String())
+		}
+	})
+}
+
 // An interactive secret prompt must never print the current secret as its
 // default, and when the terminal cannot be told to stop echoing it has to SAY
 // the input is visible rather than pretend otherwise. (Piped stdin, as here, is
