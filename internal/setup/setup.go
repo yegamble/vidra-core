@@ -112,6 +112,17 @@ type Answers struct {
 	// path, is the topology the template documents.
 	Domain string
 
+	// InstanceName is what this instance CALLS itself (INSTANCE_NAME): it is
+	// served publicly at GET /api/v1/instance, appears in NodeInfo, and is the
+	// default TOTP issuer label in every user's authenticator app. "" is
+	// unanswered and falls through to the existing file, then the template.
+	//
+	// It is asked about at all because the template's value is NOT a <...>
+	// placeholder — it is the plausible-looking "Example Video" — so nothing else
+	// in this engine would ever notice it shipping. Check cannot reject it
+	// either: any name is a valid name.
+	InstanceName string
+
 	// ReleaseTag pins all three images (VIDRA_CORE_TAG, VIDRA_USER_TAG,
 	// VIDRA_SEARCH_TAG). The per-service fields below override it individually;
 	// deploying the exact tags staging validated is the promotion rule.
@@ -861,6 +872,12 @@ func answerValues(a Answers) (map[string]string, error) {
 		for _, k := range singleOriginKeys {
 			out[k] = origin
 		}
+	}
+	// Unanswered is unanswered, exactly like every other field here: an empty
+	// name on a re-run keeps the one the instance is already known by rather than
+	// resetting it to the template's example.
+	if name := strings.TrimSpace(a.InstanceName); name != "" {
+		out["INSTANCE_NAME"] = name
 	}
 	tags := map[string]string{
 		"VIDRA_CORE_TAG":   firstNonEmpty(a.CoreTag, a.ReleaseTag),

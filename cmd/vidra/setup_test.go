@@ -20,6 +20,9 @@ const cliTemplate = `# =========================================================
 # ==============================================================================
 
 VIDRA_ENV=production
+# NOT a <...> placeholder, exactly like the shipped template: a plausible value
+# that Check has no grounds to reject and an unattended install therefore serves.
+INSTANCE_NAME=Example Video
 VIDRA_CORE_TAG=v0.1.0
 VIDRA_USER_TAG=v0.1.0
 VIDRA_SEARCH_TAG=v0.1.0
@@ -304,7 +307,7 @@ func TestSetupMergeKeepsEveryExistingValue(t *testing.T) {
 	first := h.readOutput(t)
 
 	extra := filepath.Join(h.dir, "extra.env")
-	if err := os.WriteFile(extra, []byte("PUBLIC_BASE_URL=https://other.example.org\nINSTANCE_NAME=Vidra\n"), 0o600); err != nil {
+	if err := os.WriteFile(extra, []byte("PUBLIC_BASE_URL=https://other.example.org\nINSTANCE_DESCRIPTION=A second source\n"), 0o600); err != nil {
 		t.Fatalf("write extra env: %v", err)
 	}
 	if err := h.run(h.setupArgs("--from", extra)...); err != nil {
@@ -316,7 +319,7 @@ func TestSetupMergeKeepsEveryExistingValue(t *testing.T) {
 			t.Errorf("%s was replaced by the --from file's value", key)
 		}
 	}
-	if !strings.Contains(got, "INSTANCE_NAME=Vidra") {
+	if !strings.Contains(got, "INSTANCE_DESCRIPTION=A second source") {
 		t.Errorf("the --from file's extra key was dropped:\n%s", got)
 	}
 	if !strings.Contains(h.out.String(), "preserved secrets") {
@@ -868,14 +871,23 @@ func TestSetupHelpSucceedsOnStdout(t *testing.T) {
 
 func TestSetupInteractiveAnswersTheMinimalQuestions(t *testing.T) {
 	h := newHarness(t)
-	// domain, TLS mode, ACME contact, release tag, storage, external Postgres?,
-	// external Redis?, optional components?, SMTP?, open registration?
-	h.stdin = "video.example.org\nacme\nops@example.org\nv0.1.1\nlocal\nn\nn\nn\nn\nn\n"
+	h.script = []promptAnswer{
+		{"Public domain", "video.example.org"},
+		{"TLS certificates", "acme"},
+		{"Contact address", "ops@example.org"},
+		{"Name of this instance", "Cinema Vidra"},
+		{"Release tag", "v0.1.1"},
+		{"Media storage backend", "local"},
+		{"", "n"}, // everything left is a yes/no, and the answer to all of them is no
+	}
 	if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
 	}
 	got := h.readOutput(t)
-	for _, want := range []string{"PUBLIC_BASE_URL=https://video.example.org", "VIDRA_CORE_TAG=v0.1.1", "STORAGE_BACKEND=local", "REGISTRATION_ENABLED=false"} {
+	for _, want := range []string{
+		"PUBLIC_BASE_URL=https://video.example.org", "VIDRA_CORE_TAG=v0.1.1",
+		"STORAGE_BACKEND=local", "REGISTRATION_ENABLED=false", "INSTANCE_NAME=Cinema Vidra",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("generated file is missing %q", want)
 		}
@@ -883,6 +895,72 @@ func TestSetupInteractiveAnswersTheMinimalQuestions(t *testing.T) {
 	if !strings.Contains(h.out.String(), "Public domain of this instance") {
 		t.Errorf("the domain was not asked for:\n%s", h.out.String())
 	}
+}
+
+// INSTANCE_NAME is the answer no other gate can catch: the template's "Example
+// Video" is a plausible value rather than a <...> placeholder, so it passes
+// --check and ships — served at /api/v1/instance, in NodeInfo, and as the TOTP
+// issuer label in every user's authenticator app.
+func TestSetupInstanceName(t *testing.T) {
+	t.Run("the flag lands, and a re-run keeps it", func(t *testing.T) {
+		h := newHarness(t)
+		if err := h.run(h.setupArgs("--instance-name", "Cinema Vidra")...); err != nil {
+			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "INSTANCE_NAME"); v != "Cinema Vidra" {
+			t.Fatalf("INSTANCE_NAME = %q, want the flag's value", v)
+		}
+		// A re-run about something else must not reset the instance's name to the
+		// template's example.
+		if err := h.run(h.setupArgs("--yes", "--release-tag", "v0.2.0")...); err != nil {
+			t.Fatalf("re-run: %v (stderr: %s)", err, h.err.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "INSTANCE_NAME"); v != "Cinema Vidra" {
+			t.Errorf("INSTANCE_NAME = %q after a re-run that never mentioned it, want it kept", v)
+		}
+	})
+
+	t.Run("the interview offers the current name and keeps it on enter", func(t *testing.T) {
+		h := newHarness(t)
+		if err := h.run(h.setupArgs("--instance-name", "Cinema Vidra")...); err != nil {
+			t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
+		}
+		h.script = []promptAnswer{{"", ""}}
+		if err := h.run(append([]string{"setup", "--template", h.template, "--yes"}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
+		}
+		if !strings.Contains(h.out.String(), "Name of this instance (shown publicly, and as the TOTP issuer) [Cinema Vidra]") {
+			t.Errorf("the prompt did not offer the current name as its default:\n%s", h.out.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "INSTANCE_NAME"); v != "Cinema Vidra" {
+			t.Errorf("INSTANCE_NAME = %q after pressing enter, want it kept", v)
+		}
+	})
+
+	// On a FIRST install the default is the template's example, which is the
+	// whole reason the question exists: it is the only moment anybody is shown
+	// the name the instance would otherwise ship with.
+	t.Run("a first install is shown the template's example", func(t *testing.T) {
+		h := newHarness(t)
+		h.script = []promptAnswer{
+			{"Public domain", "video.example.org"},
+			{"Name of this instance", "Cinema Vidra"},
+			{"Release tag", "v0.1.1"},
+			{"Media storage backend", "local"},
+			{"TLS certificates", "acme"},
+			{"Contact address", "ops@example.org"},
+			{"", "n"},
+		}
+		if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
+		}
+		if !strings.Contains(h.out.String(), "Name of this instance (shown publicly, and as the TOTP issuer) [Example Video]") {
+			t.Errorf("the prompt did not show the template's example as the default:\n%s", h.out.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "INSTANCE_NAME"); v != "Cinema Vidra" {
+			t.Errorf("INSTANCE_NAME = %q, want the answered name", v)
+		}
+	})
 }
 
 // An interactive RE-RUN must not change policy the operator did not answer. The
@@ -900,10 +978,8 @@ func TestSetupInteractiveReRunKeepsTheRegistrationPolicy(t *testing.T) {
 		t.Fatalf("fixture is not open+approval:\n%s", before)
 	}
 
-	// Re-run interactively, pressing enter at every question: domain, TLS mode,
-	// ACME contact, release tag, storage, external Postgres?, external Redis?,
-	// optional components?, SMTP?, open registration?, approval?
-	h.stdin = "\n\n\n\n\n\n\n\n\n\n\n"
+	// Re-run interactively, pressing enter at EVERY question, whatever they are.
+	h.script = []promptAnswer{{"", ""}}
 	if err := h.run(append([]string{"setup", "--template", h.template, "--yes"}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
 	}
@@ -935,10 +1011,8 @@ func TestSetupInteractiveSecretPromptDoesNotEchoTheCurrentValue(t *testing.T) {
 		t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
 	}
 
-	// domain, TLS mode, ACME contact, tag, storage, endpoint, region, bucket,
-	// access key, secret, external Postgres?, external Redis?, optional
-	// components?, SMTP?, reg?
-	h.stdin = "\n\n\n\n\n\n\n\n\n\n\n\n\nn\n\n"
+	// Enter at every question, which for the S3 block means "keep what is there".
+	h.script = []promptAnswer{{"", ""}}
 	if err := h.run(append([]string{"setup", "--template", h.template, "--yes"}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
 	}
@@ -960,10 +1034,15 @@ func TestSetupInteractiveSecretPromptDoesNotEchoTheCurrentValue(t *testing.T) {
 // default, which is where it went missing.
 func TestSetupInteractiveWarnsWhenTheTemplateTagIsAccepted(t *testing.T) {
 	h := newHarness(t)
-	// domain, TLS mode, ACME contact, release tag (enter = the template's
-	// v0.1.0), storage, external Postgres?, external Redis?, optional
-	// components?, SMTP?, reg?
-	h.stdin = "video.example.org\nacme\nops@example.org\n\nlocal\nn\nn\nn\nn\nn\n"
+	h.script = []promptAnswer{
+		{"Public domain", "video.example.org"},
+		{"TLS certificates", "acme"},
+		{"Contact address", "ops@example.org"},
+		{"Name of this instance", "Cinema Vidra"},
+		{"Release tag", ""}, // enter: the template's example v0.1.0
+		{"Media storage backend", "local"},
+		{"", "n"},
+	}
 	if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
 	}
@@ -1045,9 +1124,17 @@ func TestSetupKeepsTheProfileListOnAReRun(t *testing.T) {
 // treats it as the secret it is.
 func TestSetupInteractiveAsksForAManagedDatabase(t *testing.T) {
 	h := newHarness(t)
-	// domain, TLS mode, ACME contact, tag, storage, external Postgres? y, its
-	// DSN, external Redis? n, optional components? n, SMTP? n, registration? n
-	h.stdin = "video.example.org\nacme\nops@example.org\nv0.1.1\nlocal\ny\n" + managedDSN + "\nn\nn\nn\nn\n"
+	h.script = []promptAnswer{
+		{"Public domain", "video.example.org"},
+		{"TLS certificates", "acme"},
+		{"Contact address", "ops@example.org"},
+		{"Name of this instance", "Cinema Vidra"},
+		{"Release tag", "v0.1.1"},
+		{"Media storage backend", "local"},
+		{"external/managed PostgreSQL", "y"},
+		{"Managed PostgreSQL connection string", managedDSN},
+		{"", "n"}, // the bundled Redis, no components, no SMTP, closed registration
+	}
 	if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
 	}

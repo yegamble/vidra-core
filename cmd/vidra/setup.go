@@ -41,8 +41,9 @@ func runSetup(s streams, args []string) error {
 		// unrecoverable action.
 		yesIKnow = fs.Bool("yes-i-know", false, "confirm a DESTRUCTIVE *_KEK rotation: it orphans the data already sealed under that key")
 
-		domain     = fs.String("domain", "", "public origin of the instance, e.g. video.example.org (https is assumed)")
-		releaseTag = fs.String("release-tag", "", "image `tag` to deploy for all three services, e.g. v0.1.1")
+		domain       = fs.String("domain", "", "public origin of the instance, e.g. video.example.org (https is assumed)")
+		instanceName = fs.String("instance-name", "", "public `name` of this instance (INSTANCE_NAME): served at /api/v1/instance, in NodeInfo, and as the TOTP issuer")
+		releaseTag   = fs.String("release-tag", "", "image `tag` to deploy for all three services, e.g. v0.1.1")
 
 		tlsMode       = fs.String("tls-mode", "", "certificate issuer for the managed Caddy: `acme|acme-staging|internal` (default acme)")
 		acmeEmail     = fs.String("acme-email", "", "contact `address` Let's Encrypt sends expiry notices to (optional; without it there is no warning before a failed renewal)")
@@ -240,6 +241,7 @@ flags:
 
 	answers := setup.Answers{
 		Domain:         *domain,
+		InstanceName:   *instanceName,
 		TLSMode:        *tlsMode,
 		AcmeEmail:      *acmeEmail,
 		ReleaseTag:     *releaseTag,
@@ -671,6 +673,17 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 			return err
 		}
 		a.AcmeEmail = v
+	}
+	if a.InstanceName == "" {
+		// Asked because nothing else can catch it: the template's "Example Video"
+		// is a plausible value rather than a <...> placeholder, so Check waves it
+		// through and it ships — to /api/v1/instance, to NodeInfo, and into every
+		// user's authenticator app as the TOTP issuer label.
+		v, err := ask(s, r, "Name of this instance (shown publicly, and as the TOTP issuer)", effective(tmpl, existing, "INSTANCE_NAME"))
+		if err != nil {
+			return err
+		}
+		a.InstanceName = v
 	}
 	if a.ReleaseTag == "" && a.CoreTag == "" && a.UserTag == "" && a.SearchTag == "" {
 		v, err := ask(s, r, "Release tag to deploy", effective(tmpl, existing, "VIDRA_CORE_TAG"))

@@ -441,6 +441,32 @@ func TestRegistrationAnswers(t *testing.T) {
 	}
 }
 
+// INSTANCE_NAME is the one answer nothing else in this engine can catch: the
+// template's "Example Video" is not a <...> placeholder, so Check waves it
+// through and an unattended install ships it — publicly, at /api/v1/instance and
+// as the TOTP issuer in every user's authenticator app.
+func TestInstanceNameAnswer(t *testing.T) {
+	tmpl := fixtureTemplate(t)
+	if v, _ := tmpl.Value("INSTANCE_NAME"); v != "Example Video" {
+		t.Fatalf("fixture INSTANCE_NAME = %q, want the template's example value", v)
+	}
+
+	answers := baseAnswers()
+	answers.InstanceName = "Cinema Vidra"
+	first := generate(t, Request{Answers: answers})
+	if v := first.Values["INSTANCE_NAME"]; v != "Cinema Vidra" {
+		t.Errorf("INSTANCE_NAME = %q, want the answer", v)
+	}
+
+	// And unanswered stays unanswered: a re-run about something else keeps the
+	// name the instance is already known by rather than resetting it to the
+	// template's example.
+	second := generate(t, Request{Existing: mustParse(t, first.Content), Answers: baseAnswers(), Rand: &seqReader{n: 200}})
+	if v := second.Values["INSTANCE_NAME"]; v != "Cinema Vidra" {
+		t.Errorf("INSTANCE_NAME = %q after a re-run that did not mention it, want it preserved", v)
+	}
+}
+
 // PUBLIC_BASE_URL is the origin for watch links AND for OAuth/federation
 // identity, so the template's example value is documentation, never an answer.
 func TestDomainIsRequired(t *testing.T) {
