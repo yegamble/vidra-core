@@ -395,6 +395,33 @@ func (c *Client) Healthy() bool {
 	return c.prober.healthy.Load() && !c.anyBreakerOpen()
 }
 
+// Ready asks the search service's PUBLIC /readyz once, right now, and reports
+// what it said. It is the on-demand counterpart to Healthy(): an operator
+// opening the admin status page must see the service's current answer, not the
+// conclusion the background prober drew up to 15 seconds ago.
+//
+// /readyz sits outside the HMAC group on the search service, so the probe
+// carries no auth header, and it runs on the CALLER's deadline rather than a
+// group timeout — it is not a search, and it must not trip a breaker that would
+// then route real searches to their backup path.
+func (c *Client) Ready(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/readyz", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	// Drain a little so the connection can be reused.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<10))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("searchclient: readyz answered %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // ServiceProbeHealthy is the prober's view of the service (/healthz) alone,
 // independent of breaker state — the signal behind the vidra_search_service_healthy
 // gauge and the transition logs.

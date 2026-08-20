@@ -122,6 +122,12 @@ migrate-version: ## Print the schema_migrations version + dirty flag (non-zero e
 migrate-down: ## Roll back one migration (rollback is CLI-only: the binary ships `up`/`version`/`force` and only ever goes forward)
 	migrate -path migrations -database "$(DATABASE_URL)" down 1
 
+# Enforces the one-release schema-compat policy: release N-1's code must keep
+# running against release N's schema, which is what makes a rollback a tag flip.
+.PHONY: migrate-lint
+migrate-lint: ## Fail if any up migration carries destructive DDL (one-release schema-compat policy)
+	@bash scripts/migrate-lint.sh
+
 .PHONY: up
 up: ## Start the local Docker stack (postgres, redis, migrate, api)
 	docker compose --profile core up --build
@@ -138,5 +144,5 @@ check: fmt vet test ## Run the standard local gate (fmt, vet, test)
 # lock-step by adding any new required check here, never only in the workflow.
 # Assumes Postgres/Redis are reachable (run `make up` locally; CI provides them).
 .PHONY: ci
-ci: fmt-check vet openapi-verify sqlc-verify test-race ## Canonical CI gate (run locally to mirror GitHub exactly)
-	@echo "ci: gate passed (fmt-check, vet, openapi-verify, sqlc-verify, test-race)."
+ci: fmt-check vet migrate-lint openapi-verify sqlc-verify test-race ## Canonical CI gate (run locally to mirror GitHub exactly)
+	@echo "ci: gate passed (fmt-check, vet, migrate-lint, openapi-verify, sqlc-verify, test-race)."

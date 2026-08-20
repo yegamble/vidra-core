@@ -13,7 +13,7 @@ import (
 
 // searchLedgerTable is vidra-search's golang-migrate ledger. It is pinned here
 // as a literal because the two repos share no module: vidra-search compiles the
-// same name in (internal/dbmigrate.Table, "it MUST stay vidra_search_migrations
+// same name in (its own internal/dbmigrate.Table, "it MUST stay vidra_search_migrations
 // … schema_migrations belongs to core"), and both sides read it through the same
 // library, the same driver contract and the same postgres:// DSN. That shared
 // shape is the only reason this check can exist from over here.
@@ -97,7 +97,7 @@ func (s *state) ledgerViaContainer(ctx context.Context, label, table string) Fin
 }
 
 func ledgerStatusFinding(label, table, consumer string, st dbmigrate.Status, envRel string) Finding {
-	name := "schema_migrations"
+	name := dbmigrate.Table
 	if table != "" {
 		name = table
 	}

@@ -112,6 +112,17 @@ type Answers struct {
 	// path, is the topology the template documents.
 	Domain string
 
+	// InstanceName is what this instance CALLS itself (INSTANCE_NAME): it is
+	// served publicly at GET /api/v1/instance, appears in NodeInfo, and is the
+	// default TOTP issuer label in every user's authenticator app. "" is
+	// unanswered and falls through to the existing file, then the template.
+	//
+	// It is asked about at all because the template's value is NOT a <...>
+	// placeholder — it is the plausible-looking "Example Video" — so nothing else
+	// in this engine would ever notice it shipping. Check cannot reject it
+	// either: any name is a valid name.
+	InstanceName string
+
 	// ReleaseTag pins all three images (VIDRA_CORE_TAG, VIDRA_USER_TAG,
 	// VIDRA_SEARCH_TAG). The per-service fields below override it individually;
 	// deploying the exact tags staging validated is the promotion rule.
@@ -326,6 +337,7 @@ const (
 	searchRedisURLKey   = "SEARCH_REDIS_URL"
 	tlsModeKey          = "VIDRA_TLS_MODE"
 	acmeEmailKey        = "VIDRA_ACME_EMAIL"
+	instanceNameKey     = "INSTANCE_NAME"
 )
 
 // searchRedisDefaultDB is the logical Redis database vidra-search runs on when
@@ -570,6 +582,7 @@ func Generate(req Request) (*Result, error) {
 		return nil, &ValidationError{Issues: issues}
 	}
 	res.Warnings = append(res.Warnings, releaseTagWarnings(req, res.Values)...)
+	res.Warnings = append(res.Warnings, instanceNameWarnings(req, res.Values)...)
 	res.Warnings = append(res.Warnings, Warnings(res.Values)...)
 
 	content := req.Template.Render(res.Values, res.Carried, added)
@@ -862,6 +875,12 @@ func answerValues(a Answers) (map[string]string, error) {
 			out[k] = origin
 		}
 	}
+	// Unanswered is unanswered, exactly like every other field here: an empty
+	// name on a re-run keeps the one the instance is already known by rather than
+	// resetting it to the template's example.
+	if name := strings.TrimSpace(a.InstanceName); name != "" {
+		out["INSTANCE_NAME"] = name
+	}
 	tags := map[string]string{
 		"VIDRA_CORE_TAG":   firstNonEmpty(a.CoreTag, a.ReleaseTag),
 		"VIDRA_USER_TAG":   firstNonEmpty(a.UserTag, a.ReleaseTag),
@@ -981,6 +1000,16 @@ func requireDomain(req Request, answers map[string]string) error {
 	}
 	return errors.New("setup: the instance domain is required — pass the public origin (e.g. --domain video.example.org). PUBLIC_BASE_URL is the origin for watch/embed links AND for OAuth, NodeInfo and federation identity, so the template's example value cannot be deployed")
 }
+
+// NormalizeOrigin is the domain answer's validator, exported for a front end
+// that has to tell an operator the value is unusable AT THE PROMPT rather than
+// after every other question has been answered and the whole file refused.
+//
+// It is a one-line wrapper on purpose. The terminal interview, the web wizard
+// and Generate must agree to the byte about what a usable origin is — a second
+// implementation for the "friendly" early check is exactly how a wizard starts
+// accepting a domain the engine then rejects.
+func NormalizeOrigin(in string) (string, error) { return normalizeOrigin(in) }
 
 // normalizeOrigin accepts a bare host or a full origin and returns
 // https://host[:port], lowercased. https is not negotiable here: in production
@@ -1592,6 +1621,35 @@ func releaseTagWarnings(req Request, values map[string]string) []string {
 		return nil
 	}
 	return []string{fmt.Sprintf("%s kept the template's example tag — pass a release tag to pin the images you validated", strings.Join(stale, ", "))}
+}
+
+// instanceNameWarnings flags an instance still called whatever the template
+// called it.
+//
+// Same shape as releaseTagWarnings, same reason: the interview offers the
+// template's INSTANCE_NAME as the bracketed default, so an operator pressing
+// enter has ANSWERED with the example, and nothing downstream catches it — a name
+// is free text, so Check has nothing to refuse. It then ships, to
+// /api/v1/instance, to NodeInfo, and into every user's authenticator app as the
+// TOTP issuer label, which is the one place it is expensive to change later.
+//
+// The template is the only reference used, and the warning is conditional on that
+// template value READING like an example. A fork that ships a template carrying
+// its own instance's name has configured it, not forgotten it, and must not be
+// nagged about the answer forever.
+func instanceNameWarnings(req Request, values map[string]string) []string {
+	tv, ok := req.Template.Value(instanceNameKey)
+	if !ok {
+		return nil
+	}
+	tv = strings.TrimSpace(tv)
+	if tv == "" || !strings.Contains(strings.ToLower(tv), "example") {
+		return nil
+	}
+	if strings.TrimSpace(values[instanceNameKey]) != tv {
+		return nil
+	}
+	return []string{instanceNameKey + " is still the template's example name — it is served at /api/v1/instance, published in NodeInfo, and is the issuer every user's authenticator app shows beside their TOTP code"}
 }
 
 // existingValue reads a value from the existing env file, treating blanks and

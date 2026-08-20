@@ -77,6 +77,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VersionResponse"
+  /schemaz:
+    get:
+      operationId: getSchemaVersion
+      summary: Build and migration-ledger version
+      description: >-
+        Machine-readable build metadata plus the numeric position of the
+        golang-migrate ledger, for host-local tooling (`vidra doctor`, `vidra
+        update`) that has to compare an image against the database it is pointed
+        at. Always 200: a ledger that cannot be read is reported inside the
+        document, so the caller can tell "the api is not there" from "the api is
+        there and its database is not". Exposes build information and one integer
+        version — never secrets or config. Not routed publicly by the edge proxy.
+      tags: [system]
+      responses:
+        "200":
+          description: Build metadata and ledger position.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchemaVersionResponse"
   /api/v1/nodeinfo:
     get:
       operationId: getNodeInfo
@@ -10849,7 +10869,8 @@ paths:
       description: >-
         Returns an operational snapshot for the admin dashboard: build info, the
         runtime environment, process uptime, an overall health flag, and
-        per-dependency component status (postgres, redis). Restricted to admins.
+        per-dependency component status (postgres, redis, s3, smtp, search,
+        ffmpeg). Restricted to admins.
         Always 200 (even when degraded) so the admin can see the degraded state,
         unlike /readyz which 503s. Reports only operational metadata.
       tags: [admin]
@@ -12432,6 +12453,40 @@ components:
         go:
           type: string
           example: go1.26
+    SchemaVersionResponse:
+      type: object
+      required: [software, schema]
+      properties:
+        software:
+          $ref: "#/components/schemas/VersionResponse"
+        schema:
+          $ref: "#/components/schemas/SchemaLedgerStatus"
+    SchemaLedgerStatus:
+      type: object
+      required: [version, dirty, applied]
+      properties:
+        version:
+          type: integer
+          format: int64
+          description: >-
+            The highest applied migration, as a number so callers can compare it.
+            0 when applied is false.
+          example: 104
+        dirty:
+          type: boolean
+          description: >-
+            A migration failed halfway and the schema state is unknown. Needs a
+            human before anything else is deployed over it.
+        applied:
+          type: boolean
+          description: >-
+            False when no migration has ever run against this database (the
+            ledger table is absent or empty) — a fresh install, not a fault.
+        error:
+          type: string
+          description: >-
+            Present only when the ledger could not be read for some reason other
+            than "not migrated yet". The response is still 200.
     ErrorResponse:
       type: object
       description: >-

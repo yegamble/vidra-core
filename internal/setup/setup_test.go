@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -441,6 +442,32 @@ func TestRegistrationAnswers(t *testing.T) {
 	}
 }
 
+// INSTANCE_NAME is the one answer nothing else in this engine can catch: the
+// template's "Example Video" is not a <...> placeholder, so Check waves it
+// through and an unattended install ships it — publicly, at /api/v1/instance and
+// as the TOTP issuer in every user's authenticator app.
+func TestInstanceNameAnswer(t *testing.T) {
+	tmpl := fixtureTemplate(t)
+	if v, _ := tmpl.Value("INSTANCE_NAME"); v != "Example Video" {
+		t.Fatalf("fixture INSTANCE_NAME = %q, want the template's example value", v)
+	}
+
+	answers := baseAnswers()
+	answers.InstanceName = "Cinema Vidra"
+	first := generate(t, Request{Answers: answers})
+	if v := first.Values["INSTANCE_NAME"]; v != "Cinema Vidra" {
+		t.Errorf("INSTANCE_NAME = %q, want the answer", v)
+	}
+
+	// And unanswered stays unanswered: a re-run about something else keeps the
+	// name the instance is already known by rather than resetting it to the
+	// template's example.
+	second := generate(t, Request{Existing: mustParse(t, first.Content), Answers: baseAnswers(), Rand: &seqReader{n: 200}})
+	if v := second.Values["INSTANCE_NAME"]; v != "Cinema Vidra" {
+		t.Errorf("INSTANCE_NAME = %q after a re-run that did not mention it, want it preserved", v)
+	}
+}
+
 // PUBLIC_BASE_URL is the origin for watch links AND for OAuth/federation
 // identity, so the template's example value is documentation, never an answer.
 func TestDomainIsRequired(t *testing.T) {
@@ -520,6 +547,41 @@ func TestReleaseTagWarning(t *testing.T) {
 	res = generate(t, Request{Existing: existing, Answers: answers})
 	if warned(res.Warnings, "template's example tag") {
 		t.Errorf("warned about tags the existing file pins: %v", res.Warnings)
+	}
+}
+
+// The interview offers the template's INSTANCE_NAME as the bracketed default, so
+// an operator pressing enter has answered with the example and it ships: to
+// /api/v1/instance, to NodeInfo, and into every user's authenticator app as the
+// TOTP issuer. Nothing downstream catches it — a name is free text, so Check has
+// nothing to refuse — which is why it is a warning here.
+func TestInstanceNameWarning(t *testing.T) {
+	res := generate(t, Request{Answers: baseAnswers()})
+	if !warned(res.Warnings, "template's example name") {
+		t.Errorf("no warning about the instance still being called %q: %v", res.Values[instanceNameKey], res.Warnings)
+	}
+
+	// Silent the moment it is answered.
+	answers := baseAnswers()
+	answers.InstanceName = "Bergen Community Video"
+	res = generate(t, Request{Answers: answers})
+	if warned(res.Warnings, "template's example name") {
+		t.Errorf("warned about an instance name the operator chose: %v", res.Warnings)
+	}
+
+	// And silent forever for a fork whose TEMPLATE carries a real name: that is a
+	// deployment configured by whoever wrote the template, not one that forgot.
+	b, err := os.ReadFile(filepath.Join("testdata", "template.env.example"))
+	if err != nil {
+		t.Fatalf("read fixture template: %v", err)
+	}
+	named := mustParse(t, bytes.ReplaceAll(b, []byte("INSTANCE_NAME=Example Video"), []byte("INSTANCE_NAME=Bergen Community Video")))
+	if v, _ := named.Value(instanceNameKey); v != "Bergen Community Video" {
+		t.Fatalf("the fixture's INSTANCE_NAME did not change (%q) — this test is asserting nothing", v)
+	}
+	res = generate(t, Request{Template: named, Answers: baseAnswers()})
+	if warned(res.Warnings, "template's example name") {
+		t.Errorf("warned about a template that names itself: %v", res.Warnings)
 	}
 }
 

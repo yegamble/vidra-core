@@ -22,6 +22,9 @@ import (
 // can be asserted without a live service.
 type searchGateway interface {
 	Healthy() bool
+	// Ready is the on-demand probe behind the admin status page's search
+	// component — the service's answer now, not the prober's cached flag.
+	Ready(ctx context.Context) error
 	Suggestions(ctx context.Context, p searchclient.SuggestParams) (searchclient.SuggestionsResponse, error)
 	Search(ctx context.Context, p searchclient.SearchParams) (searchclient.SearchResponse, error)
 	RecommendationsHome(ctx context.Context, p searchclient.RecsParams) (searchclient.RecommendationsResponse, error)

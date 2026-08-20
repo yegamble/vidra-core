@@ -173,6 +173,9 @@ func run() error {
 	}
 	defer db.Close()
 	logger.Info("connected to postgres")
+	// GET /schemaz reads the migration ledger over this same pool, so the version
+	// probe costs a pooled query rather than a connection.
+	opts = append(opts, httpapi.WithSchemaLedger(db.Pool))
 
 	rdb, err := cache.New(startCtx, cfg.RedisURL, cacheOpts...)
 	if err != nil {

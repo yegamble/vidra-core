@@ -5,8 +5,9 @@ name: backend-ci
 # needed while core was a subdirectory of the vidra monorepo).
 #
 # Local/CI parity: run the SAME canonical gate developers run locally
-# (`make ci` = fmt-check + vet + openapi-verify + test-race). Do not add checks
-# here that aren't in `make ci`, or the two will drift (ci-guard.yml enforces this).
+# (`make ci` = fmt-check + vet + migrate-lint + openapi-verify + sqlc-verify +
+# test-race). Do not add checks here that aren't in `make ci`, or the two will
+# drift (ci-guard.yml enforces this).
 on:
   push:
     branches: [main]
@@ -25,7 +26,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: vidra
           POSTGRES_PASSWORD: vidra
@@ -38,7 +39,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       redis:
-        image: redis:7-alpine
+        image: redis:8-alpine
         ports:
           - 6379:6379
         options: >-

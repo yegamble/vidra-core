@@ -231,3 +231,59 @@ func TestDeleteUserHistoryQueryHMACSignsDecodedPath(t *testing.T) {
 		})
 	}
 }
+
+func TestReadyProbesReadyzWithoutAuth(t *testing.T) {
+	var (
+		path string
+		auth string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		auth = r.Header.Get(authHeaderName)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, testSecret)
+	if err := c.Ready(context.Background()); err != nil {
+		t.Fatalf("Ready: %v", err)
+	}
+	if path != "/readyz" {
+		t.Errorf("path = %q, want /readyz", path)
+	}
+	// /readyz is outside the HMAC group on the search service; signing it would
+	// be asserting a contract the service does not offer.
+	if auth != "" {
+		t.Errorf("auth header = %q, want none on the public readiness path", auth)
+	}
+}
+
+func TestReadyReportsNon2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	err := New(srv.URL, testSecret).Ready(context.Background())
+	if err == nil {
+		t.Fatal("Ready against a 503 returned no error")
+	}
+	if !strings.Contains(err.Error(), "503") {
+		t.Errorf("error = %q, want the status in it", err)
+	}
+}
+
+// A search service that is down must not leave the admin page waiting: the
+// caller's context is the only deadline this probe has.
+func TestReadyHonoursCallerContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := New(srv.URL, testSecret).Ready(ctx); err == nil {
+		t.Fatal("Ready against a stalled service returned no error")
+	}
+}

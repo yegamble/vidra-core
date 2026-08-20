@@ -2,12 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vidra/vidra-core/internal/preflight"
 )
 
 // A minimal template in the deployment format: comments, a blank secret, a
@@ -19,6 +23,9 @@ const cliTemplate = `# =========================================================
 # ==============================================================================
 
 VIDRA_ENV=production
+# NOT a <...> placeholder, exactly like the shipped template: a plausible value
+# that Check has no grounds to reject and an unattended install therefore serves.
+INSTANCE_NAME=Example Video
 VIDRA_CORE_TAG=v0.1.0
 VIDRA_USER_TAG=v0.1.0
 VIDRA_SEARCH_TAG=v0.1.0
@@ -80,6 +87,7 @@ example.com {
 `
 
 type harness struct {
+	t             *testing.T
 	dir           string
 	template      string
 	output        string
@@ -88,11 +96,93 @@ type harness struct {
 	out           bytes.Buffer
 	err           bytes.Buffer
 	stdin         string
+	// script answers the interview by QUESTION instead of by position; when it
+	// is set it replaces stdin. asked is every prompt the run printed, in order.
+	script []promptAnswer
+	asked  []string
+	// dns is what the interview's domain check finds. It defaults to "could not
+	// tell", which is what a hermetic test host honestly is.
+	dns preflight.DomainResult
+}
+
+// promptAnswer is one scripted reply: the first entry whose match is a substring
+// of the prompt answers it, so an entry with an empty match is the catch-all
+// "press enter" and belongs last.
+type promptAnswer struct {
+	match, answer string
+	// once drops the entry after it has answered, so the NEXT entry matching the
+	// same prompt takes the following occurrence. That is how a question that is
+	// re-asked (a rejected answer, then a good one) stays expressible by question
+	// rather than by position.
+	once bool
+}
+
+// prompter is stdin for an interview, answering by QUESTION rather than by
+// position.
+//
+// The tests used to script `"\n\n\n\n\n\n\n\n\n\n\n"` and count newlines against
+// a comment listing the questions. Adding ONE question therefore broke five
+// unrelated tests at once, and none of them said which answer had shifted — the
+// failure was a wrong value in a generated file, two layers from the cause. This
+// reads the prompt the command has just printed and replies to that, so a new
+// question changes only the tests that care about it, and an unanswered one
+// fails by name.
+type prompter struct {
+	t       *testing.T
+	out     *bytes.Buffer // everything the command has printed so far
+	script  []promptAnswer
+	asked   *[]string
+	seen    int    // bytes of out already consumed
+	pending string // the answer being handed over, one Read at a time
+}
+
+func (p *prompter) Read(b []byte) (int, error) {
+	if p.pending == "" {
+		prompt := p.nextPrompt()
+		answer, ok := p.answerFor(prompt)
+		if !ok {
+			p.t.Errorf("no scripted answer for the prompt %q", prompt)
+			return 0, io.EOF
+		}
+		*p.asked = append(*p.asked, prompt)
+		p.pending = answer + "\n"
+	}
+	n := copy(b, p.pending)
+	p.pending = p.pending[n:]
+	return n, nil
+}
+
+// nextPrompt is everything printed since the last answer, reduced to the last
+// line — which is the question, since a prompt is written without a newline.
+func (p *prompter) nextPrompt() string {
+	all := p.out.String()
+	if p.seen > len(all) {
+		p.seen = 0 // the buffer was reset between runs
+	}
+	fresh := all[p.seen:]
+	p.seen = len(all)
+	if i := strings.LastIndex(fresh, "\n"); i >= 0 {
+		fresh = fresh[i+1:]
+	}
+	return strings.TrimSpace(fresh)
+}
+
+func (p *prompter) answerFor(prompt string) (string, bool) {
+	for i, a := range p.script {
+		if a.match != "" && !strings.Contains(prompt, a.match) {
+			continue
+		}
+		if a.once {
+			p.script = append(p.script[:i:i], p.script[i+1:]...)
+		}
+		return a.answer, true
+	}
+	return "", false
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	h := &harness{dir: t.TempDir()}
+	h := &harness{t: t, dir: t.TempDir()}
 	h.template = filepath.Join(h.dir, "production.env.example")
 	h.output = filepath.Join(h.dir, "production.env")
 	h.caddyTemplate = filepath.Join(h.dir, "Caddyfile")
@@ -102,13 +192,29 @@ func newHarness(t *testing.T) *harness {
 			t.Fatalf("write %s: %v", path, err)
 		}
 	}
+	// The interview's domain feedback must never reach a real nameserver (or an
+	// IP echo service) under `go test`: a suite whose result depends on the
+	// network it runs on tells nobody anything, and this one would take seconds
+	// per interactive test to say so. Tests that care about the LINE set h.dns.
+	h.dns = preflight.DomainResult{
+		Status:  preflight.StatusWarn,
+		Message: "video.example.org resolves to 203.0.113.10, but this host's own public IP could not be determined, so the two were not compared",
+	}
+	restore := checkDomain
+	checkDomain = func(context.Context, preflight.DomainRequest) preflight.DomainResult { return h.dns }
+	t.Cleanup(func() { checkDomain = restore })
 	return h
 }
 
 func (h *harness) run(args ...string) error {
 	h.out.Reset()
 	h.err.Reset()
-	return run(streams{in: strings.NewReader(h.stdin), out: &h.out, err: &h.err}, args)
+	h.asked = nil
+	var in io.Reader = strings.NewReader(h.stdin)
+	if h.script != nil {
+		in = &prompter{t: h.t, out: &h.out, script: h.script, asked: &h.asked}
+	}
+	return run(streams{in: in, out: &h.out, err: &h.err}, args)
 }
 
 func (h *harness) setupArgs(extra ...string) []string {
@@ -182,6 +288,34 @@ func TestSetupWritesAPrivateFileAndPrintsTheRenderCheck(t *testing.T) {
 	}
 }
 
+// The env file cannot contain the admin account: the api mints a one-time
+// owner-claim token at boot and prints it to its own log, and until it is
+// redeemed every signup path answers 403. An operator who has just generated the
+// file is therefore two commands away from an instance nobody can log into, and
+// this report is the only place that says which two.
+func TestSetupReportsTheOwnerClaimHandoff(t *testing.T) {
+	h := newHarness(t)
+	if err := h.run(h.setupArgs()...); err != nil {
+		t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+	}
+	out := h.out.String()
+	for _, want := range []string{
+		"./deploy/compose.sh logs api",
+		"https://video.example.org/setup/claim",
+		"invalidates the previous one",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the owner-claim handoff is missing %q:\n%s", want, out)
+		}
+	}
+	// NEVER the bare form: on a deployment host it silently picks up
+	// docker-compose.override.yml's dev defaults and addresses a different
+	// project than the deploy scripts do.
+	if strings.Contains(out, "docker compose logs") {
+		t.Errorf("the report told the operator to run a bare `docker compose logs`:\n%s", out)
+	}
+}
+
 // Rewriting the env file a deployment is running from needs one deliberate
 // keystroke — --yes, or a --from that makes the merge explicit. The refusal names
 // both, and says nothing is lost either way.
@@ -229,7 +363,7 @@ func TestSetupMergeKeepsEveryExistingValue(t *testing.T) {
 	first := h.readOutput(t)
 
 	extra := filepath.Join(h.dir, "extra.env")
-	if err := os.WriteFile(extra, []byte("PUBLIC_BASE_URL=https://other.example.org\nINSTANCE_NAME=Vidra\n"), 0o600); err != nil {
+	if err := os.WriteFile(extra, []byte("PUBLIC_BASE_URL=https://other.example.org\nINSTANCE_DESCRIPTION=A second source\n"), 0o600); err != nil {
 		t.Fatalf("write extra env: %v", err)
 	}
 	if err := h.run(h.setupArgs("--from", extra)...); err != nil {
@@ -241,7 +375,7 @@ func TestSetupMergeKeepsEveryExistingValue(t *testing.T) {
 			t.Errorf("%s was replaced by the --from file's value", key)
 		}
 	}
-	if !strings.Contains(got, "INSTANCE_NAME=Vidra") {
+	if !strings.Contains(got, "INSTANCE_DESCRIPTION=A second source") {
 		t.Errorf("the --from file's extra key was dropped:\n%s", got)
 	}
 	if !strings.Contains(h.out.String(), "preserved secrets") {
@@ -603,6 +737,184 @@ func TestSetupSecretsCanAvoidArgv(t *testing.T) {
 	})
 }
 
+// The flags ARE the unattended interface, and a real install needs a dozen of
+// them. --answers puts them in a file that can be reviewed, diffed and re-run
+// instead of an enormous shell line retyped at 3am.
+func TestSetupAnswersFile(t *testing.T) {
+	write := func(t *testing.T, h *harness, body string) string {
+		t.Helper()
+		path := filepath.Join(h.dir, "answers")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write answers file: %v", err)
+		}
+		return path
+	}
+
+	t.Run("the file answers the flags", func(t *testing.T) {
+		h := newHarness(t)
+		// Both spellings, a comment, a blank line and a bool — everything the
+		// format promises, in the file that proves it.
+		path := write(t, h, `# a production install, in a file
+domain = video.example.org
+release-tag=v0.1.1
+
+storage = local
+acme-email = ops@example.org
+ipfs = true
+`)
+		if err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive",
+			"--answers", path}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+		}
+		got := h.readOutput(t)
+		for _, tc := range []struct{ key, want string }{
+			{"PUBLIC_BASE_URL", "https://video.example.org"},
+			{"VIDRA_CORE_TAG", "v0.1.1"},
+			{"STORAGE_BACKEND", "local"},
+			{"VIDRA_ACME_EMAIL", "ops@example.org"},
+			{"VIDRA_COMPOSE_PROFILES", "core frontend ipfs"},
+		} {
+			if v := valueOf(t, got, tc.key); v != tc.want {
+				t.Errorf("%s = %q, want %q", tc.key, v, tc.want)
+			}
+		}
+	})
+
+	// A file that could overrule the command line would make the command line
+	// unreadable: whatever is typed has to be what happens.
+	t.Run("argv wins", func(t *testing.T) {
+		h := newHarness(t)
+		path := write(t, h, "domain = from-the-file.example.org\nrelease-tag = v0.1.1\nstorage = local\n")
+		if err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive",
+			"--answers", path, "--domain", "from-argv.example.org"}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "PUBLIC_BASE_URL"); v != "https://from-argv.example.org" {
+			t.Errorf("PUBLIC_BASE_URL = %q, want the command line's domain", v)
+		}
+	})
+
+	t.Run("an unknown name names the line", func(t *testing.T) {
+		h := newHarness(t)
+		path := write(t, h, "domain = video.example.org\n# the next line is a typo\ndomian = video.example.org\n")
+		err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive", "--answers", path}, h.caddyArgs()...)...)
+		if err == nil {
+			t.Fatal("an unknown answer was accepted")
+		}
+		for _, want := range []string{path + ":3", "domian", "-h"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		}
+	})
+
+	t.Run("a line that is not an assignment is refused", func(t *testing.T) {
+		h := newHarness(t)
+		path := write(t, h, "domain video.example.org\n")
+		err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive", "--answers", path}, h.caddyArgs()...)...)
+		if err == nil || !strings.Contains(err.Error(), path+":1") {
+			t.Fatalf("err = %v, want the malformed line named", err)
+		}
+	})
+
+	// stdin belongs to the terminal running the install, and only one flag may
+	// ever claim it. A file that could claim it would make that rule
+	// unenforceable from the command line, which is where it is enforced.
+	t.Run("a secret may not read stdin from the file", func(t *testing.T) {
+		h := newHarness(t)
+		h.stdin = "the-secret\n"
+		path := write(t, h, "domain = video.example.org\nstorage = local\ns3-secret-key = -\n")
+		err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive", "--answers", path}, h.caddyArgs()...)...)
+		if err == nil {
+			t.Fatal("an answers file claimed stdin")
+		}
+		for _, want := range []string{"stdin", "@<path>", "VIDRA_SETUP_S3_SECRET_KEY"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("refusal %q does not offer %q", err, want)
+			}
+		}
+		// The other indirections are untouched.
+		keyFile := filepath.Join(h.dir, "s3.secret")
+		if err := os.WriteFile(keyFile, []byte("from-a-file\n"), 0o600); err != nil {
+			t.Fatalf("write secret file: %v", err)
+		}
+		path = write(t, h, "domain = video.example.org\nrelease-tag = v0.1.1\nstorage = s3\n"+
+			"s3-endpoint = fra1.example.net\ns3-region = fra1\ns3-bucket = media\ns3-access-key = AKIA\n"+
+			"s3-secret-key = @"+keyFile+"\n")
+		if err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive", "--answers", path}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("setup with an @file secret in the answers file: %v (stderr: %s)", err, h.err.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "STORAGE_S3_SECRET_KEY"); v != "from-a-file" {
+			t.Errorf("STORAGE_S3_SECRET_KEY = %q, want the @file's contents", v)
+		}
+	})
+
+	// --answers implies NOTHING else — not --non-interactive, not --yes — so a
+	// partial file is a pre-seeded interview: what it answers is not asked, what
+	// it leaves out still is.
+	t.Run("a partial file is a pre-seeded interview", func(t *testing.T) {
+		h := newHarness(t)
+		path := write(t, h, "domain = video.example.org\nrelease-tag = v0.1.1\ntls-mode = internal\n")
+		h.script = []promptAnswer{{match: "", answer: ""}} // press enter through whatever is left
+		if err := h.run(append([]string{"setup", "--template", h.template, "--answers", path}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+		}
+		asked := strings.Join(h.asked, "\n")
+		if strings.Contains(asked, "Public domain") || strings.Contains(asked, "Release tag") {
+			t.Errorf("a question the file answered was asked anyway:\n%s", asked)
+		}
+		if !strings.Contains(asked, "Media storage backend") {
+			t.Errorf("a question the file left out was not asked:\n%s", asked)
+		}
+		got := h.readOutput(t)
+		if v := valueOf(t, got, "PUBLIC_BASE_URL"); v != "https://video.example.org" {
+			t.Errorf("PUBLIC_BASE_URL = %q, want the file's domain", v)
+		}
+		if v := valueOf(t, got, "VIDRA_TLS_MODE"); v != "internal" {
+			t.Errorf("VIDRA_TLS_MODE = %q, want the file's mode", v)
+		}
+	})
+
+	// "Every line is validated whether or not it is applied" has to hold for the
+	// lines argv overrides, and it did not: those were skipped unchecked, so a
+	// malformed value sat in the file until the run where the operator stopped
+	// passing the flag — which is the run they were counting on the file for.
+	t.Run("a malformed value is caught on a line argv overrides", func(t *testing.T) {
+		h := newHarness(t)
+		path := write(t, h, "domain = video.example.org\nrelease-tag = v0.1.1\nstorage = local\nipfs = maybe\n")
+		err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive",
+			"--ipfs=false", "--answers", path}, h.caddyArgs()...)...)
+		if err == nil {
+			t.Fatal("a malformed value on a line the command line overrides was accepted")
+		}
+		for _, want := range []string{path + ":4", "ipfs", "maybe"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		}
+
+		// Validating the line does not APPLY it: argv still wins.
+		path = write(t, h, "domain = video.example.org\nrelease-tag = v0.1.1\nstorage = local\nipfs = true\n")
+		if err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive",
+			"--ipfs=false", "--answers", path}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "VIDRA_COMPOSE_PROFILES"); strings.Contains(v, "ipfs") {
+			t.Errorf("VIDRA_COMPOSE_PROFILES = %q, want the command line's --ipfs=false to have won", v)
+		}
+	})
+
+	t.Run("a missing file is an error, not an empty answer set", func(t *testing.T) {
+		h := newHarness(t)
+		missing := filepath.Join(h.dir, "nope")
+		err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive",
+			"--domain", "video.example.org", "--answers", missing}, h.caddyArgs()...)...)
+		if err == nil || !strings.Contains(err.Error(), missing) {
+			t.Fatalf("err = %v, want the unreadable answers file named", err)
+		}
+	})
+}
+
 // A value with a newline in it would add LINES to the env file, truncating the
 // secret and injecting an assignment. Refuse, naming the variable, and write
 // nothing.
@@ -644,14 +956,23 @@ func TestSetupHelpSucceedsOnStdout(t *testing.T) {
 
 func TestSetupInteractiveAnswersTheMinimalQuestions(t *testing.T) {
 	h := newHarness(t)
-	// domain, TLS mode, ACME contact, release tag, storage, external Postgres?,
-	// external Redis?, optional components?, SMTP?, open registration?
-	h.stdin = "video.example.org\nacme\nops@example.org\nv0.1.1\nlocal\nn\nn\nn\nn\nn\n"
+	h.script = []promptAnswer{
+		{match: "Public domain", answer: "video.example.org"},
+		{match: "TLS certificates", answer: "acme"},
+		{match: "Contact address", answer: "ops@example.org"},
+		{match: "Name of this instance", answer: "Cinema Vidra"},
+		{match: "Release tag", answer: "v0.1.1"},
+		{match: "Media storage backend", answer: "local"},
+		{match: "", answer: "n"}, // everything left is a yes/no, and the answer to all of them is no
+	}
 	if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
 	}
 	got := h.readOutput(t)
-	for _, want := range []string{"PUBLIC_BASE_URL=https://video.example.org", "VIDRA_CORE_TAG=v0.1.1", "STORAGE_BACKEND=local", "REGISTRATION_ENABLED=false"} {
+	for _, want := range []string{
+		"PUBLIC_BASE_URL=https://video.example.org", "VIDRA_CORE_TAG=v0.1.1",
+		"STORAGE_BACKEND=local", "REGISTRATION_ENABLED=false", "INSTANCE_NAME=Cinema Vidra",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("generated file is missing %q", want)
 		}
@@ -659,6 +980,72 @@ func TestSetupInteractiveAnswersTheMinimalQuestions(t *testing.T) {
 	if !strings.Contains(h.out.String(), "Public domain of this instance") {
 		t.Errorf("the domain was not asked for:\n%s", h.out.String())
 	}
+}
+
+// INSTANCE_NAME is the answer no other gate can catch: the template's "Example
+// Video" is a plausible value rather than a <...> placeholder, so it passes
+// --check and ships — served at /api/v1/instance, in NodeInfo, and as the TOTP
+// issuer label in every user's authenticator app.
+func TestSetupInstanceName(t *testing.T) {
+	t.Run("the flag lands, and a re-run keeps it", func(t *testing.T) {
+		h := newHarness(t)
+		if err := h.run(h.setupArgs("--instance-name", "Cinema Vidra")...); err != nil {
+			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "INSTANCE_NAME"); v != "Cinema Vidra" {
+			t.Fatalf("INSTANCE_NAME = %q, want the flag's value", v)
+		}
+		// A re-run about something else must not reset the instance's name to the
+		// template's example.
+		if err := h.run(h.setupArgs("--yes", "--release-tag", "v0.2.0")...); err != nil {
+			t.Fatalf("re-run: %v (stderr: %s)", err, h.err.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "INSTANCE_NAME"); v != "Cinema Vidra" {
+			t.Errorf("INSTANCE_NAME = %q after a re-run that never mentioned it, want it kept", v)
+		}
+	})
+
+	t.Run("the interview offers the current name and keeps it on enter", func(t *testing.T) {
+		h := newHarness(t)
+		if err := h.run(h.setupArgs("--instance-name", "Cinema Vidra")...); err != nil {
+			t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
+		}
+		h.script = []promptAnswer{{match: "", answer: ""}}
+		if err := h.run(append([]string{"setup", "--template", h.template, "--yes"}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
+		}
+		if !strings.Contains(h.out.String(), "Name of this instance (shown publicly, and as the TOTP issuer) [Cinema Vidra]") {
+			t.Errorf("the prompt did not offer the current name as its default:\n%s", h.out.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "INSTANCE_NAME"); v != "Cinema Vidra" {
+			t.Errorf("INSTANCE_NAME = %q after pressing enter, want it kept", v)
+		}
+	})
+
+	// On a FIRST install the default is the template's example, which is the
+	// whole reason the question exists: it is the only moment anybody is shown
+	// the name the instance would otherwise ship with.
+	t.Run("a first install is shown the template's example", func(t *testing.T) {
+		h := newHarness(t)
+		h.script = []promptAnswer{
+			{match: "Public domain", answer: "video.example.org"},
+			{match: "Name of this instance", answer: "Cinema Vidra"},
+			{match: "Release tag", answer: "v0.1.1"},
+			{match: "Media storage backend", answer: "local"},
+			{match: "TLS certificates", answer: "acme"},
+			{match: "Contact address", answer: "ops@example.org"},
+			{match: "", answer: "n"},
+		}
+		if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
+		}
+		if !strings.Contains(h.out.String(), "Name of this instance (shown publicly, and as the TOTP issuer) [Example Video]") {
+			t.Errorf("the prompt did not show the template's example as the default:\n%s", h.out.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "INSTANCE_NAME"); v != "Cinema Vidra" {
+			t.Errorf("INSTANCE_NAME = %q, want the answered name", v)
+		}
+	})
 }
 
 // An interactive RE-RUN must not change policy the operator did not answer. The
@@ -676,10 +1063,8 @@ func TestSetupInteractiveReRunKeepsTheRegistrationPolicy(t *testing.T) {
 		t.Fatalf("fixture is not open+approval:\n%s", before)
 	}
 
-	// Re-run interactively, pressing enter at every question: domain, TLS mode,
-	// ACME contact, release tag, storage, external Postgres?, external Redis?,
-	// optional components?, SMTP?, open registration?, approval?
-	h.stdin = "\n\n\n\n\n\n\n\n\n\n\n"
+	// Re-run interactively, pressing enter at EVERY question, whatever they are.
+	h.script = []promptAnswer{{match: "", answer: ""}}
 	if err := h.run(append([]string{"setup", "--template", h.template, "--yes"}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
 	}
@@ -699,6 +1084,186 @@ func TestSetupInteractiveReRunKeepsTheRegistrationPolicy(t *testing.T) {
 	}
 }
 
+// A typo used to cost the WHOLE interview: an unusable domain was discovered by
+// the engine, after every other question had been answered, and the run exited
+// having written nothing. The prompt now validates with the engine's own
+// validator and re-asks, so it costs one line.
+func TestSetupInteractiveReAsksUntilTheAnswerIsUsable(t *testing.T) {
+	h := newHarness(t)
+	// Each validated prompt is answered wrongly ONCE and then correctly, which
+	// only gets through if the command asked again.
+	h.script = []promptAnswer{
+		{match: "Public domain", answer: "https://*.example.org", once: true},
+		{match: "Public domain", answer: "video.example.org"},
+		{match: "TLS certificates", answer: "letsencrypt", once: true},
+		{match: "TLS certificates", answer: "acme"},
+		{match: "Contact address", answer: "ops at example.org", once: true},
+		{match: "Contact address", answer: "ops@example.org"},
+		{match: "Name of this instance", answer: "Cinema Vidra"},
+		{match: "Release tag", answer: "v0.1.1"},
+		{match: "Media storage backend", answer: "local"},
+		{match: "", answer: "n"},
+	}
+	if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
+		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
+	}
+	out := h.out.String()
+	for _, want := range []string{"wildcards are not a host", "unsupported TLS mode", "it contains whitespace"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the rejected answer was not explained at the prompt (%q):\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "Public domain of this instance"); n != 2 {
+		t.Errorf("the domain was asked %d time(s), want it re-asked once", n)
+	}
+	got := h.readOutput(t)
+	for _, tc := range []struct{ key, want string }{
+		{"PUBLIC_BASE_URL", "https://video.example.org"},
+		{"VIDRA_TLS_MODE", "acme"},
+		{"VIDRA_ACME_EMAIL", "ops@example.org"},
+	} {
+		if v := valueOf(t, got, tc.key); v != tc.want {
+			t.Errorf("%s = %q, want the corrected answer %q", tc.key, v, tc.want)
+		}
+	}
+}
+
+// The domain feedback is exactly one line, and it is FEEDBACK: DNS that does not
+// point here yet is an ordinary state of a fresh install (it is what
+// VIDRA_TLS_MODE=internal exists for), and a check that could not COMPLETE is
+// not a check that failed. Neither may stop an install.
+func TestSetupInteractiveReportsTheDomainDNS(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result preflight.DomainResult
+		want   string
+	}{
+		{
+			name:   "resolves here",
+			result: preflight.DomainResult{Status: preflight.StatusOK, Message: "video.example.org resolves to 203.0.113.10, which is this host"},
+			want:   "  ✓ video.example.org resolves to 203.0.113.10, which is this host",
+		},
+		{
+			name:   "points somewhere else",
+			result: preflight.DomainResult{Status: preflight.StatusFail, Message: "video.example.org resolves to 198.51.100.7, which is not this host (203.0.113.10)"},
+			want:   "  ⚠ video.example.org resolves to 198.51.100.7, which is not this host (203.0.113.10) — not a blocker",
+		},
+		{
+			name:   "could not be checked",
+			result: preflight.DomainResult{Status: preflight.StatusWarn, Message: "this host's own public IP could not be determined"},
+			want:   "  ⚠ this host's own public IP could not be determined — not a blocker",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.dns = tc.result
+			h.script = []promptAnswer{
+				{match: "Public domain", answer: "video.example.org"},
+				{match: "TLS certificates", answer: "acme"},
+				{match: "Contact address", answer: "ops@example.org"},
+				{match: "Name of this instance", answer: "Cinema Vidra"},
+				{match: "Release tag", answer: "v0.1.1"},
+				{match: "Media storage backend", answer: "local"},
+				{match: "", answer: "n"},
+			}
+			if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
+				t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
+			}
+			if !strings.Contains(h.out.String(), tc.want) {
+				t.Errorf("the DNS line is missing %q:\n%s", tc.want, h.out.String())
+			}
+			// Whatever it said, the file was written: this is never a gate.
+			if v := valueOf(t, h.readOutput(t), "PUBLIC_BASE_URL"); v != "https://video.example.org" {
+				t.Errorf("PUBLIC_BASE_URL = %q — the DNS feedback blocked the install", v)
+			}
+		})
+	}
+}
+
+// The shipped template says STORAGE_BACKEND=s3 next to <your Spaces access key>
+// placeholders, so an operator pressing enter through the interview used to
+// choose a backend with no credentials — and the run then refused to write
+// anything, after every other question had been answered. A default that cannot
+// pass Check is not a default.
+func TestSetupInteractiveStorageDefaultAvoidsThePlaceholderCredentials(t *testing.T) {
+	// The shipped template's storage block, spelled as env/production.env.example
+	// spells it.
+	s3Template := strings.NewReplacer(
+		"STORAGE_BACKEND=local", "STORAGE_BACKEND=s3",
+		"STORAGE_S3_ACCESS_KEY=", "STORAGE_S3_ACCESS_KEY=<your Spaces access key>",
+		"STORAGE_S3_SECRET_KEY=", "STORAGE_S3_SECRET_KEY=<your Spaces secret key>",
+	).Replace(cliTemplate)
+
+	script := []promptAnswer{
+		{match: "Public domain", answer: "video.example.org"},
+		{match: "TLS certificates", answer: "acme"},
+		{match: "Contact address", answer: "ops@example.org"},
+		{match: "Name of this instance", answer: "Cinema Vidra"},
+		{match: "Release tag", answer: "v0.1.1"},
+		{match: "Media storage backend", answer: ""}, // enter: whatever is offered
+		{match: "", answer: "n"},
+	}
+
+	t.Run("placeholders offer local", func(t *testing.T) {
+		h := newHarness(t)
+		if err := os.WriteFile(h.template, []byte(s3Template), 0o644); err != nil {
+			t.Fatalf("write template: %v", err)
+		}
+		h.script = script
+		if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
+		}
+		if !strings.Contains(h.out.String(), "Media storage backend (local|s3) [local]") {
+			t.Errorf("the storage prompt offered a backend with no credentials:\n%s", h.out.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "STORAGE_BACKEND"); v != "local" {
+			t.Errorf("STORAGE_BACKEND = %q, want the offered default to have been accepted", v)
+		}
+	})
+
+	// The template's answer is the RECOMMENDATION, and it stands the moment there
+	// are real keys behind it — a re-run on an instance already serving from S3
+	// must not offer to move its media.
+	t.Run("real credentials keep s3", func(t *testing.T) {
+		h := newHarness(t)
+		if err := os.WriteFile(h.template, []byte(s3Template), 0o644); err != nil {
+			t.Fatalf("write template: %v", err)
+		}
+		if err := h.run(h.setupArgs("--storage", "s3", "--s3-endpoint", "fra1.example.net",
+			"--s3-region", "fra1", "--s3-bucket", "media", "--s3-access-key", "AKIA",
+			"--s3-secret-key", "the-live-secret")...); err != nil {
+			t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
+		}
+		h.script = []promptAnswer{{match: "", answer: ""}}
+		if err := h.run(append([]string{"setup", "--template", h.template, "--yes"}, h.caddyArgs()...)...); err != nil {
+			t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
+		}
+		if !strings.Contains(h.out.String(), "Media storage backend (local|s3) [s3]") {
+			t.Errorf("a working s3 backend was not offered back:\n%s", h.out.String())
+		}
+		if v := valueOf(t, h.readOutput(t), "STORAGE_BACKEND"); v != "s3" {
+			t.Errorf("STORAGE_BACKEND = %q, want s3 kept", v)
+		}
+	})
+
+	// Non-interactive behaviour is untouched: the refusal that already exists is
+	// the answer there, because there is nobody to offer a different default to.
+	t.Run("non-interactive still refuses s3 with no credentials", func(t *testing.T) {
+		h := newHarness(t)
+		if err := os.WriteFile(h.template, []byte(s3Template), 0o644); err != nil {
+			t.Fatalf("write template: %v", err)
+		}
+		err := h.run("setup", "--template", h.template, "--non-interactive",
+			"--domain", "video.example.org", "--release-tag", "v0.1.1")
+		if err == nil {
+			t.Fatal("an unattended install accepted the template's placeholder credentials")
+		}
+		if !strings.Contains(h.err.String(), "STORAGE_S3_ACCESS_KEY") {
+			t.Errorf("the refusal did not name the placeholder credential:\n%s", h.err.String())
+		}
+	})
+}
+
 // An interactive secret prompt must never print the current secret as its
 // default, and when the terminal cannot be told to stop echoing it has to SAY
 // the input is visible rather than pretend otherwise. (Piped stdin, as here, is
@@ -711,10 +1276,8 @@ func TestSetupInteractiveSecretPromptDoesNotEchoTheCurrentValue(t *testing.T) {
 		t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
 	}
 
-	// domain, TLS mode, ACME contact, tag, storage, endpoint, region, bucket,
-	// access key, secret, external Postgres?, external Redis?, optional
-	// components?, SMTP?, reg?
-	h.stdin = "\n\n\n\n\n\n\n\n\n\n\n\n\nn\n\n"
+	// Enter at every question, which for the S3 block means "keep what is there".
+	h.script = []promptAnswer{{match: "", answer: ""}}
 	if err := h.run(append([]string{"setup", "--template", h.template, "--yes"}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
 	}
@@ -736,10 +1299,15 @@ func TestSetupInteractiveSecretPromptDoesNotEchoTheCurrentValue(t *testing.T) {
 // default, which is where it went missing.
 func TestSetupInteractiveWarnsWhenTheTemplateTagIsAccepted(t *testing.T) {
 	h := newHarness(t)
-	// domain, TLS mode, ACME contact, release tag (enter = the template's
-	// v0.1.0), storage, external Postgres?, external Redis?, optional
-	// components?, SMTP?, reg?
-	h.stdin = "video.example.org\nacme\nops@example.org\n\nlocal\nn\nn\nn\nn\nn\n"
+	h.script = []promptAnswer{
+		{match: "Public domain", answer: "video.example.org"},
+		{match: "TLS certificates", answer: "acme"},
+		{match: "Contact address", answer: "ops@example.org"},
+		{match: "Name of this instance", answer: "Cinema Vidra"},
+		{match: "Release tag", answer: ""}, // enter: the template's example v0.1.0
+		{match: "Media storage backend", answer: "local"},
+		{match: "", answer: "n"},
+	}
 	if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
 	}
@@ -821,9 +1389,17 @@ func TestSetupKeepsTheProfileListOnAReRun(t *testing.T) {
 // treats it as the secret it is.
 func TestSetupInteractiveAsksForAManagedDatabase(t *testing.T) {
 	h := newHarness(t)
-	// domain, TLS mode, ACME contact, tag, storage, external Postgres? y, its
-	// DSN, external Redis? n, optional components? n, SMTP? n, registration? n
-	h.stdin = "video.example.org\nacme\nops@example.org\nv0.1.1\nlocal\ny\n" + managedDSN + "\nn\nn\nn\nn\n"
+	h.script = []promptAnswer{
+		{match: "Public domain", answer: "video.example.org"},
+		{match: "TLS certificates", answer: "acme"},
+		{match: "Contact address", answer: "ops@example.org"},
+		{match: "Name of this instance", answer: "Cinema Vidra"},
+		{match: "Release tag", answer: "v0.1.1"},
+		{match: "Media storage backend", answer: "local"},
+		{match: "external/managed PostgreSQL", answer: "y"},
+		{match: "Managed PostgreSQL connection string", answer: managedDSN},
+		{match: "", answer: "n"}, // the bundled Redis, no components, no SMTP, closed registration
+	}
 	if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
 	}
@@ -1002,6 +1578,49 @@ func TestSetupMissingCaddyTemplateNamesThePath(t *testing.T) {
 	}
 }
 
+// `curl … | sh` holds stdin, so the interview has nobody to ask. That used to be
+// discovered one question in, as an EOF failure the operator had no way to read
+// as "you needed a different command"; it is now refused up front, naming both
+// ways forward.
+func TestSetupRefusesAnInterviewOnAPipe(t *testing.T) {
+	h := newHarness(t)
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer r.Close()
+	// A pipe with answers in it is still refused: the point is that the file
+	// descriptor is not a terminal, not that it happens to be empty.
+	if _, err := w.WriteString("video.example.org\n"); err != nil {
+		t.Fatalf("write pipe: %v", err)
+	}
+	w.Close()
+
+	var out, errBuf bytes.Buffer
+	err = run(streams{in: r, out: &out, err: &errBuf},
+		append([]string{"setup", "--template", h.template}, h.caddyArgs()...))
+	if err == nil {
+		t.Fatal("an interview was started on a pipe")
+	}
+	for _, want := range []string{"--non-interactive", "terminal"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not name %q", err, want)
+		}
+	}
+	if _, statErr := os.Stat(h.output); !errors.Is(statErr, os.ErrNotExist) {
+		t.Error("the refused run wrote a file anyway")
+	}
+	if strings.Contains(out.String(), "Public domain") {
+		t.Errorf("a question was asked before the refusal:\n%s", out.String())
+	}
+
+	// The same pipe with --non-interactive is not refused: the flag is the
+	// answer the message asks for.
+	if err := h.run(h.setupArgs()...); err != nil {
+		t.Fatalf("--non-interactive on the same shape of input: %v (stderr: %s)", err, h.err.String())
+	}
+}
+
 // An unattended install must fail loudly rather than hang or invent an answer.
 func TestSetupNonInteractiveNeedsADomain(t *testing.T) {
 	h := newHarness(t)
@@ -1024,12 +1643,24 @@ func TestOutputPathDefault(t *testing.T) {
 	}
 }
 
-// The name here has to be one the dispatch table does NOT carry — it used to be
-// "doctor", which is now a real subcommand and would have run it against the
-// working directory instead.
+// The name here has to be one the dispatch table does NOT carry, and the table
+// keeps growing: this test named "doctor" until doctor shipped, then "deploy"
+// until deploy did, and each time it stopped testing an unknown command and
+// started running a real one against the working directory. So the name is
+// DERIVED from the table instead of chosen — the next command to land cannot
+// silently take it over.
 func TestUnknownCommandPrintsUsage(t *testing.T) {
+	name := "not-a-command"
+	for taken := true; taken; {
+		taken = false
+		for _, c := range commands {
+			if c.name == name {
+				name, taken = name+"-x", true
+			}
+		}
+	}
 	var out, errBuf bytes.Buffer
-	err := run(streams{in: strings.NewReader(""), out: &out, err: &errBuf}, []string{"deploy"})
+	err := run(streams{in: strings.NewReader(""), out: &out, err: &errBuf}, []string{name})
 	if !errors.Is(err, errReported) {
 		t.Fatalf("err = %v, want errReported", err)
 	}

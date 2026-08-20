@@ -26,6 +26,14 @@ import (
 	"github.com/vidra/vidra-core/migrations"
 )
 
+// Table is the ledger this package reads and writes. It is golang-migrate's
+// DEFAULT name, kept deliberately so a database last advanced by the
+// migrate/migrate CLI container is picked up mid-chain with no conversion step;
+// renaming it would strand every existing install. Anything that reads the
+// ledger through its own SQL rather than through this package — the /schemaz
+// surface, `vidra doctor`'s report — takes the name from here.
+const Table = "schema_migrations"
+
 // Status is the state of the schema_migrations ledger.
 type Status struct {
 	// Version is the highest applied migration, 0 when Applied is false.

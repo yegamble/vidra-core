@@ -40,6 +40,8 @@ bin/
 dist/
 *.test
 *.out
+# `go build ./cmd/vidra` output, if it lands here instead of bin/.
+/vidra
 
 # --- Env ---
 .env

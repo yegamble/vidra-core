@@ -21,8 +21,8 @@
   <a href="https://github.com/yegamble/vidra-core/releases"><img src="https://img.shields.io/github/v/release/yegamble/vidra-core?label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/yegamble/vidra-core" alt="License: AGPL-3.0"></a>
   <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="Go 1.26">
-  <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL">
-  <img src="https://img.shields.io/badge/Redis-7-FF4438?logo=redis&logoColor=white" alt="Redis">
+  <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL 18">
+  <img src="https://img.shields.io/badge/Redis-8-FF4438?logo=redis&logoColor=white" alt="Redis 8">
   <img src="https://img.shields.io/badge/FFmpeg-transcoding-007808?logo=ffmpeg&logoColor=white" alt="FFmpeg">
 </p>
 
@@ -31,7 +31,7 @@ platform you install yourself. This repository (`vidra-core`) exposes the Vidra
 HTTP API; the Next.js frontend lives in the separate
 [`vidra-user`](https://github.com/yegamble/vidra-user) repository and consumes it.
 
-Vidra Core serves a **209-path OpenAPI 3.1 contract** backed by **98 SQL
+Vidra Core serves a **214-path OpenAPI 3.1 contract** backed by **104 SQL
 migrations**. It runs the full creator pipeline — upload → transcode → HLS/VP9 —
 plus live streaming over RTMP with replay-to-VOD, end-to-end-encrypted DMs,
 OAuth/OIDC and TOTP auth, ATProto (Bluesky) identity, dual-tier IPFS mirroring,
@@ -69,6 +69,7 @@ Then:
 curl localhost:8080/healthz          # liveness
 curl localhost:8080/readyz           # readiness (postgres + redis)
 curl localhost:8080/version          # build version / commit / date
+curl localhost:8080/schemaz          # build + migration-ledger version (host-local tooling)
 curl localhost:8080/api/v1/nodeinfo  # instance discovery metadata
 curl localhost:8080/api/v1/instance  # public about/config (name, software, policy, features)
 curl localhost:8080/api/v1/instance/about # long-form markdown about-page content
@@ -85,8 +86,8 @@ make migrate-up                                   # migrations are embedded in t
 make run                                           # API against local Postgres/Redis
 ```
 
-**`make ci` is the canonical gate.** It runs `fmt-check vet openapi-verify
-sqlc-verify test-race` — the exact set `backend-ci.yml` runs, so "passes locally"
+**`make ci` is the canonical gate.** It runs `fmt-check vet migrate-lint
+openapi-verify sqlc-verify test-race` — the exact set `backend-ci.yml` runs, so "passes locally"
 == "passes in GitHub". Add any new required check there, never only in the workflow.
 
 - `make check` — fast local loop (`fmt vet test`).
@@ -100,9 +101,26 @@ sqlc-verify test-race` — the exact set `backend-ci.yml` runs, so "passes local
   exploratory signal, not part of the gate. The `bench-fuzz` workflow runs these
   plus a `go test -fuzz` pass on demand.
 - `make build` — build `./bin/api`, injecting version/commit/date via `-ldflags`.
-- `make build-vidra` — build `./bin/vidra`, the host-side operator CLI (`vidra setup`),
-  with the same `-ldflags`. It is a separate binary because it runs beside `docker
-  compose` on the host, before any image exists.
+- `make build-vidra` — build `./bin/vidra`, the host-side operator CLI, with the same
+  `-ldflags`. It is a separate binary because it runs beside `docker compose` on the
+  host, before any image exists. Its commands: `setup` (generate the production env
+  file), `doctor` (check a deployment), `status` (what is running and whether it
+  answers), `logs`, `restart <service>`, `update` (below), and `deploy` / `rollback` /
+  `backup` / `restore` / `release` — those five exec the deployment's own `deploy/*.sh`
+  with your terminal attached and return the script's exit code unchanged, so every gate
+  stays in the scripts, in one copy. `vidra <command> -h` for each.
+- `vidra update` is the one command that is not a wrapper, because choosing a release is
+  work no script does. It reads the releases of all three component repositories over
+  plain HTTPS (no `gh`, no credentials; `GITHUB_TOKEN` only raises the rate limit),
+  refuses a tag that is not published in all three, refuses an image whose embedded
+  migrations are OLDER than the running database (the target tag's `migrations/` read
+  out of the tag's tree, against the api's `/schemaz` — the one mistake `vidra deploy`
+  cannot notice, since it compares the ledger against the checkout it just moved to the
+  same tag), snapshots the env file into `backups/env-history/` and keeps ten
+  generations, then runs `deploy/deploy.sh`. If the deploy's health probes fail it flips
+  the tags back through `deploy/rollback.sh` — but only when the target is ONE release
+  ahead, which is exactly the span the schema-compat policy covers. `--check` reports
+  current vs latest and changes nothing.
 - `make migrate-up` / `make migrate-version` — apply the migrations embedded in the
   api binary (`api migrate up|version`), the same code path the published image runs;
   no `migrate` CLI needed. After a migration dies halfway, `api migrate force
@@ -110,11 +128,14 @@ sqlc-verify test-race` — the exact set `backend-ci.yml` runs, so "passes local
   so the schema must already match the version you name). `make migrate-down` still uses the
   [`migrate`](https://github.com/golang-migrate/migrate) CLI — rollback is an
   operator-with-CLI operation, the shipped binary only goes forward.
+- `make migrate-lint` — reject destructive DDL in forward migrations (the one-release
+  schema-compat policy, enforced); `schema-compat.yml` additionally runs the previous
+  release's integration suite against the new schema.
 - `make help` — the full target list (fmt, vet, migrate-up/version/down, sqlc, up/down, …).
 
 ## Configuration
 
-`.env.example` documents the full configuration surface (123 keys) — this is not a
+`.env.example` documents the full configuration surface (138 keys) — this is not a
 full table. The load-bearing knobs:
 
 | Key | Default | Notes |
@@ -130,10 +151,6 @@ full table. The load-bearing knobs:
 
 Feature gates default **OFF**: yt-dlp URL import, channel auto-sync, ATProto
 cross-posting, Whisper captions, IPFS mirroring, and malware scanning are all opt-in.
-
-> **Honest note:** the `YTDLP_*` and `CHANNEL_SYNC_*` keys are real, wired config
-> (`internal/config`) but are not yet listed in `.env.example`. See
-> [docs/features.md](docs/features.md#video-pipeline) for their names and defaults.
 
 ## Compose profiles & ports
 
@@ -251,7 +268,7 @@ fail-open Redis rate limiter. See [Platform](docs/features.md#platform).
 
 ## API contract
 
-`api/openapi.yaml` (OpenAPI 3.1, 209 paths) is the source of truth for the HTTP API and
+`api/openapi.yaml` (OpenAPI 3.1, 214 paths) is the source of truth for the HTTP API and
 is consumed by the `vidra-user` frontend. A drift guard keeps it honest:
 `make openapi-verify` (the `TestOpenAPIContract` test) fails if a route is added,
 removed, or renamed without a matching spec edit, and the `openapi.yml` CI workflow
@@ -285,12 +302,13 @@ and what is imported vs. regenerated afterwards live in the operator guide
 
 ```
 cmd/api/               HTTP service entrypoint + `migrate up|version|force` (build metadata via -ldflags)
-cmd/vidra/             host-side operator CLI (`vidra setup`); `make build-vidra`
+cmd/vidra/             host-side operator CLI: setup, doctor, status, logs, restart,
+                       update, deploy/rollback/backup/restore/release; `make build-vidra`
 cmd/peertube-import/   one-way PeerTube importer CLI
 internal/              57 packages: httpapi, auth, video, transcode, live, storage,
                        messaging, e2ee, ipfs, atproto, config, store (sqlc), …
 migrations/            104 up/down migration pairs, embedded into the binary
-api/openapi.yaml       OpenAPI 3.1 contract (source of truth, 209 paths)
+api/openapi.yaml       OpenAPI 3.1 contract (source of truth, 214 paths)
 deploy/                compose sidecar configs (ipfs, rtmp, otel, …)
 docs/                  operator + feature docs (this README links here)
 .ralph/specs/          product/architecture specs, preserved as docs
