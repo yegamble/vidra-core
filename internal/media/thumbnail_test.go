@@ -21,7 +21,7 @@ func TestThumbnailSeekSeconds(t *testing.T) {
 }
 
 func TestThumbnailArgs(t *testing.T) {
-	args := thumbnailArgs("/in.mp4", "/out.jpg", 1)
+	args := thumbnailArgs(localSource("/in.mp4"), "/out.jpg", 1)
 	got := strings.Join(args, " ")
 	want := "-y -ss 1 -i /in.mp4 -frames:v 1 -vf scale=640:-2 -q:v 3 /out.jpg"
 	if got != want {
@@ -44,7 +44,7 @@ func TestThumbnailAtArgs(t *testing.T) {
 		{12.25, "-y -ss 12.25 -i /in.mp4 -frames:v 1 -vf scale=640:-2 -q:v 3 /out.jpg"},
 	}
 	for _, tc := range cases {
-		args := thumbnailAtArgs("/in.mp4", "/out.jpg", tc.at)
+		args := thumbnailAtArgs(localSource("/in.mp4"), "/out.jpg", tc.at)
 		if got := strings.Join(args, " "); got != tc.want {
 			t.Errorf("thumbnailAtArgs(%v) = %q, want %q", tc.at, got, tc.want)
 		}

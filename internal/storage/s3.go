@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -66,6 +67,7 @@ var _ PrefixDeleter = (*Local)(nil)
 var _ ObjectLister = (*S3)(nil)
 var _ ObjectLister = (*Local)(nil)
 var _ SizedPutter = (*S3)(nil)
+var _ Presigner = (*S3)(nil)
 
 // NewS3 validates cfg and builds the client. No network calls are made here;
 // use EnsureBucket at startup to fail fast on unreachable/missing buckets.
@@ -195,6 +197,24 @@ func (s *S3) PutSized(ctx context.Context, key string, r io.Reader, size int64) 
 		return 0, fmt.Errorf("storage: s3: put %q: %w", key, err)
 	}
 	return info.Size, nil
+}
+
+// PresignGet returns a time-limited URL that serves the object at key by plain
+// HTTP GET, implementing storage.Presigner. The returned URL carries a SigV4
+// signature and is therefore a credential for that object — callers must not log
+// it. Backblaze B2, MinIO, AWS S3 and DigitalOcean Spaces all support presigned
+// GETs on the S3 API.
+func (s *S3) PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	if err := validateKey(key); err != nil {
+		return "", err
+	}
+	u, err := s.client.PresignedGetObject(ctx, s.bucket, key, ttl, nil)
+	if err != nil {
+		// The SDK error can echo the request URL, which for a presign attempt may
+		// carry signature material — report the key only.
+		return "", fmt.Errorf("storage: s3: presign %q failed", key)
+	}
+	return u.String(), nil
 }
 
 // sniffSize reports how many bytes r will yield, or SizeUnknown when that cannot

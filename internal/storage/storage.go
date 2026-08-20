@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 )
 
 // Sentinel errors callers can branch on.
@@ -75,6 +76,22 @@ type PathProvider interface {
 	// rejects unsafe ones with ErrInvalidKey) but does not require the object to
 	// exist.
 	Path(key string) (string, error)
+}
+
+// Presigner is an optional capability implemented by backends that can mint a
+// time-limited URL granting read access to one object without the caller
+// holding credentials. The S3 backend implements it; the local backend cannot
+// (it has no HTTP surface of its own).
+//
+// The URL embeds a signature derived from the backend's secret key, so it is
+// itself a credential for that object: it must never be logged, traced, stored,
+// or included in an error message. Mint it as late as possible and give it the
+// shortest workable lifetime.
+type Presigner interface {
+	// PresignGet returns a URL that serves the object at key by plain HTTP GET,
+	// valid for ttl. It does not verify the object exists — a missing object
+	// surfaces as a 404 when the URL is used. ErrInvalidKey for an unsafe key.
+	PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error)
 }
 
 // SizeUnknown is the size argument meaning "the caller cannot say how many bytes

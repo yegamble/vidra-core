@@ -20,10 +20,10 @@ const WebMContentType = "video/webm"
 // rather than an HLS variant — see .ralph/specs/storage-layout.md. Pure (no
 // exec) so it is unit-testable. The audio map is optional ("0:a:0?") so silent
 // sources still encode.
-func vp9WebMArgs(src, dst string, r HLSRung) []string {
-	return []string{
-		"-y",
-		"-i", src,
+func vp9WebMArgs(src source, dst string, r HLSRung) []string {
+	args := []string{"-y"}
+	args = append(args, src.inputArgs()...)
+	return append(args,
 		"-map", "0:v:0",
 		"-map", "0:a:0?",
 		"-c:v", "libvpx-vp9",
@@ -39,7 +39,7 @@ func vp9WebMArgs(src, dst string, r HLSRung) []string {
 		"-ac", "2",
 		"-f", "webm",
 		dst,
-	}
+	)
 }
 
 // VP9WebMKey is the storage key for a video's progressive VP9/WebM alternate,
@@ -59,7 +59,7 @@ func (t *HLSTranscoder) SetVP9(enabled bool) { t.vp9 = enabled }
 // directory as the HLS tree it accompanies — W14), and returns the stored key
 // and byte size. Best-effort at the call site: a failure must not fail the HLS
 // transcode.
-func (t *HLSTranscoder) encodeVP9(ctx context.Context, videoID uuid.UUID, hlsPrefix, src string, top HLSRung) (key string, size int64, err error) {
+func (t *HLSTranscoder) encodeVP9(ctx context.Context, videoID uuid.UUID, hlsPrefix string, src source, top HLSRung) (key string, size int64, err error) {
 	out, err := os.CreateTemp("", "vidra-vp9-*.webm")
 	if err != nil {
 		return "", 0, err

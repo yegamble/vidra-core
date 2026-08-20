@@ -48,7 +48,7 @@ func TestPlanStoryboard(t *testing.T) {
 
 func TestStoryboardArgs(t *testing.T) {
 	p, _ := PlanStoryboard(20)
-	args := storyboardArgs("/in.mp4", "/out.jpg", p)
+	args := storyboardArgs(localSource("/in.mp4"), "/out.jpg", p)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "-i /in.mp4") {
 		t.Errorf("args missing input: %q", joined)

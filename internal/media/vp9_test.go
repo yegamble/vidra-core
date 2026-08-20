@@ -9,7 +9,7 @@ import (
 
 func TestVP9WebMArgs(t *testing.T) {
 	r := HLSRung{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128}
-	args := vp9WebMArgs("/in.mp4", "/out.webm", r)
+	args := vp9WebMArgs(localSource("/in.mp4"), "/out.webm", r)
 	joined := strings.Join(args, " ")
 
 	if !strings.Contains(joined, "-c:v libvpx-vp9") {

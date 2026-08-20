@@ -75,7 +75,7 @@ func TestPlanHLSLadderUnknownDimensions(t *testing.T) {
 
 func TestHLSRungArgs(t *testing.T) {
 	r := HLSRung{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128}
-	args := strings.Join(hlsRungArgs("/in/src.mp4", "/out/720p", r, 0), " ")
+	args := strings.Join(hlsRungArgs(localSource("/in/src.mp4"), "/out/720p", r, 0), " ")
 	for _, want := range []string{
 		"-i /in/src.mp4",
 		"-c:v libx264",
@@ -104,7 +104,7 @@ func TestHLSRungArgs(t *testing.T) {
 
 func TestHLSTrickPlayArgs(t *testing.T) {
 	r := HLSRung{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128}
-	args := strings.Join(hlsTrickPlayArgs("/in/src.mp4", "/out/720p", r, 3), " ")
+	args := strings.Join(hlsTrickPlayArgs(localSource("/in/src.mp4"), "/out/720p", r, 3), " ")
 	for _, want := range []string{
 		"-i /in/src.mp4",
 		"-map 0:v:0",
@@ -393,7 +393,7 @@ func TestPlanHLSLadderWithMaxFPS(t *testing.T) {
 
 func TestHLSRungArgsFPSAndThreads(t *testing.T) {
 	r := HLSRung{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128, FPS: 30}
-	args := strings.Join(hlsRungArgs("/in/src.mp4", "/out/720p", r, 4), " ")
+	args := strings.Join(hlsRungArgs(localSource("/in/src.mp4"), "/out/720p", r, 4), " ")
 	for _, want := range []string{
 		"-vf scale=1280:720,fps=30",
 		"-threads 4",
@@ -403,7 +403,7 @@ func TestHLSRungArgsFPSAndThreads(t *testing.T) {
 		}
 	}
 	// Defaults (FPS 0, threads 0) must leave the vector exactly ffmpeg-default.
-	def := strings.Join(hlsRungArgs("/in/src.mp4", "/out/720p", HLSRung{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128}, 0), " ")
+	def := strings.Join(hlsRungArgs(localSource("/in/src.mp4"), "/out/720p", HLSRung{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128}, 0), " ")
 	if strings.Contains(def, "fps=") || strings.Contains(def, "-threads") {
 		t.Errorf("default args must carry no fps filter or -threads\nargs: %s", def)
 	}

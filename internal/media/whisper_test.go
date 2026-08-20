@@ -8,7 +8,7 @@ import (
 // TestWhisperWavArgs pins the ffmpeg argument vector that extracts a 16 kHz mono
 // signed-16-bit PCM WAV — the canonical Whisper input.
 func TestWhisperWavArgs(t *testing.T) {
-	args := whisperWavArgs("/in/video.mp4", "/tmp/out.wav")
+	args := whisperWavArgs(localSource("/in/video.mp4"), "/tmp/out.wav")
 	joined := strings.Join(args, " ")
 
 	// Source and destination are present and in place.

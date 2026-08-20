@@ -251,17 +251,17 @@ func evenDim(n int) int {
 // URI relative so the API can proxy them. A positive r.FPS appends an fps
 // filter (transcoding_max_fps); a positive threads adds -threads
 // (transcoding_threads; 0 leaves ffmpeg's own default).
-func hlsRungArgs(src, dir string, r HLSRung, threads int) []string {
+func hlsRungArgs(src source, dir string, r HLSRung, threads int) []string {
 	vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height)
 	if r.FPS > 0 {
 		vf += fmt.Sprintf(",fps=%d", r.FPS)
 	}
-	args := []string{
-		"-y",
-		"-i", src,
+	args := []string{"-y"}
+	args = append(args, src.inputArgs()...)
+	args = append(args,
 		"-map", "0:v:0",
 		"-map", "0:a:0?",
-	}
+	)
 	if threads > 0 {
 		args = append(args, "-threads", fmt.Sprintf("%d", threads))
 	}
@@ -297,13 +297,13 @@ func hlsRungArgs(src, dir string, r HLSRung, threads int) []string {
 // currently emits incorrect repeated @0 offsets for an all-I-frame single-file
 // stream, so we generate the valid byte ranges with `single_file` and add the
 // standards tag after verifying the playlist shape (markIFramesOnlyPlaylist).
-func hlsTrickPlayArgs(src, dir string, r HLSRung, threads int) []string {
-	args := []string{
-		"-y",
-		"-i", src,
+func hlsTrickPlayArgs(src source, dir string, r HLSRung, threads int) []string {
+	args := []string{"-y"}
+	args = append(args, src.inputArgs()...)
+	args = append(args,
 		"-map", "0:v:0",
 		"-an",
-	}
+	)
 	if threads > 0 {
 		args = append(args, "-threads", fmt.Sprintf("%d", threads))
 	}
@@ -702,7 +702,7 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		})
 	}
 
-	src, cleanup, err := objectPath(ctx, t.blobs, sourceKey)
+	src, cleanup, err := openSource(ctx, t.blobs, sourceKey)
 	if err != nil {
 		return HLSResult{}, err
 	}
@@ -874,7 +874,8 @@ func directorySize(root string) (int64, error) {
 
 func (t *HLSTranscoder) encodeHLSTrickPlay(
 	ctx context.Context,
-	src, dir string,
+	src source,
+	dir string,
 	r HLSRung,
 	threads, durationSeconds int,
 ) (hlsTrickPlayInfo, error) {

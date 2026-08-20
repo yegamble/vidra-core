@@ -20,12 +20,14 @@ type WebVideoResult struct {
 	SizeBytes  int64
 }
 
-func webVideoArgs(src, dst string, r HLSRung, threads int) []string {
+func webVideoArgs(src source, dst string, r HLSRung, threads int) []string {
 	vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height)
 	if r.FPS > 0 {
 		vf += fmt.Sprintf(",fps=%d", r.FPS)
 	}
-	args := []string{"-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0?"}
+	args := []string{"-y"}
+	args = append(args, src.inputArgs()...)
+	args = append(args, "-map", "0:v:0", "-map", "0:a:0?")
 	if threads > 0 {
 		args = append(args, "-threads", fmt.Sprintf("%d", threads))
 	}
@@ -68,7 +70,7 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 		})
 	}
 
-	src, cleanup, err := objectPath(ctx, t.blobs, sourceKey)
+	src, cleanup, err := openSource(ctx, t.blobs, sourceKey)
 	if err != nil {
 		return nil, err
 	}
