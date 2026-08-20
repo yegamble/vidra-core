@@ -94,6 +94,50 @@ func splitAssignment(raw string) (key, value string, ok bool) {
 	return key, raw[eq+1:], true
 }
 
+// MergeSources combines several preservation sources into the single "existing"
+// environment Generate consumes. EARLIER SOURCES WIN, and a blank or placeholder
+// value never beats a real one.
+//
+// It exists because a re-run has two sources, not one: the file being
+// OVERWRITTEN and the file named by --from. Treating only --from as the source is
+// how `setup --from staging.env --output production.env` re-minted a live
+// instance's KEKs — staging's values landed, and every key staging did not
+// mention was generated fresh over the top of production's. The file about to be
+// overwritten is therefore always passed FIRST: its own values are the ones that
+// cannot be lost, and --from only fills what it leaves blank.
+//
+// The result is a synthetic EnvFile — an index for lookups, not a document to
+// render. Only Generate's reads (Keys/Value/Has) are meaningful on it; the
+// rendered artifact always comes from the TEMPLATE.
+func MergeSources(sources ...*EnvFile) *EnvFile {
+	var out *EnvFile
+	for _, src := range sources {
+		if src == nil {
+			continue
+		}
+		if out == nil {
+			out = &EnvFile{index: map[string]int{}}
+		}
+		for _, k := range src.Keys() {
+			v, _ := src.Value(k)
+			i, seen := out.index[k]
+			if !seen {
+				out.index[k] = len(out.lines)
+				out.order = append(out.order, k)
+				out.lines = append(out.lines, envLine{raw: k + "=" + v, key: k, value: v})
+				continue
+			}
+			// A later source only fills a hole an earlier one left.
+			if !needsValue(out.lines[i].value) || needsValue(v) {
+				continue
+			}
+			out.lines[i].value = v
+			out.lines[i].raw = k + "=" + v
+		}
+	}
+	return out
+}
+
 // Has reports whether key is an active assignment in the file.
 func (f *EnvFile) Has(key string) bool { _, ok := f.index[key]; return ok }
 

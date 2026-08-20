@@ -22,6 +22,13 @@
 //     additionally needs explicit confirmation because it orphans data already
 //     sealed in the database. Re-running setup on a live instance is safe.
 //
+//     The rule extends to a KEK the existing configuration leaves BLANK: on
+//     anything but a genuine first install (no existing source at all) a blank
+//     KEK is refused rather than minted, because "blank" there is far more
+//     likely to be a truncated/half-restored file than a new feature — and
+//     minting over it destroys the same rows a rotation would. See the kek gate
+//     in the resolution loop below.
+//
 //  3. THE PRODUCT IS VALIDATED BY THE BOOT ENGINE. Generation ends by running
 //     the api's own config validation (config.CheckEnv) over the file it just
 //     rendered, and refuses to hand back a file that would not boot. There is
@@ -111,7 +118,9 @@ type RegistrationAnswers struct {
 
 // Request is one generation. Template is required; Existing is the env file
 // currently in use (nil on a first install) and is what makes the run
-// non-destructive.
+// non-destructive. When more than one preservation source exists — the file
+// being overwritten AND a --from file — combine them with MergeSources first,
+// listing the file that will be overwritten FIRST so its own values win.
 type Request struct {
 	Template *EnvFile
 	Existing *EnvFile
@@ -212,6 +221,12 @@ func Generate(req Request) (*Result, error) {
 
 	res := &Result{Values: map[string]string{}}
 
+	// A genuine first install is the ONLY situation in which a blank KEK may be
+	// minted: with no preservation source at all there is no database whose rows
+	// a fresh KEK could orphan. Any existing source — even one that does not
+	// mention the KEK — means this deployment already exists.
+	firstInstall := len(existingKeys(req.Existing)) == 0
+
 	// Resolution, in template order so secret generation is deterministic.
 	// Precedence: rotation > answer > existing value > template value >
 	// generated secret > left as the template had it (blank or placeholder,
@@ -238,7 +253,10 @@ func Generate(req Request) (*Result, error) {
 		case !needsValue(tv):
 			res.Values[key] = tv
 		default:
-			if _, isSecret := secretManifest[key]; isSecret {
+			if spec, isSecret := secretManifest[key]; isSecret {
+				if spec.kek && !firstInstall {
+					return nil, blankKEKError(key, spec)
+				}
 				v, gerr := mint(key, req.Rand)
 				if gerr != nil {
 					return nil, gerr
@@ -285,7 +303,14 @@ func Generate(req Request) (*Result, error) {
 
 	applyStorageRule(req, res)
 	applyMailRule(res)
-	res.Warnings = append(res.Warnings, releaseTagWarnings(req, answers)...)
+
+	// Line-shape before rendering: a value carrying a newline would not be a bad
+	// value, it would be EXTRA LINES — see lineShapeIssues.
+	if issues := lineShapeIssues(res.Values); len(issues) > 0 {
+		return nil, &ValidationError{Issues: issues}
+	}
+	res.Warnings = append(res.Warnings, releaseTagWarnings(req, res.Values)...)
+	res.Warnings = append(res.Warnings, interpolationWarnings(res.Values)...)
 
 	content := req.Template.Render(res.Values, res.Carried)
 	// Validate the BYTES that would be written, not the map that produced them:
@@ -304,7 +329,17 @@ func Generate(req Request) (*Result, error) {
 }
 
 // Check validates a candidate environment the way the api will read it: leftover
-// <...> placeholders first, then the api's own boot validation.
+// <...> placeholders first, then the api's own boot validation — and always with
+// PRODUCTION rules.
+//
+// The VIDRA_ENV pass is the one place Check deliberately does not just mirror
+// config: an env file that omits VIDRA_ENV (or sets development) would otherwise
+// be validated in development mode, where a blank JWT_SECRET falls back to the
+// dev constant and `CORS_ALLOWED_ORIGINS=*` is allowed — a green check on a file
+// that cannot be deployed. So a non-production VIDRA_ENV is reported as its own
+// problem AND the rest of the file is checked with production forced, so the
+// operator sees the real findings in the same pass instead of after a fix and a
+// second run.
 //
 // The placeholder pass is not redundant. `<your Spaces access key>` is a
 // NON-EMPTY string, so config's "STORAGE_S3_ACCESS_KEY is required" check is
@@ -337,6 +372,19 @@ func Check(vars map[string]string) []Issue {
 		if IsPlaceholder(vars[k]) {
 			issues = append(issues, Issue{Var: k, Msg: fmt.Sprintf("unfilled template placeholder %q — replace it with a real value (or blank the key if the feature is unused)", strings.TrimSpace(vars[k]))})
 		}
+	}
+	if env := strings.TrimSpace(vars["VIDRA_ENV"]); env != "production" {
+		got := strconv.Quote(env)
+		if env == "" {
+			got = "unset"
+		}
+		issues = append(issues, Issue{Var: "VIDRA_ENV", Msg: fmt.Sprintf("a deployment env file must set VIDRA_ENV=production (%s) — without it the api boots in development mode, where a blank JWT_SECRET falls back to the built-in dev constant and a wildcard CORS origin is allowed. Everything below was checked with production forced, so these are the problems you would hit after fixing this one", got)})
+		forced := make(map[string]string, len(vars)+1)
+		for k, v := range vars {
+			forced[k] = v
+		}
+		forced["VIDRA_ENV"] = "production"
+		return append(issues, configIssues(forced)...)
 	}
 	return append(issues, configIssues(vars)...)
 }
@@ -386,6 +434,63 @@ func rotationSet(req Request) (map[string]bool, error) {
 		out[key] = true
 	}
 	return out, nil
+}
+
+// blankKEKError refuses to mint a key-encryption key over a blank/placeholder
+// slot when a previous configuration exists. The destructive gate on a KEK has
+// to be the same whether the old value is present (a rotation) or missing (a
+// truncated file, a half-finished restore, an env file assembled by hand): both
+// end with rows in the database sealed under a key nothing has any more. The
+// escape hatch is the rotation path, which says out loud what is being lost.
+func blankKEKError(key string, spec secretSpec) error {
+	return fmt.Errorf("setup: %s is blank in the configuration being merged, and minting a new one is DESTRUCTIVE: %s. "+
+		"If the value was lost, restore it from a backup of the env file and re-run. If this deployment genuinely has nothing sealed under it yet "+
+		"(a KEK the template only just turned on), accept that with --rotate %s --yes", key, spec.why, key)
+}
+
+// lineShapeIssues rejects values that cannot survive a KEY=value line. A newline
+// is not a bad value, it is EXTRA LINES: `JWT_SECRET=abc\nFOO=bar` writes a
+// truncated secret AND an unrelated assignment, and both halves look deliberate
+// to compose. A NUL is refused for the same class of reason — it terminates the
+// value for every C-based consumer of the env, so what the container receives is
+// not what the file shows.
+func lineShapeIssues(values map[string]string) []Issue {
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var out []Issue
+	for _, k := range keys {
+		v := values[k]
+		switch {
+		case strings.ContainsAny(v, "\n\r"):
+			out = append(out, Issue{Var: k, Msg: "the value contains a line break, which would not be stored — it would add lines to the env file: everything after the break becomes a separate assignment (or a stray line compose rejects) and the rest of this value is lost. Supply a single-line value"})
+		case strings.ContainsRune(v, 0):
+			out = append(out, Issue{Var: k, Msg: "the value contains a NUL byte, which truncates it for every consumer of the environment — the container would receive something shorter than this file shows. Supply a printable value"})
+		}
+	}
+	return out
+}
+
+// interpolationWarnings flags a value compose would rewrite before the container
+// ever sees it: `--env-file` values go through variable interpolation, so a
+// leading '$' means the process gets an expansion (usually empty), not the
+// string in the file. A warning, not a refusal — '$' is legal in a password and
+// escaping it ('$$') is the operator's call.
+func interpolationWarnings(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var out []string
+	for _, k := range keys {
+		if strings.HasPrefix(strings.TrimSpace(values[k]), "$") {
+			out = append(out, fmt.Sprintf("%s starts with '$': docker compose interpolates variables in --env-file values, so the container would receive an expansion (usually empty) instead of the literal value — double the dollar ('$$') to escape it", k))
+		}
+	}
+	return out
 }
 
 // unusedRotations refuses a --rotate for a variable the generated file does not
@@ -500,10 +605,19 @@ func requireDomain(req Request, answers map[string]string) error {
 }
 
 // normalizeOrigin accepts a bare host or a full origin and returns
-// https://host[:port]. https is not negotiable here: in production the api pins
-// Secure cookies and both apps emit HSTS, so a plain-http origin silently breaks
-// login (deliberate plain-HTTP and external-terminator modes are phase-1 item
-// 12, and they need code, not an env value).
+// https://host[:port], lowercased. https is not negotiable here: in production
+// the api pins Secure cookies and both apps emit HSTS, so a plain-http origin
+// silently breaks login (deliberate plain-HTTP and external-terminator modes are
+// phase-1 item 12, and they need code, not an env value).
+//
+// The host must be DNS-SHAPED, because this one answer becomes PUBLIC_BASE_URL
+// (federation and OAuth identity) and CORS_ALLOWED_ORIGINS (a browser security
+// boundary). `https://*.example.org` parses fine and would be written straight
+// into the CORS allow-list as a wildcard nobody chose; `https://example.org.`
+// and `https://Example.ORG` are the same host to DNS but three different strings
+// to an origin comparison, which is how a "correct" domain still fails CORS and
+// signature verification. Normalising here keeps the file's single origin
+// byte-identical everywhere it is compared.
 func normalizeOrigin(in string) (string, error) {
 	raw := strings.TrimRight(strings.TrimSpace(in), "/")
 	if raw == "" {
@@ -525,7 +639,49 @@ func normalizeOrigin(in string) (string, error) {
 	if u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 		return "", fmt.Errorf("setup: the domain must not include a path or query (got %q) — PUBLIC_BASE_URL is an origin", in)
 	}
-	return "https://" + u.Host, nil
+	if err := checkDNSHost(u.Hostname(), in); err != nil {
+		return "", err
+	}
+	host := strings.ToLower(u.Hostname())
+	if port := u.Port(); port != "" {
+		host += ":" + port
+	}
+	return "https://" + host, nil
+}
+
+// checkDNSHost requires the host part of an origin to be a hostname: dot-joined
+// labels of letters, digits and inner hyphens. That rejects the wildcard, the
+// stray space, the empty label from a doubled dot and the fully-qualified
+// trailing dot — see normalizeOrigin for why each of those is a real failure and
+// not pedantry.
+func checkDNSHost(host, in string) error {
+	bad := func(why string) error {
+		return fmt.Errorf("setup: %q is not a usable domain (%s) — PUBLIC_BASE_URL and CORS_ALLOWED_ORIGINS need one concrete host, like video.example.org", in, why)
+	}
+	switch {
+	case host == "":
+		return bad("no host")
+	case strings.Contains(host, "*"):
+		return bad("wildcards are not a host: CORS_ALLOWED_ORIGINS would allow every subdomain, and federation identity has to be one origin")
+	case strings.HasSuffix(host, "."):
+		return bad("trailing dot: the same host as without it to DNS, a different string to every origin comparison")
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" {
+			return bad("empty label")
+		}
+		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return bad("a label may not start or end with '-'")
+		}
+		for _, r := range label {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+			default:
+				return bad(fmt.Sprintf("%q is not allowed in a hostname", string(r)))
+			}
+		}
+	}
+	return nil
 }
 
 // applyStorageRule finishes the storage answer. Choosing local leaves the
@@ -565,13 +721,20 @@ func applyMailRule(res *Result) {
 
 // releaseTagWarnings flags image pins left at the template's example tag: the
 // file renders and deploys, it just deploys the wrong release.
-func releaseTagWarnings(req Request, answers map[string]string) []string {
+//
+// The test is the RESOLVED value against the template's, not "was there an
+// answer": the interactive path offers the template's tag as the default, and an
+// operator pressing enter has answered with the example — exactly the case the
+// warning exists for. Attributing the answer to the operator instead of the
+// template is how the warning went missing in the interview.
+func releaseTagWarnings(req Request, values map[string]string) []string {
 	var stale []string
 	for _, k := range releaseTagKeys {
-		if !req.Template.Has(k) || answers[k] != "" {
+		tv, ok := req.Template.Value(k)
+		if !ok {
 			continue
 		}
-		if _, ok := existingValue(req.Existing, k); ok {
+		if strings.TrimSpace(values[k]) != strings.TrimSpace(tv) {
 			continue
 		}
 		stale = append(stale, k)
@@ -634,6 +797,14 @@ func WriteFile(path string, content []byte) error {
 		tmp.Close()
 		return fmt.Errorf("setup: write %s: %w", tmpName, err)
 	}
+	// Durability before visibility: the rename is what makes the file the
+	// deployment's env file, and an unsynced rename can survive a crash pointing
+	// at zero bytes — which is the one outcome this whole function exists to
+	// prevent.
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("setup: flush %s to disk: %w", tmpName, err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("setup: close %s: %w", tmpName, err)
 	}
@@ -649,7 +820,31 @@ func WriteFile(path string, content []byte) error {
 // deploy/deploy.sh step 0 exactly, and must be run from the deployment
 // directory. This package never shells out to docker itself — the engine has to
 // work on a machine where the daemon is not up yet.
-func RenderCheckCommand(envPath string) string {
-	return "docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file " +
-		envPath + " --profile core --profile frontend config -q"
+//
+// values is the environment the file describes, and it is not decoration:
+// deploy.sh appends the space-separated EXTRA_COMPOSE_PROFILES from the env file
+// to its own --profile list, so an instance running the ipfs profile renders a
+// DIFFERENT compose chain than `--profile core --profile frontend`. A check
+// command that omitted the extra profiles would pass while the deploy it is
+// meant to pre-flight failed. Pass nil for the base profiles only.
+func RenderCheckCommand(envPath string, values map[string]string) string {
+	profiles := []string{"core", "frontend"}
+	profiles = append(profiles, strings.Fields(values["EXTRA_COMPOSE_PROFILES"])...)
+	cmd := "docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file " + shellQuote(envPath)
+	for _, p := range profiles {
+		cmd += " --profile " + shellQuote(p)
+	}
+	return cmd + " config -q"
+}
+
+// shellQuote makes a value safe to paste into a shell, and leaves the ordinary
+// case (env/production.env) untouched so the printed command stays readable.
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(s, " \t\n\r\"'$&|;<>()[]{}*?!#~`\\") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -33,6 +34,13 @@ POSTGRES_PASSWORD=<generate: openssl rand -hex 32>
 REDIS_PASSWORD=
 
 STORAGE_BACKEND=local
+STORAGE_S3_ENDPOINT=
+STORAGE_S3_REGION=
+STORAGE_S3_BUCKET=
+# SECRETS — never commit a real value.
+STORAGE_S3_ACCESS_KEY=
+STORAGE_S3_SECRET_KEY=
+STORAGE_S3_USE_SSL=true
 MAIL_ENABLED=false
 REGISTRATION_ENABLED=false
 REGISTRATION_REQUIRE_APPROVAL=false
@@ -120,16 +128,39 @@ func TestSetupWritesAPrivateFileAndPrintsTheRenderCheck(t *testing.T) {
 	}
 }
 
-// Overwriting an existing env file without --from would mint new KEKs behind the
-// operator's back, so the command refuses and says how to merge.
-func TestSetupRefusesToOverwriteWithoutFrom(t *testing.T) {
+// Rewriting the env file a deployment is running from needs one deliberate
+// keystroke — --yes, or a --from that makes the merge explicit. The refusal names
+// both, and says nothing is lost either way.
+func TestSetupRefusesToOverwriteWithoutIntent(t *testing.T) {
 	h := newHarness(t)
 	if err := h.run(h.setupArgs()...); err != nil {
 		t.Fatalf("first setup: %v", err)
 	}
+	before := h.readOutput(t)
+
 	err := h.run(h.setupArgs()...)
-	if err == nil || !strings.Contains(err.Error(), "--from") {
-		t.Fatalf("err = %v, want a refusal pointing at --from", err)
+	if err == nil {
+		t.Fatal("an existing output file was rewritten with no intent flag")
+	}
+	for _, want := range []string{"--yes", "--from", "--output"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not offer %q", err, want)
+		}
+	}
+	if h.readOutput(t) != before {
+		t.Fatal("the refused run still rewrote the file")
+	}
+
+	// --yes rewrites it in place, and the rewrite is byte-identical: the file
+	// itself was the preservation source.
+	if err := h.run(h.setupArgs("--yes")...); err != nil {
+		t.Fatalf("--yes rewrite: %v (stderr: %s)", err, h.err.String())
+	}
+	if got := h.readOutput(t); got != before {
+		t.Errorf("the in-place rewrite changed the file\n--- got ---\n%s--- want ---\n%s", got, before)
+	}
+	if !strings.Contains(h.out.String(), "preserved secrets") {
+		t.Errorf("the in-place rewrite did not report preserved secrets:\n%s", h.out.String())
 	}
 }
 
@@ -148,6 +179,102 @@ func TestSetupMergeIsByteIdentical(t *testing.T) {
 	}
 	if !strings.Contains(h.out.String(), "preserved secrets") {
 		t.Errorf("the merge did not report preserved secrets:\n%s", h.out.String())
+	}
+}
+
+// THE reproducer: `--from staging.env --output production.env` used to treat only
+// staging as the preservation source, so production's KEKs were re-minted and its
+// secrets replaced by staging's. The file being written is now always a source,
+// and it outranks --from.
+func TestSetupFromADifferentFilePreservesTheFileBeingWritten(t *testing.T) {
+	h := newHarness(t)
+	if err := h.run(h.setupArgs()...); err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+	live := h.readOutput(t)
+
+	// A staging env file: same shape, different secrets, and one key the live
+	// file leaves blank.
+	staging := filepath.Join(h.dir, "staging.env")
+	stagingBody := strings.Join([]string{
+		"VIDRA_ENV=production",
+		"PUBLIC_BASE_URL=https://staging.example.org",
+		"JWT_SECRET=" + strings.Repeat("S", 48),
+		"MFA_KEY_KEK=" + base64.StdEncoding.EncodeToString([]byte(strings.Repeat("s", 32))),
+		"POSTGRES_PASSWORD=" + strings.Repeat("f", 64),
+		"REDIS_PASSWORD=" + strings.Repeat("e", 64),
+		"EXTRA_COMPOSE_PROFILES=ipfs",
+	}, "\n") + "\n"
+	if err := os.WriteFile(staging, []byte(stagingBody), 0o600); err != nil {
+		t.Fatalf("write staging env: %v", err)
+	}
+
+	if err := h.run(h.setupArgs("--from", staging)...); err != nil {
+		t.Fatalf("merge from a different file: %v (stderr: %s)", err, h.err.String())
+	}
+	got := h.readOutput(t)
+
+	for _, key := range []string{"JWT_SECRET", "MFA_KEY_KEK", "POSTGRES_PASSWORD", "REDIS_PASSWORD"} {
+		if valueOf(t, got, key) != valueOf(t, live, key) {
+			t.Errorf("%s was replaced by the --from file's value — the live secret is gone", key)
+		}
+	}
+	// staging's domain does not silently re-point the instance either: the
+	// answered domain wins, and the live file's value is what --from could not
+	// override.
+	if v := valueOf(t, got, "PUBLIC_BASE_URL"); v != "https://video.example.org" {
+		t.Errorf("PUBLIC_BASE_URL = %q, want the answered domain", v)
+	}
+	// A key only --from has still comes across: that is what --from is for.
+	if !strings.Contains(got, "EXTRA_COMPOSE_PROFILES=ipfs") {
+		t.Errorf("the --from file's extra key was dropped:\n%s", got)
+	}
+	// And with an extra profile in the file, the printed render-check has to
+	// include it — deploy.sh will.
+	if !strings.Contains(h.out.String(), "--profile ipfs") {
+		t.Errorf("the render-check command omitted the env file's extra profile:\n%s", h.out.String())
+	}
+	if !strings.Contains(h.out.String(), h.output) || !strings.Contains(h.out.String(), staging) {
+		t.Errorf("the report did not name both preservation sources:\n%s", h.out.String())
+	}
+}
+
+// A KEK blanked out in the live file (a truncated restore, a hand-edited env) is
+// refused, not silently re-minted: the destructive gate cannot depend on whether
+// the old value happens to still be there.
+func TestSetupRefusesToMintAKEKOverAnExistingFile(t *testing.T) {
+	h := newHarness(t)
+	if err := h.run(h.setupArgs()...); err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+	before := h.readOutput(t)
+	blanked := strings.Replace(before, "MFA_KEY_KEK="+valueOf(t, before, "MFA_KEY_KEK"), "MFA_KEY_KEK=", 1)
+	if blanked == before {
+		t.Fatal("failed to blank MFA_KEY_KEK in the fixture")
+	}
+	if err := os.WriteFile(h.output, []byte(blanked), 0o600); err != nil {
+		t.Fatalf("write blanked file: %v", err)
+	}
+
+	err := h.run(h.setupArgs("--yes")...)
+	if err == nil {
+		t.Fatal("a blank KEK was minted over an existing env file")
+	}
+	for _, want := range []string{"MFA_KEY_KEK", "DESTRUCTIVE", "--rotate MFA_KEY_KEK --yes"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not mention %q", err, want)
+		}
+	}
+	if h.readOutput(t) != blanked {
+		t.Error("the refused run still rewrote the file")
+	}
+
+	// The named escape hatch works.
+	if err := h.run(h.setupArgs("--rotate", "MFA_KEY_KEK", "--yes")...); err != nil {
+		t.Fatalf("explicit rotation of a blank KEK: %v (stderr: %s)", err, h.err.String())
+	}
+	if v := valueOf(t, h.readOutput(t), "MFA_KEY_KEK"); v == "" {
+		t.Error("MFA_KEY_KEK is still blank after an explicit rotation")
 	}
 }
 
@@ -235,6 +362,146 @@ func TestSetupRefusesToWriteAnInvalidFile(t *testing.T) {
 	}
 }
 
+// --check must never green-light a file that omits VIDRA_ENV: in development
+// mode a blank JWT_SECRET falls back to the dev constant and a wildcard CORS
+// origin is allowed, so the file "passes" and cannot be deployed. The missing
+// line and the production findings come back in one pass.
+func TestSetupCheckNeverValidatesInDevelopmentMode(t *testing.T) {
+	h := newHarness(t)
+	bad := filepath.Join(h.dir, "no-env.env")
+	if err := os.WriteFile(bad, []byte("JWT_SECRET=\nCORS_ALLOWED_ORIGINS=*\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := h.run("setup", "--check", bad); err == nil {
+		t.Fatal("--check exited zero on a file with no VIDRA_ENV, a blank JWT_SECRET and wildcard CORS")
+	}
+	out := h.out.String()
+	if !strings.Contains(out, "VIDRA_ENV") {
+		t.Errorf("--check did not report the missing VIDRA_ENV:\n%s", out)
+	}
+	if !strings.Contains(out, "JWT_SECRET") && !strings.Contains(out, "CORS_ALLOWED_ORIGINS") {
+		t.Errorf("--check skipped the production-only rules:\n%s", out)
+	}
+}
+
+// Secrets must not have to appear in argv, where `ps` and the shell history can
+// read them.
+func TestSetupSecretsCanAvoidArgv(t *testing.T) {
+	s3Args := func(h *harness, extra ...string) []string {
+		return append([]string{
+			"setup", "--template", h.template, "--non-interactive", "--domain", "video.example.org",
+			"--release-tag", "v0.1.1", "--storage", "s3",
+			"--s3-endpoint", "fra1.example.net", "--s3-region", "fra1", "--s3-bucket", "media",
+			"--s3-access-key", "AKIA",
+		}, extra...)
+	}
+
+	t.Run("@file", func(t *testing.T) {
+		h := newHarness(t)
+		keyFile := filepath.Join(h.dir, "s3.secret")
+		// A trailing newline is what an editor or `openssl > file` leaves; it is
+		// not part of the secret.
+		if err := os.WriteFile(keyFile, []byte("sup3r s3cret\n"), 0o600); err != nil {
+			t.Fatalf("write secret file: %v", err)
+		}
+		if err := h.run(s3Args(h, "--s3-secret-key", "@"+keyFile)...); err != nil {
+			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+		}
+		if got := valueOf(t, h.readOutput(t), "STORAGE_S3_SECRET_KEY"); got != "sup3r s3cret" {
+			t.Errorf("STORAGE_S3_SECRET_KEY = %q, want the file's contents without the trailing newline", got)
+		}
+	})
+
+	t.Run("environment", func(t *testing.T) {
+		h := newHarness(t)
+		t.Setenv("VIDRA_SETUP_S3_SECRET_KEY", "from-the-environment")
+		if err := h.run(s3Args(h)...); err != nil {
+			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+		}
+		if got := valueOf(t, h.readOutput(t), "STORAGE_S3_SECRET_KEY"); got != "from-the-environment" {
+			t.Errorf("STORAGE_S3_SECRET_KEY = %q, want the VIDRA_SETUP_* fallback", got)
+		}
+	})
+
+	t.Run("stdin", func(t *testing.T) {
+		h := newHarness(t)
+		h.stdin = "piped-secret\n"
+		if err := h.run(s3Args(h, "--s3-secret-key", "-")...); err != nil {
+			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+		}
+		if got := valueOf(t, h.readOutput(t), "STORAGE_S3_SECRET_KEY"); got != "piped-secret" {
+			t.Errorf("STORAGE_S3_SECRET_KEY = %q, want the piped value", got)
+		}
+	})
+
+	t.Run("stdin needs non-interactive", func(t *testing.T) {
+		h := newHarness(t)
+		err := h.run("setup", "--template", h.template, "--domain", "video.example.org", "--s3-secret-key", "-")
+		if err == nil || !strings.Contains(err.Error(), "--non-interactive") {
+			t.Fatalf("err = %v, want a refusal explaining the stdin clash with the interview", err)
+		}
+	})
+
+	t.Run("only one flag may read stdin", func(t *testing.T) {
+		h := newHarness(t)
+		h.stdin = "x\n"
+		err := h.run("setup", "--template", h.template, "--non-interactive", "--domain", "video.example.org",
+			"--s3-secret-key", "-", "--smtp-password", "-")
+		if err == nil || !strings.Contains(err.Error(), "one flag can read stdin") {
+			t.Fatalf("err = %v, want the second stdin reader refused", err)
+		}
+	})
+
+	t.Run("a missing @file is an error, not an empty secret", func(t *testing.T) {
+		h := newHarness(t)
+		err := h.run("setup", "--template", h.template, "--non-interactive", "--domain", "video.example.org",
+			"--smtp-host", "smtp.example.net", "--smtp-from", "a@example.net",
+			"--smtp-password", "@"+filepath.Join(h.dir, "nope"))
+		if err == nil || !strings.Contains(err.Error(), "smtp-password") {
+			t.Fatalf("err = %v, want the unreadable secret file named", err)
+		}
+	})
+}
+
+// A value with a newline in it would add LINES to the env file, truncating the
+// secret and injecting an assignment. Refuse, naming the variable, and write
+// nothing.
+func TestSetupRefusesAValueWithALineBreak(t *testing.T) {
+	h := newHarness(t)
+	err := h.run("setup", "--template", h.template, "--non-interactive", "--domain", "video.example.org",
+		"--release-tag", "v0.1.1", "--storage", "s3",
+		"--s3-endpoint", "fra1.example.net", "--s3-region", "fra1", "--s3-bucket", "media",
+		"--s3-access-key", "AKIA", "--s3-secret-key", "shhh\nREGISTRATION_ENABLED=true")
+	if err == nil {
+		t.Fatal("a value containing a newline was accepted")
+	}
+	if !strings.Contains(h.err.String(), "STORAGE_S3_SECRET_KEY") {
+		t.Errorf("the offending variable was not named:\n%s", h.err.String())
+	}
+	if _, statErr := os.Stat(h.output); !errors.Is(statErr, os.ErrNotExist) {
+		t.Error("a file was written despite the rejected value")
+	}
+}
+
+// `vidra setup -h` is a successful request for help: it prints to stdout and
+// exits zero, so `vidra setup -h | head` and `... && echo ok` both work.
+func TestSetupHelpSucceedsOnStdout(t *testing.T) {
+	for _, flagName := range []string{"-h", "--help", "-help"} {
+		t.Run(flagName, func(t *testing.T) {
+			h := newHarness(t)
+			if err := h.run("setup", flagName); err != nil {
+				t.Fatalf("`setup %s` = %v, want success", flagName, err)
+			}
+			if !strings.Contains(h.out.String(), "usage: vidra setup") || !strings.Contains(h.out.String(), "--rotate") {
+				t.Errorf("help was not printed to stdout:\n%s", h.out.String())
+			}
+			if h.err.Len() != 0 {
+				t.Errorf("help wrote to stderr:\n%s", h.err.String())
+			}
+		})
+	}
+}
+
 func TestSetupInteractiveAnswersTheMinimalQuestions(t *testing.T) {
 	h := newHarness(t)
 	// domain, release tag, storage, SMTP?, open registration?
@@ -250,6 +517,91 @@ func TestSetupInteractiveAnswersTheMinimalQuestions(t *testing.T) {
 	}
 	if !strings.Contains(h.out.String(), "Public domain of this instance") {
 		t.Errorf("the domain was not asked for:\n%s", h.out.String())
+	}
+}
+
+// An interactive RE-RUN must not change policy the operator did not answer. The
+// registration prompts defaulted to false regardless of the current file, so an
+// operator pressing enter through a re-deploy closed signups on an open
+// instance — and the prompt did not even say so.
+func TestSetupInteractiveReRunKeepsTheRegistrationPolicy(t *testing.T) {
+	h := newHarness(t)
+	// Start from an instance with registration open and approval required.
+	if err := h.run(h.setupArgs("--registration", "approval")...); err != nil {
+		t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
+	}
+	before := h.readOutput(t)
+	if valueOf(t, before, "REGISTRATION_ENABLED") != "true" || valueOf(t, before, "REGISTRATION_REQUIRE_APPROVAL") != "true" {
+		t.Fatalf("fixture is not open+approval:\n%s", before)
+	}
+
+	// Re-run interactively, pressing enter at every question: domain, release
+	// tag, storage, SMTP?, open registration?, approval?
+	h.stdin = "\n\n\n\n\n\n"
+	if err := h.run("setup", "--template", h.template, "--yes"); err != nil {
+		t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
+	}
+	after := h.readOutput(t)
+	for _, k := range []string{"REGISTRATION_ENABLED", "REGISTRATION_REQUIRE_APPROVAL"} {
+		if valueOf(t, after, k) != "true" {
+			t.Errorf("%s = %q after pressing enter through the interview, want the existing true", k, valueOf(t, after, k))
+		}
+	}
+	// The prompts have to SHOW the current policy as the default, or "enter"
+	// is a guess.
+	if !strings.Contains(h.out.String(), "Open registration to the public now? [Y/n]") {
+		t.Errorf("the registration prompt did not offer the current policy as its default:\n%s", h.out.String())
+	}
+	if valueOf(t, after, "MFA_KEY_KEK") != valueOf(t, before, "MFA_KEY_KEK") {
+		t.Error("the interactive re-run re-minted MFA_KEY_KEK")
+	}
+}
+
+// An interactive secret prompt must never print the current secret as its
+// default, and when the terminal cannot be told to stop echoing it has to SAY
+// the input is visible rather than pretend otherwise. (Piped stdin, as here, is
+// exactly that case: there is no terminal to turn echo off on.)
+func TestSetupInteractiveSecretPromptDoesNotEchoTheCurrentValue(t *testing.T) {
+	h := newHarness(t)
+	if err := h.run(h.setupArgs("--storage", "s3", "--s3-endpoint", "fra1.example.net",
+		"--s3-region", "fra1", "--s3-bucket", "media", "--s3-access-key", "AKIA",
+		"--s3-secret-key", "the-live-secret")...); err != nil {
+		t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
+	}
+
+	// domain, tag, storage, endpoint, region, bucket, access key, secret, SMTP?, reg?
+	h.stdin = "\n\n\n\n\n\n\n\nn\n\n"
+	if err := h.run("setup", "--template", h.template, "--yes"); err != nil {
+		t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
+	}
+	prompts := h.out.String()
+	if strings.Contains(prompts, "the-live-secret") {
+		t.Errorf("the current secret was printed as a prompt default:\n%s", prompts)
+	}
+	if !strings.Contains(prompts, "S3 secret key (input is echoed) [set; enter keeps it]") {
+		t.Errorf("the secret prompt did not mask its default (or claimed hidden input on a pipe):\n%s", prompts)
+	}
+	// Pressing enter kept it.
+	if got := valueOf(t, h.readOutput(t), "STORAGE_S3_SECRET_KEY"); got != "the-live-secret" {
+		t.Errorf("STORAGE_S3_SECRET_KEY = %q, want the existing secret kept", got)
+	}
+}
+
+// The release-tag warning exists for the file that deploys the template's
+// example tag — including when the operator got there by accepting the prompt's
+// default, which is where it went missing.
+func TestSetupInteractiveWarnsWhenTheTemplateTagIsAccepted(t *testing.T) {
+	h := newHarness(t)
+	// domain, release tag (enter = the template's v0.1.0), storage, SMTP?, reg?
+	h.stdin = "video.example.org\n\nlocal\nn\nn\n"
+	if err := h.run("setup", "--template", h.template); err != nil {
+		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
+	}
+	if valueOf(t, h.readOutput(t), "VIDRA_CORE_TAG") != "v0.1.0" {
+		t.Fatalf("the template's tag was not the accepted default:\n%s", h.readOutput(t))
+	}
+	if !strings.Contains(h.out.String(), "template's example tag") {
+		t.Errorf("accepting the template's example tag did not warn:\n%s", h.out.String())
 	}
 }
 
