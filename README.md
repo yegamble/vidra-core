@@ -101,9 +101,14 @@ openapi-verify sqlc-verify test-race` — the exact set `backend-ci.yml` runs, s
   exploratory signal, not part of the gate. The `bench-fuzz` workflow runs these
   plus a `go test -fuzz` pass on demand.
 - `make build` — build `./bin/api`, injecting version/commit/date via `-ldflags`.
-- `make build-vidra` — build `./bin/vidra`, the host-side operator CLI (`vidra setup`),
-  with the same `-ldflags`. It is a separate binary because it runs beside `docker
-  compose` on the host, before any image exists.
+- `make build-vidra` — build `./bin/vidra`, the host-side operator CLI, with the same
+  `-ldflags`. It is a separate binary because it runs beside `docker compose` on the
+  host, before any image exists. Its commands: `setup` (generate the production env
+  file), `doctor` (check a deployment), `status` (what is running and whether it
+  answers), `logs`, `restart <service>`, and `deploy` / `rollback` / `backup` /
+  `restore` / `release` — those five exec the deployment's own `deploy/*.sh` with your
+  terminal attached and return the script's exit code unchanged, so every gate stays in
+  the scripts, in one copy. `vidra <command> -h` for each.
 - `make migrate-up` / `make migrate-version` — apply the migrations embedded in the
   api binary (`api migrate up|version`), the same code path the published image runs;
   no `migrate` CLI needed. After a migration dies halfway, `api migrate force
@@ -289,7 +294,8 @@ and what is imported vs. regenerated afterwards live in the operator guide
 
 ```
 cmd/api/               HTTP service entrypoint + `migrate up|version|force` (build metadata via -ldflags)
-cmd/vidra/             host-side operator CLI (`vidra setup`); `make build-vidra`
+cmd/vidra/             host-side operator CLI: setup, doctor, status, logs, restart,
+                       deploy/rollback/backup/restore/release; `make build-vidra`
 cmd/peertube-import/   one-way PeerTube importer CLI
 internal/              57 packages: httpapi, auth, video, transcode, live, storage,
                        messaging, e2ee, ipfs, atproto, config, store (sqlc), …
