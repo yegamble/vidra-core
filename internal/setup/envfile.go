@@ -186,20 +186,22 @@ const carriedHeader = `
 # and a DATABASE_URL that disappears re-points the api at the bundled Postgres.
 # Move any of them into the sections above if a later template adopts the key.`
 
-// managedHeader introduces the block that holds the component keys this
-// template does not define. It is a SEPARATE block from the carried one on
-// purpose: these keys are not the previous operator's leftovers, they are values
-// `vidra setup` computed this run, and an env file that told an operator
-// otherwise would be inviting them to delete it.
+// managedHeader introduces the block that holds the managed keys this template
+// does not define. It is a SEPARATE block from the carried one on purpose: these
+// keys are not the previous operator's leftovers, they are values `vidra setup`
+// computed this run, and an env file that told an operator otherwise would be
+// inviting them to delete it.
 const managedHeader = `
 # ------------------------------------------------------------------------------
-# Component selection (managed by ` + "`vidra setup`" + `)
+# Managed by ` + "`vidra setup`" + `
 # ------------------------------------------------------------------------------
 # Keys this template does not define yet: which docker compose profiles the
 # deploy scripts enable, whether Postgres/Redis are external (each true makes the
 # deploy add docker-compose.external-*.yml so the bundled service never starts),
-# and the connection strings those switches need. A newer template defines them
-# in place and setup fills them there instead, leaving this block empty.`
+# the connection strings those switches need, and the TLS mode and ACME contact
+# address the generated deploy/Caddyfile.local is rendered from. A newer template
+# defines them in place and setup fills them there instead, leaving this block
+# empty.`
 
 // Render re-emits the file with values applied: comments, blank lines and
 // ordering untouched, each active assignment carrying values[key], then two

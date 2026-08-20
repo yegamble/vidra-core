@@ -109,7 +109,7 @@ func TestRenderAppendsManagedKeysUnderTheirOwnHeader(t *testing.T) {
 	if !strings.Contains(got, "Carried over from the previous env file\n") || !strings.Contains(got, "\nOLD=kept\n") {
 		t.Errorf("carried block missing: %q", got)
 	}
-	if !strings.Contains(got, "Component selection (managed by `vidra setup`)") || !strings.HasSuffix(got, "\nVIDRA_COMPOSE_PROFILES=core frontend ipfs\n") {
+	if !strings.Contains(got, "Managed by `vidra setup`") || !strings.HasSuffix(got, "\nVIDRA_COMPOSE_PROFILES=core frontend ipfs\n") {
 		t.Errorf("managed block missing or misplaced: %q", got)
 	}
 	if strings.Index(got, "OLD=kept") > strings.Index(got, "VIDRA_COMPOSE_PROFILES=") {

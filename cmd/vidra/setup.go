@@ -42,9 +42,15 @@ func runSetup(s streams, args []string) error {
 
 		domain     = fs.String("domain", "", "public origin of the instance, e.g. video.example.org (https is assumed)")
 		releaseTag = fs.String("release-tag", "", "image `tag` to deploy for all three services, e.g. v0.1.1")
-		coreTag    = fs.String("core-tag", "", "override the api image `tag`")
-		userTag    = fs.String("user-tag", "", "override the frontend image `tag`")
-		searchTag  = fs.String("search-tag", "", "override the search image `tag`")
+
+		tlsMode       = fs.String("tls-mode", "", "certificate issuer for the managed Caddy: `acme|acme-staging|internal` (default acme)")
+		acmeEmail     = fs.String("acme-email", "", "contact `address` Let's Encrypt sends expiry notices to (required by the acme modes)")
+		caddyTemplate = fs.String("caddy-template", setup.CaddyTemplatePath, "`path` to the Caddyfile template the reverse-proxy config is rendered from")
+		caddyOut      = fs.String("caddy-out", setup.CaddyOutputPath, "`path` to write the generated Caddyfile (the prod compose file bind-mounts it)")
+		noCaddy       = fs.Bool("no-caddy", false, "do not generate a Caddyfile (another reverse proxy terminates TLS)")
+		coreTag       = fs.String("core-tag", "", "override the api image `tag`")
+		userTag       = fs.String("user-tag", "", "override the frontend image `tag`")
+		searchTag     = fs.String("search-tag", "", "override the search image `tag`")
 
 		database    = fs.String("database", "", "PostgreSQL: `local|external` — external needs --database-url and makes the deploy skip the bundled container")
 		databaseURL = fs.String("database-url", "", "managed PostgreSQL connection string: `@file`, - for stdin, or the value itself (also $VIDRA_SETUP_DATABASE_URL)")
@@ -98,6 +104,11 @@ profiles, written to VIDRA_COMPOSE_PROFILES for the deploy scripts to enable. No
 passing one keeps whatever the env file already selects, so a re-run about
 something else cannot silently switch a component off; --scan=false turns one off
 deliberately.
+
+The reverse proxy is generated too: deploy/Caddyfile.local is rendered from the
+deploy/Caddyfile template with the instance's domain as its site address and the
+--tls-mode answer as its certificate issuer, and the prod compose file bind-mounts
+it. Pass --no-caddy when another proxy terminates TLS.
 
 flags:
 `)
@@ -212,6 +223,8 @@ flags:
 
 	answers := setup.Answers{
 		Domain:         *domain,
+		TLSMode:        *tlsMode,
+		AcmeEmail:      *acmeEmail,
 		ReleaseTag:     *releaseTag,
 		CoreTag:        *coreTag,
 		UserTag:        *userTag,
@@ -281,11 +294,59 @@ flags:
 		}
 		return err
 	}
+	// Rendered BEFORE anything is written: an answer the Caddyfile refuses (an
+	// acme mode with no contact address, a template someone stripped the markers
+	// out of) must stop the run, not leave a rewritten env file beside a proxy
+	// config that was never generated.
+	caddy, err := renderCaddyfile(*caddyTemplate, *noCaddy, res.Values)
+	if err != nil {
+		return err
+	}
 	if err := setup.WriteFile(outPath, res.Content); err != nil {
 		return err
 	}
-	report(s, outPath, sourcePaths, res)
+	caddyPath := ""
+	if caddy != nil {
+		if err := setup.WriteCaddyfile(*caddyOut, caddy); err != nil {
+			return err
+		}
+		caddyPath = *caddyOut
+	}
+	report(s, outPath, caddyPath, sourcePaths, res)
 	return nil
+}
+
+// renderCaddyfile renders the managed reverse-proxy config from the values the
+// env file was just generated with, returning nil when there is nothing to
+// generate.
+//
+// The RESOLVED values are the input, not the answers: a re-run that only changes
+// the release tag passes no --domain and no --tls-mode, and it must still
+// regenerate the same Caddyfile rather than none. res.Values is what the file on
+// disk says after answer/existing/template precedence has been applied, which is
+// exactly the deployment the proxy has to match.
+func renderCaddyfile(templatePath string, skip bool, values map[string]string) ([]byte, error) {
+	if skip {
+		return nil, nil
+	}
+	// Only reachable with a template that does not define PUBLIC_BASE_URL at all
+	// (Generate refuses a missing domain otherwise). There is no site address to
+	// render, so there is no Caddyfile.
+	if strings.TrimSpace(values["PUBLIC_BASE_URL"]) == "" {
+		return nil, nil
+	}
+	b, err := os.ReadFile(templatePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("setup: the Caddyfile template %s does not exist. Run this from the deployment directory (the checkout that holds deploy/ and docker-compose.yml), point --caddy-template at the template, or pass --no-caddy if another reverse proxy terminates TLS", templatePath)
+		}
+		return nil, fmt.Errorf("setup: read %s: %w", templatePath, err)
+	}
+	return setup.RenderCaddyfile(b, setup.Answers{
+		Domain:    values["PUBLIC_BASE_URL"],
+		TLSMode:   values["VIDRA_TLS_MODE"],
+		AcmeEmail: values["VIDRA_ACME_EMAIL"],
+	})
 }
 
 // readSecretFlag resolves a secret without requiring it on the command line.
@@ -453,6 +514,28 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 			return err
 		}
 		a.Domain = v
+	}
+	// TLS belongs with the domain: it is the same answer seen from the edge, and
+	// the mode decides whether an ACME order goes out the moment the stack comes
+	// up. Asking it here is also what keeps the operator who has no DNS yet from
+	// finding out by burning a Let's Encrypt rate limit.
+	if a.TLSMode == "" {
+		def := effective(tmpl, existing, "VIDRA_TLS_MODE")
+		if def == "" {
+			def = setup.TLSModeACME
+		}
+		v, err := ask(s, r, "TLS certificates (acme = Let's Encrypt, acme-staging = untrusted rehearsal, internal = private CA)", def)
+		if err != nil {
+			return err
+		}
+		a.TLSMode = v
+	}
+	if a.AcmeEmail == "" && (a.TLSMode == setup.TLSModeACME || a.TLSMode == setup.TLSModeACMEStaging) {
+		v, err := ask(s, r, "Contact address for Let's Encrypt expiry notices", effective(tmpl, existing, "VIDRA_ACME_EMAIL"))
+		if err != nil {
+			return err
+		}
+		a.AcmeEmail = v
 	}
 	if a.ReleaseTag == "" && a.CoreTag == "" && a.UserTag == "" && a.SearchTag == "" {
 		v, err := ask(s, r, "Release tag to deploy", effective(tmpl, existing, "VIDRA_CORE_TAG"))
@@ -760,8 +843,15 @@ func existingValue(existing *setup.EnvFile, key string) (string, bool) {
 // report prints what happened, by variable NAME only — a generated secret's
 // value belongs in the file and nowhere else, least of all a terminal scrollback
 // or a CI log.
-func report(s streams, path string, sources []string, res *setup.Result) {
+func report(s streams, path, caddyPath string, sources []string, res *setup.Result) {
 	fmt.Fprintf(s.out, "✓ wrote %s (mode 0600)\n", path)
+	if caddyPath != "" {
+		mode := strings.TrimSpace(res.Values["VIDRA_TLS_MODE"])
+		if mode == "" {
+			mode = setup.TLSModeACME
+		}
+		fmt.Fprintf(s.out, "✓ wrote %s (mode 0644, TLS %s) — the caddy service bind-mounts it; a running deployment needs `caddy reload` to pick it up\n", caddyPath, mode)
+	}
 	if len(sources) > 0 {
 		// Named, and in precedence order, because "which file won" is the
 		// question an operator merging two env files actually has.

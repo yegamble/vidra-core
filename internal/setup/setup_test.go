@@ -1127,7 +1127,7 @@ func TestGenerateAppendsComponentKeysToAnOlderTemplate(t *testing.T) {
 	answers.Database = DatabaseAnswers{Mode: "external", URL: "postgresql://doadmin:pw@db.example.net:25060/defaultdb?sslmode=require"}
 	res := generate(t, Request{Template: old, Answers: answers})
 
-	if !strings.Contains(string(res.Content), "Component selection (managed by `vidra setup`)") {
+	if !strings.Contains(string(res.Content), "Managed by `vidra setup`") {
 		t.Errorf("the appended keys got no explanatory header:\n%s", res.Content)
 	}
 	back := mustParse(t, res.Content)
@@ -1305,6 +1305,152 @@ func TestCheckHandlesTheComponentKeys(t *testing.T) {
 	}
 	if !warned(Warnings(warnVars), "the deploy still starts the bundled one") {
 		t.Errorf("warnings = %v, want the bundled-service drift flagged", Warnings(warnVars))
+	}
+}
+
+// The TLS answers land in the env file so a re-run, `vidra doctor` and the
+// deploy scripts all read the same mode the Caddyfile was rendered from.
+func TestGenerateWritesTheTLSKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		answers func(*Answers)
+		want    map[string]string
+	}{
+		{
+			name:    "unanswered is acme",
+			answers: func(*Answers) {},
+			want:    map[string]string{tlsModeKey: TLSModeACME, acmeEmailKey: ""},
+		},
+		{
+			name: "acme with a contact address",
+			answers: func(a *Answers) {
+				a.TLSMode, a.AcmeEmail = TLSModeACME, "ops@example.org"
+			},
+			want: map[string]string{tlsModeKey: TLSModeACME, acmeEmailKey: "ops@example.org"},
+		},
+		{
+			name:    "the bring-up mode needs no contact address",
+			answers: func(a *Answers) { a.TLSMode = TLSModeInternal },
+			want:    map[string]string{tlsModeKey: TLSModeInternal, acmeEmailKey: ""},
+		},
+		{
+			name: "the rehearsal mode",
+			answers: func(a *Answers) {
+				a.TLSMode, a.AcmeEmail = TLSModeACMEStaging, "ops@example.org"
+			},
+			want: map[string]string{tlsModeKey: TLSModeACMEStaging, acmeEmailKey: "ops@example.org"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			answers := baseAnswers()
+			tc.answers(&answers)
+			res := generate(t, Request{Answers: answers})
+			back := mustParse(t, res.Content)
+			for k, want := range tc.want {
+				if v, _ := back.Value(k); v != want {
+					t.Errorf("re-parsed %s = %q, want %q", k, v, want)
+				}
+			}
+		})
+	}
+}
+
+// An unknown mode is refused at generation: the file it would write names a mode
+// the Caddyfile renderer cannot act on, so the deployment would be one whose
+// proxy config can never be regenerated.
+func TestGenerateRejectsAnUnknownTLSMode(t *testing.T) {
+	answers := baseAnswers()
+	answers.TLSMode = "letsencrypt"
+	if _, err := Generate(Request{Template: fixtureTemplate(t), Answers: answers, Rand: &seqReader{}}); err == nil || !strings.Contains(err.Error(), "unsupported TLS mode") {
+		t.Fatalf("err = %v, want an unsupported-mode refusal", err)
+	}
+}
+
+// A re-run that never mentions TLS keeps what the file says: the mode and the
+// contact address are ordinary preserved values, unlike the profile list.
+func TestTLSAnswersSurviveAReRun(t *testing.T) {
+	answers := baseAnswers()
+	answers.TLSMode, answers.AcmeEmail = TLSModeInternal, "ops@example.org"
+	first := generate(t, Request{Answers: answers})
+
+	again := generate(t, Request{Existing: mustParse(t, first.Content), Answers: baseAnswers(), Rand: &seqReader{n: 77}})
+	for k, want := range map[string]string{tlsModeKey: TLSModeInternal, acmeEmailKey: "ops@example.org"} {
+		if again.Values[k] != want {
+			t.Errorf("%s = %q after a re-run that never mentioned TLS, want the file's %q", k, again.Values[k], want)
+		}
+	}
+}
+
+// The TLS keys are read by the deploy scripts and the Caddyfile renderer, never
+// by the api — so Check has to validate them itself, and has to be careful about
+// what it calls a problem. Every env file written before the managed Caddyfile
+// existed has neither key and no generated Caddyfile at all.
+func TestCheckHandlesTheTLSKeys(t *testing.T) {
+	valid := map[string]string{"VIDRA_ENV": "production", "JWT_SECRET": strings.Repeat("k", 48)}
+	with := func(extra map[string]string) map[string]string {
+		out := map[string]string{}
+		for k, v := range valid {
+			out[k] = v
+		}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return out
+	}
+
+	// Absent (a file that predates the keys) and blank are both fine, and neither
+	// is worth a warning: there is no generated Caddyfile for one to be about.
+	for _, vars := range []map[string]string{
+		with(nil),
+		with(map[string]string{tlsModeKey: "", acmeEmailKey: ""}),
+	} {
+		if got := Check(vars); len(got) > 0 {
+			t.Errorf("Check(%v) = %v, want no problems", vars, got)
+		}
+		if got := Warnings(vars); len(got) > 0 {
+			t.Errorf("Warnings(%v) = %v, want silence about a Caddyfile that does not exist", vars, got)
+		}
+	}
+
+	for _, tc := range []struct {
+		name    string
+		vars    map[string]string
+		wantVar string
+	}{
+		{"a mode nothing can render", with(map[string]string{tlsModeKey: "letsencrypt"}), tlsModeKey},
+		{"a contact address with a space in it", with(map[string]string{tlsModeKey: TLSModeACME, acmeEmailKey: "ops@example.org please"}), acmeEmailKey},
+		{"a contact address that is not one", with(map[string]string{tlsModeKey: TLSModeACME, acmeEmailKey: "ops"}), acmeEmailKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Check(tc.vars); !hasIssue(got, tc.wantVar) {
+				t.Errorf("Check = %v, want an issue against %s", got, tc.wantVar)
+			}
+		})
+	}
+
+	// acme with no contact address deploys perfectly well — and gets no warning
+	// of a renewal problem 60 days later, which is why it is said now.
+	blank := with(map[string]string{tlsModeKey: TLSModeACME})
+	if got := Check(blank); len(got) > 0 {
+		t.Errorf("Check = %v, want a blank contact address accepted", got)
+	}
+	if !warned(Warnings(blank), "expiry and revocation notices") {
+		t.Errorf("warnings = %v, want the missing ACME contact flagged", Warnings(blank))
+	}
+	// Answered, it says nothing.
+	if got := Warnings(with(map[string]string{tlsModeKey: TLSModeACME, acmeEmailKey: "ops@example.org"})); len(got) > 0 {
+		t.Errorf("warnings = %v, want silence on a fully answered acme setup", got)
+	}
+	// The two modes that produce an untrusted certificate are warned about
+	// whether or not a contact address is set: leaving one on is the failure.
+	for _, mode := range []string{TLSModeACMEStaging, TLSModeInternal} {
+		vars := with(map[string]string{tlsModeKey: mode, acmeEmailKey: "ops@example.org"})
+		if got := Check(vars); len(got) > 0 {
+			t.Errorf("Check = %v, want %s accepted", got, mode)
+		}
+		if !warned(Warnings(vars), "publicly trusted") {
+			t.Errorf("warnings = %v, want %s flagged as a rehearsal mode", Warnings(vars), mode)
+		}
 	}
 }
 

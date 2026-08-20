@@ -57,6 +57,8 @@
 //	Storage   local            STORAGE_BACKEND=local          NONE
 //	Storage   s3               STORAGE_BACKEND=s3             NONE
 //	                           STORAGE_S3_*
+//	TLS       acme|internal    VIDRA_TLS_MODE                 (caddy, always on)
+//	                           VIDRA_ACME_EMAIL
 //
 // Two absences in that table are deliberate. NEITHER storage answer enables the
 // `storage` profile: its minio is a DEV convenience (the compose file says so),
@@ -66,6 +68,12 @@
 // (ipfs-private, ipfs-private-cluster) are not offered: the IPFS answer maps to
 // the plain `ipfs` profile only, and a private swarm stays a manual
 // EXTRA_COMPOSE_PROFILES choice.
+//
+// The TLS answers are the exception in that table: they turn no container on and
+// the api never reads them. They are the input to the OTHER file this engine
+// generates — deploy/Caddyfile.local, rendered from the meta repo's
+// deploy/Caddyfile by RenderCaddyfile — and they live in the env file so a re-run
+// and `vidra doctor` can both see what the proxy config was generated with.
 //
 // A profile turns a CONTAINER on; the api-side flag that makes the api USE it
 // (MALWARE_SCAN_ENABLED, WHISPER_ENABLED, OTEL_ENABLED, ...) is a separate value
@@ -111,6 +119,18 @@ type Answers struct {
 	CoreTag    string
 	UserTag    string
 	SearchTag  string
+
+	// TLSMode chooses the certificate issuer for the managed Caddy: "acme"
+	// (Let's Encrypt), "acme-staging" (the same order against the staging
+	// directory, as a rehearsal) or "internal" (Caddy's local CA, for a bring-up
+	// before DNS points at the host). "" is unanswered — it keeps the existing
+	// file's mode, and RenderCaddyfile reads it as acme.
+	//
+	// AcmeEmail is the contact address Let's Encrypt sends expiry and revocation
+	// notices to. It is REQUIRED by both acme modes: an account without one gets
+	// no warning before a renewal problem becomes an outage.
+	TLSMode   string
+	AcmeEmail string
 
 	// StorageBackend is "local" or "s3" ("" keeps the template's choice).
 	StorageBackend string
@@ -303,14 +323,16 @@ const (
 	externalRedisKey    = "VIDRA_EXTERNAL_REDIS"
 	databaseURLKey      = "DATABASE_URL"
 	redisURLKey         = "REDIS_URL"
+	tlsModeKey          = "VIDRA_TLS_MODE"
+	acmeEmailKey        = "VIDRA_ACME_EMAIL"
 )
 
-// managedKeys are the keys the component answers own, in the order they render.
-// A template that does not define them yet gets them APPENDED (see
+// managedKeys are the keys the component and TLS answers own, in the order they
+// render. A template that does not define them yet gets them APPENDED (see
 // applyComponentRule): the deploy scripts must find VIDRA_COMPOSE_PROFILES in
 // every file this engine writes, including one generated from a template that
 // predates the key.
-var managedKeys = []string{profilesKey, externalPostgresKey, externalRedisKey, databaseURLKey, redisURLKey}
+var managedKeys = []string{profilesKey, externalPostgresKey, externalRedisKey, databaseURLKey, redisURLKey, tlsModeKey, acmeEmailKey}
 
 // externalOverlays pairs each external-service switch with the compose overlay
 // the deploy adds for it and the connection string it cannot work without. The
@@ -579,6 +601,7 @@ func Check(vars map[string]string) []Issue {
 	// second-hand (or, worse, would not report at all because the fallback DSN is
 	// syntactically fine).
 	issues = append(issues, componentIssues(vars)...)
+	issues = append(issues, tlsIssues(vars)...)
 	if env := strings.TrimSpace(vars["VIDRA_ENV"]); env != "production" {
 		got := strconv.Quote(env)
 		if env == "" {
@@ -691,7 +714,8 @@ func lineShapeIssues(values map[string]string) []Issue {
 // these variables are secrets.
 func Warnings(vars map[string]string) []string {
 	out := append(interpolationWarnings(vars), quoteWarnings(vars)...)
-	return append(out, componentWarnings(vars)...)
+	out = append(out, componentWarnings(vars)...)
+	return append(out, tlsWarnings(vars)...)
 }
 
 // interpolationWarnings flags a value compose would rewrite before the container
@@ -850,6 +874,22 @@ func answerValues(a Answers) (map[string]string, error) {
 		if c.url != "" {
 			out[c.urlKey] = c.url
 		}
+	}
+	// The TLS answers are what deploy/Caddyfile.local is rendered from; they live
+	// in the env file so a re-run (and `vidra doctor`) can see what the current
+	// Caddyfile was generated with.
+	mode, err := tlsMode(a.TLSMode)
+	if err != nil {
+		return nil, err
+	}
+	if mode != "" {
+		out[tlsModeKey] = mode
+	}
+	if email := strings.TrimSpace(a.AcmeEmail); email != "" {
+		if err := checkAcmeEmailShape(email); err != nil {
+			return nil, err
+		}
+		out[acmeEmailKey] = email
 	}
 	if a.Mail != nil {
 		out["MAIL_ENABLED"] = "true"
@@ -1055,9 +1095,15 @@ func applyComponentRule(req Request, answers map[string]string, res *Result) []s
 				v = strings.Join(Profiles(req.Answers), " ")
 			case externalPostgresKey, externalRedisKey:
 				v = "false"
+			case tlsModeKey:
+				// The deploy scripts read a blank mode as acme; writing it out is
+				// how an operator finds the knob at all.
+				v = TLSModeACME
 			default:
 				// A connection string with no value is simply absent: the bundled
-				// service's DSN is derived by the compose chain.
+				// service's DSN is derived by the compose chain. So is a blank ACME
+				// contact address — a key with nothing in it would only be a
+				// placeholder Check has to be taught to forgive.
 				continue
 			}
 		}
@@ -1126,6 +1172,59 @@ func componentIssues(vars map[string]string) []Issue {
 			c.flag, c.service, c.overlay, c.urlKey, c.flag)})
 	}
 	return out
+}
+
+// tlsIssues validates the TLS keys the generated Caddyfile is rendered from. It
+// only ever complains about a value that IS there and is wrong.
+//
+// Blank and absent are both legitimate: every env file written before these keys
+// existed has neither, and those deployments have no generated Caddyfile at all —
+// deploy/Caddyfile is whatever the operator edited by hand. Failing them would
+// turn `vidra setup --check` on a working instance into a red screen about a
+// feature it does not use. What cannot be waved through is a NON-BLANK value the
+// renderer would reject, because that file names a mode (or a contact address)
+// the next `vidra setup` refuses to act on.
+func tlsIssues(vars map[string]string) []Issue {
+	var out []Issue
+	if raw := strings.TrimSpace(vars[tlsModeKey]); raw != "" {
+		if _, err := tlsMode(raw); err != nil {
+			out = append(out, Issue{Var: tlsModeKey, Msg: fmt.Sprintf("%q is not a TLS mode — write one of %s (blank means %s). It decides what `vidra setup` writes into %s, so an unrecognised value is a Caddyfile that cannot be regenerated", raw, strings.Join(tlsModes, ", "), TLSModeACME, CaddyOutputPath)})
+		}
+	}
+	if email := strings.TrimSpace(vars[acmeEmailKey]); email != "" {
+		if err := checkAcmeEmailShape(email); err != nil {
+			out = append(out, Issue{Var: acmeEmailKey, Msg: strings.TrimPrefix(err.Error(), "setup: ")})
+		}
+	}
+	return out
+}
+
+// tlsWarnings reports the two TLS configurations that deploy fine and are still
+// not what a public instance wants.
+//
+// Neither is a failure. A rehearsal mode is a legitimate state to be in for an
+// afternoon — that is what it is for — and the blank contact address costs
+// nothing until a renewal fails 60 days later, which is exactly why it needs
+// saying now rather than then. An env file that does not mention the mode at all
+// gets nothing: it predates the managed Caddyfile, so there is no generated file
+// for either warning to be about.
+func tlsWarnings(vars map[string]string) []string {
+	raw := strings.TrimSpace(vars[tlsModeKey])
+	if raw == "" {
+		return nil
+	}
+	mode, err := tlsMode(raw)
+	if err != nil {
+		// Already reported as an issue; a warning about it would be noise.
+		return nil
+	}
+	if mode != TLSModeACME {
+		return []string{fmt.Sprintf("%s=%s does not produce a publicly trusted certificate: %s is a rehearsal/bring-up mode, and every browser reaching this instance will refuse the connection. Re-run `vidra setup --tls-mode %s` once DNS points at this host", tlsModeKey, mode, mode, TLSModeACME)}
+	}
+	if strings.TrimSpace(vars[acmeEmailKey]) != "" {
+		return nil
+	}
+	return []string{fmt.Sprintf("%s is %s but %s is blank: Let's Encrypt sends expiry and revocation notices to that address and nowhere else, so the first sign of a renewal problem would be the outage. Re-run `vidra setup --acme-email ops@your-domain`", tlsModeKey, TLSModeACME, acmeEmailKey)}
 }
 
 // isTrue reads a component switch the way this engine writes it, tolerating the
@@ -1197,6 +1296,19 @@ func firstNonEmpty(vals ...string) string {
 // is renamed into place, so a re-run that fails halfway cannot leave a live
 // deployment with a truncated env file.
 func WriteFile(path string, content []byte) error {
+	return writeFile(path, content, 0o600)
+}
+
+// WriteCaddyfile writes a generated Caddyfile with the same atomic rename, at
+// mode 0644. The wider mode is deliberate: the file carries no secret — a
+// hostname, a contact address and the routing every reader of the meta repo can
+// already see — and it is bind-mounted into a container that does not run as the
+// user who generated it.
+func WriteCaddyfile(path string, content []byte) error {
+	return writeFile(path, content, 0o644)
+}
+
+func writeFile(path string, content []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp*")
 	if err != nil {
@@ -1207,7 +1319,7 @@ func WriteFile(path string, content []byte) error {
 		// No-op once the rename succeeded.
 		_ = os.Remove(tmpName)
 	}()
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := tmp.Chmod(mode); err != nil {
 		tmp.Close()
 		return fmt.Errorf("setup: chmod %s: %w", tmpName, err)
 	}

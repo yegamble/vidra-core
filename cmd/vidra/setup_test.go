@@ -51,13 +51,32 @@ REGISTRATION_REQUIRE_APPROVAL=false
 # FEDERATION_KEY_KEK=
 `
 
+// A minimal MARKED Caddyfile in the deployment format. The real one is 240 lines
+// of routing this command never touches; what it has to exercise here is the
+// plumbing — the two markers, a comment that keeps example.com and a site line
+// that must not.
+const cliCaddyfile = `# Reference reverse proxy (cli test fixture). Replace example.com with your domain.
+{
+	# email ops@example.com
+	# vidra:global-options
+}
+
+example.com {
+	# vidra:tls
+
+	reverse_proxy api:8080
+}
+`
+
 type harness struct {
-	dir      string
-	template string
-	output   string
-	out      bytes.Buffer
-	err      bytes.Buffer
-	stdin    string
+	dir           string
+	template      string
+	output        string
+	caddyTemplate string
+	caddyOut      string
+	out           bytes.Buffer
+	err           bytes.Buffer
+	stdin         string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -65,8 +84,12 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{dir: t.TempDir()}
 	h.template = filepath.Join(h.dir, "production.env.example")
 	h.output = filepath.Join(h.dir, "production.env")
-	if err := os.WriteFile(h.template, []byte(cliTemplate), 0o644); err != nil {
-		t.Fatalf("write template: %v", err)
+	h.caddyTemplate = filepath.Join(h.dir, "Caddyfile")
+	h.caddyOut = filepath.Join(h.dir, "Caddyfile.local")
+	for path, content := range map[string]string{h.template: cliTemplate, h.caddyTemplate: cliCaddyfile} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
 	}
 	return h
 }
@@ -78,10 +101,26 @@ func (h *harness) run(args ...string) error {
 }
 
 func (h *harness) setupArgs(extra ...string) []string {
-	return append([]string{
+	return append(append([]string{
 		"setup", "--template", h.template, "--non-interactive",
 		"--domain", "video.example.org", "--release-tag", "v0.1.1", "--storage", "local",
-	}, extra...)
+		"--acme-email", "ops@example.org",
+	}, h.caddyArgs()...), extra...)
+}
+
+// caddyArgs points the Caddyfile generation at the fixture instead of the
+// deployment's deploy/Caddyfile, which does not exist under `go test`.
+func (h *harness) caddyArgs() []string {
+	return []string{"--caddy-template", h.caddyTemplate, "--caddy-out", h.caddyOut}
+}
+
+func (h *harness) readCaddyfile(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(h.caddyOut)
+	if err != nil {
+		t.Fatalf("read generated Caddyfile: %v", err)
+	}
+	return string(b)
 }
 
 func (h *harness) readOutput(t *testing.T) string {
@@ -457,12 +496,12 @@ func TestSetupCheckNeverValidatesInDevelopmentMode(t *testing.T) {
 // read them.
 func TestSetupSecretsCanAvoidArgv(t *testing.T) {
 	s3Args := func(h *harness, extra ...string) []string {
-		return append([]string{
+		return append(append([]string{
 			"setup", "--template", h.template, "--non-interactive", "--domain", "video.example.org",
 			"--release-tag", "v0.1.1", "--storage", "s3",
 			"--s3-endpoint", "fra1.example.net", "--s3-region", "fra1", "--s3-bucket", "media",
-			"--s3-access-key", "AKIA",
-		}, extra...)
+			"--s3-access-key", "AKIA", "--acme-email", "ops@example.org",
+		}, h.caddyArgs()...), extra...)
 	}
 
 	t.Run("@file", func(t *testing.T) {
@@ -594,10 +633,10 @@ func TestSetupHelpSucceedsOnStdout(t *testing.T) {
 
 func TestSetupInteractiveAnswersTheMinimalQuestions(t *testing.T) {
 	h := newHarness(t)
-	// domain, release tag, storage, external Postgres?, external Redis?, optional
-	// components?, SMTP?, open registration?
-	h.stdin = "video.example.org\nv0.1.1\nlocal\nn\nn\nn\nn\nn\n"
-	if err := h.run("setup", "--template", h.template); err != nil {
+	// domain, TLS mode, ACME contact, release tag, storage, external Postgres?,
+	// external Redis?, optional components?, SMTP?, open registration?
+	h.stdin = "video.example.org\nacme\nops@example.org\nv0.1.1\nlocal\nn\nn\nn\nn\nn\n"
+	if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
 	}
 	got := h.readOutput(t)
@@ -626,11 +665,11 @@ func TestSetupInteractiveReRunKeepsTheRegistrationPolicy(t *testing.T) {
 		t.Fatalf("fixture is not open+approval:\n%s", before)
 	}
 
-	// Re-run interactively, pressing enter at every question: domain, release
-	// tag, storage, external Postgres?, external Redis?, optional components?,
-	// SMTP?, open registration?, approval?
-	h.stdin = "\n\n\n\n\n\n\n\n\n"
-	if err := h.run("setup", "--template", h.template, "--yes"); err != nil {
+	// Re-run interactively, pressing enter at every question: domain, TLS mode,
+	// ACME contact, release tag, storage, external Postgres?, external Redis?,
+	// optional components?, SMTP?, open registration?, approval?
+	h.stdin = "\n\n\n\n\n\n\n\n\n\n\n"
+	if err := h.run(append([]string{"setup", "--template", h.template, "--yes"}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
 	}
 	after := h.readOutput(t)
@@ -661,10 +700,11 @@ func TestSetupInteractiveSecretPromptDoesNotEchoTheCurrentValue(t *testing.T) {
 		t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
 	}
 
-	// domain, tag, storage, endpoint, region, bucket, access key, secret,
-	// external Postgres?, external Redis?, optional components?, SMTP?, reg?
-	h.stdin = "\n\n\n\n\n\n\n\n\n\n\nn\n\n"
-	if err := h.run("setup", "--template", h.template, "--yes"); err != nil {
+	// domain, TLS mode, ACME contact, tag, storage, endpoint, region, bucket,
+	// access key, secret, external Postgres?, external Redis?, optional
+	// components?, SMTP?, reg?
+	h.stdin = "\n\n\n\n\n\n\n\n\n\n\n\n\nn\n\n"
+	if err := h.run(append([]string{"setup", "--template", h.template, "--yes"}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
 	}
 	prompts := h.out.String()
@@ -685,10 +725,11 @@ func TestSetupInteractiveSecretPromptDoesNotEchoTheCurrentValue(t *testing.T) {
 // default, which is where it went missing.
 func TestSetupInteractiveWarnsWhenTheTemplateTagIsAccepted(t *testing.T) {
 	h := newHarness(t)
-	// domain, release tag (enter = the template's v0.1.0), storage, external
-	// Postgres?, external Redis?, optional components?, SMTP?, reg?
-	h.stdin = "video.example.org\n\nlocal\nn\nn\nn\nn\nn\n"
-	if err := h.run("setup", "--template", h.template); err != nil {
+	// domain, TLS mode, ACME contact, release tag (enter = the template's
+	// v0.1.0), storage, external Postgres?, external Redis?, optional
+	// components?, SMTP?, reg?
+	h.stdin = "video.example.org\nacme\nops@example.org\n\nlocal\nn\nn\nn\nn\nn\n"
+	if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
 	}
 	if valueOf(t, h.readOutput(t), "VIDRA_CORE_TAG") != "v0.1.0" {
@@ -769,10 +810,10 @@ func TestSetupKeepsTheProfileListOnAReRun(t *testing.T) {
 // treats it as the secret it is.
 func TestSetupInteractiveAsksForAManagedDatabase(t *testing.T) {
 	h := newHarness(t)
-	// domain, tag, storage, external Postgres? y, its DSN, external Redis? n,
-	// optional components? n, SMTP? n, registration? n
-	h.stdin = "video.example.org\nv0.1.1\nlocal\ny\n" + managedDSN + "\nn\nn\nn\nn\n"
-	if err := h.run("setup", "--template", h.template); err != nil {
+	// domain, TLS mode, ACME contact, tag, storage, external Postgres? y, its
+	// DSN, external Redis? n, optional components? n, SMTP? n, registration? n
+	h.stdin = "video.example.org\nacme\nops@example.org\nv0.1.1\nlocal\ny\n" + managedDSN + "\nn\nn\nn\nn\n"
+	if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
 	}
 	got := h.readOutput(t)
@@ -790,6 +831,137 @@ func TestSetupInteractiveAsksForAManagedDatabase(t *testing.T) {
 	// summary.
 	if !strings.Contains(h.out.String(), "Managed PostgreSQL connection string (input is echoed)") {
 		t.Errorf("the DSN was not asked for as a secret:\n%s", h.out.String())
+	}
+}
+
+// The second file every deployment needs. It is generated from the same answers
+// as the env file, in the same run, so a deployment cannot end up with an env
+// file naming one domain and a reverse proxy holding a certificate for another.
+func TestSetupWritesTheManagedCaddyfile(t *testing.T) {
+	h := newHarness(t)
+	if err := h.run(h.setupArgs()...); err != nil {
+		t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+	}
+
+	info, err := os.Stat(h.caddyOut)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	// 0644, not 0600: it carries no secret, and it is bind-mounted into a
+	// container that does not run as the user who generated it.
+	if info.Mode().Perm() != 0o644 {
+		t.Errorf("mode = %v, want 0644", info.Mode().Perm())
+	}
+
+	got := h.readCaddyfile(t)
+	for _, want := range []string{"GENERATED by `vidra setup`", "video.example.org {", "email ops@example.org"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the generated Caddyfile is missing %q:\n%s", want, got)
+		}
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") && strings.Contains(line, "example.com") {
+			t.Errorf("a non-comment line still names example.com, which deploy.sh refuses to deploy: %q", line)
+		}
+	}
+	// The answers are also recorded in the env file, so a re-run (and doctor)
+	// can see what the proxy config was generated with.
+	env := h.readOutput(t)
+	if v := valueOf(t, env, "VIDRA_TLS_MODE"); v != "acme" {
+		t.Errorf("VIDRA_TLS_MODE = %q, want the default acme", v)
+	}
+	if v := valueOf(t, env, "VIDRA_ACME_EMAIL"); v != "ops@example.org" {
+		t.Errorf("VIDRA_ACME_EMAIL = %q, want the answered contact address", v)
+	}
+	if !strings.Contains(h.out.String(), h.caddyOut) {
+		t.Errorf("the summary does not mention the generated Caddyfile:\n%s", h.out.String())
+	}
+}
+
+// The bring-up mode: no ACME order, so no contact address is required and the
+// site issues from Caddy's local CA. The env file says so too, and says loudly
+// that this is not a certificate a browser will accept.
+func TestSetupCaddyfileFollowsTheTLSMode(t *testing.T) {
+	h := newHarness(t)
+	args := append([]string{
+		"setup", "--template", h.template, "--non-interactive",
+		"--domain", "video.example.org", "--release-tag", "v0.1.1", "--storage", "local",
+		"--tls-mode", "internal",
+	}, h.caddyArgs()...)
+	if err := h.run(args...); err != nil {
+		t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+	}
+	got := h.readCaddyfile(t)
+	if !strings.Contains(got, "tls internal") {
+		t.Errorf("internal mode did not reach the Caddyfile:\n%s", got)
+	}
+	if strings.Contains(got, "\temail ") {
+		t.Errorf("an ACME contact was injected in internal mode:\n%s", got)
+	}
+	if v := valueOf(t, h.readOutput(t), "VIDRA_TLS_MODE"); v != "internal" {
+		t.Errorf("VIDRA_TLS_MODE = %q, want internal", v)
+	}
+	if !strings.Contains(h.out.String(), "publicly trusted") {
+		t.Errorf("a bring-up mode was not warned about:\n%s", h.out.String())
+	}
+}
+
+// An acme mode with no contact address is refused, and refused BEFORE anything
+// is written: a rewritten env file beside a Caddyfile that was never regenerated
+// is the state an operator cannot reason about.
+func TestSetupAcmeNeedsAContactAddress(t *testing.T) {
+	h := newHarness(t)
+	args := append([]string{
+		"setup", "--template", h.template, "--non-interactive",
+		"--domain", "video.example.org", "--release-tag", "v0.1.1", "--storage", "local",
+	}, h.caddyArgs()...)
+	err := h.run(args...)
+	if err == nil || !strings.Contains(err.Error(), "--acme-email") {
+		t.Fatalf("err = %v, want a refusal naming --acme-email", err)
+	}
+	if _, statErr := os.Stat(h.output); statErr == nil {
+		t.Error("the env file was written even though the run failed")
+	}
+}
+
+// --no-caddy is the external-proxy answer: nothing is generated, and the env
+// file is written exactly as before.
+func TestSetupNoCaddySkipsTheProxyConfig(t *testing.T) {
+	h := newHarness(t)
+	if err := h.run("setup", "--template", h.template, "--non-interactive",
+		"--domain", "video.example.org", "--release-tag", "v0.1.1", "--storage", "local",
+		"--no-caddy"); err != nil {
+		t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+	}
+	if _, err := os.Stat(h.caddyOut); err == nil {
+		t.Error("--no-caddy generated a Caddyfile anyway")
+	}
+	if strings.Contains(h.out.String(), "Caddyfile") {
+		t.Errorf("--no-caddy still reported a Caddyfile:\n%s", h.out.String())
+	}
+	// No template was needed either — the point of the flag is a host that has
+	// no deploy/Caddyfile at all.
+	if got := h.readOutput(t); !strings.Contains(got, "PUBLIC_BASE_URL=https://video.example.org") {
+		t.Errorf("the env file was not generated:\n%s", got)
+	}
+}
+
+// The default template path is relative to the deployment directory, so running
+// setup somewhere else has to say which file it wanted and how to proceed
+// without it.
+func TestSetupMissingCaddyTemplateNamesThePath(t *testing.T) {
+	h := newHarness(t)
+	missing := filepath.Join(h.dir, "nowhere", "Caddyfile")
+	err := h.run("setup", "--template", h.template, "--non-interactive",
+		"--domain", "video.example.org", "--release-tag", "v0.1.1", "--storage", "local",
+		"--acme-email", "ops@example.org", "--caddy-template", missing)
+	if err == nil {
+		t.Fatal("a missing Caddyfile template was not reported")
+	}
+	for _, want := range []string{missing, "--no-caddy"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %q: %v", want, err)
+		}
 	}
 }
 
