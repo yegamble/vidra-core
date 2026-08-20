@@ -86,8 +86,8 @@ make migrate-up                                   # migrations are embedded in t
 make run                                           # API against local Postgres/Redis
 ```
 
-**`make ci` is the canonical gate.** It runs `fmt-check vet openapi-verify
-sqlc-verify test-race` — the exact set `backend-ci.yml` runs, so "passes locally"
+**`make ci` is the canonical gate.** It runs `fmt-check vet migrate-lint
+openapi-verify sqlc-verify test-race` — the exact set `backend-ci.yml` runs, so "passes locally"
 == "passes in GitHub". Add any new required check there, never only in the workflow.
 
 - `make check` — fast local loop (`fmt vet test`).
@@ -111,6 +111,9 @@ sqlc-verify test-race` — the exact set `backend-ci.yml` runs, so "passes local
   so the schema must already match the version you name). `make migrate-down` still uses the
   [`migrate`](https://github.com/golang-migrate/migrate) CLI — rollback is an
   operator-with-CLI operation, the shipped binary only goes forward.
+- `make migrate-lint` — reject destructive DDL in forward migrations (the one-release
+  schema-compat policy, enforced); `schema-compat.yml` additionally runs the previous
+  release's integration suite against the new schema.
 - `make help` — the full target list (fmt, vet, migrate-up/version/down, sqlc, up/down, …).
 
 ## Configuration
