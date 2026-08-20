@@ -1,0 +1,107 @@
+name: release-assets
+
+# Attach the `vidra` operator CLI to every release as a downloadable binary.
+#
+# WHY IT EXISTS: the binary was distributed NOWHERE. It is not in the api image
+# (a separate binary on purpose — it runs on the host beside docker compose,
+# before any image exists), bin/ is gitignored, and the releases carried no
+# assets at all. Every operator therefore had to install Go and build it, which
+# is the opposite of the one-command install this project is aiming at, and
+# leaves the installer with nothing to fetch.
+#
+# ASSETS ONLY EXIST FOR RELEASES CUT AFTER THIS WORKFLOW LANDS. It runs on
+# `release: published` and nothing else, so a release created before this file
+# existed has no binaries and never will — building one now would mean building
+# a tag whose source predates the build that claims to be it. The next release
+# carries them; anything older is still `make build-vidra` from a checkout.
+#
+# The version metadata is baked with the SAME -ldflags as `make build-vidra`,
+# because the Makefile target is invoked rather than restated: a second copy of
+# the flags is a second answer to "which build is this?", and that question is
+# only ever asked during an incident. VERSION and BUILD_DATE are passed in so the
+# stamp is the released TAG and the tag commit's own date — stable for a given
+# tag, so a re-run produces the same bytes rather than a new timestamp.
+
+on:
+  release:
+    types: [published]
+
+# Read at the top level, exactly like publish-container.yml. Only the job below
+# is allowed to write, and the only thing it writes is release assets.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # `gh release upload` writes to the release. Nothing else here needs a
+      # token at all.
+      contents: write
+    steps:
+      - name: Check out the released source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The TAG, never the default branch: an asset named for a release has
+          # to be built from that release's source.
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # In lock-step with go.mod and backend-ci.yml. A binary built by a
+          # different toolchain than the gate ran is a binary the gate did not
+          # test.
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Build vidra for the four host platforms
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -eu
+          # The tag commit's own date, in the shape the Makefile's `date -u`
+          # produces. Deriving it from the commit rather than from `now` is what
+          # makes a re-run of this workflow produce identical binaries.
+          BUILD_DATE="$(TZ=UTC git show -s --date=format:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
+          mkdir -p dist
+          # linux/{amd64,arm64} is where deployments run (a DigitalOcean droplet
+          # is one or the other); darwin/{amd64,arm64} is where operators drive
+          # them from, since -C/--repo makes the CLI usable against a checkout
+          # that is not on this machine. CGO_ENABLED=0 because the result has to
+          # run on a droplet whose libc is not this runner's — the CLI links
+          # nothing native, so static costs it nothing.
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            GOOS="${target%/*}"
+            GOARCH="${target#*/}"
+            echo "building ${GOOS}/${GOARCH}"
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              make build-vidra VERSION="$TAG" BUILD_DATE="$BUILD_DATE"
+            mv bin/vidra "dist/vidra_${TAG}_${GOOS}_${GOARCH}"
+          done
+          ls -l dist
+
+      - name: Checksum them
+        run: |
+          set -eu
+          cd dist
+          # Bare names, no ./ prefix, so `sha256sum -c SHA256SUMS` works in the
+          # directory the assets were downloaded into.
+          sha256sum vidra_* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attach them to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -eu
+          # --clobber so re-running this workflow for a tag replaces the assets
+          # instead of failing on the ones already there.
+          gh release upload "$TAG" dist/* --clobber
