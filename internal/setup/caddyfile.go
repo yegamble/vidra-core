@@ -245,6 +245,22 @@ func caddyHost(domain string) (string, error) {
 	return strings.TrimPrefix(origin, "https://"), nil
 }
 
+// NormalizeTLSMode is the TLS answer's validator, exported for the same reason
+// as NormalizeOrigin: a prompt that can reject a typo where it was typed. "" is
+// unanswered and therefore valid — the caller decides what unanswered means.
+func NormalizeTLSMode(v string) (string, error) { return tlsMode(v) }
+
+// CheckAcmeEmail is the contact address's validator, exported alongside the two
+// above. An EMPTY address is valid here: the contact is optional (the template
+// ships it blank and calls it recommended), and refusing it at a prompt would be
+// refusing what the file itself allows.
+func CheckAcmeEmail(email string) error {
+	if strings.TrimSpace(email) == "" {
+		return nil
+	}
+	return checkAcmeEmailShape(email)
+}
+
 // tlsMode validates the answer. "" is "unanswered" like every other answer in
 // this package, and the caller decides what that means: RenderCaddyfile treats it
 // as acme, the env-file path leaves the existing value alone.

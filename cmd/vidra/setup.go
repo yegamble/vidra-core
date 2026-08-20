@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,7 +13,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/vidra/vidra-core/internal/preflight"
 	"github.com/vidra/vidra-core/internal/setup"
 )
 
@@ -644,11 +647,19 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 		// Deliberately no default from the template: its PUBLIC_BASE_URL is an
 		// example, and accepting it would generate a file for example.com.
 		def, _ := existingValue(existing, "PUBLIC_BASE_URL")
-		v, err := ask(s, r, "Public domain of this instance (e.g. video.example.org)", def)
+		v, err := askValid(s, r, "Public domain of this instance (e.g. video.example.org)", def, func(in string) error {
+			_, err := setup.NormalizeOrigin(in)
+			return err
+		})
 		if err != nil {
 			return err
 		}
 		a.Domain = v
+	}
+	// One line about whether that domain points here YET. It is feedback, never a
+	// gate: see reportDomainDNS.
+	if a.Domain != "" {
+		reportDomainDNS(s, a.Domain)
 	}
 	// TLS belongs with the domain: it is the same answer seen from the edge, and
 	// the mode decides whether an ACME order goes out the moment the stack comes
@@ -659,7 +670,10 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 		if def == "" {
 			def = setup.TLSModeACME
 		}
-		v, err := ask(s, r, "TLS certificates (acme = Let's Encrypt, acme-staging = untrusted rehearsal, internal = private CA)", def)
+		v, err := askValid(s, r, "TLS certificates (acme = Let's Encrypt, acme-staging = untrusted rehearsal, internal = private CA)", def, func(in string) error {
+			_, err := setup.NormalizeTLSMode(in)
+			return err
+		})
 		if err != nil {
 			return err
 		}
@@ -668,7 +682,8 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 	if a.AcmeEmail == "" && (a.TLSMode == setup.TLSModeACME || a.TLSMode == setup.TLSModeACMEStaging) {
 		// Optional, and the prompt says so: an operator with no address to give
 		// presses enter and the install continues with the ⚠ the report prints.
-		v, err := ask(s, r, "Contact address for Let's Encrypt expiry notices (optional, enter to skip)", effective(tmpl, existing, "VIDRA_ACME_EMAIL"))
+		v, err := askValid(s, r, "Contact address for Let's Encrypt expiry notices (optional, enter to skip)",
+			effective(tmpl, existing, "VIDRA_ACME_EMAIL"), setup.CheckAcmeEmail)
 		if err != nil {
 			return err
 		}
@@ -918,6 +933,64 @@ func stty(tty *os.File, arg string) error {
 
 func ask(s streams, r *bufio.Reader, label, def string) (string, error) {
 	return askWithShownDefault(s, r, label, def, def)
+}
+
+// askValid asks until the answer is one the ENGINE will accept, using the
+// engine's own validator rather than a friendlier second opinion.
+//
+// A mistyped domain used to cost the whole interview: it was discovered by
+// Generate, after every other question had been answered, and the run exited
+// having written nothing and with no way back to the answers. Here it costs one
+// line. There is no attempt limit — the loop ends when the answer is valid or
+// when stdin does, which is the same EOF error every other prompt returns.
+func askValid(s streams, r *bufio.Reader, label, def string, valid func(string) error) (string, error) {
+	for {
+		v, err := ask(s, r, label, def)
+		if err != nil {
+			return "", err
+		}
+		if verr := valid(v); verr != nil {
+			// The engine's message, minus its package prefix: it is already
+			// addressed to an operator and says what to write instead.
+			fmt.Fprintf(s.out, "  ✗ %s\n", strings.TrimPrefix(verr.Error(), "setup: "))
+			continue
+		}
+		return v, nil
+	}
+}
+
+// domainCheckTimeout bounds the whole DNS feedback. Short on purpose: an
+// operator is watching a prompt, and this is a nicety, not a dependency.
+const domainCheckTimeout = 5 * time.Second
+
+// checkDomain is preflight's domain check, indirected so the tests can answer
+// without a nameserver or an HTTP round trip — a suite that reaches the network
+// to test the network is a suite nobody runs (preflight's own doctrine).
+var checkDomain = preflight.CheckDomain
+
+// reportDomainDNS prints ONE line about whether the domain resolves here yet.
+//
+// It is FEEDBACK, NEVER A GATE, and the distinction is the whole design. DNS
+// that does not point here yet is a completely ordinary state of a fresh
+// install — it is what VIDRA_TLS_MODE=internal exists for, and the operator may
+// well be about to create the record. Refusing here would refuse the install
+// that the next question already has an answer for. And a check that cannot
+// COMPLETE (no outbound HTTPS, so no public IP to compare against) is not a
+// check that failed, so it reads as ⚠ and not as ✗ (internal/preflight's
+// package doc).
+func reportDomainDNS(s streams, domain string) {
+	ctx, cancel := context.WithTimeout(context.Background(), domainCheckTimeout)
+	defer cancel()
+	res := checkDomain(ctx, preflight.DomainRequest{
+		Domain: domain,
+		// Half the budget per endpoint, so both can be asked inside it.
+		PublicIP: preflight.PublicIPOptions{Timeout: domainCheckTimeout / 2},
+	})
+	if res.Status == preflight.StatusOK {
+		fmt.Fprintf(s.out, "  ✓ %s\n", res.Message)
+		return
+	}
+	fmt.Fprintf(s.out, "  ⚠ %s — not a blocker: TLS mode %s issues from Caddy's own CA until DNS points here\n", res.Message, setup.TLSModeInternal)
 }
 
 // askWithShownDefault separates the default's VALUE from how it is displayed, so

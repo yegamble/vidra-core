@@ -999,6 +999,16 @@ func requireDomain(req Request, answers map[string]string) error {
 	return errors.New("setup: the instance domain is required — pass the public origin (e.g. --domain video.example.org). PUBLIC_BASE_URL is the origin for watch/embed links AND for OAuth, NodeInfo and federation identity, so the template's example value cannot be deployed")
 }
 
+// NormalizeOrigin is the domain answer's validator, exported for a front end
+// that has to tell an operator the value is unusable AT THE PROMPT rather than
+// after every other question has been answered and the whole file refused.
+//
+// It is a one-line wrapper on purpose. The terminal interview, the web wizard
+// and Generate must agree to the byte about what a usable origin is — a second
+// implementation for the "friendly" early check is exactly how a wizard starts
+// accepting a domain the engine then rejects.
+func NormalizeOrigin(in string) (string, error) { return normalizeOrigin(in) }
+
 // normalizeOrigin accepts a bare host or a full origin and returns
 // https://host[:port], lowercased. https is not negotiable here: in production
 // the api pins Secure cookies and both apps emit HSTS, so a plain-http origin

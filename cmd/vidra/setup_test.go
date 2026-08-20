@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vidra/vidra-core/internal/preflight"
 )
 
 // A minimal template in the deployment format: comments, a blank secret, a
@@ -97,12 +100,22 @@ type harness struct {
 	// is set it replaces stdin. asked is every prompt the run printed, in order.
 	script []promptAnswer
 	asked  []string
+	// dns is what the interview's domain check finds. It defaults to "could not
+	// tell", which is what a hermetic test host honestly is.
+	dns preflight.DomainResult
 }
 
 // promptAnswer is one scripted reply: the first entry whose match is a substring
 // of the prompt answers it, so an entry with an empty match is the catch-all
 // "press enter" and belongs last.
-type promptAnswer struct{ match, answer string }
+type promptAnswer struct {
+	match, answer string
+	// once drops the entry after it has answered, so the NEXT entry matching the
+	// same prompt takes the following occurrence. That is how a question that is
+	// re-asked (a rejected answer, then a good one) stays expressible by question
+	// rather than by position.
+	once bool
+}
 
 // prompter is stdin for an interview, answering by QUESTION rather than by
 // position.
@@ -155,10 +168,14 @@ func (p *prompter) nextPrompt() string {
 }
 
 func (p *prompter) answerFor(prompt string) (string, bool) {
-	for _, a := range p.script {
-		if a.match == "" || strings.Contains(prompt, a.match) {
-			return a.answer, true
+	for i, a := range p.script {
+		if a.match != "" && !strings.Contains(prompt, a.match) {
+			continue
 		}
+		if a.once {
+			p.script = append(p.script[:i:i], p.script[i+1:]...)
+		}
+		return a.answer, true
 	}
 	return "", false
 }
@@ -175,6 +192,17 @@ func newHarness(t *testing.T) *harness {
 			t.Fatalf("write %s: %v", path, err)
 		}
 	}
+	// The interview's domain feedback must never reach a real nameserver (or an
+	// IP echo service) under `go test`: a suite whose result depends on the
+	// network it runs on tells nobody anything, and this one would take seconds
+	// per interactive test to say so. Tests that care about the LINE set h.dns.
+	h.dns = preflight.DomainResult{
+		Status:  preflight.StatusWarn,
+		Message: "video.example.org resolves to 203.0.113.10, but this host's own public IP could not be determined, so the two were not compared",
+	}
+	restore := checkDomain
+	checkDomain = func(context.Context, preflight.DomainRequest) preflight.DomainResult { return h.dns }
+	t.Cleanup(func() { checkDomain = restore })
 	return h
 }
 
@@ -799,7 +827,7 @@ ipfs = true
 	t.Run("a partial file is a pre-seeded interview", func(t *testing.T) {
 		h := newHarness(t)
 		path := write(t, h, "domain = video.example.org\nrelease-tag = v0.1.1\ntls-mode = internal\n")
-		h.script = []promptAnswer{{"", ""}} // press enter through whatever is left
+		h.script = []promptAnswer{{match: "", answer: ""}} // press enter through whatever is left
 		if err := h.run(append([]string{"setup", "--template", h.template, "--answers", path}, h.caddyArgs()...)...); err != nil {
 			t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
 		}
@@ -872,13 +900,13 @@ func TestSetupHelpSucceedsOnStdout(t *testing.T) {
 func TestSetupInteractiveAnswersTheMinimalQuestions(t *testing.T) {
 	h := newHarness(t)
 	h.script = []promptAnswer{
-		{"Public domain", "video.example.org"},
-		{"TLS certificates", "acme"},
-		{"Contact address", "ops@example.org"},
-		{"Name of this instance", "Cinema Vidra"},
-		{"Release tag", "v0.1.1"},
-		{"Media storage backend", "local"},
-		{"", "n"}, // everything left is a yes/no, and the answer to all of them is no
+		{match: "Public domain", answer: "video.example.org"},
+		{match: "TLS certificates", answer: "acme"},
+		{match: "Contact address", answer: "ops@example.org"},
+		{match: "Name of this instance", answer: "Cinema Vidra"},
+		{match: "Release tag", answer: "v0.1.1"},
+		{match: "Media storage backend", answer: "local"},
+		{match: "", answer: "n"}, // everything left is a yes/no, and the answer to all of them is no
 	}
 	if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
@@ -925,7 +953,7 @@ func TestSetupInstanceName(t *testing.T) {
 		if err := h.run(h.setupArgs("--instance-name", "Cinema Vidra")...); err != nil {
 			t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
 		}
-		h.script = []promptAnswer{{"", ""}}
+		h.script = []promptAnswer{{match: "", answer: ""}}
 		if err := h.run(append([]string{"setup", "--template", h.template, "--yes"}, h.caddyArgs()...)...); err != nil {
 			t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
 		}
@@ -943,13 +971,13 @@ func TestSetupInstanceName(t *testing.T) {
 	t.Run("a first install is shown the template's example", func(t *testing.T) {
 		h := newHarness(t)
 		h.script = []promptAnswer{
-			{"Public domain", "video.example.org"},
-			{"Name of this instance", "Cinema Vidra"},
-			{"Release tag", "v0.1.1"},
-			{"Media storage backend", "local"},
-			{"TLS certificates", "acme"},
-			{"Contact address", "ops@example.org"},
-			{"", "n"},
+			{match: "Public domain", answer: "video.example.org"},
+			{match: "Name of this instance", answer: "Cinema Vidra"},
+			{match: "Release tag", answer: "v0.1.1"},
+			{match: "Media storage backend", answer: "local"},
+			{match: "TLS certificates", answer: "acme"},
+			{match: "Contact address", answer: "ops@example.org"},
+			{match: "", answer: "n"},
 		}
 		if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
 			t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
@@ -979,7 +1007,7 @@ func TestSetupInteractiveReRunKeepsTheRegistrationPolicy(t *testing.T) {
 	}
 
 	// Re-run interactively, pressing enter at EVERY question, whatever they are.
-	h.script = []promptAnswer{{"", ""}}
+	h.script = []promptAnswer{{match: "", answer: ""}}
 	if err := h.run(append([]string{"setup", "--template", h.template, "--yes"}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
 	}
@@ -999,6 +1027,102 @@ func TestSetupInteractiveReRunKeepsTheRegistrationPolicy(t *testing.T) {
 	}
 }
 
+// A typo used to cost the WHOLE interview: an unusable domain was discovered by
+// the engine, after every other question had been answered, and the run exited
+// having written nothing. The prompt now validates with the engine's own
+// validator and re-asks, so it costs one line.
+func TestSetupInteractiveReAsksUntilTheAnswerIsUsable(t *testing.T) {
+	h := newHarness(t)
+	// Each validated prompt is answered wrongly ONCE and then correctly, which
+	// only gets through if the command asked again.
+	h.script = []promptAnswer{
+		{match: "Public domain", answer: "https://*.example.org", once: true},
+		{match: "Public domain", answer: "video.example.org"},
+		{match: "TLS certificates", answer: "letsencrypt", once: true},
+		{match: "TLS certificates", answer: "acme"},
+		{match: "Contact address", answer: "ops at example.org", once: true},
+		{match: "Contact address", answer: "ops@example.org"},
+		{match: "Name of this instance", answer: "Cinema Vidra"},
+		{match: "Release tag", answer: "v0.1.1"},
+		{match: "Media storage backend", answer: "local"},
+		{match: "", answer: "n"},
+	}
+	if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
+		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
+	}
+	out := h.out.String()
+	for _, want := range []string{"wildcards are not a host", "unsupported TLS mode", "it contains whitespace"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the rejected answer was not explained at the prompt (%q):\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "Public domain of this instance"); n != 2 {
+		t.Errorf("the domain was asked %d time(s), want it re-asked once", n)
+	}
+	got := h.readOutput(t)
+	for _, tc := range []struct{ key, want string }{
+		{"PUBLIC_BASE_URL", "https://video.example.org"},
+		{"VIDRA_TLS_MODE", "acme"},
+		{"VIDRA_ACME_EMAIL", "ops@example.org"},
+	} {
+		if v := valueOf(t, got, tc.key); v != tc.want {
+			t.Errorf("%s = %q, want the corrected answer %q", tc.key, v, tc.want)
+		}
+	}
+}
+
+// The domain feedback is exactly one line, and it is FEEDBACK: DNS that does not
+// point here yet is an ordinary state of a fresh install (it is what
+// VIDRA_TLS_MODE=internal exists for), and a check that could not COMPLETE is
+// not a check that failed. Neither may stop an install.
+func TestSetupInteractiveReportsTheDomainDNS(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result preflight.DomainResult
+		want   string
+	}{
+		{
+			name:   "resolves here",
+			result: preflight.DomainResult{Status: preflight.StatusOK, Message: "video.example.org resolves to 203.0.113.10, which is this host"},
+			want:   "  ✓ video.example.org resolves to 203.0.113.10, which is this host",
+		},
+		{
+			name:   "points somewhere else",
+			result: preflight.DomainResult{Status: preflight.StatusFail, Message: "video.example.org resolves to 198.51.100.7, which is not this host (203.0.113.10)"},
+			want:   "  ⚠ video.example.org resolves to 198.51.100.7, which is not this host (203.0.113.10) — not a blocker",
+		},
+		{
+			name:   "could not be checked",
+			result: preflight.DomainResult{Status: preflight.StatusWarn, Message: "this host's own public IP could not be determined"},
+			want:   "  ⚠ this host's own public IP could not be determined — not a blocker",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.dns = tc.result
+			h.script = []promptAnswer{
+				{match: "Public domain", answer: "video.example.org"},
+				{match: "TLS certificates", answer: "acme"},
+				{match: "Contact address", answer: "ops@example.org"},
+				{match: "Name of this instance", answer: "Cinema Vidra"},
+				{match: "Release tag", answer: "v0.1.1"},
+				{match: "Media storage backend", answer: "local"},
+				{match: "", answer: "n"},
+			}
+			if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
+				t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
+			}
+			if !strings.Contains(h.out.String(), tc.want) {
+				t.Errorf("the DNS line is missing %q:\n%s", tc.want, h.out.String())
+			}
+			// Whatever it said, the file was written: this is never a gate.
+			if v := valueOf(t, h.readOutput(t), "PUBLIC_BASE_URL"); v != "https://video.example.org" {
+				t.Errorf("PUBLIC_BASE_URL = %q — the DNS feedback blocked the install", v)
+			}
+		})
+	}
+}
+
 // The shipped template says STORAGE_BACKEND=s3 next to <your Spaces access key>
 // placeholders, so an operator pressing enter through the interview used to
 // choose a backend with no credentials — and the run then refused to write
@@ -1014,13 +1138,13 @@ func TestSetupInteractiveStorageDefaultAvoidsThePlaceholderCredentials(t *testin
 	).Replace(cliTemplate)
 
 	script := []promptAnswer{
-		{"Public domain", "video.example.org"},
-		{"TLS certificates", "acme"},
-		{"Contact address", "ops@example.org"},
-		{"Name of this instance", "Cinema Vidra"},
-		{"Release tag", "v0.1.1"},
-		{"Media storage backend", ""}, // enter: whatever is offered
-		{"", "n"},
+		{match: "Public domain", answer: "video.example.org"},
+		{match: "TLS certificates", answer: "acme"},
+		{match: "Contact address", answer: "ops@example.org"},
+		{match: "Name of this instance", answer: "Cinema Vidra"},
+		{match: "Release tag", answer: "v0.1.1"},
+		{match: "Media storage backend", answer: ""}, // enter: whatever is offered
+		{match: "", answer: "n"},
 	}
 
 	t.Run("placeholders offer local", func(t *testing.T) {
@@ -1053,7 +1177,7 @@ func TestSetupInteractiveStorageDefaultAvoidsThePlaceholderCredentials(t *testin
 			"--s3-secret-key", "the-live-secret")...); err != nil {
 			t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
 		}
-		h.script = []promptAnswer{{"", ""}}
+		h.script = []promptAnswer{{match: "", answer: ""}}
 		if err := h.run(append([]string{"setup", "--template", h.template, "--yes"}, h.caddyArgs()...)...); err != nil {
 			t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
 		}
@@ -1096,7 +1220,7 @@ func TestSetupInteractiveSecretPromptDoesNotEchoTheCurrentValue(t *testing.T) {
 	}
 
 	// Enter at every question, which for the S3 block means "keep what is there".
-	h.script = []promptAnswer{{"", ""}}
+	h.script = []promptAnswer{{match: "", answer: ""}}
 	if err := h.run(append([]string{"setup", "--template", h.template, "--yes"}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive re-run: %v (stderr: %s)", err, h.err.String())
 	}
@@ -1119,13 +1243,13 @@ func TestSetupInteractiveSecretPromptDoesNotEchoTheCurrentValue(t *testing.T) {
 func TestSetupInteractiveWarnsWhenTheTemplateTagIsAccepted(t *testing.T) {
 	h := newHarness(t)
 	h.script = []promptAnswer{
-		{"Public domain", "video.example.org"},
-		{"TLS certificates", "acme"},
-		{"Contact address", "ops@example.org"},
-		{"Name of this instance", "Cinema Vidra"},
-		{"Release tag", ""}, // enter: the template's example v0.1.0
-		{"Media storage backend", "local"},
-		{"", "n"},
+		{match: "Public domain", answer: "video.example.org"},
+		{match: "TLS certificates", answer: "acme"},
+		{match: "Contact address", answer: "ops@example.org"},
+		{match: "Name of this instance", answer: "Cinema Vidra"},
+		{match: "Release tag", answer: ""}, // enter: the template's example v0.1.0
+		{match: "Media storage backend", answer: "local"},
+		{match: "", answer: "n"},
 	}
 	if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
@@ -1209,15 +1333,15 @@ func TestSetupKeepsTheProfileListOnAReRun(t *testing.T) {
 func TestSetupInteractiveAsksForAManagedDatabase(t *testing.T) {
 	h := newHarness(t)
 	h.script = []promptAnswer{
-		{"Public domain", "video.example.org"},
-		{"TLS certificates", "acme"},
-		{"Contact address", "ops@example.org"},
-		{"Name of this instance", "Cinema Vidra"},
-		{"Release tag", "v0.1.1"},
-		{"Media storage backend", "local"},
-		{"external/managed PostgreSQL", "y"},
-		{"Managed PostgreSQL connection string", managedDSN},
-		{"", "n"}, // the bundled Redis, no components, no SMTP, closed registration
+		{match: "Public domain", answer: "video.example.org"},
+		{match: "TLS certificates", answer: "acme"},
+		{match: "Contact address", answer: "ops@example.org"},
+		{match: "Name of this instance", answer: "Cinema Vidra"},
+		{match: "Release tag", answer: "v0.1.1"},
+		{match: "Media storage backend", answer: "local"},
+		{match: "external/managed PostgreSQL", answer: "y"},
+		{match: "Managed PostgreSQL connection string", answer: managedDSN},
+		{match: "", answer: "n"}, // the bundled Redis, no components, no SMTP, closed registration
 	}
 	if err := h.run(append([]string{"setup", "--template", h.template}, h.caddyArgs()...)...); err != nil {
 		t.Fatalf("interactive setup: %v (stderr: %s)", err, h.err.String())
