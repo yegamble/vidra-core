@@ -254,6 +254,51 @@ func TestHostHeaderAllowlistDefeatsDNSRebinding(t *testing.T) {
 	}
 }
 
+// TestAbsoluteFormRequestTargetIsRefusedOverARawSocket closes the belt-and-
+// suspenders gap the audit noted: an ABSOLUTE-form request target,
+// `GET http://127.0.0.1/ HTTP/1.1`, makes Go read the authority into r.Host (so
+// the Host allowlist passes) while a mismatched `Host: evil.example` rides
+// alongside and is dropped from r.Header. No browser sends an absolute-form
+// target to a loopback server, so it is refused outright.
+//
+// It has to be driven over a RAW SOCKET: net/http's client will not emit an
+// absolute-form target for a plain GET, which is exactly why the vector is not
+// reachable by a browser — this test is proving the last mile shut anyway.
+func TestAbsoluteFormRequestTargetIsRefusedOverARawSocket(t *testing.T) {
+	t.Parallel()
+	s, ts := newTestServer(t, Options{})
+	addr := strings.TrimPrefix(ts.URL, "http://")
+
+	send := func(raw string) string {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer func() { _ = conn.Close() }()
+		if _, err := conn.Write([]byte(raw)); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		buf := make([]byte, 128)
+		n, _ := conn.Read(buf)
+		return string(buf[:n])
+	}
+
+	// The exact attack: authority in the URI is loopback (to slip past r.Host),
+	// a forged Host header beside it, and the real token so ONLY the host check
+	// stands between the request and a 200.
+	status := send("GET http://127.0.0.1/?t=" + s.Token() + " HTTP/1.1\r\nHost: evil.example\r\nConnection: close\r\n\r\n")
+	if !strings.Contains(status, "403") {
+		t.Errorf("absolute-form target with a forged Host was not refused:\n%s", status)
+	}
+	// And the ordinary origin-form request the browser actually sends still works
+	// over the same raw socket, so the rule refuses the attack and nothing else.
+	ok := send("GET /?t=" + s.Token() + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+	if !strings.Contains(ok, "200") {
+		t.Errorf("origin-form request was refused:\n%s", ok)
+	}
+}
+
 func TestCrossSiteOriginIsRefusedEvenWithTheToken(t *testing.T) {
 	t.Parallel()
 	s, ts := newTestServer(t, Options{})

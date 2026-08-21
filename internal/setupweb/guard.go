@@ -149,7 +149,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		h.Set("Content-Security-Policy",
 			"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src data:; form-action 'none'; frame-ancestors 'none'; base-uri 'none'")
 
-		if !allowedHost(r.Host) || !allowedOrigin(r.Header.Get("Origin")) || !s.authorized(r) {
+		if !allowedHost(r.Host) || !hostTargetOK(r) || !allowedOrigin(r.Header.Get("Origin")) || !s.authorized(r) {
 			http.Error(w, forbidden, http.StatusForbidden)
 			return
 		}
@@ -158,6 +158,29 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		s.touch()
 		next.ServeHTTP(w, r)
 	})
+}
+
+// hostTargetOK is belt to rule 3's braces, for a client that is not a browser.
+//
+// A browser always sends an ORIGIN-FORM request target — a bare path — and puts
+// the authority in the Host header, which net/http promotes to r.Host, the value
+// allowedHost has already vetted. A raw socket can instead send an ABSOLUTE-form
+// target, `GET http://127.0.0.1/ HTTP/1.1`, whose authority Go reads into r.Host
+// (so it passes the check above) while a mismatched `Host: evil.example` rides
+// alongside — and Go, having taken the authority from the URI, drops that header
+// from r.Header entirely, so allowedHost never sees it. Nothing a browser does
+// looks like this, and a loopback wizard has no proxy in front of it that
+// legitimately would, so an absolute-form request target is refused outright.
+// Any Host header still present (Go keeps it for an origin-form target that also
+// repeats it) is held to the same loopback allowlist.
+func hostTargetOK(r *http.Request) bool {
+	if r.URL != nil && r.URL.IsAbs() {
+		return false
+	}
+	if h := r.Header.Get("Host"); h != "" && !allowedHost(h) {
+		return false
+	}
+	return true
 }
 
 // allowedHost is rule 3. The port is ignored — the operator may have moved it
