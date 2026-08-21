@@ -14,6 +14,7 @@ import (
 	"github.com/vidra/vidra-core/internal/diskspace"
 	"github.com/vidra/vidra-core/internal/preflight"
 	"github.com/vidra/vidra-core/internal/storage"
+	"github.com/vidra/vidra-core/internal/store"
 )
 
 // Host is everything doctor reads from the machine it runs on: the filesystem,
@@ -88,6 +89,11 @@ type Prober interface {
 	// MigrationStatus reads a golang-migrate ledger. table is "" for the default
 	// (schema_migrations, which is core's).
 	MigrationStatus(ctx context.Context, dsn, table string) (dbmigrate.Status, error)
+	// ActiveStorageMigration reports whether a STORAGE migration campaign (media
+	// moving between backends) is in flight. Read-only, and deliberately the
+	// same question the media-GC interlock asks, so doctor and the sweep can
+	// never disagree about whether a move is happening.
+	ActiveStorageMigration(ctx context.Context, dsn string) (bool, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +218,30 @@ func (RealProber) MigrationStatus(ctx context.Context, dsn, table string) (dbmig
 	case <-ctx.Done():
 		return dbmigrate.Status{}, fmt.Errorf("timed out after %s", timeoutOf(ctx))
 	}
+}
+
+// ActiveStorageMigration asks the database the SAME question the media-GC
+// interlock asks — the sqlc query HasActiveStorageMigration, through the same
+// pool type the api uses — rather than a hand-written SELECT that would have to
+// be kept in step with it. The query's semantics are deliberately wide (a
+// 'failed' campaign still counts as in flight), and a doctor that quietly used
+// a narrower definition would tell an operator the coast was clear while the
+// sweep was still refusing to delete.
+//
+// A connect timeout is pushed into the DSN for the same reason MigrationStatus
+// does it: a database that accepts the connection and then stops answering must
+// not hang the whole report.
+func (RealProber) ActiveStorageMigration(ctx context.Context, dsn string) (bool, error) {
+	dsn, err := addDSNParams(dsn, map[string]string{"connect_timeout": "5"})
+	if err != nil {
+		return false, err
+	}
+	db, err := store.New(ctx, dsn)
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+	return db.Queries().HasActiveStorageMigration(ctx)
 }
 
 func timeoutOf(ctx context.Context) time.Duration {
