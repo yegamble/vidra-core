@@ -54,8 +54,10 @@ const (
 	acmeStagingCA = "https://acme-staging-v02.api.letsencrypt.org/directory"
 )
 
-// The TLS modes. acme is the production answer; the other two are rehearsal and
-// bring-up modes, and neither produces a certificate any browser trusts.
+// The TLS modes. acme is the production answer; the rest are rehearsal, bring-up
+// and the two deployment TOPOLOGIES phase-1 item 12 added — none of them
+// produces a certificate a public browser trusts, and two of them do not produce
+// one at all.
 const (
 	// TLSModeACME orders a real certificate from Let's Encrypt.
 	TLSModeACME = "acme"
@@ -67,9 +69,43 @@ const (
 	// TLSModeInternal issues from Caddy's own local CA: no ACME order at all, so
 	// the stack comes up on a host whose DNS does not point at it yet.
 	TLSModeInternal = "internal"
+	// TLSModeExternal is the operator's own terminator — a cloud load balancer, a
+	// CDN, an nginx they already run. The origin stays https and every
+	// https-derived default stays ON, because from the browser's side nothing has
+	// changed; what changes is that the managed caddy does not run at all (the
+	// deploy drops it from the compose profiles) and this engine generates
+	// deploy/nginx-external.conf.example instead of a Caddyfile.
+	//
+	// A terminator on a PUBLIC address is also the case TRUSTED_PROXY_CIDRS
+	// exists for: without it every visitor behind that hop shares one rate-limit
+	// bucket. The generated example says so where an operator will read it.
+	TLSModeExternal = "external"
+	// TLSModePlainHTTP is a deliberate NO-TLS deployment: a lab, a LAN, an
+	// air-gapped install where there is no certificate to be had and no public
+	// browser to protect. Caddy still runs — generated as a plain-http site — so
+	// the one-front-door topology, the Caddyfile machinery and deploy.sh's reload
+	// all stay exactly as they are; what changes is the scheme.
+	//
+	// It is the one mode that needs the api's agreement, because an http origin
+	// in production is otherwise a refusal to boot: the generated env file carries
+	// VIDRA_ALLOW_PLAIN_HTTP=true beside it, and config.validate() is the single
+	// place that rule lives.
+	TLSModePlainHTTP = "plain-http"
 )
 
-var tlsModes = []string{TLSModeACME, TLSModeACMEStaging, TLSModeInternal}
+var tlsModes = []string{TLSModeACME, TLSModeACMEStaging, TLSModeInternal, TLSModeExternal, TLSModePlainHTTP}
+
+// SkipsManagedCaddy reports whether a mode means "this deployment has no managed
+// Caddy at all" — external, and nothing else. It is exported because THREE
+// front-ends have to make the same call (the CLI skips generation, the deploy
+// scripts drop the `edge` compose profile, doctor stops looking for a
+// Caddyfile), and a fourth spelling of `mode == "external"` in one of them is
+// how a deployment ends up with a generated proxy config nothing mounts.
+//
+// plain-http is deliberately NOT in here: it keeps Caddy, as an http site.
+func SkipsManagedCaddy(mode string) bool {
+	return strings.TrimSpace(mode) == TLSModeExternal
+}
 
 // caddyMarkers is every marker the template must carry, with the location an
 // operator needs told when one has gone missing.
@@ -113,6 +149,13 @@ func RenderCaddyfile(template []byte, a Answers) ([]byte, error) {
 	if mode == "" {
 		mode = TLSModeACME
 	}
+	// external has no Caddyfile to render, and rendering one anyway would be the
+	// worst outcome available: a file that looks like the deployment's proxy
+	// config, is bind-mounted by nothing, and orders a certificate for a hostname
+	// the operator's own terminator already holds one for.
+	if SkipsManagedCaddy(mode) {
+		return nil, fmt.Errorf("setup: %s=%s means another proxy terminates TLS, so there is no managed Caddyfile to render — `vidra setup` writes %s instead, and the deploy leaves the caddy service out of the compose profiles", tlsModeKey, TLSModeExternal, NginxExampleOutputPath)
+	}
 	// A blank contact address is a legitimate answer, and the ONE thing this
 	// renderer must not do with it is refuse: the shipped template ships
 	// VIDRA_ACME_EMAIL blank ("Optional but strongly recommended"), so a refusal
@@ -126,7 +169,7 @@ func RenderCaddyfile(template []byte, a Answers) ([]byte, error) {
 			return nil, err
 		}
 	}
-	host, err := caddyHost(a.Domain)
+	host, err := caddyHost(a.Domain, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +246,14 @@ func checkCaddyMarkers(seen map[string]int) error {
 //	acme          global: email <contact>, when there is one
 //	acme-staging  global: email <contact> when there is one, acme_ca <staging>
 //	internal      site:   tls internal
+//	plain-http    nothing — the http:// SITE ADDRESS is what turns TLS off
+//
+// plain-http injecting nothing is not an oversight. Caddy decides whether to
+// provision a certificate from the site address's scheme, so `http://host {`
+// already means "serve this on :80, order nothing"; a `tls` directive beside it
+// would be a contradiction, and `tls internal` in particular would put the site
+// back on TLS with a certificate no LAN browser trusts — the exact outcome this
+// mode exists to avoid.
 //
 // A BLANK contact address injects no `email` line at all rather than an empty
 // one: `email` with no argument is a Caddyfile that does not parse, so the
@@ -234,13 +285,23 @@ func caddyInjections(mode, email string) (global, site []string) {
 // the instance's origin. It goes through normalizeOrigin so the Caddyfile and
 // PUBLIC_BASE_URL cannot name different hosts — the certificate Caddy provisions
 // has to cover the origin the api mints links for.
-func caddyHost(domain string) (string, error) {
+//
+// The SCHEME is kept for plain-http and dropped for every other mode, and that
+// asymmetry is the whole implementation of the mode. A bare `host {` site
+// address makes Caddy provision a certificate and serve HTTPS (its default);
+// `http://host {` makes it serve :80 and order nothing. deploy.sh's
+// example.com/site-address checks read the same line either way, so the
+// machinery around the file is untouched.
+func caddyHost(domain, mode string) (string, error) {
 	if strings.TrimSpace(domain) == "" {
 		return "", errors.New("setup: the instance domain is required to render the Caddyfile — the site address is the one hostname Caddy provisions a certificate for (pass --domain video.example.org)")
 	}
-	origin, err := normalizeOrigin(domain)
+	origin, err := NormalizeOriginForMode(domain, mode)
 	if err != nil {
 		return "", err
+	}
+	if mode == TLSModePlainHTTP {
+		return origin, nil
 	}
 	return strings.TrimPrefix(origin, "https://"), nil
 }
@@ -268,7 +329,7 @@ func tlsMode(v string) (string, error) {
 	switch mode := strings.TrimSpace(v); mode {
 	case "":
 		return "", nil
-	case TLSModeACME, TLSModeACMEStaging, TLSModeInternal:
+	case TLSModeACME, TLSModeACMEStaging, TLSModeInternal, TLSModeExternal, TLSModePlainHTTP:
 		return mode, nil
 	default:
 		return "", fmt.Errorf("setup: unsupported TLS mode %q (want %s)", mode, strings.Join(tlsModes, "|"))

@@ -24,6 +24,14 @@ import (
 // bug reported somewhere else entirely).
 func checkCaddyfile(_ context.Context, s *state) []Finding {
 	rel := setup.CaddyOutputPath
+	// VIDRA_TLS_MODE=external has no managed Caddy at all: the deploy leaves the
+	// service out of the compose profiles, `vidra setup` writes no Caddyfile, and
+	// there is consequently no bind-mount to crash-loop. Reporting the missing
+	// file would be a permanent ✗ on a correct deployment — the one thing that
+	// reliably teaches an operator to stop reading this report.
+	if setup.SkipsManagedCaddy(s.value("VIDRA_TLS_MODE")) {
+		return []Finding{skipf(fmt.Sprintf("VIDRA_TLS_MODE=%s: your own proxy terminates TLS, so this deployment runs no caddy container and generates no %s. %s is the example `vidra setup` writes for that proxy", setup.TLSModeExternal, rel, setup.NginxExampleOutputPath))}
+	}
 	b, err := s.opt.Host.ReadFile(s.path(rel))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -50,7 +58,7 @@ func checkCaddyfile(_ context.Context, s *state) []Finding {
 		if ph, ok := setup.PlaceholderDomain(line); ok {
 			findings = append(findings, failf(
 				fmt.Sprintf("%s still names the placeholder domain %s on a non-comment line", rel, ph),
-				"re-run `vidra setup --domain <your domain>` to regenerate it. Caddy would order a certificate for the placeholder, fail the challenge, and spend this host's Let's Encrypt validation budget doing it. deploy/deploy.sh refuses to deploy this file at all"))
+				"re-run `vidra setup --domain <your domain>` to regenerate it. "+placeholderConsequence(s.value("VIDRA_TLS_MODE"))+" deploy/deploy.sh refuses to deploy this file at all"))
 		}
 		if site == "" {
 			if addr, ok := caddySiteAddress(raw); ok {
@@ -77,7 +85,7 @@ func checkCaddyfile(_ context.Context, s *state) []Finding {
 				"set PUBLIC_BASE_URL to this instance's public origin (https://video.example.org) and re-run `vidra setup`"))
 		case !strings.EqualFold(site, want):
 			findings = append(findings, failf(
-				fmt.Sprintf("%s serves %s but PUBLIC_BASE_URL is https://%s", rel, site, want),
+				fmt.Sprintf("%s serves %s but PUBLIC_BASE_URL names %s", rel, site, want),
 				"fix whichever is wrong and re-run `vidra setup` to regenerate the Caddyfile from PUBLIC_BASE_URL. Caddy answering on one hostname while the api mints links, OAuth callbacks and federation actor ids for another breaks logins and federation in ways that never point back here"))
 		default:
 			findings = append(findings, okf(fmt.Sprintf("%s serves %s, which matches PUBLIC_BASE_URL", rel, site)))
@@ -130,12 +138,16 @@ const skipDNSPreflightVar = "VIDRA_SKIP_DNS_PREFLIGHT"
 // it: only for the ACME modes, and downgraded to a warning when the operator has
 // deliberately turned it off.
 //
-// The gate is the point. VIDRA_TLS_MODE=internal issues from Caddy's own CA and
-// places no ACME order, so there is nothing for DNS to be wrong ABOUT; running
-// the check anyway would put a permanent ✗ on a correctly configured private
-// instance. And when an order IS coming, a wrong A record does not fail politely
-// — Let's Encrypt counts the failed authorisation against a per-hostname limit
-// that locks this host out of the CA for the rest of the hour.
+// The gate is the point, and each mode outside it is skipped for its OWN reason
+// — a permanent ✗ on a correctly configured instance is a diagnostic nobody
+// reads twice. internal issues from Caddy's own CA and places no ACME order, so
+// there is nothing for DNS to be wrong ABOUT; plain-http is a LAN/lab instance
+// whose name may resolve only on an internal resolver, or be an IP; external
+// points at the operator's own terminator, which is a DIFFERENT host from this
+// one by definition, so "does this A record point here" is the wrong question.
+// And when an order IS coming, a wrong A record does not fail politely — Let's
+// Encrypt counts the failed authorisation against a per-hostname limit that
+// locks this host out of the CA for the rest of the hour.
 func checkDomainDNS(ctx context.Context, s *state) []Finding {
 	if s.envErr != nil {
 		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s), so there is no domain or TLS mode to check", s.envErr))}
@@ -145,7 +157,7 @@ func checkDomainDNS(ctx context.Context, s *state) []Finding {
 		mode = setup.TLSModeACME
 	}
 	if mode != setup.TLSModeACME && mode != setup.TLSModeACMEStaging {
-		return []Finding{skipf(fmt.Sprintf("VIDRA_TLS_MODE=%s issues from Caddy's own CA, so no ACME order depends on this host's DNS", mode))}
+		return []Finding{skipf(fmt.Sprintf("VIDRA_TLS_MODE=%s: %s, so no ACME order depends on this host's DNS", mode, tlsModeDNSReason(mode)))}
 	}
 	skipped := dnsPreflightSkipped(s.opt.Host.Getenv(skipDNSPreflightVar)) || dnsPreflightSkipped(s.value(skipDNSPreflightVar))
 
@@ -167,6 +179,40 @@ func checkDomainDNS(ctx context.Context, s *state) []Finding {
 		status = StatusWarn
 	}
 	return []Finding{{Status: status, Detail: detail, Fix: fix}}
+}
+
+// placeholderConsequence is the sentence between "re-run setup" and "deploy.sh
+// refuses this file", and it has to follow the MODE. The certificate story is
+// the right one for the three issuing modes and simply false for plain-http,
+// which orders nothing from anybody — telling that operator their Let's Encrypt
+// budget is at risk is the kind of detail that teaches people the diagnostics do
+// not know what they are looking at.
+//
+// The finding itself is unconditional, and stays that way: deploy.sh refuses a
+// placeholder site address in every mode, so the ✗ is correct everywhere. Only
+// the WHY changes.
+func placeholderConsequence(mode string) string {
+	if mode == setup.TLSModePlainHTTP {
+		return "The site would answer on a hostname nobody uses, so every link, feed and OAuth callback the api mints would point somewhere this instance does not serve."
+	}
+	return "Caddy would order a certificate for the placeholder, fail the challenge, and spend this host's Let's Encrypt validation budget doing it."
+}
+
+// tlsModeDNSReason is the half-sentence checkDomainDNS's skip line is built
+// from: WHY this mode places no ACME order. An unrecognised mode gets the
+// conservative wording rather than a claim about a mode this binary predates —
+// setup's own tlsIssues is what reports the value as unusable.
+func tlsModeDNSReason(mode string) string {
+	switch mode {
+	case setup.TLSModeInternal:
+		return "certificates are issued by Caddy's own local CA"
+	case setup.TLSModePlainHTTP:
+		return "this instance is served over plain HTTP with no certificate at all"
+	case setup.TLSModeExternal:
+		return "your own proxy terminates TLS, and the domain resolves to it rather than to this host"
+	default:
+		return "that mode orders no certificate from a public CA"
+	}
 }
 
 // maxDriftNames caps how many variable names a drift line prints. The point of

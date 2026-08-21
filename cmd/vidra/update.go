@@ -622,6 +622,16 @@ func runningSchemaVersion(ctx context.Context, port string) (int64, bool, string
 func targetSchemaVersion(ctx context.Context, dep deployment, target string) (int64, bool, string) {
 	repo := filepath.Join(dep.root, coreRepo)
 	if _, err := os.Stat(filepath.Join(repo, ".git")); err != nil {
+		// A BUNDLE deployment has the directory and not the history: the release
+		// tarball ships vidra-core/docker-compose.yml and the deploy/ files compose
+		// bind-mounts, at the same relative paths a checkout has them, with no .git
+		// anywhere. Telling that operator there is "no vidra-core checkout" sends
+		// them looking for a directory they can see, so the two cases are worded
+		// apart. Neither is a refusal — this gate has always been advisory, and on
+		// a bundle tree it is simply unavailable rather than failed.
+		if _, statErr := os.Stat(repo); statErr == nil {
+			return 0, false, coreRepo + " under " + dep.root + " is not a git checkout (a release-bundle deployment has no git history), so the target release's migration version could not be read here — the update is not gated on it. deploy.sh still compares the running database against what it is about to deploy"
+		}
 		return 0, false, "there is no " + coreRepo + " checkout under " + dep.root + ", so the target release's migration version could not be read — the update is not gated on it"
 	}
 	gctx, cancel := context.WithTimeout(ctx, updateGitTimeout)

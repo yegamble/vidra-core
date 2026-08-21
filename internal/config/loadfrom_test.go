@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net"
 	"strings"
 	"testing"
 )
@@ -317,5 +318,125 @@ func TestCheckEnvEmptyCandidateIsTheDevelopmentDefault(t *testing.T) {
 	}
 	if cfg.Environment != "development" {
 		t.Errorf("Environment = %q, want development", cfg.Environment)
+	}
+}
+
+// The plain-http gate, from both sides. A production env file whose origin is
+// http:// is the typo that would silently drop Secure cookies and HSTS on the
+// one deployment where they matter, so it refuses to boot — and the refusal has
+// to name BOTH variables an operator needs, because setup.Check runs this rule
+// with production forced and the operator reading the message may be installing
+// a lab instance on purpose.
+func TestCheckEnvRefusesPlainHTTPOriginWithoutConsent(t *testing.T) {
+	vars := productionCandidate()
+	vars["PUBLIC_BASE_URL"] = "http://videos.internal"
+	vars["CORS_ALLOWED_ORIGINS"] = "http://videos.internal"
+
+	err := CheckEnv(vars)
+	if err == nil {
+		t.Fatal("CheckEnv() accepted a plain-http origin in production without VIDRA_ALLOW_PLAIN_HTTP")
+	}
+	var ve *VarError
+	if !errors.As(err, &ve) {
+		t.Fatalf("error %v is not a *VarError", err)
+	}
+	if ve.Var != "PUBLIC_BASE_URL" {
+		t.Errorf("VarError.Var = %q, want PUBLIC_BASE_URL — that is the value to fix", ve.Var)
+	}
+	for _, want := range []string{"VIDRA_ALLOW_PLAIN_HTTP=true", "VIDRA_TLS_MODE=plain-http"} {
+		if !strings.Contains(ve.Error(), want) {
+			t.Errorf("refusal %q does not name %s, so an operator who MEANT plain http cannot act on it", ve, want)
+		}
+	}
+
+	// With the consent, the same file boots — and the https-derived defaults go
+	// off together.
+	vars["VIDRA_ALLOW_PLAIN_HTTP"] = "true"
+	cfg, err := LoadFrom(func(key string) (string, bool) {
+		v, ok := vars[key]
+		return v, ok
+	})
+	if err != nil {
+		t.Fatalf("LoadFrom() error = %v with VIDRA_ALLOW_PLAIN_HTTP=true", err)
+	}
+	if cfg.PublicOriginIsHTTPS() {
+		t.Error("PublicOriginIsHTTPS() = true for an http:// origin")
+	}
+	if cfg.CookieSecure() {
+		t.Error("CookieSecure() = true on a consented plain-http deployment: the browser would never send the cookie back")
+	}
+}
+
+// An https origin is unaffected by the consent flag either way: the scheme
+// already answered the question, and a deployment that set the flag "just in
+// case" must not lose Secure cookies for it.
+func TestCheckEnvHTTPSOriginIsUnaffectedByPlainHTTPConsent(t *testing.T) {
+	vars := productionCandidate()
+	vars["VIDRA_ALLOW_PLAIN_HTTP"] = "true"
+	cfg, err := LoadFrom(func(key string) (string, bool) {
+		v, ok := vars[key]
+		return v, ok
+	})
+	if err != nil {
+		t.Fatalf("LoadFrom() error = %v", err)
+	}
+	if !cfg.PublicOriginIsHTTPS() || !cfg.CookieSecure() {
+		t.Error("an https origin must stay https-derived regardless of VIDRA_ALLOW_PLAIN_HTTP")
+	}
+}
+
+// TRUSTED_PROXY_CIDRS hands addresses the power to forge a client IP, so a value
+// that does not parse must refuse to boot rather than trust nothing quietly: the
+// symptom of the silent version is every visitor behind the proxy sharing one
+// rate-limit bucket, which looks like an outage, not like a typo.
+func TestCheckEnvRejectsMalformedTrustedProxyCIDRs(t *testing.T) {
+	for _, bad := range []string{"203.0.113.7", "not-a-network", "203.0.113.0/33"} {
+		vars := productionCandidate()
+		vars["TRUSTED_PROXY_CIDRS"] = "10.0.0.0/8," + bad
+		err := CheckEnv(vars)
+		if err == nil {
+			t.Errorf("CheckEnv() accepted TRUSTED_PROXY_CIDRS entry %q", bad)
+			continue
+		}
+		var ve *VarError
+		if !errors.As(err, &ve) {
+			t.Errorf("error %v for %q is not a *VarError", err, bad)
+			continue
+		}
+		if ve.Var != "TRUSTED_PROXY_CIDRS" {
+			t.Errorf("VarError.Var = %q for %q, want TRUSTED_PROXY_CIDRS", ve.Var, bad)
+		}
+		if !strings.Contains(ve.Error(), bad) {
+			t.Errorf("refusal %q does not quote the offending entry %q", ve, bad)
+		}
+	}
+}
+
+// The parsed networks are what the server hands echo.TrustIPRange, so the list
+// has to survive the round trip in order, blanks and stray spaces included (the
+// env file is written by hand as often as it is generated).
+func TestTrustedProxyCIDRsParseIntoNetworks(t *testing.T) {
+	vars := productionCandidate()
+	vars["TRUSTED_PROXY_CIDRS"] = " 203.0.113.7/32 , 2001:db8::/32 ,"
+	cfg, err := LoadFrom(func(key string) (string, bool) {
+		v, ok := vars[key]
+		return v, ok
+	})
+	if err != nil {
+		t.Fatalf("LoadFrom() error = %v", err)
+	}
+	nets := cfg.TrustedProxyNets()
+	if len(nets) != 2 {
+		t.Fatalf("TrustedProxyNets() = %v, want the two networks", nets)
+	}
+	if got := nets[0].String(); got != "203.0.113.7/32" {
+		t.Errorf("first network = %q, want 203.0.113.7/32", got)
+	}
+	if !nets[1].Contains(net.ParseIP("2001:db8::1")) {
+		t.Errorf("second network %v does not contain 2001:db8::1", nets[1])
+	}
+	// Unset is the default and must trust nothing extra.
+	if len(cfg.TrustedProxyCIDRs) != 2 {
+		t.Errorf("TrustedProxyCIDRs = %v, want the two raw entries", cfg.TrustedProxyCIDRs)
 	}
 }

@@ -123,3 +123,48 @@ func TestForwardedForChainStopsAtFirstUntrustedHop(t *testing.T) {
 		t.Errorf("rate-limit keys = %v, want [auth:203.0.113.7] (nearest untrusted hop, not the client-supplied 1.2.3.4)", keys)
 	}
 }
+
+// TestPublicTrustedProxyCIDRIsHonoured is the fourth case, and the one the other
+// three could not express: a TLS terminator on a PUBLIC address.
+//
+// A cloud load balancer, a CDN edge or the operator-run proxy of
+// VIDRA_TLS_MODE=external forwards from a routable address, which the built-in
+// loopback/RFC1918/link-local trust set correctly refuses to believe. The
+// consequence is not a security hole — the proxy becomes the client, which is
+// fail-safe — it is that EVERY visitor behind it shares one 10/min auth budget,
+// so the instance locks itself out at the edge. TRUSTED_PROXY_CIDRS is the
+// deliberate statement that fixes it, and this proves the statement is read.
+func TestPublicTrustedProxyCIDRIsHonoured(t *testing.T) {
+	var buf bytes.Buffer
+	fc := &fakeCounter{}
+	cfg := testConfig()
+	cfg.TrustedProxyCIDRs = []string{"198.51.100.10/32"}
+	srv := newAuthLimitedServerWith(t, &buf, 2, fc, cfg)
+	body := `{"email":"ada@example.test"}`
+
+	// Two visitors relayed by the public terminator: each keeps its own budget.
+	for _, visitor := range []string{"203.0.113.10", "203.0.113.20"} {
+		for i := 1; i <= 2; i++ {
+			rec := postFrom(srv, "/api/v1/auth/password-reset", body, "198.51.100.10:44300", visitor)
+			if rec.Code == http.StatusTooManyRequests {
+				t.Fatalf("visitor %s attempt #%d throttled — the configured terminator's forwarded address must key the budget", visitor, i)
+			}
+		}
+	}
+	for _, k := range counterKeys(fc) {
+		if k == "auth:198.51.100.10" {
+			t.Error("requests were charged to the terminator, not the visitor it forwarded for: TRUSTED_PROXY_CIDRS was not applied")
+		}
+	}
+
+	// The same request WITHOUT the CIDR configured is charged to the proxy — the
+	// default, and the reason this variable has to be set deliberately.
+	var defaultBuf bytes.Buffer
+	defaultCounter := &fakeCounter{}
+	defaultSrv := newAuthLimitedServer(t, &defaultBuf, 2, defaultCounter)
+	postFrom(defaultSrv, "/api/v1/auth/password-reset", body, "198.51.100.10:44300", "203.0.113.10")
+	keys := counterKeys(defaultCounter)
+	if len(keys) != 1 || keys[0] != "auth:198.51.100.10" {
+		t.Errorf("rate-limit keys = %v, want [auth:198.51.100.10]: an unlisted public hop must NOT be trusted", keys)
+	}
+}

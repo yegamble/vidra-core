@@ -91,7 +91,9 @@ func TestExportedEnvFileDrivesTheProfileRefusal(t *testing.T) {
 	// The profile list it quotes is staging's ("core"), not production's
 	// ("core", "frontend") — which, being the list that contains the profile the
 	// service needs, would have made the refusal read as nonsense.
-	if !strings.Contains(err.Error(), `enables "core".`) || strings.Contains(err.Error(), `"core", "frontend"`) {
+	// `edge` is in both files' lists (the engine adds it unless the mode is
+	// external), so what distinguishes them is still "frontend".
+	if !strings.Contains(err.Error(), `enables "core", "edge".`) || strings.Contains(err.Error(), `"core", "frontend"`) {
 		t.Errorf("the refusal quotes the wrong file's profiles: %v", err)
 	}
 

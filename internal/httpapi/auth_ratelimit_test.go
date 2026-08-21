@@ -9,18 +9,27 @@ import (
 	"time"
 
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 )
 
 func newAuthLimitedServer(t *testing.T, buf *bytes.Buffer, limit int, fc *fakeCounter) *Server {
 	t.Helper()
+	return newAuthLimitedServerWith(t, buf, limit, fc, testConfig())
+}
+
+// newAuthLimitedServerWith is the same server against a caller-supplied config,
+// for the tests that are about what the CONFIG does to the limiter's key — the
+// client-IP trust chain (TRUSTED_PROXY_CIDRS) rather than the budget.
+func newAuthLimitedServerWith(t *testing.T, buf *bytes.Buffer, limit int, fc *fakeCounter, cfg *config.Config) *Server {
+	t.Helper()
 	logger := slog.New(slog.NewJSONHandler(buf, nil))
 	repo := newAuthFakeRepo()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
 	svc := auth.NewService(repo, issuer, 720*time.Hour)
 	authLimiter := ratelimit.NewLimiter(fc, limit, time.Minute)
-	return New(testConfig(), nil, nil,
+	return New(cfg, nil, nil,
 		WithAuthService(svc, 15*time.Minute),
 		WithAuthRateLimiter(authLimiter),
 		WithLogger(logger),

@@ -96,10 +96,15 @@ func TestEnabledInProfiles(t *testing.T) {
 		{"ipfs", []string{"core", "ipfs"}, true},
 		{"ipfs", []string{"core", "full"}, true},
 		{"ipfs", stock, false},
-		// caddy carries no profile: the TLS edge comes up with every production
-		// deploy, so it is enabled even in a deployment that lists nothing.
-		{"caddy", nil, true},
-		{"caddy", stock, true},
+		// caddy sits on `edge`, which the ENGINE adds unless
+		// VIDRA_TLS_MODE=external — so it is enabled in every ordinary deployment
+		// (setup.EnabledProfiles puts `edge` in the list) and absent in exactly the
+		// one topology that runs somebody else's proxy. Before it was mapped,
+		// `vidra restart caddy` on an external deployment died at compose with "no
+		// such service" instead of refusing cleanly.
+		{"caddy", []string{"core", "frontend", "edge"}, true},
+		{"caddy", stock, false},
+		{"caddy", nil, false},
 	} {
 		if got := enabledIn(tc.service, tc.profiles); got != tc.want {
 			t.Errorf("enabledIn(%q, %v) = %v, want %v", tc.service, tc.profiles, got, tc.want)

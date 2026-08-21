@@ -969,32 +969,32 @@ func TestRenderCheckCommandMirrorsTheDeployScript(t *testing.T) {
 	}{
 		{
 			name: "an env file older than the profile key keeps the deploy's hard-coded pair",
-			want: base + " --env-file env/production.env --profile core --profile frontend config -q",
+			want: base + " --env-file env/production.env --profile core --profile frontend --profile edge config -q",
 		},
 		{
 			name:   "all local: the managed list is exactly the base profiles",
 			values: map[string]string{profilesKey: "core frontend", externalPostgresKey: "false", externalRedisKey: "false"},
-			want:   base + " --env-file env/production.env --profile core --profile frontend config -q",
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile edge config -q",
 		},
 		{
 			name:   "features become profiles, in the list's order",
 			values: map[string]string{profilesKey: "core frontend scan captions media otel ipfs"},
-			want:   base + " --env-file env/production.env --profile core --profile frontend --profile scan --profile captions --profile media --profile otel --profile ipfs config -q",
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile scan --profile captions --profile media --profile otel --profile ipfs --profile edge config -q",
 		},
 		{
 			name:   "external postgres only: its overlay goes straight after the prod one",
 			values: map[string]string{profilesKey: "core frontend", externalPostgresKey: "true"},
-			want:   base + " -f docker-compose.external-postgres.yml --env-file env/production.env --profile core --profile frontend config -q",
+			want:   base + " -f docker-compose.external-postgres.yml --env-file env/production.env --profile core --profile frontend --profile edge config -q",
 		},
 		{
 			name:   "external redis only",
 			values: map[string]string{profilesKey: "core frontend", externalRedisKey: "true"},
-			want:   base + " -f docker-compose.external-redis.yml --env-file env/production.env --profile core --profile frontend config -q",
+			want:   base + " -f docker-compose.external-redis.yml --env-file env/production.env --profile core --profile frontend --profile edge config -q",
 		},
 		{
 			name:   "both external, postgres overlay first",
 			values: map[string]string{profilesKey: "core frontend ipfs", externalPostgresKey: "true", externalRedisKey: "true"},
-			want:   base + " -f docker-compose.external-postgres.yml -f docker-compose.external-redis.yml --env-file env/production.env --profile core --profile frontend --profile ipfs config -q",
+			want:   base + " -f docker-compose.external-postgres.yml -f docker-compose.external-redis.yml --env-file env/production.env --profile core --profile frontend --profile ipfs --profile edge config -q",
 		},
 		{
 			// deploy.sh appends EXTRA_COMPOSE_PROFILES from the env file to its own
@@ -1002,21 +1002,54 @@ func TestRenderCheckCommandMirrorsTheDeployScript(t *testing.T) {
 			// chain than the deploy it is supposed to pre-flight.
 			name:   "the operator's extra profiles are appended",
 			values: map[string]string{"EXTRA_COMPOSE_PROFILES": "ipfs  observability"},
-			want:   base + " --env-file env/production.env --profile core --profile frontend --profile ipfs --profile observability config -q",
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile ipfs --profile observability --profile edge config -q",
 		},
 		{
 			// The overlap is the ordinary case after an upgrade: the profile an
 			// operator enabled by hand is now in the managed list too.
 			name:   "a profile in both lists is enabled once",
 			values: map[string]string{profilesKey: "core frontend ipfs", "EXTRA_COMPOSE_PROFILES": "ipfs ipfs-private"},
-			want:   base + " --env-file env/production.env --profile core --profile frontend --profile ipfs --profile ipfs-private config -q",
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile ipfs --profile ipfs-private --profile edge config -q",
 		},
 		{
 			// A spelling neither the shell nor ParseBool agrees on must not quietly
 			// add an overlay; componentIssues is what tells the operator.
 			name:   "an unparseable switch is not true",
 			values: map[string]string{externalPostgresKey: "yes please"},
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile edge config -q",
+		},
+		{
+			// THE `edge` PROFILE, which is deploy/lib.sh's edge_profile() rather
+			// than anything the operator writes in VIDRA_COMPOSE_PROFILES. external
+			// is the only mode that drops it, and dropping it is the whole
+			// difference between the two topologies at the compose level.
+			name:   "external drops the caddy profile",
+			values: map[string]string{profilesKey: "core frontend", tlsModeKey: TLSModeExternal},
 			want:   base + " --env-file env/production.env --profile core --profile frontend config -q",
+		},
+		{
+			// plain-http still runs the managed caddy — as a plain-HTTP site — so
+			// the profile stays. A check command that dropped it here would validate
+			// a stack with no front door at all.
+			name:   "plain-http keeps it",
+			values: map[string]string{profilesKey: "core frontend", tlsModeKey: TLSModePlainHTTP},
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile edge config -q",
+		},
+		{
+			// A typo in the mode keeps caddy, deliberately: deploy.sh refuses an
+			// unrecognised mode outright, and a silently edge-less stack would be
+			// the worse of the two failures.
+			name:   "an unrecognised mode keeps it",
+			values: map[string]string{profilesKey: "core frontend", tlsModeKey: "letsencrypt"},
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile edge config -q",
+		},
+		{
+			// An operator who wrote `edge` into the managed list by hand gets it
+			// once, in the position they put it — the same first-seen dedup the
+			// shell loop does.
+			name:   "a hand-written edge is not doubled",
+			values: map[string]string{profilesKey: "core edge frontend"},
+			want:   base + " --env-file env/production.env --profile core --profile edge --profile frontend config -q",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1939,4 +1972,234 @@ func warned(warnings []string, substr string) bool {
 		}
 	}
 	return false
+}
+
+// The plain-http mode against the SAME production-forced validation every
+// generated file gets (see Check). This is the contract that makes the mode
+// possible at all: the rule lives in config.validate(), so the engine that
+// writes the file and the api that boots from it cannot disagree about whether
+// an http origin is legal.
+func TestCheckAcceptsPlainHTTPOnlyWithTheConsent(t *testing.T) {
+	base := map[string]string{
+		"VIDRA_ENV":            "production",
+		"JWT_SECRET":           strings.Repeat("k", 48),
+		"PUBLIC_BASE_URL":      "http://video.lan",
+		"CORS_ALLOWED_ORIGINS": "http://video.lan",
+		tlsModeKey:             TLSModePlainHTTP,
+	}
+	without := map[string]string{}
+	for k, v := range base {
+		without[k] = v
+	}
+	if got := Check(without); !hasIssue(got, "PUBLIC_BASE_URL") {
+		t.Errorf("Check = %v, want an issue against PUBLIC_BASE_URL: an http origin without %s is a typo, not a lab install", got, allowPlainHTTPKey)
+	}
+
+	base[allowPlainHTTPKey] = "true"
+	if got := Check(base); len(got) > 0 {
+		t.Errorf("Check = %v, want a consented plain-http deployment accepted", got)
+	}
+	// And it is still told, every time, what that costs.
+	if !warned(Warnings(base), "cross the network in clear") {
+		t.Errorf("Warnings = %v, want the plain-HTTP traffic warning", Warnings(base))
+	}
+}
+
+// external is a correct, permanent production topology, so a FULLY configured
+// one must be accepted in silence: a standing ⚠ on a healthy deployment is one
+// nobody reads. The one thing it is warned about is the terminator it cannot
+// recognise — see the second half.
+func TestCheckAcceptsTheExternalModeWithoutWarning(t *testing.T) {
+	vars := map[string]string{
+		"VIDRA_ENV":            "production",
+		"JWT_SECRET":           strings.Repeat("k", 48),
+		"PUBLIC_BASE_URL":      "https://video.vidra.test",
+		"CORS_ALLOWED_ORIGINS": "https://video.vidra.test",
+		tlsModeKey:             TLSModeExternal,
+		trustedProxyCIDRsKey:   "203.0.113.7/32",
+	}
+	if got := Check(vars); len(got) > 0 {
+		t.Errorf("Check = %v, want the external topology accepted", got)
+	}
+	if got := Warnings(vars); len(got) > 0 {
+		t.Errorf("Warnings = %v, want silence: the certificate is simply somebody else's", got)
+	}
+}
+
+// An external terminator the api cannot recognise is the one failure this
+// topology has that no other does, and it presents as the site 429ing strangers
+// rather than as a misconfiguration — so it is said at generation time, not left
+// in the nginx example's comments where only somebody already editing that file
+// would find it.
+func TestExternalModeWarnsAboutAnUnrecognisedTerminator(t *testing.T) {
+	vars := map[string]string{
+		"VIDRA_ENV":            "production",
+		"JWT_SECRET":           strings.Repeat("k", 48),
+		"PUBLIC_BASE_URL":      "https://video.vidra.test",
+		"CORS_ALLOWED_ORIGINS": "https://video.vidra.test",
+		tlsModeKey:             TLSModeExternal,
+	}
+	if !warned(Warnings(vars), "shared login/password-reset budget") {
+		t.Errorf("Warnings = %v, want the shared-per-IP-budget warning naming %s", Warnings(vars), trustedProxyCIDRsKey)
+	}
+	if !warned(Warnings(vars), trustedProxyCIDRsKey) {
+		t.Errorf("the warning does not name the variable that fixes it: %v", Warnings(vars))
+	}
+	// It is a warning, never a refusal: a terminator on this same host is already
+	// trusted and needs nothing, which is an ordinary way to run this mode.
+	if got := Check(vars); len(got) > 0 {
+		t.Errorf("Check = %v, want an empty %s accepted", got, trustedProxyCIDRsKey)
+	}
+}
+
+// The two origin shapes that generate cleanly and then fail at the edge.
+func TestOriginWarnings(t *testing.T) {
+	base := func(origin, mode string) map[string]string {
+		return map[string]string{
+			"VIDRA_ENV":            "production",
+			"JWT_SECRET":           strings.Repeat("k", 48),
+			"PUBLIC_BASE_URL":      origin,
+			"CORS_ALLOWED_ORIGINS": origin,
+			tlsModeKey:             mode,
+			allowPlainHTTPKey:      "true",
+			trustedProxyCIDRsKey:   "203.0.113.7/32",
+		}
+	}
+	for _, tc := range []struct {
+		name, origin, mode, want string
+	}{
+		// deploy.sh refuses a placeholder site address, so this install stops at
+		// the deploy — after the file is written and the secrets are minted.
+		{name: "a placeholder domain", origin: "https://video.example.org", mode: TLSModeACME, want: "placeholder domain example.org"},
+		{name: "the bare placeholder", origin: "https://example.com", mode: TLSModeACME, want: "placeholder domain example.com"},
+		// The managed caddy publishes 80/443 and nothing else, and the deploy's
+		// edge probe strips the port — so this comes up healthy and unreachable.
+		{name: "a port under plain-http", origin: "http://192.168.1.10:8080", mode: TLSModePlainHTTP, want: "explicit port (:8080)"},
+		{name: "a port under acme", origin: "https://video.vidra.test:8443", mode: TLSModeACME, want: "explicit port (:8443)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Warnings(base(tc.origin, tc.mode))
+			if !warned(got, tc.want) {
+				t.Errorf("Warnings = %v, want one mentioning %q", got, tc.want)
+			}
+		})
+	}
+
+	// And the shapes that must stay silent, because over-warning is how an
+	// operator learns to skip the whole block.
+	for _, tc := range []struct{ name, origin, mode string }{
+		{"a real domain that merely contains the example", "https://myexample.com", TLSModeACME},
+		{"a real domain that merely ends in one", "https://video.example.company", TLSModeACME},
+		{"no port, real host", "https://video.vidra.test", TLSModeACME},
+		{"a plain-http LAN name with no port", "http://video.lan", TLSModePlainHTTP},
+		// external terminates wherever the operator put it, so a port there is
+		// their business and not a broken deployment.
+		{"a port under external", "https://video.vidra.test:8443", TLSModeExternal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, w := range Warnings(base(tc.origin, tc.mode)) {
+				if strings.Contains(w, "placeholder domain") || strings.Contains(w, "explicit port") {
+					t.Errorf("Warnings warned about %q: %s", tc.origin, w)
+				}
+			}
+		})
+	}
+}
+
+// The mode decides which scheme a bare host defaults to, and which one an
+// explicit answer is allowed to carry. Everything below the scheme — the host
+// shape, the case folding, the no-path rule — is the same in both, because the
+// value is compared as a STRING by CORS and by federation either way.
+func TestNormalizeOriginForMode(t *testing.T) {
+	for _, tc := range []struct {
+		in, mode, want, wantErr string
+	}{
+		{in: "video.lan", mode: TLSModePlainHTTP, want: "http://video.lan"},
+		{in: "http://video.lan", mode: TLSModePlainHTTP, want: "http://video.lan"},
+		{in: "192.168.1.10:8080", mode: TLSModePlainHTTP, want: "http://192.168.1.10:8080"},
+		{in: "http://VIDEO.Lan/", mode: TLSModePlainHTTP, want: "http://video.lan"},
+		{in: "https://video.lan", mode: TLSModePlainHTTP, wantErr: "must be http"},
+		{in: "*.lan", mode: TLSModePlainHTTP, wantErr: "wildcards are not a host"},
+
+		// Every other mode is NormalizeOrigin exactly, external included: the
+		// operator's own terminator serves https, so the origin is https.
+		{in: "video.example.org", mode: TLSModeExternal, want: "https://video.example.org"},
+		{in: "http://video.example.org", mode: TLSModeExternal, wantErr: "must be https"},
+		{in: "video.example.org", mode: TLSModeACME, want: "https://video.example.org"},
+		{in: "video.example.org", mode: "", want: "https://video.example.org"},
+		// An unreadable mode falls through to the https rule — the safe
+		// direction, since being wrong costs a re-typed answer rather than a
+		// deployment that silently ships without Secure cookies.
+		{in: "http://video.example.org", mode: "letsencrypt", wantErr: "must be https"},
+	} {
+		got, err := NormalizeOriginForMode(tc.in, tc.mode)
+		switch {
+		case tc.wantErr != "":
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("NormalizeOriginForMode(%q, %q) err = %v, want one mentioning %q", tc.in, tc.mode, err, tc.wantErr)
+			}
+		case err != nil:
+			t.Errorf("NormalizeOriginForMode(%q, %q): %v", tc.in, tc.mode, err)
+		case got != tc.want:
+			t.Errorf("NormalizeOriginForMode(%q, %q) = %q, want %q", tc.in, tc.mode, got, tc.want)
+		}
+	}
+}
+
+// The two halves of plain-http are written TOGETHER, and switching away clears
+// the consent. Either half alone is a deployment that does not boot or one that
+// silently keeps permission it no longer needs.
+func TestPlainHTTPWritesAndClearsTheConsent(t *testing.T) {
+	a := baseAnswers()
+	a.Domain = "video.lan"
+	a.TLSMode = TLSModePlainHTTP
+	res := generate(t, Request{Answers: a})
+	if got := res.Values["PUBLIC_BASE_URL"]; got != "http://video.lan" {
+		t.Errorf("PUBLIC_BASE_URL = %q, want the http origin", got)
+	}
+	if got := res.Values[allowPlainHTTPKey]; got != "true" {
+		t.Errorf("%s = %q, want true beside the mode", allowPlainHTTPKey, got)
+	}
+
+	// Switching to a real certificate clears it: an https origin does not need
+	// the consent, and a stale true is a permission nobody re-authorised.
+	existing, err := ParseEnvFile(res.Content)
+	if err != nil {
+		t.Fatalf("parse the generated file: %v", err)
+	}
+	back := baseAnswers()
+	back.TLSMode = TLSModeACME
+	next := generate(t, Request{Existing: existing, Answers: back})
+	if got := next.Values[allowPlainHTTPKey]; got != "false" {
+		t.Errorf("%s = %q after switching to acme, want it cleared", allowPlainHTTPKey, got)
+	}
+	if got := next.Values["PUBLIC_BASE_URL"]; got != "https://video.example.org" {
+		t.Errorf("PUBLIC_BASE_URL = %q, want the https origin back", got)
+	}
+}
+
+// A re-run that changes something ELSE must keep generating for the topology the
+// deployment is already in: the domain answer is normalised against the mode in
+// the FILE when no --tls-mode is passed, or the run would refuse the very origin
+// the file already holds.
+func TestARerunNormalisesAgainstTheExistingMode(t *testing.T) {
+	a := baseAnswers()
+	a.Domain = "video.lan"
+	a.TLSMode = TLSModePlainHTTP
+	first := generate(t, Request{Answers: a})
+	existing, err := ParseEnvFile(first.Content)
+	if err != nil {
+		t.Fatalf("parse the generated file: %v", err)
+	}
+
+	rerun := baseAnswers()
+	rerun.Domain = "video2.lan" // a new address, no mode answer at all
+	rerun.TLSMode = ""
+	res := generate(t, Request{Existing: existing, Answers: rerun})
+	if got := res.Values["PUBLIC_BASE_URL"]; got != "http://video2.lan" {
+		t.Errorf("PUBLIC_BASE_URL = %q, want the existing file's plain-http scheme kept", got)
+	}
+	if got := res.Values[tlsModeKey]; got != TLSModePlainHTTP {
+		t.Errorf("%s = %q, want the existing mode preserved", tlsModeKey, got)
+	}
 }

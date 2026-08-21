@@ -328,16 +328,19 @@ var s3Keys = []string{"STORAGE_S3_ENDPOINT", "STORAGE_S3_REGION", "STORAGE_S3_BU
 // by the api — internal/config has never heard of them, which is why Check waves
 // them through and why this package has to validate their combinations itself.
 const (
-	profilesKey         = "VIDRA_COMPOSE_PROFILES"
-	extraProfilesKey    = "EXTRA_COMPOSE_PROFILES"
-	externalPostgresKey = "VIDRA_EXTERNAL_POSTGRES"
-	externalRedisKey    = "VIDRA_EXTERNAL_REDIS"
-	databaseURLKey      = "DATABASE_URL"
-	redisURLKey         = "REDIS_URL"
-	searchRedisURLKey   = "SEARCH_REDIS_URL"
-	tlsModeKey          = "VIDRA_TLS_MODE"
-	acmeEmailKey        = "VIDRA_ACME_EMAIL"
-	instanceNameKey     = "INSTANCE_NAME"
+	profilesKey          = "VIDRA_COMPOSE_PROFILES"
+	extraProfilesKey     = "EXTRA_COMPOSE_PROFILES"
+	externalPostgresKey  = "VIDRA_EXTERNAL_POSTGRES"
+	externalRedisKey     = "VIDRA_EXTERNAL_REDIS"
+	databaseURLKey       = "DATABASE_URL"
+	redisURLKey          = "REDIS_URL"
+	searchRedisURLKey    = "SEARCH_REDIS_URL"
+	tlsModeKey           = "VIDRA_TLS_MODE"
+	acmeEmailKey         = "VIDRA_ACME_EMAIL"
+	allowPlainHTTPKey    = "VIDRA_ALLOW_PLAIN_HTTP"
+	trustedProxyCIDRsKey = "TRUSTED_PROXY_CIDRS"
+	publicBaseURLKey     = "PUBLIC_BASE_URL"
+	instanceNameKey      = "INSTANCE_NAME"
 )
 
 // searchRedisDefaultDB is the logical Redis database vidra-search runs on when
@@ -352,7 +355,7 @@ const searchRedisDefaultDB = 1
 // applyComponentRule): the deploy scripts must find VIDRA_COMPOSE_PROFILES in
 // every file this engine writes, including one generated from a template that
 // predates the key.
-var managedKeys = []string{profilesKey, externalPostgresKey, externalRedisKey, databaseURLKey, redisURLKey, searchRedisURLKey, tlsModeKey, acmeEmailKey}
+var managedKeys = []string{profilesKey, externalPostgresKey, externalRedisKey, databaseURLKey, redisURLKey, searchRedisURLKey, tlsModeKey, acmeEmailKey, allowPlainHTTPKey}
 
 // ManagedKeys is that list, for a caller comparing a generated env file against
 // the template. These keys are the engine's OWN output and several of them
@@ -465,7 +468,7 @@ func Generate(req Request) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	answers, err := answerValues(req.Answers)
+	answers, err := answerValues(req)
 	if err != nil {
 		return nil, err
 	}
@@ -766,6 +769,7 @@ func Warnings(vars map[string]string) []string {
 	out := append(interpolationWarnings(vars), quoteWarnings(vars)...)
 	out = append(out, componentWarnings(vars)...)
 	out = append(out, searchRedisWarnings(vars)...)
+	out = append(out, originWarnings(vars)...)
 	return append(out, tlsWarnings(vars)...)
 }
 
@@ -864,10 +868,30 @@ func mint(key string, r io.Reader) (string, error) {
 // answerValues turns the answers into concrete key/value pairs. An empty string
 // means "not answered" throughout, so a partially filled answer set falls
 // through to the existing file and then the template.
-func answerValues(a Answers) (map[string]string, error) {
+func answerValues(req Request) (map[string]string, error) {
+	a := req.Answers
 	out := map[string]string{}
+	mode, err := tlsMode(a.TLSMode)
+	if err != nil {
+		return nil, err
+	}
+	// The mode the DOMAIN is normalised against is the one this deployment will
+	// actually run in, which on a re-run is not necessarily the one answered:
+	// `vidra setup --domain video.lan` with no --tls-mode on a plain-http
+	// deployment must keep producing an http origin, or the run would refuse the
+	// very domain the file already holds. Answer, then the existing file, then the
+	// template; an unreadable value falls through to the https rule, which is the
+	// safe direction (tlsIssues reports it separately).
+	effectiveMode := mode
+	if effectiveMode == "" {
+		raw, _ := existingValue(req.Existing, tlsModeKey)
+		if raw == "" && req.Template != nil {
+			raw, _ = req.Template.Value(tlsModeKey)
+		}
+		effectiveMode, _ = tlsMode(raw)
+	}
 	if a.Domain != "" {
-		origin, err := normalizeOrigin(a.Domain)
+		origin, err := NormalizeOriginForMode(a.Domain, effectiveMode)
 		if err != nil {
 			return nil, err
 		}
@@ -935,12 +959,24 @@ func answerValues(a Answers) (map[string]string, error) {
 	// The TLS answers are what deploy/Caddyfile.local is rendered from; they live
 	// in the env file so a re-run (and `vidra doctor`) can see what the current
 	// Caddyfile was generated with.
-	mode, err := tlsMode(a.TLSMode)
-	if err != nil {
-		return nil, err
-	}
 	if mode != "" {
 		out[tlsModeKey] = mode
+	}
+	// plain-http is the one mode the API has to agree to. Its origin is http, and
+	// config.validate() refuses an http origin in production unless this says the
+	// deployment means it — so the two values are written together, by the engine,
+	// rather than left as a second step an operator discovers from a boot failure.
+	//
+	// Switching AWAY clears a consent that is no longer true, but only when the
+	// file actually carries one: writing VIDRA_ALLOW_PLAIN_HTTP=false into every
+	// ordinary install would be a line about a mode nobody chose.
+	switch {
+	case mode == TLSModePlainHTTP:
+		out[allowPlainHTTPKey] = "true"
+	case mode != "":
+		if ev, ok := existingValue(req.Existing, allowPlainHTTPKey); ok && IsTrue(ev) {
+			out[allowPlainHTTPKey] = "false"
+		}
 	}
 	if email := strings.TrimSpace(a.AcmeEmail); email != "" {
 		if err := checkAcmeEmailShape(email); err != nil {
@@ -1011,11 +1047,29 @@ func requireDomain(req Request, answers map[string]string) error {
 // accepting a domain the engine then rejects.
 func NormalizeOrigin(in string) (string, error) { return normalizeOrigin(in) }
 
+// NormalizeOriginForMode is NormalizeOrigin once the TLS mode is known. Only
+// plain-http differs: it is the mode that legalises an http:// origin, so it is
+// the ONE place a bare host defaults to http and an http:// answer is accepted
+// rather than corrected.
+//
+// Every other mode — including external, whose origin is https because the
+// operator's own terminator serves it — is NormalizeOrigin unchanged. An
+// unrecognised or unanswered mode is treated as https too, which is the
+// fail-secure direction: the cost of being wrong is a refused answer an operator
+// re-types, not a deployment that silently ships without Secure cookies.
+func NormalizeOriginForMode(in, mode string) (string, error) {
+	if strings.TrimSpace(mode) == TLSModePlainHTTP {
+		return normalizeOriginScheme(in, "http")
+	}
+	return normalizeOrigin(in)
+}
+
 // normalizeOrigin accepts a bare host or a full origin and returns
 // https://host[:port], lowercased. https is not negotiable here: in production
 // the api pins Secure cookies and both apps emit HSTS, so a plain-http origin
-// silently breaks login (deliberate plain-HTTP and external-terminator modes are
-// phase-1 item 12, and they need code, not an env value).
+// silently breaks login. The deliberate plain-HTTP deployment has its own mode
+// (VIDRA_TLS_MODE=plain-http, which routes through normalizeOriginScheme below);
+// what stays refused is an http origin nobody asked for.
 //
 // The host must be DNS-SHAPED, because this one answer becomes PUBLIC_BASE_URL
 // (federation and OAuth identity) and CORS_ALLOWED_ORIGINS (a browser security
@@ -1026,19 +1080,35 @@ func NormalizeOrigin(in string) (string, error) { return normalizeOrigin(in) }
 // signature verification. Normalising here keeps the file's single origin
 // byte-identical everywhere it is compared.
 func normalizeOrigin(in string) (string, error) {
+	return normalizeOriginScheme(in, "https")
+}
+
+// normalizeOriginScheme is the one implementation, with the scheme the caller's
+// TLS mode requires. Everything below the scheme check — the host shape, the
+// no-path rule, the lowercasing — is identical for both, and has to be: the
+// value it returns is PUBLIC_BASE_URL and CORS_ALLOWED_ORIGINS, and a plain-http
+// deployment compares origins exactly as strictly as a TLS one does.
+func normalizeOriginScheme(in, scheme string) (string, error) {
 	raw := strings.TrimRight(strings.TrimSpace(in), "/")
 	if raw == "" {
 		return "", errors.New("setup: the domain is empty")
 	}
 	if !strings.Contains(raw, "://") {
-		raw = "https://" + raw
+		raw = scheme + "://" + raw
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return "", fmt.Errorf("setup: %q is not a usable domain: %w", in, err)
 	}
-	if u.Scheme != "https" {
-		return "", fmt.Errorf("setup: the domain must be https (got %q) — production pins Secure cookies and emits HSTS, so a plain-http origin breaks login", in)
+	switch {
+	case u.Scheme == scheme:
+	case scheme == "http":
+		// The operator asked for the no-TLS mode and then typed an https origin.
+		// Accepting it would generate a Caddy site on :80 while the api minted
+		// https links for the same host — a deployment that answers nothing.
+		return "", fmt.Errorf("setup: %s=%s serves this instance over plain http, so the domain must be http (got %q). Use https and one of the TLS modes if there is a certificate for this host", tlsModeKey, TLSModePlainHTTP, in)
+	default:
+		return "", fmt.Errorf("setup: the domain must be https (got %q) — production pins Secure cookies and emits HSTS, so a plain-http origin breaks login. A deliberate no-TLS deployment is %s=%s, which legalises it end to end", in, tlsModeKey, TLSModePlainHTTP)
 	}
 	if u.Host == "" || u.User != nil {
 		return "", fmt.Errorf("setup: %q is not a usable domain: expected a host like video.example.org", in)
@@ -1053,7 +1123,7 @@ func normalizeOrigin(in string) (string, error) {
 	if port := u.Port(); port != "" {
 		host += ":" + port
 	}
-	return "https://" + host, nil
+	return scheme + "://" + host, nil
 }
 
 // checkDNSHost requires the host part of an origin to be a hostname: dot-joined
@@ -1511,15 +1581,73 @@ func tlsIssues(vars map[string]string) []Issue {
 	return out
 }
 
-// tlsWarnings reports the two TLS configurations that deploy fine and are still
-// not what a public instance wants.
+// originWarnings reports the two shapes of PUBLIC_BASE_URL that generate
+// cleanly, boot cleanly, and then fail at the EDGE — where the failure looks
+// like a broken deployment rather than a value somebody typed.
 //
-// Neither is a failure. A rehearsal mode is a legitimate state to be in for an
+// Neither can be a refusal here. Both are things `vidra setup --check` runs
+// against files on live instances, and both are recoverable by editing one line;
+// a refusal would also mean this engine rejecting a value the api itself accepts,
+// which is the drift the whole package is built to avoid.
+func originWarnings(vars map[string]string) []string {
+	raw := strings.TrimSpace(vars[publicBaseURLKey])
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	// (1) A placeholder domain. deploy.sh REFUSES to deploy a Caddyfile whose
+	// non-comment lines name one and `vidra doctor` reports it, so an install that
+	// gets this far with example.org is one that stops at the deploy — after the
+	// env file has been written, the secrets minted and the operator has moved on
+	// to DNS. PlaceholderDomain is deploy.sh's own anchored test, not a substring
+	// search: myexample.com is a real domain, sub.example.org is not.
+	if ph, ok := PlaceholderDomain(raw); ok {
+		out = append(out, fmt.Sprintf("%s names the placeholder domain %s. It generates fine and then stops the deploy: deploy/deploy.sh refuses a Caddyfile whose site address is a placeholder (Caddy would order a certificate for it, fail the challenge, and spend this host's Let's Encrypt validation budget doing it) and `vidra doctor` reports the same thing. Set %s to the instance's real origin and re-run",
+			publicBaseURLKey, ph, publicBaseURLKey))
+	}
+	// (2) An explicit port. The managed caddy publishes 80 and 443 and nothing
+	// else — docker-compose.prod.yml says so — and deploy.sh's edge probe strips
+	// the port before it connects, so a deployment on :8080 comes up healthy,
+	// probes green, and is unreachable at the address the api mints every link
+	// with. external is exempt: that proxy is the operator's, and it can listen
+	// wherever they put it.
+	if !SkipsManagedCaddy(vars[tlsModeKey]) {
+		if u, err := url.Parse(withScheme(raw)); err == nil && u.Port() != "" {
+			out = append(out, fmt.Sprintf("%s carries an explicit port (:%s), but the managed reverse proxy publishes only 80 and 443 — nothing listens on :%s on this host. The stack would come up healthy and be unreachable at the origin every link, feed and OAuth callback is minted from. Drop the port, or terminate TLS yourself with %s=%s and publish whatever port you like",
+				publicBaseURLKey, u.Port(), u.Port(), tlsModeKey, TLSModeExternal))
+		}
+	}
+	return out
+}
+
+// withScheme makes a bare host parseable as a URL, so a file whose
+// PUBLIC_BASE_URL somebody hand-edited to `video.example.org:8080` is read the
+// same way as `https://video.example.org:8080`. url.Parse on the bare form puts
+// the whole thing in Opaque and reports no port at all.
+func withScheme(raw string) string {
+	if strings.Contains(raw, "://") {
+		return raw
+	}
+	return "https://" + raw
+}
+
+// tlsWarnings reports the TLS configurations that deploy fine and are still not
+// what a public instance wants.
+//
+// None is a failure. A rehearsal mode is a legitimate state to be in for an
 // afternoon — that is what it is for — and the blank contact address costs
 // nothing until a renewal fails 60 days later, which is exactly why it needs
 // saying now rather than then. An env file that does not mention the mode at all
 // gets nothing: it predates the managed Caddyfile, so there is no generated file
 // for either warning to be about.
+//
+// external gets NOTHING, and that is the deliberate part. It is a correct,
+// permanent production topology whose certificate is simply somebody else's, so
+// a standing ⚠ about it would be a red line on a healthy deployment for ever —
+// the failure mode this package elsewhere calls "a permanent ⚠ about the engine
+// having done its job". plain-http gets one every time, because what it costs is
+// not a rehearsal's inconvenience: every password and session cookie on that
+// instance crosses the network in clear, for as long as it runs.
 //
 // Both lines name the ENV KEY and the file it lives in, never a command-line
 // flag. The reader may be an operator who never typed `vidra setup` at all — the
@@ -1536,7 +1664,27 @@ func tlsWarnings(vars map[string]string) []string {
 		// Already reported as an issue; a warning about it would be noise.
 		return nil
 	}
-	if mode != TLSModeACME {
+	switch mode {
+	case TLSModeExternal:
+		// The topology itself is fine and gets no ⚠ (see the comment above). What
+		// does is the ONE thing that silently breaks on it and on nothing else: a
+		// terminator this instance cannot recognise. The api believes an
+		// X-Forwarded-For hop only from loopback/RFC1918/ULA/link-local, so a proxy
+		// on a routable address becomes the client for every per-IP budget on the
+		// instance — one shared login bucket for everybody behind it, which
+		// presents as the site 429ing strangers rather than as a misconfiguration.
+		// It is a warning and not a refusal because a terminator on the SAME host
+		// (127.0.0.1, or a container on the compose bridge) is already trusted and
+		// needs nothing, and that is a perfectly ordinary way to run this mode.
+		if strings.TrimSpace(vars[trustedProxyCIDRsKey]) == "" {
+			return []string{fmt.Sprintf("%s=%s with %s empty: only loopback and private-network proxies are believed, so if TLS is terminated on a PUBLIC address (a cloud load balancer, a CDN edge, an nginx on another host) the api sees THAT address as every visitor's — one shared login/password-reset budget for everyone behind it, and eventual 429s for strangers. Set %s to the terminator's network (203.0.113.7/32, 2001:db8::/32; comma-separated) in env/production.env, and only to networks you control. A proxy on this same host needs nothing",
+				tlsModeKey, mode, trustedProxyCIDRsKey, trustedProxyCIDRsKey)}
+		}
+		return nil
+	case TLSModePlainHTTP:
+		return []string{fmt.Sprintf("%s=%s serves this instance over plain HTTP: passwords, session cookies and every upload cross the network in clear, and anything on the path can read or rewrite them. It is a LAN/lab/air-gapped mode and nothing on the public internet should run it. %s=true in env/production.env is the api's half of the same choice — remove both and set %s=%s once there is a certificate for this host",
+			tlsModeKey, mode, allowPlainHTTPKey, tlsModeKey, TLSModeACME)}
+	case TLSModeACMEStaging, TLSModeInternal:
 		return []string{fmt.Sprintf("%s=%s does not produce a publicly trusted certificate: %s is a rehearsal/bring-up mode, and every browser reaching this instance will refuse the connection. Set %s=%s in env/production.env and regenerate the Caddyfile once DNS points at this host", tlsModeKey, mode, mode, tlsModeKey, TLSModeACME)}
 	}
 	if strings.TrimSpace(vars[acmeEmailKey]) != "" {
@@ -1833,7 +1981,7 @@ func RenderCheckArgs(envPath string, values map[string]string, tail ...string) [
 // EnabledProfiles is the compose profile list the deploy will enable for an env
 // file: the managed VIDRA_COMPOSE_PROFILES list (or the legacy core+frontend
 // when the file predates the key), plus the operator's EXTRA_COMPOSE_PROFILES,
-// deduplicated.
+// plus the `edge` profile the ENGINE decides on, deduplicated.
 //
 // Exported because it is also the answer to "is the RTMP edge supposed to be
 // public here?" — `vidra doctor` reads the rendered port map against it, and a
@@ -1841,10 +1989,35 @@ func RenderCheckArgs(envPath string, values map[string]string, tail ...string) [
 // one direction that matters.
 func EnabledProfiles(values map[string]string) []string { return checkProfiles(values) }
 
+// edgeProfile is the compose profile carrying the managed caddy service. It is
+// NOT in VIDRA_COMPOSE_PROFILES and must never be: if it had to be typed there,
+// every env file written before caddy moved onto a profile — every one in
+// existence — would silently stop starting the TLS terminator on its next
+// deploy. So the rule is inverted, and the engine decides.
+const edgeProfile = "edge"
+
 // checkProfiles is the profile list the deploy will enable: the managed list, or
-// the legacy base when the file predates it, plus the operator's extras.
+// the legacy base when the file predates it, then the operator's extras, then
+// `edge` unless somebody else terminates TLS.
 //
-// Deduped because the two lists overlap by design — an operator who enabled ipfs
+// THE `edge` RULE IS deploy/lib.sh's edge_profile(), character for character,
+// and this is the Go half of a cross-repo contract rather than a convenience.
+// The shell builds the chain the deploy runs; this builds the chain
+// RenderCheckCommand prints for an operator to paste and the one `vidra doctor`
+// renders its port model from. When they disagree, both failures are silent and
+// both are bad: the pre-flight validates a stack with no reverse proxy in it,
+// and doctor's :80/:443 exposure audit reads a model where nothing publishes
+// either port and therefore finds nothing to report, for ever.
+//
+// `external` is the only mode that drops it (via SkipsManagedCaddy, the one
+// spelling of that question). plain-http keeps caddy — as a plain-HTTP site —
+// and an unset or unrecognised mode keeps it too: an operator who typos the mode
+// gets deploy.sh's refusal, not a silently edge-less stack.
+//
+// It goes LAST, like the shell's loop, so the printed --profile order matches
+// what an operator sees the deploy use.
+//
+// Deduped because the lists overlap by design — an operator who enabled ipfs
 // through EXTRA_COMPOSE_PROFILES before this key existed keeps that line after a
 // re-run puts `ipfs` in the managed list, and `--profile ipfs --profile ipfs` is
 // noise in a command an operator is being asked to read and paste.
@@ -1854,6 +2027,9 @@ func checkProfiles(values map[string]string) []string {
 		profiles = append([]string(nil), baseProfiles...)
 	}
 	profiles = append(profiles, strings.Fields(values[extraProfilesKey])...)
+	if !SkipsManagedCaddy(values[tlsModeKey]) {
+		profiles = append(profiles, edgeProfile)
+	}
 	seen := make(map[string]bool, len(profiles))
 	out := make([]string, 0, len(profiles))
 	for _, p := range profiles {

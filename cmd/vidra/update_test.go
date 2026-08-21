@@ -391,6 +391,36 @@ func TestUpdateWarnsWhenThereIsNoCoreCheckout(t *testing.T) {
 	contains(t, st.out(), "note:", "no vidra-core checkout")
 }
 
+// A BUNDLE deployment — the release tarball, which ships vidra-core/ at the same
+// relative paths a checkout uses but with no git history anywhere — must DEGRADE,
+// not refuse. Every other part of the command works there (the env file, the
+// release listing, deploy.sh and rollback.sh are all present), so the one gate
+// that needs git says so and the update proceeds.
+func TestUpdateDegradesOnABundleTree(t *testing.T) {
+	st := newUpdateStage(t)
+	// The bundle's shape: the directory and its files, no .git.
+	if err := os.RemoveAll(filepath.Join(st.dir, coreRepo, ".git")); err != nil {
+		t.Fatalf("rm .git: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(st.dir, coreRepo, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatalf("write bundle compose file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(st.dir, "vidra-bundle.manifest"), []byte("tag=v0.3.0\n"), 0o644); err != nil {
+		t.Fatalf("write bundle manifest: %v", err)
+	}
+	if err := st.run("--yes"); err != nil {
+		t.Fatalf("a bundle deployment was refused: %v", err)
+	}
+	// Named as what it is, so nobody goes looking for a directory that is there.
+	contains(t, st.out(), "note:", "is not a git checkout", "release-bundle")
+	if strings.Contains(st.out(), "there is no "+coreRepo+" checkout") {
+		t.Errorf("a bundle tree was told its vidra-core directory does not exist:\n%s", st.out())
+	}
+	// And the deploy still ran: the gate is advisory, and no git command was
+	// attempted against a tree that has no history to read.
+	st.wantCalls("deploy/deploy.sh")
+}
+
 // The pre-flight reads the tag's tree; it must not move the working directory,
 // which deploy.sh is about to do for itself.
 func TestUpdateReadsTheTargetsMigrationsWithoutCheckingOut(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vidra/vidra-core/internal/dbmigrate"
+	"github.com/vidra/vidra-core/internal/setup"
 )
 
 // The whole point of the command, in one test: a deployment with nothing wrong
@@ -231,6 +232,12 @@ func TestPublishedPortsRendersTheDeploysOwnChain(t *testing.T) {
 		"-f docker-compose.external-redis.yml", // the env file says the redis is managed
 		"--env-file env/production.env",
 		"--profile core", "--profile frontend", "--profile ipfs",
+		// The caddy service moved onto the `edge` profile, and the engine adds it.
+		// Without it the rendered model has no reverse proxy in it at all — which
+		// is not a cosmetic gap here: this is the :80/:443 EXPOSURE audit, and a
+		// model where nothing publishes either port finds nothing to report, for
+		// ever, on every deployment.
+		"--profile edge",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("the rendered chain is missing %q: %s", want, rendered)
@@ -238,6 +245,44 @@ func TestPublishedPortsRendersTheDeploysOwnChain(t *testing.T) {
 	}
 	if strings.Contains(rendered, "external-postgres") {
 		t.Errorf("the chain added the postgres overlay for a bundled database: %s", rendered)
+	}
+}
+
+// The two-way gate on the `edge` profile: the model doctor audits must CONTAIN
+// the caddy service on an ordinary deployment and must NOT on an external one.
+//
+// Both directions are failures nobody would see. Missing on acme, the port audit
+// stops auditing the only service that publishes 80 and 443. Present on
+// external, doctor reports an exposure from a container this deployment does not
+// run, and the operator goes looking for it.
+func TestPublishedPortsChainFollowsTheEdgeProfile(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mode    string
+		wantHas bool
+	}{
+		{name: "acme renders the managed caddy", mode: "acme", wantHas: true},
+		{name: "plain-http renders it too", mode: "plain-http", wantHas: true},
+		{name: "external leaves it out", mode: "external", wantHas: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newFakeHost()
+			h.files[filepath.Join(testRoot, "env/production.env")] = strings.Replace(healthyEnv, "VIDRA_TLS_MODE=acme", "VIDRA_TLS_MODE="+tc.mode, 1)
+			only(t, "published ports", h, nil)
+
+			var rendered string
+			for _, c := range h.commands() {
+				if strings.Contains(c, "config --format json") {
+					rendered = c
+				}
+			}
+			if rendered == "" {
+				t.Fatal("the check never rendered a compose model")
+			}
+			if got := strings.Contains(rendered, "--profile edge"); got != tc.wantHas {
+				t.Errorf("VIDRA_TLS_MODE=%s rendered with --profile edge = %v, want %v: %s", tc.mode, got, tc.wantHas, rendered)
+			}
+		})
 	}
 }
 
@@ -276,7 +321,7 @@ func TestCaddyfile(t *testing.T) {
 			name:      "a different host from PUBLIC_BASE_URL",
 			content:   "other.vidra.test {\n\treverse_proxy api:8080\n}\n",
 			want:      StatusFail,
-			detailHas: "serves other.vidra.test but PUBLIC_BASE_URL is https://tube.vidra.test",
+			detailHas: "serves other.vidra.test but PUBLIC_BASE_URL names tube.vidra.test",
 			fixHas:    "federation actor ids",
 		},
 		{
@@ -436,7 +481,14 @@ func TestDomainDNSGating(t *testing.T) {
 		{name: "acme-staging is still an order", tlsMode: "acme-staging", resStatus: StatusFail, want: StatusFail},
 		// internal issues from Caddy's own CA: no ACME order, nothing for DNS to
 		// be wrong about.
-		{name: "internal is not checked", tlsMode: "internal", resStatus: StatusFail, want: StatusWarn, detailHas: "issues from Caddy's own CA"},
+		{name: "internal is not checked", tlsMode: "internal", resStatus: StatusFail, want: StatusWarn, detailHas: "issued by Caddy's own local CA"},
+		// The two topologies from phase-1 item 12. Each is skipped for its own
+		// reason, and the reason is in the line: a lab instance's name may not
+		// resolve publicly at all, and an external terminator is deliberately a
+		// DIFFERENT host from this one, so "does this A record point here" would
+		// be a permanent ✗ on a correct deployment.
+		{name: "plain-http is not checked", tlsMode: "plain-http", resStatus: StatusFail, want: StatusWarn, detailHas: "no certificate at all"},
+		{name: "external is not checked", tlsMode: "external", resStatus: StatusFail, want: StatusWarn, detailHas: "your own proxy terminates TLS"},
 		{name: "blank means acme", tlsMode: "", resStatus: StatusFail, want: StatusFail},
 		{
 			name: "the opt-out downgrades, it does not hide", tlsMode: "acme", skipEnv: "1", resStatus: StatusFail,
@@ -472,6 +524,77 @@ func TestDomainDNSGating(t *testing.T) {
 			wantFinding(t, one(t, only(t, "domain DNS", h, p)), tc.want, tc.detailHas, "")
 		})
 	}
+}
+
+// The placeholder finding fires in every mode — deploy.sh refuses the file
+// whatever the scheme — but its REASON must not. Telling a plain-http operator
+// that their Let's Encrypt validation budget is at risk is a diagnostic
+// describing a certificate order that does not happen.
+func TestCaddyfilePlaceholderReasonFollowsTheMode(t *testing.T) {
+	for _, tc := range []struct {
+		mode, want, notWant string
+	}{
+		{mode: "acme", want: "Let's Encrypt validation budget", notWant: "hostname nobody uses"},
+		{mode: "internal", want: "Let's Encrypt validation budget", notWant: "hostname nobody uses"},
+		{mode: "plain-http", want: "hostname nobody uses", notWant: "Let's Encrypt"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			h := newFakeHost()
+			env := strings.Replace(healthyEnv, "VIDRA_TLS_MODE=acme", "VIDRA_TLS_MODE="+tc.mode+"\nVIDRA_ALLOW_PLAIN_HTTP=true", 1)
+			h.files[filepath.Join(testRoot, "env/production.env")] = strings.ReplaceAll(env, "https://tube.vidra.test", "http://tube.vidra.test")
+			h.files[filepath.Join(testRoot, "deploy/Caddyfile.local")] = "example.com {\n\treverse_proxy api:8080\n}\n"
+			findings := only(t, "reverse proxy", h, nil)
+			if !hasStatus(findings, StatusFail) {
+				t.Fatalf("statuses = %v, want the placeholder still refused in %s: %+v", statuses(findings), tc.mode, findings)
+			}
+			if !hasAny(findings, tc.want) {
+				t.Errorf("the remediation does not mention %q in %s mode: %+v", tc.want, tc.mode, findings)
+			}
+			if hasAny(findings, tc.notWant) {
+				t.Errorf("the remediation still mentions %q in %s mode: %+v", tc.notWant, tc.mode, findings)
+			}
+		})
+	}
+}
+
+// The two topologies phase-1 item 12 added, at the reverse-proxy check.
+//
+// external is the one that would otherwise be a PERMANENT ✗ on a correct
+// deployment: there is no caddy container and no generated Caddyfile by design,
+// so "the file is missing and compose bind-mounts it" is false twice over.
+// plain-http keeps both, with an http:// site address — which must still be
+// compared against PUBLIC_BASE_URL by HOST, or every lab instance reports a
+// mismatch with itself.
+func TestCaddyfileHandlesTheItem12Topologies(t *testing.T) {
+	t.Run("external skips the check entirely", func(t *testing.T) {
+		h := newFakeHost()
+		h.files[filepath.Join(testRoot, "env/production.env")] = strings.Replace(healthyEnv, "VIDRA_TLS_MODE=acme", "VIDRA_TLS_MODE=external", 1)
+		// The bundle/external reality: no Caddyfile.local on disk at all.
+		delete(h.files, filepath.Join(testRoot, "deploy/Caddyfile.local"))
+		findings := only(t, "reverse proxy", h, nil)
+		// A skip is a ⚠ carrying "skipped:" — there is nothing wrong to fix, and
+		// this deployment is correct as it stands.
+		if !hasStatus(findings, StatusWarn) || !hasAny(findings, "skipped:") {
+			t.Fatalf("statuses = %v, want a skip on an external deployment: %+v", statuses(findings), findings)
+		}
+		if !hasAny(findings, "your own proxy terminates TLS") {
+			t.Errorf("the skip does not say why: %+v", findings)
+		}
+		if !hasAny(findings, setup.NginxExampleOutputPath) {
+			t.Errorf("the skip does not name the example that IS generated: %+v", findings)
+		}
+	})
+
+	t.Run("plain-http matches an http site address against the origin", func(t *testing.T) {
+		h := newFakeHost()
+		env := strings.Replace(healthyEnv, "VIDRA_TLS_MODE=acme", "VIDRA_TLS_MODE=plain-http\nVIDRA_ALLOW_PLAIN_HTTP=true", 1)
+		h.files[filepath.Join(testRoot, "env/production.env")] = strings.ReplaceAll(env, "https://tube.vidra.test", "http://tube.vidra.test")
+		h.files[filepath.Join(testRoot, "deploy/Caddyfile.local")] = "http://tube.vidra.test {\n\treverse_proxy api:8080\n}\n"
+		findings := only(t, "reverse proxy", h, nil)
+		if !hasStatus(findings, StatusOK) {
+			t.Fatalf("statuses = %v, want OK: an http site address matching an http origin is correct: %+v", statuses(findings), findings)
+		}
+	})
 }
 
 // VIDRA_PUBLIC_IP is how an operator behind NAT tells the check what this host's

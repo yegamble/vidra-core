@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"regexp"
@@ -71,6 +72,25 @@ type Config struct {
 	// string (e.g. "8M", "512K"). Oversized requests are rejected with 413.
 	HTTPBodyLimit string
 
+	// TrustedProxyCIDRs are EXTRA networks whose X-Forwarded-For the server
+	// believes, on top of the built-in loopback + RFC1918/ULA + link-local set
+	// (see internal/httpapi.New, which explains why the walk stops at the nearest
+	// untrusted hop). Comma-separated CIDRs, empty by default.
+	//
+	// It exists for one topology: a TLS terminator on a PUBLIC address — a cloud
+	// load balancer, a CDN, an operator-run nginx on another host
+	// (VIDRA_TLS_MODE=external). Such a hop is untrusted by default, which is
+	// fail-SAFE rather than fail-open — the proxy itself becomes the client for
+	// every per-IP budget on the instance, so one visitor's login attempts spend
+	// everybody's — but it is still wrong, and a CIDR is the only honest way to
+	// say "that address really is our edge". Naming a network that is NOT under
+	// the operator's control hands every attacker behind it the ability to forge
+	// their own client address, so this stays empty unless somebody means it.
+	//
+	// Each entry must parse as a CIDR (validate() refuses otherwise): a bare IP
+	// with no prefix length is the typo that would silently trust nothing.
+	TrustedProxyCIDRs []string
+
 	// PostgreSQL connection (DSN form, e.g. postgres://user:pass@host:5432/db).
 	DatabaseURL string
 
@@ -88,6 +108,21 @@ type Config struct {
 	// URLs. Required when FederationEnabled; must carry no path or trailing
 	// slash (a trailing slash is trimmed at load). See .ralph/specs/federation.md.
 	PublicBaseURL string
+
+	// AllowPlainHTTP is the operator's EXPLICIT consent to a plain-http public
+	// origin in production — the lab, LAN and air-gapped deployments phase-1 item
+	// 12 exists for, where there is no certificate to be had and no browser on the
+	// public internet to protect.
+	//
+	// It is a separate variable rather than an inference from the scheme because
+	// the two mistakes are not symmetrical. A production deployment that MEANT to
+	// be https and typed http:// gets Secure cookies dropped and HSTS withheld —
+	// silently, on the one deployment where those matter most — and the only way
+	// to tell that apart from a deliberate lab install is to make somebody say so.
+	// So an http:// origin in production without this is a refusal to boot (see
+	// validate()), and with it every https-derived default flips off together:
+	// PublicOriginIsHTTPS is the one predicate CookieSecure and HSTS both read.
+	AllowPlainHTTP bool
 
 	// FederationEnabled is the master switch for ActivityPub federation. When
 	// false (default) all federation routes are unmounted (they 404) — zero cost
@@ -651,6 +686,8 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		HTTPHost:                       getEnv("HTTP_HOST", "0.0.0.0"),
 		InstanceName:                   getEnv("INSTANCE_NAME", "Vidra (dev)"),
 		PublicBaseURL:                  strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
+		AllowPlainHTTP:                 p.Bool("VIDRA_ALLOW_PLAIN_HTTP", false),
+		TrustedProxyCIDRs:              splitAndTrim(getEnv("TRUSTED_PROXY_CIDRS", "")),
 		FederationEnabled:              p.Bool("FEDERATION_ENABLED", false),
 		FederationKeyKEK:               getEnv("FEDERATION_KEY_KEK", ""),
 		ATProtoEnabled:                 p.Bool("ATPROTO_ENABLED", false),
@@ -903,6 +940,12 @@ func (c *Config) validate() error {
 	}
 	if _, err := bytes.Parse(c.HTTPBodyLimit); err != nil {
 		return varErrorf("HTTP_BODY_LIMIT", "config: invalid HTTP_BODY_LIMIT %q: %w", c.HTTPBodyLimit, err)
+	}
+	if err := c.validatePublicScheme(); err != nil {
+		return err
+	}
+	if _, err := parseTrustedProxyCIDRs(c.TrustedProxyCIDRs); err != nil {
+		return err
 	}
 	if c.RateLimitEnabled {
 		if c.RateLimitRequests <= 0 {
@@ -1331,17 +1374,98 @@ func (c *Config) HTTPAddr() string {
 	return fmt.Sprintf("%s:%d", c.HTTPHost, c.HTTPPort)
 }
 
-// CookieSecure reports whether auth cookies (the vidra_refresh cookie set by
-// cookie-mode sessions) must carry the Secure attribute. True when the
-// instance's canonical public origin is https (PUBLIC_BASE_URL), and always in
-// production — fail-secure even when PUBLIC_BASE_URL is unset, since production
-// deployments are expected to terminate TLS. Plain-http local development keeps
-// Secure off so the cookie still works on http://localhost.
-func (c *Config) CookieSecure() bool {
-	if strings.HasPrefix(strings.ToLower(c.PublicBaseURL), "https://") {
+// PublicOriginIsHTTPS reports whether browsers reach this instance over TLS. It
+// is the ONE predicate every https-derived default hangs off — Secure cookies
+// (CookieSecure) and the HSTS response header — because those two have to agree:
+// a deployment that pins Secure cookies while withholding HSTS, or the reverse,
+// is one whose login works in exactly half the browsers that try it.
+//
+// PUBLIC_BASE_URL's scheme is the source of truth, and the fallbacks are chosen
+// to fail SECURE in both directions:
+//
+//   - https origin → true. The ordinary answer.
+//   - http origin → false. validate() has already refused this in production
+//     unless VIDRA_ALLOW_PLAIN_HTTP said so, so reaching here means somebody
+//     deliberately deployed a lab/LAN instance with no TLS — Secure cookies
+//     would simply never be sent back, i.e. no login at all.
+//   - unset origin → whether this is production. Unchanged from before: a
+//     production deployment is expected to terminate TLS, and guessing "no"
+//     because a variable is missing is how a public instance ships without
+//     Secure cookies.
+//
+// Over-emitting HSTS costs nothing: per RFC 6797 §8.1 a browser ignores the
+// header on a plain-http response. Under-emitting it on a real TLS deployment is
+// the failure that matters, which is why the unset case leans the way it does.
+func (c *Config) PublicOriginIsHTTPS() bool {
+	switch scheme := strings.ToLower(c.PublicBaseURL); {
+	case strings.HasPrefix(scheme, "https://"):
 		return true
+	case strings.HasPrefix(scheme, "http://"):
+		return false
+	default:
+		return c.Environment == "production"
 	}
-	return c.Environment == "production"
+}
+
+// validatePublicScheme is the gate that makes a plain-http production origin a
+// DELIBERATE state rather than a typo nobody notices.
+//
+// setup.Check validates every generated env file with production forced, so this
+// one rule is what lets `VIDRA_TLS_MODE=plain-http` survive it — there is no
+// second copy of the rule in the setup engine, on purpose (one engine, zero
+// drift; see the package comment).
+func (c *Config) validatePublicScheme() error {
+	if c.Environment != "production" || c.AllowPlainHTTP {
+		return nil
+	}
+	if !strings.HasPrefix(strings.ToLower(c.PublicBaseURL), "http://") {
+		return nil
+	}
+	return varErrorf("PUBLIC_BASE_URL", "config: PUBLIC_BASE_URL is a plain-http origin (%q) in production. Over http the api cannot set Secure cookies and browsers ignore HSTS, so sessions and every other https-derived default are off — which is either a typo (write https://) or a deliberate lab/LAN/air-gapped install. If it is deliberate, say so: set VIDRA_ALLOW_PLAIN_HTTP=true, and set VIDRA_TLS_MODE=plain-http so the reverse proxy is generated for http as well", c.PublicBaseURL)
+}
+
+// parseTrustedProxyCIDRs is the ONE parser for TRUSTED_PROXY_CIDRS: validate()
+// calls it for the refusal, TrustedProxyNets calls it for the networks. A second
+// parse of the same strings is how "it validated" and "it is trusted" start
+// disagreeing about a value with an odd host part.
+func parseTrustedProxyCIDRs(entries []string) ([]*net.IPNet, error) {
+	out := make([]*net.IPNet, 0, len(entries))
+	for _, raw := range entries {
+		_, network, err := net.ParseCIDR(raw)
+		if err != nil {
+			return nil, varErrorf("TRUSTED_PROXY_CIDRS", "config: TRUSTED_PROXY_CIDRS entry %q is not a CIDR block — write a network with a prefix length (203.0.113.7/32 for a single address, 2001:db8::/32 for a range), comma-separated", raw)
+		}
+		out = append(out, network)
+	}
+	return out, nil
+}
+
+// TrustedProxyNets returns the extra trusted networks, parsed. validate() has
+// already refused anything that does not parse, so an error here can only come
+// from a Config built by hand (a test) and the bad entry is skipped rather than
+// panicking a running server over it.
+func (c *Config) TrustedProxyNets() []*net.IPNet {
+	nets, err := parseTrustedProxyCIDRs(c.TrustedProxyCIDRs)
+	if err == nil {
+		return nets
+	}
+	out := make([]*net.IPNet, 0, len(c.TrustedProxyCIDRs))
+	for _, raw := range c.TrustedProxyCIDRs {
+		if _, network, err := net.ParseCIDR(raw); err == nil {
+			out = append(out, network)
+		}
+	}
+	return out
+}
+
+// CookieSecure reports whether auth cookies (the vidra_refresh cookie set by
+// cookie-mode sessions) must carry the Secure attribute: exactly when browsers
+// reach this instance over TLS. See PublicOriginIsHTTPS for what decides that
+// and why the unset case is fail-secure — plain-http local development (and a
+// consented plain-http deployment) keeps Secure off, since a Secure cookie on an
+// http origin is a cookie the browser never sends back.
+func (c *Config) CookieSecure() bool {
+	return c.PublicOriginIsHTTPS()
 }
 
 // ATProtoKEK returns the key-encryption key that seals linked Bluesky app

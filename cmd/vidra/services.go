@@ -78,8 +78,14 @@ var oneShots = map[string]string{
 
 // serviceProfiles is the compose profile (or profiles) each service is gated
 // behind, as docker-compose.yml and docker-compose.prod.yml declare it. A
-// service with none is always in the project — caddy is the only one, and
-// deliberately: the TLS terminator comes up with every production deploy.
+// service with none is always in the project.
+//
+// caddy USED to be that service — "the TLS terminator comes up with every
+// production deploy" — and it no longer is: it sits on the `edge` profile, which
+// the ENGINE adds unless VIDRA_TLS_MODE=external (setup.EnabledProfiles, the Go
+// half of deploy/lib.sh's edge_profile). Leaving it mapped to "no profile" made
+// `vidra restart caddy` on an external deployment die at compose with "no such
+// service" instead of the clean refusal every other profiled service gets.
 //
 // This is a transcription, so it can drift from the compose files. It is only
 // ever used to REFUSE an action that compose would refuse anyway ("no such
@@ -102,7 +108,7 @@ var serviceProfiles = map[string][]string{
 	"jaeger":         {"otel"},
 	"rtmp":           {"media"},
 	"ipfs":           {"ipfs", "full"},
-	"caddy":          nil,
+	"caddy":          {"edge"},
 }
 
 // composeService resolves what an operator typed to a compose service name.
