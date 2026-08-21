@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vidra/vidra-core/internal/blobsink"
+	"github.com/vidra/vidra-core/internal/storage"
 )
 
 func testLadder() []HLSRung {
@@ -276,6 +279,43 @@ func TestSingleRungLadderOmitsSplit(t *testing.T) {
 	}
 	if !strings.HasPrefix(graph, "[0:v]") {
 		t.Errorf("single-rung graph should read [0:v] directly: %q", graph)
+	}
+}
+
+// TestSinkLadderArgsDisablePersistentConnections pins a flag that looks like a
+// tuning knob and is actually a correctness requirement. On one reused
+// connection an HTTP origin handles requests in order, so every segment store
+// blocks the muxer's next request from even being read; the last write of all —
+// the final playlist, which ffmpeg pushes out and then exits without waiting for
+// — is left unread in the socket, invisible to the sink's completion barrier.
+// Measured against a 300ms-per-object store, Flush then returns "successfully"
+// on a rendition with half its segments and no playlist at all.
+func TestSinkLadderArgsDisablePersistentConnections(t *testing.T) {
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	sink, err := blobsink.New(blobs, "streaming-playlists/vid1")
+	if err != nil {
+		t.Fatalf("blobsink.New: %v", err)
+	}
+	defer func() { _ = sink.Close() }()
+
+	rungs := testLadder()
+	args := hlsLadderArgs(localSource("/in/src.mp4"), sinkOutput(sink), rungs, 0)
+	got := argValues(args, "-http_persistent")
+	if len(got) != len(rungs) {
+		t.Fatalf("-http_persistent appears %d times, want one per rung (%d)", len(got), len(rungs))
+	}
+	for i, v := range got {
+		if v != "0" {
+			t.Errorf("rung %d has -http_persistent %s; a reused connection queues the "+
+				"ladder behind itself and strands the final playlist write", i, v)
+		}
+	}
+	// A local output is a plain file path: none of this belongs there.
+	if n := countArg(hlsLadderArgs(localSource("/in/src.mp4"), localOutput("/out"), rungs, 0), "-http_persistent"); n != 0 {
+		t.Errorf("a scratch-directory ladder emitted -http_persistent %d times", n)
 	}
 }
 
