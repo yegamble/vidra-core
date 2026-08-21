@@ -3,9 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
+	"net"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/vidra/vidra-core/internal/doctor"
 	"github.com/vidra/vidra-core/internal/preflight"
 	"github.com/vidra/vidra-core/internal/setup"
 	"github.com/vidra/vidra-core/internal/setupweb"
@@ -266,5 +271,205 @@ func TestWebSeedsMatchTheInterviewDefaults(t *testing.T) {
 	// And the profile the operator never mentioned is still there.
 	if got := webRes.Values["VIDRA_COMPOSE_PROFILES"]; got != "core frontend ipfs" {
 		t.Errorf("VIDRA_COMPOSE_PROFILES = %q; a re-run that touched nothing dropped a component", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The wiring: what cmd/vidra adds to internal/setupweb, tested at the real seam.
+
+func TestSetupWebRefusesANonLoopbackListen(t *testing.T) {
+	h := newHarness(t)
+	err := h.run("setup", "--template", h.template, "--web", "--listen", "0.0.0.0:8321")
+	if err == nil {
+		t.Fatal("the wizard accepted a public bind address")
+	}
+	// The refusal is the containment model's first rule, and it has to arrive
+	// with the way OUT attached: an operator on a droplet who is told "no" and
+	// nothing else reaches for a firewall rule next.
+	for _, want := range []string{"loopback only", "ssh -L"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal does not mention %q:\n%s", want, err)
+		}
+	}
+}
+
+func TestSetupWebRefusesTheTerminalOnlyFlags(t *testing.T) {
+	h := newHarness(t)
+	for _, tc := range []struct{ flag, args string }{
+		{"--non-interactive", "--non-interactive"},
+		{"--yes", "--yes"},
+		{"--yes-i-know", "--yes-i-know"},
+		{"--from", "--from=" + h.template},
+		{"--rotate", "--rotate=JWT_SECRET"},
+	} {
+		// Every one of them has an answer INSIDE the wizard, so a flag that
+		// silently did nothing would be an operator believing they had
+		// pre-authorised something.
+		err := h.run("setup", "--template", h.template, "--web", tc.args)
+		if err == nil {
+			t.Errorf("%s was accepted beside --web", tc.flag)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.flag) {
+			t.Errorf("%s: refusal does not name the flag: %v", tc.flag, err)
+		}
+	}
+}
+
+func TestSetupWebRefusesAMissingTemplateBeforeOpeningABrowser(t *testing.T) {
+	h := newHarness(t)
+	// The same mistake in both front ends — running from the wrong directory —
+	// and it belongs on the command line rather than as a red banner in a browser
+	// the operator has only just opened.
+	err := h.run("setup", "--template", filepath.Join(h.dir, "nope.env.example"), "--web")
+	if err == nil {
+		t.Fatal("the wizard started without a template")
+	}
+	if !strings.Contains(err.Error(), "nope.env.example") {
+		t.Errorf("error does not name the template: %v", err)
+	}
+}
+
+func TestWizardBannerNamesTheOneTimeLinkAndTheTunnel(t *testing.T) {
+	srv, err := setupweb.New(setupweb.Options{Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := srv.Listen(); err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer srv.Shutdown("test over")
+
+	var out bytes.Buffer
+	printWizardBanner(streams{out: &out, err: io.Discard}, srv, "env/production.env")
+	got := out.String()
+	if !strings.Contains(got, srv.URL()) {
+		t.Errorf("the banner does not print the opening link:\n%s", got)
+	}
+	if !strings.Contains(got, srv.Token()) {
+		t.Errorf("the link carries no token:\n%s", got)
+	}
+	_, port, _ := net.SplitHostPort(srv.Addr())
+	// The port the OS actually granted, not the one that was asked for: with
+	// --listen 127.0.0.1:0 those differ, and a banner naming the wrong one is a
+	// tunnel that forwards to nothing.
+	if !strings.Contains(got, "ssh -L "+port+":127.0.0.1:"+port) {
+		t.Errorf("the tunnel instruction does not name the bound port %s:\n%s", port, got)
+	}
+	// It names the FILE the wizard is about to write, not the address it is on:
+	// the sentence is about what the operator is authorising by leaving this
+	// window open.
+	if !strings.Contains(got, "It writes env/production.env") {
+		t.Errorf("the banner does not name the env file it will write:\n%s", got)
+	}
+	for _, want := range []string{"ONE-TIME", "Keep this terminal open", "Ctrl-C"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the banner is missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// deployStub is a deploy.sh that reports everything the wizard's install path is
+// supposed to give it: both output streams, whether stdin is readable, the
+// ENV_FILE it was handed, and a specific exit code.
+const deployStub = `#!/usr/bin/env bash
+echo "[deploy] starting"
+echo "[deploy] a line on stderr" >&2
+if read -r line; then
+  echo "[deploy] READ FROM STDIN: $line"
+else
+  echo "[deploy] stdin is at EOF"
+fi
+echo "[deploy] ENV_FILE=$ENV_FILE"
+exit 7
+`
+
+func TestRunDeployForWizardClosesStdinAndStreamsBothOutputs(t *testing.T) {
+	dir := fakeDeployment(t, defaultEnv)
+	write(t, filepath.Join(dir, "deploy", "deploy.sh"), deployStub)
+
+	var out bytes.Buffer
+	code, err := runDeployForWizard(context.Background(),
+		wrapperFlags{repo: dir, envFile: "env/production.env", explicit: true}, &out)
+	if err != nil {
+		t.Fatalf("runDeployForWizard: %v", err)
+	}
+	// A non-zero exit is a RESULT, not an error: the script printed its own
+	// reason and the wizard shows the code.
+	if code != 7 {
+		t.Errorf("exit code = %d, want the script's own 7", code)
+	}
+	got := out.String()
+	// STDIN IS CLOSED. There is nobody at a terminal, so a script that blocked on
+	// a prompt would hang the wizard behind a spinner with nothing to read; at
+	// EOF a `read` fails at once and the script dies with its own message.
+	if !strings.Contains(got, "stdin is at EOF") {
+		t.Errorf("the script could read stdin — a prompt would hang the wizard:\n%s", got)
+	}
+	// Both streams, interleaved into one log: deploy.sh logs progress to stdout
+	// and refusals to stderr, and an operator watching an install needs them in
+	// the order they happened.
+	for _, want := range []string{"[deploy] starting", "[deploy] a line on stderr", "[deploy] ENV_FILE=env/production.env"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q from the stream:\n%s", want, got)
+		}
+	}
+}
+
+func TestRunDeployForWizardSaysWhenTheScriptIsNotThere(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	_, err := runDeployForWizard(context.Background(),
+		wrapperFlags{repo: dir, envFile: "env/production.env", explicit: true}, &out)
+	if err == nil {
+		t.Fatal("a missing deploy.sh was reported as a successful deploy")
+	}
+	// A deploy that could not be STARTED has no log to read, and the wizard says
+	// so differently from one that ran and failed.
+	if !strings.Contains(err.Error(), "deploy.sh") {
+		t.Errorf("error does not name the missing script: %v", err)
+	}
+}
+
+func TestDeployCommandShowsTheEnvFileOnlyWhenItIsNotTheDefault(t *testing.T) {
+	if got := deployCommand(defaultEnvFile); got != "vidra deploy" {
+		t.Errorf("deployCommand(default) = %q", got)
+	}
+	if got := deployCommand("env/staging.env"); got != "vidra deploy --env env/staging.env" {
+		t.Errorf("deployCommand(staging) = %q", got)
+	}
+}
+
+func TestDoctorAndStatusAreFlattenedWithWordsNotIntegers(t *testing.T) {
+	rep := doctorReport(doctor.Report{
+		Root: "/srv/vidra", EnvFile: "env/production.env",
+		Results: []doctor.Result{
+			{Check: "compose version", Section: doctor.SectionStack, Finding: doctor.Finding{Status: doctor.StatusOK, Detail: "2.29.1"}},
+			{Check: "disk space", Section: doctor.SectionState, Finding: doctor.Finding{Status: doctor.StatusFail, Detail: "2% free", Fix: "prune images"}},
+		},
+	})
+	if rep.OK != 1 || rep.Fail != 1 {
+		t.Errorf("counts = %+v", rep)
+	}
+	// The word, not the iota: a page switching on 0/1/2 would break silently the
+	// day a fourth outcome is added.
+	if rep.Results[0].Status != "ok" || rep.Results[1].Status != "fail" {
+		t.Errorf("statuses = %q / %q", rep.Results[0].Status, rep.Results[1].Status)
+	}
+	if rep.Results[0].Section != "docker & compose" {
+		t.Errorf("section = %q", rep.Results[0].Section)
+	}
+
+	lines := statusLines(statusReport{lines: []statusLine{
+		{source: "api", check: "/readyz", status: preflight.StatusWarn, detail: "nothing is listening", fix: "vidra deploy"},
+		// The verbatim `compose ps` table is deliberately dropped: the Success
+		// step is a summary.
+		{source: "containers", check: "compose ps", status: preflight.StatusOK, detail: "7 container(s)", block: "NAME  STATUS\napi   Up"},
+	}})
+	if len(lines) != 2 || lines[0].Status != "warn" || lines[1].Status != "ok" {
+		t.Fatalf("lines = %+v", lines)
+	}
+	if lines[1].Detail != "7 container(s)" {
+		t.Errorf("detail = %q", lines[1].Detail)
 	}
 }

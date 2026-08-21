@@ -17,6 +17,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/preflight"
 	"github.com/vidra/vidra-core/internal/setup"
+	"github.com/vidra/vidra-core/internal/setupweb"
 )
 
 // runSetup is `vidra setup`: generate (or re-generate, or check) the env file a
@@ -31,6 +32,7 @@ func runSetup(s streams, args []string) error {
 
 	usage := func(w io.Writer) {
 		fmt.Fprint(w, `usage: vidra setup --template env/production.env.example [flags]
+       vidra setup --template env/production.env.example --web
        vidra setup --check env/production.env
 
 Generates the production env file from the deployment template, filling in the
@@ -50,6 +52,16 @@ Secrets do not have to appear on the command line: --s3-secret-key,
 (read stdin, with --non-interactive) or a VIDRA_SETUP_* environment variable, and
 the interactive prompts read them without echoing. A managed connection string
 counts as a secret: it carries the password inside it.
+
+--web asks the same questions in a BROWSER instead of this terminal: it serves
+the nine-step wizard from this process and prints a one-time link. The wizard
+binds to LOOPBACK ONLY and there is no flag to change that — it writes the env
+file and can run the deploy, and its one-time token is its only authentication,
+over plain http, before the TLS it is configuring exists. To drive it from your
+own machine, forward the port over SSH — ssh -L 8321:127.0.0.1:8321 user@server —
+and open the link there. It shuts itself down on Finish, on Ctrl-C, and after 30
+minutes with no browser talking to it. Everything it does goes through the same
+engine as the questions above.
 
 Answers can come from a FILE as well as from argv: --answers <path> reads
 "flag-name = value" lines (the flag names below, without their dashes; # comments
@@ -126,9 +138,22 @@ flags:
 	if err != nil {
 		return err
 	}
+	// Read here, and its result discarded on the --web path, deliberately: a
+	// template that does not exist (or does not parse) is the same mistake in
+	// both front ends — running from the wrong directory — and it must be
+	// reported at the command line rather than as a red banner in a browser the
+	// operator has only just opened.
 	tmpl, err := readEnvFile(opt.template)
 	if err != nil {
 		return err
+	}
+	// The browser path branches HERE, before the preservation sources and the
+	// secret flags below: the wizard reads its own sources on every request (the
+	// tree can change while it is open) and asks for its own overwrite
+	// acknowledgement, in the Review step, where the operator can see what the
+	// rewrite would change.
+	if opt.web {
+		return runSetupWeb(s, opt, outPath)
 	}
 
 	// Preservation sources, in precedence order. THE FILE BEING WRITTEN IS
@@ -318,6 +343,8 @@ type setupOptions struct {
 	output         string
 	from           string
 	answersPath    string
+	web            bool
+	listen         string
 	nonInteractive bool
 	yes            bool
 	yesIKnow       bool
@@ -364,6 +391,8 @@ func registerSetupFlags(fs *flag.FlagSet) *setupOptions {
 	fs.StringVar(&o.from, "from", "", "extra env `file` to merge: it fills keys the output file leaves blank, and never overrides it")
 
 	fs.StringVar(&o.answersPath, "answers", "", "`file` of \"flag-name = value\" lines to take answers from; anything also on the command line wins")
+	fs.BoolVar(&o.web, "web", false, "ask the questions in a browser instead of this terminal: serve the nine-step wizard on loopback and print a one-time link")
+	fs.StringVar(&o.listen, "listen", setupweb.DefaultListen, "`host:port` for --web. Loopback only — reach it from elsewhere with `ssh -L`, never by binding a public interface")
 	fs.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt; take every answer from flags (for unattended installs)")
 	fs.BoolVar(&o.yes, "yes", false, "rewrite an existing --output in place (every value it sets is still preserved)")
 	// Deliberately NOT --yes: an operator confirming the routine in-place
