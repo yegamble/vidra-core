@@ -21,6 +21,15 @@ import (
 	"github.com/vidra/vidra-core/internal/urlsafety"
 )
 
+// deliveryLeaseSeconds is how long a claimed row stops being due. Delivering an activity is one outbound HTTP POST, so
+// the lease only has to outlast one attempt; it is generous rather than tight so
+// a worker killed mid-request does not have its row re-claimed while the remote
+// side is still processing the first attempt. A crashed worker's row becomes due
+// again on its own once the lease elapses -- that is the whole recovery
+// mechanism, and it needs no boot-time sweep and no assumption about who else is
+// alive.
+const deliveryLeaseSeconds = 300
+
 const (
 	// maxDeliveryAttempts is how many times a delivery is retried before it is
 	// dead-lettered (state 'failed').
@@ -39,7 +48,10 @@ const (
 // the claim query error is returned (per-delivery failures are persisted, not
 // surfaced). Intended to be called on a ticker by a single worker.
 func (s *Service) DrainDeliveries(ctx context.Context, limit int) (int, error) {
-	rows, err := s.repo.ClaimDueDeliveries(ctx, int32(limit))
+	rows, err := s.repo.ClaimDueDeliveries(ctx, sqlcgen.ClaimDueDeliveriesParams{
+		BatchSize:    int32(limit),
+		LeaseSeconds: deliveryLeaseSeconds,
+	})
 	if err != nil {
 		return 0, err
 	}

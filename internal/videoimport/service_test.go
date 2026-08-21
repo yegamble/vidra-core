@@ -497,3 +497,6 @@ func TestDrainJobsConcurrentFailureIsolation(t *testing.T) {
 		t.Errorf("bad job = state %q attempts %d error %q, want pending/1 with a safe error", j.State, j.Attempts, j.Error)
 	}
 }
+
+// RenewImportJobLease is the lease heartbeat; the fake has no leases to keep.
+func (*fakeRepo) RenewImportJobLease(_ context.Context, _ uuid.UUID) error { return nil }

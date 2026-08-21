@@ -10,15 +10,23 @@ ON CONFLICT (video_id) WHERE state IN ('pending', 'running') DO NOTHING;
 
 -- name: ClaimDueTranscodeJobs :many
 -- Atomically claims due pending jobs (oldest first) by flipping them to
--- 'running'. A single in-process worker drains sequentially; the claim still
--- guards against double-processing across restarts within one batch.
+-- 'running', so no two workers -- in one process or across instances -- ever
+-- receive the same job.
+--
+-- FOR UPDATE SKIP LOCKED is what makes this safe with more than one instance:
+-- concurrent claimers take disjoint rows instead of blocking on each other and
+-- then racing to re-evaluate the subquery. Without it, `UPDATE ... WHERE id IN
+-- (SELECT ...)` is the classic queue anti-pattern -- the ids are chosen before
+-- the lock is taken, so two claimers can select the same row.
 UPDATE transcode_jobs
-SET state = 'running', updated_at = now()
+SET next_attempt_at = now() + interval '30 minutes',
+    state = 'running', updated_at = now()
 WHERE id IN (
     SELECT id FROM transcode_jobs
     WHERE state = 'pending' AND next_attempt_at <= now()
     ORDER BY next_attempt_at
     LIMIT $1
+    FOR UPDATE SKIP LOCKED
 )
 RETURNING id, video_id, source_key, transcode_type, attempts;
 
@@ -48,6 +56,19 @@ WHERE id = $1;
 -- Back to pending with backoff so a later drain retries it.
 UPDATE transcode_jobs
 SET state = 'pending', attempts = attempts + 1, next_attempt_at = $2, last_error = $3, updated_at = now()
+WHERE id = $1;
+
+-- name: DeferTranscodeJob :exec
+-- Return a claimed job to the queue WITHOUT consuming an attempt. Used when the
+-- job cannot run for a reason that has nothing to do with the job itself -- today
+-- only "the scratch filesystem does not have room for this source".
+--
+-- Deliberately NOT RescheduleTranscodeJob: that increments attempts, so a video
+-- that happened to arrive during five full-disk ticks would dead-letter and stay
+-- untranscoded forever. A transient host condition must not consume a video's
+-- retry budget.
+UPDATE transcode_jobs
+SET state = 'pending', next_attempt_at = $2, last_error = $3, updated_at = now()
 WHERE id = $1;
 
 -- name: FailTranscodeJob :exec
@@ -101,3 +122,35 @@ ON CONFLICT (transcode_job_id, format, height) DO UPDATE SET
         ELSE NULL
     END,
     updated_at = now();
+
+-- name: GetVideoFileSizeByStorageKey :one
+-- The stored byte size of the file at a storage key. The transcode worker uses it
+-- for scratch-space admission control: a job's source_key IS the original's
+-- storage_key, so this answers "how big is the thing I am about to transcode"
+-- without a round trip to the object store. Rows are unique enough in practice
+-- (one file per stored key) but LIMIT 1 keeps the query total.
+SELECT size_bytes FROM video_files WHERE storage_key = $1 LIMIT 1;
+
+-- name: RenewTranscodeJobLease :exec
+-- Push a running job's lease forward. The worker calls this on a ticker while the
+-- job runs, so a job that legitimately outlives one lease is not swept out from
+-- under itself. Guarded on state so a completed or failed job cannot be revived.
+UPDATE transcode_jobs
+SET next_attempt_at = now() + interval '30 minutes'
+WHERE id = $1 AND state = 'running';
+
+-- name: SweepExpiredTranscodeJobs :execrows
+-- Return jobs whose lease elapsed while they were 'running' to the queue.
+--
+-- This REPLACES the boot-time blanket requeue of every running row, which was
+-- safe only because the process doing it was the deployment's only worker. A
+-- second instance booting would have requeued jobs the first was actively
+-- running. A lease sweep needs no such assumption: it only touches rows whose
+-- owner has demonstrably stopped renewing, so it is correct with any number of
+-- instances and can run periodically rather than only at start-up.
+--
+-- attempts is incremented so a job that crashes its worker every time walks its
+-- counter up and dead-letters through the normal path instead of looping forever.
+UPDATE transcode_jobs
+SET state = 'pending', attempts = attempts + 1, updated_at = now()
+WHERE state = 'running' AND next_attempt_at <= now();

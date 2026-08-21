@@ -54,6 +54,67 @@ func checkObjectStorage(ctx context.Context, s *state) []Finding {
 	}
 }
 
+// checkObjectRetention answers a question an operator cannot see from their
+// bucket browser and only finds out about on an invoice: does deleting an object
+// here actually free the bytes?
+//
+// On a VERSIONED bucket it does not. A delete writes a delete marker (Backblaze
+// calls it a hide marker) and the previous version keeps existing and keeps
+// billing. That is not a corner case for Vidra — it is the normal path:
+//
+//   - every resumable upload writes its chunks to uploads/<session>/* and
+//     deletes them once the original is assembled, so a 2 GB upload is stored
+//     twice and billed twice, permanently;
+//   - re-transcoding a video clears the previous generation's HLS tree first;
+//   - internal/mediagc's whole job is deleting orphans, and on such a bucket it
+//     reclaims exactly nothing.
+//
+// Backblaze B2 buckets are versioned BY DEFAULT, which is what makes this worth
+// a check rather than a documentation line. A lifecycle rule that expires
+// non-current versions fixes it, and B2 additionally warns that accumulating
+// many versions of one object degrades listing and delete performance.
+func checkObjectRetention(ctx context.Context, s *state) []Finding {
+	if s.envErr != nil {
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s)", s.envErr))}
+	}
+	if strings.ToLower(s.value("STORAGE_BACKEND")) != "s3" {
+		return []Finding{okf("media lives on local disk, where a delete frees the bytes immediately — object versioning does not apply")}
+	}
+	cfg := storage.S3Config{
+		Endpoint:       s.value("STORAGE_S3_ENDPOINT"),
+		Bucket:         s.value("STORAGE_S3_BUCKET"),
+		AccessKey:      s.value("STORAGE_S3_ACCESS_KEY"),
+		SecretKey:      s.value("STORAGE_S3_SECRET_KEY"),
+		Region:         s.value("STORAGE_S3_REGION"),
+		UseSSL:         !isFalseish(s.value("STORAGE_S3_USE_SSL")),
+		ForcePathStyle: setup.IsTrue(s.value("STORAGE_S3_FORCE_PATH_STYLE")),
+	}
+	retention, err := s.opt.Prober.CheckBucketRetention(ctx, cfg)
+	if err != nil {
+		// The reachability check above already reports an unreachable store; a
+		// second failure line for the same cause is noise.
+		return []Finding{skipf(fmt.Sprintf("the bucket %q would not report its versioning or lifecycle configuration (%s)", cfg.Bucket, reachSummary(err)))}
+	}
+
+	const fix = "set a lifecycle rule on the bucket that expires NON-CURRENT versions (Backblaze calls this `daysFromHidingToDeleting`; on the S3 API it is NoncurrentVersionExpiration). A few days is plenty — Vidra never reads a superseded version. Without it every upload is billed roughly twice forever, and `vidra` media garbage collection frees nothing"
+
+	reclaims, known := retention.ReclaimsOnDelete()
+	switch {
+	case !known:
+		return []Finding{warnf(
+			fmt.Sprintf("the bucket %q did not fully answer whether it keeps previous versions, so it is unknown whether deletes reclaim space", cfg.Bucket),
+			"check in your provider's console whether the bucket has versioning on. "+fix)}
+	case reclaims && !retention.VersioningEnabled:
+		return []Finding{okf(fmt.Sprintf("versioning is off on %q — deletes and overwrites reclaim space immediately", cfg.Bucket))}
+	case reclaims:
+		return []Finding{okf(fmt.Sprintf("%q is versioned, and lifecycle rule %q expires non-current versions — deleted and superseded objects are reclaimed", cfg.Bucket, retention.NoncurrentExpiryRule))}
+	default:
+		return []Finding{warnf(
+			fmt.Sprintf("%q keeps previous versions and has no lifecycle rule expiring them, so nothing Vidra deletes is ever reclaimed: upload chunks removed after assembly, superseded HLS trees, and everything media garbage collection sweeps all keep billing", cfg.Bucket),
+			fix)}
+	}
+}
+
 // checkSMTP proves there is a relay at the address the api will hand password
 // resets and email verifications to. It dials and reads the greeting; it never
 // sends, and it never authenticates — a diagnostic that logs into the mail relay

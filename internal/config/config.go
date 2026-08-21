@@ -220,6 +220,14 @@ type Config struct {
 	// TranscodingEnabled and a non-local storage backend.
 	TranscodingStreamOutput bool
 
+	// TranscodingMinFreeScratchMB is the free-space floor (MiB) on the transcode
+	// scratch filesystem below which the worker claims no new jobs. A transcode
+	// writes several times its source before anything is uploaded, and on the
+	// single-disk deployment that volume shares a filesystem with the Postgres
+	// data directory — so filling it does not merely fail a job, it stops the
+	// database accepting writes. 0 uses the built-in default (10 GiB).
+	TranscodingMinFreeScratchMB int
+
 	// TranscodingAV1Enabled is accepted only as false: AV1 transcoding is
 	// deferred (see fix_plan P6.3, mirrors the IPFS-storage defer). Setting it
 	// true fails config validation with a documented defer note.
@@ -721,6 +729,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		TranscodingEnabled:             p.Bool("TRANSCODING_ENABLED", true),
 		TranscodingVP9Enabled:          p.Bool("TRANSCODING_VP9_ENABLED", false),
 		TranscodingStreamOutput:        p.Bool("TRANSCODING_STREAM_OUTPUT", false),
+		TranscodingMinFreeScratchMB:    p.Int("TRANSCODING_MIN_FREE_SCRATCH_MB", 0),
 		TranscodingAV1Enabled:          p.Bool("TRANSCODING_AV1_ENABLED", false),
 		TranscodeHoldTimeout:           p.Duration("TRANSCODE_HOLD_TIMEOUT", 12*time.Hour),
 		WhisperEnabled:                 p.Bool("WHISPER_ENABLED", false),

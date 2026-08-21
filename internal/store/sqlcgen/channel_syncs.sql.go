@@ -14,12 +14,14 @@ import (
 
 const claimDueChannelSyncs = `-- name: ClaimDueChannelSyncs :many
 UPDATE channel_syncs
-SET state = 'syncing', updated_at = now()
+SET next_run_at = now() + interval '30 minutes',
+    state = 'syncing', updated_at = now()
 WHERE id IN (
     SELECT id FROM channel_syncs
     WHERE next_run_at <= now() AND state IN ('waiting_first_run', 'idle', 'failed')
     ORDER BY next_run_at
     LIMIT $1
+    FOR UPDATE SKIP LOCKED
 )
 RETURNING id, channel_id, user_id, external_channel_url
 `
@@ -33,6 +35,12 @@ type ClaimDueChannelSyncsRow struct {
 
 // Atomically claims due syncs (oldest first) by flipping them to 'syncing', so an
 // overlapping tick never double-processes one. A failed sync is retryable.
+//
+// FOR UPDATE SKIP LOCKED is what makes this safe with more than one instance:
+// concurrent claimers take disjoint rows instead of blocking on each other and
+// then racing to re-evaluate the subquery. Without it, `UPDATE ... WHERE id IN
+// (SELECT ...)` is the classic queue anti-pattern -- the ids are chosen before
+// the lock is taken, so two claimers can select the same row.
 func (q *Queries) ClaimDueChannelSyncs(ctx context.Context, limit int32) ([]ClaimDueChannelSyncsRow, error) {
 	rows, err := q.db.Query(ctx, claimDueChannelSyncs, limit)
 	if err != nil {
@@ -235,6 +243,43 @@ func (q *Queries) ListChannelSyncsByUser(ctx context.Context, userID uuid.UUID) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const renewChannelSyncLease = `-- name: RenewChannelSyncLease :exec
+UPDATE channel_syncs
+SET next_run_at = now() + interval '30 minutes'
+WHERE id = $1 AND state = 'syncing'
+`
+
+// Push a syncing row's lease forward. The worker calls this on a ticker so a sync
+// that legitimately runs longer than one lease is not swept out from under
+// itself. Guarded on state so a finished sync cannot be revived.
+func (q *Queries) RenewChannelSyncLease(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, renewChannelSyncLease, id)
+	return err
+}
+
+const sweepExpiredChannelSyncs = `-- name: SweepExpiredChannelSyncs :execrows
+UPDATE channel_syncs
+SET state = 'idle', updated_at = now()
+WHERE state = 'syncing' AND next_run_at <= now()
+`
+
+// Return syncs whose lease elapsed while they were 'syncing' to the queue.
+//
+// Replaces the boot-time blanket requeue of every syncing row, which a second
+// instance booting would have used to steal syncs the first was running. This
+// only touches rows whose owner has demonstrably stopped renewing.
+//
+// channel_syncs has no attempt counter and no dead-lettering: a sync that keeps
+// failing simply retries on its next cadence, so 'idle' (not 'failed') is the
+// honest resting state for one that was interrupted rather than rejected.
+func (q *Queries) SweepExpiredChannelSyncs(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepExpiredChannelSyncs)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const triggerChannelSyncNow = `-- name: TriggerChannelSyncNow :exec

@@ -101,6 +101,9 @@ type fakeProber struct {
 	ledgers   map[string]dbmigrate.Status // keyed by table ("" is core's)
 	ledgerErr error
 
+	retention    storage.BucketRetention
+	retentionErr error
+
 	sawBucket storage.S3Config
 	sawSMTP   string
 	sawDomain preflight.DomainRequest
@@ -114,6 +117,11 @@ func (p *fakeProber) CheckDomain(_ context.Context, req preflight.DomainRequest)
 func (p *fakeProber) CheckBucket(_ context.Context, cfg storage.S3Config) (bool, error) {
 	p.sawBucket = cfg
 	return p.bucket, p.bucketErr
+}
+
+func (p *fakeProber) CheckBucketRetention(_ context.Context, cfg storage.S3Config) (storage.BucketRetention, error) {
+	p.sawBucket = cfg
+	return p.retention, p.retentionErr
 }
 
 func (p *fakeProber) CheckSMTP(_ context.Context, addr string) (string, error) {

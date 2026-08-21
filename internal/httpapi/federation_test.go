@@ -150,7 +150,7 @@ func (f fakeFedRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDeliv
 	f.deliveries[arg.InboxUrl] = arg
 	return nil
 }
-func (fakeFedRepo) ClaimDueDeliveries(context.Context, int32) ([]sqlcgen.ClaimDueDeliveriesRow, error) {
+func (fakeFedRepo) ClaimDueDeliveries(context.Context, sqlcgen.ClaimDueDeliveriesParams) ([]sqlcgen.ClaimDueDeliveriesRow, error) {
 	return nil, nil
 }
 func (fakeFedRepo) MarkDeliveryDelivered(context.Context, uuid.UUID) error { return nil }

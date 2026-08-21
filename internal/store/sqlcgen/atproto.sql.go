@@ -13,12 +13,23 @@ import (
 )
 
 const claimDueATProtoPosts = `-- name: ClaimDueATProtoPosts :many
-SELECT id, video_id, attempts
-FROM atproto_posts
-WHERE state = 'pending' AND next_attempt_at <= now()
-ORDER BY next_attempt_at
-LIMIT $1
+UPDATE atproto_posts
+SET next_attempt_at = now() + ($1::int * interval '1 second'),
+    updated_at = now()
+WHERE id IN (
+    SELECT id FROM atproto_posts
+    WHERE state = 'pending' AND next_attempt_at <= now()
+    ORDER BY next_attempt_at
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING id, video_id, attempts
 `
+
+type ClaimDueATProtoPostsParams struct {
+	LeaseSeconds int32 `json:"lease_seconds"`
+	BatchSize    int32 `json:"batch_size"`
+}
 
 type ClaimDueATProtoPostsRow struct {
 	ID       uuid.UUID `json:"id"`
@@ -26,10 +37,17 @@ type ClaimDueATProtoPostsRow struct {
 	Attempts int32     `json:"attempts"`
 }
 
-// Pending posts whose backoff has elapsed, oldest first. A single worker drains
-// sequentially, so no row-locking is needed yet.
-func (q *Queries) ClaimDueATProtoPosts(ctx context.Context, limit int32) ([]ClaimDueATProtoPostsRow, error) {
-	rows, err := q.db.Query(ctx, claimDueATProtoPosts, limit)
+// LEASES pending cross-posts whose backoff has elapsed, oldest first.
+//
+// Previously a bare SELECT: on two nodes both would read the same row and both
+// would create a Bluesky post, so one video became two posts on the user's
+// public feed. Externally visible and not undoable by a retry.
+// The lease is next_attempt_at pushed forward: a claimed row stops being due for
+// lease_seconds, so a second worker's claim skips it and a CRASHED worker's row
+// becomes due again by itself. FOR UPDATE SKIP LOCKED makes concurrent claimers
+// take disjoint rows without blocking each other.
+func (q *Queries) ClaimDueATProtoPosts(ctx context.Context, arg ClaimDueATProtoPostsParams) ([]ClaimDueATProtoPostsRow, error) {
+	rows, err := q.db.Query(ctx, claimDueATProtoPosts, arg.LeaseSeconds, arg.BatchSize)
 	if err != nil {
 		return nil, err
 	}

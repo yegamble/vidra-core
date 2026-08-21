@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minio/minio-go/v7/pkg/lifecycle"
 )
 
 // validS3Config is a syntactically valid config pointing nowhere; constructing
@@ -200,5 +202,114 @@ func TestValidateKeyTable(t *testing.T) {
 		if err := validateKey(key); !errors.Is(err, ErrInvalidKey) {
 			t.Errorf("validateKey(%q) = %v, want ErrInvalidKey", key, err)
 		}
+	}
+}
+
+// TestNoncurrentExpiryRuleID pins which lifecycle rules count as "this bucket
+// actually reclaims". A rule that is present but DISABLED must not count — that
+// is configuration which is not running, and treating it as protection is how an
+// operator ends up billed for something a green check told them was handled.
+func TestNoncurrentExpiryRuleID(t *testing.T) {
+	days := func(n int) lifecycle.NoncurrentVersionExpiration {
+		return lifecycle.NoncurrentVersionExpiration{NoncurrentDays: lifecycle.ExpirationDays(n)}
+	}
+	cases := []struct {
+		name string
+		cfg  *lifecycle.Configuration
+		want string
+	}{
+		{"nil config", nil, ""},
+		{"no rules", &lifecycle.Configuration{}, ""},
+		{
+			"enabled noncurrent-days rule counts",
+			&lifecycle.Configuration{Rules: []lifecycle.Rule{
+				{ID: "expire-old", Status: "Enabled", NoncurrentVersionExpiration: days(7)},
+			}},
+			"expire-old",
+		},
+		{
+			"keep-newest-N counts too",
+			&lifecycle.Configuration{Rules: []lifecycle.Rule{
+				{ID: "keep-2", Status: "Enabled", NoncurrentVersionExpiration: lifecycle.NoncurrentVersionExpiration{NewerNoncurrentVersions: 2}},
+			}},
+			"keep-2",
+		},
+		{
+			"a disabled rule does not count",
+			&lifecycle.Configuration{Rules: []lifecycle.Rule{
+				{ID: "expire-old", Status: "Disabled", NoncurrentVersionExpiration: days(7)},
+			}},
+			"",
+		},
+		{
+			"a current-version expiry is not a noncurrent expiry",
+			&lifecycle.Configuration{Rules: []lifecycle.Rule{
+				{ID: "expire-current", Status: "Enabled", Expiration: lifecycle.Expiration{Days: 30}},
+			}},
+			"",
+		},
+		{
+			"an unnamed enabled rule still reports",
+			&lifecycle.Configuration{Rules: []lifecycle.Rule{
+				{ID: "  ", Status: "Enabled", NoncurrentVersionExpiration: days(3)},
+			}},
+			"(unnamed)",
+		},
+		{
+			"a disabled rule does not mask an enabled one",
+			&lifecycle.Configuration{Rules: []lifecycle.Rule{
+				{ID: "off", Status: "Disabled", NoncurrentVersionExpiration: days(7)},
+				{ID: "on", Status: "Enabled", NoncurrentVersionExpiration: days(7)},
+			}},
+			"on",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := noncurrentExpiryRuleID(tc.cfg); got != tc.want {
+				t.Errorf("noncurrentExpiryRuleID = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBucketRetentionReclaimsOnDelete pins the three-way answer. "Unknown" must
+// never collapse into "fine": a store that would not answer is a store whose
+// billing behaviour we cannot vouch for.
+func TestBucketRetentionReclaimsOnDelete(t *testing.T) {
+	cases := []struct {
+		name            string
+		r               BucketRetention
+		reclaims, known bool
+	}{
+		{"nothing known", BucketRetention{}, false, false},
+		{
+			"versioning off reclaims, lifecycle irrelevant",
+			BucketRetention{VersioningKnown: true},
+			true, true,
+		},
+		{
+			"versioned with an expiry rule reclaims",
+			BucketRetention{VersioningKnown: true, VersioningEnabled: true, LifecycleKnown: true, NoncurrentExpiryRule: "r"},
+			true, true,
+		},
+		{
+			"versioned with a known-empty lifecycle does not reclaim",
+			BucketRetention{VersioningKnown: true, VersioningEnabled: true, LifecycleKnown: true},
+			false, true,
+		},
+		{
+			"versioned with an unknown lifecycle is undetermined, not safe",
+			BucketRetention{VersioningKnown: true, VersioningEnabled: true},
+			false, false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reclaims, known := tc.r.ReclaimsOnDelete()
+			if reclaims != tc.reclaims || known != tc.known {
+				t.Errorf("ReclaimsOnDelete() = (%v, %v), want (%v, %v)", reclaims, known, tc.reclaims, tc.known)
+			}
+		})
 	}
 }

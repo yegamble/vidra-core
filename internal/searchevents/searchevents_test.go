@@ -27,11 +27,12 @@ type fakeOutbox struct {
 	docErr  error
 	allDocs []sqlcgen.ListVideoSearchDocsPageRow
 
-	due          []sqlcgen.ClaimDueSearchEventsRow
-	claimErr     error
-	delivered    []int64
-	rescheduled  map[int64]sqlcgen.RescheduleSearchEventParams
-	deadLettered map[int64]string
+	due             []sqlcgen.ClaimDueSearchEventsRow
+	claimErr        error
+	sawLeaseSeconds int32
+	delivered       []int64
+	rescheduled     map[int64]sqlcgen.RescheduleSearchEventParams
+	deadLettered    map[int64]string
 }
 
 func newFakeOutbox() *fakeOutbox {
@@ -78,12 +79,15 @@ func (f *fakeOutbox) ListVideoSearchDocsPage(_ context.Context, a sqlcgen.ListVi
 	return out, nil
 }
 
-func (f *fakeOutbox) ClaimDueSearchEvents(_ context.Context, limit int32) ([]sqlcgen.ClaimDueSearchEventsRow, error) {
+// ClaimDueSearchEvents records the lease it was asked for so a test can assert
+// the drainer requests one at all.
+func (f *fakeOutbox) ClaimDueSearchEvents(_ context.Context, arg sqlcgen.ClaimDueSearchEventsParams) ([]sqlcgen.ClaimDueSearchEventsRow, error) {
+	f.sawLeaseSeconds = arg.LeaseSeconds
 	if f.claimErr != nil {
 		return nil, f.claimErr
 	}
-	if int(limit) < len(f.due) {
-		return f.due[:limit], nil
+	if int(arg.BatchSize) < len(f.due) {
+		return f.due[:arg.BatchSize], nil
 	}
 	return f.due, nil
 }

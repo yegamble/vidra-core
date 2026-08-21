@@ -8,10 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/vidra/vidra-core/internal/dbmigrate"
+	"github.com/vidra/vidra-core/internal/diskspace"
 	"github.com/vidra/vidra-core/internal/preflight"
 	"github.com/vidra/vidra-core/internal/storage"
 )
@@ -73,6 +73,10 @@ type Prober interface {
 	// reports whether the configured bucket is there. It must never create
 	// anything.
 	CheckBucket(ctx context.Context, cfg storage.S3Config) (bool, error)
+	// CheckBucketRetention reports what the bucket does with overwritten and
+	// deleted objects, so the report can warn about a bucket that never
+	// reclaims. Read-only; creates and changes nothing.
+	CheckBucketRetention(ctx context.Context, cfg storage.S3Config) (storage.BucketRetention, error)
 	// CheckSMTP dials the relay and reads its greeting. It never sends.
 	CheckSMTP(ctx context.Context, addr string) (banner string, err error)
 	// MigrationStatus reads a golang-migrate ledger. table is "" for the default
@@ -114,20 +118,16 @@ func (RealHost) Run(ctx context.Context, dir, name string, args ...string) (Outp
 	return out, nil
 }
 
-// statfs is the free-space figure for the filesystem holding path.
+// statfs is the free-space figure for the filesystem holding path. It delegates
+// to internal/diskspace so the transcode worker's admission control and this
+// diagnostic measure the same thing the same way — two answers about one disk is
+// worse than one.
 func statfs(path string) (DiskUsage, error) {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(path, &st); err != nil {
+	u, err := diskspace.Measure(path)
+	if err != nil {
 		return DiskUsage{}, err
 	}
-	// Bavail, not Bfree: the reserved blocks a filesystem keeps for root are not
-	// space the containers can write into, and counting them is how a "10% free"
-	// check passes on a disk that is already refusing writes.
-	bsize := uint64(st.Bsize) //nolint:gosec // Bsize is a positive block size on every supported platform.
-	return DiskUsage{
-		TotalBytes: st.Blocks * bsize,
-		FreeBytes:  uint64(st.Bavail) * bsize, //nolint:gosec // Bavail is non-negative.
-	}, nil
+	return DiskUsage{TotalBytes: u.TotalBytes, FreeBytes: u.FreeBytes}, nil
 }
 
 // RealProber is the production Prober.
@@ -145,6 +145,14 @@ func (RealProber) CheckBucket(ctx context.Context, cfg storage.S3Config) (bool, 
 	// BucketExists, never EnsureBucket: a diagnostic that creates the bucket it
 	// could not find turns a typo into a new, empty, silently-wrong store.
 	return s3.BucketExists(ctx)
+}
+
+func (RealProber) CheckBucketRetention(ctx context.Context, cfg storage.S3Config) (storage.BucketRetention, error) {
+	s3, err := storage.NewS3(cfg)
+	if err != nil {
+		return storage.BucketRetention{}, err
+	}
+	return s3.Retention(ctx)
 }
 
 // CheckSMTP delegates to preflight so the dial exists exactly once: `vidra

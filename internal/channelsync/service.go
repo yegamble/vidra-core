@@ -79,6 +79,7 @@ type Repository interface {
 	TriggerChannelSyncNow(ctx context.Context, id uuid.UUID) error
 
 	ClaimDueChannelSyncs(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueChannelSyncsRow, error)
+	RenewChannelSyncLease(ctx context.Context, id uuid.UUID) error
 	FinishChannelSync(ctx context.Context, arg sqlcgen.FinishChannelSyncParams) error
 	FailChannelSync(ctx context.Context, arg sqlcgen.FailChannelSyncParams) error
 	InsertChannelSyncSeen(ctx context.Context, arg sqlcgen.InsertChannelSyncSeenParams) (int64, error)

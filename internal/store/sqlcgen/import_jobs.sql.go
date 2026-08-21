@@ -14,12 +14,14 @@ import (
 
 const claimDueImportJobs = `-- name: ClaimDueImportJobs :many
 UPDATE import_jobs
-SET state = 'running', updated_at = now()
+SET next_attempt_at = now() + interval '30 minutes',
+    state = 'running', updated_at = now()
 WHERE id IN (
     SELECT id FROM import_jobs
     WHERE state = 'pending' AND next_attempt_at <= now()
     ORDER BY next_attempt_at
     LIMIT $1
+    FOR UPDATE SKIP LOCKED
 )
 RETURNING id, video_id, url, attempts, resolver, stage
 `
@@ -36,6 +38,12 @@ type ClaimDueImportJobsRow struct {
 // Atomically claims due pending jobs (oldest first) by flipping them to
 // 'running', exactly like ClaimDueTranscodeJobs. resolver/stage travel with the
 // claim so the worker picks the fetch path and can report honest progress.
+//
+// FOR UPDATE SKIP LOCKED is what makes this safe with more than one instance:
+// concurrent claimers take disjoint rows instead of blocking on each other and
+// then racing to re-evaluate the subquery. Without it, `UPDATE ... WHERE id IN
+// (SELECT ...)` is the classic queue anti-pattern -- the ids are chosen before
+// the lock is taken, so two claimers can select the same row.
 func (q *Queries) ClaimDueImportJobs(ctx context.Context, limit int32) ([]ClaimDueImportJobsRow, error) {
 	rows, err := q.db.Query(ctx, claimDueImportJobs, limit)
 	if err != nil {
@@ -157,6 +165,20 @@ func (q *Queries) GetLatestImportJobByVideo(ctx context.Context, videoID uuid.UU
 	return i, err
 }
 
+const renewImportJobLease = `-- name: RenewImportJobLease :exec
+UPDATE import_jobs
+SET next_attempt_at = now() + interval '30 minutes'
+WHERE id = $1 AND state = 'running'
+`
+
+// Push a running job's lease forward. The worker calls this on a ticker while the
+// job runs, so a job that legitimately outlives one lease is not swept out from
+// under itself. Guarded on state so a completed or failed job cannot be revived.
+func (q *Queries) RenewImportJobLease(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, renewImportJobLease, id)
+	return err
+}
+
 const rescheduleImportJob = `-- name: RescheduleImportJob :exec
 UPDATE import_jobs
 SET state = 'pending', attempts = attempts + 1, next_attempt_at = $2, error = $3, stage = '', updated_at = now()
@@ -212,4 +234,29 @@ type SetImportJobStageParams struct {
 func (q *Queries) SetImportJobStage(ctx context.Context, arg SetImportJobStageParams) error {
 	_, err := q.db.Exec(ctx, setImportJobStage, arg.ID, arg.Stage)
 	return err
+}
+
+const sweepExpiredImportJobs = `-- name: SweepExpiredImportJobs :execrows
+UPDATE import_jobs
+SET state = 'pending', attempts = attempts + 1, stage = '', updated_at = now()
+WHERE state = 'running' AND next_attempt_at <= now()
+`
+
+// Return jobs whose lease elapsed while they were 'running' to the queue.
+//
+// This REPLACES the boot-time blanket requeue of every running row, which was
+// safe only because the process doing it was the deployment's only worker. A
+// second instance booting would have requeued jobs the first was actively
+// running. A lease sweep needs no such assumption: it only touches rows whose
+// owner has demonstrably stopped renewing, so it is correct with any number of
+// instances and can run periodically rather than only at start-up.
+//
+// attempts is incremented so a job that crashes its worker every time walks its
+// counter up and dead-letters through the normal path instead of looping forever.
+func (q *Queries) SweepExpiredImportJobs(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepExpiredImportJobs)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

@@ -11,6 +11,15 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
+// postLeaseSeconds is how long a claimed row stops being due. Creating a Bluesky post is one outbound HTTP request, so
+// the lease only has to outlast one attempt; it is generous rather than tight so
+// a worker killed mid-request does not have its row re-claimed while the remote
+// side is still processing the first attempt. A crashed worker's row becomes due
+// again on its own once the lease elapses -- that is the whole recovery
+// mechanism, and it needs no boot-time sweep and no assumption about who else is
+// alive.
+const postLeaseSeconds = 300
+
 const (
 	// maxPostAttempts is how many times a post is retried before dead-lettering.
 	maxPostAttempts = 6
@@ -52,7 +61,10 @@ func (s *Service) DrainPosts(ctx context.Context, limit int) (int, error) {
 	if !s.enabled {
 		return 0, nil
 	}
-	rows, err := s.repo.ClaimDueATProtoPosts(ctx, int32(limit))
+	rows, err := s.repo.ClaimDueATProtoPosts(ctx, sqlcgen.ClaimDueATProtoPostsParams{
+		BatchSize:    int32(limit),
+		LeaseSeconds: postLeaseSeconds,
+	})
 	if err != nil {
 		return 0, err
 	}

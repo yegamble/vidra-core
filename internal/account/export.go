@@ -14,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+
+	"github.com/vidra/vidra-core/internal/lease"
 )
 
 // pgTimestamptz wraps a time as a valid pgtype.Timestamptz.
@@ -141,7 +143,12 @@ func (s *Service) DrainExports(ctx context.Context, limit int) (int, error) {
 	}
 	done := 0
 	for _, row := range rows {
-		if err := s.runExport(ctx, row); err != nil {
+		stopLease := lease.Keep(ctx, lease.DefaultInterval, "account_export", func(c context.Context) error {
+			return s.repo.RenewAccountExportLease(c, row.ID)
+		})
+		err := s.runExport(ctx, row)
+		stopLease()
+		if err != nil {
 			s.recordExportFailure(ctx, row, err)
 			continue
 		}

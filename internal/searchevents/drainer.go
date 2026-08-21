@@ -10,6 +10,15 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
+// eventLeaseSeconds is how long a claimed row stops being due. Draining the outbox is one batched HTTP POST, so
+// the lease only has to outlast one attempt; it is generous rather than tight so
+// a worker killed mid-request does not have its row re-claimed while the remote
+// side is still processing the first attempt. A crashed worker's row becomes due
+// again on its own once the lease elapses -- that is the whole recovery
+// mechanism, and it needs no boot-time sweep and no assumption about who else is
+// alive.
+const eventLeaseSeconds = 300
+
 const (
 	// maxDrainAttempts is how many times an event is retried before it is
 	// dead-lettered (state 'dead'). MASTER-PLAN §2.3.
@@ -24,7 +33,7 @@ const (
 
 // DrainRepository is the outbox data access the drainer needs.
 type DrainRepository interface {
-	ClaimDueSearchEvents(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueSearchEventsRow, error)
+	ClaimDueSearchEvents(ctx context.Context, arg sqlcgen.ClaimDueSearchEventsParams) ([]sqlcgen.ClaimDueSearchEventsRow, error)
 	MarkSearchEventDelivered(ctx context.Context, id int64) error
 	RescheduleSearchEvent(ctx context.Context, arg sqlcgen.RescheduleSearchEventParams) error
 	DeadLetterSearchEvent(ctx context.Context, arg sqlcgen.DeadLetterSearchEventParams) error
@@ -76,7 +85,10 @@ func NewDrainer(repo DrainRepository, sender Sender, logger *slog.Logger, opts .
 // Failed[], in which case only that event retries. Returns the number delivered;
 // only the claim-query error is surfaced (per-event outcomes are persisted).
 func (d *Drainer) Drain(ctx context.Context, limit int32) (int, error) {
-	rows, err := d.repo.ClaimDueSearchEvents(ctx, limit)
+	rows, err := d.repo.ClaimDueSearchEvents(ctx, sqlcgen.ClaimDueSearchEventsParams{
+		BatchSize:    limit,
+		LeaseSeconds: eventLeaseSeconds,
+	})
 	if err != nil {
 		return 0, err
 	}

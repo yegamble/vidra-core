@@ -105,7 +105,11 @@ func (r *fakeRepo) EnqueueATProtoPost(_ context.Context, videoID uuid.UUID) erro
 	return nil
 }
 
-func (r *fakeRepo) ClaimDueATProtoPosts(_ context.Context, limit int32) ([]sqlcgen.ClaimDueATProtoPostsRow, error) {
+// ClaimDueATProtoPosts mirrors the real query: it LEASES each row it returns by
+// pushing next_attempt_at forward, so a concurrent claimer sees nothing. A fake
+// that returned rows without leasing would let the double-post bug pass its own
+// regression test.
+func (r *fakeRepo) ClaimDueATProtoPosts(_ context.Context, arg sqlcgen.ClaimDueATProtoPostsParams) ([]sqlcgen.ClaimDueATProtoPostsRow, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var out []sqlcgen.ClaimDueATProtoPostsRow
@@ -114,7 +118,8 @@ func (r *fakeRepo) ClaimDueATProtoPosts(_ context.Context, limit int32) ([]sqlcg
 			continue
 		}
 		out = append(out, sqlcgen.ClaimDueATProtoPostsRow{ID: p.ID, VideoID: p.VideoID, Attempts: p.Attempts})
-		if int32(len(out)) >= limit {
+		p.NextAttemptAt = time.Now().Add(time.Duration(arg.LeaseSeconds) * time.Second)
+		if int32(len(out)) >= arg.BatchSize {
 			break
 		}
 	}

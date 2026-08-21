@@ -10,13 +10,28 @@ INSERT INTO search_outbox (event_type, payload)
 VALUES ($1, $2);
 
 -- name: ClaimDueSearchEvents :many
--- Due, still-pending events oldest first. A single worker drains sequentially
--- (no row locking needed yet), building the batched /internal/v1/events envelope.
-SELECT id, event_id, event_type, payload, attempts, created_at
-FROM search_outbox
-WHERE state = 'pending' AND next_attempt_at <= now()
-ORDER BY id
-LIMIT $1;
+-- LEASES due, still-pending events oldest first, building the batched
+-- /internal/v1/events envelope.
+--
+-- Previously a bare SELECT: two nodes would build two envelopes from the same
+-- rows and both POST them. The search service dedupes on event_id so the index
+-- stays correct, which is why this is the least harmful of the three -- but it is
+-- still double the requests and double the payload for no benefit.
+-- The lease is next_attempt_at pushed forward: a claimed row stops being due for
+-- lease_seconds, so a second worker's claim skips it and a CRASHED worker's row
+-- becomes due again by itself. FOR UPDATE SKIP LOCKED makes concurrent claimers
+-- take disjoint rows without blocking each other.
+-- search_outbox has no updated_at column, so only the lease is written.
+UPDATE search_outbox
+SET next_attempt_at = now() + (sqlc.arg(lease_seconds)::int * interval '1 second')
+WHERE id IN (
+    SELECT id FROM search_outbox
+    WHERE state = 'pending' AND next_attempt_at <= now()
+    ORDER BY id
+    LIMIT sqlc.arg(batch_size)
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING id, event_id, event_type, payload, attempts, created_at;
 
 -- name: MarkSearchEventDelivered :exec
 UPDATE search_outbox SET state = 'delivered' WHERE id = $1;

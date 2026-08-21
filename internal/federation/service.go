@@ -50,7 +50,7 @@ type Repository interface {
 	ListChannelOutboxVideos(ctx context.Context, arg sqlcgen.ListChannelOutboxVideosParams) ([]sqlcgen.ListChannelOutboxVideosRow, error)
 	// Outbound delivery queue (Slice 5a).
 	EnqueueDelivery(ctx context.Context, arg sqlcgen.EnqueueDeliveryParams) error
-	ClaimDueDeliveries(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueDeliveriesRow, error)
+	ClaimDueDeliveries(ctx context.Context, arg sqlcgen.ClaimDueDeliveriesParams) ([]sqlcgen.ClaimDueDeliveriesRow, error)
 	MarkDeliveryDelivered(ctx context.Context, id uuid.UUID) error
 	RescheduleDelivery(ctx context.Context, arg sqlcgen.RescheduleDeliveryParams) error
 	FailDelivery(ctx context.Context, arg sqlcgen.FailDeliveryParams) error

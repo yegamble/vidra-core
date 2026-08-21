@@ -183,6 +183,7 @@ var checks = []check{
 	{"disk space", SectionState, checkDiskSpace},
 
 	{"object storage", SectionReach, checkObjectStorage},
+	{"object retention", SectionReach, checkObjectRetention},
 	{"smtp", SectionReach, checkSMTP},
 	{"search service", SectionReach, checkSearchService},
 	{"ffmpeg", SectionReach, checkFFmpeg},

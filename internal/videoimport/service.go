@@ -31,6 +31,8 @@ import (
 	"github.com/vidra/vidra-core/internal/urlsafety"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/workerpool"
+
+	"github.com/vidra/vidra-core/internal/lease"
 )
 
 const (
@@ -83,6 +85,7 @@ type Repository interface {
 	EnqueueImportJob(ctx context.Context, arg sqlcgen.EnqueueImportJobParams) (sqlcgen.ImportJob, error)
 	GetLatestImportJobByVideo(ctx context.Context, videoID uuid.UUID) (sqlcgen.ImportJob, error)
 	ClaimDueImportJobs(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueImportJobsRow, error)
+	RenewImportJobLease(ctx context.Context, id uuid.UUID) error
 	CompleteImportJob(ctx context.Context, id uuid.UUID) error
 	RescheduleImportJob(ctx context.Context, arg sqlcgen.RescheduleImportJobParams) error
 	FailImportJob(ctx context.Context, arg sqlcgen.FailImportJobParams) error
@@ -320,7 +323,12 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 	)
 	workerpool.Run(s.Concurrency(), len(rows), func(i int) {
 		row := rows[i]
-		if err := s.runImport(ctx, row); err != nil {
+		stopLease := lease.Keep(ctx, lease.DefaultInterval, "import_job", func(c context.Context) error {
+			return s.repo.RenewImportJobLease(c, row.ID)
+		})
+		err := s.runImport(ctx, row)
+		stopLease()
+		if err != nil {
 			s.recordFailure(ctx, row, err)
 			return
 		}

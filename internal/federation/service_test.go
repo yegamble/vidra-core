@@ -341,12 +341,17 @@ func (f fakeRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDelivery
 	return nil
 }
 
-func (f fakeRepo) ClaimDueDeliveries(_ context.Context, limit int32) ([]sqlcgen.ClaimDueDeliveriesRow, error) {
+// ClaimDueDeliveries mirrors the real query: each returned row is LEASED by
+// pushing nextAttempt forward, so a concurrent claimer sees nothing. A fake that
+// returned rows without leasing would let the double-delivery bug pass its own
+// regression test.
+func (f fakeRepo) ClaimDueDeliveries(_ context.Context, arg sqlcgen.ClaimDueDeliveriesParams) ([]sqlcgen.ClaimDueDeliveriesRow, error) {
 	var out []sqlcgen.ClaimDueDeliveriesRow
 	for _, d := range f.deliveries {
 		if d.state == "pending" && !d.nextAttempt.After(time.Now()) {
 			out = append(out, d.row)
-			if len(out) >= int(limit) {
+			d.nextAttempt = time.Now().Add(time.Duration(arg.LeaseSeconds) * time.Second)
+			if len(out) >= int(arg.BatchSize) {
 				break
 			}
 		}
