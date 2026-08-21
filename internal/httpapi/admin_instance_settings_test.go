@@ -836,8 +836,11 @@ func TestValidateInstanceSettingsDryRun(t *testing.T) {
 		t.Errorf("a dry run emitted an %s audit event: %s", observability.ActionAdminInstanceUpdate, buf.String())
 	}
 
-	// The dry run and the write agree, word for word: the whole point of not
-	// having a second copy of the rules.
+	// Where both speak about a key, they speak the same words — the whole point
+	// of not having a second copy of the rules. (The two lists need not be the
+	// same LENGTH: the write stops after the type pass, the dry run carries on
+	// to check content, so a mixed body gets more findings here. What must never
+	// happen is a finding here that the write would not have made.)
 	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/instance-settings", `{"instance_name":"   "}`, adminTok)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("PATCH with an empty instance_name = %d, want 422", rec.Code)

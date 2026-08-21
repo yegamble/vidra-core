@@ -46,7 +46,7 @@ type mailTestResponse struct {
 // nothing to abuse — the worst an attacker with an admin session can do is mail
 // the operator three times an hour.
 //
-//	503 — this deployment has no outbound mail path at all.
+//	503 — this deployment has no outbound mail path at all (mail_not_configured).
 //	409 — no contact address is set, so there is nowhere to send.
 //	502 — the relay refused it (generic text; the relay's own words go to the
 //	      server log, never to the response).
@@ -60,8 +60,11 @@ func (s *Server) handleMailTest(c echo.Context) error {
 	sender, configured := s.testMailSender()
 	if !configured {
 		s.audit(c, observability.ActionAdminMailTest, observability.ResultFailure, callerID.String(), "mail_not_configured")
-		return echo.NewHTTPError(http.StatusServiceUnavailable,
-			"this instance has no outbound mail path, so there is nothing to test. Set MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and SMTP_FROM, then restart the api")
+		// Typed, not a bare echo.NewHTTPError: 503 is a 5xx and the central
+		// handler scrubs any 5xx it has no stable code for down to "an
+		// unexpected error occurred", which would throw away the one sentence
+		// that tells the operator what to set.
+		return &MailNotConfiguredError{}
 	}
 
 	to := strings.TrimSpace(s.effectiveContactEmail())

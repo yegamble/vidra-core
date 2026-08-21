@@ -340,22 +340,33 @@ func (s *Server) handleUpdateInstanceSettings(c echo.Context) error {
 	return c.JSON(http.StatusOK, s.instanceSettingsResponse())
 }
 
-// instanceSettingsValidationResponse is the answer to a DRY RUN: exactly the
-// field problems a PATCH of this body would report, or an empty list when it
-// would be accepted. fields is never null — an empty array is the "clean" answer
-// a client renders as "no problems", and `null` would make that ambiguous.
+// instanceSettingsValidationResponse is the answer to a DRY RUN: the field
+// problems this body would produce, or an empty list when it would be accepted.
+// fields is never null — an empty array is the "clean" answer a client renders
+// as "no problems", and `null` would make that ambiguous.
 type instanceSettingsValidationResponse struct {
 	Fields []FieldError `json:"fields"`
 }
 
-// handleValidateInstanceSettings answers "would this be accepted?" without
-// writing anything. Behind requireRole(admin), same body shape as the PATCH.
+// handleValidateInstanceSettings reports the field problems a body would
+// produce, without writing anything. Behind requireRole(admin), same body shape
+// as the PATCH.
 //
 // It exists so the admin config form can validate a field as the operator
 // leaves it, against the SERVER's rules, instead of a hand-copied second copy of
 // them in TypeScript — a copy drifts the first time either side is edited, and
 // the operator discovers the drift as a 422 on save. The PATCH's 422 stays the
 // backstop; this is the early answer.
+//
+// It is not a byte-for-byte replay of the write, and deliberately so. The PATCH
+// stops after the type pass — nothing may be persisted, so there is no reason to
+// go further — while a dry run has nothing to protect and carries on to check
+// the CONTENT of every key that typed cleanly. On a mixed body it therefore
+// reports MORE problems than the PATCH would have, never different ones: each
+// message comes from the same rule the write would have applied, so no finding
+// here can be a false alarm at save time. Reporting the whole list at once is
+// the point — a form that reveals its problems a pass at a time is a form the
+// operator submits repeatedly.
 //
 // It always answers 200: the field problems ARE the successful result of asking
 // a validation question, so a 422 here would mean "your validation request was

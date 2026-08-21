@@ -104,11 +104,29 @@ func TestInfrastructureLeaksNoSecret(t *testing.T) {
 	cfg.StorageS3AccessKey = "SECRET-S3-ACCESS-KEY"
 	cfg.StorageS3SecretKey = "SECRET-S3-SECRET-KEY"
 	cfg.MailEnabled = true
-	cfg.SMTPHost = "smtp.example"
+	cfg.SMTPHost = "SENTINEL-smtp-relay.internal"
 	cfg.SMTPPort = 587
-	cfg.SMTPFrom = "noreply@example.test"
+	cfg.SMTPFrom = "SENTINEL-noreply@example.test"
 	cfg.SMTPUsername = "SECRET-SMTP-USERNAME"
 	cfg.SMTPPassword = "SECRET-SMTP-PASSWORD"
+	// Every other INTERNAL endpoint the config knows. None of these is a
+	// credential, which is exactly why they need pinning: the struct's doc
+	// comment says internal addresses stay out (naming internal hosts on an
+	// admin page is free reconnaissance), and until now nothing enforced that
+	// for anything but the DSNs. A field added later that helpfully reports
+	// "your ClamAV is at ..." fails here.
+	cfg.MalwareScanEnabled = true
+	cfg.ClamAVAddr = "SENTINEL-clamav.internal:3310"
+	cfg.WhisperEnabled = true
+	cfg.WhisperEndpoint = "http://SENTINEL-whisper.internal:9000"
+	cfg.LiveEnabled = true
+	cfg.LiveRTMPURL = "rtmp://SENTINEL-ingest.internal/live"
+	cfg.LiveHLSRoot = "/srv/SENTINEL-live-hls"
+	cfg.IPFSEnabled = true
+	cfg.IPFSAPIURL = "http://SENTINEL-kubo.internal:5001"
+	cfg.IPFSGatewayURL = "http://SENTINEL-gateway.internal:8080"
+	cfg.IPFSPrivateAPIURL = "http://SENTINEL-kubo-private.internal:5001"
+	cfg.IPFSClusterAPIURL = "http://SENTINEL-cluster.internal:9094"
 	cfg.FederationKeyKEK = "SECRET-FEDERATION-KEK"
 	cfg.ATProtoKeyKEK = "SECRET-ATPROTO-KEK"
 	cfg.MFAKeyKEK = "SECRET-MFA-KEK"
@@ -137,6 +155,13 @@ func TestInfrastructureLeaksNoSecret(t *testing.T) {
 		"SECRET-OWNER-CLAIM-TOKEN",
 		"db.internal", "redis.internal", "pt.internal", "search.internal",
 		"otel-collector.internal",
+		// The internal endpoints. Not credentials, but the struct's doc comment
+		// keeps them out and this is what holds it to that.
+		"SENTINEL-smtp-relay.internal", "SENTINEL-noreply@example.test",
+		"SENTINEL-clamav.internal", "SENTINEL-whisper.internal",
+		"SENTINEL-ingest.internal", "SENTINEL-live-hls",
+		"SENTINEL-kubo.internal", "SENTINEL-gateway.internal",
+		"SENTINEL-kubo-private.internal", "SENTINEL-cluster.internal",
 	} {
 		if strings.Contains(rawJSON, forbidden) {
 			t.Errorf("the infrastructure response leaks %q:\n%s", forbidden, rawJSON)
@@ -300,5 +325,33 @@ func TestInfrastructureMailCapability(t *testing.T) {
 	}
 	if !strings.Contains(m.Note, "SMTP_HOST") {
 		t.Errorf("mail note = %q, want it to name the relay variables", m.Note)
+	}
+	// The quadrant the generic notes get wrong. enabled+unconfigured normally
+	// means "MAIL_ENABLED is set but the relay is incomplete" — with the capture
+	// seam BOTH halves of that are false, and a page whose job is to be honest
+	// about the deployment must not open with a false sentence.
+	if strings.Contains(m.Note, "MAIL_ENABLED is set") {
+		t.Errorf("mail note claims MAIL_ENABLED is set on a capture-seam deployment: %q", m.Note)
+	}
+	if !strings.Contains(m.Note, "CAPTURED") {
+		t.Errorf("mail note = %q, want it to say messages are captured rather than delivered", m.Note)
+	}
+
+	// The override is scoped to that quadrant and nothing else: a real relay
+	// reports configured with nothing to say. (There is no MAIL_ENABLED-with-no-
+	// relay case to test here — config refuses to boot in that state, which is
+	// why the generic misconfigured note for mail does not exist.)
+	full := testConfig()
+	full.MailEnabled = true
+	full.SMTPHost = "smtp.example"
+	full.SMTPPort = 587
+	full.SMTPFrom = "noreply@example.test"
+	relaySrv := New(full, nil, nil,
+		WithAuthService(auth.NewService(newAuthFakeRepo(), issuer, 720*time.Hour), 15*time.Minute),
+		WithContactMailer(auth.NewCaptureMailer()),
+	)
+	wired, _ := infrastructure(t, relaySrv)
+	if rm := featureNamed(t, wired, "mail"); !rm.Enabled || !rm.Configured || rm.Note != "" {
+		t.Errorf("mail with a configured relay = %+v, want enabled+configured with no note", rm)
 	}
 }

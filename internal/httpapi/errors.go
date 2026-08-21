@@ -64,11 +64,16 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var su *SearchUnavailableError
 	var ale *ATProtoLoginError
 	var mtf *MailTestFailedError
+	var mnc *MailNotConfiguredError
 	switch {
 	case errors.As(err, &mtf):
 		status = http.StatusBadGateway
 		message = "the mail relay refused the test message. Check the SMTP host, port and credentials, then the relay's own logs — the server log for this request has its exact answer"
 		code = "mail_test_failed"
+	case errors.As(err, &mnc):
+		status = http.StatusServiceUnavailable
+		message = "this instance has no outbound mail path, so there is nothing to test. Set MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and SMTP_FROM, then restart the api"
+		code = "mail_not_configured"
 	case errors.As(err, &ale):
 		status = ale.Status
 		message = ale.Message
@@ -279,6 +284,19 @@ func (e *ReplaceConflictError) Error() string { return "replace conflict: " + e.
 type ContactFormDisabledError struct{}
 
 func (e *ContactFormDisabledError) Error() string { return "contact form disabled" }
+
+// MailNotConfiguredError renders as 503 with the stable code
+// "mail_not_configured": the admin mail probe was asked for on a deployment
+// with no outbound mail path at all.
+//
+// It is a typed error rather than a bare echo.NewHTTPError for one reason: 503
+// is a 5xx, and the central handler scrubs every 5xx message it has no stable
+// code for down to "an unexpected error occurred". That would replace the one
+// sentence an operator needs — which variables to set — with nothing, for
+// anybody reading the API through curl or a script rather than the admin UI.
+type MailNotConfiguredError struct{}
+
+func (e *MailNotConfiguredError) Error() string { return "mail is not configured" }
 
 // MailTestFailedError renders as 502 with the stable code "mail_test_failed":
 // the admin mail probe was refused by the relay. It carries NO cause on purpose

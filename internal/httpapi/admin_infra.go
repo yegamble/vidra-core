@@ -272,6 +272,10 @@ func (s *Server) infraFeatures() []infraFeature {
 			// capability; Configured is the narrower "a real relay is set".
 			Enabled:    s.contactMailer != nil,
 			Configured: cfg.MailEnabled && strings.TrimSpace(cfg.SMTPHost) != "" && strings.TrimSpace(cfg.SMTPFrom) != "",
+			// Mail is the one feature whose note cannot be written from
+			// (enabled, configured) alone — see mailDevCaptureNote. Empty in
+			// every ordinary case, which leaves the generic notes in charge.
+			Note: mailDevCaptureNote(s.contactMailer != nil, cfg.MailEnabled),
 		},
 		{
 			Key:        "search",
@@ -341,11 +345,33 @@ func (s *Server) infraFeatures() []infraFeature {
 	}
 
 	// The notes are attached separately so the table above stays a table: what
-	// each feature IS, then what to say about it.
+	// each feature IS, then what to say about it. An entry that already carries
+	// a note said something only it could say, and keeps it.
 	for i := range features {
+		if features[i].Note != "" {
+			continue
+		}
 		features[i].Note = infraFeatureNote(features[i])
 	}
 	return features
+}
+
+// mailDevCaptureNote covers the one quadrant the generic notes get wrong.
+//
+// The dev capture seam is a real outbound path — it is how the local and e2e
+// stacks "send" — so enabled is true while MAIL_ENABLED is unset. That lands in
+// the enabled-but-unconfigured slot, whose note reads "MAIL_ENABLED is set but
+// the relay is not fully configured": both halves false. Reporting enabled=false
+// instead would be the other lie, since messages really are being handled.
+//
+// So the quadrant gets its own sentence, and returns "" everywhere else — the
+// enabled+MAIL_ENABLED case is a genuinely incomplete relay and the generic
+// misconfigured note is exactly right for it.
+func mailDevCaptureNote(hasMailer, mailEnabled bool) string {
+	if !hasMailer || mailEnabled {
+		return ""
+	}
+	return "Mail is CAPTURED, not delivered: this deployment runs the development mail seam with MAIL_ENABLED unset, so password resets and verification links are held in memory for the local test harness and never leave the process. That is correct for a developer machine and wrong everywhere else — set MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and SMTP_FROM before anybody outside it relies on email."
 }
 
 // infraFeatureNote is the operator-facing sentence for one feature: what the
@@ -386,8 +412,14 @@ var infraFeatureOffNotes = map[string]string{
 // infraFeatureMisconfiguredNotes is the other half: the switch is on and the
 // dependency is not there, so the feature is quietly inert. These are findings,
 // not suggestions.
+//
+// There is deliberately no "mail" entry. config refuses to BOOT with
+// MAIL_ENABLED and an incomplete relay (SMTP_HOST and SMTP_FROM are both
+// required), so a running instance can only be enabled-but-unconfigured for
+// mail via the dev capture seam — which mailDevCaptureNote owns. A note here
+// for a state that cannot exist would be copy nobody ever reads and nobody ever
+// checks, which is how it becomes wrong.
 var infraFeatureMisconfiguredNotes = map[string]string{
-	"mail":           "MAIL_ENABLED is set but the relay is not fully configured (SMTP_HOST and SMTP_FROM are both required), so outbound mail is going nowhere.",
 	"search":         "A search client is wired but SEARCH_SERVICE_URL is empty, so every query is falling back to the local database.",
 	"atproto":        "ATPROTO_ENABLED is set with no ATPROTO_KEY_KEK or FEDERATION_KEY_KEK, so linked Bluesky app passwords would be stored unsealed. Production refuses to boot in this state; fix it before promoting this instance.",
 	"malware_scan":   "MALWARE_SCAN_ENABLED is set with no CLAMAV_ADDR, so nothing is being scanned.",

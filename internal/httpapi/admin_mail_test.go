@@ -64,8 +64,23 @@ func TestMailTestOutcomes(t *testing.T) {
 
 	t.Run("no outbound mail path is 503", func(t *testing.T) {
 		srv, _ := mailTestServer(t, contactCfg())
-		if rec := mailTest(t, srv); rec.Code != http.StatusServiceUnavailable {
+		rec := mailTest(t, srv)
+		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("mail test with no mailer = %d, want 503; body=%s", rec.Code, rec.Body.String())
+		}
+		var envelope ErrorResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+			t.Fatalf("unmarshal 503: %v", err)
+		}
+		if envelope.Error.Code != "mail_not_configured" {
+			t.Errorf("503 code = %q, want mail_not_configured", envelope.Error.Code)
+		}
+		// 503 is a 5xx, and the central handler scrubs any 5xx without a stable
+		// code down to "an unexpected error occurred". The guidance has to
+		// survive that, or anyone reading the API through curl or a script gets
+		// nothing to act on.
+		if !strings.Contains(envelope.Error.Message, "MAIL_ENABLED") {
+			t.Errorf("503 message = %q; the operator guidance was scrubbed", envelope.Error.Message)
 		}
 	})
 

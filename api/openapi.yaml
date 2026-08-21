@@ -10963,7 +10963,8 @@ paths:
         "503":
           description: >-
             This deployment has no outbound mail path at all, so there is
-            nothing to test.
+            nothing to test (code mail_not_configured). The message names the
+            variables to set.
           content:
             application/json:
               schema:
@@ -11408,16 +11409,23 @@ paths:
       operationId: validateInstanceSettings
       summary: Dry-run instance-settings validation (admin)
       description: >-
-        Answers "would PATCH /api/v1/admin/instance-settings accept this body?"
-        without writing anything. The request body is exactly the PATCH's — a
-        flat object of setting key → new value — and the response lists the field
-        problems the write would have reported, or an empty list when it would be
-        accepted. Nothing is persisted and no audit event is emitted.
+        Reports the field problems a body would produce, without writing
+        anything. The request body is exactly the PATCH's — a flat object of
+        setting key → new value — and the response lists those problems, or an
+        empty list when the body would be accepted. Nothing is persisted and no
+        audit event is emitted.
         It exists so an admin config form can validate a field as the operator
         leaves it, against the SERVER's rules, instead of keeping a hand-copied
         second copy of them client-side (a copy drifts the first time either side
         changes, and the operator finds out as a 422 on save). The PATCH's 422
         stays the authoritative backstop; this is only the early answer.
+        It is not a byte-for-byte replay of the write. The PATCH stops after the
+        type pass, because nothing may be persisted once a key is wrong; a dry
+        run has nothing to protect and carries on to check the CONTENT of every
+        key that typed cleanly. On a mixed body it therefore reports MORE
+        problems than the PATCH would have, never different ones — each message
+        comes from the same rule the write applies, so a finding here cannot turn
+        out to be a false alarm at save time.
         Always 200 on a well-formed request: the field problems ARE the result of
         asking a validation question, so they are not themselves an error
         response. A body that is not a JSON object is 400. Restricted to admins.
