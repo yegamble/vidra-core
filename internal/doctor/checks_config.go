@@ -24,6 +24,14 @@ import (
 // bug reported somewhere else entirely).
 func checkCaddyfile(_ context.Context, s *state) []Finding {
 	rel := setup.CaddyOutputPath
+	// VIDRA_TLS_MODE=external has no managed Caddy at all: the deploy leaves the
+	// service out of the compose profiles, `vidra setup` writes no Caddyfile, and
+	// there is consequently no bind-mount to crash-loop. Reporting the missing
+	// file would be a permanent ✗ on a correct deployment — the one thing that
+	// reliably teaches an operator to stop reading this report.
+	if setup.SkipsManagedCaddy(s.value("VIDRA_TLS_MODE")) {
+		return []Finding{skipf(fmt.Sprintf("VIDRA_TLS_MODE=%s: your own proxy terminates TLS, so this deployment runs no caddy container and generates no %s. %s is the example `vidra setup` writes for that proxy", setup.TLSModeExternal, rel, setup.NginxExampleOutputPath))}
+	}
 	b, err := s.opt.Host.ReadFile(s.path(rel))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -77,7 +85,7 @@ func checkCaddyfile(_ context.Context, s *state) []Finding {
 				"set PUBLIC_BASE_URL to this instance's public origin (https://video.example.org) and re-run `vidra setup`"))
 		case !strings.EqualFold(site, want):
 			findings = append(findings, failf(
-				fmt.Sprintf("%s serves %s but PUBLIC_BASE_URL is https://%s", rel, site, want),
+				fmt.Sprintf("%s serves %s but PUBLIC_BASE_URL names %s", rel, site, want),
 				"fix whichever is wrong and re-run `vidra setup` to regenerate the Caddyfile from PUBLIC_BASE_URL. Caddy answering on one hostname while the api mints links, OAuth callbacks and federation actor ids for another breaks logins and federation in ways that never point back here"))
 		default:
 			findings = append(findings, okf(fmt.Sprintf("%s serves %s, which matches PUBLIC_BASE_URL", rel, site)))

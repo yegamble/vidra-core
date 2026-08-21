@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vidra/vidra-core/internal/dbmigrate"
+	"github.com/vidra/vidra-core/internal/setup"
 )
 
 // The whole point of the command, in one test: a deployment with nothing wrong
@@ -276,7 +277,7 @@ func TestCaddyfile(t *testing.T) {
 			name:      "a different host from PUBLIC_BASE_URL",
 			content:   "other.vidra.test {\n\treverse_proxy api:8080\n}\n",
 			want:      StatusFail,
-			detailHas: "serves other.vidra.test but PUBLIC_BASE_URL is https://tube.vidra.test",
+			detailHas: "serves other.vidra.test but PUBLIC_BASE_URL names tube.vidra.test",
 			fixHas:    "federation actor ids",
 		},
 		{
@@ -479,6 +480,46 @@ func TestDomainDNSGating(t *testing.T) {
 			wantFinding(t, one(t, only(t, "domain DNS", h, p)), tc.want, tc.detailHas, "")
 		})
 	}
+}
+
+// The two topologies phase-1 item 12 added, at the reverse-proxy check.
+//
+// external is the one that would otherwise be a PERMANENT ✗ on a correct
+// deployment: there is no caddy container and no generated Caddyfile by design,
+// so "the file is missing and compose bind-mounts it" is false twice over.
+// plain-http keeps both, with an http:// site address — which must still be
+// compared against PUBLIC_BASE_URL by HOST, or every lab instance reports a
+// mismatch with itself.
+func TestCaddyfileHandlesTheItem12Topologies(t *testing.T) {
+	t.Run("external skips the check entirely", func(t *testing.T) {
+		h := newFakeHost()
+		h.files[filepath.Join(testRoot, "env/production.env")] = strings.Replace(healthyEnv, "VIDRA_TLS_MODE=acme", "VIDRA_TLS_MODE=external", 1)
+		// The bundle/external reality: no Caddyfile.local on disk at all.
+		delete(h.files, filepath.Join(testRoot, "deploy/Caddyfile.local"))
+		findings := only(t, "reverse proxy", h, nil)
+		// A skip is a ⚠ carrying "skipped:" — there is nothing wrong to fix, and
+		// this deployment is correct as it stands.
+		if !hasStatus(findings, StatusWarn) || !hasAny(findings, "skipped:") {
+			t.Fatalf("statuses = %v, want a skip on an external deployment: %+v", statuses(findings), findings)
+		}
+		if !hasAny(findings, "your own proxy terminates TLS") {
+			t.Errorf("the skip does not say why: %+v", findings)
+		}
+		if !hasAny(findings, setup.NginxExampleOutputPath) {
+			t.Errorf("the skip does not name the example that IS generated: %+v", findings)
+		}
+	})
+
+	t.Run("plain-http matches an http site address against the origin", func(t *testing.T) {
+		h := newFakeHost()
+		env := strings.Replace(healthyEnv, "VIDRA_TLS_MODE=acme", "VIDRA_TLS_MODE=plain-http\nVIDRA_ALLOW_PLAIN_HTTP=true", 1)
+		h.files[filepath.Join(testRoot, "env/production.env")] = strings.ReplaceAll(env, "https://tube.vidra.test", "http://tube.vidra.test")
+		h.files[filepath.Join(testRoot, "deploy/Caddyfile.local")] = "http://tube.vidra.test {\n\treverse_proxy api:8080\n}\n"
+		findings := only(t, "reverse proxy", h, nil)
+		if !hasStatus(findings, StatusOK) {
+			t.Fatalf("statuses = %v, want OK: an http site address matching an http origin is correct: %+v", statuses(findings), findings)
+		}
+	})
 }
 
 // VIDRA_PUBLIC_IP is how an operator behind NAT tells the check what this host's
