@@ -106,15 +106,11 @@ type Config struct {
 	// of a DSN to guess would be wrong precisely on the deployments that matter.
 	// So the operator says which it is.
 	//
-	// It is read with the ordinary typed-bool parser, exactly as MAIL_ENABLED
-	// and FEDERATION_ENABLED already are — which means a spelling setup.IsTrue
-	// accepts and strconv.ParseBool does not (`yes`, `on`) refuses to boot here
-	// while the deploy scripts read it happily. That disagreement predates this
-	// key and is not special to it; `vidra setup` normalises what it writes to a
-	// concrete true/false, so only a hand-edited file can reach it. Closing it
-	// properly means moving the shared spelling rule down into this package and
-	// having setup.IsTrue delegate to it, which changes MAIL_ENABLED's parsing
-	// too and belongs in its own commit rather than riding along here.
+	// It is read with isShellTrue, NOT the typed-bool parser: the deploy shell
+	// scripts read the same variable, `yes` is a spelling they and setup.IsTrue
+	// both accept, and strconv.ParseBool does not — so the ordinary parser would
+	// refuse to BOOT an instance over the spelling of a variable that governs one
+	// paragraph of display copy. Nothing here is ever a config error.
 	ExternalPostgres bool
 
 	// Redis connection (URL form, e.g. redis://host:6379/0).
@@ -757,7 +753,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		ImportAllowPrivateURLs:         p.Bool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
 		OwnerClaimToken:                getEnv("OWNER_CLAIM_TOKEN", ""),
 		DatabaseURL:                    getEnv("DATABASE_URL", DefaultDatabaseURL),
-		ExternalPostgres:               p.Bool("VIDRA_EXTERNAL_POSTGRES", false),
+		ExternalPostgres:               isShellTrue(getEnv("VIDRA_EXTERNAL_POSTGRES", "")),
 		RedisURL:                       getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		CORSAllowedOrigins:             splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
 		HTTPReadTimeout:                p.Duration("HTTP_READ_TIMEOUT", 15*time.Second),
@@ -951,13 +947,44 @@ func varErrorf(v, format string, args ...any) *VarError {
 // instance-level rather than against an input.
 func (c *Config) validate() error {
 	var errs []error
-	// add records one finding. A nil error — a sub-validator that found nothing
-	// — is dropped, so the sub-validator calls read the same as when their
-	// result was returned directly.
-	add := func(err error) {
-		if err != nil {
-			errs = append(errs, err)
+	// seen dedupes findings on (variable, message). Collecting instead of
+	// returning early made a genuine duplicate possible for the first time: one
+	// http:// PUBLIC_BASE_URL in production trips the plain-http gate, the
+	// federation https rule and the OAuth https rule, and the last two produce
+	// the SAME sentence. Nothing downstream dedupes — setup.configIssues turns
+	// every leaf into an Issue — so doctor and the wizard would print the same
+	// line twice and an operator would look for a second thing to fix.
+	//
+	// The key includes the variable so two fields failing the same rule
+	// ("... is required") still both speak; unattributed multi-variable rules
+	// dedupe on their message alone.
+	seen := map[string]bool{}
+	// add records findings. A nil error — a sub-validator that found nothing —
+	// is dropped, so the sub-validator calls read the same as when their result
+	// was returned directly. A JOINED error (what the sub-validators now return)
+	// is flattened into its leaves, so dedupe sees individual findings rather
+	// than a tree, and the final result is one flat list.
+	var add func(err error)
+	add = func(err error) {
+		if err == nil {
+			return
 		}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			for _, sub := range joined.Unwrap() {
+				add(sub)
+			}
+			return
+		}
+		key := err.Error()
+		var ve *VarError
+		if errors.As(err, &ve) {
+			key = ve.Var + "\x00" + ve.Msg
+		}
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		errs = append(errs, err)
 	}
 
 	switch c.Environment {
@@ -1324,6 +1351,33 @@ func (c *Config) validateIPFSPrivate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// shellTrueSpellings are the values BOTH this process and the deploy shell
+// scripts read as true. It MIRRORS setup.IsTrue's list (internal/setup,
+// trueSpellings) exactly; this package cannot import that one, because setup
+// imports this one and the dependency only runs the one way.
+//
+// The comparison is exact rather than case-folding, for setup.IsTrue's reason:
+// `[ "$VIDRA_EXTERNAL_POSTGRES" = true ]` in a shell script reads `tRue` as
+// FALSE, so a Go reader that folded case would disagree with the script it sits
+// beside. Here that disagreement would put the managed-database backup advice on
+// the admin page of a deployment whose own nightly dump is the only backup it
+// has — the exact wrong sentence, on the page that exists to get it right.
+var shellTrueSpellings = []string{"true", "TRUE", "True", "yes", "YES", "Yes", "1", "on", "ON", "On"}
+
+// isShellTrue reports whether v is a spelling the deploy scripts read as true.
+// Everything else — a blank, a `t`, a typo — is FALSE, and never an error: the
+// variables read this way are display-only, and refusing to boot an instance to
+// correct a sentence is not a trade anybody would choose.
+func isShellTrue(v string) bool {
+	t := strings.TrimSpace(v)
+	for _, spelling := range shellTrueSpellings {
+		if t == spelling {
+			return true
+		}
+	}
+	return false
 }
 
 // isHTTPURL reports whether raw parses as an absolute http(s) URL with a host.

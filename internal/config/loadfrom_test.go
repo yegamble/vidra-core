@@ -501,3 +501,121 @@ func TestTrustedProxyCIDRsParseIntoNetworks(t *testing.T) {
 		t.Errorf("TrustedProxyCIDRs = %v, want the two raw entries", cfg.TrustedProxyCIDRs)
 	}
 }
+
+// Collecting instead of returning early made a genuine duplicate possible for
+// the first time: ONE http:// origin in production trips the plain-http gate,
+// the federation https rule and the OAuth https rule, and the last two produce
+// a byte-identical sentence. Nothing downstream dedupes — setup.configIssues
+// turns every leaf into an Issue — so a duplicate reaches doctor and the wizard
+// as two lines, and an operator goes looking for a second thing to fix.
+func TestCheckEnvDeduplicatesIdenticalFindings(t *testing.T) {
+	vars := productionCandidate()
+	vars["PUBLIC_BASE_URL"] = "http://videos.internal"
+	vars["CORS_ALLOWED_ORIGINS"] = "http://videos.internal"
+	vars["FEDERATION_ENABLED"] = "true"
+	vars["FEDERATION_KEY_KEK"] = strings.Repeat("A", 43) + "=" // base64 of exactly 32 bytes
+	vars["OAUTH_PROVIDERS"] = "my-idp"
+	vars["OAUTH_MY_IDP_ISSUER"] = "https://idp.example"
+	vars["OAUTH_MY_IDP_CLIENT_ID"] = "vidra"
+	vars["OAUTH_MY_IDP_CLIENT_SECRET"] = "s3cret"
+
+	err := CheckEnv(vars)
+	if err == nil {
+		t.Fatal("CheckEnv() accepted a plain-http production origin with federation and OAuth on")
+	}
+	const httpsRule = "config: PUBLIC_BASE_URL must be https in production"
+	if n := strings.Count(err.Error(), httpsRule); n != 1 {
+		t.Errorf("the https rule appears %d times, want exactly 1:\n%s", n, err)
+	}
+
+	// Dedupe must collapse only IDENTICAL findings: the plain-http refusal is a
+	// different sentence about the same variable and still has to be said, or
+	// the operator never learns about VIDRA_ALLOW_PLAIN_HTTP.
+	if !strings.Contains(err.Error(), "VIDRA_ALLOW_PLAIN_HTTP=true") {
+		t.Errorf("the plain-http refusal was swallowed with the duplicate:\n%s", err)
+	}
+	if ve, ok := collectVarErrors(err)["PUBLIC_BASE_URL"]; !ok {
+		t.Errorf("no VarError for PUBLIC_BASE_URL; tree = %v", err)
+	} else if ve.Var != "PUBLIC_BASE_URL" {
+		t.Errorf("VarError.Var = %q, want PUBLIC_BASE_URL", ve.Var)
+	}
+}
+
+// The two passes stay separate, and nothing else guards it. A candidate with a
+// MALFORMED value and a semantically-broken one must report only the malformed
+// one: the semantic rules ran against the default the bad value fell back to, so
+// reporting them would describe a value the operator never wrote.
+func TestCheckEnvParseErrorsShortCircuitTheSemanticPass(t *testing.T) {
+	vars := productionCandidate()
+	vars["HTTP_PORT"] = "eighty" // malformed: never parses
+	vars["LOG_LEVEL"] = "loud"   // semantic: parses fine, fails a rule
+
+	err := CheckEnv(vars)
+	if err == nil {
+		t.Fatal("CheckEnv() expected an error, got nil")
+	}
+	got := collectVarErrors(err)
+	if _, ok := got["HTTP_PORT"]; !ok {
+		t.Errorf("no VarError for the malformed HTTP_PORT; tree = %v", err)
+	}
+	if ve, ok := got["LOG_LEVEL"]; ok {
+		t.Errorf("the semantic pass ran anyway and reported %q; it must not run over values that never parsed", ve)
+	}
+
+	// With the typo fixed, the semantic failure surfaces on the next run — the
+	// operator sees one class of problem at a time, in the order they can act on.
+	vars["HTTP_PORT"] = "8080"
+	err = CheckEnv(vars)
+	if err == nil {
+		t.Fatal("CheckEnv() accepted an invalid LOG_LEVEL once the port parsed")
+	}
+	if _, ok := collectVarErrors(err)["LOG_LEVEL"]; !ok {
+		t.Errorf("no VarError for LOG_LEVEL once parsing was clean; tree = %v", err)
+	}
+}
+
+// VIDRA_EXTERNAL_POSTGRES is read the way the deploy shell scripts read it, and
+// is never a boot error. It governs one paragraph of backup advice on an admin
+// page; refusing to start an instance over its spelling is not a trade anybody
+// would choose, and `yes` is a spelling setup.Check accepts and does not flag.
+func TestCheckEnvExternalPostgresFollowsTheShellSpellings(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{"true", true},
+		{"True", true},
+		{"yes", true},
+		{"on", true},
+		{"1", true},
+		{"false", false},
+		{"no", false},
+		{"", false},
+		// The deploy scripts read these as FALSE. strconv.ParseBool reads `t` as
+		// true and would have disagreed; a case-folding reader would disagree
+		// about `tRue`. Either disagreement puts the managed-database backup
+		// advice on a deployment whose own nightly dump is its only backup.
+		{"t", false},
+		{"tRue", false},
+		{"banana", false},
+	} {
+		vars := productionCandidate()
+		vars["VIDRA_EXTERNAL_POSTGRES"] = tc.value
+
+		if err := CheckEnv(vars); err != nil {
+			t.Errorf("CheckEnv() with VIDRA_EXTERNAL_POSTGRES=%q = %v; this key must never refuse a boot", tc.value, err)
+			continue
+		}
+		cfg, err := LoadFrom(func(key string) (string, bool) {
+			v, ok := vars[key]
+			return v, ok
+		})
+		if err != nil {
+			t.Errorf("LoadFrom() with VIDRA_EXTERNAL_POSTGRES=%q = %v", tc.value, err)
+			continue
+		}
+		if cfg.ExternalPostgres != tc.want {
+			t.Errorf("VIDRA_EXTERNAL_POSTGRES=%q read as %v, want %v (the deploy scripts' answer)", tc.value, cfg.ExternalPostgres, tc.want)
+		}
+	}
+}
