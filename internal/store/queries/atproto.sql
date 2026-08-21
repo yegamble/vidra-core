@@ -33,13 +33,26 @@ VALUES ($1)
 ON CONFLICT (video_id) DO NOTHING;
 
 -- name: ClaimDueATProtoPosts :many
--- Pending posts whose backoff has elapsed, oldest first. A single worker drains
--- sequentially, so no row-locking is needed yet.
-SELECT id, video_id, attempts
-FROM atproto_posts
-WHERE state = 'pending' AND next_attempt_at <= now()
-ORDER BY next_attempt_at
-LIMIT $1;
+-- LEASES pending cross-posts whose backoff has elapsed, oldest first.
+--
+-- Previously a bare SELECT: on two nodes both would read the same row and both
+-- would create a Bluesky post, so one video became two posts on the user's
+-- public feed. Externally visible and not undoable by a retry.
+-- The lease is next_attempt_at pushed forward: a claimed row stops being due for
+-- lease_seconds, so a second worker's claim skips it and a CRASHED worker's row
+-- becomes due again by itself. FOR UPDATE SKIP LOCKED makes concurrent claimers
+-- take disjoint rows without blocking each other.
+UPDATE atproto_posts
+SET next_attempt_at = now() + (sqlc.arg(lease_seconds)::int * interval '1 second'),
+    updated_at = now()
+WHERE id IN (
+    SELECT id FROM atproto_posts
+    WHERE state = 'pending' AND next_attempt_at <= now()
+    ORDER BY next_attempt_at
+    LIMIT sqlc.arg(batch_size)
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING id, video_id, attempts;
 
 -- name: MarkATProtoPostDone :exec
 UPDATE atproto_posts

@@ -51,7 +51,7 @@ func TestSearchOutboxRoundTrip(t *testing.T) {
 	}
 
 	// Claim due events (oldest first). event_id defaults are populated by the DB.
-	due, err := q.ClaimDueSearchEvents(ctx, 100)
+	due, err := q.ClaimDueSearchEvents(ctx, sqlcgen.ClaimDueSearchEventsParams{BatchSize: 100, LeaseSeconds: 300})
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestSearchOutboxRoundTrip(t *testing.T) {
 	}
 
 	// A fresh claim must not re-return the delivered, rescheduled, or dead rows.
-	after, err := q.ClaimDueSearchEvents(ctx, 100)
+	after, err := q.ClaimDueSearchEvents(ctx, sqlcgen.ClaimDueSearchEventsParams{BatchSize: 100, LeaseSeconds: 300})
 	if err != nil {
 		t.Fatalf("re-claim: %v", err)
 	}

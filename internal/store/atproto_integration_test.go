@@ -100,7 +100,7 @@ func TestATProtoQueriesPersist(t *testing.T) {
 	}
 
 	// --- claim ---
-	due, err := q.ClaimDueATProtoPosts(ctx, 10)
+	due, err := q.ClaimDueATProtoPosts(ctx, sqlcgen.ClaimDueATProtoPostsParams{BatchSize: 10, LeaseSeconds: 300})
 	if err != nil {
 		t.Fatalf("ClaimDueATProtoPosts: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestATProtoQueriesPersist(t *testing.T) {
 		t.Fatalf("RescheduleATProtoPost: %v", err)
 	}
 	// Now it is not due (next_attempt_at in the future).
-	due, err = q.ClaimDueATProtoPosts(ctx, 10)
+	due, err = q.ClaimDueATProtoPosts(ctx, sqlcgen.ClaimDueATProtoPostsParams{BatchSize: 10, LeaseSeconds: 300})
 	if err != nil {
 		t.Fatalf("claim after reschedule: %v", err)
 	}

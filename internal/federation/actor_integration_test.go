@@ -234,7 +234,7 @@ func TestDeliveryQueuePersistsClaimReschedule(t *testing.T) {
 	}
 
 	find := func() *sqlcgen.ClaimDueDeliveriesRow {
-		rows, err := q.ClaimDueDeliveries(ctx, 100)
+		rows, err := q.ClaimDueDeliveries(ctx, sqlcgen.ClaimDueDeliveriesParams{BatchSize: 100, LeaseSeconds: 300})
 		if err != nil {
 			t.Fatalf("ClaimDueDeliveries: %v", err)
 		}
@@ -319,7 +319,7 @@ func TestAnnounceVideoEnqueuesToFollowers(t *testing.T) {
 		t.Fatalf("AnnounceVideo: %v", err)
 	}
 
-	rows, err := q.ClaimDueDeliveries(ctx, 500)
+	rows, err := q.ClaimDueDeliveries(ctx, sqlcgen.ClaimDueDeliveriesParams{BatchSize: 500, LeaseSeconds: 300})
 	if err != nil {
 		t.Fatalf("ClaimDueDeliveries: %v", err)
 	}

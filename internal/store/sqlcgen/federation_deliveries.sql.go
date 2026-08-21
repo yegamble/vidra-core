@@ -14,13 +14,24 @@ import (
 )
 
 const claimDueDeliveries = `-- name: ClaimDueDeliveries :many
-SELECT id, inbox_url, payload, signing_channel_id, signing_channel_handle,
-       signing_user_id, signing_username, attempts
-FROM federation_deliveries
-WHERE state = 'pending' AND next_attempt_at <= now()
-ORDER BY next_attempt_at
-LIMIT $1
+UPDATE federation_deliveries
+SET next_attempt_at = now() + ($1::int * interval '1 second'),
+    updated_at = now()
+WHERE id IN (
+    SELECT id FROM federation_deliveries
+    WHERE state = 'pending' AND next_attempt_at <= now()
+    ORDER BY next_attempt_at
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING id, inbox_url, payload, signing_channel_id, signing_channel_handle,
+          signing_user_id, signing_username, attempts
 `
+
+type ClaimDueDeliveriesParams struct {
+	LeaseSeconds int32 `json:"lease_seconds"`
+	BatchSize    int32 `json:"batch_size"`
+}
 
 type ClaimDueDeliveriesRow struct {
 	ID                   uuid.UUID   `json:"id"`
@@ -33,10 +44,19 @@ type ClaimDueDeliveriesRow struct {
 	Attempts             int32       `json:"attempts"`
 }
 
-// Pending deliveries whose backoff has elapsed, oldest first. A single worker
-// drains sequentially, so no row-locking is needed yet.
-func (q *Queries) ClaimDueDeliveries(ctx context.Context, limit int32) ([]ClaimDueDeliveriesRow, error) {
-	rows, err := q.db.Query(ctx, claimDueDeliveries, limit)
+// LEASES pending deliveries whose backoff has elapsed, oldest first.
+//
+// This was a bare SELECT with a comment saying a single worker drains
+// sequentially so no locking was needed. That made it the worst of the queues to
+// run on two nodes: nothing marked the row as taken, so both nodes would read it
+// and both would POST the activity. Duplicate federation delivery is not an
+// internal inefficiency -- it is visible to every remote server that receives it.
+// The lease is next_attempt_at pushed forward: a claimed row stops being due for
+// lease_seconds, so a second worker's claim skips it and a CRASHED worker's row
+// becomes due again by itself. FOR UPDATE SKIP LOCKED makes concurrent claimers
+// take disjoint rows without blocking each other.
+func (q *Queries) ClaimDueDeliveries(ctx context.Context, arg ClaimDueDeliveriesParams) ([]ClaimDueDeliveriesRow, error) {
+	rows, err := q.db.Query(ctx, claimDueDeliveries, arg.LeaseSeconds, arg.BatchSize)
 	if err != nil {
 		return nil, err
 	}

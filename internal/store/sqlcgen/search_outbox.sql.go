@@ -14,12 +14,22 @@ import (
 )
 
 const claimDueSearchEvents = `-- name: ClaimDueSearchEvents :many
-SELECT id, event_id, event_type, payload, attempts, created_at
-FROM search_outbox
-WHERE state = 'pending' AND next_attempt_at <= now()
-ORDER BY id
-LIMIT $1
+UPDATE search_outbox
+SET next_attempt_at = now() + ($1::int * interval '1 second')
+WHERE id IN (
+    SELECT id FROM search_outbox
+    WHERE state = 'pending' AND next_attempt_at <= now()
+    ORDER BY id
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING id, event_id, event_type, payload, attempts, created_at
 `
+
+type ClaimDueSearchEventsParams struct {
+	LeaseSeconds int32 `json:"lease_seconds"`
+	BatchSize    int32 `json:"batch_size"`
+}
 
 type ClaimDueSearchEventsRow struct {
 	ID        int64     `json:"id"`
@@ -30,10 +40,20 @@ type ClaimDueSearchEventsRow struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// Due, still-pending events oldest first. A single worker drains sequentially
-// (no row locking needed yet), building the batched /internal/v1/events envelope.
-func (q *Queries) ClaimDueSearchEvents(ctx context.Context, limit int32) ([]ClaimDueSearchEventsRow, error) {
-	rows, err := q.db.Query(ctx, claimDueSearchEvents, limit)
+// LEASES due, still-pending events oldest first, building the batched
+// /internal/v1/events envelope.
+//
+// Previously a bare SELECT: two nodes would build two envelopes from the same
+// rows and both POST them. The search service dedupes on event_id so the index
+// stays correct, which is why this is the least harmful of the three -- but it is
+// still double the requests and double the payload for no benefit.
+// The lease is next_attempt_at pushed forward: a claimed row stops being due for
+// lease_seconds, so a second worker's claim skips it and a CRASHED worker's row
+// becomes due again by itself. FOR UPDATE SKIP LOCKED makes concurrent claimers
+// take disjoint rows without blocking each other.
+// search_outbox has no updated_at column, so only the lease is written.
+func (q *Queries) ClaimDueSearchEvents(ctx context.Context, arg ClaimDueSearchEventsParams) ([]ClaimDueSearchEventsRow, error) {
+	rows, err := q.db.Query(ctx, claimDueSearchEvents, arg.LeaseSeconds, arg.BatchSize)
 	if err != nil {
 		return nil, err
 	}

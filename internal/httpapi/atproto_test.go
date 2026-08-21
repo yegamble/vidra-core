@@ -49,7 +49,7 @@ func (r *atprotoFakeRepo) DeleteATProtoAccount(_ context.Context, userID uuid.UU
 
 func (r *atprotoFakeRepo) TouchATProtoAccountPosted(context.Context, uuid.UUID) error { return nil }
 func (r *atprotoFakeRepo) EnqueueATProtoPost(context.Context, uuid.UUID) error        { return nil }
-func (r *atprotoFakeRepo) ClaimDueATProtoPosts(context.Context, int32) ([]sqlcgen.ClaimDueATProtoPostsRow, error) {
+func (r *atprotoFakeRepo) ClaimDueATProtoPosts(context.Context, sqlcgen.ClaimDueATProtoPostsParams) ([]sqlcgen.ClaimDueATProtoPostsRow, error) {
 	return nil, nil
 }
 func (r *atprotoFakeRepo) MarkATProtoPostDone(context.Context, sqlcgen.MarkATProtoPostDoneParams) error {

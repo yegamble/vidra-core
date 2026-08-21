@@ -68,7 +68,7 @@ type Repository interface {
 	DeleteATProtoAccount(ctx context.Context, userID uuid.UUID) error
 	TouchATProtoAccountPosted(ctx context.Context, userID uuid.UUID) error
 	EnqueueATProtoPost(ctx context.Context, videoID uuid.UUID) error
-	ClaimDueATProtoPosts(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueATProtoPostsRow, error)
+	ClaimDueATProtoPosts(ctx context.Context, arg sqlcgen.ClaimDueATProtoPostsParams) ([]sqlcgen.ClaimDueATProtoPostsRow, error)
 	MarkATProtoPostDone(ctx context.Context, arg sqlcgen.MarkATProtoPostDoneParams) error
 	RescheduleATProtoPost(ctx context.Context, arg sqlcgen.RescheduleATProtoPostParams) error
 	FailATProtoPost(ctx context.Context, arg sqlcgen.FailATProtoPostParams) error
