@@ -344,3 +344,64 @@ enforced at boot in `VIDRA_ENV=production`:
 Health/readiness for orchestrators: `GET /healthz` (liveness) and `GET /readyz`
 (503 until PostgreSQL + Redis are reachable). See the top-level
 [`README.md`](../README.md) for the full env-var and endpoint reference.
+
+## Running more than one api instance
+
+Several `vidra-core` api instances can share one PostgreSQL. What makes that safe
+is two mechanisms, and it is worth knowing which does what:
+
+**Queue work is leased.** Every durable queue claims rows with
+`FOR UPDATE SKIP LOCKED` and pushes the row's due time forward by a lease
+(30 minutes), which the owning worker renews every 5 minutes while it works. Two
+instances therefore never claim the same job, and an instance that dies stops
+renewing so its rows return to the queue by themselves — no boot-time requeue and
+no assumption about which instances are alive. More instances mean more transcode,
+import, caption and delivery throughput.
+
+**Singleton sweeps are leader-elected.** The workers that sweep rather than claim
+(media garbage collection, scheduled publish, the transcode-hold sweep, the upload
+sweeper, the live watchdog, the search and IPFS reconcilers, operational-job
+retention, the E2EE sweep) each walk a table or a bucket and act on what they
+find, so running them everywhere duplicates work — and media GC deletes. They are
+gated on a PostgreSQL advisory lock held on a dedicated connection: exactly one
+instance runs them, and the lock is released by the server itself when that
+instance dies. Leadership moves within ~15 seconds.
+
+### What was actually tested
+
+Two api replicas against one PostgreSQL, verified end to end rather than by
+inspection:
+
+| Property | How it was checked |
+|---|---|
+| Both replicas serve | `GET /healthz` 200 on each replica's port |
+| Exactly one leader | one `elected leader` log line; `pg_locks` shows exactly one advisory holder |
+| Failover on crash | `SIGKILL` the leader → advisory holders drop to 0, a new leader is elected ~11s later |
+| No duplicate work under load | 400 outbox events drained concurrently by both replicas → 406 unique events, 406 deliveries, **0 duplicates** |
+
+The last row is the one that matters, and it was checked against a counterfactual:
+with the lease and `SKIP LOCKED` removed and the image rebuilt, the same run
+produced **423 deliveries for 406 events — 17 duplicates**. A "no duplicates"
+result from a harness that cannot detect duplicates would prove nothing.
+
+Reproduce with `deploy/docker-compose.soak.yml`:
+
+```sh
+docker compose -f docker-compose.yml -f deploy/docker-compose.soak.yml \
+  --profile core up -d --scale api=2
+```
+
+### Caveats, stated plainly
+
+- **This is not a scaling recommendation.** It is evidence that the concurrency
+  primitives hold under a real two-process topology. Capacity planning, session
+  affinity, rolling deploys and load balancing are not covered here.
+- **A partitioned leader still holds its lock** until PostgreSQL notices the TCP
+  session is gone (`tcp_keepalives_*`, minutes by default). During that window the
+  singleton sweeps do not run anywhere. That is the correct failure to have —
+  pausing periodic maintenance is safe in a way that running media GC from two
+  instances is not.
+- **Local media storage does not scale out.** `STORAGE_BACKEND=local` writes to a
+  volume only one host can see; multi-instance requires `STORAGE_BACKEND=s3`.
+- **The soak ran without an object store or a real search service.** Transcode
+  throughput across instances has not been measured under load.

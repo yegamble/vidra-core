@@ -1,0 +1,46 @@
+# Two-replica soak overlay.
+#
+# Proves the multi-instance claims are true of the TOPOLOGY, not just of the
+# queries: several api instances against one PostgreSQL, with the queue leases
+# and the singleton-cron leader lock doing their jobs.
+#
+# Run:
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.soak.yml \
+#     --profile core up -d --scale api=2
+#
+# The base file publishes a fixed host port for the api, which cannot be scaled
+# (the second replica would collide on it). A RANGE is used instead of clearing
+# the mapping so both replicas stay individually reachable from the host, which
+# is what makes it possible to check that each one actually serves.
+#
+# This overlay is for testing a topology, not for production. Running two api
+# replicas behind one host is not a deployment recommendation — see
+# deploy/README.md for what is actually supported.
+# The repo's .env carries HOST-oriented URLs (localhost:5432) so the binary can be
+# run outside compose. Compose substitutes those into the containers, where
+# localhost is the container itself — so both api and migrate must be pointed
+# back at the in-network service names or they fail to connect.
+x-incluster-urls: &incluster-urls
+  DATABASE_URL: postgres://vidra:vidra@postgres:5432/vidra?sslmode=disable
+  REDIS_URL: redis://redis:6379/0
+
+services:
+  migrate:
+    environment: *incluster-urls
+
+  api:
+    ports: !override
+      - "18080-18089:8080"
+    environment:
+      <<: *incluster-urls
+      # Loud enough to see leadership change hands and to see which replica ran
+      # a sweep.
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      # The soak run has no object store, so keep the transcode worker from
+      # deferring everything on a scratch check it cannot satisfy.
+      TRANSCODING_MIN_FREE_SCRATCH_MB: ${TRANSCODING_MIN_FREE_SCRATCH_MB:-1}
+      # Point the search-outbox drainer at a counting sink so a delivery claimed
+      # by BOTH replicas would be directly visible as a duplicate event_id,
+      # rather than something we have to infer from row state.
+      SEARCH_SERVICE_URL: ${SEARCH_SERVICE_URL:-http://soak-sink:9999}
+      SEARCH_INTERNAL_SECRET: ${SEARCH_INTERNAL_SECRET:-soak-secret}
