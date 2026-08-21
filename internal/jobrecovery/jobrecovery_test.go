@@ -41,6 +41,9 @@ func (f *fakeQueries) SweepExpiredImportRuns(context.Context) (int64, error) {
 func (f *fakeQueries) SweepExpiredChannelSyncs(context.Context) (int64, error) {
 	return f.run("channel_syncs")
 }
+func (f *fakeQueries) SweepExpiredStorageMigrationObjects(context.Context) (int64, error) {
+	return f.run("storage_migration_objects")
+}
 
 // TestSweepVisitsEveryQueue guards the list itself: every queue that claims work
 // by flipping a row to running/syncing must be swept, or that queue keeps the
@@ -56,6 +59,7 @@ func TestSweepVisitsEveryQueue(t *testing.T) {
 	want := []string{
 		"transcode_jobs", "import_jobs", "caption_jobs",
 		"account_exports", "peertube_import_runs", "channel_syncs",
+		"storage_migration_objects",
 	}
 	if len(results) != len(want) {
 		t.Fatalf("got %d results, want %d", len(results), len(want))

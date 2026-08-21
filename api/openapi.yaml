@@ -11022,7 +11022,8 @@ paths:
       description: >-
         Returns an operations snapshot of every durable background-work queue
         (transcode_jobs, federation_deliveries, import_jobs, caption_jobs,
-        account_exports, upload_sessions): per-queue depth counts by state
+        account_exports, upload_sessions, storage_migrations): per-queue depth
+        counts by state
         (pending/running/done/failed) plus the age of the oldest still-pending
         item (a stuck-worker signal), and a merged recent-failures list. This is
         the backend contract behind the admin jobs page. Failures carry only
@@ -12213,6 +12214,202 @@ paths:
           description: >-
             The instance has no identity to stamp on the bucket (the migrations
             have not been run against this database).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/storage/migrations:
+    post:
+      operationId: startStorageMigration
+      summary: Start a storage migration (admin)
+      description: >-
+        Opens a campaign that copies EVERY object in the configured media store
+        into the configured migration target (STORAGE_MIGRATION_TARGET_*),
+        verifying each copy by reading it back out of the target and re-hashing
+        it. Object keys are never rewritten, so the IPFS pin ledger and every
+        stored storage_key keep pointing at the right bytes.
+
+
+        This does NOT change what the instance serves from. Cutover is an
+        explicit operator step: swap BOTH environment sets (STORAGE_* to the new
+        store, STORAGE_MIGRATION_TARGET_* to the old one) and restart. The api
+        detects that swap, starts the grace clock, and only then — after
+        STORAGE_MIGRATION_GRACE_HOURS — deletes the old store's copies. See
+        vidra-core docs/operations.md, "Moving the media store".
+
+
+        While any campaign is not done or cancelled, DESTRUCTIVE media garbage
+        collection is forced to dry-run (MediaGCResponse.forced_dry_run_reason =
+        storage_migration_active). At most one campaign runs at a time.
+        Restricted to admins; audited (admin.storage.migration.start).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: The campaign was opened.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageMigration"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: A storage migration is already in progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            No migration target is configured (STORAGE_MIGRATION_TARGET_* unset),
+            the media store cannot enumerate its objects, or a configured backend
+            does not report which store it is.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: listStorageMigrations
+      summary: List storage migrations (admin)
+      description: >-
+        Returns the campaign history, newest first (up to 50), with each
+        campaign's counters. Restricted to admins.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The campaign history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageMigrationList"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/storage/migrations/{id}:
+    get:
+      operationId: getStorageMigration
+      summary: Get one storage migration (admin)
+      description: >-
+        Returns one campaign plus its per-state object breakdown — the numbers
+        that say whether it is safe to cut over yet (cut over from `synced`, with
+        `objects.pending` and `objects.copying` at zero). Restricted to admins.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The campaign and its object breakdown.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageMigration"
+        "400":
+          description: The id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such storage migration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/storage/migrations/{id}/cancel:
+    post:
+      operationId: cancelStorageMigration
+      summary: Cancel a storage migration (admin)
+      description: >-
+        Stops a live campaign: no further objects are claimed, and the media
+        garbage collector's interlock releases. Objects already copied are LEFT
+        IN PLACE in the target — they are byte-identical copies under identical
+        keys, so they are inert, and deleting them would be a destructive action
+        taken on the way out of a destructive operation.
+
+
+        Before cutover this is a complete rollback: nothing about what the
+        instance serves has changed. After cutover it is not — the instance is
+        already serving from the target — so cancelling then simply stops the old
+        store's copies from ever being deleted. Restricted to admins; audited
+        (admin.storage.migration.cancel).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The campaign after cancellation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageMigration"
+        "400":
+          description: The id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such storage migration.
           content:
             application/json:
               schema:
@@ -17229,8 +17426,126 @@ components:
         forced_dry_run:
           type: boolean
           description: >-
-            True when a requested delete was downgraded to a dry run because of
-            bucket_ownership rather than because the caller asked for one.
+            True when a requested delete was downgraded to a dry run by a safety
+            rail rather than because the caller asked for one. See
+            forced_dry_run_reason for which rail.
+        forced_dry_run_reason:
+          type: string
+          enum: [bucket_ownership, storage_migration_active]
+          description: >-
+            Which safety rail forced the dry run; absent when none did.
+            `bucket_ownership` — the object store is not established as this
+            instance's (adopt it, or fix the configuration).
+            `storage_migration_active` — a storage migration campaign is in
+            flight, so the two stores are deliberately out of step and
+            "unreferenced" is not evidence about either of them. It also covers
+            the case where the check itself could not be answered, which is
+            treated as "a migration is running". Wait for the campaign to reach
+            done, or cancel it.
+    StorageMigration:
+      type: object
+      description: >-
+        One media-store migration campaign. source_desc/target_desc are store
+        IDENTITY strings ("s3://<endpoint>/<bucket>" or "local:<path>") — never
+        credentials, which authorise a store rather than name it. The api
+        compares them against the backends it is actually holding before it
+        copies or deletes anything, which is how it detects the cutover env swap.
+      required:
+        [
+          id,
+          state,
+          source_desc,
+          target_desc,
+          objects_total,
+          objects_done,
+          objects_failed,
+          last_error,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum:
+            [
+              enumerating,
+              copying,
+              synced,
+              cutover,
+              deleting_source,
+              done,
+              cancelled,
+              failed,
+            ]
+          description: >-
+            `enumerating` — listing the source store.
+            `copying` — objects are being copied and verified.
+            `synced` — every object is verified in the target and a delta pass
+            found nothing new; this is the state to cut over from.
+            `cutover` — the api is serving from the target and the grace clock
+            is running.
+            `deleting_source` — removing the old store's copies.
+            `done`/`cancelled`/`failed` — terminal.
+        source_desc:
+          type: string
+          example: local:/var/lib/vidra/media
+        target_desc:
+          type: string
+          example: s3://nyc3.digitaloceanspaces.com/example-video-media
+        objects_total:
+          type: integer
+          format: int64
+          description: Objects enumerated in the source so far.
+        objects_done:
+          type: integer
+          format: int64
+          description: Objects verified in the target (including those whose source copy has since been deleted).
+        objects_failed:
+          type: integer
+          format: int64
+          description: Objects that dead-lettered. They do not block completion; they are a reported fact.
+        last_error:
+          type: string
+          description: >-
+            A safe, operator-facing diagnostic — a category or an instruction,
+            never a raw backend error, endpoint or object key. Typically set when
+            a campaign is STUCK waiting for an operator (for example, the
+            environment was swapped before every object had been copied).
+        observed_cutover_at:
+          type: string
+          format: date-time
+          description: >-
+            When the api first saw itself serving from target_desc. The grace
+            period before the source is deleted is measured from here, and it is
+            written once so a restart cannot restart the clock.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        objects:
+          type: object
+          description: >-
+            Per-state object counts. Returned on the single-campaign view only.
+            Cutting over is safe when pending and copying are both zero.
+          additionalProperties:
+            type: integer
+            format: int64
+          example:
+            { pending: 0, copying: 0, verified: 412, failed: 0, source_deleted: 0 }
+    StorageMigrationList:
+      type: object
+      required: [migrations]
+      properties:
+        migrations:
+          type: array
+          description: Campaign history, newest first.
+          items:
+            $ref: "#/components/schemas/StorageMigration"
     MediaGCAdoptBucketResponse:
       type: object
       required: [bucket_ownership, marker_key]
@@ -17678,7 +17993,10 @@ components:
       type: object
       description: >-
         One queue's normalised depth. For upload_sessions (no retry model),
-        pending=active, done=completed, failed=cancelled, running=0.
+        pending=active, done=completed, failed=cancelled, running=0. For
+        storage_migrations the unit is the OBJECT being moved, not the campaign:
+        pending=not yet copied, running=copying, done=verified or
+        source-deleted, failed=dead-lettered.
       required: [queue, pending, running, done, failed, oldest_pending_age_seconds]
       properties:
         queue:

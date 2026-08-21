@@ -99,6 +99,23 @@ func (q *Queries) GetVideoFileByKind(ctx context.Context, arg GetVideoFileByKind
 	return i, err
 }
 
+const getVideoFileSHA256ByStorageKey = `-- name: GetVideoFileSHA256ByStorageKey :one
+SELECT sha256 FROM video_files WHERE storage_key = $1 LIMIT 1
+`
+
+// The recorded digest of the file stored at an object key, for storage
+// migration's cross-check: a copy whose bytes hash to something other than what
+// the database says the source held is a corrupt SOURCE, and no amount of
+// re-copying fixes it. Keyed by storage_key (the same handle the migration
+// ledger uses) rather than by id, because the migration only ever knows the key.
+// LIMIT 1 keeps the query total; one file per stored key is the invariant.
+func (q *Queries) GetVideoFileSHA256ByStorageKey(ctx context.Context, storageKey string) (string, error) {
+	row := q.db.QueryRow(ctx, getVideoFileSHA256ByStorageKey, storageKey)
+	var sha256 string
+	err := row.Scan(&sha256)
+	return sha256, err
+}
+
 const listUnhashedVideoFiles = `-- name: ListUnhashedVideoFiles :many
 SELECT id, storage_key
 FROM video_files

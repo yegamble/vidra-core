@@ -30,6 +30,15 @@ WHERE sha256 = ''
 ORDER BY created_at
 LIMIT $1;
 
+-- name: GetVideoFileSHA256ByStorageKey :one
+-- The recorded digest of the file stored at an object key, for storage
+-- migration's cross-check: a copy whose bytes hash to something other than what
+-- the database says the source held is a corrupt SOURCE, and no amount of
+-- re-copying fixes it. Keyed by storage_key (the same handle the migration
+-- ledger uses) rather than by id, because the migration only ever knows the key.
+-- LIMIT 1 keeps the query total; one file per stored key is the invariant.
+SELECT sha256 FROM video_files WHERE storage_key = $1 LIMIT 1;
+
 -- name: SetVideoFileSHA256 :exec
 -- Records a computed digest (or the 'missing' sentinel). The still-empty guard
 -- makes it a no-op against a row something else already hashed, so a backfill

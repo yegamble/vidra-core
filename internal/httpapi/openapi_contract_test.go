@@ -39,6 +39,7 @@ import (
 	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/remotevideo"
+	"github.com/vidra/vidra-core/internal/storagemigration"
 	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/video"
@@ -87,6 +88,10 @@ func fullRouteOptions() []Option {
 		WithInstanceDocumentsService(instancedocs.NewService(nil)),
 		WithRemoteVideoService(remotevideo.NewService(nil, nil)),
 		WithMediaGCService(mediagc.NewService(nil, nil)),
+		// Storage migration: always part of the contract. cmd/api wires it even
+		// without a target backend so the read/cancel surface always exists;
+		// Start answers 503 in that configuration.
+		WithStorageMigrationService(storagemigration.NewService(nil, nil, nil, storagemigration.Config{})),
 		WithJobStatusService(jobstatus.NewService(nil)),
 		WithPeerTubeImportService(peertubeimport.NewService(nil)),
 		// Mounts the REST remote-follow routes. The AP root routes stay excluded

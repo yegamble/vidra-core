@@ -23,12 +23,14 @@ type fakeQuerier struct {
 	caption   sqlcgen.CaptionJobStatsRow
 	export    sqlcgen.AccountExportStatsRow
 	upload    sqlcgen.UploadSessionStatsRow
+	storagemi sqlcgen.StorageMigrationStatsRow
 
 	transcodeFails []sqlcgen.TranscodeRecentFailuresRow
 	fedFails       []sqlcgen.FederationRecentFailuresRow
 	impFails       []sqlcgen.ImportRecentFailuresRow
 	captionFails   []sqlcgen.CaptionRecentFailuresRow
 	exportFails    []sqlcgen.AccountExportRecentFailuresRow
+	storagemiFails []sqlcgen.StorageMigrationRecentFailuresRow
 }
 
 type fakeOperationalQuerier struct {
@@ -149,6 +151,12 @@ func (f *fakeQuerier) CaptionRecentFailures(context.Context, int32) ([]sqlcgen.C
 func (f *fakeQuerier) AccountExportRecentFailures(context.Context, int32) ([]sqlcgen.AccountExportRecentFailuresRow, error) {
 	return f.exportFails, nil
 }
+func (f *fakeQuerier) StorageMigrationStats(context.Context) (sqlcgen.StorageMigrationStatsRow, error) {
+	return f.storagemi, nil
+}
+func (f *fakeQuerier) StorageMigrationRecentFailures(context.Context, int32) ([]sqlcgen.StorageMigrationRecentFailuresRow, error) {
+	return f.storagemiFails, nil
+}
 
 func TestOverviewNormalisesAndMergesFailures(t *testing.T) {
 	now := time.Now()
@@ -160,6 +168,9 @@ func TestOverviewNormalisesAndMergesFailures(t *testing.T) {
 		export:    sqlcgen.AccountExportStatsRow{Done: 1},
 		// upload_sessions maps active→pending, completed→done, cancelled→failed.
 		upload: sqlcgen.UploadSessionStatsRow{Pending: 6, Done: 2, Failed: 1},
+		// storage_migration_objects counts OBJECTS: copying→running,
+		// verified+source_deleted→done.
+		storagemi: sqlcgen.StorageMigrationStatsRow{Pending: 9, Running: 2, Done: 41, Failed: 1, OldestPendingAgeSeconds: 12},
 		transcodeFails: []sqlcgen.TranscodeRecentFailuresRow{
 			{ID: uuid.New(), Error: "ffmpeg boom", Attempts: 5, UpdatedAt: now.Add(-1 * time.Minute)},
 		},
@@ -174,16 +185,21 @@ func TestOverviewNormalisesAndMergesFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Overview: %v", err)
 	}
-	if len(ov.Queues) != 6 {
-		t.Fatalf("want 6 queues, got %d", len(ov.Queues))
+	if len(ov.Queues) != 7 {
+		t.Fatalf("want 7 queues, got %d", len(ov.Queues))
 	}
 	if ov.Queues[0].Queue != QueueTranscode || ov.Queues[0].Pending != 2 || ov.Queues[0].OldestPendingAgeSeconds != 42 {
 		t.Errorf("transcode queue = %+v", ov.Queues[0])
 	}
-	// upload_sessions is last and uses the remapped counts.
+	// upload_sessions uses the remapped counts.
 	us := ov.Queues[5]
 	if us.Queue != QueueUploadSessions || us.Pending != 6 || us.Done != 2 || us.Failed != 1 || us.Running != 0 {
 		t.Errorf("upload_sessions queue = %+v", us)
+	}
+	// storage_migration_objects is last; its unit is the object, not the campaign.
+	sm := ov.Queues[6]
+	if sm.Queue != QueueStorageMigration || sm.Pending != 9 || sm.Running != 2 || sm.Done != 41 || sm.Failed != 1 {
+		t.Errorf("storage_migration_objects queue = %+v", sm)
 	}
 	// Failures merged and sorted newest-first across queues.
 	if len(ov.RecentFailures) != 3 {
@@ -222,9 +238,9 @@ func TestDepthsFlattensAllStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Depths: %v", err)
 	}
-	// 6 queues x 4 states.
-	if len(depths) != 24 {
-		t.Fatalf("want 24 depth samples, got %d", len(depths))
+	// 7 queues x 4 states.
+	if len(depths) != 28 {
+		t.Fatalf("want 28 depth samples, got %d", len(depths))
 	}
 	seen := map[string]int64{}
 	for _, d := range depths {

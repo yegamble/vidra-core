@@ -688,3 +688,114 @@ func TestMediaGCKnobs(t *testing.T) {
 		}
 	})
 }
+
+// TestStorageMigrationTargetValidation covers the second backend's boot-time
+// rules. The one that matters most is the last: a "migration" whose target is
+// the source is a loop that copies every object onto itself and then deletes it
+// after the grace period, and boot is the only cheap place to catch it.
+func TestStorageMigrationTargetValidation(t *testing.T) {
+	load := func(extra map[string]string) (*Config, error) {
+		env := productionCandidate()
+		for k, v := range extra {
+			env[k] = v
+		}
+		return LoadFrom(func(key string) (string, bool) {
+			v, ok := env[key]
+			return v, ok
+		})
+	}
+
+	t.Run("unset means the feature is simply off", func(t *testing.T) {
+		cfg, err := load(nil)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		if cfg.StorageMigrationConfigured() {
+			t.Error("StorageMigrationConfigured() is true with no target set")
+		}
+		if cfg.StorageMigrationGraceHours != 168 {
+			t.Errorf("default grace = %d hours, want 168 (a week: the undo window)", cfg.StorageMigrationGraceHours)
+		}
+	})
+
+	t.Run("an s3 target requires its own credentials", func(t *testing.T) {
+		_, err := load(map[string]string{"STORAGE_MIGRATION_TARGET_BACKEND": "s3"})
+		vars := collectVarErrors(err)
+		for _, want := range []string{
+			"STORAGE_MIGRATION_TARGET_S3_ENDPOINT",
+			"STORAGE_MIGRATION_TARGET_S3_BUCKET",
+			"STORAGE_MIGRATION_TARGET_S3_ACCESS_KEY",
+			"STORAGE_MIGRATION_TARGET_S3_SECRET_KEY",
+		} {
+			if _, ok := vars[want]; !ok {
+				t.Errorf("no error reported for %s; got %v", want, err)
+			}
+		}
+	})
+
+	t.Run("the endpoint is host-only, like the primary", func(t *testing.T) {
+		_, err := load(map[string]string{
+			"STORAGE_MIGRATION_TARGET_BACKEND":       "s3",
+			"STORAGE_MIGRATION_TARGET_S3_ENDPOINT":   "https://nyc3.example",
+			"STORAGE_MIGRATION_TARGET_S3_BUCKET":     "new-media",
+			"STORAGE_MIGRATION_TARGET_S3_ACCESS_KEY": "key",
+			"STORAGE_MIGRATION_TARGET_S3_SECRET_KEY": "secret",
+		})
+		if _, ok := collectVarErrors(err)["STORAGE_MIGRATION_TARGET_S3_ENDPOINT"]; !ok {
+			t.Errorf("a scheme in the endpoint was accepted: %v", err)
+		}
+	})
+
+	t.Run("an unknown backend names itself", func(t *testing.T) {
+		_, err := load(map[string]string{"STORAGE_MIGRATION_TARGET_BACKEND": "ipfs"})
+		if _, ok := collectVarErrors(err)["STORAGE_MIGRATION_TARGET_BACKEND"]; !ok {
+			t.Errorf("STORAGE_MIGRATION_TARGET_BACKEND=ipfs was accepted: %v", err)
+		}
+	})
+
+	t.Run("a valid s3 target loads", func(t *testing.T) {
+		cfg, err := load(map[string]string{
+			"STORAGE_MIGRATION_TARGET_BACKEND":       "s3",
+			"STORAGE_MIGRATION_TARGET_S3_ENDPOINT":   "nyc3.example",
+			"STORAGE_MIGRATION_TARGET_S3_BUCKET":     "new-media",
+			"STORAGE_MIGRATION_TARGET_S3_ACCESS_KEY": "key",
+			"STORAGE_MIGRATION_TARGET_S3_SECRET_KEY": "secret",
+			"STORAGE_MIGRATION_GRACE_HOURS":          "24",
+		})
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		if !cfg.StorageMigrationConfigured() || cfg.StorageMigrationGraceHours != 24 {
+			t.Errorf("configured=%v grace=%d", cfg.StorageMigrationConfigured(), cfg.StorageMigrationGraceHours)
+		}
+	})
+
+	t.Run("the target may not be the source", func(t *testing.T) {
+		_, err := load(map[string]string{
+			"STORAGE_BACKEND":                        "s3",
+			"STORAGE_S3_ENDPOINT":                    "nyc3.example",
+			"STORAGE_S3_BUCKET":                      "media",
+			"STORAGE_S3_ACCESS_KEY":                  "key",
+			"STORAGE_S3_SECRET_KEY":                  "secret",
+			"STORAGE_MIGRATION_TARGET_BACKEND":       "s3",
+			"STORAGE_MIGRATION_TARGET_S3_ENDPOINT":   "nyc3.example",
+			"STORAGE_MIGRATION_TARGET_S3_BUCKET":     "media",
+			"STORAGE_MIGRATION_TARGET_S3_ACCESS_KEY": "other-key",
+			"STORAGE_MIGRATION_TARGET_S3_SECRET_KEY": "other-secret",
+		})
+		if _, ok := collectVarErrors(err)["STORAGE_MIGRATION_TARGET_BACKEND"]; !ok {
+			t.Errorf("a target identical to the source was accepted: %v", err)
+		}
+	})
+
+	t.Run("a negative grace is refused", func(t *testing.T) {
+		_, err := load(map[string]string{
+			"STORAGE_MIGRATION_TARGET_BACKEND":    "local",
+			"STORAGE_MIGRATION_TARGET_LOCAL_ROOT": "/srv/new-media",
+			"STORAGE_MIGRATION_GRACE_HOURS":       "-1",
+		})
+		if _, ok := collectVarErrors(err)["STORAGE_MIGRATION_GRACE_HOURS"]; !ok {
+			t.Errorf("a negative grace period was accepted: %v", err)
+		}
+	})
+}

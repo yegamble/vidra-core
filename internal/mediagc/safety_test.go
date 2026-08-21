@@ -2,6 +2,7 @@ package mediagc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -361,5 +362,109 @@ func TestOwnerMarkerIsOutsideEverySweptPrefix(t *testing.T) {
 	}
 	if _, found, _ := storage.ReadOwnerMarker(ctx, blobs); !found {
 		t.Error("the sweep deleted the ownership marker")
+	}
+}
+
+// TestActiveMigrationForcesADryRun is the storage-migration interlock. During a
+// move the two stores are deliberately out of step — objects are being written
+// into a store this instance is not serving from, and after cutover the OLD
+// store is full of objects no database row will ever reference again by design —
+// so a sweep in that window would look at a healthy store and see garbage.
+func TestActiveMigrationForcesADryRun(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name       string
+		active     bool
+		checkErr   error
+		wantForced bool
+	}{
+		{name: "no migration running deletes as asked", active: false, wantForced: false},
+		{name: "a live campaign forces a dry run", active: true, wantForced: true},
+		{
+			// Fail safe: the rail exists for the case where the answer matters
+			// most, and that is exactly the case where a database it cannot reach
+			// is least reassuring.
+			name:   "an unanswerable check is treated as a live campaign",
+			active: false, checkErr: errors.New("database unreachable"), wantForced: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			blobs, err := storage.NewLocal(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := seedOrphans(t, blobs, 3, 1)
+			svc := NewService(repo, blobs,
+				WithBucketOwnership(OwnershipOwned),
+				WithActiveMigrationCheck(func(context.Context) (bool, error) {
+					return tc.active, tc.checkErr
+				}))
+
+			res, err := svc.Sweep(ctx, false)
+			if err != nil {
+				t.Fatalf("sweep: %v", err)
+			}
+			if res.ForcedDryRun != tc.wantForced {
+				t.Fatalf("ForcedDryRun = %v, want %v", res.ForcedDryRun, tc.wantForced)
+			}
+			if tc.wantForced {
+				if res.ForcedDryRunReason != ReasonMigrationActive {
+					t.Errorf("ForcedDryRunReason = %q, want %q", res.ForcedDryRunReason, ReasonMigrationActive)
+				}
+				if res.Deleted != 0 || res.Mode != ModeDryRun {
+					t.Errorf("deleted %d objects in mode %q during a migration", res.Deleted, res.Mode)
+				}
+				// The orphan list is still the full report: "what would it have
+				// deleted?" is the operator's next question either way.
+				if len(res.Orphans) != 3 {
+					t.Errorf("orphans = %d, want 3", len(res.Orphans))
+				}
+				for _, k := range res.Orphans {
+					if !exists(t, blobs, k) {
+						t.Errorf("%q was deleted while a migration was in flight", k)
+					}
+				}
+			} else {
+				if res.ForcedDryRunReason != "" {
+					t.Errorf("ForcedDryRunReason = %q, want empty", res.ForcedDryRunReason)
+				}
+				if res.Deleted != 3 || res.Mode != ModeDelete {
+					t.Errorf("deleted %d objects in mode %q, want 3/delete", res.Deleted, res.Mode)
+				}
+			}
+		})
+	}
+}
+
+// TestOwnershipReasonWinsOverTheMigrationCheck: ownership is the cheaper and more
+// alarming answer, and it is reported rather than being masked by whichever rail
+// happens to run second.
+func TestOwnershipReasonWinsOverTheMigrationCheck(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := seedOrphans(t, blobs, 2, 0)
+	migrationChecked := false
+	svc := NewService(repo, blobs,
+		WithBucketOwnership(OwnershipConflict),
+		WithActiveMigrationCheck(func(context.Context) (bool, error) {
+			migrationChecked = true
+			return true, nil
+		}))
+	res, err := svc.Sweep(ctx, false)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if res.ForcedDryRunReason != ReasonBucketOwnership {
+		t.Errorf("ForcedDryRunReason = %q, want %q", res.ForcedDryRunReason, ReasonBucketOwnership)
+	}
+	if migrationChecked {
+		t.Error("the migration check ran even though ownership had already forced a dry run; it costs a database round trip")
+	}
+	if !strings.Contains(res.Summary(), "forced_reason="+ReasonBucketOwnership) {
+		t.Errorf("Summary() = %q, want it to carry the forced reason", res.Summary())
 	}
 }

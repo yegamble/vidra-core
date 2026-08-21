@@ -712,6 +712,33 @@ type Session struct {
 	CreatedAt   time.Time          `json:"created_at"`
 }
 
+type StorageMigration struct {
+	ID                uuid.UUID          `json:"id"`
+	SourceDesc        string             `json:"source_desc"`
+	TargetDesc        string             `json:"target_desc"`
+	State             string             `json:"state"`
+	ObjectsTotal      int64              `json:"objects_total"`
+	ObjectsDone       int64              `json:"objects_done"`
+	ObjectsFailed     int64              `json:"objects_failed"`
+	LastError         string             `json:"last_error"`
+	ObservedCutoverAt pgtype.Timestamptz `json:"observed_cutover_at"`
+	CreatedAt         time.Time          `json:"created_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+}
+
+type StorageMigrationObject struct {
+	ObjectKey     string    `json:"object_key"`
+	CampaignID    uuid.UUID `json:"campaign_id"`
+	State         string    `json:"state"`
+	Sha256        string    `json:"sha256"`
+	ByteSize      int64     `json:"byte_size"`
+	Attempts      int32     `json:"attempts"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	LastError     string    `json:"last_error"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type StreamingPlaylist struct {
 	VideoID   uuid.UUID `json:"video_id"`
 	MasterKey string    `json:"master_key"`

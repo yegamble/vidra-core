@@ -84,6 +84,13 @@ const (
 	// bucket boot refused to delete from. Reason carries the resulting ownership
 	// state or a failure category only; never the bucket, endpoint or key.
 	ActionMediaGCAdoptBucket = "admin.media.gc.adopt_bucket"
+	// ActionStorageMigrationStart / Cancel record an admin opening or aborting a
+	// campaign that moves the whole media library to another backend (phase-2
+	// storage). Reason carries the campaign id and the two store IDENTITY strings
+	// (endpoint/bucket or path) — never an access key or secret, which are what
+	// authorise a store rather than name it.
+	ActionStorageMigrationStart  = "admin.storage.migration.start"
+	ActionStorageMigrationCancel = "admin.storage.migration.cancel"
 	// ActionIPFSReconcile records an admin kicking the one-shot IPFS mirror
 	// reconcile/backfill (P19.6): re-arm dead-lettered pins + seed pin intents for
 	// eligible pre-existing public objects. Reason carries only safe counts
