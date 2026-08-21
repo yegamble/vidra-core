@@ -7,7 +7,6 @@ import (
 	"context"
 	"io"
 	"os/exec"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -58,12 +57,7 @@ func TestFFmpegWritesHLSThroughSink(t *testing.T) {
 		t.Fatalf("Flush: %v", err)
 	}
 
-	var keys []string
-	for k := range b.objects {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
+	keys := b.keys()
 	var segments int
 	for _, k := range keys {
 		if !strings.HasPrefix(k, "streaming-playlists/vid1/240p/") {
@@ -71,7 +65,7 @@ func TestFFmpegWritesHLSThroughSink(t *testing.T) {
 		}
 		if strings.HasSuffix(k, ".ts") {
 			segments++
-			if len(b.objects[k]) == 0 {
+			if len(b.object(k)) == 0 {
 				t.Errorf("segment %q is empty", k)
 			}
 		}
@@ -81,7 +75,7 @@ func TestFFmpegWritesHLSThroughSink(t *testing.T) {
 		t.Errorf("stored %d segments, want at least 3: %v", segments, keys)
 	}
 
-	playlist := string(b.objects["streaming-playlists/vid1/240p/playlist.m3u8"])
+	playlist := string(b.object("streaming-playlists/vid1/240p/playlist.m3u8"))
 	if !strings.HasPrefix(playlist, "#EXTM3U") {
 		t.Fatalf("playlist not stored or malformed: %q", playlist)
 	}
