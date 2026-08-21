@@ -408,6 +408,49 @@ environment back and the old store is still complete.
 Deletion refuses to run unless every object is accounted for, and refuses unless
 the handle it is about to delete through is the campaign's recorded source.
 
+**`cutover` → `done` takes about three minutes, even at
+`STORAGE_MIGRATION_GRACE_HOURS=0`.** The state machine advances one step per
+sweep tick and the sweep ticks once a minute: `cutover` → `deleting_source` →
+(delete a batch) → `done`. A campaign that has sat at `cutover` for two minutes
+after a zero-grace restart is on schedule, not stalled. With a real grace window
+the wait is that window plus the same three ticks, and a library big enough to
+need more than one delete batch (200 objects) takes one further tick per batch.
+
+**Completing the campaign claims the destination store for this install.** The
+last thing a `done` transition does is write the `.vidra/owner` marker into the
+store it just filled, with this install's identity — see "Bucket ownership"
+above. That write exists because nothing else would do it: boot-time claiming
+only claims a bucket the api *created* or found *empty*, and a bucket a
+migration filled is neither, so without it a completed move would leave media
+GC permanently and silently non-destructive on your new bucket. It **never**
+overwrites a marker that is already there and says something else — that is the
+shared-bucket case, and it is logged loudly and left alone. Campaigns that
+finished before this behaviour existed need the manual fallback once:
+
+```bash
+curl -X POST https://videos.example/api/v1/admin/media/gc/adopt-bucket \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+`vidra doctor`'s **bucket ownership** check is how you confirm either way.
+
+### 5. Unconfigure the target
+
+**A finished migration is not finished until you remove the target block.** Once
+the campaign reads `done`, delete (or blank) every `STORAGE_MIGRATION_TARGET_*`
+line and `STORAGE_MIGRATION_GRACE_HOURS`, and restart. `STORAGE_*` — which now
+names the new store — is all that should be left.
+
+This is not tidiness. **While a migration target is configured, direct delivery
+stays disabled**, whatever `delivery_presign_enabled` says: during dual-read an
+object may be in either store and a URL signed against the wrong one is a 404
+the API can no longer rescue, so the capability is refused at boot. The boot log
+says which state you are in (`direct object delivery available` / `… disabled
+while a storage migration target is configured`). Leaving a completed campaign's
+target in the environment therefore costs you every byte of egress the API would
+otherwise have handed straight to the object store. Configuring a target also
+keeps a second backend built and its workers ticking for no reason.
+
 ### Rolling back
 
 - **Before cutover:** `POST /api/v1/admin/storage/migrations/$ID/cancel`. Nothing
@@ -496,26 +539,34 @@ so a redirected download still saves under the creator's filename and a redirect
 video still plays inline — those headers are inside the signature and cannot be
 edited by the viewer.
 
-**Verifying it.** With the setting on and an S3-backed install:
+**Verifying it.** With the setting on and an S3-backed install. Note these are
+**GET requests with the body discarded** (`-o /dev/null -D -`), not `curl -I`:
+the media routes are GET-only, so a HEAD answers `405` and tells you nothing
+about delivery.
 
 ```bash
 # A public video's original should answer 307 with a signed Location.
-curl -sI https://example.org/api/v1/videos/<id>/original | head -20
+curl -s -o /dev/null -D - https://example.org/api/v1/videos/<id>/original
 #   HTTP/2 307
 #   location: https://<bucket>.<endpoint>/web-videos/<id>.mp4?X-Amz-Signature=…
 #   cache-control: private, max-age=300, must-revalidate
 
 # The same request with a credential must NOT redirect.
-curl -sI -H "Authorization: Bearer <token>" https://example.org/api/v1/videos/<id>/original | head -5
+curl -s -o /dev/null -D - -H "Authorization: Bearer <token>" \
+  https://example.org/api/v1/videos/<id>/original
 #   HTTP/2 200
 #   cache-control: private, no-store
 
 # A private video's original must NOT redirect, for anyone.
-curl -sI -H "Authorization: Bearer <owner-token>" https://example.org/api/v1/videos/<private-id>/original | head -5
+curl -s -o /dev/null -D - -H "Authorization: Bearer <owner-token>" \
+  https://example.org/api/v1/videos/<private-id>/original
 #   HTTP/2 200
 
-# Follow the signed URL: same bytes, same headers the API would have sent.
-curl -sIL https://example.org/api/v1/videos/<id>/download/original | grep -i 'content-disposition\|content-type'
+# Follow the signed URL: same bytes, same headers the API would have sent. -L
+# really does fetch the whole object, and prints BOTH header blocks — the API's
+# 307 and then the store's 200.
+curl -s -o /dev/null -D - -L https://example.org/api/v1/videos/<id>/download/original \
+  | grep -i 'HTTP/\|content-disposition\|content-type'
 ```
 
 **Rolling back** is the setting, not a migration: turn `delivery_presign_enabled`

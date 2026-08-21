@@ -1,11 +1,13 @@
 package storagemigration
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"io"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -365,6 +367,130 @@ func TestCutoverGraceAndSourceDeletion(t *testing.T) {
 		if ok, _ := dst.Exists(ctx, key); !ok {
 			t.Errorf("target lost %q", key)
 		}
+	}
+}
+
+// completeCampaign drives one campaign the whole way — start, copy, the
+// operator's environment swap, zero grace, source deletion — and returns the
+// finished campaign together with everything the service logged on the way.
+func completeCampaign(t *testing.T, repo *fakeRepo, src, dst *storage.Local) (Campaign, string) {
+	t.Helper()
+	ctx := context.Background()
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+
+	forward := NewService(repo, src, dst, Config{Logger: logger})
+	camp, err := forward.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	drain(t, forward)
+	if got, _, _ := forward.Get(ctx, camp.ID); got.State != StateSynced {
+		t.Fatalf("state before the swap = %q (last_error %q), want synced", got.State, got.LastError)
+	}
+
+	// THE ENV SWAP, with no grace window so the delete phase is reachable in a
+	// test. synced -> cutover -> deleting_source -> done is three sweeps.
+	swapped := NewService(repo, dst, src, Config{Grace: 0, Logger: logger})
+	for i := 0; i < 5; i++ {
+		if err := swapped.SweepOnce(ctx); err != nil {
+			t.Fatalf("SweepOnce after the swap: %v", err)
+		}
+	}
+	got, _, err := swapped.Get(ctx, camp.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.State != StateDone {
+		t.Fatalf("state = %q (last_error %q), want %q", got.State, got.LastError, StateDone)
+	}
+	return got, logs.String()
+}
+
+// TestCompletedMigrationClaimsTheDestinationStore closes the hole a real move
+// exposed: the ownership marker is otherwise only written by boot-time claiming
+// (which claims a store this boot CREATED or found EMPTY) and by the admin adopt
+// endpoint, and a migration's destination is neither by the time anyone boots on
+// it. Nothing was left to tell media GC that the store now being served belongs
+// to this install, so it stayed silently non-destructive.
+func TestCompletedMigrationClaimsTheDestinationStore(t *testing.T) {
+	ctx := context.Background()
+	src, dst := localAt(t, "source"), localAt(t, "target")
+	repo := newFakeRepo()
+	put(t, src, "web-videos/a.mp4", "bytes a")
+	put(t, src, "thumbnails/a.jpg", "bytes b")
+
+	_, logs := completeCampaign(t, repo, src, dst)
+
+	marker, found, err := storage.ReadOwnerMarker(ctx, dst)
+	if err != nil || !found {
+		t.Fatalf("ReadOwnerMarker on the destination = (%q, %v, %v); a completed migration must leave the new store owned", marker, found, err)
+	}
+	if marker != repo.identity.String() {
+		t.Errorf("destination marker = %q, want this install's identity %q", marker, repo.identity)
+	}
+	if !strings.Contains(logs, "claimed the destination store") {
+		t.Errorf("the claim was not logged; an operator has to be able to see it happened:\n%s", logs)
+	}
+	// And it went to the store being SERVED, not the one just emptied. Writing it
+	// through the migration-target handle is the same bug inverted.
+	if _, found, _ := storage.ReadOwnerMarker(ctx, src); found {
+		t.Error("the marker was written to the decommissioned source; at 'done' the PRIMARY handle is the destination")
+	}
+}
+
+// TestCompletedMigrationNeverOverwritesAForeignOwnershipMarker is the
+// shared-store case the whole ownership rail exists for. Taking the store over
+// silently would re-arm destructive GC across another install's media.
+func TestCompletedMigrationNeverOverwritesAForeignOwnershipMarker(t *testing.T) {
+	ctx := context.Background()
+	src, dst := localAt(t, "source"), localAt(t, "target")
+	repo := newFakeRepo()
+	put(t, src, "web-videos/a.mp4", "bytes a")
+
+	const theirs = "11111111-1111-4111-8111-111111111111"
+	if err := storage.WriteOwnerMarker(ctx, dst, theirs); err != nil {
+		t.Fatalf("WriteOwnerMarker: %v", err)
+	}
+
+	_, logs := completeCampaign(t, repo, src, dst)
+
+	marker, _, err := storage.ReadOwnerMarker(ctx, dst)
+	if err != nil {
+		t.Fatalf("ReadOwnerMarker: %v", err)
+	}
+	if marker != theirs {
+		t.Fatalf("destination marker = %q, want it left at %q", marker, theirs)
+	}
+	if !strings.Contains(logs, "ANOTHER Vidra install's ownership marker") {
+		t.Errorf("the conflict was not logged loudly:\n%s", logs)
+	}
+	if strings.Contains(logs, theirs) {
+		t.Error("the other install's identity was logged as a plain value an operator could mistake for their own")
+	}
+}
+
+// TestCompletedMigrationWithoutAnInstanceIdentityStillFinishes: an install whose
+// migrations have not been run has no identity to stamp. That costs the marker —
+// and the operator an adopt — but it must never cost the campaign, whose bytes
+// are already moved and whose source is already gone.
+func TestCompletedMigrationWithoutAnInstanceIdentityStillFinishes(t *testing.T) {
+	ctx := context.Background()
+	src, dst := localAt(t, "source"), localAt(t, "target")
+	repo := newFakeRepo()
+	repo.identityErr = errors.New("no instance identity row")
+	put(t, src, "web-videos/a.mp4", "bytes a")
+
+	final, logs := completeCampaign(t, repo, src, dst)
+
+	if final.State != StateDone {
+		t.Errorf("state = %q, want %q", final.State, StateDone)
+	}
+	if _, found, _ := storage.ReadOwnerMarker(ctx, dst); found {
+		t.Error("a marker was written with no identity to write")
+	}
+	if !strings.Contains(logs, "could not read this instance's identity") {
+		t.Errorf("the skipped claim was not explained:\n%s", logs)
 	}
 }
 

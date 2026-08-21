@@ -25,6 +25,11 @@ type fakeRepo struct {
 	objects    map[string]*sqlcgen.StorageMigrationObject
 	fileHashes map[string]string
 	now        func() time.Time
+	// identity is what instance_identity holds; identityErr stands in for the
+	// install whose migrations have not been run, where the identity cannot be
+	// read at all and the destination therefore cannot be claimed.
+	identity    uuid.UUID
+	identityErr error
 }
 
 func newFakeRepo() *fakeRepo {
@@ -32,6 +37,7 @@ func newFakeRepo() *fakeRepo {
 		objects:    map[string]*sqlcgen.StorageMigrationObject{},
 		fileHashes: map[string]string{},
 		now:        time.Now,
+		identity:   uuid.New(),
 	}
 }
 
@@ -339,6 +345,15 @@ func (f *fakeRepo) CountStorageMigrationObjectsByState(_ context.Context, id uui
 		out = append(out, sqlcgen.CountStorageMigrationObjectsByStateRow{State: s, Count: counts[s]})
 	}
 	return out, nil
+}
+
+func (f *fakeRepo) GetInstanceIdentity(context.Context) (uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.identityErr != nil {
+		return uuid.UUID{}, f.identityErr
+	}
+	return f.identity, nil
 }
 
 func (f *fakeRepo) GetVideoFileSHA256ByStorageKey(_ context.Context, key string) (string, error) {
