@@ -107,6 +107,31 @@ func (q *Queries) CreateVideoRendition(ctx context.Context, arg CreateVideoRendi
 	return i, err
 }
 
+const deferTranscodeJob = `-- name: DeferTranscodeJob :exec
+UPDATE transcode_jobs
+SET state = 'pending', next_attempt_at = $2, last_error = $3, updated_at = now()
+WHERE id = $1
+`
+
+type DeferTranscodeJobParams struct {
+	ID            uuid.UUID `json:"id"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	LastError     string    `json:"last_error"`
+}
+
+// Return a claimed job to the queue WITHOUT consuming an attempt. Used when the
+// job cannot run for a reason that has nothing to do with the job itself -- today
+// only "the scratch filesystem does not have room for this source".
+//
+// Deliberately NOT RescheduleTranscodeJob: that increments attempts, so a video
+// that happened to arrive during five full-disk ticks would dead-letter and stay
+// untranscoded forever. A transient host condition must not consume a video's
+// retry budget.
+func (q *Queries) DeferTranscodeJob(ctx context.Context, arg DeferTranscodeJobParams) error {
+	_, err := q.db.Exec(ctx, deferTranscodeJob, arg.ID, arg.NextAttemptAt, arg.LastError)
+	return err
+}
+
 const deleteStreamingPlaylist = `-- name: DeleteStreamingPlaylist :exec
 DELETE FROM streaming_playlists WHERE video_id = $1
 `
@@ -183,6 +208,22 @@ func (q *Queries) GetStreamingPlaylist(ctx context.Context, videoID uuid.UUID) (
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getVideoFileSizeByStorageKey = `-- name: GetVideoFileSizeByStorageKey :one
+SELECT size_bytes FROM video_files WHERE storage_key = $1 LIMIT 1
+`
+
+// The stored byte size of the file at a storage key. The transcode worker uses it
+// for scratch-space admission control: a job's source_key IS the original's
+// storage_key, so this answers "how big is the thing I am about to transcode"
+// without a round trip to the object store. Rows are unique enough in practice
+// (one file per stored key) but LIMIT 1 keeps the query total.
+func (q *Queries) GetVideoFileSizeByStorageKey(ctx context.Context, storageKey string) (int64, error) {
+	row := q.db.QueryRow(ctx, getVideoFileSizeByStorageKey, storageKey)
+	var size_bytes int64
+	err := row.Scan(&size_bytes)
+	return size_bytes, err
 }
 
 const hasLiveTranscodeJob = `-- name: HasLiveTranscodeJob :one

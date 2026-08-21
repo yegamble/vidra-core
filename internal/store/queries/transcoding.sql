@@ -50,6 +50,19 @@ UPDATE transcode_jobs
 SET state = 'pending', attempts = attempts + 1, next_attempt_at = $2, last_error = $3, updated_at = now()
 WHERE id = $1;
 
+-- name: DeferTranscodeJob :exec
+-- Return a claimed job to the queue WITHOUT consuming an attempt. Used when the
+-- job cannot run for a reason that has nothing to do with the job itself -- today
+-- only "the scratch filesystem does not have room for this source".
+--
+-- Deliberately NOT RescheduleTranscodeJob: that increments attempts, so a video
+-- that happened to arrive during five full-disk ticks would dead-letter and stay
+-- untranscoded forever. A transient host condition must not consume a video's
+-- retry budget.
+UPDATE transcode_jobs
+SET state = 'pending', next_attempt_at = $2, last_error = $3, updated_at = now()
+WHERE id = $1;
+
 -- name: FailTranscodeJob :exec
 -- Dead-letter: no further retries.
 UPDATE transcode_jobs
@@ -101,3 +114,11 @@ ON CONFLICT (transcode_job_id, format, height) DO UPDATE SET
         ELSE NULL
     END,
     updated_at = now();
+
+-- name: GetVideoFileSizeByStorageKey :one
+-- The stored byte size of the file at a storage key. The transcode worker uses it
+-- for scratch-space admission control: a job's source_key IS the original's
+-- storage_key, so this answers "how big is the thing I am about to transcode"
+-- without a round trip to the object store. Rows are unique enough in practice
+-- (one file per stored key) but LIMIT 1 keeps the query total.
+SELECT size_bytes FROM video_files WHERE storage_key = $1 LIMIT 1;

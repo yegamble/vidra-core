@@ -23,6 +23,7 @@ type fakeRepo struct {
 	renditions map[uuid.UUID][]sqlcgen.VideoRendition
 	videoFiles map[uuid.UUID][]sqlcgen.VideoFile
 	steps      []sqlcgen.UpsertTranscodeStepParams
+	sizes      map[string]int64 // storage key -> size_bytes, for the scratch estimate
 }
 
 func newFakeRepo() *fakeRepo {
@@ -31,6 +32,7 @@ func newFakeRepo() *fakeRepo {
 		playlists:  map[uuid.UUID]sqlcgen.StreamingPlaylist{},
 		renditions: map[uuid.UUID][]sqlcgen.VideoRendition{},
 		videoFiles: map[uuid.UUID][]sqlcgen.VideoFile{},
+		sizes:      map[string]int64{},
 	}
 }
 
@@ -118,6 +120,31 @@ func (f *fakeRepo) RescheduleTranscodeJob(_ context.Context, a sqlcgen.Reschedul
 	j.NextAttemptAt = a.NextAttemptAt
 	j.LastError = a.LastError
 	return nil
+}
+
+// DeferTranscodeJob returns a job to the queue WITHOUT consuming an attempt --
+// the distinction the scratch-space guard depends on.
+func (f *fakeRepo) DeferTranscodeJob(_ context.Context, a sqlcgen.DeferTranscodeJobParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.jobs[a.ID]
+	j.State = "pending"
+	j.NextAttemptAt = a.NextAttemptAt
+	j.LastError = a.LastError
+	return nil
+}
+
+// GetVideoFileSizeByStorageKey makes the fake a sizeRepository so the per-job
+// scratch estimate is exercised. sizes is keyed by storage key; a miss reports
+// pgx.ErrNoRows-ish (any error), which the guard treats as "admit".
+func (f *fakeRepo) GetVideoFileSizeByStorageKey(_ context.Context, key string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n, ok := f.sizes[key]
+	if !ok {
+		return 0, errors.New("no such file")
+	}
+	return n, nil
 }
 
 func (f *fakeRepo) FailTranscodeJob(_ context.Context, a sqlcgen.FailTranscodeJobParams) error {
@@ -983,5 +1010,166 @@ func TestInvalidateDropsPlaylistAndRenditions(t *testing.T) {
 	}
 	if rends := svc.Renditions(context.Background(), videoID); len(rends) != 0 {
 		t.Errorf("renditions after Invalidate = %+v, want none", rends)
+	}
+}
+
+const gib = 1 << 30
+
+// TestScratchFloorStopsClaiming is the guard that matters most. The scratch
+// volume shares a filesystem with the Postgres data directory on the single-disk
+// deployment, so a transcode that fills it does not merely fail a job — it stops
+// the database accepting writes. Below the floor the worker must claim NOTHING,
+// and crucially must leave the jobs in 'pending' rather than flipping them to
+// 'running' and failing them for a condition the job did not cause.
+func TestScratchFloorStopsClaiming(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	tc := &fakeTranscoder{}
+	svc := NewService(repo, tc, WithScratchGuard(
+		func() (uint64, error) { return 2 * gib, nil }, 10*gib))
+
+	if err := svc.Enqueue(context.Background(), videoID, "web-videos/x.mp4"); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	n, err := svc.DrainJobs(context.Background(), 10)
+	if err != nil || n != 0 {
+		t.Fatalf("DrainJobs = (%d, %v), want (0, nil) below the floor", n, err)
+	}
+	if tc.calls != 0 {
+		t.Errorf("transcoder ran %d times below the scratch floor", tc.calls)
+	}
+	if got := repo.job(t, videoID); got.State != "pending" {
+		t.Errorf("job state = %q, want it left pending (not claimed-then-failed)", got.State)
+	}
+	if got := repo.job(t, videoID); got.Attempts != 0 {
+		t.Errorf("attempts = %d; a full disk must not consume the video's retry budget", got.Attempts)
+	}
+}
+
+// TestScratchFloorAdmitsWhenSpaceIsAvailable is the other half: the guard must
+// not be a permanent brake.
+func TestScratchFloorAdmitsWhenSpaceIsAvailable(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	tc := &fakeTranscoder{}
+	svc := NewService(repo, tc, WithScratchGuard(
+		func() (uint64, error) { return 500 * gib, nil }, 10*gib))
+
+	_ = svc.Enqueue(context.Background(), videoID, "web-videos/x.mp4")
+	if n, err := svc.DrainJobs(context.Background(), 10); err != nil || n != 1 {
+		t.Fatalf("DrainJobs = (%d, %v), want (1, nil) with space free", n, err)
+	}
+}
+
+// TestUnmeasurableScratchDoesNotHaltTranscoding pins the fail-open posture. A
+// statfs that errors is a broken measurement, not a full disk; halting every
+// transcode on the instance because a syscall failed would be a worse outage
+// than the one being guarded against.
+func TestUnmeasurableScratchDoesNotHaltTranscoding(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	tc := &fakeTranscoder{}
+	svc := NewService(repo, tc, WithScratchGuard(
+		func() (uint64, error) { return 0, errors.New("statfs: permission denied") }, 10*gib))
+
+	_ = svc.Enqueue(context.Background(), videoID, "web-videos/x.mp4")
+	if n, err := svc.DrainJobs(context.Background(), 10); err != nil || n != 1 {
+		t.Fatalf("DrainJobs = (%d, %v), want (1, nil) — an unmeasurable disk must not halt the queue", n, err)
+	}
+}
+
+// TestOversizedSourceIsDeferredNotFailed covers the per-job estimate. The
+// distinction between DEFER and RESCHEDULE is the whole point: rescheduling
+// increments attempts, so five full-disk ticks would dead-letter a perfectly
+// good video permanently.
+func TestOversizedSourceIsDeferredNotFailed(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	const key = "web-videos/huge.mp4"
+	// 40 GiB source needs ~120 GiB of scratch; only 50 GiB is free.
+	repo.sizes[key] = 40 * gib
+	tc := &fakeTranscoder{}
+	svc := NewService(repo, tc, WithScratchGuard(
+		func() (uint64, error) { return 50 * gib, nil }, 10*gib))
+
+	_ = svc.Enqueue(context.Background(), videoID, key)
+	n, err := svc.DrainJobs(context.Background(), 10)
+	if err != nil || n != 0 {
+		t.Fatalf("DrainJobs = (%d, %v), want (0, nil) for an oversized source", n, err)
+	}
+	if tc.calls != 0 {
+		t.Errorf("transcoder ran %d times for a source that cannot fit", tc.calls)
+	}
+	job := repo.job(t, videoID)
+	if job.State != "pending" {
+		t.Errorf("job state = %q, want pending", job.State)
+	}
+	if job.Attempts != 0 {
+		t.Errorf("attempts = %d, want 0 — a deferral must not burn the retry budget, "+
+			"or five full-disk ticks would dead-letter the video", job.Attempts)
+	}
+	if !strings.Contains(job.LastError, "scratch space") {
+		t.Errorf("last_error = %q, want it to name the reason so an operator can act", job.LastError)
+	}
+	if !job.NextAttemptAt.After(time.Now()) {
+		t.Error("deferred job is due immediately; it would spin against a full disk")
+	}
+}
+
+// TestSourceThatFitsRuns proves the estimate admits normal work.
+func TestSourceThatFitsRuns(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	const key = "web-videos/normal.mp4"
+	repo.sizes[key] = 2 * gib // needs ~6 GiB, 500 GiB free
+	tc := &fakeTranscoder{}
+	svc := NewService(repo, tc, WithScratchGuard(
+		func() (uint64, error) { return 500 * gib, nil }, 10*gib))
+
+	_ = svc.Enqueue(context.Background(), videoID, key)
+	if n, err := svc.DrainJobs(context.Background(), 10); err != nil || n != 1 {
+		t.Fatalf("DrainJobs = (%d, %v), want (1, nil)", n, err)
+	}
+}
+
+// TestUnknownSourceSizeAdmits pins the other fail-open: a missing size row (an
+// imported video, a hand-inserted job) must not block transcoding. The floor has
+// already passed at this point, so admitting is the safe default.
+func TestUnknownSourceSizeAdmits(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	tc := &fakeTranscoder{}
+	svc := NewService(repo, tc, WithScratchGuard(
+		func() (uint64, error) { return 50 * gib, nil }, 10*gib))
+
+	_ = svc.Enqueue(context.Background(), videoID, "web-videos/unknown.mp4")
+	if n, err := svc.DrainJobs(context.Background(), 10); err != nil || n != 1 {
+		t.Fatalf("DrainJobs = (%d, %v), want (1, nil) when the source size is unknown", n, err)
+	}
+}
+
+// TestNoScratchGuardKeepsPreGuardBehaviour proves the option is genuinely
+// optional — a service without it behaves exactly as before.
+func TestNoScratchGuardKeepsPreGuardBehaviour(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	repo.sizes["web-videos/huge.mp4"] = 500 * gib
+	tc := &fakeTranscoder{}
+	svc := NewService(repo, tc)
+
+	_ = svc.Enqueue(context.Background(), videoID, "web-videos/huge.mp4")
+	if n, err := svc.DrainJobs(context.Background(), 10); err != nil || n != 1 {
+		t.Fatalf("DrainJobs = (%d, %v), want (1, nil) with no guard wired", n, err)
+	}
+}
+
+// TestScratchGuardDefaultsTheFloor proves a zero minFree does not mean "no
+// floor" — that would silently disable the guard for anyone who passes an unset
+// config value.
+func TestScratchGuardDefaultsTheFloor(t *testing.T) {
+	svc := NewService(newFakeRepo(), &fakeTranscoder{}, WithScratchGuard(
+		func() (uint64, error) { return 0, nil }, 0))
+	if svc.minFreeScratch != DefaultMinFreeScratchBytes {
+		t.Errorf("minFreeScratch = %d, want the default %d", svc.minFreeScratch, DefaultMinFreeScratchBytes)
 	}
 }

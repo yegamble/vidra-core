@@ -489,6 +489,9 @@ services:
       # object-store egress (the pipeline reads its output back to build the
       # progressive downloads). See .env.example. Off by default.
       TRANSCODING_STREAM_OUTPUT: ${TRANSCODING_STREAM_OUTPUT:-false}
+      # Free-space floor (MiB) on the transcode scratch volume below which no new
+      # job is claimed. 0 = built-in default (10 GiB). See .env.example.
+      TRANSCODING_MIN_FREE_SCRATCH_MB: ${TRANSCODING_MIN_FREE_SCRATCH_MB:-0}
       # AV1 is DEFERRED (fix_plan P6.3): setting this true is a HARD boot failure,
       # not a no-op. Passed through only so the key has a compose consumer; leave
       # it false.

@@ -82,6 +82,16 @@ func (f *transcodeFakeRepo) RescheduleTranscodeJob(_ context.Context, a sqlcgen.
 	return nil
 }
 
+// DeferTranscodeJob returns a job to the queue WITHOUT consuming an attempt (the
+// scratch-space guard's path).
+func (f *transcodeFakeRepo) DeferTranscodeJob(_ context.Context, a sqlcgen.DeferTranscodeJobParams) error {
+	j := f.jobs[a.ID]
+	j.State = "pending"
+	j.NextAttemptAt = a.NextAttemptAt
+	j.LastError = a.LastError
+	return nil
+}
+
 func (f *transcodeFakeRepo) FailTranscodeJob(_ context.Context, a sqlcgen.FailTranscodeJobParams) error {
 	j := f.jobs[a.ID]
 	j.State = "failed"

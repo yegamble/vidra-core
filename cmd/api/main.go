@@ -31,6 +31,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channelsync"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/diskspace"
 	"github.com/vidra/vidra-core/internal/donation"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
@@ -770,6 +771,19 @@ func run() error {
 			return settingssvc.Int(instancesettings.KeyTranscodingConcurrency)
 		}),
 	)
+	// Scratch-space admission control: the worker measures the filesystem it
+	// actually writes to (TMPDIR, which the prod compose points at the
+	// transcode_tmp volume) and claims nothing below the floor. Without this a
+	// busy instance fills the disk, and on a single-disk host that stops Postgres
+	// accepting writes rather than merely failing a transcode.
+	scratchRoot := os.TempDir()
+	tcopts = append(tcopts, transcode.WithScratchGuard(
+		func() (uint64, error) {
+			u, err := diskspace.Measure(scratchRoot)
+			return u.FreeBytes, err
+		},
+		uint64(cfg.TranscodingMinFreeScratchMB)<<20,
+	))
 	transcodesvc = transcode.NewService(db.Queries(), hlsTranscoder, tcopts...)
 	opts = append(opts, httpapi.WithTranscodeService(transcodesvc))
 	// Publish-after-transcode seams (0098): whether a transcode will actually run

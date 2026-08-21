@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -52,6 +53,46 @@ const (
 	PlaylistFailed = "failed"
 )
 
+// Scratch-space admission control.
+//
+// A transcode writes several times its source into the scratch volume before
+// anything is uploaded. On the single-disk deployment this ships as, that volume
+// shares a filesystem with the Postgres data directory — so a transcode that
+// fills the disk does not merely fail its own job, it stops the database
+// accepting writes and takes the instance down. Claiming work the disk cannot
+// hold is therefore not a job-level problem; it is how a busy instance kills
+// itself.
+//
+// Two guards, because they catch different failures:
+//
+//   - a FLOOR below which no job is claimed at all, which stops a nearly-full
+//     disk from being finished off by routine work;
+//   - a PER-JOB estimate, which stops one unusually large source from
+//     overrunning a disk that looked fine.
+const (
+	// DefaultMinFreeScratchBytes is the floor. It is deliberately generous: the
+	// cost of deferring a transcode for a tick is minutes, and the cost of
+	// filling the disk is the whole instance.
+	DefaultMinFreeScratchBytes uint64 = 10 << 30 // 10 GiB
+
+	// scratchMultiple is how much scratch one job is assumed to need relative to
+	// its source. Measured peak after the decode-once/incremental-upload work is
+	// roughly 1.8x for a typical camera or screen-recording source; 3x leaves
+	// room for concurrent jobs and for sources that compress unusually well.
+	//
+	// It is a heuristic and it has a known blind spot: the HLS ladder's bitrates
+	// are FIXED, so a very low-bitrate source (a mostly-static 30-minute
+	// screencast, say) can produce a ladder several times its own size and slip
+	// past this estimate. The floor above is what actually protects the disk in
+	// that case, which is why both exist.
+	scratchMultiple = 3
+
+	// scratchRetryDelay is how long a job deferred for space waits. Long enough
+	// that a full disk is not re-checked in a tight loop, short enough that
+	// freeing space brings the queue back within a few minutes.
+	scratchRetryDelay = 5 * time.Minute
+)
+
 // Repository is the data access the transcode service needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
 type Repository interface {
@@ -59,6 +100,7 @@ type Repository interface {
 	ClaimDueTranscodeJobs(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueTranscodeJobsRow, error)
 	CompleteTranscodeJob(ctx context.Context, id uuid.UUID) error
 	RescheduleTranscodeJob(ctx context.Context, arg sqlcgen.RescheduleTranscodeJobParams) error
+	DeferTranscodeJob(ctx context.Context, arg sqlcgen.DeferTranscodeJobParams) error
 	FailTranscodeJob(ctx context.Context, arg sqlcgen.FailTranscodeJobParams) error
 	HasLiveTranscodeJob(ctx context.Context, videoID uuid.UUID) (bool, error)
 	UpsertStreamingPlaylist(ctx context.Context, arg sqlcgen.UpsertStreamingPlaylistParams) (sqlcgen.StreamingPlaylist, error)
@@ -97,6 +139,13 @@ type stepRepository interface {
 	UpsertTranscodeStep(ctx context.Context, arg sqlcgen.UpsertTranscodeStepParams) error
 }
 
+// sizeRepository is the optional source-size lookup the per-job scratch estimate
+// needs. *sqlcgen.Queries satisfies it; a fake that does not simply means the
+// per-job estimate is skipped and only the free-space floor applies.
+type sizeRepository interface {
+	GetVideoFileSizeByStorageKey(ctx context.Context, storageKey string) (int64, error)
+}
+
 type targetRunError struct {
 	target string
 	err    error
@@ -126,6 +175,12 @@ type Service struct {
 	// DrainJobs call (per worker tick) so a change applies without a restart.
 	// nil = 1 (the pre-W10 sequential behavior).
 	concurrencyFn func() int64
+	// scratchFn reports free bytes on the transcode scratch filesystem. nil
+	// disables admission control entirely (the pre-guard behaviour), which is
+	// what tests and the read-only service get.
+	scratchFn func() (uint64, error)
+	// minFreeScratch is the floor below which no job is claimed.
+	minFreeScratch uint64
 }
 
 // Option configures the transcode service.
@@ -166,6 +221,21 @@ func WithEnabledFunc(f func() bool) Option {
 // parallelism they started with.
 func WithConcurrencyFunc(f func() int64) Option {
 	return func(s *Service) { s.concurrencyFn = f }
+}
+
+// WithScratchGuard wires scratch-space admission control. free reports the
+// remaining bytes on the filesystem the transcoder writes to (see
+// internal/diskspace); minFree is the floor below which the worker claims
+// nothing. A zero minFree falls back to DefaultMinFreeScratchBytes; a nil free
+// leaves admission control off.
+func WithScratchGuard(free func() (uint64, error), minFree uint64) Option {
+	return func(s *Service) {
+		s.scratchFn = free
+		if minFree == 0 {
+			minFree = DefaultMinFreeScratchBytes
+		}
+		s.minFreeScratch = minFree
+	}
 }
 
 // Enabled reports the effective runtime transcoding gate (true when no
@@ -286,6 +356,17 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 	if !s.Enabled() {
 		return 0, nil
 	}
+	// Scratch floor: below it, claim nothing. Checked BEFORE the claim so a
+	// nearly-full disk leaves jobs in 'pending' where the next tick (or an
+	// operator freeing space) picks them up, rather than flipping them to
+	// 'running' and then failing them for a condition that has nothing to do
+	// with the job.
+	free, freeKnown := s.freeScratch(ctx)
+	if freeKnown && free < s.minFreeScratch {
+		slog.WarnContext(ctx, "transcode: deferring all jobs, scratch space below the floor",
+			"free_bytes", free, "min_free_bytes", s.minFreeScratch)
+		return 0, nil
+	}
 	rows, err := s.repo.ClaimDueTranscodeJobs(ctx, int32(limit))
 	if err != nil {
 		return 0, err
@@ -309,6 +390,18 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 			context.WithoutCancel(ctx), bookkeepingTimeout)
 		defer cancelBookkeeping()
 
+		// Per-job estimate. A job whose source will not fit is DEFERRED, not
+		// failed and not rescheduled: the disk is a host condition with nothing
+		// to do with this video, so it must not consume the video's retry budget
+		// (five full-disk ticks would otherwise dead-letter it permanently).
+		if freeKnown && !s.scratchFits(ctx, row.SourceKey, free) {
+			_ = s.repo.DeferTranscodeJob(bookkeeping, sqlcgen.DeferTranscodeJobParams{
+				ID:            row.ID,
+				NextAttemptAt: time.Now().UTC().Add(scratchRetryDelay),
+				LastError:     "deferred: not enough scratch space for this source",
+			})
+			return
+		}
 		err := s.runTarget(ctx, row)
 		if err != nil {
 			s.recordFailure(bookkeeping, row, err)
@@ -491,6 +584,45 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueTransco
 		NextAttemptAt: time.Now().UTC().Add(backoff(attempts)),
 		LastError:     msg,
 	})
+}
+
+// freeScratch reports the free bytes on the scratch filesystem, and whether the
+// answer is usable. A measurement error is reported as UNKNOWN rather than as
+// zero: a statfs that fails must not silently halt every transcode on the
+// instance.
+func (s *Service) freeScratch(ctx context.Context) (uint64, bool) {
+	if s.scratchFn == nil {
+		return 0, false
+	}
+	free, err := s.scratchFn()
+	if err != nil {
+		slog.WarnContext(ctx, "transcode: scratch space could not be measured; admission control is off for this tick",
+			"error", err.Error())
+		return 0, false
+	}
+	return free, true
+}
+
+// scratchFits reports whether free space covers this source's estimated need.
+// An unknown source size admits the job: the floor already passed, and refusing
+// work because a size lookup failed would be a worse failure than the one being
+// guarded against.
+func (s *Service) scratchFits(ctx context.Context, sourceKey string, free uint64) bool {
+	repo, ok := s.repo.(sizeRepository)
+	if !ok {
+		return true
+	}
+	size, err := repo.GetVideoFileSizeByStorageKey(ctx, sourceKey)
+	if err != nil || size <= 0 {
+		return true
+	}
+	need := uint64(size) * scratchMultiple
+	if free >= need {
+		return true
+	}
+	slog.WarnContext(ctx, "transcode: deferring job, source too large for the free scratch space",
+		"source_bytes", size, "estimated_need_bytes", need, "free_bytes", free)
+	return false
 }
 
 // backoff is baseBackoff * 2^(attempts-1), capped at maxBackoff.
