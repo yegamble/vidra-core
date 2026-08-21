@@ -264,3 +264,68 @@ func TestExpiredLeaseBecomesClaimableAgain(t *testing.T) {
 		t.Fatalf("the row did not become claimable after its lease expired; a crashed worker would strand it")
 	}
 }
+
+// TestStateFlipClaimsAreExclusive covers the six queues that claim by flipping a
+// row to 'running' rather than by leasing. Those were `UPDATE ... WHERE id IN
+// (SELECT ... LIMIT n)` with no row locking — the classic queue anti-pattern,
+// where the ids are chosen before any lock is taken so two concurrent claimers
+// can select the same row. FOR UPDATE SKIP LOCKED is what makes them safe.
+//
+// transcode_jobs stands in for the set: they are the same statement shape, and
+// this one is the most expensive to get wrong (two workers encoding the same
+// video into the same output prefix, corrupting each other's tree).
+func TestStateFlipClaimsAreExclusive(t *testing.T) {
+	st := leaseStore(t)
+	q := st.Queries()
+	ctx := context.Background()
+
+	_, channelID, cleanup := seedUserAndChannel(t, st)
+	t.Cleanup(cleanup)
+
+	wanted := map[uuid.UUID]bool{}
+	for i := range 6 {
+		var videoID uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO videos (channel_id, title, privacy, state) VALUES ($1, 'claim-race', 'public', 'published') RETURNING id`,
+			channelID,
+		).Scan(&videoID); err != nil {
+			t.Fatalf("seed video %d: %v", i, err)
+		}
+		if err := q.EnqueueTranscodeJob(ctx, sqlcgen.EnqueueTranscodeJobParams{
+			VideoID:       videoID,
+			SourceKey:     "web-videos/" + videoID.String() + ".mp4",
+			TranscodeType: "all",
+		}); err != nil {
+			t.Fatalf("EnqueueTranscodeJob: %v", err)
+		}
+		wanted[videoID] = true
+	}
+
+	claim := func(ctx context.Context) ([]uuid.UUID, error) {
+		rows, err := q.ClaimDueTranscodeJobs(ctx, 10)
+		if err != nil {
+			return nil, err
+		}
+		ids := make([]uuid.UUID, 0, len(rows))
+		for _, r := range rows {
+			if wanted[r.VideoID] {
+				ids = append(ids, r.ID)
+			}
+		}
+		return ids, nil
+	}
+	a, b := claimRace(t, claim)
+	assertDisjoint(t, "transcode_jobs", a, b)
+
+	// Every one of our jobs must now be 'running' exactly once — no row left
+	// pending because two claimers fought over it, and none claimed twice.
+	var running int
+	if err := st.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM transcode_jobs j JOIN videos v ON v.id = j.video_id
+		 WHERE v.channel_id = $1 AND j.state = 'running'`, channelID).Scan(&running); err != nil {
+		t.Fatalf("count running: %v", err)
+	}
+	if running != len(wanted) {
+		t.Errorf("%d jobs are running, want all %d claimed exactly once", running, len(wanted))
+	}
+}

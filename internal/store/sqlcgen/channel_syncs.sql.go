@@ -20,6 +20,7 @@ WHERE id IN (
     WHERE next_run_at <= now() AND state IN ('waiting_first_run', 'idle', 'failed')
     ORDER BY next_run_at
     LIMIT $1
+    FOR UPDATE SKIP LOCKED
 )
 RETURNING id, channel_id, user_id, external_channel_url
 `
@@ -33,6 +34,12 @@ type ClaimDueChannelSyncsRow struct {
 
 // Atomically claims due syncs (oldest first) by flipping them to 'syncing', so an
 // overlapping tick never double-processes one. A failed sync is retryable.
+//
+// FOR UPDATE SKIP LOCKED is what makes this safe with more than one instance:
+// concurrent claimers take disjoint rows instead of blocking on each other and
+// then racing to re-evaluate the subquery. Without it, `UPDATE ... WHERE id IN
+// (SELECT ...)` is the classic queue anti-pattern -- the ids are chosen before
+// the lock is taken, so two claimers can select the same row.
 func (q *Queries) ClaimDueChannelSyncs(ctx context.Context, limit int32) ([]ClaimDueChannelSyncsRow, error) {
 	rows, err := q.db.Query(ctx, claimDueChannelSyncs, limit)
 	if err != nil {

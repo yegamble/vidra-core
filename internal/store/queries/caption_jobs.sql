@@ -20,6 +20,12 @@ LIMIT 1;
 -- name: ClaimDueCaptionJobs :many
 -- Atomically claims due pending jobs (oldest first) by flipping them to
 -- 'running', exactly like ClaimDueImportJobs.
+--
+-- FOR UPDATE SKIP LOCKED is what makes this safe with more than one instance:
+-- concurrent claimers take disjoint rows instead of blocking on each other and
+-- then racing to re-evaluate the subquery. Without it, `UPDATE ... WHERE id IN
+-- (SELECT ...)` is the classic queue anti-pattern -- the ids are chosen before
+-- the lock is taken, so two claimers can select the same row.
 UPDATE caption_jobs
 SET state = 'running', stage = 'preparing', progress_percent = 5, updated_at = now()
 WHERE id IN (
@@ -27,6 +33,7 @@ WHERE id IN (
     WHERE state = 'pending' AND next_attempt_at <= now()
     ORDER BY next_attempt_at
     LIMIT $1
+    FOR UPDATE SKIP LOCKED
 )
 RETURNING id, video_id, language, attempts;
 

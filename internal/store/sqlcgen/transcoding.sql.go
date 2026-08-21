@@ -20,6 +20,7 @@ WHERE id IN (
     WHERE state = 'pending' AND next_attempt_at <= now()
     ORDER BY next_attempt_at
     LIMIT $1
+    FOR UPDATE SKIP LOCKED
 )
 RETURNING id, video_id, source_key, transcode_type, attempts
 `
@@ -33,8 +34,14 @@ type ClaimDueTranscodeJobsRow struct {
 }
 
 // Atomically claims due pending jobs (oldest first) by flipping them to
-// 'running'. A single in-process worker drains sequentially; the claim still
-// guards against double-processing across restarts within one batch.
+// 'running', so no two workers -- in one process or across instances -- ever
+// receive the same job.
+//
+// FOR UPDATE SKIP LOCKED is what makes this safe with more than one instance:
+// concurrent claimers take disjoint rows instead of blocking on each other and
+// then racing to re-evaluate the subquery. Without it, `UPDATE ... WHERE id IN
+// (SELECT ...)` is the classic queue anti-pattern -- the ids are chosen before
+// the lock is taken, so two claimers can select the same row.
 func (q *Queries) ClaimDueTranscodeJobs(ctx context.Context, limit int32) ([]ClaimDueTranscodeJobsRow, error) {
 	rows, err := q.db.Query(ctx, claimDueTranscodeJobs, limit)
 	if err != nil {
