@@ -50,8 +50,11 @@ header.top h1 .mark{background:linear-gradient(90deg,var(--cyan),var(--indigo));
 header.top .sub{color:var(--ink-faint);font-size:.82rem}
 
 ol.steps{display:flex;flex-wrap:wrap;gap:.3rem;list-style:none;padding:0;margin:1rem 0 1.25rem}
+/* The chips are a PROGRESS INDICATOR, not navigation — clicking one would jump
+   past validation. So they read as non-interactive: no pointer cursor, no text
+   selection handle. */
 ol.steps li{font-size:.72rem;color:var(--ink-faint);border:1px solid var(--line);
-  border-radius:999px;padding:.15rem .6rem;white-space:nowrap}
+  border-radius:999px;padding:.15rem .6rem;white-space:nowrap;cursor:default;user-select:none}
 ol.steps li[aria-current="step"]{color:var(--bg);background:var(--cyan);border-color:var(--cyan);font-weight:600}
 ol.steps li.done{color:var(--ink-dim);border-color:var(--ink-faint)}
 
@@ -70,6 +73,7 @@ input[type=text],input[type=password],select,textarea{
   background:var(--panel-2);color:var(--ink);font:inherit}
 input:focus-visible,select:focus-visible,button:focus-visible,input[type=checkbox]:focus-visible{
   outline:2px solid var(--cyan);outline-offset:2px}
+input[aria-invalid="true"],select[aria-invalid="true"]{border-color:var(--fail)}
 .check{display:flex;gap:.55rem;align-items:flex-start;margin:0 0 .55rem;font-weight:400}
 .check input{margin-top:.28rem}
 .check label{font-weight:600;margin:0}
@@ -78,6 +82,18 @@ input:focus-visible,select:focus-visible,button:focus-visible,input[type=checkbo
 .err:empty{display:none}
 .note{border-left:3px solid var(--indigo);padding:.5rem .75rem;background:var(--panel-2);
   border-radius:0 7px 7px 0;color:var(--ink-dim);font-size:.88rem;margin:0 0 1rem}
+/* The one doctor finding that guarantees the deploy fails — docker or compose
+   missing, or too old — gets its own weight, above the cosmetic first-install
+   skips it would otherwise be lost among. */
+.blocker{border-left:3px solid var(--fail);padding:.6rem .8rem;background:var(--panel-2);
+  border-radius:0 7px 7px 0;margin:0 0 1rem}
+.blocker strong{color:var(--fail)}
+.blocker .fix{color:var(--ink-dim);display:block;margin-top:.25rem;font-size:.86rem}
+/* The static Basic-mode TLS value: a statement of what will happen, not a dead
+   one-item dropdown. */
+.tls-static-value{font-weight:600;padding:.5rem .6rem;border-radius:7px;
+  border:1px dashed var(--line);background:var(--panel-2);display:inline-block}
+a{color:var(--cyan)}
 .line{display:flex;gap:.5rem;align-items:flex-start;padding:.22rem 0;font-size:.88rem}
 .line .g{flex:0 0 1.1rem;font-weight:700}
 .g.ok{color:var(--ok)} .g.warn{color:var(--warn)} .g.fail{color:var(--fail)} .g.skipped{color:var(--ink-faint)}
@@ -93,7 +109,10 @@ nav.actions{display:flex;gap:.6rem;justify-content:space-between;margin-top:1.25
 button{font:inherit;font-weight:600;border-radius:8px;padding:.5rem 1rem;cursor:pointer;
   border:1px solid var(--line);background:var(--panel-2);color:var(--ink)}
 button.primary{background:var(--cyan);border-color:var(--cyan);color:#04202a}
-button.primary:disabled{opacity:.45;cursor:not-allowed}
+/* Every disabled button dims and refuses the pointer, ghost included — a
+   disabled .ghost used to render at full opacity with a pointer cursor, which
+   reads as "clickable, just ignored". */
+button:disabled{opacity:.45;cursor:not-allowed}
 button.ghost{background:transparent}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
 .seg button{border:0;border-radius:0;background:transparent;padding:.4rem .9rem}
@@ -154,14 +173,23 @@ button.ghost{background:transparent}
     <div class="field">
       <label for="f-tls">How is TLS terminated?</label>
       <p class="hint" id="tls-hint"></p>
-      <select id="f-tls"></select>
+      <select id="f-tls" aria-describedby="e-tls"></select>
+      <!-- When Basic offers acme alone, the select would be a dead one-item
+           dropdown a LAN operator (plain-http's whole audience) opens, finds one
+           thing in, and is stuck. So it renders as a plain statement of what
+           will happen, with the way to the other modes named rather than hidden
+           behind a control that looks broken. -->
+      <div id="tls-static" hidden>
+        <span class="tls-static-value">Automatic HTTPS (Let's Encrypt)</span>
+        <p class="hint">This host gets a real certificate automatically once its domain points here. <a href="#" id="tls-advanced-link">Need plain HTTP, a private CA, or your own proxy? Switch to Advanced.</a></p>
+      </div>
       <p class="err" id="e-tls" role="alert"></p>
     </div>
 
     <div class="field">
       <label for="f-domain" id="l-domain">Public domain of this instance</label>
       <p class="hint" id="domain-hint">e.g. video.example.org. It is the origin for watch and embed links <em>and</em> for OAuth, NodeInfo and federation identity, so it cannot be changed casually later.</p>
-      <input type="text" id="f-domain" autocomplete="off" spellcheck="false" placeholder="video.example.org">
+      <input type="text" id="f-domain" autocomplete="off" spellcheck="false" placeholder="video.example.org" aria-describedby="e-domain">
       <p class="err" id="e-domain" role="alert"></p>
       <div id="dns-out"></div>
     </div>
@@ -169,7 +197,7 @@ button.ghost{background:transparent}
     <div class="field" id="w-acme">
       <label for="f-acme">Contact address for Let's Encrypt expiry notices</label>
       <p class="hint">Optional — leave it blank and the install continues. Without one there is no warning before a failed renewal becomes an outage.</p>
-      <input type="text" id="f-acme" autocomplete="off" spellcheck="false" placeholder="ops@example.org">
+      <input type="text" id="f-acme" autocomplete="off" spellcheck="false" placeholder="ops@example.org" aria-describedby="e-acme">
       <p class="err" id="e-acme" role="alert"></p>
     </div>
 
@@ -396,6 +424,11 @@ button.ghost{background:transparent}
   const app = {
     step: 0,
     advanced: false,
+    // tlsMode is the AUTHORITATIVE selected mode, so it survives the
+    // Basic↔Advanced toggle (which rebuilds the control) and the static-display
+    // case (where there is no <select> to read a value from). tlsMode() returns
+    // this, and the select's change handler writes it.
+    tlsMode: "acme",
     state: null,
     review: null,
     applied: null,
@@ -545,7 +578,28 @@ button.ghost{background:transparent}
     }
     const r = res.body;
     out.replaceChildren();
-    (r.results || []).forEach((c) => {
+    const results = r.results || [];
+
+    // The docker/compose finding is not one warning among many: on a first
+    // install most checks are cosmetic "skipped — the deployment does not exist
+    // yet" warns, and a missing or too-old docker (the "compose version" check
+    // being anything but ok) is visually identical to them while being the ONE
+    // finding that guarantees the deploy fails. Lift it out, above the rest, with
+    // its own weight.
+    const blocker = results.find((c) => c.check === "compose version" && c.status !== "ok");
+    if (blocker) {
+      const box = el("div", "blocker");
+      box.setAttribute("role", "alert");
+      box.appendChild(el("strong", null, "Docker is not ready on this host"));
+      box.appendChild(el("div", null, blocker.detail));
+      box.appendChild(el("div", "fix", blocker.fix
+        ? blocker.fix
+        : "Install Docker with the compose plugin (docker compose v2) before you deploy — the install step runs `docker compose`, and it cannot start without it."));
+      out.appendChild(box);
+    }
+
+    results.forEach((c) => {
+      if (c === blocker) return; // already shown, prominently, above
       out.appendChild(statusLine(c.status, c.check, c.detail, c.status === "ok" ? "" : c.fix));
     });
     out.appendChild(el("p", "hint", r.ok + " passed, " + r.warn + " could not be checked or need reading, " + r.fail + " found a problem."));
@@ -582,31 +636,68 @@ button.ghost{background:transparent}
 
   // ---------------------------------------------------------------- step 4
 
-  function renderTLSOptions() {
-    const sel = $("f-tls");
-    const current = sel.value || (app.state && app.state.seed.tls_mode) || "acme";
-    sel.replaceChildren();
-    TLS_MODES.forEach((m) => {
-      // Basic offers acme only — plus whatever this deployment is already using,
-      // so a Basic re-run cannot silently move an instance off the mode it was
-      // installed with.
-      if (!app.advanced && !m.basic && m.v !== (app.state && app.state.seed.tls_mode)) return;
-      const o = document.createElement("option");
-      o.value = m.v;
-      o.textContent = m.label;
-      sel.appendChild(o);
+  // availableModes is which TLS modes the current step offers. Advanced offers
+  // all of them; Basic offers acme, PLUS any non-acme mode the operator has
+  // already committed to — the deployment's current mode on a re-run, or a mode
+  // they picked in Advanced this session. That second rule is what makes the
+  // Basic↔Advanced round-trip preserve a plain-http choice instead of silently
+  // resetting it to acme, WITHOUT dumping every mode into Basic.
+  function availableModes() {
+    if (app.advanced) return TLS_MODES.map((m) => m.v);
+    const out = ["acme"];
+    [app.tlsMode, app.state && app.state.seed.tls_mode].forEach((v) => {
+      if (v && v !== "acme" && !out.includes(v)) out.push(v);
     });
-    sel.value = Array.from(sel.options).some((o) => o.value === current) ? current : sel.options[0].value;
+    return out;
+  }
+
+  function renderTLSOptions() {
+    const modes = availableModes();
+    // Keep the current selection if it is still on offer; otherwise fall to the
+    // first available (acme).
+    if (!modes.includes(app.tlsMode)) app.tlsMode = modes[0];
+
+    const sel = $("f-tls");
+    const staticBox = $("tls-static");
+    // A single-option Basic dropdown is a dead control. Render the acme case as
+    // a static statement instead; anything with a real choice keeps the select.
+    if (modes.length === 1) {
+      sel.hidden = true;
+      sel.replaceChildren();
+      staticBox.hidden = false;
+    } else {
+      staticBox.hidden = true;
+      sel.hidden = false;
+      sel.replaceChildren();
+      modes.forEach((v) => {
+        const m = TLS_MODES.find((x) => x.v === v);
+        const o = document.createElement("option");
+        o.value = v;
+        o.textContent = m ? m.label : v;
+        sel.appendChild(o);
+      });
+      sel.value = app.tlsMode;
+    }
     onTLSChange();
   }
 
-  function tlsMode() { return $("f-tls").value; }
+  function tlsMode() { return app.tlsMode; }
 
   function onTLSChange() {
     const mode = tlsMode();
     const m = TLS_MODES.find((x) => x.v === mode);
     text($("tls-hint"), m ? m.hint : "");
-    $("w-acme").hidden = !(mode === "acme" || mode === "acme-staging");
+    const acmeMode = mode === "acme" || mode === "acme-staging";
+    $("w-acme").hidden = !acmeMode;
+    // A field the current mode HIDES must not carry a stale value into the
+    // written env: an ACME contact typed under acme, then switched to plain-http,
+    // would otherwise persist. Clearing it here is the visible half; collect()
+    // also excludes it, so neither the form nor a hand-crafted POST can smuggle
+    // it through.
+    if (!acmeMode) {
+      $("f-acme").value = "";
+      clearFieldError($("f-acme"), $("e-acme"));
+    }
     if (mode === "plain-http") {
       // No PORT in the example, deliberately: the managed Caddy publishes 80 and
       // 443 only, so an operator who copied a host:port shape would deploy an
@@ -619,8 +710,32 @@ button.ghost{background:transparent}
       text($("domain-hint"), "e.g. video.example.org. It is the origin for watch and embed links and for OAuth, NodeInfo and federation identity, so it cannot be changed casually later.");
       $("f-domain").placeholder = "video.example.org";
     }
-    text($("e-domain"), "");
+    clearFieldError($("f-domain"), $("e-domain"));
+    // The scheme a bare host normalises to depends on the mode, so a DNS verdict
+    // read under the old mode is stale the moment the mode changes.
     $("dns-out").replaceChildren();
+  }
+
+  // setFieldError / clearFieldError keep an input and its role=alert message in
+  // step, and wire the two together for a screen reader: aria-invalid on the
+  // field, aria-describedby pointing at the message, so the error is announced
+  // with the field rather than floating unattached.
+  function setFieldError(input, errEl, msg) {
+    text(errEl, msg);
+    if (input) {
+      input.setAttribute("aria-invalid", "true");
+      input.setAttribute("aria-describedby", errEl.id);
+    }
+  }
+  function clearFieldError(input, errEl) {
+    text(errEl, "");
+    if (input) input.removeAttribute("aria-invalid");
+  }
+
+  // fieldInput maps a validated field to its input element, so validateField can
+  // put the aria state on the right control without every caller passing it.
+  function fieldInput(field) {
+    return { tls_mode: $("f-tls"), domain: $("f-domain"), acme_email: $("f-acme") }[field] || null;
   }
 
   // Field validation is ONE request per field, and the answer is the engine's.
@@ -628,13 +743,14 @@ button.ghost{background:transparent}
   // friendlier opinion about what a domain is, is a page that accepts answers
   // the Review step then refuses.
   async function validateField(field, value, errEl) {
-    text(errEl, "");
+    const input = fieldInput(field);
+    clearFieldError(input, errEl);
     if (!value && field !== "acme_email") return true;
     let res;
     try { res = await api("POST", "/api/validate", { field, value, context: { tls_mode: tlsMode() } }); }
-    catch (e) { text(errEl, e.message); return false; }
-    if (res.status !== 200 || !res.body) { text(errEl, "That answer could not be checked."); return false; }
-    if (!res.body.ok) { text(errEl, res.body.error); return false; }
+    catch (e) { setFieldError(input, errEl, e.message); return false; }
+    if (res.status !== 200 || !res.body) { setFieldError(input, errEl, "That answer could not be checked."); return false; }
+    if (!res.body.ok) { setFieldError(input, errEl, res.body.error); return false; }
     return true;
   }
 
@@ -677,9 +793,11 @@ button.ghost{background:transparent}
   // ---------------------------------------------------------------- form
 
   function seedForm(seed) {
+    // The mode is authoritative in app.tlsMode from here on — renderTLSOptions
+    // reads it, and the seeded re-run case (a deployment already on a non-acme
+    // mode) makes that mode one of Basic's options.
+    app.tlsMode = seed.tls_mode || "acme";
     renderTLSOptions();
-    $("f-tls").value = seed.tls_mode || "acme";
-    onTLSChange();
     $("f-domain").value = seed.domain || "";
     $("f-acme").value = seed.acme_email || "";
     $("f-name").value = seed.instance_name || "";
@@ -735,10 +853,15 @@ button.ghost{background:transparent}
   }
 
   function collect() {
+    const mode = tlsMode();
+    const acmeMode = mode === "acme" || mode === "acme-staging";
     const form = {
-      tls_mode: tlsMode(),
+      tls_mode: mode,
       domain: $("f-domain").value.trim(),
-      acme_email: $("f-acme").value.trim(),
+      // Only the acme modes have a contact address. Excluding it otherwise is the
+      // defensive half of onTLSChange's clear: a value from a mode that has since
+      // been switched away cannot ride into the written env.
+      acme_email: acmeMode ? $("f-acme").value.trim() : "",
       instance_name: $("f-name").value.trim(),
       release_tag: $("f-tag").value.trim(),
       core_tag: app.advanced ? $("f-core").value.trim() : "",
@@ -1033,17 +1156,34 @@ button.ghost{background:transparent}
 
   // ---------------------------------------------------------------- wiring
 
+  // focusInvalid takes an operator to the first field that failed, because a
+  // silent Next with the offending field scrolled off the bottom of a long step
+  // is a wizard that looks frozen. It scrolls the field to the middle and puts
+  // the cursor in it, so the role=alert message it is wired to is right there.
+  function focusInvalid(input) {
+    if (!input) return;
+    if (input.hidden || (input.offsetParent === null && input.type !== "hidden")) return;
+    input.scrollIntoView({ block: "center", behavior: "smooth" });
+    try { input.focus({ preventScroll: true }); } catch (_) { input.focus(); }
+  }
+
   async function next() {
     const id = STEPS[app.step].id;
     if (id === "s-domain") {
+      // Order matters: the first failing field is the one we take the operator
+      // to, and the fields are validated top to bottom as they appear.
       const okTLS = await validateField("tls_mode", tlsMode(), $("e-tls"));
-      const okDomain = await validateField("domain", $("f-domain").value.trim(), $("e-domain"));
-      const okEmail = await validateField("acme_email", $("f-acme").value.trim(), $("e-acme"));
+      let okDomain = true;
       if (!$("f-domain").value.trim()) {
-        text($("e-domain"), "The instance needs a public origin: it is the address for watch and embed links and for OAuth, NodeInfo and federation identity, so the template's example cannot be deployed.");
-        return;
+        setFieldError($("f-domain"), $("e-domain"), "The instance needs a public origin: it is the address for watch and embed links and for OAuth, NodeInfo and federation identity, so the template's example cannot be deployed.");
+        okDomain = false;
+      } else {
+        okDomain = await validateField("domain", $("f-domain").value.trim(), $("e-domain"));
       }
-      if (!okTLS || !okDomain || !okEmail) return;
+      const okEmail = await validateField("acme_email", $("f-acme").value.trim(), $("e-acme"));
+      if (!okTLS) { focusInvalid($("f-tls")); return; }
+      if (!okDomain) { focusInvalid($("f-domain")); return; }
+      if (!okEmail) { focusInvalid($("f-acme")); return; }
     }
     if (id === "s-review" && (!app.review || !app.review.ok)) return;
     if (id === "s-success") { await finish(); return; }
@@ -1055,8 +1195,19 @@ button.ghost{background:transparent}
     $("btn-back").addEventListener("click", () => { if (app.step > 0) show(app.step - 1); });
     $("mode-basic").addEventListener("click", () => setMode(false));
     $("mode-advanced").addEventListener("click", () => setMode(true));
-    $("f-tls").addEventListener("change", () => { onTLSChange(); checkDNS(); });
+    $("f-tls").addEventListener("change", () => { app.tlsMode = $("f-tls").value; onTLSChange(); checkDNS(); });
+    // The Basic-mode static display's escape hatch: no dead dropdown, a link that
+    // takes the LAN operator to the modes that are theirs.
+    $("tls-advanced-link").addEventListener("click", (e) => { e.preventDefault(); setMode(true); });
+    // A DNS verdict is about the value that produced it; as soon as the domain
+    // changes the old verdict is stale, so it (and any stale field error) is
+    // cleared the moment the operator types.
+    $("f-domain").addEventListener("input", () => {
+      $("dns-out").replaceChildren();
+      clearFieldError($("f-domain"), $("e-domain"));
+    });
     $("f-domain").addEventListener("blur", async () => {
+      if (!$("f-domain").value.trim()) return;
       if (await validateField("domain", $("f-domain").value.trim(), $("e-domain"))) checkDNS();
     });
     $("f-acme").addEventListener("blur", () => validateField("acme_email", $("f-acme").value.trim(), $("e-acme")));

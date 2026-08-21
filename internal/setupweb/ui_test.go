@@ -126,6 +126,46 @@ func TestTheShellSpellsTheTLSModesTheEngineAccepts(t *testing.T) {
 	}
 }
 
+// TestTheShellHasTheUXAffordancesTheAuditAskedFor locks the browser-pass fixes
+// against a silent regression. It is structural, not behavioural — the behaviour
+// is JavaScript a browser drives — but each of these is a hook the fix depends
+// on, and losing one is losing the fix.
+func TestTheShellHasTheUXAffordancesTheAuditAskedFor(t *testing.T) {
+	t.Parallel()
+	page := string(shell)
+	for name, needle := range map[string]string{
+		// #4: the Basic-mode static TLS value and its escape hatch, not a dead
+		// one-item dropdown.
+		"static TLS value":        `id="tls-static"`,
+		"switch-to-advanced link": `id="tls-advanced-link"`,
+		// #5: acme email excluded from the posted body when the mode hides it.
+		"acme email gated in collect": "acmeMode ? $(\"f-acme\").value.trim() : \"\"",
+		// #6: the authoritative mode that survives the Basic/Advanced toggle.
+		"authoritative tls mode": "app.tlsMode",
+		// #7: stale DNS cleared on domain input.
+		"domain input clears DNS": `$("f-domain").addEventListener("input"`,
+		// #8: first invalid field is scrolled to and focused.
+		"focus the invalid field": "function focusInvalid",
+		// #10: the docker/compose blocker lifted above the cosmetic skips.
+		"elevated docker blocker": `"compose version" && c.status !== "ok"`,
+		// a11y: inputs wired to their alert message.
+		"aria-invalid wiring": `input.setAttribute("aria-invalid", "true")`,
+	} {
+		if !strings.Contains(page, needle) {
+			t.Errorf("%s: the page is missing %q", name, needle)
+		}
+	}
+	// #9: the step chips must not advertise themselves as clickable.
+	if !strings.Contains(page, "cursor:default") {
+		t.Error("the step chips still carry a pointer affordance")
+	}
+	// a11y: a disabled ghost button dims like the primary one; a blanket
+	// button:disabled rule is how both get it.
+	if !strings.Contains(page, "button:disabled{opacity:.45;cursor:not-allowed}") {
+		t.Error("disabled buttons (ghost included) are not dimmed / not-allowed")
+	}
+}
+
 func TestTheShellKeepsItsHandSyncCommentsToTheInterview(t *testing.T) {
 	t.Parallel()
 	page := string(shell)
