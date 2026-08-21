@@ -31,6 +31,10 @@ func (s *Server) routes() http.Handler {
 	// every path this server does not define, and the shell answering /api/state
 	// with a page of HTML is a worse answer than 404.
 	mux.HandleFunc("GET /{$}", s.handleShell)
+	mux.HandleFunc("GET /api/state", s.handleState)
+	mux.HandleFunc("POST /api/validate", s.handleValidate)
+	mux.HandleFunc("POST /api/check-domain", s.handleCheckDomain)
+	mux.HandleFunc("POST /api/doctor", s.handleDoctor)
 	mux.HandleFunc("POST /api/finish", s.handleFinish)
 	return mux
 }
