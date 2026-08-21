@@ -337,6 +337,7 @@ const (
 	searchRedisURLKey   = "SEARCH_REDIS_URL"
 	tlsModeKey          = "VIDRA_TLS_MODE"
 	acmeEmailKey        = "VIDRA_ACME_EMAIL"
+	allowPlainHTTPKey   = "VIDRA_ALLOW_PLAIN_HTTP"
 	instanceNameKey     = "INSTANCE_NAME"
 )
 
@@ -352,7 +353,7 @@ const searchRedisDefaultDB = 1
 // applyComponentRule): the deploy scripts must find VIDRA_COMPOSE_PROFILES in
 // every file this engine writes, including one generated from a template that
 // predates the key.
-var managedKeys = []string{profilesKey, externalPostgresKey, externalRedisKey, databaseURLKey, redisURLKey, searchRedisURLKey, tlsModeKey, acmeEmailKey}
+var managedKeys = []string{profilesKey, externalPostgresKey, externalRedisKey, databaseURLKey, redisURLKey, searchRedisURLKey, tlsModeKey, acmeEmailKey, allowPlainHTTPKey}
 
 // ManagedKeys is that list, for a caller comparing a generated env file against
 // the template. These keys are the engine's OWN output and several of them
@@ -465,7 +466,7 @@ func Generate(req Request) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	answers, err := answerValues(req.Answers)
+	answers, err := answerValues(req)
 	if err != nil {
 		return nil, err
 	}
@@ -864,10 +865,30 @@ func mint(key string, r io.Reader) (string, error) {
 // answerValues turns the answers into concrete key/value pairs. An empty string
 // means "not answered" throughout, so a partially filled answer set falls
 // through to the existing file and then the template.
-func answerValues(a Answers) (map[string]string, error) {
+func answerValues(req Request) (map[string]string, error) {
+	a := req.Answers
 	out := map[string]string{}
+	mode, err := tlsMode(a.TLSMode)
+	if err != nil {
+		return nil, err
+	}
+	// The mode the DOMAIN is normalised against is the one this deployment will
+	// actually run in, which on a re-run is not necessarily the one answered:
+	// `vidra setup --domain video.lan` with no --tls-mode on a plain-http
+	// deployment must keep producing an http origin, or the run would refuse the
+	// very domain the file already holds. Answer, then the existing file, then the
+	// template; an unreadable value falls through to the https rule, which is the
+	// safe direction (tlsIssues reports it separately).
+	effectiveMode := mode
+	if effectiveMode == "" {
+		raw, _ := existingValue(req.Existing, tlsModeKey)
+		if raw == "" && req.Template != nil {
+			raw, _ = req.Template.Value(tlsModeKey)
+		}
+		effectiveMode, _ = tlsMode(raw)
+	}
 	if a.Domain != "" {
-		origin, err := normalizeOrigin(a.Domain)
+		origin, err := NormalizeOriginForMode(a.Domain, effectiveMode)
 		if err != nil {
 			return nil, err
 		}
@@ -935,12 +956,24 @@ func answerValues(a Answers) (map[string]string, error) {
 	// The TLS answers are what deploy/Caddyfile.local is rendered from; they live
 	// in the env file so a re-run (and `vidra doctor`) can see what the current
 	// Caddyfile was generated with.
-	mode, err := tlsMode(a.TLSMode)
-	if err != nil {
-		return nil, err
-	}
 	if mode != "" {
 		out[tlsModeKey] = mode
+	}
+	// plain-http is the one mode the API has to agree to. Its origin is http, and
+	// config.validate() refuses an http origin in production unless this says the
+	// deployment means it — so the two values are written together, by the engine,
+	// rather than left as a second step an operator discovers from a boot failure.
+	//
+	// Switching AWAY clears a consent that is no longer true, but only when the
+	// file actually carries one: writing VIDRA_ALLOW_PLAIN_HTTP=false into every
+	// ordinary install would be a line about a mode nobody chose.
+	switch {
+	case mode == TLSModePlainHTTP:
+		out[allowPlainHTTPKey] = "true"
+	case mode != "":
+		if ev, ok := existingValue(req.Existing, allowPlainHTTPKey); ok && IsTrue(ev) {
+			out[allowPlainHTTPKey] = "false"
+		}
 	}
 	if email := strings.TrimSpace(a.AcmeEmail); email != "" {
 		if err := checkAcmeEmailShape(email); err != nil {
@@ -1011,11 +1044,29 @@ func requireDomain(req Request, answers map[string]string) error {
 // accepting a domain the engine then rejects.
 func NormalizeOrigin(in string) (string, error) { return normalizeOrigin(in) }
 
+// NormalizeOriginForMode is NormalizeOrigin once the TLS mode is known. Only
+// plain-http differs: it is the mode that legalises an http:// origin, so it is
+// the ONE place a bare host defaults to http and an http:// answer is accepted
+// rather than corrected.
+//
+// Every other mode — including external, whose origin is https because the
+// operator's own terminator serves it — is NormalizeOrigin unchanged. An
+// unrecognised or unanswered mode is treated as https too, which is the
+// fail-secure direction: the cost of being wrong is a refused answer an operator
+// re-types, not a deployment that silently ships without Secure cookies.
+func NormalizeOriginForMode(in, mode string) (string, error) {
+	if strings.TrimSpace(mode) == TLSModePlainHTTP {
+		return normalizeOriginScheme(in, "http")
+	}
+	return normalizeOrigin(in)
+}
+
 // normalizeOrigin accepts a bare host or a full origin and returns
 // https://host[:port], lowercased. https is not negotiable here: in production
 // the api pins Secure cookies and both apps emit HSTS, so a plain-http origin
-// silently breaks login (deliberate plain-HTTP and external-terminator modes are
-// phase-1 item 12, and they need code, not an env value).
+// silently breaks login. The deliberate plain-HTTP deployment has its own mode
+// (VIDRA_TLS_MODE=plain-http, which routes through normalizeOriginScheme below);
+// what stays refused is an http origin nobody asked for.
 //
 // The host must be DNS-SHAPED, because this one answer becomes PUBLIC_BASE_URL
 // (federation and OAuth identity) and CORS_ALLOWED_ORIGINS (a browser security
@@ -1026,19 +1077,35 @@ func NormalizeOrigin(in string) (string, error) { return normalizeOrigin(in) }
 // signature verification. Normalising here keeps the file's single origin
 // byte-identical everywhere it is compared.
 func normalizeOrigin(in string) (string, error) {
+	return normalizeOriginScheme(in, "https")
+}
+
+// normalizeOriginScheme is the one implementation, with the scheme the caller's
+// TLS mode requires. Everything below the scheme check — the host shape, the
+// no-path rule, the lowercasing — is identical for both, and has to be: the
+// value it returns is PUBLIC_BASE_URL and CORS_ALLOWED_ORIGINS, and a plain-http
+// deployment compares origins exactly as strictly as a TLS one does.
+func normalizeOriginScheme(in, scheme string) (string, error) {
 	raw := strings.TrimRight(strings.TrimSpace(in), "/")
 	if raw == "" {
 		return "", errors.New("setup: the domain is empty")
 	}
 	if !strings.Contains(raw, "://") {
-		raw = "https://" + raw
+		raw = scheme + "://" + raw
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return "", fmt.Errorf("setup: %q is not a usable domain: %w", in, err)
 	}
-	if u.Scheme != "https" {
-		return "", fmt.Errorf("setup: the domain must be https (got %q) — production pins Secure cookies and emits HSTS, so a plain-http origin breaks login", in)
+	switch {
+	case u.Scheme == scheme:
+	case scheme == "http":
+		// The operator asked for the no-TLS mode and then typed an https origin.
+		// Accepting it would generate a Caddy site on :80 while the api minted
+		// https links for the same host — a deployment that answers nothing.
+		return "", fmt.Errorf("setup: %s=%s serves this instance over plain http, so the domain must be http (got %q). Use https and one of the TLS modes if there is a certificate for this host", tlsModeKey, TLSModePlainHTTP, in)
+	default:
+		return "", fmt.Errorf("setup: the domain must be https (got %q) — production pins Secure cookies and emits HSTS, so a plain-http origin breaks login. A deliberate no-TLS deployment is %s=%s, which legalises it end to end", in, tlsModeKey, TLSModePlainHTTP)
 	}
 	if u.Host == "" || u.User != nil {
 		return "", fmt.Errorf("setup: %q is not a usable domain: expected a host like video.example.org", in)
@@ -1053,7 +1120,7 @@ func normalizeOrigin(in string) (string, error) {
 	if port := u.Port(); port != "" {
 		host += ":" + port
 	}
-	return "https://" + host, nil
+	return scheme + "://" + host, nil
 }
 
 // checkDNSHost requires the host part of an origin to be a hostname: dot-joined
@@ -1511,15 +1578,23 @@ func tlsIssues(vars map[string]string) []Issue {
 	return out
 }
 
-// tlsWarnings reports the two TLS configurations that deploy fine and are still
-// not what a public instance wants.
+// tlsWarnings reports the TLS configurations that deploy fine and are still not
+// what a public instance wants.
 //
-// Neither is a failure. A rehearsal mode is a legitimate state to be in for an
+// None is a failure. A rehearsal mode is a legitimate state to be in for an
 // afternoon — that is what it is for — and the blank contact address costs
 // nothing until a renewal fails 60 days later, which is exactly why it needs
 // saying now rather than then. An env file that does not mention the mode at all
 // gets nothing: it predates the managed Caddyfile, so there is no generated file
 // for either warning to be about.
+//
+// external gets NOTHING, and that is the deliberate part. It is a correct,
+// permanent production topology whose certificate is simply somebody else's, so
+// a standing ⚠ about it would be a red line on a healthy deployment for ever —
+// the failure mode this package elsewhere calls "a permanent ⚠ about the engine
+// having done its job". plain-http gets one every time, because what it costs is
+// not a rehearsal's inconvenience: every password and session cookie on that
+// instance crosses the network in clear, for as long as it runs.
 //
 // Both lines name the ENV KEY and the file it lives in, never a command-line
 // flag. The reader may be an operator who never typed `vidra setup` at all — the
@@ -1536,7 +1611,13 @@ func tlsWarnings(vars map[string]string) []string {
 		// Already reported as an issue; a warning about it would be noise.
 		return nil
 	}
-	if mode != TLSModeACME {
+	switch mode {
+	case TLSModeExternal:
+		return nil
+	case TLSModePlainHTTP:
+		return []string{fmt.Sprintf("%s=%s serves this instance over plain HTTP: passwords, session cookies and every upload cross the network in clear, and anything on the path can read or rewrite them. It is a LAN/lab/air-gapped mode and nothing on the public internet should run it. %s=true in env/production.env is the api's half of the same choice — remove both and set %s=%s once there is a certificate for this host",
+			tlsModeKey, mode, allowPlainHTTPKey, tlsModeKey, TLSModeACME)}
+	case TLSModeACMEStaging, TLSModeInternal:
 		return []string{fmt.Sprintf("%s=%s does not produce a publicly trusted certificate: %s is a rehearsal/bring-up mode, and every browser reaching this instance will refuse the connection. Set %s=%s in env/production.env and regenerate the Caddyfile once DNS points at this host", tlsModeKey, mode, mode, tlsModeKey, TLSModeACME)}
 	}
 	if strings.TrimSpace(vars[acmeEmailKey]) != "" {

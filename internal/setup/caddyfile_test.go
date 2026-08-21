@@ -28,6 +28,20 @@ func caddyTemplate(t *testing.T) []byte {
 	return b
 }
 
+// caddyfileModes are the modes that produce a Caddyfile at all: every mode
+// except external, whose whole meaning is that no managed proxy runs. It is
+// derived from tlsModes rather than listed, so a mode added later is covered by
+// these tests the moment it exists.
+func caddyfileModes() []string {
+	var out []string
+	for _, mode := range tlsModes {
+		if !SkipsManagedCaddy(mode) {
+			out = append(out, mode)
+		}
+	}
+	return out
+}
+
 func caddyAnswers() Answers {
 	return Answers{Domain: "video.example.org", TLSMode: TLSModeACME, AcmeEmail: "ops@example.org"}
 }
@@ -52,6 +66,11 @@ func TestRenderCaddyfileGolden(t *testing.T) {
 		{TLSModeACME, "Caddyfile.acme.golden"},
 		{TLSModeACMEStaging, "Caddyfile.acme-staging.golden"},
 		{TLSModeInternal, "Caddyfile.internal.golden"},
+		// plain-http's whole diff from acme is the SITE ADDRESS line: nothing is
+		// injected at either marker, and `http://video.example.org {` is what
+		// tells Caddy to serve :80 and order no certificate. Read that one line
+		// in the diff and the mode is reviewed.
+		{TLSModePlainHTTP, "Caddyfile.plain-http.golden"},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			a := caddyAnswers()
@@ -199,7 +218,7 @@ func TestRenderCaddyfileInternalNeedsNoAcmeEmail(t *testing.T) {
 // itself configured. An empty `email` directive would be no better: `email` with
 // no argument does not parse, so the stack would come up with no proxy at all.
 func TestRenderCaddyfileAcceptsABlankAcmeEmail(t *testing.T) {
-	for _, mode := range tlsModes {
+	for _, mode := range caddyfileModes() {
 		t.Run(mode, func(t *testing.T) {
 			got := renderCaddy(t, Answers{Domain: "video.example.org", TLSMode: mode})
 			if strings.Contains(got, "\temail ") {
@@ -333,7 +352,7 @@ func TestRenderCaddyfileRefusesBadAnswers(t *testing.T) {
 // The same answers must produce the same bytes: the file is bind-mounted, and a
 // re-run that rewrote it differently would ask for a reload that changes nothing.
 func TestRenderCaddyfileIsDeterministic(t *testing.T) {
-	for _, mode := range tlsModes {
+	for _, mode := range caddyfileModes() {
 		a := caddyAnswers()
 		a.TLSMode = mode
 		if first, second := renderCaddy(t, a), renderCaddy(t, a); first != second {

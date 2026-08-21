@@ -130,12 +130,16 @@ const skipDNSPreflightVar = "VIDRA_SKIP_DNS_PREFLIGHT"
 // it: only for the ACME modes, and downgraded to a warning when the operator has
 // deliberately turned it off.
 //
-// The gate is the point. VIDRA_TLS_MODE=internal issues from Caddy's own CA and
-// places no ACME order, so there is nothing for DNS to be wrong ABOUT; running
-// the check anyway would put a permanent ✗ on a correctly configured private
-// instance. And when an order IS coming, a wrong A record does not fail politely
-// — Let's Encrypt counts the failed authorisation against a per-hostname limit
-// that locks this host out of the CA for the rest of the hour.
+// The gate is the point, and each mode outside it is skipped for its OWN reason
+// — a permanent ✗ on a correctly configured instance is a diagnostic nobody
+// reads twice. internal issues from Caddy's own CA and places no ACME order, so
+// there is nothing for DNS to be wrong ABOUT; plain-http is a LAN/lab instance
+// whose name may resolve only on an internal resolver, or be an IP; external
+// points at the operator's own terminator, which is a DIFFERENT host from this
+// one by definition, so "does this A record point here" is the wrong question.
+// And when an order IS coming, a wrong A record does not fail politely — Let's
+// Encrypt counts the failed authorisation against a per-hostname limit that
+// locks this host out of the CA for the rest of the hour.
 func checkDomainDNS(ctx context.Context, s *state) []Finding {
 	if s.envErr != nil {
 		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s), so there is no domain or TLS mode to check", s.envErr))}
@@ -145,7 +149,7 @@ func checkDomainDNS(ctx context.Context, s *state) []Finding {
 		mode = setup.TLSModeACME
 	}
 	if mode != setup.TLSModeACME && mode != setup.TLSModeACMEStaging {
-		return []Finding{skipf(fmt.Sprintf("VIDRA_TLS_MODE=%s issues from Caddy's own CA, so no ACME order depends on this host's DNS", mode))}
+		return []Finding{skipf(fmt.Sprintf("VIDRA_TLS_MODE=%s: %s, so no ACME order depends on this host's DNS", mode, tlsModeDNSReason(mode)))}
 	}
 	skipped := dnsPreflightSkipped(s.opt.Host.Getenv(skipDNSPreflightVar)) || dnsPreflightSkipped(s.value(skipDNSPreflightVar))
 
@@ -167,6 +171,23 @@ func checkDomainDNS(ctx context.Context, s *state) []Finding {
 		status = StatusWarn
 	}
 	return []Finding{{Status: status, Detail: detail, Fix: fix}}
+}
+
+// tlsModeDNSReason is the half-sentence checkDomainDNS's skip line is built
+// from: WHY this mode places no ACME order. An unrecognised mode gets the
+// conservative wording rather than a claim about a mode this binary predates —
+// setup's own tlsIssues is what reports the value as unusable.
+func tlsModeDNSReason(mode string) string {
+	switch mode {
+	case setup.TLSModeInternal:
+		return "certificates are issued by Caddy's own local CA"
+	case setup.TLSModePlainHTTP:
+		return "this instance is served over plain HTTP with no certificate at all"
+	case setup.TLSModeExternal:
+		return "your own proxy terminates TLS, and the domain resolves to it rather than to this host"
+	default:
+		return "that mode orders no certificate from a public CA"
+	}
 }
 
 // maxDriftNames caps how many variable names a drift line prints. The point of

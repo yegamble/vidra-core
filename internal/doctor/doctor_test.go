@@ -436,7 +436,14 @@ func TestDomainDNSGating(t *testing.T) {
 		{name: "acme-staging is still an order", tlsMode: "acme-staging", resStatus: StatusFail, want: StatusFail},
 		// internal issues from Caddy's own CA: no ACME order, nothing for DNS to
 		// be wrong about.
-		{name: "internal is not checked", tlsMode: "internal", resStatus: StatusFail, want: StatusWarn, detailHas: "issues from Caddy's own CA"},
+		{name: "internal is not checked", tlsMode: "internal", resStatus: StatusFail, want: StatusWarn, detailHas: "issued by Caddy's own local CA"},
+		// The two topologies from phase-1 item 12. Each is skipped for its own
+		// reason, and the reason is in the line: a lab instance's name may not
+		// resolve publicly at all, and an external terminator is deliberately a
+		// DIFFERENT host from this one, so "does this A record point here" would
+		// be a permanent ✗ on a correct deployment.
+		{name: "plain-http is not checked", tlsMode: "plain-http", resStatus: StatusFail, want: StatusWarn, detailHas: "no certificate at all"},
+		{name: "external is not checked", tlsMode: "external", resStatus: StatusFail, want: StatusWarn, detailHas: "your own proxy terminates TLS"},
 		{name: "blank means acme", tlsMode: "", resStatus: StatusFail, want: StatusFail},
 		{
 			name: "the opt-out downgrades, it does not hide", tlsMode: "acme", skipEnv: "1", resStatus: StatusFail,

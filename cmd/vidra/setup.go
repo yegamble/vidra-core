@@ -71,6 +71,14 @@ deploy/Caddyfile template with the instance's domain as its site address and the
 --tls-mode answer as its certificate issuer, and the prod compose file bind-mounts
 it. Pass --no-caddy when another proxy terminates TLS.
 
+--tls-mode also chooses the deployment's TOPOLOGY, not just its issuer. external
+means your own load balancer or nginx is the front door: the managed caddy is left
+out of the compose profiles, no Caddyfile is written, and an example config for
+that proxy is generated instead. plain-http means no TLS anywhere — a lab, a LAN
+or an air-gapped install: caddy still runs, as an http site, the origin is http://
+and the generated file carries VIDRA_ALLOW_PLAIN_HTTP=true, which is what lets the
+api boot without Secure cookies. Nothing on the public internet should use it.
+
 flags:
 `)
 		fs.SetOutput(w)
@@ -274,6 +282,10 @@ flags:
 	if err != nil {
 		return err
 	}
+	nginx, err := renderNginxExample(res.Values)
+	if err != nil {
+		return err
+	}
 	if err := setup.WriteFile(outPath, res.Content); err != nil {
 		return err
 	}
@@ -284,7 +296,16 @@ flags:
 		}
 		caddyPath = opt.caddyOut
 	}
-	report(s, outPath, caddyPath, sourcePaths, res)
+	nginxPath := ""
+	if nginx != nil {
+		// Same 0644 as the Caddyfile: it is a proxy configuration an operator has
+		// to be able to read, copy and diff, and it holds no secret.
+		if err := setup.WriteCaddyfile(opt.nginxOut, nginx); err != nil {
+			return err
+		}
+		nginxPath = opt.nginxOut
+	}
+	report(s, outPath, caddyPath, nginxPath, sourcePaths, res)
 	return nil
 }
 
@@ -307,6 +328,7 @@ type setupOptions struct {
 	acmeEmail      string
 	caddyTemplate  string
 	caddyOut       string
+	nginxOut       string
 	noCaddy        bool
 	coreTag        string
 	userTag        string
@@ -356,10 +378,11 @@ func registerSetupFlags(fs *flag.FlagSet) *setupOptions {
 	fs.StringVar(&o.instanceName, "instance-name", "", "public `name` of this instance (INSTANCE_NAME): served at /api/v1/instance, in NodeInfo, and as the TOTP issuer")
 	fs.StringVar(&o.releaseTag, "release-tag", "", "image `tag` to deploy for all three services, e.g. v0.1.1")
 
-	fs.StringVar(&o.tlsMode, "tls-mode", "", "certificate issuer for the managed Caddy: `acme|acme-staging|internal` (default acme)")
+	fs.StringVar(&o.tlsMode, "tls-mode", "", "TLS topology: `acme|acme-staging|internal|external|plain-http` (default acme; external = your own proxy terminates, plain-http = no TLS at all)")
 	fs.StringVar(&o.acmeEmail, "acme-email", "", "contact `address` Let's Encrypt sends expiry notices to (optional; without it there is no warning before a failed renewal)")
 	fs.StringVar(&o.caddyTemplate, "caddy-template", setup.CaddyTemplatePath, "`path` to the Caddyfile template the reverse-proxy config is rendered from")
 	fs.StringVar(&o.caddyOut, "caddy-out", setup.CaddyOutputPath, "`path` to write the generated Caddyfile (the prod compose file bind-mounts it)")
+	fs.StringVar(&o.nginxOut, "nginx-out", setup.NginxExampleOutputPath, "`path` to write the external-proxy example (--tls-mode external only; nothing mounts it)")
 	fs.BoolVar(&o.noCaddy, "no-caddy", false, "do not generate a Caddyfile (another reverse proxy terminates TLS)")
 	fs.StringVar(&o.coreTag, "core-tag", "", "override the api image `tag`")
 	fs.StringVar(&o.userTag, "user-tag", "", "override the frontend image `tag`")
@@ -402,6 +425,14 @@ func renderCaddyfile(templatePath string, skip bool, values map[string]string) (
 	if skip {
 		return nil, nil
 	}
+	// VIDRA_TLS_MODE=external is --no-caddy chosen in the env file instead of on
+	// the command line: the deploy leaves the caddy service out of the compose
+	// profiles entirely, so a Caddyfile generated here would be a file nothing
+	// mounts, ordering a certificate for a hostname the operator's own terminator
+	// already holds one for. renderNginxExample is what runs instead.
+	if setup.SkipsManagedCaddy(values["VIDRA_TLS_MODE"]) {
+		return nil, nil
+	}
 	// Only reachable with a template that does not define PUBLIC_BASE_URL at all
 	// (Generate refuses a missing domain otherwise). There is no site address to
 	// render, so there is no Caddyfile.
@@ -420,6 +451,24 @@ func renderCaddyfile(templatePath string, skip bool, values map[string]string) (
 		TLSMode:   values["VIDRA_TLS_MODE"],
 		AcmeEmail: values["VIDRA_ACME_EMAIL"],
 	})
+}
+
+// renderNginxExample is the other half of renderCaddyfile: the file an
+// external-terminator deployment gets INSTEAD of a Caddyfile. Same input (the
+// resolved values, not the answers), same nil-means-nothing-to-write contract.
+//
+// It runs even under --no-caddy, because the two flags mean different things:
+// --no-caddy says "do not generate a Caddyfile", and an operator who has also
+// said VIDRA_TLS_MODE=external has said their proxy is the front door — which is
+// precisely who this example is for.
+func renderNginxExample(values map[string]string) ([]byte, error) {
+	if !setup.SkipsManagedCaddy(values["VIDRA_TLS_MODE"]) {
+		return nil, nil
+	}
+	if strings.TrimSpace(values["PUBLIC_BASE_URL"]) == "" {
+		return nil, nil
+	}
+	return setup.RenderNginxExternal(setup.Answers{Domain: values["PUBLIC_BASE_URL"]})
 }
 
 // secretFlagEnv is every flag whose value is a SECRET, mapped to the environment
@@ -705,12 +754,41 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 	r := bufio.NewReader(s.in)
 	fmt.Fprint(s.out, "Answer the questions below; press enter to keep the value in brackets.\n\n")
 
+	// TLS belongs with the domain: it is the same answer seen from the edge, and
+	// the mode decides whether an ACME order goes out the moment the stack comes
+	// up. Asking it here is also what keeps the operator who has no DNS yet from
+	// finding out by burning a Let's Encrypt rate limit.
+	//
+	// It is asked BEFORE the domain, and that order is load-bearing now that
+	// plain-http exists: the mode decides which SCHEME a domain answer is
+	// normalised to, so asking for the domain first would reject `video.lan` from
+	// the one operator whose deployment is allowed to use it.
+	if a.TLSMode == "" {
+		def := effective(tmpl, existing, "VIDRA_TLS_MODE")
+		if def == "" {
+			def = setup.TLSModeACME
+		}
+		// plain-http is worded so nobody arrives at it by accident: it is last, it
+		// says what it costs, and it names the audience.
+		v, err := askValid(s, r, "TLS (acme = Let's Encrypt, acme-staging = untrusted rehearsal, internal = private CA, external = your own proxy terminates, plain-http = NO TLS, LAN/lab only — logins travel in clear)", def, func(in string) error {
+			_, err := setup.NormalizeTLSMode(in)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		a.TLSMode = v
+	}
 	if a.Domain == "" {
 		// Deliberately no default from the template: its PUBLIC_BASE_URL is an
 		// example, and accepting it would generate a file for example.com.
 		def, _ := existingValue(existing, "PUBLIC_BASE_URL")
-		v, err := askValid(s, r, "Public domain of this instance (e.g. video.example.org)", def, func(in string) error {
-			_, err := setup.NormalizeOrigin(in)
+		label := "Public domain of this instance (e.g. video.example.org)"
+		if a.TLSMode == setup.TLSModePlainHTTP {
+			label = "Address of this instance (e.g. video.lan or 192.168.1.10:8080 — it will be an http:// origin)"
+		}
+		v, err := askValid(s, r, label, def, func(in string) error {
+			_, err := setup.NormalizeOriginForMode(in, a.TLSMode)
 			return err
 		})
 		if err != nil {
@@ -719,27 +797,12 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 		a.Domain = v
 	}
 	// One line about whether that domain points here YET. It is feedback, never a
-	// gate: see reportDomainDNS.
-	if a.Domain != "" {
+	// gate: see reportDomainDNS. plain-http instances are LAN/lab by definition —
+	// the name may resolve only on an internal resolver, or be an IP — and
+	// external ones point at somebody else's terminator, so neither is asked
+	// about: a ⚠ that is expected teaches an operator to ignore the line.
+	if a.Domain != "" && a.TLSMode != setup.TLSModePlainHTTP && a.TLSMode != setup.TLSModeExternal {
 		reportDomainDNS(s, a.Domain)
-	}
-	// TLS belongs with the domain: it is the same answer seen from the edge, and
-	// the mode decides whether an ACME order goes out the moment the stack comes
-	// up. Asking it here is also what keeps the operator who has no DNS yet from
-	// finding out by burning a Let's Encrypt rate limit.
-	if a.TLSMode == "" {
-		def := effective(tmpl, existing, "VIDRA_TLS_MODE")
-		if def == "" {
-			def = setup.TLSModeACME
-		}
-		v, err := askValid(s, r, "TLS certificates (acme = Let's Encrypt, acme-staging = untrusted rehearsal, internal = private CA)", def, func(in string) error {
-			_, err := setup.NormalizeTLSMode(in)
-			return err
-		})
-		if err != nil {
-			return err
-		}
-		a.TLSMode = v
 	}
 	if a.AcmeEmail == "" && (a.TLSMode == setup.TLSModeACME || a.TLSMode == setup.TLSModeACMEStaging) {
 		// Optional, and the prompt says so: an operator with no address to give
@@ -1164,7 +1227,7 @@ func existingValue(existing *setup.EnvFile, key string) (string, bool) {
 // report prints what happened, by variable NAME only — a generated secret's
 // value belongs in the file and nowhere else, least of all a terminal scrollback
 // or a CI log.
-func report(s streams, path, caddyPath string, sources []string, res *setup.Result) {
+func report(s streams, path, caddyPath, nginxPath string, sources []string, res *setup.Result) {
 	fmt.Fprintf(s.out, "✓ wrote %s (mode 0600)\n", path)
 	if caddyPath != "" {
 		mode := strings.TrimSpace(res.Values["VIDRA_TLS_MODE"])
@@ -1172,6 +1235,13 @@ func report(s streams, path, caddyPath string, sources []string, res *setup.Resu
 			mode = setup.TLSModeACME
 		}
 		fmt.Fprintf(s.out, "✓ wrote %s (mode 0644, TLS %s) — the caddy service bind-mounts it; a running deployment needs `caddy reload` to pick it up\n", caddyPath, mode)
+	}
+	if nginxPath != "" {
+		// Said in the same breath as the file, because the ONE thing that goes
+		// wrong here is an operator treating a .example as a deployed file and
+		// wondering why editing it changes nothing.
+		fmt.Fprintf(s.out, "✓ wrote %s (mode 0644) — an EXAMPLE for your own proxy, mounted by nothing. Copy it into that proxy's configuration, fill in the two TLS lines, and reload it; the managed caddy does not run in VIDRA_TLS_MODE=%s\n",
+			nginxPath, setup.TLSModeExternal)
 	}
 	if len(sources) > 0 {
 		// Named, and in precedence order, because "which file won" is the

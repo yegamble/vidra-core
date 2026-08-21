@@ -1940,3 +1940,150 @@ func warned(warnings []string, substr string) bool {
 	}
 	return false
 }
+
+// The plain-http mode against the SAME production-forced validation every
+// generated file gets (see Check). This is the contract that makes the mode
+// possible at all: the rule lives in config.validate(), so the engine that
+// writes the file and the api that boots from it cannot disagree about whether
+// an http origin is legal.
+func TestCheckAcceptsPlainHTTPOnlyWithTheConsent(t *testing.T) {
+	base := map[string]string{
+		"VIDRA_ENV":            "production",
+		"JWT_SECRET":           strings.Repeat("k", 48),
+		"PUBLIC_BASE_URL":      "http://video.lan",
+		"CORS_ALLOWED_ORIGINS": "http://video.lan",
+		tlsModeKey:             TLSModePlainHTTP,
+	}
+	without := map[string]string{}
+	for k, v := range base {
+		without[k] = v
+	}
+	if got := Check(without); !hasIssue(got, "PUBLIC_BASE_URL") {
+		t.Errorf("Check = %v, want an issue against PUBLIC_BASE_URL: an http origin without %s is a typo, not a lab install", got, allowPlainHTTPKey)
+	}
+
+	base[allowPlainHTTPKey] = "true"
+	if got := Check(base); len(got) > 0 {
+		t.Errorf("Check = %v, want a consented plain-http deployment accepted", got)
+	}
+	// And it is still told, every time, what that costs.
+	if !warned(Warnings(base), "cross the network in clear") {
+		t.Errorf("Warnings = %v, want the plain-HTTP traffic warning", Warnings(base))
+	}
+}
+
+// external is a correct, permanent production topology, so it must be accepted
+// in silence: a standing ⚠ on a healthy deployment is one nobody reads.
+func TestCheckAcceptsTheExternalModeWithoutWarning(t *testing.T) {
+	vars := map[string]string{
+		"VIDRA_ENV":            "production",
+		"JWT_SECRET":           strings.Repeat("k", 48),
+		"PUBLIC_BASE_URL":      "https://video.example.org",
+		"CORS_ALLOWED_ORIGINS": "https://video.example.org",
+		tlsModeKey:             TLSModeExternal,
+	}
+	if got := Check(vars); len(got) > 0 {
+		t.Errorf("Check = %v, want the external topology accepted", got)
+	}
+	if got := Warnings(vars); len(got) > 0 {
+		t.Errorf("Warnings = %v, want silence: the certificate is simply somebody else's", got)
+	}
+}
+
+// The mode decides which scheme a bare host defaults to, and which one an
+// explicit answer is allowed to carry. Everything below the scheme — the host
+// shape, the case folding, the no-path rule — is the same in both, because the
+// value is compared as a STRING by CORS and by federation either way.
+func TestNormalizeOriginForMode(t *testing.T) {
+	for _, tc := range []struct {
+		in, mode, want, wantErr string
+	}{
+		{in: "video.lan", mode: TLSModePlainHTTP, want: "http://video.lan"},
+		{in: "http://video.lan", mode: TLSModePlainHTTP, want: "http://video.lan"},
+		{in: "192.168.1.10:8080", mode: TLSModePlainHTTP, want: "http://192.168.1.10:8080"},
+		{in: "http://VIDEO.Lan/", mode: TLSModePlainHTTP, want: "http://video.lan"},
+		{in: "https://video.lan", mode: TLSModePlainHTTP, wantErr: "must be http"},
+		{in: "*.lan", mode: TLSModePlainHTTP, wantErr: "wildcards are not a host"},
+
+		// Every other mode is NormalizeOrigin exactly, external included: the
+		// operator's own terminator serves https, so the origin is https.
+		{in: "video.example.org", mode: TLSModeExternal, want: "https://video.example.org"},
+		{in: "http://video.example.org", mode: TLSModeExternal, wantErr: "must be https"},
+		{in: "video.example.org", mode: TLSModeACME, want: "https://video.example.org"},
+		{in: "video.example.org", mode: "", want: "https://video.example.org"},
+		// An unreadable mode falls through to the https rule — the safe
+		// direction, since being wrong costs a re-typed answer rather than a
+		// deployment that silently ships without Secure cookies.
+		{in: "http://video.example.org", mode: "letsencrypt", wantErr: "must be https"},
+	} {
+		got, err := NormalizeOriginForMode(tc.in, tc.mode)
+		switch {
+		case tc.wantErr != "":
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("NormalizeOriginForMode(%q, %q) err = %v, want one mentioning %q", tc.in, tc.mode, err, tc.wantErr)
+			}
+		case err != nil:
+			t.Errorf("NormalizeOriginForMode(%q, %q): %v", tc.in, tc.mode, err)
+		case got != tc.want:
+			t.Errorf("NormalizeOriginForMode(%q, %q) = %q, want %q", tc.in, tc.mode, got, tc.want)
+		}
+	}
+}
+
+// The two halves of plain-http are written TOGETHER, and switching away clears
+// the consent. Either half alone is a deployment that does not boot or one that
+// silently keeps permission it no longer needs.
+func TestPlainHTTPWritesAndClearsTheConsent(t *testing.T) {
+	a := baseAnswers()
+	a.Domain = "video.lan"
+	a.TLSMode = TLSModePlainHTTP
+	res := generate(t, Request{Answers: a})
+	if got := res.Values["PUBLIC_BASE_URL"]; got != "http://video.lan" {
+		t.Errorf("PUBLIC_BASE_URL = %q, want the http origin", got)
+	}
+	if got := res.Values[allowPlainHTTPKey]; got != "true" {
+		t.Errorf("%s = %q, want true beside the mode", allowPlainHTTPKey, got)
+	}
+
+	// Switching to a real certificate clears it: an https origin does not need
+	// the consent, and a stale true is a permission nobody re-authorised.
+	existing, err := ParseEnvFile(res.Content)
+	if err != nil {
+		t.Fatalf("parse the generated file: %v", err)
+	}
+	back := baseAnswers()
+	back.TLSMode = TLSModeACME
+	next := generate(t, Request{Existing: existing, Answers: back})
+	if got := next.Values[allowPlainHTTPKey]; got != "false" {
+		t.Errorf("%s = %q after switching to acme, want it cleared", allowPlainHTTPKey, got)
+	}
+	if got := next.Values["PUBLIC_BASE_URL"]; got != "https://video.example.org" {
+		t.Errorf("PUBLIC_BASE_URL = %q, want the https origin back", got)
+	}
+}
+
+// A re-run that changes something ELSE must keep generating for the topology the
+// deployment is already in: the domain answer is normalised against the mode in
+// the FILE when no --tls-mode is passed, or the run would refuse the very origin
+// the file already holds.
+func TestARerunNormalisesAgainstTheExistingMode(t *testing.T) {
+	a := baseAnswers()
+	a.Domain = "video.lan"
+	a.TLSMode = TLSModePlainHTTP
+	first := generate(t, Request{Answers: a})
+	existing, err := ParseEnvFile(first.Content)
+	if err != nil {
+		t.Fatalf("parse the generated file: %v", err)
+	}
+
+	rerun := baseAnswers()
+	rerun.Domain = "video2.lan" // a new address, no mode answer at all
+	rerun.TLSMode = ""
+	res := generate(t, Request{Existing: existing, Answers: rerun})
+	if got := res.Values["PUBLIC_BASE_URL"]; got != "http://video2.lan" {
+		t.Errorf("PUBLIC_BASE_URL = %q, want the existing file's plain-http scheme kept", got)
+	}
+	if got := res.Values[tlsModeKey]; got != TLSModePlainHTTP {
+		t.Errorf("%s = %q, want the existing mode preserved", tlsModeKey, got)
+	}
+}

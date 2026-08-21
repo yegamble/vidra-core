@@ -93,6 +93,7 @@ type harness struct {
 	output        string
 	caddyTemplate string
 	caddyOut      string
+	nginxOut      string
 	out           bytes.Buffer
 	err           bytes.Buffer
 	stdin         string
@@ -187,6 +188,7 @@ func newHarness(t *testing.T) *harness {
 	h.output = filepath.Join(h.dir, "production.env")
 	h.caddyTemplate = filepath.Join(h.dir, "Caddyfile")
 	h.caddyOut = filepath.Join(h.dir, "Caddyfile.local")
+	h.nginxOut = filepath.Join(h.dir, "nginx-external.conf.example")
 	for path, content := range map[string]string{h.template: cliTemplate, h.caddyTemplate: cliCaddyfile} {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatalf("write %s: %v", path, err)
@@ -228,7 +230,7 @@ func (h *harness) setupArgs(extra ...string) []string {
 // caddyArgs points the Caddyfile generation at the fixture instead of the
 // deployment's deploy/Caddyfile, which does not exist under `go test`.
 func (h *harness) caddyArgs() []string {
-	return []string{"--caddy-template", h.caddyTemplate, "--caddy-out", h.caddyOut}
+	return []string{"--caddy-template", h.caddyTemplate, "--caddy-out", h.caddyOut, "--nginx-out", h.nginxOut}
 }
 
 func (h *harness) readCaddyfile(t *testing.T) string {
@@ -958,7 +960,7 @@ func TestSetupInteractiveAnswersTheMinimalQuestions(t *testing.T) {
 	h := newHarness(t)
 	h.script = []promptAnswer{
 		{match: "Public domain", answer: "video.example.org"},
-		{match: "TLS certificates", answer: "acme"},
+		{match: "TLS (acme", answer: "acme"},
 		{match: "Contact address", answer: "ops@example.org"},
 		{match: "Name of this instance", answer: "Cinema Vidra"},
 		{match: "Release tag", answer: "v0.1.1"},
@@ -1032,7 +1034,7 @@ func TestSetupInstanceName(t *testing.T) {
 			{match: "Name of this instance", answer: "Cinema Vidra"},
 			{match: "Release tag", answer: "v0.1.1"},
 			{match: "Media storage backend", answer: "local"},
-			{match: "TLS certificates", answer: "acme"},
+			{match: "TLS (acme", answer: "acme"},
 			{match: "Contact address", answer: "ops@example.org"},
 			{match: "", answer: "n"},
 		}
@@ -1095,8 +1097,8 @@ func TestSetupInteractiveReAsksUntilTheAnswerIsUsable(t *testing.T) {
 	h.script = []promptAnswer{
 		{match: "Public domain", answer: "https://*.example.org", once: true},
 		{match: "Public domain", answer: "video.example.org"},
-		{match: "TLS certificates", answer: "letsencrypt", once: true},
-		{match: "TLS certificates", answer: "acme"},
+		{match: "TLS (acme", answer: "letsencrypt", once: true},
+		{match: "TLS (acme", answer: "acme"},
 		{match: "Contact address", answer: "ops at example.org", once: true},
 		{match: "Contact address", answer: "ops@example.org"},
 		{match: "Name of this instance", answer: "Cinema Vidra"},
@@ -1159,7 +1161,7 @@ func TestSetupInteractiveReportsTheDomainDNS(t *testing.T) {
 			h.dns = tc.result
 			h.script = []promptAnswer{
 				{match: "Public domain", answer: "video.example.org"},
-				{match: "TLS certificates", answer: "acme"},
+				{match: "TLS (acme", answer: "acme"},
 				{match: "Contact address", answer: "ops@example.org"},
 				{match: "Name of this instance", answer: "Cinema Vidra"},
 				{match: "Release tag", answer: "v0.1.1"},
@@ -1196,7 +1198,7 @@ func TestSetupInteractiveStorageDefaultAvoidsThePlaceholderCredentials(t *testin
 
 	script := []promptAnswer{
 		{match: "Public domain", answer: "video.example.org"},
-		{match: "TLS certificates", answer: "acme"},
+		{match: "TLS (acme", answer: "acme"},
 		{match: "Contact address", answer: "ops@example.org"},
 		{match: "Name of this instance", answer: "Cinema Vidra"},
 		{match: "Release tag", answer: "v0.1.1"},
@@ -1301,7 +1303,7 @@ func TestSetupInteractiveWarnsWhenTheTemplateTagIsAccepted(t *testing.T) {
 	h := newHarness(t)
 	h.script = []promptAnswer{
 		{match: "Public domain", answer: "video.example.org"},
-		{match: "TLS certificates", answer: "acme"},
+		{match: "TLS (acme", answer: "acme"},
 		{match: "Contact address", answer: "ops@example.org"},
 		{match: "Name of this instance", answer: "Cinema Vidra"},
 		{match: "Release tag", answer: ""}, // enter: the template's example v0.1.0
@@ -1391,7 +1393,7 @@ func TestSetupInteractiveAsksForAManagedDatabase(t *testing.T) {
 	h := newHarness(t)
 	h.script = []promptAnswer{
 		{match: "Public domain", answer: "video.example.org"},
-		{match: "TLS certificates", answer: "acme"},
+		{match: "TLS (acme", answer: "acme"},
 		{match: "Contact address", answer: "ops@example.org"},
 		{match: "Name of this instance", answer: "Cinema Vidra"},
 		{match: "Release tag", answer: "v0.1.1"},
@@ -1556,6 +1558,100 @@ func TestSetupNoCaddySkipsTheProxyConfig(t *testing.T) {
 	// no deploy/Caddyfile at all.
 	if got := h.readOutput(t); !strings.Contains(got, "PUBLIC_BASE_URL=https://video.example.org") {
 		t.Errorf("the env file was not generated:\n%s", got)
+	}
+}
+
+// VIDRA_TLS_MODE=external is --no-caddy expressed in the env file, plus the file
+// that makes it actionable: an operator whose own proxy is the front door gets a
+// worked example of the routing rather than a paragraph telling them to work it
+// out from deploy/Caddyfile.
+func TestSetupExternalModeWritesTheNginxExampleAndNoCaddyfile(t *testing.T) {
+	h := newHarness(t)
+	if err := h.run(h.setupArgs("--tls-mode", "external")...); err != nil {
+		t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+	}
+	if _, err := os.Stat(h.caddyOut); err == nil {
+		t.Error("external mode generated a Caddyfile, which nothing would mount")
+	}
+	b, err := os.ReadFile(h.nginxOut)
+	if err != nil {
+		t.Fatalf("read the generated nginx example: %v", err)
+	}
+	nginx := string(b)
+	for _, want := range []string{"server_name video.example.org;", "location = /metrics {", "TRUSTED_PROXY_CIDRS"} {
+		if !strings.Contains(nginx, want) {
+			t.Errorf("the generated example is missing %q:\n%s", want, nginx)
+		}
+	}
+	// The origin stays https: from a browser's side an external terminator is
+	// TLS, so nothing about Secure cookies or HSTS changes.
+	got := h.readOutput(t)
+	if v := valueOf(t, got, "PUBLIC_BASE_URL"); v != "https://video.example.org" {
+		t.Errorf("PUBLIC_BASE_URL = %q, want the https origin", v)
+	}
+	if v := valueOf(t, got, "VIDRA_TLS_MODE"); v != "external" {
+		t.Errorf("VIDRA_TLS_MODE = %q, want external", v)
+	}
+	// The report has to say the file is an example, or it gets edited in place
+	// and the edits change nothing.
+	if out := h.out.String(); !strings.Contains(out, "EXAMPLE") || !strings.Contains(out, h.nginxOut) {
+		t.Errorf("the summary does not explain the generated example:\n%s", out)
+	}
+}
+
+// plain-http is the mode that changes the SCHEME everywhere at once: the origin,
+// the Caddy site address, and the api's consent to boot without Secure cookies.
+// Any one of the three alone is a deployment that does not work.
+func TestSetupPlainHTTPModeIsCoherentEndToEnd(t *testing.T) {
+	h := newHarness(t)
+	if err := h.run("setup", "--template", h.template, "--non-interactive",
+		"--domain", "video.lan", "--release-tag", "v0.1.1", "--storage", "local",
+		"--tls-mode", "plain-http", "--caddy-template", h.caddyTemplate,
+		"--caddy-out", h.caddyOut, "--nginx-out", h.nginxOut); err != nil {
+		t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+	}
+	got := h.readOutput(t)
+	for _, tc := range []struct{ key, want string }{
+		{"PUBLIC_BASE_URL", "http://video.lan"},
+		{"VIDRA_TLS_MODE", "plain-http"},
+		{"VIDRA_ALLOW_PLAIN_HTTP", "true"},
+	} {
+		if v := valueOf(t, got, tc.key); v != tc.want {
+			t.Errorf("%s = %q, want %q", tc.key, v, tc.want)
+		}
+	}
+	// The Caddyfile is still generated — plain-http keeps the managed edge — but
+	// as an http site, which is what stops Caddy ordering a certificate for a
+	// name no public CA can validate.
+	caddy := h.readCaddyfile(t)
+	if !strings.Contains(caddy, "\nhttp://video.lan {\n") {
+		t.Errorf("the site address is not a plain-http one:\n%s", caddy)
+	}
+	if strings.Contains(caddy, "tls internal") {
+		t.Errorf("a tls directive was injected into a plain-http site:\n%s", caddy)
+	}
+	if _, err := os.Stat(h.nginxOut); err == nil {
+		t.Error("plain-http generated the external-proxy example, which is the other mode's file")
+	}
+	// And the warning an operator must not miss.
+	if out := h.out.String(); !strings.Contains(out, "plain HTTP") {
+		t.Errorf("the summary does not warn that traffic is in clear:\n%s", out)
+	}
+}
+
+// An https domain beside --tls-mode plain-http is a contradiction, and it has to
+// be refused at the answer rather than produce a Caddy site on :80 while the api
+// mints https links for the same host.
+func TestSetupPlainHTTPRefusesAnHTTPSDomain(t *testing.T) {
+	h := newHarness(t)
+	err := h.run(append([]string{"setup", "--template", h.template, "--non-interactive",
+		"--domain", "https://video.lan", "--release-tag", "v0.1.1", "--storage", "local",
+		"--tls-mode", "plain-http"}, h.caddyArgs()...)...)
+	if err == nil {
+		t.Fatal("an https domain was accepted in plain-http mode")
+	}
+	if !strings.Contains(err.Error(), "must be http") {
+		t.Errorf("the refusal does not say which scheme is wanted: %v", err)
 	}
 }
 
