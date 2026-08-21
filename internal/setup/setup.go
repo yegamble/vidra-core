@@ -1821,6 +1821,67 @@ func existingKeys(f *EnvFile) []string {
 	return f.Keys()
 }
 
+// Effective is the value an operator would SEE today for a key: the existing
+// file's, else the template's — and never a placeholder, which is a question
+// rather than an answer.
+//
+// It is the seed behind every default a front end offers, and it is exported
+// because there are now two front ends offering them. The terminal interview
+// puts it in brackets after each prompt; the web wizard opens each form field
+// with it. A second copy of this three-line rule in the wizard is how one of
+// them starts proposing `<your Spaces access key>` as something to press enter
+// on.
+func Effective(tmpl, existing *EnvFile, key string) string {
+	if v, ok := existingValue(existing, key); ok {
+		return strings.TrimSpace(v)
+	}
+	if tmpl != nil {
+		if v, ok := tmpl.Value(key); ok && !IsPlaceholder(v) {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// rawEffective is Effective WITHOUT the placeholder filter: it answers "what
+// does the file literally say", which is the only way to ask whether the value
+// there IS a placeholder — Effective has already turned those into "".
+func rawEffective(tmpl, existing *EnvFile, key string) string {
+	if existing != nil {
+		if v, ok := existing.Value(key); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	if tmpl != nil {
+		if v, ok := tmpl.Value(key); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// S3CredentialsAnswered reports whether the S3 key pair a front end would fall
+// back to is a real one rather than the template's <...> placeholders.
+//
+// It is the test behind the storage question's DEFAULT, in both front ends. With
+// placeholders in both slots an s3 answer cannot be written at all (Check
+// rejects a placeholder by name), so offering it would be offering a run that
+// fails — after every other question has been answered. The template's s3 is
+// still the RECOMMENDATION and stands the moment there are real keys behind it;
+// what changes is which backend is proposed to somebody who has not got them.
+//
+// Exported for the same reason as Effective: this is a RULE, and the wizard and
+// the interview have to make the same call or one of them offers a default the
+// other refuses.
+func S3CredentialsAnswered(tmpl, existing *EnvFile) bool {
+	for _, key := range []string{"STORAGE_S3_ACCESS_KEY", "STORAGE_S3_SECRET_KEY"} {
+		if IsPlaceholder(rawEffective(tmpl, existing, key)) {
+			return false
+		}
+	}
+	return true
+}
+
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {

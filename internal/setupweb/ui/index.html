@@ -1,0 +1,1237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Vidra setup</title>
+<!--
+  THE WHOLE USER INTERFACE, in one file, with no build step and nothing fetched
+  from anywhere. That is a requirement rather than a preference: an operator is
+  configuring a host that may not have working outbound HTTPS yet (it is the
+  thing this wizard is about to arrange), and every external reference would be
+  another origin the server's Content-Security-Policy has to allow. It also
+  keeps the whole page behind ONE token-gated route — a subresource could not
+  carry the X-Setup-Token header.
+
+  QUESTION TEXT IS DUPLICATED FROM cmd/vidra/setup.go's interview(), and that
+  duplication was accepted deliberately: a form label does not read like a
+  terminal prompt, and neither wants the other's wording. Every question below
+  carries a HAND-SYNC comment naming the interview line it mirrors. BEHAVIOUR is
+  not duplicated and must never be — every answer goes to the server, which puts
+  it through internal/setup and nothing else.
+-->
+<style>
+:root{
+  --bg:#0b1016; --panel:#121a23; --panel-2:#0e1620; --line:#22303e;
+  --ink:#e6edf3; --ink-dim:#9fb0c0; --ink-faint:#6d8296;
+  --cyan:#22d3ee; --indigo:#818cf8;
+  --ok:#34d399; --warn:#fbbf24; --fail:#f87171;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#f6f8fa; --panel:#ffffff; --panel-2:#f0f4f8; --line:#d8e0e8;
+    --ink:#101820; --ink-dim:#48586a; --ink-faint:#6b7c8e;
+    --cyan:#0891b2; --indigo:#4f46e5;
+    --ok:#047857; --warn:#b45309; --fail:#b91c1c;
+    color-scheme: light;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+main{max-width:50rem;margin:0 auto;padding:1.5rem 1.25rem 5rem}
+header.top{display:flex;align-items:baseline;gap:.75rem;margin-bottom:.25rem}
+header.top h1{font-size:1.2rem;margin:0;letter-spacing:-.01em}
+header.top h1 .mark{background:linear-gradient(90deg,var(--cyan),var(--indigo));
+  -webkit-background-clip:text;background-clip:text;color:transparent;font-weight:700}
+header.top .sub{color:var(--ink-faint);font-size:.82rem}
+
+ol.steps{display:flex;flex-wrap:wrap;gap:.3rem;list-style:none;padding:0;margin:1rem 0 1.25rem}
+/* The chips are a PROGRESS INDICATOR, not navigation — clicking one would jump
+   past validation. So they read as non-interactive: no pointer cursor, no text
+   selection handle. */
+ol.steps li{font-size:.72rem;color:var(--ink-faint);border:1px solid var(--line);
+  border-radius:999px;padding:.15rem .6rem;white-space:nowrap;cursor:default;user-select:none}
+ol.steps li[aria-current="step"]{color:var(--bg);background:var(--cyan);border-color:var(--cyan);font-weight:600}
+ol.steps li.done{color:var(--ink-dim);border-color:var(--ink-faint)}
+
+section.step{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.25rem}
+section.step[hidden]{display:none}
+h2{font-size:1.02rem;margin:0 0 .35rem}
+p.lede{color:var(--ink-dim);margin:0 0 1rem}
+fieldset{border:1px solid var(--line);border-radius:9px;margin:0 0 1rem;padding:.85rem 1rem 1rem}
+legend{padding:0 .4rem;font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-faint)}
+.field{margin:0 0 .9rem}
+.field:last-child{margin-bottom:0}
+label{display:block;font-weight:600;margin-bottom:.2rem}
+.hint{color:var(--ink-faint);font-size:.82rem;margin:.15rem 0 .35rem}
+input[type=text],input[type=password],select,textarea{
+  width:100%;padding:.5rem .6rem;border-radius:7px;border:1px solid var(--line);
+  background:var(--panel-2);color:var(--ink);font:inherit}
+input:focus-visible,select:focus-visible,button:focus-visible,input[type=checkbox]:focus-visible{
+  outline:2px solid var(--cyan);outline-offset:2px}
+input[aria-invalid="true"],select[aria-invalid="true"]{border-color:var(--fail)}
+.check{display:flex;gap:.55rem;align-items:flex-start;margin:0 0 .55rem;font-weight:400}
+.check input{margin-top:.28rem}
+.check label{font-weight:600;margin:0}
+.check .hint{margin:.05rem 0 0}
+.err{color:var(--fail);font-size:.85rem;margin-top:.25rem}
+.err:empty{display:none}
+.note{border-left:3px solid var(--indigo);padding:.5rem .75rem;background:var(--panel-2);
+  border-radius:0 7px 7px 0;color:var(--ink-dim);font-size:.88rem;margin:0 0 1rem}
+/* The one doctor finding that guarantees the deploy fails — docker or compose
+   missing, or too old — gets its own weight, above the cosmetic first-install
+   skips it would otherwise be lost among. */
+.blocker{border-left:3px solid var(--fail);padding:.6rem .8rem;background:var(--panel-2);
+  border-radius:0 7px 7px 0;margin:0 0 1rem}
+.blocker strong{color:var(--fail)}
+.blocker .fix{color:var(--ink-dim);display:block;margin-top:.25rem;font-size:.86rem}
+/* The static Basic-mode TLS value: a statement of what will happen, not a dead
+   one-item dropdown. */
+.tls-static-value{font-weight:600;padding:.5rem .6rem;border-radius:7px;
+  border:1px dashed var(--line);background:var(--panel-2);display:inline-block}
+a{color:var(--cyan)}
+.line{display:flex;gap:.5rem;align-items:flex-start;padding:.22rem 0;font-size:.88rem}
+.line .g{flex:0 0 1.1rem;font-weight:700}
+.g.ok{color:var(--ok)} .g.warn{color:var(--warn)} .g.fail{color:var(--fail)} .g.skipped{color:var(--ink-faint)}
+.line .fix{color:var(--ink-faint);display:block;margin-top:.1rem}
+ul.plain{list-style:none;padding:0;margin:.25rem 0}
+ul.plain li{padding:.15rem 0;font-size:.88rem}
+.tag{display:inline-block;background:var(--panel-2);border:1px solid var(--line);border-radius:5px;
+  padding:.05rem .4rem;margin:.1rem .25rem .1rem 0;font-family:ui-monospace,monospace;font-size:.78rem}
+pre.log{background:#05090d;color:#cfe3ef;border:1px solid var(--line);border-radius:8px;
+  padding:.7rem;max-height:24rem;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:0}
+@media (prefers-color-scheme: light){pre.log{background:#0b1016}}
+nav.actions{display:flex;gap:.6rem;justify-content:space-between;margin-top:1.25rem}
+button{font:inherit;font-weight:600;border-radius:8px;padding:.5rem 1rem;cursor:pointer;
+  border:1px solid var(--line);background:var(--panel-2);color:var(--ink)}
+button.primary{background:var(--cyan);border-color:var(--cyan);color:#04202a}
+/* Every disabled button dims and refuses the pointer, ghost included — a
+   disabled .ghost used to render at full opacity with a pointer cursor, which
+   reads as "clickable, just ignored". */
+button:disabled{opacity:.45;cursor:not-allowed}
+button.ghost{background:transparent}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;border-radius:0;background:transparent;padding:.4rem .9rem}
+.seg button[aria-pressed="true"]{background:var(--indigo);color:#fff}
+.spinner{color:var(--ink-faint);font-size:.85rem}
+[hidden]{display:none !important}
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <h1><span class="mark">Vidra</span> setup</h1>
+    <span class="sub" id="paths"></span>
+  </header>
+
+  <ol class="steps" id="stepper" aria-label="Setup steps"></ol>
+
+  <div id="fatal" class="note" role="alert" hidden></div>
+
+  <!-- 1 — WELCOME. State detection: template found, first install or re-run,
+       and the seeds every field below opens with (GET /api/state). -->
+  <section class="step" id="s-welcome" hidden>
+    <h2>Welcome</h2>
+    <p class="lede">This wizard generates the environment file your deployment runs on, and can run the deploy for you. It is served by the <code>vidra</code> binary on this host's loopback interface, and it talks to nothing else.</p>
+    <div id="welcome-state"></div>
+    <div class="note">The admin account is <strong>not</strong> part of this file and cannot be. Once the stack is up, the api mints a one-time owner-claim token and prints it in its own log; the last step tells you how to redeem it.</div>
+  </section>
+
+  <!-- 2 — SYSTEM CHECK. internal/doctor's host-side findings. NOT A GATE: a ✗
+       here blocks nothing, exactly as `vidra doctor`'s exit rule says. -->
+  <section class="step" id="s-check" hidden>
+    <h2>System check</h2>
+    <p class="lede">What this host looks like right now — the same checks <code>vidra doctor</code> runs, from files, the rendered compose model and the daemon.</p>
+    <div class="note">This is <strong>not a gate</strong>. A ✗ here does not stop the install: on a first install half of what doctor checks is about a deployment that does not exist yet. It is here so a Compose older than 2.24, or a disk with no room for the images, is something you read now rather than discover from a failed deploy.</div>
+    <div id="doctor-out"><span class="spinner">Running checks…</span></div>
+  </section>
+
+  <!-- 3 — BASIC / ADVANCED. UI only: it changes which questions are asked, never
+       what any answer means. -->
+  <section class="step" id="s-mode" hidden>
+    <h2>How much do you want to be asked?</h2>
+    <p class="lede">This only changes which questions appear. Every answer goes through the same engine either way.</p>
+    <div class="seg" role="group" aria-label="Question detail">
+      <button type="button" id="mode-basic" aria-pressed="true">Basic</button>
+      <button type="button" id="mode-advanced" aria-pressed="false">Advanced</button>
+    </div>
+    <ul class="plain" id="mode-explain"></ul>
+  </section>
+
+  <!-- 4 — DOMAIN / NETWORKING. TLS mode FIRST, then the domain: the mode decides
+       which scheme a bare host is normalised to, so asking for the domain first
+       would reject video.lan from the one deployment allowed to use it.
+       Hand-sync: interview()'s first two questions, setup.go:766-801. -->
+  <section class="step" id="s-domain" hidden>
+    <h2>Domain and TLS</h2>
+    <p class="lede">The certificate topology first, because it decides what a valid address looks like.</p>
+
+    <div class="field">
+      <label for="f-tls">How is TLS terminated?</label>
+      <p class="hint" id="tls-hint"></p>
+      <select id="f-tls" aria-describedby="e-tls"></select>
+      <!-- When Basic offers acme alone, the select would be a dead one-item
+           dropdown a LAN operator (plain-http's whole audience) opens, finds one
+           thing in, and is stuck. So it renders as a plain statement of what
+           will happen, with the way to the other modes named rather than hidden
+           behind a control that looks broken. -->
+      <div id="tls-static" hidden>
+        <span class="tls-static-value">Automatic HTTPS (Let's Encrypt)</span>
+        <p class="hint">This host gets a real certificate automatically once its domain points here. <a href="#" id="tls-advanced-link">Need plain HTTP, a private CA, or your own proxy? Switch to Advanced.</a></p>
+      </div>
+      <p class="err" id="e-tls" role="alert"></p>
+    </div>
+
+    <div class="field">
+      <label for="f-domain" id="l-domain">Public domain of this instance</label>
+      <p class="hint" id="domain-hint">e.g. video.example.org. It is the origin for watch and embed links <em>and</em> for OAuth, NodeInfo and federation identity, so it cannot be changed casually later.</p>
+      <input type="text" id="f-domain" autocomplete="off" spellcheck="false" placeholder="video.example.org" aria-describedby="e-domain">
+      <p class="err" id="e-domain" role="alert"></p>
+      <div id="dns-out"></div>
+    </div>
+
+    <div class="field" id="w-acme">
+      <label for="f-acme">Contact address for Let's Encrypt expiry notices</label>
+      <p class="hint">Optional — leave it blank and the install continues. Without one there is no warning before a failed renewal becomes an outage.</p>
+      <input type="text" id="f-acme" autocomplete="off" spellcheck="false" placeholder="ops@example.org" aria-describedby="e-acme">
+      <p class="err" id="e-acme" role="alert"></p>
+    </div>
+
+    <!-- Hand-sync: interview() "Name of this instance", setup.go:820-830. Asked
+         because nothing else can catch it — the template's "Example Video" is a
+         plausible value rather than a <...> placeholder, so Check waves it
+         through and it ships to /api/v1/instance, to NodeInfo, and into every
+         user's authenticator app as the TOTP issuer. -->
+    <div class="field">
+      <label for="f-name">Name of this instance</label>
+      <p class="hint">Shown publicly, and used as the issuer label in every user's authenticator app.</p>
+      <input type="text" id="f-name" autocomplete="off">
+    </div>
+
+    <!-- Hand-sync: interview() "Release tag to deploy", setup.go:831-837. -->
+    <div class="field">
+      <label for="f-tag">Release tag to deploy</label>
+      <p class="hint">The image tag for all three services, e.g. v0.2.1.</p>
+      <input type="text" id="f-tag" autocomplete="off" spellcheck="false">
+    </div>
+    <fieldset id="w-tags" hidden>
+      <legend>Per-service tag overrides</legend>
+      <p class="hint">Leave blank to use the release tag above. Deploying the exact tags staging validated is the promotion rule.</p>
+      <div class="field"><label for="f-core">api image tag</label><input type="text" id="f-core" spellcheck="false"></div>
+      <div class="field"><label for="f-user">frontend image tag</label><input type="text" id="f-user" spellcheck="false"></div>
+      <div class="field"><label for="f-search">search image tag</label><input type="text" id="f-search" spellcheck="false"></div>
+    </fieldset>
+  </section>
+
+  <!-- 5 — STORAGE. Hand-sync: interview()'s storage block, setup.go:838-878. The
+       default flips to local when the template's S3 key slots still hold <...>
+       placeholders: a default that cannot pass Check is not a default. -->
+  <section class="step" id="s-storage" hidden>
+    <h2>Media storage</h2>
+    <p class="lede">Where uploaded video lives.</p>
+    <div class="field">
+      <label for="f-storage">Backend</label>
+      <select id="f-storage">
+        <option value="local">local — a Docker volume on this host</option>
+        <option value="s3">s3 — S3-compatible object storage</option>
+      </select>
+      <p class="hint" id="storage-hint"></p>
+    </div>
+    <fieldset id="w-s3" hidden>
+      <legend>Object storage</legend>
+      <div class="field"><label for="f-s3-endpoint">Endpoint host</label>
+        <p class="hint">Host only, no scheme — e.g. nyc3.digitaloceanspaces.com.</p>
+        <input type="text" id="f-s3-endpoint" spellcheck="false"></div>
+      <div class="field"><label for="f-s3-region">Region</label><input type="text" id="f-s3-region" spellcheck="false"></div>
+      <div class="field"><label for="f-s3-bucket">Bucket</label>
+        <p class="hint">Create it before deploying; nothing here creates a bucket.</p>
+        <input type="text" id="f-s3-bucket" spellcheck="false"></div>
+      <div class="field"><label for="f-s3-access">Access key</label><input type="text" id="f-s3-access" spellcheck="false"></div>
+      <div class="field"><label for="f-s3-secret">Secret key</label>
+        <p class="hint" id="s3-secret-hint">Write-only: it is sent when you type one and is never sent back to this page.</p>
+        <input type="password" id="f-s3-secret" autocomplete="new-password"></div>
+    </fieldset>
+  </section>
+
+  <!-- 6 — OPTIONAL FEATURES. Hand-sync: interview()'s datastore, component, SMTP
+       and registration blocks, setup.go:879-999. -->
+  <section class="step" id="s-features" hidden>
+    <h2>Optional features</h2>
+    <p class="lede">Everything here is off on a normal install, and everything already running stays on unless you change it.</p>
+
+    <fieldset id="w-datastores" hidden>
+      <legend>Datastores</legend>
+      <p class="hint">External means the deploy leaves the bundled container out entirely, so the connection string is the only way to reach it.</p>
+      <div class="check">
+        <input type="checkbox" id="f-db-external">
+        <div><label for="f-db-external">Use an external/managed PostgreSQL</label></div>
+      </div>
+      <div class="field" id="w-db-url" hidden>
+        <label for="f-db-url">Managed PostgreSQL connection string</label>
+        <p class="hint" id="db-url-hint">It carries the password, so it is write-only — sent once, never sent back.</p>
+        <input type="password" id="f-db-url" autocomplete="new-password" placeholder="postgres://USER:PASSWORD@HOST:5432/DB?sslmode=require">
+      </div>
+      <div class="check">
+        <input type="checkbox" id="f-redis-external">
+        <div><label for="f-redis-external">Use an external/managed Redis</label></div>
+      </div>
+      <div class="field" id="w-redis-url" hidden>
+        <label for="f-redis-url">Managed Redis connection string</label>
+        <p class="hint" id="redis-url-hint">The search service's DSN is derived from this one on a different logical database.</p>
+        <input type="password" id="f-redis-url" autocomplete="new-password" placeholder="rediss://:PASSWORD@HOST:6379/0">
+      </div>
+    </fieldset>
+
+    <fieldset id="w-components" hidden>
+      <legend>Bundled components</legend>
+      <p class="hint">Each one is a compose profile. Turning one off stops that container from starting at the next deploy.</p>
+      <div class="check"><input type="checkbox" id="f-scan"><div><label for="f-scan">ClamAV upload scanner</label><p class="hint">Profile <code>scan</code>. MALWARE_SCAN_ENABLED stays a separate setting.</p></div></div>
+      <div class="check"><input type="checkbox" id="f-captions"><div><label for="f-captions">Whisper caption worker</label><p class="hint">Profile <code>captions</code>.</p></div></div>
+      <div class="check"><input type="checkbox" id="f-media"><div><label for="f-media">RTMP live-ingest server</label><p class="hint">Profile <code>media</code>.</p></div></div>
+      <div class="check"><input type="checkbox" id="f-otel"><div><label for="f-otel">OpenTelemetry collector and Jaeger</label><p class="hint">Profile <code>otel</code>.</p></div></div>
+      <div class="check"><input type="checkbox" id="f-ipfs"><div><label for="f-ipfs">IPFS node</label><p class="hint">Profile <code>ipfs</code>.</p></div></div>
+    </fieldset>
+    <div class="note" id="components-basic">The bundled components stay exactly as they are today. Switch to Advanced on the previous step to change them.</div>
+
+    <fieldset>
+      <legend>Email</legend>
+      <div class="check">
+        <input type="checkbox" id="f-mail-on">
+        <div><label for="f-mail-on">Configure SMTP now</label>
+        <p class="hint">Password reset and email verification need it. Left off, the file is written with mail disabled rather than enabled with nowhere to send.</p></div>
+      </div>
+      <div id="w-mail" hidden>
+        <div class="field"><label for="f-smtp-host">SMTP host</label><input type="text" id="f-smtp-host" spellcheck="false"></div>
+        <div class="field"><label for="f-smtp-port">SMTP port</label><p class="hint">587 with STARTTLS is the usual answer.</p><input type="text" id="f-smtp-port" spellcheck="false"></div>
+        <div class="field"><label for="f-smtp-user">SMTP username</label><input type="text" id="f-smtp-user" spellcheck="false"></div>
+        <div class="field"><label for="f-smtp-pass">SMTP password</label><p class="hint" id="smtp-pass-hint">Write-only.</p><input type="password" id="f-smtp-pass" autocomplete="new-password"></div>
+        <div class="field"><label for="f-smtp-from">From address</label><input type="text" id="f-smtp-from" spellcheck="false"></div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Registration</legend>
+      <div class="check">
+        <input type="checkbox" id="f-reg-open">
+        <div><label for="f-reg-open">Open registration to the public now</label>
+        <p class="hint">Closed is the safe first boot: bring the stack up, claim the owner account with the one-time token, then re-run this wizard with signups open.</p></div>
+      </div>
+      <div class="check" id="w-reg-approval" hidden>
+        <input type="checkbox" id="f-reg-approval">
+        <div><label for="f-reg-approval">Require an admin to approve each signup</label></div>
+      </div>
+    </fieldset>
+  </section>
+
+  <!-- 7 — REVIEW. The dry run: every file, every secret by name, every warning,
+       and EVERY problem at once. -->
+  <section class="step" id="s-review" hidden>
+    <h2>Review</h2>
+    <p class="lede">Nothing has been written yet. This is exactly what the next step would do.</p>
+    <div id="review-out"><span class="spinner">Generating…</span></div>
+  </section>
+
+  <!-- 8 — INSTALL. Apply first (both proxy configs are rendered before either
+       file is written, server-side), then the deploy — or the command to run it
+       yourself. -->
+  <section class="step" id="s-install" hidden>
+    <h2>Install</h2>
+    <div id="apply-out"><span class="spinner">Writing the files…</span></div>
+    <div id="install-choice" hidden>
+      <p class="lede">The deployment's own <code>deploy/deploy.sh</code> does the rest: a pre-deploy database dump, a pull of the pinned images, both migrators as separate gated steps, <code>up -d</code>, then the readiness probes.</p>
+      <nav class="actions" style="justify-content:flex-start">
+        <button type="button" class="primary" id="btn-install">Run the deploy now</button>
+        <button type="button" class="ghost" id="btn-install-manual">I'll run it myself</button>
+      </nav>
+      <div id="manual-out" hidden></div>
+    </div>
+    <div id="install-run" hidden>
+      <p class="hint" id="install-status">Running…</p>
+      <pre class="log" id="install-log" aria-live="polite" aria-label="Deploy output"></pre>
+      <div id="install-done"></div>
+    </div>
+  </section>
+
+  <!-- 9 — SUCCESS. The status probe, then the owner-claim handoff exactly as
+       the terminal's report() prints it. -->
+  <section class="step" id="s-success" hidden>
+    <h2>Done</h2>
+    <div id="status-out"><span class="spinner">Checking what is up…</span></div>
+    <div id="claim-out"></div>
+  </section>
+
+  <nav class="actions">
+    <button type="button" class="ghost" id="btn-back">Back</button>
+    <button type="button" class="primary" id="btn-next">Next</button>
+  </nav>
+</main>
+
+<script>
+"use strict";
+(function () {
+  // The token travels in the query string of the one-time link this page was
+  // opened with — the only way a browser can be handed its first credential —
+  // and in a CUSTOM header on every request afterwards, which is what puts a
+  // cross-site attempt behind a preflight this server never approves.
+  //
+  // It does not STAY in the address bar. As soon as it is read it is moved into
+  // sessionStorage and the query string is stripped with replaceState, so it is
+  // not left in the URL bar for a shoulder to read, not written into browser
+  // history, and not carried by a Referer to anything the page later links to.
+  // sessionStorage rather than localStorage: it is scoped to this one tab and
+  // dies when the tab closes, which is the lifetime a one-time install token
+  // should have. A reload — which drops the query we just removed — reads it
+  // back from there.
+  const TOKEN = (function () {
+    const fromURL = new URLSearchParams(location.search).get("t");
+    if (fromURL) {
+      try { sessionStorage.setItem("vidra_setup_token", fromURL); } catch (_) { /* private mode: fall through */ }
+      try { history.replaceState(null, "", "/"); } catch (_) { /* fine, the header is what matters */ }
+      return fromURL;
+    }
+    try { return sessionStorage.getItem("vidra_setup_token") || ""; } catch (_) { return ""; }
+  })();
+
+  const STEPS = [
+    { id: "s-welcome",  label: "Welcome" },
+    { id: "s-check",    label: "System check" },
+    { id: "s-mode",     label: "Detail" },
+    { id: "s-domain",   label: "Domain & TLS" },
+    { id: "s-storage",  label: "Storage" },
+    { id: "s-features", label: "Optional" },
+    { id: "s-review",   label: "Review" },
+    { id: "s-install",  label: "Install" },
+    { id: "s-success",  label: "Done" },
+  ];
+
+  const TLS_MODES = [
+    { v: "acme",         basic: true,  label: "acme — Let's Encrypt certificates",
+      hint: "The normal answer. Needs a public domain pointing at this host and ports 80/443 reachable." },
+    { v: "acme-staging", basic: false, label: "acme-staging — an untrusted rehearsal",
+      hint: "The same order against Let's Encrypt's staging directory. Browsers will not trust the certificate; use it to prove the flow without burning a rate limit." },
+    { v: "internal",     basic: false, label: "internal — Caddy's own private CA",
+      hint: "For a bring-up before DNS points here. Browsers will not trust it either, but nothing goes out to the internet." },
+    { v: "external",     basic: false, label: "external — your own proxy terminates TLS",
+      hint: "The managed Caddy is left out of the deployment entirely and an example config for your proxy is written instead." },
+    { v: "plain-http",   basic: false, label: "plain-http — NO TLS at all",
+      hint: "A LAN, a lab or an air-gapped install. Logins travel in clear. Nothing on the public internet should use it." },
+  ];
+
+  const app = {
+    step: 0,
+    advanced: false,
+    // tlsMode is the AUTHORITATIVE selected mode, so it survives the
+    // Basic↔Advanced toggle (which rebuilds the control) and the static-display
+    // case (where there is no <select> to read a value from). tlsMode() returns
+    // this, and the select's change handler writes it.
+    tlsMode: "acme",
+    state: null,
+    review: null,
+    applied: null,
+    installed: false,
+    // componentsTouched records whether the operator has actually SEEN the
+    // bundled-component checkboxes. It is what decides whether the form sends a
+    // features block at all: unsent means "leave the compose profile list
+    // exactly as it is", which is the same thing declining the terminal's
+    // "Configure optional components" question means. A form that always sent
+    // five booleans would silently turn off every component a Basic-mode re-run
+    // never asked about.
+    componentsTouched: false,
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const text = (el, s) => { el.textContent = s == null ? "" : String(s); };
+
+  function el(tag, cls, txt) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (txt != null) n.textContent = txt;
+    return n;
+  }
+
+  function fatal(msg) {
+    const box = $("fatal");
+    text(box, msg);
+    box.hidden = false;
+    box.scrollIntoView({ block: "nearest" });
+  }
+
+  async function api(method, path, body) {
+    const init = { method, headers: { "X-Setup-Token": TOKEN } };
+    if (body !== undefined) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
+    const resp = await fetch(path, init);
+    const raw = await resp.text();
+    let parsed = null;
+    try { parsed = raw ? JSON.parse(raw) : null; } catch (_) { /* left null */ }
+    if (resp.status === 403) {
+      throw new Error("This page's one-time link is no longer valid. The terminal running `vidra setup --web` has the current one — or the wizard has already exited.");
+    }
+    return { status: resp.status, body: parsed, raw };
+  }
+
+  // ---------------------------------------------------------------- stepper
+
+  function renderStepper() {
+    const ol = $("stepper");
+    ol.replaceChildren();
+    STEPS.forEach((s, i) => {
+      const li = el("li", i < app.step ? "done" : "", (i + 1) + ". " + s.label);
+      if (i === app.step) li.setAttribute("aria-current", "step");
+      ol.appendChild(li);
+    });
+  }
+
+  function show(i) {
+    app.step = i;
+    STEPS.forEach((s, n) => { $(s.id).hidden = n !== i; });
+    renderStepper();
+    $("btn-back").disabled = i === 0 || STEPS[i].id === "s-success";
+    const next = $("btn-next");
+    next.disabled = false;
+    next.hidden = false;
+    switch (STEPS[i].id) {
+      case "s-review":  next.textContent = "Write the files"; break;
+      case "s-install": next.hidden = true; break;
+      case "s-success": next.textContent = "Finish"; break;
+      default:          next.textContent = "Next";
+    }
+    window.scrollTo({ top: 0 });
+    onEnter(STEPS[i].id);
+  }
+
+  function onEnter(id) {
+    if (id === "s-check") loadDoctor();
+    if (id === "s-mode") renderModeExplain();
+    if (id === "s-features" && app.advanced) app.componentsTouched = true;
+    if (id === "s-review") loadReview();
+    if (id === "s-install") doApply();
+    if (id === "s-success") loadStatus();
+  }
+
+  // ---------------------------------------------------------------- step 1
+
+  async function loadState() {
+    let res;
+    try { res = await api("GET", "/api/state"); }
+    catch (e) { fatal(e.message); return false; }
+    if (res.status !== 200) {
+      fatal((res.body && res.body.error) || "The wizard could not read this deployment.");
+      return false;
+    }
+    app.state = res.body;
+    text($("paths"), res.body.template);
+    renderWelcome();
+    seedForm(res.body.seed);
+    return true;
+  }
+
+  function renderWelcome() {
+    const st = app.state, out = $("welcome-state");
+    out.replaceChildren();
+    out.appendChild(statusLine("ok", "Deployment template", st.template));
+    if (st.output_exists) {
+      out.appendChild(statusLine("warn", "This deployment already exists",
+        st.output + " is on disk. Every value it sets is preserved — including the key-encryption keys that seal data in the database — and you will be asked to confirm the rewrite before anything is written."));
+    } else {
+      out.appendChild(statusLine("ok", "First install", "No " + st.output + " yet. Every secret it needs will be generated."));
+    }
+    if (st.secrets && st.secrets.length) {
+      const li = statusLine("ok", "Secrets already on file", "kept as they are — only their names are ever shown here:");
+      const tags = el("div");
+      st.secrets.forEach((n) => tags.appendChild(el("span", "tag", n)));
+      li.appendChild(tags);
+      out.appendChild(li);
+    }
+  }
+
+  function statusLine(status, check, detail, fix) {
+    const row = el("div", "line");
+    const g = el("span", "g " + status, status === "ok" ? "✓" : status === "fail" ? "✗" : status === "skipped" ? "—" : "⚠");
+    row.appendChild(g);
+    const body = el("div");
+    const strong = el("strong", null, check + ": ");
+    body.appendChild(strong);
+    body.appendChild(document.createTextNode(detail || ""));
+    if (fix) body.appendChild(el("span", "fix", "→ " + fix));
+    row.appendChild(body);
+    return row;
+  }
+
+  // ---------------------------------------------------------------- step 2
+
+  async function loadDoctor() {
+    const out = $("doctor-out");
+    out.replaceChildren(el("span", "spinner", "Running checks…"));
+    let res;
+    try { res = await api("POST", "/api/doctor"); }
+    catch (e) { out.replaceChildren(el("p", "err", e.message)); return; }
+    if (res.status !== 200 || !res.body) {
+      out.replaceChildren(el("p", "hint", (res.body && res.body.error) || "The host checks could not be run here."));
+      return;
+    }
+    const r = res.body;
+    out.replaceChildren();
+    const results = r.results || [];
+
+    // The docker/compose finding is not one warning among many: on a first
+    // install most checks are cosmetic "skipped — the deployment does not exist
+    // yet" warns, and a missing or too-old docker (the "compose version" check
+    // being anything but ok) is visually identical to them while being the ONE
+    // finding that guarantees the deploy fails. Lift it out, above the rest, with
+    // its own weight.
+    const blocker = results.find((c) => c.check === "compose version" && c.status !== "ok");
+    if (blocker) {
+      const box = el("div", "blocker");
+      box.setAttribute("role", "alert");
+      box.appendChild(el("strong", null, "Docker is not ready on this host"));
+      box.appendChild(el("div", null, blocker.detail));
+      box.appendChild(el("div", "fix", blocker.fix
+        ? blocker.fix
+        : "Install Docker with the compose plugin (docker compose v2) before you deploy — the install step runs `docker compose`, and it cannot start without it."));
+      out.appendChild(box);
+    }
+
+    results.forEach((c) => {
+      if (c === blocker) return; // already shown, prominently, above
+      out.appendChild(statusLine(c.status, c.check, c.detail, c.status === "ok" ? "" : c.fix));
+    });
+    out.appendChild(el("p", "hint", r.ok + " passed, " + r.warn + " could not be checked or need reading, " + r.fail + " found a problem."));
+  }
+
+  // ---------------------------------------------------------------- step 3
+
+  function setMode(advanced) {
+    app.advanced = advanced;
+    $("mode-basic").setAttribute("aria-pressed", String(!advanced));
+    $("mode-advanced").setAttribute("aria-pressed", String(advanced));
+    $("w-tags").hidden = !advanced;
+    $("w-datastores").hidden = !advanced;
+    $("w-components").hidden = !advanced;
+    $("components-basic").hidden = advanced;
+    renderTLSOptions();
+    renderModeExplain();
+  }
+
+  function renderModeExplain() {
+    const ul = $("mode-explain");
+    ul.replaceChildren();
+    const items = app.advanced
+      ? ["Every TLS topology, including the ones with no trusted certificate.",
+         "External/managed PostgreSQL and Redis.",
+         "The five bundled components, one compose profile each.",
+         "Per-service image tag overrides."]
+      : ["Let's Encrypt certificates.",
+         "The bundled PostgreSQL and Redis.",
+         "Whatever components are running today, left exactly as they are.",
+         "One release tag for all three images."];
+    items.forEach((t) => ul.appendChild(el("li", null, (app.advanced ? "✓ " : "• ") + t)));
+  }
+
+  // ---------------------------------------------------------------- step 4
+
+  // availableModes is which TLS modes the current step offers. Advanced offers
+  // all of them; Basic offers acme, PLUS any non-acme mode the operator has
+  // already committed to — the deployment's current mode on a re-run, or a mode
+  // they picked in Advanced this session. That second rule is what makes the
+  // Basic↔Advanced round-trip preserve a plain-http choice instead of silently
+  // resetting it to acme, WITHOUT dumping every mode into Basic.
+  function availableModes() {
+    if (app.advanced) return TLS_MODES.map((m) => m.v);
+    const out = ["acme"];
+    [app.tlsMode, app.state && app.state.seed.tls_mode].forEach((v) => {
+      if (v && v !== "acme" && !out.includes(v)) out.push(v);
+    });
+    return out;
+  }
+
+  function renderTLSOptions() {
+    const modes = availableModes();
+    // Keep the current selection if it is still on offer; otherwise fall to the
+    // first available (acme).
+    if (!modes.includes(app.tlsMode)) app.tlsMode = modes[0];
+
+    const sel = $("f-tls");
+    const staticBox = $("tls-static");
+    // A single-option Basic dropdown is a dead control. Render the acme case as
+    // a static statement instead; anything with a real choice keeps the select.
+    if (modes.length === 1) {
+      sel.hidden = true;
+      sel.replaceChildren();
+      staticBox.hidden = false;
+    } else {
+      staticBox.hidden = true;
+      sel.hidden = false;
+      sel.replaceChildren();
+      modes.forEach((v) => {
+        const m = TLS_MODES.find((x) => x.v === v);
+        const o = document.createElement("option");
+        o.value = v;
+        o.textContent = m ? m.label : v;
+        sel.appendChild(o);
+      });
+      sel.value = app.tlsMode;
+    }
+    onTLSChange();
+  }
+
+  function tlsMode() { return app.tlsMode; }
+
+  function onTLSChange() {
+    const mode = tlsMode();
+    const m = TLS_MODES.find((x) => x.v === mode);
+    text($("tls-hint"), m ? m.hint : "");
+    const acmeMode = mode === "acme" || mode === "acme-staging";
+    $("w-acme").hidden = !acmeMode;
+    // A field the current mode HIDES must not carry a stale value into the
+    // written env: an ACME contact typed under acme, then switched to plain-http,
+    // would otherwise persist. Clearing it here is the visible half; collect()
+    // also excludes it, so neither the form nor a hand-crafted POST can smuggle
+    // it through.
+    if (!acmeMode) {
+      $("f-acme").value = "";
+      clearFieldError($("f-acme"), $("e-acme"));
+    }
+    if (mode === "plain-http") {
+      // No PORT in the example, deliberately: the managed Caddy publishes 80 and
+      // 443 only, so an operator who copied a host:port shape would deploy an
+      // instance that comes up healthy and answers nowhere.
+      text($("l-domain"), "Address of this instance");
+      text($("domain-hint"), "e.g. video.lan or 192.168.1.10. It will be an http:// origin — this deployment has no TLS anywhere.");
+      $("f-domain").placeholder = "video.lan";
+    } else {
+      text($("l-domain"), "Public domain of this instance");
+      text($("domain-hint"), "e.g. video.example.org. It is the origin for watch and embed links and for OAuth, NodeInfo and federation identity, so it cannot be changed casually later.");
+      $("f-domain").placeholder = "video.example.org";
+    }
+    clearFieldError($("f-domain"), $("e-domain"));
+    // The scheme a bare host normalises to depends on the mode, so a DNS verdict
+    // read under the old mode is stale the moment the mode changes.
+    $("dns-out").replaceChildren();
+  }
+
+  // setFieldError / clearFieldError keep an input and its role=alert message in
+  // step, and wire the two together for a screen reader: aria-invalid on the
+  // field, aria-describedby pointing at the message, so the error is announced
+  // with the field rather than floating unattached.
+  function setFieldError(input, errEl, msg) {
+    text(errEl, msg);
+    if (input) {
+      input.setAttribute("aria-invalid", "true");
+      input.setAttribute("aria-describedby", errEl.id);
+    }
+  }
+  function clearFieldError(input, errEl) {
+    text(errEl, "");
+    if (input) input.removeAttribute("aria-invalid");
+  }
+
+  // fieldInput maps a validated field to its input element, so validateField can
+  // put the aria state on the right control without every caller passing it.
+  function fieldInput(field) {
+    return { tls_mode: $("f-tls"), domain: $("f-domain"), acme_email: $("f-acme") }[field] || null;
+  }
+
+  // Field validation is ONE request per field, and the answer is the engine's.
+  // There is no regex in this file, and there must never be one: a page with a
+  // friendlier opinion about what a domain is, is a page that accepts answers
+  // the Review step then refuses.
+  async function validateField(field, value, errEl) {
+    const input = fieldInput(field);
+    clearFieldError(input, errEl);
+    if (!value && field !== "acme_email") return true;
+    let res;
+    try { res = await api("POST", "/api/validate", { field, value, context: { tls_mode: tlsMode() } }); }
+    catch (e) { setFieldError(input, errEl, e.message); return false; }
+    if (res.status !== 200 || !res.body) { setFieldError(input, errEl, "That answer could not be checked."); return false; }
+    if (!res.body.ok) { setFieldError(input, errEl, res.body.error); return false; }
+    return true;
+  }
+
+  async function checkDNS() {
+    const out = $("dns-out");
+    out.replaceChildren();
+    const domain = $("f-domain").value.trim();
+    if (!domain) return;
+    out.appendChild(el("span", "spinner", "Checking DNS…"));
+    let res;
+    try { res = await api("POST", "/api/check-domain", { domain, tls_mode: tlsMode() }); }
+    catch (_) { out.replaceChildren(); return; }
+    out.replaceChildren();
+    const r = (res.body) || {};
+    if (!r.status || r.status === "skipped") {
+      if (r.message) out.appendChild(el("p", "hint", r.message));
+      return;
+    }
+    // Feedback, never a gate: DNS that does not point here yet is an ordinary
+    // state of a fresh install, and the operator may be about to create the
+    // record.
+    out.appendChild(statusLine(r.status, "DNS", r.message, r.status === "ok" ? "" : r.fix));
+    if (r.status !== "ok") out.appendChild(el("p", "hint", "This does not stop the install."));
+  }
+
+  // ---------------------------------------------------------------- step 5
+
+  function onStorageChange() {
+    const s3 = $("f-storage").value === "s3";
+    $("w-s3").hidden = !s3;
+    const seed = app.state ? app.state.seed : null;
+    text($("storage-hint"), s3
+      ? "Object storage keeps media off this host's disk and out of your backups' way."
+      : "Media lives in the media_data volume mounted at /app/data — include that volume in your backups, since the database rows are useless without it.");
+    if (seed && !seed.s3.credentials_answered && s3) {
+      text($("storage-hint"), "This template's S3 credentials are still placeholders, so you will need to fill in a real key pair below before the file can be written.");
+    }
+  }
+
+  // ---------------------------------------------------------------- form
+
+  function seedForm(seed) {
+    // The mode is authoritative in app.tlsMode from here on — renderTLSOptions
+    // reads it, and the seeded re-run case (a deployment already on a non-acme
+    // mode) makes that mode one of Basic's options.
+    app.tlsMode = seed.tls_mode || "acme";
+    renderTLSOptions();
+    $("f-domain").value = seed.domain || "";
+    $("f-acme").value = seed.acme_email || "";
+    $("f-name").value = seed.instance_name || "";
+    $("f-tag").value = seed.release_tag || "";
+    $("f-storage").value = seed.storage || "local";
+    $("f-s3-endpoint").value = seed.s3.endpoint || "";
+    $("f-s3-region").value = seed.s3.region || "";
+    $("f-s3-bucket").value = seed.s3.bucket || "";
+    $("f-s3-access").value = seed.s3.access_key || "";
+    // A secret already on file is offered as PRESENCE, never as a value: the
+    // field stays empty and the placeholder says what leaving it empty means.
+    kept($("f-s3-secret"), $("s3-secret-hint"), seed.s3.secret_key_set);
+    $("f-db-external").checked = seed.database.mode === "external";
+    kept($("f-db-url"), $("db-url-hint"), seed.database.url_set);
+    $("f-redis-external").checked = seed.redis.mode === "external";
+    kept($("f-redis-url"), $("redis-url-hint"), seed.redis.url_set);
+    $("f-scan").checked = !!seed.features.scan;
+    $("f-captions").checked = !!seed.features.captions;
+    $("f-media").checked = !!seed.features.media;
+    $("f-otel").checked = !!seed.features.otel;
+    $("f-ipfs").checked = !!seed.features.ipfs;
+    $("f-mail-on").checked = !!seed.mail_configured;
+    $("f-smtp-host").value = seed.mail.host || "";
+    $("f-smtp-port").value = seed.mail.port || "587";
+    $("f-smtp-user").value = seed.mail.username || "";
+    $("f-smtp-from").value = seed.mail.from || "";
+    kept($("f-smtp-pass"), $("smtp-pass-hint"), seed.mail.password_set);
+    $("f-reg-open").checked = !!seed.registration.enabled;
+    $("f-reg-approval").checked = !!seed.registration.require_approval;
+    onStorageChange();
+    onMailToggle();
+    onRegToggle();
+    onDatastoreToggle();
+    setMode(false);
+  }
+
+  function kept(input, hint, isSet) {
+    input.value = "";
+    if (isSet) {
+      input.placeholder = "kept — leave blank to keep it";
+      text(hint, "A value is already on file. Leave this blank to keep it; anything you type replaces it. It is never sent back to this page.");
+    } else {
+      input.placeholder = "";
+      text(hint, "Write-only: it is sent when you type one and is never sent back to this page.");
+    }
+  }
+
+  function onMailToggle() { $("w-mail").hidden = !$("f-mail-on").checked; }
+  function onRegToggle() { $("w-reg-approval").hidden = !$("f-reg-open").checked; }
+  function onDatastoreToggle() {
+    $("w-db-url").hidden = !$("f-db-external").checked;
+    $("w-redis-url").hidden = !$("f-redis-external").checked;
+  }
+
+  function collect() {
+    const mode = tlsMode();
+    const acmeMode = mode === "acme" || mode === "acme-staging";
+    const form = {
+      tls_mode: mode,
+      domain: $("f-domain").value.trim(),
+      // Only the acme modes have a contact address. Excluding it otherwise is the
+      // defensive half of onTLSChange's clear: a value from a mode that has since
+      // been switched away cannot ride into the written env.
+      acme_email: acmeMode ? $("f-acme").value.trim() : "",
+      instance_name: $("f-name").value.trim(),
+      release_tag: $("f-tag").value.trim(),
+      core_tag: app.advanced ? $("f-core").value.trim() : "",
+      user_tag: app.advanced ? $("f-user").value.trim() : "",
+      search_tag: app.advanced ? $("f-search").value.trim() : "",
+      storage: $("f-storage").value,
+      s3: {
+        endpoint: $("f-s3-endpoint").value.trim(),
+        region: $("f-s3-region").value.trim(),
+        bucket: $("f-s3-bucket").value.trim(),
+        access_key: $("f-s3-access").value.trim(),
+        secret_key: $("f-s3-secret").value,
+      },
+      database: { mode: "local", url: "" },
+      redis: { mode: "local", url: "" },
+      // null means "unanswered", and for the components that is a real answer:
+      // see app.componentsTouched.
+      features: null,
+      mail: null,
+      registration: { enabled: $("f-reg-open").checked, require_approval: $("f-reg-approval").checked },
+    };
+    if (app.advanced) {
+      if ($("f-db-external").checked) form.database = { mode: "external", url: $("f-db-url").value };
+      if ($("f-redis-external").checked) form.redis = { mode: "external", url: $("f-redis-url").value };
+    } else if (app.state) {
+      // Basic never asks, so it never changes: the modes come straight back from
+      // what the deployment says today.
+      form.database.mode = app.state.seed.database.mode;
+      form.redis.mode = app.state.seed.redis.mode;
+    }
+    if (app.componentsTouched) {
+      form.features = {
+        scan: $("f-scan").checked, captions: $("f-captions").checked,
+        media: $("f-media").checked, otel: $("f-otel").checked, ipfs: $("f-ipfs").checked,
+      };
+    }
+    if ($("f-mail-on").checked) {
+      form.mail = {
+        host: $("f-smtp-host").value.trim(), port: $("f-smtp-port").value.trim(),
+        username: $("f-smtp-user").value.trim(), password: $("f-smtp-pass").value,
+        from: $("f-smtp-from").value.trim(),
+      };
+    }
+    return form;
+  }
+
+  // ---------------------------------------------------------------- step 7
+
+  async function loadReview() {
+    const out = $("review-out");
+    out.replaceChildren(el("span", "spinner", "Generating…"));
+    app.review = null;
+    $("btn-next").disabled = true;
+    let res;
+    try { res = await api("POST", "/api/review", collect()); }
+    catch (e) { out.replaceChildren(el("p", "err", e.message)); return; }
+    if (res.status !== 200 || !res.body) {
+      out.replaceChildren(el("p", "err", (res.body && res.body.error) || "The review could not be generated."));
+      return;
+    }
+    app.review = res.body;
+    out.replaceChildren();
+
+    if (!res.body.ok) {
+      out.appendChild(el("h2", null, "This configuration would not boot"));
+      if (res.body.error) out.appendChild(el("p", "err", res.body.error));
+      const ul = el("ul", "plain");
+      (res.body.issues || []).forEach((is) => {
+        const li = el("li");
+        li.appendChild(el("span", "g fail", "✗ "));
+        if (is.var) li.appendChild(el("span", "tag", is.var));
+        li.appendChild(document.createTextNode(" " + is.msg));
+        ul.appendChild(li);
+      });
+      out.appendChild(ul);
+      // EVERY problem at once, deliberately: finding out about the second bad
+      // answer only after fixing the first is the experience this replaces.
+      out.appendChild(el("p", "hint", "All of them are listed, not just the first. Go Back, fix them, and return here."));
+      return;
+    }
+
+    out.appendChild(el("h2", null, "Files this will write"));
+    const files = el("ul", "plain");
+    (res.body.files || []).forEach((f) => {
+      const li = el("li");
+      li.appendChild(el("span", "tag", f.path));
+      li.appendChild(el("span", "tag", "mode " + f.mode));
+      li.appendChild(el("div", "hint", f.what));
+      files.appendChild(li);
+    });
+    out.appendChild(files);
+
+    const secs = res.body.secrets || {};
+    const buckets = [
+      ["generated", secs.generated, "minted fresh by this run"],
+      ["preserved", secs.preserved, "kept exactly as the existing file has them"],
+      ["rotated", secs.rotated, "deliberately replaced"],
+      ["carried over", secs.carried, "set by the previous file and not defined by the template"],
+    ].filter((b) => b[1] && b[1].length);
+    if (buckets.length) {
+      out.appendChild(el("h2", null, "Secrets"));
+      out.appendChild(el("p", "hint", "By name only — no value is ever shown here, or sent to this page."));
+      buckets.forEach((b) => {
+        const li = el("div", "field");
+        li.appendChild(el("strong", null, b[0] + " — " + b[2]));
+        const tags = el("div");
+        b[1].forEach((n) => tags.appendChild(el("span", "tag", n)));
+        li.appendChild(tags);
+        out.appendChild(li);
+      });
+    }
+
+    if (res.body.profiles && res.body.profiles.length) {
+      out.appendChild(el("h2", null, "Compose profiles"));
+      const tags = el("div");
+      res.body.profiles.forEach((p) => tags.appendChild(el("span", "tag", p)));
+      out.appendChild(tags);
+    }
+
+    if (res.body.warnings && res.body.warnings.length) {
+      out.appendChild(el("h2", null, "Worth knowing"));
+      res.body.warnings.forEach((wmsg) => out.appendChild(statusLine("warn", "note", wmsg)));
+    }
+
+    if (res.body.overwrite_required) {
+      const box = el("div", "note");
+      const row = el("div", "check");
+      const cb = document.createElement("input");
+      cb.type = "checkbox"; cb.id = "f-overwrite";
+      const wrap = el("div");
+      const lab = el("label", null, "Rewrite " + app.state.output + " in place");
+      lab.setAttribute("for", "f-overwrite");
+      wrap.appendChild(lab);
+      wrap.appendChild(el("p", "hint", "This is the file a running deployment reads. Every value it already sets is preserved either way — including the key-encryption keys, which are never re-minted — so this is one deliberate keystroke, not a risk."));
+      row.appendChild(cb); row.appendChild(wrap);
+      box.appendChild(row);
+      out.appendChild(box);
+      cb.addEventListener("change", () => { $("btn-next").disabled = !cb.checked; });
+    } else {
+      $("btn-next").disabled = false;
+    }
+  }
+
+  // ---------------------------------------------------------------- step 8
+
+  async function doApply() {
+    if (app.applied) return;
+    const out = $("apply-out");
+    out.replaceChildren(el("span", "spinner", "Writing the files…"));
+    const body = Object.assign({}, collect(), {
+      overwrite: !!(document.getElementById("f-overwrite") && document.getElementById("f-overwrite").checked),
+    });
+    let res;
+    try { res = await api("POST", "/api/apply", body); }
+    catch (e) { out.replaceChildren(el("p", "err", e.message)); return; }
+    if (res.status !== 200 || !res.body || !res.body.ok) {
+      out.replaceChildren(el("p", "err",
+        (res.body && res.body.error) || "Nothing was written. Go back to Review — the problems are listed there."));
+      return;
+    }
+    app.applied = res.body;
+    out.replaceChildren();
+    (res.body.written || []).forEach((f) => {
+      out.appendChild(statusLine("ok", "wrote " + f.path, "mode " + f.mode));
+    });
+    $("install-choice").hidden = false;
+  }
+
+  function showManual() {
+    const out = $("manual-out");
+    out.hidden = false;
+    out.replaceChildren();
+    out.appendChild(el("p", "hint", "Run this from the deployment directory, then come back and press Next:"));
+    const pre = el("pre", "log", app.state.deploy_command);
+    out.appendChild(pre);
+    app.installed = true;
+    $("btn-next").hidden = false;
+    $("btn-next").textContent = "Next";
+    $("btn-next").disabled = false;
+  }
+
+  async function runInstall() {
+    $("install-choice").hidden = true;
+    $("install-run").hidden = false;
+    const log = $("install-log");
+    log.textContent = "";
+    let resp;
+    try {
+      resp = await fetch("/api/install", { method: "POST", headers: { "X-Setup-Token": TOKEN } });
+    } catch (e) {
+      text($("install-status"), "The deploy could not be started: " + e.message);
+      return;
+    }
+    if (resp.status === 403) { fatal("This page's one-time link is no longer valid."); return; }
+    if (!resp.ok || !resp.body) {
+      let msg = "The deploy could not be started.";
+      try { const j = await resp.json(); if (j && j.error) msg = j.error; } catch (_) { /* keep the default */ }
+      text($("install-status"), msg);
+      return;
+    }
+    // Server-sent events read off a POST with fetch, rather than EventSource:
+    // EventSource cannot set a header, and the token lives in one.
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      let chunk;
+      try { chunk = await reader.read(); } catch (_) { break; }
+      if (chunk.done) break;
+      buf += dec.decode(chunk.value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        handleFrame(buf.slice(0, i));
+        buf = buf.slice(i + 2);
+      }
+    }
+  }
+
+  function handleFrame(frame) {
+    let name = "", data = null;
+    frame.split("\n").forEach((line) => {
+      if (line.startsWith("event: ")) name = line.slice(7);
+      else if (line.startsWith("data: ")) { try { data = JSON.parse(line.slice(6)); } catch (_) { data = null; } }
+    });
+    if (!data) return;
+    const log = $("install-log");
+    if (name === "line") {
+      log.textContent += data.text + "\n";
+      log.scrollTop = log.scrollHeight;
+      return;
+    }
+    if (name !== "done") return;
+    const out = $("install-done");
+    out.replaceChildren();
+    if (data.exit_code === 0 && !data.error) {
+      text($("install-status"), "The deploy finished.");
+      out.appendChild(statusLine("ok", "deploy", "exit 0"));
+    } else {
+      text($("install-status"), "The deploy stopped.");
+      out.appendChild(statusLine("fail", "deploy", data.error ? data.error : "exit " + data.exit_code));
+      if (data.hint) out.appendChild(el("p", "hint", data.hint));
+    }
+    app.installed = true;
+    $("btn-next").hidden = false;
+    $("btn-next").textContent = "Next";
+    $("btn-next").disabled = false;
+  }
+
+  // ---------------------------------------------------------------- step 9
+
+  async function loadStatus() {
+    const out = $("status-out");
+    out.replaceChildren(el("span", "spinner", "Checking what is up…"));
+    let res;
+    try { res = await api("POST", "/api/status"); }
+    catch (e) { out.replaceChildren(el("p", "err", e.message)); return; }
+    const r = (res.body) || {};
+    out.replaceChildren();
+    if (r.lines && r.lines.length) {
+      out.appendChild(el("h2", null, "What is running"));
+      r.lines.forEach((l) => out.appendChild(statusLine(l.status, l.source + " " + l.check, l.detail, l.status === "ok" ? "" : l.fix)));
+    }
+    const claim = $("claim-out");
+    claim.replaceChildren();
+    claim.appendChild(el("h2", null, "Claim the admin account"));
+    claim.appendChild(el("p", "lede", "The admin account is not in the env file and cannot be. The api mints a one-time owner-claim token at boot and prints it in its own log; until it is redeemed, every signup path answers 403."));
+    claim.appendChild(el("pre", "log", r.logs_command || "./deploy/compose.sh logs api"));
+    const link = document.createElement("a");
+    link.href = r.claim_url || "#";
+    link.textContent = r.claim_url || "";
+    link.rel = "noreferrer";
+    const p = el("p");
+    p.appendChild(document.createTextNode("Then open "));
+    p.appendChild(link);
+    claim.appendChild(p);
+    claim.appendChild(el("div", "note", "Every api restart mints a fresh token and invalidates the previous one, so take the newest line in the log."));
+    claim.appendChild(el("p", "hint", "Pressing Finish shuts this wizard down. It holds a one-time credential that can write your env file and run a deploy, so it does not stay open."));
+  }
+
+  async function finish() {
+    $("btn-next").disabled = true;
+    try { await api("POST", "/api/finish"); } catch (_) { /* it is going away either way */ }
+    document.querySelectorAll("section.step").forEach((s) => { s.hidden = true; });
+    $("stepper").replaceChildren();
+    $("btn-next").hidden = true;
+    $("btn-back").hidden = true;
+    const done = el("section", "step");
+    done.appendChild(el("h2", null, "The wizard has stopped."));
+    done.appendChild(el("p", "lede", "This page is now inert. The terminal that started it has printed what to do next; you can close this tab."));
+    document.querySelector("main").appendChild(done);
+  }
+
+  // ---------------------------------------------------------------- wiring
+
+  // focusInvalid takes an operator to the first field that failed, because a
+  // silent Next with the offending field scrolled off the bottom of a long step
+  // is a wizard that looks frozen. It scrolls the field to the middle and puts
+  // the cursor in it, so the role=alert message it is wired to is right there.
+  function focusInvalid(input) {
+    if (!input) return;
+    if (input.hidden || (input.offsetParent === null && input.type !== "hidden")) return;
+    input.scrollIntoView({ block: "center", behavior: "smooth" });
+    try { input.focus({ preventScroll: true }); } catch (_) { input.focus(); }
+  }
+
+  async function next() {
+    const id = STEPS[app.step].id;
+    if (id === "s-domain") {
+      // Order matters: the first failing field is the one we take the operator
+      // to, and the fields are validated top to bottom as they appear.
+      const okTLS = await validateField("tls_mode", tlsMode(), $("e-tls"));
+      let okDomain = true;
+      if (!$("f-domain").value.trim()) {
+        setFieldError($("f-domain"), $("e-domain"), "The instance needs a public origin: it is the address for watch and embed links and for OAuth, NodeInfo and federation identity, so the template's example cannot be deployed.");
+        okDomain = false;
+      } else {
+        okDomain = await validateField("domain", $("f-domain").value.trim(), $("e-domain"));
+      }
+      const okEmail = await validateField("acme_email", $("f-acme").value.trim(), $("e-acme"));
+      if (!okTLS) { focusInvalid($("f-tls")); return; }
+      if (!okDomain) { focusInvalid($("f-domain")); return; }
+      if (!okEmail) { focusInvalid($("f-acme")); return; }
+    }
+    if (id === "s-review" && (!app.review || !app.review.ok)) return;
+    if (id === "s-success") { await finish(); return; }
+    if (app.step < STEPS.length - 1) show(app.step + 1);
+  }
+
+  function bind() {
+    $("btn-next").addEventListener("click", () => { next(); });
+    $("btn-back").addEventListener("click", () => { if (app.step > 0) show(app.step - 1); });
+    $("mode-basic").addEventListener("click", () => setMode(false));
+    $("mode-advanced").addEventListener("click", () => setMode(true));
+    $("f-tls").addEventListener("change", () => { app.tlsMode = $("f-tls").value; onTLSChange(); checkDNS(); });
+    // The Basic-mode static display's escape hatch: no dead dropdown, a link that
+    // takes the LAN operator to the modes that are theirs.
+    $("tls-advanced-link").addEventListener("click", (e) => { e.preventDefault(); setMode(true); });
+    // A DNS verdict is about the value that produced it; as soon as the domain
+    // changes the old verdict is stale, so it (and any stale field error) is
+    // cleared the moment the operator types.
+    $("f-domain").addEventListener("input", () => {
+      $("dns-out").replaceChildren();
+      clearFieldError($("f-domain"), $("e-domain"));
+    });
+    $("f-domain").addEventListener("blur", async () => {
+      if (!$("f-domain").value.trim()) return;
+      if (await validateField("domain", $("f-domain").value.trim(), $("e-domain"))) checkDNS();
+    });
+    $("f-acme").addEventListener("blur", () => validateField("acme_email", $("f-acme").value.trim(), $("e-acme")));
+    $("f-storage").addEventListener("change", onStorageChange);
+    $("f-mail-on").addEventListener("change", onMailToggle);
+    $("f-reg-open").addEventListener("change", onRegToggle);
+    $("f-db-external").addEventListener("change", onDatastoreToggle);
+    $("f-redis-external").addEventListener("change", onDatastoreToggle);
+    $("btn-install").addEventListener("click", () => { runInstall(); });
+    $("btn-install-manual").addEventListener("click", showManual);
+  }
+
+  async function boot() {
+    if (!TOKEN) {
+      fatal("This page must be opened with the one-time link `vidra setup --web` printed in your terminal.");
+      return;
+    }
+    bind();
+    if (!(await loadState())) return;
+    show(0);
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
