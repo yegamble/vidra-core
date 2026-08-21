@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -204,7 +205,7 @@ func (s *Server) downloadStoredVideoFile(c echo.Context, kind, fallbackName stri
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	_, viewerID, authed, err := s.videoForDownload(c, id)
+	v, viewerID, authed, err := s.videoForDownload(c, id)
 	if err != nil {
 		return err
 	}
@@ -216,8 +217,27 @@ func (s *Server) downloadStoredVideoFile(c echo.Context, kind, fallbackName stri
 	if kind == "original" {
 		filename = safeDownloadFilename(f.OriginalName, "video-"+id.String()+filepath.Ext(f.OriginalName))
 	}
-	setAttachmentHeader(c, filename)
-	return s.serveStoredObject(c, f.StorageKey, f.ContentType)
+	return s.serveMediaAsset(c, mediaAsset{
+		key:         f.StorageKey,
+		contentType: f.ContentType,
+		class:       delivery.ClassDownload,
+		filename:    filename,
+		eligible:    s.publicDownload(v),
+		notFound:    "video not found",
+	})
+}
+
+// publicDownload reports whether this download is the one an anonymous visitor
+// could take: a public, published video with BOTH download gates open.
+//
+// It re-states videoForDownload's non-privileged path deliberately. A
+// moderator's download of the same object is authorised — they bypass the
+// gates — but it is authorised for THEM, and a signed URL is a transferable
+// credential. Downloads being switched off instance-wide has to mean no
+// download URL leaves the building, not "no download URL except the one the
+// moderator's browser can be talked into fetching".
+func (s *Server) publicDownload(v sqlcgen.GetVideoByIDRow) bool {
+	return publicVideoForIPFS(v.Privacy, v.State) && s.downloadsEnabled() && v.DownloadEnabled
 }
 
 func (s *Server) handleDownloadHLSRendition(c echo.Context) error {
@@ -229,7 +249,8 @@ func (s *Server) handleDownloadHLSRendition(c echo.Context) error {
 	if err != nil || height <= 0 {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if _, _, _, err := s.videoForDownload(c, id); err != nil {
+	v, _, _, err := s.videoForDownload(c, id)
+	if err != nil {
 		return err
 	}
 	includeAudio := !strings.EqualFold(c.QueryParam("audio"), "false")
@@ -241,8 +262,14 @@ func (s *Server) handleDownloadHLSRendition(c echo.Context) error {
 	if !includeAudio {
 		filename = fmt.Sprintf("video-%s-%dp-video-only.mp4", id, rendition.Height)
 	}
-	setAttachmentHeader(c, filename)
-	return s.serveStoredObject(c, key, media.HLSMP4ContentType)
+	return s.serveMediaAsset(c, mediaAsset{
+		key:         key,
+		contentType: media.HLSMP4ContentType,
+		class:       delivery.ClassDownload,
+		filename:    filename,
+		eligible:    s.publicDownload(v),
+		notFound:    "video not found",
+	})
 }
 
 func (s *Server) handleDownloadHLSAudio(c echo.Context) error {
@@ -250,7 +277,8 @@ func (s *Server) handleDownloadHLSAudio(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if _, _, _, err := s.videoForDownload(c, id); err != nil {
+	v, _, _, err := s.videoForDownload(c, id)
+	if err != nil {
 		return err
 	}
 	if s.transcodesvc == nil {
@@ -266,8 +294,14 @@ func (s *Server) handleDownloadHLSAudio(c echo.Context) error {
 	} else if !exists {
 		return echo.NewHTTPError(http.StatusNotFound, "download not found")
 	}
-	setAttachmentHeader(c, "video-"+id.String()+"-audio.m4a")
-	return s.serveStoredObject(c, key, media.HLSM4AContentType)
+	return s.serveMediaAsset(c, mediaAsset{
+		key:         key,
+		contentType: media.HLSM4AContentType,
+		class:       delivery.ClassAudio,
+		filename:    "video-" + id.String() + "-audio.m4a",
+		eligible:    s.publicDownload(v),
+		notFound:    "video not found",
+	})
 }
 
 // resolveHLSDownload accepts only assets from a ready playlist and proves the
@@ -315,6 +349,11 @@ func (s *Server) handleDownloadVideoSubtitle(c echo.Context) error {
 	}
 	defer func() { _ = rc.Close() }()
 	setAttachmentHeader(c, "video-"+id.String()+"-"+language+".vtt")
+	// Caption bytes come back as a stream from video.Service, which never
+	// surfaces the storage key, so this route keeps the API-proxy path and takes
+	// the cache policy alone (see docs/operations.md — captions are deliberately
+	// outside presigned delivery).
+	setMediaCacheControl(c, delivery.ClassCaption)
 	return c.Stream(http.StatusOK, "text/vtt; charset=utf-8", rc)
 }
 
@@ -327,7 +366,8 @@ func (s *Server) handleStreamVideoWebM(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if _, err := s.videoVisibleForMedia(c, id); err != nil {
+	v, err := s.videoVisibleForMedia(c, id)
+	if err != nil {
 		return err
 	}
 	viewerID, _, authed := principalFromContext(c)
@@ -335,7 +375,13 @@ func (s *Server) handleStreamVideoWebM(c echo.Context) error {
 	if err != nil {
 		return videoError(err)
 	}
-	return s.serveStoredObject(c, f.StorageKey, f.ContentType)
+	return s.serveMediaAsset(c, mediaAsset{
+		key:         f.StorageKey,
+		contentType: f.ContentType,
+		class:       delivery.ClassWebM,
+		eligible:    publicVideoForIPFS(v.Privacy, v.State),
+		notFound:    "video not found",
+	})
 }
 
 // downloadObjectSize returns (size, exists) without opening every remote object.
@@ -375,10 +421,19 @@ func safeDownloadFilename(name, fallback string) string {
 	return name
 }
 
-func setAttachmentHeader(c echo.Context, filename string) {
+// attachmentHeader formats the Content-Disposition value for a download. It is
+// split out from setAttachmentHeader because a presigned redirect has to send
+// the SAME value to the object store as a response-header override — the
+// browser never sees this route's headers once it follows the redirect, so a
+// second formatting of the filename would be a second chance to disagree.
+func attachmentHeader(filename string) string {
 	header := mime.FormatMediaType("attachment", map[string]string{"filename": filename})
 	if header == "" {
 		header = "attachment"
 	}
-	c.Response().Header().Set(echo.HeaderContentDisposition, header)
+	return header
+}
+
+func setAttachmentHeader(c echo.Context, filename string) {
+	c.Response().Header().Set(echo.HeaderContentDisposition, attachmentHeader(filename))
 }

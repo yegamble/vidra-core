@@ -27,6 +27,7 @@ import (
 	"github.com/vidra/vidra-core/internal/channelsync"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/donation"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
@@ -173,6 +174,16 @@ type Server struct {
 	ipfsmirrorsvc       ipfsMirrorProvider
 	metrics             *observability.Metrics
 	media               storage.Backend
+	// mediaPresigner is the RAW primary storage backend when it can mint signed
+	// URLs, and nil otherwise — including, deliberately, whenever a storage
+	// migration is in flight (see WithDeliveryPresigner). It is NOT `media`:
+	// `media` may be a storage.Fallback dual-read view, which cannot honestly
+	// presign for either store.
+	mediaPresigner storage.Presigner
+	// deliverysvc decides where each media request's bytes come from
+	// (api-proxy / presigned / ipfs-gateway). Built in New() after the options
+	// have been applied; never nil, so no handler needs a nil check.
+	deliverysvc delivery.Resolver
 	// lookPath is exec.LookPath, indirected so the admin status page's ffmpeg
 	// component can be tested on a machine that does — or does not — have ffmpeg
 	// installed. A probe whose answer depends on the developer's laptop is not a
@@ -530,6 +541,23 @@ func WithIPFSMirrorService(svc ipfsMirrorProvider) Option {
 	return func(s *Server) { s.ipfsmirrorsvc = svc }
 }
 
+// WithDeliveryPresigner wires the backend that mints signed object URLs for
+// direct delivery (phase-2 storage item 6). Unset — the local backend, or a
+// deployment mid-storage-migration — means media is always served by the API
+// byte proxy, which is the shipped behaviour.
+//
+// The argument must be the RAW primary backend. A storage.Fallback deliberately
+// implements no optional capability precisely because a URL signed against one
+// store, for an object that currently lives in the other, is a 404 the API can
+// no longer fall back from; cmd/api therefore passes nothing at all while a
+// migration target is configured.
+//
+// Wiring a presigner does NOT turn presigned delivery on: that is the
+// delivery_presign_enabled admin setting, default off.
+func WithDeliveryPresigner(p storage.Presigner) Option {
+	return func(s *Server) { s.mediaPresigner = p }
+}
+
 // WithMetrics attaches the Prometheus RED-metrics registry. When set AND
 // cfg.MetricsEnabled is true, the request choke point records per-request
 // counters/histograms and GET /metrics serves the scrape. Mirrors the otelecho
@@ -852,6 +880,11 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 		},
 		Limit: cfg.HTTPBodyLimit,
 	}))
+
+	// Delivery-source resolver (interfaces.md §4). Built AFTER the options so it
+	// closes over the final wiring, and BEFORE routes() so every media handler
+	// can rely on it being present.
+	s.deliverysvc = s.newDeliveryResolver()
 
 	s.routes()
 	return s

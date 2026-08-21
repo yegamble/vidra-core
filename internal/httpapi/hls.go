@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -33,9 +34,12 @@ const (
 
 	// HLS routes remain authorization gates, so their immutable cache entries
 	// are browser-private. A deployment may promote these to shared-CDN entries
-	// only when it also purges old generations on privacy changes and deletion.
-	hlsVersionedCacheControl = "private, max-age=31536000, immutable"
-	hlsStableCacheControl    = "private, max-age=0, must-revalidate"
+	// only when it also purges old generations on privacy changes and deletion —
+	// which is why delivery.Resolver carries a Purge hook from day one. The
+	// values live in internal/delivery so every media route's cache policy has
+	// exactly one definition.
+	hlsVersionedCacheControl = delivery.CacheVersionedImmutable
+	hlsStableCacheControl    = delivery.CacheStableRevalidate
 )
 
 // The two file shapes a rendition directory contains: its variant playlist and
@@ -50,23 +54,30 @@ var (
 )
 
 // hlsPlaylistForView authorises serving a video's HLS assets and returns its
-// streaming playlist row. Visibility mirrors the /original endpoint: the video
-// must exist and be visible to the caller (private → owner only, blocked →
-// moderators only), and its playlist must be ready; every other case is 404 so
-// existence is not leaked.
-func (s *Server) hlsPlaylistForView(c echo.Context, id uuid.UUID) (sqlcgen.StreamingPlaylist, error) {
+// streaming playlist row together with the video row the authorization decision
+// was made on. Visibility mirrors the /original endpoint: the video must exist
+// and be visible to the caller (private → owner only, blocked → moderators
+// only), and its playlist must be ready; every other case is 404 so existence is
+// not leaked.
+//
+// The video row is returned rather than discarded because segment delivery needs
+// the SAME row the gate used to decide whether these bytes are public — deriving
+// that from a second lookup is how an eligibility fence and an auth check drift
+// apart.
+func (s *Server) hlsPlaylistForView(c echo.Context, id uuid.UUID) (sqlcgen.StreamingPlaylist, sqlcgen.GetVideoByIDRow, error) {
 	notFound := echo.NewHTTPError(http.StatusNotFound, "video not found")
 	if s.transcodesvc == nil {
-		return sqlcgen.StreamingPlaylist{}, notFound
+		return sqlcgen.StreamingPlaylist{}, sqlcgen.GetVideoByIDRow{}, notFound
 	}
-	if _, err := s.videoVisibleForMedia(c, id); err != nil {
-		return sqlcgen.StreamingPlaylist{}, err
+	v, err := s.videoVisibleForMedia(c, id)
+	if err != nil {
+		return sqlcgen.StreamingPlaylist{}, sqlcgen.GetVideoByIDRow{}, err
 	}
 	sp, ok := s.transcodesvc.Playlist(c.Request().Context(), id)
 	if !ok || sp.State != "ready" || sp.MasterKey == "" {
-		return sqlcgen.StreamingPlaylist{}, notFound
+		return sqlcgen.StreamingPlaylist{}, sqlcgen.GetVideoByIDRow{}, notFound
 	}
-	return sp, nil
+	return sp, v, nil
 }
 
 // handleGetHLSMaster serves a video's HLS master playlist. Behind optionalAuth:
@@ -78,7 +89,7 @@ func (s *Server) handleGetHLSMaster(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	sp, err := s.hlsPlaylistForView(c, id)
+	sp, _, err := s.hlsPlaylistForView(c, id)
 	if err != nil {
 		return err
 	}
@@ -108,7 +119,7 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 	if !canonical && !peertube {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	sp, err := s.hlsPlaylistForView(c, id)
+	sp, v, err := s.hlsPlaylistForView(c, id)
 	if err != nil {
 		return err
 	}
@@ -124,16 +135,27 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 		key = prefix + "/" + file
 	}
 	// A variant playlist gets the same ?pt= URI rewrite as the master (so the
-	// native player propagates the token to segment requests); a .ts segment is
-	// binary and streamed as-is.
+	// native player propagates the token to segment requests), which is exactly
+	// why a playlist can never be delivered from anywhere but here; a segment is
+	// opaque binary and goes through the delivery resolver.
 	if strings.HasSuffix(file, ".m3u8") {
 		return s.serveHLSPlaylist(c, key, sp)
 	}
-	setHLSCacheControl(c, sp)
+	contentType := contentTypeMP4
 	if strings.HasSuffix(file, ".ts") {
-		return s.serveStoredObject(c, key, contentTypeTS)
+		contentType = contentTypeTS
 	}
-	return s.serveStoredObject(c, key, contentTypeMP4)
+	// No mirror class: the pin ledger mirrors an HLS ladder as one directory
+	// CID, not per-segment objects, so there is no per-segment gateway URL to
+	// look up. Segments still qualify for a presigned redirect.
+	return s.serveMediaAsset(c, mediaAsset{
+		key:         key,
+		contentType: contentType,
+		class:       delivery.ClassHLSSegment,
+		eligible:    publicVideoForIPFS(v.Privacy, v.State),
+		versioned:   hlsVersionMatches(c, sp),
+		notFound:    "video not found",
+	})
 }
 
 // serveHLSPlaylist streams an m3u8. When the request carries a ?pt= playback
@@ -305,17 +327,22 @@ func validateHLSVersion(c echo.Context, sp sqlcgen.StreamingPlaylist) error {
 	return echo.NewHTTPError(http.StatusNotFound, "video not found")
 }
 
+// setHLSCacheControl applies the HLS cache policy to a playlist response. The
+// rules are unchanged; they are now expressed once, in internal/delivery, so a
+// playlist served here and a segment served through the delivery resolver
+// cannot drift apart.
 func setHLSCacheControl(c echo.Context, sp sqlcgen.StreamingPlaylist) {
-	header := c.Response().Header()
-	if c.QueryParam(playbackTokenParam) != "" || c.Request().Header.Get("Authorization") != "" {
-		header.Set("Cache-Control", "private, no-store")
-		return
-	}
-	if c.QueryParam(hlsVersionParam) == hlsCacheVersion(sp) {
-		header.Set("Cache-Control", hlsVersionedCacheControl)
-		return
-	}
-	header.Set("Cache-Control", hlsStableCacheControl)
+	c.Response().Header().Set("Cache-Control", delivery.CacheControl(
+		delivery.ClassHLSPlaylist,
+		hlsVersionMatches(c, sp),
+		credentialedMediaRequest(c),
+	))
+}
+
+// hlsVersionMatches reports whether the request carries this playlist
+// generation's version, which is what makes an HLS URL immutable.
+func hlsVersionMatches(c echo.Context, sp sqlcgen.StreamingPlaylist) bool {
+	return c.QueryParam(hlsVersionParam) == hlsCacheVersion(sp)
 }
 
 func isRelativePlaylistURI(raw string) bool {

@@ -352,3 +352,106 @@ func TestEnsureBucketReportsCreation(t *testing.T) {
 		t.Error("a bucket holding an object reported itself empty — that answer would let GC delete somebody else's media")
 	}
 }
+
+// TestS3PresignGetAsPinsResponseHeaders proves the response-header overrides a
+// delivery redirect depends on actually reach the wire. Vidra uploads objects
+// with NO content type and derives download filenames from the database, so a
+// signed URL that could not carry them would silently change what the viewer
+// gets (an octet-stream download where a video used to play inline, a
+// "<uuid>.mp4" file where the creator's filename used to be).
+func TestS3PresignGetAsPinsResponseHeaders(t *testing.T) {
+	b := newS3TestBackend(t)
+	ctx := context.Background()
+	key := testKey(t, b, "delivery.mp4")
+	content := []byte("presigned-delivery-bytes")
+	if _, err := b.Put(ctx, key, bytes.NewReader(content)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	// A bare presign: the object comes back, but with the store's own headers.
+	bare, err := b.PresignGet(ctx, key, time.Minute)
+	if err != nil {
+		t.Fatalf("PresignGet: %v", err)
+	}
+	body, headers := fetchPresigned(t, bare)
+	if !bytes.Equal(body, content) {
+		t.Fatalf("bare presigned body = %q, want %q", body, content)
+	}
+	if ct := headers.Get("Content-Type"); ct == "video/mp4" {
+		t.Fatalf("the store already returns video/mp4 for an object stored without one; "+
+			"the response-override machinery would be untested (got %q)", ct)
+	}
+
+	// The full presign: content type, attachment filename, and a PRIVATE cache
+	// policy all come back exactly as asked.
+	want := PresignResponse{
+		ContentType:        "video/mp4",
+		ContentDisposition: `attachment; filename="My Holiday.mp4"`,
+		CacheControl:       "private, max-age=300, must-revalidate",
+	}
+	signed, err := b.PresignGetAs(ctx, key, time.Minute, want)
+	if err != nil {
+		t.Fatalf("PresignGetAs: %v", err)
+	}
+	body, headers = fetchPresigned(t, signed)
+	if !bytes.Equal(body, content) {
+		t.Fatalf("signed body = %q, want %q", body, content)
+	}
+	if got := headers.Get("Content-Type"); got != want.ContentType {
+		t.Errorf("Content-Type = %q, want %q", got, want.ContentType)
+	}
+	if got := headers.Get("Content-Disposition"); got != want.ContentDisposition {
+		t.Errorf("Content-Disposition = %q, want %q", got, want.ContentDisposition)
+	}
+	if got := headers.Get("Cache-Control"); got != want.CacheControl {
+		t.Errorf("Cache-Control = %q, want %q", got, want.CacheControl)
+	}
+
+	// The overrides are inside the signature: editing them invalidates the URL,
+	// so a viewer cannot turn an inline video into an attachment (or vice versa).
+	tampered := strings.Replace(signed, "response-content-type=video%2Fmp4", "response-content-type=text%2Fhtml", 1)
+	if tampered == signed {
+		t.Fatal("could not find the response-content-type parameter to tamper with")
+	}
+	resp, err := http.Get(tampered) //nolint:gosec // a presigned URL from this test
+	if err != nil {
+		t.Fatalf("GET tampered: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusOK {
+		t.Error("a tampered response-header override was accepted; the overrides are not signed")
+	}
+
+	// An expired signature is refused rather than silently served — which is why
+	// the delivery redirect's own max-age has to stay well inside the TTL.
+	expiring, err := b.PresignGetAs(ctx, key, time.Second, want)
+	if err != nil {
+		t.Fatalf("PresignGetAs(1s): %v", err)
+	}
+	time.Sleep(2 * time.Second)
+	expired, err := http.Get(expiring) //nolint:gosec // a presigned URL from this test
+	if err != nil {
+		t.Fatalf("GET expired: %v", err)
+	}
+	defer func() { _ = expired.Body.Close() }()
+	if expired.StatusCode == http.StatusOK {
+		t.Error("an expired presigned URL still served the object")
+	}
+}
+
+func fetchPresigned(t *testing.T, url string) ([]byte, http.Header) {
+	t.Helper()
+	resp, err := http.Get(url) //nolint:gosec // a presigned URL from this test
+	if err != nil {
+		t.Fatalf("GET presigned: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read presigned body: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("presigned GET = %d; body=%s", resp.StatusCode, body)
+	}
+	return body, resp.Header
+}

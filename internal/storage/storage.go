@@ -96,6 +96,49 @@ type Presigner interface {
 	PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error)
 }
 
+// PresignResponse overrides the headers the store sends when a presigned URL is
+// used. Empty fields are left to the store.
+//
+// It exists because a presigned redirect has to be header-equivalent to the API
+// byte path it replaces, and Vidra's byte path builds those headers from the
+// DATABASE, not from the object: objects are uploaded with no Content-Type at
+// all, and a download's filename comes from the video row rather than the key.
+// Without overrides, redirecting `/download/original` would save "<uuid>.mp4"
+// instead of the creator's filename, and redirecting `/original` would offer an
+// application/octet-stream download where a video used to play inline.
+type PresignResponse struct {
+	// ContentType is the media type the object is served with.
+	ContentType string
+	// ContentDisposition is the full header value (e.g. an RFC 2183
+	// `attachment; filename="..."`), already formatted by the caller.
+	ContentDisposition string
+	// CacheControl is the cache policy the OBJECT RESPONSE carries. A signed
+	// URL is a per-viewer credential, so this is how a delivery redirect keeps
+	// the bytes behind it out of shared caches too.
+	CacheControl string
+}
+
+// IsZero reports whether no override is requested.
+func (p PresignResponse) IsZero() bool {
+	return p.ContentType == "" && p.ContentDisposition == "" && p.CacheControl == ""
+}
+
+// ResponsePresigner is an optional capability implemented by backends that can
+// presign a GET *and* pin the response headers that GET answers with. The S3
+// backend implements it (the S3 API's `response-*` query overrides, supported by
+// MinIO, AWS, Backblaze B2 and DigitalOcean Spaces alike); the local backend
+// cannot presign at all.
+//
+// Consumers that need header equivalence must feature-detect this rather than
+// Presigner and DECLINE to redirect when it is absent — degrading to a signed
+// URL with the wrong headers is not the same delivery.
+type ResponsePresigner interface {
+	Presigner
+	// PresignGetAs is PresignGet with response-header overrides. A zero
+	// PresignResponse is exactly PresignGet.
+	PresignGetAs(ctx context.Context, key string, ttl time.Duration, resp PresignResponse) (string, error)
+}
+
 // SizeUnknown is the size argument meaning "the caller cannot say how many bytes
 // r will yield". Backends must still store the object correctly; they just
 // cannot pick an upload strategy from the length.

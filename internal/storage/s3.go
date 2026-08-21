@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -69,6 +70,7 @@ var _ ObjectLister = (*S3)(nil)
 var _ ObjectLister = (*Local)(nil)
 var _ SizedPutter = (*S3)(nil)
 var _ Presigner = (*S3)(nil)
+var _ ResponsePresigner = (*S3)(nil)
 
 // NewS3 validates cfg and builds the client. No network calls are made here;
 // use EnsureBucket at startup to fail fast on unreachable/missing buckets.
@@ -334,10 +336,32 @@ func isNoLifecycleConfiguration(err error) bool {
 // it. Backblaze B2, MinIO, AWS S3 and DigitalOcean Spaces all support presigned
 // GETs on the S3 API.
 func (s *S3) PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	return s.PresignGetAs(ctx, key, ttl, PresignResponse{})
+}
+
+// PresignGetAs is PresignGet with response-header overrides, implementing
+// storage.ResponsePresigner. The overrides ride the S3 `response-*` query
+// parameters, which are covered by the signature — a viewer cannot edit them to
+// make the store answer with different headers, and a URL signed for an inline
+// video cannot be rewritten into an attachment.
+func (s *S3) PresignGetAs(ctx context.Context, key string, ttl time.Duration, resp PresignResponse) (string, error) {
 	if err := validateKey(key); err != nil {
 		return "", err
 	}
-	u, err := s.client.PresignedGetObject(ctx, s.bucket, key, ttl, nil)
+	var params url.Values
+	if !resp.IsZero() {
+		params = url.Values{}
+		if resp.ContentType != "" {
+			params.Set("response-content-type", resp.ContentType)
+		}
+		if resp.ContentDisposition != "" {
+			params.Set("response-content-disposition", resp.ContentDisposition)
+		}
+		if resp.CacheControl != "" {
+			params.Set("response-cache-control", resp.CacheControl)
+		}
+	}
+	u, err := s.client.PresignedGetObject(ctx, s.bucket, key, ttl, params)
 	if err != nil {
 		// The SDK error can echo the request URL, which for a presign attempt may
 		// carry signature material — report the key only.

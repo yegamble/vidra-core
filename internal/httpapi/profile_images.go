@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -83,10 +84,18 @@ func (s *Server) handleGetUserImage(kind string) echo.HandlerFunc {
 		if err != nil {
 			return profileImageError(err, kind)
 		}
-		if redirected, err := s.redirectPublicIPFS(c, img.StorageKey, identityIPFSClass("user", kind)); redirected {
-			return err
-		}
-		return s.serveStoredObjectNamed(c, img.StorageKey, img.ContentType, kind+" not found")
+		// Identity images have no privacy dimension: the route is public by
+		// construction (an unknown user or an unset image is 404 before we get
+		// here), so eligibility is unconditional — matching the unconditional
+		// IPFS redirect this replaces.
+		return s.serveMediaAsset(c, mediaAsset{
+			key:         img.StorageKey,
+			contentType: img.ContentType,
+			class:       identityImageClass(kind),
+			mirrorClass: identityIPFSClass("user", kind),
+			eligible:    true,
+			notFound:    kind + " not found",
+		})
 	}
 }
 
@@ -139,11 +148,25 @@ func (s *Server) handleGetChannelImage(kind string) echo.HandlerFunc {
 		if err != nil {
 			return profileImageError(err, kind)
 		}
-		if redirected, err := s.redirectPublicIPFS(c, img.StorageKey, identityIPFSClass("channel", kind)); redirected {
-			return err
-		}
-		return s.serveStoredObjectNamed(c, img.StorageKey, img.ContentType, kind+" not found")
+		return s.serveMediaAsset(c, mediaAsset{
+			key:         img.StorageKey,
+			contentType: img.ContentType,
+			class:       identityImageClass(kind),
+			mirrorClass: identityIPFSClass("channel", kind),
+			eligible:    true,
+			notFound:    kind + " not found",
+		})
 	}
+}
+
+// identityImageClass maps the avatar/banner route kind onto its delivery class
+// (they share a cache policy today, but they are distinct assets and the CDN
+// wave will want to tell them apart).
+func identityImageClass(kind string) delivery.Class {
+	if kind == profileimage.KindBanner {
+		return delivery.ClassBanner
+	}
+	return delivery.ClassAvatar
 }
 
 // ownedChannel resolves the :handle channel and requires the caller to own it.

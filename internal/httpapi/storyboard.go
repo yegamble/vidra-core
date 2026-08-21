@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
 )
 
@@ -37,12 +38,22 @@ func (s *Server) serveVideoStoryboard(c echo.Context, kind, contentType string) 
 	if err != nil {
 		return videoError(err)
 	}
-	// Keep the small VTT map on the stable application URL: its cue references
-	// storyboard.jpg, whose own stable route may redirect to the immutable CID.
-	if kind == "storyboard" && publicVideoForIPFS(v.Privacy, v.State) {
-		if redirected, err := s.redirectPublicIPFS(c, f.StorageKey, ipfsmirror.ClassStoryboard); redirected {
-			return err
-		}
+	// The sprite sheet is opaque bytes and may be delivered from anywhere. The
+	// small VTT map may NOT: its cues reference "storyboard.jpg" RELATIVELY, so
+	// it only works while it is served from the application URL next to the
+	// sprite's own route — which is itself free to redirect. delivery.Class
+	// carries that distinction (ClassStoryboardVTT is never redirectable), and
+	// the mirror class is left empty for the VTT for the same reason.
+	asset := mediaAsset{
+		key:         f.StorageKey,
+		contentType: contentType,
+		class:       delivery.ClassStoryboardVTT,
+		eligible:    publicVideoForIPFS(v.Privacy, v.State),
+		notFound:    "video not found",
 	}
-	return s.serveStoredObject(c, f.StorageKey, contentType)
+	if kind == "storyboard" {
+		asset.class = delivery.ClassStoryboard
+		asset.mirrorClass = ipfsmirror.ClassStoryboard
+	}
+	return s.serveMediaAsset(c, asset)
 }
