@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -850,8 +851,34 @@ func KindOf(key string) (Kind, bool) {
 	return sp.kind, true
 }
 
+// Validate answers "would this value be accepted for this key?" WITHOUT writing
+// anything, against the one registry Apply enforces. It is the exported half of
+// the rule the admin UI used to keep a hand-copied second copy of: a frontend
+// that re-implements "a hex colour looks like this" drifts from the server the
+// first time either side is edited, and the operator finds out through a 422 on
+// save. Everything that validates a candidate value — the dry-run endpoint, the
+// PATCH, a wizard — goes through here.
+//
+// value is the NORMALISED string form the overlay stores ("true"/"false" for
+// bool keys, a decimal for int keys, a compact JSON array for list keys), which
+// is what the HTTP layer's type-coercion switch already produces. An unknown key
+// is a *ValidationError like any other rejection, so a caller has one shape to
+// render.
+func Validate(key, value string) error {
+	sp, ok := specByKey[key]
+	if !ok {
+		return &ValidationError{Key: key, Message: "unknown setting"}
+	}
+	if err := sp.validate(value); err != nil {
+		return &ValidationError{Key: key, Message: err.Error()}
+	}
+	return nil
+}
+
 // ValidationError is a per-key validation failure the HTTP layer maps to a 422
-// field error (Field = Key).
+// field error (Field = Key). A batch that breaks several keys returns one of
+// these PER KEY, joined — errors.As still finds the first, and a caller that
+// wants them all walks Unwrap() []error (the config package's shape).
 type ValidationError struct {
 	Key     string
 	Message string
@@ -1025,6 +1052,19 @@ func (s *Service) Snapshot() []Effective {
 	return out
 }
 
+// sortedKeys returns a batch's keys in lexical order, so the collected
+// validation errors come back in the same order on every run — Go's map
+// iteration is randomised, and a form that renders its errors in a different
+// sequence each save looks broken.
+func sortedKeys(updates map[string]Update) []string {
+	keys := make([]string, 0, len(updates))
+	for k := range updates {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // Update is one setting change: Value is the normalised string to store
 // ("true"/"false" for bool keys), or Delete=true to remove the override and
 // fall back to the config default.
@@ -1035,25 +1075,34 @@ type Update struct {
 
 // Apply validates and applies a batch of setting changes, then reloads the
 // cache so the overlay reflects them. Validation runs across the whole batch
-// first (all-or-nothing on validation), returning a *ValidationError for the
-// first offending key; a persisted write that fails surfaces its raw error. An
-// empty batch is a no-op. updatedBy is the acting admin (stamped on each row).
+// first (all-or-nothing on validation) and reports EVERY offending key, joined,
+// rather than the first one the map iteration happened to reach — a form that
+// submits eight fields and gets one error back, at random, is a form the
+// operator has to save eight times. A persisted write that fails surfaces its
+// raw error. An empty batch is a no-op. updatedBy is the acting admin (stamped
+// on each row).
 func (s *Service) Apply(ctx context.Context, updates map[string]Update, updatedBy uuid.UUID) error {
 	if len(updates) == 0 {
 		return nil
 	}
-	// Validate the entire batch before persisting anything.
-	for key, u := range updates {
-		sp, ok := specByKey[key]
-		if !ok {
-			return &ValidationError{Key: key, Message: "unknown setting"}
-		}
-		if u.Delete {
+	// Validate the entire batch before persisting anything. Keys are visited in
+	// sorted order so a multi-key failure reads the same way twice.
+	var invalid []error
+	for _, key := range sortedKeys(updates) {
+		if updates[key].Delete {
+			// Clearing an override needs the key to exist, not the value to be
+			// valid — there is no value.
+			if _, ok := specByKey[key]; !ok {
+				invalid = append(invalid, &ValidationError{Key: key, Message: "unknown setting"})
+			}
 			continue
 		}
-		if err := sp.validate(u.Value); err != nil {
-			return &ValidationError{Key: key, Message: err.Error()}
+		if err := Validate(key, updates[key].Value); err != nil {
+			invalid = append(invalid, err)
 		}
+	}
+	if len(invalid) > 0 {
+		return errors.Join(invalid...)
 	}
 	// Persist. updated_by survives the admin's later deletion (ON DELETE SET NULL).
 	by := pgtype.UUID{Bytes: updatedBy, Valid: updatedBy != uuid.Nil}

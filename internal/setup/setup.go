@@ -624,11 +624,12 @@ func Generate(req Request) (*Result, error) {
 // keys and are left to config.
 //
 // The reporting shape is the boot engine's, deliberately: every MALFORMED value
-// is reported in one pass (config collects parse failures before validating),
-// and then the first semantic failure. An operator fixing a generated file
-// therefore sees all the typos at once, then one rule at a time — exactly what
-// they would see booting the api, which is the point of not having a second
-// validation library.
+// is reported in one pass, and — when nothing is malformed — every broken
+// semantic RULE in a second one. The two passes stay separate because semantics
+// computed over values that never parsed describe defaults the operator did not
+// write. An operator fixing a generated file therefore sees all the typos at
+// once, then all the rules at once, which is exactly what they would see booting
+// the api: the point of not having a second validation library.
 //
 // Keys config does not know (VIDRA_CORE_TAG, FRONTEND_PORT, POSTGRES_*) are
 // ignored, so a whole env file can be handed over as-is. DATABASE_URL and

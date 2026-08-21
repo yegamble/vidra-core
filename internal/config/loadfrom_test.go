@@ -217,6 +217,67 @@ func TestCheckEnvAttributesValidationErrors(t *testing.T) {
 	}
 }
 
+// Semantic failures are collected the same way malformed values are: an env file
+// with several broken RULES reports all of them in one pass, each attributed, so
+// an operator (or the wizard rendering one message per input) is not walked
+// through a fix-one-rerun-discover-the-next loop.
+func TestCheckEnvReportsEverySemanticFailureAttributed(t *testing.T) {
+	vars := productionCandidate()
+	vars["LOG_LEVEL"] = "loud"                                 // enum
+	vars["HTTP_PORT"] = "70000"                                // range
+	vars["JWT_SECRET"] = "too-short"                           // production floor
+	vars["CORS_ALLOWED_ORIGINS"] = "*"                         // production refusal
+	vars["MAIL_ENABLED"] = "true"                              // makes SMTP_HOST required
+	vars["MALWARE_SCAN_MODE"] = "fail-sideways"                // enum
+	vars["MFA_KEY_KEK"] = "not-base64"                         // key shape
+	vars["WHISPER_DEFAULT_LANGUAGE"] = "not a language tag!!!" // pattern
+
+	err := CheckEnv(vars)
+	if err == nil {
+		t.Fatal("CheckEnv() expected errors for eight broken rules, got nil")
+	}
+	got := collectVarErrors(err)
+	for _, key := range []string{
+		"LOG_LEVEL", "HTTP_PORT", "JWT_SECRET", "CORS_ALLOWED_ORIGINS",
+		"SMTP_HOST", "MALWARE_SCAN_MODE", "MFA_KEY_KEK", "WHISPER_DEFAULT_LANGUAGE",
+	} {
+		ve, ok := got[key]
+		if !ok {
+			t.Errorf("no VarError for %s; error tree = %v", key, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), ve.Error()) {
+			t.Errorf("joined error %q is missing the %s message %q", err, key, ve)
+		}
+	}
+}
+
+// A guard that fails must not spray the rules it was guarding. An unrecognised
+// STORAGE_BACKEND selects NO branch, so the five s3 keys it does not have are
+// not five more problems — they are the same problem, and reporting them sends
+// the operator to fix the wrong lines.
+func TestCheckEnvGuardedBranchesStaySilent(t *testing.T) {
+	vars := productionCandidate()
+	vars["STORAGE_BACKEND"] = "ipfs"
+
+	err := CheckEnv(vars)
+	if err == nil {
+		t.Fatal("CheckEnv() accepted an unsupported STORAGE_BACKEND")
+	}
+	got := collectVarErrors(err)
+	if _, ok := got["STORAGE_BACKEND"]; !ok {
+		t.Fatalf("no VarError for STORAGE_BACKEND; error tree = %v", err)
+	}
+	for _, key := range []string{
+		"STORAGE_S3_ENDPOINT", "STORAGE_S3_BUCKET", "STORAGE_S3_ACCESS_KEY",
+		"STORAGE_S3_SECRET_KEY", "STORAGE_LOCAL_ROOT",
+	} {
+		if ve, ok := got[key]; ok {
+			t.Errorf("unsupported backend also reported %s (%q); the branch was never taken", key, ve)
+		}
+	}
+}
+
 // Per-provider OAuth variables are named dynamically; attribution must name the
 // variable the operator actually has to add, not the OAUTH_%s pattern.
 func TestCheckEnvAttributesPerProviderOAuthVars(t *testing.T) {
@@ -438,5 +499,123 @@ func TestTrustedProxyCIDRsParseIntoNetworks(t *testing.T) {
 	// Unset is the default and must trust nothing extra.
 	if len(cfg.TrustedProxyCIDRs) != 2 {
 		t.Errorf("TrustedProxyCIDRs = %v, want the two raw entries", cfg.TrustedProxyCIDRs)
+	}
+}
+
+// Collecting instead of returning early made a genuine duplicate possible for
+// the first time: ONE http:// origin in production trips the plain-http gate,
+// the federation https rule and the OAuth https rule, and the last two produce
+// a byte-identical sentence. Nothing downstream dedupes — setup.configIssues
+// turns every leaf into an Issue — so a duplicate reaches doctor and the wizard
+// as two lines, and an operator goes looking for a second thing to fix.
+func TestCheckEnvDeduplicatesIdenticalFindings(t *testing.T) {
+	vars := productionCandidate()
+	vars["PUBLIC_BASE_URL"] = "http://videos.internal"
+	vars["CORS_ALLOWED_ORIGINS"] = "http://videos.internal"
+	vars["FEDERATION_ENABLED"] = "true"
+	vars["FEDERATION_KEY_KEK"] = strings.Repeat("A", 43) + "=" // base64 of exactly 32 bytes
+	vars["OAUTH_PROVIDERS"] = "my-idp"
+	vars["OAUTH_MY_IDP_ISSUER"] = "https://idp.example"
+	vars["OAUTH_MY_IDP_CLIENT_ID"] = "vidra"
+	vars["OAUTH_MY_IDP_CLIENT_SECRET"] = "s3cret"
+
+	err := CheckEnv(vars)
+	if err == nil {
+		t.Fatal("CheckEnv() accepted a plain-http production origin with federation and OAuth on")
+	}
+	const httpsRule = "config: PUBLIC_BASE_URL must be https in production"
+	if n := strings.Count(err.Error(), httpsRule); n != 1 {
+		t.Errorf("the https rule appears %d times, want exactly 1:\n%s", n, err)
+	}
+
+	// Dedupe must collapse only IDENTICAL findings: the plain-http refusal is a
+	// different sentence about the same variable and still has to be said, or
+	// the operator never learns about VIDRA_ALLOW_PLAIN_HTTP.
+	if !strings.Contains(err.Error(), "VIDRA_ALLOW_PLAIN_HTTP=true") {
+		t.Errorf("the plain-http refusal was swallowed with the duplicate:\n%s", err)
+	}
+	if ve, ok := collectVarErrors(err)["PUBLIC_BASE_URL"]; !ok {
+		t.Errorf("no VarError for PUBLIC_BASE_URL; tree = %v", err)
+	} else if ve.Var != "PUBLIC_BASE_URL" {
+		t.Errorf("VarError.Var = %q, want PUBLIC_BASE_URL", ve.Var)
+	}
+}
+
+// The two passes stay separate, and nothing else guards it. A candidate with a
+// MALFORMED value and a semantically-broken one must report only the malformed
+// one: the semantic rules ran against the default the bad value fell back to, so
+// reporting them would describe a value the operator never wrote.
+func TestCheckEnvParseErrorsShortCircuitTheSemanticPass(t *testing.T) {
+	vars := productionCandidate()
+	vars["HTTP_PORT"] = "eighty" // malformed: never parses
+	vars["LOG_LEVEL"] = "loud"   // semantic: parses fine, fails a rule
+
+	err := CheckEnv(vars)
+	if err == nil {
+		t.Fatal("CheckEnv() expected an error, got nil")
+	}
+	got := collectVarErrors(err)
+	if _, ok := got["HTTP_PORT"]; !ok {
+		t.Errorf("no VarError for the malformed HTTP_PORT; tree = %v", err)
+	}
+	if ve, ok := got["LOG_LEVEL"]; ok {
+		t.Errorf("the semantic pass ran anyway and reported %q; it must not run over values that never parsed", ve)
+	}
+
+	// With the typo fixed, the semantic failure surfaces on the next run — the
+	// operator sees one class of problem at a time, in the order they can act on.
+	vars["HTTP_PORT"] = "8080"
+	err = CheckEnv(vars)
+	if err == nil {
+		t.Fatal("CheckEnv() accepted an invalid LOG_LEVEL once the port parsed")
+	}
+	if _, ok := collectVarErrors(err)["LOG_LEVEL"]; !ok {
+		t.Errorf("no VarError for LOG_LEVEL once parsing was clean; tree = %v", err)
+	}
+}
+
+// VIDRA_EXTERNAL_POSTGRES is read the way the deploy shell scripts read it, and
+// is never a boot error. It governs one paragraph of backup advice on an admin
+// page; refusing to start an instance over its spelling is not a trade anybody
+// would choose, and `yes` is a spelling setup.Check accepts and does not flag.
+func TestCheckEnvExternalPostgresFollowsTheShellSpellings(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{"true", true},
+		{"True", true},
+		{"yes", true},
+		{"on", true},
+		{"1", true},
+		{"false", false},
+		{"no", false},
+		{"", false},
+		// The deploy scripts read these as FALSE. strconv.ParseBool reads `t` as
+		// true and would have disagreed; a case-folding reader would disagree
+		// about `tRue`. Either disagreement puts the managed-database backup
+		// advice on a deployment whose own nightly dump is its only backup.
+		{"t", false},
+		{"tRue", false},
+		{"banana", false},
+	} {
+		vars := productionCandidate()
+		vars["VIDRA_EXTERNAL_POSTGRES"] = tc.value
+
+		if err := CheckEnv(vars); err != nil {
+			t.Errorf("CheckEnv() with VIDRA_EXTERNAL_POSTGRES=%q = %v; this key must never refuse a boot", tc.value, err)
+			continue
+		}
+		cfg, err := LoadFrom(func(key string) (string, bool) {
+			v, ok := vars[key]
+			return v, ok
+		})
+		if err != nil {
+			t.Errorf("LoadFrom() with VIDRA_EXTERNAL_POSTGRES=%q = %v", tc.value, err)
+			continue
+		}
+		if cfg.ExternalPostgres != tc.want {
+			t.Errorf("VIDRA_EXTERNAL_POSTGRES=%q read as %v, want %v (the deploy scripts' answer)", tc.value, cfg.ExternalPostgres, tc.want)
+		}
 	}
 }

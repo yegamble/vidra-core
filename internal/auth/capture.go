@@ -28,6 +28,7 @@ type CaptureMailer struct {
 	latest       map[string]string
 	contacts     []CapturedContact
 	reportAlerts []CapturedReportAlert
+	testMessages []CapturedTestMessage
 }
 
 // CapturedContact is one contact-form message recorded by the capture mailer
@@ -85,6 +86,34 @@ func (c *CaptureMailer) Contacts() []CapturedContact {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]CapturedContact(nil), c.contacts...)
+}
+
+// CapturedTestMessage is one admin mail-test probe recorded by the capture
+// mailer instead of being delivered.
+type CapturedTestMessage struct {
+	To string
+}
+
+// SendTest records the admin mail-test probe instead of delivering it, so the
+// dev/e2e stack — which has no relay — can still exercise the button end to end
+// and prove the 202 path is real rather than mocked. Like every other capture,
+// it lives in memory only and is never logged or persisted.
+//
+// It is deliberately NOT on auth.Mailer (that interface has four
+// implementations and a pile of test fakes); httpapi asserts a narrow optional
+// interface for it, so only this type and *mail.SMTP need to know about it.
+func (c *CaptureMailer) SendTest(_ context.Context, to string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.testMessages = append(c.testMessages, CapturedTestMessage{To: to})
+	return nil
+}
+
+// TestMessages returns a copy of every captured mail-test probe, in send order.
+func (c *CaptureMailer) TestMessages() []CapturedTestMessage {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]CapturedTestMessage(nil), c.testMessages...)
 }
 
 // CapturedReportAlert is one new-report operator alert recorded by the capture

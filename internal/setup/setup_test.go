@@ -727,8 +727,8 @@ func TestReleaseTagPerServiceOverride(t *testing.T) {
 
 // Check is the doctor precursor: a problem is reported against the variable an
 // operator has to fix, never as a raw Go error. It inherits the boot engine's
-// reporting shape — every MALFORMED value at once, then the first semantic
-// failure — so this test asserts both halves.
+// reporting shape — every MALFORMED value at once, then every broken semantic
+// RULE at once — so this test asserts both halves.
 func TestCheckSurfacesEachBadVariableByName(t *testing.T) {
 	issues := Check(map[string]string{
 		"VIDRA_ENV":             "production",

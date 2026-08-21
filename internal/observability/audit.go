@@ -59,6 +59,14 @@ const (
 	// Reason carries the document NAME and the new content sha256 only — never
 	// the body (custom JS/CSS is operator-authored code).
 	ActionAdminInstanceDocumentUpdate = "admin.instance_document.update"
+	// ActionAdminMailTest records an admin sending the outbound-mail probe. The
+	// probe goes to the instance's own contact address and nowhere else (the
+	// caller cannot choose a recipient), and the reason carries the OUTCOME only
+	// — sent, mail_not_configured, no_contact_email, send_failed — never an
+	// address. It is audited because it is an authenticated action that causes
+	// outbound network traffic, which is exactly the shape worth being able to
+	// look back at.
+	ActionAdminMailTest = "admin.mail.test"
 	// ActionAdminInstanceAssetUpdate / Delete record an admin uploading or
 	// removing an instance branding image (avatar/banner/logo slots,
 	// config-parity W1). Reason carries the asset kind only.

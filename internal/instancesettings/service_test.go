@@ -960,3 +960,128 @@ func TestW11LiveKnobsRegistry(t *testing.T) {
 		}
 	}
 }
+
+// Validate is the exported half of the rule set the admin form used to keep a
+// hand-copied duplicate of client-side. It answers about a candidate value
+// without touching the repository, in the same words Apply would use.
+func TestValidateAnswersWithoutWriting(t *testing.T) {
+	for name, tc := range map[string]struct {
+		key, value string
+		wantKey    string // "" = expect acceptance
+		wantMsg    string
+	}{
+		"accepted string":     {KeyInstanceName, "My Videos", "", ""},
+		"accepted bool":       {KeyUploadsEnabled, "true", "", ""},
+		"accepted enum":       {KeySensitiveContentPolicy, "blur", "", ""},
+		"empty instance name": {KeyInstanceName, "  ", KeyInstanceName, "must not be empty"},
+		"malformed url":       {KeyTermsURL, "not a url", KeyTermsURL, ""},
+		"enum off the list":   {KeySensitiveContentPolicy, "sometimes", KeySensitiveContentPolicy, ""},
+		"unknown key":         {"definitely_not_a_setting", "x", "definitely_not_a_setting", "unknown setting"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := Validate(tc.key, tc.value)
+			if tc.wantKey == "" {
+				if err != nil {
+					t.Fatalf("Validate(%s=%q) = %v, want acceptance", tc.key, tc.value, err)
+				}
+				return
+			}
+			var ve *ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("Validate(%s=%q) = %v, want *ValidationError", tc.key, tc.value, err)
+			}
+			if ve.Key != tc.wantKey {
+				t.Errorf("ValidationError.Key = %q, want %q", ve.Key, tc.wantKey)
+			}
+			if tc.wantMsg != "" && ve.Message != tc.wantMsg {
+				t.Errorf("ValidationError.Message = %q, want %q", ve.Message, tc.wantMsg)
+			}
+			if ve.Message == "" {
+				t.Error("a rejection with no message gives the form nothing to render")
+			}
+		})
+	}
+}
+
+// Validate must not write, read the overlay, or need a service at all — the
+// dry-run endpoint calls it on a server whose repository is a live database.
+func TestValidateTouchesNothing(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewService(repo, testDefaults())
+	if err := svc.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := Validate(KeyInstanceName, "Renamed"); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(repo.rows) != 0 {
+		t.Errorf("Validate persisted %d rows; a dry run writes nothing", len(repo.rows))
+	}
+	if svc.String(KeyInstanceName) != "Vidra Default" {
+		t.Errorf("instance_name = %q; Validate must not touch the overlay", svc.String(KeyInstanceName))
+	}
+}
+
+// A batch that breaks several keys reports ALL of them. Map iteration is
+// randomised, so the old first-error behaviour handed the admin one problem at
+// random out of eight — eight saves to discover eight typos.
+func TestApplyReportsEveryInvalidKey(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := NewService(repo, testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	admin := uuid.New()
+
+	err := svc.Apply(ctx, map[string]Update{
+		KeyInstanceName:           {Value: "   "},
+		KeyTermsURL:               {Value: "not a url"},
+		KeyContactEmail:           {Value: "not an email"},
+		KeySensitiveContentPolicy: {Value: "sometimes"},
+		"not_a_setting":           {Value: "x"},
+		KeyUploadsEnabled:         {Value: "false"}, // valid: must not be reported
+	}, admin)
+	if err == nil {
+		t.Fatal("Apply() accepted five invalid keys")
+	}
+
+	got := map[string]string{}
+	var walk func(error)
+	walk = func(e error) {
+		if joined, ok := e.(interface{ Unwrap() []error }); ok {
+			for _, sub := range joined.Unwrap() {
+				walk(sub)
+			}
+			return
+		}
+		var ve *ValidationError
+		if errors.As(e, &ve) {
+			got[ve.Key] = ve.Message
+		}
+	}
+	walk(err)
+	for _, key := range []string{KeyInstanceName, KeyTermsURL, KeyContactEmail, KeySensitiveContentPolicy, "not_a_setting"} {
+		if _, ok := got[key]; !ok {
+			t.Errorf("no ValidationError for %s; tree = %v", key, err)
+		}
+	}
+	if _, ok := got[KeyUploadsEnabled]; ok {
+		t.Errorf("the one VALID key was reported as a problem: %v", err)
+	}
+
+	// errors.As still reaches a leaf, so every existing single-key caller keeps
+	// working against the joined tree.
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("errors.As found no *ValidationError in %v", err)
+	}
+
+	// All-or-nothing survives: the one valid key in the batch was not persisted.
+	if len(repo.rows) != 0 {
+		t.Errorf("Apply persisted %d rows despite validation failures", len(repo.rows))
+	}
+	if svc.Bool(KeyUploadsEnabled) != true {
+		t.Error("uploads_enabled changed despite the batch being rejected")
+	}
+}
