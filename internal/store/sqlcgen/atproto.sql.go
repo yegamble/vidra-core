@@ -20,7 +20,7 @@ WITH claimed AS (
     WHERE id IN (
         SELECT id FROM atproto_posts
         WHERE state = 'pending' AND next_attempt_at <= now()
-        ORDER BY next_attempt_at
+        ORDER BY next_attempt_at, id
         LIMIT $2
         FOR UPDATE SKIP LOCKED
     )
@@ -28,7 +28,7 @@ WITH claimed AS (
 )
 SELECT id, video_id, attempts
 FROM claimed
-ORDER BY created_at
+ORDER BY created_at, id
 `
 
 type ClaimDueATProtoPostsParams struct {
@@ -61,6 +61,20 @@ type ClaimDueATProtoPostsRow struct {
 // It orders by created_at, NOT next_attempt_at: the claim overwrites
 // next_attempt_at with the lease, so every claimed row shares the same value by
 // the time the outer query runs. created_at is the stable proxy for "oldest".
+//
+// created_at alone is NOT a total order, which is why id is the tiebreak. It
+// defaults to now(), and now() is TRANSACTION-fixed: every row enqueued inside
+// one transaction (a bulk publish queues several) gets a byte-identical
+// created_at, so ORDER BY created_at leaves them tied and PostgreSQL is free to
+// emit tied rows in any order it likes -- including a different order on each
+// claim. The id tiebreak is what makes the sort deterministic. NOTE that id
+// CANNOT carry the ordering by itself here the way it does in search_outbox:
+// that table's id is a BIGSERIAL, but this one is a random uuid_generate_v4(),
+// so ORDER BY id would be a total order over an order that means nothing.
+// The inner selection gets the same id tiebreak so the LIMIT cut is
+// deterministic too: rows tied on next_attempt_at (again, same-transaction
+// enqueues) would otherwise be split across batches arbitrarily, and no amount
+// of outer ordering can repair an arbitrary split.
 func (q *Queries) ClaimDueATProtoPosts(ctx context.Context, arg ClaimDueATProtoPostsParams) ([]ClaimDueATProtoPostsRow, error) {
 	rows, err := q.db.Query(ctx, claimDueATProtoPosts, arg.LeaseSeconds, arg.BatchSize)
 	if err != nil {
