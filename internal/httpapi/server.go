@@ -1558,6 +1558,10 @@ func (s *Server) routes() {
 	// Admin operational status. Depends only on core wiring; auth guards it.
 	if s.authsvc != nil {
 		api.GET("/admin/system", s.handleSystemStatus, s.requireAuth, s.requireRole("admin"))
+		// The deploy-time shape beside the runtime health: what this instance
+		// IS (storage backend, public origin, wired subsystems, backup story),
+		// which otherwise takes an SSH session and an env file to find out.
+		api.GET("/admin/infrastructure", s.handleInfrastructure, s.requireAuth, s.requireRole("admin"))
 	}
 
 	// Admin operations: durable-queue depth snapshot + recent failures (P17.4).

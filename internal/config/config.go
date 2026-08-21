@@ -94,6 +94,19 @@ type Config struct {
 	// PostgreSQL connection (DSN form, e.g. postgres://user:pass@host:5432/db).
 	DatabaseURL string
 
+	// ExternalPostgres declares that DATABASE_URL points at a database this
+	// deployment does NOT run — a managed instance, somebody else's server —
+	// rather than the compose-network postgres. It is DISPLAY-ONLY: nothing in
+	// the api may key behaviour on it, and nothing does. It exists because the
+	// admin infrastructure page has to tell an operator where their backups come
+	// from, and the two answers are opposite advice ("the nightly pg_dump this
+	// stack writes" vs "your provider's snapshots — check they are on"). The DSN
+	// cannot be inspected for the difference: a managed database and a
+	// self-hosted one on another host look identical, and reading the host out
+	// of a DSN to guess would be wrong precisely on the deployments that matter.
+	// So the operator says which it is.
+	ExternalPostgres bool
+
 	// Redis connection (URL form, e.g. redis://host:6379/0).
 	RedisURL string
 
@@ -734,6 +747,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		ImportAllowPrivateURLs:         p.Bool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
 		OwnerClaimToken:                getEnv("OWNER_CLAIM_TOKEN", ""),
 		DatabaseURL:                    getEnv("DATABASE_URL", DefaultDatabaseURL),
+		ExternalPostgres:               p.Bool("VIDRA_EXTERNAL_POSTGRES", false),
 		RedisURL:                       getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		CORSAllowedOrigins:             splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
 		HTTPReadTimeout:                p.Duration("HTTP_READ_TIMEOUT", 15*time.Second),
