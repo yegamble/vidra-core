@@ -309,7 +309,14 @@ type FileJSON struct {
 type InstallEvent struct {
 	Text     string `json:"text,omitempty"`
 	ExitCode int    `json:"exit_code"`
-	Error    string `json:"error,omitempty"`
+	// Error is a deploy that could not be STARTED, which is a different thing
+	// from one that ran and failed — the second has a log to read and the first
+	// has not.
+	Error string `json:"error,omitempty"`
+	// Hint is what to do next when the deploy did not succeed. The TAIL is not
+	// repeated in it: the page already holds every line it was sent, and sending
+	// the last twenty back would be the same bytes twice.
+	Hint string `json:"hint,omitempty"`
 }
 
 // StatusLine is one line of the post-install probe, in `vidra status`'s own
