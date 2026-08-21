@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Vidra setup</title>
+<style>
+:root { color-scheme: dark; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+body { margin: 0; background: #0b1016; color: #e6edf3; }
+main { max-width: 46rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+h1 { font-size: 1.35rem; letter-spacing: -0.01em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Vidra setup</h1>
+  <noscript>
+    <p>This wizard needs JavaScript. It is served by <code>vidra setup --web</code> on this
+    host's loopback interface and talks only to itself; nothing is fetched from the network.
+    Without JavaScript, run <code>vidra setup</code> in the terminal instead — it asks the
+    same questions and writes the same files.</p>
+  </noscript>
+  <div id="app">Loading…</div>
+</main>
+<script>
+// Replaced by the nine-step flow. The token travels in the query string of the
+// one-time link this page was opened with, and in the X-Setup-Token header of
+// every request the page makes after that.
+document.getElementById("app").textContent = "Loading…";
+</script>
+</body>
+</html>
