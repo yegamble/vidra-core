@@ -1,6 +1,7 @@
 name: release-assets
 
-# Attach the `vidra` operator CLI to every release as a downloadable binary.
+# Attach the `vidra` operator CLI — and the no-git deployment bundle — to every
+# release as downloadable assets.
 #
 # WHY IT EXISTS: the binary was distributed NOWHERE. It is not in the api image
 # (a separate binary on purpose — it runs on the host beside docker compose,
@@ -94,13 +95,74 @@ jobs:
           done
           ls -l dist
 
+      # ---------------------------------------------------------------------
+      # The no-git deployment bundle.
+      #
+      # WHY IT EXISTS: installing has needed `git clone` of the meta repo plus
+      # both components, which makes git a hard dependency of every install and
+      # every update, and makes the deployment tree a working copy an operator
+      # can accidentally `git pull` out from under a running stack. The bundle is
+      # the same tree, at the same relative paths, with no history: compose
+      # renders from it unchanged, and install.sh can fetch ONE checksummed
+      # tarball the way it already fetches the CLI binaries.
+      #
+      # It is assembled by the META repo's script, from THIS checkout — the
+      # script owns what goes in (it is the repo that holds the compose files and
+      # the deploy scripts), and vidra-core owns only the half of the tree that
+      # lives here. That split is why the meta repo is checked out at the SAME
+      # tag: a bundle built from meta's main against a core release tag would be
+      # a tree nobody can reproduce later, and the manifest inside it would be
+      # claiming a provenance it does not have.
+      - name: Check out the meta repo at the same tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: yegamble/vidra
+          ref: ${{ github.event.release.tag_name }}
+          path: .vidra-meta
+          persist-credentials: false
+
+      - name: Build the deployment bundle
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -eu
+          # A missing meta tag fails HERE, loudly, rather than shipping a release
+          # whose bundle was built from whatever meta's default branch happened to
+          # be. The checkout step above already fails in that case; this is the
+          # message that says what to do about it, since "ref not found" does not.
+          if [ ! -x .vidra-meta/deploy/make-bundle.sh ]; then
+            echo "release-assets: .vidra-meta/deploy/make-bundle.sh is missing or not executable." >&2
+            echo "The bundle is assembled by the meta repository (yegamble/vidra) at the SAME tag as this release." >&2
+            echo "Tag it and push before publishing this release — deploy/release.sh does that step; see docs/productionization/." >&2
+            exit 1
+          fi
+          # The interface is fixed across the two repos: --core is this checkout
+          # (the workspace, not a path inside the meta tree), --tag is the release
+          # being cut, --out is the asset. The script is run FROM the meta
+          # checkout because every other path it reads is relative to that tree.
+          mkdir -p dist
+          ( cd .vidra-meta && ./deploy/make-bundle.sh \
+              --core "$GITHUB_WORKSPACE" \
+              --tag "$TAG" \
+              --out "$GITHUB_WORKSPACE/dist/vidra-bundle_${TAG}.tar.gz" )
+          ls -l "dist/vidra-bundle_${TAG}.tar.gz"
+
       - name: Checksum them
         run: |
           set -eu
           cd dist
           # Bare names, no ./ prefix, so `sha256sum -c SHA256SUMS` works in the
           # directory the assets were downloaded into.
-          sha256sum vidra_* > SHA256SUMS
+          #
+          # The bundle is checksummed in the SAME file as the binaries, not a
+          # second one: install.sh verifies every asset it downloads against one
+          # SHA256SUMS, and a second manifest would be a second thing to fetch,
+          # trust and keep in step. make-bundle.sh produces a deterministic tar
+          # (sorted names, fixed mtime/owner) for the same reason the binaries
+          # bake a commit-derived BUILD_DATE — a re-run of this workflow has to
+          # produce identical bytes, or --clobber would replace an asset people
+          # have already verified with a different one.
+          sha256sum vidra_* vidra-bundle_* > SHA256SUMS
           cat SHA256SUMS
 
       - name: Attach them to the release
