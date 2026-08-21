@@ -46,6 +46,15 @@
 // ever constructs a backend from a persisted description — a process only ever
 // uses the two handles it was configured with, and the descriptions are used
 // solely to decide whether those handles are the ones this campaign means.
+//
+// # Finishing hands the new store its ownership marker
+//
+// The last act of a campaign is to stamp storage.OwnerMarkerKey onto the store
+// it just filled (see adoptDestination). Media garbage collection refuses to
+// delete from an object store it cannot establish as this install's, and a
+// migrated-into bucket is exactly the shape boot-time claiming has to refuse —
+// so without that write, a SUCCESSFUL move would leave GC permanently, silently
+// non-destructive.
 package storagemigration
 
 import (
@@ -166,6 +175,10 @@ type Repository interface {
 	CountUnfinishedStorageMigrationObjects(ctx context.Context, campaignID uuid.UUID) (int64, error)
 	CountStorageMigrationObjectsByState(ctx context.Context, campaignID uuid.UUID) ([]sqlcgen.CountStorageMigrationObjectsByStateRow, error)
 	GetVideoFileSHA256ByStorageKey(ctx context.Context, storageKey string) (string, error)
+	// GetInstanceIdentity is this install's identity UUID (migration 0105). It is
+	// here for exactly one write: the ownership marker stamped onto the
+	// destination store when a campaign completes (see adoptDestination).
+	GetInstanceIdentity(ctx context.Context) (uuid.UUID, error)
 }
 
 // Config is the non-wiring knobs.
@@ -587,9 +600,94 @@ func (s *Service) deleteSourceBatch(ctx context.Context, camp sqlcgen.StorageMig
 	if left > 0 {
 		return nil
 	}
+	// The last thing a finished campaign does is say whose the new store is.
+	s.adoptDestination(ctx, camp)
 	s.logger.InfoContext(ctx, "storage migration complete", "campaign", camp.ID.String(),
 		"now_serving", camp.TargetDesc, "failed_objects", camp.ObjectsFailed)
 	return s.setState(ctx, camp.ID, StateDone, "")
+}
+
+// adoptDestination stamps this install's media-GC ownership marker
+// (storage.OwnerMarkerKey) onto the store the campaign has just finished filling.
+//
+// It closes a hole that only shows up after a real move. The marker is otherwise
+// written by exactly two things: boot-time claiming, which claims only a bucket
+// the api CREATED or found EMPTY, and the admin adopt endpoint. A migration's
+// destination is neither of those by the time anyone boots on it — THIS PACKAGE
+// put the objects there — so boot correctly refuses to claim it, and media
+// garbage collection is then silently non-destructive forever, until an operator
+// happens to read a sweep and notice. This service is the one party that knows
+// those objects are its own, so this is the one place that can say so without
+// asking an operator.
+//
+// WHICH HANDLE. Reaching 'done' means the campaign came through
+// sweepSwapped → deleteSourceBatch, and that path runs only in the SWAPPED
+// topology: the operator swapped both environment sets, so s.primary is the
+// campaign's DESTINATION — the store this process is now SERVING from — and
+// s.target is the old source we have just emptied. The marker therefore goes to
+// the PRIMARY handle. The identity assertion below is not decoration: writing it
+// through s.target would stamp this install onto the store being decommissioned
+// and leave the live one unowned, which is the bug this function exists to fix,
+// inverted.
+//
+// It NEVER overwrites. A marker that is already there and says something else is
+// the shared-bucket case the whole rail exists for; taking ownership silently
+// would re-arm destructive GC over another install's media. That case is logged
+// loudly and skipped, and stays an operator decision.
+//
+// Nothing here can fail the campaign. The bytes are moved and the source is
+// gone; a marker that could not be written is a warning and a manual adopt, not
+// a reason to leave a completed migration unfinished.
+//
+// A LOCAL destination gets one too. It is inert there (local roots are exempt
+// from the ownership gate by design), but it costs 36 bytes outside every swept
+// prefix and it travels with the objects if that root is ever migrated onward.
+func (s *Service) adoptDestination(ctx context.Context, camp sqlcgen.StorageMigration) {
+	const adoptHint = "POST /api/v1/admin/media/gc/adopt-bucket"
+
+	dest := storage.Describe(s.primary)
+	if dest != camp.TargetDesc {
+		s.logger.WarnContext(ctx, "storage migration will not claim the destination store: this process is not serving from it",
+			"campaign", camp.ID.String(), "serving", dest, "campaign_target", camp.TargetDesc)
+		return
+	}
+	identity, err := s.repo.GetInstanceIdentity(ctx)
+	if err != nil {
+		s.logger.WarnContext(ctx, "storage migration could not read this instance's identity, so the destination store carries no ownership marker; media garbage collection will not delete from it until an admin adopts it",
+			"campaign", camp.ID.String(), "marker_key", storage.OwnerMarkerKey,
+			"adopt", adoptHint, "error", err.Error())
+		return
+	}
+	marker, found, err := storage.ReadOwnerMarker(ctx, s.primary)
+	switch {
+	case err != nil:
+		// Fail SAFE. An unreadable marker is not an absent one, and writing over a
+		// network blip is precisely the thing this function must never do.
+		s.logger.WarnContext(ctx, "storage migration could not read the destination store's ownership marker, so it was left alone",
+			"campaign", camp.ID.String(), "marker_key", storage.OwnerMarkerKey,
+			"adopt", adoptHint, "error", err.Error())
+		return
+	case found && marker == identity.String():
+		// Already ours, and legitimately so: a store-to-store move copies the
+		// source's own marker across as an ordinary object. Same answer, other
+		// route.
+		return
+	case found:
+		// Deliberately NOT logging the other identity as a plain value an operator
+		// could mistake for their own — same rule as boot-time resolution.
+		s.logger.ErrorContext(ctx, "storage migration finished into a store that carries ANOTHER Vidra install's ownership marker; it was NOT taken over, and media garbage collection will not delete from it",
+			"campaign", camp.ID.String(), "destination", dest,
+			"marker_key", storage.OwnerMarkerKey, "adopt", adoptHint)
+		return
+	}
+	if werr := storage.WriteOwnerMarker(ctx, s.primary, identity.String()); werr != nil {
+		s.logger.WarnContext(ctx, "storage migration could not write the destination store's ownership marker; media garbage collection will not delete from it until an admin adopts it",
+			"campaign", camp.ID.String(), "marker_key", storage.OwnerMarkerKey,
+			"adopt", adoptHint, "error", werr.Error())
+		return
+	}
+	s.logger.InfoContext(ctx, "storage migration claimed the destination store with an ownership marker",
+		"campaign", camp.ID.String(), "destination", dest, "marker_key", storage.OwnerMarkerKey)
 }
 
 // enumerate lists the SOURCE store (which in the forward topology is the

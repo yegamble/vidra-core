@@ -16,10 +16,13 @@
 package storagemigration
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -371,6 +374,121 @@ func TestTamperedObjectStoreCopyFailsVerification(t *testing.T) {
 	// the condition the check detected rather than an artefact of the test.
 	if got := read(t, f.target, key); got == "the bytes that were sent" {
 		t.Error("the corrupting wrapper did not corrupt anything; the test proves nothing")
+	}
+}
+
+// runCampaignToDone drives a campaign against the live pair of stores all the
+// way to 'done' — start, copy, the operator's environment swap, zero grace,
+// source deletion — and returns everything the service logged.
+//
+// The swap is the real one: STORAGE_* becomes the object store and
+// STORAGE_MIGRATION_TARGET_* the local root it came from, which is what the
+// process sees after the restart.
+func runCampaignToDone(t *testing.T, ctx context.Context, f *campaignFixture) string {
+	t.Helper()
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+
+	forward := NewService(f.q, f.source, f.target, Config{Logger: logger})
+	camp, err := forward.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	runToSynced(t, ctx, forward)
+	if got, _, _ := forward.Get(ctx, camp.ID); got.State != StateSynced {
+		t.Fatalf("state before the swap = %q (last_error %q), want synced", got.State, got.LastError)
+	}
+
+	// synced -> cutover -> deleting_source -> done is THREE sweeps, which is why
+	// finishing a cutover costs about three reconcile ticks even at grace 0.
+	swapped := NewService(f.q, f.target, f.source, Config{Grace: 0, Logger: logger})
+	for i := 0; i < 6; i++ {
+		if err := swapped.SweepOnce(ctx); err != nil {
+			t.Fatalf("SweepOnce after the swap: %v", err)
+		}
+	}
+	got, _, err := swapped.Get(ctx, camp.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.State != StateDone {
+		t.Fatalf("state = %q (last_error %q), want %q", got.State, got.LastError, StateDone)
+	}
+	return logs.String()
+}
+
+// TestCompletedMigrationClaimsTheDestinationBucket proves the fix where it
+// matters: against a REAL bucket. A migrated-into bucket is exactly the shape
+// boot-time claiming has to refuse (this boot did not create it and it is not
+// empty), so before this a successful local→object-store move left the new
+// bucket UNOWNED and media garbage collection silently non-destructive on it
+// forever.
+func TestCompletedMigrationClaimsTheDestinationBucket(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	f := newCampaignFixture(t, "adopt")
+
+	put(t, f.source, fmt.Sprintf("web-videos/%s.mp4", uuid.New()), "pretend this is an mp4 original")
+	put(t, f.source, "thumbnails/poster.jpg", "poster bytes")
+
+	// The identity the marker must end up holding — read from the database the
+	// service reads it from, not invented by the test.
+	identity, err := f.q.GetInstanceIdentity(ctx)
+	if err != nil {
+		t.Fatalf("GetInstanceIdentity: %v", err)
+	}
+
+	logs := runCampaignToDone(t, ctx, f)
+
+	marker, found, err := storage.ReadOwnerMarker(ctx, f.target)
+	if err != nil || !found {
+		t.Fatalf("ReadOwnerMarker on the destination bucket = (%q, %v, %v); the bucket a campaign filled must not be left unowned", marker, found, err)
+	}
+	if marker != identity.String() {
+		t.Errorf("destination marker = %q, want this install's identity %q", marker, identity)
+	}
+	if !strings.Contains(logs, "claimed the destination store") {
+		t.Errorf("the claim was not logged:\n%s", logs)
+	}
+	// The marker went to the bucket being SERVED, not the local root just
+	// emptied — at 'done' the primary handle is the destination.
+	if _, found, _ := storage.ReadOwnerMarker(ctx, f.source); found {
+		t.Error("the marker was written into the decommissioned source root")
+	}
+	// This is the same evidence boot reads (marker == this install's identity),
+	// which is what re-enables destructive media GC on the new bucket.
+}
+
+// TestCompletedMigrationLeavesAForeignBucketMarkerAlone: a destination that
+// already carries another install's marker is a SHARED bucket. Stamping over it
+// would hand this install permission to delete somebody else's media, so the
+// campaign finishes, says so loudly, and changes nothing.
+func TestCompletedMigrationLeavesAForeignBucketMarkerAlone(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	f := newCampaignFixture(t, "foreign")
+
+	put(t, f.source, "web-videos/shared.mp4", "bytes in a shared bucket")
+
+	const theirs = "22222222-2222-4222-8222-222222222222"
+	if err := storage.WriteOwnerMarker(ctx, f.target, theirs); err != nil {
+		t.Fatalf("WriteOwnerMarker: %v", err)
+	}
+
+	logs := runCampaignToDone(t, ctx, f)
+
+	marker, _, err := storage.ReadOwnerMarker(ctx, f.target)
+	if err != nil {
+		t.Fatalf("ReadOwnerMarker: %v", err)
+	}
+	if marker != theirs {
+		t.Fatalf("destination marker = %q, want it left at %q", marker, theirs)
+	}
+	if !strings.Contains(logs, "ANOTHER Vidra install's ownership marker") {
+		t.Errorf("the conflict was not logged loudly:\n%s", logs)
+	}
+	if strings.Contains(logs, theirs) {
+		t.Error("the other install's identity was logged as a plain value an operator could mistake for their own")
 	}
 }
 
