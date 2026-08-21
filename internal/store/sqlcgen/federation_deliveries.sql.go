@@ -14,18 +14,24 @@ import (
 )
 
 const claimDueDeliveries = `-- name: ClaimDueDeliveries :many
-UPDATE federation_deliveries
-SET next_attempt_at = now() + ($1::int * interval '1 second'),
-    updated_at = now()
-WHERE id IN (
-    SELECT id FROM federation_deliveries
-    WHERE state = 'pending' AND next_attempt_at <= now()
-    ORDER BY next_attempt_at
-    LIMIT $2
-    FOR UPDATE SKIP LOCKED
+WITH claimed AS (
+    UPDATE federation_deliveries
+    SET next_attempt_at = now() + ($1::int * interval '1 second'),
+        updated_at = now()
+    WHERE id IN (
+        SELECT id FROM federation_deliveries
+        WHERE state = 'pending' AND next_attempt_at <= now()
+        ORDER BY next_attempt_at
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED
+    )
+    RETURNING id, inbox_url, payload, signing_channel_id, signing_channel_handle,
+              signing_user_id, signing_username, attempts, created_at
 )
-RETURNING id, inbox_url, payload, signing_channel_id, signing_channel_handle,
-          signing_user_id, signing_username, attempts
+SELECT id, inbox_url, payload, signing_channel_id, signing_channel_handle,
+       signing_user_id, signing_username, attempts
+FROM claimed
+ORDER BY created_at
 `
 
 type ClaimDueDeliveriesParams struct {
@@ -55,6 +61,16 @@ type ClaimDueDeliveriesRow struct {
 // lease_seconds, so a second worker's claim skips it and a CRASHED worker's row
 // becomes due again by itself. FOR UPDATE SKIP LOCKED makes concurrent claimers
 // take disjoint rows without blocking each other.
+// The claim is wrapped in a CTE with an OUTER ORDER BY because UPDATE ...
+// RETURNING does not preserve the order of the subquery that chose the rows --
+// PostgreSQL returns them in whatever order it updated them. The "oldest first"
+// contract is real: these rows carry ordered side effects (an index mutation
+// applied out of order leaves the index stale; activities delivered out of order
+// are visible to the remote server), so the ordering has to be restated here.
+//
+// It orders by created_at, NOT next_attempt_at: the claim overwrites
+// next_attempt_at with the lease, so every claimed row shares the same value by
+// the time the outer query runs. created_at is the stable proxy for "oldest".
 func (q *Queries) ClaimDueDeliveries(ctx context.Context, arg ClaimDueDeliveriesParams) ([]ClaimDueDeliveriesRow, error) {
 	rows, err := q.db.Query(ctx, claimDueDeliveries, arg.LeaseSeconds, arg.BatchSize)
 	if err != nil {

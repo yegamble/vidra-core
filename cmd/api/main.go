@@ -43,6 +43,7 @@ import (
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
 	"github.com/vidra/vidra-core/internal/jobrecovery"
 	"github.com/vidra/vidra-core/internal/jobstatus"
+	"github.com/vidra/vidra-core/internal/leaderlock"
 	"github.com/vidra/vidra-core/internal/linkpreview"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/mail"
@@ -1302,6 +1303,20 @@ func run() error {
 	instancemodsvc := instancemod.NewService(db.Queries())
 	opts = append(opts, httpapi.WithInstanceModerationService(instancemodsvc))
 
+	// LEADER ELECTION for the singleton background sweeps. The workers that CLAIM
+	// from a durable queue run on every instance -- that is what the leases are
+	// for, and more instances mean more throughput. The workers that SWEEP must
+	// not: they each walk a table or a bucket and act on whatever they find, and
+	// media garbage collection is destructive. One PostgreSQL advisory lock, held
+	// on a dedicated connection, elects exactly one instance to run them; it is
+	// released automatically if that instance dies.
+	cronLeader := leaderlock.New(db.Pool, leaderlock.SingletonCronClass, leaderlock.SingletonCronsKey, "singleton-crons", logger)
+	{
+		leaderCtx, leaderCancel := context.WithCancel(context.Background())
+		defer leaderCancel()
+		go cronLeader.Run(leaderCtx)
+	}
+
 	// LEASE-EXPIRY JOB RECOVERY. Every durable queue claims work by flipping a
 	// row to 'running' and pushing its due time forward by a lease that the
 	// owning worker renews while it works. A worker that dies stops renewing, so
@@ -1390,7 +1405,7 @@ func run() error {
 	{
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
-		go runE2EESweepWorker(workerCtx, logger, e2eesvc)
+		go runE2EESweepWorker(workerCtx, logger, e2eesvc, cronLeader)
 		logger.Info("e2ee expiry sweep worker started")
 	}
 
@@ -1401,7 +1416,7 @@ func run() error {
 	{
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
-		go runScheduledPublishWorker(workerCtx, logger, videosvc)
+		go runScheduledPublishWorker(workerCtx, logger, videosvc, cronLeader)
 		logger.Info("scheduled publish worker started")
 	}
 
@@ -1412,7 +1427,7 @@ func run() error {
 	{
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
-		go runTranscodeHoldSweepWorker(workerCtx, logger, videosvc, cfg.TranscodeHoldTimeout)
+		go runTranscodeHoldSweepWorker(workerCtx, logger, videosvc, cfg.TranscodeHoldTimeout, cronLeader)
 		logger.Info("transcode hold sweep worker started", "timeout", cfg.TranscodeHoldTimeout)
 	}
 
@@ -1454,7 +1469,7 @@ func run() error {
 	{
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
-		go runLiveDurationWatchdog(workerCtx, logger, livesvc)
+		go runLiveDurationWatchdog(workerCtx, logger, livesvc, cronLeader)
 		logger.Info("live duration watchdog started")
 	}
 
@@ -1464,7 +1479,7 @@ func run() error {
 	{
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
-		go runUploadSweepWorker(workerCtx, logger, uploadsvc)
+		go runUploadSweepWorker(workerCtx, logger, uploadsvc, cronLeader)
 		logger.Info("upload session sweep worker started")
 	}
 
@@ -1474,7 +1489,7 @@ func run() error {
 	{
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
-		go runMediaGCWorker(workerCtx, logger, mediagcsvc, auditsvc)
+		go runMediaGCWorker(workerCtx, logger, mediagcsvc, auditsvc, cronLeader)
 		logger.Info("media gc worker started")
 	}
 
@@ -1486,7 +1501,7 @@ func run() error {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runSearchOutboxWorker(workerCtx, logger, searchDrainer)
-		go runSearchReconcileWorker(workerCtx, logger, searchEnqueuer, cfg.SearchReconcileInterval)
+		go runSearchReconcileWorker(workerCtx, logger, searchEnqueuer, cfg.SearchReconcileInterval, cronLeader)
 		// Active health prober (W9): drives Client.Healthy() so the routing policy
 		// fails over to backup the moment /healthz goes down. Context-cancelled on
 		// shutdown; never blocks it.
@@ -1503,7 +1518,7 @@ func run() error {
 	if ipfsMirror.Enabled() {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
-		go runIPFSMirrorWorker(workerCtx, logger, ipfsMirror, cfg.IPFSReconcileInterval)
+		go runIPFSMirrorWorker(workerCtx, logger, ipfsMirror, cfg.IPFSReconcileInterval, cronLeader)
 		logger.Info("ipfs mirror worker started")
 	}
 
@@ -1514,7 +1529,7 @@ func run() error {
 	{
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
-		go runOperationalJobRetentionWorker(workerCtx, logger, jobStatusSvc)
+		go runOperationalJobRetentionWorker(workerCtx, logger, jobStatusSvc, cronLeader)
 		logger.Info("operational job retention worker started")
 	}
 
@@ -1709,7 +1724,7 @@ func runSearchOutboxWorker(ctx context.Context, logger *slog.Logger, drainer *se
 // and then every interval (search-service W4). The sweep pages every eligible
 // public+published local video into reconcile.begin/page/end events so the search
 // service can repair the index against any dropped incremental event.
-func runSearchReconcileWorker(ctx context.Context, logger *slog.Logger, enq *searchevents.Enqueuer, interval time.Duration) {
+func runSearchReconcileWorker(ctx context.Context, logger *slog.Logger, enq *searchevents.Enqueuer, interval time.Duration, leader *leaderlock.Elector) {
 	if interval <= 0 {
 		interval = 24 * time.Hour
 	}
@@ -1723,6 +1738,12 @@ func runSearchReconcileWorker(ctx context.Context, logger *slog.Logger, enq *sea
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Singleton sweep: exactly one instance runs it. A follower skips the
+			// tick rather than shutting down, because leadership can move here at
+			// any time (see internal/leaderlock).
+			if !leader.IsLeader() {
+				continue
+			}
 			if err := enq.RunReconcile(ctx, searchevents.DefaultReconcilePageSize); err != nil {
 				logger.Warn("search reconcile sweep failed", "error", err)
 			}
@@ -1854,7 +1875,7 @@ func runAccountExportWorker(ctx context.Context, logger *slog.Logger, svc *accou
 // runE2EESweepWorker hard-deletes expired disappearing E2EE messages on a
 // ticker until ctx is canceled (mirrors runTranscodeWorker). Only the sweep
 // query error is logged — never message contents (which are ciphertext anyway).
-func runE2EESweepWorker(ctx context.Context, logger *slog.Logger, svc *e2ee.Service) {
+func runE2EESweepWorker(ctx context.Context, logger *slog.Logger, svc *e2ee.Service, leader *leaderlock.Elector) {
 	const (
 		interval   = 10 * time.Second
 		sweepBatch = 200
@@ -1866,6 +1887,12 @@ func runE2EESweepWorker(ctx context.Context, logger *slog.Logger, svc *e2ee.Serv
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Singleton sweep: exactly one instance runs it. A follower skips the
+			// tick rather than shutting down, because leadership can move here at
+			// any time (see internal/leaderlock).
+			if !leader.IsLeader() {
+				continue
+			}
 			if n, err := svc.SweepExpired(ctx, sweepBatch); err != nil {
 				logger.Warn("e2ee expiry sweep failed", "error", err)
 			} else if n > 0 {
@@ -1884,7 +1911,7 @@ func runE2EESweepWorker(ctx context.Context, logger *slog.Logger, svc *e2ee.Serv
 // deployed media config this is a server-side close (HLS serving + listings
 // stop immediately); the publisher's ingest socket lingers until it disconnects,
 // which then drives the normal stop/replay path.
-func runLiveDurationWatchdog(ctx context.Context, logger *slog.Logger, svc *live.Service) {
+func runLiveDurationWatchdog(ctx context.Context, logger *slog.Logger, svc *live.Service, leader *leaderlock.Elector) {
 	const interval = 30 * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -1893,6 +1920,12 @@ func runLiveDurationWatchdog(ctx context.Context, logger *slog.Logger, svc *live
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Singleton sweep: exactly one instance runs it. A follower skips the
+			// tick rather than shutting down, because leadership can move here at
+			// any time (see internal/leaderlock).
+			if !leader.IsLeader() {
+				continue
+			}
 			if n, err := svc.SweepOverdueLive(ctx); err != nil {
 				logger.Warn("live duration watchdog sweep failed", "error", err)
 			} else if n > 0 {
@@ -1908,7 +1941,7 @@ func runLiveDurationWatchdog(ctx context.Context, logger *slog.Logger, svc *live
 // transition Process uses, so the federation-announce and transcode-enqueue
 // hooks fire exactly as they would on a direct publish. Per-video failures stay
 // 'scheduled' and are retried next tick; only the claim-query error is logged.
-func runScheduledPublishWorker(ctx context.Context, logger *slog.Logger, svc *video.Service) {
+func runScheduledPublishWorker(ctx context.Context, logger *slog.Logger, svc *video.Service, leader *leaderlock.Elector) {
 	const (
 		interval = 10 * time.Second
 		batch    = 20
@@ -1920,6 +1953,12 @@ func runScheduledPublishWorker(ctx context.Context, logger *slog.Logger, svc *vi
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Singleton sweep: exactly one instance runs it. A follower skips the
+			// tick rather than shutting down, because leadership can move here at
+			// any time (see internal/leaderlock).
+			if !leader.IsLeader() {
+				continue
+			}
 			n, err := svc.PublishDue(ctx, batch)
 			if err != nil {
 				logger.Warn("scheduled publish sweep failed", "error", err)
@@ -1957,7 +1996,7 @@ func composeTranscodeCompletion(releaseHold, mirrorSync func(context.Context, uu
 // would otherwise hide a video forever, so the sweeper publishes it from its
 // (playable) original. Modeled on runScheduledPublishWorker; a rare backstop, so
 // a released batch is logged at warn level.
-func runTranscodeHoldSweepWorker(ctx context.Context, logger *slog.Logger, svc *video.Service, timeout time.Duration) {
+func runTranscodeHoldSweepWorker(ctx context.Context, logger *slog.Logger, svc *video.Service, timeout time.Duration, leader *leaderlock.Elector) {
 	const (
 		interval = 5 * time.Minute
 		batch    = 20
@@ -1969,6 +2008,12 @@ func runTranscodeHoldSweepWorker(ctx context.Context, logger *slog.Logger, svc *
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Singleton sweep: exactly one instance runs it. A follower skips the
+			// tick rather than shutting down, because leadership can move here at
+			// any time (see internal/leaderlock).
+			if !leader.IsLeader() {
+				continue
+			}
 			n, err := svc.ReleaseStuckTranscodeHolds(ctx, timeout, batch)
 			if err != nil {
 				logger.Warn("transcode hold sweep failed", "error", err)
@@ -2086,7 +2131,7 @@ func runCaptionJobWorker(ctx context.Context, logger *slog.Logger, svc *captionj
 // runUploadSweepWorker deletes expired/cancelled resumable-upload sessions and
 // their chunk blobs on a ticker until ctx is canceled (mirrors the account
 // export sweep). Only the sweep-query error is logged.
-func runUploadSweepWorker(ctx context.Context, logger *slog.Logger, svc *upload.Service) {
+func runUploadSweepWorker(ctx context.Context, logger *slog.Logger, svc *upload.Service, leader *leaderlock.Elector) {
 	const (
 		interval   = time.Minute
 		sweepBatch = 50
@@ -2098,6 +2143,12 @@ func runUploadSweepWorker(ctx context.Context, logger *slog.Logger, svc *upload.
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Singleton sweep: exactly one instance runs it. A follower skips the
+			// tick rather than shutting down, because leadership can move here at
+			// any time (see internal/leaderlock).
+			if !leader.IsLeader() {
+				continue
+			}
 			if n, err := svc.Sweep(ctx, sweepBatch); err != nil {
 				logger.Warn("upload session sweep failed", "error", err)
 			} else if n > 0 {
@@ -2112,7 +2163,7 @@ func runUploadSweepWorker(ctx context.Context, logger *slog.Logger, svc *upload.
 // dead-lettered rows on the reconcile interval, until ctx is canceled. Per-row
 // failures are persisted in the ledger (rescheduled/dead-lettered), never
 // surfaced — the mirror is non-authoritative, so an outage never blocks anything.
-func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirror.Service, reconcileInterval time.Duration) {
+func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirror.Service, reconcileInterval time.Duration, leader *leaderlock.Elector) {
 	const (
 		drainInterval = 10 * time.Second
 		batch         = 8
@@ -2157,6 +2208,12 @@ func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirr
 				}
 			}
 		case <-reconcile.C:
+			// Singleton sweep: exactly one instance runs it. A follower skips the
+			// tick rather than shutting down, because leadership can move here at
+			// any time (see internal/leaderlock).
+			if !leader.IsLeader() {
+				continue
+			}
 			if _, err := svc.Reconcile(ctx); err != nil {
 				logger.Warn("ipfs mirror reconcile failed", "error", err)
 			}
@@ -2173,7 +2230,7 @@ func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirr
 // orphaned storage blobs) until ctx is canceled. Each run is audited with its
 // counts under an explicit system actor. A listing-unsupported backend disables the sweep
 // after one warning.
-func runMediaGCWorker(ctx context.Context, logger *slog.Logger, svc *mediagc.Service, auditsvc *audit.Service) {
+func runMediaGCWorker(ctx context.Context, logger *slog.Logger, svc *mediagc.Service, auditsvc *audit.Service, leader *leaderlock.Elector) {
 	const interval = 24 * time.Hour
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -2182,6 +2239,12 @@ func runMediaGCWorker(ctx context.Context, logger *slog.Logger, svc *mediagc.Ser
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Singleton sweep: exactly one instance runs it. A follower skips the
+			// tick rather than shutting down, because leadership can move here at
+			// any time (see internal/leaderlock).
+			if !leader.IsLeader() {
+				continue
+			}
 			res, err := svc.Sweep(ctx, false)
 			if err != nil {
 				if errors.Is(err, mediagc.ErrListingUnsupported) {
@@ -2226,7 +2289,7 @@ func runPeerTubeImportWorker(ctx context.Context, logger *slog.Logger, svc *peer
 // runOperationalJobRetentionWorker prunes only bounded batches. Events are
 // removed after 30 days only when their parent is terminal; terminal runs and
 // pipelines are retained for 90 days. Active execution history is never pruned.
-func runOperationalJobRetentionWorker(ctx context.Context, logger *slog.Logger, svc *jobstatus.Service) {
+func runOperationalJobRetentionWorker(ctx context.Context, logger *slog.Logger, svc *jobstatus.Service, leader *leaderlock.Elector) {
 	const interval = 24 * time.Hour
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -2235,6 +2298,12 @@ func runOperationalJobRetentionWorker(ctx context.Context, logger *slog.Logger, 
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
+			// Singleton sweep: exactly one instance runs it. A follower skips the
+			// tick rather than shutting down, because leadership can move here at
+			// any time (see internal/leaderlock).
+			if !leader.IsLeader() {
+				continue
+			}
 			events, runs, pipelines, err := svc.Prune(ctx, now.UTC())
 			if err != nil {
 				logger.Warn("operational job retention failed", "error", err)

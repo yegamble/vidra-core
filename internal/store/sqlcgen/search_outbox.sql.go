@@ -14,16 +14,21 @@ import (
 )
 
 const claimDueSearchEvents = `-- name: ClaimDueSearchEvents :many
-UPDATE search_outbox
-SET next_attempt_at = now() + ($1::int * interval '1 second')
-WHERE id IN (
-    SELECT id FROM search_outbox
-    WHERE state = 'pending' AND next_attempt_at <= now()
-    ORDER BY id
-    LIMIT $2
-    FOR UPDATE SKIP LOCKED
+WITH claimed AS (
+    UPDATE search_outbox
+    SET next_attempt_at = now() + ($1::int * interval '1 second')
+    WHERE id IN (
+        SELECT id FROM search_outbox
+        WHERE state = 'pending' AND next_attempt_at <= now()
+        ORDER BY id
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED
+    )
+    RETURNING id, event_id, event_type, payload, attempts, created_at
 )
-RETURNING id, event_id, event_type, payload, attempts, created_at
+SELECT id, event_id, event_type, payload, attempts, created_at
+FROM claimed
+ORDER BY id
 `
 
 type ClaimDueSearchEventsParams struct {
@@ -52,6 +57,12 @@ type ClaimDueSearchEventsRow struct {
 // becomes due again by itself. FOR UPDATE SKIP LOCKED makes concurrent claimers
 // take disjoint rows without blocking each other.
 // search_outbox has no updated_at column, so only the lease is written.
+// The claim is wrapped in a CTE with an OUTER ORDER BY because UPDATE ...
+// RETURNING does not preserve the order of the subquery that chose the rows --
+// PostgreSQL returns them in whatever order it updated them. The "oldest first"
+// contract is real: these rows carry ordered side effects (an index mutation
+// applied out of order leaves the index stale; activities delivered out of order
+// are visible to the remote server), so the ordering has to be restated here.
 func (q *Queries) ClaimDueSearchEvents(ctx context.Context, arg ClaimDueSearchEventsParams) ([]ClaimDueSearchEventsRow, error) {
 	rows, err := q.db.Query(ctx, claimDueSearchEvents, arg.LeaseSeconds, arg.BatchSize)
 	if err != nil {
