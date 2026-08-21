@@ -115,6 +115,51 @@ func checkObjectRetention(ctx context.Context, s *state) []Finding {
 	}
 }
 
+// checkBucketOwnership looks for the object that says this bucket belongs to
+// this install (storage.OwnerMarkerKey). Its absence is what stands between a
+// shared or pre-populated bucket and a daily sweep that deletes every object no
+// database row references.
+//
+// It reports PRESENCE and nothing more. Comparing the marker against the
+// install's own identity would need the database — a `vidra doctor` that read
+// the identity table would be answering a different question with a second
+// connection, and it would still be the api's answer that governs, since the api
+// resolves ownership at boot and logs what it found. So: found is ok, absent is
+// a warning naming the adoption endpoint, and a bucket carrying somebody else's
+// UUID reads as ok here and as a refusal in the api's log — which is why the
+// fix text sends the operator to that log rather than leaving them to compare
+// UUIDs by eye.
+func checkBucketOwnership(ctx context.Context, s *state) []Finding {
+	if s.envErr != nil {
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s)", s.envErr))}
+	}
+	if strings.ToLower(s.value("STORAGE_BACKEND")) != "s3" {
+		return []Finding{okf("media lives on local disk, which this instance populated itself — there is no shared bucket to mistake for its own, so the ownership marker does not apply")}
+	}
+	cfg := storage.S3Config{
+		Endpoint:       s.value("STORAGE_S3_ENDPOINT"),
+		Bucket:         s.value("STORAGE_S3_BUCKET"),
+		AccessKey:      s.value("STORAGE_S3_ACCESS_KEY"),
+		SecretKey:      s.value("STORAGE_S3_SECRET_KEY"),
+		Region:         s.value("STORAGE_S3_REGION"),
+		UseSSL:         !isFalseish(s.value("STORAGE_S3_USE_SSL")),
+		ForcePathStyle: setup.IsTrue(s.value("STORAGE_S3_FORCE_PATH_STYLE")),
+	}
+	found, _, err := s.opt.Prober.CheckBucketMarker(ctx, cfg)
+	switch {
+	case err != nil:
+		// The reachability check above already reports an unreachable store in
+		// full; a second failure line for the same cause is noise.
+		return []Finding{skipf(fmt.Sprintf("the ownership marker %q in %q could not be read (%s)", storage.OwnerMarkerKey, cfg.Bucket, reachSummary(err)))}
+	case !found:
+		return []Finding{warnf(
+			fmt.Sprintf("%q carries no ownership marker (%s), so this instance has not established that the bucket is its own — media garbage collection will report what it would delete and delete nothing", cfg.Bucket, storage.OwnerMarkerKey),
+			"if this bucket is yours, adopt it once: POST /api/v1/admin/media/gc/adopt-bucket as an admin, which writes the marker and re-enables the sweep. If it is NOT yours — a shared bucket, or the destination of a migration in progress — leave it: that refusal is the point. A bucket the api CREATED, or one that was empty at boot, is marked automatically, so seeing this on a working instance means it had objects in it before Vidra did")}
+	default:
+		return []Finding{okf(fmt.Sprintf("%q carries an ownership marker (%s), so media garbage collection is allowed to delete from it. If the api's log says otherwise at boot, the marker belongs to a DIFFERENT install and the two must not share this bucket", cfg.Bucket, storage.OwnerMarkerKey))}
+	}
+}
+
 // checkSMTP proves there is a relay at the address the api will hand password
 // resets and email verifications to. It dials and reads the greeting; it never
 // sends, and it never authenticates — a diagnostic that logs into the mail relay

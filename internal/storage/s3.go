@@ -104,23 +104,46 @@ func NewS3(cfg S3Config) (*S3, error) {
 // EnsureBucket verifies the configured bucket exists, creating it when absent
 // (dev convenience for MinIO; production buckets are usually pre-provisioned).
 // Call once at startup so a misconfigured store fails fast.
-func (s *S3) EnsureBucket(ctx context.Context) error {
+//
+// created reports whether THIS call made the bucket. That is not bookkeeping: a
+// bucket this process just created cannot hold anyone else's objects, which is
+// the one case where claiming ownership of a store (see OwnerMarkerKey) needs no
+// operator confirmation. A lost create race reports created=false, because the
+// winner may not have been us.
+func (s *S3) EnsureBucket(ctx context.Context) (created bool, err error) {
 	ok, err := s.client.BucketExists(ctx, s.bucket)
 	if err != nil {
-		return fmt.Errorf("storage: s3: check bucket %q: %w", s.bucket, err)
+		return false, fmt.Errorf("storage: s3: check bucket %q: %w", s.bucket, err)
 	}
 	if ok {
-		return nil
+		return false, nil
 	}
 	if err := s.client.MakeBucket(ctx, s.bucket, minio.MakeBucketOptions{Region: s.region}); err != nil {
 		// Lost a create race (or the credentials may not create but the bucket
 		// now exists) — re-check before failing.
 		if ok2, err2 := s.client.BucketExists(ctx, s.bucket); err2 == nil && ok2 {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("storage: s3: create bucket %q: %w", s.bucket, err)
+		return false, fmt.Errorf("storage: s3: create bucket %q: %w", s.bucket, err)
 	}
-	return nil
+	return true, nil
+}
+
+// IsEmpty reports whether the bucket holds no objects at all. It is one list
+// request capped at a single key — the cheapest question that distinguishes "a
+// store nobody has used yet" from "a store with somebody's data in it", which is
+// the distinction the ownership marker turns on.
+func (s *S3) IsEmpty(ctx context.Context) (bool, error) {
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Recursive: true,
+		MaxKeys:   1,
+	}) {
+		if obj.Err != nil {
+			return false, fmt.Errorf("storage: s3: list bucket %q: %w", s.bucket, obj.Err)
+		}
+		return false, nil
+	}
+	return true, nil
 }
 
 // BucketExists reports whether the configured bucket is there, and is the

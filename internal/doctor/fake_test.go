@@ -104,6 +104,10 @@ type fakeProber struct {
 	retention    storage.BucketRetention
 	retentionErr error
 
+	markerFound   bool
+	markerContent string
+	markerErr     error
+
 	sawBucket storage.S3Config
 	sawSMTP   string
 	sawDomain preflight.DomainRequest
@@ -122,6 +126,11 @@ func (p *fakeProber) CheckBucket(_ context.Context, cfg storage.S3Config) (bool,
 func (p *fakeProber) CheckBucketRetention(_ context.Context, cfg storage.S3Config) (storage.BucketRetention, error) {
 	p.sawBucket = cfg
 	return p.retention, p.retentionErr
+}
+
+func (p *fakeProber) CheckBucketMarker(_ context.Context, cfg storage.S3Config) (bool, string, error) {
+	p.sawBucket = cfg
+	return p.markerFound, p.markerContent, p.markerErr
 }
 
 func (p *fakeProber) CheckSMTP(_ context.Context, addr string) (string, error) {
@@ -271,6 +280,11 @@ func newFakeProber() *fakeProber {
 		domain: preflight.DomainResult{Status: StatusOK, Domain: "tube.vidra.test", Message: "tube.vidra.test resolves to 203.0.113.10, which is this host"},
 		bucket: true,
 		banner: "220 smtp.example.net ESMTP ready",
+		// The healthy S3 deployment is one that has adopted its own bucket. The
+		// baseline env is local storage, so this only matters to the tests that
+		// switch it.
+		markerFound:   true,
+		markerContent: "8f2b6c1e-0f4a-4f1c-9f3e-2a7d5b8c4e10",
 		ledgers: map[string]dbmigrate.Status{
 			"":                {Version: 42, Applied: true},
 			searchLedgerTable: {Version: 7, Applied: true},

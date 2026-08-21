@@ -181,9 +181,11 @@ var checks = []check{
 	{"backups", SectionState, checkBackupAge},
 	{"backup timer", SectionState, checkBackupTimer},
 	{"disk space", SectionState, checkDiskSpace},
+	{"media GC posture", SectionState, checkMediaGCPosture},
 
 	{"object storage", SectionReach, checkObjectStorage},
 	{"object retention", SectionReach, checkObjectRetention},
+	{"bucket ownership", SectionReach, checkBucketOwnership},
 	{"smtp", SectionReach, checkSMTP},
 	{"search service", SectionReach, checkSearchService},
 	{"ffmpeg", SectionReach, checkFFmpeg},

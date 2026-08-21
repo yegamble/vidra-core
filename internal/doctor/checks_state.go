@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -148,6 +149,71 @@ func parseMigrateVersion(out string) (dbmigrate.Status, bool) {
 		}
 	}
 	return st, true
+}
+
+// checkMediaGCPosture reads the two knobs that decide whether an unattended
+// daily job is allowed to DELETE media, and says out loud what they currently
+// mean. It reads the env file and nothing else — the api is the only thing that
+// can say what the sweep actually did, and it says so in its own log and audit
+// trail.
+//
+// It exists mostly to make the effective mode visible: "media garbage collection
+// deletes orphaned objects every 24 hours" is a sentence most operators have
+// never read, and the first time they want to know it is usually after something
+// has gone missing. The two failure modes it can catch on its own are a
+// misspelled boolean and an out-of-range percentage — both of which the api
+// refuses to boot with, so a red line here is a deploy that will not come up.
+func checkMediaGCPosture(_ context.Context, s *state) []Finding {
+	if s.envErr != nil {
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s)", s.envErr))}
+	}
+	const (
+		enabledKey = "MEDIA_GC_ENABLED"
+		percentKey = "MEDIA_GC_MAX_ORPHAN_PERCENT"
+	)
+	// The api parses both with the Go standard library, so doctor must too: an
+	// env file that reads as configured to a human and does not parse for
+	// strconv is exactly the drift worth catching before the deploy.
+	enabled := true
+	if raw := strings.TrimSpace(s.value(enabledKey)); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return []Finding{failf(
+				fmt.Sprintf("%s is %q, which is not a boolean the api will accept (true|false|1|0)", enabledKey, truncate(raw, 20)),
+				"set "+enabledKey+"=true or =false in "+s.envRel+". The api refuses to boot on an unparsable value, so this is a deploy that will not start rather than a sweep that misbehaves")}
+		}
+		enabled = v
+	}
+	percent := 25
+	if raw := strings.TrimSpace(s.value(percentKey)); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			return []Finding{failf(
+				fmt.Sprintf("%s is %q, which is not a whole number", percentKey, truncate(raw, 20)),
+				"set "+percentKey+" to a percentage between 0 and 100 in "+s.envRel+" (25 is the default). The api refuses to boot on an unparsable value")}
+		}
+		percent = v
+	}
+	if percent < 0 || percent > 100 {
+		return []Finding{failf(
+			fmt.Sprintf("%s is %d, which is not a percentage", percentKey, percent),
+			"set "+percentKey+" between 0 and 100 in "+s.envRel+" (0 = never delete, 100 = no ratio limit, 25 = the default). The api refuses to boot on an out-of-range value")}
+	}
+	if !enabled {
+		return []Finding{okf(fmt.Sprintf("%s=false — nothing sweeps on a schedule, so orphaned objects (a deleted video's HLS tree, a superseded original) accumulate and keep billing until an admin runs POST /api/v1/admin/media/gc by hand", enabledKey))}
+	}
+	switch percent {
+	case 0:
+		return []Finding{warnf(
+			fmt.Sprintf("media garbage collection is on, but %s=0 means every destructive sweep of more than 100 orphans stops itself — in practice the sweep reports and never deletes", percentKey),
+			"that is a safe place to sit while you watch what it would delete (the api logs `media gc sweep completed` with the counts each day). Raise it to 25 in "+s.envRel+" once the numbers look right")}
+	case 100:
+		return []Finding{warnf(
+			fmt.Sprintf("media garbage collection is on with %s=100, which turns the circuit breaker off: a sweep will delete every unreferenced object it finds, however many that is", percentKey),
+			"the breaker is what stops a sweep whose reference set came back wrong — a half-restored database looks exactly like 'almost everything is an orphan'. Set "+percentKey+"=25 in "+s.envRel+" unless you have a specific reason not to")}
+	default:
+		return []Finding{okf(fmt.Sprintf("media garbage collection runs daily and deletes stored objects no database row references; a sweep that finds more than %d%% of what it scanned to be orphans deletes nothing instead (%s). The first sweep after each restart is always a dry run", percent, percentKey))}
+	}
 }
 
 // maxBackupAge is how old the newest successful backup may be before it is a

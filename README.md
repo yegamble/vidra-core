@@ -151,6 +151,8 @@ full table. The load-bearing knobs:
 | `PUBLIC_BASE_URL` | empty | Required for OAuth redirect URIs and `Secure` cookies. |
 | `STORAGE_BACKEND` | `local` | `local` \| `s3`. Local writes under `STORAGE_LOCAL_ROOT`. |
 | `STORAGE_LOCAL_ROOT` | `./data/media` | Root directory for the local backend. |
+| `MEDIA_GC_ENABLED` | `true` | Daily sweep that **deletes** stored objects no DB row references. `false` stops the worker; the admin endpoint stays. |
+| `MEDIA_GC_MAX_ORPHAN_PERCENT` | `25` | Circuit breaker: a destructive sweep finding a bigger orphan share deletes nothing. See [operations](docs/operations.md#media-garbage-collection--the-job-that-deletes). |
 | `TRANSCODING_ENABLED` | `true` | HLS ladder; set `false` to serve originals only. |
 | `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW` | `120` / `1m` | Per-IP `/api` budget; fails **open** if Redis is down. |
 | `HTTP_BODY_LIMIT` | `8M` | JSON API body cap (upload routes are exempt). |

@@ -513,7 +513,7 @@ func run() error {
 	donationsvc := donation.NewService(db.Queries(), donationInstance)
 	opts = append(opts, httpapi.WithDonationService(donationsvc))
 
-	blobs, err := newStorageBackend(startCtx, cfg)
+	blobs, createdBucket, err := newStorageBackend(startCtx, cfg)
 	if err != nil {
 		return err
 	}
@@ -529,6 +529,22 @@ func run() error {
 	} else {
 		logger.Info("media storage configured", "backend", cfg.StorageBackend)
 	}
+
+	// Bucket ownership for media GC (phase-2 storage, item 1). Resolved here
+	// because it needs both halves of the question — the identity is in the
+	// database and the marker is in the store — and once, at boot, because a
+	// per-sweep round trip would answer the same question daily and still not
+	// notice the case that matters (someone else's bucket) any sooner.
+	//
+	// A missing identity row is not fatal: an install whose migrations have not
+	// been run yet still has to boot. It costs destructive GC until they have.
+	instanceIdentity := ""
+	if id, iderr := db.Queries().GetInstanceIdentity(startCtx); iderr != nil {
+		logger.Warn("instance identity unavailable; media gc cannot establish bucket ownership", "error", iderr)
+	} else {
+		instanceIdentity = id.String()
+	}
+	bucketOwnership := resolveBucketOwnership(startCtx, logger, blobs, createdBucket, instanceIdentity)
 
 	// Hybrid IPFS media mirror (fix_plan P19, .ralph/specs/ipfs-media.md). A MIRROR
 	// SIDECAR — local/S3 stays authoritative — that add+pins ALREADY-PUBLIC media
@@ -974,7 +990,13 @@ func run() error {
 	opts = append(opts, httpapi.WithPlaylistService(playlistsvc))
 
 	// Media garbage collection: admin-triggered sweep + a daily scheduled sweep.
-	mediagcsvc := mediagc.NewService(db.Queries(), blobs)
+	// The endpoint is mounted whatever MEDIA_GC_ENABLED says — the flag governs
+	// the unattended daily delete, not an admin asking for a sweep by hand — and
+	// the ownership state resolved above governs whether either may delete.
+	mediagcsvc := mediagc.NewService(db.Queries(), blobs,
+		mediagc.WithMaxOrphanPercent(cfg.MediaGCMaxOrphanPercent),
+		mediagc.WithBucketOwnership(bucketOwnership),
+		mediagc.WithInstanceIdentity(instanceIdentity))
 	opts = append(opts, httpapi.WithMediaGCService(mediagcsvc))
 
 	moderationsvc := moderation.NewService(db.Queries())
@@ -1483,14 +1505,19 @@ func run() error {
 		logger.Info("upload session sweep worker started")
 	}
 
-	// Media garbage collection: a daily sweep of orphaned storage blobs. Always
-	// on (dry-run-free deletion) — the reference queries are cheap and the sweep
-	// never touches unknown prefixes.
-	{
+	// Media garbage collection: a daily sweep of orphaned storage blobs. The
+	// unattended sweep DELETES, so it is the one worker with an off switch —
+	// boot-baked, because a runtime toggle would put an irreversible operation
+	// behind a settings mistake.
+	if cfg.MediaGCEnabled {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runMediaGCWorker(workerCtx, logger, mediagcsvc, auditsvc, cronLeader)
-		logger.Info("media gc worker started")
+		logger.Info("media gc worker started",
+			"max_orphan_percent", cfg.MediaGCMaxOrphanPercent,
+			"bucket_ownership", string(bucketOwnership))
+	} else {
+		logger.Info("media gc worker disabled (MEDIA_GC_ENABLED=false); orphaned objects accumulate until an admin sweeps by hand")
 	}
 
 	// Search outbox drain + reconcile sweep (search-service W4). Only when the
@@ -2230,39 +2257,66 @@ func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirr
 // orphaned storage blobs) until ctx is canceled. Each run is audited with its
 // counts under an explicit system actor. A listing-unsupported backend disables the sweep
 // after one warning.
+//
+// The FIRST sweep of a process lifetime is always a dry run, and it happens five
+// minutes after boot rather than a day later. That is the rail an operator can
+// actually use: a misconfiguration that would make this worker delete a library
+// is visible in the log and the audit trail within minutes of the deploy that
+// introduced it, instead of overnight and after the fact. Whichever timer fires
+// first spends that dry run; deletion starts from the sweep after it.
 func runMediaGCWorker(ctx context.Context, logger *slog.Logger, svc *mediagc.Service, auditsvc *audit.Service, leader *leaderlock.Elector) {
 	const interval = 24 * time.Hour
+	// Long enough that the boot storm (migrations, the first transcodes, a cold
+	// object store) is over, short enough to still be the same deploy.
+	const firstSweepDelay = 5 * time.Minute
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	initial := time.NewTimer(firstSweepDelay)
+	defer initial.Stop()
+
+	swept := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-initial.C:
 		case <-ticker.C:
-			// Singleton sweep: exactly one instance runs it. A follower skips the
-			// tick rather than shutting down, because leadership can move here at
-			// any time (see internal/leaderlock).
-			if !leader.IsLeader() {
-				continue
+		}
+		// Singleton sweep: exactly one instance runs it. A follower skips the
+		// tick rather than shutting down, because leadership can move here at
+		// any time (see internal/leaderlock). A skipped tick is not a sweep, so
+		// it does not spend the dry run either.
+		if !leader.IsLeader() {
+			continue
+		}
+		dryRun := !swept
+		res, err := svc.Sweep(ctx, dryRun)
+		if err != nil {
+			if errors.Is(err, mediagc.ErrListingUnsupported) {
+				logger.Warn("media gc disabled: storage backend does not support listing")
+				return
 			}
-			res, err := svc.Sweep(ctx, false)
-			if err != nil {
-				if errors.Is(err, mediagc.ErrListingUnsupported) {
-					logger.Warn("media gc disabled: storage backend does not support listing")
-					return
-				}
-				logger.Warn("media gc sweep failed", "error", err)
-				continue
-			}
-			logger.Info("media gc sweep completed", "scanned", res.Scanned, "orphans", len(res.Orphans), "deleted", res.Deleted)
-			if auditsvc != nil {
-				_ = auditsvc.Record(ctx, audit.Event{
-					Action: observability.ActionMediaGC,
-					Result: observability.ResultSuccess,
-					Actor:  audit.ActorSnapshot{Kind: "system"},
-					Reason: fmt.Sprintf("mode=delete scanned=%d orphans=%d deleted=%d", res.Scanned, len(res.Orphans), res.Deleted),
-				})
-			}
+			logger.Warn("media gc sweep failed", "error", err)
+			continue
+		}
+		swept = true
+		logger.Info("media gc sweep completed",
+			"mode", res.Mode, "scanned", res.Scanned, "orphans", len(res.Orphans),
+			"orphan_percent", res.OrphanPercent, "deleted", res.Deleted,
+			"breaker_tripped", res.BreakerTripped, "bucket_ownership", res.BucketOwnership,
+			"forced_dry_run", res.ForcedDryRun)
+		if res.BreakerTripped {
+			logger.Error("media gc deleted nothing: the orphan share of the store is over MEDIA_GC_MAX_ORPHAN_PERCENT, which is what a wrong reference set looks like",
+				"orphan_percent", res.OrphanPercent, "scanned", res.Scanned, "orphans", len(res.Orphans))
+		}
+		if auditsvc != nil {
+			_ = auditsvc.Record(ctx, audit.Event{
+				Action: observability.ActionMediaGC,
+				Result: observability.ResultSuccess,
+				Actor:  audit.ActorSnapshot{Kind: "system"},
+				Reason: res.Summary(),
+			})
 		}
 	}
 }
@@ -2321,12 +2375,21 @@ func runOperationalJobRetentionWorker(ctx context.Context, logger *slog.Logger, 
 // validation already restricts StorageBackend to the supported set, so the
 // default branch is a defensive guard. ctx bounds the s3 startup probe
 // (EnsureBucket) so an unreachable store fails fast like a missing DB.
-func newStorageBackend(ctx context.Context, cfg *config.Config) (storage.Backend, error) {
+//
+// createdBucket reports that this boot MADE the bucket, which resolveBucketOwnership
+// needs: a bucket that did not exist a moment ago cannot hold anyone else's
+// media, and is therefore the one case where this install may claim ownership of
+// an object store without an operator saying so.
+func newStorageBackend(ctx context.Context, cfg *config.Config) (blobs storage.Backend, createdBucket bool, err error) {
 	switch cfg.StorageBackend {
 	case "local":
-		return storage.NewLocal(cfg.StorageLocalRoot)
+		local, lerr := storage.NewLocal(cfg.StorageLocalRoot)
+		if lerr != nil {
+			return nil, false, lerr
+		}
+		return local, false, nil
 	case "s3":
-		s3b, err := storage.NewS3(storage.S3Config{
+		s3b, serr := storage.NewS3(storage.S3Config{
 			Endpoint:       cfg.StorageS3Endpoint,
 			Bucket:         cfg.StorageS3Bucket,
 			AccessKey:      cfg.StorageS3AccessKey,
@@ -2335,14 +2398,81 @@ func newStorageBackend(ctx context.Context, cfg *config.Config) (storage.Backend
 			UseSSL:         cfg.StorageS3UseSSL,
 			ForcePathStyle: cfg.StorageS3ForcePathStyle,
 		})
-		if err != nil {
-			return nil, err
+		if serr != nil {
+			return nil, false, serr
 		}
-		if err := s3b.EnsureBucket(ctx); err != nil {
-			return nil, err
+		created, berr := s3b.EnsureBucket(ctx)
+		if berr != nil {
+			return nil, false, berr
 		}
-		return s3b, nil
+		return s3b, created, nil
 	default:
-		return nil, fmt.Errorf("unsupported storage backend %q", cfg.StorageBackend)
+		return nil, false, fmt.Errorf("unsupported storage backend %q", cfg.StorageBackend)
 	}
+}
+
+// resolveBucketOwnership answers, once per boot, whether the object store media
+// garbage collection is about to delete from belongs to THIS install.
+//
+// The evidence is a marker object holding the instance identity
+// (storage.OwnerMarkerKey). Four outcomes, and only the first two permit a
+// destructive sweep:
+//
+//	marker == our identity                     → owned
+//	no marker, and the bucket is ours to claim → written, owned
+//	no marker, and the bucket has objects in it→ unowned  (operator must adopt)
+//	marker == a different identity             → conflict (another install owns it)
+//
+// "Ours to claim" is the bucket this boot just created, or one that holds
+// nothing at all. Anything else is somebody's data, and the only thing that can
+// establish whose is an operator — hence the adopt-bucket endpoint.
+//
+// Every failure resolves to unowned rather than owned: the whole point is that
+// an unanswerable question must not end in a delete. Local disk is exempt by
+// design (see mediagc.OwnershipNotApplicable) and never reaches this function.
+func resolveBucketOwnership(ctx context.Context, logger *slog.Logger, blobs storage.Backend, createdBucket bool, identity string) mediagc.BucketOwnership {
+	s3b, isObjectStore := blobs.(*storage.S3)
+	if !isObjectStore {
+		return mediagc.OwnershipNotApplicable
+	}
+	if identity == "" {
+		logger.Warn("media gc: no instance identity, so bucket ownership cannot be established — destructive sweeps are disabled")
+		return mediagc.OwnershipUnowned
+	}
+	marker, found, err := storage.ReadOwnerMarker(ctx, blobs)
+	switch {
+	case err != nil:
+		logger.Warn("media gc: the bucket ownership marker could not be read — destructive sweeps are disabled", "error", err)
+		return mediagc.OwnershipUnowned
+	case found && marker == identity:
+		return mediagc.OwnershipOwned
+	case found:
+		// Deliberately NOT logging the other identity as a plain value an
+		// operator might mistake for theirs — the state is the actionable part.
+		logger.Error("media gc: this bucket carries ANOTHER Vidra install's ownership marker; destructive sweeps are disabled",
+			"marker_key", storage.OwnerMarkerKey)
+		return mediagc.OwnershipConflict
+	}
+
+	// No marker. Claim it only when there is provably nobody else's data here.
+	claimable := createdBucket
+	if !claimable {
+		empty, eerr := s3b.IsEmpty(ctx)
+		if eerr != nil {
+			logger.Warn("media gc: the bucket could not be checked for existing objects — destructive sweeps are disabled", "error", eerr)
+			return mediagc.OwnershipUnowned
+		}
+		claimable = empty
+	}
+	if !claimable {
+		logger.Warn("media gc: this bucket holds objects but carries no ownership marker, so it is not established that it belongs to this instance; destructive sweeps are disabled until an admin adopts it",
+			"marker_key", storage.OwnerMarkerKey, "adopt", "POST /api/v1/admin/media/gc/adopt-bucket")
+		return mediagc.OwnershipUnowned
+	}
+	if werr := storage.WriteOwnerMarker(ctx, blobs, identity); werr != nil {
+		logger.Warn("media gc: the bucket ownership marker could not be written — destructive sweeps are disabled", "error", werr)
+		return mediagc.OwnershipUnowned
+	}
+	logger.Info("media gc: claimed the object store with an ownership marker", "marker_key", storage.OwnerMarkerKey)
+	return mediagc.OwnershipOwned
 }
