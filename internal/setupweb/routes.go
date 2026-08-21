@@ -35,6 +35,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/validate", s.handleValidate)
 	mux.HandleFunc("POST /api/check-domain", s.handleCheckDomain)
 	mux.HandleFunc("POST /api/doctor", s.handleDoctor)
+	mux.HandleFunc("POST /api/review", s.handleReview)
+	mux.HandleFunc("POST /api/apply", s.handleApply)
 	mux.HandleFunc("POST /api/finish", s.handleFinish)
 	return mux
 }
