@@ -349,7 +349,24 @@ button.ghost{background:transparent}
   // opened with — the only way a browser can be handed its first credential —
   // and in a CUSTOM header on every request afterwards, which is what puts a
   // cross-site attempt behind a preflight this server never approves.
-  const TOKEN = new URLSearchParams(location.search).get("t") || "";
+  //
+  // It does not STAY in the address bar. As soon as it is read it is moved into
+  // sessionStorage and the query string is stripped with replaceState, so it is
+  // not left in the URL bar for a shoulder to read, not written into browser
+  // history, and not carried by a Referer to anything the page later links to.
+  // sessionStorage rather than localStorage: it is scoped to this one tab and
+  // dies when the tab closes, which is the lifetime a one-time install token
+  // should have. A reload — which drops the query we just removed — reads it
+  // back from there.
+  const TOKEN = (function () {
+    const fromURL = new URLSearchParams(location.search).get("t");
+    if (fromURL) {
+      try { sessionStorage.setItem("vidra_setup_token", fromURL); } catch (_) { /* private mode: fall through */ }
+      try { history.replaceState(null, "", "/"); } catch (_) { /* fine, the header is what matters */ }
+      return fromURL;
+    }
+    try { return sessionStorage.getItem("vidra_setup_token") || ""; } catch (_) { return ""; }
+  })();
 
   const STEPS = [
     { id: "s-welcome",  label: "Welcome" },

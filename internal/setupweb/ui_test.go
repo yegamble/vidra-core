@@ -56,6 +56,20 @@ func TestTheShellCarriesNoCredentialAndNoSecret(t *testing.T) {
 	if !strings.Contains(page, `"X-Setup-Token": TOKEN`) {
 		t.Error("the page does not send the token in the custom header the server requires")
 	}
+	// And it does not LEAVE the token in the address bar: it moves it into
+	// sessionStorage and strips the query with replaceState, so it is not read off
+	// the screen, not written into history, and not carried by a Referer.
+	if !strings.Contains(page, `history.replaceState(null, "", "/")`) {
+		t.Error("the page does not strip the token from the URL after reading it")
+	}
+	if !strings.Contains(page, `sessionStorage.setItem("vidra_setup_token"`) || !strings.Contains(page, `sessionStorage.getItem("vidra_setup_token"`) {
+		t.Error("the page does not stash/restore the token in sessionStorage, so a reload would lose it")
+	}
+	// sessionStorage, not localStorage: a one-time install token should die with
+	// the tab, not linger on the machine.
+	if strings.Contains(page, "localStorage.") {
+		t.Error("the page uses localStorage for the token; it must be tab-scoped sessionStorage")
+	}
 	// EventSource cannot set a header, which is exactly why the install stream is
 	// a POST read with fetch. A page that reached for EventSource would need the
 	// token in a URL.
