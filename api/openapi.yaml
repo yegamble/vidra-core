@@ -2436,7 +2436,11 @@ paths:
                 type: string
                 format: binary
         "307":
-          description: The public avatar is pinned; redirect to its immutable public IPFS gateway URL.
+          description: >-
+            Delivered from somewhere other than this API: the public avatar is
+            pinned and the redirect points at its immutable IPFS gateway URL, or
+            direct delivery is on and it points at a short-lived signed object
+            URL. The 200 byte path stays authoritative.
           headers:
             Location:
               schema:
@@ -2567,7 +2571,11 @@ paths:
                 type: string
                 format: binary
         "307":
-          description: The public banner is pinned; redirect to its immutable public IPFS gateway URL.
+          description: >-
+            Delivered from somewhere other than this API: the public banner is
+            pinned and the redirect points at its immutable IPFS gateway URL, or
+            direct delivery is on and it points at a short-lived signed object
+            URL. The 200 byte path stays authoritative.
           headers:
             Location:
               schema:
@@ -2844,7 +2852,11 @@ paths:
                 type: string
                 format: binary
         "307":
-          description: The public avatar is pinned; redirect to its immutable public IPFS gateway URL.
+          description: >-
+            Delivered from somewhere other than this API: the public avatar is
+            pinned and the redirect points at its immutable IPFS gateway URL, or
+            direct delivery is on and it points at a short-lived signed object
+            URL. The 200 byte path stays authoritative.
           headers:
             Location:
               schema:
@@ -2881,7 +2893,11 @@ paths:
                 type: string
                 format: binary
         "307":
-          description: The public banner is pinned; redirect to its immutable public IPFS gateway URL.
+          description: >-
+            Delivered from somewhere other than this API: the public banner is
+            pinned and the redirect points at its immutable IPFS gateway URL, or
+            direct delivery is on and it points at a short-lived signed object
+            URL. The 200 byte path stays authoritative.
           headers:
             Location:
               schema:
@@ -3700,6 +3716,14 @@ paths:
               schema:
                 type: string
                 format: binary
+        "307":
+          description: >-
+            Direct delivery: the instance has delivery_presign_enabled on and the object store can sign URLs, so this public request is redirected to a short-lived signed object URL (one hour) carrying the same Content-Type and Content-Disposition this route would have sent. Never emitted for private/unpublished/password-protected media, nor for a request carrying a playback token or Authorization header; the 200/206 byte path stays authoritative and is always the fallback.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
         "404":
           description: No such video (or private and not yours), or no stored original.
           content:
@@ -3789,6 +3813,14 @@ paths:
           content:
             application/octet-stream:
               schema: { type: string, format: binary }
+        "307":
+          description: >-
+            Direct delivery: the instance has delivery_presign_enabled on and the object store can sign URLs, so this public request is redirected to a short-lived signed object URL (one hour) carrying the same Content-Type and Content-Disposition this route would have sent. Never emitted for private/unpublished/password-protected media, nor for a request carrying a playback token or Authorization header; the 200/206 byte path stays authoritative and is always the fallback.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
         "401":
           description: A password-protected video requires a valid playback token.
           content:
@@ -3832,6 +3864,14 @@ paths:
           content:
             video/webm:
               schema: { type: string, format: binary }
+        "307":
+          description: >-
+            Direct delivery: the instance has delivery_presign_enabled on and the object store can sign URLs, so this public request is redirected to a short-lived signed object URL (one hour) carrying the same Content-Type and Content-Disposition this route would have sent. Never emitted for private/unpublished/password-protected media, nor for a request carrying a playback token or Authorization header; the 200/206 byte path stays authoritative and is always the fallback.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
         "401":
           description: A password-protected video requires a valid playback token.
           content:
@@ -3887,6 +3927,14 @@ paths:
           content:
             video/mp4:
               schema: { type: string, format: binary }
+        "307":
+          description: >-
+            Direct delivery: the instance has delivery_presign_enabled on and the object store can sign URLs, so this public request is redirected to a short-lived signed object URL (one hour) carrying the same Content-Type and Content-Disposition this route would have sent. Never emitted for private/unpublished/password-protected media, nor for a request carrying a playback token or Authorization header; the 200/206 byte path stays authoritative and is always the fallback.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
         "401":
           description: A password-protected video requires a valid playback token.
           content:
@@ -3930,6 +3978,14 @@ paths:
           content:
             audio/mp4:
               schema: { type: string, format: binary }
+        "307":
+          description: >-
+            Direct delivery: the instance has delivery_presign_enabled on and the object store can sign URLs, so this public request is redirected to a short-lived signed object URL (one hour) carrying the same Content-Type and Content-Disposition this route would have sent. Never emitted for private/unpublished/password-protected media, nor for a request carrying a playback token or Authorization header; the 200/206 byte path stays authoritative and is always the fallback.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
         "401":
           description: A password-protected video requires a valid playback token.
           content:
@@ -4093,6 +4149,14 @@ paths:
               schema:
                 type: string
                 format: binary
+        "307":
+          description: >-
+            Direct delivery of a SEGMENT (never a playlist — .m3u8 references are rewritten by this origin): with delivery_presign_enabled on and a signing object store, a public+published video's segment request is redirected to a short-lived signed object URL. The 200 byte path stays authoritative.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
         "404":
           description: >-
             No such video (or private and not yours), playlist not ready, or no
@@ -4130,7 +4194,11 @@ paths:
                 type: string
                 format: binary
         "307":
-          description: The public poster is pinned; redirect to its immutable public IPFS gateway URL.
+          description: >-
+            Delivered from somewhere other than this API: the public poster is
+            pinned and the redirect points at its immutable IPFS gateway URL, or
+            direct delivery is on and it points at a short-lived signed object
+            URL. The 200 byte path stays authoritative.
           headers:
             Location:
               schema:
@@ -4272,7 +4340,12 @@ paths:
                 type: string
                 format: binary
         "307":
-          description: The public sprite sheet is pinned; redirect to its immutable public IPFS gateway URL.
+          description: >-
+            Delivered from somewhere other than this API: the public sprite sheet
+            is pinned and the redirect points at its immutable IPFS gateway URL,
+            or direct delivery is on and it points at a short-lived signed object
+            URL. The 200 byte path stays authoritative. The companion .vtt map is
+            NEVER redirected — its cues reference the sprite relatively.
           headers:
             Location:
               schema:
@@ -4758,6 +4831,14 @@ paths:
               schema:
                 type: string
                 format: binary
+        "307":
+          description: >-
+            Direct delivery: the instance has delivery_presign_enabled on and the object store can sign URLs, so this public request is redirected to a short-lived signed object URL (one hour) carrying the same Content-Type and Content-Disposition this route would have sent. Never emitted for private/unpublished/password-protected media, nor for a request carrying a playback token or Authorization header; the 200/206 byte path stays authoritative and is always the fallback.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
         "404":
           description: No such video (or not visible), or no VP9/WebM alternate.
           content:
@@ -7539,7 +7620,12 @@ paths:
                 type: string
                 format: binary
         "307":
-          description: The public playlist cover is pinned; redirect to its immutable public IPFS gateway URL.
+          description: >-
+            Delivered from somewhere other than this API: the public playlist cover
+            is pinned and the redirect points at its immutable IPFS gateway URL,
+            or direct delivery is on and it points at a short-lived signed object
+            URL. The 200 byte path stays authoritative; a private playlist's cover
+            is never redirected.
           headers:
             Location:
               schema:

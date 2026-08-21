@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -1203,7 +1204,8 @@ func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	if _, err := s.videoVisibleForMedia(c, id); err != nil {
+	v, err := s.videoVisibleForMedia(c, id)
+	if err != nil {
 		return err
 	}
 	viewerID, _, authed := principalFromContext(c)
@@ -1211,7 +1213,13 @@ func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
 	if err != nil {
 		return videoError(err)
 	}
-	return s.serveStoredObject(c, f.StorageKey, f.ContentType)
+	return s.serveMediaAsset(c, mediaAsset{
+		key:         f.StorageKey,
+		contentType: f.ContentType,
+		class:       delivery.ClassOriginal,
+		eligible:    publicVideoForIPFS(v.Privacy, v.State),
+		notFound:    "video not found",
+	})
 }
 
 // handleGetVideoThumbnail serves a video's generated poster image under the
@@ -1230,30 +1238,24 @@ func (s *Server) handleGetVideoThumbnail(c echo.Context) error {
 	if err != nil {
 		return videoError(err)
 	}
-	if publicVideoForIPFS(v.Privacy, v.State) {
-		if redirected, err := s.redirectPublicIPFS(c, f.StorageKey, ipfsmirror.ClassThumbnail); redirected {
-			return err
-		}
-	}
 	// The public thumbnail URL is stable and owners can replace its bytes, so it
-	// cannot honestly be immutable. Allow a short browser-private reuse window;
-	// never retain authenticated or password-token media.
-	if c.QueryParam(playbackTokenParam) != "" || c.Request().Header.Get("Authorization") != "" {
-		c.Response().Header().Set("Cache-Control", "private, no-store")
-	} else {
-		c.Response().Header().Set("Cache-Control", "private, max-age=300, must-revalidate")
-	}
-	return s.serveStoredObject(c, f.StorageKey, f.ContentType)
+	// cannot honestly be immutable: the delivery policy gives it a short
+	// browser-private reuse window, and never retains authenticated or
+	// password-token media.
+	return s.serveMediaAsset(c, mediaAsset{
+		key:         f.StorageKey,
+		contentType: f.ContentType,
+		class:       delivery.ClassThumbnail,
+		mirrorClass: ipfsmirror.ClassThumbnail,
+		eligible:    publicVideoForIPFS(v.Privacy, v.State),
+		notFound:    "video not found",
+	})
 }
 
-// serveStoredObject streams the object at key with the video routes' 404
-// message. See serveStoredObjectNamed.
-func (s *Server) serveStoredObject(c echo.Context, key, contentType string) error {
-	return s.serveStoredObjectNamed(c, key, contentType, "video not found")
-}
-
-// serveStoredObjectNamed streams the object at key, reporting a missing object
-// as a 404 with notFoundMsg (so avatar routes don't say "video not found").
+// serveStoredObjectNamed is the API-PROXY delivery source in code — the
+// authoritative path every media route falls back to. It streams the object at
+// key, reporting a missing object as a 404 with notFoundMsg (so avatar routes
+// don't say "video not found").
 // When the backend exposes a local path (storage.PathProvider) it uses
 // http.ServeContent so Range, conditional, and 206 handling come for free.
 // A backend without a path can still return a seekable reader from Open (the

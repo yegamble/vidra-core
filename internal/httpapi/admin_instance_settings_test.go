@@ -171,10 +171,12 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// playback gate and inherited user default + 7 search & recommendation
 	// keys (search-service W4) + search_service_enabled routing toggle
 	// (search-service W9) + 6 featured-banner keys (home-featured-banner)
-	// + report_email_alerts_enabled (new-report staff alerts).
+	// + report_email_alerts_enabled (new-report staff alerts)
+	// + delivery_presign_enabled (phase-2 storage item 6 — the registry's first
+	// storage-area key; credentials stay env-side, this is runtime posture).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 109 {
-		t.Fatalf("settings count = %d, want 109", len(got.Settings))
+	if len(got.Settings) != 110 {
+		t.Fatalf("settings count = %d, want 110", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

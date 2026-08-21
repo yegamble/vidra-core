@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -133,6 +134,10 @@ func (s *Server) handleDownloadCaption(c echo.Context) error {
 		return err
 	}
 	defer func() { _ = rc.Close() }()
+	// Caption tracks had no cache policy at all before the delivery wave; they
+	// now take the same short private window as the other small per-video assets
+	// (and no-store when the request carries a playback token).
+	setMediaCacheControl(c, delivery.ClassCaption)
 	return c.Stream(http.StatusOK, "text/vtt; charset=utf-8", rc)
 }
 

@@ -262,6 +262,26 @@ const (
 	// deliberately NOT pushed on search.config_updated (it is absent from
 	// SearchSettingKeys) so that contract stays stable.
 	KeySearchServiceEnabled = "search_service_enabled"
+
+	// KeyDeliveryPresignEnabled is the direct-object-delivery toggle (phase-2
+	// storage, item 6): when on, media requests that are already servable to an
+	// anonymous public visitor are answered with a 307 to a short-lived signed
+	// object-store URL instead of proxying every byte through the API.
+	//
+	// It is the FIRST storage-area key in this registry, and it is deliberately
+	// a lone non-secret boolean. The env-vs-DB doctrine (interfaces.md §1) keeps
+	// storage credentials, endpoints and buckets on the env side where they are
+	// boot-validated and never queryable; what belongs here is exactly this —
+	// an operational posture an admin needs to flip at 3am without a restart,
+	// e.g. to shed egress cost, or to fall back to API-proxied serving while
+	// diagnosing an object store. Default OFF: presigned delivery is a NEW
+	// capability, not shipped behaviour, and turning it on changes where a
+	// viewer's bytes come from.
+	//
+	// EFFECTIVE availability is this AND a backend that can presign — the local
+	// filesystem backend has no HTTP surface, so on a local install the setting
+	// is inert rather than broken.
+	KeyDeliveryPresignEnabled = "delivery_presign_enabled"
 )
 
 // SearchSettingKeys are the settings whose change pushes a search.config_updated
@@ -831,6 +851,12 @@ var specs = []spec{
 	// core-side routing only, never the search service's own config.
 	{key: KeySearchServiceEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
 		page: PageAdvanced, section: "search"},
+
+	// Direct object delivery (phase-2 storage item 6). Advanced page, its own
+	// 'delivery' section — the metadata-driven admin UI auto-renders it, so this
+	// entry is the whole admin surface.
+	{key: KeyDeliveryPresignEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageAdvanced, section: "delivery"},
 }
 
 var specByKey = func() map[string]spec {

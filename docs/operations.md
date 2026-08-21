@@ -362,6 +362,98 @@ Failed objects do not block a campaign from reaching `synced` — they are a
 reported fact for you to decide about. They **do** mean the destination is not a
 complete copy, so read `objects_failed` before you cut over.
 
+## Direct delivery — presigned redirects instead of proxying every byte
+
+By default every media byte a viewer receives is read out of the store by the Go
+API and streamed through it. That is the **authoritative** path, it re-checks
+authorization on every request, and it never goes away. Direct delivery is an
+optional shortcut: for requests that are already servable to an anonymous
+visitor, the API answers `307` with a short-lived signed object-store URL and the
+viewer fetches the bytes from the store instead.
+
+**Turning it on.** One admin setting — `delivery_presign_enabled`, on the
+Advanced page under *Delivery*. Default **off**. Flipping it takes effect on the
+next request; there is no restart and no env variable. It is inert unless the
+store can sign URLs, so on a local-filesystem install it does nothing.
+
+**It is deliberately unavailable in two situations**, both decided at boot:
+
+- `STORAGE_BACKEND=local` — the filesystem has no HTTP surface to redirect to.
+- a storage migration is configured (`STORAGE_MIGRATION_TARGET_*`) — during
+  dual-read an object may be in either store, and a URL signed against the wrong
+  one is a 404 the API can no longer rescue. Finish and unconfigure the
+  migration, then enable delivery.
+
+The boot log says which applies (`direct object delivery available` /
+`… disabled while a storage migration target is configured`).
+
+**What never gets a signed URL**, whatever the setting says:
+
+| Never redirected | Why |
+|---|---|
+| Anything not `public` + `published` | Private, unlisted-by-password, draft, scheduled, quarantined and blocked media stay behind per-request authorization. A signed URL is transferable; an authorization decision is not |
+| Password-protected media, even with a valid `?pt=` token | The token is scoped to one viewer's unlock; a signed URL would outlive and outrank it |
+| Any request carrying `?pt=` or an `Authorization` header | Trading one credential for a longer-lived one, and keeping `?pt=` out of intermediary logs |
+| Official downloads while `downloads_enabled` is off, or with the video's own download flag off | Moderators keep their gate bypass for the **bytes**; they do not get a shareable URL |
+| HLS playlists (`.m3u8`) | This origin rewrites their relative URIs (playback token, generation version). A copy served from the store points players at URIs that do not resolve |
+| `storyboard.vtt` | Its cues reference `storyboard.jpg` relatively; it only works served next to that route |
+| The IPFS gateway's own redirect | Unchanged — a pinned public asset still prefers the immutable CID |
+
+Everything else — originals, the VP9 alternate, downloads, extracted audio, HLS
+**segments** (canonical and imported-PeerTube shapes), thumbnails, storyboard
+sprites, avatars, banners, public playlist covers — is eligible.
+
+**Signature lifetime is one hour** and is not configurable. The redirect itself
+is cached for five minutes (`private, max-age=300, must-revalidate`), well inside
+that, so a browser never replays an expired signature. The signed URL also pins
+the response's `Content-Type`, `Content-Disposition` and a *private* cache policy,
+so a redirected download still saves under the creator's filename and a redirected
+video still plays inline — those headers are inside the signature and cannot be
+edited by the viewer.
+
+**Verifying it.** With the setting on and an S3-backed install:
+
+```bash
+# A public video's original should answer 307 with a signed Location.
+curl -sI https://example.org/api/v1/videos/<id>/original | head -20
+#   HTTP/2 307
+#   location: https://<bucket>.<endpoint>/web-videos/<id>.mp4?X-Amz-Signature=…
+#   cache-control: private, max-age=300, must-revalidate
+
+# The same request with a credential must NOT redirect.
+curl -sI -H "Authorization: Bearer <token>" https://example.org/api/v1/videos/<id>/original | head -5
+#   HTTP/2 200
+#   cache-control: private, no-store
+
+# A private video's original must NOT redirect, for anyone.
+curl -sI -H "Authorization: Bearer <owner-token>" https://example.org/api/v1/videos/<private-id>/original | head -5
+#   HTTP/2 200
+
+# Follow the signed URL: same bytes, same headers the API would have sent.
+curl -sIL https://example.org/api/v1/videos/<id>/download/original | grep -i 'content-disposition\|content-type'
+```
+
+**Rolling back** is the setting, not a migration: turn `delivery_presign_enabled`
+off and the next request is served by the API again. Already-issued signatures
+stay valid until they expire (up to an hour) — if you are turning it off because
+media leaked, also make the object non-public (delete it, or change its privacy;
+the API refuses to sign it again immediately) and rotate the store credentials if
+the leak was of the signing key itself.
+
+**Cache headers.** Every media response is `private`. Nothing Vidra serves as
+bytes is shared-cacheable, because a shared cache entry can outlive the
+authorization decision that produced it and there is no purge machinery yet
+(`delivery.Resolver.Purge` exists as a no-op hook so that machinery has a place
+to land). Current policy: whole-file media (originals, downloads, webm, audio)
+`private, max-age=3600, must-revalidate`; per-video assets (thumbnails,
+storyboards, captions) and identity images `private, max-age=300,
+must-revalidate`; HLS `private, max-age=31536000, immutable` on a
+generation-versioned URL and `private, max-age=0, must-revalidate` otherwise; and
+`private, no-store` for anything requested with a playback token or an
+Authorization header. Captions are the one eligible-looking asset that is never
+redirected today — they are read as a stream that does not expose a storage key —
+so they take the cache policy only.
+
 ## IPFS mirror (pinset) — a distribution surface, not a backup
 
 When `IPFS_ENABLED=true` (`IPFS_API_URL` + `IPFS_GATEWAY_URL` required), the mirror

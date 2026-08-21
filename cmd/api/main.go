@@ -978,6 +978,31 @@ func run() error {
 	}
 	opts = append(opts, httpapi.WithVideoService(videosvc), httpapi.WithMediaStorage(mediaForServing))
 
+	// DIRECT DELIVERY (phase-2 storage item 6): the presigner for signed-URL
+	// redirects is the RAW primary backend, and only when no migration is in
+	// flight. Both halves matter:
+	//
+	//   - raw, because storage.Fallback deliberately implements no optional
+	//     capability — a URL signed against the primary for an object that is
+	//     still only in the secondary is a 404 the API can no longer rescue,
+	//     since the viewer is no longer talking to the API;
+	//   - only when migrationTarget is nil, because "dual-read is active" is
+	//     exactly the state in which any given object may be in the other store.
+	//
+	// A local-filesystem install simply is not a Presigner and lands here as a
+	// no-op. Wiring this does NOT enable presigned delivery — the
+	// delivery_presign_enabled admin setting does, and it defaults off.
+	if migrationTarget == nil {
+		if presigner, ok := storage.Backend(blobs).(storage.Presigner); ok {
+			opts = append(opts, httpapi.WithDeliveryPresigner(presigner))
+			logger.Info("direct object delivery available",
+				"backend", storage.Describe(blobs),
+				"note", "enable with the delivery_presign_enabled instance setting")
+		}
+	} else {
+		logger.Info("direct object delivery disabled while a storage migration target is configured")
+	}
+
 	// When federation is on, fan a local comment on a local video out to the
 	// channel's remote followers as Create/Update/Delete{Note} (remote-content
 	// §6) — same deferred-fedsvc seam as the video hooks above.

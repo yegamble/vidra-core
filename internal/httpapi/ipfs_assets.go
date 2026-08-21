@@ -1,36 +1,26 @@
 package httpapi
 
 import (
-	"net/http"
-
-	"github.com/labstack/echo/v4"
-
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
 )
 
-// redirectPublicIPFS sends an eligible, already-pinned public asset to the
-// configured IPFS gateway. Missing/pending/failed/private pins and lookup
-// failures fall back to authoritative local/S3 serving: IPFS remains an
-// optional bandwidth-saving sidecar, never a serving dependency.
-func (s *Server) redirectPublicIPFS(c echo.Context, objectKey string, class ipfsmirror.MediaClass) (bool, error) {
-	if !s.ipfsMirrorEnabled() {
-		return false, nil
-	}
-	u, ok, err := s.ipfsmirrorsvc.PublicAssetURL(c.Request().Context(), objectKey, class)
-	if err != nil {
-		s.logger.WarnContext(c.Request().Context(), "ipfs asset lookup failed; serving authoritative storage",
-			"error", err, "media_class", class, "object_key", objectKey)
-		return false, nil
-	}
-	if !ok {
-		return false, nil
-	}
-	// The stable application URL may point at replacement bytes later, so cache
-	// this redirect briefly. The gateway target itself is immutable by CID.
-	c.Response().Header().Set("Cache-Control", "public, max-age=300, must-revalidate")
-	return true, c.Redirect(http.StatusTemporaryRedirect, u)
-}
+// The IPFS gateway redirect itself now lives in internal/delivery as one source
+// among several (delivery.SourceIPFSGateway, minted by the mirror provider that
+// delivery.go wires): an eligible, already-pinned public asset is redirected to
+// the configured gateway, and missing/pending/failed/private pins and ledger
+// lookup failures all fall back to authoritative local/S3 serving. IPFS stays an
+// optional bandwidth-saving sidecar, never a serving dependency — that
+// fail-open shape is now the contract for every delivery source.
+//
+// What stays here is the part that is about VIDRA's data rather than about
+// delivery: which rows are eligible, and how a route's asset maps onto a pin
+// ledger media class.
 
+// publicVideoForIPFS is the eligibility fence for redirecting a video's assets
+// anywhere off-origin: public AND published. It is also what the delivery
+// resolver's Eligible flag means for video routes — a private, unlisted-by-
+// password, draft, scheduled, quarantined or blocked video is served by the API
+// byte proxy alone.
 func publicVideoForIPFS(privacy, state string) bool {
 	return privacy == "public" && state == "published"
 }
