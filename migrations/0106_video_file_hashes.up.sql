@@ -1,0 +1,31 @@
+-- 0106: content hashes for stored media (phase-2 storage, work item 2).
+--
+-- video_files has recorded size_bytes since 0008, which answers "how much is
+-- stored" but not "is what is stored still the bytes we wrote". Every later
+-- phase-2 step needs that second answer: a local->S3 or bucket->bucket
+-- migration has to prove the copy before it deletes the source, and a restore
+-- has to prove the blob store and the database still agree. A checksum computed
+-- at Put time is the only version of that proof which is cheap — it rides the
+-- stream that is already being written.
+--
+-- Column states, in order of a row's life:
+--
+--   ''          not computed yet. Either the row predates this migration (the
+--               backfill worker will hash it) or a write path was added without
+--               threading the hash through. Never treat '' as "verified".
+--   <64 hex>    lowercase hex SHA-256 of the stored object's bytes.
+--   'missing'   the backfill went to read the object and the store said it is
+--               not there. The row is a dangling reference; the sentinel makes
+--               that a queryable fact instead of a permanently retried error.
+--               A later wave's verify-blobs check consumes it.
+--
+-- Deliberately hash-less: HLS segments and playlists. They have no video_files
+-- rows at all (a rendition is one video_renditions row per ladder rung covering
+-- a whole directory of segments), so there is nothing here to carry their
+-- checksum. Storage migration verifies those objects in flight instead.
+ALTER TABLE video_files ADD COLUMN sha256 TEXT NOT NULL DEFAULT '';
+
+-- The backfill's only query: oldest unhashed rows first, in batches. Partial,
+-- so it costs one index entry per not-yet-hashed row and disappears entirely
+-- once the backfill drains — which is the steady state.
+CREATE INDEX video_files_unhashed_idx ON video_files (created_at) WHERE sha256 = '';

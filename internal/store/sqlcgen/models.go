@@ -884,6 +884,7 @@ type VideoFile struct {
 	OriginalName string    `json:"original_name"`
 	SizeBytes    int64     `json:"size_bytes"`
 	CreatedAt    time.Time `json:"created_at"`
+	Sha256       string    `json:"sha256"`
 }
 
 type VideoMetadatum struct {

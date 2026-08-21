@@ -49,6 +49,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mail"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/mediagc"
+	"github.com/vidra/vidra-core/internal/mediahash"
 	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/mute"
@@ -999,6 +1000,12 @@ func run() error {
 		mediagc.WithInstanceIdentity(instanceIdentity))
 	opts = append(opts, httpapi.WithMediaGCService(mediagcsvc))
 
+	// Content-hash backfill (phase-2 storage, work item 2): reads back the
+	// stored objects whose video_files row predates hash-on-Put and records what
+	// they actually contain. No API surface — it exists only to give the
+	// integrity-verified storage migration a baseline for the WHOLE library.
+	mediahashsvc := mediahash.NewService(db.Queries(), blobs, logger)
+
 	moderationsvc := moderation.NewService(db.Queries())
 	opts = append(opts, httpapi.WithModerationService(moderationsvc))
 
@@ -1518,6 +1525,17 @@ func run() error {
 			"bucket_ownership", string(bucketOwnership))
 	} else {
 		logger.Info("media gc worker disabled (MEDIA_GC_ENABLED=false); orphaned objects accumulate until an admin sweeps by hand")
+	}
+
+	// Content-hash backfill. Always on and with no flag: it only ever READS
+	// objects and writes one text column, it drains to a no-op query once the
+	// library is hashed, and every later phase-2 step (verified migration,
+	// post-restore consistency) is unusable without it.
+	{
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runMediaHashBackfillWorker(workerCtx, logger, mediahashsvc, cronLeader)
+		logger.Info("media hash backfill worker started")
 	}
 
 	// Search outbox drain + reconcile sweep (search-service W4). Only when the
@@ -2317,6 +2335,60 @@ func runMediaGCWorker(ctx context.Context, logger *slog.Logger, svc *mediagc.Ser
 				Actor:  audit.ActorSnapshot{Kind: "system"},
 				Reason: res.Summary(),
 			})
+		}
+	}
+}
+
+// runMediaHashBackfillWorker computes the content hash of stored media files
+// whose video_files row does not carry one yet, a small batch per tick, until
+// ctx is canceled (phase-2 storage, work item 2).
+//
+// It has no enable flag on purpose. The sweep reads objects and writes one text
+// column — it can neither delete nor rewrite media — and it drains: once every
+// row is hashed the tick costs one indexed query that returns nothing, which is
+// the steady state for the entire life of the install. The alternative, an
+// operator who forgets to turn it on, shows up much later as a storage migration
+// that cannot verify what it copied.
+//
+// Objects the store does not have are recorded with the missing sentinel rather
+// than retried forever; anything else that fails is simply left for the next
+// tick.
+func runMediaHashBackfillWorker(ctx context.Context, logger *slog.Logger, svc *mediahash.Service, leader *leaderlock.Elector) {
+	const (
+		interval = time.Minute
+		batch    = 25
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	// Completion is logged on the edge, not every tick: a drained backfill
+	// otherwise writes one line a minute forever.
+	drained := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Singleton sweep: exactly one instance runs it. A follower skips the
+			// tick rather than shutting down, because leadership can move here at
+			// any time (see internal/leaderlock).
+			if !leader.IsLeader() {
+				continue
+			}
+			res, err := svc.BackfillOnce(ctx, batch)
+			if err != nil {
+				logger.Warn("media hash backfill failed", "error", err)
+				continue
+			}
+			if res.Scanned == 0 {
+				if !drained {
+					drained = true
+					logger.Info("media hash backfill complete: every stored media file carries a content hash or the missing sentinel")
+				}
+				continue
+			}
+			drained = false
+			logger.Info("media hash backfill progressed",
+				"scanned", res.Scanned, "hashed", res.Hashed, "missing", res.Missing, "failed", res.Failed)
 		}
 	}
 }

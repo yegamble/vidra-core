@@ -10,6 +10,8 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"time"
@@ -128,4 +130,31 @@ func PutSized(ctx context.Context, b Backend, key string, r io.Reader, size int6
 		}
 	}
 	return b.Put(ctx, key, r)
+}
+
+// PutSizedHashed stores r at key exactly like PutSized and additionally returns
+// the SHA-256 of the bytes stored, as lowercase hex. The digest is taken from
+// the same single pass that uploads: the reader is tee'd into the hash as the
+// backend consumes it, so nothing is buffered and nothing is read twice — which
+// matters, because the objects going through here are whole video originals.
+//
+// The returned digest is only meaningful when err is nil. A partial upload
+// hashes only the bytes that made it, and the object it would describe does not
+// exist as a complete object anyway.
+//
+// It sniffs the length itself when the caller passes SizeUnknown, because the
+// tee wrapper hides r's concrete type from the backend and would otherwise cost
+// callers the single-PUT path they get today (see sniffSize / SizedPutter: an
+// unknown length turns a 4 KB thumbnail into a multipart upload with a 16 MiB
+// buffer). Callers that know the exact length should still pass it.
+func PutSizedHashed(ctx context.Context, b Backend, key string, r io.Reader, size int64) (int64, string, error) {
+	if size < 0 {
+		size = sniffSize(r)
+	}
+	h := sha256.New()
+	n, err := PutSized(ctx, b, key, io.TeeReader(r, h), size)
+	if err != nil {
+		return 0, "", err
+	}
+	return n, hex.EncodeToString(h.Sum(nil)), nil
 }

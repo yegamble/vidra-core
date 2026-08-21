@@ -185,6 +185,46 @@ why. On a **versioned bucket with no non-current-version expiry rule**, a
 successful sweep still reclaims nothing — see the section above; that is a billing
 problem the GC cannot solve.
 
+## Content hashes — what `video_files.sha256` means
+
+Every stored media file recorded in `video_files` carries the SHA-256 of its
+bytes, computed **in the same pass that uploaded them** — the stream is tee'd
+through the hash on its way to the backend, so a hash costs no extra read and
+never buffers a video. It is what makes a storage migration verifiable: copy,
+compare, then delete the source. Nothing serves it over the API; it is an
+operational column.
+
+The column has three states, and the difference matters:
+
+| Value | Meaning |
+|---|---|
+| *empty* | Not computed yet. Either the row predates the hash-on-Put paths, or its write path could not produce one (a PeerTube import in **reference** mode copies no bytes). **Never read an empty value as "verified"** |
+| 64 hex chars | The digest of the object as stored |
+| `missing` | The backfill went to read the object and the store said it is not there. The row is a **dangling reference** — a real finding, not a hash |
+
+A **backfill worker** closes the gap on existing libraries: once a minute, on
+the leader only, it takes the 25 oldest empty rows, streams each object through
+SHA-256, and records the result. It has no enable flag on purpose — it only
+reads objects and writes one text column, it cannot delete or rewrite media, and
+it *drains*: when everything is hashed it logs
+
+```text
+media hash backfill complete: every stored media file carries a content hash or the missing sentinel
+```
+
+once and thereafter costs one indexed query per minute that returns nothing.
+While it works it logs `media hash backfill progressed scanned=… hashed=…
+missing=… failed=…`. A `failed` row is a transient read error (timeout, store
+5xx); it stays empty and is retried next tick. A rising `missing` count is the
+one worth acting on — those are database rows whose media is gone.
+
+**HLS segments and playlists are deliberately hash-less.** They have no
+`video_files` rows at all — a ladder rung is one `video_renditions` row covering
+a whole directory of segments — so there is nowhere per-object to record a
+digest and nothing that would read one back. Storage migration verifies that
+tree object-by-object while it copies it. Consequently a fully-hashed library
+says nothing about the integrity of the HLS trees.
+
 ## IPFS mirror (pinset) — a distribution surface, not a backup
 
 When `IPFS_ENABLED=true` (`IPFS_API_URL` + `IPFS_GATEWAY_URL` required), the mirror
@@ -439,10 +479,11 @@ no assumption about which instances are alive. More instances mean more transcod
 import, caption and delivery throughput.
 
 **Singleton sweeps are leader-elected.** The workers that sweep rather than claim
-(media garbage collection, scheduled publish, the transcode-hold sweep, the upload
-sweeper, the live watchdog, the search and IPFS reconcilers, operational-job
-retention, the E2EE sweep) each walk a table or a bucket and act on what they
-find, so running them everywhere duplicates work — and media GC deletes. They are
+(media garbage collection, the content-hash backfill, scheduled publish, the
+transcode-hold sweep, the upload sweeper, the live watchdog, the search and IPFS
+reconcilers, operational-job retention, the E2EE sweep) each walk a table or a
+bucket and act on what they find, so running them everywhere duplicates work —
+and media GC deletes. They are
 gated on a PostgreSQL advisory lock held on a dedicated connection: exactly one
 instance runs them, and the lock is released by the server itself when that
 instance dies. Leadership moves within ~15 seconds.

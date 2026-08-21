@@ -148,8 +148,11 @@ ON CONFLICT (video_id) DO UPDATE SET
     updated_at = now();
 
 -- name: ImportInsertVideoFile :one
-INSERT INTO video_files (video_id, kind, storage_key, content_type, original_name, size_bytes)
-VALUES ($1, $2, $3, $4, $5, $6)
+-- sha256 is the digest the media copy already computed while streaming the
+-- object across; it is empty in reference mode, where no bytes were copied and
+-- the backfill worker hashes the referenced object instead.
+INSERT INTO video_files (video_id, kind, storage_key, content_type, original_name, size_bytes, sha256)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id;
 
 -- name: ImportUpsertCaption :one

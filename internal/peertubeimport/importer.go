@@ -2,8 +2,6 @@ package peertubeimport
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -357,9 +355,8 @@ func (im *Importer) copyMedia(ctx context.Context, srcKey, destKey string) (int6
 		return 0, "", err
 	}
 	defer func() { _ = rc.Close() }()
-	h := sha256.New()
-	limited := io.LimitReader(io.TeeReader(rc, h), maxSourceFileBytes+1)
-	n, err := im.destMedia.Put(ctx, destKey, limited)
+	limited := io.LimitReader(rc, maxSourceFileBytes+1)
+	n, sum, err := storage.PutSizedHashed(ctx, im.destMedia, destKey, limited, storage.SizeUnknown)
 	if err != nil {
 		return 0, "", err
 	}
@@ -367,7 +364,7 @@ func (im *Importer) copyMedia(ctx context.Context, srcKey, destKey string) (int6
 		_ = im.destMedia.Delete(ctx, destKey)
 		return 0, "", fmt.Errorf("peertubeimport: source object %s exceeds the size cap", destKey)
 	}
-	return n, hex.EncodeToString(h.Sum(nil)), nil
+	return n, sum, nil
 }
 
 // optUUID wraps a uuid as a nullable pgtype.UUID (Nil → NULL).

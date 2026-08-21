@@ -20,6 +20,10 @@ type WebVideoResult struct {
 	Width      int
 	StorageKey string
 	SizeBytes  int64
+	// SHA256 is the lowercase hex digest of the stored object, taken from the
+	// upload stream itself (phase-2 storage, work item 2). It rides the result
+	// out to the transcode service, which is what writes the video_files row.
+	SHA256 string
 }
 
 func webVideoArgs(src source, dst string, r HLSRung, threads int) []string {
@@ -172,7 +176,7 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 			return nil, err
 		}
 		key := path.Join(prefix, filename)
-		size, putErr := t.blobs.Put(ctx, key, f)
+		size, sum, putErr := storage.PutSizedHashed(ctx, t.blobs, key, f, storage.SizeUnknown)
 		_ = f.Close()
 		if putErr != nil {
 			return nil, putErr
@@ -185,7 +189,7 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 			return nil, err
 		}
 		results = append(results, WebVideoResult{
-			Height: r.Height, Width: r.Width, StorageKey: key, SizeBytes: size,
+			Height: r.Height, Width: r.Width, StorageKey: key, SizeBytes: size, SHA256: sum,
 		})
 		reportProgress(progress, TranscodeProgress{
 			Format: TranscodeFormatWebVideo, Height: r.Height, Width: r.Width,

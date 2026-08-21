@@ -396,9 +396,13 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 	var (
 		fileKey, fileType, fileName string
 		fileSize                    int64
-		haveFile                    bool
-		hlsMasterKey                string
-		haveHLS                     bool
+		// Only copy mode produces a digest — it is the hash of the stream the
+		// copy already had to read. Reference mode writes no bytes, so the row
+		// lands unhashed and the backfill worker hashes the referenced object.
+		fileSHA      string
+		haveFile     bool
+		hlsMasterKey string
+		haveHLS      bool
 	)
 	files, err := im.src.VideoFiles(ctx, v.ID)
 	if err != nil {
@@ -416,11 +420,12 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 			switch im.mediaMode {
 			case MediaModeCopy:
 				fileKey = "web-videos/" + mediaID.String() + f.Extname
-				size, _, cerr := im.copyMedia(ctx, sourceWebVideoKey(f.Filename), fileKey)
+				size, sum, cerr := im.copyMedia(ctx, sourceWebVideoKey(f.Filename), fileKey)
 				if cerr != nil {
 					return cerr
 				}
 				fileSize = size
+				fileSHA = sum
 				fileType = contentTypeForExt(f.Extname)
 				fileName = f.Filename
 				haveFile = true
@@ -446,6 +451,7 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 
 	var thumbKey string
 	var thumbType string
+	var thumbSHA string
 	thumbFilename, err := im.src.ThumbnailFilename(ctx, v.ID)
 	if err != nil {
 		return err
@@ -456,9 +462,11 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 			if im.srcMedia != nil && im.destMedia != nil {
 				thumbKey = "thumbnails/" + mediaID.String() + ".jpg"
 				thumbType = imageContentTypeForExt(extOf(thumbFilename))
-				if _, _, cerr := im.copyMedia(ctx, sourceThumbnailKey(thumbFilename), thumbKey); cerr != nil {
+				_, sum, cerr := im.copyMedia(ctx, sourceThumbnailKey(thumbFilename), thumbKey)
+				if cerr != nil {
 					return cerr
 				}
+				thumbSHA = sum
 			}
 		case MediaModeReference:
 			thumbKey = sourceThumbnailKey(thumbFilename)
@@ -539,6 +547,7 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 				ContentType:  fileType,
 				OriginalName: fileName,
 				SizeBytes:    fileSize,
+				Sha256:       fileSHA,
 			}); err != nil {
 				return err
 			}
@@ -549,6 +558,7 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 				Kind:        "thumbnail",
 				StorageKey:  thumbKey,
 				ContentType: thumbType,
+				Sha256:      thumbSHA,
 			}); err != nil {
 				return err
 			}
