@@ -526,6 +526,37 @@ func TestDomainDNSGating(t *testing.T) {
 	}
 }
 
+// The placeholder finding fires in every mode — deploy.sh refuses the file
+// whatever the scheme — but its REASON must not. Telling a plain-http operator
+// that their Let's Encrypt validation budget is at risk is a diagnostic
+// describing a certificate order that does not happen.
+func TestCaddyfilePlaceholderReasonFollowsTheMode(t *testing.T) {
+	for _, tc := range []struct {
+		mode, want, notWant string
+	}{
+		{mode: "acme", want: "Let's Encrypt validation budget", notWant: "hostname nobody uses"},
+		{mode: "internal", want: "Let's Encrypt validation budget", notWant: "hostname nobody uses"},
+		{mode: "plain-http", want: "hostname nobody uses", notWant: "Let's Encrypt"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			h := newFakeHost()
+			env := strings.Replace(healthyEnv, "VIDRA_TLS_MODE=acme", "VIDRA_TLS_MODE="+tc.mode+"\nVIDRA_ALLOW_PLAIN_HTTP=true", 1)
+			h.files[filepath.Join(testRoot, "env/production.env")] = strings.ReplaceAll(env, "https://tube.vidra.test", "http://tube.vidra.test")
+			h.files[filepath.Join(testRoot, "deploy/Caddyfile.local")] = "example.com {\n\treverse_proxy api:8080\n}\n"
+			findings := only(t, "reverse proxy", h, nil)
+			if !hasStatus(findings, StatusFail) {
+				t.Fatalf("statuses = %v, want the placeholder still refused in %s: %+v", statuses(findings), tc.mode, findings)
+			}
+			if !hasAny(findings, tc.want) {
+				t.Errorf("the remediation does not mention %q in %s mode: %+v", tc.want, tc.mode, findings)
+			}
+			if hasAny(findings, tc.notWant) {
+				t.Errorf("the remediation still mentions %q in %s mode: %+v", tc.notWant, tc.mode, findings)
+			}
+		})
+	}
+}
+
 // The two topologies phase-1 item 12 added, at the reverse-proxy check.
 //
 // external is the one that would otherwise be a PERMANENT ✗ on a correct

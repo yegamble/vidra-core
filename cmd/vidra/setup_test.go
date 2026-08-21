@@ -1551,7 +1551,11 @@ func TestSetupNoCaddySkipsTheProxyConfig(t *testing.T) {
 	if _, err := os.Stat(h.caddyOut); err == nil {
 		t.Error("--no-caddy generated a Caddyfile anyway")
 	}
-	if strings.Contains(h.out.String(), "Caddyfile") {
+	// The WRITE line specifically, not the word anywhere: the warnings block
+	// legitimately mentions the Caddyfile (the placeholder-domain warning explains
+	// that deploy.sh refuses one), and asserting on a bare substring made this test
+	// fail for a sentence that was doing its job.
+	if strings.Contains(h.out.String(), "✓ wrote "+h.caddyOut) {
 		t.Errorf("--no-caddy still reported a Caddyfile:\n%s", h.out.String())
 	}
 	// No template was needed either — the point of the flag is a host that has

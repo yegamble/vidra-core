@@ -12,7 +12,7 @@ import (
 // perform, so a diff here is a change to how a deployment behaves at its front
 // door. UPDATE_GOLDEN=1 rewrites it.
 func TestRenderNginxExternalGolden(t *testing.T) {
-	got, err := RenderNginxExternal(Answers{Domain: "video.example.org"})
+	got, err := RenderNginxExternal(Answers{Domain: "video.example.org"}, nil)
 	if err != nil {
 		t.Fatalf("RenderNginxExternal: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestRenderNginxExternalGolden(t *testing.T) {
 // a live password-reset token endpoint, the frontend answering /api/* (a sitemap
 // of dead links), or nginx's 1m body default killing every upload.
 func TestRenderNginxExternalMirrorsTheCaddyfileRouting(t *testing.T) {
-	got, err := RenderNginxExternal(Answers{Domain: "video.example.org"})
+	got, err := RenderNginxExternal(Answers{Domain: "video.example.org"}, nil)
 	if err != nil {
 		t.Fatalf("RenderNginxExternal: %v", err)
 	}
@@ -45,8 +45,8 @@ func TestRenderNginxExternalMirrorsTheCaddyfileRouting(t *testing.T) {
 		"location = /metrics {\n\t\treturn 404;",
 		"location ^~ /api/v1/dev/ {\n\t\treturn 404;",
 		"location ^~ /api/ {",
-		"proxy_pass http://" + nginxAPIUpstream + ";",
-		"proxy_pass http://" + nginxFrontendUpstream + ";",
+		"proxy_pass http://" + nginxUpstreamHost + ":" + nginxDefaultAPIPort + ";",
+		"proxy_pass http://" + nginxUpstreamHost + ":" + nginxDefaultFrontendPort + ";",
 		"client_max_body_size " + nginxBodyLimit + ";",
 		"proxy_request_buffering off;",
 		"proxy_read_timeout " + nginxStreamTimeout + ";",
@@ -97,11 +97,11 @@ func TestRenderNginxExternalMirrorsTheCaddyfileRouting(t *testing.T) {
 // that reshuffled it would look like a change nobody made.
 func TestRenderNginxExternalIsDeterministic(t *testing.T) {
 	a := Answers{Domain: "https://VIDEO.Example.ORG/"}
-	first, err := RenderNginxExternal(a)
+	first, err := RenderNginxExternal(a, nil)
 	if err != nil {
 		t.Fatalf("RenderNginxExternal: %v", err)
 	}
-	second, err := RenderNginxExternal(a)
+	second, err := RenderNginxExternal(a, nil)
 	if err != nil {
 		t.Fatalf("RenderNginxExternal: %v", err)
 	}
@@ -136,6 +136,42 @@ func TestRenderCaddyfileRefusesTheExternalMode(t *testing.T) {
 	for _, mode := range []string{TLSModeACME, TLSModeACMEStaging, TLSModeInternal, TLSModePlainHTTP, ""} {
 		if SkipsManagedCaddy(mode) {
 			t.Errorf("SkipsManagedCaddy(%q) = true; only external has no managed proxy", mode)
+		}
+	}
+}
+
+// HTTP_PORT and FRONTEND_PORT are operator knobs — the deployment template
+// assigns them explicitly and deploy.sh's external-mode guidance prints the real
+// values — so an example that hardcoded 8080/3000 would point at nothing the
+// moment somebody moved a port, and would contradict the other surface telling
+// them what to do.
+func TestRenderNginxExternalFollowsThePublishedPorts(t *testing.T) {
+	got, err := RenderNginxExternal(Answers{Domain: "video.example.org"},
+		map[string]string{"HTTP_PORT": "18080", "FRONTEND_PORT": "13000"})
+	if err != nil {
+		t.Fatalf("RenderNginxExternal: %v", err)
+	}
+	out := string(got)
+	for _, want := range []string{"proxy_pass http://127.0.0.1:18080;", "proxy_pass http://127.0.0.1:13000;"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the example does not follow the published ports (missing %q):\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "127.0.0.1:8080") || strings.Contains(out, "127.0.0.1:3000") {
+		t.Errorf("the example still points at the default ports:\n%s", out)
+	}
+
+	// A value compose itself would reject falls back to the default rather than
+	// writing an nginx that refuses to start. `vidra setup --check` reports the
+	// bad value through the api's own validation; this file is not the place to
+	// discover it.
+	for _, bad := range []string{"eighty-eighty", "0", "99999", "  "} {
+		b, err := RenderNginxExternal(Answers{Domain: "video.example.org"}, map[string]string{"HTTP_PORT": bad})
+		if err != nil {
+			t.Fatalf("RenderNginxExternal(HTTP_PORT=%q): %v", bad, err)
+		}
+		if !strings.Contains(string(b), "proxy_pass http://127.0.0.1:8080;") {
+			t.Errorf("HTTP_PORT=%q did not fall back to the compose default:\n%s", bad, b)
 		}
 	}
 }

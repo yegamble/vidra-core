@@ -58,7 +58,7 @@ func checkCaddyfile(_ context.Context, s *state) []Finding {
 		if ph, ok := setup.PlaceholderDomain(line); ok {
 			findings = append(findings, failf(
 				fmt.Sprintf("%s still names the placeholder domain %s on a non-comment line", rel, ph),
-				"re-run `vidra setup --domain <your domain>` to regenerate it. Caddy would order a certificate for the placeholder, fail the challenge, and spend this host's Let's Encrypt validation budget doing it. deploy/deploy.sh refuses to deploy this file at all"))
+				"re-run `vidra setup --domain <your domain>` to regenerate it. "+placeholderConsequence(s.value("VIDRA_TLS_MODE"))+" deploy/deploy.sh refuses to deploy this file at all"))
 		}
 		if site == "" {
 			if addr, ok := caddySiteAddress(raw); ok {
@@ -179,6 +179,23 @@ func checkDomainDNS(ctx context.Context, s *state) []Finding {
 		status = StatusWarn
 	}
 	return []Finding{{Status: status, Detail: detail, Fix: fix}}
+}
+
+// placeholderConsequence is the sentence between "re-run setup" and "deploy.sh
+// refuses this file", and it has to follow the MODE. The certificate story is
+// the right one for the three issuing modes and simply false for plain-http,
+// which orders nothing from anybody — telling that operator their Let's Encrypt
+// budget is at risk is the kind of detail that teaches people the diagnostics do
+// not know what they are looking at.
+//
+// The finding itself is unconditional, and stays that way: deploy.sh refuses a
+// placeholder site address in every mode, so the ✗ is correct everywhere. Only
+// the WHY changes.
+func placeholderConsequence(mode string) string {
+	if mode == setup.TLSModePlainHTTP {
+		return "The site would answer on a hostname nobody uses, so every link, feed and OAuth callback the api mints would point somewhere this instance does not serve."
+	}
+	return "Caddy would order a certificate for the placeholder, fail the challenge, and spend this host's Let's Encrypt validation budget doing it."
 }
 
 // tlsModeDNSReason is the half-sentence checkDomainDNS's skip line is built

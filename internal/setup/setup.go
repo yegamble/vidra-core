@@ -328,17 +328,19 @@ var s3Keys = []string{"STORAGE_S3_ENDPOINT", "STORAGE_S3_REGION", "STORAGE_S3_BU
 // by the api — internal/config has never heard of them, which is why Check waves
 // them through and why this package has to validate their combinations itself.
 const (
-	profilesKey         = "VIDRA_COMPOSE_PROFILES"
-	extraProfilesKey    = "EXTRA_COMPOSE_PROFILES"
-	externalPostgresKey = "VIDRA_EXTERNAL_POSTGRES"
-	externalRedisKey    = "VIDRA_EXTERNAL_REDIS"
-	databaseURLKey      = "DATABASE_URL"
-	redisURLKey         = "REDIS_URL"
-	searchRedisURLKey   = "SEARCH_REDIS_URL"
-	tlsModeKey          = "VIDRA_TLS_MODE"
-	acmeEmailKey        = "VIDRA_ACME_EMAIL"
-	allowPlainHTTPKey   = "VIDRA_ALLOW_PLAIN_HTTP"
-	instanceNameKey     = "INSTANCE_NAME"
+	profilesKey          = "VIDRA_COMPOSE_PROFILES"
+	extraProfilesKey     = "EXTRA_COMPOSE_PROFILES"
+	externalPostgresKey  = "VIDRA_EXTERNAL_POSTGRES"
+	externalRedisKey     = "VIDRA_EXTERNAL_REDIS"
+	databaseURLKey       = "DATABASE_URL"
+	redisURLKey          = "REDIS_URL"
+	searchRedisURLKey    = "SEARCH_REDIS_URL"
+	tlsModeKey           = "VIDRA_TLS_MODE"
+	acmeEmailKey         = "VIDRA_ACME_EMAIL"
+	allowPlainHTTPKey    = "VIDRA_ALLOW_PLAIN_HTTP"
+	trustedProxyCIDRsKey = "TRUSTED_PROXY_CIDRS"
+	publicBaseURLKey     = "PUBLIC_BASE_URL"
+	instanceNameKey      = "INSTANCE_NAME"
 )
 
 // searchRedisDefaultDB is the logical Redis database vidra-search runs on when
@@ -767,6 +769,7 @@ func Warnings(vars map[string]string) []string {
 	out := append(interpolationWarnings(vars), quoteWarnings(vars)...)
 	out = append(out, componentWarnings(vars)...)
 	out = append(out, searchRedisWarnings(vars)...)
+	out = append(out, originWarnings(vars)...)
 	return append(out, tlsWarnings(vars)...)
 }
 
@@ -1578,6 +1581,56 @@ func tlsIssues(vars map[string]string) []Issue {
 	return out
 }
 
+// originWarnings reports the two shapes of PUBLIC_BASE_URL that generate
+// cleanly, boot cleanly, and then fail at the EDGE — where the failure looks
+// like a broken deployment rather than a value somebody typed.
+//
+// Neither can be a refusal here. Both are things `vidra setup --check` runs
+// against files on live instances, and both are recoverable by editing one line;
+// a refusal would also mean this engine rejecting a value the api itself accepts,
+// which is the drift the whole package is built to avoid.
+func originWarnings(vars map[string]string) []string {
+	raw := strings.TrimSpace(vars[publicBaseURLKey])
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	// (1) A placeholder domain. deploy.sh REFUSES to deploy a Caddyfile whose
+	// non-comment lines name one and `vidra doctor` reports it, so an install that
+	// gets this far with example.org is one that stops at the deploy — after the
+	// env file has been written, the secrets minted and the operator has moved on
+	// to DNS. PlaceholderDomain is deploy.sh's own anchored test, not a substring
+	// search: myexample.com is a real domain, sub.example.org is not.
+	if ph, ok := PlaceholderDomain(raw); ok {
+		out = append(out, fmt.Sprintf("%s names the placeholder domain %s. It generates fine and then stops the deploy: deploy/deploy.sh refuses a Caddyfile whose site address is a placeholder (Caddy would order a certificate for it, fail the challenge, and spend this host's Let's Encrypt validation budget doing it) and `vidra doctor` reports the same thing. Set %s to the instance's real origin and re-run",
+			publicBaseURLKey, ph, publicBaseURLKey))
+	}
+	// (2) An explicit port. The managed caddy publishes 80 and 443 and nothing
+	// else — docker-compose.prod.yml says so — and deploy.sh's edge probe strips
+	// the port before it connects, so a deployment on :8080 comes up healthy,
+	// probes green, and is unreachable at the address the api mints every link
+	// with. external is exempt: that proxy is the operator's, and it can listen
+	// wherever they put it.
+	if !SkipsManagedCaddy(vars[tlsModeKey]) {
+		if u, err := url.Parse(withScheme(raw)); err == nil && u.Port() != "" {
+			out = append(out, fmt.Sprintf("%s carries an explicit port (:%s), but the managed reverse proxy publishes only 80 and 443 — nothing listens on :%s on this host. The stack would come up healthy and be unreachable at the origin every link, feed and OAuth callback is minted from. Drop the port, or terminate TLS yourself with %s=%s and publish whatever port you like",
+				publicBaseURLKey, u.Port(), u.Port(), tlsModeKey, TLSModeExternal))
+		}
+	}
+	return out
+}
+
+// withScheme makes a bare host parseable as a URL, so a file whose
+// PUBLIC_BASE_URL somebody hand-edited to `video.example.org:8080` is read the
+// same way as `https://video.example.org:8080`. url.Parse on the bare form puts
+// the whole thing in Opaque and reports no port at all.
+func withScheme(raw string) string {
+	if strings.Contains(raw, "://") {
+		return raw
+	}
+	return "https://" + raw
+}
+
 // tlsWarnings reports the TLS configurations that deploy fine and are still not
 // what a public instance wants.
 //
@@ -1613,6 +1666,20 @@ func tlsWarnings(vars map[string]string) []string {
 	}
 	switch mode {
 	case TLSModeExternal:
+		// The topology itself is fine and gets no ⚠ (see the comment above). What
+		// does is the ONE thing that silently breaks on it and on nothing else: a
+		// terminator this instance cannot recognise. The api believes an
+		// X-Forwarded-For hop only from loopback/RFC1918/ULA/link-local, so a proxy
+		// on a routable address becomes the client for every per-IP budget on the
+		// instance — one shared login bucket for everybody behind it, which
+		// presents as the site 429ing strangers rather than as a misconfiguration.
+		// It is a warning and not a refusal because a terminator on the SAME host
+		// (127.0.0.1, or a container on the compose bridge) is already trusted and
+		// needs nothing, and that is a perfectly ordinary way to run this mode.
+		if strings.TrimSpace(vars[trustedProxyCIDRsKey]) == "" {
+			return []string{fmt.Sprintf("%s=%s with %s empty: only loopback and private-network proxies are believed, so if TLS is terminated on a PUBLIC address (a cloud load balancer, a CDN edge, an nginx on another host) the api sees THAT address as every visitor's — one shared login/password-reset budget for everyone behind it, and eventual 429s for strangers. Set %s to the terminator's network (203.0.113.7/32, 2001:db8::/32; comma-separated) in env/production.env, and only to networks you control. A proxy on this same host needs nothing",
+				tlsModeKey, mode, trustedProxyCIDRsKey, trustedProxyCIDRsKey)}
+		}
 		return nil
 	case TLSModePlainHTTP:
 		return []string{fmt.Sprintf("%s=%s serves this instance over plain HTTP: passwords, session cookies and every upload cross the network in clear, and anything on the path can read or rewrite them. It is a LAN/lab/air-gapped mode and nothing on the public internet should run it. %s=true in env/production.env is the api's half of the same choice — remove both and set %s=%s once there is a certificate for this host",

@@ -2,6 +2,7 @@ package setup
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -36,14 +37,21 @@ const (
 	// scripts and the docs must not disagree about the path.
 	NginxExampleOutputPath = "deploy/nginx-external.conf.example"
 
-	// nginxAPIUpstream and nginxFrontendUpstream are the LOOPBACK addresses
-	// docker-compose.prod.yml publishes: `127.0.0.1:${HTTP_PORT:-8080}:8080` and
-	// `127.0.0.1:${FRONTEND_PORT:-3000}:3000`. They are loopback and not the
-	// compose service names on purpose — the operator's nginx runs on the HOST,
-	// outside the compose network, which is the whole difference between this
-	// file and the Caddyfile.
-	nginxAPIUpstream      = "127.0.0.1:8080"
-	nginxFrontendUpstream = "127.0.0.1:3000"
+	// The upstreams are LOOPBACK addresses, not compose service names, and that
+	// is the whole difference between this file and the Caddyfile: the operator's
+	// nginx runs on the HOST, outside the compose network. docker-compose.prod.yml
+	// publishes `127.0.0.1:${HTTP_PORT:-8080}:8080` and
+	// `127.0.0.1:${FRONTEND_PORT:-3000}:3000`.
+	//
+	// The PORTS are read from the env file rather than baked, because HTTP_PORT
+	// and FRONTEND_PORT are operator knobs the deployment template assigns
+	// explicitly — and deploy.sh's own external-mode guidance prints the real
+	// values. A hardcoded example is a config that silently points at nothing the
+	// moment somebody moves a port, and disagrees with the other surface telling
+	// them what to do.
+	nginxUpstreamHost        = "127.0.0.1"
+	nginxDefaultAPIPort      = "8080"
+	nginxDefaultFrontendPort = "3000"
 
 	// nginxBodyLimit mirrors the UPLOAD_MAX_SIZE default (2G). nginx's own
 	// default is 1m, which rejects the second chunk of any real upload with a
@@ -67,13 +75,32 @@ const (
 // meta repo ships deploy/Caddyfile because that file is DEPLOYED and has to be
 // reviewable on its own, while this one is a starting point for a configuration
 // living somewhere this project never sees.
-func RenderNginxExternal(a Answers) ([]byte, error) {
+func RenderNginxExternal(a Answers, values map[string]string) ([]byte, error) {
 	origin, err := normalizeOrigin(a.Domain)
 	if err != nil {
 		return nil, err
 	}
 	host := strings.TrimPrefix(origin, "https://")
-	return []byte(fmt.Sprintf(nginxExampleFormat, host, nginxBodyLimit, nginxStreamTimeout, nginxAPIUpstream, nginxFrontendUpstream)), nil
+	api := nginxUpstreamHost + ":" + nginxPort(values, "HTTP_PORT", nginxDefaultAPIPort)
+	frontend := nginxUpstreamHost + ":" + nginxPort(values, "FRONTEND_PORT", nginxDefaultFrontendPort)
+	return []byte(fmt.Sprintf(nginxExampleFormat, host, nginxBodyLimit, nginxStreamTimeout, api, frontend)), nil
+}
+
+// nginxPort reads a published-port knob out of the resolved env, falling back to
+// the compose default. A value that is not a plain port number is IGNORED rather
+// than written into the file: compose would reject it too, and an nginx that
+// refuses to start is a worse answer than an example pointing at the default the
+// operator has probably not moved. `vidra setup --check` reports the bad value
+// itself, through the api's own validation.
+func nginxPort(values map[string]string, key, def string) string {
+	v := strings.TrimSpace(values[key])
+	if v == "" {
+		return def
+	}
+	if n, err := strconv.Atoi(v); err != nil || n < 1 || n > 65535 {
+		return def
+	}
+	return v
 }
 
 // nginxExampleFormat carries every comment an operator needs at the line they

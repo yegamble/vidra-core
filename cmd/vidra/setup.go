@@ -468,7 +468,7 @@ func renderNginxExample(values map[string]string) ([]byte, error) {
 	if strings.TrimSpace(values["PUBLIC_BASE_URL"]) == "" {
 		return nil, nil
 	}
-	return setup.RenderNginxExternal(setup.Answers{Domain: values["PUBLIC_BASE_URL"]})
+	return setup.RenderNginxExternal(setup.Answers{Domain: values["PUBLIC_BASE_URL"]}, values)
 }
 
 // secretFlagEnv is every flag whose value is a SECRET, mapped to the environment
@@ -785,7 +785,10 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 		def, _ := existingValue(existing, "PUBLIC_BASE_URL")
 		label := "Public domain of this instance (e.g. video.example.org)"
 		if a.TLSMode == setup.TLSModePlainHTTP {
-			label = "Address of this instance (e.g. video.lan or 192.168.1.10:8080 — it will be an http:// origin)"
+			// No PORT in the example, deliberately: the managed caddy publishes 80
+			// and 443 only, so an operator who copied the shape would deploy an
+			// instance that comes up healthy and answers nowhere.
+			label = "Address of this instance (e.g. video.lan or 192.168.1.10 — it will be an http:// origin)"
 		}
 		v, err := askValid(s, r, label, def, func(in string) error {
 			_, err := setup.NormalizeOriginForMode(in, a.TLSMode)

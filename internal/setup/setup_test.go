@@ -2005,21 +2005,104 @@ func TestCheckAcceptsPlainHTTPOnlyWithTheConsent(t *testing.T) {
 	}
 }
 
-// external is a correct, permanent production topology, so it must be accepted
-// in silence: a standing ⚠ on a healthy deployment is one nobody reads.
+// external is a correct, permanent production topology, so a FULLY configured
+// one must be accepted in silence: a standing ⚠ on a healthy deployment is one
+// nobody reads. The one thing it is warned about is the terminator it cannot
+// recognise — see the second half.
 func TestCheckAcceptsTheExternalModeWithoutWarning(t *testing.T) {
 	vars := map[string]string{
 		"VIDRA_ENV":            "production",
 		"JWT_SECRET":           strings.Repeat("k", 48),
-		"PUBLIC_BASE_URL":      "https://video.example.org",
-		"CORS_ALLOWED_ORIGINS": "https://video.example.org",
+		"PUBLIC_BASE_URL":      "https://video.vidra.test",
+		"CORS_ALLOWED_ORIGINS": "https://video.vidra.test",
 		tlsModeKey:             TLSModeExternal,
+		trustedProxyCIDRsKey:   "203.0.113.7/32",
 	}
 	if got := Check(vars); len(got) > 0 {
 		t.Errorf("Check = %v, want the external topology accepted", got)
 	}
 	if got := Warnings(vars); len(got) > 0 {
 		t.Errorf("Warnings = %v, want silence: the certificate is simply somebody else's", got)
+	}
+}
+
+// An external terminator the api cannot recognise is the one failure this
+// topology has that no other does, and it presents as the site 429ing strangers
+// rather than as a misconfiguration — so it is said at generation time, not left
+// in the nginx example's comments where only somebody already editing that file
+// would find it.
+func TestExternalModeWarnsAboutAnUnrecognisedTerminator(t *testing.T) {
+	vars := map[string]string{
+		"VIDRA_ENV":            "production",
+		"JWT_SECRET":           strings.Repeat("k", 48),
+		"PUBLIC_BASE_URL":      "https://video.vidra.test",
+		"CORS_ALLOWED_ORIGINS": "https://video.vidra.test",
+		tlsModeKey:             TLSModeExternal,
+	}
+	if !warned(Warnings(vars), "shared login/password-reset budget") {
+		t.Errorf("Warnings = %v, want the shared-per-IP-budget warning naming %s", Warnings(vars), trustedProxyCIDRsKey)
+	}
+	if !warned(Warnings(vars), trustedProxyCIDRsKey) {
+		t.Errorf("the warning does not name the variable that fixes it: %v", Warnings(vars))
+	}
+	// It is a warning, never a refusal: a terminator on this same host is already
+	// trusted and needs nothing, which is an ordinary way to run this mode.
+	if got := Check(vars); len(got) > 0 {
+		t.Errorf("Check = %v, want an empty %s accepted", got, trustedProxyCIDRsKey)
+	}
+}
+
+// The two origin shapes that generate cleanly and then fail at the edge.
+func TestOriginWarnings(t *testing.T) {
+	base := func(origin, mode string) map[string]string {
+		return map[string]string{
+			"VIDRA_ENV":            "production",
+			"JWT_SECRET":           strings.Repeat("k", 48),
+			"PUBLIC_BASE_URL":      origin,
+			"CORS_ALLOWED_ORIGINS": origin,
+			tlsModeKey:             mode,
+			allowPlainHTTPKey:      "true",
+			trustedProxyCIDRsKey:   "203.0.113.7/32",
+		}
+	}
+	for _, tc := range []struct {
+		name, origin, mode, want string
+	}{
+		// deploy.sh refuses a placeholder site address, so this install stops at
+		// the deploy — after the file is written and the secrets are minted.
+		{name: "a placeholder domain", origin: "https://video.example.org", mode: TLSModeACME, want: "placeholder domain example.org"},
+		{name: "the bare placeholder", origin: "https://example.com", mode: TLSModeACME, want: "placeholder domain example.com"},
+		// The managed caddy publishes 80/443 and nothing else, and the deploy's
+		// edge probe strips the port — so this comes up healthy and unreachable.
+		{name: "a port under plain-http", origin: "http://192.168.1.10:8080", mode: TLSModePlainHTTP, want: "explicit port (:8080)"},
+		{name: "a port under acme", origin: "https://video.vidra.test:8443", mode: TLSModeACME, want: "explicit port (:8443)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Warnings(base(tc.origin, tc.mode))
+			if !warned(got, tc.want) {
+				t.Errorf("Warnings = %v, want one mentioning %q", got, tc.want)
+			}
+		})
+	}
+
+	// And the shapes that must stay silent, because over-warning is how an
+	// operator learns to skip the whole block.
+	for _, tc := range []struct{ name, origin, mode string }{
+		{"a real domain that merely contains the example", "https://myexample.com", TLSModeACME},
+		{"a real domain that merely ends in one", "https://video.example.company", TLSModeACME},
+		{"no port, real host", "https://video.vidra.test", TLSModeACME},
+		{"a plain-http LAN name with no port", "http://video.lan", TLSModePlainHTTP},
+		// external terminates wherever the operator put it, so a port there is
+		// their business and not a broken deployment.
+		{"a port under external", "https://video.vidra.test:8443", TLSModeExternal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, w := range Warnings(base(tc.origin, tc.mode)) {
+				if strings.Contains(w, "placeholder domain") || strings.Contains(w, "explicit port") {
+					t.Errorf("Warnings warned about %q: %s", tc.origin, w)
+				}
+			}
+		})
 	}
 }
 
