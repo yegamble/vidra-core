@@ -50,6 +50,7 @@ import (
 	"github.com/vidra/vidra-core/internal/remotevideo"
 	"github.com/vidra/vidra-core/internal/searchevents"
 	"github.com/vidra/vidra-core/internal/storage"
+	"github.com/vidra/vidra-core/internal/storagemigration"
 	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/video"
@@ -165,6 +166,7 @@ type Server struct {
 	searchWatchThrottle func(ctx context.Context, key string) bool
 	instancedocssvc     *instancedocs.Service
 	mediagcsvc          *mediagc.Service
+	storagemigrationsvc *storagemigration.Service
 	jobStatusSvc        jobStatusProvider
 	jobOperationsSvc    jobOperationsProvider
 	peertubeimportsvc   peerTubeImportProvider
@@ -486,6 +488,15 @@ func WithTranscodeService(svc *transcode.Service) Option {
 // cmd/api.
 func WithMediaGCService(svc *mediagc.Service) Option {
 	return func(s *Server) { s.mediagcsvc = svc }
+}
+
+// WithStorageMigrationService mounts the admin storage-migration endpoints. It
+// is wired unconditionally in cmd/api — including when no target backend is
+// configured — so the read and CANCEL surfaces always exist: the one campaign an
+// operator most needs to be able to stop is one left behind by a configuration
+// that has since changed. Start itself answers 503 without a target.
+func WithStorageMigrationService(svc *storagemigration.Service) Option {
+	return func(s *Server) { s.storagemigrationsvc = svc }
 }
 
 // WithJobStatusService mounts the compatibility queue overview plus the unified
@@ -1451,6 +1462,12 @@ func (s *Server) routes() {
 	if s.mediagcsvc != nil {
 		api.POST("/admin/media/gc", s.handleAdminMediaGC, s.requireAuth, s.requireRole("admin"))
 		api.POST("/admin/media/gc/adopt-bucket", s.handleAdminAdoptBucket, s.requireAuth, s.requireRole("admin"))
+	}
+	if s.storagemigrationsvc != nil {
+		api.POST("/admin/storage/migrations", s.handleAdminStartStorageMigration, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/storage/migrations", s.handleAdminListStorageMigrations, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/storage/migrations/:id", s.handleAdminGetStorageMigration, s.requireAuth, s.requireRole("admin"))
+		api.POST("/admin/storage/migrations/:id/cancel", s.handleAdminCancelStorageMigration, s.requireAuth, s.requireRole("admin"))
 	}
 
 	if s.videosvc != nil && s.transcodesvc != nil {

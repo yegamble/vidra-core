@@ -116,7 +116,7 @@ ownership marker below are owned by other lifecycles and are not enumerated.
 
 The inference it makes is "the database does not reference it, therefore it is
 garbage", and that is only true when the database and the store belong to the same
-install. Four rails stand between that inference and an irreversible delete.
+install. Five rails stand between that inference and an irreversible delete.
 
 | Rail | What it does |
 |---|---|
@@ -124,6 +124,7 @@ install. Four rails stand between that inference and an irreversible delete.
 | Dry-run first | The **first sweep of every process lifetime is a dry run**, and it runs ~5 minutes after boot rather than 24 hours later. A misconfiguration that would delete a library shows up in the log and the audit trail during the deploy that introduced it. Deletion starts from the sweep after that |
 | `MEDIA_GC_MAX_ORPHAN_PERCENT` (default `25`) | A destructive sweep that finds more than this share of what it scanned to be orphans deletes **nothing** and says so (`breaker_tripped`). Sweeps of 100 orphans or fewer are exempt whatever the ratio — a nearly-empty store is 100% orphans and that is not news. Every wrong reference set looks the same: a half-restored database, a bucket that is not ours, a migration in flight |
 | Bucket-ownership marker | See below. S3 only |
+| Storage-migration interlock | While a migration campaign is not `done`/`cancelled`, a destructive sweep is forced to dry-run with `forced_dry_run_reason: storage_migration_active`. During a move the two stores are deliberately out of step, so the reference set describes neither of them completely. An interlock check that cannot be answered counts as "a migration is running". See "Moving the media store" |
 
 ### Bucket ownership (`.vidra/owner`)
 
@@ -224,6 +225,142 @@ a whole directory of segments — so there is nowhere per-object to record a
 digest and nothing that would read one back. Storage migration verifies that
 tree object-by-object while it copies it. Consequently a fully-hashed library
 says nothing about the integrity of the HLS trees.
+
+## Moving the media store
+
+Local disk → S3, one bucket → another, one provider → another. A **storage
+migration campaign** copies every object into the destination, proves each copy
+by reading it back out and re-hashing it there, and only deletes the originals
+after you have been live on the new store for a grace period. Viewers see
+nothing: during the move the API reads from **both** stores.
+
+**Object keys never change.** A move copies each object to the same key, so
+`media_ipfs_pins` (whose primary key *is* a storage key) and every
+`video_files.storage_key` keep pointing at the right bytes. **The IPFS pin
+ledger is not touched and does not need migrating.**
+
+### 1. Point at the destination
+
+Set the target beside your existing `STORAGE_*` block — same shape, prefixed:
+
+```bash
+STORAGE_MIGRATION_TARGET_BACKEND=s3            # "" (default) = feature off
+STORAGE_MIGRATION_TARGET_S3_ENDPOINT=nyc3.digitaloceanspaces.com
+STORAGE_MIGRATION_TARGET_S3_REGION=nyc3
+STORAGE_MIGRATION_TARGET_S3_BUCKET=example-video-media
+STORAGE_MIGRATION_TARGET_S3_ACCESS_KEY=...     # SECRET
+STORAGE_MIGRATION_TARGET_S3_SECRET_KEY=...     # SECRET
+STORAGE_MIGRATION_TARGET_S3_USE_SSL=true
+STORAGE_MIGRATION_TARGET_S3_FORCE_PATH_STYLE=false
+STORAGE_MIGRATION_GRACE_HOURS=168              # a week; the undo window
+```
+
+(Or `STORAGE_MIGRATION_TARGET_BACKEND=local` +
+`STORAGE_MIGRATION_TARGET_LOCAL_ROOT=/srv/new-media`.) Restart. The api refuses
+to boot if the target resolves to the same store as `STORAGE_*`, and logs
+`storage migration target configured` with the endpoint and bucket — never the
+keys.
+
+### 2. Start it
+
+```bash
+curl -sX POST -H "Authorization: Bearer $ADMIN" \
+  https://videos.example/api/v1/admin/storage/migrations
+```
+
+At most one campaign runs at a time (409 otherwise; 503 when no target is
+configured). Watch it in **Admin → Jobs**: the campaign appears as a
+`storage_migrations` run whose *stage* is its phase and whose percentage is
+`objects_done / objects_total`, and the per-object queue appears as
+`storage_migration_objects`. Or poll:
+
+```bash
+curl -s -H "Authorization: Bearer $ADMIN" \
+  https://videos.example/api/v1/admin/storage/migrations/$ID | jq
+```
+
+The copy worker runs **on every instance** (leases make that safe), so more
+instances copy faster. The phases:
+
+| State | What is happening |
+|---|---|
+| `enumerating` | Listing every object in the source |
+| `copying` | Objects are being copied and verified |
+| `synced` | Everything is verified in the destination and a delta pass found nothing new — **cut over from here** |
+| `cutover` | You swapped the environment; the grace clock is running |
+| `deleting_source` | Removing the old store's copies |
+| `done` | Finished |
+
+Uploads that land **during** the move are picked up by the delta pass, so
+`synced` keeps meaning "the two stores match" on a live instance.
+
+### 3. Cut over — swap BOTH environment sets
+
+This is the step that matters. When the campaign reads `synced` and its
+`objects.pending` / `objects.copying` are zero, **swap the two blocks**:
+`STORAGE_*` now describes the NEW store, and `STORAGE_MIGRATION_TARGET_*`
+describes the **OLD** one. Restart.
+
+That swap is not bookkeeping. It is how the api learns the cutover happened (it
+compares the identity of the backends it is holding against the ones the
+campaign recorded) **and** it is what gives the delete-source step a handle on
+the store it is about to empty. If you swap only `STORAGE_*`, the campaign
+stalls with an explanation in `last_error` and **nothing is deleted** — which is
+the correct outcome, not a bug to work around.
+
+While the campaign is not `done`/`cancelled`, serving reads go through a
+dual-read view: an object missing from the new store is fetched from the old
+one. Writes only ever go to the store you are configured to serve from.
+
+### 4. Grace, then automatic deletion
+
+`observed_cutover_at` is stamped the first time the api sees itself serving from
+the destination, and is never moved by a restart. After
+`STORAGE_MIGRATION_GRACE_HOURS` the campaign deletes the source copies in
+batches and finishes. **Until then, reverting is a restart** — swap the
+environment back and the old store is still complete.
+
+Deletion refuses to run unless every object is accounted for, and refuses unless
+the handle it is about to delete through is the campaign's recorded source.
+
+### Rolling back
+
+- **Before cutover:** `POST /api/v1/admin/storage/migrations/$ID/cancel`. Nothing
+  about what you serve has changed. Objects already copied stay in the
+  destination — byte-identical copies under identical keys, inert until some
+  future campaign re-verifies them. Clean up the destination bucket by hand if
+  you want to.
+- **After cutover, inside the grace window:** swap the environment back and
+  restart, then cancel.
+- **After the source has been deleted:** it is a restore, not a rollback. That is
+  what the grace period is for.
+
+### Media GC is interlocked
+
+While any campaign is not `done` or `cancelled`, destructive media garbage
+collection is **forced to dry-run** — `POST /admin/media/gc` and the daily sweep
+both report `forced_dry_run: true` with
+`forced_dry_run_reason: storage_migration_active`. During a move the two stores
+are deliberately out of step, so "no database row references this object" stops
+being evidence about either of them. If the interlock check itself cannot be
+answered, it is treated as "a migration is running". Finish or cancel the
+campaign to release it.
+
+### Failures
+
+A dead-lettered object shows in `objects_failed` and in the admin jobs
+failures list, with a category and never a storage key:
+
+| `last_error` | Meaning |
+|---|---|
+| `source object missing` | The source listed the key and then did not have it. A dangling object; nothing to copy |
+| `verification failed: …` | The bytes read back out of the destination are not the bytes that were written. The destination store is lying; do not cut over |
+| `the source object does not match the sha256 recorded for this file` | The copy was faithful — the **source** no longer matches its `video_files` row. Pre-existing corruption, surfaced before you delete the only other copy |
+| `copy failed repeatedly; giving up on this object` | Five transient failures. Check the destination's reachability and start a fresh campaign |
+
+Failed objects do not block a campaign from reaching `synced` — they are a
+reported fact for you to decide about. They **do** mean the destination is not a
+complete copy, so read `objects_failed` before you cut over.
 
 ## IPFS mirror (pinset) — a distribution surface, not a backup
 

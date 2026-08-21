@@ -22,15 +22,16 @@ type mediaGCRequest struct {
 // nothing — which safety rail stopped it. It mirrors mediagc.Result field for
 // field; the two and api/openapi.yaml move together.
 type mediaGCResponse struct {
-	DryRun          bool     `json:"dry_run"`
-	Mode            string   `json:"mode"`
-	Scanned         int      `json:"scanned"`
-	Orphans         []string `json:"orphans"`
-	Deleted         int      `json:"deleted"`
-	OrphanPercent   int      `json:"orphan_percent"`
-	BreakerTripped  bool     `json:"breaker_tripped"`
-	BucketOwnership string   `json:"bucket_ownership"`
-	ForcedDryRun    bool     `json:"forced_dry_run"`
+	DryRun             bool     `json:"dry_run"`
+	Mode               string   `json:"mode"`
+	Scanned            int      `json:"scanned"`
+	Orphans            []string `json:"orphans"`
+	Deleted            int      `json:"deleted"`
+	OrphanPercent      int      `json:"orphan_percent"`
+	BreakerTripped     bool     `json:"breaker_tripped"`
+	BucketOwnership    string   `json:"bucket_ownership"`
+	ForcedDryRun       bool     `json:"forced_dry_run"`
+	ForcedDryRunReason string   `json:"forced_dry_run_reason,omitempty"`
 }
 
 // adoptBucketResponse reports the ownership state after an adoption, and the key
@@ -77,15 +78,16 @@ func (s *Server) handleAdminMediaGC(c echo.Context) error {
 		orphans = []string{}
 	}
 	return c.JSON(http.StatusOK, mediaGCResponse{
-		DryRun:          res.DryRun,
-		Mode:            res.Mode,
-		Scanned:         res.Scanned,
-		Orphans:         orphans,
-		Deleted:         res.Deleted,
-		OrphanPercent:   res.OrphanPercent,
-		BreakerTripped:  res.BreakerTripped,
-		BucketOwnership: res.BucketOwnership,
-		ForcedDryRun:    res.ForcedDryRun,
+		DryRun:             res.DryRun,
+		Mode:               res.Mode,
+		Scanned:            res.Scanned,
+		Orphans:            orphans,
+		Deleted:            res.Deleted,
+		OrphanPercent:      res.OrphanPercent,
+		BreakerTripped:     res.BreakerTripped,
+		BucketOwnership:    res.BucketOwnership,
+		ForcedDryRun:       res.ForcedDryRun,
+		ForcedDryRunReason: res.ForcedDryRunReason,
 	})
 }
 

@@ -43,6 +43,13 @@ const (
 	QueueCaption        = "caption_jobs"
 	QueueAccountExport  = "account_exports"
 	QueueUploadSessions = "upload_sessions"
+	// QueueStorageMigration is the storage-migration queue. Its DEPTH counts
+	// OBJECTS rather than campaigns — a campaign is one row that would sit at
+	// 'running' for a week, while the objects under it are the work whose depth
+	// and staleness an operator can act on — but it keeps the campaign's queue
+	// name so the depth gauge, the job_runs projection and the admin jobs page
+	// all say "storage_migrations" and mean the same feature.
+	QueueStorageMigration = "storage_migrations"
 )
 
 // QueueStatus is one queue's normalised depth snapshot. For upload_sessions —
@@ -81,11 +88,13 @@ type Querier interface {
 	CaptionJobStats(ctx context.Context) (sqlcgen.CaptionJobStatsRow, error)
 	AccountExportStats(ctx context.Context) (sqlcgen.AccountExportStatsRow, error)
 	UploadSessionStats(ctx context.Context) (sqlcgen.UploadSessionStatsRow, error)
+	StorageMigrationStats(ctx context.Context) (sqlcgen.StorageMigrationStatsRow, error)
 	TranscodeRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.TranscodeRecentFailuresRow, error)
 	FederationRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.FederationRecentFailuresRow, error)
 	ImportRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.ImportRecentFailuresRow, error)
 	CaptionRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.CaptionRecentFailuresRow, error)
 	AccountExportRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.AccountExportRecentFailuresRow, error)
+	StorageMigrationRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.StorageMigrationRecentFailuresRow, error)
 }
 
 // Service produces the durable-queue overview.
@@ -131,6 +140,10 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return ov, err
 	}
+	sm, err := s.q.StorageMigrationStats(ctx)
+	if err != nil {
+		return ov, err
+	}
 	ov.Queues = []QueueStatus{
 		{QueueTranscode, tj.Pending, tj.Running, tj.Done, tj.Failed, tj.OldestPendingAgeSeconds},
 		{QueueFederation, fd.Pending, fd.Running, fd.Done, fd.Failed, fd.OldestPendingAgeSeconds},
@@ -138,6 +151,7 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 		{QueueCaption, cj.Pending, cj.Running, cj.Done, cj.Failed, cj.OldestPendingAgeSeconds},
 		{QueueAccountExport, ae.Pending, ae.Running, ae.Done, ae.Failed, ae.OldestPendingAgeSeconds},
 		{QueueUploadSessions, us.Pending, us.Running, us.Done, us.Failed, us.OldestPendingAgeSeconds},
+		{QueueStorageMigration, sm.Pending, sm.Running, sm.Done, sm.Failed, sm.OldestPendingAgeSeconds},
 	}
 
 	failures := make([]Failure, 0, maxRecentFailures)
@@ -174,6 +188,17 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	} else {
 		for _, r := range rows {
 			failures = append(failures, Failure{QueueAccountExport, r.ID, redactDetail(r.Error), r.Attempts, r.UpdatedAt})
+		}
+	}
+
+	// Storage migration failures report the CAMPAIGN id, never the object key:
+	// the overview contract forbids storage keys, and several dead-lettered
+	// objects from one campaign legitimately share an id here.
+	if rows, err := s.q.StorageMigrationRecentFailures(ctx, perQueueFailureFetch); err != nil {
+		return ov, err
+	} else {
+		for _, r := range rows {
+			failures = append(failures, Failure{QueueStorageMigration, r.ID, redactDetail(r.Error), r.Attempts, r.UpdatedAt})
 		}
 	}
 

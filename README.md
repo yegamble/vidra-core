@@ -153,6 +153,7 @@ full table. The load-bearing knobs:
 | `STORAGE_LOCAL_ROOT` | `./data/media` | Root directory for the local backend. |
 | `MEDIA_GC_ENABLED` | `true` | Daily sweep that **deletes** stored objects no DB row references. `false` stops the worker; the admin endpoint stays. |
 | `MEDIA_GC_MAX_ORPHAN_PERCENT` | `25` | Circuit breaker: a destructive sweep finding a bigger orphan share deletes nothing. See [operations](docs/operations.md#media-garbage-collection--the-job-that-deletes). |
+| `STORAGE_MIGRATION_TARGET_BACKEND` | empty | Set (with `STORAGE_MIGRATION_TARGET_S3_*` / `_LOCAL_ROOT`) to move the library to another store — copy, verify, dual-read, then delete the source after `STORAGE_MIGRATION_GRACE_HOURS`. See [operations](docs/operations.md#moving-the-media-store). |
 | `TRANSCODING_ENABLED` | `true` | HLS ladder; set `false` to serve originals only. |
 | `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW` | `120` / `1m` | Per-IP `/api` budget; fails **open** if Redis is down. |
 | `HTTP_BODY_LIMIT` | `8M` | JSON API body cap (upload routes are exempt). |

@@ -5,7 +5,7 @@
 // HTTP-agnostic and testable against any storage backend that can list objects.
 //
 // "No database row references it" is a statement about the database, and it is
-// only evidence about the STORE when the two belong to the same install. Three
+// only evidence about the STORE when the two belong to the same install. Four
 // rails stand between that inference and an irreversible delete, and all of them
 // degrade to a dry run rather than to an error:
 //
@@ -13,6 +13,9 @@
 //     being started at all;
 //   - the bucket-ownership marker (storage.OwnerMarkerKey), which refuses to
 //     delete from an object store this install has not been shown to own;
+//   - the storage-migration interlock, which refuses to delete while a migration
+//     campaign is in flight: during a move the two stores are deliberately out of
+//     step, so "unreferenced" stops being evidence about either of them;
 //   - the orphan-ratio circuit breaker, which refuses a sweep that found an
 //     implausible share of what it scanned to be garbage — the shape every
 //     wrong reference set has.
@@ -102,6 +105,21 @@ const (
 	ModeDelete = "delete"
 )
 
+// Reasons a requested delete was downgraded to a dry run by a SAFETY RAIL rather
+// than by the caller. Result.ForcedDryRunReason carries one of these; the empty
+// string means no rail forced anything (the sweep ran as asked, or the caller
+// asked for a dry run).
+const (
+	// ReasonBucketOwnership: the object store is not established as this
+	// install's (see BucketOwnership).
+	ReasonBucketOwnership = "bucket_ownership"
+	// ReasonMigrationActive: a storage migration campaign is in flight, so the
+	// two stores are mid-move and the reference set describes neither of them
+	// completely. It also covers "the check itself failed" — an unanswerable
+	// question about whether a migration is running has to mean "assume one is".
+	ReasonMigrationActive = "storage_migration_active"
+)
+
 // Repository is the reference-set data access mediagc needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
 type Repository interface {
@@ -120,6 +138,12 @@ type Service struct {
 	// identity is this install's instance-identity UUID, the value AdoptBucket
 	// stamps into the ownership marker. Empty when the process could not read it.
 	identity string
+
+	// migrationActive answers "is a storage migration in flight right now?". Nil
+	// means the question was never wired, which is the pre-migration world and
+	// is treated as "no migration" — unlike a wired check that FAILS, which is
+	// treated as "yes" (see Sweep).
+	migrationActive func(context.Context) (bool, error)
 
 	// mu guards ownership alone: it is read by every sweep and rewritten by the
 	// adopt endpoint, from different goroutines.
@@ -144,6 +168,25 @@ func WithMaxOrphanPercent(pct int) Option {
 // WithBucketOwnership sets the ownership state resolved at boot.
 func WithBucketOwnership(o BucketOwnership) Option {
 	return func(s *Service) { s.ownership = o }
+}
+
+// WithActiveMigrationCheck supplies the storage-migration interlock: a
+// DESTRUCTIVE sweep is downgraded to a dry run while the check says a migration
+// campaign is live.
+//
+// It exists because a migration deliberately puts the two stores out of step.
+// Objects are being written into a destination this instance is not serving
+// from; the source still holds copies the campaign has not deleted yet; and
+// between cutover and the end of the grace period the OLD store is full of
+// objects that no database row will ever reference again by design. A sweep that
+// ran in any of those windows would look at a perfectly healthy store and see a
+// library's worth of garbage.
+//
+// A check that ERRORS is treated as "a migration is running". The rail exists
+// for the case where the answer matters most, and that is exactly the case where
+// a database it cannot reach is least reassuring.
+func WithActiveMigrationCheck(fn func(context.Context) (bool, error)) Option {
+	return func(s *Service) { s.migrationActive = fn }
 }
 
 // WithInstanceIdentity supplies the UUID AdoptBucket writes into the marker.
@@ -226,17 +269,26 @@ type Result struct {
 	// requested delete deleted nothing. The orphan list is still the full report.
 	BreakerTripped bool `json:"breaker_tripped"`
 	// BucketOwnership is the marker state the sweep ran under, and ForcedDryRun
-	// means that state (not the caller) is why nothing was deleted.
+	// means a SAFETY RAIL (not the caller) is why nothing was deleted.
 	BucketOwnership string `json:"bucket_ownership"`
 	ForcedDryRun    bool   `json:"forced_dry_run"`
+	// ForcedDryRunReason says WHICH rail forced it — there is more than one now,
+	// and "forced_dry_run: true" alone sends an operator to adopt a bucket when
+	// the real answer is "wait for the migration to finish". Empty when nothing
+	// was forced.
+	ForcedDryRunReason string `json:"forced_dry_run_reason,omitempty"`
 }
 
 // Summary is the one-line audit reason for a sweep. It exists once so the daily
 // worker and the admin endpoint cannot drift into describing the same outcome
 // two different ways. It carries counts and states only — never an object key.
 func (r Result) Summary() string {
-	return fmt.Sprintf("mode=%s scanned=%d orphans=%d orphan_pct=%d deleted=%d breaker=%t ownership=%s forced_dry_run=%t",
-		r.Mode, r.Scanned, len(r.Orphans), r.OrphanPercent, r.Deleted, r.BreakerTripped, r.BucketOwnership, r.ForcedDryRun)
+	reason := r.ForcedDryRunReason
+	if reason == "" {
+		reason = "none"
+	}
+	return fmt.Sprintf("mode=%s scanned=%d orphans=%d orphan_pct=%d deleted=%d breaker=%t ownership=%s forced_dry_run=%t forced_reason=%s",
+		r.Mode, r.Scanned, len(r.Orphans), r.OrphanPercent, r.Deleted, r.BreakerTripped, r.BucketOwnership, r.ForcedDryRun, reason)
 }
 
 // sweptPrefixes are the ONLY prefixes the sweep lists. Anything stored outside
@@ -267,12 +319,14 @@ const hlsPrefix = "streaming-playlists"
 // (best-effort; a per-object delete error is skipped, not fatal). Returns
 // ErrListingUnsupported when the backend cannot list.
 //
-// Two things can turn a requested delete into a dry run, and both report a full
-// orphan list rather than an error, because the operator's next question is
-// always "what would it have deleted?":
+// Three things can turn a requested delete into a dry run, and all of them
+// report a full orphan list rather than an error, because the operator's next
+// question is always "what would it have deleted?":
 //
 //   - the bucket-ownership gate, which refuses to delete from a store this
 //     install has not been established to own;
+//   - the storage-migration interlock, which refuses to delete while a campaign
+//     has the two stores deliberately out of step;
 //   - the orphan-ratio circuit breaker, which refuses a sweep that found an
 //     implausible share of the store to be garbage.
 func (s *Service) Sweep(ctx context.Context, dryRun bool) (Result, error) {
@@ -281,12 +335,25 @@ func (s *Service) Sweep(ctx context.Context, dryRun bool) (Result, error) {
 		return Result{}, ErrListingUnsupported
 	}
 
-	// The ownership gate comes first: it is a decision about the store, made
-	// before a single key is listed.
+	// Both gates come first: they are decisions about the store and about the
+	// world, made before a single key is listed. Ownership is checked first
+	// because it is free, and because a store that is not ours is the more
+	// alarming of the two answers.
 	ownership := s.Ownership()
-	forced := false
+	forced, forcedReason := false, ""
 	if !dryRun && !ownership.AllowsDelete() {
-		dryRun, forced = true, true
+		dryRun, forced, forcedReason = true, true, ReasonBucketOwnership
+	}
+	if !dryRun && s.migrationActive != nil {
+		active, merr := s.migrationActive(ctx)
+		if merr != nil {
+			// Fail safe. An unanswerable "is a migration running?" is the case the
+			// interlock exists for, not an excuse to skip it.
+			active = true
+		}
+		if active {
+			dryRun, forced, forcedReason = true, true, ReasonMigrationActive
+		}
 	}
 
 	refs, err := s.referenceSet(ctx)
@@ -295,10 +362,11 @@ func (s *Service) Sweep(ctx context.Context, dryRun bool) (Result, error) {
 	}
 
 	res := Result{
-		DryRun:          dryRun,
-		Mode:            modeOf(dryRun),
-		BucketOwnership: string(ownership),
-		ForcedDryRun:    forced,
+		DryRun:             dryRun,
+		Mode:               modeOf(dryRun),
+		BucketOwnership:    string(ownership),
+		ForcedDryRun:       forced,
+		ForcedDryRunReason: forcedReason,
 	}
 	for _, prefix := range sweptPrefixes {
 		keys, lerr := lister.ListKeys(ctx, prefix)

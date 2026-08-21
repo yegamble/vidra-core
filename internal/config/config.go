@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -469,6 +470,41 @@ type Config struct {
 	StorageS3UseSSL         bool
 	StorageS3ForcePathStyle bool
 
+	// Storage migration target (phase-2 storage, work items 4-5): the SECOND
+	// backend a migration campaign copies media INTO. Empty (the default) means
+	// the feature is off — no target backend is built, the copy/sweep workers
+	// never start, and POST /admin/storage/migrations answers 503.
+	//
+	// The precedent for a process holding two Backends is
+	// PEERTUBE_SOURCE_STORAGE_BACKEND; this one is the mirror image of it (a
+	// destination rather than a source). Its S3 credentials are SECRETS under the
+	// same rules as STORAGE_S3_* and must never be logged.
+	//
+	// AT CUTOVER THE OPERATOR SWAPS BOTH SETS. Once the media lives in the new
+	// store, STORAGE_* names it and STORAGE_MIGRATION_TARGET_* names the OLD one
+	// — that swap is how the process learns the cutover happened, and it is what
+	// gives the delete-source pass a handle on the store it is about to empty.
+	// See vidra-core docs/operations.md, "Moving the media store".
+	StorageMigrationTargetBackend   string
+	StorageMigrationTargetLocalRoot string
+
+	StorageMigrationTargetS3Endpoint       string
+	StorageMigrationTargetS3Bucket         string
+	StorageMigrationTargetS3AccessKey      string
+	StorageMigrationTargetS3SecretKey      string
+	StorageMigrationTargetS3Region         string
+	StorageMigrationTargetS3UseSSL         bool
+	StorageMigrationTargetS3ForcePathStyle bool
+
+	// StorageMigrationGraceHours is how long the OLD store keeps its copies after
+	// cutover before the campaign deletes them. It is the undo window: until it
+	// elapses, reverting the environment swap is a restart, not a restore. The
+	// default is a week, deliberately long — object storage is cheap and a
+	// migration that deleted the only other copy the same afternoon would make
+	// every later surprise unrecoverable. 0 means "delete as soon as the grace
+	// check runs", which is only ever right in a test.
+	StorageMigrationGraceHours int
+
 	// Media garbage collection (phase-2 storage, work item 1). The daily sweep
 	// DELETES stored objects that no database row references, so both knobs are
 	// boot-baked: a runtime override would let a settings mistake become an
@@ -721,125 +757,135 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 	env := getEnv("VIDRA_ENV", "development")
 
 	cfg := &Config{
-		Environment:                    env,
-		LogLevel:                       strings.ToLower(getEnv("LOG_LEVEL", "info")),
-		LogFormat:                      strings.ToLower(getEnv("LOG_FORMAT", "json")),
-		OTelEnabled:                    p.Bool("OTEL_ENABLED", false),
-		OTelExporterEndpoint:           getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
-		OTelExporterProtocol:           strings.ToLower(getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")),
-		OTelServiceName:                getEnv("OTEL_SERVICE_NAME", "vidra-core"),
-		MetricsEnabled:                 p.Bool("METRICS_ENABLED", false),
-		HTTPHost:                       getEnv("HTTP_HOST", "0.0.0.0"),
-		InstanceName:                   getEnv("INSTANCE_NAME", "Vidra (dev)"),
-		PublicBaseURL:                  strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
-		AllowPlainHTTP:                 p.Bool("VIDRA_ALLOW_PLAIN_HTTP", false),
-		TrustedProxyCIDRs:              splitAndTrim(getEnv("TRUSTED_PROXY_CIDRS", "")),
-		FederationEnabled:              p.Bool("FEDERATION_ENABLED", false),
-		FederationKeyKEK:               getEnv("FEDERATION_KEY_KEK", ""),
-		ATProtoEnabled:                 p.Bool("ATPROTO_ENABLED", false),
-		ATProtoKeyKEK:                  getEnv("ATPROTO_KEY_KEK", ""),
-		ATProtoLoginEnabled:            p.Bool("ATPROTO_LOGIN_ENABLED", false),
-		MFAKeyKEK:                      getEnv("MFA_KEY_KEK", ""),
-		TOTPIssuer:                     getEnv("TOTP_ISSUER", ""),
-		MalwareScanEnabled:             p.Bool("MALWARE_SCAN_ENABLED", false),
-		ClamAVAddr:                     getEnv("CLAMAV_ADDR", ""),
-		ClamAVTimeout:                  p.Duration("CLAMAV_TIMEOUT", 60*time.Second),
-		MalwareScanMode:                getEnv("MALWARE_SCAN_MODE", "fail-closed"),
-		TranscodingEnabled:             p.Bool("TRANSCODING_ENABLED", true),
-		TranscodingVP9Enabled:          p.Bool("TRANSCODING_VP9_ENABLED", false),
-		TranscodingStreamOutput:        p.Bool("TRANSCODING_STREAM_OUTPUT", false),
-		TranscodingMinFreeScratchMB:    p.Int("TRANSCODING_MIN_FREE_SCRATCH_MB", 0),
-		TranscodingAV1Enabled:          p.Bool("TRANSCODING_AV1_ENABLED", false),
-		TranscodeHoldTimeout:           p.Duration("TRANSCODE_HOLD_TIMEOUT", 12*time.Hour),
-		WhisperEnabled:                 p.Bool("WHISPER_ENABLED", false),
-		WhisperEndpoint:                strings.TrimRight(getEnv("WHISPER_ENDPOINT", ""), "/"),
-		WhisperDefaultLanguage:         strings.TrimSpace(getEnv("WHISPER_DEFAULT_LANGUAGE", "en")),
-		SearchServiceURL:               strings.TrimRight(getEnv("SEARCH_SERVICE_URL", ""), "/"),
-		SearchInternalSecret:           getEnv("SEARCH_INTERNAL_SECRET", ""),
-		SearchReconcileInterval:        p.Duration("SEARCH_RECONCILE_INTERVAL", 24*time.Hour),
-		SearchHealthInterval:           p.Duration("SEARCH_HEALTH_INTERVAL", 15*time.Second),
-		LiveRTMPURL:                    getEnv("LIVE_RTMP_URL", ""),
-		LiveIngestSecret:               getEnv("LIVE_INGEST_SECRET", ""),
-		LiveHLSRoot:                    strings.TrimRight(getEnv("LIVE_HLS_ROOT", ""), "/"),
-		InstanceDescription:            getEnv("INSTANCE_DESCRIPTION", ""),
-		InstanceTermsURL:               getEnv("INSTANCE_TERMS_URL", ""),
-		InstancePrivacyURL:             getEnv("INSTANCE_PRIVACY_URL", ""),
-		InstanceContactEmail:           getEnv("INSTANCE_CONTACT_EMAIL", ""),
-		RegistrationEnabled:            p.Bool("REGISTRATION_ENABLED", true),
-		RegistrationRequireApproval:    p.Bool("REGISTRATION_REQUIRE_APPROVAL", false),
-		QuarantineNewUploads:           p.Bool("QUARANTINE_NEW_UPLOADS", false),
-		UploadsEnabled:                 p.Bool("FEATURE_UPLOADS_ENABLED", true),
-		ImportsEnabled:                 p.Bool("FEATURE_IMPORTS_ENABLED", true),
-		LiveEnabled:                    p.Bool("FEATURE_LIVE_ENABLED", true),
-		CommentsEnabled:                p.Bool("FEATURE_COMMENTS_ENABLED", true),
-		MailEnabled:                    p.Bool("MAIL_ENABLED", false),
-		SMTPHost:                       getEnv("SMTP_HOST", ""),
-		SMTPUsername:                   getEnv("SMTP_USERNAME", ""),
-		SMTPPassword:                   getEnv("SMTP_PASSWORD", ""),
-		SMTPFrom:                       getEnv("SMTP_FROM", ""),
-		DevMailCaptureEnabled:          p.Bool("DEV_MAIL_CAPTURE_ENABLED", false),
-		ImportAllowPrivateURLs:         p.Bool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
-		OwnerClaimToken:                getEnv("OWNER_CLAIM_TOKEN", ""),
-		DatabaseURL:                    getEnv("DATABASE_URL", DefaultDatabaseURL),
-		ExternalPostgres:               isShellTrue(getEnv("VIDRA_EXTERNAL_POSTGRES", "")),
-		RedisURL:                       getEnv("REDIS_URL", "redis://localhost:6379/0"),
-		CORSAllowedOrigins:             splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
-		HTTPReadTimeout:                p.Duration("HTTP_READ_TIMEOUT", 15*time.Second),
-		HTTPWriteTimeout:               p.Duration("HTTP_WRITE_TIMEOUT", 30*time.Second),
-		HTTPShutdownTimeout:            p.Duration("HTTP_SHUTDOWN_TIMEOUT", 20*time.Second),
-		HTTPRequestTimeout:             p.Duration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
-		HTTPStreamRequestTimeout:       p.Duration("HTTP_STREAM_REQUEST_TIMEOUT", time.Hour),
-		HTTPBodyLimit:                  getEnv("HTTP_BODY_LIMIT", "8M"),
-		RateLimitEnabled:               p.Bool("RATE_LIMIT_ENABLED", true),
-		RateLimitWindow:                p.Duration("RATE_LIMIT_WINDOW", time.Minute),
-		JWTSecret:                      getEnv("JWT_SECRET", devJWTSecret),
-		JWTIssuer:                      getEnv("JWT_ISSUER", "vidra"),
-		JWTAudience:                    getEnv("JWT_AUDIENCE", "vidra"),
-		JWTAccessTTL:                   p.Duration("JWT_ACCESS_TTL", 15*time.Minute),
-		JWTRefreshTTL:                  p.Duration("JWT_REFRESH_TTL", 720*time.Hour),
-		StorageBackend:                 getEnv("STORAGE_BACKEND", "local"),
-		StorageLocalRoot:               getEnv("STORAGE_LOCAL_ROOT", "./data/media"),
-		StorageS3Endpoint:              getEnv("STORAGE_S3_ENDPOINT", ""),
-		StorageS3Bucket:                getEnv("STORAGE_S3_BUCKET", ""),
-		StorageS3AccessKey:             getEnv("STORAGE_S3_ACCESS_KEY", ""),
-		StorageS3SecretKey:             getEnv("STORAGE_S3_SECRET_KEY", ""),
-		StorageS3Region:                getEnv("STORAGE_S3_REGION", ""),
-		StorageS3UseSSL:                p.Bool("STORAGE_S3_USE_SSL", true),
-		StorageS3ForcePathStyle:        p.Bool("STORAGE_S3_FORCE_PATH_STYLE", false),
-		MediaGCEnabled:                 p.Bool("MEDIA_GC_ENABLED", true),
-		MediaGCMaxOrphanPercent:        p.Int("MEDIA_GC_MAX_ORPHAN_PERCENT", 25),
-		IPFSEnabled:                    p.Bool("IPFS_ENABLED", false),
-		IPFSAPIURL:                     strings.TrimRight(getEnv("IPFS_API_URL", ""), "/"),
-		IPFSGatewayURL:                 strings.TrimRight(getEnv("IPFS_GATEWAY_URL", ""), "/"),
-		IPFSAddTimeout:                 p.Duration("IPFS_ADD_TIMEOUT", 60*time.Second),
-		IPFSReconcileInterval:          p.Duration("IPFS_RECONCILE_INTERVAL", 5*time.Minute),
-		IPFSMirrorPrivate:              p.Bool("IPFS_MIRROR_PRIVATE", false),
-		IPFSClusterAPIURL:              strings.TrimRight(getEnv("IPFS_CLUSTER_API_URL", ""), "/"),
-		IPFSClusterToken:               getEnv("IPFS_CLUSTER_TOKEN", ""),
-		IPFSPrivateAPIURL:              strings.TrimRight(getEnv("IPFS_PRIVATE_API_URL", ""), "/"),
-		IPFSPrivateClusterAPIURL:       strings.TrimRight(getEnv("IPFS_PRIVATE_CLUSTER_API_URL", ""), "/"),
-		IPFSPrivateClusterToken:        getEnv("IPFS_PRIVATE_CLUSTER_TOKEN", ""),
-		UploadMaxSize:                  getEnv("UPLOAD_MAX_SIZE", "2G"),
-		YtdlpImportEnabled:             p.Bool("YTDLP_IMPORT_ENABLED", false),
-		YtdlpPath:                      getEnv("YTDLP_PATH", "yt-dlp"),
-		YtdlpTimeout:                   p.Duration("YTDLP_TIMEOUT", 15*time.Minute),
-		YtdlpProxy:                     strings.TrimSpace(getEnv("YTDLP_PROXY", "")),
-		ChannelSyncEnabled:             p.Bool("CHANNEL_SYNC_ENABLED", false),
-		ChannelSyncInterval:            p.Duration("CHANNEL_SYNC_INTERVAL", time.Hour),
-		ChannelSyncCooldown:            p.Duration("CHANNEL_SYNC_COOLDOWN", time.Minute),
-		PeerTubeImportEnabled:          p.Bool("PEERTUBE_IMPORT_ENABLED", false),
-		PeerTubeSourceDatabaseURL:      getEnv("PEERTUBE_SOURCE_DATABASE_URL", ""),
-		PeerTubeSourceStorageBackend:   getEnv("PEERTUBE_SOURCE_STORAGE_BACKEND", "local"),
-		PeerTubeSourceStorageLocalRoot: getEnv("PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT", ""),
-		PeerTubeSourceS3Endpoint:       getEnv("PEERTUBE_SOURCE_S3_ENDPOINT", ""),
-		PeerTubeSourceS3Bucket:         getEnv("PEERTUBE_SOURCE_S3_BUCKET", ""),
-		PeerTubeSourceS3AccessKey:      getEnv("PEERTUBE_SOURCE_S3_ACCESS_KEY", ""),
-		PeerTubeSourceS3SecretKey:      getEnv("PEERTUBE_SOURCE_S3_SECRET_KEY", ""),
-		PeerTubeSourceS3Region:         getEnv("PEERTUBE_SOURCE_S3_REGION", ""),
-		PeerTubeSourceS3UseSSL:         p.Bool("PEERTUBE_SOURCE_S3_USE_SSL", true),
-		PeerTubeSourceS3ForcePathStyle: p.Bool("PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE", false),
-		PeerTubeImportConflictPolicy:   strings.ToLower(getEnv("PEERTUBE_IMPORT_CONFLICT_POLICY", "skip")),
-		PeerTubeImportMediaMode:        strings.ToLower(getEnv("PEERTUBE_IMPORT_MEDIA_MODE", "copy")),
+		Environment:                            env,
+		LogLevel:                               strings.ToLower(getEnv("LOG_LEVEL", "info")),
+		LogFormat:                              strings.ToLower(getEnv("LOG_FORMAT", "json")),
+		OTelEnabled:                            p.Bool("OTEL_ENABLED", false),
+		OTelExporterEndpoint:                   getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		OTelExporterProtocol:                   strings.ToLower(getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")),
+		OTelServiceName:                        getEnv("OTEL_SERVICE_NAME", "vidra-core"),
+		MetricsEnabled:                         p.Bool("METRICS_ENABLED", false),
+		HTTPHost:                               getEnv("HTTP_HOST", "0.0.0.0"),
+		InstanceName:                           getEnv("INSTANCE_NAME", "Vidra (dev)"),
+		PublicBaseURL:                          strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
+		AllowPlainHTTP:                         p.Bool("VIDRA_ALLOW_PLAIN_HTTP", false),
+		TrustedProxyCIDRs:                      splitAndTrim(getEnv("TRUSTED_PROXY_CIDRS", "")),
+		FederationEnabled:                      p.Bool("FEDERATION_ENABLED", false),
+		FederationKeyKEK:                       getEnv("FEDERATION_KEY_KEK", ""),
+		ATProtoEnabled:                         p.Bool("ATPROTO_ENABLED", false),
+		ATProtoKeyKEK:                          getEnv("ATPROTO_KEY_KEK", ""),
+		ATProtoLoginEnabled:                    p.Bool("ATPROTO_LOGIN_ENABLED", false),
+		MFAKeyKEK:                              getEnv("MFA_KEY_KEK", ""),
+		TOTPIssuer:                             getEnv("TOTP_ISSUER", ""),
+		MalwareScanEnabled:                     p.Bool("MALWARE_SCAN_ENABLED", false),
+		ClamAVAddr:                             getEnv("CLAMAV_ADDR", ""),
+		ClamAVTimeout:                          p.Duration("CLAMAV_TIMEOUT", 60*time.Second),
+		MalwareScanMode:                        getEnv("MALWARE_SCAN_MODE", "fail-closed"),
+		TranscodingEnabled:                     p.Bool("TRANSCODING_ENABLED", true),
+		TranscodingVP9Enabled:                  p.Bool("TRANSCODING_VP9_ENABLED", false),
+		TranscodingStreamOutput:                p.Bool("TRANSCODING_STREAM_OUTPUT", false),
+		TranscodingMinFreeScratchMB:            p.Int("TRANSCODING_MIN_FREE_SCRATCH_MB", 0),
+		TranscodingAV1Enabled:                  p.Bool("TRANSCODING_AV1_ENABLED", false),
+		TranscodeHoldTimeout:                   p.Duration("TRANSCODE_HOLD_TIMEOUT", 12*time.Hour),
+		WhisperEnabled:                         p.Bool("WHISPER_ENABLED", false),
+		WhisperEndpoint:                        strings.TrimRight(getEnv("WHISPER_ENDPOINT", ""), "/"),
+		WhisperDefaultLanguage:                 strings.TrimSpace(getEnv("WHISPER_DEFAULT_LANGUAGE", "en")),
+		SearchServiceURL:                       strings.TrimRight(getEnv("SEARCH_SERVICE_URL", ""), "/"),
+		SearchInternalSecret:                   getEnv("SEARCH_INTERNAL_SECRET", ""),
+		SearchReconcileInterval:                p.Duration("SEARCH_RECONCILE_INTERVAL", 24*time.Hour),
+		SearchHealthInterval:                   p.Duration("SEARCH_HEALTH_INTERVAL", 15*time.Second),
+		LiveRTMPURL:                            getEnv("LIVE_RTMP_URL", ""),
+		LiveIngestSecret:                       getEnv("LIVE_INGEST_SECRET", ""),
+		LiveHLSRoot:                            strings.TrimRight(getEnv("LIVE_HLS_ROOT", ""), "/"),
+		InstanceDescription:                    getEnv("INSTANCE_DESCRIPTION", ""),
+		InstanceTermsURL:                       getEnv("INSTANCE_TERMS_URL", ""),
+		InstancePrivacyURL:                     getEnv("INSTANCE_PRIVACY_URL", ""),
+		InstanceContactEmail:                   getEnv("INSTANCE_CONTACT_EMAIL", ""),
+		RegistrationEnabled:                    p.Bool("REGISTRATION_ENABLED", true),
+		RegistrationRequireApproval:            p.Bool("REGISTRATION_REQUIRE_APPROVAL", false),
+		QuarantineNewUploads:                   p.Bool("QUARANTINE_NEW_UPLOADS", false),
+		UploadsEnabled:                         p.Bool("FEATURE_UPLOADS_ENABLED", true),
+		ImportsEnabled:                         p.Bool("FEATURE_IMPORTS_ENABLED", true),
+		LiveEnabled:                            p.Bool("FEATURE_LIVE_ENABLED", true),
+		CommentsEnabled:                        p.Bool("FEATURE_COMMENTS_ENABLED", true),
+		MailEnabled:                            p.Bool("MAIL_ENABLED", false),
+		SMTPHost:                               getEnv("SMTP_HOST", ""),
+		SMTPUsername:                           getEnv("SMTP_USERNAME", ""),
+		SMTPPassword:                           getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:                               getEnv("SMTP_FROM", ""),
+		DevMailCaptureEnabled:                  p.Bool("DEV_MAIL_CAPTURE_ENABLED", false),
+		ImportAllowPrivateURLs:                 p.Bool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
+		OwnerClaimToken:                        getEnv("OWNER_CLAIM_TOKEN", ""),
+		DatabaseURL:                            getEnv("DATABASE_URL", DefaultDatabaseURL),
+		ExternalPostgres:                       isShellTrue(getEnv("VIDRA_EXTERNAL_POSTGRES", "")),
+		RedisURL:                               getEnv("REDIS_URL", "redis://localhost:6379/0"),
+		CORSAllowedOrigins:                     splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
+		HTTPReadTimeout:                        p.Duration("HTTP_READ_TIMEOUT", 15*time.Second),
+		HTTPWriteTimeout:                       p.Duration("HTTP_WRITE_TIMEOUT", 30*time.Second),
+		HTTPShutdownTimeout:                    p.Duration("HTTP_SHUTDOWN_TIMEOUT", 20*time.Second),
+		HTTPRequestTimeout:                     p.Duration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
+		HTTPStreamRequestTimeout:               p.Duration("HTTP_STREAM_REQUEST_TIMEOUT", time.Hour),
+		HTTPBodyLimit:                          getEnv("HTTP_BODY_LIMIT", "8M"),
+		RateLimitEnabled:                       p.Bool("RATE_LIMIT_ENABLED", true),
+		RateLimitWindow:                        p.Duration("RATE_LIMIT_WINDOW", time.Minute),
+		JWTSecret:                              getEnv("JWT_SECRET", devJWTSecret),
+		JWTIssuer:                              getEnv("JWT_ISSUER", "vidra"),
+		JWTAudience:                            getEnv("JWT_AUDIENCE", "vidra"),
+		JWTAccessTTL:                           p.Duration("JWT_ACCESS_TTL", 15*time.Minute),
+		JWTRefreshTTL:                          p.Duration("JWT_REFRESH_TTL", 720*time.Hour),
+		StorageBackend:                         getEnv("STORAGE_BACKEND", "local"),
+		StorageLocalRoot:                       getEnv("STORAGE_LOCAL_ROOT", "./data/media"),
+		StorageS3Endpoint:                      getEnv("STORAGE_S3_ENDPOINT", ""),
+		StorageS3Bucket:                        getEnv("STORAGE_S3_BUCKET", ""),
+		StorageS3AccessKey:                     getEnv("STORAGE_S3_ACCESS_KEY", ""),
+		StorageS3SecretKey:                     getEnv("STORAGE_S3_SECRET_KEY", ""),
+		StorageS3Region:                        getEnv("STORAGE_S3_REGION", ""),
+		StorageS3UseSSL:                        p.Bool("STORAGE_S3_USE_SSL", true),
+		StorageS3ForcePathStyle:                p.Bool("STORAGE_S3_FORCE_PATH_STYLE", false),
+		StorageMigrationTargetBackend:          getEnv("STORAGE_MIGRATION_TARGET_BACKEND", ""),
+		StorageMigrationTargetLocalRoot:        getEnv("STORAGE_MIGRATION_TARGET_LOCAL_ROOT", ""),
+		StorageMigrationTargetS3Endpoint:       getEnv("STORAGE_MIGRATION_TARGET_S3_ENDPOINT", ""),
+		StorageMigrationTargetS3Bucket:         getEnv("STORAGE_MIGRATION_TARGET_S3_BUCKET", ""),
+		StorageMigrationTargetS3AccessKey:      getEnv("STORAGE_MIGRATION_TARGET_S3_ACCESS_KEY", ""),
+		StorageMigrationTargetS3SecretKey:      getEnv("STORAGE_MIGRATION_TARGET_S3_SECRET_KEY", ""),
+		StorageMigrationTargetS3Region:         getEnv("STORAGE_MIGRATION_TARGET_S3_REGION", ""),
+		StorageMigrationTargetS3UseSSL:         p.Bool("STORAGE_MIGRATION_TARGET_S3_USE_SSL", true),
+		StorageMigrationTargetS3ForcePathStyle: p.Bool("STORAGE_MIGRATION_TARGET_S3_FORCE_PATH_STYLE", false),
+		StorageMigrationGraceHours:             p.Int("STORAGE_MIGRATION_GRACE_HOURS", 168),
+		MediaGCEnabled:                         p.Bool("MEDIA_GC_ENABLED", true),
+		MediaGCMaxOrphanPercent:                p.Int("MEDIA_GC_MAX_ORPHAN_PERCENT", 25),
+		IPFSEnabled:                            p.Bool("IPFS_ENABLED", false),
+		IPFSAPIURL:                             strings.TrimRight(getEnv("IPFS_API_URL", ""), "/"),
+		IPFSGatewayURL:                         strings.TrimRight(getEnv("IPFS_GATEWAY_URL", ""), "/"),
+		IPFSAddTimeout:                         p.Duration("IPFS_ADD_TIMEOUT", 60*time.Second),
+		IPFSReconcileInterval:                  p.Duration("IPFS_RECONCILE_INTERVAL", 5*time.Minute),
+		IPFSMirrorPrivate:                      p.Bool("IPFS_MIRROR_PRIVATE", false),
+		IPFSClusterAPIURL:                      strings.TrimRight(getEnv("IPFS_CLUSTER_API_URL", ""), "/"),
+		IPFSClusterToken:                       getEnv("IPFS_CLUSTER_TOKEN", ""),
+		IPFSPrivateAPIURL:                      strings.TrimRight(getEnv("IPFS_PRIVATE_API_URL", ""), "/"),
+		IPFSPrivateClusterAPIURL:               strings.TrimRight(getEnv("IPFS_PRIVATE_CLUSTER_API_URL", ""), "/"),
+		IPFSPrivateClusterToken:                getEnv("IPFS_PRIVATE_CLUSTER_TOKEN", ""),
+		UploadMaxSize:                          getEnv("UPLOAD_MAX_SIZE", "2G"),
+		YtdlpImportEnabled:                     p.Bool("YTDLP_IMPORT_ENABLED", false),
+		YtdlpPath:                              getEnv("YTDLP_PATH", "yt-dlp"),
+		YtdlpTimeout:                           p.Duration("YTDLP_TIMEOUT", 15*time.Minute),
+		YtdlpProxy:                             strings.TrimSpace(getEnv("YTDLP_PROXY", "")),
+		ChannelSyncEnabled:                     p.Bool("CHANNEL_SYNC_ENABLED", false),
+		ChannelSyncInterval:                    p.Duration("CHANNEL_SYNC_INTERVAL", time.Hour),
+		ChannelSyncCooldown:                    p.Duration("CHANNEL_SYNC_COOLDOWN", time.Minute),
+		PeerTubeImportEnabled:                  p.Bool("PEERTUBE_IMPORT_ENABLED", false),
+		PeerTubeSourceDatabaseURL:              getEnv("PEERTUBE_SOURCE_DATABASE_URL", ""),
+		PeerTubeSourceStorageBackend:           getEnv("PEERTUBE_SOURCE_STORAGE_BACKEND", "local"),
+		PeerTubeSourceStorageLocalRoot:         getEnv("PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT", ""),
+		PeerTubeSourceS3Endpoint:               getEnv("PEERTUBE_SOURCE_S3_ENDPOINT", ""),
+		PeerTubeSourceS3Bucket:                 getEnv("PEERTUBE_SOURCE_S3_BUCKET", ""),
+		PeerTubeSourceS3AccessKey:              getEnv("PEERTUBE_SOURCE_S3_ACCESS_KEY", ""),
+		PeerTubeSourceS3SecretKey:              getEnv("PEERTUBE_SOURCE_S3_SECRET_KEY", ""),
+		PeerTubeSourceS3Region:                 getEnv("PEERTUBE_SOURCE_S3_REGION", ""),
+		PeerTubeSourceS3UseSSL:                 p.Bool("PEERTUBE_SOURCE_S3_USE_SSL", true),
+		PeerTubeSourceS3ForcePathStyle:         p.Bool("PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE", false),
+		PeerTubeImportConflictPolicy:           strings.ToLower(getEnv("PEERTUBE_IMPORT_CONFLICT_POLICY", "skip")),
+		PeerTubeImportMediaMode:                strings.ToLower(getEnv("PEERTUBE_IMPORT_MEDIA_MODE", "copy")),
 	}
 
 	cfg.HTTPPort = p.Int("HTTP_PORT", 8080)
@@ -1116,6 +1162,43 @@ func (c *Config) validate() error {
 		}
 	default:
 		add(varErrorf("STORAGE_BACKEND", "config: unsupported STORAGE_BACKEND %q (want local|s3)", c.StorageBackend))
+	}
+	// Storage migration target. Empty = the feature is off and nothing else here
+	// is read; otherwise it is a full second backend and gets the same treatment
+	// as the primary — plus the one check that only makes sense for a pair.
+	switch strings.TrimSpace(c.StorageMigrationTargetBackend) {
+	case "":
+	case "local":
+		if strings.TrimSpace(c.StorageMigrationTargetLocalRoot) == "" {
+			add(varErrorf("STORAGE_MIGRATION_TARGET_LOCAL_ROOT", "config: STORAGE_MIGRATION_TARGET_LOCAL_ROOT is required for the local storage migration target"))
+		}
+	case "s3":
+		if strings.TrimSpace(c.StorageMigrationTargetS3Endpoint) == "" {
+			add(varErrorf("STORAGE_MIGRATION_TARGET_S3_ENDPOINT", "config: STORAGE_MIGRATION_TARGET_S3_ENDPOINT is required for the s3 storage migration target"))
+		}
+		if strings.Contains(c.StorageMigrationTargetS3Endpoint, "://") {
+			add(varErrorf("STORAGE_MIGRATION_TARGET_S3_ENDPOINT", "config: STORAGE_MIGRATION_TARGET_S3_ENDPOINT must be host[:port] without a scheme (got %q); use STORAGE_MIGRATION_TARGET_S3_USE_SSL to pick http/https", c.StorageMigrationTargetS3Endpoint))
+		}
+		if strings.TrimSpace(c.StorageMigrationTargetS3Bucket) == "" {
+			add(varErrorf("STORAGE_MIGRATION_TARGET_S3_BUCKET", "config: STORAGE_MIGRATION_TARGET_S3_BUCKET is required for the s3 storage migration target"))
+		}
+		if strings.TrimSpace(c.StorageMigrationTargetS3AccessKey) == "" {
+			add(varErrorf("STORAGE_MIGRATION_TARGET_S3_ACCESS_KEY", "config: STORAGE_MIGRATION_TARGET_S3_ACCESS_KEY is required for the s3 storage migration target"))
+		}
+		if strings.TrimSpace(c.StorageMigrationTargetS3SecretKey) == "" {
+			add(varErrorf("STORAGE_MIGRATION_TARGET_S3_SECRET_KEY", "config: STORAGE_MIGRATION_TARGET_S3_SECRET_KEY is required for the s3 storage migration target"))
+		}
+	default:
+		add(varErrorf("STORAGE_MIGRATION_TARGET_BACKEND", "config: unsupported STORAGE_MIGRATION_TARGET_BACKEND %q (want local|s3, or empty to disable storage migration)", c.StorageMigrationTargetBackend))
+	}
+	// A target that IS the source is not a migration, it is a loop that would
+	// copy every object onto itself and then delete it after the grace period.
+	// Refusing at boot is the only place this is cheap to catch.
+	if src, dst := c.storageIdentity(), c.storageMigrationTargetIdentity(); dst != "" && src == dst {
+		add(varErrorf("STORAGE_MIGRATION_TARGET_BACKEND", "config: the storage migration target is the same store as STORAGE_* (%s); a migration must have two different stores", src))
+	}
+	if c.StorageMigrationGraceHours < 0 {
+		add(varErrorf("STORAGE_MIGRATION_GRACE_HOURS", "config: STORAGE_MIGRATION_GRACE_HOURS must not be negative (0 = delete the source as soon as cutover is confirmed), got %d", c.StorageMigrationGraceHours))
 	}
 	if c.MediaGCMaxOrphanPercent < 0 || c.MediaGCMaxOrphanPercent > 100 {
 		add(varErrorf("MEDIA_GC_MAX_ORPHAN_PERCENT", "config: MEDIA_GC_MAX_ORPHAN_PERCENT must be between 0 and 100 (0 = never delete, 100 = no ratio limit), got %d", c.MediaGCMaxOrphanPercent))
@@ -1466,6 +1549,53 @@ func (c *Config) validatePeerTubeImport() error {
 // PeerTubeImportEnabled AND this is true.
 func (c *Config) PeerTubeImportConfigured() bool {
 	return c.PeerTubeImportEnabled && strings.TrimSpace(c.PeerTubeSourceDatabaseURL) != ""
+}
+
+// StorageMigrationConfigured reports whether a second, destination backend is
+// configured — the switch that decides whether a migration can be started at
+// all, whether the copy/sweep workers run, and whether serving reads go through
+// the dual-read fallback.
+func (c *Config) StorageMigrationConfigured() bool {
+	return strings.TrimSpace(c.StorageMigrationTargetBackend) != ""
+}
+
+// storageIdentity and storageMigrationTargetIdentity restate the two configured
+// stores in the same short form storage.Describe produces, so validate can tell
+// whether they are the same store BEFORE anything is dialled. They are
+// deliberately a duplicate of that logic rather than an import: config is the
+// boot-time engine every other package is validated by, and it stays free of
+// dependencies on the packages it configures. The authoritative comparison is
+// still the runtime one in cmd/api, made against the handles actually built.
+func (c *Config) storageIdentity() string {
+	return storeIdentity(c.StorageBackend, c.StorageLocalRoot, c.StorageS3Endpoint, c.StorageS3Bucket)
+}
+
+func (c *Config) storageMigrationTargetIdentity() string {
+	return storeIdentity(c.StorageMigrationTargetBackend, c.StorageMigrationTargetLocalRoot,
+		c.StorageMigrationTargetS3Endpoint, c.StorageMigrationTargetS3Bucket)
+}
+
+func storeIdentity(backend, localRoot, s3Endpoint, s3Bucket string) string {
+	switch strings.TrimSpace(backend) {
+	case "local":
+		root := strings.TrimSpace(localRoot)
+		if root == "" {
+			return ""
+		}
+		abs, err := filepath.Abs(root)
+		if err != nil {
+			abs = filepath.Clean(root)
+		}
+		return "local:" + abs
+	case "s3":
+		endpoint, bucket := strings.TrimSpace(s3Endpoint), strings.TrimSpace(s3Bucket)
+		if endpoint == "" || bucket == "" {
+			return ""
+		}
+		return "s3://" + endpoint + "/" + bucket
+	default:
+		return ""
+	}
 }
 
 // SearchServiceEnabled reports whether the vidra-search integration is wired

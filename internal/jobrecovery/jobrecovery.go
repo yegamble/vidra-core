@@ -57,6 +57,7 @@ type Queries interface {
 	SweepExpiredAccountExports(ctx context.Context) (int64, error)
 	SweepExpiredImportRuns(ctx context.Context) (int64, error)
 	SweepExpiredChannelSyncs(ctx context.Context) (int64, error)
+	SweepExpiredStorageMigrationObjects(ctx context.Context) (int64, error)
 }
 
 // Result is one queue's outcome. Requeued is the number of rows returned to the
@@ -83,13 +84,16 @@ func Sweep(ctx context.Context, q Queries) []Result {
 	}{
 		// Ordered by how visible the failure is to a user: a stuck transcode hides
 		// a published video, a stuck import/caption hides its result, and a stuck
-		// export/import-run/sync only blocks a repeat request.
+		// export/import-run/sync only blocks a repeat request. A stranded storage
+		// migration object is invisible to users but blocks the campaign from ever
+		// reaching 'synced', which is the gate on cutting over at all.
 		{"transcode_jobs", q.SweepExpiredTranscodeJobs},
 		{"import_jobs", q.SweepExpiredImportJobs},
 		{"caption_jobs", q.SweepExpiredCaptionJobs},
 		{"account_exports", q.SweepExpiredAccountExports},
 		{"peertube_import_runs", q.SweepExpiredImportRuns},
 		{"channel_syncs", q.SweepExpiredChannelSyncs},
+		{"storage_migration_objects", q.SweepExpiredStorageMigrationObjects},
 	}
 
 	results := make([]Result, 0, len(steps))

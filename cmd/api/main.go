@@ -67,6 +67,7 @@ import (
 	"github.com/vidra/vidra-core/internal/searchevents"
 	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/storage"
+	"github.com/vidra/vidra-core/internal/storagemigration"
 	"github.com/vidra/vidra-core/internal/store"
 	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/upload"
@@ -547,6 +548,24 @@ func run() error {
 	}
 	bucketOwnership := resolveBucketOwnership(startCtx, logger, blobs, createdBucket, instanceIdentity)
 
+	// Storage migration target (phase-2 storage, items 4-5): the SECOND backend a
+	// migration campaign copies into. nil when STORAGE_MIGRATION_TARGET_* is
+	// unset, which is the ordinary configuration.
+	//
+	// NB: same rule as the primary — endpoint/bucket are safe to log, the
+	// credentials are NOT. storage.Describe returns exactly the safe half.
+	migrationTarget, err := newMigrationTargetBackend(startCtx, cfg, blobs)
+	if err != nil {
+		return err
+	}
+	if migrationTarget != nil {
+		logger.Info("storage migration target configured",
+			"backend", cfg.StorageMigrationTargetBackend,
+			"target", storage.Describe(migrationTarget),
+			"serving_from", storage.Describe(blobs),
+			"grace_hours", cfg.StorageMigrationGraceHours)
+	}
+
 	// Hybrid IPFS media mirror (fix_plan P19, .ralph/specs/ipfs-media.md). A MIRROR
 	// SIDECAR — local/S3 stays authoritative — that add+pins ALREADY-PUBLIC media
 	// to a Kubo node when IPFS_ENABLED. It is constructed unconditionally so every
@@ -941,7 +960,23 @@ func run() error {
 		)
 	}
 	videosvc = video.NewService(db.Queries(), blobs, vopts...)
-	opts = append(opts, httpapi.WithVideoService(videosvc), httpapi.WithMediaStorage(blobs))
+
+	// DUAL-READ during a storage migration. The HTTP layer's media handle — and
+	// ONLY it — gets a fallback view: a request for an object that has not been
+	// copied into the store this instance now serves from is answered from the
+	// other one instead of 404ing.
+	//
+	// The split is deliberate and load-bearing. mediagc, the IPFS mirror, the
+	// doctor, ffprobe/thumbnailing and every other consumer keep the RAW primary,
+	// because storage.Fallback implements Backend and no optional capability (see
+	// its doc comment): a garbage collector that enumerated a merged view of two
+	// stores would delete from a store the merge did not cover. Serving is the one
+	// job where "wherever the bytes are" is the right answer.
+	mediaForServing := storage.Backend(blobs)
+	if migrationTarget != nil {
+		mediaForServing = storage.NewFallback(blobs, migrationTarget, logger)
+	}
+	opts = append(opts, httpapi.WithVideoService(videosvc), httpapi.WithMediaStorage(mediaForServing))
 
 	// When federation is on, fan a local comment on a local video out to the
 	// channel's remote followers as Create/Update/Delete{Note} (remote-content
@@ -997,7 +1032,12 @@ func run() error {
 	mediagcsvc := mediagc.NewService(db.Queries(), blobs,
 		mediagc.WithMaxOrphanPercent(cfg.MediaGCMaxOrphanPercent),
 		mediagc.WithBucketOwnership(bucketOwnership),
-		mediagc.WithInstanceIdentity(instanceIdentity))
+		mediagc.WithInstanceIdentity(instanceIdentity),
+		// Storage-migration interlock. Wired unconditionally — a campaign can
+		// outlive the configuration that started it, and the sweep that must not
+		// delete during one is exactly the sweep on the instance that has since
+		// been reconfigured.
+		mediagc.WithActiveMigrationCheck(db.Queries().HasActiveStorageMigration))
 	opts = append(opts, httpapi.WithMediaGCService(mediagcsvc))
 
 	// Content-hash backfill (phase-2 storage, work item 2): reads back the
@@ -1005,6 +1045,18 @@ func run() error {
 	// they actually contain. No API surface — it exists only to give the
 	// integrity-verified storage migration a baseline for the WHOLE library.
 	mediahashsvc := mediahash.NewService(db.Queries(), blobs, logger)
+
+	// Storage migration (phase-2 storage, items 4-5). Constructed unconditionally,
+	// with a possibly-nil target: Start answers 503 without one, but the read and
+	// CANCEL surfaces have to exist even on an instance whose target has since been
+	// unconfigured — otherwise a half-finished campaign could neither advance nor
+	// be stopped, and the media-GC interlock would hold destructive sweeps off
+	// forever with no way out.
+	storagemigrationsvc := storagemigration.NewService(db.Queries(), blobs, migrationTarget, storagemigration.Config{
+		Grace:  time.Duration(cfg.StorageMigrationGraceHours) * time.Hour,
+		Logger: logger,
+	})
+	opts = append(opts, httpapi.WithStorageMigrationService(storagemigrationsvc))
 
 	moderationsvc := moderation.NewService(db.Queries())
 	opts = append(opts, httpapi.WithModerationService(moderationsvc))
@@ -1536,6 +1588,29 @@ func run() error {
 		defer workerCancel()
 		go runMediaHashBackfillWorker(workerCtx, logger, mediahashsvc, cronLeader)
 		logger.Info("media hash backfill worker started")
+	}
+
+	// Storage migration (phase-2 storage, items 4-5). TWO workers, split the way
+	// the worker-role doctrine requires:
+	//
+	//   the COPY worker is UNLEADERED — it claims object rows with FOR UPDATE
+	//   SKIP LOCKED and renews a lease while it streams, so running it on every
+	//   instance is safe and makes the move finish sooner;
+	//
+	//   the SWEEP worker is LEADER-GATED — enumerating a store, deciding a
+	//   campaign is synced, and deleting the source are all whole-store decisions,
+	//   and two instances making them at once would fight.
+	//
+	// Only started when a target is configured: with none there is nothing to copy
+	// to, and the admin surface (which can still cancel a leftover campaign) is
+	// mounted regardless.
+	if storagemigrationsvc.Enabled() {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runStorageMigrationCopyWorker(workerCtx, logger, storagemigrationsvc)
+		go runStorageMigrationSweepWorker(workerCtx, logger, storagemigrationsvc, cronLeader)
+		logger.Info("storage migration workers started",
+			"grace_hours", cfg.StorageMigrationGraceHours)
 	}
 
 	// Search outbox drain + reconcile sweep (search-service W4). Only when the
@@ -2271,6 +2346,77 @@ func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirr
 	}
 }
 
+// runStorageMigrationCopyWorker drains the storage-migration object queue on a
+// short ticker until ctx is canceled.
+//
+// DELIBERATELY UNLEADERED. The queue claims with FOR UPDATE SKIP LOCKED and each
+// claimed object's lease is renewed while it copies, so concurrent instances take
+// disjoint objects and a dead worker's object comes back on its own. More
+// instances therefore mean a faster move, which is the whole point of putting a
+// library migration on the durable-queue convention.
+//
+// The batch is small because each item is a whole media object: four concurrent
+// streams per tick keeps the copy from monopolising the same network the instance
+// is serving playback over.
+func runStorageMigrationCopyWorker(ctx context.Context, logger *slog.Logger, svc *storagemigration.Service) {
+	const (
+		interval = 10 * time.Second
+		batch    = 4
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			total := 0
+			for {
+				n, err := svc.CopyOnce(ctx, batch)
+				if err != nil {
+					logger.Warn("storage migration copy pass failed", "error", err)
+					break
+				}
+				total += n
+				if n == 0 {
+					break
+				}
+			}
+			if total > 0 {
+				logger.Info("storage migration copied objects", "count", total)
+			}
+		}
+	}
+}
+
+// runStorageMigrationSweepWorker advances the campaign state machine on a ticker
+// until ctx is canceled: enumerate, reconcile, notice cutover, and — after the
+// grace period — delete the source copies.
+//
+// LEADER-GATED. Every one of those steps acts on whatever it finds across a whole
+// store, and the last one is irreversible.
+func runStorageMigrationSweepWorker(ctx context.Context, logger *slog.Logger, svc *storagemigration.Service, leader *leaderlock.Elector) {
+	const interval = time.Minute
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Singleton sweep: exactly one instance runs it. A follower skips the
+			// tick rather than shutting down, because leadership can move here at
+			// any time (see internal/leaderlock).
+			if !leader.IsLeader() {
+				continue
+			}
+			if err := svc.SweepOnce(ctx); err != nil {
+				logger.Warn("storage migration sweep failed", "error", err)
+			}
+		}
+	}
+}
+
 // runMediaGCWorker runs the media garbage collector once a day (deleting
 // orphaned storage blobs) until ctx is canceled. Each run is audited with its
 // counts under an explicit system actor. A listing-unsupported backend disables the sweep
@@ -2443,25 +2589,22 @@ func runOperationalJobRetentionWorker(ctx context.Context, logger *slog.Logger, 
 	}
 }
 
-// newStorageBackend builds the media blob backend selected by config. Config
-// validation already restricts StorageBackend to the supported set, so the
-// default branch is a defensive guard. ctx bounds the s3 startup probe
-// (EnsureBucket) so an unreachable store fails fast like a missing DB.
-//
-// createdBucket reports that this boot MADE the bucket, which resolveBucketOwnership
-// needs: a bucket that did not exist a moment ago cannot hold anyone else's
-// media, and is therefore the one case where this install may claim ownership of
-// an object store without an operator saying so.
-func newStorageBackend(ctx context.Context, cfg *config.Config) (blobs storage.Backend, createdBucket bool, err error) {
-	switch cfg.StorageBackend {
-	case "local":
-		local, lerr := storage.NewLocal(cfg.StorageLocalRoot)
-		if lerr != nil {
-			return nil, false, lerr
-		}
-		return local, false, nil
-	case "s3":
-		s3b, serr := storage.NewS3(storage.S3Config{
+// storageSpec is one store's worth of configuration, so the primary media
+// backend and the storage-migration target are built by the SAME code. They have
+// to be: a target built by a near-copy of this function is exactly how a
+// migration ends up writing into a store with different semantics than the one
+// it is reading from.
+type storageSpec struct {
+	backend   string
+	localRoot string
+	s3        storage.S3Config
+}
+
+func primaryStorageSpec(cfg *config.Config) storageSpec {
+	return storageSpec{
+		backend:   cfg.StorageBackend,
+		localRoot: cfg.StorageLocalRoot,
+		s3: storage.S3Config{
 			Endpoint:       cfg.StorageS3Endpoint,
 			Bucket:         cfg.StorageS3Bucket,
 			AccessKey:      cfg.StorageS3AccessKey,
@@ -2469,7 +2612,45 @@ func newStorageBackend(ctx context.Context, cfg *config.Config) (blobs storage.B
 			Region:         cfg.StorageS3Region,
 			UseSSL:         cfg.StorageS3UseSSL,
 			ForcePathStyle: cfg.StorageS3ForcePathStyle,
-		})
+		},
+	}
+}
+
+func migrationTargetStorageSpec(cfg *config.Config) storageSpec {
+	return storageSpec{
+		backend:   cfg.StorageMigrationTargetBackend,
+		localRoot: cfg.StorageMigrationTargetLocalRoot,
+		s3: storage.S3Config{
+			Endpoint:       cfg.StorageMigrationTargetS3Endpoint,
+			Bucket:         cfg.StorageMigrationTargetS3Bucket,
+			AccessKey:      cfg.StorageMigrationTargetS3AccessKey,
+			SecretKey:      cfg.StorageMigrationTargetS3SecretKey,
+			Region:         cfg.StorageMigrationTargetS3Region,
+			UseSSL:         cfg.StorageMigrationTargetS3UseSSL,
+			ForcePathStyle: cfg.StorageMigrationTargetS3ForcePathStyle,
+		},
+	}
+}
+
+// buildStorageBackend builds one blob backend from a spec. Config validation
+// already restricts the backend name to the supported set, so the default branch
+// is a defensive guard. ctx bounds the s3 startup probe (EnsureBucket) so an
+// unreachable store fails fast like a missing DB.
+//
+// createdBucket reports that this boot MADE the bucket, which resolveBucketOwnership
+// needs: a bucket that did not exist a moment ago cannot hold anyone else's
+// media, and is therefore the one case where this install may claim ownership of
+// an object store without an operator saying so.
+func buildStorageBackend(ctx context.Context, spec storageSpec) (blobs storage.Backend, createdBucket bool, err error) {
+	switch spec.backend {
+	case "local":
+		local, lerr := storage.NewLocal(spec.localRoot)
+		if lerr != nil {
+			return nil, false, lerr
+		}
+		return local, false, nil
+	case "s3":
+		s3b, serr := storage.NewS3(spec.s3)
 		if serr != nil {
 			return nil, false, serr
 		}
@@ -2479,8 +2660,39 @@ func newStorageBackend(ctx context.Context, cfg *config.Config) (blobs storage.B
 		}
 		return s3b, created, nil
 	default:
-		return nil, false, fmt.Errorf("unsupported storage backend %q", cfg.StorageBackend)
+		return nil, false, fmt.Errorf("unsupported storage backend %q", spec.backend)
 	}
+}
+
+// newStorageBackend builds the AUTHORITATIVE media blob backend selected by
+// config.
+func newStorageBackend(ctx context.Context, cfg *config.Config) (storage.Backend, bool, error) {
+	return buildStorageBackend(ctx, primaryStorageSpec(cfg))
+}
+
+// newMigrationTargetBackend builds the SECOND backend a storage migration copies
+// into (STORAGE_MIGRATION_TARGET_*), or (nil, nil) when the feature is off.
+//
+// It refuses a target that is the same store as the primary. Config validation
+// already compares the configured values; this compares the IDENTITIES the built
+// handles actually report, which is the version that cannot be fooled by two
+// different spellings of one bucket.
+func newMigrationTargetBackend(ctx context.Context, cfg *config.Config, primary storage.Backend) (storage.Backend, error) {
+	if !cfg.StorageMigrationConfigured() {
+		return nil, nil
+	}
+	target, _, err := buildStorageBackend(ctx, migrationTargetStorageSpec(cfg))
+	if err != nil {
+		return nil, fmt.Errorf("storage migration target: %w", err)
+	}
+	src, dst := storage.Describe(primary), storage.Describe(target)
+	if src == "" || dst == "" {
+		return nil, fmt.Errorf("storage migration target: a configured storage backend does not report its identity")
+	}
+	if src == dst {
+		return nil, fmt.Errorf("storage migration target: STORAGE_MIGRATION_TARGET_* names the same store as STORAGE_* (%s)", src)
+	}
+	return target, nil
 }
 
 // resolveBucketOwnership answers, once per boot, whether the object store media
