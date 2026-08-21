@@ -469,6 +469,25 @@ type Config struct {
 	StorageS3UseSSL         bool
 	StorageS3ForcePathStyle bool
 
+	// Media garbage collection (phase-2 storage, work item 1). The daily sweep
+	// DELETES stored objects that no database row references, so both knobs are
+	// boot-baked: a runtime override would let a settings mistake become an
+	// irreversible one.
+	//
+	// MediaGCEnabled off means the worker is never started at all — the admin
+	// endpoint stays mounted, because an operator asking for a sweep by hand is
+	// not the hazard the flag exists for.
+	MediaGCEnabled bool
+	// MediaGCMaxOrphanPercent is the circuit breaker: a DESTRUCTIVE sweep that
+	// finds more than this share of the objects it scanned to be orphans deletes
+	// nothing and reports why. It is the guard against a sweep whose reference
+	// set came back wrong (a half-restored database, a bucket that belongs to
+	// someone else, a migration in flight) — those all look like "almost
+	// everything is an orphan", and that is exactly the sweep that must not run.
+	// 0 disables deletion entirely (any orphan trips it); 100 lets any ratio
+	// through. Small sweeps are exempt regardless — see mediagc.breakerFloor.
+	MediaGCMaxOrphanPercent int
+
 	// Hybrid IPFS media mirroring (fix_plan P19, .ralph/specs/ipfs-media.md). IPFS
 	// is an orthogonal MIRROR of eligible ALREADY-PUBLIC media, present in
 	// addition to the authoritative local/S3 store — never a replacement backend,
@@ -787,6 +806,8 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		StorageS3Region:                getEnv("STORAGE_S3_REGION", ""),
 		StorageS3UseSSL:                p.Bool("STORAGE_S3_USE_SSL", true),
 		StorageS3ForcePathStyle:        p.Bool("STORAGE_S3_FORCE_PATH_STYLE", false),
+		MediaGCEnabled:                 p.Bool("MEDIA_GC_ENABLED", true),
+		MediaGCMaxOrphanPercent:        p.Int("MEDIA_GC_MAX_ORPHAN_PERCENT", 25),
 		IPFSEnabled:                    p.Bool("IPFS_ENABLED", false),
 		IPFSAPIURL:                     strings.TrimRight(getEnv("IPFS_API_URL", ""), "/"),
 		IPFSGatewayURL:                 strings.TrimRight(getEnv("IPFS_GATEWAY_URL", ""), "/"),
@@ -1095,6 +1116,9 @@ func (c *Config) validate() error {
 		}
 	default:
 		add(varErrorf("STORAGE_BACKEND", "config: unsupported STORAGE_BACKEND %q (want local|s3)", c.StorageBackend))
+	}
+	if c.MediaGCMaxOrphanPercent < 0 || c.MediaGCMaxOrphanPercent > 100 {
+		add(varErrorf("MEDIA_GC_MAX_ORPHAN_PERCENT", "config: MEDIA_GC_MAX_ORPHAN_PERCENT must be between 0 and 100 (0 = never delete, 100 = no ratio limit), got %d", c.MediaGCMaxOrphanPercent))
 	}
 	if _, err := bytes.Parse(c.UploadMaxSize); err != nil {
 		add(varErrorf("UPLOAD_MAX_SIZE", "config: invalid UPLOAD_MAX_SIZE %q: %w", c.UploadMaxSize, err))

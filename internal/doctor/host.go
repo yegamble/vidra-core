@@ -77,6 +77,12 @@ type Prober interface {
 	// deleted objects, so the report can warn about a bucket that never
 	// reclaims. Read-only; creates and changes nothing.
 	CheckBucketRetention(ctx context.Context, cfg storage.S3Config) (storage.BucketRetention, error)
+	// CheckBucketMarker reads the media-GC ownership marker
+	// (storage.OwnerMarkerKey) and reports whether it is there and what it says.
+	// Read-only: doctor never writes the marker, because writing it is the
+	// adoption decision and that belongs to an admin at the API, not to a
+	// diagnostic that an operator may have run just to look around.
+	CheckBucketMarker(ctx context.Context, cfg storage.S3Config) (found bool, content string, err error)
 	// CheckSMTP dials the relay and reads its greeting. It never sends.
 	CheckSMTP(ctx context.Context, addr string) (banner string, err error)
 	// MigrationStatus reads a golang-migrate ledger. table is "" for the default
@@ -153,6 +159,15 @@ func (RealProber) CheckBucketRetention(ctx context.Context, cfg storage.S3Config
 		return storage.BucketRetention{}, err
 	}
 	return s3.Retention(ctx)
+}
+
+func (RealProber) CheckBucketMarker(ctx context.Context, cfg storage.S3Config) (bool, string, error) {
+	s3, err := storage.NewS3(cfg)
+	if err != nil {
+		return false, "", err
+	}
+	content, found, err := storage.ReadOwnerMarker(ctx, s3)
+	return found, content, err
 }
 
 // CheckSMTP delegates to preflight so the dial exists exactly once: `vidra

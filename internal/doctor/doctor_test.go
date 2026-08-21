@@ -1368,3 +1368,116 @@ func TestObjectRetention(t *testing.T) {
 		wantFinding(t, one(t, only(t, "object retention", h, p)), StatusWarn, "skipped: the bucket", "")
 	})
 }
+
+// s3EnvFile is the healthy baseline switched to object storage, which is the
+// only shape in which the ownership question exists at all.
+func s3EnvFile() string {
+	env := healthyEnv + strings.Join([]string{
+		"STORAGE_S3_ENDPOINT=s3.us-west-004.backblazeb2.com",
+		"STORAGE_S3_REGION=us-west-004",
+		"STORAGE_S3_BUCKET=vidra-media",
+		"STORAGE_S3_ACCESS_KEY=AKIAEXAMPLE",
+		"STORAGE_S3_SECRET_KEY=secret",
+		"",
+	}, "\n")
+	return strings.Replace(env, "STORAGE_BACKEND=local", "STORAGE_BACKEND=s3", 1)
+}
+
+// TestBucketOwnership covers the marker that stands between a shared or
+// pre-populated bucket and a daily sweep that deletes everything in it the
+// database does not reference.
+func TestBucketOwnership(t *testing.T) {
+	h := newFakeHost()
+	wantFinding(t, one(t, only(t, "bucket ownership", h, nil)), StatusOK, "media lives on local disk", "")
+
+	h = newFakeHost()
+	h.files[filepath.Join(testRoot, "env/production.env")] = s3EnvFile()
+
+	t.Run("a marked bucket is sweepable", func(t *testing.T) {
+		p := newFakeProber()
+		p.markerFound = true
+		wantFinding(t, one(t, only(t, "bucket ownership", h, p)), StatusOK, "carries an ownership marker", "")
+	})
+
+	t.Run("an unmarked bucket warns and names the adoption endpoint", func(t *testing.T) {
+		p := newFakeProber()
+		p.markerFound = false
+		f := one(t, only(t, "bucket ownership", h, p))
+		wantFinding(t, f, StatusWarn, "carries no ownership marker", "/api/v1/admin/media/gc/adopt-bucket")
+		// The operator must be told what the consequence is, not only that a
+		// file is missing.
+		if !strings.Contains(f.Detail, "delete nothing") {
+			t.Errorf("the warning does not say what the sweep will do: %q", f.Detail)
+		}
+	})
+
+	t.Run("an unreadable marker skips rather than double-reporting", func(t *testing.T) {
+		p := newFakeProber()
+		p.markerErr = &notInstalled{}
+		wantFinding(t, one(t, only(t, "bucket ownership", h, p)), StatusWarn, "skipped: the ownership marker", "")
+	})
+
+	t.Run("an unreadable env file skips", func(t *testing.T) {
+		broken := newFakeHost()
+		delete(broken.files, filepath.Join(testRoot, "env/production.env"))
+		wantFinding(t, one(t, only(t, "bucket ownership", broken, nil)), StatusWarn, "skipped:", "")
+	})
+}
+
+// TestMediaGCPosture pins the env-only check that tells an operator what the
+// daily sweep is currently allowed to do. The defaults are the interesting case:
+// most env files never mention either key, and the check still has to say
+// clearly that an unattended job deletes media every 24 hours.
+func TestMediaGCPosture(t *testing.T) {
+	t.Run("the defaults are reported, not assumed known", func(t *testing.T) {
+		f := one(t, only(t, "media GC posture", newFakeHost(), nil))
+		wantFinding(t, f, StatusOK, "deletes stored objects no database row references", "")
+		for _, want := range []string{"25%", "first sweep after each restart is always a dry run"} {
+			if !strings.Contains(f.Detail, want) {
+				t.Errorf("the posture line does not mention %q: %q", want, f.Detail)
+			}
+		}
+	})
+
+	t.Run("disabled says what accumulates instead", func(t *testing.T) {
+		h := newFakeHost()
+		h.files[filepath.Join(testRoot, "env/production.env")] = healthyEnv + "MEDIA_GC_ENABLED=false\n"
+		wantFinding(t, one(t, only(t, "media GC posture", h, nil)), StatusOK, "accumulate", "")
+	})
+
+	t.Run("an unparsable boolean is a deploy that will not boot", func(t *testing.T) {
+		h := newFakeHost()
+		// The api parses this with strconv, which does not accept "yes" — the
+		// exact spelling gap worth catching before the deploy rather than after.
+		h.files[filepath.Join(testRoot, "env/production.env")] = healthyEnv + "MEDIA_GC_ENABLED=yes\n"
+		wantFinding(t, one(t, only(t, "media GC posture", h, nil)), StatusFail, "not a boolean", "MEDIA_GC_ENABLED=true")
+	})
+
+	t.Run("a non-numeric percentage fails", func(t *testing.T) {
+		h := newFakeHost()
+		h.files[filepath.Join(testRoot, "env/production.env")] = healthyEnv + "MEDIA_GC_MAX_ORPHAN_PERCENT=quarter\n"
+		wantFinding(t, one(t, only(t, "media GC posture", h, nil)), StatusFail, "not a whole number", "between 0 and 100")
+	})
+
+	t.Run("an out-of-range percentage fails", func(t *testing.T) {
+		h := newFakeHost()
+		h.files[filepath.Join(testRoot, "env/production.env")] = healthyEnv + "MEDIA_GC_MAX_ORPHAN_PERCENT=250\n"
+		wantFinding(t, one(t, only(t, "media GC posture", h, nil)), StatusFail, "not a percentage", "between 0 and 100")
+	})
+
+	t.Run("0 and 100 are legal but worth a word", func(t *testing.T) {
+		h := newFakeHost()
+		h.files[filepath.Join(testRoot, "env/production.env")] = healthyEnv + "MEDIA_GC_MAX_ORPHAN_PERCENT=0\n"
+		wantFinding(t, one(t, only(t, "media GC posture", h, nil)), StatusWarn, "reports and never deletes", "Raise it")
+
+		h = newFakeHost()
+		h.files[filepath.Join(testRoot, "env/production.env")] = healthyEnv + "MEDIA_GC_MAX_ORPHAN_PERCENT=100\n"
+		wantFinding(t, one(t, only(t, "media GC posture", h, nil)), StatusWarn, "turns the circuit breaker off", "half-restored database")
+	})
+
+	t.Run("an unreadable env file skips", func(t *testing.T) {
+		h := newFakeHost()
+		delete(h.files, filepath.Join(testRoot, "env/production.env"))
+		wantFinding(t, one(t, only(t, "media GC posture", h, nil)), StatusWarn, "skipped:", "")
+	})
+}

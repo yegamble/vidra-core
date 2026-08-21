@@ -57,7 +57,7 @@ func newS3TestBackend(t *testing.T) *S3 {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := b.EnsureBucket(ctx); err != nil {
+	if _, err := b.EnsureBucket(ctx); err != nil {
 		t.Fatalf("EnsureBucket: %v", err)
 	}
 	return b
@@ -305,5 +305,50 @@ func TestS3ListKeys(t *testing.T) {
 	}
 	if len(empty) != 0 {
 		t.Errorf("ListKeys(missing) = %v, want empty", empty)
+	}
+}
+
+// EnsureBucket has to say whether THIS call made the bucket, because that is the
+// one circumstance in which media GC may claim a store as its own without an
+// operator confirming it. A second call against the same bucket must say no.
+func TestEnsureBucketReportsCreation(t *testing.T) {
+	b := newS3TestBackend(t) // already created the shared test bucket
+	ctx := context.Background()
+	created, err := b.EnsureBucket(ctx)
+	if err != nil {
+		t.Fatalf("EnsureBucket: %v", err)
+	}
+	if created {
+		t.Error("EnsureBucket reported creating a bucket that already existed — that answer would let an install claim somebody else's store")
+	}
+
+	fresh := *b
+	fresh.bucket = fmt.Sprintf("vidra-created-%d", time.Now().UnixNano())
+	t.Cleanup(func() { _ = fresh.client.RemoveBucket(context.Background(), fresh.bucket) })
+	created, err = fresh.EnsureBucket(ctx)
+	if err != nil {
+		t.Fatalf("EnsureBucket on a new bucket: %v", err)
+	}
+	if !created {
+		t.Error("EnsureBucket created a bucket and did not say so")
+	}
+	// A brand-new bucket is empty, which is the other half of the claim rule.
+	empty, err := fresh.IsEmpty(ctx)
+	if err != nil {
+		t.Fatalf("IsEmpty: %v", err)
+	}
+	if !empty {
+		t.Error("a bucket that was just created reported objects in it")
+	}
+	if _, err := fresh.Put(ctx, "web-videos/x.mp4", strings.NewReader("x")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	t.Cleanup(func() { _ = fresh.Delete(context.Background(), "web-videos/x.mp4") })
+	empty, err = fresh.IsEmpty(ctx)
+	if err != nil {
+		t.Fatalf("IsEmpty: %v", err)
+	}
+	if empty {
+		t.Error("a bucket holding an object reported itself empty — that answer would let GC delete somebody else's media")
 	}
 }

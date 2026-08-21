@@ -201,7 +201,10 @@ func buildDestMedia(ctx context.Context, cfg *config.Config) (storage.Backend, e
 		if err != nil {
 			return nil, err
 		}
-		if err := b.EnsureBucket(ctx); err != nil {
+		// The bulk importer writes objects and never garbage-collects, so it has
+		// no use for the "did this call create the bucket" answer the api's
+		// ownership-marker resolution turns on.
+		if _, err := b.EnsureBucket(ctx); err != nil {
 			return nil, err
 		}
 		return b, nil

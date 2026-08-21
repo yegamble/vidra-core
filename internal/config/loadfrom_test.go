@@ -619,3 +619,72 @@ func TestCheckEnvExternalPostgresFollowsTheShellSpellings(t *testing.T) {
 		}
 	}
 }
+
+// The media-GC knobs are the two that decide whether an unattended job may
+// delete an operator's media, so their defaults and their refusals are worth
+// pinning rather than inferring from the parser's generic behaviour.
+func TestMediaGCKnobs(t *testing.T) {
+	load := func(extra map[string]string) (*Config, error) {
+		env := productionCandidate()
+		for k, v := range extra {
+			env[k] = v
+		}
+		return LoadFrom(func(key string) (string, bool) {
+			v, ok := env[key]
+			return v, ok
+		})
+	}
+
+	t.Run("the defaults are on, with the breaker armed", func(t *testing.T) {
+		cfg, err := load(nil)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		if !cfg.MediaGCEnabled {
+			t.Error("MEDIA_GC_ENABLED defaults off; an install that upgrades into this release must keep collecting its orphans")
+		}
+		if cfg.MediaGCMaxOrphanPercent != 25 {
+			t.Errorf("MEDIA_GC_MAX_ORPHAN_PERCENT default = %d, want 25", cfg.MediaGCMaxOrphanPercent)
+		}
+	})
+
+	t.Run("the off switch is honoured", func(t *testing.T) {
+		cfg, err := load(map[string]string{"MEDIA_GC_ENABLED": "false"})
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		if cfg.MediaGCEnabled {
+			t.Error("MEDIA_GC_ENABLED=false was ignored")
+		}
+	})
+
+	t.Run("an out-of-range percentage refuses to boot, named", func(t *testing.T) {
+		for _, bad := range []string{"-1", "101"} {
+			_, err := load(map[string]string{"MEDIA_GC_MAX_ORPHAN_PERCENT": bad})
+			if err == nil {
+				t.Fatalf("MEDIA_GC_MAX_ORPHAN_PERCENT=%s was accepted", bad)
+			}
+			if _, ok := collectVarErrors(err)["MEDIA_GC_MAX_ORPHAN_PERCENT"]; !ok {
+				t.Errorf("MEDIA_GC_MAX_ORPHAN_PERCENT=%s: the error is not attributed to the variable: %v", bad, err)
+			}
+		}
+	})
+
+	t.Run("the boundaries are legal", func(t *testing.T) {
+		for _, ok := range []string{"0", "100"} {
+			if _, err := load(map[string]string{"MEDIA_GC_MAX_ORPHAN_PERCENT": ok}); err != nil {
+				t.Errorf("MEDIA_GC_MAX_ORPHAN_PERCENT=%s was rejected: %v", ok, err)
+			}
+		}
+	})
+
+	t.Run("an unparsable value is attributed to its variable", func(t *testing.T) {
+		_, err := load(map[string]string{"MEDIA_GC_ENABLED": "yes"})
+		if err == nil {
+			t.Fatal("MEDIA_GC_ENABLED=yes was accepted; the api parses booleans with strconv")
+		}
+		if _, ok := collectVarErrors(err)["MEDIA_GC_ENABLED"]; !ok {
+			t.Errorf("the error is not attributed to MEDIA_GC_ENABLED: %v", err)
+		}
+	})
+}

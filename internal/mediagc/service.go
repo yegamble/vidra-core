@@ -3,13 +3,28 @@
 // with no database reference. It NEVER lists or touches an unknown prefix, and a
 // dry run reports what it would delete without deleting anything. It is
 // HTTP-agnostic and testable against any storage backend that can list objects.
+//
+// "No database row references it" is a statement about the database, and it is
+// only evidence about the STORE when the two belong to the same install. Three
+// rails stand between that inference and an irreversible delete, and all of them
+// degrade to a dry run rather than to an error:
+//
+//   - the enable flag (config.MediaGCEnabled), which stops the daily worker from
+//     being started at all;
+//   - the bucket-ownership marker (storage.OwnerMarkerKey), which refuses to
+//     delete from an object store this install has not been shown to own;
+//   - the orphan-ratio circuit breaker, which refuses a sweep that found an
+//     implausible share of what it scanned to be garbage — the shape every
+//     wrong reference set has.
 package mediagc
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 
@@ -21,6 +36,71 @@ import (
 // ErrListingUnsupported means the configured storage backend cannot enumerate
 // objects (no storage.ObjectLister), so garbage collection cannot run.
 var ErrListingUnsupported = errors.New("mediagc: storage backend does not support listing")
+
+// ErrAdoptNotApplicable means AdoptBucket was called on a deployment that has no
+// object store to adopt (the local-disk backend), where ownership is not a
+// question that can be asked.
+var ErrAdoptNotApplicable = errors.New("mediagc: this deployment stores media on local disk, so there is no bucket to adopt")
+
+// ErrNoInstanceIdentity means the marker cannot be written because this process
+// never read its instance identity (the row the identity migration inserts).
+var ErrNoInstanceIdentity = errors.New("mediagc: this process has no instance identity to stamp on the bucket")
+
+// BucketOwnership is the answer to "does the object store I am about to delete
+// from belong to THIS install?", derived from the ownership marker
+// (storage.OwnerMarkerKey) at boot and re-derived by an explicit adoption.
+//
+// It gates DESTRUCTIVE sweeps only. A dry run is always allowed — reporting what
+// would be deleted from a store that is not ours is exactly how an operator
+// finds out it is not ours.
+type BucketOwnership string
+
+const (
+	// OwnershipUnknown is the zero value: nothing has resolved ownership yet.
+	// It forbids deletion on purpose — the failure mode of forgetting to wire
+	// the resolution has to be "GC stops deleting", never "GC deletes anyway".
+	OwnershipUnknown BucketOwnership = "unknown"
+	// OwnershipNotApplicable is the local-disk backend. A storage root is a
+	// directory this install was pointed at and populated itself; there is no
+	// shared-bucket hazard to guard against, and stamping a marker file into
+	// somebody's media directory would be its own surprise. Local is exempt BY
+	// DESIGN, not by omission.
+	OwnershipNotApplicable BucketOwnership = "not-applicable"
+	// OwnershipOwned means the marker holds this install's identity.
+	OwnershipOwned BucketOwnership = "owned"
+	// OwnershipUnowned means there is no marker and the store was not empty, so
+	// somebody's objects are in there and it is not established whose. An
+	// operator resolves it with the adopt-bucket endpoint.
+	OwnershipUnowned BucketOwnership = "unowned"
+	// OwnershipConflict means the marker holds a DIFFERENT install's identity:
+	// another Vidra thinks this bucket is its own. This is the case worth being
+	// loudest about — two installs sweeping one bucket delete each other's media.
+	OwnershipConflict BucketOwnership = "conflict"
+)
+
+// AllowsDelete reports whether a destructive sweep may run in this state.
+func (o BucketOwnership) AllowsDelete() bool {
+	return o == OwnershipOwned || o == OwnershipNotApplicable
+}
+
+// DefaultMaxOrphanPercent mirrors config.Config.MediaGCMaxOrphanPercent's
+// default, for callers that construct a Service without one.
+const DefaultMaxOrphanPercent = 25
+
+// breakerFloor is the orphan count below which the ratio breaker never fires,
+// whatever the percentage says. A brand-new instance with four objects in it and
+// one orphan is at 25%; so is one with 40,000 objects and 10,000 orphans. Only
+// the second is a sweep worth stopping, and a ratio alone cannot tell them
+// apart. Below the floor the sweep is small enough that a wrong answer is
+// recoverable from a backup, which is not true of the case this breaker exists
+// for.
+const breakerFloor = 100
+
+// Mode names for Result.Mode.
+const (
+	ModeDryRun = "dry-run"
+	ModeDelete = "delete"
+)
 
 // Repository is the reference-set data access mediagc needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
@@ -34,28 +114,135 @@ type Repository interface {
 
 // Service runs the media GC sweep over a storage backend.
 type Service struct {
-	repo  Repository
-	blobs storage.Backend
+	repo             Repository
+	blobs            storage.Backend
+	maxOrphanPercent int
+	// identity is this install's instance-identity UUID, the value AdoptBucket
+	// stamps into the ownership marker. Empty when the process could not read it.
+	identity string
+
+	// mu guards ownership alone: it is read by every sweep and rewritten by the
+	// adopt endpoint, from different goroutines.
+	mu        sync.RWMutex
+	ownership BucketOwnership
 }
 
-// NewService builds the media GC service.
-func NewService(repo Repository, blobs storage.Backend) *Service {
-	return &Service{repo: repo, blobs: blobs}
+// Option configures a Service at construction.
+type Option func(*Service)
+
+// WithMaxOrphanPercent sets the circuit-breaker ratio (0–100); out-of-range
+// values are ignored in favour of the default, because config validation is
+// where a bad number gets reported, not here.
+func WithMaxOrphanPercent(pct int) Option {
+	return func(s *Service) {
+		if pct >= 0 && pct <= 100 {
+			s.maxOrphanPercent = pct
+		}
+	}
+}
+
+// WithBucketOwnership sets the ownership state resolved at boot.
+func WithBucketOwnership(o BucketOwnership) Option {
+	return func(s *Service) { s.ownership = o }
+}
+
+// WithInstanceIdentity supplies the UUID AdoptBucket writes into the marker.
+func WithInstanceIdentity(id string) Option {
+	return func(s *Service) { s.identity = strings.TrimSpace(id) }
+}
+
+// NewService builds the media GC service. Ownership defaults to
+// OwnershipNotApplicable for every backend that is not an object store, and to
+// OwnershipUnknown — which forbids deletion — for one that is: a caller that
+// forgets to resolve ownership must lose the ability to delete, not the guard.
+func NewService(repo Repository, blobs storage.Backend, opts ...Option) *Service {
+	s := &Service{
+		repo:             repo,
+		blobs:            blobs,
+		maxOrphanPercent: DefaultMaxOrphanPercent,
+		ownership:        OwnershipNotApplicable,
+	}
+	if _, isObjectStore := blobs.(*storage.S3); isObjectStore {
+		s.ownership = OwnershipUnknown
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// Ownership reports the current bucket-ownership state.
+func (s *Service) Ownership() BucketOwnership {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ownership
+}
+
+// SetOwnership replaces the bucket-ownership state. Boot resolution and the
+// adopt endpoint are its only callers.
+func (s *Service) SetOwnership(o BucketOwnership) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ownership = o
+}
+
+// AdoptBucket claims the object store for this install: it stamps the instance
+// identity into the ownership marker and flips this process's state to owned, so
+// destructive sweeps are allowed from the next one onward. It is the deliberate,
+// audited answer to an unowned or conflicting bucket — deliberately an operator
+// action rather than something boot decides, because the store holds objects
+// whose owner boot cannot establish.
+func (s *Service) AdoptBucket(ctx context.Context) error {
+	if s.Ownership() == OwnershipNotApplicable {
+		return ErrAdoptNotApplicable
+	}
+	if s.identity == "" {
+		return ErrNoInstanceIdentity
+	}
+	if err := storage.WriteOwnerMarker(ctx, s.blobs, s.identity); err != nil {
+		return err
+	}
+	s.SetOwnership(OwnershipOwned)
+	return nil
 }
 
 // Result summarises a sweep. Orphans is the sorted list of unreferenced object
 // keys — the would-delete set in a dry run, the actually-deleted set otherwise
 // (Deleted counts the successful deletes).
 type Result struct {
+	// DryRun and Mode are the same fact twice: the mode the sweep ACTUALLY ran
+	// in, which is not necessarily the one that was asked for. A requested delete
+	// that the ownership gate or the circuit breaker refused reports dry-run, and
+	// ForcedDryRun/BreakerTripped say which of the two refused it.
 	DryRun  bool     `json:"dry_run"`
+	Mode    string   `json:"mode"`
 	Scanned int      `json:"scanned"`
 	Orphans []string `json:"orphans"`
 	Deleted int      `json:"deleted"`
+	// OrphanPercent is len(Orphans) as a whole-number percentage of Scanned
+	// (0 when nothing was scanned) — the figure the breaker compares.
+	OrphanPercent int `json:"orphan_percent"`
+	// BreakerTripped means the orphan ratio was over the configured limit, so a
+	// requested delete deleted nothing. The orphan list is still the full report.
+	BreakerTripped bool `json:"breaker_tripped"`
+	// BucketOwnership is the marker state the sweep ran under, and ForcedDryRun
+	// means that state (not the caller) is why nothing was deleted.
+	BucketOwnership string `json:"bucket_ownership"`
+	ForcedDryRun    bool   `json:"forced_dry_run"`
+}
+
+// Summary is the one-line audit reason for a sweep. It exists once so the daily
+// worker and the admin endpoint cannot drift into describing the same outcome
+// two different ways. It carries counts and states only — never an object key.
+func (r Result) Summary() string {
+	return fmt.Sprintf("mode=%s scanned=%d orphans=%d orphan_pct=%d deleted=%d breaker=%t ownership=%s forced_dry_run=%t",
+		r.Mode, r.Scanned, len(r.Orphans), r.OrphanPercent, r.Deleted, r.BreakerTripped, r.BucketOwnership, r.ForcedDryRun)
 }
 
 // sweptPrefixes are the ONLY prefixes the sweep lists. Anything stored outside
-// them (avatars, banners, resumable-upload chunks, remote thumbnails, …) is
-// never enumerated or deleted here — those are owned by other lifecycles.
+// them (avatars, banners, resumable-upload chunks, remote thumbnails, the
+// ownership marker at storage.OwnerMarkerKey, …) is never enumerated or deleted
+// here — those are owned by other lifecycles.
 var sweptPrefixes = []string{
 	"web-videos",          // originals (video_files)
 	"thumbnails",          // posters (video_files)
@@ -79,10 +266,27 @@ const hlsPrefix = "streaming-playlists"
 // (objects with no DB reference). When dryRun is false it deletes each orphan
 // (best-effort; a per-object delete error is skipped, not fatal). Returns
 // ErrListingUnsupported when the backend cannot list.
+//
+// Two things can turn a requested delete into a dry run, and both report a full
+// orphan list rather than an error, because the operator's next question is
+// always "what would it have deleted?":
+//
+//   - the bucket-ownership gate, which refuses to delete from a store this
+//     install has not been established to own;
+//   - the orphan-ratio circuit breaker, which refuses a sweep that found an
+//     implausible share of the store to be garbage.
 func (s *Service) Sweep(ctx context.Context, dryRun bool) (Result, error) {
 	lister, ok := s.blobs.(storage.ObjectLister)
 	if !ok {
 		return Result{}, ErrListingUnsupported
+	}
+
+	// The ownership gate comes first: it is a decision about the store, made
+	// before a single key is listed.
+	ownership := s.Ownership()
+	forced := false
+	if !dryRun && !ownership.AllowsDelete() {
+		dryRun, forced = true, true
 	}
 
 	refs, err := s.referenceSet(ctx)
@@ -90,7 +294,12 @@ func (s *Service) Sweep(ctx context.Context, dryRun bool) (Result, error) {
 		return Result{}, err
 	}
 
-	res := Result{DryRun: dryRun}
+	res := Result{
+		DryRun:          dryRun,
+		Mode:            modeOf(dryRun),
+		BucketOwnership: string(ownership),
+		ForcedDryRun:    forced,
+	}
 	for _, prefix := range sweptPrefixes {
 		keys, lerr := lister.ListKeys(ctx, prefix)
 		if lerr != nil {
@@ -105,8 +314,18 @@ func (s *Service) Sweep(ctx context.Context, dryRun bool) (Result, error) {
 		}
 	}
 	sort.Strings(res.Orphans)
+	res.OrphanPercent = percentOf(len(res.Orphans), res.Scanned)
 
-	if !dryRun {
+	// The orphan set is final here, which is the only point at which the ratio
+	// is knowable and still the point before anything has been deleted.
+	if !dryRun && s.breakerTrips(len(res.Orphans), res.Scanned) {
+		res.BreakerTripped = true
+		res.DryRun = true
+		res.Mode = ModeDryRun
+		return res, nil
+	}
+
+	if !res.DryRun {
 		for _, key := range res.Orphans {
 			if derr := s.blobs.Delete(ctx, key); derr == nil {
 				res.Deleted++
@@ -114,6 +333,33 @@ func (s *Service) Sweep(ctx context.Context, dryRun bool) (Result, error) {
 		}
 	}
 	return res, nil
+}
+
+// breakerTrips is the ratio guard: an absolute floor first (a handful of orphans
+// is never suspicious, whatever share of a nearly-empty store they are), then
+// the percentage, compared by cross-multiplication so no float rounding decides
+// a deletion.
+func (s *Service) breakerTrips(orphans, scanned int) bool {
+	if orphans <= breakerFloor {
+		return false
+	}
+	return orphans*100 > scanned*s.maxOrphanPercent
+}
+
+// percentOf is the whole-number share, rounded down; 0 objects scanned is 0%
+// rather than a division by zero.
+func percentOf(part, total int) int {
+	if total <= 0 {
+		return 0
+	}
+	return part * 100 / total
+}
+
+func modeOf(dryRun bool) string {
+	if dryRun {
+		return ModeDryRun
+	}
+	return ModeDelete
 }
 
 // refSet is everything the sweep matches listed keys against: exact DB-recorded

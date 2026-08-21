@@ -12106,6 +12106,16 @@ paths:
         delete. Restricted to admins; audited. Returns the scanned count, the
         orphan keys, and the number deleted (0 on a dry run). The daily scheduled
         sweep runs the same collector.
+
+
+        A requested delete can still delete nothing, and that is a 200 with a
+        full orphan list rather than an error: either the bucket-ownership marker
+        does not establish that this instance owns the object store
+        (forced_dry_run, bucket_ownership), or the orphan share of what was
+        scanned exceeded MEDIA_GC_MAX_ORPHAN_PERCENT (breaker_tripped). Deleting
+        from a store whose contents cannot be attributed is the failure this
+        endpoint is built to refuse; POST
+        /api/v1/admin/media/gc/adopt-bucket is the deliberate way out.
       tags: [admin]
       security:
         - bearerAuth: []
@@ -12136,6 +12146,73 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: The storage backend does not support listing (GC unavailable).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/media/gc/adopt-bucket:
+    post:
+      operationId: adminMediaGCAdoptBucket
+      summary: Adopt the configured object store for this instance (admin)
+      description: >-
+        Writes this instance's identity into the object store's ownership marker
+        (`.vidra/owner`), which re-enables DESTRUCTIVE media garbage collection
+        against a bucket the instance could not establish as its own at boot.
+
+
+        A bucket the api created, or one that was empty when the api started, is
+        marked automatically and never needs this. The bucket that does is one
+        that already held objects — a store carried over from a previous install,
+        a bucket shared with something else, or the destination of a migration in
+        progress — and the missing evidence is an operator saying the media is
+        theirs. Calling this asserts exactly that: from the next sweep onward,
+        every object under the swept prefixes with no database row referencing it
+        is deletable.
+
+
+        Idempotent, and it overwrites a marker belonging to a different install,
+        so on a genuinely shared bucket it takes ownership away from the other
+        one. Restricted to admins; audited (admin.media.gc.adopt_bucket).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The marker was written; the instance now owns the store.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaGCAdoptBucketResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            This instance stores media on local disk, so there is no bucket to
+            adopt (local storage is exempt from the ownership marker by design).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The marker could not be written to the object store.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            The instance has no identity to stamp on the bucket (the migrations
+            have not been run against this database).
           content:
             application/json:
               schema:
@@ -17093,10 +17170,28 @@ components:
             deleting anything. Pass false to actually delete the orphans.
     MediaGCResponse:
       type: object
-      required: [dry_run, scanned, orphans, deleted]
+      required:
+        [
+          dry_run,
+          mode,
+          scanned,
+          orphans,
+          deleted,
+          orphan_percent,
+          breaker_tripped,
+          bucket_ownership,
+          forced_dry_run,
+        ]
       properties:
         dry_run:
           type: boolean
+          description: >-
+            Whether the sweep ACTUALLY ran as a dry run, which is not necessarily
+            what was asked for — see forced_dry_run and breaker_tripped.
+        mode:
+          type: string
+          enum: [dry-run, delete]
+          description: The mode the sweep actually ran in; the same fact as dry_run.
         scanned:
           type: integer
           description: Total stored objects listed across the known prefixes.
@@ -17108,6 +17203,46 @@ components:
         deleted:
           type: integer
           description: Number of orphans actually deleted (0 on a dry run).
+        orphan_percent:
+          type: integer
+          description: >-
+            Orphans as a whole-number percentage of scanned (0 when nothing was
+            scanned) — the figure the circuit breaker compares against
+            MEDIA_GC_MAX_ORPHAN_PERCENT.
+        breaker_tripped:
+          type: boolean
+          description: >-
+            True when the orphan share exceeded MEDIA_GC_MAX_ORPHAN_PERCENT, so a
+            requested delete deleted nothing. Only ever set on sweeps of more
+            than 100 orphans — a handful of orphans in a nearly-empty store is a
+            high percentage and not a reason to stop.
+        bucket_ownership:
+          type: string
+          enum: [owned, unowned, conflict, not-applicable, unknown]
+          description: >-
+            Whether the object store is established as this instance's:
+            `owned` (marker matches), `unowned` (no marker and the store was not
+            empty), `conflict` (the marker names a different install),
+            `not-applicable` (local disk, exempt by design), `unknown`
+            (ownership was never resolved). Only `owned` and `not-applicable`
+            permit deletion.
+        forced_dry_run:
+          type: boolean
+          description: >-
+            True when a requested delete was downgraded to a dry run because of
+            bucket_ownership rather than because the caller asked for one.
+    MediaGCAdoptBucketResponse:
+      type: object
+      required: [bucket_ownership, marker_key]
+      properties:
+        bucket_ownership:
+          type: string
+          enum: [owned]
+          description: The ownership state after the adoption.
+        marker_key:
+          type: string
+          description: The object key the ownership marker was written to.
+          example: .vidra/owner
     AdminStats:
       type: object
       description: >-

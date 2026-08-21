@@ -78,6 +78,12 @@ const (
 	ActionVideoCaptionGenerate     = "content.video.caption_generate"
 	ActionChannelDelete            = "content.channel.delete"
 	ActionMediaGC                  = "admin.media.gc"
+	// ActionMediaGCAdoptBucket records an admin claiming the configured object
+	// store for this install — writing the instance identity into the ownership
+	// marker, which re-enables DESTRUCTIVE media garbage collection against a
+	// bucket boot refused to delete from. Reason carries the resulting ownership
+	// state or a failure category only; never the bucket, endpoint or key.
+	ActionMediaGCAdoptBucket = "admin.media.gc.adopt_bucket"
 	// ActionIPFSReconcile records an admin kicking the one-shot IPFS mirror
 	// reconcile/backfill (P19.6): re-arm dead-lettered pins + seed pin intents for
 	// eligible pre-existing public objects. Reason carries only safe counts

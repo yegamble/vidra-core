@@ -1445,9 +1445,12 @@ func (s *Server) routes() {
 		api.DELETE("/playlists/:id/thumbnail", s.handleDeletePlaylistThumbnail, s.requireAuth)
 	}
 
-	// Media garbage collection: admin-triggered sweep of orphaned storage blobs.
+	// Media garbage collection: admin-triggered sweep of orphaned storage blobs,
+	// plus the explicit adoption that re-enables destructive sweeps against a
+	// bucket this install has not been shown to own.
 	if s.mediagcsvc != nil {
 		api.POST("/admin/media/gc", s.handleAdminMediaGC, s.requireAuth, s.requireRole("admin"))
+		api.POST("/admin/media/gc/adopt-bucket", s.handleAdminAdoptBucket, s.requireAuth, s.requireRole("admin"))
 	}
 
 	if s.videosvc != nil && s.transcodesvc != nil {

@@ -105,6 +105,86 @@ credit it — that is configuration which is not running.
 `STORAGE_BACKEND=ipfs` is **not** a valid backend — IPFS is a mirror sidecar, never
 authoritative (it is rejected at config load). See the next section.
 
+## Media garbage collection — the job that deletes
+
+Once a day, one instance lists everything stored under the six media prefixes
+(`web-videos/`, `thumbnails/`, `storyboards/`, `captions/`, `streaming-playlists/`,
+`playlist-thumbnails/`) and **deletes every object no database row references**.
+That is how a deleted video's HLS ladder and a superseded original stop billing.
+It never lists any other prefix — avatars, banners, upload chunks and the
+ownership marker below are owned by other lifecycles and are not enumerated.
+
+The inference it makes is "the database does not reference it, therefore it is
+garbage", and that is only true when the database and the store belong to the same
+install. Four rails stand between that inference and an irreversible delete.
+
+| Rail | What it does |
+|---|---|
+| `MEDIA_GC_ENABLED` (default `true`) | `false` means the daily worker is never started. The admin endpoint stays available — the flag governs the unattended delete, not an operator asking for a sweep. Boot-baked: it is not in the admin settings overlay, deliberately |
+| Dry-run first | The **first sweep of every process lifetime is a dry run**, and it runs ~5 minutes after boot rather than 24 hours later. A misconfiguration that would delete a library shows up in the log and the audit trail during the deploy that introduced it. Deletion starts from the sweep after that |
+| `MEDIA_GC_MAX_ORPHAN_PERCENT` (default `25`) | A destructive sweep that finds more than this share of what it scanned to be orphans deletes **nothing** and says so (`breaker_tripped`). Sweeps of 100 orphans or fewer are exempt whatever the ratio — a nearly-empty store is 100% orphans and that is not news. Every wrong reference set looks the same: a half-restored database, a bucket that is not ours, a migration in flight |
+| Bucket-ownership marker | See below. S3 only |
+
+### Bucket ownership (`.vidra/owner`)
+
+Point Vidra at a bucket that already holds objects — a colleague's, a previous
+install's, the *destination* of a migration in progress — and every object in it
+looks like an orphan. So the api records which install owns a store, in an object
+at `.vidra/owner` holding that install's identity UUID (migration `0105`,
+`instance_identity`; it survives dump-and-restore, which is the point).
+
+At boot the api reads it and resolves one of four states, logged as
+`bucket_ownership` and reported on every sweep:
+
+| State | When | Destructive sweep |
+|---|---|---|
+| `owned` | the marker holds this install's identity | allowed |
+| `owned` (marked now) | the api **created** the bucket, or it was **empty** — nobody else's data can be in it, so the marker is written automatically | allowed |
+| `unowned` | there is no marker and the bucket is **not** empty | refused — forced dry run |
+| `conflict` | the marker holds a **different** install's identity: another Vidra believes this bucket is its own | refused — forced dry run |
+
+`STORAGE_BACKEND=local` is exempt by design (`not-applicable`): a storage root is a
+directory this install was pointed at and filled itself, and there is no shared-store
+hazard to guard against.
+
+A refusal is never an error. The sweep returns the **full orphan list** with
+`forced_dry_run: true` — that list is how an operator works out whose media it is.
+
+**Adopting a bucket.** If the objects really are yours (the usual case: a store
+carried over from a previous install, or one restored from a backup), claim it
+once as an admin:
+
+```bash
+curl -X POST https://<host>/api/v1/admin/media/gc/adopt-bucket \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+That writes the marker and re-enables deletion from the next sweep. It is audited
+(`admin.media.gc.adopt_bucket`). It **overwrites** a marker belonging to another
+install, so on a genuinely shared bucket it takes ownership away from the other
+one — do not adopt your way out of a `conflict` without first working out what the
+other install is.
+
+`vidra doctor` reports both halves: **media GC posture** (Section State, env file
+only) says what the knobs currently mean, and **bucket ownership** (Section Reach)
+says whether the marker is there, with the adopt command as its fix.
+
+### Reading a sweep
+
+Every sweep is audited as `admin.media.gc` with counts and states and no object
+keys, and the daily one logs the same line:
+
+```text
+media gc sweep completed mode=dry-run scanned=4210 orphans=39 orphan_percent=0
+  deleted=0 breaker_tripped=false bucket_ownership=owned forced_dry_run=false
+```
+
+`deleted=0` with `mode=delete` never happens: if nothing was deleted, `mode` is
+`dry-run` and one of `forced_dry_run` (ownership) or `breaker_tripped` (ratio) says
+why. On a **versioned bucket with no non-current-version expiry rule**, a
+successful sweep still reclaims nothing — see the section above; that is a billing
+problem the GC cannot solve.
+
 ## IPFS mirror (pinset) — a distribution surface, not a backup
 
 When `IPFS_ENABLED=true` (`IPFS_API_URL` + `IPFS_GATEWAY_URL` required), the mirror
@@ -366,6 +446,13 @@ find, so running them everywhere duplicates work — and media GC deletes. They 
 gated on a PostgreSQL advisory lock held on a dedicated connection: exactly one
 instance runs them, and the lock is released by the server itself when that
 instance dies. Leadership moves within ~15 seconds.
+
+Media GC additionally carries its own rails — an enable flag, a dry-run-first
+first sweep, an orphan-ratio breaker and the bucket-ownership marker — because
+leadership only decides *how many* instances sweep, not whether the sweep is
+right. See [Media garbage collection](#media-garbage-collection--the-job-that-deletes).
+Each instance spends its own first-sweep dry run, so a leadership move re-arms
+that rail on the new leader.
 
 ### What was actually tested
 

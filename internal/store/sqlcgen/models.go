@@ -306,6 +306,11 @@ type InstanceDocument struct {
 	UpdatedAt time.Time   `json:"updated_at"`
 }
 
+type InstanceIdentity struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type InstanceImage struct {
 	Kind        string    `json:"kind"`
 	StorageKey  string    `json:"storage_key"`
