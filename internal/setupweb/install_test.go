@@ -25,12 +25,12 @@ type sseEvent struct {
 // browser has to be told about.
 func (w *wizard) readSSE(t *testing.T, path string) (int, []sseEvent) {
 	t.Helper()
-	req, err := http.NewRequest("POST", w.ts.URL+path, nil)
+	req, err := http.NewRequest("POST", w.base+path, nil)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
 	req.Header.Set(tokenHeader, w.Token())
-	resp, err := w.ts.Client().Do(req)
+	resp, err := w.client.Do(req)
 	if err != nil {
 		t.Fatalf("POST %s: %v", path, err)
 	}
@@ -216,6 +216,120 @@ func TestOnlyOneInstallRunsAtATime(t *testing.T) {
 	}
 }
 
+// TestASilentInstallDoesNotTripTheIdleTimeout is the SHOULD-FIX from the audit:
+// a deploy's pre-deploy pg_dump can be silent for well past the idle window on a
+// large database, and the browser watching the stream sends nothing while it
+// waits — so a naive idle timer would fire mid-dump, tear the server down,
+// orphan the deploy child and drop the stream with no `done` event.
+func TestASilentInstallDoesNotTripTheIdleTimeout(t *testing.T) {
+	// Not Parallel: it runs on its OWN server with a very short idle window, and
+	// it reasons about wall-clock time.
+	const idle = 60 * time.Millisecond
+	started := make(chan struct{})
+	release := make(chan struct{})
+	w := newRunningWizard(t, func(o *Options) {
+		o.IdleTimeout = idle
+		o.Install = func(_ context.Context, out io.Writer) (int, error) {
+			close(started)
+			// Silent for several idle windows, exactly like a big dump: not one
+			// byte reaches the stream, so the ONLY thing that can keep the wizard
+			// alive is the timer noticing an install is in flight.
+			<-release
+			_, _ = io.WriteString(out, "[deploy] dump finished, deploying\n")
+			return 0, nil
+		}
+	})
+
+	var (
+		events []sseEvent
+		code   int
+		wg     sync.WaitGroup
+	)
+	wg.Add(1)
+	go func() { defer wg.Done(); code, events = w.readSSE(t, "/api/install") }()
+
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the install never started")
+	}
+	// Well past several idle windows with the deploy still silent. If the timer
+	// shut the server down, Done() is closed and the stream is already dead.
+	time.Sleep(6 * idle)
+	select {
+	case <-w.Done():
+		t.Fatal("the idle timer shut the wizard down while a deploy was running")
+	default:
+	}
+	close(release)
+	wg.Wait()
+
+	if code != http.StatusOK {
+		t.Fatalf("install = %d", code)
+	}
+	// And the stream still ended properly: a page waiting for `done` would spin
+	// for ever otherwise.
+	if fin := done(t, events); fin.ExitCode != 0 {
+		t.Errorf("done = %+v, want a clean exit", fin)
+	}
+	if got := lines(events); len(got) == 0 || got[len(got)-1] != "[deploy] dump finished, deploying" {
+		t.Errorf("lines = %q, want the post-dump line last", got)
+	}
+}
+
+// TestASilentInstallStillGetsAHeartbeat proves the other half: a comment frame
+// crosses the stream on the keepalive interval even when the deploy prints
+// nothing, so an intermediary (or the browser's own read timeout) does not give
+// up on a connection it thinks is dead.
+func TestASilentInstallStillGetsAHeartbeat(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	started := make(chan struct{})
+	w := newWizard(t, "", func(o *Options) {
+		o.KeepAlive = 20 * time.Millisecond
+		o.Install = func(_ context.Context, _ io.Writer) (int, error) {
+			close(started)
+			<-release
+			return 0, nil
+		}
+	})
+
+	// Read the RAW bytes: the heartbeat is an SSE comment, which the frame parser
+	// deliberately does not surface as an event.
+	req, err := http.NewRequest("POST", w.base+"/api/install", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set(tokenHeader, w.Token())
+	resp, err := w.client.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	<-started
+	buf := make([]byte, 256)
+	var seen strings.Builder
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := resp.Request.Context().Err(); err != nil {
+			break
+		}
+		n, rerr := resp.Body.Read(buf)
+		seen.Write(buf[:n])
+		if strings.Contains(seen.String(), ": keepalive") {
+			break
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	close(release)
+	if !strings.Contains(seen.String(), ": keepalive") {
+		t.Errorf("no heartbeat comment on a silent install; got %q", seen.String())
+	}
+}
+
 func TestInstallStreamNeedsTheToken(t *testing.T) {
 	t.Parallel()
 	ran := false
@@ -225,11 +339,11 @@ func TestInstallStreamNeedsTheToken(t *testing.T) {
 	// EventSource cannot set a header, which is exactly why the install stream is
 	// a POST the page reads with fetch: an <script>-reachable stream would be a
 	// deploy anyone's page could start.
-	req, err := http.NewRequest("POST", w.ts.URL+"/api/install?t="+w.Token(), nil)
+	req, err := http.NewRequest("POST", w.base+"/api/install?t="+w.Token(), nil)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	resp, err := w.ts.Client().Do(req)
+	resp, err := w.client.Do(req)
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}

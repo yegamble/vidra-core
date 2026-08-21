@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/vidra/vidra-core/internal/setup"
 )
@@ -69,7 +71,31 @@ func (s *Server) handleInstall(w http.ResponseWriter, _ *http.Request) {
 	flush(w)
 
 	stream := &sseWriter{w: w, touch: s.touch}
+
+	// A HEARTBEAT for a deploy that goes quiet. A pre-deploy pg_dump prints
+	// nothing while it runs, and on a large database that is minutes — long
+	// enough for an intermediary (or the browser's own read timeout) to give up
+	// on a connection it thinks is dead, and long enough that WITHOUT this the
+	// idle timer would have to be the only thing keeping the wizard alive. The
+	// comment (`:` line) is invisible to the EventSource parser and to the page,
+	// so it costs nothing but the bytes; touching the idle timer as it goes is
+	// belt to onIdle's braces.
+	stop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(s.keepAlive())
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				stream.keepalive()
+			}
+		}
+	}()
+
 	code, err := s.opt.Install(context.Background(), stream)
+	close(stop)
 	stream.close()
 
 	ev := InstallEvent{ExitCode: code}
@@ -86,6 +112,20 @@ func (s *Server) handleInstall(w http.ResponseWriter, _ *http.Request) {
 	stream.event("done", ev)
 }
 
+// defaultKeepAlive is how often a silent deploy still gets a heartbeat comment
+// on the stream. Set once in New (from Options.KeepAlive, else this) and read
+// only when an install starts — a field rather than a package global so a test
+// can shrink it without racing a parallel test that is streaming its own deploy.
+const defaultKeepAlive = 15 * time.Second
+
+// keepAlive is the interval this server heartbeats a silent install at.
+func (s *Server) keepAlive() time.Duration {
+	if s.opt.KeepAlive > 0 {
+		return s.opt.KeepAlive
+	}
+	return defaultKeepAlive
+}
+
 // sseWriter turns a subprocess's byte stream into one server-sent event per
 // LINE.
 //
@@ -95,8 +135,13 @@ func (s *Server) handleInstall(w http.ResponseWriter, _ *http.Request) {
 // of the next one. The payload is JSON-encoded, which is also what keeps a line
 // containing a newline (or a lone \r from a progress bar) from breaking the
 // event framing.
+//
+// mu serialises writes to w, because the keepalive ticker and the deploy's own
+// output arrive on two goroutines and an interleaved write would split one SSE
+// frame across another.
 type sseWriter struct {
 	w     http.ResponseWriter
+	mu    sync.Mutex
 	buf   bytes.Buffer
 	touch func()
 }
@@ -141,7 +186,23 @@ func (s *sseWriter) event(name string, payload any) {
 	if err != nil {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	_, _ = fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", name, b)
+	flush(s.w)
+}
+
+// keepalive writes an SSE comment — a line that begins with ':' — which every
+// EventSource implementation ignores and which the page never sees. Its only job
+// is to move a byte across a connection that would otherwise look dead, and to
+// keep the idle timer reset while a deploy is producing no output of its own.
+func (s *sseWriter) keepalive() {
+	if s.touch != nil {
+		s.touch()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, _ = fmt.Fprint(s.w, ": keepalive\n\n")
 	flush(s.w)
 }
 

@@ -81,6 +81,12 @@ type Options struct {
 	// command line can reach it.
 	IdleTimeout time.Duration
 
+	// KeepAlive overrides defaultKeepAlive, the interval at which a silent deploy
+	// still heartbeats the install stream; zero means the default. It exists as an
+	// option so a test can shrink it without mutating a shared global, which would
+	// race a parallel test streaming its own install.
+	KeepAlive time.Duration
+
 	// Rand is the entropy behind the one-time token; nil means crypto/rand.
 	Rand io.Reader
 
@@ -294,15 +300,39 @@ func (s *Server) Run(ctx context.Context) error {
 // startIdleTimer arms the inactivity shutdown. A non-positive timeout disables
 // it outright, which is a test affordance: nothing on the command line can
 // produce one.
+//
+// A RUNNING INSTALL IS NEVER IDLE. A deploy's pre-deploy pg_dump can be silent
+// for well past the idle window on a large database, and the browser watching an
+// SSE stream sends nothing while it waits — so a naive timer would fire mid-dump,
+// tear the server down, orphan the deploy child (it outlives the request by
+// design) and drop the stream with no `done` event, leaving an operator staring
+// at a frozen progress log for a deploy that is still running underneath. So the
+// timer re-arms instead of shutting down while s.installing is set; the install
+// keepalive (see sseWriter) is what keeps the timer honest even when the deploy
+// itself is silent.
 func (s *Server) startIdleTimer() {
 	if s.opt.IdleTimeout <= 0 {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.idle = time.AfterFunc(s.opt.IdleTimeout, func() {
-		s.Shutdown(ReasonIdle + s.opt.IdleTimeout.String())
-	})
+	s.idle = time.AfterFunc(s.opt.IdleTimeout, s.onIdle)
+}
+
+// onIdle is the timer's callback. It shuts the wizard down UNLESS a deploy is in
+// flight, in which case it re-arms and waits — an install is activity even when
+// it is producing no output.
+func (s *Server) onIdle() {
+	s.mu.Lock()
+	if s.installing {
+		if s.idle != nil {
+			s.idle.Reset(s.opt.IdleTimeout)
+		}
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	s.Shutdown(ReasonIdle + s.opt.IdleTimeout.String())
 }
 
 // touch resets the inactivity timer. Called from the guard, once a request has

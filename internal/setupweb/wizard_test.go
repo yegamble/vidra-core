@@ -24,13 +24,17 @@ import (
 // commented-out optional key, MAIL_ENABLED=true beside a blank SMTP_HOST.
 const fixtureTemplate = "../setup/testdata/template.env.example"
 
-// wizard is a server on a temp deployment tree.
+// wizard is a server on a temp deployment tree. base and client are how the
+// call helpers reach it — filled either from an httptest.Server (newWizard) or
+// from the server's own running listener (newRunningWizard), so the same helpers
+// drive both.
 type wizard struct {
 	*Server
-	ts   *httptest.Server
-	dir  string
-	out  string
-	opts Options
+	base   string
+	client *http.Client
+	dir    string
+	out    string
+	opts   Options
 }
 
 func newWizard(t *testing.T, existing string, mutate func(*Options)) *wizard {
@@ -68,7 +72,47 @@ func newWizard(t *testing.T, existing string, mutate func(*Options)) *wizard {
 	}
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-	return &wizard{Server: s, ts: ts, dir: dir, out: out, opts: opt}
+	return &wizard{Server: s, base: ts.URL, client: ts.Client(), dir: dir, out: out, opts: opt}
+}
+
+// runningWizard is a wizard on its OWN Run loop, not an httptest wrapper around
+// the handler — so the idle timer, which Run arms, is actually ticking. It is
+// what the idle-versus-install tests need: the interplay between the timer and a
+// live deploy is a property of the running server, and an httptest server never
+// starts the timer at all.
+func newRunningWizard(t *testing.T, mutate func(*Options)) *wizard {
+	t.Helper()
+	dir := t.TempDir()
+	tmpl := filepath.Join(dir, "production.env.example")
+	b, err := os.ReadFile(fixtureTemplate)
+	if err != nil {
+		t.Fatalf("read %s: %v", fixtureTemplate, err)
+	}
+	if err := os.WriteFile(tmpl, b, 0o644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+	out := filepath.Join(dir, "production.env")
+	opt := Options{
+		Listen:        "127.0.0.1:0",
+		TemplatePath:  tmpl,
+		OutputPath:    out,
+		CaddyOutPath:  filepath.Join(dir, "Caddyfile.local"),
+		NginxOutPath:  filepath.Join(dir, "nginx-external.conf.example"),
+		DeployCommand: "vidra deploy",
+	}
+	if mutate != nil {
+		mutate(&opt)
+	}
+	s, err := New(opt)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := s.Listen(); err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	go func() { _ = s.Run(context.Background()) }()
+	t.Cleanup(func() { s.Shutdown("test over") })
+	return &wizard{Server: s, base: "http://" + s.Addr(), client: &http.Client{}, dir: dir, out: out, opts: opt}
 }
 
 // call is an authenticated request, the way the page makes them.
@@ -82,7 +126,7 @@ func (w *wizard) call(t *testing.T, method, path string, body any) (int, []byte)
 		}
 		rdr = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, w.ts.URL+path, rdr)
+	req, err := http.NewRequest(method, w.base+path, rdr)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
@@ -90,7 +134,7 @@ func (w *wizard) call(t *testing.T, method, path string, body any) (int, []byte)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := w.ts.Client().Do(req)
+	resp, err := w.client.Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
