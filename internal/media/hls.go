@@ -297,11 +297,22 @@ func (o output) dest(rel string) string {
 
 // muxerArgs are the extra per-output options an HTTP destination needs. They
 // must precede the output filename.
+//
+// -http_persistent is deliberately OFF. Reusing one connection for the whole
+// ladder puts every write in a single queue: an HTTP server handles a
+// connection's requests in order, so each segment's store must finish before the
+// muxer's next request is even read. Against a real object store that serialises
+// the encode behind Put latency, and it strands the muxer's LAST write — the
+// final playlist rewrite, which ffmpeg pushes out and then exits without waiting
+// for. Queued behind an unfinished segment store, that request is still unread
+// in the socket when the process is gone: the sink cannot see it, cannot wait
+// for it, and Flush writes a ladder with no playlist. A connection per object
+// costs a loopback handshake and removes the queue entirely.
 func (o output) muxerArgs() []string {
 	if o.sink == nil {
 		return nil
 	}
-	return []string{"-method", "PUT", "-http_persistent", "1"}
+	return []string{"-method", "PUT", "-http_persistent", "0"}
 }
 
 // hlsFlags adapts an -hls_flags value to the destination. Over HTTP the muxer's
