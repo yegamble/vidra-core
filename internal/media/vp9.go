@@ -20,10 +20,10 @@ const WebMContentType = "video/webm"
 // rather than an HLS variant — see .ralph/specs/storage-layout.md. Pure (no
 // exec) so it is unit-testable. The audio map is optional ("0:a:0?") so silent
 // sources still encode.
-func vp9WebMArgs(src, dst string, r HLSRung) []string {
-	return []string{
-		"-y",
-		"-i", src,
+func vp9WebMArgs(src source, dst string, r HLSRung) []string {
+	args := []string{"-y"}
+	args = append(args, src.inputArgs()...)
+	return append(args,
 		"-map", "0:v:0",
 		"-map", "0:a:0?",
 		"-c:v", "libvpx-vp9",
@@ -39,7 +39,7 @@ func vp9WebMArgs(src, dst string, r HLSRung) []string {
 		"-ac", "2",
 		"-f", "webm",
 		dst,
-	}
+	)
 }
 
 // VP9WebMKey is the storage key for a video's progressive VP9/WebM alternate,
@@ -54,12 +54,24 @@ func VP9WebMKey(videoID uuid.UUID) string {
 // TRANSCODING_VP9_ENABLED.
 func (t *HLSTranscoder) SetVP9(enabled bool) { t.vp9 = enabled }
 
+// SetStreamOutput makes the HLS ladder write straight into the blob store
+// through a loopback blobsink, so segments never land on scratch. Off by
+// default; cmd/api enables it from TRANSCODING_STREAM_OUTPUT.
+//
+// This is a deliberate trade, not a free win. Peak scratch for the ladder drops
+// to roughly zero, but the pipeline reads its own output back to build the
+// progressive downloads and to probe the trick-play codec, so those reads become
+// object-store range requests. Worth it where scratch is scarce and egress is
+// cheap or free (a Backblaze B2 bucket fronted by a Bandwidth Alliance CDN);
+// not worth it where egress is metered and disk is plentiful.
+func (t *HLSTranscoder) SetStreamOutput(enabled bool) { t.streamOutput = enabled }
+
 // encodeVP9 renders the progressive VP9/WebM alternate for src (a local path)
 // at the top rung, stores it at <hlsPrefix>/vp9.webm (the same generation
 // directory as the HLS tree it accompanies — W14), and returns the stored key
 // and byte size. Best-effort at the call site: a failure must not fail the HLS
 // transcode.
-func (t *HLSTranscoder) encodeVP9(ctx context.Context, videoID uuid.UUID, hlsPrefix, src string, top HLSRung) (key string, size int64, err error) {
+func (t *HLSTranscoder) encodeVP9(ctx context.Context, videoID uuid.UUID, hlsPrefix string, src source, top HLSRung) (key string, size int64, err error) {
 	out, err := os.CreateTemp("", "vidra-vp9-*.webm")
 	if err != nil {
 		return "", 0, err

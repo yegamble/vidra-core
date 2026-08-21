@@ -3,12 +3,14 @@ package media
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/vidra/vidra-core/internal/storage"
 )
@@ -37,31 +39,149 @@ func DetectFFProbe(blobs storage.Backend) (*FFProbe, bool) {
 	return NewFFProbe(blobs), true
 }
 
-// Probe runs ffprobe against the object at key and returns its metadata.
+// Probe runs ffprobe against the object at key and returns its metadata. On a
+// backend that can presign, ffprobe reads the object over HTTP with range
+// requests — it needs the header and a little stream data, not the whole file,
+// so this is a few KiB instead of a full download to a temp file.
 func (f *FFProbe) Probe(ctx context.Context, key string) (Metadata, error) {
-	path, cleanup, err := objectPath(ctx, f.blobs, key)
+	src, cleanup, err := openSource(ctx, f.blobs, key)
 	if err != nil {
 		return Metadata{}, err
 	}
 	defer cleanup()
 
-	cmd := exec.CommandContext(ctx, f.bin,
-		"-v", "error",
-		"-print_format", "json",
-		"-show_format",
-		"-show_streams",
-		path,
-	)
+	cmd := exec.CommandContext(ctx, f.bin, ffprobeArgs(src)...)
 	out, err := cmd.Output()
 	if err != nil {
-		return Metadata{}, fmt.Errorf("media: ffprobe %q: %w", key, err)
+		// err may carry ffprobe's stderr, which echoes the input URL — and a
+		// presigned URL is a credential. Report the key, never the source.
+		return Metadata{}, fmt.Errorf("media: ffprobe %q failed: %w", key, redactSource(src, err))
 	}
 	return parseFFProbe(out)
 }
 
-// objectPath returns a filesystem path an external tool can read for key. When
-// the backend exposes paths directly (local) it is used in place; otherwise the
-// object is streamed to a temp file. The returned cleanup removes any temp file.
+// ffprobeArgs builds the ffprobe argument vector reading src. ffprobe takes its
+// input positionally, so protocol options precede the bare input value (there is
+// no -i). Pure (no exec) so it is unit-testable.
+func ffprobeArgs(src source) []string {
+	args := []string{
+		"-v", "error",
+		"-print_format", "json",
+		"-show_format",
+		"-show_streams",
+	}
+	args = append(args, src.opts...)
+	return append(args, src.arg)
+}
+
+// source is a resolved ffmpeg/ffprobe input for a stored object: the value to
+// pass after -i, plus any protocol options that must precede it. A local path
+// renders exactly "-i <path>", so local behaviour is byte-identical to the
+// pre-remote form.
+type source struct {
+	// arg is the value passed after -i: a filesystem path or a URL.
+	arg string
+	// opts are protocol options that must precede -i (empty for a local path).
+	opts []string
+	// remote reports whether arg is a presigned URL. Such a URL carries a
+	// signature and is a credential for the object — it must never be logged,
+	// traced, or put in an error message.
+	remote bool
+}
+
+// localSource is an input already present on the filesystem.
+func localSource(path string) source { return source{arg: path} }
+
+// redactSource strips a presigned source URL out of an error. ffmpeg and ffprobe
+// echo the input they were given in their diagnostics, so an error from a remote
+// source can carry the signature. Local paths are safe and pass through.
+func redactSource(s source, err error) error {
+	if err == nil || !s.remote || s.arg == "" {
+		return err
+	}
+	msg := strings.ReplaceAll(err.Error(), s.arg, "<presigned source url>")
+	return errors.New(msg)
+}
+
+// inputArgs renders the "<opts...> -i <arg>" fragment that opens this source.
+func (s source) inputArgs() []string {
+	out := make([]string, 0, len(s.opts)+2)
+	out = append(out, s.opts...)
+	return append(out, "-i", s.arg)
+}
+
+// remoteSourceTTL is how long a presigned source URL stays valid. It must
+// comfortably outlast the longest single encode that reads it: ffmpeg holds the
+// URL for the whole run and re-requests ranges (and reconnects) throughout, so a
+// URL that expires mid-encode fails the job near the end, which is the most
+// expensive moment to fail.
+const remoteSourceTTL = 6 * time.Hour
+
+// httpSourceOpts are the ffmpeg http protocol options a remote source needs.
+// Without them a multi-hour read of a remote object is fragile: a single
+// transient TCP reset ends the encode.
+//
+//   - seekable 1        — the store serves Range requests; don't rely on probing
+//   - multiple_requests — reuse one connection across the many range requests a
+//     demuxer makes, instead of a fresh TLS handshake each time
+//   - reconnect*        — survive transient network and TLS errors mid-read
+//   - rw_timeout        — 30s (microseconds), so a hung socket fails rather than
+//     wedging the worker for the job's lifetime
+var httpSourceOpts = []string{
+	"-seekable", "1",
+	"-multiple_requests", "1",
+	"-reconnect", "1",
+	"-reconnect_streamed", "1",
+	"-reconnect_on_network_error", "1",
+	"-reconnect_delay_max", "30",
+	"-rw_timeout", "30000000",
+}
+
+// openSource resolves key to something an external tool can read, preferring in
+// order:
+//
+//  1. a local filesystem path, when the backend exposes one (the local backend);
+//  2. a presigned URL ffmpeg reads directly over HTTP, when the backend can mint
+//     one (the S3 backend) — the object never touches this instance's disk;
+//  3. a full download to a temp file, for any backend that can do neither.
+//
+// Option 2 is the difference between a transcode staging the whole original
+// locally and streaming it: on S3 the download fallback wrote a complete copy of
+// the source per tool invocation.
+//
+// The returned cleanup removes any temp file and is always safe to call.
+//
+// Note on exposure: a presigned URL passed in argv is visible in the process
+// list to a local user on the host. It is read-only, scoped to one object, and
+// time-limited, which is an acceptable trade for not staging every original on
+// local disk — but it is a trade, not a free win.
+func openSource(ctx context.Context, blobs storage.Backend, key string) (source, func(), error) {
+	if pp, ok := blobs.(storage.PathProvider); ok {
+		p, err := pp.Path(key)
+		if err != nil {
+			return source{}, func() {}, err
+		}
+		return localSource(p), func() {}, nil
+	}
+
+	if pr, ok := blobs.(storage.Presigner); ok {
+		// A presign failure is not fatal: fall through to the download path so a
+		// misconfigured or unsupported store still transcodes, just less leanly.
+		if u, err := pr.PresignGet(ctx, key, remoteSourceTTL); err == nil {
+			return source{arg: u, opts: httpSourceOpts, remote: true}, func() {}, nil
+		}
+	}
+
+	path, cleanup, err := downloadToTemp(ctx, blobs, key)
+	if err != nil {
+		return source{}, func() {}, err
+	}
+	return localSource(path), cleanup, nil
+}
+
+// objectPath returns a filesystem path an external tool can read for key. It is
+// the path-or-download resolver, kept for tools that genuinely need a seekable
+// local FILE rather than any readable input. Prefer openSource.
 func objectPath(ctx context.Context, blobs storage.Backend, key string) (string, func(), error) {
 	if pp, ok := blobs.(storage.PathProvider); ok {
 		p, err := pp.Path(key)
@@ -70,7 +190,12 @@ func objectPath(ctx context.Context, blobs storage.Backend, key string) (string,
 		}
 		return p, func() {}, nil
 	}
+	return downloadToTemp(ctx, blobs, key)
+}
 
+// downloadToTemp streams the object at key to a temp file and returns its path
+// plus a cleanup that removes it.
+func downloadToTemp(ctx context.Context, blobs storage.Backend, key string) (string, func(), error) {
 	rc, err := blobs.Open(ctx, key)
 	if err != nil {
 		return "", func() {}, err

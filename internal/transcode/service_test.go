@@ -221,19 +221,29 @@ type fakeTranscoder struct {
 }
 
 type fakeTargetTranscoder struct {
-	hlsResult media.HLSResult
-	webResult []media.WebVideoResult
-	hlsErr    error
-	webErr    error
-	hlsCalls  []string
-	webCalls  []string
+	hlsResult  media.HLSResult
+	webResult  []media.WebVideoResult
+	hlsErr     error
+	webErr     error
+	probeErr   error
+	hlsCalls   []string
+	webCalls   []string
+	probeCalls []string
 }
 
 func (f *fakeTargetTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, sourceKey string) (media.HLSResult, error) {
-	return f.TranscodeHLS(ctx, videoID, sourceKey, nil)
+	return f.TranscodeHLS(ctx, videoID, sourceKey, media.Metadata{}, nil)
 }
 
-func (f *fakeTargetTranscoder) TranscodeHLS(_ context.Context, _ uuid.UUID, sourceKey string, progress media.ProgressFunc) (media.HLSResult, error) {
+func (f *fakeTargetTranscoder) Probe(_ context.Context, sourceKey string) (media.Metadata, error) {
+	f.probeCalls = append(f.probeCalls, sourceKey)
+	if f.probeErr != nil {
+		return media.Metadata{}, f.probeErr
+	}
+	return media.Metadata{DurationSeconds: 120, Width: 1280, Height: 720, FPS: 30}, nil
+}
+
+func (f *fakeTargetTranscoder) TranscodeHLS(_ context.Context, _ uuid.UUID, sourceKey string, _ media.Metadata, progress media.ProgressFunc) (media.HLSResult, error) {
 	f.hlsCalls = append(f.hlsCalls, sourceKey)
 	if progress != nil {
 		progress(media.TranscodeProgress{Format: media.TranscodeFormatHLS, Height: 720, Width: 1280, State: media.ProgressRunning, Stage: "encoding", Percent: 42})
@@ -246,7 +256,7 @@ func (f *fakeTargetTranscoder) TranscodeHLS(_ context.Context, _ uuid.UUID, sour
 	return f.hlsResult, f.hlsErr
 }
 
-func (f *fakeTargetTranscoder) TranscodeWebVideos(_ context.Context, _ uuid.UUID, sourceKey string, progress media.ProgressFunc) ([]media.WebVideoResult, error) {
+func (f *fakeTargetTranscoder) TranscodeWebVideos(_ context.Context, _ uuid.UUID, sourceKey string, _ media.Metadata, progress media.ProgressFunc) ([]media.WebVideoResult, error) {
 	f.webCalls = append(f.webCalls, sourceKey)
 	if progress != nil {
 		progress(media.TranscodeProgress{Format: media.TranscodeFormatWebVideo, Height: 720, Width: 1280, State: media.ProgressRunning, Stage: "encoding", Percent: 63})
@@ -361,6 +371,55 @@ func TestDrainJobsNoWebMWhenAbsent(t *testing.T) {
 	}
 	if len(repo.videoFiles[videoID]) != 0 {
 		t.Errorf("stored webm video_file when VP9 was off: %+v", repo.videoFiles[videoID])
+	}
+}
+
+// TestJobProbesSourceOnce pins the shared-probe contract: an 'all' job runs two
+// encode targets against one source and must read its metadata exactly once. On
+// a backend with no local paths a probe streams the entire source to a temp
+// file, so a per-target probe costs a full extra download of the original.
+func TestJobProbesSourceOnce(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	originalKey := "web-videos/" + videoID.String() + ".mp4"
+	tc := &fakeTargetTranscoder{
+		hlsResult: media.HLSResult{MasterKey: "streaming-playlists/" + videoID.String() + "/master.m3u8"},
+		webResult: []media.WebVideoResult{
+			{Height: 720, Width: 1280, StorageKey: "web-videos/" + videoID.String() + "/720p.mp4", SizeBytes: 4096},
+		},
+	}
+	svc := NewService(repo, tc)
+
+	if err := svc.EnqueueTarget(context.Background(), videoID, originalKey, TargetAll); err != nil {
+		t.Fatalf("EnqueueTarget: %v", err)
+	}
+	if n, err := svc.DrainJobs(context.Background(), 1); err != nil || n != 1 {
+		t.Fatalf("DrainJobs = (%d, %v), want (1, nil)", n, err)
+	}
+	if len(tc.probeCalls) != 1 || tc.probeCalls[0] != originalKey {
+		t.Errorf("probe calls = %v, want exactly one against the retained original", tc.probeCalls)
+	}
+	if len(tc.hlsCalls) != 1 || len(tc.webCalls) != 1 {
+		t.Errorf("target calls HLS=%v Web=%v, want each exactly once", tc.hlsCalls, tc.webCalls)
+	}
+}
+
+// TestProbeFailureFailsJobWithoutEncoding proves an unreadable source is a job
+// failure, not a silent encode against zero dimensions.
+func TestProbeFailureFailsJobWithoutEncoding(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	tc := &fakeTargetTranscoder{probeErr: errors.New("source unreadable")}
+	svc := NewService(repo, tc)
+
+	if err := svc.EnqueueTarget(context.Background(), videoID, "web-videos/x.mp4", TargetAll); err != nil {
+		t.Fatalf("EnqueueTarget: %v", err)
+	}
+	if n, err := svc.DrainJobs(context.Background(), 1); err != nil || n != 0 {
+		t.Fatalf("DrainJobs = (%d, %v), want (0, nil) for a failed job", n, err)
+	}
+	if len(tc.hlsCalls) != 0 || len(tc.webCalls) != 0 {
+		t.Errorf("encoded despite an unreadable source: HLS=%v Web=%v", tc.hlsCalls, tc.webCalls)
 	}
 }
 

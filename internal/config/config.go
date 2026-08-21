@@ -190,6 +190,17 @@ type Config struct {
 	// Only meaningful with TranscodingEnabled. Default false.
 	TranscodingVP9Enabled bool
 
+	// TranscodingStreamOutput writes the HLS ladder straight into the blob store
+	// through a loopback signing sidecar instead of staging it on scratch and
+	// uploading afterwards. Peak transcode disk drops to roughly the progressive
+	// MP4s alone, but the pipeline reads its own output back to build those
+	// downloads, so those reads become object-store range requests: this trades
+	// scratch disk for egress. Default false — right for a small-disk host with
+	// cheap or CDN-fronted egress (Backblaze B2 via the Bandwidth Alliance),
+	// wrong where egress is metered and disk is plentiful. Only meaningful with
+	// TranscodingEnabled and a non-local storage backend.
+	TranscodingStreamOutput bool
+
 	// TranscodingAV1Enabled is accepted only as false: AV1 transcoding is
 	// deferred (see fix_plan P6.3, mirrors the IPFS-storage defer). Setting it
 	// true fails config validation with a documented defer note.
@@ -690,6 +701,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		MalwareScanMode:                getEnv("MALWARE_SCAN_MODE", "fail-closed"),
 		TranscodingEnabled:             p.Bool("TRANSCODING_ENABLED", true),
 		TranscodingVP9Enabled:          p.Bool("TRANSCODING_VP9_ENABLED", false),
+		TranscodingStreamOutput:        p.Bool("TRANSCODING_STREAM_OUTPUT", false),
 		TranscodingAV1Enabled:          p.Bool("TRANSCODING_AV1_ENABLED", false),
 		TranscodeHoldTimeout:           p.Duration("TRANSCODE_HOLD_TIMEOUT", 12*time.Hour),
 		WhisperEnabled:                 p.Bool("WHISPER_ENABLED", false),

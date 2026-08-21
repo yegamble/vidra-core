@@ -39,7 +39,7 @@ func DetectThumbnailer(blobs storage.Backend) (*Thumbnailer, bool) {
 // Thumbnail produces a JPEG poster for the media at key. durationSeconds (0 if
 // unknown) hints which frame to grab.
 func (t *Thumbnailer) Thumbnail(ctx context.Context, key string, durationSeconds int) ([]byte, error) {
-	src, cleanup, err := objectPath(ctx, t.blobs, key)
+	src, cleanup, err := openSource(ctx, t.blobs, key)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func (t *Thumbnailer) Thumbnail(ctx context.Context, key string, durationSeconds
 // bounding atSeconds against the media duration; a timestamp at/after the last
 // frame yields an empty output, reported as an error.
 func (t *Thumbnailer) ThumbnailAt(ctx context.Context, key string, atSeconds float64) ([]byte, error) {
-	src, cleanup, err := objectPath(ctx, t.blobs, key)
+	src, cleanup, err := openSource(ctx, t.blobs, key)
 	if err != nil {
 		return nil, err
 	}
@@ -113,16 +113,15 @@ func thumbnailSeekSeconds(durationSeconds int) int {
 
 // thumbnailArgs builds the ffmpeg argument vector to extract one scaled JPEG
 // frame. Pure (no exec) so it is unit-testable.
-func thumbnailArgs(src, dst string, seekSeconds int) []string {
-	return []string{
-		"-y",
-		"-ss", strconv.Itoa(seekSeconds),
-		"-i", src,
+func thumbnailArgs(src source, dst string, seekSeconds int) []string {
+	args := []string{"-y", "-ss", strconv.Itoa(seekSeconds)}
+	args = append(args, src.inputArgs()...)
+	return append(args,
 		"-frames:v", "1",
 		"-vf", fmt.Sprintf("scale=%d:-2", thumbnailWidth),
 		"-q:v", "3",
 		dst,
-	}
+	)
 }
 
 // thumbnailAtArgs builds the ffmpeg argument vector to extract one scaled JPEG
@@ -130,14 +129,13 @@ func thumbnailArgs(src, dst string, seekSeconds int) []string {
 // unit-testable; mirrors thumbnailArgs but seeks to a caller-chosen time. The
 // timestamp is formatted with the shortest exact decimal (e.g. 5, 5.5), never in
 // scientific notation, so ffmpeg always reads a plain seconds value.
-func thumbnailAtArgs(src, dst string, atSeconds float64) []string {
-	return []string{
-		"-y",
-		"-ss", strconv.FormatFloat(atSeconds, 'f', -1, 64),
-		"-i", src,
+func thumbnailAtArgs(src source, dst string, atSeconds float64) []string {
+	args := []string{"-y", "-ss", strconv.FormatFloat(atSeconds, 'f', -1, 64)}
+	args = append(args, src.inputArgs()...)
+	return append(args,
 		"-frames:v", "1",
 		"-vf", fmt.Sprintf("scale=%d:-2", thumbnailWidth),
 		"-q:v", "3",
 		dst,
-	}
+	)
 }
