@@ -39,6 +39,16 @@
 // billable hidden version). Playlists are therefore buffered in memory and
 // written once, when the caller calls Flush after ffmpeg exits. Segments, which
 // are written once and never rewritten, stream straight through.
+//
+// # Completion
+//
+// ffmpeg exiting does not mean its writes are durable. The muxer closes its
+// socket without waiting for the response to its last PUT, so a handler can
+// still be streaming that body into the backend after the process is gone.
+// Flush is therefore a barrier: it returns only once every PUT the sink accepted
+// has finished, which is what lets the pipeline read its own output back, total
+// a rendition with BytesUnder, and trust Err. Close is a barrier too, so no
+// goroutine touches the backend after it returns.
 package blobsink
 
 import (
@@ -83,6 +93,10 @@ type Sink struct {
 	stored map[string]int64
 	err    error
 	done   chan struct{}
+	// inflight counts accepted PUTs whose handler has not returned, and idle
+	// signals when that reaches zero. Flush and Close wait on it.
+	inflight int
+	idle     *sync.Cond
 }
 
 // Backend is the subset of storage.Backend a Sink needs. Narrowed so the
@@ -121,6 +135,7 @@ func New(backend Backend, prefix string) (*Sink, error) {
 		stored:    map[string]int64{},
 		done:      make(chan struct{}),
 	}
+	s.idle = sync.NewCond(&s.mu)
 	s.srv = &http.Server{
 		Handler:           http.HandlerFunc(s.handle),
 		ReadHeaderTimeout: 30 * time.Second,
@@ -224,9 +239,25 @@ func (s *Sink) Replace(ctx context.Context, rel string, body []byte) error {
 	return nil
 }
 
+// drain blocks until no accepted PUT is still being written to the backend.
+func (s *Sink) drain() {
+	s.mu.Lock()
+	for s.inflight > 0 {
+		s.idle.Wait()
+	}
+	s.mu.Unlock()
+}
+
 // Flush writes every coalesced playlist to the backend. Call it once the encoder
 // has exited and the playlists are final.
+//
+// It first waits for any segment PUT still in flight, because ffmpeg's exit is
+// not proof its last write landed: the muxer abandons the connection without
+// reading the response. Without that wait the pipeline resumes on a partially
+// written tree — the remux reads the ladder back and can 404 on a segment, and a
+// store failure raised by a late handler is missed by the Err check.
 func (s *Sink) Flush(ctx context.Context) error {
+	s.drain()
 	s.mu.Lock()
 	pending := s.coalesced
 	s.coalesced = map[string][]byte{}
@@ -248,9 +279,15 @@ func (s *Sink) Flush(ctx context.Context) error {
 }
 
 // Close shuts the listener down. It does not flush; call Flush first.
+//
+// It returns only once every handler has unwound, so nothing writes to the
+// backend behind the caller's back. Closing the server first cancels those
+// requests' contexts, so a store in progress fails fast instead of holding
+// Close open.
 func (s *Sink) Close() error {
 	err := s.srv.Close()
 	<-s.done
+	s.drain()
 	return err
 }
 
@@ -302,6 +339,19 @@ func (s *Sink) handle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Sink) put(w http.ResponseWriter, r *http.Request, key string) {
+	// Counted for the whole handler, not just the store: the write is only
+	// observable to the caller once this returns.
+	s.mu.Lock()
+	s.inflight++
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.inflight--
+		if s.inflight == 0 {
+			s.idle.Broadcast()
+		}
+		s.mu.Unlock()
+	}()
 	defer func() { _, _ = io.Copy(io.Discard, r.Body) }()
 
 	if isCoalesced(key) {
