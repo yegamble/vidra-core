@@ -710,7 +710,7 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 	}); err != nil {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
 	}
-	size, err := s.blobs.Put(ctx, key, in.Reader)
+	size, sum, err := storage.PutSizedHashed(ctx, s.blobs, key, in.Reader, storage.SizeUnknown)
 	if err != nil {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
 	}
@@ -721,6 +721,7 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 		ContentType:  strings.TrimSpace(in.ContentType),
 		OriginalName: strings.TrimSpace(in.Filename),
 		SizeBytes:    size,
+		Sha256:       sum,
 	})
 	if err != nil {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
@@ -797,7 +798,7 @@ func (s *Service) ReplaceSource(ctx context.Context, actorID, videoID uuid.UUID,
 		version = media.OriginalKeyVersion(cur.StorageKey) + 1
 	}
 	key := media.OriginalVideoKey(videoID, version, ext)
-	size, err := s.blobs.Put(ctx, key, in.Reader)
+	size, sum, err := storage.PutSizedHashed(ctx, s.blobs, key, in.Reader, storage.SizeUnknown)
 	if err != nil {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
 	}
@@ -856,6 +857,7 @@ func (s *Service) ReplaceSource(ctx context.Context, actorID, videoID uuid.UUID,
 		ContentType:  strings.TrimSpace(in.ContentType),
 		OriginalName: strings.TrimSpace(in.Filename),
 		SizeBytes:    size,
+		Sha256:       sum,
 	})
 	if err != nil {
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
@@ -1315,7 +1317,8 @@ func (s *Service) generateThumbnail(ctx context.Context, videoID uuid.UUID, orig
 		return
 	}
 	key := thumbnailKey(videoID)
-	if _, err := s.blobs.Put(ctx, key, bytes.NewReader(jpg)); err != nil {
+	_, sum, err := storage.PutSizedHashed(ctx, s.blobs, key, bytes.NewReader(jpg), int64(len(jpg)))
+	if err != nil {
 		return
 	}
 	_ = s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{VideoID: videoID, Kind: "thumbnail"})
@@ -1326,6 +1329,7 @@ func (s *Service) generateThumbnail(ctx context.Context, videoID uuid.UUID, orig
 		ContentType:  "image/jpeg",
 		OriginalName: "thumbnail.jpg",
 		SizeBytes:    int64(len(jpg)),
+		Sha256:       sum,
 	})
 }
 
@@ -1350,10 +1354,12 @@ func (s *Service) generateStoryboard(ctx context.Context, videoID uuid.UUID, ori
 	}
 	jpgKey := media.StoryboardKeyJPG(videoID)
 	vttKey := media.StoryboardKeyVTT(videoID)
-	if _, err := s.blobs.Put(ctx, jpgKey, bytes.NewReader(sprite)); err != nil {
+	_, spriteSum, err := storage.PutSizedHashed(ctx, s.blobs, jpgKey, bytes.NewReader(sprite), int64(len(sprite)))
+	if err != nil {
 		return
 	}
-	if _, err := s.blobs.Put(ctx, vttKey, bytes.NewReader(vtt)); err != nil {
+	_, vttSum, err := storage.PutSizedHashed(ctx, s.blobs, vttKey, bytes.NewReader(vtt), int64(len(vtt)))
+	if err != nil {
 		return
 	}
 	_ = s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{VideoID: videoID, Kind: "storyboard"})
@@ -1365,6 +1371,7 @@ func (s *Service) generateStoryboard(ctx context.Context, videoID uuid.UUID, ori
 		ContentType:  "image/jpeg",
 		OriginalName: "storyboard.jpg",
 		SizeBytes:    int64(len(sprite)),
+		Sha256:       spriteSum,
 	})
 	_, _ = s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
 		VideoID:      videoID,
@@ -1373,6 +1380,7 @@ func (s *Service) generateStoryboard(ctx context.Context, videoID uuid.UUID, ori
 		ContentType:  "text/vtt",
 		OriginalName: "storyboard.vtt",
 		SizeBytes:    int64(len(vtt)),
+		Sha256:       vttSum,
 	})
 }
 
@@ -1413,7 +1421,7 @@ func (s *Service) SetThumbnail(ctx context.Context, ownerID, videoID uuid.UUID, 
 	}); err != nil {
 		return sqlcgen.VideoFile{}, err
 	}
-	size, err := s.blobs.Put(ctx, key, in.Reader)
+	size, sum, err := storage.PutSizedHashed(ctx, s.blobs, key, in.Reader, storage.SizeUnknown)
 	if err != nil {
 		return sqlcgen.VideoFile{}, err
 	}
@@ -1424,6 +1432,7 @@ func (s *Service) SetThumbnail(ctx context.Context, ownerID, videoID uuid.UUID, 
 		ContentType:  contentType,
 		OriginalName: strings.TrimSpace(in.Filename),
 		SizeBytes:    size,
+		Sha256:       sum,
 	})
 }
 
@@ -1482,7 +1491,8 @@ func (s *Service) SetThumbnailFromFrame(ctx context.Context, ownerID, videoID uu
 	}); err != nil {
 		return sqlcgen.VideoFile{}, err
 	}
-	if _, err := s.blobs.Put(ctx, key, bytes.NewReader(jpg)); err != nil {
+	_, sum, err := storage.PutSizedHashed(ctx, s.blobs, key, bytes.NewReader(jpg), int64(len(jpg)))
+	if err != nil {
 		return sqlcgen.VideoFile{}, err
 	}
 	return s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
@@ -1492,6 +1502,7 @@ func (s *Service) SetThumbnailFromFrame(ctx context.Context, ownerID, videoID uu
 		ContentType:  "image/jpeg",
 		OriginalName: "frame.jpg",
 		SizeBytes:    int64(len(jpg)),
+		Sha256:       sum,
 	})
 }
 

@@ -8,6 +8,8 @@ import (
 	"os/exec"
 
 	"github.com/google/uuid"
+
+	"github.com/vidra/vidra-core/internal/storage"
 )
 
 // WebMContentType is served for the progressive VP9/WebM alternate.
@@ -68,13 +70,13 @@ func (t *HLSTranscoder) SetStreamOutput(enabled bool) { t.streamOutput = enabled
 
 // encodeVP9 renders the progressive VP9/WebM alternate for src (a local path)
 // at the top rung, stores it at <hlsPrefix>/vp9.webm (the same generation
-// directory as the HLS tree it accompanies — W14), and returns the stored key
-// and byte size. Best-effort at the call site: a failure must not fail the HLS
-// transcode.
-func (t *HLSTranscoder) encodeVP9(ctx context.Context, videoID uuid.UUID, hlsPrefix string, src source, top HLSRung) (key string, size int64, err error) {
+// directory as the HLS tree it accompanies — W14), and returns the stored key,
+// byte size and content hash. Best-effort at the call site: a failure must not
+// fail the HLS transcode.
+func (t *HLSTranscoder) encodeVP9(ctx context.Context, videoID uuid.UUID, hlsPrefix string, src source, top HLSRung) (key string, size int64, sum string, err error) {
 	out, err := os.CreateTemp("", "vidra-vp9-*.webm")
 	if err != nil {
-		return "", 0, err
+		return "", 0, "", err
 	}
 	outPath := out.Name()
 	_ = out.Close()
@@ -84,17 +86,17 @@ func (t *HLSTranscoder) encodeVP9(ctx context.Context, videoID uuid.UUID, hlsPre
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", 0, fmt.Errorf("media: ffmpeg vp9 for %s: %w: %s", videoID, err, tailOf(stderr.String()))
+		return "", 0, "", fmt.Errorf("media: ffmpeg vp9 for %s: %w: %s", videoID, err, tailOf(stderr.String()))
 	}
 	f, err := os.Open(outPath)
 	if err != nil {
-		return "", 0, err
+		return "", 0, "", err
 	}
 	defer func() { _ = f.Close() }()
 	key = hlsPrefix + "/vp9.webm"
-	n, err := t.blobs.Put(ctx, key, f)
+	n, sum, err := storage.PutSizedHashed(ctx, t.blobs, key, f, storage.SizeUnknown)
 	if err != nil {
-		return "", 0, err
+		return "", 0, "", err
 	}
-	return key, n, nil
+	return key, n, sum, nil
 }

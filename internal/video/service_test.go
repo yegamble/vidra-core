@@ -362,7 +362,7 @@ func (f *fakeRepo) CreateVideoFile(_ context.Context, a sqlcgen.CreateVideoFileP
 	vf := sqlcgen.VideoFile{
 		ID: uuid.New(), VideoID: a.VideoID, Kind: a.Kind, StorageKey: a.StorageKey,
 		ContentType: a.ContentType, OriginalName: a.OriginalName, SizeBytes: a.SizeBytes,
-		CreatedAt: time.Now(),
+		Sha256: a.Sha256, CreatedAt: time.Now(),
 	}
 	f.files[a.VideoID] = append(f.files[a.VideoID], vf)
 	return vf, nil
@@ -1048,6 +1048,58 @@ func TestAttachOriginalStoresBytesAndFlipsToProcessing(t *testing.T) {
 	got, _ := io.ReadAll(rc)
 	if string(got) != content {
 		t.Errorf("stored bytes = %q, want %q", got, content)
+	}
+}
+
+// TestAttachOriginalRecordsContentHash proves the file row an upload creates
+// carries the SHA-256 of the bytes that were stored (phase-2 storage, work item
+// 2). The expected digest is the published vector for "hello world", pinned as
+// a literal rather than recomputed here, so a change to how or where the hash is
+// taken fails this test instead of agreeing with itself.
+//
+// It also covers the thumbnail path, which stores a byte slice rather than a
+// stream: both shapes have to produce a digest, because a row that lands with
+// the empty state silently defers to the backfill worker instead of failing.
+func TestAttachOriginalRecordsContentHash(t *testing.T) {
+	const (
+		content = "hello world"
+		want    = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+	)
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	svc := NewService(repo, blobs)
+	ctx := context.Background()
+	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "private"})
+
+	_, file, err := svc.AttachOriginal(ctx, owner, v.ID, UploadInput{
+		Filename: "clip.mp4", ContentType: "video/mp4", Reader: strings.NewReader(content),
+	})
+	if err != nil {
+		t.Fatalf("AttachOriginal: %v", err)
+	}
+	if file.Sha256 != want {
+		t.Errorf("original sha256 = %q, want %q", file.Sha256, want)
+	}
+	stored, err := repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: v.ID, Kind: "original"})
+	if err != nil {
+		t.Fatalf("GetVideoFileByKind: %v", err)
+	}
+	if stored.Sha256 != want {
+		t.Errorf("persisted sha256 = %q, want %q", stored.Sha256, want)
+	}
+
+	thumb, err := svc.SetThumbnail(ctx, owner, v.ID, UploadInput{
+		Filename: "poster.jpg", Reader: strings.NewReader(content),
+	})
+	if err != nil {
+		t.Fatalf("SetThumbnail: %v", err)
+	}
+	if thumb.Sha256 != want {
+		t.Errorf("thumbnail sha256 = %q, want %q", thumb.Sha256, want)
 	}
 }
 

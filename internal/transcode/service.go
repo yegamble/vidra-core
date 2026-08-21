@@ -521,6 +521,7 @@ func (s *Service) storeResult(ctx context.Context, videoID uuid.UUID, res media.
 			ContentType:  media.WebMContentType,
 			OriginalName: "vp9.webm",
 			SizeBytes:    res.WebMBytes,
+			Sha256:       res.WebMSHA256,
 		}); err != nil {
 			return err
 		}
@@ -548,6 +549,7 @@ func (s *Service) storeWebVideos(ctx context.Context, videoID uuid.UUID, files [
 			ContentType:  media.HLSMP4ContentType,
 			OriginalName: fmt.Sprintf("%dp.mp4", f.Height),
 			SizeBytes:    f.SizeBytes,
+			Sha256:       f.SHA256,
 		}); err != nil {
 			return err
 		}

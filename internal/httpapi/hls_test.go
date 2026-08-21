@@ -150,6 +150,7 @@ func (f *transcodeFakeRepo) CreateVideoFile(_ context.Context, a sqlcgen.CreateV
 	return sqlcgen.VideoFile{
 		ID: uuid.New(), VideoID: a.VideoID, Kind: a.Kind, StorageKey: a.StorageKey,
 		ContentType: a.ContentType, OriginalName: a.OriginalName, SizeBytes: a.SizeBytes,
+		Sha256: a.Sha256,
 	}, nil
 }
 

@@ -1024,7 +1024,11 @@ func (s *Server) handleDeleteVideo(c echo.Context) error {
 }
 
 // videoFileView is the public projection of a stored video file. The storage
-// key is internal and deliberately not exposed.
+// key is internal and deliberately not exposed, and so is the content hash
+// (phase-2 storage, work item 2): it is an operational column for verified
+// storage migration, it has states — empty, 'missing' — that mean nothing to a
+// client, and the field list here is written out rather than embedded exactly so
+// a new column cannot reach the wire by being added to the row.
 type videoFileView struct {
 	ID           string    `json:"id"`
 	Kind         string    `json:"kind"`

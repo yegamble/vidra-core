@@ -12,9 +12,9 @@ import (
 )
 
 const createVideoFile = `-- name: CreateVideoFile :one
-INSERT INTO video_files (video_id, kind, storage_key, content_type, original_name, size_bytes)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, video_id, kind, storage_key, content_type, original_name, size_bytes, created_at
+INSERT INTO video_files (video_id, kind, storage_key, content_type, original_name, size_bytes, sha256)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, video_id, kind, storage_key, content_type, original_name, size_bytes, created_at, sha256
 `
 
 type CreateVideoFileParams struct {
@@ -24,8 +24,12 @@ type CreateVideoFileParams struct {
 	ContentType  string    `json:"content_type"`
 	OriginalName string    `json:"original_name"`
 	SizeBytes    int64     `json:"size_bytes"`
+	Sha256       string    `json:"sha256"`
 }
 
+// sha256 is the lowercase hex digest of the bytes just stored, computed in the
+// same pass that uploaded them. Empty when the write path could not produce one;
+// the backfill worker picks those rows up (see migration 0106).
 func (q *Queries) CreateVideoFile(ctx context.Context, arg CreateVideoFileParams) (VideoFile, error) {
 	row := q.db.QueryRow(ctx, createVideoFile,
 		arg.VideoID,
@@ -34,6 +38,7 @@ func (q *Queries) CreateVideoFile(ctx context.Context, arg CreateVideoFileParams
 		arg.ContentType,
 		arg.OriginalName,
 		arg.SizeBytes,
+		arg.Sha256,
 	)
 	var i VideoFile
 	err := row.Scan(
@@ -45,6 +50,7 @@ func (q *Queries) CreateVideoFile(ctx context.Context, arg CreateVideoFileParams
 		&i.OriginalName,
 		&i.SizeBytes,
 		&i.CreatedAt,
+		&i.Sha256,
 	)
 	return i, err
 }
@@ -64,7 +70,7 @@ func (q *Queries) DeleteVideoFilesByVideoAndKind(ctx context.Context, arg Delete
 }
 
 const getVideoFileByKind = `-- name: GetVideoFileByKind :one
-SELECT id, video_id, kind, storage_key, content_type, original_name, size_bytes, created_at
+SELECT id, video_id, kind, storage_key, content_type, original_name, size_bytes, created_at, sha256
 FROM video_files
 WHERE video_id = $1 AND kind = $2
 ORDER BY created_at DESC
@@ -88,12 +94,50 @@ func (q *Queries) GetVideoFileByKind(ctx context.Context, arg GetVideoFileByKind
 		&i.OriginalName,
 		&i.SizeBytes,
 		&i.CreatedAt,
+		&i.Sha256,
 	)
 	return i, err
 }
 
+const listUnhashedVideoFiles = `-- name: ListUnhashedVideoFiles :many
+SELECT id, storage_key
+FROM video_files
+WHERE sha256 = ''
+ORDER BY created_at
+LIMIT $1
+`
+
+type ListUnhashedVideoFilesRow struct {
+	ID         uuid.UUID `json:"id"`
+	StorageKey string    `json:"storage_key"`
+}
+
+// The content-hash backfill's scan: the oldest rows still carrying the empty
+// (not-computed) state, in batches. Served by video_files_unhashed_idx. A plain
+// SELECT with no lease or claim is correct here because the worker driving it is
+// leader-gated, so exactly one instance is ever reading this.
+func (q *Queries) ListUnhashedVideoFiles(ctx context.Context, limit int32) ([]ListUnhashedVideoFilesRow, error) {
+	rows, err := q.db.Query(ctx, listUnhashedVideoFiles, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUnhashedVideoFilesRow
+	for rows.Next() {
+		var i ListUnhashedVideoFilesRow
+		if err := rows.Scan(&i.ID, &i.StorageKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVideoFiles = `-- name: ListVideoFiles :many
-SELECT id, video_id, kind, storage_key, content_type, original_name, size_bytes, created_at
+SELECT id, video_id, kind, storage_key, content_type, original_name, size_bytes, created_at, sha256
 FROM video_files
 WHERE video_id = $1
 ORDER BY created_at
@@ -117,6 +161,7 @@ func (q *Queries) ListVideoFiles(ctx context.Context, videoID uuid.UUID) ([]Vide
 			&i.OriginalName,
 			&i.SizeBytes,
 			&i.CreatedAt,
+			&i.Sha256,
 		); err != nil {
 			return nil, err
 		}
@@ -126,6 +171,23 @@ func (q *Queries) ListVideoFiles(ctx context.Context, videoID uuid.UUID) ([]Vide
 		return nil, err
 	}
 	return items, nil
+}
+
+const setVideoFileSHA256 = `-- name: SetVideoFileSHA256 :exec
+UPDATE video_files SET sha256 = $2 WHERE id = $1 AND sha256 = ''
+`
+
+type SetVideoFileSHA256Params struct {
+	ID     uuid.UUID `json:"id"`
+	Sha256 string    `json:"sha256"`
+}
+
+// Records a computed digest (or the 'missing' sentinel). The still-empty guard
+// makes it a no-op against a row something else already hashed, so a backfill
+// racing a re-upload can never overwrite a fresher digest with a staler one.
+func (q *Queries) SetVideoFileSHA256(ctx context.Context, arg SetVideoFileSHA256Params) error {
+	_, err := q.db.Exec(ctx, setVideoFileSHA256, arg.ID, arg.Sha256)
+	return err
 }
 
 const sumAllStorageUsage = `-- name: SumAllStorageUsage :one

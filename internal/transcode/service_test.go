@@ -42,6 +42,7 @@ func (f *fakeRepo) CreateVideoFile(_ context.Context, a sqlcgen.CreateVideoFileP
 	vf := sqlcgen.VideoFile{
 		ID: uuid.New(), VideoID: a.VideoID, Kind: a.Kind, StorageKey: a.StorageKey,
 		ContentType: a.ContentType, OriginalName: a.OriginalName, SizeBytes: a.SizeBytes,
+		Sha256: a.Sha256,
 	}
 	f.videoFiles[a.VideoID] = append(f.videoFiles[a.VideoID], vf)
 	return vf, nil
@@ -370,6 +371,7 @@ func TestDrainJobsStoresVP9WebMAlternate(t *testing.T) {
 		WebMHeight: 360,
 		WebMWidth:  640,
 		WebMBytes:  4096,
+		WebMSHA256: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
 	}}
 	svc := NewService(repo, tc)
 	if err := svc.Enqueue(context.Background(), videoID, "web-videos/x.mp4"); err != nil {
@@ -384,6 +386,11 @@ func TestDrainJobsStoresVP9WebMAlternate(t *testing.T) {
 	}
 	if got := files[0]; got.Kind != "webm" || got.StorageKey != webmKey || got.ContentType != media.WebMContentType || got.SizeBytes != 4096 {
 		t.Errorf("webm video_file = %+v, want kind=webm key=%q ct=%q size=4096", got, webmKey, media.WebMContentType)
+	}
+	// The digest the encoder took while uploading has to reach the row; a row
+	// that lands empty defers to the backfill worker re-reading the object.
+	if got := files[0].Sha256; got != "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9" {
+		t.Errorf("webm video_file sha256 = %q, want the transcoder's digest", got)
 	}
 }
 
@@ -458,7 +465,8 @@ func TestWebVideoTargetUsesOriginalAndProjectsResolutionProgress(t *testing.T) {
 	videoID := uuid.New()
 	originalKey := "web-videos/" + videoID.String() + ".mp4"
 	tc := &fakeTargetTranscoder{webResult: []media.WebVideoResult{
-		{Height: 720, Width: 1280, StorageKey: "web-videos/" + videoID.String() + "/720p.mp4", SizeBytes: 4096},
+		{Height: 720, Width: 1280, StorageKey: "web-videos/" + videoID.String() + "/720p.mp4", SizeBytes: 4096,
+			SHA256: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"},
 	}}
 	svc := NewService(repo, tc)
 
@@ -485,6 +493,9 @@ func TestWebVideoTargetUsesOriginalAndProjectsResolutionProgress(t *testing.T) {
 	files := repo.videoFiles[videoID]
 	if len(files) != 1 || files[0].Kind != "rendition" || files[0].StorageKey != tc.webResult[0].StorageKey {
 		t.Fatalf("stored web videos = %+v, want replacement rendition", files)
+	}
+	if files[0].Sha256 != tc.webResult[0].SHA256 {
+		t.Errorf("rendition sha256 = %q, want the transcoder's digest %q", files[0].Sha256, tc.webResult[0].SHA256)
 	}
 }
 

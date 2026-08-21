@@ -615,7 +615,7 @@ func (f *videoFakeRepo) CreateVideoFile(_ context.Context, a sqlcgen.CreateVideo
 	vf := sqlcgen.VideoFile{
 		ID: uuid.New(), VideoID: a.VideoID, Kind: a.Kind, StorageKey: a.StorageKey,
 		ContentType: a.ContentType, OriginalName: a.OriginalName, SizeBytes: a.SizeBytes,
-		CreatedAt: time.Now(),
+		Sha256: a.Sha256, CreatedAt: time.Now(),
 	}
 	f.files[a.VideoID] = append(f.files[a.VideoID], vf)
 	return vf, nil

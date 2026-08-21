@@ -699,6 +699,12 @@ type HLSResult struct {
 	WebMHeight int
 	WebMWidth  int
 	WebMBytes  int64
+	// WebMSHA256 is the lowercase hex digest of the stored VP9/WebM object,
+	// taken from its upload stream (phase-2 storage, work item 2). The HLS
+	// segments and playlists under MasterKey deliberately carry no digest: they
+	// have no video_files rows to hold one, and storage migration verifies them
+	// in flight instead.
+	WebMSHA256 string
 }
 
 // HLSKeyPrefix is the storage-key directory holding a video's HLS output
@@ -1126,9 +1132,10 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		// failure must not fail the H.264 HLS transcode (VP9 is an extra codec
 		// option, not the primary deliverable).
 		top := rungs[0]
-		if key, size, verr := t.encodeVP9(ctx, videoID, prefix, src, top); verr == nil {
+		if key, size, sum, verr := t.encodeVP9(ctx, videoID, prefix, src, top); verr == nil {
 			res.WebMKey = key
 			res.WebMBytes = size
+			res.WebMSHA256 = sum
 			res.WebMHeight = top.Height
 			res.WebMWidth = top.Width
 		}
@@ -1272,6 +1279,10 @@ func (t *HLSTranscoder) storeTree(ctx context.Context, root, keyPrefix string) e
 		if err != nil {
 			return err
 		}
+		// Deliberately unhashed (phase-2 storage, work item 2): segments and
+		// playlists have no video_files rows, so there is nowhere to record a
+		// per-object digest and nothing that would ever read one back. Storage
+		// migration verifies this tree object-by-object while it copies.
 		_, perr := t.blobs.Put(ctx, keyPrefix+"/"+filepath.ToSlash(rel), f)
 		_ = f.Close()
 		if perr != nil {
