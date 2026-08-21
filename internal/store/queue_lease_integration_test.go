@@ -22,6 +22,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"testing"
@@ -263,6 +264,156 @@ func TestExpiredLeaseBecomesClaimableAgain(t *testing.T) {
 	if mine(rows) != 1 {
 		t.Fatalf("the row did not become claimable after its lease expired; a crashed worker would strand it")
 	}
+}
+
+// assertClaimIDsAscending fails when ids are not in ascending byte order. That
+// is the order PostgreSQL sorts the uuid type in, so it is the order a claim
+// whose rows all tie on created_at must return them in.
+func assertClaimIDsAscending(t *testing.T, queue string, ids []uuid.UUID) {
+	t.Helper()
+	for i := 1; i < len(ids); i++ {
+		if bytes.Compare(ids[i][:], ids[i-1][:]) < 0 {
+			t.Errorf("%s: claim is not ordered by (created_at, id) — %s came back before %s",
+				queue, ids[i-1], ids[i])
+		}
+	}
+}
+
+// assertTiedCreatedAt fails when the seeded rows did NOT end up sharing one
+// created_at. Without the tie the ordering test proves nothing: created_at
+// alone already orders rows that have distinct created_at values.
+func assertTiedCreatedAt(t *testing.T, st *Store, query string, arg any) {
+	t.Helper()
+	var distinct int
+	if err := st.Pool.QueryRow(context.Background(), query, arg).Scan(&distinct); err != nil {
+		t.Fatalf("count distinct created_at: %v", err)
+	}
+	if distinct != 1 {
+		t.Fatalf("seeded rows have %d distinct created_at values, want 1; the tie the test needs did not happen", distinct)
+	}
+}
+
+// TestClaimReturnOrderIsATotalOrder covers the OTHER half of the claim
+// contract: not just WHICH rows a claimer gets, but the order it gets them in.
+//
+// federation_deliveries and atproto_posts sorted the claim by created_at alone.
+// created_at defaults to now(), and now() is TRANSACTION-fixed: every row a
+// fan-out enqueues inside one transaction carries a byte-identical created_at,
+// so ORDER BY created_at leaves them tied and PostgreSQL may emit tied rows in
+// any order it likes — a different one on each claim. Both consumers apply what
+// they are handed last-write-wins (a Delete overtaking its Update leaves the
+// remote server showing a deleted object; the reverse resurrects it), so the
+// return order IS the behaviour, and it has to be deterministic.
+//
+// The tiebreak is id, and it has to BE the tiebreak rather than the whole sort:
+// unlike search_outbox's BIGSERIAL id, these two tables' ids are random
+// uuid_generate_v4() values, so ORDER BY id alone would be a total order over
+// an order that means nothing.
+//
+// A fake repository cannot prove this: which order a sort emits tied rows in is
+// a database behaviour.
+func TestClaimReturnOrderIsATotalOrder(t *testing.T) {
+	st := leaseStore(t)
+	q := st.Queries()
+	ctx := context.Background()
+
+	const seeded = 8
+
+	// --- federation_deliveries ---
+	inbox := "https://remote.example/inbox/" + uuid.NewString()
+	t.Cleanup(func() { _, _ = st.Pool.Exec(ctx, `DELETE FROM federation_deliveries WHERE inbox_url = $1`, inbox) })
+
+	tx, err := st.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	for range seeded {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO federation_deliveries (inbox_url, payload) VALUES ($1, $2)`,
+			inbox, []byte(`{"type":"Create"}`),
+		); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("enqueue delivery in tx: %v", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit deliveries: %v", err)
+	}
+	assertTiedCreatedAt(t, st,
+		`SELECT count(DISTINCT created_at) FROM federation_deliveries WHERE inbox_url = $1`, inbox)
+
+	rows, err := q.ClaimDueDeliveries(ctx, sqlcgen.ClaimDueDeliveriesParams{BatchSize: 500, LeaseSeconds: 300})
+	if err != nil {
+		t.Fatalf("ClaimDueDeliveries: %v", err)
+	}
+	deliveryIDs := make([]uuid.UUID, 0, seeded)
+	for _, r := range rows {
+		if r.InboxUrl == inbox {
+			deliveryIDs = append(deliveryIDs, r.ID)
+		}
+	}
+	// A concurrently-running package may have claimed some of ours; a subset of
+	// an ordered sequence is still ordered, so the assertion holds either way.
+	if len(deliveryIDs) < 2 {
+		t.Fatalf("claimed %d of our %d deliveries; too few to prove an ordering", len(deliveryIDs), seeded)
+	}
+	if len(deliveryIDs) < seeded {
+		t.Logf("claimed %d of %d deliveries (a concurrent claimer took the rest)", len(deliveryIDs), seeded)
+	}
+	assertClaimIDsAscending(t, "federation_deliveries", deliveryIDs)
+
+	// --- atproto_posts: same tie, same tiebreak. Each queued post needs a real
+	// video (video_id is UNIQUE and FKs to videos).
+	_, channelID, cleanup := seedUserAndChannel(t, st)
+	t.Cleanup(cleanup)
+
+	videoIDs := make([]uuid.UUID, 0, seeded)
+	tx, err = st.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	for range seeded {
+		var videoID uuid.UUID
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO videos (channel_id, title, privacy, state) VALUES ($1, 'claim-order', 'public', 'published') RETURNING id`,
+			channelID,
+		).Scan(&videoID); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("seed video in tx: %v", err)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO atproto_posts (video_id) VALUES ($1)`, videoID); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("enqueue post in tx: %v", err)
+		}
+		videoIDs = append(videoIDs, videoID)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit posts: %v", err)
+	}
+	assertTiedCreatedAt(t, st,
+		`SELECT count(DISTINCT created_at) FROM atproto_posts WHERE video_id = ANY($1)`, videoIDs)
+
+	mineVideo := make(map[uuid.UUID]bool, len(videoIDs))
+	for _, id := range videoIDs {
+		mineVideo[id] = true
+	}
+	posts, err := q.ClaimDueATProtoPosts(ctx, sqlcgen.ClaimDueATProtoPostsParams{BatchSize: 500, LeaseSeconds: 300})
+	if err != nil {
+		t.Fatalf("ClaimDueATProtoPosts: %v", err)
+	}
+	postIDs := make([]uuid.UUID, 0, seeded)
+	for _, r := range posts {
+		if mineVideo[r.VideoID] {
+			postIDs = append(postIDs, r.ID)
+		}
+	}
+	if len(postIDs) < 2 {
+		t.Fatalf("claimed %d of our %d posts; too few to prove an ordering", len(postIDs), seeded)
+	}
+	if len(postIDs) < seeded {
+		t.Logf("claimed %d of %d posts (a concurrent claimer took the rest)", len(postIDs), seeded)
+	}
+	assertClaimIDsAscending(t, "atproto_posts", postIDs)
 }
 
 // TestStateFlipClaimsAreExclusive covers the six queues that claim by flipping a
