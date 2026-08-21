@@ -2,20 +2,31 @@ package blobsink
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // memBackend is an in-memory Backend recording the exact sequence of writes, so
 // tests can assert not just what was stored but how many times.
+//
+// Everything it holds is reachable from a Sink handler goroutine, so tests read
+// it through the accessors below rather than touching the maps directly.
 type memBackend struct {
 	mu      sync.Mutex
 	objects map[string][]byte
 	puts    []string
 	putErr  error
+	// onPut runs inside Put, before the write is recorded. Set it before New so
+	// the handler goroutines the sink starts see it. Tests use it to hold a store
+	// open and observe what the sink does while a PUT is still in flight.
+	onPut func(key string)
 }
 
 func newMemBackend() *memBackend {
@@ -26,6 +37,9 @@ func (m *memBackend) Put(_ context.Context, key string, r io.Reader) (int64, err
 	b, err := io.ReadAll(r)
 	if err != nil {
 		return 0, err
+	}
+	if m.onPut != nil {
+		m.onPut(key)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -57,6 +71,32 @@ func (m *memBackend) putCount(key string) int {
 		}
 	}
 	return n
+}
+
+// object returns a stored object's bytes, or nil.
+func (m *memBackend) object(key string) []byte {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.objects[key]
+}
+
+// keys returns every stored key, sorted.
+func (m *memBackend) keys() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	keys := make([]string, 0, len(m.objects))
+	for k := range m.objects {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// putKeys returns the keys written, in order, including repeats.
+func (m *memBackend) putKeys() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.puts...)
 }
 
 func newTestSink(t *testing.T) (*Sink, *memBackend) {
@@ -101,7 +141,7 @@ func TestPutStreamsIntoBackend(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d, want 201", resp.StatusCode)
 	}
-	got := string(b.objects["streaming-playlists/vid1/720p/seg_00000.ts"])
+	got := string(b.object("streaming-playlists/vid1/720p/seg_00000.ts"))
 	if got != "segment-bytes" {
 		t.Errorf("stored %q, want the PUT body", got)
 	}
@@ -132,7 +172,7 @@ func TestPlaylistRewritesCoalesceToOneWrite(t *testing.T) {
 	if n := b.putCount(key); n != 1 {
 		t.Errorf("playlist written %d times, want exactly 1 after three rewrites", n)
 	}
-	if got := string(b.objects[key]); got != "#EXTM3U\nv3-final" {
+	if got := string(b.object(key)); got != "#EXTM3U\nv3-final" {
 		t.Errorf("stored playlist = %q, want the LAST rewrite", got)
 	}
 }
@@ -146,7 +186,7 @@ func TestSegmentsAreNotCoalesced(t *testing.T) {
 		resp := do(t, http.MethodPut, s.URL(name), "x")
 		_ = resp.Body.Close()
 	}
-	if n := len(b.puts); n != 2 {
+	if n := len(b.putKeys()); n != 2 {
 		t.Errorf("%d backend writes, want 2 (segments must not buffer)", n)
 	}
 }
@@ -205,8 +245,8 @@ func TestRejectsRequestsWithoutTheToken(t *testing.T) {
 			t.Errorf("PUT %s status = %d, want 404", p, resp.StatusCode)
 		}
 	}
-	if len(b.puts) != 0 {
-		t.Errorf("unauthenticated requests reached the backend: %v", b.puts)
+	if reached := b.putKeys(); len(reached) != 0 {
+		t.Errorf("unauthenticated requests reached the backend: %v", reached)
 	}
 }
 
@@ -219,7 +259,7 @@ func TestRejectsPathEscape(t *testing.T) {
 		resp := do(t, http.MethodPut, s.BaseURL()+"/"+p, "hostile")
 		_ = resp.Body.Close()
 	}
-	for key := range b.objects {
+	for _, key := range b.keys() {
 		if !strings.HasPrefix(key, "streaming-playlists/vid1/") {
 			t.Errorf("stored %q outside the sink prefix", key)
 		}
@@ -252,6 +292,90 @@ func TestErrSurfacesStorageFailure(t *testing.T) {
 	// Flush must report the recorded failure rather than appearing to succeed.
 	if err := s.Flush(context.Background()); err == nil {
 		t.Error("Flush() = nil after a failed store")
+	}
+}
+
+const heldSegmentKey = "streaming-playlists/vid1/720p/seg_00000.ts"
+
+// heldPut leaves a sink in the state ffmpeg leaves behind: a segment PUT whose
+// body has arrived and whose store is still running, on a connection the client
+// has already abandoned without reading the response. The returned func releases
+// the store. Both completion barriers have to survive exactly this.
+func heldPut(t *testing.T) (*Sink, *memBackend, func()) {
+	t.Helper()
+	started, release := make(chan struct{}), make(chan struct{})
+	b := newMemBackend()
+	// Set before New: every handler goroutine descends from the one New starts,
+	// so this write is ordered ahead of the reads of it.
+	b.onPut = func(string) {
+		close(started)
+		<-release
+	}
+	s, err := New(b, "streaming-playlists/vid1")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	conn, err := net.Dial("tcp", s.ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial sink: %v", err)
+	}
+	// Written by hand rather than with an http.Client, which would wait for the
+	// response the muxer never reads.
+	const body = "segment-bytes"
+	if _, err := fmt.Fprintf(conn, "PUT /%s/720p/seg_00000.ts HTTP/1.1\r\nHost: sink\r\nContent-Length: %d\r\n\r\n%s",
+		s.token, len(body), body); err != nil {
+		t.Fatalf("write PUT: %v", err)
+	}
+	<-started
+	_ = conn.Close()
+	return s, b, func() { close(release) }
+}
+
+// TestFlushWaitsForInFlightPuts is the durability barrier the pipeline depends
+// on. ffmpeg's exit is not proof its last segment landed, so if Flush returned
+// while a store was still running the transcode would carry on over a partial
+// HLS tree: the progressive-download remux reads the ladder back through the
+// sink and would 404 on the missing segment, and BytesUnder would undercount it.
+func TestFlushWaitsForInFlightPuts(t *testing.T) {
+	s, b, release := heldPut(t)
+	defer func() { _ = s.Close() }()
+
+	done := make(chan error, 1)
+	go func() { done <- s.Flush(context.Background()) }()
+	select {
+	case err := <-done:
+		t.Fatalf("Flush returned (err=%v) with a segment PUT still in flight", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	release()
+	if err := <-done; err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if got := string(b.object(heldSegmentKey)); got != "segment-bytes" {
+		t.Errorf("segment = %q after Flush, want it stored", got)
+	}
+}
+
+// TestCloseWaitsForInFlightPuts pins the other half: closing the listener does
+// not stop handlers that are already running, so without a wait a goroutine
+// would still be writing into the media bucket after the caller believes the
+// sink is done with it.
+func TestCloseWaitsForInFlightPuts(t *testing.T) {
+	s, b, release := heldPut(t)
+
+	done := make(chan error, 1)
+	go func() { done <- s.Close() }()
+	select {
+	case err := <-done:
+		t.Fatalf("Close returned (err=%v) with a segment PUT still in flight", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	release()
+	if err := <-done; err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := string(b.object(heldSegmentKey)); got != "segment-bytes" {
+		t.Errorf("segment = %q after Close, want the in-flight store settled", got)
 	}
 }
 
