@@ -9,6 +9,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/dbmigrate"
 	"github.com/vidra/vidra-core/internal/setup"
+	"github.com/vidra/vidra-core/internal/storage"
 )
 
 // The whole point of the command, in one test: a deployment with nothing wrong
@@ -1302,4 +1303,68 @@ func TestAddDSNParams(t *testing.T) {
 	if err != nil || !strings.Contains(got, "connect_timeout=30") {
 		t.Errorf("= %q (%v), want the existing connect_timeout kept", got, err)
 	}
+}
+
+// TestObjectRetention covers the versioned-bucket billing trap. On a bucket that
+// keeps previous versions, nothing Vidra deletes is ever reclaimed — and B2
+// buckets are versioned by default, so the quiet-cost case is the DEFAULT case
+// for the cheapest storage target an operator is likely to pick.
+func TestObjectRetention(t *testing.T) {
+	h := newFakeHost()
+	wantFinding(t, one(t, only(t, "object retention", h, nil)), StatusOK, "media lives on local disk", "")
+
+	s3Env := healthyEnv + strings.Join([]string{
+		"STORAGE_S3_ENDPOINT=s3.us-west-004.backblazeb2.com",
+		"STORAGE_S3_REGION=us-west-004",
+		"STORAGE_S3_BUCKET=vidra-media",
+		"STORAGE_S3_ACCESS_KEY=AKIAEXAMPLE",
+		"STORAGE_S3_SECRET_KEY=secret",
+		"",
+	}, "\n")
+	s3Env = strings.Replace(s3Env, "STORAGE_BACKEND=local", "STORAGE_BACKEND=s3", 1)
+	h = newFakeHost()
+	h.files[filepath.Join(testRoot, "env/production.env")] = s3Env
+
+	t.Run("versioning off reclaims immediately", func(t *testing.T) {
+		p := newFakeProber()
+		p.retention = storage.BucketRetention{VersioningKnown: true, LifecycleKnown: true}
+		wantFinding(t, one(t, only(t, "object retention", h, p)), StatusOK, "versioning is off", "")
+	})
+
+	t.Run("versioned with an expiry rule is fine", func(t *testing.T) {
+		p := newFakeProber()
+		p.retention = storage.BucketRetention{
+			VersioningKnown: true, VersioningEnabled: true,
+			LifecycleKnown: true, NoncurrentExpiryRule: "expire-old-versions",
+		}
+		wantFinding(t, one(t, only(t, "object retention", h, p)), StatusOK, "expire-old-versions", "")
+	})
+
+	t.Run("versioned with no expiry rule warns with the cost named", func(t *testing.T) {
+		p := newFakeProber()
+		p.retention = storage.BucketRetention{
+			VersioningKnown: true, VersioningEnabled: true, LifecycleKnown: true,
+		}
+		f := one(t, only(t, "object retention", h, p))
+		wantFinding(t, f, StatusWarn, "nothing Vidra deletes is ever reclaimed", "NoncurrentVersionExpiration")
+		// The operator has to be able to act on this without already knowing the
+		// pipeline: name what accumulates.
+		for _, want := range []string{"upload chunks", "media garbage collection"} {
+			if !strings.Contains(f.Detail, want) {
+				t.Errorf("warning does not mention %q: %q", want, f.Detail)
+			}
+		}
+	})
+
+	t.Run("an unanswered bucket is a warning, not a false all-clear", func(t *testing.T) {
+		p := newFakeProber()
+		p.retention = storage.BucketRetention{} // nothing known
+		wantFinding(t, one(t, only(t, "object retention", h, p)), StatusWarn, "did not fully answer", "versioning on")
+	})
+
+	t.Run("an unreachable bucket skips rather than double-reporting", func(t *testing.T) {
+		p := newFakeProber()
+		p.retentionErr = &notInstalled{}
+		wantFinding(t, one(t, only(t, "object retention", h, p)), StatusWarn, "skipped: the bucket", "")
+	})
 }

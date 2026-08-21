@@ -45,9 +45,62 @@ safe.
   versioning/replication/lifecycle rules (AWS S3, Backblaze B2, DigitalOcean
   Spaces). Nothing bespoke to run; keep the bucket's retention aligned with the
   DB retention. Credentials (`STORAGE_S3_ACCESS_KEY`/`STORAGE_S3_SECRET_KEY`) are
-  secrets — never commit or log them.
+  secrets — never commit or log them. **If versioning is on, read the next
+  section** — on a versioned bucket nothing Vidra deletes is ever reclaimed.
 - **`STORAGE_BACKEND=local`** (dev / small single-host): snapshot the media volume
   (`docker volume` or a filesystem snapshot) on the same schedule as the DB dump.
+
+### Versioned buckets need a non-current-version expiry rule
+
+`vidra doctor` reports this under **object retention**. It matters most on
+**Backblaze B2, whose buckets are versioned by default** — so the expensive case is
+the default case for the cheapest storage target most operators pick.
+
+On a versioned bucket a delete does not free anything. It writes a delete marker
+(Backblaze calls it a *hide marker*) and the previous version keeps existing and
+keeps billing. That is not an edge case for Vidra; it is the normal path:
+
+| What Vidra deletes | What it costs on a versioned bucket with no expiry rule |
+|---|---|
+| Resumable-upload chunks under `uploads/<session>/*`, removed once the original is assembled | Every upload is stored twice and billed twice, permanently — a 2 GB upload bills as 4 GB |
+| The previous HLS generation, cleared before a re-transcode of the same source | A full extra ladder per re-transcode |
+| Everything media garbage collection sweeps | Nothing at all is reclaimed; the sweep is cosmetic |
+
+**Fix:** add a lifecycle rule that expires **non-current** versions. On the S3 API
+that is `NoncurrentVersionExpiration`; in Backblaze's own console it is
+`daysFromHidingToDeleting`. A few days is plenty — Vidra never reads a superseded
+version, so the window only needs to cover "did I just break something and want to
+roll the bucket back". Backblaze additionally warns that accumulating many versions
+of one object degrades listing and delete performance and can get an account blocked
+from uploads.
+
+Example rule (S3 API, whole bucket):
+
+```json
+{
+  "Rules": [
+    {
+      "ID": "expire-noncurrent-versions",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "" },
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 7 },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
+    }
+  ]
+}
+```
+
+`AbortIncompleteMultipartUpload` is worth having alongside it: an upload interrupted
+mid-multipart otherwise leaves parts that are billed and do not appear in a normal
+object listing.
+
+Turning versioning **off** is the other valid answer, and is what `vidra doctor`
+reports as clean. Do that only if the object store is not part of your recovery
+story — the DB dump plus the bucket is the whole backup for an S3 deployment, and an
+unversioned bucket has no undo.
+
+A rule that exists but is **disabled** does not count, and `vidra doctor` will not
+credit it — that is configuration which is not running.
 
 `STORAGE_BACKEND=ipfs` is **not** a valid backend — IPFS is a mirror sidecar, never
 authoritative (it is rejected at config load). See the next section.

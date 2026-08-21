@@ -12,6 +12,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/minio/minio-go/v7/pkg/lifecycle"
 )
 
 // S3Config configures the S3-compatible backend. It works against MinIO, AWS
@@ -197,6 +198,111 @@ func (s *S3) PutSized(ctx context.Context, key string, r io.Reader, size int64) 
 		return 0, fmt.Errorf("storage: s3: put %q: %w", key, err)
 	}
 	return info.Size, nil
+}
+
+// BucketRetention describes what a bucket does with objects that are overwritten
+// or deleted. It exists because that answer is not uniform across S3-compatible
+// stores and gets the operator billed when they assume it is.
+//
+// On a versioned bucket a DELETE does not free anything: it writes a delete
+// marker (Backblaze calls it a hide marker) and the previous version keeps
+// existing and keeps costing money. Every Delete and DeletePrefix this codebase
+// performs is that kind of delete — the upload chunks removed after an original
+// is assembled, the superseded HLS generation removed before a re-transcode, and
+// everything internal/mediagc collects. On such a bucket none of it is reclaimed
+// unless a lifecycle rule expires non-current versions.
+//
+// This matters most on Backblaze B2, whose buckets are versioned BY DEFAULT.
+type BucketRetention struct {
+	// VersioningEnabled reports whether the bucket retains previous versions.
+	// Only meaningful when VersioningKnown is true.
+	VersioningEnabled bool
+	// VersioningKnown is false when the store did not answer the versioning
+	// query at all (not every S3-compatible implements it). An unknown answer is
+	// not a failure — it is reported as unknown so an operator is not told
+	// something false about their bill.
+	VersioningKnown bool
+	// NoncurrentExpiryRule is the ID of an ENABLED lifecycle rule that expires
+	// non-current versions, or "" when the bucket has none. A rule with a blank
+	// ID reports as "(unnamed)" so the caller can still say one exists.
+	NoncurrentExpiryRule string
+	// LifecycleKnown is false when the store would not answer the lifecycle
+	// query. A bucket with no lifecycle configuration at all is KNOWN and empty,
+	// which is different from unknown.
+	LifecycleKnown bool
+}
+
+// ReclaimsOnDelete reports whether a delete against this bucket actually frees
+// the bytes. True when versioning is known-off, or known-on with a non-current
+// expiry rule. False means deletes accumulate billable hidden versions. The
+// second return is false when there was not enough information to say.
+func (r BucketRetention) ReclaimsOnDelete() (reclaims, known bool) {
+	if !r.VersioningKnown {
+		return false, false
+	}
+	if !r.VersioningEnabled {
+		return true, true
+	}
+	if !r.LifecycleKnown {
+		return false, false
+	}
+	return r.NoncurrentExpiryRule != "", true
+}
+
+// Retention reports how the configured bucket treats overwritten and deleted
+// objects. It makes two read-only calls and creates nothing. A store that does
+// not implement either query is reported as unknown rather than as an error:
+// the point is to warn an operator whose bill is quietly growing, not to fail a
+// diagnostic on a store that simply answers fewer questions.
+func (s *S3) Retention(ctx context.Context) (BucketRetention, error) {
+	var out BucketRetention
+	if v, err := s.client.GetBucketVersioning(ctx, s.bucket); err == nil {
+		out.VersioningKnown = true
+		out.VersioningEnabled = v.Enabled()
+	}
+	cfg, err := s.client.GetBucketLifecycle(ctx, s.bucket)
+	switch {
+	case err == nil:
+		out.LifecycleKnown = true
+		out.NoncurrentExpiryRule = noncurrentExpiryRuleID(cfg)
+	case isNoLifecycleConfiguration(err):
+		// "This bucket has no lifecycle configuration" is a definitive answer,
+		// not a failure to answer: the bucket is known to expire nothing.
+		out.LifecycleKnown = true
+	}
+	if !out.VersioningKnown && !out.LifecycleKnown {
+		return out, fmt.Errorf("storage: s3: bucket %q answered neither versioning nor lifecycle", s.bucket)
+	}
+	return out, nil
+}
+
+// noncurrentExpiryRuleID returns the ID of the first ENABLED rule that expires
+// non-current versions — either after a number of days or by keeping only the N
+// newest. A disabled rule is ignored: it is configuration that is not running.
+func noncurrentExpiryRuleID(cfg *lifecycle.Configuration) string {
+	if cfg == nil {
+		return ""
+	}
+	for _, r := range cfg.Rules {
+		if !strings.EqualFold(r.Status, "Enabled") {
+			continue
+		}
+		if r.NoncurrentVersionExpiration.IsDaysNull() && r.NoncurrentVersionExpiration.NewerNoncurrentVersions == 0 {
+			continue
+		}
+		if strings.TrimSpace(r.ID) == "" {
+			return "(unnamed)"
+		}
+		return r.ID
+	}
+	return ""
+}
+
+// isNoLifecycleConfiguration reports the "there is no lifecycle here" response,
+// which S3-compatibles return as an error rather than an empty document.
+func isNoLifecycleConfiguration(err error) bool {
+	resp := minio.ToErrorResponse(err)
+	return resp.Code == "NoSuchLifecycleConfiguration" || resp.StatusCode == http.StatusNotFound
 }
 
 // PresignGet returns a time-limited URL that serves the object at key by plain

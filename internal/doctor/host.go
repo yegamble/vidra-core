@@ -73,6 +73,10 @@ type Prober interface {
 	// reports whether the configured bucket is there. It must never create
 	// anything.
 	CheckBucket(ctx context.Context, cfg storage.S3Config) (bool, error)
+	// CheckBucketRetention reports what the bucket does with overwritten and
+	// deleted objects, so the report can warn about a bucket that never
+	// reclaims. Read-only; creates and changes nothing.
+	CheckBucketRetention(ctx context.Context, cfg storage.S3Config) (storage.BucketRetention, error)
 	// CheckSMTP dials the relay and reads its greeting. It never sends.
 	CheckSMTP(ctx context.Context, addr string) (banner string, err error)
 	// MigrationStatus reads a golang-migrate ledger. table is "" for the default
@@ -145,6 +149,14 @@ func (RealProber) CheckBucket(ctx context.Context, cfg storage.S3Config) (bool, 
 	// BucketExists, never EnsureBucket: a diagnostic that creates the bucket it
 	// could not find turns a typo into a new, empty, silently-wrong store.
 	return s3.BucketExists(ctx)
+}
+
+func (RealProber) CheckBucketRetention(ctx context.Context, cfg storage.S3Config) (storage.BucketRetention, error) {
+	s3, err := storage.NewS3(cfg)
+	if err != nil {
+		return storage.BucketRetention{}, err
+	}
+	return s3.Retention(ctx)
 }
 
 // CheckSMTP delegates to preflight so the dial exists exactly once: `vidra
