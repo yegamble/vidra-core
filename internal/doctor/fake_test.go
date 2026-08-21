@@ -101,6 +101,9 @@ type fakeProber struct {
 	ledgers   map[string]dbmigrate.Status // keyed by table ("" is core's)
 	ledgerErr error
 
+	storageMigrationActive bool
+	storageMigrationErr    error
+
 	retention    storage.BucketRetention
 	retentionErr error
 
@@ -143,6 +146,10 @@ func (p *fakeProber) MigrationStatus(_ context.Context, _, table string) (dbmigr
 		return dbmigrate.Status{}, p.ledgerErr
 	}
 	return p.ledgers[table], nil
+}
+
+func (p *fakeProber) ActiveStorageMigration(_ context.Context, _ string) (bool, error) {
+	return p.storageMigrationActive, p.storageMigrationErr
 }
 
 // ---------------------------------------------------------------------------

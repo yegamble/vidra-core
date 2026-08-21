@@ -226,6 +226,91 @@ digest and nothing that would read one back. Storage migration verifies that
 tree object-by-object while it copies it. Consequently a fully-hashed library
 says nothing about the integrity of the HLS trees.
 
+## Verifying media consistency — `verify-blobs`
+
+The GC sweep enumerates the **store** and looks for objects no row references.
+`verify-blobs` is the other direction: it enumerates the **database** and looks
+for rows no object backs. Nothing else detects that case — the API just 404s one
+video at a time, forever, and you find out from a viewer.
+
+It runs on the api image, like `migrate`, and it only ever reads:
+
+```bash
+# The fast pass: one existence check per referenced object.
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  --env-file env/production.env run --rm api verify-blobs
+
+# Re-read every object that has a recorded digest and compare (reads the whole
+# library — give it a real timeout).
+… run --rm api verify-blobs --hash --timeout=4h
+
+# Walk every HLS tree through the storage backend instead of trusting that a
+# present master manifest implies a present ladder.
+… run --rm api verify-blobs --deep
+
+# One JSON document instead of the summary.
+… run --rm api verify-blobs --json
+```
+
+It runs on the **api** service, not the `migrate` one-shot: the migrator is
+given `DATABASE_URL` and nothing else, and this needs the whole `STORAGE_*` set
+to know which bucket or directory to ask.
+
+| Exit | Meaning |
+|---|---|
+| `0` | The database and the store agree |
+| `3` | They do not — objects are missing, corrupt, hollow (`--deep`), or unreadable |
+| `1` | The check could not be made: the database or the bucket was unreachable, the configuration is unusable, or the run timed out |
+
+`3` and `1` are deliberately different. A restore has to be able to tell "I
+verified and it is wrong" from "I could not verify" — and it continues in both
+cases, because a restore that aborted here would leave the site down over a
+media problem that not booting does not fix.
+
+**What it checks.** Every `storage_key` the database holds: `video_files`
+(originals, thumbnails, storyboards, webm alternates), captions, avatars and
+banners for users and channels, the instance's own images, account-export
+archives, DM attachments, the reconstructed playlist covers, and each streaming
+playlist's master manifest. The key derivation is shared with the GC sweep
+(`mediagc.ListReferences`) so the two can never drift into disagreeing about
+what the database references.
+
+**The three classes it reports separately**, because they have different causes:
+
+- **MISSING** — a row references an object the store does not have, and nothing
+  had recorded that before this run. The finding that matters most.
+- **MISMATCHED** (`--hash` only) — the object is there and its bytes no longer
+  hash to what was written. Corruption, not absence.
+- **known missing** — rows whose `sha256` is the backfill's `missing` sentinel
+  and whose object is indeed absent. Reported in full every run, but they do
+  **not** set exit 3: they were already dangling when the dump was taken, and a
+  post-restore check that can never go green is one operators stop reading.
+  (A sentinel row whose object *is* there is reported as `sentinel stale` — the
+  object came back and the backfill will never revisit that row.)
+
+**When to run it.**
+
+- **After every restore** — `deploy/restore.sh` runs the fast pass automatically
+  between the migrators and `up -d`, and never blocks on it. A dump is taken at
+  time T and the bucket is whatever it is at T+n; the two stop being a matched
+  pair the moment they are restored separately.
+- **With `--hash`, after a hardware or provider incident**, after a bucket-level
+  restore, or on a schedule you are willing to pay the reads for. It is the only
+  mode that detects corruption; the fast pass deliberately reads no bytes.
+- **With `--deep`, after anything that touched the object store wholesale.** A
+  partial restore that brought back one small text file per video and none of
+  the segments passes the fast pass with a clean bill of health and plays
+  nothing.
+- **Not during a storage migration.** The two stores are deliberately out of
+  step then; the command says so in its output and in the JSON
+  (`storage_migration_active`), and `vidra doctor`'s **storage migration** check
+  reports the same fact before you start.
+
+There is no repair mode, deliberately. Every plausible repair — delete the row,
+re-derive the object — destroys information, and the only party who can say
+which of the two stores is the stale one is the operator who knows what
+happened.
+
 ## Moving the media store
 
 Local disk → S3, one bucket → another, one provider → another. A **storage

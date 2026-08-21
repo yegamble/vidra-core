@@ -356,7 +356,7 @@ func (s *Service) Sweep(ctx context.Context, dryRun bool) (Result, error) {
 		}
 	}
 
-	refs, err := s.referenceSet(ctx)
+	refs, err := referenceSet(ctx, s.repo)
 	if err != nil {
 		return Result{}, err
 	}
@@ -487,7 +487,14 @@ func (s *Service) isReferenced(key, prefix string, refs refSet) bool {
 // referenceSet gathers the exact object keys the database references, the set
 // of live video ids, and the per-video HLS generation picture (for the HLS
 // tree).
-func (s *Service) referenceSet(ctx context.Context) (refSet, error) {
+//
+// It is a function of the repository rather than a method on Service because it
+// is the ONE place the key grammar is derived from the database, and the
+// blob-reference consistency check (internal/blobverify) has to ask the exact
+// same question without owning a sweep, an ownership state or a backend. Two
+// enumerations of "every key the database references" would drift, and the one
+// that drifted would either delete live media or declare a healthy store broken.
+func referenceSet(ctx context.Context, repo Repository) (refSet, error) {
 	refs := refSet{
 		referenced:   map[string]bool{},
 		liveVideoIDs: map[string]bool{},
@@ -496,7 +503,7 @@ func (s *Service) referenceSet(ctx context.Context) (refSet, error) {
 		targetGen:    map[string]string{},
 	}
 
-	fileKeys, err := s.repo.ListAllVideoFileKeys(ctx)
+	fileKeys, err := repo.ListAllVideoFileKeys(ctx)
 	if err != nil {
 		return refSet{}, err
 	}
@@ -508,14 +515,14 @@ func (s *Service) referenceSet(ctx context.Context) (refSet, error) {
 			refs.targetGen[vid] = media.HLSGenerationName(media.OriginalKeyVersion(k))
 		}
 	}
-	capKeys, err := s.repo.ListAllCaptionKeys(ctx)
+	capKeys, err := repo.ListAllCaptionKeys(ctx)
 	if err != nil {
 		return refSet{}, err
 	}
 	for _, k := range capKeys {
 		refs.referenced[k] = true
 	}
-	plRefs, err := s.repo.ListPlaylistThumbnailRefs(ctx)
+	plRefs, err := repo.ListPlaylistThumbnailRefs(ctx)
 	if err != nil {
 		return refSet{}, err
 	}
@@ -524,7 +531,7 @@ func (s *Service) referenceSet(ctx context.Context) (refSet, error) {
 			refs.referenced[media.PlaylistThumbnailKey(r.ID, *r.ThumbnailExt)] = true
 		}
 	}
-	spRefs, err := s.repo.ListStreamingPlaylistRefs(ctx)
+	spRefs, err := repo.ListStreamingPlaylistRefs(ctx)
 	if err != nil {
 		return refSet{}, err
 	}
@@ -545,7 +552,7 @@ func (s *Service) referenceSet(ctx context.Context) (refSet, error) {
 		}
 		refs.promotedGen[vid] = gen
 	}
-	ids, err := s.repo.ListAllVideoIDs(ctx)
+	ids, err := repo.ListAllVideoIDs(ctx)
 	if err != nil {
 		return refSet{}, err
 	}
@@ -553,6 +560,88 @@ func (s *Service) referenceSet(ctx context.Context) (refSet, error) {
 		refs.liveVideoIDs[id.String()] = true
 	}
 	return refs, nil
+}
+
+// References is what the database says the object store must contain, in the
+// two shapes the store can be asked about.
+//
+// The split is not cosmetic. Most media is referenced by an EXACT key that a
+// row holds, so "is it there?" is one Exists call. An HLS tree is not: its
+// segments and rendition playlists have no rows at all (a ladder rung is one
+// video_renditions row covering a whole directory), so the only object a
+// reference check can name exactly is the master manifest, and everything below
+// it can only be reached through the prefix.
+type References struct {
+	// Keys are the exact object keys the database references: originals,
+	// thumbnails, storyboards and webm alternates (video_files), caption tracks,
+	// and the playlist covers reconstructed from playlists.thumbnail_ext.
+	// Sorted, deduplicated, and never empty-string.
+	Keys []string
+	// Playlists is one entry per recorded streaming playlist, including the
+	// dead-lettered ones whose MasterKey is '' — a caller that reports on trees
+	// needs to be able to say "this video's transcode never produced one"
+	// rather than silently not mentioning it.
+	Playlists []PlaylistRef
+}
+
+// PlaylistRef is one video's HLS tree as the database records it.
+type PlaylistRef struct {
+	// VideoID owns the tree.
+	VideoID uuid.UUID
+	// MasterKey is the promoted master manifest's exact key, or '' when the
+	// transcode never produced one (a failed or dead-lettered job).
+	MasterKey string
+	// Prefix is the tree's own key prefix (media.HLSKeyPrefix), the only handle
+	// on the segments and rendition playlists that have no rows of their own.
+	Prefix string
+}
+
+// ListReferences enumerates every object the database expects the store to
+// hold, using the SAME derivation the GC sweep matches listed keys against
+// (referenceSet). It is exported for the blob-reference consistency check,
+// which asks the identical question with the opposite intent: the sweep looks
+// for objects with no row, this looks for rows with no object.
+//
+// It deliberately reports only what the database can name. Objects the sweep
+// keeps at the video-id level (a live video's whole HLS tree) are reported as
+// Playlists, not as keys.
+func ListReferences(ctx context.Context, repo Repository) (References, error) {
+	refs, err := referenceSet(ctx, repo)
+	if err != nil {
+		return References{}, err
+	}
+	out := References{Keys: make([]string, 0, len(refs.referenced))}
+	for k := range refs.referenced {
+		if strings.TrimSpace(k) == "" {
+			// A row whose blob was never written. Asking a bucket about "" is a
+			// question with no useful answer, and reporting it as a dangling
+			// reference would be reporting the absence of something nobody ever
+			// stored.
+			continue
+		}
+		out.Keys = append(out.Keys, k)
+	}
+	sort.Strings(out.Keys)
+
+	spRefs, err := repo.ListStreamingPlaylistRefs(ctx)
+	if err != nil {
+		return References{}, err
+	}
+	out.Playlists = make([]PlaylistRef, 0, len(spRefs))
+	for _, r := range spRefs {
+		out.Playlists = append(out.Playlists, PlaylistRef{
+			VideoID:   r.VideoID,
+			MasterKey: strings.TrimSpace(r.MasterKey),
+			Prefix:    media.HLSKeyPrefix(r.VideoID),
+		})
+	}
+	sort.Slice(out.Playlists, func(i, j int) bool {
+		if out.Playlists[i].VideoID != out.Playlists[j].VideoID {
+			return out.Playlists[i].VideoID.String() < out.Playlists[j].VideoID.String()
+		}
+		return out.Playlists[i].MasterKey < out.Playlists[j].MasterKey
+	})
+	return out, nil
 }
 
 // videoIDOfOriginalKey extracts the video id from an original-file storage key

@@ -216,6 +216,65 @@ func checkMediaGCPosture(_ context.Context, s *state) []Finding {
 	}
 }
 
+// checkStorageMigration reports whether media is currently MOVING between
+// storage backends, because a campaign in flight changes what three other
+// things mean and an operator who does not know one is running will read all
+// three wrong.
+//
+// While a campaign is live:
+//
+//   - media garbage collection is forced to a dry run, so the "GC deletes
+//     orphans daily" posture above is temporarily untrue;
+//   - presigned direct delivery is withheld entirely (the presigner is not
+//     installed), so every byte proxies through the api and the delivery
+//     configuration looks broken;
+//   - a restore or an unplanned STORAGE_* edit lands in the middle of a move,
+//     where "which store holds this object" is a question with two answers.
+//
+// It is a warning rather than a failure: a migration is a thing an operator
+// deliberately started, and a ✗ for work proceeding as designed is how a report
+// teaches people to ignore it.
+func checkStorageMigration(ctx context.Context, s *state) []Finding {
+	if s.envErr != nil {
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s), so there is no connection string", s.envErr))}
+	}
+	dsn := s.value("DATABASE_URL")
+	if dsn == "" {
+		// The bundled Postgres publishes no host port by design. checkSchemaLedger
+		// can still get its answer because the api image has a `migrate version`
+		// subcommand that prints the ledger; there is no equivalent one-shot that
+		// prints campaign state, and inventing one just for this would put a
+		// diagnostic's convenience ahead of the api's surface area. The admin
+		// storage-migration view answers it from inside.
+		return []Finding{skipf("this deployment uses the bundled Postgres, which publishes no host port (by design), and there is no `migrate version`-style one-shot that reports storage-migration state — read it at GET /api/v1/admin/storage/migrations instead")}
+	}
+	active, err := s.opt.Prober.ActiveStorageMigration(ctx, dsn)
+	if err != nil {
+		if isMissingRelation(err) {
+			// A database older than migration 0107. Nothing can be migrating,
+			// because the feature does not exist there yet.
+			return []Finding{okf("no storage migration in flight (this database predates the storage-migration tables, so there is nothing that could be)")}
+		}
+		return []Finding{skipf("the storage-migration state could not be read: " + reachSummary(err) + " (the core ledger check above reports the connection in full)")}
+	}
+	if !active {
+		return []Finding{okf("no storage migration in flight — media is served from, and garbage-collected in, one store")}
+	}
+	return []Finding{warnf(
+		"a storage migration campaign is IN FLIGHT: media is being copied to the STORAGE_MIGRATION_TARGET_* store. While it runs, media garbage collection is forced to a dry run (nothing is deleted), presigned direct delivery is withheld so every byte proxies through the api, and the two stores are deliberately out of step",
+		"that is the designed behaviour, not a fault — let it finish. Do NOT run ./deploy/restore.sh and do NOT edit STORAGE_* except at the point the cutover runbook says to (\"Moving the media store\" in vidra-core/docs/operations.md): a restore mid-campaign reinstates rows for objects the move has not copied, and an early env swap makes the api serve from a store that is not finished. Watch progress at GET /api/v1/admin/storage/migrations; `docker compose … run --rm api verify-blobs` after the campaign completes is what proves the destination is whole")}
+}
+
+// isMissingRelation reports whether an error is Postgres saying the table is not
+// there (SQLSTATE 42P01). It is matched on the message rather than on a typed
+// error because the connection may fail before pgx can classify anything, and
+// the only thing this distinction changes is a ✓ versus a ⚠.
+func isMissingRelation(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "42p01") ||
+		(strings.Contains(msg, "does not exist") && strings.Contains(msg, "relation"))
+}
+
 // maxBackupAge is how old the newest successful backup may be before it is a
 // failure rather than a warning. The timer runs daily at 03:15 with up to 15
 // minutes of jitter, so 26 hours is "one run has been missed", not "the schedule

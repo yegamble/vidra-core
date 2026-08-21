@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1479,5 +1480,60 @@ func TestMediaGCPosture(t *testing.T) {
 		h := newFakeHost()
 		delete(h.files, filepath.Join(testRoot, "env/production.env"))
 		wantFinding(t, one(t, only(t, "media GC posture", h, nil)), StatusWarn, "skipped:", "")
+	})
+}
+
+func TestStorageMigration(t *testing.T) {
+	// A managed database is dialled directly, which is the only shape in which
+	// this check can answer at all.
+	withDSN := func() *fakeHost {
+		h := newFakeHost()
+		h.files[filepath.Join(testRoot, "env/production.env")] = healthyEnv +
+			"DATABASE_URL=postgres://u:p@db.example.net:25060/defaultdb?sslmode=require\n"
+		return h
+	}
+
+	t.Run("nothing in flight is the ordinary answer", func(t *testing.T) {
+		wantFinding(t, one(t, only(t, "storage migration", withDSN(), nil)), StatusOK, "no storage migration in flight", "")
+	})
+
+	t.Run("a live campaign warns and says what it changes", func(t *testing.T) {
+		p := newFakeProber()
+		p.storageMigrationActive = true
+		f := one(t, only(t, "storage migration", withDSN(), p))
+		wantFinding(t, f, StatusWarn, "IN FLIGHT", "restore.sh")
+		// The three things an operator will otherwise misread while it runs.
+		for _, phrase := range []string{"garbage collection is forced to a dry run", "presigned direct delivery is withheld", "STORAGE_"} {
+			if !strings.Contains(f.Detail+f.Fix, phrase) {
+				t.Errorf("the in-flight finding never mentions %q: %s / %s", phrase, f.Detail, f.Fix)
+			}
+		}
+	})
+
+	t.Run("a database older than the storage-migration tables is a pass", func(t *testing.T) {
+		p := newFakeProber()
+		p.storageMigrationErr = errors.New(`ERROR: relation "storage_migrations" does not exist (SQLSTATE 42P01)`)
+		wantFinding(t, one(t, only(t, "storage migration", withDSN(), p)), StatusOK, "predates the storage-migration tables", "")
+	})
+
+	t.Run("an unreachable database is a skip, not a failure", func(t *testing.T) {
+		// The core ledger check has already reported the connection in full; a
+		// second ✗ for one connection teaches operators to read past this section.
+		p := newFakeProber()
+		p.storageMigrationErr = errors.New("dial tcp 10.0.0.1:5432: connect: connection refused")
+		wantFinding(t, one(t, only(t, "storage migration", withDSN(), p)), StatusWarn, "skipped:", "")
+	})
+
+	t.Run("the bundled Postgres cannot be asked from the host", func(t *testing.T) {
+		// No DATABASE_URL in the env file: docker-compose.prod.yml publishes no
+		// port for it, deliberately, and there is no `migrate version`-shaped
+		// one-shot that prints campaign state.
+		wantFinding(t, one(t, only(t, "storage migration", newFakeHost(), nil)), StatusWarn, "publishes no host port", "")
+	})
+
+	t.Run("an unreadable env file skips", func(t *testing.T) {
+		h := newFakeHost()
+		delete(h.files, filepath.Join(testRoot, "env/production.env"))
+		wantFinding(t, one(t, only(t, "storage migration", h, nil)), StatusWarn, "skipped:", "")
 	})
 }

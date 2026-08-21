@@ -91,25 +91,33 @@ func main() {
 	// logger (LOG_LEVEL/LOG_FORMAT) once config is loaded in run().
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
-	// Operator subcommands (see migrate.go). Dispatched before run() so the schema
-	// tooling ships in the same image as the server without paying for the
-	// server's config/dependency startup. Bare `api` (no argv) is the server, as
-	// it has always been.
+	// Operator subcommands (see migrate.go, verify_blobs.go). Dispatched before
+	// run() so the schema and consistency tooling ships in the same image as the
+	// server without paying for the server's config/dependency startup. Bare
+	// `api` (no argv) is the server, as it has always been.
 	//
 	// Anything else is REFUSED rather than ignored: `docker compose run --rm
 	// migrate <args>` replaces the service's command outright, so a mistyped
 	// subcommand on the migrate one-shot would otherwise boot a whole HTTP server
 	// in a container an operator believes is applying migrations.
 	if len(os.Args) > 1 {
-		if os.Args[1] != "migrate" {
-			slog.Error("unknown subcommand", "argv", os.Args[1], "usage", "api ["+migrateUsage+"] (no arguments runs the server)")
+		switch os.Args[1] {
+		case "migrate":
+			if err := runMigrate(os.Args[2:]); err != nil {
+				slog.Error("migrate failed", "error", err)
+				os.Exit(1)
+			}
+			return
+		case "verify-blobs":
+			// Exits with its own code: 0 consistent, 3 inconsistent, 1 could not
+			// check. A three-outcome command cannot report through main's
+			// error path, which only knows "worked" and "did not".
+			os.Exit(runVerifyBlobs(os.Args[2:], os.Stdout, os.Stderr))
+		default:
+			slog.Error("unknown subcommand", "argv", os.Args[1],
+				"usage", "api ["+migrateUsage+"|"+verifyBlobsUsage+"] (no arguments runs the server)")
 			os.Exit(1)
 		}
-		if err := runMigrate(os.Args[2:]); err != nil {
-			slog.Error("migrate failed", "error", err)
-			os.Exit(1)
-		}
-		return
 	}
 
 	if err := run(); err != nil {

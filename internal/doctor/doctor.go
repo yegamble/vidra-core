@@ -182,6 +182,7 @@ var checks = []check{
 	{"backup timer", SectionState, checkBackupTimer},
 	{"disk space", SectionState, checkDiskSpace},
 	{"media GC posture", SectionState, checkMediaGCPosture},
+	{"storage migration", SectionState, checkStorageMigration},
 
 	{"object storage", SectionReach, checkObjectStorage},
 	{"object retention", SectionReach, checkObjectRetention},
