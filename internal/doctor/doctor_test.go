@@ -232,6 +232,12 @@ func TestPublishedPortsRendersTheDeploysOwnChain(t *testing.T) {
 		"-f docker-compose.external-redis.yml", // the env file says the redis is managed
 		"--env-file env/production.env",
 		"--profile core", "--profile frontend", "--profile ipfs",
+		// The caddy service moved onto the `edge` profile, and the engine adds it.
+		// Without it the rendered model has no reverse proxy in it at all — which
+		// is not a cosmetic gap here: this is the :80/:443 EXPOSURE audit, and a
+		// model where nothing publishes either port finds nothing to report, for
+		// ever, on every deployment.
+		"--profile edge",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("the rendered chain is missing %q: %s", want, rendered)
@@ -239,6 +245,44 @@ func TestPublishedPortsRendersTheDeploysOwnChain(t *testing.T) {
 	}
 	if strings.Contains(rendered, "external-postgres") {
 		t.Errorf("the chain added the postgres overlay for a bundled database: %s", rendered)
+	}
+}
+
+// The two-way gate on the `edge` profile: the model doctor audits must CONTAIN
+// the caddy service on an ordinary deployment and must NOT on an external one.
+//
+// Both directions are failures nobody would see. Missing on acme, the port audit
+// stops auditing the only service that publishes 80 and 443. Present on
+// external, doctor reports an exposure from a container this deployment does not
+// run, and the operator goes looking for it.
+func TestPublishedPortsChainFollowsTheEdgeProfile(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mode    string
+		wantHas bool
+	}{
+		{name: "acme renders the managed caddy", mode: "acme", wantHas: true},
+		{name: "plain-http renders it too", mode: "plain-http", wantHas: true},
+		{name: "external leaves it out", mode: "external", wantHas: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newFakeHost()
+			h.files[filepath.Join(testRoot, "env/production.env")] = strings.Replace(healthyEnv, "VIDRA_TLS_MODE=acme", "VIDRA_TLS_MODE="+tc.mode, 1)
+			only(t, "published ports", h, nil)
+
+			var rendered string
+			for _, c := range h.commands() {
+				if strings.Contains(c, "config --format json") {
+					rendered = c
+				}
+			}
+			if rendered == "" {
+				t.Fatal("the check never rendered a compose model")
+			}
+			if got := strings.Contains(rendered, "--profile edge"); got != tc.wantHas {
+				t.Errorf("VIDRA_TLS_MODE=%s rendered with --profile edge = %v, want %v: %s", tc.mode, got, tc.wantHas, rendered)
+			}
+		})
 	}
 }
 

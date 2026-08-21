@@ -1914,7 +1914,7 @@ func RenderCheckArgs(envPath string, values map[string]string, tail ...string) [
 // EnabledProfiles is the compose profile list the deploy will enable for an env
 // file: the managed VIDRA_COMPOSE_PROFILES list (or the legacy core+frontend
 // when the file predates the key), plus the operator's EXTRA_COMPOSE_PROFILES,
-// deduplicated.
+// plus the `edge` profile the ENGINE decides on, deduplicated.
 //
 // Exported because it is also the answer to "is the RTMP edge supposed to be
 // public here?" — `vidra doctor` reads the rendered port map against it, and a
@@ -1922,10 +1922,35 @@ func RenderCheckArgs(envPath string, values map[string]string, tail ...string) [
 // one direction that matters.
 func EnabledProfiles(values map[string]string) []string { return checkProfiles(values) }
 
+// edgeProfile is the compose profile carrying the managed caddy service. It is
+// NOT in VIDRA_COMPOSE_PROFILES and must never be: if it had to be typed there,
+// every env file written before caddy moved onto a profile — every one in
+// existence — would silently stop starting the TLS terminator on its next
+// deploy. So the rule is inverted, and the engine decides.
+const edgeProfile = "edge"
+
 // checkProfiles is the profile list the deploy will enable: the managed list, or
-// the legacy base when the file predates it, plus the operator's extras.
+// the legacy base when the file predates it, then the operator's extras, then
+// `edge` unless somebody else terminates TLS.
 //
-// Deduped because the two lists overlap by design — an operator who enabled ipfs
+// THE `edge` RULE IS deploy/lib.sh's edge_profile(), character for character,
+// and this is the Go half of a cross-repo contract rather than a convenience.
+// The shell builds the chain the deploy runs; this builds the chain
+// RenderCheckCommand prints for an operator to paste and the one `vidra doctor`
+// renders its port model from. When they disagree, both failures are silent and
+// both are bad: the pre-flight validates a stack with no reverse proxy in it,
+// and doctor's :80/:443 exposure audit reads a model where nothing publishes
+// either port and therefore finds nothing to report, for ever.
+//
+// `external` is the only mode that drops it (via SkipsManagedCaddy, the one
+// spelling of that question). plain-http keeps caddy — as a plain-HTTP site —
+// and an unset or unrecognised mode keeps it too: an operator who typos the mode
+// gets deploy.sh's refusal, not a silently edge-less stack.
+//
+// It goes LAST, like the shell's loop, so the printed --profile order matches
+// what an operator sees the deploy use.
+//
+// Deduped because the lists overlap by design — an operator who enabled ipfs
 // through EXTRA_COMPOSE_PROFILES before this key existed keeps that line after a
 // re-run puts `ipfs` in the managed list, and `--profile ipfs --profile ipfs` is
 // noise in a command an operator is being asked to read and paste.
@@ -1935,6 +1960,9 @@ func checkProfiles(values map[string]string) []string {
 		profiles = append([]string(nil), baseProfiles...)
 	}
 	profiles = append(profiles, strings.Fields(values[extraProfilesKey])...)
+	if !SkipsManagedCaddy(values[tlsModeKey]) {
+		profiles = append(profiles, edgeProfile)
+	}
 	seen := make(map[string]bool, len(profiles))
 	out := make([]string, 0, len(profiles))
 	for _, p := range profiles {

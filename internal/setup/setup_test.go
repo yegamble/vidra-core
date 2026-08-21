@@ -969,32 +969,32 @@ func TestRenderCheckCommandMirrorsTheDeployScript(t *testing.T) {
 	}{
 		{
 			name: "an env file older than the profile key keeps the deploy's hard-coded pair",
-			want: base + " --env-file env/production.env --profile core --profile frontend config -q",
+			want: base + " --env-file env/production.env --profile core --profile frontend --profile edge config -q",
 		},
 		{
 			name:   "all local: the managed list is exactly the base profiles",
 			values: map[string]string{profilesKey: "core frontend", externalPostgresKey: "false", externalRedisKey: "false"},
-			want:   base + " --env-file env/production.env --profile core --profile frontend config -q",
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile edge config -q",
 		},
 		{
 			name:   "features become profiles, in the list's order",
 			values: map[string]string{profilesKey: "core frontend scan captions media otel ipfs"},
-			want:   base + " --env-file env/production.env --profile core --profile frontend --profile scan --profile captions --profile media --profile otel --profile ipfs config -q",
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile scan --profile captions --profile media --profile otel --profile ipfs --profile edge config -q",
 		},
 		{
 			name:   "external postgres only: its overlay goes straight after the prod one",
 			values: map[string]string{profilesKey: "core frontend", externalPostgresKey: "true"},
-			want:   base + " -f docker-compose.external-postgres.yml --env-file env/production.env --profile core --profile frontend config -q",
+			want:   base + " -f docker-compose.external-postgres.yml --env-file env/production.env --profile core --profile frontend --profile edge config -q",
 		},
 		{
 			name:   "external redis only",
 			values: map[string]string{profilesKey: "core frontend", externalRedisKey: "true"},
-			want:   base + " -f docker-compose.external-redis.yml --env-file env/production.env --profile core --profile frontend config -q",
+			want:   base + " -f docker-compose.external-redis.yml --env-file env/production.env --profile core --profile frontend --profile edge config -q",
 		},
 		{
 			name:   "both external, postgres overlay first",
 			values: map[string]string{profilesKey: "core frontend ipfs", externalPostgresKey: "true", externalRedisKey: "true"},
-			want:   base + " -f docker-compose.external-postgres.yml -f docker-compose.external-redis.yml --env-file env/production.env --profile core --profile frontend --profile ipfs config -q",
+			want:   base + " -f docker-compose.external-postgres.yml -f docker-compose.external-redis.yml --env-file env/production.env --profile core --profile frontend --profile ipfs --profile edge config -q",
 		},
 		{
 			// deploy.sh appends EXTRA_COMPOSE_PROFILES from the env file to its own
@@ -1002,21 +1002,54 @@ func TestRenderCheckCommandMirrorsTheDeployScript(t *testing.T) {
 			// chain than the deploy it is supposed to pre-flight.
 			name:   "the operator's extra profiles are appended",
 			values: map[string]string{"EXTRA_COMPOSE_PROFILES": "ipfs  observability"},
-			want:   base + " --env-file env/production.env --profile core --profile frontend --profile ipfs --profile observability config -q",
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile ipfs --profile observability --profile edge config -q",
 		},
 		{
 			// The overlap is the ordinary case after an upgrade: the profile an
 			// operator enabled by hand is now in the managed list too.
 			name:   "a profile in both lists is enabled once",
 			values: map[string]string{profilesKey: "core frontend ipfs", "EXTRA_COMPOSE_PROFILES": "ipfs ipfs-private"},
-			want:   base + " --env-file env/production.env --profile core --profile frontend --profile ipfs --profile ipfs-private config -q",
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile ipfs --profile ipfs-private --profile edge config -q",
 		},
 		{
 			// A spelling neither the shell nor ParseBool agrees on must not quietly
 			// add an overlay; componentIssues is what tells the operator.
 			name:   "an unparseable switch is not true",
 			values: map[string]string{externalPostgresKey: "yes please"},
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile edge config -q",
+		},
+		{
+			// THE `edge` PROFILE, which is deploy/lib.sh's edge_profile() rather
+			// than anything the operator writes in VIDRA_COMPOSE_PROFILES. external
+			// is the only mode that drops it, and dropping it is the whole
+			// difference between the two topologies at the compose level.
+			name:   "external drops the caddy profile",
+			values: map[string]string{profilesKey: "core frontend", tlsModeKey: TLSModeExternal},
 			want:   base + " --env-file env/production.env --profile core --profile frontend config -q",
+		},
+		{
+			// plain-http still runs the managed caddy — as a plain-HTTP site — so
+			// the profile stays. A check command that dropped it here would validate
+			// a stack with no front door at all.
+			name:   "plain-http keeps it",
+			values: map[string]string{profilesKey: "core frontend", tlsModeKey: TLSModePlainHTTP},
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile edge config -q",
+		},
+		{
+			// A typo in the mode keeps caddy, deliberately: deploy.sh refuses an
+			// unrecognised mode outright, and a silently edge-less stack would be
+			// the worse of the two failures.
+			name:   "an unrecognised mode keeps it",
+			values: map[string]string{profilesKey: "core frontend", tlsModeKey: "letsencrypt"},
+			want:   base + " --env-file env/production.env --profile core --profile frontend --profile edge config -q",
+		},
+		{
+			// An operator who wrote `edge` into the managed list by hand gets it
+			// once, in the position they put it — the same first-seen dedup the
+			// shell loop does.
+			name:   "a hand-written edge is not doubled",
+			values: map[string]string{profilesKey: "core edge frontend"},
+			want:   base + " --env-file env/production.env --profile core --profile edge --profile frontend config -q",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

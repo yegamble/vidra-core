@@ -84,8 +84,17 @@ func runRestart(s streams, args []string) error {
 	}
 	profiles := setup.EnabledProfiles(values)
 	if !enabledIn(svc, profiles) {
-		return fmt.Errorf("restart: %s is not enabled in this deployment — it lives behind the %s compose profile, and VIDRA_COMPOSE_PROFILES (plus EXTRA_COMPOSE_PROFILES) enables %s. Add the profile there and run `vidra deploy` to start it",
-			svc, quoteList(serviceProfiles[svc], " or "), quoteList(profiles, ", "))
+		// caddy is the one service whose profile is NOT the operator's to add.
+		// `edge` is decided by the engine from VIDRA_TLS_MODE, so "add the profile
+		// to VIDRA_COMPOSE_PROFILES" would be advice that does not work — and on an
+		// external deployment there is genuinely nothing here to restart, because
+		// the front door is a proxy this stack does not run.
+		if svc == "caddy" {
+			return fmt.Errorf("restart: %s is not part of this deployment — %s=%s in %s, so your own proxy terminates TLS and no caddy container is started (the `edge` compose profile is left out). Restart that proxy instead; `vidra setup` writes %s as a worked example of its configuration",
+				svc, "VIDRA_TLS_MODE", setup.TLSModeExternal, dep.envFile, setup.NginxExampleOutputPath)
+		}
+		return fmt.Errorf("restart: %s is not enabled in this deployment — it lives behind the %s compose profile, and this deployment enables %s. Add the profile to VIDRA_COMPOSE_PROFILES (or EXTRA_COMPOSE_PROFILES) in %s and run `vidra deploy` to start it",
+			svc, quoteList(serviceProfiles[svc], " or "), quoteList(profiles, ", "), dep.envFile)
 	}
 	if svc == "caddy" {
 		// Said BEFORE the restart, not after, because after is too late to
