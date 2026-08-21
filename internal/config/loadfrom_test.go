@@ -217,6 +217,67 @@ func TestCheckEnvAttributesValidationErrors(t *testing.T) {
 	}
 }
 
+// Semantic failures are collected the same way malformed values are: an env file
+// with several broken RULES reports all of them in one pass, each attributed, so
+// an operator (or the wizard rendering one message per input) is not walked
+// through a fix-one-rerun-discover-the-next loop.
+func TestCheckEnvReportsEverySemanticFailureAttributed(t *testing.T) {
+	vars := productionCandidate()
+	vars["LOG_LEVEL"] = "loud"                                 // enum
+	vars["HTTP_PORT"] = "70000"                                // range
+	vars["JWT_SECRET"] = "too-short"                           // production floor
+	vars["CORS_ALLOWED_ORIGINS"] = "*"                         // production refusal
+	vars["MAIL_ENABLED"] = "true"                              // makes SMTP_HOST required
+	vars["MALWARE_SCAN_MODE"] = "fail-sideways"                // enum
+	vars["MFA_KEY_KEK"] = "not-base64"                         // key shape
+	vars["WHISPER_DEFAULT_LANGUAGE"] = "not a language tag!!!" // pattern
+
+	err := CheckEnv(vars)
+	if err == nil {
+		t.Fatal("CheckEnv() expected errors for eight broken rules, got nil")
+	}
+	got := collectVarErrors(err)
+	for _, key := range []string{
+		"LOG_LEVEL", "HTTP_PORT", "JWT_SECRET", "CORS_ALLOWED_ORIGINS",
+		"SMTP_HOST", "MALWARE_SCAN_MODE", "MFA_KEY_KEK", "WHISPER_DEFAULT_LANGUAGE",
+	} {
+		ve, ok := got[key]
+		if !ok {
+			t.Errorf("no VarError for %s; error tree = %v", key, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), ve.Error()) {
+			t.Errorf("joined error %q is missing the %s message %q", err, key, ve)
+		}
+	}
+}
+
+// A guard that fails must not spray the rules it was guarding. An unrecognised
+// STORAGE_BACKEND selects NO branch, so the five s3 keys it does not have are
+// not five more problems — they are the same problem, and reporting them sends
+// the operator to fix the wrong lines.
+func TestCheckEnvGuardedBranchesStaySilent(t *testing.T) {
+	vars := productionCandidate()
+	vars["STORAGE_BACKEND"] = "ipfs"
+
+	err := CheckEnv(vars)
+	if err == nil {
+		t.Fatal("CheckEnv() accepted an unsupported STORAGE_BACKEND")
+	}
+	got := collectVarErrors(err)
+	if _, ok := got["STORAGE_BACKEND"]; !ok {
+		t.Fatalf("no VarError for STORAGE_BACKEND; error tree = %v", err)
+	}
+	for _, key := range []string{
+		"STORAGE_S3_ENDPOINT", "STORAGE_S3_BUCKET", "STORAGE_S3_ACCESS_KEY",
+		"STORAGE_S3_SECRET_KEY", "STORAGE_LOCAL_ROOT",
+	} {
+		if ve, ok := got[key]; ok {
+			t.Errorf("unsupported backend also reported %s (%q); the branch was never taken", key, ve)
+		}
+	}
+}
+
 // Per-provider OAuth variables are named dynamically; attribution must name the
 // variable the operator actually has to add, not the OAUTH_%s pattern.
 func TestCheckEnvAttributesPerProviderOAuthVars(t *testing.T) {
