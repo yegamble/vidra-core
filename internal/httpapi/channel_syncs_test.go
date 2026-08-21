@@ -409,3 +409,6 @@ func TestChannelSyncDeleteNonOwner404(t *testing.T) {
 		t.Errorf("non-owner sync-now = %d, want 404", now.Code)
 	}
 }
+
+// RenewChannelSyncLease is the lease heartbeat; the fake has no leases to keep.
+func (*csFakeRepo) RenewChannelSyncLease(_ context.Context, _ uuid.UUID) error { return nil }

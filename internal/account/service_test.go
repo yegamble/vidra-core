@@ -1016,3 +1016,6 @@ func TestExportTTLFunc(t *testing.T) {
 		}
 	})
 }
+
+// RenewAccountExportLease is the lease heartbeat; the fake has no leases to keep.
+func (*fakeRepo) RenewAccountExportLease(_ context.Context, _ uuid.UUID) error { return nil }

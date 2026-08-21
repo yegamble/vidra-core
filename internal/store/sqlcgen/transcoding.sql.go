@@ -14,7 +14,8 @@ import (
 
 const claimDueTranscodeJobs = `-- name: ClaimDueTranscodeJobs :many
 UPDATE transcode_jobs
-SET state = 'running', updated_at = now()
+SET next_attempt_at = now() + interval '30 minutes',
+    state = 'running', updated_at = now()
 WHERE id IN (
     SELECT id FROM transcode_jobs
     WHERE state = 'pending' AND next_attempt_at <= now()
@@ -283,6 +284,20 @@ func (q *Queries) ListVideoRenditions(ctx context.Context, videoID uuid.UUID) ([
 	return items, nil
 }
 
+const renewTranscodeJobLease = `-- name: RenewTranscodeJobLease :exec
+UPDATE transcode_jobs
+SET next_attempt_at = now() + interval '30 minutes'
+WHERE id = $1 AND state = 'running'
+`
+
+// Push a running job's lease forward. The worker calls this on a ticker while the
+// job runs, so a job that legitimately outlives one lease is not swept out from
+// under itself. Guarded on state so a completed or failed job cannot be revived.
+func (q *Queries) RenewTranscodeJobLease(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, renewTranscodeJobLease, id)
+	return err
+}
+
 const rescheduleTranscodeJob = `-- name: RescheduleTranscodeJob :exec
 UPDATE transcode_jobs
 SET state = 'pending', attempts = attempts + 1, next_attempt_at = $2, last_error = $3, updated_at = now()
@@ -299,6 +314,31 @@ type RescheduleTranscodeJobParams struct {
 func (q *Queries) RescheduleTranscodeJob(ctx context.Context, arg RescheduleTranscodeJobParams) error {
 	_, err := q.db.Exec(ctx, rescheduleTranscodeJob, arg.ID, arg.NextAttemptAt, arg.LastError)
 	return err
+}
+
+const sweepExpiredTranscodeJobs = `-- name: SweepExpiredTranscodeJobs :execrows
+UPDATE transcode_jobs
+SET state = 'pending', attempts = attempts + 1, updated_at = now()
+WHERE state = 'running' AND next_attempt_at <= now()
+`
+
+// Return jobs whose lease elapsed while they were 'running' to the queue.
+//
+// This REPLACES the boot-time blanket requeue of every running row, which was
+// safe only because the process doing it was the deployment's only worker. A
+// second instance booting would have requeued jobs the first was actively
+// running. A lease sweep needs no such assumption: it only touches rows whose
+// owner has demonstrably stopped renewing, so it is correct with any number of
+// instances and can run periodically rather than only at start-up.
+//
+// attempts is incremented so a job that crashes its worker every time walks its
+// counter up and dead-letters through the normal path instead of looping forever.
+func (q *Queries) SweepExpiredTranscodeJobs(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepExpiredTranscodeJobs)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertStreamingPlaylist = `-- name: UpsertStreamingPlaylist :one

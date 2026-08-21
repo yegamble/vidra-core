@@ -42,6 +42,7 @@ type Repository interface {
 	GetLatestImportRun(ctx context.Context) (sqlcgen.PeertubeImportRun, error)
 	ListImportRuns(ctx context.Context, arg sqlcgen.ListImportRunsParams) ([]sqlcgen.PeertubeImportRun, error)
 	ClaimDueImportRuns(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueImportRunsRow, error)
+	RenewImportRunLease(ctx context.Context, id uuid.UUID) error
 	SetImportRunVersion(ctx context.Context, arg sqlcgen.SetImportRunVersionParams) error
 	UpdateImportRunProgress(ctx context.Context, arg sqlcgen.UpdateImportRunProgressParams) error
 	CompleteImportRun(ctx context.Context, arg sqlcgen.CompleteImportRunParams) error

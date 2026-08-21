@@ -638,3 +638,6 @@ func TestMaxPerUserFunc(t *testing.T) {
 		}
 	})
 }
+
+// RenewChannelSyncLease is the lease heartbeat; the fake has no leases to keep.
+func (*fakeRepo) RenewChannelSyncLease(_ context.Context, _ uuid.UUID) error { return nil }

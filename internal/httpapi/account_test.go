@@ -719,3 +719,6 @@ func TestUserExportQuotaCap(t *testing.T) {
 		t.Errorf("uncapped export = %d, want 202 or 409; body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// RenewAccountExportLease is the lease heartbeat; the fake has no leases to keep.
+func (*accountFakeRepo) RenewAccountExportLease(_ context.Context, _ uuid.UUID) error { return nil }

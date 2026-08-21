@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/lease"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/workerpool"
@@ -101,6 +102,7 @@ type Repository interface {
 	CompleteTranscodeJob(ctx context.Context, id uuid.UUID) error
 	RescheduleTranscodeJob(ctx context.Context, arg sqlcgen.RescheduleTranscodeJobParams) error
 	DeferTranscodeJob(ctx context.Context, arg sqlcgen.DeferTranscodeJobParams) error
+	RenewTranscodeJobLease(ctx context.Context, id uuid.UUID) error
 	FailTranscodeJob(ctx context.Context, arg sqlcgen.FailTranscodeJobParams) error
 	HasLiveTranscodeJob(ctx context.Context, videoID uuid.UUID) (bool, error)
 	UpsertStreamingPlaylist(ctx context.Context, arg sqlcgen.UpsertStreamingPlaylistParams) (sqlcgen.StreamingPlaylist, error)
@@ -402,7 +404,15 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 			})
 			return
 		}
+		// Keep the claim alive for as long as this worker is actually working.
+		// A transcode routinely outlives one lease, and without renewal the
+		// recovery sweep would hand the same video to a second worker writing
+		// the same output prefix.
+		stopLease := lease.Keep(ctx, lease.DefaultInterval, "transcode_job", func(c context.Context) error {
+			return s.repo.RenewTranscodeJobLease(c, row.ID)
+		})
 		err := s.runTarget(ctx, row)
+		stopLease()
 		if err != nil {
 			s.recordFailure(bookkeeping, row, err)
 			return

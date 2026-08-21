@@ -76,6 +76,13 @@ import (
 	"github.com/vidra/vidra-core/internal/ytdlp"
 )
 
+// jobRecoverySweepInterval is how often stranded jobs are swept back into their
+// queues. The queues lease for 30 minutes, so a worker that dies is recovered
+// somewhere between one and two sweeps later — soon enough that a crash is not
+// felt as a permanently stuck video, and rare enough that six UPDATEs every few
+// minutes is not worth thinking about.
+const jobRecoverySweepInterval = 2 * time.Minute
+
 func main() {
 	// Bootstrap logger for pre-config diagnostics; replaced by the configured
 	// logger (LOG_LEVEL/LOG_FORMAT) once config is loaded in run().
@@ -1295,29 +1302,49 @@ func run() error {
 	instancemodsvc := instancemod.NewService(db.Queries())
 	opts = append(opts, httpapi.WithInstanceModerationService(instancemodsvc))
 
-	// BOOT-TIME JOB RECOVERY (production-readiness 5d). Every durable queue here
-	// claims work by flipping a row to 'running' and only ever leaves that state
-	// from the worker that claimed it, so a deploy, reboot or OOM kill strands
-	// the in-flight row forever: the partial unique indexes count it as live
-	// (re-enqueue becomes a silent no-op) and HasLiveTranscodeJob keeps 409-ing
-	// the admin re-transcode endpoint. Requeue them once, HERE — before the first
-	// worker goroutine below — because that ordering is exactly what makes
-	// "everything in 'running' is dead" true rather than merely likely. See
-	// internal/jobrecovery for the multi-node caveat.
+	// LEASE-EXPIRY JOB RECOVERY. Every durable queue claims work by flipping a
+	// row to 'running' and pushing its due time forward by a lease that the
+	// owning worker renews while it works. A worker that dies stops renewing, so
+	// its rows come back on their own; nothing has to know which instances are
+	// alive. That replaced a boot-time blanket requeue of every 'running' row,
+	// which was safe only while this process was the deployment's only worker.
+	//
+	// Recovery therefore runs on a TICKER, not once at start-up: a worker that
+	// dies an hour into the day is recovered within a lease rather than at the
+	// next deploy. The first sweep still happens immediately, because a crash
+	// right before this boot is the most likely reason there is anything to
+	// recover.
 	{
-		recoverCtx, recoverCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		for _, r := range jobrecovery.Recover(recoverCtx, db.Queries()) {
-			switch {
-			case r.Err != nil:
-				// Never fatal: a queue that cannot be recovered is a degraded
-				// instance, not a reason to refuse to serve.
-				logger.Error("job recovery failed", "queue", r.Queue, "error", r.Err)
-			case r.Requeued > 0:
-				logger.Warn("requeued jobs stranded by an unclean shutdown",
-					"queue", r.Queue, "requeued", r.Requeued)
+		sweepCtx, sweepCancel := context.WithCancel(context.Background())
+		defer sweepCancel()
+		sweep := func() {
+			ctx, cancel := context.WithTimeout(sweepCtx, 30*time.Second)
+			defer cancel()
+			for _, r := range jobrecovery.Sweep(ctx, db.Queries()) {
+				switch {
+				case r.Err != nil:
+					// Never fatal: a queue that cannot be swept is a degraded
+					// instance, not a reason to refuse to serve.
+					logger.Error("job recovery sweep failed", "queue", r.Queue, "error", r.Err)
+				case r.Requeued > 0:
+					logger.Warn("requeued jobs whose worker stopped renewing their lease",
+						"queue", r.Queue, "requeued", r.Requeued)
+				}
 			}
 		}
-		recoverCancel()
+		sweep()
+		go func() {
+			t := time.NewTicker(jobRecoverySweepInterval)
+			defer t.Stop()
+			for {
+				select {
+				case <-sweepCtx.Done():
+					return
+				case <-t.C:
+					sweep()
+				}
+			}
+		}()
 	}
 
 	// Drain the outbound federation delivery queue in the background (signed

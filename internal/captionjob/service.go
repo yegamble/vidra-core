@@ -26,6 +26,8 @@ import (
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
+
+	"github.com/vidra/vidra-core/internal/lease"
 )
 
 const (
@@ -71,6 +73,7 @@ type Repository interface {
 	EnqueueCaptionJob(ctx context.Context, arg sqlcgen.EnqueueCaptionJobParams) (sqlcgen.CaptionJob, error)
 	GetLatestCaptionJobByVideo(ctx context.Context, videoID uuid.UUID) (sqlcgen.CaptionJob, error)
 	ClaimDueCaptionJobs(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueCaptionJobsRow, error)
+	RenewCaptionJobLease(ctx context.Context, id uuid.UUID) error
 	CompleteCaptionJob(ctx context.Context, id uuid.UUID) error
 	RescheduleCaptionJob(ctx context.Context, arg sqlcgen.RescheduleCaptionJobParams) error
 	FailCaptionJob(ctx context.Context, arg sqlcgen.FailCaptionJobParams) error
@@ -238,7 +241,12 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 	}
 	done := 0
 	for _, row := range rows {
-		if err := s.runJob(ctx, row); err != nil {
+		stopLease := lease.Keep(ctx, lease.DefaultInterval, "caption_job", func(c context.Context) error {
+			return s.repo.RenewCaptionJobLease(c, row.ID)
+		})
+		err := s.runJob(ctx, row)
+		stopLease()
+		if err != nil {
 			s.recordFailure(ctx, row, err)
 			continue
 		}

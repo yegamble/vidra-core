@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// fakeQueries records which queues were recovered and lets one of them fail.
+// fakeQueries records which queues were swept and lets one of them fail.
 type fakeQueries struct {
 	called map[string]int
 	counts map[string]int64
@@ -23,35 +23,35 @@ func (f *fakeQueries) run(queue string) (int64, error) {
 	return f.counts[queue], f.errs[queue]
 }
 
-func (f *fakeQueries) RequeueRunningTranscodeJobs(context.Context) (int64, error) {
+func (f *fakeQueries) SweepExpiredTranscodeJobs(context.Context) (int64, error) {
 	return f.run("transcode_jobs")
 }
-func (f *fakeQueries) RequeueRunningImportJobs(context.Context) (int64, error) {
+func (f *fakeQueries) SweepExpiredImportJobs(context.Context) (int64, error) {
 	return f.run("import_jobs")
 }
-func (f *fakeQueries) RequeueRunningCaptionJobs(context.Context) (int64, error) {
+func (f *fakeQueries) SweepExpiredCaptionJobs(context.Context) (int64, error) {
 	return f.run("caption_jobs")
 }
-func (f *fakeQueries) RequeueRunningAccountExports(context.Context) (int64, error) {
+func (f *fakeQueries) SweepExpiredAccountExports(context.Context) (int64, error) {
 	return f.run("account_exports")
 }
-func (f *fakeQueries) RequeueRunningPeerTubeImportRuns(context.Context) (int64, error) {
+func (f *fakeQueries) SweepExpiredImportRuns(context.Context) (int64, error) {
 	return f.run("peertube_import_runs")
 }
-func (f *fakeQueries) RequeueSyncingChannelSyncs(context.Context) (int64, error) {
+func (f *fakeQueries) SweepExpiredChannelSyncs(context.Context) (int64, error) {
 	return f.run("channel_syncs")
 }
 
-// TestRecoverVisitsEveryQueue guards the list itself: every queue that claims
-// work by flipping a row to running/syncing must be recovered, or that queue
-// keeps the stranded-forever bug this package exists to fix. A new claiming
-// queue added without a recovery statement fails here.
-func TestRecoverVisitsEveryQueue(t *testing.T) {
+// TestSweepVisitsEveryQueue guards the list itself: every queue that claims work
+// by flipping a row to running/syncing must be swept, or that queue keeps the
+// stranded-forever bug this package exists to fix. A new claiming queue added
+// without a sweep statement fails here.
+func TestSweepVisitsEveryQueue(t *testing.T) {
 	f := newFakeQueries()
 	f.counts["transcode_jobs"] = 2
 	f.counts["channel_syncs"] = 1
 
-	results := Recover(context.Background(), f)
+	results := Sweep(context.Background(), f)
 
 	want := []string{
 		"transcode_jobs", "import_jobs", "caption_jobs",
@@ -81,13 +81,13 @@ func TestRecoverVisitsEveryQueue(t *testing.T) {
 // rest. Aborting on the first error would leave (for example) every transcode
 // stranded because an unrelated import statement failed — strictly worse than a
 // partial recovery, and invisible until someone notices videos never publish.
-func TestRecoverContinuesPastAFailingQueue(t *testing.T) {
+func TestSweepContinuesPastAFailingQueue(t *testing.T) {
 	boom := errors.New("relation does not exist")
 	f := newFakeQueries()
 	f.errs["import_jobs"] = boom
 	f.counts["caption_jobs"] = 3
 
-	results := Recover(context.Background(), f)
+	results := Sweep(context.Background(), f)
 
 	var failed *Result
 	for i := range results {

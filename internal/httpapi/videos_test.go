@@ -2397,3 +2397,6 @@ func TestFeedCardsCarryChannelInfo(t *testing.T) {
 		t.Errorf("channel_display_name = %v, want ada", c.ChannelDisplayName)
 	}
 }
+
+// RenewCaptionJobLease is the lease heartbeat; the fake has no leases to keep.
+func (*captionJobFakeRepo) RenewCaptionJobLease(_ context.Context, _ uuid.UUID) error { return nil }

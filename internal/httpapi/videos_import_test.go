@@ -338,3 +338,6 @@ func TestImportResolverEchoedInView(t *testing.T) {
 		t.Errorf("stage after done = %q, want cleared", job.Stage)
 	}
 }
+
+// RenewImportJobLease is the lease heartbeat; the fake has no leases to keep.
+func (*importFakeRepo) RenewImportJobLease(_ context.Context, _ uuid.UUID) error { return nil }

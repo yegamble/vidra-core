@@ -45,7 +45,8 @@ WHERE id = $1;
 -- (SELECT ...)` is the classic queue anti-pattern -- the ids are chosen before
 -- the lock is taken, so two claimers can select the same row.
 UPDATE channel_syncs
-SET state = 'syncing', updated_at = now()
+SET next_run_at = now() + interval '30 minutes',
+    state = 'syncing', updated_at = now()
 WHERE id IN (
     SELECT id FROM channel_syncs
     WHERE next_run_at <= now() AND state IN ('waiting_first_run', 'idle', 'failed')
@@ -77,3 +78,25 @@ WHERE id = $1;
 INSERT INTO channel_sync_seen (sync_id, external_id)
 VALUES ($1, $2)
 ON CONFLICT (sync_id, external_id) DO NOTHING;
+
+-- name: RenewChannelSyncLease :exec
+-- Push a syncing row's lease forward. The worker calls this on a ticker so a sync
+-- that legitimately runs longer than one lease is not swept out from under
+-- itself. Guarded on state so a finished sync cannot be revived.
+UPDATE channel_syncs
+SET next_run_at = now() + interval '30 minutes'
+WHERE id = $1 AND state = 'syncing';
+
+-- name: SweepExpiredChannelSyncs :execrows
+-- Return syncs whose lease elapsed while they were 'syncing' to the queue.
+--
+-- Replaces the boot-time blanket requeue of every syncing row, which a second
+-- instance booting would have used to steal syncs the first was running. This
+-- only touches rows whose owner has demonstrably stopped renewing.
+--
+-- channel_syncs has no attempt counter and no dead-lettering: a sync that keeps
+-- failing simply retries on its next cadence, so 'idle' (not 'failed') is the
+-- honest resting state for one that was interrupted rather than rejected.
+UPDATE channel_syncs
+SET state = 'idle', updated_at = now()
+WHERE state = 'syncing' AND next_run_at <= now();

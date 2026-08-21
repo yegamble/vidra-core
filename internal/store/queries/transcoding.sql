@@ -19,7 +19,8 @@ ON CONFLICT (video_id) WHERE state IN ('pending', 'running') DO NOTHING;
 -- (SELECT ...)` is the classic queue anti-pattern -- the ids are chosen before
 -- the lock is taken, so two claimers can select the same row.
 UPDATE transcode_jobs
-SET state = 'running', updated_at = now()
+SET next_attempt_at = now() + interval '30 minutes',
+    state = 'running', updated_at = now()
 WHERE id IN (
     SELECT id FROM transcode_jobs
     WHERE state = 'pending' AND next_attempt_at <= now()
@@ -129,3 +130,27 @@ ON CONFLICT (transcode_job_id, format, height) DO UPDATE SET
 -- without a round trip to the object store. Rows are unique enough in practice
 -- (one file per stored key) but LIMIT 1 keeps the query total.
 SELECT size_bytes FROM video_files WHERE storage_key = $1 LIMIT 1;
+
+-- name: RenewTranscodeJobLease :exec
+-- Push a running job's lease forward. The worker calls this on a ticker while the
+-- job runs, so a job that legitimately outlives one lease is not swept out from
+-- under itself. Guarded on state so a completed or failed job cannot be revived.
+UPDATE transcode_jobs
+SET next_attempt_at = now() + interval '30 minutes'
+WHERE id = $1 AND state = 'running';
+
+-- name: SweepExpiredTranscodeJobs :execrows
+-- Return jobs whose lease elapsed while they were 'running' to the queue.
+--
+-- This REPLACES the boot-time blanket requeue of every running row, which was
+-- safe only because the process doing it was the deployment's only worker. A
+-- second instance booting would have requeued jobs the first was actively
+-- running. A lease sweep needs no such assumption: it only touches rows whose
+-- owner has demonstrably stopped renewing, so it is correct with any number of
+-- instances and can run periodically rather than only at start-up.
+--
+-- attempts is incremented so a job that crashes its worker every time walks its
+-- counter up and dead-letters through the normal path instead of looping forever.
+UPDATE transcode_jobs
+SET state = 'pending', attempts = attempts + 1, updated_at = now()
+WHERE state = 'running' AND next_attempt_at <= now();

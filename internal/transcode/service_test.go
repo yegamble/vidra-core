@@ -124,6 +124,9 @@ func (f *fakeRepo) RescheduleTranscodeJob(_ context.Context, a sqlcgen.Reschedul
 
 // DeferTranscodeJob returns a job to the queue WITHOUT consuming an attempt --
 // the distinction the scratch-space guard depends on.
+// RenewTranscodeJobLease is the heartbeat that keeps a long job's claim alive.
+func (f *fakeRepo) RenewTranscodeJobLease(_ context.Context, _ uuid.UUID) error { return nil }
+
 func (f *fakeRepo) DeferTranscodeJob(_ context.Context, a sqlcgen.DeferTranscodeJobParams) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

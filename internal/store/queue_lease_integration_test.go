@@ -329,3 +329,172 @@ func TestStateFlipClaimsAreExclusive(t *testing.T) {
 		t.Errorf("%d jobs are running, want all %d claimed exactly once", running, len(wanted))
 	}
 }
+
+// TestLeaseRenewAndSweepCycle is the crash-recovery contract that replaced the
+// boot-time blanket requeue.
+//
+// The old shape requeued EVERY row in 'running' at start-up, which was safe only
+// while the process doing it was the deployment's only worker. A second instance
+// booting would have requeued jobs the first was actively running. The lease
+// makes the distinction real:
+//
+//   - a worker that keeps renewing keeps its job (nobody may take it);
+//   - a worker that stops renewing loses it to the sweep (anybody may take it).
+//
+// Both halves are asserted, because only having the second is how you build a
+// recovery mechanism that steals live work.
+func TestLeaseRenewAndSweepCycle(t *testing.T) {
+	st := leaseStore(t)
+	q := st.Queries()
+	ctx := context.Background()
+
+	_, channelID, cleanup := seedUserAndChannel(t, st)
+	t.Cleanup(cleanup)
+
+	var videoID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO videos (channel_id, title, privacy, state) VALUES ($1, 'lease-cycle', 'public', 'published') RETURNING id`,
+		channelID,
+	).Scan(&videoID); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := q.EnqueueTranscodeJob(ctx, sqlcgen.EnqueueTranscodeJobParams{
+		VideoID: videoID, SourceKey: "web-videos/x.mp4", TranscodeType: "all",
+	}); err != nil {
+		t.Fatalf("EnqueueTranscodeJob: %v", err)
+	}
+
+	rows, err := q.ClaimDueTranscodeJobs(ctx, 50)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	var jobID uuid.UUID
+	for _, r := range rows {
+		if r.VideoID == videoID {
+			jobID = r.ID
+		}
+	}
+	if jobID == uuid.Nil {
+		t.Fatal("our job was not claimed")
+	}
+
+	state := func() (string, time.Time) {
+		t.Helper()
+		var s string
+		var next time.Time
+		if err := st.Pool.QueryRow(ctx,
+			`SELECT state, next_attempt_at FROM transcode_jobs WHERE id = $1`, jobID).Scan(&s, &next); err != nil {
+			t.Fatalf("read job: %v", err)
+		}
+		return s, next
+	}
+
+	// The claim must have taken a lease: a running row is not due.
+	gotState, leaseUntil := state()
+	if gotState != "running" {
+		t.Fatalf("state after claim = %q, want running", gotState)
+	}
+	if !leaseUntil.After(time.Now()) {
+		t.Fatal("claim did not push next_attempt_at forward; the row is immediately sweepable")
+	}
+
+	// A live worker's job survives a sweep.
+	if _, err := q.SweepExpiredTranscodeJobs(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if gotState, _ = state(); gotState != "running" {
+		t.Fatalf("the sweep requeued a job whose lease is still live (state=%q) — "+
+			"that is exactly the multi-node bug the lease exists to prevent", gotState)
+	}
+
+	// Renewal pushes the lease further out.
+	if err := q.RenewTranscodeJobLease(ctx, jobID); err != nil {
+		t.Fatalf("renew: %v", err)
+	}
+	_, renewed := state()
+	if !renewed.After(leaseUntil) {
+		t.Errorf("renew did not extend the lease (%v -> %v)", leaseUntil, renewed)
+	}
+
+	// Simulate the worker dying: expire the lease by hand, then sweep.
+	if _, err := st.Pool.Exec(ctx,
+		`UPDATE transcode_jobs SET next_attempt_at = now() - interval '1 second' WHERE id = $1`, jobID); err != nil {
+		t.Fatalf("expire lease: %v", err)
+	}
+	n, err := q.SweepExpiredTranscodeJobs(ctx)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if n < 1 {
+		t.Fatal("the sweep returned nothing for an expired lease; a crashed worker would strand the job forever")
+	}
+	if gotState, _ = state(); gotState != "pending" {
+		t.Errorf("state after sweep = %q, want pending", gotState)
+	}
+
+	// And the attempt counter advanced, so a job that kills its worker every time
+	// dead-letters through the normal path instead of looping forever.
+	var attempts int32
+	if err := st.Pool.QueryRow(ctx, `SELECT attempts FROM transcode_jobs WHERE id = $1`, jobID).Scan(&attempts); err != nil {
+		t.Fatalf("read attempts: %v", err)
+	}
+	if attempts < 1 {
+		t.Errorf("attempts = %d after a sweep, want >= 1 so a poisonous job cannot loop forever", attempts)
+	}
+}
+
+// TestRenewCannotReviveAFinishedJob guards the state predicate on the renew
+// query. Without it a late heartbeat from a worker that has already completed
+// (or dead-lettered) its job would push a terminal row's due time around.
+func TestRenewCannotReviveAFinishedJob(t *testing.T) {
+	st := leaseStore(t)
+	q := st.Queries()
+	ctx := context.Background()
+
+	_, channelID, cleanup := seedUserAndChannel(t, st)
+	t.Cleanup(cleanup)
+
+	var videoID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO videos (channel_id, title, privacy, state) VALUES ($1, 'lease-revive', 'public', 'published') RETURNING id`,
+		channelID,
+	).Scan(&videoID); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := q.EnqueueTranscodeJob(ctx, sqlcgen.EnqueueTranscodeJobParams{
+		VideoID: videoID, SourceKey: "web-videos/y.mp4", TranscodeType: "all",
+	}); err != nil {
+		t.Fatalf("EnqueueTranscodeJob: %v", err)
+	}
+	rows, err := q.ClaimDueTranscodeJobs(ctx, 50)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	var jobID uuid.UUID
+	for _, r := range rows {
+		if r.VideoID == videoID {
+			jobID = r.ID
+		}
+	}
+	if jobID == uuid.Nil {
+		t.Fatal("our job was not claimed")
+	}
+	if err := q.CompleteTranscodeJob(ctx, jobID); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+
+	var before time.Time
+	if err := st.Pool.QueryRow(ctx, `SELECT next_attempt_at FROM transcode_jobs WHERE id = $1`, jobID).Scan(&before); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if err := q.RenewTranscodeJobLease(ctx, jobID); err != nil {
+		t.Fatalf("renew: %v", err)
+	}
+	var after time.Time
+	if err := st.Pool.QueryRow(ctx, `SELECT next_attempt_at FROM transcode_jobs WHERE id = $1`, jobID).Scan(&after); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !after.Equal(before) {
+		t.Errorf("renew moved a completed job's lease (%v -> %v); it must only touch running rows", before, after)
+	}
+}

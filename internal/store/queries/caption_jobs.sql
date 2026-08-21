@@ -27,7 +27,8 @@ LIMIT 1;
 -- (SELECT ...)` is the classic queue anti-pattern -- the ids are chosen before
 -- the lock is taken, so two claimers can select the same row.
 UPDATE caption_jobs
-SET state = 'running', stage = 'preparing', progress_percent = 5, updated_at = now()
+SET next_attempt_at = now() + interval '30 minutes',
+    state = 'running', stage = 'preparing', progress_percent = 5, updated_at = now()
 WHERE id IN (
     SELECT id FROM caption_jobs
     WHERE state = 'pending' AND next_attempt_at <= now()
@@ -59,3 +60,27 @@ WHERE id = $1;
 UPDATE caption_jobs
 SET state = 'failed', attempts = attempts + 1, error = $2, stage = 'failed', updated_at = now()
 WHERE id = $1;
+
+-- name: RenewCaptionJobLease :exec
+-- Push a running job's lease forward. The worker calls this on a ticker while the
+-- job runs, so a job that legitimately outlives one lease is not swept out from
+-- under itself. Guarded on state so a completed or failed job cannot be revived.
+UPDATE caption_jobs
+SET next_attempt_at = now() + interval '30 minutes'
+WHERE id = $1 AND state = 'running';
+
+-- name: SweepExpiredCaptionJobs :execrows
+-- Return jobs whose lease elapsed while they were 'running' to the queue.
+--
+-- This REPLACES the boot-time blanket requeue of every running row, which was
+-- safe only because the process doing it was the deployment's only worker. A
+-- second instance booting would have requeued jobs the first was actively
+-- running. A lease sweep needs no such assumption: it only touches rows whose
+-- owner has demonstrably stopped renewing, so it is correct with any number of
+-- instances and can run periodically rather than only at start-up.
+--
+-- attempts is incremented so a job that crashes its worker every time walks its
+-- counter up and dead-letters through the normal path instead of looping forever.
+UPDATE caption_jobs
+SET state = 'pending', attempts = attempts + 1, stage = '', progress_percent = 0, updated_at = now()
+WHERE state = 'running' AND next_attempt_at <= now();

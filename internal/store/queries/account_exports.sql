@@ -44,7 +44,8 @@ RETURNING storage_key;
 -- (SELECT ...)` is the classic queue anti-pattern -- the ids are chosen before
 -- the lock is taken, so two claimers can select the same row.
 UPDATE account_exports
-SET state = 'running', updated_at = now()
+SET next_attempt_at = now() + interval '30 minutes',
+    state = 'running', updated_at = now()
 WHERE id IN (
     SELECT id FROM account_exports
     WHERE state = 'pending' AND next_attempt_at <= now()
@@ -82,3 +83,27 @@ LIMIT $1;
 
 -- name: DeleteAccountExport :exec
 DELETE FROM account_exports WHERE id = $1;
+
+-- name: RenewAccountExportLease :exec
+-- Push a running job's lease forward. The worker calls this on a ticker while the
+-- job runs, so a job that legitimately outlives one lease is not swept out from
+-- under itself. Guarded on state so a completed or failed job cannot be revived.
+UPDATE account_exports
+SET next_attempt_at = now() + interval '30 minutes'
+WHERE id = $1 AND state = 'running';
+
+-- name: SweepExpiredAccountExports :execrows
+-- Return jobs whose lease elapsed while they were 'running' to the queue.
+--
+-- This REPLACES the boot-time blanket requeue of every running row, which was
+-- safe only because the process doing it was the deployment's only worker. A
+-- second instance booting would have requeued jobs the first was actively
+-- running. A lease sweep needs no such assumption: it only touches rows whose
+-- owner has demonstrably stopped renewing, so it is correct with any number of
+-- instances and can run periodically rather than only at start-up.
+--
+-- attempts is incremented so a job that crashes its worker every time walks its
+-- counter up and dead-letters through the normal path instead of looping forever.
+UPDATE account_exports
+SET state = 'pending', attempts = attempts + 1, updated_at = now()
+WHERE state = 'running' AND next_attempt_at <= now();

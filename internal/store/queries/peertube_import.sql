@@ -71,7 +71,8 @@ LIMIT $1 OFFSET $2;
 -- (SELECT ...)` is the classic queue anti-pattern -- the ids are chosen before
 -- the lock is taken, so two claimers can select the same row.
 UPDATE peertube_import_runs
-SET state = 'running',
+SET next_attempt_at = now() + interval '30 minutes',
+    state = 'running',
     attempts = attempts + 1,
     started_at = COALESCE(started_at, now()),
     updated_at = now()
@@ -198,3 +199,27 @@ ON CONFLICT (user_id) DO NOTHING;
 INSERT INTO channel_actor_keys (channel_id, public_key_pem, private_key_pem)
 VALUES ($1, $2, $3)
 ON CONFLICT (channel_id) DO NOTHING;
+
+-- name: RenewImportRunLease :exec
+-- Push a running job's lease forward. The worker calls this on a ticker while the
+-- job runs, so a job that legitimately outlives one lease is not swept out from
+-- under itself. Guarded on state so a completed or failed job cannot be revived.
+UPDATE peertube_import_runs
+SET next_attempt_at = now() + interval '30 minutes'
+WHERE id = $1 AND state = 'running';
+
+-- name: SweepExpiredImportRuns :execrows
+-- Return jobs whose lease elapsed while they were 'running' to the queue.
+--
+-- This REPLACES the boot-time blanket requeue of every running row, which was
+-- safe only because the process doing it was the deployment's only worker. A
+-- second instance booting would have requeued jobs the first was actively
+-- running. A lease sweep needs no such assumption: it only touches rows whose
+-- owner has demonstrably stopped renewing, so it is correct with any number of
+-- instances and can run periodically rather than only at start-up.
+--
+-- attempts is incremented so a job that crashes its worker every time walks its
+-- counter up and dead-letters through the normal path instead of looping forever.
+UPDATE peertube_import_runs
+SET state = 'pending', attempts = attempts + 1, started_at = NULL, updated_at = now()
+WHERE state = 'running' AND next_attempt_at <= now();

@@ -81,6 +81,7 @@ type Repository interface {
 	DeleteInactiveAccountExportsByUser(ctx context.Context, userID uuid.UUID) ([]string, error)
 	DeleteAccountExportsByUser(ctx context.Context, userID uuid.UUID) ([]string, error)
 	ClaimDueAccountExports(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueAccountExportsRow, error)
+	RenewAccountExportLease(ctx context.Context, id uuid.UUID) error
 	CompleteAccountExport(ctx context.Context, arg sqlcgen.CompleteAccountExportParams) error
 	RescheduleAccountExport(ctx context.Context, arg sqlcgen.RescheduleAccountExportParams) error
 	FailAccountExport(ctx context.Context, arg sqlcgen.FailAccountExportParams) error

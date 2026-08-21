@@ -351,3 +351,6 @@ func TestEnabledFunc(t *testing.T) {
 		t.Fatalf("gated-on Enqueue: %v", err)
 	}
 }
+
+// RenewCaptionJobLease is the lease heartbeat; the fake has no leases to keep.
+func (*fakeRepo) RenewCaptionJobLease(_ context.Context, _ uuid.UUID) error { return nil }
