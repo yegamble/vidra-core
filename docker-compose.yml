@@ -354,6 +354,17 @@ services:
       # is the compensating anti-abuse control.
       ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS: ${ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS:-60}
       ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW: ${ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW:-10m}
+      # WHO the per-IP budgets above are charged to. The api believes an
+      # X-Forwarded-For hop only when the peer that sent it is loopback,
+      # RFC1918/ULA or link-local — the compose network and this host — and
+      # otherwise charges the PROXY itself, which is fail-safe rather than
+      # fail-open. A TLS terminator on a PUBLIC address (a cloud load balancer, a
+      # CDN edge, the operator-run proxy of VIDRA_TLS_MODE=external) is therefore
+      # untrusted by default, and every visitor behind it shares one login budget.
+      # Naming its network here is the deliberate fix; only list networks you
+      # control, because trusting an address means believing the client IP it
+      # claims. Comma-separated CIDRs, e.g. 203.0.113.7/32,2001:db8::/32.
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       # Master switch for self-service signup. Default true so local dev and the
       # e2e suites can register freely. First-boot note: signups stay closed
       # (403 owner_claim_required) on a fresh instance until the operator redeems
@@ -568,6 +579,14 @@ services:
       # PUBLIC_BASE_URL to this instance's canonical origin. See .ralph/specs/federation.md.
       FEDERATION_ENABLED: ${FEDERATION_ENABLED:-false}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      # Consent to a PLAIN-HTTP public origin in production (VIDRA_TLS_MODE=
+      # plain-http: a lab, a LAN, an air-gapped install). Without it an http://
+      # PUBLIC_BASE_URL in production is a hard boot failure, deliberately — over
+      # http the api cannot set Secure cookies and browsers ignore HSTS, and a
+      # typed http:// that silently dropped both would do it on exactly the
+      # deployment where they matter most. With it, the https-derived defaults go
+      # off together instead of half-applying. NOT for anything public.
+      VIDRA_ALLOW_PLAIN_HTTP: ${VIDRA_ALLOW_PLAIN_HTTP:-false}
       # Base64 32-byte KEK for actor private-key envelope encryption (required in
       # production when federation is on). NEVER commit a real value.
       FEDERATION_KEY_KEK: ${FEDERATION_KEY_KEK:-}
