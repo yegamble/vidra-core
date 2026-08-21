@@ -507,3 +507,57 @@ func TestCustomizationAppliedAtSendSeam(t *testing.T) {
 		t.Error("body signature missing from the delivered message")
 	}
 }
+
+// The admin mail probe goes through the same send seam as everything else, so
+// what the operator receives is what a real recipient would receive — prefix,
+// signature and all. A test that bypassed the decoration would prove the relay
+// works and prove nothing about the messages users actually get.
+func TestSendTestGoesThroughTheDecorationSeam(t *testing.T) {
+	f := newFakeSMTP(t, nil, true)
+	m := newMailer(t, f, "mailer", "relay-pass",
+		WithSubjectPrefixFunc(func() string { return "[{instance_name}]" }),
+		WithBodySignatureFunc(func() string { return "Questions? support@vidra.test" }),
+		// The EFFECTIVE (DB-overlaid) name, deliberately not the boot config's:
+		// an admin who just renamed the instance and immediately sends a test
+		// should not read the old name back.
+		WithInstanceNameFunc(func() string { return "ExampleTube" }),
+	)
+
+	if err := m.SendTest(context.Background(), "ops@example.test"); err != nil {
+		t.Fatalf("SendTest: %v", err)
+	}
+	from, rcpt, data, _, sawAuth := f.snapshot(t)
+	if !strings.Contains(from, "no-reply@vidra.test") {
+		t.Errorf("MAIL FROM = %q, want the configured sender", from)
+	}
+	if len(rcpt) != 1 || !strings.Contains(rcpt[0], "ops@example.test") {
+		t.Errorf("RCPT TO = %v, want exactly the operator address", rcpt)
+	}
+	if !sawAuth {
+		t.Error("expected AUTH with configured credentials")
+	}
+	if !strings.Contains(data, "Subject: [ExampleTube] Test message from ExampleTube") {
+		t.Errorf("subject is not prefixed/substituted; data:\n%s", data)
+	}
+	if !strings.Contains(data, "Questions? support@vidra.test") {
+		t.Error("the configured body signature is missing, so the probe is not representative")
+	}
+	// The message has to say what it is: an operator who forgot they pressed
+	// the button must not read it as a real alert.
+	if !strings.Contains(data, "test message") {
+		t.Errorf("the body does not identify itself as a test; data:\n%s", data)
+	}
+	if strings.Contains(data, "relay-pass") {
+		t.Error("relay password leaked into the message")
+	}
+}
+
+// A recipient that could break the envelope is refused before a byte is sent —
+// the same guard every other send path gets, reached through SendTest.
+func TestSendTestRejectsHeaderInjection(t *testing.T) {
+	f := newFakeSMTP(t, nil, false)
+	m := newMailer(t, f, "", "")
+	if err := m.SendTest(context.Background(), "ops@example.test\r\nBcc: victim@elsewhere.test"); err == nil {
+		t.Fatal("SendTest accepted a recipient carrying CRLF")
+	}
+}

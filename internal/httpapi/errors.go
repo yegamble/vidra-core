@@ -63,7 +63,12 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var rc *ReplaceConflictError
 	var su *SearchUnavailableError
 	var ale *ATProtoLoginError
+	var mtf *MailTestFailedError
 	switch {
+	case errors.As(err, &mtf):
+		status = http.StatusBadGateway
+		message = "the mail relay refused the test message. Check the SMTP host, port and credentials, then the relay's own logs — the server log for this request has its exact answer"
+		code = "mail_test_failed"
 	case errors.As(err, &ale):
 		status = ale.Status
 		message = ale.Message
@@ -274,6 +279,16 @@ func (e *ReplaceConflictError) Error() string { return "replace conflict: " + e.
 type ContactFormDisabledError struct{}
 
 func (e *ContactFormDisabledError) Error() string { return "contact form disabled" }
+
+// MailTestFailedError renders as 502 with the stable code "mail_test_failed":
+// the admin mail probe was refused by the relay. It carries NO cause on purpose
+// — the relay's rejection routinely quotes the recipient address back, and the
+// central handler logs whatever it is given. The handler logs the real error
+// itself, to the operator's server log, and returns this bare marker so nothing
+// with an address in it can reach a response body or a log line twice.
+type MailTestFailedError struct{}
+
+func (e *MailTestFailedError) Error() string { return "mail test failed" }
 
 // SearchUnavailableError renders as 503 with the stable code "search_unavailable"
 // (search-service W4): a search-history read/delete could not reach vidra-search

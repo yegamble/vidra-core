@@ -90,6 +90,14 @@ type Server struct {
 	// cmd/api via WithContactRateLimiter). Nil (e.g. unit tests) mounts the
 	// route unthrottled beyond the general limiter.
 	contactLimit *ratelimit.Limiter
+	// mailTestLimit throttles the admin mail probe (POST /admin/mail/test) per
+	// ADMIN USER — 3 per hour in production wiring (cmd/api). The endpoint
+	// cannot be pointed at an arbitrary address, so this is not an anti-relay
+	// control; it protects the instance's own sending reputation, since a stuck
+	// retry loop in a browser tab is enough to get a domain rate-limited by its
+	// relay. Nil (e.g. unit tests) mounts the route unthrottled beyond the
+	// general limiter.
+	mailTestLimit *ratelimit.Limiter
 	// searchResolveLimit throttles remote-URI search resolution (config-parity
 	// W13): the outbound WebFinger/object fetches triggered by URI/handle-
 	// shaped search queries, budgeted PER CALLER (user id, else client IP).
@@ -312,6 +320,15 @@ func WithAttachmentRateLimiter(l *ratelimit.Limiter) Option {
 // nil/unset, the route falls back to the general limiter only.
 func WithContactRateLimiter(l *ratelimit.Limiter) Option {
 	return func(s *Server) { s.contactLimit = l }
+}
+
+// WithMailTestRateLimiter mounts a dedicated per-ADMIN-USER limiter on the mail
+// probe (POST /admin/mail/test): 3 per admin per hour in production wiring. It
+// is keyed by user id rather than IP because the endpoint is admin-only and a
+// shared office address should not make two admins fight over one budget. When
+// nil/unset, the route falls back to the general limiter only.
+func WithMailTestRateLimiter(l *ratelimit.Limiter) Option {
+	return func(s *Server) { s.mailTestLimit = l }
 }
 
 // WithSearchResolveRateLimiter overrides the per-caller budget applied to
@@ -1562,6 +1579,13 @@ func (s *Server) routes() {
 		// IS (storage backend, public origin, wired subsystems, backup story),
 		// which otherwise takes an SSH session and an env file to find out.
 		api.GET("/admin/infrastructure", s.handleInfrastructure, s.requireAuth, s.requireRole("admin"))
+		// Outbound mail probe. Always mounted (stable contract) and 503 inside
+		// when the deployment has no mail path — an admin needs to be told that
+		// is why, not find the button missing. The recipient is the instance's
+		// own contact address and cannot be chosen, so this can never become a
+		// relay; the extra budget is about the instance's sending reputation.
+		api.POST("/admin/mail/test", s.handleMailTest,
+			s.requireAuth, s.requireRole("admin"), s.mailTestRateLimit())
 	}
 
 	// Admin operations: durable-queue depth snapshot + recent failures (P17.4).

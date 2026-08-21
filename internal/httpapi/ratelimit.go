@@ -152,6 +152,57 @@ func (s *Server) contactRateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFun
 	}
 }
 
+// mailTestRateLimit throttles the admin mail probe (POST /admin/mail/test) PER
+// ADMIN USER, on its own budget — 3 per hour in production wiring. The endpoint
+// always mails the instance's own contact address, so this is not an anti-relay
+// control; it exists because a browser tab stuck in a retry loop is enough to
+// get a domain throttled or blacklisted by its own relay, and that failure
+// arrives days later as "password resets stopped working".
+//
+// It follows the contact limiter exactly: a no-op passthrough when no limiter
+// is wired, an audit event on denial (never an address), 429 + Retry-After, and
+// FAIL OPEN when the backing store is down. Keyed by user id, not IP: two
+// admins behind one office address should not fight over one budget.
+func (s *Server) mailTestRateLimit() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if s.mailTestLimit == nil {
+				return next(c)
+			}
+			userID, _, ok := principalFromContext(c)
+			if !ok {
+				// requireAuth runs first, so this is only a defensive fallback.
+				return next(c)
+			}
+			res, err := s.mailTestLimit.Allow(c.Request().Context(), "mail-test:"+userID.String())
+			if err != nil {
+				s.logger.Warn("mail test rate limiter unavailable, failing open",
+					"error", err,
+					"path", c.Path(),
+					"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
+				)
+				return next(c)
+			}
+
+			h := c.Response().Header()
+			h.Set("X-RateLimit-Limit", strconv.Itoa(res.Limit))
+			h.Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
+			h.Set("X-RateLimit-Reset", strconv.Itoa(int(res.Reset.Seconds())))
+
+			if !res.Allowed {
+				retry := int(res.RetryAfter.Seconds())
+				if retry < 1 {
+					retry = 1
+				}
+				h.Set("Retry-After", strconv.Itoa(retry))
+				s.audit(c, observability.ActionRateLimited, observability.ResultFailure, userID.String(), "mail_test_rate_limited")
+				return echo.NewHTTPError(http.StatusTooManyRequests, "you have sent several test messages recently; wait before sending another")
+			}
+			return next(c)
+		}
+	}
+}
+
 // authRateLimit is a stricter limiter for the sensitive auth endpoints. It keys
 // independently of the general limiter ("auth:" + client IP) so credential
 // stuffing on login/register/confirm endpoints is throttled without touching the

@@ -385,6 +385,12 @@ func run() error {
 		contactCounter = ratelimit.NewRedisCounter(rdb.Client)
 	}
 	opts = append(opts, httpapi.WithContactRateLimiter(ratelimit.NewLimiter(contactCounter, 1, time.Hour)))
+	// The admin mail probe (POST /admin/mail/test) gets its own budget on the
+	// same counter: 3 per ADMIN per hour. It always mails the instance's own
+	// contact address, so this is not an anti-relay control — it stops a stuck
+	// browser tab from hammering the relay until the domain is throttled, which
+	// is a failure that arrives days later as "password resets stopped working".
+	opts = append(opts, httpapi.WithMailTestRateLimiter(ratelimit.NewLimiter(contactCounter, 3, time.Hour)))
 	// Remote-URI search resolution (config-parity W13) is an outbound-fetch
 	// surface, so it carries its own per-caller budget — 10 resolutions per
 	// minute — on the shared Redis counter when rate limiting is on (multi-node

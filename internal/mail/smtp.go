@@ -121,6 +121,28 @@ func (s *SMTP) SendContactForm(ctx context.Context, to, fromName, fromEmail, sub
 	return s.send(ctx, to, fromEmail, subj, msg)
 }
 
+// SendTest delivers the admin "does outbound mail actually work" probe to the
+// instance's own contact address. It is deliberately NOT part of auth.Mailer:
+// the interface has four implementations and a pile of test fakes, and widening
+// it for one admin button would churn all of them. httpapi asserts a narrow
+// optional interface for this method instead.
+//
+// The message goes through the same send() seam every other message does, so it
+// picks up the configured subject prefix and body signature — a test that
+// bypassed the decoration would prove the relay works and prove nothing about
+// what recipients actually see. The instance is named from the EFFECTIVE
+// (DB-overlaid) name rather than the boot config: an admin who just renamed the
+// instance and immediately sends a test should not read the old name back.
+func (s *SMTP) SendTest(ctx context.Context, to string) error {
+	name := s.effectiveInstanceName()
+	subject := "Test message from " + name
+	body := "This is a test message, sent from the admin settings of " + name + ".\n\n" +
+		"If you are reading it, this instance's outbound mail works: password resets, " +
+		"email verification and operator alerts can reach the people they are addressed to.\n\n" +
+		"Nobody needs to do anything about this message.\n"
+	return s.send(ctx, to, "", subject, body)
+}
+
 // SendNewReportAlert tells the operator a user filed an abuse report — the
 // push half of the moderation queue (the in-app staff notification is the
 // other half). targetType names what was reported; the reporter's identity is

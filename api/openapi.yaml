@@ -10895,6 +10895,79 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/mail/test:
+    post:
+      operationId: sendTestMail
+      summary: Send an outbound-mail test message (admin)
+      description: >-
+        Sends one probe message so an admin can find out whether outbound mail
+        works BEFORE a user needs a password reset. No request body.
+        The recipient is the instance's own effective contact address and the
+        caller CANNOT choose it. That is the security design of the endpoint: an
+        authenticated send-to-any-address button is an open relay behind an admin
+        password — useful for spam, for phishing from the instance's own domain,
+        and for burning its sending reputation. With a fixed recipient there is
+        nothing to abuse.
+        202 means the message was handed to the relay, not that it was delivered:
+        SMTP acceptance is a promise to try, and an admin who reads "sent" and
+        finds nothing in the inbox has learned something real.
+        Restricted to admins, throttled on its own budget (3 per admin per hour
+        in production wiring), and audited as admin.mail.test with the OUTCOME
+        only — never an address.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "202":
+          description: The message was handed to the mail relay.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailTestResult"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            No instance contact email is set, so there is nowhere to send the
+            test. Set the contact_email instance setting first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many test messages recently.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: >-
+            The relay refused the message (code mail_test_failed). The response
+            text is deliberately generic — the relay's own answer goes to the
+            server log, because a rejection routinely quotes the recipient
+            address back.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            This deployment has no outbound mail path at all, so there is
+            nothing to test.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/infrastructure:
     get:
       operationId: getInfrastructure
@@ -17117,6 +17190,16 @@ components:
               type: integer
               format: int64
               description: The shared fixed-window length in seconds.
+    MailTestResult:
+      type: object
+      description: >-
+        The mail probe was handed to the relay. "sent" is the only value — a
+        failure is an error response, not a status in here.
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [sent]
     InfrastructureFeature:
       type: object
       description: >-
