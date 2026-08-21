@@ -28,8 +28,14 @@ func TestFFmpegWritesHLSThroughSink(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }()
 
+	// These flags mirror media.output.muxerArgs and media.output.hlsFlags — this
+	// test is only proof of the real pipeline if it invokes ffmpeg the way the
+	// real pipeline does, so keep them in lock-step.
+	//
 	// -hls_flags -temp_file: the muxer's write-then-rename dance is meaningless
 	// over HTTP and makes it PUT to a .tmp name the sink would store verbatim.
+	// -http_persistent 0: one connection per object, so no write queues behind
+	// another's store. See media.output.muxerArgs for why that is load-bearing.
 	cmd := exec.Command("ffmpeg",
 		"-y",
 		"-f", "lavfi", "-i", "testsrc=duration=8:size=320x240:rate=24",
@@ -43,7 +49,7 @@ func TestFFmpegWritesHLSThroughSink(t *testing.T) {
 		"-hls_list_size", "0",
 		"-hls_flags", "-temp_file",
 		"-method", "PUT",
-		"-http_persistent", "1",
+		"-http_persistent", "0",
 		"-hls_segment_filename", s.URL("240p/seg_%05d.ts"),
 		s.URL("240p/playlist.m3u8"),
 	)
@@ -77,7 +83,10 @@ func TestFFmpegWritesHLSThroughSink(t *testing.T) {
 
 	playlist := string(b.object("streaming-playlists/vid1/240p/playlist.m3u8"))
 	if !strings.HasPrefix(playlist, "#EXTM3U") {
-		t.Fatalf("playlist not stored or malformed: %q", playlist)
+		// The keys matter as much as the content: an empty playlist next to a full
+		// set of segments means the muxer's last write never reached the sink,
+		// which is a different bug from a malformed one.
+		t.Fatalf("playlist not stored or malformed: %q (stored keys: %v)", playlist, keys)
 	}
 	if !strings.Contains(playlist, "#EXT-X-ENDLIST") {
 		t.Error("playlist has no ENDLIST; the coalesced copy is not the final rewrite")
@@ -121,13 +130,17 @@ func TestFFmpegRemuxesFromSinkURL(t *testing.T) {
 		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
 		"-f", "hls", "-hls_time", "2", "-hls_playlist_type", "vod",
 		"-hls_list_size", "0", "-hls_flags", "-temp_file",
-		"-method", "PUT", "-http_persistent", "1",
+		"-method", "PUT", "-http_persistent", "0",
 		"-hls_segment_filename", s.URL("240p/seg_%05d.ts"),
 		s.URL("240p/playlist.m3u8"),
 	)
 	if out, err := write.CombinedOutput(); err != nil {
 		t.Fatalf("ffmpeg write: %v\n%s", err, out)
 	}
+	// The encoder having exited is not proof its writes landed, so take the same
+	// barrier Flush would take. The pipeline gets it from Flush; this test cannot
+	// call Flush without destroying what it is proving.
+	s.drain()
 
 	// Deliberately BEFORE Flush: the remux runs mid-job, when the playlist is
 	// still only in the sink's buffer.
