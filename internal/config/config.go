@@ -105,6 +105,16 @@ type Config struct {
 	// self-hosted one on another host look identical, and reading the host out
 	// of a DSN to guess would be wrong precisely on the deployments that matter.
 	// So the operator says which it is.
+	//
+	// It is read with the ordinary typed-bool parser, exactly as MAIL_ENABLED
+	// and FEDERATION_ENABLED already are — which means a spelling setup.IsTrue
+	// accepts and strconv.ParseBool does not (`yes`, `on`) refuses to boot here
+	// while the deploy scripts read it happily. That disagreement predates this
+	// key and is not special to it; `vidra setup` normalises what it writes to a
+	// concrete true/false, so only a hand-edited file can reach it. Closing it
+	// properly means moving the shared spelling rule down into this package and
+	// having setup.IsTrue delegate to it, which changes MAIL_ENABLED's parsing
+	// too and belongs in its own commit rather than riding along here.
 	ExternalPostgres bool
 
 	// Redis connection (URL form, e.g. redis://host:6379/0).
