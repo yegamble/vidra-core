@@ -745,3 +745,165 @@ func TestInstanceFeaturesTranscodingFlag(t *testing.T) {
 		t.Errorf("features.transcoding without a capable transcoder = true, want false")
 	}
 }
+
+// dryRun posts a candidate settings body to the validate endpoint and returns
+// the decoded result.
+func dryRun(t *testing.T, srv *Server, body, token string) instanceSettingsValidationResponse {
+	t.Helper()
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/instance-settings/validate", body, token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("validate = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var out instanceSettingsValidationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal validate response: %v", err)
+	}
+	return out
+}
+
+// issueFor returns the message reported against key, and whether it was
+// reported at all.
+func issueFor(fields []FieldError, key string) (string, bool) {
+	for _, f := range fields {
+		if f.Field == key {
+			return f.Message, true
+		}
+	}
+	return "", false
+}
+
+// The dry run is what lets the admin form check a field on blur against the
+// SERVER's rules. It answers 200 either way — the problems are the result of
+// asking, not an error — writes nothing, and speaks in exactly the words the
+// PATCH's 422 would use.
+func TestValidateInstanceSettingsDryRun(t *testing.T) {
+	srv := videoServer(t)
+	var buf bytes.Buffer
+	srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	bobTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	// Guards, like every other admin surface.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/instance-settings/validate", `{"instance_name":"x"}`, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("anon validate = %d, want 401", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/instance-settings/validate", `{"instance_name":"x"}`, bobTok); rec.Code != http.StatusForbidden {
+		t.Errorf("non-admin validate = %d, want 403", rec.Code)
+	}
+
+	// A value that would be accepted: an EMPTY list, never null, so the client
+	// can render "no problems" without a special case.
+	clean := dryRun(t, srv, `{"instance_name":"Renamed"}`, adminTok)
+	if len(clean.Fields) != 0 {
+		t.Errorf("clean dry run fields = %+v, want none", clean.Fields)
+	}
+	if !strings.Contains(sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/instance-settings/validate", `{"instance_name":"Renamed"}`, adminTok).Body.String(), `"fields":[]`) {
+		t.Error("a clean dry run must serialise fields as [], not null")
+	}
+
+	// Nothing was written: the effective name is still the config default.
+	if got := instanceName(t, srv); got != "Vidra Test" {
+		t.Errorf("instance_name = %q after a dry run; a dry run persists nothing", got)
+	}
+
+	// A content rule, a type mismatch and an unknown key in one body — all three
+	// reported, keyed by setting.
+	dirty := dryRun(t, srv, `{"instance_name":"   ","uploads_enabled":"yes","not_a_setting":1,"terms_url":"not a url"}`, adminTok)
+	if len(dirty.Fields) != 4 {
+		t.Fatalf("dirty dry run fields = %+v, want four", dirty.Fields)
+	}
+	for _, key := range []string{"instance_name", "uploads_enabled", "not_a_setting", "terms_url"} {
+		msg, ok := issueFor(dirty.Fields, key)
+		if !ok {
+			t.Errorf("no issue for %s in %+v", key, dirty.Fields)
+			continue
+		}
+		if msg == "" {
+			t.Errorf("issue for %s carries no message", key)
+		}
+	}
+	if msg, _ := issueFor(dirty.Fields, "uploads_enabled"); msg != "must be a boolean" {
+		t.Errorf("uploads_enabled dry-run message = %q, want the PATCH's wording", msg)
+	}
+	if msg, _ := issueFor(dirty.Fields, "not_a_setting"); msg != "unknown setting" {
+		t.Errorf("unknown key message = %q, want %q", msg, "unknown setting")
+	}
+
+	// A dry run is not an audited change: it never happened. Sampled BEFORE the
+	// write below, which legitimately does emit one.
+	if strings.Contains(buf.String(), observability.ActionAdminInstanceUpdate) {
+		t.Errorf("a dry run emitted an %s audit event: %s", observability.ActionAdminInstanceUpdate, buf.String())
+	}
+
+	// The dry run and the write agree, word for word: the whole point of not
+	// having a second copy of the rules.
+	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/instance-settings", `{"instance_name":"   "}`, adminTok)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("PATCH with an empty instance_name = %d, want 422", rec.Code)
+	}
+	var envelope ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal 422: %v", err)
+	}
+	dryMsg, _ := issueFor(dirty.Fields, "instance_name")
+	patchMsg, _ := issueFor(envelope.Error.Fields, "instance_name")
+	if dryMsg == "" || dryMsg != patchMsg {
+		t.Errorf("dry run said %q, the write said %q; the two must be the same rule", dryMsg, patchMsg)
+	}
+
+	// Clearing an override is always valid — the config default validated at boot.
+	if reset := dryRun(t, srv, `{"instance_name":null}`, adminTok); len(reset.Fields) != 0 {
+		t.Errorf("null (reset to default) dry run = %+v, want no problems", reset.Fields)
+	}
+
+	// A body that is not a JSON object cannot be validated at all.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/instance-settings/validate", `[]`, adminTok); rec.Code != http.StatusBadRequest {
+		t.Errorf("array body = %d, want 400", rec.Code)
+	}
+}
+
+// The PATCH reports every offending key in one 422, not the first one map
+// iteration reached — a form that submits eight fields must not need eight
+// saves to learn about eight typos.
+func TestUpdateInstanceSettingsReportsEveryInvalidKey(t *testing.T) {
+	srv := videoServer(t)
+	var buf bytes.Buffer
+	srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/instance-settings",
+		`{"instance_name":"   ","terms_url":"not a url","contact_email":"not an email","uploads_enabled":false}`, adminTok)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("PATCH = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	var envelope ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, key := range []string{"instance_name", "terms_url", "contact_email"} {
+		if _, ok := issueFor(envelope.Error.Fields, key); !ok {
+			t.Errorf("no field error for %s in %+v", key, envelope.Error.Fields)
+		}
+	}
+	if _, ok := issueFor(envelope.Error.Fields, "uploads_enabled"); ok {
+		t.Errorf("the one valid key was reported: %+v", envelope.Error.Fields)
+	}
+
+	// The failure audit event names the offending KEYS and nothing else — no
+	// value ever reaches the trail (a contact address is operator PII).
+	logged := buf.String()
+	if !strings.Contains(logged, "invalid:contact_email,instance_name,terms_url") {
+		t.Errorf("failure audit reason missing the sorted key list: %s", logged)
+	}
+	for _, value := range []string{"not a url", "not an email"} {
+		if strings.Contains(logged, value) {
+			t.Errorf("the audit trail carries a rejected VALUE (%q): %s", value, logged)
+		}
+	}
+
+	// Nothing was written.
+	if got := instanceName(t, srv); got != "Vidra Test" {
+		t.Errorf("instance_name = %q; a rejected batch writes nothing", got)
+	}
+}

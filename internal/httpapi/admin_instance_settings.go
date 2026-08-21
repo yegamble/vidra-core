@@ -318,10 +318,104 @@ func (s *Server) handleUpdateInstanceSettings(c echo.Context) error {
 		return &ValidationError{Fields: []FieldError{{Field: "settings", Message: "at least one setting is required"}}}
 	}
 
+	updates, changed, fields := coerceSettingUpdates(raw)
+	if len(fields) > 0 {
+		return &ValidationError{Fields: fields}
+	}
+
+	if err := s.settingssvc.Apply(c.Request().Context(), updates, callerID); err != nil {
+		if bad := settingsFieldErrors(err); len(bad) > 0 {
+			// KEY NAMES only, never values — the same rule the success event
+			// follows (a contact email is operator PII).
+			s.audit(c, observability.ActionAdminInstanceUpdate, observability.ResultFailure, callerID.String(), "invalid:"+strings.Join(fieldNames(bad), ","))
+			return &ValidationError{Fields: bad}
+		}
+		return err
+	}
+
+	s.audit(c, observability.ActionAdminInstanceUpdate, observability.ResultSuccess, callerID.String(), "keys="+strings.Join(changed, ","))
+	// Search: push the effective config to vidra-search when a search key changed
+	// (search-service W4). Best-effort.
+	s.emitSearchConfigChangedIfNeeded(c.Request().Context(), changed)
+	return c.JSON(http.StatusOK, s.instanceSettingsResponse())
+}
+
+// instanceSettingsValidationResponse is the answer to a DRY RUN: exactly the
+// field problems a PATCH of this body would report, or an empty list when it
+// would be accepted. fields is never null — an empty array is the "clean" answer
+// a client renders as "no problems", and `null` would make that ambiguous.
+type instanceSettingsValidationResponse struct {
+	Fields []FieldError `json:"fields"`
+}
+
+// handleValidateInstanceSettings answers "would this be accepted?" without
+// writing anything. Behind requireRole(admin), same body shape as the PATCH.
+//
+// It exists so the admin config form can validate a field as the operator
+// leaves it, against the SERVER's rules, instead of a hand-copied second copy of
+// them in TypeScript — a copy drifts the first time either side is edited, and
+// the operator discovers the drift as a 422 on save. The PATCH's 422 stays the
+// backstop; this is the early answer.
+//
+// It always answers 200: the field problems ARE the successful result of asking
+// a validation question, so a 422 here would mean "your validation request was
+// invalid", which is a different sentence. Nothing is persisted and no audit
+// event is emitted — a dry run changes nothing, and an event per keystroke would
+// drown the trail that records real changes.
+func (s *Server) handleValidateInstanceSettings(c echo.Context) error {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(c.Request().Body).Decode(&raw); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "malformed or invalid request body")
+	}
+	if len(raw) == 0 {
+		return c.JSON(http.StatusOK, instanceSettingsValidationResponse{
+			Fields: []FieldError{{Field: "settings", Message: "at least one setting is required"}},
+		})
+	}
+	// The same coercion the PATCH runs, so a type problem is reported here in
+	// the words the write would have used.
+	updates, _, fields := coerceSettingUpdates(raw)
+	for _, key := range sortedUpdateKeys(updates) {
+		u := updates[key]
+		if u.Delete {
+			// Clearing an override restores the config default, which validated
+			// at boot. There is nothing to check.
+			continue
+		}
+		if err := instancesettings.Validate(key, u.Value); err != nil {
+			fields = append(fields, settingsFieldErrors(err)...)
+		}
+	}
+	if fields == nil {
+		fields = []FieldError{}
+	}
+	return c.JSON(http.StatusOK, instanceSettingsValidationResponse{Fields: fields})
+}
+
+// coerceSettingUpdates turns a settings write body — a flat JSON object of
+// setting key → new value — into the normalised string form the settings
+// service validates and stores, collecting a TYPE error per key rather than
+// stopping at the first. The PATCH and the dry-run endpoint share it verbatim:
+// a second copy of "which JSON type does this kind take" is a second place for
+// the answer to drift.
+//
+// Keys are visited in sorted order so the problems come back in the same
+// sequence on every call — Go randomises map iteration, and a form whose error
+// list reshuffles between saves reads as broken. changed names the keys that
+// produced a well-typed update, sorted: it is the audit event's key-names-only
+// payload.
+func coerceSettingUpdates(raw map[string]json.RawMessage) (map[string]instancesettings.Update, []string, []FieldError) {
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
 	updates := make(map[string]instancesettings.Update, len(raw))
 	changed := make([]string, 0, len(raw))
 	var fields []FieldError
-	for key, rawVal := range raw {
+	for _, key := range keys {
+		rawVal := raw[key]
 		kind, known := instancesettings.KindOf(key)
 		if !known {
 			fields = append(fields, FieldError{Field: key, Message: "unknown setting"})
@@ -371,25 +465,64 @@ func (s *Server) handleUpdateInstanceSettings(c echo.Context) error {
 		}
 		changed = append(changed, key)
 	}
-	if len(fields) > 0 {
-		return &ValidationError{Fields: fields}
-	}
+	return updates, changed, fields
+}
 
-	if err := s.settingssvc.Apply(c.Request().Context(), updates, callerID); err != nil {
-		var ve *instancesettings.ValidationError
-		if errors.As(err, &ve) {
-			s.audit(c, observability.ActionAdminInstanceUpdate, observability.ResultFailure, callerID.String(), "invalid:"+ve.Key)
-			return &ValidationError{Fields: []FieldError{{Field: ve.Key, Message: ve.Message}}}
+// sortedUpdateKeys orders a coerced batch, so the dry run reports its per-key
+// rejections in the same sequence every time.
+func sortedUpdateKeys(updates map[string]instancesettings.Update) []string {
+	keys := make([]string, 0, len(updates))
+	for key := range updates {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// settingsFieldErrors flattens what the settings service returns — one
+// *instancesettings.ValidationError per offending key, joined — into the
+// field-error list the 422 envelope and the dry-run response both carry.
+//
+// It returns nil when ANY leaf of the tree is something else: a persistence
+// failure is not a form problem, and rendering half a write failure as "fix this
+// field" would tell an admin their database outage is a typo. The caller falls
+// through to the generic 500 path in that case.
+func settingsFieldErrors(err error) []FieldError {
+	var out []FieldError
+	ours := true
+	var walk func(error)
+	walk = func(e error) {
+		if e == nil || !ours {
+			return
 		}
-		return err
+		if joined, isJoined := e.(interface{ Unwrap() []error }); isJoined {
+			for _, sub := range joined.Unwrap() {
+				walk(sub)
+			}
+			return
+		}
+		var ve *instancesettings.ValidationError
+		if errors.As(e, &ve) {
+			out = append(out, FieldError{Field: ve.Key, Message: ve.Message})
+			return
+		}
+		ours = false
 	}
+	walk(err)
+	if !ours {
+		return nil
+	}
+	return out
+}
 
-	sort.Strings(changed)
-	s.audit(c, observability.ActionAdminInstanceUpdate, observability.ResultSuccess, callerID.String(), "keys="+strings.Join(changed, ","))
-	// Search: push the effective config to vidra-search when a search key changed
-	// (search-service W4). Best-effort.
-	s.emitSearchConfigChangedIfNeeded(c.Request().Context(), changed)
-	return c.JSON(http.StatusOK, s.instanceSettingsResponse())
+// fieldNames lists the offending field names for an audit reason — names only,
+// never the values that failed.
+func fieldNames(fields []FieldError) []string {
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		out = append(out, f.Field)
+	}
+	return out
 }
 
 // isJSONNull reports whether a raw JSON value is the literal null.

@@ -1575,6 +1575,10 @@ func (s *Server) routes() {
 	if s.settingssvc != nil {
 		api.GET("/admin/instance-settings", s.handleGetInstanceSettings, s.requireAuth, s.requireRole("admin"))
 		api.PATCH("/admin/instance-settings", s.handleUpdateInstanceSettings, s.requireAuth, s.requireRole("admin"))
+		// Dry run: the same body, validated and thrown away. It is what lets the
+		// admin config form check a field on blur against the SERVER's rules
+		// instead of a hand-copied TypeScript duplicate of them.
+		api.POST("/admin/instance-settings/validate", s.handleValidateInstanceSettings, s.requireAuth, s.requireRole("admin"))
 	}
 
 	// PeerTube import / migration (fix_plan P18). Admin-only: launch a

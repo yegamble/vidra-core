@@ -11284,6 +11284,60 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/instance-settings/validate:
+    post:
+      operationId: validateInstanceSettings
+      summary: Dry-run instance-settings validation (admin)
+      description: >-
+        Answers "would PATCH /api/v1/admin/instance-settings accept this body?"
+        without writing anything. The request body is exactly the PATCH's — a
+        flat object of setting key → new value — and the response lists the field
+        problems the write would have reported, or an empty list when it would be
+        accepted. Nothing is persisted and no audit event is emitted.
+        It exists so an admin config form can validate a field as the operator
+        leaves it, against the SERVER's rules, instead of keeping a hand-copied
+        second copy of them client-side (a copy drifts the first time either side
+        changes, and the operator finds out as a 422 on save). The PATCH's 422
+        stays the authoritative backstop; this is only the early answer.
+        Always 200 on a well-formed request: the field problems ARE the result of
+        asking a validation question, so they are not themselves an error
+        response. A body that is not a JSON object is 400. Restricted to admins.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateInstanceSettingsRequest"
+      responses:
+        "200":
+          description: >-
+            The validation result. An empty fields array means the same body
+            would be accepted by the PATCH.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceSettingsValidationResponse"
+        "400":
+          description: Malformed request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/instance-documents/{name}:
     get:
       operationId: getInstanceDocument
@@ -17524,6 +17578,32 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/InstanceSetting"
+    SettingValidationIssue:
+      type: object
+      description: >-
+        One rejected setting: the key that would fail and the message the PATCH's
+        422 would carry for it. Identical in shape to the field errors in
+        ErrorResponse, so a client renders both the same way.
+      required: [field, message]
+      properties:
+        field:
+          type: string
+          description: The setting key.
+          example: instance_name
+        message:
+          type: string
+          example: is required
+    InstanceSettingsValidationResponse:
+      type: object
+      description: >-
+        The dry-run result. fields is always present: an empty array means the
+        same body would be accepted by PATCH /api/v1/admin/instance-settings.
+      required: [fields]
+      properties:
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/SettingValidationIssue"
     InstanceHomepageResponse:
       type: object
       description: >-
