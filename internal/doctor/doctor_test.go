@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vidra/vidra-core/internal/dbmigrate"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/setup"
 	"github.com/vidra/vidra-core/internal/storage"
 )
@@ -1097,6 +1098,79 @@ func TestVideoEncoders(t *testing.T) {
 		return h.healthyRespond(name, args)
 	}
 	wantFinding(t, one(t, only(t, "video encoders", h, nil)), StatusWarn, "could not be asked what it supports", "re-run")
+}
+
+// TestVideoEncodersNeverConvictsOnTheHostBinary is the trap this check fell into
+// once and must not fall into again. Transcodes run INSIDE the api container; the
+// host's ffmpeg is a different build. So when the container is down, whatever the
+// host says is a ⚠ in BOTH directions — a host hit is not proof the deployment
+// works, and a host miss is not proof it is broken. Reporting either as a verdict
+// is worse than reporting neither, because it names the wrong binary with total
+// confidence: the earlier version claimed "the api container's ffmpeg has no
+// libsvtav1" without ever having looked at it.
+func TestVideoEncodersNeverConvictsOnTheHostBinary(t *testing.T) {
+	// The container is down; only the host answers.
+	hostOnly := func(t *testing.T, listing string) *fakeHost {
+		t.Helper()
+		h := newFakeHost()
+		h.respond = func(name string, args []string) (Output, error) {
+			joined := strings.Join(args, " ")
+			if name == "docker" && strings.HasPrefix(joined, "ps ") {
+				return Output{Stdout: ""}, nil
+			}
+			if name == "/usr/bin/ffmpeg" && strings.Contains(joined, "-encoders") {
+				return Output{Stdout: listing}, nil
+			}
+			return h.healthyRespond(name, args)
+		}
+		return h
+	}
+
+	t.Run("a host HIT is still only a warning", func(t *testing.T) {
+		h := hostOnly(t, encoderListing)
+		setEnv(h, "TRANSCODING_HEVC_ENABLED=true")
+		f := one(t, only(t, "video encoders", h, nil))
+		wantFinding(t, f, StatusWarn, "not the ffmpeg that will run the transcodes", "bring the stack up")
+		if strings.Contains(f.Detail, "container's ffmpeg") {
+			t.Errorf("a host answer is attributed to the container: %q", f.Detail)
+		}
+	})
+
+	t.Run("a host MISS is a warning, not a verdict", func(t *testing.T) {
+		h := hostOnly(t, strings.Replace(encoderListing, " V..... libsvtav1            SVT-AV1 encoder (codec av1)\n", "", 1))
+		setEnv(h, "TRANSCODING_AV1_ENABLED=true")
+		f := one(t, only(t, "video encoders", h, nil))
+		wantFinding(t, f, StatusWarn, "says nothing about the image", "bring the stack up")
+		if f.Status == StatusFail {
+			t.Error("the host binary convicted the container")
+		}
+		if strings.Contains(f.Detail, "container's ffmpeg") {
+			t.Errorf("a host answer is attributed to the container: %q", f.Detail)
+		}
+	})
+}
+
+// TestVideoEncoderKnobsMatchTheRegistry pins doctor's copy of the encoder names
+// against internal/media's registry, which is the authority.
+//
+// The import is TEST-ONLY on purpose. This package diagnoses a deployment — an
+// env file and a container — and importing the media pipeline at build time to
+// learn two strings would tie the diagnostic to the thing it diagnoses. A test
+// has no such constraint, so the duplication is checked without being created.
+func TestVideoEncoderKnobsMatchTheRegistry(t *testing.T) {
+	want := media.VideoCodecEncoders()
+	got := map[string]string{}
+	for _, k := range videoEncoderKnobs {
+		got[k.envVar] = k.encoder
+	}
+	if len(got) != len(want) {
+		t.Fatalf("doctor checks %d codec knobs, the registry has %d: %v vs %v", len(got), len(want), got, want)
+	}
+	for envVar, encoder := range want {
+		if got[envVar] != encoder {
+			t.Errorf("%s: doctor checks for %q, the registry needs %q", envVar, got[envVar], encoder)
+		}
+	}
 }
 
 // TestFFmpegEncoderNamesReadsTheRealLayout pins the parser against the shape

@@ -282,11 +282,12 @@ var videoEncoderKnobs = []struct{ envVar, encoder, codec string }{
 // on the host PATH only as a fallback — because a host ffmpeg built with libx265
 // says nothing about the one in the image, and the two are routinely different.
 //
-// A ✗ rather than a ⚠ when an enabled codec's encoder is missing: the api refuses
-// to boot on it, so this is not a degradation, it is why the stack is down. A
-// deployment with neither knob on gets a plain ✓ — the H.264-only default is the
-// correct configuration, not an absence of one, and a permanent ⚠ on it is how a
-// report teaches people to stop reading it.
+// A ✗ rather than a ⚠ when an enabled codec's encoder is missing FROM THE
+// CONTAINER: the api refuses to boot on it, so this is not a degradation, it is
+// why the stack is down. Everything the HOST binary says is a ⚠ either way — see
+// the switch below. A deployment with neither knob on gets a plain ✓: the
+// H.264-only default is the correct configuration, not an absence of one, and a
+// permanent ⚠ on it is how a report teaches people to stop reading it.
 func checkVideoEncoders(ctx context.Context, s *state) []Finding {
 	if s.envErr != nil {
 		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s)", s.envErr))}
@@ -304,50 +305,67 @@ func checkVideoEncoders(ctx context.Context, s *state) []Finding {
 	for _, k := range want {
 		asked = append(asked, k.codec)
 	}
-	list, where, why := s.ffmpegEncoders(ctx)
+	list, where, container, why := s.ffmpegEncoders(ctx)
 	if why != "" {
 		return []Finding{warnf(
 			fmt.Sprintf("%s %s enabled, but the ffmpeg that would encode %s could not be asked what it supports (%s)",
 				strings.Join(asked, " and "), plural(len(want), "is", "are"), plural(len(want), "it", "them"), why),
 			"bring the stack up and re-run: the api refuses to boot when an enabled codec's encoder is missing, so this check is how you find that out before a deploy rather than after")}
 	}
+	// A HOST answer is only ever a ⚠, whichever way it comes out. Transcodes run
+	// inside the api container, and this host's ffmpeg is a different build that
+	// says nothing about the image's — so "the host has libx265" is not evidence
+	// the deployment works, and "the host lacks libsvtav1" is not evidence it is
+	// broken. Reporting either as a verdict is worse than reporting neither,
+	// because it names the wrong binary with total confidence.
+	hostFix := "transcodes run inside the api container, not here — bring the stack up and re-run to check the binary that actually does the work"
 	var findings []Finding
 	for _, k := range want {
-		if list[k.encoder] {
+		switch {
+		case list[k.encoder] && container:
 			findings = append(findings, okf(fmt.Sprintf("%s is enabled and %s has the %s encoder", k.codec, where, k.encoder)))
-			continue
+		case list[k.encoder]:
+			findings = append(findings, warnf(
+				fmt.Sprintf("%s is enabled and %s has the %s encoder, but that is not the ffmpeg that will run the transcodes", k.codec, where, k.encoder),
+				hostFix))
+		case container:
+			findings = append(findings, failf(
+				fmt.Sprintf("%s=true, but %s has no %q encoder", k.envVar, where, k.encoder),
+				fmt.Sprintf("the api refuses to boot like this, so nothing is transcoding. Either deploy an ffmpeg built with %s or set %s=false in %s and restart",
+					k.encoder, k.envVar, s.envRel)))
+		default:
+			findings = append(findings, warnf(
+				fmt.Sprintf("%s=true and %s has no %q encoder — but the api container was not available, so this says nothing about the image", k.envVar, where, k.encoder),
+				hostFix))
 		}
-		findings = append(findings, failf(
-			fmt.Sprintf("%s=true, but %s has no %q encoder", k.envVar, where, k.encoder),
-			fmt.Sprintf("the api refuses to boot like this, so nothing is transcoding. Either deploy an ffmpeg built with %s or set %s=false in %s and restart",
-				k.encoder, k.envVar, s.envRel)))
 	}
 	return findings
 }
 
 // ffmpegEncoders lists the encoder names the deployment's ffmpeg has, preferring
-// the api container's binary over the host's. It returns the set, a phrase
-// naming which binary answered, and — when neither could be asked — why not.
-func (s *state) ffmpegEncoders(ctx context.Context) (map[string]bool, string, string) {
-	running, why := s.containers(ctx)
-	if why == "" {
+// the api container's binary over the host's. It returns the set, a phrase naming
+// which binary answered, whether that binary was the CONTAINER's — which is the
+// only one whose answer is a verdict — and, when neither could be asked, why not.
+func (s *state) ffmpegEncoders(ctx context.Context) (list map[string]bool, where string, container bool, why string) {
+	running, reason := s.containers(ctx)
+	if reason == "" {
 		if _, ok := serviceContainer(running, "api"); ok {
 			args := s.composeArgs("exec", "-T", "api", "ffmpeg", "-hide_banner", "-encoders")
 			out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
 			if err == nil && out.ExitCode == 0 {
-				return ffmpegEncoderNames(out.Stdout), "the api container's ffmpeg", ""
+				return ffmpegEncoderNames(out.Stdout), "the api container's ffmpeg", true, ""
 			}
 		}
 	}
 	path, err := s.opt.Host.LookPath("ffmpeg")
 	if err != nil {
-		return nil, "", "the api container was not available and there is no ffmpeg on this host either"
+		return nil, "", false, "the api container was not available and there is no ffmpeg on this host either"
 	}
 	out, err := s.opt.Host.Run(ctx, s.root, path, "-hide_banner", "-encoders")
 	if err != nil || out.ExitCode != 0 {
-		return nil, "", "the api container was not available and the host ffmpeg would not list its encoders"
+		return nil, "", false, "the api container was not available and the host ffmpeg would not list its encoders"
 	}
-	return ffmpegEncoderNames(out.Stdout), "this host's ffmpeg (NOT the container's, which is the one that matters)", ""
+	return ffmpegEncoderNames(out.Stdout), "this host's ffmpeg (" + path + ")", false, ""
 }
 
 // ffmpegEncoderNames is the set of encoder names in `ffmpeg -encoders` output.
