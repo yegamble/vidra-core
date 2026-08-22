@@ -1021,6 +1021,104 @@ func TestFFmpeg(t *testing.T) {
 	wantFinding(t, one(t, only(t, "ffmpeg", h, nil)), StatusWarn, "not on this host's PATH", "")
 }
 
+// encoderListing is a trimmed `ffmpeg -encoders` in the real layout: a legend
+// whose rows have the same six-character flag block as the encoders, a rule, and
+// then the encoders themselves.
+const encoderListing = `Encoders:
+ V..... = Video
+ A..... = Audio
+ .....D = Supports direct rendering method 1
+ ------
+ V....D libx264              libx264 H.264 / AVC (codec h264)
+ V....D libx265              libx265 H.265 / HEVC (codec hevc)
+ V..... libsvtav1            SVT-AV1 encoder (codec av1)
+ A....D aac                  AAC (Advanced Audio Coding)
+`
+
+// withEncoders makes the api container's ffmpeg answer -encoders with listing,
+// leaving every other command healthy.
+func withEncoders(h *fakeHost, listing string) {
+	h.respond = func(name string, args []string) (Output, error) {
+		joined := strings.Join(args, " ")
+		if name == "docker" && strings.Contains(joined, "exec -T api ffmpeg -hide_banner -encoders") {
+			return Output{Stdout: listing}, nil
+		}
+		return h.healthyRespond(name, args)
+	}
+}
+
+// setEnv rewrites the deployment's env file with extra lines appended.
+func setEnv(h *fakeHost, lines ...string) {
+	path := filepath.Join(testRoot, "env/production.env")
+	h.files[path] = h.files[path] + strings.Join(lines, "\n") + "\n"
+}
+
+func TestVideoEncoders(t *testing.T) {
+	// The default deployment: H.264 only. That is a correct configuration, not an
+	// absent one, so it reports ✓ and asks the container nothing.
+	h := newFakeHost()
+	withEncoders(h, encoderListing)
+	wantFinding(t, one(t, only(t, "video encoders", h, nil)), StatusOK, "only H.264 is enabled", "")
+	for _, cmd := range h.commands() {
+		if strings.Contains(cmd, "-encoders") {
+			t.Errorf("an H.264-only deployment probed the encoder list: %s", cmd)
+		}
+	}
+
+	// Enabled and present.
+	h = newFakeHost()
+	setEnv(h, "TRANSCODING_HEVC_ENABLED=true", "TRANSCODING_AV1_ENABLED=true")
+	withEncoders(h, encoderListing)
+	findings := only(t, "video encoders", h, nil)
+	if len(findings) != 2 {
+		t.Fatalf("got %d findings, want one per enabled codec: %+v", len(findings), findings)
+	}
+	for _, f := range findings {
+		wantFinding(t, f, StatusOK, "api container's ffmpeg", "")
+	}
+
+	// Enabled and MISSING. A ✗, because the api refuses to boot on it — and the
+	// fix must name the knob to turn off, not just the encoder to go and find.
+	h = newFakeHost()
+	setEnv(h, "TRANSCODING_AV1_ENABLED=true")
+	withEncoders(h, strings.Replace(encoderListing, " V..... libsvtav1            SVT-AV1 encoder (codec av1)\n", "", 1))
+	wantFinding(t, one(t, only(t, "video encoders", h, nil)), StatusFail, `no "libsvtav1" encoder`, "TRANSCODING_AV1_ENABLED=false")
+
+	// Enabled, but nothing to ask: the container is down and there is no host
+	// binary either. A ⚠ — the check could not run, which is not the same as a
+	// failure, and the fix says how to make it runnable.
+	h = newFakeHost()
+	setEnv(h, "TRANSCODING_HEVC_ENABLED=true")
+	delete(h.paths, "ffmpeg")
+	h.respond = func(name string, args []string) (Output, error) {
+		if name == "docker" && strings.HasPrefix(strings.Join(args, " "), "ps ") {
+			return Output{Stdout: ""}, nil
+		}
+		return h.healthyRespond(name, args)
+	}
+	wantFinding(t, one(t, only(t, "video encoders", h, nil)), StatusWarn, "could not be asked what it supports", "re-run")
+}
+
+// TestFFmpegEncoderNamesReadsTheRealLayout pins the parser against the shape
+// ffmpeg actually prints, including the legend rows that look exactly like
+// encoder rows until you read the second field.
+func TestFFmpegEncoderNamesReadsTheRealLayout(t *testing.T) {
+	got := ffmpegEncoderNames(encoderListing)
+	for _, want := range []string{"libx264", "libx265", "libsvtav1", "aac"} {
+		if !got[want] {
+			t.Errorf("encoder %q not found in %v", want, got)
+		}
+	}
+	for _, unwanted := range []string{"Encoders:", "=", "------", "Video"} {
+		if got[unwanted] {
+			t.Errorf("parser took %q for an encoder name", unwanted)
+		}
+	}
+	if len(ffmpegEncoderNames("")) != 0 {
+		t.Error("empty output produced encoder names")
+	}
+}
+
 // The trap this check exists for: a bare `docker compose up` auto-loads
 // docker-compose.override.yml, which turns rate limiting off. Nothing about the
 // running stack looks wrong, so the evidence has to come from the labels.

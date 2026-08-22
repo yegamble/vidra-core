@@ -259,6 +259,125 @@ func checkFFmpeg(ctx context.Context, s *state) []Finding {
 		"transcodes run inside the api container, not here — bring the stack up and re-run to check the binary that actually does the work")}
 }
 
+// videoEncoderKnobs maps the boot-baked extra-codec settings to the ffmpeg
+// encoder each one needs.
+//
+// The names are spelled out rather than read from internal/media for the same
+// reason internal/config spells the packager names out: this package diagnoses a
+// DEPLOYMENT — an env file and a container — and importing the media pipeline to
+// learn two string constants would tie a diagnostic to the thing it diagnoses.
+// The authority they mirror is the codec registry in internal/media/codec.go;
+// they have to be changed together, and the media package's own boot probe is
+// what actually stops a mismatched deployment.
+var videoEncoderKnobs = []struct{ envVar, encoder, codec string }{
+	{"TRANSCODING_HEVC_ENABLED", "libx265", "HEVC/H.265"},
+	{"TRANSCODING_AV1_ENABLED", "libsvtav1", "AV1"},
+}
+
+// checkVideoEncoders answers the question the extra-codec knobs raise: does the
+// ffmpeg that will actually run the transcodes HAVE the encoder they ask for?
+//
+// It mirrors the boot-time probe the api makes of its own binary, and it is
+// checked where it will be USED — inside the api container when that is running,
+// on the host PATH only as a fallback — because a host ffmpeg built with libx265
+// says nothing about the one in the image, and the two are routinely different.
+//
+// A ✗ rather than a ⚠ when an enabled codec's encoder is missing: the api refuses
+// to boot on it, so this is not a degradation, it is why the stack is down. A
+// deployment with neither knob on gets a plain ✓ — the H.264-only default is the
+// correct configuration, not an absence of one, and a permanent ⚠ on it is how a
+// report teaches people to stop reading it.
+func checkVideoEncoders(ctx context.Context, s *state) []Finding {
+	if s.envErr != nil {
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s)", s.envErr))}
+	}
+	var want []struct{ envVar, encoder, codec string }
+	for _, k := range videoEncoderKnobs {
+		if setup.IsTrue(s.value(k.envVar)) {
+			want = append(want, k)
+		}
+	}
+	if len(want) == 0 {
+		return []Finding{okf("only H.264 is enabled, which every client can play and every ffmpeg can encode — there is no extra encoder to check")}
+	}
+	asked := make([]string, 0, len(want))
+	for _, k := range want {
+		asked = append(asked, k.codec)
+	}
+	list, where, why := s.ffmpegEncoders(ctx)
+	if why != "" {
+		return []Finding{warnf(
+			fmt.Sprintf("%s %s enabled, but the ffmpeg that would encode %s could not be asked what it supports (%s)",
+				strings.Join(asked, " and "), plural(len(want), "is", "are"), plural(len(want), "it", "them"), why),
+			"bring the stack up and re-run: the api refuses to boot when an enabled codec's encoder is missing, so this check is how you find that out before a deploy rather than after")}
+	}
+	var findings []Finding
+	for _, k := range want {
+		if list[k.encoder] {
+			findings = append(findings, okf(fmt.Sprintf("%s is enabled and %s has the %s encoder", k.codec, where, k.encoder)))
+			continue
+		}
+		findings = append(findings, failf(
+			fmt.Sprintf("%s=true, but %s has no %q encoder", k.envVar, where, k.encoder),
+			fmt.Sprintf("the api refuses to boot like this, so nothing is transcoding. Either deploy an ffmpeg built with %s or set %s=false in %s and restart",
+				k.encoder, k.envVar, s.envRel)))
+	}
+	return findings
+}
+
+// ffmpegEncoders lists the encoder names the deployment's ffmpeg has, preferring
+// the api container's binary over the host's. It returns the set, a phrase
+// naming which binary answered, and — when neither could be asked — why not.
+func (s *state) ffmpegEncoders(ctx context.Context) (map[string]bool, string, string) {
+	running, why := s.containers(ctx)
+	if why == "" {
+		if _, ok := serviceContainer(running, "api"); ok {
+			args := s.composeArgs("exec", "-T", "api", "ffmpeg", "-hide_banner", "-encoders")
+			out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
+			if err == nil && out.ExitCode == 0 {
+				return ffmpegEncoderNames(out.Stdout), "the api container's ffmpeg", ""
+			}
+		}
+	}
+	path, err := s.opt.Host.LookPath("ffmpeg")
+	if err != nil {
+		return nil, "", "the api container was not available and there is no ffmpeg on this host either"
+	}
+	out, err := s.opt.Host.Run(ctx, s.root, path, "-hide_banner", "-encoders")
+	if err != nil || out.ExitCode != 0 {
+		return nil, "", "the api container was not available and the host ffmpeg would not list its encoders"
+	}
+	return ffmpegEncoderNames(out.Stdout), "this host's ffmpeg (NOT the container's, which is the one that matters)", ""
+}
+
+// ffmpegEncoderNames is the set of encoder names in `ffmpeg -encoders` output.
+// The listing is a legend, a rule of dashes, and then one indented encoder per
+// line as "<six flag characters> <name> <description>". The legend's own rows
+// share that flag block ("V..... = Video"), so they are told apart by their
+// second field being the "=" no encoder is named.
+func ffmpegEncoderNames(out string) map[string]bool {
+	names := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, " ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 || len(fields[0]) != 6 || fields[1] == "=" {
+			continue
+		}
+		names[fields[1]] = true
+	}
+	return names
+}
+
+// plural picks between two spellings for a count of 1 and a count of more.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
 // isFalseish is setup.IsTrue's opposite for a knob whose DEFAULT is on:
 // STORAGE_S3_USE_SSL is true unless the file says otherwise. It is its own
 // function because "unset means true" cannot be expressed by negating a
