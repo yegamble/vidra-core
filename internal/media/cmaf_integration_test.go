@@ -550,6 +550,13 @@ func TestCMAFStreamsLadderIntoStorage(t *testing.T) {
 	if probe["codec_name"] != "h264" || probe["width"] != "1280" || probe["height"] != "720" {
 		t.Errorf("streamed top rung concatenates to %v, want h264 1280x720", probe)
 	}
+	// The riskiest read-back of all: the muxed progressive download is remuxed
+	// from TWO inputs (the rung's representation AND the shared audio one), both
+	// fetched back through the sidecar over HTTP. If either read failed the asset
+	// would be silently video-only.
+	assertStoredStreamTypes(t, f.blobs, HLSDownloadKey(f.res.Renditions[0].KeyPrefix, true), "video", "audio")
+	assertStoredStreamTypes(t, f.blobs, HLSDownloadKey(f.res.Renditions[0].KeyPrefix, false), "video")
+	assertStoredStreamTypes(t, f.blobs, HLSAudioDownloadKey(f.res.MasterKey), "audio")
 }
 
 // TestPackagerRollbackStillProducesTheMPEGTSTree is the rollback proof: the same
