@@ -79,11 +79,12 @@ var hlsRungBitrates = map[int]rungBitrates{
 // regardless of how many video frames sit beside it.
 //
 // The rate it scales by is the EFFECTIVE OUTPUT rate, min(sourceFPS, MaxFPS) —
-// not the source rate. transcoding_max_fps appends a uniform fps filter to the
-// whole graph, so a 60fps source under a 30fps cap really does emit 30fps on
-// every rung and must be budgeted as standard-rate. That is also why one
-// multiplier serves the whole ladder: the cap is uniform, so the effective rate
-// is uniform.
+// not the source rate. transcoding_max_fps puts an fps filter on every output
+// that renders pictures: each branch of the ladder's shared filter graph, and
+// the VP9 alternate, which encodes from the source and so carries its own (see
+// vp9WebMArgs). A 60fps source under a 30fps cap therefore really does emit
+// 30fps everywhere, and must be budgeted as standard-rate. That the cap is
+// UNIFORM is also why one multiplier serves the whole ladder.
 const (
 	// hlsBaselineFPS is the highest effective rate that still gets the table
 	// verbatim. 32 rather than 30 so the 30000/1001 and 25fps families — and the
@@ -1155,7 +1156,11 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	// ladder decoded a 30-minute video four times. Because the rungs now advance
 	// together rather than one after another, each reports the SHARED progress of
 	// the single pass; the per-resolution projection is unchanged in shape.
-	reportAll := func(stage string, state string, percent int) {
+	// Parameter order follows TranscodeProgress's own fields (state, stage,
+	// percent), which is also the order webVideoDeriver.report takes — two
+	// progress closures in one function reading the same two strings in opposite
+	// orders is a transposition waiting to happen.
+	reportAll := func(state, stage string, percent int) {
 		for _, r := range steps {
 			reportProgress(progress, TranscodeProgress{
 				Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
@@ -1169,12 +1174,12 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		hasAudio:        md.HasAudio,
 		sourceAudioKbps: md.AudioKbps,
 	}
-	reportAll("encoding", ProgressRunning, 1)
+	reportAll(ProgressRunning, "encoding", 1)
 	stderr, runErr := runFFmpegWithProgress(ctx, t.bin, hlsLadderArgsWith(pkg, src, out, plan), md.DurationSeconds, func(percent int) {
-		reportAll("encoding", ProgressRunning, percent*9/10)
+		reportAll(ProgressRunning, "encoding", percent*9/10)
 	})
 	if runErr != nil {
-		reportAll("encoding", ProgressFailed, 0)
+		reportAll(ProgressFailed, "encoding", 0)
 		return HLSResult{}, fmt.Errorf("media: ffmpeg hls ladder for %q: %w: %s", sourceKey, redactSource(src, runErr), tailOf(stderr))
 	}
 
@@ -1183,11 +1188,11 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	// double the encoders running concurrently in one process. There is nothing
 	// to scrub through in an audio-only tree, so it is skipped outright rather
 	// than run over an empty rung set.
-	reportAll("packaging", ProgressRunning, 92)
+	reportAll(ProgressRunning, "packaging", 92)
 	if !plan.audioOnly() {
 		trickStderr, trickErr := runFFmpegWithProgress(ctx, t.bin, hlsTrickPlayLadderArgsWith(pkg, src, out, plan), md.DurationSeconds, nil)
 		if trickErr != nil {
-			reportAll("packaging", ProgressFailed, 92)
+			reportAll(ProgressFailed, "packaging", 92)
 			return HLSResult{}, fmt.Errorf("media: trick-play ladder for %q: %w: %s", sourceKey, redactSource(src, trickErr), tailOf(trickStderr))
 		}
 	}
@@ -1197,11 +1202,11 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	// before treating the encode as successful.
 	if out.streaming() {
 		if serr := out.sink.Err(); serr != nil {
-			reportAll("packaging", ProgressFailed, 92)
+			reportAll(ProgressFailed, "packaging", 92)
 			return HLSResult{}, fmt.Errorf("media: streaming hls output for %q: %w", sourceKey, serr)
 		}
 		if ferr := out.sink.Flush(ctx); ferr != nil {
-			reportAll("packaging", ProgressFailed, 92)
+			reportAll(ProgressFailed, "packaging", 92)
 			return HLSResult{}, fmt.Errorf("media: streaming hls output for %q: %w", sourceKey, ferr)
 		}
 	}
@@ -1256,7 +1261,7 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		audioKbps: plan.audioBitrateKbps(),
 		tools:     t.packageTools(),
 		onPackagingFailed: func() {
-			reportAll("packaging", ProgressFailed, 92)
+			reportAll(ProgressFailed, "packaging", 92)
 		},
 		onStoreFailed: func(failed []HLSRung) {
 			for _, r := range failed {

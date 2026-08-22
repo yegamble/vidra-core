@@ -136,7 +136,7 @@ func webVideoLadderArgs(src source, root string, rungs []HLSRung, threads int) [
 // same rendition we had before. A standalone target='web_video' job has no
 // ladder to copy from and keeps the encode below.
 
-// deriveWebVideos copies one rung's just-packaged progressive MP4 into the
+// webVideoDeriver copies each rung's just-packaged progressive MP4 into the
 // standalone web-videos prefix, hashing it on the way through so the video_files
 // row carries the same digest an encoded one would.
 type webVideoDeriver struct {
