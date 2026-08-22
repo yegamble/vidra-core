@@ -2,7 +2,9 @@ package media
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -677,17 +679,31 @@ func TestPackagerMultiCodecCapability(t *testing.T) {
 	}
 }
 
+// noSuchFFmpeg is a path that cannot exist, used to make "there is no ffmpeg"
+// a DETERMINISTIC condition instead of a property of the machine.
+//
+// The alternative — leaving the binary as "ffmpeg" and letting PATH decide — is
+// exactly the bug this constant exists because of: the probe was made
+// unconditional, every developer machine had Homebrew ffmpeg, and the build
+// runner did not. A unit test must not have an opinion about what is installed.
+const noSuchFFmpeg = "/nonexistent/vidra-test/ffmpeg"
+
 // TestSetVideoCodecsRefusesTheMPEGTSPackager is the in-process second gate on the
 // combination config already refuses at boot. It matters because the two settings
 // are independent variables an operator can change one at a time — rolling back
 // to `ts` while HEVC is still on must stop the process, not silently produce
 // H.264 trees while the operator believes they are shipping H.265.
+//
+// It also pins the ORDER of the two checks. The packager verdict does not depend
+// on any binary, so it must be reached without one: with no ffmpeg present, a
+// probe running first would report the wrong problem entirely.
 func TestSetVideoCodecsRefusesTheMPEGTSPackager(t *testing.T) {
 	blobs, err := storage.NewLocal(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewLocal: %v", err)
 	}
 	tc := NewHLSTranscoder(blobs)
+	tc.bin = noSuchFFmpeg
 	if err := tc.SetPackager(PackagerTS); err != nil {
 		t.Fatalf("SetPackager: %v", err)
 	}
@@ -700,12 +716,135 @@ func TestSetVideoCodecsRefusesTheMPEGTSPackager(t *testing.T) {
 			t.Errorf("error %q does not name the packager an operator must switch to", err)
 		}
 	}
-	// H.264-only is always fine, on every packager, and leaves the shipped ladder.
+	// H.264-only is always fine, on every packager, and leaves the shipped
+	// ladder — with or without an ffmpeg to ask about it.
 	if err := tc.SetVideoCodecs(false, false); err != nil {
 		t.Fatalf("SetVideoCodecs(false, false) on MPEG-TS: %v", err)
 	}
 	if got := tc.videoCodecs(); len(got) != 1 || got[0].Name != VideoCodecH264 {
 		t.Errorf("codecs = %v, want H.264 alone", got)
+	}
+}
+
+// TestSetVideoCodecsWithNoFFmpegAtAll pins the semantics that keep this probe
+// from being an environment dependency, on the transcoder rather than on the
+// helper — because that is the seam a caller actually crosses.
+func TestSetVideoCodecsWithNoFFmpegAtAll(t *testing.T) {
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	newTC := func(t *testing.T) *HLSTranscoder {
+		t.Helper()
+		tc := NewHLSTranscoder(blobs)
+		tc.bin = noSuchFFmpeg
+		if err := tc.SetPackager(PackagerCMAF); err != nil {
+			t.Fatalf("SetPackager: %v", err)
+		}
+		return tc
+	}
+
+	// The DEFAULT plan asks nothing of ffmpeg that this probe has to prove, so a
+	// missing binary is not a boot failure. Whether ffmpeg exists at all is
+	// checkFFmpeg's and doctor's question, and a transcode that cannot find it
+	// fails with a message nobody can misread.
+	if err := newTC(t).SetVideoCodecs(false, false); err != nil {
+		t.Errorf("a default install refused to boot because ffmpeg is absent: %v", err)
+	}
+
+	// An ENABLED extra codec is the opposite: the operator asked for something
+	// optional and would otherwise never learn it silently did not happen.
+	for _, tc := range []struct {
+		name      string
+		hevc, av1 bool
+		knob      string
+	}{
+		{"hevc", true, false, "TRANSCODING_HEVC_ENABLED"},
+		{"av1", false, true, "TRANSCODING_AV1_ENABLED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := newTC(t).SetVideoCodecs(tc.hevc, tc.av1)
+			if err == nil {
+				t.Fatalf("%s was enabled with no ffmpeg to encode it, and boot continued", tc.name)
+			}
+			for _, want := range []string{tc.knob, noSuchFFmpeg} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not mention %q — it has to name both the missing binary and the knob", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestEncoderListingVerdicts is the probe's whole decision table, driven
+// directly so every branch is deterministic — including the ones that depend on
+// there being no ffmpeg, which is precisely the case a test must never leave to
+// the machine it runs on.
+func TestEncoderListingVerdicts(t *testing.T) {
+	missing := &exec.Error{Name: "ffmpeg", Err: exec.ErrNotFound}
+	broken := errors.New("media: listing ffmpeg encoders: exit status 1")
+	full := map[string]bool{"libx264": true, "libx265": true, "libsvtav1": true}
+	h264Only := map[string]bool{"libx264": true}
+
+	cases := []struct {
+		name    string
+		want    []codecProfile
+		have    map[string]bool
+		listErr error
+		wantErr string // "" means it must succeed
+	}{
+		{"everything present", videoCodecProfiles(true, true), full, nil, ""},
+		{"default plan, everything present", defaultVideoCodecs, full, nil, ""},
+		{"default plan, no ffmpeg at all", defaultVideoCodecs, nil, missing, ""},
+		{"hevc enabled, no ffmpeg at all", videoCodecProfiles(true, false), nil, missing, "TRANSCODING_HEVC_ENABLED"},
+		{"av1 enabled, no ffmpeg at all", videoCodecProfiles(false, true), nil, missing, "TRANSCODING_AV1_ENABLED"},
+		// A binary that EXISTS and misbehaves is a real fault whatever the plan
+		// is: something is wrong with the deployment's ffmpeg, not with its
+		// configuration, and no leniency applies.
+		{"default plan, ffmpeg present but broken", defaultVideoCodecs, nil, broken, "exit status 1"},
+		{"hevc enabled, ffmpeg present but broken", videoCodecProfiles(true, false), nil, broken, "exit status 1"},
+		// A listing that SUCCEEDS and lacks the encoder keeps the behaviour it
+		// has always had, for the baseline codec as much as the optional ones.
+		{"hevc enabled, listing lacks libx265", videoCodecProfiles(true, false), h264Only, nil, "TRANSCODING_HEVC_ENABLED"},
+		{"default plan, listing lacks libx264", defaultVideoCodecs, map[string]bool{}, nil, "every transcode needs"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := verifiedAgainstEncoderListing("ffmpeg", tc.want, tc.have, tc.listErr)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("want success, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("want an error mentioning %q, got success", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error %q does not mention %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestBaselineEncodersAreTheOnesEveryBuildHas pins WHICH encoders a missing
+// binary is forgiven for, because that set is the whole leniency rule — and
+// because a hardware backend swapping an encoder in must fall outside it. A
+// hardware encoder's availability is a property of the HOST, which is exactly the
+// kind of claim that has to be proven before boot rather than discovered per job.
+func TestBaselineEncodersAreTheOnesEveryBuildHas(t *testing.T) {
+	if !baselineEncoders[h264Profile.Encoder] {
+		t.Errorf("%q is the compatibility floor and must be baseline", h264Profile.Encoder)
+	}
+	for _, p := range []codecProfile{hevcProfile, av1Profile} {
+		if baselineEncoders[p.Encoder] {
+			t.Errorf("%s is opt-in, so %q must not be baseline", p.Name, p.Encoder)
+		}
+	}
+	for _, hw := range []string{"h264_vaapi", "hevc_videotoolbox", "h264_nvenc", "av1_qsv"} {
+		if baselineEncoders[hw] {
+			t.Errorf("%q is a hardware encoder; its availability is per host and must be proven, not assumed", hw)
+		}
 	}
 }
 

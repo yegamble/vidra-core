@@ -1019,12 +1019,13 @@ func (t *HLSTranscoder) SetPackager(name string) error {
 //
 // Call it AFTER SetPackager: the first check reads the selected format.
 //
-// The encoder probe runs for EVERY plan, including the H.264-only default. It
-// was once skipped there — nothing extra was enabled, so there was nothing to
-// check — which made the H.264 branch of the probe unreachable and left the one
-// encoder every deployment depends on unverified. An image built without libx264
-// passes the ffmpeg-is-on-PATH check and then fails every transcode; one
-// subprocess at boot is the whole price of catching that.
+// The encoder probe runs for EVERY plan, including the H.264-only default, so
+// that an ffmpeg which RAN and reported no libx264 is caught at boot rather than
+// per dead-lettered job. What it does NOT do is refuse to boot a default install
+// merely because there is no ffmpeg to ask: that is checkFFmpeg's and `vidra
+// doctor`'s question, and turning it into a startup failure would convert a clear
+// runtime error into an outage. An enabled extra codec is the opposite case and
+// is fatal either way — see verifiedAgainstEncoderListing.
 func (t *HLSTranscoder) SetVideoCodecs(hevc, av1 bool) error {
 	profiles := videoCodecProfiles(hevc, av1)
 	if len(profiles) > 1 && !t.packager().SupportsMultiCodec() {

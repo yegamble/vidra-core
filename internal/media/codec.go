@@ -3,7 +3,9 @@ package media
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"os/exec"
 	"strings"
@@ -348,6 +350,28 @@ func (p codecProfile) videoKbps(r HLSRung) int {
 // binary.
 const videoEncoderProbeTimeout = 10 * time.Second
 
+// baselineEncoders are the encoders whose presence this probe does NOT have to
+// prove before boot: the software H.264 and AAC pair that every ffmpeg this
+// project runs against has, and that the pipeline cannot function without at all.
+//
+// The distinction exists because of what a MISSING BINARY means for each half of
+// a codec plan. A deployment running the shipped image, or any host ffmpeg, has
+// these; if it somehow does not, the transcoder was never going to work and the
+// symptom — every job failing with an ffmpeg error — is already unambiguous, and
+// checkFFmpeg and `vidra doctor` are the things that say so. An extra codec is a
+// different situation entirely: the operator asked for something optional, paid
+// for it in CPU, and would otherwise never learn it silently did not happen.
+//
+// It is keyed on the ENCODER NAME rather than a flag on the profile so the rule
+// composes with anything that swaps an encoder in. A hardware backend that
+// replaces libx264 with h264_vaapi is, correctly, no longer baseline: hardware
+// availability is per HOST and is exactly the kind of claim that must be proven
+// before boot rather than discovered per job.
+var baselineEncoders = map[string]bool{
+	"libx264": true,
+	"aac":     true,
+}
+
 // verifyVideoEncoders asks the ffmpeg that will actually run the transcodes
 // whether it HAS the encoders this deployment's codec plan needs, and returns an
 // operator-actionable error when it does not.
@@ -357,22 +381,23 @@ const videoEncoderProbeTimeout = 10 * time.Second
 // healthy, and then dead-letters every video with an ffmpeg stderr tail. The
 // probe is one `ffmpeg -encoders` for the whole process lifetime; the encoder set
 // is a property of the BUILD and cannot change under a running binary.
-//
-// It runs for the H.264-ONLY plan too, which is every ordinary install. That
-// costs one subprocess at boot and buys the same guarantee for the codec every
-// deployment actually depends on: an image built without libx264 currently
-// passes the ffmpeg-is-on-PATH check and then fails every single transcode.
 func verifyVideoEncoders(ctx context.Context, ffmpegBin string, profiles []codecProfile) error {
 	var want []codecProfile
 	for _, p := range profiles {
-		if p.Encoder == "" {
-			continue
+		if p.Encoder != "" {
+			want = append(want, p)
 		}
-		want = append(want, p)
 	}
 	if len(want) == 0 {
 		return nil
 	}
+	have, err := listFFmpegEncoders(ctx, ffmpegBin)
+	return verifiedAgainstEncoderListing(ffmpegBin, want, have, err)
+}
+
+// listFFmpegEncoders runs `ffmpeg -encoders` once and returns the encoder names
+// it printed.
+func listFFmpegEncoders(ctx context.Context, ffmpegBin string) (map[string]bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, videoEncoderProbeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, ffmpegBin, "-hide_banner", "-encoders")
@@ -380,9 +405,48 @@ func verifyVideoEncoders(ctx context.Context, ffmpegBin string, profiles []codec
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("media: listing %s encoders: %w: %s", ffmpegBin, err, tailOf(stderr.String()))
+		return nil, fmt.Errorf("media: listing %s encoders: %w: %s", ffmpegBin, err, tailOf(stderr.String()))
 	}
-	have := ffmpegEncoderNames(out)
+	return ffmpegEncoderNames(out), nil
+}
+
+// verifiedAgainstEncoderListing is the whole decision the probe makes, separated
+// from the subprocess that feeds it so every branch — including "there is no
+// ffmpeg at all" — is a deterministic test rather than a property of the machine
+// the suite happens to run on. That separation is not hypothetical tidiness: an
+// earlier version of this probe passed locally and failed CI for precisely the
+// reason it now encodes, because the developer's machine had ffmpeg and the
+// build runner did not.
+//
+// listErr is whatever listFFmpegEncoders returned.
+func verifiedAgainstEncoderListing(ffmpegBin string, want []codecProfile, have map[string]bool, listErr error) error {
+	if listErr != nil {
+		// The binary EXISTS and the listing still failed — a wedged, broken or
+		// timed-out ffmpeg, which is a real fault whatever the plan is.
+		if !ffmpegBinaryMissing(listErr) {
+			return listErr
+		}
+		// There is NO BINARY. Whether that is fatal depends on what was asked
+		// for, and on nothing else.
+		for _, p := range want {
+			if baselineEncoders[p.Encoder] {
+				continue
+			}
+			knob := p.EnvVar
+			if knob == "" {
+				return fmt.Errorf("media: the %q encoder is needed but there is no ffmpeg at %q to provide it: %w",
+					p.Encoder, ffmpegBin, listErr)
+			}
+			return fmt.Errorf("media: %s=true needs the %q encoder, and there is no ffmpeg at %q to check for it; "+
+				"install ffmpeg (built with %s), or set %s=false", knob, p.Encoder, ffmpegBin, p.Encoder, knob)
+		}
+		// A baseline-only plan asks nothing this probe has to prove. Whether
+		// ffmpeg exists at all is checkFFmpeg's and `vidra doctor`'s question, and
+		// a transcode that cannot find it fails with a message nobody can
+		// misread — so refusing to BOOT over it would take a clear runtime error
+		// and turn it into an outage.
+		return nil
+	}
 	for _, p := range want {
 		if have[p.Encoder] {
 			continue
@@ -391,7 +455,8 @@ func verifyVideoEncoders(ctx context.Context, ffmpegBin string, profiles []codec
 		if knob == "" {
 			// H.264 has no knob to turn off, and an ffmpeg without libx264 cannot
 			// transcode anything at all — say that rather than offering a fix that
-			// does not exist.
+			// does not exist. Note this arm is reached only when ffmpeg RAN and
+			// said so, which is a real, specific fault worth refusing to boot on.
 			return fmt.Errorf("media: this ffmpeg (%s) has no %q encoder, which every transcode needs; "+
 				"install an ffmpeg built with %s", ffmpegBin, p.Encoder, p.Encoder)
 		}
@@ -400,6 +465,16 @@ func verifyVideoEncoders(ctx context.Context, ffmpegBin string, profiles []codec
 			knob, p.Encoder, ffmpegBin, p.Encoder, knob)
 	}
 	return nil
+}
+
+// ffmpegBinaryMissing reports that a probe failure was "there is no such binary"
+// rather than "the binary ran and something went wrong".
+//
+// Both spellings matter: a bare name that PATH cannot resolve fails with
+// exec.ErrNotFound, while a path that simply does not exist fails with a
+// PathError wrapping fs.ErrNotExist, and the two arrive by different routes.
+func ffmpegBinaryMissing(err error) bool {
+	return errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist)
 }
 
 // ffmpegEncoderNames is the set of encoder names in `ffmpeg -encoders` output.
