@@ -499,6 +499,57 @@ services:
       # libsvtav1; both are present). Off by default. See .env.example.
       TRANSCODING_HEVC_ENABLED: ${TRANSCODING_HEVC_ENABLED:-false}
       TRANSCODING_AV1_ENABLED: ${TRANSCODING_AV1_ENABLED:-false}
+      # Hardware encoding: off | videotoolbox | vaapi | qsv | nvenc. Off by
+      # default and opt-in BY NAME — there is deliberately no "auto", because
+      # whether a backend works is a property of this host and a pipeline that
+      # chose one by looking around would re-tune the whole deployment's picture
+      # quality the first time a device node moved. CMAF-only, like the extra
+      # codecs. `vidra doctor` says which backends look usable here.
+      #
+      # The environment variable is NOT enough on its own: vaapi and qsv read a
+      # DRM render node, which a container only has if it is mapped in — see the
+      # commented block below. AV1 always stays on the CPU whatever this says.
+      TRANSCODING_HW: ${TRANSCODING_HW:-off}
+      # The DRM render node vaapi/qsv use; empty = /dev/dri/renderD128. Set it
+      # only on a host with more than one GPU, and leave it empty for
+      # videotoolbox and nvenc, which name no device (the api refuses to boot
+      # otherwise rather than silently ignoring it).
+      TRANSCODING_HW_DEVICE: ${TRANSCODING_HW_DEVICE:-}
+      #
+      # --- GPU access for TRANSCODING_HW ------------------------------------
+      #
+      # Commented out because it is wrong on most hosts and a compose file that
+      # names a device the machine does not have will not start at all. Uncomment
+      # the block that matches the backend you set above.
+      #
+      # VAAPI or QSV — map the DRM render node in. The container's user must be
+      # able to open it; on most distributions that means adding the `video` and
+      # `render` group IDs (`getent group render` on the host) with `group_add`.
+      # Mapping /dev/dri gives the container direct access to the GPU: it is a
+      # real privilege escalation surface, so do it on hosts you control and not
+      # on shared or multi-tenant machines.
+      #
+      #   devices:
+      #     - "/dev/dri:/dev/dri"
+      #   group_add:
+      #     - "44"    # video  — check with `getent group video` on the host
+      #     - "104"   # render — check with `getent group render` on the host
+      #
+      # NVENC — the NVIDIA container runtime, which injects the driver and the
+      # device nodes. Needs nvidia-container-toolkit installed on the host AND an
+      # image whose ffmpeg was built with --enable-nvenc; the shipped one is not.
+      #
+      #   deploy:
+      #     resources:
+      #       reservations:
+      #         devices:
+      #           - driver: nvidia
+      #             count: 1
+      #             capabilities: ["gpu", "video"]
+      #
+      # VideoToolbox needs nothing here and cannot work here: it is macOS's own
+      # framework and is unreachable from a Linux container. It is for a host
+      # binary on a Mac, not for this stack.
       # Age at which the stuck-hold sweeper gives up waiting for a transcode and
       # publishes a publish-after-transcode video from its original anyway. Lower
       # values shorten the window in which a crashed worker keeps a video hidden.
