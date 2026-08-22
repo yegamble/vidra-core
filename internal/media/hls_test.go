@@ -617,3 +617,39 @@ func TestIsHLSRungHeightAndCanonicalSet(t *testing.T) {
 		t.Errorf("DefaultHLSResolutionHeights = %v", got)
 	}
 }
+
+// TestMetadataAudioOnly pins the classification the whole audio-only path turns
+// on. It is deliberately narrower than "no video": a file with neither video nor
+// audio is not media at all and must keep failing, and a source WITH video is
+// never audio-only however little else it has.
+func TestMetadataAudioOnly(t *testing.T) {
+	cases := []struct {
+		name string
+		md   Metadata
+		want bool
+		why  string
+	}{
+		{"audio with no video", Metadata{HasAudio: true, DurationSeconds: 90}, true,
+			"a podcast episode: the shape that used to dead-letter"},
+		{"neither audio nor video", Metadata{DurationSeconds: 90}, false,
+			"an unprobeable file must keep failing, not package as silence"},
+		{"video with audio", Metadata{Width: 1280, Height: 720, HasAudio: true}, false, ""},
+		{"video without audio", Metadata{Width: 1280, Height: 720}, false,
+			"a silent video is a video"},
+		{"audio beside a zero-height video stream", Metadata{Width: 640, HasAudio: true}, true,
+			"a cover-art attachment leaves one dimension unset and cannot be laddered"},
+	}
+	for _, tc := range cases {
+		if got := tc.md.AudioOnly(); got != tc.want {
+			t.Errorf("%s: AudioOnly() = %v, want %v — %s", tc.name, got, tc.want, tc.why)
+		}
+	}
+}
+
+// TestAudioOnlyLadderPlansNothingToEncode: the planner is unchanged, and that is
+// the point. "No rungs" was never wrong — reading it as "unprobeable source" was.
+func TestAudioOnlyLadderPlansNothingToEncode(t *testing.T) {
+	if rungs := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 0, 0, 0); rungs != nil {
+		t.Errorf("audio-only source planned %v, want no rungs", rungSizes(rungs))
+	}
+}

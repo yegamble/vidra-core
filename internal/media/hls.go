@@ -143,6 +143,14 @@ func effectiveOutputFPS(settings HLSEncodeSettings, sourceFPS float64) float64 {
 	return sourceFPS
 }
 
+// hlsAudioOnlyKbps is the AAC budget for a source that has NO video: the whole
+// deliverable is the audio, so it gets the ladder's top-rung audio budget rather
+// than any lower tier's. There is no rung to read it from — an audio-only plan
+// has none, deliberately: the canonical rung universe is video heights and adding
+// a 0p rung to it was explicitly ruled out (see HLSCanonicalRungHeights and the
+// transcoding_resolutions validator, which both refuse 0).
+const hlsAudioOnlyKbps = 160
+
 // HLSCanonicalRungHeights is the full rung universe an admin may enable via
 // transcoding_resolutions, tallest first (PeerTube's resolution set minus the
 // deliberately absent 0p audio-only rung).
@@ -496,6 +504,14 @@ func hlsLadderArgs(src source, out output, rungs []HLSRung, threads int) []strin
 func hlsLadderArgsWith(pkg Packager, src source, out output, plan ladderPlan) []string {
 	args := []string{"-y"}
 	args = append(args, src.inputArgs()...)
+
+	// An audio-only plan has no video to fork, so it has no filter graph at all —
+	// an empty -filter_complex is a syntax error, and a split into zero branches
+	// is meaningless. The packager's output half maps the audio straight off the
+	// input.
+	if plan.audioOnly() {
+		return append(args, pkg.LadderOutputArgs(out, plan)...)
+	}
 
 	chain, labels := splitChain(len(plan.rungs))
 	chains := make([]string, 0, len(plan.rungs)+1)
@@ -956,10 +972,37 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	// settings change applies to the next job, never mid-job.
 	settings := t.encodeSettings()
 	rungs := PlanHLSLadderWith(settings, md.Width, md.Height, md.FPS)
-	if len(rungs) == 0 {
+
+	// The packaging format contributes the muxer half of every rung's output
+	// arguments to the very same invocation that encodes it — ffmpeg packages as
+	// it encodes, so there is no separate packaging pass to run afterwards (see
+	// packager.go).
+	pkg := t.packager()
+
+	// A source with no video is not an unprobeable source. It used to be treated
+	// as one — the ladder planner returns nothing for it, and "nothing to plan"
+	// read as "nothing to read" — so a podcast retried five times and
+	// dead-lettered. It is packaged as a single audio rendition instead, on the
+	// formats that can express one.
+	audioOnly := md.AudioOnly()
+	if len(rungs) == 0 && !audioOnly {
 		return HLSResult{}, fmt.Errorf("media: source %q has no probeable video dimensions", sourceKey)
 	}
-	for _, r := range rungs {
+	if audioOnly && !pkg.SupportsAudioOnly() {
+		return HLSResult{}, fmt.Errorf(
+			"media: source %q is audio-only, which the %q packager cannot express: audio-only requires the %s packager",
+			sourceKey, pkg.Name(), PackagerCMAF)
+	}
+
+	// What the per-resolution job projection reports one execution for. An
+	// audio-only transcode has no resolution, so it reports a single 0x0
+	// execution rather than none at all — a job with no steps renders as an empty
+	// operational view, which reads as "nothing happened".
+	steps := rungs
+	if audioOnly {
+		steps = []HLSRung{{}}
+	}
+	for _, r := range steps {
 		reportProgress(progress, TranscodeProgress{
 			Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
 			State: ProgressQueued, Stage: "queued", Percent: 0,
@@ -977,12 +1020,6 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		return HLSResult{}, err
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
-
-	// The packaging format contributes the muxer half of every rung's output
-	// arguments to the very same invocation that encodes it — ffmpeg packages as
-	// it encodes, so there is no separate packaging pass to run afterwards (see
-	// packager.go).
-	pkg := t.packager()
 
 	// ffmpeg opens its output files but never creates their directories, and the
 	// progressive MP4s need a real local file even when the ladder streams
@@ -1042,7 +1079,7 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	// together rather than one after another, each reports the SHARED progress of
 	// the single pass; the per-resolution projection is unchanged in shape.
 	reportAll := func(stage string, state string, percent int) {
-		for _, r := range rungs {
+		for _, r := range steps {
 			reportProgress(progress, TranscodeProgress{
 				Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
 				State: state, Stage: stage, Percent: percent,
@@ -1061,12 +1098,16 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 
 	// Trick-play is a second single-decode pass rather than more outputs on the
 	// first: its failure belongs to the packaging stage, and folding it in would
-	// double the encoders running concurrently in one process.
+	// double the encoders running concurrently in one process. There is nothing
+	// to scrub through in an audio-only tree, so it is skipped outright rather
+	// than run over an empty rung set.
 	reportAll("packaging", ProgressRunning, 92)
-	trickStderr, trickErr := runFFmpegWithProgress(ctx, t.bin, hlsTrickPlayLadderArgsWith(pkg, src, out, plan), md.DurationSeconds, nil)
-	if trickErr != nil {
-		reportAll("packaging", ProgressFailed, 92)
-		return HLSResult{}, fmt.Errorf("media: trick-play ladder for %q: %w: %s", sourceKey, redactSource(src, trickErr), tailOf(trickStderr))
+	if !plan.audioOnly() {
+		trickStderr, trickErr := runFFmpegWithProgress(ctx, t.bin, hlsTrickPlayLadderArgsWith(pkg, src, out, plan), md.DurationSeconds, nil)
+		if trickErr != nil {
+			reportAll("packaging", ProgressFailed, 92)
+			return HLSResult{}, fmt.Errorf("media: trick-play ladder for %q: %w: %s", sourceKey, redactSource(src, trickErr), tailOf(trickStderr))
+		}
 	}
 
 	// A streamed ladder is only durable once the coalesced playlists are written,
@@ -1120,6 +1161,12 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		return HLSResult{}, err
 	}
 
+	// An audio-only tree contributes NO renditions: a video_renditions row
+	// describes a resolution, and this has none. The detail response omits the
+	// rendition list entirely (it is `omitempty`) and every serving route gates on
+	// the playlist row rather than on rendition rows, so the video is servable
+	// with none — see the master playlist, which advertises a single audio-only
+	// variant.
 	res := HLSResult{MasterKey: packaged.masterKey, Format: packaged.format}
 	for _, r := range rungs {
 		res.Renditions = append(res.Renditions, HLSRendition{
@@ -1128,12 +1175,16 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 			KeyPrefix: prefix + "/" + r.Name(),
 			SizeBytes: packaged.rungSizes[r.Height],
 		})
+	}
+	for _, r := range steps {
 		reportProgress(progress, TranscodeProgress{
 			Format: TranscodeFormatHLS, Height: r.Height, Width: r.Width,
 			State: ProgressSucceeded, Stage: "complete", Percent: 100,
 		})
 	}
-	if t.vp9 {
+	// VP9 is a progressive VIDEO alternate; an audio-only source has nothing to
+	// encode one from (and rungs[0] would not exist to encode it at).
+	if t.vp9 && !plan.audioOnly() {
 		// Progressive VP9/WebM alternate at the top rung. Best-effort: a VP9
 		// failure must not fail the H.264 HLS transcode (VP9 is an extra codec
 		// option, not the primary deliverable).

@@ -78,6 +78,23 @@ type Packager interface {
 	// operator-facing TRANSCODING_PACKAGER value ("ts", "cmaf").
 	Name() string
 
+	// SupportsAudioOnly reports whether this format can package a source that has
+	// no video stream at all — a podcast, a music track — as a single audio
+	// rendition instead of failing for want of a ladder to build.
+	//
+	// It is a capability rather than an assumption because the two formats differ
+	// on it for a STRUCTURAL reason, not an unfinished one. A CMAF tree already
+	// carries audio as its own representation in its own adaptation set, so
+	// dropping the video representations leaves a manifest that is still exactly
+	// the shape it was. An MPEG-TS ladder has no such thing: audio is muxed INTO
+	// each variant, a variant is a rendition directory named for its height, and
+	// the file route only reaches "<NNN>p" directories — an audio-only MPEG-TS
+	// tree would need a rendition naming scheme, a route change and a master
+	// shape that none of the format's serving path has today. Since MPEG-TS
+	// exists only as the config-only rollback from CMAF, building all that for it
+	// would be building a second first-class format.
+	SupportsAudioOnly() bool
+
 	// ScratchDirs are the directories, relative to the transcode's scratch root,
 	// that must exist before the encode starts. ffmpeg's muxers open their output
 	// files but do not create the parent directories, and the progressive MP4s
@@ -130,6 +147,23 @@ type ladderPlan struct {
 	threads int
 	// hasAudio reports whether the source has an audio stream to encode.
 	hasAudio bool
+}
+
+// audioOnly reports that this plan has no video at all: the source carried none,
+// so there is one audio representation and nothing else. An empty rung slice is
+// the whole signal — a video plan always has at least one rung (the planner
+// falls back to a single rung at the source's own size), so there is no third
+// state to confuse it with and no second field to keep in sync.
+func (p ladderPlan) audioOnly() bool { return len(p.rungs) == 0 }
+
+// audioBitrateKbps is the AAC budget for the ladder's SINGLE shared audio
+// representation: the top rung's, or — when there are no rungs to read one from
+// — the standalone audio-only budget.
+func (p ladderPlan) audioBitrateKbps() int {
+	if p.audioOnly() {
+		return hlsAudioOnlyKbps
+	}
+	return p.rungs[0].AudioKbps
 }
 
 // rungRef resolves a filename inside ONE rung's output directory to the value
@@ -252,6 +286,10 @@ var defaultPackager = tsPackager{}
 
 // Name implements Packager.
 func (tsPackager) Name() string { return PackagerTS }
+
+// SupportsAudioOnly implements Packager: no. See the interface for why this is a
+// structural property of the format rather than a gap to be filled in later.
+func (tsPackager) SupportsAudioOnly() bool { return false }
 
 // ScratchDirs implements Packager: one directory per rung, holding that rung's
 // segments (unless the ladder streams) and always its progressive MP4s.

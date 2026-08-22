@@ -869,3 +869,196 @@ func TestCMAFSilentSourceDeclaresNoAudioAdaptationSet(t *testing.T) {
 		t.Errorf("silent MPD has %d representations, want 1:\n%s", n, mpd)
 	}
 }
+
+// --- phase-3 item 6.2: audio-only sources ------------------------------------
+
+// audioOnlySource generates a real audio-only file (in an MP4 container, which
+// is what an audio-only upload of an accepted extension actually looks like).
+var audioOnlySource = []string{
+	"-f", "lavfi", "-i", "sine=frequency=440:duration=13:sample_rate=48000",
+	"-ac", "2", "-c:a", "aac", "-b:a", "128k",
+}
+
+// TestCMAFAudioOnlySourceProducesAnAudioRendition is the end-to-end proof that a
+// source with no video is packaged rather than dead-lettered. Before this, the
+// ladder planner returned nothing for it, TranscodeHLS read that as "no
+// probeable video dimensions", and the queue retried five times and gave up —
+// so a podcast episode could be uploaded and published but never transcoded.
+func TestCMAFAudioOnlySourceProducesAnAudioRendition(t *testing.T) {
+	f := newCMAFFixture(t, audioOnlySource, false)
+
+	if f.res.Format != HLSFormatCMAF {
+		t.Errorf("Format = %q, want %q", f.res.Format, HLSFormatCMAF)
+	}
+	if f.res.MasterKey != f.prefix+"/master.m3u8" {
+		t.Errorf("MasterKey = %q, want the same key every other tree uses", f.res.MasterKey)
+	}
+	// No rendition rows: a video_renditions row describes a RESOLUTION, and this
+	// has none. Serving gates on the playlist row, not on rendition rows.
+	if len(f.res.Renditions) != 0 {
+		t.Errorf("renditions = %+v, want none for an audio-only source", f.res.Renditions)
+	}
+
+	// The tree shape, pinned. No rung directories, no video.mp4, no
+	// video-only.mp4, no trick-play — and exactly one representation.
+	segRE := regexp.MustCompile(`^cmaf/chunk-0-[0-9]{5}\.m4s$`)
+	var shape []string
+	segments := 0
+	for _, rel := range f.rels() {
+		if segRE.MatchString(rel) {
+			segments++
+			continue
+		}
+		shape = append(shape, rel)
+	}
+	sort.Strings(shape)
+	wantShape := []string{
+		"audio.m4a",
+		"cmaf/init-0.mp4",
+		"cmaf/media_0.m3u8",
+		"cmaf/stream.mpd",
+		"master.m3u8",
+	}
+	if strings.Join(shape, "\n") != strings.Join(wantShape, "\n") {
+		t.Errorf("stored tree shape:\n got %s\nwant %s", strings.Join(shape, "\n "), strings.Join(wantShape, "\n "))
+	}
+	if segments == 0 {
+		t.Error("the audio representation has no segments")
+	}
+
+	// The MPD: exactly one adaptation set, and it is the audio one. A declared-
+	// but-empty video set would be invalid DASH for the same reason a declared-
+	// but-empty audio set is on a silent video.
+	mpd := f.read(t, "cmaf/"+cmafManifestFilename)
+	if n := strings.Count(mpd, "<AdaptationSet"); n != 1 {
+		t.Errorf("audio-only MPD has %d adaptation sets, want 1:\n%s", n, mpd)
+	}
+	if !strings.Contains(mpd, `contentType="audio"`) {
+		t.Errorf("audio-only MPD declares no audio adaptation set:\n%s", mpd)
+	}
+	if strings.Contains(mpd, `contentType="video"`) {
+		t.Errorf("audio-only MPD declares a video adaptation set:\n%s", mpd)
+	}
+	if n := strings.Count(mpd, "<Representation "); n != 1 {
+		t.Errorf("audio-only MPD has %d representations, want 1:\n%s", n, mpd)
+	}
+
+	// The master: RFC 8216's audio-only presentation — ONE variant naming the
+	// audio media playlist directly, an audio codec in CODECS, and no RESOLUTION.
+	master := f.read(t, "master.m3u8")
+	if n := strings.Count(master, "#EXT-X-STREAM-INF:"); n != 1 {
+		t.Errorf("audio-only master has %d variants, want 1:\n%s", n, master)
+	}
+	if strings.Contains(master, "RESOLUTION=") {
+		t.Errorf("audio-only variant declares a RESOLUTION:\n%s", master)
+	}
+	if !strings.Contains(master, `CODECS="mp4a.`) {
+		t.Errorf("audio-only variant names no audio codec:\n%s", master)
+	}
+	if strings.Contains(master, "#EXT-X-MEDIA:") {
+		t.Errorf("audio-only master published a rendition GROUP; RFC 8216 wants a variant:\n%s", master)
+	}
+	if strings.Contains(master, "#EXT-X-I-FRAME-STREAM-INF") {
+		t.Errorf("audio-only master advertises trick-play:\n%s", master)
+	}
+	if !strings.Contains(master, "\ncmaf/media_0.m3u8\n") {
+		t.Errorf("audio-only variant does not point at the audio media playlist:\n%s", master)
+	}
+
+	// The media playlist is VOD and carries no wall-clock date-times, exactly as
+	// a video tree's is.
+	media0 := f.read(t, "cmaf/media_0.m3u8")
+	if !strings.Contains(media0, "#EXT-X-PLAYLIST-TYPE:VOD") {
+		t.Errorf("audio media playlist is not declared VOD:\n%s", media0)
+	}
+	if strings.Contains(media0, "#EXT-X-PROGRAM-DATE-TIME") {
+		t.Errorf("audio media playlist kept its wall-clock date-times:\n%s", media0)
+	}
+
+	// The audio download really is playable audio.
+	audioKey := HLSAudioDownloadKey(f.res.MasterKey)
+	p, err := f.blobs.Path(audioKey)
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if got := ffprobeEntries(t, p, "stream=codec_type"); got["codec_type"] != "audio" {
+		t.Errorf("audio.m4a first stream is %q, want audio", got["codec_type"])
+	}
+}
+
+// TestCMAFAudioOnlyStreamedLadder proves the same source survives the streaming
+// transport, where every object is PUT into the store as ffmpeg writes it and
+// finalisation reads its own output back over HTTP.
+func TestCMAFAudioOnlyStreamedLadder(t *testing.T) {
+	f := newCMAFFixture(t, audioOnlySource, true)
+	if len(f.res.Renditions) != 0 {
+		t.Errorf("renditions = %+v, want none", f.res.Renditions)
+	}
+	for _, want := range []string{"master.m3u8", "audio.m4a", "cmaf/media_0.m3u8", "cmaf/init-0.mp4"} {
+		if !slicesContains(f.rels(), want) {
+			t.Errorf("streamed audio-only tree is missing %q: %v", want, f.rels())
+		}
+	}
+	for _, rel := range f.rels() {
+		if strings.HasSuffix(rel, cmafFFmpegMasterFilename) {
+			t.Errorf("ffmpeg's discarded master was stored at %q", rel)
+		}
+	}
+}
+
+// TestTSPackagerRefusesAudioOnlySource pins the rollback path's contract. MPEG-TS
+// cannot express an audio-only tree — audio is muxed INTO a rendition directory
+// named for its height, and the file route only reaches "<NNN>p" — so it must
+// say so plainly rather than fail somewhere deeper with a confusing message.
+func TestTSPackagerRefusesAudioOnlySource(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	videoID := uuid.New()
+	srcKey := "web-videos/" + videoID.String() + ".mp4"
+	srcPath, err := blobs.Path(srcKey)
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(srcPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if out, err := exec.Command("ffmpeg", append(append([]string{"-y"}, audioOnlySource...), srcPath)...).CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg generate: %v\n%s", err, out)
+	}
+	tc, ok := DetectHLSTranscoder(blobs)
+	if !ok {
+		t.Fatal("DetectHLSTranscoder = false")
+	}
+	if err := tc.SetPackager(PackagerTS); err != nil {
+		t.Fatalf("SetPackager: %v", err)
+	}
+	_, err = tc.Transcode(context.Background(), videoID, srcKey)
+	if err == nil {
+		t.Fatal("the MPEG-TS packager accepted an audio-only source")
+	}
+	if !strings.Contains(err.Error(), "audio-only requires the cmaf packager") {
+		t.Errorf("error = %q, want it to name the packager an operator must switch to", err)
+	}
+	// Nothing may have been written for a source that was refused.
+	keys, kerr := blobs.ListKeys(context.Background(), HLSKeyPrefix(videoID))
+	if kerr != nil {
+		t.Fatalf("ListKeys: %v", kerr)
+	}
+	if len(keys) != 0 {
+		t.Errorf("a refused audio-only transcode stored %v", keys)
+	}
+}
+
+func slicesContains(hay []string, needle string) bool {
+	for _, s := range hay {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}

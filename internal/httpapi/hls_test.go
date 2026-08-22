@@ -843,3 +843,169 @@ func TestHLSCMAFNamesAreCrossCheckedAgainstTheVideosFormat(t *testing.T) {
 		}
 	})
 }
+
+// --- phase-3 item 6.2: audio-only CMAF trees ---------------------------------
+
+// seedReadyAudioOnlyCMAF marks videoID's playlist ready with the tree
+// internal/media's cmafPackager stores for a source that has NO video: one audio
+// representation, an audio-only master, an MPD with a single audio adaptation
+// set, and — deliberately — NO video_renditions rows, no rung directories and no
+// trick-play.
+func seedReadyAudioOnlyCMAF(t *testing.T, repo *transcodeFakeRepo, blobs storage.Backend, videoID string) {
+	t.Helper()
+	id := uuid.MustParse(videoID)
+	prefix := "streaming-playlists/" + videoID
+	repo.playlists[id] = sqlcgen.StreamingPlaylist{
+		VideoID: id, MasterKey: prefix + "/master.m3u8", State: "ready",
+		Format: media.HLSFormatCMAF,
+	}
+	put := func(key, content string) {
+		if _, err := blobs.Put(context.Background(), key, strings.NewReader(content)); err != nil {
+			t.Fatalf("Put %q: %v", key, err)
+		}
+	}
+	put(prefix+"/master.m3u8", "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n"+
+		"#EXT-X-STREAM-INF:BANDWIDTH=176000,CODECS=\"mp4a.40.2\"\n"+
+		"cmaf/media_0.m3u8\n")
+	put(prefix+"/cmaf/stream.mpd", `<?xml version="1.0" encoding="utf-8"?><MPD type="static">`+
+		`<AdaptationSet id="0" contentType="audio">`+
+		`<SegmentTemplate initialization="init-$RepresentationID$.mp4" media="chunk-$RepresentationID$-$Number%05d$.m4s"/>`+
+		`</AdaptationSet></MPD>`)
+	put(prefix+"/cmaf/media_0.m3u8", "#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-PLAYLIST-TYPE:VOD\n"+
+		"#EXT-X-MAP:URI=\"init-0.mp4\"\n#EXTINF:6.000000,\nchunk-0-00001.m4s\n#EXT-X-ENDLIST\n")
+	put(prefix+"/cmaf/init-0.mp4", "fake-audio-init")
+	put(prefix+"/cmaf/chunk-0-00001.m4s", "fake-audio-segment")
+	put(prefix+"/"+media.HLSAudioDownloadFilename, "fake-m4a-bytes")
+}
+
+// TestHLSServesAnAudioOnlyCMAFTree walks an audio-only video the way a player
+// does. Nothing on the serving path needed changing for this — the routes gate
+// on the playlist row and a filename regex, never on rendition rows, and the
+// audio representation lands on names the CMAF regex already matched — so this
+// pins that as a PROPERTY rather than an accident that could be refactored away.
+func TestHLSServesAnAudioOnlyCMAFTree(t *testing.T) {
+	srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Podcast","privacy":"public"}`)
+	seedReadyAudioOnlyCMAF(t, tcRepo, blobs, id)
+	version := hlsCacheVersion(tcRepo.playlists[uuid.MustParse(id)])
+
+	rec := getHLS(srv, "/api/v1/videos/"+id+"/hls/master.m3u8", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("master = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	master := rec.Body.String()
+	if !strings.Contains(master, "\ncmaf/media_0.m3u8?v="+version+"\n") {
+		t.Errorf("audio-only master's variant URI was not versioned into the cmaf pseudo-rendition:\n%s", master)
+	}
+	if strings.Contains(master, "RESOLUTION=") {
+		t.Errorf("audio-only master declares a RESOLUTION:\n%s", master)
+	}
+
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/cmaf/media_0.m3u8", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("audio media playlist = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `URI="init-0.mp4?v=`+version+`"`) ||
+		!strings.Contains(rec.Body.String(), "chunk-0-00001.m4s?v="+version) {
+		t.Errorf("audio media playlist should version its references:\n%s", rec.Body.String())
+	}
+
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/cmaf/init-0.mp4", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "fake-audio-init" {
+		t.Fatalf("audio init segment = %d %q", rec.Code, rec.Body.String())
+	}
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/cmaf/chunk-0-00001.m4s", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "fake-audio-segment" {
+		t.Fatalf("audio media segment = %d %q", rec.Code, rec.Body.String())
+	}
+
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/"+hlsCMAFRendition+"/"+hlsCMAFManifestFile, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("mpd = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/dash+xml") {
+		t.Errorf("mpd Content-Type = %q", ct)
+	}
+
+	// Nothing invents a rung: the MPEG-TS rendition names stay 404 for this tree
+	// exactly as they do for any other CMAF one.
+	for _, p := range []string{"/hls/240p/playlist.m3u8", "/hls/cmaf/iframe-0.m3u8"} {
+		if rec := getHLS(srv, "/api/v1/videos/"+id+p, ""); rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404 for an audio-only tree", p, rec.Code)
+		}
+	}
+}
+
+// TestVideoDetailForAnAudioOnlyTreeHasHLSAndNoRenditions pins the detail shape:
+// hls_url is present (there IS something to play) and the rendition list is
+// absent rather than empty — an audio-only presentation has no resolutions, and
+// saying so by omission is what `omitempty` already does.
+func TestVideoDetailForAnAudioOnlyTreeHasHLSAndNoRenditions(t *testing.T) {
+	srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Podcast","privacy":"public"}`)
+	seedReadyAudioOnlyCMAF(t, tcRepo, blobs, id)
+
+	var view videoView
+	rec := getVideo(srv, id, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail = %d", rec.Code)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	wantURL := "/api/v1/videos/" + id + "/hls/master.m3u8?v=" +
+		hlsCacheVersion(tcRepo.playlists[uuid.MustParse(id)])
+	if view.HLSURL == nil || *view.HLSURL != wantURL {
+		t.Errorf("hls_url = %v, want %q", view.HLSURL, wantURL)
+	}
+	if view.Renditions != nil {
+		t.Errorf("renditions = %+v, want absent for an audio-only tree", view.Renditions)
+	}
+	if strings.Contains(rec.Body.String(), `"renditions"`) {
+		t.Errorf("detail body should omit the renditions key entirely:\n%s", rec.Body.String())
+	}
+}
+
+// TestDownloadsForAnAudioOnlyTreeOfferTheAudioAsset closes the loop on the
+// deliverable: the download list gains an `audio` entry and no `hls` ones, and
+// the byte route serves it.
+func TestDownloadsForAnAudioOnlyTreeOfferTheAudioAsset(t *testing.T) {
+	srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Podcast","privacy":"public"}`)
+	seedReadyAudioOnlyCMAF(t, tcRepo, blobs, id)
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+id+"/download", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("downloads = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Files []struct {
+			Kind      string `json:"kind"`
+			URL       string `json:"url"`
+			SizeBytes int64  `json:"size_bytes"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	kinds := map[string]int{}
+	for _, f := range resp.Files {
+		kinds[f.Kind]++
+	}
+	if kinds["hls"] != 0 {
+		t.Errorf("audio-only downloads offered %d hls rungs: %+v", kinds["hls"], resp.Files)
+	}
+	if kinds["audio"] != 1 {
+		t.Fatalf("audio-only downloads offered %d audio assets, want 1: %+v", kinds["audio"], resp.Files)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+id+"/download/audio", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "fake-m4a-bytes" {
+		t.Fatalf("audio download = %d %q", rec.Code, rec.Body.String())
+	}
+}

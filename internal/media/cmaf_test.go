@@ -608,3 +608,163 @@ func TestPackagerSelection(t *testing.T) {
 		t.Errorf("packager = %q after a rejected name", got)
 	}
 }
+
+// --- phase-3 item 6.2: audio-only sources ------------------------------------
+
+// ffmpegCMAFMasterAudioOnly is a verbatim capture of what ffmpeg 8.1's dash
+// muxer writes for a source with only an audio stream, under the very arguments
+// cmafMuxerArgs builds for one. Note the SHAPE: with no video to group
+// renditions against, there is no EXT-X-MEDIA at all and the audio is published
+// as an ordinary variant. That is correct HLS — and it is why the audio arrives
+// through the branch that means "video rung" in the ladder reader, which is what
+// makes a separate reader necessary rather than tidy.
+const ffmpegCMAFMasterAudioOnly = `#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-STREAM-INF:BANDWIDTH=161750,CODECS="mp4a.40.2"
+media_0.m3u8
+
+`
+
+// TestCMAFAudioOnlyLadderArgs pins the encode vector for a source with no video:
+// no filter graph, no video maps, no video encoders, a REQUIRED audio map, and
+// exactly one adaptation set — the audio one.
+func TestCMAFAudioOnlyLadderArgs(t *testing.T) {
+	plan := ladderPlan{hasAudio: true}
+	if !plan.audioOnly() {
+		t.Fatal("a plan with no rungs must be audio-only")
+	}
+	args := hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.m4a"), localOutput("/out"), plan)
+	joined := strings.Join(args, " ")
+
+	// An empty -filter_complex is a syntax error and a split into zero branches is
+	// meaningless; there is simply no graph.
+	if countArg(args, "-filter_complex") != 0 {
+		t.Errorf("audio-only vector carries a filter graph:\n%s", joined)
+	}
+	// The audio map is REQUIRED here. On a video ladder a missing audio stream is
+	// a silent video; here it is an empty output the muxer would happily write.
+	if !strings.Contains(joined, "-map 0:a:0 ") {
+		t.Errorf("audio-only vector does not map audio unconditionally:\n%s", joined)
+	}
+	if strings.Contains(joined, "-map 0:a:0?") {
+		t.Errorf("audio-only vector maps audio OPTIONALLY, so an unusable stream would package as an empty tree:\n%s", joined)
+	}
+	if strings.Contains(joined, "libx264") || strings.Contains(joined, "-b:v") {
+		t.Errorf("audio-only vector carries a video encoder:\n%s", joined)
+	}
+	// One adaptation set, and it is audio: an empty video set is as invalid as an
+	// empty audio set.
+	if got := argValue(t, args, "-adaptation_sets"); got != "id=0,streams=a" {
+		t.Errorf("-adaptation_sets = %q, want id=0,streams=a", got)
+	}
+	// The audio budget comes from the standalone audio-only value, because there
+	// is no rung to read one off.
+	if want := "-b:a:0 " + strconv.Itoa(hlsAudioOnlyKbps) + "k"; !strings.Contains(joined, want) {
+		t.Errorf("audio-only vector missing %q:\n%s", want, joined)
+	}
+	// It is still the same muxer writing the same tree.
+	if !strings.HasSuffix(joined, "/out/cmaf/stream.mpd") {
+		t.Errorf("audio-only vector does not write the shared CMAF directory:\n%s", joined)
+	}
+}
+
+// TestCMAFAudioOnlyScratchDirsHaveNoRungDirectories: nothing per-rung is written
+// for a source with no rungs, so no per-rung directory may be created either.
+func TestCMAFAudioOnlyScratchDirsHaveNoRungDirectories(t *testing.T) {
+	dirs := cmafPackager{}.ScratchDirs(nil)
+	if len(dirs) != 1 || dirs[0] != cmafDirName {
+		t.Errorf("audio-only scratch dirs = %v, want just %q", dirs, cmafDirName)
+	}
+}
+
+// TestCMAFAudioOnlyTrickPlayIsNotAttempted: there is nothing to scrub through.
+func TestCMAFAudioOnlyTrickPlayIsNotAttempted(t *testing.T) {
+	args := cmafPackager{}.TrickPlayOutputArgs(localOutput("/out"), ladderPlan{hasAudio: true})
+	if len(args) != 0 {
+		t.Errorf("audio-only trick-play output args = %v, want none", args)
+	}
+}
+
+// TestParseCMAFAudioOnlyMasterPlaylist reads ffmpeg's real audio-only master and
+// pins what may go wrong with it.
+func TestParseCMAFAudioOnlyMasterPlaylist(t *testing.T) {
+	layout, err := parseCMAFMasterPlaylist([]byte(ffmpegCMAFMasterAudioOnly), 0)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !layout.audioOnly() || !layout.hasAudio {
+		t.Errorf("layout = %+v, want an audio-only layout with audio", layout)
+	}
+	if layout.audioRep != 0 {
+		t.Errorf("audioRep = %d, want 0 (it is the only stream)", layout.audioRep)
+	}
+	if layout.audioCodecs != "mp4a.40.2" {
+		t.Errorf("audioCodecs = %q, want the muxer's own string", layout.audioCodecs)
+	}
+
+	for _, tc := range []struct {
+		name, playlist string
+	}{
+		{"no variant at all", "#EXTM3U\n#EXT-X-VERSION:7\n"},
+		{"a variant that is not a media playlist", "#EXTM3U\n#EXT-X-STREAM-INF:CODECS=\"mp4a.40.2\"\nsomething.m3u8\n"},
+		{"a variant that is not representation 0", "#EXTM3U\n#EXT-X-STREAM-INF:CODECS=\"mp4a.40.2\"\nmedia_3.m3u8\n"},
+		{"more than one variant", "#EXTM3U\n#EXT-X-STREAM-INF:CODECS=\"mp4a.40.2\"\nmedia_0.m3u8\n" +
+			"#EXT-X-STREAM-INF:CODECS=\"mp4a.40.2\"\nmedia_1.m3u8\n"},
+		{"a variant that names no audio codec", "#EXTM3U\n#EXT-X-STREAM-INF:CODECS=\"avc1.4d400d\"\nmedia_0.m3u8\n"},
+	} {
+		if _, err := parseCMAFMasterPlaylist([]byte(tc.playlist), 0); err == nil {
+			t.Errorf("%s: parsed without error", tc.name)
+		}
+	}
+}
+
+// TestRenderCMAFAudioOnlyMasterPlaylist pins RFC 8216's audio-only presentation:
+// ONE variant naming the audio media playlist directly, an audio codec in
+// CODECS, and no RESOLUTION. Deliberately not an EXT-X-MEDIA rendition group — a
+// group describes alternates OF a video presentation, and a master whose only
+// audio is in a group no variant references is one no client will start.
+func TestRenderCMAFAudioOnlyMasterPlaylist(t *testing.T) {
+	layout, err := parseCMAFMasterPlaylist([]byte(ffmpegCMAFMasterAudioOnly), 0)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got, err := renderCMAFMasterPlaylist(nil, layout, nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	want := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n" +
+		"#EXT-X-STREAM-INF:BANDWIDTH=" + strconv.Itoa(hlsAudioOnlyKbps*1000*11/10) + ",CODECS=\"mp4a.40.2\"\n" +
+		"cmaf/media_0.m3u8\n"
+	if got != want {
+		t.Errorf("audio-only master:\n got %q\nwant %q", got, want)
+	}
+	// A layout with no audio codec cannot produce a startable master, so it must
+	// fail rather than emit one.
+	if _, err := renderCMAFMasterPlaylist(nil, cmafLayout{hasAudio: true}, nil); err == nil {
+		t.Error("rendered an audio-only master with no audio codec")
+	}
+}
+
+// TestLadderPlanAudioBudget pins where the single shared audio representation's
+// bitrate comes from in each shape.
+func TestLadderPlanAudioBudget(t *testing.T) {
+	rungs := cmafTestRungs()
+	if got := cmafPlan(rungs).audioBitrateKbps(); got != rungs[0].AudioKbps {
+		t.Errorf("video plan audio budget = %d, want the top rung's %d", got, rungs[0].AudioKbps)
+	}
+	if got := (ladderPlan{hasAudio: true}).audioBitrateKbps(); got != hlsAudioOnlyKbps {
+		t.Errorf("audio-only plan audio budget = %d, want %d", got, hlsAudioOnlyKbps)
+	}
+}
+
+// TestPackagerAudioOnlyCapability pins which formats can express an audio-only
+// tree, and that the capability is stated rather than inferred at a call site.
+func TestPackagerAudioOnlyCapability(t *testing.T) {
+	var cmaf, ts Packager = cmafPackager{}, tsPackager{}
+	if !cmaf.SupportsAudioOnly() {
+		t.Error("CMAF must support audio-only: its audio is already its own representation")
+	}
+	if ts.SupportsAudioOnly() {
+		t.Error("MPEG-TS must not claim audio-only support: its variants are rendition directories named for a height")
+	}
+}

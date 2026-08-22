@@ -21,3 +21,18 @@ type Metadata struct {
 	// then leaves empty produces an MPD with a Representation-less AdaptationSet.
 	HasAudio bool
 }
+
+// HasVideo reports whether the probe found a usable video stream. A file whose
+// only video stream is a cover-art still is not one: parseFFProbe requires
+// positive dimensions before it records any, so a picture attachment leaves
+// these zero.
+func (m Metadata) HasVideo() bool { return m.Width > 0 && m.Height > 0 }
+
+// AudioOnly reports whether the source is audio with no video to ladder: a
+// podcast episode, a music track, or a video container someone stripped the
+// video out of. It is the shape that used to dead-letter — the ladder planner
+// returns nothing for it, and "nothing to plan" was read as "unprobeable".
+//
+// It is deliberately NOT "no video": a file with neither video nor audio is
+// not media at all, and must keep failing.
+func (m Metadata) AudioOnly() bool { return m.HasAudio && !m.HasVideo() }

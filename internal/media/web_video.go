@@ -117,6 +117,14 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 	settings := t.encodeSettings()
 	rungs := PlanHLSLadderWith(settings, md.Width, md.Height, md.FPS)
 	if len(rungs) == 0 {
+		// A source with no video has no progressive VIDEO derivatives to make, and
+		// that is a complete answer rather than a failure: its audio deliverable is
+		// the audio.m4a the streaming tree already produces. Returning nothing lets
+		// the caller record nothing, which is exactly right — anything else would
+		// fail a job whose work is genuinely done.
+		if md.AudioOnly() {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("media: source %q has no probeable video dimensions", sourceKey)
 	}
 	for _, r := range rungs {

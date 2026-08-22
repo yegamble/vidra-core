@@ -100,6 +100,14 @@ type cmafPackager struct{}
 // Name implements Packager.
 func (cmafPackager) Name() string { return PackagerCMAF }
 
+// SupportsAudioOnly implements Packager: yes, and almost for free. A CMAF tree
+// already carries audio as its OWN representation in its OWN adaptation set,
+// referenced by the video ones rather than contained in them. Dropping the video
+// representations therefore leaves a manifest of exactly the same shape with one
+// fewer adaptation set — and an HLS master whose single variant names the audio
+// media playlist directly, which is precisely RFC 8216's audio-only variant.
+func (cmafPackager) SupportsAudioOnly() bool { return true }
+
 // ASPECT RATIO — WHY THERE IS NO FILTER HERE.
 //
 // The dash muxer refuses to write a manifest whose adaptation set mixes display
@@ -149,6 +157,12 @@ func (cmafPackager) EphemeralOutputs() []string {
 // LadderOutputArgs implements Packager: ONE dash output carrying every rung as a
 // video representation plus, when the source has any, a single shared audio
 // representation.
+//
+// An AUDIO-ONLY plan is the same output with the video half absent: no branches
+// to map, no video encoders, one adaptation set. Its audio map is REQUIRED
+// rather than optional — for a video ladder a missing audio stream is a silent
+// video, but here it is an empty output the muxer would happily write and
+// finalisation would happily store.
 func (cmafPackager) LadderOutputArgs(out output, plan ladderPlan) []string {
 	var args []string
 	// Every video branch first, then the audio — the map order IS the
@@ -156,9 +170,13 @@ func (cmafPackager) LadderOutputArgs(out output, plan ladderPlan) []string {
 	for i := range plan.rungs {
 		args = append(args, "-map", "["+plan.labels[i]+"]")
 	}
-	// Optional even when the probe found audio: the map must not fail the ladder
-	// if the stream turns out unusable.
-	args = append(args, "-map", "0:a:0?")
+	if plan.audioOnly() {
+		args = append(args, "-map", "0:a:0")
+	} else {
+		// Optional even when the probe found audio: the map must not fail the
+		// ladder if the stream turns out unusable.
+		args = append(args, "-map", "0:a:0?")
+	}
 
 	per := perOutputThreads(plan.threads, len(plan.rungs))
 	for i, r := range plan.rungs {
@@ -172,13 +190,13 @@ func (cmafPackager) LadderOutputArgs(out output, plan ladderPlan) []string {
 		// One audio encode for the whole ladder, at the TOP rung's audio bitrate:
 		// every video representation references this one rendition, so there is no
 		// per-rung audio quality to choose between.
-		args = append(args, hlsAudioEncodeArgs(plan.rungs[0].AudioKbps, sharedAudioStream(0))...)
+		args = append(args, hlsAudioEncodeArgs(plan.audioBitrateKbps(), sharedAudioStream(0))...)
 	}
-	return append(args, cmafMuxerArgs(out, plan.hasAudio)...)
+	return append(args, cmafMuxerArgs(out, plan.hasAudio, plan.audioOnly())...)
 }
 
 // cmafMuxerArgs is the shared dash-muxer block that closes the ladder vector.
-func cmafMuxerArgs(out output, hasAudio bool) []string {
+func cmafMuxerArgs(out output, hasAudio, audioOnly bool) []string {
 	args := []string{
 		"-f", "dash",
 		"-seg_duration", strconv.Itoa(hlsSegmentSeconds),
@@ -205,8 +223,14 @@ func cmafMuxerArgs(out output, hasAudio bool) []string {
 	// audio: the muxer does not drop an adaptation set that ends up with no
 	// streams, it writes an empty <AdaptationSet contentType="audio"/>, and a
 	// Representation-less adaptation set is invalid DASH.
+	//
+	// An audio-only tree declares ONE set, and it is the audio one — for the same
+	// reason: an empty video adaptation set is just as invalid as an empty audio
+	// one, so the sets are exactly the streams that exist.
 	adaptationSets := "id=0,streams=v"
-	if hasAudio {
+	if audioOnly {
+		adaptationSets = "id=0,streams=a"
+	} else if hasAudio {
 		adaptationSets += " id=1,streams=a"
 	}
 	args = append(args, "-adaptation_sets", adaptationSets)
@@ -327,6 +351,30 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 	if layout.hasAudio {
 		audioPlaylist = tree.ref(cmafMediaPlaylistName(layout.audioRep))
 	}
+	if audioPlaylist != "" {
+		// The audio-only download, written at the TOP level beside the master. It
+		// is extracted once for the whole tree because there is only one audio
+		// representation to extract from — which is why it sits here rather than
+		// inside the rung loop, and why an audio-only tree (no rungs at all) still
+		// gets one.
+		//
+		// Best effort on a VIDEO tree: it is a convenience asset there, and a
+		// failure must not fail the canonical transcode. On an audio-only tree it
+		// is the whole point, so a failure is fatal — a "successful" transcode of a
+		// podcast that produced no downloadable audio is not a success.
+		dst := filepath.Join(req.scratch, HLSAudioDownloadFilename)
+		cmd := exec.CommandContext(ctx, req.tools.ffmpeg, hlsAudioM4AArgs(audioPlaylist, dst)...)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if aerr := cmd.Run(); aerr != nil {
+			_ = os.Remove(dst)
+			if layout.audioOnly() {
+				req.packagingFailed()
+				return packageResult{}, fmt.Errorf("media: cmaf audio download for %q: %w: %s",
+					req.sourceKey, aerr, tailOf(stderr.String()))
+			}
+		}
+	}
 	rungSizes := make(map[int]int64, len(req.rungs))
 	for i, r := range req.rungs {
 		dir := filepath.Join(req.scratch, r.Name())
@@ -334,15 +382,6 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 		if derr := remuxCMAFDownloads(ctx, req.tools.ffmpeg, req.sourceKey, videoPlaylist, audioPlaylist, dir, r); derr != nil {
 			req.packagingFailed()
 			return packageResult{}, derr
-		}
-		if i == 0 && audioPlaylist != "" {
-			// Audio-only is an optional convenience asset; a failure must not fail
-			// the transcode. Written at the TOP level, beside the master.
-			dst := filepath.Join(req.scratch, HLSAudioDownloadFilename)
-			cmd := exec.CommandContext(ctx, req.tools.ffmpeg, hlsAudioM4AArgs(audioPlaylist, dst)...)
-			if cmd.Run() != nil {
-				_ = os.Remove(dst)
-			}
 		}
 		// A rung directory holds only its two progressive MP4s: the segments are
 		// shared and accounted for below.
@@ -383,11 +422,19 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 	// top-level files. Per-rung attribution of a deliberately SHARED segment set
 	// would be a fiction; what the sum has to equal — and does — is the stored
 	// size of the whole tree.
+	//
+	// An AUDIO-ONLY tree has no rung to attribute anything to, and deliberately
+	// gets no video_renditions row to carry a size (a rendition row describes a
+	// resolution). Its bytes are therefore not in the per-video size ledger —
+	// a known gap, and the honest one: the alternative is inventing a 0p rung the
+	// whole ladder universe was explicitly built without.
 	shared, err := cmafSharedTreeSize(req.out, tree.scratch)
 	if err != nil {
 		return packageResult{}, err
 	}
-	rungSizes[req.rungs[0].Height] += shared
+	if len(req.rungs) > 0 {
+		rungSizes[req.rungs[0].Height] += shared
+	}
 
 	if !req.out.streaming() {
 		if serr := storeTree(ctx, req.tools.blobs, tree.scratch, req.prefix+"/"+cmafDirName); serr != nil {
@@ -405,7 +452,9 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 	if err != nil {
 		return packageResult{}, err
 	}
-	rungSizes[req.rungs[0].Height] += extra
+	if len(req.rungs) > 0 {
+		rungSizes[req.rungs[0].Height] += extra
+	}
 
 	// A replacement source may be silent when the previous generation had audio.
 	// storeTree only overwrites files present in the new tree, so remove the old
@@ -513,7 +562,15 @@ type cmafLayout struct {
 	// index after the last video one).
 	audioRep      int
 	audioChannels string
+	// audioCodecs is the CODECS string of the audio representation, and is read
+	// only for an AUDIO-ONLY tree — where the single variant IS the audio, so its
+	// codec list is what the master must declare. In a video tree the audio codec
+	// already appears inside each variant's own CODECS.
+	audioCodecs string
 }
+
+// audioOnly reports that the tree ffmpeg wrote has no video representations.
+func (l cmafLayout) audioOnly() bool { return len(l.videoCodecs) == 0 }
 
 // representations lists every representation index in the tree, video first.
 func (l cmafLayout) representations() []int {
@@ -531,6 +588,9 @@ func (l cmafLayout) representations() []int {
 // verifies the representation layout is exactly the one the ladder asked for:
 // rungs video-first in ladder order, then at most one audio rendition.
 func parseCMAFMasterPlaylist(playlist []byte, rungs int) (cmafLayout, error) {
+	if rungs == 0 {
+		return parseCMAFAudioOnlyMasterPlaylist(playlist)
+	}
 	layout := cmafLayout{videoCodecs: make([]string, rungs)}
 	seen := make([]bool, rungs)
 
@@ -589,6 +649,62 @@ func parseCMAFMasterPlaylist(playlist []byte, rungs int) (cmafLayout, error) {
 		if layout.videoCodecs[i] == "" {
 			return cmafLayout{}, fmt.Errorf("representation %d has no CODECS", i)
 		}
+	}
+	return layout, nil
+}
+
+// parseCMAFAudioOnlyMasterPlaylist is parseCMAFMasterPlaylist for a tree with no
+// video representations at all.
+//
+// It is a separate reader rather than a special case inside the other one
+// because ffmpeg writes a genuinely DIFFERENT master here: with no video to
+// group renditions against, it emits no EXT-X-MEDIA line at all and publishes
+// the audio as an ordinary EXT-X-STREAM-INF variant. That is the correct HLS
+// shape — RFC 8216's audio-only variant is a variant, not a rendition group —
+// but it means the audio arrives through the branch that means "video rung" in
+// the other reader.
+func parseCMAFAudioOnlyMasterPlaylist(playlist []byte) (cmafLayout, error) {
+	layout := cmafLayout{hasAudio: true}
+	found := false
+	pendingCodecs, pending := "", false
+	for _, raw := range strings.Split(string(playlist), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
+			pendingCodecs, _ = m3u8Attr(line, "CODECS")
+			pending = true
+		case strings.HasPrefix(line, "#"):
+			// Any other tag; a URI must follow its own STREAM-INF immediately.
+		default:
+			if !pending {
+				continue
+			}
+			pending = false
+			if found {
+				return cmafLayout{}, errors.New("audio-only tree has more than one variant")
+			}
+			rep, ok := cmafRepOfMediaPlaylist(line)
+			if !ok {
+				return cmafLayout{}, fmt.Errorf("variant URI %q is not a media playlist", line)
+			}
+			if rep != 0 {
+				return cmafLayout{}, fmt.Errorf("audio is representation %d, want 0 (it is the only stream)", rep)
+			}
+			found, layout.audioRep, layout.audioCodecs = true, rep, pendingCodecs
+		}
+	}
+	if !found {
+		return cmafLayout{}, errors.New("audio-only tree has no variant")
+	}
+	// Guarded because the whole point of the master is telling a player what it
+	// is about to decode, and an audio-only variant's codec list is the ONLY
+	// place the audio codec appears — a video tree's variants each carry it
+	// inside their own CODECS.
+	if !strings.Contains(layout.audioCodecs, "mp4a.") {
+		return cmafLayout{}, fmt.Errorf("audio-only variant CODECS %q names no audio codec", layout.audioCodecs)
 	}
 	return layout, nil
 }
@@ -710,6 +826,9 @@ func fixCMAFMediaPlaylist(playlist []byte) ([]byte, error) {
 // that is silently unplayable in one browser is far worse than a failed
 // transcode an operator can see.
 func renderCMAFMasterPlaylist(rungs []HLSRung, layout cmafLayout, trickPlay map[int]hlsTrickPlayInfo) (string, error) {
+	if len(rungs) == 0 {
+		return renderCMAFAudioOnlyMasterPlaylist(layout)
+	}
 	// Audio is encoded ONCE for the whole ladder, so every variant's peak rate
 	// includes the same audio bitrate — the top rung's. Using each rung's own
 	// AudioKbps here (as the MPEG-TS master legitimately does, because MPEG-TS
@@ -758,3 +877,28 @@ func renderCMAFMasterPlaylist(rungs []HLSRung, layout cmafLayout, trickPlay map[
 func cmafVariantBandwidth(r HLSRung, sharedAudioKbps int) int {
 	return (r.VideoKbps + sharedAudioKbps) * 1000 * 11 / 10
 }
+
+// renderCMAFAudioOnlyMasterPlaylist renders the master for a tree with no video.
+//
+// It is RFC 8216 §4.3.4.2's audio-only presentation: a single EXT-X-STREAM-INF
+// naming the audio media playlist directly, with the audio codec in CODECS and
+// NO RESOLUTION attribute (there is nothing to resolve). Deliberately NOT an
+// EXT-X-MEDIA rendition group — a group describes alternates OF a video
+// presentation, and referencing one from no variant at all is not a playlist any
+// client will start.
+func renderCMAFAudioOnlyMasterPlaylist(layout cmafLayout) (string, error) {
+	if !layout.hasAudio || layout.audioCodecs == "" {
+		return "", errors.New("audio-only master needs an audio representation")
+	}
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
+	fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,CODECS=%q\n",
+		cmafAudioOnlyBandwidth(hlsAudioOnlyKbps), layout.audioCodecs)
+	b.WriteString(cmafDirName + "/" + cmafMediaPlaylistName(layout.audioRep) + "\n")
+	return b.String(), nil
+}
+
+// cmafAudioOnlyBandwidth is the audio-only variant's declared peak rate: the
+// encoder's own budget with the same ~10% container allowance every other
+// BANDWIDTH here carries.
+func cmafAudioOnlyBandwidth(audioKbps int) int { return audioKbps * 1000 * 11 / 10 }
