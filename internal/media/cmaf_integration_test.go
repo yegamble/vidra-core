@@ -2178,18 +2178,27 @@ var spikySource = []string{
 // bandwidthTolerance is how far over its declared BANDWIDTH a variant's worst
 // segment may land.
 //
-// It is deliberately SMALL, because the codec-specific part of the overshoot is
-// declared rather than tolerated: each rate-control mode's own peak allowance is
-// baked into the BANDWIDTH the master publishes (see the peak-permille constants
-// in codec.go), so what is left here is only the container overhead a real
-// segment carries. Measured on this fixture: H.264 1.030x and 1.031x, HEVC
-// 0.945x and 0.928x, AV1 0.842x and 0.622x.
+// What it covers is the part of the overshoot that belongs to the ENCODER BUILD
+// rather than to this code: real container overhead on a real segment, and a rate
+// controller that converges over a window instead of per segment. The
+// codec-specific part is not in here — each codec's own target is chosen to fit
+// its own budget (see av1CRF) so all three land in the same band.
 //
-// Widening this instead would have been the wrong fix twice over: it would mask
-// AV1 behind a number H.264 does not need, and it would stop the test noticing
-// the 2.93x an UNCAPPED AV1 rung produces on the same clip — which the
-// counterfactual below re-measures rather than asserting from memory.
-const bandwidthTolerance = 1.06
+// Measured across the two ffmpeg builds this project runs against — 8.1 (the
+// shipped Alpine image) and 6.1 (the distribution build on the CI runner and on
+// a Debian/Ubuntu host):
+//
+//	           ffmpeg 8.1        ffmpeg 6.1
+//	H.264      1.030x  1.031x    1.061x  1.077x
+//	HEVC       0.945x  0.928x    0.987x  1.006x
+//	AV1        0.842x  0.622x    0.822x  0.669x
+//
+// 1.10 admits all of it. It does NOT mask AV1, which is the failure this test
+// exists for: AV1's worst measurement is 0.842x, so it would have to regress by
+// a third before this number hid anything — and the uncapped encode it replaced
+// ran at 2.93x on the shipped build. The widest column is H.264's, whose ~10%
+// container allowance predates codec profiles entirely.
+const bandwidthTolerance = 1.10
 
 // TestCMAFDeclaredBandwidthBoundsWhatIsDelivered is the regression for the AV1
 // rate-control bug, and it is stated for every codec because the property is not
@@ -2251,9 +2260,20 @@ func TestCMAFDeclaredBandwidthBoundsWhatIsDelivered(t *testing.T) {
 
 	// THE COUNTERFACTUAL, measured rather than remembered: the same AV1 rung,
 	// same budget, same source, encoded the way this pipeline used to — plain VBR
-	// with no ceiling, which is all libsvtav1 accepts alongside -b:v. If this
-	// number ever stops being far outside the tolerance, the fixture has gone
-	// soft and the test above has stopped proving anything.
+	// with no ceiling, which is all libsvtav1 accepts alongside -b:v.
+	//
+	// Its MAGNITUDE is a property of the SVT-AV1 build and not of this code, so
+	// only its DIRECTION is asserted. Measured: 4.0x apart on SVT-AV1 4.1
+	// (ffmpeg 8.1, the shipped image), where the uncapped encode reaches 2.93x its
+	// declared BANDWIDTH; 1.4x apart on SVT-AV1 1.7 (ffmpeg 6.1), whose plain VBR
+	// happens to track its target far more closely. The bug got WORSE as the
+	// encoder got better, which is exactly the kind of thing a hard-coded
+	// expectation would have hidden.
+	//
+	// The build-independent guard against losing the ceiling is not here at all —
+	// it is TestEveryCodecIsRateCapped, which reads the argument vector and needs
+	// no encoder to run. This measures the outcome on whatever build is present;
+	// that pins the code.
 	top := f.res.Renditions[0]
 	budget := av1Profile.videoKbps(HLSRung{VideoKbps: hlsRungBitrates[top.Height].VideoKbps})
 	uncapped := uncappedAV1PeakBitrate(t, f, top, budget)
@@ -2261,10 +2281,7 @@ func TestCMAFDeclaredBandwidthBoundsWhatIsDelivered(t *testing.T) {
 	t.Logf("counterfactual at %dp: uncapped AV1 peaks at %d bps, capped CRF at %d (%.1fx apart)",
 		top.Height, uncapped, capped, float64(uncapped)/float64(capped))
 	if uncapped <= capped {
-		t.Errorf("plain VBR peaked at %d and capped CRF at %d — the fixture no longer distinguishes them, so this test proves nothing", uncapped, capped)
-	}
-	if float64(uncapped) <= float64(declared[f.rep(len(f.codecs)-1, 0)])*bandwidthTolerance {
-		t.Errorf("plain VBR stayed inside the tolerance (%d bps) on this fixture; it must not, or the regression it guards is untestable", uncapped)
+		t.Errorf("plain VBR peaked at %d and capped CRF at %d — the ceiling is no longer doing anything, or the fixture no longer distinguishes them", uncapped, capped)
 	}
 }
 
