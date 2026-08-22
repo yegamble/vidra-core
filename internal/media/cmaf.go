@@ -78,11 +78,6 @@ const (
 	// cmafAudioGroupID names the EXT-X-MEDIA rendition group the single shared
 	// audio representation is published as.
 	cmafAudioGroupID = "audio"
-
-	// cmafMPDContentType and cmafSegmentContentType are what the serving layer
-	// labels the two new object shapes with.
-	cmafMPDContentType     = "application/dash+xml"
-	cmafSegmentContentType = "video/iso.segment"
 )
 
 // cmafMediaPlaylistName is the HLS media playlist ffmpeg writes for
@@ -105,33 +100,32 @@ type cmafPackager struct{}
 // Name implements Packager.
 func (cmafPackager) Name() string { return PackagerCMAF }
 
-// ScaleFilterSuffix implements Packager: every rung is forced to the TOP rung's
-// display aspect ratio.
+// ASPECT RATIO — WHY THERE IS NO FILTER HERE.
 //
-// This is not cosmetic. The dash muxer REFUSES to write a manifest whose
-// adaptation set mixes aspect ratios ("Conflicting stream aspect ratios values
-// in Adaptation Set 1") — reasonably, because representations in one adaptation
-// set are supposed to be interchangeable mid-playback, and a player switching
-// between two shapes would visibly jump. Vidra's ladder trips that check on
-// ordinary 16:9 sources: widths are rounded to even for H.264 4:2:0, so a 720p
-// source's 480p rung is 854x480 (1.7792) next to 1280x720 (1.7778) and the mux
-// aborts.
+// The dash muxer refuses to write a manifest whose adaptation set mixes display
+// aspect ratios ("Conflicting stream aspect ratios values in Adaptation Set 1"),
+// reasonably: representations in one adaptation set are meant to be
+// interchangeable mid-playback, so a player switching between two shapes would
+// visibly jump. That check looks like it needs handling, because the ladder's
+// widths are rounded to even for H.264 4:2:0 and a 720p source's 480p rung is
+// 854x480 (1.7792) beside 1280x720 (1.7778).
 //
-// setdar reconciles them by deriving each rung's sample aspect ratio from the
-// requested display one, which is also why it SUPERSEDES the plain setsar=1 this
-// path was specified with: square pixels alone are what causes the conflict. The
-// correction is a 0.08% pixel stretch on the one rung whose rounding drifted
-// (sar 1280:1281), and every other rung still comes out exactly 1:1.
+// It does not. scale ALREADY sets each output's sample aspect ratio to exactly
+// the value that preserves the input's display aspect through that rounding —
+// 854x480 comes out sar 1280:1281, so its display ratio is 16:9 to the bit, the
+// same as every other rung. The adaptation set is consistent for free.
 //
-// Applied ONLY here: the MPEG-TS vectors are pinned byte-identical and its
-// playlists advertise no aspect ratio at all.
-func (cmafPackager) ScaleFilterSuffix(rungs []HLSRung) string {
-	if len(rungs) == 0 {
-		return ""
-	}
-	top := rungs[0]
-	return fmt.Sprintf(",setdar=%d/%d", top.Width, top.Height)
-}
+// Adding setsar=1 is what BREAKS it: it throws that correction away, and the
+// rungs then genuinely disagree. Replacing it with setdar pinned to the top
+// rung's coded ratio is worse still — silently, and only for the sources that
+// matter. Rung dimensions come from ffprobe's CODED width/height, which for a
+// rotated phone video or anamorphic SD is not the shape the video is displayed
+// at; pinning to it re-renders the entire ladder wrong (a portrait 1920x1080+90°
+// clip stretched 3.16x into landscape, unrecoverable without re-encoding).
+//
+// So the filter graph stays byte-identical to the MPEG-TS one, which is what
+// makes CMAF geometry provably equal to MPEG-TS geometry for every source
+// shape rather than for the ones we happened to test.
 
 // ScratchDirs implements Packager: the per-rung directories the progressive MP4s
 // are written into, plus the shared segment directory the muxer writes into when
@@ -144,36 +138,47 @@ func (cmafPackager) ScratchDirs(rungs []HLSRung) []string {
 	return append(dirs, cmafDirName)
 }
 
+// EphemeralOutputs implements Packager: ffmpeg's own HLS master playlist, which
+// finalisation reads for its CODECS strings and then discards in favour of the
+// one Vidra authors. Naming it here is what keeps a streaming transcode from
+// storing it and immediately deleting it again.
+func (cmafPackager) EphemeralOutputs() []string {
+	return []string{cmafDirName + "/" + cmafFFmpegMasterFilename}
+}
+
 // LadderOutputArgs implements Packager: ONE dash output carrying every rung as a
-// video representation plus a single shared audio representation.
-func (cmafPackager) LadderOutputArgs(out output, rungs []HLSRung, labels []string, threads int) []string {
+// video representation plus, when the source has any, a single shared audio
+// representation.
+func (cmafPackager) LadderOutputArgs(out output, plan ladderPlan) []string {
 	var args []string
 	// Every video branch first, then the audio — the map order IS the
 	// representation order, which is the mapping Finalize re-derives and checks.
-	for i := range rungs {
-		args = append(args, "-map", "["+labels[i]+"]")
+	for i := range plan.rungs {
+		args = append(args, "-map", "["+plan.labels[i]+"]")
 	}
-	// Optional, so a silent source still transcodes: the audio adaptation set
-	// simply comes out empty and the master gains no EXT-X-MEDIA.
+	// Optional even when the probe found audio: the map must not fail the ladder
+	// if the stream turns out unusable.
 	args = append(args, "-map", "0:a:0?")
 
-	per := perOutputThreads(threads, len(rungs))
-	for i, r := range rungs {
+	per := perOutputThreads(plan.threads, len(plan.rungs))
+	for i, r := range plan.rungs {
 		spec := sharedVideoStream(i)
 		if per > 0 {
 			args = append(args, "-threads"+spec.bare, strconv.Itoa(per))
 		}
 		args = append(args, hlsRungVideoEncodeArgs(r, spec, "")...)
 	}
-	// One audio encode for the whole ladder, at the TOP rung's audio bitrate:
-	// every video representation references this one rendition, so there is no
-	// per-rung audio quality to choose between.
-	args = append(args, hlsAudioEncodeArgs(rungs[0].AudioKbps, sharedAudioStream(0))...)
-	return append(args, cmafMuxerArgs(out)...)
+	if plan.hasAudio {
+		// One audio encode for the whole ladder, at the TOP rung's audio bitrate:
+		// every video representation references this one rendition, so there is no
+		// per-rung audio quality to choose between.
+		args = append(args, hlsAudioEncodeArgs(plan.rungs[0].AudioKbps, sharedAudioStream(0))...)
+	}
+	return append(args, cmafMuxerArgs(out, plan.hasAudio)...)
 }
 
 // cmafMuxerArgs is the shared dash-muxer block that closes the ladder vector.
-func cmafMuxerArgs(out output) []string {
+func cmafMuxerArgs(out output, hasAudio bool) []string {
 	args := []string{
 		"-f", "dash",
 		"-seg_duration", strconv.Itoa(hlsSegmentSeconds),
@@ -192,12 +197,19 @@ func cmafMuxerArgs(out output) []string {
 		// Deliberately 0: with io errors ignored the process exit code stops
 		// meaning anything, and a half-written tree would be stored as success.
 		"-ignore_io_errors", "0",
-		// Video representations in one adaptation set, audio in another — the
-		// standard demuxed CMAF shape.
-		"-adaptation_sets", "id=0,streams=v id=1,streams=a",
 		"-init_seg_name", cmafInitSegmentPattern,
 		"-media_seg_name", cmafMediaSegmentPattern,
 	}
+	// Video representations in one adaptation set, audio in another — the
+	// standard demuxed CMAF shape. The audio set is declared only when there IS
+	// audio: the muxer does not drop an adaptation set that ends up with no
+	// streams, it writes an empty <AdaptationSet contentType="audio"/>, and a
+	// Representation-less adaptation set is invalid DASH.
+	adaptationSets := "id=0,streams=v"
+	if hasAudio {
+		adaptationSets += " id=1,streams=a"
+	}
+	args = append(args, "-adaptation_sets", adaptationSets)
 	args = append(args, out.muxerArgs()...)
 	return append(args, out.dest(out.rel(cmafDirName, cmafManifestFilename)))
 }
@@ -206,12 +218,12 @@ func cmafMuxerArgs(out output) []string {
 // output as it is for MPEG-TS — the dash muxer has no I-frame-playlist support
 // at all — but the media is now an fMP4 single file, and every rung's pair lands
 // in the shared segment directory named by representation index.
-func (cmafPackager) TrickPlayOutputArgs(out output, rungs []HLSRung, labels []string, threads int) []string {
+func (cmafPackager) TrickPlayOutputArgs(out output, plan ladderPlan) []string {
 	var args []string
-	per := perOutputThreads(threads, len(rungs))
+	per := perOutputThreads(plan.threads, len(plan.rungs))
 	dest := func(name string) string { return out.dest(out.rel(cmafDirName, name)) }
-	for i := range rungs {
-		args = append(args, "-map", "["+labels[i]+"]", "-an")
+	for i := range plan.rungs {
+		args = append(args, "-map", "["+plan.labels[i]+"]", "-an")
 		if per > 0 {
 			args = append(args, "-threads", strconv.Itoa(per))
 		}
@@ -348,20 +360,22 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 		}
 	}
 
-	master := renderCMAFMasterPlaylist(req.rungs, layout, trickPlay)
+	master, err := renderCMAFMasterPlaylist(req.rungs, layout, trickPlay)
+	if err != nil {
+		req.packagingFailed()
+		return packageResult{}, fmt.Errorf("media: cmaf master playlist for %q: %w", req.sourceKey, err)
+	}
 	if werr := os.WriteFile(filepath.Join(req.scratch, hlsMasterPlaylistFilename), []byte(master), 0o644); werr != nil {
 		return packageResult{}, werr
 	}
 
-	// ffmpeg's master is not part of the tree. On scratch it is removed before
-	// the upload walk sees it; a streamed ladder already flushed it into the
-	// store, so it is deleted there.
-	if req.out.streaming() {
-		if derr := req.tools.blobs.Delete(ctx, req.prefix+"/"+cmafDirName+"/"+cmafFFmpegMasterFilename); derr != nil {
-			return packageResult{}, derr
+	// ffmpeg's master is not part of the tree. A streamed ladder never stored it
+	// (EphemeralOutputs kept it out of the flush); on scratch it is removed here,
+	// before the upload walk can see it.
+	if !req.out.streaming() {
+		if rerr := os.Remove(filepath.Join(tree.scratch, cmafFFmpegMasterFilename)); rerr != nil {
+			return packageResult{}, rerr
 		}
-	} else if rerr := os.Remove(filepath.Join(tree.scratch, cmafFFmpegMasterFilename)); rerr != nil {
-		return packageResult{}, rerr
 	}
 
 	// The shared segment directory is attributed to the TOP rung, together with
@@ -369,7 +383,7 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 	// top-level files. Per-rung attribution of a deliberately SHARED segment set
 	// would be a fiction; what the sum has to equal — and does — is the stored
 	// size of the whole tree.
-	shared, err := cmafSharedTreeSize(req.out, tree.scratch, len(rawMaster))
+	shared, err := cmafSharedTreeSize(req.out, tree.scratch)
 	if err != nil {
 		return packageResult{}, err
 	}
@@ -415,11 +429,11 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 }
 
 // cmafSharedTreeSize totals the stored bytes of the shared segment directory.
-// discarded is the size of ffmpeg's own master playlist, which a streamed ladder
-// has already counted and which is not part of the served tree.
-func cmafSharedTreeSize(out output, scratch string, discarded int) (int64, error) {
+// The sink excludes discarded objects from its own accounting, so ffmpeg's
+// never-stored master playlist is already out of this on both paths.
+func cmafSharedTreeSize(out output, scratch string) (int64, error) {
 	if out.streaming() {
-		return out.sink.BytesUnder(cmafDirName) - int64(discarded), nil
+		return out.sink.BytesUnder(cmafDirName), nil
 	}
 	return directorySize(scratch)
 }
@@ -689,7 +703,23 @@ func fixCMAFMediaPlaylist(playlist []byte) ([]byte, error) {
 // Every URI is RELATIVE and prefixed with the shared segment directory, so the
 // playlist works from any base path and the file route resolves it as the "cmaf"
 // pseudo-rendition.
-func renderCMAFMasterPlaylist(rungs []HLSRung, layout cmafLayout, trickPlay map[int]hlsTrickPlayInfo) string {
+//
+// It returns an error rather than a best-effort playlist when ffmpeg's CODECS
+// strings do not describe what the variant actually plays: an fMP4 variant whose
+// codec list is wrong or incomplete is exactly what Safari refuses, and a master
+// that is silently unplayable in one browser is far worse than a failed
+// transcode an operator can see.
+func renderCMAFMasterPlaylist(rungs []HLSRung, layout cmafLayout, trickPlay map[int]hlsTrickPlayInfo) (string, error) {
+	// Audio is encoded ONCE for the whole ladder, so every variant's peak rate
+	// includes the same audio bitrate — the top rung's. Using each rung's own
+	// AudioKbps here (as the MPEG-TS master legitimately does, because MPEG-TS
+	// really does encode audio per rung) would under-declare BANDWIDTH on every
+	// variant below the top, and RFC 8216 requires it to be the peak.
+	audioKbps := rungs[0].AudioKbps
+	if !layout.hasAudio {
+		audioKbps = 0
+	}
+
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
 	audioAttr := ""
@@ -703,8 +733,15 @@ func renderCMAFMasterPlaylist(rungs []HLSRung, layout cmafLayout, trickPlay map[
 		audioAttr = fmt.Sprintf(",AUDIO=%q", cmafAudioGroupID)
 	}
 	for i, r := range rungs {
+		codecs := layout.videoCodecs[i]
+		// A variant that references the audio rendition group must say so in its
+		// codec list; a player picks a variant on CODECS before it fetches
+		// anything, and one that omits the audio codec is chosen and then fails.
+		if layout.hasAudio && !strings.Contains(codecs, "mp4a.") {
+			return "", fmt.Errorf("variant %d references the audio rendition but its CODECS %q names no audio codec", i, codecs)
+		}
 		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,CODECS=%q%s\n",
-			r.Bandwidth(), r.Width, r.Height, layout.videoCodecs[i], audioAttr)
+			cmafVariantBandwidth(r, audioKbps), r.Width, r.Height, codecs, audioAttr)
 		b.WriteString(cmafDirName + "/" + cmafMediaPlaylistName(i) + "\n")
 		if tp, ok := trickPlay[r.Height]; ok && tp.Bandwidth > 0 && tp.Codec != "" {
 			fmt.Fprintf(&b,
@@ -712,5 +749,12 @@ func renderCMAFMasterPlaylist(rungs []HLSRung, layout cmafLayout, trickPlay map[
 				tp.Bandwidth, r.Width, r.Height, tp.Codec, cmafDirName+"/"+cmafIFramePlaylistName(i))
 		}
 	}
-	return b.String()
+	return b.String(), nil
+}
+
+// cmafVariantBandwidth is one CMAF variant's declared peak rate: its own video
+// bitrate plus the ladder's SHARED audio bitrate, with the same ~10% container
+// allowance HLSRung.Bandwidth applies.
+func cmafVariantBandwidth(r HLSRung, sharedAudioKbps int) int {
+	return (r.VideoKbps + sharedAudioKbps) * 1000 * 11 / 10
 }

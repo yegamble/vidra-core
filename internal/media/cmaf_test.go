@@ -33,6 +33,12 @@ media_0.m3u8
 
 `
 
+// cmafPlan is the default ladder plan these tests exercise: a source WITH audio,
+// which is the shape that has a shared audio representation to get wrong.
+func cmafPlan(rungs []HLSRung) ladderPlan {
+	return ladderPlan{rungs: rungs, hasAudio: true}
+}
+
 func cmafTestRungs() []HLSRung {
 	return []HLSRung{
 		{Height: 360, Width: 480, VideoKbps: 800, AudioKbps: 96},
@@ -47,7 +53,7 @@ func cmafTestRungs() []HLSRung {
 // ladder would silently collapse to a single quality that still plays.
 func TestCMAFLadderIsOneOutputWithStreamQualifiedEncoders(t *testing.T) {
 	rungs := cmafTestRungs()
-	args := hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), rungs, 0)
+	args := hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), cmafPlan(rungs))
 	joined := strings.Join(args, " ")
 
 	if n := countArg(args, "-f"); n != 1 {
@@ -94,7 +100,7 @@ func TestCMAFLadderIsOneOutputWithStreamQualifiedEncoders(t *testing.T) {
 // segments.
 func TestCMAFEncodesAudioOnceForTheWholeLadder(t *testing.T) {
 	rungs := cmafTestRungs()
-	args := hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), rungs, 0)
+	args := hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), cmafPlan(rungs))
 	joined := strings.Join(args, " ")
 
 	if n := strings.Count(joined, "-c:a:"); n != 1 {
@@ -124,7 +130,7 @@ func TestCMAFEncodesAudioOnceForTheWholeLadder(t *testing.T) {
 // TestCMAFMuxerAsksForOneSharedSegmentSet pins the flags that make HLS and DASH
 // name the SAME files, and the one that makes a broken tree fail loudly.
 func TestCMAFMuxerAsksForOneSharedSegmentSet(t *testing.T) {
-	args := hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), cmafTestRungs(), 0)
+	args := hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), cmafPlan(cmafTestRungs()))
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		// The entire reason this muxer was chosen: HLS playlists over the same
@@ -155,39 +161,75 @@ func TestCMAFMuxerAsksForOneSharedSegmentSet(t *testing.T) {
 	}
 }
 
-// TestCMAFForcesSquarePixels pins the one encode-side filter packaging asks for,
-// and that MPEG-TS does not get it.
-func TestCMAFForcesSquarePixels(t *testing.T) {
-	rungs := cmafTestRungs()
-	graph := argValue(t, hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), rungs, 0), "-filter_complex")
-	// Every rung is pinned to the TOP rung's display aspect ratio, not merely to
-	// square pixels: the dash muxer refuses to write an adaptation set that mixes
-	// aspect ratios, and this ladder's even-rounded widths do mix them.
-	dar := ",setdar=" + strconv.Itoa(rungs[0].Width) + "/" + strconv.Itoa(rungs[0].Height)
-	for _, r := range rungs {
-		want := "scale=" + strconv.Itoa(r.Width) + ":" + strconv.Itoa(r.Height) + dar
-		if !strings.Contains(graph, want) {
-			t.Errorf("graph missing %q — the dash muxer would abort on conflicting aspect ratios: %q", want, graph)
+// TestCMAFFilterGraphIsIdenticalToTheMPEGTSOne is the guard on the mistake this
+// path already made once. CMAF's manifests publish an aspect ratio per
+// representation where MPEG-TS playlists publish none, which makes "normalise
+// the aspect here" look like a packaging concern; it is not, and acting on it
+// corrupts every source whose CODED dimensions are not its DISPLAY dimensions
+// (rotated phone video, anamorphic SD) because rung dimensions are planned from
+// the coded ones. scale already emits the sample aspect ratio that preserves the
+// source's display ratio through each rung's rounding, so the only correct graph
+// is the one MPEG-TS uses — byte for byte.
+func TestCMAFFilterGraphIsIdenticalToTheMPEGTSOne(t *testing.T) {
+	src := localSource("/in/src.mp4")
+	for _, rungs := range [][]HLSRung{
+		cmafTestRungs(),
+		PlanHLSLadder(1280, 720),                       // the 854x480 rung: ratios differ by rounding
+		PlanHLSLadder(1920, 1080),                      // four rungs
+		PlanHLSLadder(320, 240),                        // single rung, 4:3
+		PlanHLSLadderWith(withFPS(30), 1920, 1080, 60), // an fps cap in the chain too
+	} {
+		cmaf := argValue(t, hlsLadderArgsWith(cmafPackager{}, src, localOutput("/out"), cmafPlan(rungs)), "-filter_complex")
+		ts := argValue(t, hlsLadderArgs(src, localOutput("/out"), rungs, 0), "-filter_complex")
+		if cmaf != ts {
+			t.Errorf("CMAF graph diverges from MPEG-TS:\n cmaf %q\n   ts %q", cmaf, ts)
+		}
+		for _, banned := range []string{"setsar", "setdar", "aspect"} {
+			if strings.Contains(cmaf, banned) {
+				t.Errorf("graph carries %q; it overwrites the sample aspect ratio scale computed to "+
+					"preserve the SOURCE display ratio, which silently re-renders rotated and "+
+					"anamorphic sources at the wrong shape: %q", banned, cmaf)
+			}
+		}
+		trick := argValue(t, hlsTrickPlayLadderArgsWith(cmafPackager{}, src, localOutput("/out"), cmafPlan(rungs)), "-filter_complex")
+		tsTrick := argValue(t, hlsTrickPlayLadderArgs(src, localOutput("/out"), rungs, 0), "-filter_complex")
+		if trick != tsTrick {
+			t.Errorf("CMAF trick-play graph diverges from MPEG-TS:\n cmaf %q\n   ts %q", trick, tsTrick)
 		}
 	}
-	// The real-world case this exists for: a 720p ladder's 480p rung is 854x480,
-	// which is NOT the 1280x720 rung's ratio.
-	hd := PlanHLSLadder(1280, 720)
-	if hd[0].Width*hd[1].Height == hd[1].Width*hd[0].Height {
-		t.Fatal("test is stale: the ladder no longer produces rungs with differing aspect ratios, so this guard proves nothing")
+}
+
+func withFPS(max int) HLSEncodeSettings {
+	s := DefaultHLSEncodeSettings()
+	s.MaxFPS = max
+	return s
+}
+
+// TestCMAFDeclaresAnAudioAdaptationSetOnlyWhenThereIsAudio: the dash muxer does
+// not drop an adaptation set that ends up with no streams, it writes an empty
+// one — and a Representation-less AdaptationSet is invalid DASH.
+func TestCMAFDeclaresAnAudioAdaptationSetOnlyWhenThereIsAudio(t *testing.T) {
+	rungs := cmafTestRungs()
+	withAudio := hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), ladderPlan{rungs: rungs, hasAudio: true})
+	if got := argValue(t, withAudio, "-adaptation_sets"); got != "id=0,streams=v id=1,streams=a" {
+		t.Errorf("-adaptation_sets %q with audio", got)
 	}
-	hdGraph := argValue(t, hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), hd, 0), "-filter_complex")
-	if n := strings.Count(hdGraph, ",setdar=1280/720"); n != len(hd) {
-		t.Errorf("%d of %d rungs pinned to the top rung's ratio: %q", n, len(hd), hdGraph)
+	if n := strings.Count(strings.Join(withAudio, " "), "-c:a:"); n != 1 {
+		t.Errorf("%d audio encoders with audio, want 1", n)
 	}
 
-	trick := argValue(t, hlsTrickPlayLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), rungs, 0), "-filter_complex")
-	if !strings.Contains(trick, dar+",fps=1") {
-		t.Errorf("trick-play graph missing the aspect pin: %q", trick)
+	silent := hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), ladderPlan{rungs: rungs})
+	if got := argValue(t, silent, "-adaptation_sets"); got != "id=0,streams=v" {
+		t.Errorf("-adaptation_sets %q for a silent source, want video only", got)
 	}
-	tsGraph := argValue(t, hlsLadderArgs(localSource("/in/src.mp4"), localOutput("/out"), rungs, 0), "-filter_complex")
-	if strings.Contains(tsGraph, "setdar") || strings.Contains(tsGraph, "setsar") {
-		t.Errorf("MPEG-TS graph gained a filter; its vectors are pinned byte-identical: %q", tsGraph)
+	joined := strings.Join(silent, " ")
+	if strings.Contains(joined, "-c:a:") || strings.Contains(joined, "-b:a:") {
+		t.Errorf("a silent source still configures an audio encoder: %s", joined)
+	}
+	// The map stays optional either way: the probe says a stream exists, the
+	// encode must not die if it turns out unusable.
+	if !strings.Contains(joined, "-map 0:a:0?") {
+		t.Errorf("silent vector dropped the optional audio map: %s", joined)
 	}
 }
 
@@ -197,7 +239,7 @@ func TestCMAFForcesSquarePixels(t *testing.T) {
 // the representation index.
 func TestCMAFTrickPlayStaysPerRungInTheSharedDirectory(t *testing.T) {
 	rungs := cmafTestRungs()
-	args := hlsTrickPlayLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), rungs, 0)
+	args := hlsTrickPlayLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), cmafPlan(rungs))
 	joined := strings.Join(args, " ")
 	if n := countArg(args, "-f"); n != len(rungs) {
 		t.Errorf("-f appears %d times, want one per rung (%d)", n, len(rungs))
@@ -235,7 +277,7 @@ func TestCMAFArgsComposeWithBothTransports(t *testing.T) {
 	defer func() { _ = sink.Close() }()
 
 	rungs := cmafTestRungs()
-	local := strings.Join(hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), rungs, 0), " ")
+	local := strings.Join(hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), cmafPlan(rungs)), " ")
 	for _, unwanted := range []string{"-method", "-http_persistent", "http://"} {
 		if strings.Contains(local, unwanted) {
 			t.Errorf("a scratch destination emitted the HTTP-only %q: %s", unwanted, local)
@@ -243,13 +285,13 @@ func TestCMAFArgsComposeWithBothTransports(t *testing.T) {
 	}
 
 	streamed := sinkOutput(sink)
-	args := strings.Join(hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), streamed, rungs, 0), " ")
+	args := strings.Join(hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), streamed, cmafPlan(rungs)), " ")
 	for _, want := range []string{"-method PUT", "-http_persistent 0", sink.URL("cmaf/stream.mpd")} {
 		if !strings.Contains(args, want) {
 			t.Errorf("streaming destination missing %q: %s", want, args)
 		}
 	}
-	trick := strings.Join(hlsTrickPlayLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), streamed, rungs, 0), " ")
+	trick := strings.Join(hlsTrickPlayLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), streamed, cmafPlan(rungs)), " ")
 	for _, want := range []string{"-hls_flags single_file-temp_file", "-method PUT", "-http_persistent 0"} {
 		if !strings.Contains(trick, want) {
 			t.Errorf("streaming trick-play missing %q: %s", want, trick)
@@ -418,15 +460,20 @@ func TestRenderCMAFMasterPlaylist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	got := renderCMAFMasterPlaylist(rungs, layout, map[int]hlsTrickPlayInfo{
+	got, err := renderCMAFMasterPlaylist(rungs, layout, map[int]hlsTrickPlayInfo{
 		360: {Bandwidth: 120000, Codec: "avc1.4d4015"},
 	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
 
 	for _, want := range []string{
 		"#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n",
 		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="audio",DEFAULT=YES,AUTOSELECT=YES,CHANNELS="2",URI="cmaf/media_2.m3u8"`,
 		`#EXT-X-STREAM-INF:BANDWIDTH=985600,RESOLUTION=480x360,CODECS="avc1.4d4015,mp4a.40.2",AUDIO="audio"` + "\ncmaf/media_0.m3u8\n",
-		`#EXT-X-STREAM-INF:BANDWIDTH=620400,RESOLUTION=320x240,CODECS="avc1.4d400d,mp4a.40.2",AUDIO="audio"` + "\ncmaf/media_1.m3u8\n",
+		// 655600, not 620400: the low rung's declared peak includes the SHARED
+		// audio bitrate (the top rung's 96k), because that is the audio it plays.
+		`#EXT-X-STREAM-INF:BANDWIDTH=655600,RESOLUTION=320x240,CODECS="avc1.4d400d,mp4a.40.2",AUDIO="audio"` + "\ncmaf/media_1.m3u8\n",
 		`#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=120000,RESOLUTION=480x360,CODECS="avc1.4d4015",URI="cmaf/iframe-0.m3u8"`,
 	} {
 		if !strings.Contains(got, want) {
@@ -444,18 +491,51 @@ func TestRenderCMAFMasterPlaylist(t *testing.T) {
 		}
 	}
 
+	// Every variant's BANDWIDTH must count the audio it actually plays. Audio is
+	// encoded ONCE at the top rung's bitrate, so a variant declaring its own
+	// (lower) AudioKbps under-declares its peak — which is what an ABR player
+	// uses to decide whether the connection can carry it.
+	t.Run("bandwidth counts the shared audio, not the rung's own", func(t *testing.T) {
+		for i, r := range rungs {
+			want := (r.VideoKbps + rungs[0].AudioKbps) * 1000 * 11 / 10
+			if !strings.Contains(got, "BANDWIDTH="+strconv.Itoa(want)+",RESOLUTION="+strconv.Itoa(r.Width)) {
+				t.Errorf("variant %d does not declare the shared-audio peak %d:\n%s", i, want, got)
+			}
+			if i > 0 && r.AudioKbps != rungs[0].AudioKbps && strings.Contains(got, "BANDWIDTH="+strconv.Itoa(r.Bandwidth())+",") {
+				t.Errorf("variant %d declares its own AudioKbps, which is not the audio it plays:\n%s", i, got)
+			}
+		}
+	})
+
+	// An incomplete codec list is chosen by a player and then fails, which is the
+	// specific Safari behaviour the CODECS attribute exists to avoid.
+	t.Run("a variant that references audio must name an audio codec", func(t *testing.T) {
+		broken := layout
+		broken.videoCodecs = []string{"avc1.4d4015", "avc1.4d400d"}
+		if _, err := renderCMAFMasterPlaylist(rungs, broken, nil); err == nil {
+			t.Error("rendered a master whose variants reference the audio group but declare no audio codec")
+		}
+	})
+
 	t.Run("a silent source advertises no audio group", func(t *testing.T) {
 		single := rungs[1:]
 		silent, err := parseCMAFMasterPlaylist([]byte(ffmpegCMAFMasterSilent), 1)
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
-		got := renderCMAFMasterPlaylist(single, silent, nil)
+		got, err := renderCMAFMasterPlaylist(single, silent, nil)
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
 		if strings.Contains(got, "EXT-X-MEDIA") || strings.Contains(got, "AUDIO=") {
 			t.Errorf("silent master advertises an audio rendition that does not exist:\n%s", got)
 		}
 		if !strings.Contains(got, `CODECS="avc1.4d400d"`) {
 			t.Errorf("silent master lost its CODECS:\n%s", got)
+		}
+		// No audio to carry, so none is declared in the peak either.
+		if want := single[0].VideoKbps * 1000 * 11 / 10; !strings.Contains(got, "BANDWIDTH="+strconv.Itoa(want)+",") {
+			t.Errorf("silent variant declares bandwidth for audio it does not have, want %d:\n%s", want, got)
 		}
 	})
 }

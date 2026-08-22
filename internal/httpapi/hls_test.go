@@ -778,6 +778,46 @@ func TestHLSCMAFNamesAreCrossCheckedAgainstTheVideosFormat(t *testing.T) {
 		}
 	})
 
+	t.Run("MPEG-TS names against a CMAF video are 404", func(t *testing.T) {
+		// The mirror of the case above, and the reason the rule is stated as a
+		// property of the route rather than a guard bolted on for the new format:
+		// the two naming schemes are mutually exclusive, so each is refused on the
+		// recorded format instead of being allowed to reach storage and miss.
+		srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
+		tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+		id := createPublishedVideo(t, srv, tok, "ada", `{"title":"CMAF","privacy":"public"}`)
+		seedReadyCMAF(t, tcRepo, blobs, id)
+		for _, p := range []string{
+			"/hls/240p/playlist.m3u8",
+			"/hls/240p/seg_00000.ts",
+			"/hls/240p/iframe.m3u8",
+			"/hls/240p/iframe.ts",
+		} {
+			if rec := getHLS(srv, "/api/v1/videos/"+id+p, ""); rec.Code != http.StatusNotFound {
+				t.Errorf("GET %s on a CMAF video = %d, want 404", p, rec.Code)
+			}
+		}
+		// The CMAF tree itself keeps serving.
+		if rec := getHLS(srv, "/api/v1/videos/"+id+"/hls/cmaf/media_0.m3u8", ""); rec.Code != http.StatusOK {
+			t.Errorf("CMAF media playlist = %d, want 200", rec.Code)
+		}
+	})
+
+	t.Run("a PeerTube import is fenced on its tree, not on a format it has none of", func(t *testing.T) {
+		// A pass-through tree records the pre-CMAF default like any other legacy
+		// row, so the format check must not be what decides its fate.
+		srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
+		tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+		id := createPublishedVideo(t, srv, tok, "ada", `{"title":"PeerTube","privacy":"public"}`)
+		seedReadyPeerTubeHLS(t, tcRepo, blobs, id)
+		if rec := getHLS(srv, "/api/v1/videos/"+id+"/hls/peertube/v1-720.m3u8", ""); rec.Code != http.StatusOK {
+			t.Errorf("PeerTube variant = %d, want 200", rec.Code)
+		}
+		if rec := getHLS(srv, "/api/v1/videos/"+id+"/hls/cmaf/stream.mpd", ""); rec.Code != http.StatusNotFound {
+			t.Errorf("cmaf name on a PeerTube tree = %d, want 404", rec.Code)
+		}
+	})
+
 	t.Run("a stale generation version is 404 even for cmaf names", func(t *testing.T) {
 		srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
 		tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")

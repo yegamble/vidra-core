@@ -32,6 +32,15 @@ type cmafFixture struct {
 
 func newCMAFFixture(t *testing.T, genArgs []string, stream bool) cmafFixture {
 	t.Helper()
+	return newPackagedFixture(t, PackagerCMAF, genArgs, stream)
+}
+
+// newPackagedFixture transcodes a generated source with the named packager. It
+// takes the packager so the geometry tests can run the SAME source through both
+// and compare, which is the only way to state "CMAF renders this the way MPEG-TS
+// does" as a fact rather than a hope.
+func newPackagedFixture(t *testing.T, packager string, genArgs []string, stream bool) cmafFixture {
+	t.Helper()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not installed")
 	}
@@ -62,14 +71,14 @@ func newCMAFFixture(t *testing.T, genArgs []string, stream bool) cmafFixture {
 	if !ok {
 		t.Fatal("DetectHLSTranscoder = false with ffmpeg+ffprobe on PATH")
 	}
-	if err := tc.SetPackager(PackagerCMAF); err != nil {
+	if err := tc.SetPackager(packager); err != nil {
 		t.Fatalf("SetPackager: %v", err)
 	}
 	tc.SetStreamOutput(stream)
 
 	res, err := tc.Transcode(context.Background(), videoID, srcKey)
 	if err != nil {
-		t.Fatalf("CMAF transcode: %v", err)
+		t.Fatalf("%s transcode: %v", packager, err)
 	}
 	prefix := HLSKeyPrefix(videoID)
 	keys, err := blobs.ListKeys(context.Background(), prefix)
@@ -667,4 +676,196 @@ func attrOf(t *testing.T, doc, name string) string {
 		t.Fatalf("no %s attribute in:\n%s", name, doc)
 	}
 	return m[1]
+}
+
+// --- geometry: CMAF must render exactly what MPEG-TS renders --------------
+
+// Ladder rung dimensions are planned from ffprobe's CODED width/height, which
+// for a great many real uploads is NOT the shape the video is displayed at: a
+// phone shoots 1920x1080 with a 90-degree display matrix, a DVD rip is 720x576
+// with a 64:45 sample aspect. The MPEG-TS path survives that because ffmpeg's
+// scale filter sets each output's sample aspect ratio to whatever preserves the
+// SOURCE's display ratio — nothing in the pipeline has to understand rotation or
+// anamorphic pixels for the result to be right.
+//
+// Anything CMAF adds to that filter chain breaks it silently: the tree is
+// well-formed, every manifest validates, and the video is simply the wrong shape
+// forever. So these fixtures do not assert an expected ratio in the abstract.
+// They transcode the SAME source both ways and require the geometry to match,
+// which is the only claim that stays true for source shapes nobody thought of.
+
+// probedDAR returns the display aspect ratio ffprobe reports for a file, as an
+// exact rational reduced from its coded size and sample aspect ratio.
+func probedDAR(t *testing.T, path string) string {
+	t.Helper()
+	p := ffprobeEntries(t, path, "stream=width,height,sample_aspect_ratio,display_aspect_ratio")
+	w, err := strconv.Atoi(p["width"])
+	if err != nil {
+		t.Fatalf("width %q: %v", p["width"], err)
+	}
+	h, err := strconv.Atoi(p["height"])
+	if err != nil {
+		t.Fatalf("height %q: %v", p["height"], err)
+	}
+	sarN, sarD := 1, 1
+	if sar := p["sample_aspect_ratio"]; sar != "" && sar != "N/A" && sar != "0:1" {
+		if n, d, ok := strings.Cut(sar, ":"); ok {
+			sarN, _ = strconv.Atoi(n)
+			sarD, _ = strconv.Atoi(d)
+		}
+	}
+	if sarN <= 0 || sarD <= 0 {
+		sarN, sarD = 1, 1
+	}
+	num, den := w*sarN, h*sarD
+	g := gcd(num, den)
+	return strconv.Itoa(num/g) + ":" + strconv.Itoa(den/g)
+}
+
+func gcd(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	if a == 0 {
+		return 1
+	}
+	return a
+}
+
+// assertCMAFGeometryMatchesMPEGTS transcodes one source both ways and requires
+// every rung's decoded display aspect ratio to agree.
+func assertCMAFGeometryMatchesMPEGTS(t *testing.T, genArgs []string) {
+	t.Helper()
+	cmaf := newPackagedFixture(t, PackagerCMAF, genArgs, false)
+	ts := newPackagedFixture(t, PackagerTS, genArgs, false)
+
+	if len(cmaf.res.Renditions) != len(ts.res.Renditions) {
+		t.Fatalf("ladders differ: cmaf %d rungs, ts %d", len(cmaf.res.Renditions), len(ts.res.Renditions))
+	}
+	for i, r := range cmaf.res.Renditions {
+		// The MPEG-TS reference: its progressive download is a stream copy of the
+		// rung, so it carries the encoded aspect signalling verbatim.
+		tsPath, err := ts.blobs.Path(HLSDownloadKey(ts.res.Renditions[i].KeyPrefix, false))
+		if err != nil {
+			t.Fatalf("Path: %v", err)
+		}
+		wantDAR := probedDAR(t, tsPath)
+
+		// The CMAF side, read from the segments themselves rather than a
+		// derivative, so a wrong filter cannot hide behind a remux.
+		gotDAR := probedDAR(t, cmaf.concatRepresentation(t, i))
+		if gotDAR != wantDAR {
+			t.Errorf("rung %dp: CMAF segments display at %s, MPEG-TS at %s — the ladder is rendering this source at the wrong shape",
+				r.Height, gotDAR, wantDAR)
+		}
+		// And the progressive download, which is what /download serves.
+		cmafPath, err := cmaf.blobs.Path(HLSDownloadKey(r.KeyPrefix, false))
+		if err != nil {
+			t.Fatalf("Path: %v", err)
+		}
+		if got := probedDAR(t, cmafPath); got != wantDAR {
+			t.Errorf("rung %dp download: CMAF %s, MPEG-TS %s", r.Height, got, wantDAR)
+		}
+	}
+
+	// The MPD must publish that same ratio, once, for the whole video adaptation
+	// set — the muxer refuses to write one that mixes ratios, so this doubles as
+	// proof there was never a conflict to "fix".
+	mpd := cmaf.read(t, "cmaf/"+cmafManifestFilename)
+	pars := regexp.MustCompile(`par="([^"]*)"`).FindAllStringSubmatch(mpd, -1)
+	if len(pars) != 1 {
+		t.Fatalf("MPD declares %d video aspect ratios, want exactly 1:\n%s", len(pars), mpd)
+	}
+	tsTop, err := ts.blobs.Path(HLSDownloadKey(ts.res.Renditions[0].KeyPrefix, false))
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if want := probedDAR(t, tsTop); pars[0][1] != want {
+		t.Errorf("MPD par = %q, want the source's %q", pars[0][1], want)
+	}
+}
+
+// TestCMAFGeometryRotatedSource is the case that motivated all of this: a
+// portrait clip recorded as landscape-plus-display-matrix. ffmpeg autorotates
+// before the filter graph, so the graph sees 1080x1920 and scale's corrective
+// SAR carries the portrait shape through a ladder whose rung dimensions were
+// planned from the landscape coded size. Pinning the ladder to those coded
+// dimensions instead renders it landscape — a 3.16x horizontal stretch, baked
+// into the segments.
+func TestCMAFGeometryRotatedSource(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	src := rotatedSource(t)
+	assertCMAFGeometryMatchesMPEGTS(t, []string{"-i", src, "-c", "copy"})
+}
+
+// rotatedSource writes a 1920x1080 clip carrying a 90-degree display matrix and
+// returns its path.
+func rotatedSource(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	flat := filepath.Join(dir, "flat.mp4")
+	if out, err := exec.Command("ffmpeg", "-y", "-f", "lavfi",
+		"-i", "testsrc2=duration=4:size=1920x1080:rate=25",
+		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", flat).CombinedOutput(); err != nil {
+		t.Fatalf("generate: %v\n%s", err, out)
+	}
+	rotated := filepath.Join(dir, "rotated.mp4")
+	if out, err := exec.Command("ffmpeg", "-y", "-display_rotation", "90",
+		"-i", flat, "-c", "copy", rotated).CombinedOutput(); err != nil {
+		t.Fatalf("rotate: %v\n%s", err, out)
+	}
+	probe := ffprobeEntries(t, rotated, "stream_side_data=rotation")
+	if probe["rotation"] == "" {
+		t.Skip("this ffmpeg does not write a display matrix; the fixture would prove nothing")
+	}
+	return rotated
+}
+
+// TestCMAFGeometryAnamorphicSource: 720x576 with a 64:45 sample aspect displays
+// at 16:9, not the 5:4 its coded size suggests. Same failure mode, no rotation
+// involved, and the shape of every PAL-sourced upload in an archive.
+func TestCMAFGeometryAnamorphicSource(t *testing.T) {
+	assertCMAFGeometryMatchesMPEGTS(t, []string{
+		"-f", "lavfi", "-i", "testsrc2=duration=4:size=720x576:rate=25",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+		"-c:a", "aac", "-shortest", "-aspect", "16:9",
+	})
+}
+
+// TestCMAFGeometrySingleRungSource: with one rung there is nothing to keep
+// consistent — no adaptation set can conflict with itself — so any aspect filter
+// here is pure downside. The source is deliberately anamorphic (320x240 coded,
+// displayed 16:9, i.e. sample aspect 4:3) so that pinning to the rung's coded
+// ratio would visibly squash it; a square-pixel fixture would pass either way
+// and prove nothing.
+func TestCMAFGeometrySingleRungSource(t *testing.T) {
+	assertCMAFGeometryMatchesMPEGTS(t, []string{
+		"-f", "lavfi", "-i", "testsrc2=duration=4:size=320x240:rate=25",
+		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+		"-aspect", "16:9",
+	})
+}
+
+// TestCMAFSilentSourceDeclaresNoAudioAdaptationSet: the dash muxer writes an
+// EMPTY <AdaptationSet contentType="audio"/> when the set is declared and no
+// stream lands in it, and an adaptation set with no Representation is invalid
+// DASH — a manifest some players reject outright.
+func TestCMAFSilentSourceDeclaresNoAudioAdaptationSet(t *testing.T) {
+	f := newCMAFFixture(t, []string{
+		"-f", "lavfi", "-i", "testsrc2=duration=4:size=320x240:rate=25",
+		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+	}, false)
+	mpd := f.read(t, "cmaf/"+cmafManifestFilename)
+	if strings.Contains(mpd, `contentType="audio"`) {
+		t.Errorf("silent source declared an audio adaptation set:\n%s", mpd)
+	}
+	if n := strings.Count(mpd, "<AdaptationSet"); n != 1 {
+		t.Errorf("silent MPD has %d adaptation sets, want 1 (video):\n%s", n, mpd)
+	}
+	if n := strings.Count(mpd, "<Representation "); n != 1 {
+		t.Errorf("silent MPD has %d representations, want 1:\n%s", n, mpd)
+	}
 }

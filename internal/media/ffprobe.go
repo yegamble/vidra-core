@@ -244,15 +244,21 @@ func parseFFProbe(b []byte) (Metadata, error) {
 	if d, err := strconv.ParseFloat(strings.TrimSpace(out.Format.Duration), 64); err == nil && d > 0 && d < maxProbeDurationSeconds {
 		m.DurationSeconds = int(d + 0.5) // round to nearest second
 	}
+	// The video scan stops at the first usable stream (as it always has); the
+	// audio scan cannot, because an audio stream may follow it.
+	video := false
 	for _, s := range out.Streams {
-		if s.CodecType == "video" && s.Width > 0 && s.Height > 0 {
+		switch {
+		case !video && s.CodecType == "video" && s.Width > 0 && s.Height > 0:
+			video = true
 			m.Width = s.Width
 			m.Height = s.Height
 			m.FPS = parseFrameRate(s.AvgFrameRate)
 			if m.FPS == 0 {
 				m.FPS = parseFrameRate(s.RFrameRate)
 			}
-			break
+		case s.CodecType == "audio":
+			m.HasAudio = true
 		}
 	}
 	return m, nil

@@ -153,11 +153,14 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 	if err := validateHLSVersion(c, sp); err != nil {
 		return err
 	}
-	// Cross-checks: a pseudo-rendition names a tree SHAPE, and asking for one
-	// shape's names against a video stored in the other must not reach storage
-	// and hope for a miss. The CMAF check reads the format the transcode
-	// recorded; the PeerTube one reads the imported tree's master-key prefix.
-	if cmaf && sp.Format != media.HLSFormatCMAF {
+	// Cross-checks: a rendition names a tree SHAPE, and asking for one shape's
+	// names against a video stored in the other must not reach storage and hope
+	// for a miss. Both directions, so the rule is a property of the route rather
+	// than a guard that happens to exist for the new format: the CMAF and MPEG-TS
+	// naming schemes are mutually exclusive and each is refused on the format the
+	// transcode recorded. The PeerTube pass-through has no format of its own and
+	// is fenced on the imported tree's master-key prefix instead.
+	if cmaf != (sp.Format == media.HLSFormatCMAF) && !peertube {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	if peertube && !isPeerTubeHLSMasterKey(sp.MasterKey) {
@@ -175,7 +178,7 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 	if strings.HasSuffix(file, ".m3u8") {
 		return s.serveHLSPlaylist(c, key, sp)
 	}
-	if strings.HasSuffix(file, ".mpd") {
+	if cmaf && file == hlsCMAFManifestFile {
 		return s.serveCMAFManifest(c, key, sp)
 	}
 	// .m4s segments are labelled video/mp4 rather than the registered

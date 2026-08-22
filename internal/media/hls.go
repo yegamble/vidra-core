@@ -372,7 +372,7 @@ func perOutputThreads(threads, outputs int) int {
 // standalone command (see hlsRungArgs, the oracle the ladder is asserted
 // against) — only the decode is shared.
 func hlsLadderArgs(src source, out output, rungs []HLSRung, threads int) []string {
-	return hlsLadderArgsWith(defaultPackager, src, out, rungs, threads)
+	return hlsLadderArgsWith(defaultPackager, src, out, ladderPlan{rungs: rungs, threads: threads})
 }
 
 // hlsLadderArgsWith is hlsLadderArgs with the packaging format selected: the
@@ -382,27 +382,39 @@ func hlsLadderArgs(src source, out output, rungs []HLSRung, threads int) []strin
 // second packaging format is a second Packager rather than a second ladder
 // builder, even though CMAF's output half is one shared muxer block rather than
 // one per rung.
-func hlsLadderArgsWith(pkg Packager, src source, out output, rungs []HLSRung, threads int) []string {
+//
+// THE FILTER GRAPH IS FORMAT-INDEPENDENT, and deliberately so. It is tempting to
+// let a packager add filters here — CMAF's manifests publish an aspect ratio per
+// representation where MPEG-TS playlists publish none, so "normalise the aspect"
+// looks like a packaging concern. It is a trap. scale already sets each output's
+// sample aspect ratio to whatever PRESERVES the source's display aspect through
+// the rung's own rounding, which is the only correct answer and is what makes
+// every rung agree with every other one. Anything added on top does not refine
+// that; it overwrites it, and for a source whose coded dimensions are not its
+// display dimensions — a rotated phone video, anamorphic SD — it silently
+// re-renders the whole ladder at the wrong shape. Keeping the graph identical
+// across formats is what makes CMAF geometry provably equal to MPEG-TS geometry.
+func hlsLadderArgsWith(pkg Packager, src source, out output, plan ladderPlan) []string {
 	args := []string{"-y"}
 	args = append(args, src.inputArgs()...)
 
-	chain, labels := splitChain(len(rungs))
-	chains := make([]string, 0, len(rungs)+1)
+	chain, labels := splitChain(len(plan.rungs))
+	chains := make([]string, 0, len(plan.rungs)+1)
 	if chain != "" {
 		chains = append(chains, chain)
 	}
-	outLabels := make([]string, len(rungs))
-	for i, r := range rungs {
-		vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height) + pkg.ScaleFilterSuffix(rungs)
+	plan.labels = make([]string, len(plan.rungs))
+	for i, r := range plan.rungs {
+		vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height)
 		if r.FPS > 0 {
 			vf += fmt.Sprintf(",fps=%d", r.FPS)
 		}
-		outLabels[i] = fmt.Sprintf("v%d", i)
-		chains = append(chains, fmt.Sprintf("[%s]%s[%s]", labels[i], vf, outLabels[i]))
+		plan.labels[i] = fmt.Sprintf("v%d", i)
+		chains = append(chains, fmt.Sprintf("[%s]%s[%s]", labels[i], vf, plan.labels[i]))
 	}
 	args = append(args, "-filter_complex", strings.Join(chains, ";"))
 
-	return append(args, pkg.LadderOutputArgs(out, rungs, outLabels, threads)...)
+	return append(args, pkg.LadderOutputArgs(out, plan)...)
 }
 
 // hlsTrickPlayLadderArgs builds ONE ffmpeg argument vector emitting every rung's
@@ -412,29 +424,30 @@ func hlsLadderArgsWith(pkg Packager, src source, out output, rungs []HLSRung, th
 // reported separately, and folding it in would double the number of encoders
 // running concurrently in one process.
 func hlsTrickPlayLadderArgs(src source, out output, rungs []HLSRung, threads int) []string {
-	return hlsTrickPlayLadderArgsWith(defaultPackager, src, out, rungs, threads)
+	return hlsTrickPlayLadderArgsWith(defaultPackager, src, out, ladderPlan{rungs: rungs, threads: threads})
 }
 
 // hlsTrickPlayLadderArgsWith is hlsTrickPlayLadderArgs with the packaging format
-// selected.
-func hlsTrickPlayLadderArgsWith(pkg Packager, src source, out output, rungs []HLSRung, threads int) []string {
+// selected. Its graph is format-independent for the same reason the variant
+// ladder's is.
+func hlsTrickPlayLadderArgsWith(pkg Packager, src source, out output, plan ladderPlan) []string {
 	args := []string{"-y"}
 	args = append(args, src.inputArgs()...)
 
-	chain, labels := splitChain(len(rungs))
-	chains := make([]string, 0, len(rungs)+1)
+	chain, labels := splitChain(len(plan.rungs))
+	chains := make([]string, 0, len(plan.rungs)+1)
 	if chain != "" {
 		chains = append(chains, chain)
 	}
-	outLabels := make([]string, len(rungs))
-	for i, r := range rungs {
-		outLabels[i] = fmt.Sprintf("t%d", i)
-		chains = append(chains, fmt.Sprintf("[%s]scale=%d:%d%s,fps=1[%s]",
-			labels[i], r.Width, r.Height, pkg.ScaleFilterSuffix(rungs), outLabels[i]))
+	plan.labels = make([]string, len(plan.rungs))
+	for i, r := range plan.rungs {
+		plan.labels[i] = fmt.Sprintf("t%d", i)
+		chains = append(chains, fmt.Sprintf("[%s]scale=%d:%d,fps=1[%s]",
+			labels[i], r.Width, r.Height, plan.labels[i]))
 	}
 	args = append(args, "-filter_complex", strings.Join(chains, ";"))
 
-	return append(args, pkg.TrickPlayOutputArgs(out, rungs, outLabels, threads)...)
+	return append(args, pkg.TrickPlayOutputArgs(out, plan)...)
 }
 
 // streamSpec renders the ffmpeg stream-specifier suffixes ONE stream's encoder
@@ -912,6 +925,13 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 			return HLSResult{}, serr
 		}
 		defer func() { _ = sink.Close() }()
+		// Output the muxer has to write and finalisation has to read, but that is
+		// not part of the stored tree. Registered BEFORE the encode so it is never
+		// written at all — storing it and deleting it afterwards leaves a billable
+		// hide-marker per transcode on a versioned bucket.
+		for _, rel := range pkg.EphemeralOutputs() {
+			sink.Discard(rel)
+		}
 		out = sinkOutput(sink)
 	}
 
@@ -930,8 +950,9 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 			})
 		}
 	}
+	plan := ladderPlan{rungs: rungs, threads: settings.Threads, hasAudio: md.HasAudio}
 	reportAll("encoding", ProgressRunning, 1)
-	stderr, runErr := runFFmpegWithProgress(ctx, t.bin, hlsLadderArgsWith(pkg, src, out, rungs, settings.Threads), md.DurationSeconds, func(percent int) {
+	stderr, runErr := runFFmpegWithProgress(ctx, t.bin, hlsLadderArgsWith(pkg, src, out, plan), md.DurationSeconds, func(percent int) {
 		reportAll("encoding", ProgressRunning, percent*9/10)
 	})
 	if runErr != nil {
@@ -943,7 +964,7 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	// first: its failure belongs to the packaging stage, and folding it in would
 	// double the encoders running concurrently in one process.
 	reportAll("packaging", ProgressRunning, 92)
-	trickStderr, trickErr := runFFmpegWithProgress(ctx, t.bin, hlsTrickPlayLadderArgsWith(pkg, src, out, rungs, settings.Threads), md.DurationSeconds, nil)
+	trickStderr, trickErr := runFFmpegWithProgress(ctx, t.bin, hlsTrickPlayLadderArgsWith(pkg, src, out, plan), md.DurationSeconds, nil)
 	if trickErr != nil {
 		reportAll("packaging", ProgressFailed, 92)
 		return HLSResult{}, fmt.Errorf("media: trick-play ladder for %q: %w: %s", sourceKey, redactSource(src, trickErr), tailOf(trickStderr))

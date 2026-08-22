@@ -14,4 +14,10 @@ type Metadata struct {
 	// unknown. The transcoder uses it to decide whether transcoding_max_fps
 	// needs an fps filter (a cap is never applied to a slower/unknown source).
 	FPS float64
+	// HasAudio reports whether the source carries an audio stream. The MPEG-TS
+	// ladder never needs it — it maps audio optionally into every rung and simply
+	// gets nothing from a silent source — but CMAF must decide UP FRONT whether
+	// to declare an audio adaptation set, because declaring one a silent source
+	// then leaves empty produces an MPD with a Representation-less AdaptationSet.
+	HasAudio bool
 }

@@ -78,19 +78,6 @@ type Packager interface {
 	// operator-facing TRANSCODING_PACKAGER value ("ts", "cmaf").
 	Name() string
 
-	// ScaleFilterSuffix is the packaging-driven tail of every rung's filter
-	// chain, appended straight after the scale filter hls.go composes ("" when
-	// the format needs nothing). It takes the whole ladder because the
-	// requirement is about the rungs' relationship to each other, not about any
-	// one of them.
-	//
-	// It is a PACKAGING requirement expressed as an encode-side filter, which is
-	// why it belongs to the packager and not to the ladder builder: an MPD
-	// publishes an aspect ratio per Representation, read off the encoded stream.
-	// MPEG-TS playlists carry no such attribute, and its vectors are pinned
-	// byte-identical.
-	ScaleFilterSuffix(rungs []HLSRung) string
-
 	// ScratchDirs are the directories, relative to the transcode's scratch root,
 	// that must exist before the encode starts. ffmpeg's muxers open their output
 	// files but do not create the parent directories, and the progressive MP4s
@@ -99,23 +86,50 @@ type Packager interface {
 	// rewound.
 	ScratchDirs(rungs []HLSRung) []string
 
+	// EphemeralOutputs are files the muxer is made to write that the pipeline
+	// READS during finalisation but that must never become part of the stored
+	// tree — relative to the output prefix. A streaming transcode needs them
+	// named up front, because an object written into a blobsink is durable the
+	// moment it is flushed and deleting it afterwards leaves a delete marker on
+	// a versioned bucket (and costs two requests to store nothing).
+	EphemeralOutputs() []string
+
 	// LadderOutputArgs is the OUTPUT half of the ladder encode vector: for every
 	// planned rung, the stream maps consuming its filter-graph branch, that
 	// rung's ENCODER arguments, and the container arguments those encoders write
-	// through. labels[i] is the graph label carrying rung i's frames; threads is
-	// the job's whole budget, to be divided across the encoders that now run
-	// concurrently in one process.
-	LadderOutputArgs(out output, rungs []HLSRung, labels []string, threads int) []string
+	// through.
+	LadderOutputArgs(out output, plan ladderPlan) []string
 
 	// TrickPlayOutputArgs is the same composition for the dense-I-frame
 	// trick-play pass, whose container settings are format-specific.
-	TrickPlayOutputArgs(out output, rungs []HLSRung, labels []string, threads int) []string
+	TrickPlayOutputArgs(out output, plan ladderPlan) []string
 
 	// Finalize turns a finished encode into a stored, servable tree: per-rung
 	// derivative assets, playlist fixups, the master playlist, and the uploads
 	// themselves. It is called once, after every encode pass has completed and
 	// (when streaming) the sink has been flushed.
 	Finalize(ctx context.Context, req packageRequest) (packageResult, error)
+}
+
+// ladderPlan is everything hls.go decided about ONE encode vector, handed to a
+// packager so it can compose the output half around it. The DECODE half — one
+// input, one filter graph forking it into a branch per rung — has already been
+// written by the time a packager sees this.
+//
+// It is a struct rather than a parameter list because the two formats need
+// genuinely different subsets of it, and the set has already grown once: CMAF
+// needs to know whether the source HAS audio (to decide whether to declare an
+// audio adaptation set at all) where MPEG-TS never does, because MPEG-TS maps
+// audio optionally into every rung and simply gets nothing.
+type ladderPlan struct {
+	rungs []HLSRung
+	// labels[i] is the filter-graph output label carrying rung i's frames.
+	labels []string
+	// threads is the job's WHOLE budget, to be divided across the encoders that
+	// now run concurrently in one process.
+	threads int
+	// hasAudio reports whether the source has an audio stream to encode.
+	hasAudio bool
 }
 
 // rungRef resolves a filename inside ONE rung's output directory to the value
@@ -239,11 +253,6 @@ var defaultPackager = tsPackager{}
 // Name implements Packager.
 func (tsPackager) Name() string { return PackagerTS }
 
-// ScaleFilterSuffix implements Packager: MPEG-TS playlists advertise no sample
-// aspect ratio, and these vectors are pinned byte-identical to what this package
-// has always emitted, so the filter chain gains nothing.
-func (tsPackager) ScaleFilterSuffix([]HLSRung) string { return "" }
-
 // ScratchDirs implements Packager: one directory per rung, holding that rung's
 // segments (unless the ladder streams) and always its progressive MP4s.
 func (tsPackager) ScratchDirs(rungs []HLSRung) []string {
@@ -254,15 +263,19 @@ func (tsPackager) ScratchDirs(rungs []HLSRung) []string {
 	return dirs
 }
 
+// EphemeralOutputs implements Packager: the HLS muxer writes nothing this
+// pipeline reads and then throws away — every file it produces is served.
+func (tsPackager) EphemeralOutputs() []string { return nil }
+
 // LadderOutputArgs implements Packager: one self-contained -f hls output per
 // rung — its own filter branch, its own optional audio map, its own encoder and
 // its own muxer — which is the shape this package has always emitted.
-func (p tsPackager) LadderOutputArgs(out output, rungs []HLSRung, labels []string, threads int) []string {
+func (p tsPackager) LadderOutputArgs(out output, plan ladderPlan) []string {
 	var args []string
-	per := perOutputThreads(threads, len(rungs))
-	for i, r := range rungs {
+	per := perOutputThreads(plan.threads, len(plan.rungs))
+	for i, r := range plan.rungs {
 		args = append(args,
-			"-map", "["+labels[i]+"]",
+			"-map", "["+plan.labels[i]+"]",
 			// Audio comes from the input, optionally, so a silent source still
 			// encodes; the filter graph only carries video.
 			"-map", "0:a:0?",
@@ -277,11 +290,11 @@ func (p tsPackager) LadderOutputArgs(out output, rungs []HLSRung, labels []strin
 }
 
 // TrickPlayOutputArgs implements Packager: one video-only output per rung.
-func (p tsPackager) TrickPlayOutputArgs(out output, rungs []HLSRung, labels []string, threads int) []string {
+func (p tsPackager) TrickPlayOutputArgs(out output, plan ladderPlan) []string {
 	var args []string
-	per := perOutputThreads(threads, len(rungs))
-	for i, r := range rungs {
-		args = append(args, "-map", "["+labels[i]+"]", "-an")
+	per := perOutputThreads(plan.threads, len(plan.rungs))
+	for i, r := range plan.rungs {
+		args = append(args, "-map", "["+plan.labels[i]+"]", "-an")
 		if per > 0 {
 			args = append(args, "-threads", strconv.Itoa(per))
 		}
