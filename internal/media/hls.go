@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path"
@@ -35,11 +36,20 @@ const (
 	HLSM4AContentType            = "audio/mp4"
 )
 
+// rungBitrates is one rung's encode budget: the video bitrate that drives -b:v
+// (and, doubled, -bufsize) and the AAC bitrate for its audio.
+type rungBitrates struct{ VideoKbps, AudioKbps int }
+
 // hlsRungBitrates is the canonical H.264/AAC bitrate table per ladder rung
 // height (config-parity W10). The 1080/720/480/360 values are the original
 // hardcoded ladder, unchanged; the other rungs extend the same curve so an
 // admin-selected ladder (transcoding_resolutions) has defined bitrates.
-var hlsRungBitrates = map[int]struct{ VideoKbps, AudioKbps int }{
+//
+// IT IS A ~30fps TABLE. Every value here is the budget for STANDARD-RATE
+// content; a high-frame-rate source needs more bits for the same picture at the
+// same resolution because there are simply more pictures. See
+// fpsVideoBitrateMultiplier for how the table is scaled at planning time.
+var hlsRungBitrates = map[int]rungBitrates{
 	2160: {16000, 160},
 	1440: {9000, 160},
 	1080: {5000, 160},
@@ -48,6 +58,89 @@ var hlsRungBitrates = map[int]struct{ VideoKbps, AudioKbps int }{
 	360:  {800, 96},
 	240:  {500, 64},
 	144:  {250, 64},
+}
+
+// --- frame-rate-aware bitrates -----------------------------------------------
+//
+// The table above is authored for standard-rate content (23.976–30fps). Handing
+// a 50/60fps source the same budget does not produce a 60fps version of the same
+// quality; it produces the same total bits spread over twice as many pictures,
+// which x264 pays for in blocking and smearing on exactly the motion that made
+// the source high-frame-rate in the first place. PeerTube, Apple's HLS authoring
+// specification and Bitmovin's ladder guidance all land in the same place: a
+// high-frame-rate rung wants roughly 1.5–2x the standard-rate budget for the
+// same resolution.
+//
+// vidra scales the VIDEO budget only, and does it at PLANNING time so the
+// decision is packager-independent — the scaled number reaches -b:v/-maxrate/
+// -bufsize, the master playlist's BANDWIDTH, the CMAF variant bandwidth, the VP9
+// alternate and the progressive MP4s through the one HLSRung every one of them
+// already reads. AUDIO IS UNTOUCHED: an AAC stream costs what it costs
+// regardless of how many video frames sit beside it.
+//
+// The rate it scales by is the EFFECTIVE OUTPUT rate, min(sourceFPS, MaxFPS) —
+// not the source rate. transcoding_max_fps appends a uniform fps filter to the
+// whole graph, so a 60fps source under a 30fps cap really does emit 30fps on
+// every rung and must be budgeted as standard-rate. That is also why one
+// multiplier serves the whole ladder: the cap is uniform, so the effective rate
+// is uniform.
+const (
+	// hlsBaselineFPS is the highest effective rate that still gets the table
+	// verbatim. 32 rather than 30 so the 30000/1001 and 25fps families — and the
+	// odd 31.x average a variable-rate 30fps source probes as — are unambiguously
+	// baseline.
+	hlsBaselineFPS = 32.0
+	// hlsHighFPS is where the full high-frame-rate budget applies: the 48/50/60fps
+	// tier, and everything above it.
+	hlsHighFPS = 40.0
+	// hlsHighFPSVideoMultiplier is that budget, 1.6x. It sits inside the 1.5–2x
+	// band the references agree on and deliberately below a naive doubling: a
+	// 60fps encode's frames are far more temporally redundant than a 30fps
+	// encode's, so the marginal frame costs well under a full frame's worth of
+	// bits.
+	hlsHighFPSVideoMultiplier = 1.6
+)
+
+// fpsVideoBitrateMultiplier is the video-budget multiplier for an effective
+// output frame rate: 1.0 at or below hlsBaselineFPS, hlsHighFPSVideoMultiplier
+// at or above hlsHighFPS, and linearly interpolated between the two so the 36fps
+// oddities that exist in the wild do not fall off a cliff in either direction.
+//
+// An UNKNOWN rate (0 — a probe that found no frame rate, or a variable-rate
+// source ffprobe could not average) is not high-frame-rate as far as this is
+// concerned: it returns 1.0 and the ladder is budgeted exactly as it was before
+// this existed. Degrading to the shipped table is the only safe direction, since
+// the alternative is over-spending on every source whose rate we cannot read.
+func fpsVideoBitrateMultiplier(fps float64) float64 {
+	switch {
+	case fps <= hlsBaselineFPS:
+		return 1
+	case fps >= hlsHighFPS:
+		return hlsHighFPSVideoMultiplier
+	default:
+		return 1 + (hlsHighFPSVideoMultiplier-1)*(fps-hlsBaselineFPS)/(hlsHighFPS-hlsBaselineFPS)
+	}
+}
+
+// scaledForFPS applies a video-budget multiplier to one rung's bitrates, leaving
+// the audio budget alone. A multiplier of 1 (the baseline and unknown-rate case)
+// returns the table's own values unchanged, bit for bit.
+func (b rungBitrates) scaledForFPS(multiplier float64) rungBitrates {
+	if multiplier <= 1 {
+		return b
+	}
+	b.VideoKbps = int(math.Round(float64(b.VideoKbps) * multiplier))
+	return b
+}
+
+// effectiveOutputFPS is the frame rate the ladder will actually emit: the
+// source's own rate, or the configured cap when the source is faster than it.
+// Zero means unknown, which every caller treats as standard-rate.
+func effectiveOutputFPS(settings HLSEncodeSettings, sourceFPS float64) float64 {
+	if settings.MaxFPS > 0 && sourceFPS > float64(settings.MaxFPS) {
+		return float64(settings.MaxFPS)
+	}
+	return sourceFPS
 }
 
 // HLSCanonicalRungHeights is the full rung universe an admin may enable via
@@ -132,6 +225,8 @@ func PlanHLSLadder(sourceWidth, sourceHeight int) []HLSRung {
 // enabled rung, an extra rung at the source's own size is planned on top.
 // A positive settings.MaxFPS below a KNOWN source frame rate caps every rung's
 // output rate (never upsampling: an unknown or slower source keeps its rate).
+// The EFFECTIVE output rate — the source's, or the cap when it bites — also
+// scales every rung's video budget above hlsBaselineFPS (fpsVideoBitrateMultiplier).
 // Widths preserve the source aspect ratio, rounded to even (required by H.264
 // 4:2:0). Unknown (non-positive) dimensions cannot be planned and return nil.
 func PlanHLSLadderWith(settings HLSEncodeSettings, sourceWidth, sourceHeight int, sourceFPS float64) []HLSRung {
@@ -143,10 +238,14 @@ func PlanHLSLadderWith(settings HLSEncodeSettings, sourceWidth, sourceHeight int
 	if settings.MaxFPS > 0 && sourceFPS > float64(settings.MaxFPS) {
 		fps = settings.MaxFPS
 	}
+	// One multiplier for the whole ladder, because the fps filter is uniform
+	// across it: every rung emits the same effective rate, so every rung's budget
+	// moves by the same factor.
+	multiplier := fpsVideoBitrateMultiplier(effectiveOutputFPS(settings, sourceFPS))
 	var rungs []HLSRung
 	if settings.OriginalResolution && sourceHeight > heights[0] {
 		h := evenDim(sourceHeight)
-		br := rungBitratesForHeight(sourceHeight)
+		br := rungBitratesForHeight(sourceHeight).scaledForFPS(multiplier)
 		rungs = append(rungs, HLSRung{
 			Height:    h,
 			Width:     evenScaledWidth(sourceWidth, sourceHeight, h),
@@ -159,7 +258,7 @@ func PlanHLSLadderWith(settings HLSEncodeSettings, sourceWidth, sourceHeight int
 		if height > sourceHeight {
 			continue
 		}
-		br := hlsRungBitrates[height]
+		br := hlsRungBitrates[height].scaledForFPS(multiplier)
 		rungs = append(rungs, HLSRung{
 			Height:    evenDim(height),
 			Width:     evenScaledWidth(sourceWidth, sourceHeight, height),
@@ -169,7 +268,7 @@ func PlanHLSLadderWith(settings HLSEncodeSettings, sourceWidth, sourceHeight int
 		})
 	}
 	if len(rungs) == 0 {
-		lowest := hlsRungBitrates[heights[len(heights)-1]]
+		lowest := hlsRungBitrates[heights[len(heights)-1]].scaledForFPS(multiplier)
 		h := evenDim(sourceHeight)
 		rungs = append(rungs, HLSRung{
 			Height:    h,
@@ -206,7 +305,7 @@ func normalizeRungHeights(resolutions []int) []int {
 // rungBitratesForHeight resolves bitrates for an arbitrary (original-
 // resolution) rung height: the smallest canonical rung at least as tall, or
 // the tallest canonical rung's bitrates for anything taller than the table.
-func rungBitratesForHeight(height int) struct{ VideoKbps, AudioKbps int } {
+func rungBitratesForHeight(height int) rungBitrates {
 	best, found := 0, false
 	for h := range hlsRungBitrates {
 		if h >= height && (!found || h < best) {

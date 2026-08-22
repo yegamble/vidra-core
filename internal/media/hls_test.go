@@ -391,6 +391,194 @@ func TestPlanHLSLadderWithMaxFPS(t *testing.T) {
 	}
 }
 
+// --- phase-3 item 6.1: frame-rate-aware bitrates ---
+
+// TestPlanHLSLadderBitratesAreFPSAware is the planning-level pin: a 24/30fps
+// source gets the shipped table verbatim, a 50/60fps source gets 1.6x the VIDEO
+// budget on every rung, and the audio budget never moves.
+func TestPlanHLSLadderBitratesAreFPSAware(t *testing.T) {
+	baseline := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 1920, 1080, 24)
+	if len(baseline) != 4 {
+		t.Fatalf("test is stale: 1080p plans %d rungs, want 4", len(baseline))
+	}
+	// The 24fps ladder IS the shipped table — this is the anchor every other
+	// case is expressed against, so it is pinned by literal value.
+	wantVideo := []int{5000, 2800, 1400, 800}
+	wantAudio := []int{160, 128, 128, 96}
+	for i, r := range baseline {
+		if r.VideoKbps != wantVideo[i] || r.AudioKbps != wantAudio[i] {
+			t.Errorf("24fps rung %s = %dk/%dk, want %dk/%dk (the table, unscaled)",
+				r.Name(), r.VideoKbps, r.AudioKbps, wantVideo[i], wantAudio[i])
+		}
+	}
+	// 30fps is the same standard-rate tier.
+	for i, r := range PlanHLSLadderWith(DefaultHLSEncodeSettings(), 1920, 1080, 30) {
+		if r.VideoKbps != wantVideo[i] || r.AudioKbps != wantAudio[i] {
+			t.Errorf("30fps rung %s = %dk/%dk, want the same as 24fps (%dk/%dk)",
+				r.Name(), r.VideoKbps, r.AudioKbps, wantVideo[i], wantAudio[i])
+		}
+	}
+	// 60fps: 1.6x video, identical audio. 5000→8000, 2800→4480, 1400→2240, 800→1280.
+	wantHFR := []int{8000, 4480, 2240, 1280}
+	for _, sourceFPS := range []float64{50, 59.94, 60, 120} {
+		rungs := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 1920, 1080, sourceFPS)
+		for i, r := range rungs {
+			if r.VideoKbps != wantHFR[i] {
+				t.Errorf("%vfps rung %s video = %dk, want %dk (1.6x the %dk table value)",
+					sourceFPS, r.Name(), r.VideoKbps, wantHFR[i], wantVideo[i])
+			}
+			if r.AudioKbps != wantAudio[i] {
+				t.Errorf("%vfps rung %s audio = %dk, want %dk — audio is not frame-rate dependent",
+					sourceFPS, r.Name(), r.AudioKbps, wantAudio[i])
+			}
+		}
+	}
+}
+
+// TestPlanHLSLadderBitratesDegradeToBaselineWhenFPSIsUnknown pins the safe
+// direction: a probe that could not read a frame rate (VFR, absent, degenerate
+// "0/0") budgets the ladder exactly as it was budgeted before this existed.
+func TestPlanHLSLadderBitratesDegradeToBaselineWhenFPSIsUnknown(t *testing.T) {
+	if parseFrameRate("0/0") != 0 || parseFrameRate("N/A") != 0 || parseFrameRate("") != 0 {
+		t.Fatal("test is stale: the probe no longer reports unknown frame rates as 0")
+	}
+	unknown := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 1920, 1080, 0)
+	known := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 1920, 1080, 30)
+	for i := range unknown {
+		if unknown[i] != known[i] {
+			t.Errorf("unknown-fps rung %s = %+v, want the standard-rate plan %+v",
+				unknown[i].Name(), unknown[i], known[i])
+		}
+	}
+}
+
+// TestPlanHLSLadderBitratesFollowTheEFFECTIVEFPS proves the multiplier keys off
+// what the ladder will actually EMIT, not off the source: transcoding_max_fps
+// appends a uniform fps filter, so a 60fps source capped to 30 really does emit
+// standard-rate video and must be budgeted as such.
+func TestPlanHLSLadderBitratesFollowTheEFFECTIVEFPS(t *testing.T) {
+	capped := PlanHLSLadderWith(HLSEncodeSettings{Resolutions: []int{1080, 720}, MaxFPS: 30}, 1920, 1080, 60)
+	for _, r := range capped {
+		if r.FPS != 30 {
+			t.Fatalf("test is stale: a capped 60fps source must plan FPS=30, got %d", r.FPS)
+		}
+	}
+	if capped[0].VideoKbps != 5000 || capped[1].VideoKbps != 2800 {
+		t.Errorf("60fps source capped to 30fps = %dk/%dk, want the standard-rate 5000k/2800k",
+			capped[0].VideoKbps, capped[1].VideoKbps)
+	}
+	// A cap ABOVE the source rate never bites, so the source rate still decides.
+	loose := PlanHLSLadderWith(HLSEncodeSettings{Resolutions: []int{1080}, MaxFPS: 120}, 1920, 1080, 60)
+	if loose[0].FPS != 0 || loose[0].VideoKbps != 8000 {
+		t.Errorf("60fps under a 120fps cap = FPS %d @ %dk, want FPS 0 @ 8000k",
+			loose[0].FPS, loose[0].VideoKbps)
+	}
+	// A cap that bites but stays high-frame-rate keeps the high budget.
+	stillHFR := PlanHLSLadderWith(HLSEncodeSettings{Resolutions: []int{1080}, MaxFPS: 50}, 1920, 1080, 60)
+	if stillHFR[0].FPS != 50 || stillHFR[0].VideoKbps != 8000 {
+		t.Errorf("60fps capped to 50fps = FPS %d @ %dk, want FPS 50 @ 8000k",
+			stillHFR[0].FPS, stillHFR[0].VideoKbps)
+	}
+}
+
+// TestFPSVideoBitrateMultiplier pins the curve itself: flat below the baseline,
+// flat above the high-frame-rate threshold, monotonic and continuous between.
+func TestFPSVideoBitrateMultiplier(t *testing.T) {
+	for _, fps := range []float64{0, 1, 23.976, 25, 29.97, 30, 32} {
+		if got := fpsVideoBitrateMultiplier(fps); got != 1 {
+			t.Errorf("fpsVideoBitrateMultiplier(%v) = %v, want 1 (standard rate)", fps, got)
+		}
+	}
+	for _, fps := range []float64{40, 48, 50, 59.94, 60, 90, 240} {
+		if got := fpsVideoBitrateMultiplier(fps); got != hlsHighFPSVideoMultiplier {
+			t.Errorf("fpsVideoBitrateMultiplier(%v) = %v, want %v", fps, got, hlsHighFPSVideoMultiplier)
+		}
+	}
+	// The ramp: strictly increasing, and it meets both ends without a step.
+	if got := fpsVideoBitrateMultiplier(36); got != 1.3 {
+		t.Errorf("fpsVideoBitrateMultiplier(36) = %v, want 1.3 (the midpoint of the ramp)", got)
+	}
+	prev := 1.0
+	for fps := 32.0; fps <= 40.0; fps += 0.5 {
+		got := fpsVideoBitrateMultiplier(fps)
+		if got < prev {
+			t.Errorf("multiplier fell from %v to %v at %v fps", prev, got, fps)
+		}
+		if got < 1 || got > hlsHighFPSVideoMultiplier {
+			t.Errorf("multiplier %v at %v fps is outside [1, %v]", got, fps, hlsHighFPSVideoMultiplier)
+		}
+		prev = got
+	}
+}
+
+// TestPlanHLSLadderFPSAwareBitratesReachEveryDerivedRung proves the scaling is
+// not confined to the canonical table lookup: the tiny-source fallback and the
+// transcoding_original_resolution rung derive their budgets through their own
+// code paths and must scale too.
+func TestPlanHLSLadderFPSAwareBitratesReachEveryDerivedRung(t *testing.T) {
+	// Tiny-source fallback: inherits the LOWEST enabled rung's budget (360p:
+	// 800k) — scaled.
+	tiny := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 320, 240, 60)
+	if len(tiny) != 1 || tiny[0].VideoKbps != 1280 || tiny[0].AudioKbps != 96 {
+		t.Errorf("60fps tiny-source fallback = %+v, want one rung at 1280k/96k", tiny)
+	}
+	// Original-resolution rung: 1440p's 9000k table value, scaled.
+	st := HLSEncodeSettings{Resolutions: []int{1080, 720}, OriginalResolution: true}
+	orig := PlanHLSLadderWith(st, 2560, 1440, 60)
+	if orig[0].Height != 1440 || orig[0].VideoKbps != 14400 || orig[0].AudioKbps != 160 {
+		t.Errorf("60fps original-resolution rung = %dp @ %dk/%dk, want 1440p @ 14400k/160k",
+			orig[0].Height, orig[0].VideoKbps, orig[0].AudioKbps)
+	}
+}
+
+// TestFPSAwareBitratesReachTheEncoderAndBothMasters closes the loop from the
+// plan to the bytes: the scaled budget must drive -b:v/-maxrate/-bufsize on both
+// packagers and be what BANDWIDTH declares in both master playlists. A ladder
+// encoded at 1.6x whose manifest still advertises the 1x rate would have every
+// ABR player under-estimate what it is about to download.
+func TestFPSAwareBitratesReachTheEncoderAndBothMasters(t *testing.T) {
+	rungs := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 1920, 1080, 60)
+	top := rungs[0]
+	if top.VideoKbps != 8000 {
+		t.Fatalf("test is stale: 60fps 1080p top rung = %dk, want 8000k", top.VideoKbps)
+	}
+
+	// MPEG-TS encoder args.
+	ts := strings.Join(hlsLadderArgs(localSource("/in/src.mp4"), localOutput("/out"), rungs, 0), " ")
+	for _, want := range []string{"-b:v 8000k", "-maxrate 8000k", "-bufsize 16000k"} {
+		if !strings.Contains(ts, want) {
+			t.Errorf("MPEG-TS ladder missing %q\n%s", want, ts)
+		}
+	}
+	// CMAF encoder args (stream-qualified).
+	plan := ladderPlan{rungs: rungs, labels: []string{"v0", "v1", "v2", "v3"}, hasAudio: true}
+	cmaf := strings.Join(cmafPackager{}.LadderOutputArgs(localOutput("/out"), plan), " ")
+	for _, want := range []string{"-b:v:0 8000k", "-maxrate:v:0 8000k", "-bufsize:v:0 16000k"} {
+		if !strings.Contains(cmaf, want) {
+			t.Errorf("CMAF ladder missing %q\n%s", want, cmaf)
+		}
+	}
+
+	// Both masters' BANDWIDTH.
+	wantBW := (8000 + top.AudioKbps) * 1000 * 11 / 10
+	tsMaster := renderMasterPlaylist(rungs, nil)
+	if !strings.Contains(tsMaster, "BANDWIDTH="+fmt.Sprint(wantBW)+",") {
+		t.Errorf("MPEG-TS master does not declare the scaled top-rung bandwidth %d:\n%s", wantBW, tsMaster)
+	}
+	layout := cmafLayout{
+		videoCodecs: []string{"avc1.4d4028,mp4a.40.2", "avc1.4d401f,mp4a.40.2", "avc1.4d401e,mp4a.40.2", "avc1.4d401e,mp4a.40.2"},
+		hasAudio:    true,
+		audioRep:    len(rungs),
+	}
+	cmafMaster, err := renderCMAFMasterPlaylist(rungs, layout, nil)
+	if err != nil {
+		t.Fatalf("renderCMAFMasterPlaylist: %v", err)
+	}
+	if !strings.Contains(cmafMaster, "BANDWIDTH="+fmt.Sprint(wantBW)+",") {
+		t.Errorf("CMAF master does not declare the scaled top-rung bandwidth %d:\n%s", wantBW, cmafMaster)
+	}
+}
+
 func TestHLSRungArgsFPSAndThreads(t *testing.T) {
 	r := HLSRung{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128, FPS: 30}
 	args := strings.Join(hlsRungArgs(localSource("/in/src.mp4"), "/out/720p", r, 4), " ")
