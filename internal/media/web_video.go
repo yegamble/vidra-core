@@ -98,6 +98,83 @@ func webVideoLadderArgs(src source, root string, rungs []HLSRung, threads int) [
 	return args
 }
 
+// --- phase-3 item 6.3: deriving the web videos instead of re-encoding them ---
+//
+// A target='all' job used to decode its source THREE times: once for the HLS
+// ladder, once for the trick-play ladder, and once more for the progressive MP4
+// ladder below — plus one libx264 encode per rung on that third pass. The third
+// decode was pure duplication, and the comparison that says so is short:
+//
+//	                     web_video <H>p.mp4      HLS tree <H>p/video.mp4
+//	video codec          libx264 main veryfast   the same (it IS a ladder rung)
+//	rate control         -b:v/-maxrate N, 2N     the same
+//	scaling              scale=W:H (+fps)        the same filter graph
+//	audio                aac, -ac 2              the same encoder
+//	container            mp4, +faststart         mp4, +faststart (remuxed -c copy)
+//
+// Two differences, neither material. The ladder rung forces an IDR every segment
+// (hlsRungEncodeArgs) where the standalone encode took x264's default GOP — a
+// DENSER, deterministic key-frame cadence, which is better for seeking and
+// costs a little efficiency. And on CMAF the audio is the ladder's single shared
+// representation, so a lower rung's MP4 carries the top rung's audio bitrate
+// rather than its own — more audio, not less.
+//
+// What settles it is the CONSUMER side: nothing serves these bytes. There is no
+// query for video_files rows of kind='rendition' and no handler that asks for
+// one; the public progressive download already reads
+// streaming-playlists/<id>/<H>p/video.mp4 through video_renditions.key_prefix.
+// The rows are load-bearing only for mediagc reachability, the storage-usage
+// sums, blobverify/mediahash bookkeeping and the admin web_video_count — all of
+// which care about a key, a size and a digest, not about which encoder pass
+// produced them.
+//
+// So for target='all' the object is COPIED from the ladder's own output rather
+// than re-encoded, at the one moment it is still on local disk (see
+// packageRequest.onRungPackaged). It is not even a remux: the file is already a
+// faststart progressive MP4 with the right streams, so the two copies become
+// byte-identical, which is more coherent than the two different encodes of the
+// same rendition we had before. A standalone target='web_video' job has no
+// ladder to copy from and keeps the encode below.
+
+// deriveWebVideos copies one rung's just-packaged progressive MP4 into the
+// standalone web-videos prefix, hashing it on the way through so the video_files
+// row carries the same digest an encoded one would.
+type webVideoDeriver struct {
+	blobs   storage.Backend
+	prefix  string
+	report  func(r HLSRung, state, stage string, percent int)
+	results []WebVideoResult
+}
+
+// rungPackaged satisfies packageRequest.onRungPackaged.
+func (d *webVideoDeriver) rungPackaged(ctx context.Context, r HLSRung, dir string) error {
+	d.report(r, ProgressRunning, "storing", 97)
+	src := filepath.Join(dir, HLSMuxedDownloadFilename)
+	f, err := os.Open(src)
+	if err != nil {
+		d.report(r, ProgressFailed, "storing", 97)
+		return fmt.Errorf("media: web video %s from the packaged ladder: %w", r.Name(), err)
+	}
+	defer func() { _ = f.Close() }()
+	// The length is known, so the store gets its single-PUT path instead of
+	// assuming the 5 TiB maximum and buffering a multipart part for it.
+	size := int64(storage.SizeUnknown)
+	if info, serr := f.Stat(); serr == nil {
+		size = info.Size()
+	}
+	key := path.Join(d.prefix, r.Name()+".mp4")
+	stored, sum, perr := storage.PutSizedHashed(ctx, d.blobs, key, f, size)
+	if perr != nil {
+		d.report(r, ProgressFailed, "storing", 97)
+		return perr
+	}
+	d.results = append(d.results, WebVideoResult{
+		Height: r.Height, Width: r.Width, StorageKey: key, SizeBytes: stored, SHA256: sum,
+	})
+	d.report(r, ProgressSucceeded, "complete", 100)
+	return nil
+}
+
 // WebVideoPrefixForSource keeps manual reruns stable while source replacements
 // write a fresh generation. Originals are sibling objects
 // (web-videos/<id>.<ext>), so deleting this directory never deletes the source.

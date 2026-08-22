@@ -727,6 +727,12 @@ type HLSResult struct {
 	// have no video_files rows to hold one, and storage migration verifies them
 	// in flight instead.
 	WebMSHA256 string
+	// WebVideos are the standalone progressive MP4s DERIVED from this tree's own
+	// per-rung downloads, present only when the caller asked for them
+	// (TranscodeAll). They ride out on the HLS result because they are produced
+	// inside the HLS packaging window and cannot be produced anywhere else
+	// without decoding the source again.
+	WebVideos []WebVideoResult
 }
 
 // HLSKeyPrefix is the storage-key directory holding a video's HLS output
@@ -968,6 +974,34 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 // md is the caller's already-obtained probe of sourceKey; the worker probes once
 // per job and shares it across targets.
 func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, md Metadata, progress ProgressFunc) (HLSResult, error) {
+	return t.transcodeHLS(ctx, videoID, sourceKey, md, progress, false)
+}
+
+// TranscodeAll produces BOTH output classes from ONE ladder encode: the
+// streaming tree, and the standalone progressive "web video" MP4s COPIED out of
+// that tree's own per-rung downloads rather than encoded a second time.
+//
+// It is one method rather than two calls because the saving depends entirely on
+// the two happening together: the bytes the web videos need exist only inside
+// the packaging window, on local scratch, between the remux that writes them and
+// the upload that frees them. Running the two targets independently is what made
+// a target='all' job decode its source three times — see the comparison at the
+// top of web_video.go for why the second encode was producing a strictly
+// equivalent file.
+//
+// A failure is a failure of the whole thing: the derivation runs inside
+// packaging, where a fault already fails the transcode without promoting
+// anything.
+func (t *HLSTranscoder) TranscodeAll(ctx context.Context, videoID uuid.UUID, sourceKey string, md Metadata, progress ProgressFunc) (HLSResult, []WebVideoResult, error) {
+	res, err := t.transcodeHLS(ctx, videoID, sourceKey, md, progress, true)
+	if err != nil {
+		return HLSResult{}, nil, err
+	}
+	return res, res.WebVideos, nil
+}
+
+// transcodeHLS is TranscodeHLS with the web-video derivation switched on or off.
+func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, md Metadata, progress ProgressFunc, deriveWebVideos bool) (HLSResult, error) {
 	// Runtime encode knobs, resolved once per job (config-parity W10): a
 	// settings change applies to the next job, never mid-job.
 	settings := t.encodeSettings()
@@ -1130,6 +1164,41 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	// tree stored. The two callbacks let the packager report a fatal error
 	// through this job's per-resolution progress projection without knowing
 	// anything about it.
+	// The standalone progressive MP4s, when this job wants them, are COPIED out
+	// of each rung's packaged directory as it is finished — the only moment those
+	// bytes exist locally. See web_video.go for why a copy is equivalent to the
+	// second encode this replaces.
+	var deriver *webVideoDeriver
+	var onRungPackaged func(context.Context, HLSRung, string) error
+	if deriveWebVideos && len(rungs) > 0 {
+		webPrefix := WebVideoPrefixForSource(videoID, sourceKey)
+		// The same prefix-clearing a standalone web-video job does, for the same
+		// reason: a re-run of the SAME source version reuses this prefix, so a
+		// shorter ladder must not leave the previous run's taller rungs behind.
+		if deleter, ok := t.blobs.(storage.PrefixDeleter); ok {
+			if derr := deleter.DeletePrefix(ctx, webPrefix); derr != nil {
+				return HLSResult{}, derr
+			}
+		}
+		deriver = &webVideoDeriver{
+			blobs:  t.blobs,
+			prefix: webPrefix,
+			report: func(r HLSRung, state, stage string, percent int) {
+				reportProgress(progress, TranscodeProgress{
+					Format: TranscodeFormatWebVideo, Height: r.Height, Width: r.Width,
+					State: state, Stage: stage, Percent: percent,
+				})
+			},
+		}
+		for _, r := range rungs {
+			reportProgress(progress, TranscodeProgress{
+				Format: TranscodeFormatWebVideo, Height: r.Height, Width: r.Width,
+				State: ProgressQueued, Stage: "queued", Percent: 0,
+			})
+		}
+		onRungPackaged = deriver.rungPackaged
+	}
+
 	packaged, err := pkg.Finalize(ctx, packageRequest{
 		sourceKey: sourceKey,
 		out:       out,
@@ -1148,6 +1217,7 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 				})
 			}
 		},
+		onRungPackaged: onRungPackaged,
 	})
 	if err != nil {
 		return HLSResult{}, err
@@ -1168,6 +1238,9 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	// with none — see the master playlist, which advertises a single audio-only
 	// variant.
 	res := HLSResult{MasterKey: packaged.masterKey, Format: packaged.format}
+	if deriver != nil {
+		res.WebVideos = deriver.results
+	}
 	for _, r := range rungs {
 		res.Renditions = append(res.Renditions, HLSRendition{
 			Height:    r.Height,

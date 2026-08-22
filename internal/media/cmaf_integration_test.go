@@ -4,7 +4,10 @@
 package media
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -1061,4 +1064,410 @@ func slicesContains(hay []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// --- phase-3 item 6.3: deriving the web videos instead of re-encoding them ---
+
+// countingFFmpeg returns the path to a wrapper that logs every ffmpeg
+// invocation's argument vector and then execs the real binary, plus a reader for
+// the log. It is how "how many times did this decode the source?" becomes an
+// assertion instead of a claim.
+func countingFFmpeg(t *testing.T) (bin string, invocations func() []string) {
+	t.Helper()
+	real, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	dir := t.TempDir()
+	log := filepath.Join(dir, "invocations.log")
+	script := filepath.Join(dir, "ffmpeg-counting")
+	body := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(log) + "\nexec " + strconv.Quote(real) + " \"$@\"\n"
+	if werr := os.WriteFile(script, []byte(body), 0o755); werr != nil {
+		t.Fatalf("write wrapper: %v", werr)
+	}
+	return script, func() []string {
+		b, rerr := os.ReadFile(log)
+		if rerr != nil {
+			return nil
+		}
+		var out []string
+		for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			if line != "" {
+				out = append(out, line)
+			}
+		}
+		return out
+	}
+}
+
+// decodePasses counts the invocations that DECODE the source: every one of them
+// builds a filter graph over the input. The remuxes and the audio extraction are
+// stream copies and carry none.
+func decodePasses(invocations []string) []string {
+	var out []string
+	for _, inv := range invocations {
+		if strings.Contains(inv, "-filter_complex") {
+			out = append(out, inv)
+		}
+	}
+	return out
+}
+
+// TestFullJobDecodesTheSourceTwiceNotThreeTimes is the measurement behind
+// phase-3 item 6.3, taken against real ffmpeg and stated as a counterfactual:
+// the SAME source is run both ways, so the number that matters is the
+// difference, not an absolute anyone has to trust.
+//
+// The old shape ran the two targets independently — an HLS ladder decode, a
+// trick-play decode, and a third whole decode plus one libx264 encode per rung
+// for progressive MP4s the ladder had already produced. TranscodeAll derives
+// those instead, at the one moment they are still on scratch.
+func TestFullJobDecodesTheSourceTwiceNotThreeTimes(t *testing.T) {
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+
+	newTranscoder := func(t *testing.T) (*HLSTranscoder, *storage.Local, uuid.UUID, string, func() []string) {
+		t.Helper()
+		blobs, err := storage.NewLocal(t.TempDir())
+		if err != nil {
+			t.Fatalf("NewLocal: %v", err)
+		}
+		videoID := uuid.New()
+		srcKey := "web-videos/" + videoID.String() + ".mp4"
+		srcPath, perr := blobs.Path(srcKey)
+		if perr != nil {
+			t.Fatalf("Path: %v", perr)
+		}
+		if merr := os.MkdirAll(filepath.Dir(srcPath), 0o755); merr != nil {
+			t.Fatalf("mkdir: %v", merr)
+		}
+		if out, gerr := exec.Command("ffmpeg", append(append([]string{"-y"}, hd720WithAudio...), srcPath)...).CombinedOutput(); gerr != nil {
+			t.Fatalf("ffmpeg generate: %v\n%s", gerr, out)
+		}
+		tc, ok := DetectHLSTranscoder(blobs)
+		if !ok {
+			t.Fatal("DetectHLSTranscoder = false")
+		}
+		if serr := tc.SetPackager(PackagerCMAF); serr != nil {
+			t.Fatalf("SetPackager: %v", serr)
+		}
+		bin, invocations := countingFFmpeg(t)
+		tc.bin = bin
+		return tc, blobs, videoID, srcKey, invocations
+	}
+
+	// The old shape: two independent target calls.
+	var before int
+	t.Run("running the targets independently", func(t *testing.T) {
+		tc, _, videoID, srcKey, invocations := newTranscoder(t)
+		md, err := tc.Probe(context.Background(), srcKey)
+		if err != nil {
+			t.Fatalf("Probe: %v", err)
+		}
+		if _, err := tc.TranscodeHLS(context.Background(), videoID, srcKey, md, nil); err != nil {
+			t.Fatalf("TranscodeHLS: %v", err)
+		}
+		if _, err := tc.TranscodeWebVideos(context.Background(), videoID, srcKey, md, nil); err != nil {
+			t.Fatalf("TranscodeWebVideos: %v", err)
+		}
+		before = len(decodePasses(invocations()))
+		if before != 3 {
+			t.Fatalf("independent targets made %d decode passes, want 3 (ladder, trick-play, web-video ladder):\n%s",
+				before, strings.Join(decodePasses(invocations()), "\n"))
+		}
+	})
+
+	// The new shape: one call, one ladder, derived downloads.
+	t.Run("running them as one job", func(t *testing.T) {
+		tc, blobs, videoID, srcKey, invocations := newTranscoder(t)
+		md, err := tc.Probe(context.Background(), srcKey)
+		if err != nil {
+			t.Fatalf("Probe: %v", err)
+		}
+		res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, md, nil)
+		if err != nil {
+			t.Fatalf("TranscodeAll: %v", err)
+		}
+		passes := decodePasses(invocations())
+		if len(passes) != 2 {
+			t.Fatalf("a full job made %d decode passes, want 2 (ladder, trick-play):\n%s",
+				len(passes), strings.Join(passes, "\n"))
+		}
+		if len(passes) >= before {
+			t.Errorf("a full job decodes %d times, no better than the %d it took independently", len(passes), before)
+		}
+		// And no libx264 encode outside those two passes: every other invocation
+		// is a stream copy.
+		for _, inv := range invocations() {
+			if strings.Contains(inv, "-filter_complex") {
+				continue
+			}
+			if strings.Contains(inv, "libx264") {
+				t.Errorf("an invocation outside the ladder passes runs a video encoder:\n%s", inv)
+			}
+		}
+
+		// The derived files are the real deliverable: one per rung, at the same
+		// keys, byte-valid, and byte-IDENTICAL to the ladder's own download for
+		// that rung — which is what makes copying them equivalent to encoding them.
+		if len(files) != len(res.Renditions) {
+			t.Fatalf("derived %d web videos for %d renditions", len(files), len(res.Renditions))
+		}
+		for i, f := range files {
+			rendition := res.Renditions[i]
+			wantKey := "web-videos/" + videoID.String() + "/" + strconv.Itoa(rendition.Height) + "p.mp4"
+			if f.StorageKey != wantKey {
+				t.Errorf("derived key = %q, want %q", f.StorageKey, wantKey)
+			}
+			if f.Height != rendition.Height || f.Width != rendition.Width {
+				t.Errorf("derived %dx%d, want the rung's %dx%d", f.Width, f.Height, rendition.Width, rendition.Height)
+			}
+			if f.SizeBytes <= 0 || len(f.SHA256) != 64 {
+				t.Errorf("derived file = %+v, want a real size and a sha256", f)
+			}
+			derived := readObject(t, blobs, f.StorageKey)
+			ladder := readObject(t, blobs, HLSDownloadKey(rendition.KeyPrefix, true))
+			if !bytes.Equal(derived, ladder) {
+				t.Errorf("rung %dp: the derived web video is not the ladder's own download (%d vs %d bytes)",
+					rendition.Height, len(derived), len(ladder))
+			}
+			if int64(len(derived)) != f.SizeBytes {
+				t.Errorf("rung %dp: recorded size %d, stored %d bytes", rendition.Height, f.SizeBytes, len(derived))
+			}
+			if got := fmt.Sprintf("%x", sha256.Sum256(derived)); got != f.SHA256 {
+				t.Errorf("rung %dp: recorded sha256 %q, stored bytes hash to %q", rendition.Height, f.SHA256, got)
+			}
+			// Playable: the right codecs at the right size, with audio.
+			p, perr := blobs.Path(f.StorageKey)
+			if perr != nil {
+				t.Fatalf("Path: %v", perr)
+			}
+			v := ffprobeStream(t, p, "v:0", "stream=codec_name,width,height")
+			if v["codec_name"] != "h264" || v["width"] != strconv.Itoa(rendition.Width) || v["height"] != strconv.Itoa(rendition.Height) {
+				t.Errorf("rung %dp derived video stream = %v", rendition.Height, v)
+			}
+			if a := ffprobeStream(t, p, "a:0", "stream=codec_name"); a["codec_name"] != "aac" {
+				t.Errorf("rung %dp derived file has no AAC audio: %v", rendition.Height, a)
+			}
+		}
+	})
+}
+
+// TestStandaloneWebVideoTargetStillEncodes: a target='web_video' rebuild has no
+// ladder to derive from — it is precisely the operator action for when the
+// progressive files are missing or wrong — so it must keep its own encode.
+func TestStandaloneWebVideoTargetStillEncodes(t *testing.T) {
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	videoID := uuid.New()
+	srcKey := "web-videos/" + videoID.String() + ".mp4"
+	srcPath, perr := blobs.Path(srcKey)
+	if perr != nil {
+		t.Fatalf("Path: %v", perr)
+	}
+	if merr := os.MkdirAll(filepath.Dir(srcPath), 0o755); merr != nil {
+		t.Fatalf("mkdir: %v", merr)
+	}
+	if out, gerr := exec.Command("ffmpeg", append(append([]string{"-y"},
+		"-f", "lavfi", "-i", "testsrc2=duration=4:size=640x360:rate=25",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"),
+		srcPath)...).CombinedOutput(); gerr != nil {
+		t.Fatalf("ffmpeg generate: %v\n%s", gerr, out)
+	}
+	tc, ok := DetectHLSTranscoder(blobs)
+	if !ok {
+		t.Fatal("DetectHLSTranscoder = false")
+	}
+	bin, invocations := countingFFmpeg(t)
+	tc.bin = bin
+
+	md, err := tc.Probe(context.Background(), srcKey)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	files, err := tc.TranscodeWebVideos(context.Background(), videoID, srcKey, md, nil)
+	if err != nil {
+		t.Fatalf("TranscodeWebVideos: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("web videos = %+v, want one rung for a 360p source", files)
+	}
+	passes := decodePasses(invocations())
+	if len(passes) != 1 {
+		t.Fatalf("standalone web-video rebuild made %d decode passes, want its own single one:\n%s",
+			len(passes), strings.Join(passes, "\n"))
+	}
+	if !strings.Contains(passes[0], "libx264") {
+		t.Errorf("standalone rebuild did not encode:\n%s", passes[0])
+	}
+	p, perr := blobs.Path(files[0].StorageKey)
+	if perr != nil {
+		t.Fatalf("Path: %v", perr)
+	}
+	if got := ffprobeStream(t, p, "v:0", "stream=codec_name"); got["codec_name"] != "h264" {
+		t.Errorf("standalone rebuild produced %v", got)
+	}
+}
+
+func readObject(t *testing.T, blobs *storage.Local, key string) []byte {
+	t.Helper()
+	rc, err := blobs.Open(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Open %q: %v", key, err)
+	}
+	defer func() { _ = rc.Close() }()
+	b, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read %q: %v", key, err)
+	}
+	return b
+}
+
+// TestFullJobDerivesWebVideosOnBothPackagers proves the derivation lives in the
+// packager seam rather than in CMAF: the MPEG-TS rollback path produces the same
+// per-rung download at the same point in finalisation, so a deployment rolled
+// back to it keeps both the saving and the files.
+func TestFullJobDerivesWebVideosOnBothPackagers(t *testing.T) {
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+	for _, packager := range []string{PackagerTS, PackagerCMAF} {
+		t.Run(packager, func(t *testing.T) {
+			t.Setenv("TMPDIR", t.TempDir())
+			blobs, err := storage.NewLocal(t.TempDir())
+			if err != nil {
+				t.Fatalf("NewLocal: %v", err)
+			}
+			videoID := uuid.New()
+			srcKey := "web-videos/" + videoID.String() + ".mp4"
+			srcPath, perr := blobs.Path(srcKey)
+			if perr != nil {
+				t.Fatalf("Path: %v", perr)
+			}
+			if merr := os.MkdirAll(filepath.Dir(srcPath), 0o755); merr != nil {
+				t.Fatalf("mkdir: %v", merr)
+			}
+			if out, gerr := exec.Command("ffmpeg", append(append([]string{"-y"},
+				"-f", "lavfi", "-i", "testsrc2=duration=4:size=854x480:rate=25",
+				"-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+				"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"),
+				srcPath)...).CombinedOutput(); gerr != nil {
+				t.Fatalf("ffmpeg generate: %v\n%s", gerr, out)
+			}
+			tc, ok := DetectHLSTranscoder(blobs)
+			if !ok {
+				t.Fatal("DetectHLSTranscoder = false")
+			}
+			if serr := tc.SetPackager(packager); serr != nil {
+				t.Fatalf("SetPackager: %v", serr)
+			}
+			bin, invocations := countingFFmpeg(t)
+			tc.bin = bin
+
+			md, err := tc.Probe(context.Background(), srcKey)
+			if err != nil {
+				t.Fatalf("Probe: %v", err)
+			}
+			res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, md, nil)
+			if err != nil {
+				t.Fatalf("TranscodeAll: %v", err)
+			}
+			if n := len(decodePasses(invocations())); n != 2 {
+				t.Errorf("%s made %d decode passes, want 2", packager, n)
+			}
+			if len(files) == 0 || len(files) != len(res.Renditions) {
+				t.Fatalf("%s derived %d web videos for %d renditions", packager, len(files), len(res.Renditions))
+			}
+			for i, f := range files {
+				derived := readObject(t, blobs, f.StorageKey)
+				ladder := readObject(t, blobs, HLSDownloadKey(res.Renditions[i].KeyPrefix, true))
+				if !bytes.Equal(derived, ladder) {
+					t.Errorf("%s rung %dp: derived bytes differ from the ladder's own download",
+						packager, res.Renditions[i].Height)
+				}
+			}
+		})
+	}
+}
+
+// TestAudioOnlyFullJobDerivesNoWebVideos: there are no rungs, so there are no
+// progressive video derivatives to make. The job must still succeed — its
+// deliverable is the audio tree.
+func TestAudioOnlyFullJobDerivesNoWebVideos(t *testing.T) {
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	videoID := uuid.New()
+	srcKey := "web-videos/" + videoID.String() + ".mp4"
+	srcPath, perr := blobs.Path(srcKey)
+	if perr != nil {
+		t.Fatalf("Path: %v", perr)
+	}
+	if merr := os.MkdirAll(filepath.Dir(srcPath), 0o755); merr != nil {
+		t.Fatalf("mkdir: %v", merr)
+	}
+	if out, gerr := exec.Command("ffmpeg", append(append([]string{"-y"}, audioOnlySource...), srcPath)...).CombinedOutput(); gerr != nil {
+		t.Fatalf("ffmpeg generate: %v\n%s", gerr, out)
+	}
+	tc, ok := DetectHLSTranscoder(blobs)
+	if !ok {
+		t.Fatal("DetectHLSTranscoder = false")
+	}
+	if serr := tc.SetPackager(PackagerCMAF); serr != nil {
+		t.Fatalf("SetPackager: %v", serr)
+	}
+	md, err := tc.Probe(context.Background(), srcKey)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, md, nil)
+	if err != nil {
+		t.Fatalf("TranscodeAll on an audio-only source: %v", err)
+	}
+	if len(files) != 0 || len(res.Renditions) != 0 {
+		t.Errorf("audio-only full job produced %d web videos and %d renditions, want none", len(files), len(res.Renditions))
+	}
+	if res.MasterKey == "" {
+		t.Error("audio-only full job produced no master playlist")
+	}
+	keys, kerr := blobs.ListKeys(context.Background(), "web-videos/"+videoID.String())
+	if kerr != nil {
+		t.Fatalf("ListKeys: %v", kerr)
+	}
+	if len(keys) != 0 {
+		t.Errorf("audio-only full job wrote progressive video objects: %v", keys)
+	}
+}
+
+// ffprobeStream is ffprobeEntries restricted to ONE stream, so a file with both
+// video and audio does not have its later streams overwrite the earlier ones in
+// the flat key/value output.
+func ffprobeStream(t *testing.T, path, selector, entries string) map[string]string {
+	t.Helper()
+	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", selector,
+		"-show_entries", entries, "-of", "default=noprint_wrappers=1", path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("ffprobe %q %s: %v\n%s", path, selector, err, out)
+	}
+	got := map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+			got[k] = v
+		}
+	}
+	return got
 }

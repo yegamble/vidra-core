@@ -212,6 +212,26 @@ type packageRequest struct {
 	// optional.
 	onPackagingFailed func()
 	onStoreFailed     func(rungs []HLSRung)
+	// onRungPackaged, when set, is called for each rung with the LOCAL directory
+	// holding that rung's freshly-remuxed progressive MP4s — after the remux, and
+	// immediately before the directory is uploaded and freed.
+	//
+	// It exists for one caller and one reason: a job that also wants the
+	// standalone progressive "web video" derivatives needs bytes that are
+	// identical to the ones sitting in that directory RIGHT NOW and nowhere else
+	// afterwards. This is the only moment they can be had without either a second
+	// full decode of the source or reading the whole ladder back out of the object
+	// store. A failure is fatal to the transcode, exactly as a storeTree failure
+	// at the same point already is.
+	onRungPackaged func(ctx context.Context, r HLSRung, dir string) error
+}
+
+// rungPackaged notifies the optional per-rung derivative hook.
+func (req packageRequest) rungPackaged(ctx context.Context, r HLSRung, dir string) error {
+	if req.onRungPackaged == nil {
+		return nil
+	}
+	return req.onRungPackaged(ctx, r, dir)
 }
 
 func (req packageRequest) packagingFailed() {
@@ -407,6 +427,10 @@ func (tsPackager) Finalize(ctx context.Context, req packageRequest) (packageResu
 		rio := rungIO{out: req.out, rung: r, scratch: dir}
 		playlist := rio.ref(hlsVariantPlaylistFilename)
 		if err := remuxHLSDownloads(ctx, req.tools.ffmpeg, req.sourceKey, playlist, dir, r); err != nil {
+			req.packagingFailed()
+			return packageResult{}, err
+		}
+		if err := req.rungPackaged(ctx, r, dir); err != nil {
 			req.packagingFailed()
 			return packageResult{}, err
 		}

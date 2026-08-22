@@ -383,6 +383,10 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 			req.packagingFailed()
 			return packageResult{}, derr
 		}
+		if herr := req.rungPackaged(ctx, r, dir); herr != nil {
+			req.packagingFailed()
+			return packageResult{}, herr
+		}
 		// A rung directory holds only its two progressive MP4s: the segments are
 		// shared and accounted for below.
 		local, serr := directorySize(dir)

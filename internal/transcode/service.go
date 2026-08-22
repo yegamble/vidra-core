@@ -136,6 +136,13 @@ type TargetTranscoder interface {
 	Probe(ctx context.Context, sourceKey string) (media.Metadata, error)
 	TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, md media.Metadata, progress media.ProgressFunc) (media.HLSResult, error)
 	TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, md media.Metadata, progress media.ProgressFunc) ([]media.WebVideoResult, error)
+	// TranscodeAll is the FULL job, and it is one method rather than a call to
+	// each of the two above because running them independently is what made a
+	// target='all' job decode its source three times. The progressive MP4s are
+	// derived from the streaming tree's own per-rung downloads, which exist only
+	// on local scratch inside the packaging window — so the saving is available
+	// exactly when the two run together, and not otherwise.
+	TranscodeAll(ctx context.Context, videoID uuid.UUID, sourceKey string, md media.Metadata, progress media.ProgressFunc) (media.HLSResult, []media.WebVideoResult, error)
 }
 
 type stepRepository interface {
@@ -467,7 +474,28 @@ func (s *Service) runTarget(ctx context.Context, row sqlcgen.ClaimDueTranscodeJo
 	if err != nil {
 		return err
 	}
-	if target == TargetAll || target == TargetHLS {
+	// A full job runs ONE encode pass and derives both output classes from it.
+	// Splitting it into the two single-target calls below would decode the source
+	// an extra time for files the ladder already produced — see
+	// media.HLSTranscoder.TranscodeAll.
+	//
+	// Its failures are attributed to HLS because that is what actually failed:
+	// the derivation runs inside HLS packaging, where a fault fails the transcode
+	// with nothing promoted, so the playlist state must reflect it.
+	if target == TargetAll {
+		res, files, err := advanced.TranscodeAll(ctx, row.VideoID, row.SourceKey, md, progress)
+		if err != nil {
+			return &targetRunError{target: TargetHLS, err: err}
+		}
+		if err := s.storeResult(ctx, row.VideoID, res); err != nil {
+			return &targetRunError{target: TargetHLS, err: err}
+		}
+		if err := s.storeWebVideos(ctx, row.VideoID, files); err != nil {
+			return &targetRunError{target: TargetWebVideo, err: err}
+		}
+		return nil
+	}
+	if target == TargetHLS {
 		res, err := advanced.TranscodeHLS(ctx, row.VideoID, row.SourceKey, md, progress)
 		if err != nil {
 			return &targetRunError{target: TargetHLS, err: err}
@@ -476,7 +504,9 @@ func (s *Service) runTarget(ctx context.Context, row sqlcgen.ClaimDueTranscodeJo
 			return &targetRunError{target: TargetHLS, err: err}
 		}
 	}
-	if target == TargetAll || target == TargetWebVideo {
+	// A standalone web-video rebuild has no ladder to derive from, so it keeps
+	// the encode.
+	if target == TargetWebVideo {
 		files, err := advanced.TranscodeWebVideos(ctx, row.VideoID, row.SourceKey, md, progress)
 		if err != nil {
 			return &targetRunError{target: TargetWebVideo, err: err}
