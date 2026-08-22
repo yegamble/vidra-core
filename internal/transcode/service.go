@@ -34,12 +34,17 @@ const (
 	maxBackoff = time.Hour
 	// maxLastErrorLen bounds the stored last_error string.
 	maxLastErrorLen = 500
-	// bookkeepingTimeout bounds the queue-state writes that follow a job (see
-	// DrainJobs). They deliberately outlive the request/worker cancellation that
-	// ended the job, so they need a deadline of their own — otherwise a wedged
-	// database would hold shutdown open indefinitely. It must stay comfortably
-	// under HTTP_SHUTDOWN_TIMEOUT (20s) so a clean SIGTERM still drains.
-	bookkeepingTimeout = 10 * time.Second
+	// defaultBookkeepingTimeout bounds the queue-state writes that follow a job
+	// (see DrainJobs). They deliberately outlive the request/worker cancellation
+	// that ended the job, so they need a deadline of their own — otherwise a
+	// wedged database would hold shutdown open indefinitely. It must stay
+	// comfortably under HTTP_SHUTDOWN_TIMEOUT (20s) so a clean SIGTERM still
+	// drains.
+	//
+	// It is a BUDGET FOR THE WRITES, not for the job: the clock starts when the
+	// transcode is already over. Starting it any earlier would make it a cap on
+	// the transcode itself, which is what the >10s stuck-row bug was.
+	defaultBookkeepingTimeout = 10 * time.Second
 )
 
 const (
@@ -183,6 +188,36 @@ type Service struct {
 	scratchFn func() (uint64, error)
 	// minFreeScratch is the floor below which no job is claimed.
 	minFreeScratch uint64
+	// bookkeepingTimeout overrides defaultBookkeepingTimeout. Zero means the
+	// default; it exists so tests can shrink the budget to milliseconds instead
+	// of running a ten-second transcode to exercise the boundary.
+	bookkeepingTimeout time.Duration
+}
+
+// bookkeepingCtx returns the detached, bounded context for ONE burst of
+// queue-state writes.
+//
+// Two properties, both load-bearing:
+//
+//   - DETACHED from cancellation, because these writes run precisely when the
+//     worker's context is being cancelled (SIGTERM mid-job). Writing the outcome
+//     through a cancelled context fails, and a row whose outcome was never
+//     written stays 'running' until the lease sweep — which the partial unique
+//     index treats as a live job (no re-enqueue, permanent 409 on admin
+//     re-transcode and on video replace).
+//
+//   - BOUNDED, so a wedged database cannot hold shutdown open indefinitely.
+//
+// Call it immediately before the writes it covers, never before the work that
+// precedes them: the deadline is wall-clock, so a context built before a
+// minutes-long transcode is already dead by the time there is an outcome to
+// record.
+func (s *Service) bookkeepingCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	d := s.bookkeepingTimeout
+	if d <= 0 {
+		d = defaultBookkeepingTimeout
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), d)
 }
 
 // Option configures the transcode service.
@@ -379,29 +414,27 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 	)
 	workerpool.Run(s.Concurrency(), len(rows), func(i int) {
 		row := rows[i]
-		// The BOOKKEEPING writes (complete / reschedule / dead-letter) must
-		// survive the very cancellation that ends the job. On SIGTERM ctx is
-		// already cancelled by the time runTarget returns, so writing the outcome
-		// through it fails silently — and the row that was just abandoned stays
-		// 'running' forever, which the partial unique index then treats as a live
-		// job (no re-enqueue, permanent 409 on admin re-transcode). Detaching
-		// cancellation keeps the trace/correlation values while giving the write
-		// its own bounded budget; the transcode work itself still honours ctx, so
-		// this does not delay shutdown by more than that budget.
-		bookkeeping, cancelBookkeeping := context.WithTimeout(
-			context.WithoutCancel(ctx), bookkeepingTimeout)
-		defer cancelBookkeeping()
+		// Every queue-state write below runs under its OWN bookkeeping context,
+		// built immediately before it (see bookkeepingCtx). One context shared
+		// across the whole job would start its clock before the transcode, and a
+		// ten-second budget spent on a minutes-long encode leaves nothing to write
+		// the outcome with — the row then stays 'running' until the lease sweep.
 
 		// Per-job estimate. A job whose source will not fit is DEFERRED, not
 		// failed and not rescheduled: the disk is a host condition with nothing
 		// to do with this video, so it must not consume the video's retry budget
 		// (five full-disk ticks would otherwise dead-letter it permanently).
 		if freeKnown && !s.scratchFits(ctx, row.SourceKey, free) {
-			_ = s.repo.DeferTranscodeJob(bookkeeping, sqlcgen.DeferTranscodeJobParams{
+			deferCtx, cancelDefer := s.bookkeepingCtx(ctx)
+			defer cancelDefer()
+			if derr := s.repo.DeferTranscodeJob(deferCtx, sqlcgen.DeferTranscodeJobParams{
 				ID:            row.ID,
 				NextAttemptAt: time.Now().UTC().Add(scratchRetryDelay),
 				LastError:     "deferred: not enough scratch space for this source",
-			})
+			}); derr != nil {
+				slog.ErrorContext(ctx, "transcode: could not defer the job; it stays 'running' until the lease sweep",
+					"job_id", row.ID, "video_id", row.VideoID, "error", derr.Error())
+			}
 			return
 		}
 		// Keep the claim alive for as long as this worker is actually working.
@@ -414,10 +447,20 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 		err := s.runTarget(ctx, row)
 		stopLease()
 		if err != nil {
-			s.recordFailure(bookkeeping, row, err)
+			// recordFailure builds its own budget per write burst.
+			s.recordFailure(ctx, row, err)
 			return
 		}
-		_ = s.repo.CompleteTranscodeJob(bookkeeping, row.ID)
+		bookkeeping, cancelBookkeeping := s.bookkeepingCtx(ctx)
+		defer cancelBookkeeping()
+		// A completion write that fails is exactly the symptom an operator sees
+		// half an hour later — a finished transcode whose job row is still
+		// 'running', blocking re-enqueue and 409-ing admin re-transcode. It must
+		// not be swallowed.
+		if cerr := s.repo.CompleteTranscodeJob(bookkeeping, row.ID); cerr != nil {
+			slog.ErrorContext(ctx, "transcode: job finished but could not be marked done; the row stays 'running' until the lease sweep",
+				"job_id", row.ID, "video_id", row.VideoID, "error", cerr.Error())
+		}
 		// Best-effort completion hook (IPFS mirror HLS-tree pin, P19.4). A hook
 		// failure must never fail the job — the transcode already succeeded.
 		if s.onComplete != nil {
@@ -560,24 +603,33 @@ func (s *Service) storeWebVideos(ctx context.Context, videoID uuid.UUID, files [
 // recordFailure reschedules with backoff, or dead-letters after the cap (also
 // marking the video's playlist failed so the outcome is observable).
 //
-// ctx here is the DETACHED bookkeeping context from DrainJobs, not the worker's:
-// this runs precisely when the job was cancelled, so a cancellation-bound
-// context would drop the reschedule write and strand the row in 'running'.
+// ctx here is the WORKER's context, and it is used only to derive the writes'
+// own bookkeeping budget (see bookkeepingCtx): this runs precisely when the job
+// was cancelled, so writing through ctx itself would drop the reschedule and
+// strand the row in 'running'. The budget is built HERE rather than handed in,
+// so it cannot have been spent by the transcode that just failed — a caller that
+// built it before runTarget was the >10s stuck-row bug.
 func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueTranscodeJobsRow, cause error) {
+	bookkeeping, cancel := s.bookkeepingCtx(ctx)
+	defer cancel()
+
 	attempts := int(row.Attempts) + 1
 	msg := cause.Error()
 	if len(msg) > maxLastErrorLen {
 		msg = msg[:maxLastErrorLen]
 	}
 	if attempts >= maxAttempts {
-		_ = s.repo.FailTranscodeJob(ctx, sqlcgen.FailTranscodeJobParams{ID: row.ID, LastError: msg})
+		if ferr := s.repo.FailTranscodeJob(bookkeeping, sqlcgen.FailTranscodeJobParams{ID: row.ID, LastError: msg}); ferr != nil {
+			slog.ErrorContext(ctx, "transcode: job could not be dead-lettered; the row stays 'running' until the lease sweep",
+				"job_id", row.ID, "video_id", row.VideoID, "error", ferr.Error())
+		}
 		affectsHLS := row.TranscodeType != TargetWebVideo
 		var targetErr *targetRunError
 		if errors.As(cause, &targetErr) {
 			affectsHLS = targetErr.target == TargetHLS
 		}
 		if affectsHLS {
-			_, _ = s.repo.UpsertStreamingPlaylist(ctx, sqlcgen.UpsertStreamingPlaylistParams{
+			_, _ = s.repo.UpsertStreamingPlaylist(bookkeeping, sqlcgen.UpsertStreamingPlaylistParams{
 				VideoID:   row.VideoID,
 				MasterKey: "",
 				State:     PlaylistFailed,
@@ -587,15 +639,18 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueTransco
 		// hold so the video publishes from its (playable) original rather than
 		// staying hidden forever. Fired only on dead-letter, per completed video.
 		if s.onFail != nil {
-			s.onFail(ctx, row.VideoID)
+			s.onFail(bookkeeping, row.VideoID)
 		}
 		return
 	}
-	_ = s.repo.RescheduleTranscodeJob(ctx, sqlcgen.RescheduleTranscodeJobParams{
+	if rerr := s.repo.RescheduleTranscodeJob(bookkeeping, sqlcgen.RescheduleTranscodeJobParams{
 		ID:            row.ID,
 		NextAttemptAt: time.Now().UTC().Add(backoff(attempts)),
 		LastError:     msg,
-	})
+	}); rerr != nil {
+		slog.ErrorContext(ctx, "transcode: job could not be rescheduled; the row stays 'running' until the lease sweep",
+			"job_id", row.ID, "video_id", row.VideoID, "error", rerr.Error())
+	}
 }
 
 // freeScratch reports the free bytes on the scratch filesystem, and whether the
