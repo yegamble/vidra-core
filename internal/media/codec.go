@@ -92,13 +92,21 @@ type codecProfile struct {
 	// cmafVariantScore for the values and the reasoning.
 	ScoreBonus float64
 
-	// CodecsPrefix is the RFC 6381 prefix ffmpeg must write for this encoder in
-	// the CODECS attribute of every one of its variants. It is what turns "the
-	// rung → representation mapping is verified" into "the rung → representation
-	// → CODEC mapping is verified": a tree whose HEVC representations were
-	// silently encoded as H.264 (or tagged hev1) plays, it just plays the wrong
-	// thing on the wrong clients.
-	CodecsPrefix string
+	// CodecsID is the RFC 6381 sample-entry code ffmpeg must name for this
+	// encoder in the CODECS attribute of every one of its variants.
+	//
+	// It is what turns "the rung → representation mapping is verified" into "the
+	// rung → representation → CODEC mapping is verified": a tree whose HEVC
+	// representations were silently encoded as H.264 (or tagged hev1) plays, it
+	// just plays the wrong thing on the wrong clients.
+	//
+	// It is matched as a CODEC FAMILY — the identifier alone, or the identifier
+	// followed by a dot and a profile/level suffix — because different ffmpeg
+	// builds write different amounts of detail. 8.1 writes "hvc1.1.6.L93.90"
+	// where 6.1 writes a bare "hvc1" for the same stream. Both name HEVC, which
+	// is the whole question here; demanding the suffix rejected a perfectly
+	// correct tree on every older build.
+	CodecsID string
 
 	// BitrateMultiplier scales the H.264 ladder budget (hlsRungBitrates, already
 	// fps-adjusted) into this codec's own. See the constants below for where the
@@ -265,7 +273,7 @@ var (
 		Preset:            "veryfast",
 		Rate:              rateCappedVBR,
 		ScoreBonus:        h264ScoreBonus,
-		CodecsPrefix:      "avc1.",
+		CodecsID:          "avc1",
 		BitrateMultiplier: 1,
 		Compat:            "every browser, every mobile OS, every set-top box made this century; the only codec safe to ship alone",
 		Cost:              "the baseline this pipeline is budgeted and tuned for",
@@ -279,7 +287,7 @@ var (
 		Preset:            "veryfast",
 		Rate:              rateCappedVBR,
 		ScoreBonus:        hevcScoreBonus,
-		CodecsPrefix:      "hvc1.",
+		CodecsID:          "hvc1",
 		BitrateMultiplier: hevcBitrateMultiplier,
 		EnvVar:            "TRANSCODING_HEVC_ENABLED",
 		Compat:            "Safari (macOS/iOS/tvOS), Edge and Chrome on hardware-decoding devices, most 2016+ smart TVs; NOT Firefox on desktop",
@@ -296,7 +304,7 @@ var (
 		Rate:              rateCappedCRF,
 		CRF:               av1CRF,
 		ScoreBonus:        av1ScoreBonus,
-		CodecsPrefix:      "av01.",
+		CodecsID:          "av01",
 		BitrateMultiplier: av1BitrateMultiplier,
 		EnvVar:            "TRANSCODING_AV1_ENABLED",
 		Compat:            "Chrome/Edge 70+, Firefox 67+, Safari 17+ on hardware that decodes it; falls back to the H.264 variant elsewhere",
@@ -370,6 +378,20 @@ const videoEncoderProbeTimeout = 10 * time.Second
 var baselineEncoders = map[string]bool{
 	"libx264": true,
 	"aac":     true,
+}
+
+// namesCodec reports whether an EXT-X-STREAM-INF CODECS attribute describes a
+// stream of this profile's codec.
+//
+// The VIDEO codec is the first entry: ffmpeg writes the video sample entry ahead
+// of the audio one, and every variant this package renders carries both. Reading
+// the first entry rather than searching the whole list is what makes the empty
+// string a missing hvc1 tag produces (",mp4a.40.2") a failure rather than a
+// shrug — searching would find the audio codec and conclude the list was fine.
+func (p codecProfile) namesCodec(codecs string) bool {
+	video, _, _ := strings.Cut(codecs, ",")
+	video = strings.TrimSpace(video)
+	return video == p.CodecsID || strings.HasPrefix(video, p.CodecsID+".")
 }
 
 // verifyVideoEncoders asks the ffmpeg that will actually run the transcodes

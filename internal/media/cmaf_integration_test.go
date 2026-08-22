@@ -1803,7 +1803,8 @@ func TestCMAFHEVCLadderIsTaggedHVC1(t *testing.T) {
 	if n := strings.Count(master, "#EXT-X-STREAM-INF:"); n != 6 {
 		t.Errorf("master has %d variants, want 6 (3 rungs x 2 codecs):\n%s", n, master)
 	}
-	hvc1 := regexp.MustCompile(`#EXT-X-STREAM-INF:[^\n]*CODECS="hvc1\.[^",]+,mp4a\.40\.2"`)
+	// `hvc1` alone or `hvc1.<profile/level>`: older ffmpeg builds abbreviate.
+	hvc1 := regexp.MustCompile(`#EXT-X-STREAM-INF:[^\n]*CODECS="hvc1(\.[^",]+)?,mp4a\.40\.2"`)
 	if got := hvc1.FindAllString(master, -1); len(got) != 3 {
 		t.Errorf("only %d of 3 HEVC variants carry an hvc1 CODECS attribute:\n%s", len(got), master)
 	}
@@ -1820,7 +1821,7 @@ func TestCMAFHEVCLadderIsTaggedHVC1(t *testing.T) {
 	if n := strings.Count(mpd, "<AdaptationSet"); n != 3 {
 		t.Errorf("MPD has %d adaptation sets, want 3 (h264, hevc, audio):\n%s", n, mpd)
 	}
-	if n := strings.Count(mpd, `codecs="hvc1.`); n != 3 {
+	if n := len(regexp.MustCompile(`codecs="hvc1(\.[^"]*)?"`).FindAllString(mpd, -1)); n != 3 {
 		t.Errorf("MPD declares %d hvc1 representations, want 3:\n%s", n, mpd)
 	}
 	if n := strings.Count(mpd, `contentType="video"`); n != 2 {
@@ -1868,12 +1869,12 @@ func TestCMAFAV1Ladder(t *testing.T) {
 		assertCMAFRepresentation(t, f, f.rep(1, i), "av1", "av01", r)
 	}
 	master := f.read(t, "master.m3u8")
-	av01 := regexp.MustCompile(`#EXT-X-STREAM-INF:[^\n]*CODECS="av01\.[^",]+,mp4a\.40\.2"`)
+	av01 := regexp.MustCompile(`#EXT-X-STREAM-INF:[^\n]*CODECS="av01(\.[^",]+)?,mp4a\.40\.2"`)
 	if got := av01.FindAllString(master, -1); len(got) != 3 {
 		t.Errorf("only %d of 3 AV1 variants carry an av01 CODECS attribute:\n%s", len(got), master)
 	}
 	mpd := f.read(t, "cmaf/"+cmafManifestFilename)
-	if n := strings.Count(mpd, `codecs="av01.`); n != 3 {
+	if n := len(regexp.MustCompile(`codecs="av01(\.[^"]*)?"`).FindAllString(mpd, -1)); n != 3 {
 		t.Errorf("MPD declares %d av01 representations, want 3:\n%s", n, mpd)
 	}
 
@@ -1945,7 +1946,7 @@ func TestCMAFMultiCodecLadder(t *testing.T) {
 		t.Errorf("variant order:\n got %v\nwant %v", variants, wantOrder)
 	}
 	// And the first STREAM-INF in the file is H.264.
-	if i := strings.Index(master, "#EXT-X-STREAM-INF:"); i < 0 || !strings.Contains(master[i:i+200], `CODECS="avc1.`) {
+	if i := strings.Index(master, "#EXT-X-STREAM-INF:"); i < 0 || !regexp.MustCompile(`CODECS="avc1[.,"]`).MatchString(master[i:i+200]) {
 		t.Errorf("the first variant is not H.264:\n%s", master)
 	}
 

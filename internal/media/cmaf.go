@@ -802,10 +802,10 @@ func (l cmafLayout) verifyAgainstPlan(rungs []HLSRung) error {
 	for c, prof := range profiles {
 		for i, r := range rungs {
 			rep := c*len(rungs) + i
-			if !strings.HasPrefix(l.videoCodecs[rep], prof.CodecsPrefix) {
+			if !prof.namesCodec(l.videoCodecs[rep]) {
 				return fmt.Errorf(
-					"representation %d is rung %d encoded as %s, but ffmpeg declared CODECS %q, which does not start with %q",
-					rep, i, prof.Name, l.videoCodecs[rep], prof.CodecsPrefix)
+					"representation %d is rung %d encoded as %s, but ffmpeg declared CODECS %q, whose video codec is not %s",
+					rep, i, prof.Name, l.videoCodecs[rep], prof.CodecsID)
 			}
 			want := fmt.Sprintf("%dx%d", r.Width, r.Height)
 			got := ""

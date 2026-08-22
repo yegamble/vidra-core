@@ -436,6 +436,31 @@ func TestVerifyCMAFLayoutAgainstPlan(t *testing.T) {
 		}
 	})
 
+	// Different ffmpeg builds write different amounts of RFC 6381 detail for the
+	// same stream: 8.1 writes "hvc1.1.6.L93.90" where 6.1 writes a bare "hvc1".
+	// Both name HEVC, which is the only question this check asks. Demanding the
+	// suffix rejected correct trees on every older build — found by running this
+	// suite against the ffmpeg the CI runner actually has.
+	t.Run("a bare codec identifier with no profile suffix is accepted", func(t *testing.T) {
+		ok := multiCodecLayout(t)
+		ok.videoCodecs[2] = "hvc1,mp4a.40.2"
+		ok.videoCodecs[3] = "hvc1,mp4a.40.2"
+		if err := ok.verifyAgainstPlan(rungs); err != nil {
+			t.Errorf("an older ffmpeg's abbreviated CODECS was rejected: %v", err)
+		}
+	})
+
+	// But a codec identifier that merely STARTS THE SAME is not the same codec.
+	t.Run("a different codec with a similar name is refused", func(t *testing.T) {
+		for _, wrong := range []string{"hvc10,mp4a.40.2", "hev1.1.6.L93.90,mp4a.40.2", "avc1,mp4a.40.2"} {
+			bad := multiCodecLayout(t)
+			bad.videoCodecs[2] = wrong
+			if err := bad.verifyAgainstPlan(rungs); err == nil {
+				t.Errorf("CODECS %q was accepted as HEVC", wrong)
+			}
+		}
+	})
+
 	t.Run("a short layout is refused", func(t *testing.T) {
 		bad := multiCodecLayout(t)
 		bad.videoCodecs = bad.videoCodecs[:3]
