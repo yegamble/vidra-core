@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/preflight"
 )
 
@@ -1786,4 +1787,54 @@ func valueOf(t *testing.T, file, key string) string {
 	}
 	t.Fatalf("%s not found in the generated file", key)
 	return ""
+}
+
+// TestSetupHardwareTranscodeOffer covers the informational line `vidra setup`
+// prints when this host looks like it could encode on a GPU.
+//
+// It is a LINE and not a question, and the test's job is to pin the two silences
+// as firmly as the offer itself. An install that already asked for a backend must
+// not be told about one, and an install this tool cannot be sure about must say
+// nothing at all rather than recommend something the api will refuse to boot on.
+func TestSetupHardwareTranscodeOffer(t *testing.T) {
+	// Already opted in: nothing to offer, whatever this host has. doctor reports
+	// whether the choice actually works; repeating it here would be noise on every
+	// re-run of setup.
+	for _, hw := range []string{"vaapi", "videotoolbox", "qsv", "nvenc"} {
+		if got := hardwareTranscodeOffer(map[string]string{"TRANSCODING_HW": hw}); got != "" {
+			t.Errorf("TRANSCODING_HW=%s was offered %q", hw, got)
+		}
+	}
+
+	// Off (and unset, which is the same thing). What comes back depends on the
+	// machine running the test, so the assertion is on the SHAPE: either silence,
+	// or a line naming a real backend and the variable to write. A test that
+	// required a GPU would only pass on the machine it was written on.
+	for _, values := range []map[string]string{{}, {"TRANSCODING_HW": "off"}, {"TRANSCODING_HW": ""}} {
+		got := hardwareTranscodeOffer(values)
+		if got == "" {
+			continue
+		}
+		if !strings.Contains(got, "hardware transcode available: ") {
+			t.Errorf("offer %q is not the detection helper's sentence", got)
+		}
+		if !strings.Contains(got, "TRANSCODING_HW=") {
+			t.Errorf("offer %q does not name the variable to write", got)
+		}
+		// The caveat is mandatory: setup normally runs before the stack has come
+		// up, so the ffmpeg it asked is the HOST's and the one that encodes is the
+		// image's.
+		if !strings.Contains(got, "vidra doctor") {
+			t.Errorf("offer %q does not send the operator to the check that asks the right binary", got)
+		}
+		var named bool
+		for _, name := range media.HardwareNames() {
+			if name != media.HardwareOff && strings.Contains(got, "TRANSCODING_HW="+name) {
+				named = true
+			}
+		}
+		if !named {
+			t.Errorf("offer %q names no implemented backend", got)
+		}
+	}
 }
