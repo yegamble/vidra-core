@@ -558,14 +558,32 @@ func hlsLadderArgsWith(pkg Packager, src source, out output, plan ladderPlan) []
 	if chain != "" {
 		chains = append(chains, chain)
 	}
-	plan.labels = make([]string, len(plan.rungs))
+	// One filter-graph output per REPRESENTATION — rung × codec — laid out
+	// h264 rungs first in ladder order, then hevc, then av1 (ladderPlan.repIndex).
+	// The rung is SCALED once and the scaled frames are forked to that rung's
+	// encoders, so adding a codec adds encoders and not scalers.
+	profiles := plan.profiles()
+	plan.labels = make([]string, plan.videoReps())
 	for i, r := range plan.rungs {
 		vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height)
 		if r.FPS > 0 {
 			vf += fmt.Sprintf(",fps=%d", r.FPS)
 		}
-		plan.labels[i] = fmt.Sprintf("v%d", i)
-		chains = append(chains, fmt.Sprintf("[%s]%s[%s]", labels[i], vf, plan.labels[i]))
+		outs := make([]string, len(profiles))
+		for c := range profiles {
+			rep := plan.repIndex(c, i)
+			plan.labels[rep] = fmt.Sprintf("v%d", rep)
+			outs[c] = "[" + plan.labels[rep] + "]"
+		}
+		// A single codec — every ordinary install — has nothing to fork, and the
+		// chain is byte-for-byte the one this package has always emitted. `split=1`
+		// would be legal and would mean the same thing; it would also change the
+		// graph for every deployment that never asked for a second codec.
+		fork := ""
+		if len(outs) > 1 {
+			fork = fmt.Sprintf(",split=%d", len(outs))
+		}
+		chains = append(chains, fmt.Sprintf("[%s]%s%s%s", labels[i], vf, fork, strings.Join(outs, "")))
 	}
 	args = append(args, "-filter_complex", strings.Join(chains, ";"))
 
@@ -650,34 +668,59 @@ func sharedAudioStream(i int) streamSpec {
 // streams: what container they land in is the packager's half of the vector. vf
 // is the scale filter chain for the single-rung oracle; the ladder passes ""
 // because its filter graph has already scaled the branch.
+//
+// It is H.264 by construction and not by default. This is the MPEG-TS shape: one
+// self-contained variant per rung, which is the frozen compatibility/rollback
+// path and stays single-codec (see codec.go).
 func hlsRungEncodeArgs(r HLSRung, vf string) []string {
 	return append(
-		hlsRungVideoEncodeArgs(r, soleVideoStream, vf),
+		hlsRungVideoEncodeArgs(r, h264Profile, soleVideoStream, vf),
 		hlsAudioEncodeArgs(r.AudioKbps, soleAudioStream)...,
 	)
 }
 
-// hlsRungVideoEncodeArgs is the VIDEO half of a variant's encoder configuration,
-// qualified by spec so it can be one of several encoders on a shared output.
-func hlsRungVideoEncodeArgs(r HLSRung, spec streamSpec, vf string) []string {
-	args := []string{
-		"-c" + spec.typed, "libx264",
-		"-profile" + spec.typed, "main",
-		"-preset" + spec.bare, "veryfast",
-		"-pix_fmt" + spec.bare, "yuv420p",
+// hlsRungVideoEncodeArgs is the VIDEO half of ONE representation's encoder
+// configuration: rung r encoded with codec profile p, qualified by spec so it can
+// be one of several encoders on a shared output.
+//
+// The argument ORDER is fixed and the H.264 profile's fields are exactly the
+// values this function used to spell inline, so the vector an ordinary install
+// emits is byte-for-byte the one it emitted before the registry existed. The
+// per-codec variation is entirely in the profile: a container tag (mandatory for
+// HEVC, absent otherwise), whether the encoder has a -profile option at all, the
+// preset's spelling, and whether it accepts capped VBR.
+func hlsRungVideoEncodeArgs(r HLSRung, p codecProfile, spec streamSpec, vf string) []string {
+	args := []string{"-c" + spec.typed, p.Encoder}
+	if p.Tag != "" {
+		// Not cosmetic: without it ffmpeg writes hev1 into fMP4, which Safari
+		// refuses and which makes the muxer's own CODECS string come out empty.
+		args = append(args, "-tag"+spec.typed, p.Tag)
 	}
+	if p.Profile != "" {
+		args = append(args, "-profile"+spec.typed, p.Profile)
+	}
+	args = append(args,
+		"-preset"+spec.bare, p.Preset,
+		"-pix_fmt"+spec.bare, "yuv420p",
+	)
 	if vf != "" {
 		args = append(args, "-vf", vf)
 	}
+	kbps := p.videoKbps(r)
+	args = append(args, "-b"+spec.typed, fmt.Sprintf("%dk", kbps))
+	if p.CappedRate {
+		args = append(args,
+			"-maxrate"+spec.bare, fmt.Sprintf("%dk", kbps),
+			"-bufsize"+spec.bare, fmt.Sprintf("%dk", 2*kbps),
+		)
+	}
 	return append(args,
-		"-b"+spec.typed, fmt.Sprintf("%dk", r.VideoKbps),
-		"-maxrate"+spec.bare, fmt.Sprintf("%dk", r.VideoKbps),
-		"-bufsize"+spec.bare, fmt.Sprintf("%dk", 2*r.VideoKbps),
 		// The key-frame cadence is an ENCODER setting with a packaging purpose:
 		// every packaging format cuts segments on independently decodable IDR
 		// frames, so one is forced at each segment boundary and the muxer cuts
 		// there. It stays on this side of the seam because only the encoder can
-		// place a key frame.
+		// place a key frame — and it is codec-independent, because it is ffmpeg's
+		// own frame-level flag rather than any encoder's option.
 		"-force_key_frames"+spec.bare, fmt.Sprintf("expr:gte(t,n_forced*%d)", hlsSegmentSeconds),
 	)
 }
@@ -902,6 +945,10 @@ type HLSTranscoder struct {
 	// encoders write through and the post-encode finalisation of what they
 	// produced. nil = defaultPackager (MPEG-TS), which is every deployment today.
 	pkg Packager
+	// codecs is the video codec plan every ladder is encoded with, H.264 first
+	// (SetVideoCodecs). nil = defaultVideoCodecs, the single-codec H.264 ladder
+	// this package emitted before codec profiles existed.
+	codecs []codecProfile
 }
 
 // packager resolves this transcoder's packaging implementation.
@@ -933,6 +980,54 @@ func (t *HLSTranscoder) SetPackager(name string) error {
 	}
 	t.pkg = pkg
 	return nil
+}
+
+// SetVideoCodecs selects the ADDITIONAL video codecs every ladder emits
+// alongside H.264 (TRANSCODING_HEVC_ENABLED / TRANSCODING_AV1_ENABLED, both
+// boot-baked). H.264 is not a choice — it is the compatibility floor and the
+// source of the progressive downloads, the derived web videos, the audio-only
+// extraction and trick-play — so this only ever ADDS representations.
+//
+// Both extras are false on an ordinary install, and this then stores nothing:
+// the ladder is the single-codec one, encoder for encoder.
+//
+// It is fallible on purpose, and refuses at BOOT rather than per job, because
+// both ways of getting this wrong are otherwise invisible until the first upload:
+//
+//   - a packaging format that cannot express several codecs (MPEG-TS — a variant
+//     there is a rendition DIRECTORY named for a height, with no room for a
+//     second encoding of the same height). Config refuses the combination too;
+//     this is the second gate, at the point the transcoder is actually built.
+//   - an ffmpeg build without the encoder. The image ships one that has both, but
+//     a host binary, a distro rebuild or a slimmed image may not.
+//
+// Call it AFTER SetPackager: the first check reads the selected format.
+func (t *HLSTranscoder) SetVideoCodecs(hevc, av1 bool) error {
+	profiles := videoCodecProfiles(hevc, av1)
+	if len(profiles) > 1 {
+		if !t.packager().SupportsMultiCodec() {
+			var extra []string
+			for _, p := range profiles[1:] {
+				extra = append(extra, p.Name)
+			}
+			return fmt.Errorf(
+				"media: the %q packager emits H.264 only, so it cannot carry %s: use the %s packager or turn the extra codecs off",
+				t.packager().Name(), strings.Join(extra, "+"), PackagerCMAF)
+		}
+		if err := verifyVideoEncoders(context.Background(), t.bin, profiles); err != nil {
+			return err
+		}
+	}
+	t.codecs = profiles
+	return nil
+}
+
+// videoCodecs resolves this transcoder's codec plan.
+func (t *HLSTranscoder) videoCodecs() []codecProfile {
+	if len(t.codecs) == 0 {
+		return defaultVideoCodecs
+	}
+	return t.codecs
 }
 
 // packagerByName resolves a TRANSCODING_PACKAGER value to its implementation.
@@ -1170,6 +1265,7 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	}
 	plan := ladderPlan{
 		rungs:           rungs,
+		codecs:          t.videoCodecs(),
 		threads:         settings.Threads,
 		hasAudio:        md.HasAudio,
 		sourceAudioKbps: md.AudioKbps,
@@ -1259,6 +1355,7 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		prefix:    prefix,
 		rungs:     rungs,
 		audioKbps: plan.audioBitrateKbps(),
+		codecs:    plan.profiles(),
 		tools:     t.packageTools(),
 		onPackagingFailed: func() {
 			reportAll(ProgressFailed, "packaging", 92)

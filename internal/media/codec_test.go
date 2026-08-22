@@ -1,0 +1,592 @@
+package media
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/vidra/vidra-core/internal/storage"
+)
+
+// --- phase-3 item 5: codec profiles ------------------------------------------
+
+// TestH264LadderIsUnchangedByTheRegistry is the pin that matters most here, and
+// it is stated as an EQUALITY rather than a list of expected strings: the
+// argument vector an ordinary install emits must be the one it emitted when
+// libx264 was spelled inline, and a plan that names H.264 explicitly must be
+// indistinguishable from one that names no codec at all.
+func TestH264LadderIsUnchangedByTheRegistry(t *testing.T) {
+	src := localSource("/in/src.mp4")
+	for _, rungs := range [][]HLSRung{
+		cmafTestRungs(),
+		PlanHLSLadder(1920, 1080),
+		PlanHLSLadder(320, 240),
+	} {
+		implicit := hlsLadderArgsWith(cmafPackager{}, src, localOutput("/out"), ladderPlan{rungs: rungs, hasAudio: true})
+		explicit := hlsLadderArgsWith(cmafPackager{}, src, localOutput("/out"),
+			ladderPlan{rungs: rungs, codecs: videoCodecProfiles(false, false), hasAudio: true})
+		if strings.Join(implicit, "\x00") != strings.Join(explicit, "\x00") {
+			t.Errorf("naming H.264 changes the vector:\n implicit %s\n explicit %s",
+				strings.Join(implicit, " "), strings.Join(explicit, " "))
+		}
+		// And the encoder half is exactly the four options plus capped VBR this
+		// package has always emitted, in that order.
+		got := strings.Join(hlsRungVideoEncodeArgs(rungs[0], h264Profile, soleVideoStream, ""), " ")
+		want := "-c:v libx264 -profile:v main -preset veryfast -pix_fmt yuv420p" +
+			" -b:v " + strconv.Itoa(rungs[0].VideoKbps) + "k" +
+			" -maxrate " + strconv.Itoa(rungs[0].VideoKbps) + "k" +
+			" -bufsize " + strconv.Itoa(2*rungs[0].VideoKbps) + "k" +
+			" -force_key_frames expr:gte(t,n_forced*6)"
+		if got != want {
+			t.Errorf("H.264 encoder args:\n got %s\nwant %s", got, want)
+		}
+		// H.264 carries no container tag: forcing avc1 would be a no-op that
+		// invited someone to "fix" the HEVC one by removing it.
+		if strings.Contains(got, "-tag") {
+			t.Errorf("H.264 emits a container tag it does not need: %s", got)
+		}
+	}
+}
+
+// TestVideoCodecProfileOrder pins H.264-first. It is the order of representation
+// indices, of adaptation sets and of HLS variants, and everything downstream —
+// the progressive downloads, the derived web videos, trick-play — addresses the
+// H.264 representations as indices 0..len(rungs)-1.
+func TestVideoCodecProfileOrder(t *testing.T) {
+	cases := []struct {
+		hevc, av1 bool
+		want      []string
+	}{
+		{false, false, []string{VideoCodecH264}},
+		{true, false, []string{VideoCodecH264, VideoCodecHEVC}},
+		{false, true, []string{VideoCodecH264, VideoCodecAV1}},
+		{true, true, []string{VideoCodecH264, VideoCodecHEVC, VideoCodecAV1}},
+	}
+	for _, tc := range cases {
+		var got []string
+		for _, p := range videoCodecProfiles(tc.hevc, tc.av1) {
+			got = append(got, p.Name)
+		}
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Errorf("videoCodecProfiles(%v, %v) = %v, want %v", tc.hevc, tc.av1, got, tc.want)
+		}
+	}
+	// H.264 is never absent, whatever the knobs say.
+	for _, p := range []struct{ hevc, av1 bool }{{true, true}, {false, true}, {true, false}} {
+		if videoCodecProfiles(p.hevc, p.av1)[0].Name != VideoCodecH264 {
+			t.Errorf("H.264 is not first for (hevc %v, av1 %v)", p.hevc, p.av1)
+		}
+	}
+}
+
+// TestCodecBitrateMultipliers checks the budget arithmetic, and specifically
+// that H.264's is not arithmetic at all: the compatibility ladder's numbers must
+// come through untouched rather than survive a float round-trip.
+func TestCodecBitrateMultipliers(t *testing.T) {
+	r := HLSRung{Height: 1080, Width: 1920, VideoKbps: 5000, AudioKbps: 160}
+	if got := h264Profile.videoKbps(r); got != 5000 {
+		t.Errorf("h264 budget = %d, want the rung's own %d", got, r.VideoKbps)
+	}
+	if got := hevcProfile.videoKbps(r); got != 3250 {
+		t.Errorf("hevc budget = %d, want 3250 (0.65x)", got)
+	}
+	if got := av1Profile.videoKbps(r); got != 2750 {
+		t.Errorf("av1 budget = %d, want 2750 (0.55x)", got)
+	}
+	// The multipliers stack on top of the fps-aware budget rather than replacing
+	// it: a 60fps 1080p rung is planned at 8000k, and HEVC's share is of THAT.
+	hfr := HLSRung{Height: 1080, Width: 1920, VideoKbps: 8000, AudioKbps: 160}
+	if got := hevcProfile.videoKbps(hfr); got != 5200 {
+		t.Errorf("hevc budget for a high-frame-rate rung = %d, want 5200 (0.65 x 8000)", got)
+	}
+	// A rung small enough to round to nothing still gets a positive budget: an
+	// encoder handed -b:v 0k does not fail, it produces garbage.
+	if got := av1Profile.videoKbps(HLSRung{VideoKbps: 1}); got < 1 {
+		t.Errorf("a tiny rung budgets to %d", got)
+	}
+}
+
+// TestHEVCCarriesTheHVC1Tag is the single most consequential line in the
+// registry. Without it ffmpeg writes hev1, warns, and carries on — and the
+// measured consequence is not merely "Safari refuses it": ffmpeg's own HLS
+// master then computes an EMPTY video codec string for that variant, so the
+// manifest is unplayable everywhere.
+func TestHEVCCarriesTheHVC1Tag(t *testing.T) {
+	got := strings.Join(hlsRungVideoEncodeArgs(HLSRung{VideoKbps: 800}, hevcProfile, sharedVideoStream(2), ""), " ")
+	if !strings.Contains(got, "-tag:v:2 hvc1") {
+		t.Fatalf("HEVC vector has no hvc1 tag, so it will be written as Safari-breaking hev1: %s", got)
+	}
+	if strings.Contains(got, "hev1") {
+		t.Errorf("HEVC vector asks for hev1: %s", got)
+	}
+	// The tag has to be stream-qualified like everything else on a shared output,
+	// or it would be applied to every video stream including the H.264 ones.
+	if strings.Contains(got, "-tag:v ") {
+		t.Errorf("the tag is not stream-qualified and would retag the whole ladder: %s", got)
+	}
+	if !strings.Contains(got, "-c:v:2 libx265") || !strings.Contains(got, "-profile:v:2 main") {
+		t.Errorf("HEVC vector: %s", got)
+	}
+}
+
+// TestAV1UsesPlainVBR pins the rate-control difference the registry exists to
+// absorb. SVT-AV1 does not merely prefer VBR to capped VBR — it REFUSES the
+// combination ("Max Bitrate only supported with CRF mode") and the whole ffmpeg
+// process dies before it writes a byte, so emitting -maxrate here would break
+// every AV1-enabled transcode rather than degrading one.
+func TestAV1UsesPlainVBR(t *testing.T) {
+	got := strings.Join(hlsRungVideoEncodeArgs(HLSRung{VideoKbps: 800}, av1Profile, sharedVideoStream(3), ""), " ")
+	for _, banned := range []string{"-maxrate", "-bufsize"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("AV1 vector carries %s, which libsvtav1 refuses outright: %s", banned, got)
+		}
+	}
+	if !strings.Contains(got, "-b:v:3 440k") {
+		t.Errorf("AV1 vector does not target its own budget: %s", got)
+	}
+	// SVT-AV1's preset is a NUMBER; "veryfast" is not a value it has.
+	if !strings.Contains(got, "-preset:v:3 8") {
+		t.Errorf("AV1 preset is not the numeric one libsvtav1 takes: %s", got)
+	}
+	// libsvtav1 has no `profile` private option at all, so asking for one is an
+	// error rather than a hint.
+	if strings.Contains(got, "-profile") {
+		t.Errorf("AV1 vector sets a profile libsvtav1 does not have: %s", got)
+	}
+	// Key frames are forced through ffmpeg's own frame flag, which is
+	// codec-independent — and without it the segments would not align.
+	if !strings.Contains(got, "-force_key_frames:v:3 expr:gte(t,n_forced*6)") {
+		t.Errorf("AV1 vector does not force key frames on segment boundaries: %s", got)
+	}
+}
+
+// TestLadderPlanRepIndexing pins the tree layout every other part of this change
+// depends on: each codec's whole ladder in rung order, H.264 first, so the H.264
+// representations are 0..len(rungs)-1.
+func TestLadderPlanRepIndexing(t *testing.T) {
+	rungs := cmafTestRungs()
+	plan := ladderPlan{rungs: rungs, codecs: videoCodecProfiles(true, true)}
+	if got := plan.videoReps(); got != 6 {
+		t.Errorf("videoReps = %d, want 2 rungs x 3 codecs", got)
+	}
+	want := map[[2]int]int{
+		{0, 0}: 0, {0, 1}: 1, // h264
+		{1, 0}: 2, {1, 1}: 3, // hevc
+		{2, 0}: 4, {2, 1}: 5, // av1
+	}
+	for k, v := range want {
+		if got := plan.repIndex(k[0], k[1]); got != v {
+			t.Errorf("repIndex(codec %d, rung %d) = %d, want %d", k[0], k[1], got, v)
+		}
+	}
+	// The single-codec plan keeps rung i at representation i, which is what the
+	// MPEG-TS packager and every derived asset read.
+	single := ladderPlan{rungs: rungs}
+	for i := range rungs {
+		if got := single.repIndex(0, i); got != i {
+			t.Errorf("single-codec repIndex(0, %d) = %d", i, got)
+		}
+	}
+	if single.videoReps() != len(rungs) {
+		t.Errorf("single-codec videoReps = %d, want %d", single.videoReps(), len(rungs))
+	}
+	// An audio-only plan has no video representations at all.
+	if got := (ladderPlan{codecs: videoCodecProfiles(true, true)}).videoReps(); got != 0 {
+		t.Errorf("audio-only videoReps = %d, want 0", got)
+	}
+}
+
+// multiCodecPlan is a 2-rung ladder with all three codecs and audio.
+func multiCodecPlan() ladderPlan {
+	return ladderPlan{rungs: cmafTestRungs(), codecs: videoCodecProfiles(true, true), hasAudio: true}
+}
+
+// TestMultiCodecLadderIsOnePassWithOneScalePerRung pins the shape of the
+// multi-codec encode: still ONE input and one dash output, still one scale per
+// rung, with the scaled frames forked to that rung's encoders. Adding a codec
+// must add encoders, not decodes and not scalers.
+func TestMultiCodecLadderIsOnePassWithOneScalePerRung(t *testing.T) {
+	plan := multiCodecPlan()
+	args := hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), plan)
+	joined := strings.Join(args, " ")
+
+	if n := countArg(args, "-i"); n != 1 {
+		t.Errorf("-i appears %d times, want 1 (one decode for every codec)", n)
+	}
+	if n := countArg(args, "-f"); n != 1 {
+		t.Errorf("-f appears %d times, want 1 (one dash output)", n)
+	}
+	graph := argValue(t, args, "-filter_complex")
+	if n := strings.Count(graph, "scale="); n != len(plan.rungs) {
+		t.Errorf("graph scales %d times, want once per rung (%d): %s", n, len(plan.rungs), graph)
+	}
+	want := "[0:v]split=2[b0][b1];" +
+		"[b0]scale=480:360,split=3[v0][v2][v4];" +
+		"[b1]scale=320:240,split=3[v1][v3][v5]"
+	if graph != want {
+		t.Errorf("graph:\n got %s\nwant %s", graph, want)
+	}
+	// One map per representation, then the audio.
+	if n := countArg(args, "-map"); n != 7 {
+		t.Errorf("%d maps, want 6 representations + 1 audio", n)
+	}
+	// Audio is STILL encoded once, for all three codecs' representations to
+	// reference — a three-codec tree stores its audio exactly once.
+	if n := strings.Count(joined, "-c:a:"); n != 1 {
+		t.Errorf("%d audio encoders, want 1:\n%s", n, joined)
+	}
+}
+
+// TestMultiCodecLadderEncodersAreGroupedByCodec walks the whole vector and
+// asserts each representation index gets its own codec's encoder at its own
+// codec's budget — the mapping a wrong index would silently invert.
+func TestMultiCodecLadderEncodersAreGroupedByCodec(t *testing.T) {
+	plan := multiCodecPlan()
+	joined := strings.Join(hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), plan), " ")
+	for c, prof := range plan.profiles() {
+		for i, r := range plan.rungs {
+			rep := strconv.Itoa(plan.repIndex(c, i))
+			for _, want := range []string{
+				"-c:v:" + rep + " " + prof.Encoder,
+				"-b:v:" + rep + " " + strconv.Itoa(prof.videoKbps(r)) + "k",
+				"-force_key_frames:v:" + rep + " expr:gte(t,n_forced*6)",
+			} {
+				if !strings.Contains(joined, want) {
+					t.Errorf("%s rung %s missing %q:\n%s", prof.Name, r.Name(), want, joined)
+				}
+			}
+		}
+	}
+	// Nothing unqualified: on a shared output that would be applied to every
+	// representation of every codec at once.
+	for _, leaked := range []string{" -c:v ", " -tag:v ", " -profile:v ", " -preset ", " -b:v ", " -maxrate "} {
+		if strings.Contains(" "+joined+" ", leaked) {
+			t.Errorf("unqualified%soption on a shared output:\n%s", leaked, joined)
+		}
+	}
+}
+
+// TestMultiCodecAdaptationSets: one video adaptation set PER CODEC. A set is
+// what a player switches within, so an H.264 rung and an AV1 rung in one set
+// would claim to be interchangeable mid-playback for a decoder that only has
+// one of them.
+func TestMultiCodecAdaptationSets(t *testing.T) {
+	rungs := cmafTestRungs()
+	cases := []struct {
+		name string
+		plan ladderPlan
+		want string
+	}{
+		{"single codec keeps the shorthand", ladderPlan{rungs: rungs, hasAudio: true}, "id=0,streams=v id=1,streams=a"},
+		{"single codec, silent", ladderPlan{rungs: rungs}, "id=0,streams=v"},
+		{"audio-only", ladderPlan{codecs: videoCodecProfiles(true, true), hasAudio: true}, "id=0,streams=a"},
+		{"h264+hevc", ladderPlan{rungs: rungs, codecs: videoCodecProfiles(true, false), hasAudio: true},
+			"id=0,streams=0,1 id=1,streams=2,3 id=2,streams=a"},
+		{"all three", multiCodecPlan(), "id=0,streams=0,1 id=1,streams=2,3 id=2,streams=4,5 id=3,streams=a"},
+		{"all three, silent", ladderPlan{rungs: rungs, codecs: videoCodecProfiles(true, true)},
+			"id=0,streams=0,1 id=1,streams=2,3 id=2,streams=4,5"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cmafAdaptationSets(tc.plan); got != tc.want {
+				t.Errorf("-adaptation_sets = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMultiCodecThreadsAreSplitAcrossEveryEncoder: transcoding_threads is a
+// PER-JOB budget, and with three codecs there are three times as many encoders
+// running concurrently in the one process. Dividing by the rung count would
+// triple the setting.
+func TestMultiCodecThreadsAreSplitAcrossEveryEncoder(t *testing.T) {
+	plan := multiCodecPlan()
+	plan.threads = 12
+	joined := strings.Join(hlsLadderArgsWith(cmafPackager{}, localSource("/in/src.mp4"), localOutput("/out"), plan), " ")
+	// 12 threads across 6 representations is 2 each — not 6 each, which is what
+	// dividing by the rung count would have given.
+	for rep := 0; rep < 6; rep++ {
+		if !strings.Contains(joined, "-threads:v:"+strconv.Itoa(rep)+" 2") {
+			t.Errorf("representation %d does not get its share of the thread budget:\n%s", rep, joined)
+		}
+	}
+	if strings.Contains(joined, "-threads:v:0 6") {
+		t.Errorf("the budget was divided by the rung count, tripling a deliberately-restrained setting:\n%s", joined)
+	}
+}
+
+// --- multi-codec manifests ---------------------------------------------------
+
+// ffmpegCMAFMasterMultiCodec is a verbatim capture of what ffmpeg 8.1's dash
+// muxer writes for a 2-rung H.264+HEVC ladder with audio under the arguments
+// this package builds — the hvc1 tag included, which is why the HEVC variants
+// have a codec string at all.
+const ffmpegCMAFMasterMultiCodec = `#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="group_A1",NAME="audio_4",DEFAULT=YES,CHANNELS="2",URI="media_4.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH=899485,RESOLUTION=480x360,CODECS="avc1.4d401e,mp4a.40.2",AUDIO="group_A1"
+media_0.m3u8
+
+#EXT-X-STREAM-INF:BANDWIDTH=599485,RESOLUTION=320x240,CODECS="avc1.4d400d,mp4a.40.2",AUDIO="group_A1"
+media_1.m3u8
+
+#EXT-X-STREAM-INF:BANDWIDTH=619484,RESOLUTION=480x360,CODECS="hvc1.1.6.L63.90,mp4a.40.2",AUDIO="group_A1"
+media_2.m3u8
+
+#EXT-X-STREAM-INF:BANDWIDTH=424484,RESOLUTION=320x240,CODECS="hvc1.1.6.L60.90,mp4a.40.2",AUDIO="group_A1"
+media_3.m3u8
+
+`
+
+func multiCodecLayout(t *testing.T) cmafLayout {
+	t.Helper()
+	layout, err := parseCMAFMasterPlaylist([]byte(ffmpegCMAFMasterMultiCodec), 4)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	layout.codecs = videoCodecProfiles(true, false)
+	return layout
+}
+
+// TestVerifyCMAFCodecs is the codec half of the mapping check. The resolution
+// half already refuses a master that points a variant at the wrong media
+// playlist; this refuses one that points it at the right playlist holding the
+// wrong CODEC — which plays perfectly and delivers the wrong thing.
+func TestVerifyCMAFCodecs(t *testing.T) {
+	if err := multiCodecLayout(t).verifyCodecs(2); err != nil {
+		t.Fatalf("a correct layout was rejected: %v", err)
+	}
+	// H.264-only layouts are verified too, and the shipped ladder passes.
+	plain, err := parseCMAFMasterPlaylist([]byte(ffmpegCMAFMaster), 2)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := plain.verifyCodecs(2); err != nil {
+		t.Errorf("the H.264 ladder failed its own codec check: %v", err)
+	}
+	// Audio-only has no video representations to attribute.
+	if err := (cmafLayout{hasAudio: true}).verifyCodecs(0); err != nil {
+		t.Errorf("audio-only layout: %v", err)
+	}
+
+	t.Run("a representation encoded with the wrong codec is refused", func(t *testing.T) {
+		bad := multiCodecLayout(t)
+		// The HEVC half came out H.264: the tree plays, at the HEVC rung's
+		// smaller budget, and looks like a quality regression.
+		bad.videoCodecs[2] = "avc1.4d401e,mp4a.40.2"
+		if err := bad.verifyCodecs(2); err == nil {
+			t.Error("an H.264 stream in an HEVC representation was accepted")
+		}
+	})
+
+	t.Run("the empty codec string a missing hvc1 tag produces is refused", func(t *testing.T) {
+		bad := multiCodecLayout(t)
+		// This is the literal string ffmpeg writes when HEVC is muxed without the
+		// tag: no video codec at all, and a master no client will start.
+		bad.videoCodecs[2] = ",mp4a.40.2"
+		if err := bad.verifyCodecs(2); err == nil {
+			t.Error("a variant with no video codec was accepted")
+		}
+	})
+
+	t.Run("a short layout is refused", func(t *testing.T) {
+		bad := multiCodecLayout(t)
+		bad.videoCodecs = bad.videoCodecs[:3]
+		if err := bad.verifyCodecs(2); err == nil {
+			t.Error("a layout missing a representation was accepted")
+		}
+	})
+}
+
+// TestRenderMultiCodecMasterPlaylist pins the master a multi-codec tree serves:
+// every codec's variants, H.264 FIRST, each declaring its own codec's budget,
+// and trick-play advertised only for the H.264 ones.
+func TestRenderMultiCodecMasterPlaylist(t *testing.T) {
+	rungs := cmafTestRungs()
+	layout := multiCodecLayout(t)
+	got, err := renderCMAFMasterPlaylist(rungs, rungs[0].AudioKbps, layout, map[int]hlsTrickPlayInfo{
+		360: {Bandwidth: 120000, Codec: "avc1.4d4015"},
+		240: {Bandwidth: 90000, Codec: "avc1.4d400d"},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	// Variant order, exactly: the two H.264 rungs, then the two HEVC ones. A
+	// client that takes the first variant it understands must land on H.264.
+	var variants []string
+	for _, line := range strings.Split(got, "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			variants = append(variants, line)
+		}
+	}
+	want := []string{"cmaf/media_0.m3u8", "cmaf/media_1.m3u8", "cmaf/media_2.m3u8", "cmaf/media_3.m3u8"}
+	if strings.Join(variants, ",") != strings.Join(want, ",") {
+		t.Errorf("variant order = %v, want %v (H.264 first)", variants, want)
+	}
+	first := strings.Index(got, `CODECS="hvc1.`)
+	last := strings.LastIndex(got, `CODECS="avc1.4d400d,mp4a.40.2"`)
+	if first < 0 || last < 0 || last > first {
+		t.Errorf("an HEVC variant precedes an H.264 one:\n%s", got)
+	}
+
+	// Each variant declares ITS codec's budget plus the shared audio.
+	for c, prof := range layout.profiles() {
+		for _, r := range rungs {
+			bw := (prof.videoKbps(r) + rungs[0].AudioKbps) * 1000 * 11 / 10
+			line := "#EXT-X-STREAM-INF:BANDWIDTH=" + strconv.Itoa(bw) + ",RESOLUTION=" +
+				strconv.Itoa(r.Width) + "x" + strconv.Itoa(r.Height)
+			if !strings.Contains(got, line) {
+				t.Errorf("%s %s does not declare its own budget (%d):\n%s", prof.Name, r.Name(), bw, got)
+			}
+			if c > 0 && prof.videoKbps(r) == r.VideoKbps {
+				t.Errorf("%s is budgeted identically to H.264, so the multiplier is not applied", prof.Name)
+			}
+		}
+	}
+
+	// Trick-play is H.264-only, so exactly one I-frame entry per rung — not one
+	// per rung per codec, and none pointing at an HEVC representation.
+	if n := strings.Count(got, "#EXT-X-I-FRAME-STREAM-INF:"); n != len(rungs) {
+		t.Errorf("%d I-frame entries, want one per rung (%d):\n%s", n, len(rungs), got)
+	}
+	for i := 2; i < 4; i++ {
+		if strings.Contains(got, "iframe-"+strconv.Itoa(i)+".m3u8") {
+			t.Errorf("trick-play advertised for a non-H.264 representation:\n%s", got)
+		}
+	}
+	// One audio rendition group for the whole tree, at the representation after
+	// the last video one.
+	if !strings.Contains(got, `URI="cmaf/media_4.m3u8"`) {
+		t.Errorf("the shared audio rendition is not at representation 4:\n%s", got)
+	}
+	if n := strings.Count(got, "#EXT-X-MEDIA:"); n != 1 {
+		t.Errorf("%d audio rendition declarations, want 1:\n%s", n, got)
+	}
+}
+
+// --- packager capability and the boot-time refusals ---------------------------
+
+// TestPackagerMultiCodecCapability: MPEG-TS is the frozen rollback path and says
+// so, rather than a call site inferring it.
+func TestPackagerMultiCodecCapability(t *testing.T) {
+	var cmaf, ts Packager = cmafPackager{}, tsPackager{}
+	if !cmaf.SupportsMultiCodec() {
+		t.Error("CMAF must support several codecs: a representation is an index in a shared directory")
+	}
+	if ts.SupportsMultiCodec() {
+		t.Error("MPEG-TS must not claim multi-codec support: a variant there is a directory named for a height")
+	}
+}
+
+// TestSetVideoCodecsRefusesTheMPEGTSPackager is the in-process second gate on the
+// combination config already refuses at boot. It matters because the two settings
+// are independent variables an operator can change one at a time — rolling back
+// to `ts` while HEVC is still on must stop the process, not silently produce
+// H.264 trees while the operator believes they are shipping H.265.
+func TestSetVideoCodecsRefusesTheMPEGTSPackager(t *testing.T) {
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	tc := NewHLSTranscoder(blobs)
+	if err := tc.SetPackager(PackagerTS); err != nil {
+		t.Fatalf("SetPackager: %v", err)
+	}
+	for _, codec := range []struct{ hevc, av1 bool }{{true, false}, {false, true}, {true, true}} {
+		err := tc.SetVideoCodecs(codec.hevc, codec.av1)
+		if err == nil {
+			t.Fatalf("the MPEG-TS packager accepted (hevc %v, av1 %v)", codec.hevc, codec.av1)
+		}
+		if !strings.Contains(err.Error(), PackagerCMAF) {
+			t.Errorf("error %q does not name the packager an operator must switch to", err)
+		}
+	}
+	// H.264-only is always fine, on every packager, and leaves the shipped ladder.
+	if err := tc.SetVideoCodecs(false, false); err != nil {
+		t.Fatalf("SetVideoCodecs(false, false) on MPEG-TS: %v", err)
+	}
+	if got := tc.videoCodecs(); len(got) != 1 || got[0].Name != VideoCodecH264 {
+		t.Errorf("codecs = %v, want H.264 alone", got)
+	}
+}
+
+// TestVerifyVideoEncoders drives the boot probe against a stub ffmpeg, so the
+// failure an operator would otherwise meet as "every upload dead-lettered" is
+// exercised without needing a specially-built binary to hand.
+func TestVerifyVideoEncoders(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub is a shell script")
+	}
+	stub := func(t *testing.T, listing string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "ffmpeg-stub")
+		body := "#!/bin/sh\ncat <<'EOF'\n" + listing + "EOF\n"
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			t.Fatalf("write stub: %v", err)
+		}
+		return path
+	}
+	const full = `Encoders:
+ V..... = Video
+ ------
+ V....D libx264              libx264 H.264 / AVC (codec h264)
+ V....D libx265              libx265 H.265 / HEVC (codec hevc)
+ V..... libsvtav1            SVT-AV1 encoder (codec av1)
+`
+	ctx := context.Background()
+	all := videoCodecProfiles(true, true)
+
+	if err := verifyVideoEncoders(ctx, stub(t, full), all); err != nil {
+		t.Fatalf("a complete ffmpeg was rejected: %v", err)
+	}
+
+	// The realistic failure: a distro or slim-image ffmpeg without AV1.
+	noAV1 := strings.Replace(full, " V..... libsvtav1            SVT-AV1 encoder (codec av1)\n", "", 1)
+	err := verifyVideoEncoders(ctx, stub(t, noAV1), all)
+	if err == nil {
+		t.Fatal("a missing libsvtav1 was accepted")
+	}
+	for _, want := range []string{"libsvtav1", "TRANSCODING_AV1_ENABLED"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q — it has to name the encoder AND the knob to turn off", err, want)
+		}
+	}
+
+	noHEVC := strings.Replace(full, " V....D libx265              libx265 H.265 / HEVC (codec hevc)\n", "", 1)
+	err = verifyVideoEncoders(ctx, stub(t, noHEVC), all)
+	if err == nil || !strings.Contains(err.Error(), "TRANSCODING_HEVC_ENABLED") {
+		t.Errorf("missing libx265 = %v, want it attributed to TRANSCODING_HEVC_ENABLED", err)
+	}
+
+	// A binary that cannot be run at all is an error, not a pass: "we could not
+	// check" must never be reported as "it is fine".
+	if err := verifyVideoEncoders(ctx, filepath.Join(t.TempDir(), "nope"), all); err == nil {
+		t.Error("an unrunnable ffmpeg was accepted")
+	}
+}
+
+// TestFFmpegEncoderNamesParsesTheRealListing pins the parser against the layout
+// ffmpeg prints, including the legend rows that carry the same flag block as the
+// encoder rows.
+func TestFFmpegEncoderNamesParsesTheRealListing(t *testing.T) {
+	got := ffmpegEncoderNames([]byte(`Encoders:
+ V..... = Video
+ A..... = Audio
+ ------
+ V....D libx264              libx264 H.264 / AVC (codec h264)
+ A....D aac                  AAC (Advanced Audio Coding)
+`))
+	if !got["libx264"] || !got["aac"] {
+		t.Errorf("encoders = %v", got)
+	}
+	for _, unwanted := range []string{"=", "Encoders:", "------", "Video"} {
+		if got[unwanted] {
+			t.Errorf("parser took %q for an encoder name", unwanted)
+		}
+	}
+}
