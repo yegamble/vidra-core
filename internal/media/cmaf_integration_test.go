@@ -1399,6 +1399,66 @@ func TestFullJobDerivesWebVideosOnBothPackagers(t *testing.T) {
 	}
 }
 
+// TestFullJobDerivesWebVideosFromAStreamedLadder is the case most likely to be
+// wrong by construction: with SetStreamOutput no segment ever touches the disk,
+// so "the bytes are still local" has to be true for a reason rather than by
+// luck. It is — the progressive MP4s are ALWAYS written to scratch, because
+// +faststart rewinds to move the moov atom and an HTTP PUT body cannot be
+// rewound — and this pins it.
+func TestFullJobDerivesWebVideosFromAStreamedLadder(t *testing.T) {
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	videoID := uuid.New()
+	srcKey := "web-videos/" + videoID.String() + ".mp4"
+	srcPath, perr := blobs.Path(srcKey)
+	if perr != nil {
+		t.Fatalf("Path: %v", perr)
+	}
+	if merr := os.MkdirAll(filepath.Dir(srcPath), 0o755); merr != nil {
+		t.Fatalf("mkdir: %v", merr)
+	}
+	if out, gerr := exec.Command("ffmpeg", append(append([]string{"-y"},
+		"-f", "lavfi", "-i", "testsrc2=duration=4:size=854x480:rate=25",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"),
+		srcPath)...).CombinedOutput(); gerr != nil {
+		t.Fatalf("ffmpeg generate: %v\n%s", gerr, out)
+	}
+	tc, ok := DetectHLSTranscoder(blobs)
+	if !ok {
+		t.Fatal("DetectHLSTranscoder = false")
+	}
+	if serr := tc.SetPackager(PackagerCMAF); serr != nil {
+		t.Fatalf("SetPackager: %v", serr)
+	}
+	tc.SetStreamOutput(true)
+	md, err := tc.Probe(context.Background(), srcKey)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, md, nil)
+	if err != nil {
+		t.Fatalf("TranscodeAll: %v", err)
+	}
+	if len(files) == 0 || len(files) != len(res.Renditions) {
+		t.Fatalf("streamed job derived %d web videos for %d renditions", len(files), len(res.Renditions))
+	}
+	for i, f := range files {
+		derived := readObject(t, blobs, f.StorageKey)
+		ladder := readObject(t, blobs, HLSDownloadKey(res.Renditions[i].KeyPrefix, true))
+		if !bytes.Equal(derived, ladder) {
+			t.Errorf("streamed rung %dp: derived bytes differ from the ladder's own download",
+				res.Renditions[i].Height)
+		}
+	}
+}
+
 // TestAudioOnlyFullJobDerivesNoWebVideos: there are no rungs, so there are no
 // progressive video derivatives to make. The job must still succeed — its
 // deliverable is the audio tree.
