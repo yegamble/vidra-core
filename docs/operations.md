@@ -536,6 +536,65 @@ Two things to know before switching:
   `.mp4` (init segments) and `.mpd` (manifest). A CDN or bucket policy that
   allow-lists suffixes needs `.m4s` and `.mpd` added.
 
+## Extra video codecs — HEVC and AV1
+
+By default a transcode encodes each ladder rung once, in **H.264**. That is the
+compatibility floor: every browser, every phone, every set-top box can play it,
+and it is also what the progressive downloads, the `/download` web videos, the
+audio-only extraction and the scrubbing thumbnails are made from. It is always
+emitted and there is no setting that turns it off.
+
+Two settings add a **second and third encoding of the same rungs** to the same
+CMAF tree:
+
+| Setting | Encoder | Bitrate vs H.264 | Plays on |
+| --- | --- | --- | --- |
+| `TRANSCODING_HEVC_ENABLED` | `libx265` | ~65% (a 35% cut) | Safari (macOS/iOS/tvOS), Edge and Chrome on hardware that decodes it, most 2016+ smart TVs. **Not** desktop Firefox |
+| `TRANSCODING_AV1_ENABLED` | `libsvtav1` | ~55% (a 45% cut) | Chrome/Edge 70+, Firefox 67+, Safari 17+ on capable hardware |
+
+Both default to `false`. With both off, a transcode produces byte-for-byte the
+H.264 ladder it always produced.
+
+**What "the same tree" means.** There is no second encode pass and no second set
+of segments to manage. The one ffmpeg invocation that already decodes the source
+once and scales it once grows extra encoders; the shared segment directory grows
+extra representations. In the manifests:
+
+* the **MPD** gains one video `AdaptationSet` per codec (a set is what a player
+  switches *within*, so codecs are never mixed inside one), plus the same single
+  audio set — audio is still encoded and stored **once** for the whole tree;
+* the **HLS master** gains a variant per codec per rung, with **every H.264
+  variant listed first** so a client that simply takes the first playable variant
+  lands on the one everything can play.
+
+Trick-play, the progressive downloads and the audio file stay H.264-only.
+
+**What it costs.** Encode time and storage, on every video, forever. HEVC is
+roughly 3–5x H.264's encode time at the same preset and AV1 is more; the segments
+are additive. Turn these on where delivery bandwidth is the expensive thing and
+CPU is not.
+
+**Two hard boot failures, on purpose.** Both are settings whose failure mode is
+otherwise invisible — the site comes up, videos transcode, and the smaller
+deliveries the operator paid CPU for silently never appear:
+
+* **`TRANSCODING_PACKAGER=ts` with either codec on.** MPEG-TS is the frozen
+  rollback path; a variant there is a rendition *directory* named for its height,
+  so there is nowhere to put a second encoding of that height, and multi-codec
+  MPEG-TS masters are deliberately not built. Rolling the packager back to `ts`
+  therefore means turning these off too.
+* **An ffmpeg without the encoder.** The shipped image has `libx265` and
+  `libsvtav1`; a host binary or a slimmed image may not. The api probes
+  `ffmpeg -encoders` at boot and refuses to start, naming the encoder and the
+  setting. `vidra doctor` reports the same thing (the **video encoders** check)
+  against the api container's ffmpeg, so a deploy can be checked before it is
+  rolled out.
+
+**Turning them off is config-only**, exactly like the packager rollback: it
+changes what *new* transcodes produce, already-packaged multi-codec trees keep
+serving every representation they have, and nothing is re-encoded. There is no
+back-catalogue job in either direction.
+
 ## Direct delivery — presigned redirects instead of proxying every byte
 
 By default every media byte a viewer receives is read out of the store by the Go

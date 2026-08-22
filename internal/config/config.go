@@ -244,10 +244,34 @@ type Config struct {
 	// database accepting writes. 0 uses the built-in default (10 GiB).
 	TranscodingMinFreeScratchMB int
 
-	// TranscodingAV1Enabled is accepted only as false: AV1 transcoding is
-	// deferred (see fix_plan P6.3, mirrors the IPFS-storage defer). Setting it
-	// true fails config validation with a documented defer note.
-	TranscodingAV1Enabled bool
+	// TranscodingHEVCEnabled and TranscodingAV1Enabled add a SECOND (and third)
+	// encoding of every ladder rung to each CMAF tree — HEVC/H.265 and AV1
+	// representations alongside the H.264 ones, in their own DASH adaptation sets
+	// and as extra HLS variants, so a client that can decode them picks them up
+	// and every other client keeps playing H.264.
+	//
+	// H.264 is NOT one of these knobs. It is the compatibility floor and the
+	// source of the progressive downloads, the derived web videos, the audio-only
+	// extraction and trick-play, so it is always emitted and cannot be turned off.
+	// Both default false: an ordinary install produces exactly the H.264 ladder it
+	// always did, bit for bit.
+	//
+	// They are CMAF-ONLY. TRANSCODING_PACKAGER=ts is the frozen
+	// compatibility/rollback path and has no way to express a second encoding of
+	// the same resolution (an MPEG-TS variant is a rendition directory named for
+	// its height), so enabling either one with it is a boot failure rather than a
+	// silently ignored setting.
+	//
+	// They also require an ffmpeg with the encoder — libx265 and libsvtav1
+	// respectively. The shipped image has both; a host binary may not, so the
+	// transcoder probes `ffmpeg -encoders` at boot and refuses to start rather
+	// than dead-lettering every upload.
+	//
+	// Boot-baked for the same reason as TranscodingPackager: a value that could
+	// flip mid-ladder would produce a tree that is half one codec plan and half
+	// another.
+	TranscodingHEVCEnabled bool
+	TranscodingAV1Enabled  bool
 
 	// TranscodeHoldTimeout bounds how long a publish-after-transcode video may sit
 	// in the 'transcoding' hold before the stuck-hold sweeper publishes it anyway
@@ -801,6 +825,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		TranscodingStreamOutput:                p.Bool("TRANSCODING_STREAM_OUTPUT", false),
 		TranscodingPackager:                    p.Str("TRANSCODING_PACKAGER", DefaultTranscodingPackager),
 		TranscodingMinFreeScratchMB:            p.Int("TRANSCODING_MIN_FREE_SCRATCH_MB", 0),
+		TranscodingHEVCEnabled:                 p.Bool("TRANSCODING_HEVC_ENABLED", false),
 		TranscodingAV1Enabled:                  p.Bool("TRANSCODING_AV1_ENABLED", false),
 		TranscodeHoldTimeout:                   p.Duration("TRANSCODE_HOLD_TIMEOUT", 12*time.Hour),
 		WhisperEnabled:                         p.Bool("WHISPER_ENABLED", false),
@@ -1299,8 +1324,26 @@ func (c *Config) validate() error {
 	default:
 		add(varErrorf("MALWARE_SCAN_MODE", "config: MALWARE_SCAN_MODE %q must be one of fail-closed, fail-open, quarantine", c.MalwareScanMode))
 	}
-	if c.TranscodingAV1Enabled {
-		add(varErrorf("TRANSCODING_AV1_ENABLED", "config: TRANSCODING_AV1_ENABLED is not supported yet — AV1 transcoding is deferred (see fix_plan P6.3); leave it false"))
+	// The extra video codecs are CMAF-only. MPEG-TS is the frozen
+	// compatibility/rollback packaging path: a variant there is a rendition
+	// directory named for its height, so there is nowhere to put a second
+	// encoding of that height, and multi-codec MPEG-TS masters are deliberately
+	// not built. Enabling one anyway is a boot failure rather than a setting that
+	// is quietly ignored — the operator asked for smaller deliveries and would
+	// otherwise never learn they did not get them. Each knob is attributed to
+	// itself so a wizard can point at the field the operator has to change.
+	for _, codec := range []struct {
+		enabled bool
+		name    string
+	}{
+		{c.TranscodingHEVCEnabled, "TRANSCODING_HEVC_ENABLED"},
+		{c.TranscodingAV1Enabled, "TRANSCODING_AV1_ENABLED"},
+	} {
+		if codec.enabled && c.Packager() != DefaultTranscodingPackager {
+			add(varErrorf(codec.name,
+				"config: %s=true requires TRANSCODING_PACKAGER=%s (it is %q); the MPEG-TS packager carries H.264 only",
+				codec.name, DefaultTranscodingPackager, c.Packager()))
+		}
 	}
 	// Spelled out rather than asked of internal/media: this package is the leaf
 	// every other one configures itself from and imports nothing of the codebase,

@@ -482,7 +482,7 @@ services:
       # the full ladder; set TRANSCODING_ENABLED=false to serve originals only.
       TRANSCODING_ENABLED: ${TRANSCODING_ENABLED:-true}
       # TRANSCODING_VP9_ENABLED additionally emits a progressive VP9/WebM alternate
-      # per video (surfaced via /download). AV1 is deferred and rejected if enabled.
+      # per video (surfaced via /download).
       TRANSCODING_VP9_ENABLED: ${TRANSCODING_VP9_ENABLED:-false}
       # TRANSCODING_STREAM_OUTPUT streams the HLS ladder into object storage
       # instead of staging it on the scratch volume. Trades scratch disk for
@@ -492,9 +492,12 @@ services:
       # Free-space floor (MiB) on the transcode scratch volume below which no new
       # job is claimed. 0 = built-in default (10 GiB). See .env.example.
       TRANSCODING_MIN_FREE_SCRATCH_MB: ${TRANSCODING_MIN_FREE_SCRATCH_MB:-0}
-      # AV1 is DEFERRED (fix_plan P6.3): setting this true is a HARD boot failure,
-      # not a no-op. Passed through only so the key has a compose consumer; leave
-      # it false.
+      # Extra video codecs: an HEVC and/or AV1 encoding of every ladder rung
+      # alongside the H.264 one, in the same CMAF tree. H.264 is always emitted
+      # and is not a knob. CMAF-ONLY — with TRANSCODING_PACKAGER=ts the api
+      # refuses to boot — and each needs its encoder in the image (libx265,
+      # libsvtav1; both are present). Off by default. See .env.example.
+      TRANSCODING_HEVC_ENABLED: ${TRANSCODING_HEVC_ENABLED:-false}
       TRANSCODING_AV1_ENABLED: ${TRANSCODING_AV1_ENABLED:-false}
       # Age at which the stuck-hold sweeper gives up waiting for a transcode and
       # publishes a publish-after-transcode video from its original anyway. Lower

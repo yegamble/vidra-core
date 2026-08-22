@@ -758,6 +758,15 @@ func run() error {
 		if err := tc.SetPackager(cfg.Packager()); err != nil {
 			return fmt.Errorf("TRANSCODING_PACKAGER: %w", err)
 		}
+		// Extra video codecs (phase-3 item 5). H.264 is always emitted and is not a
+		// choice; these ADD an HEVC and/or AV1 encoding of every rung to the same
+		// CMAF tree. Refusing to boot is deliberate: the two ways this can be wrong
+		// — a packager that cannot carry them, an ffmpeg without the encoder —
+		// otherwise surface as every upload dead-lettering with an ffmpeg stderr
+		// tail, hours after the restart that caused it. Must follow SetPackager.
+		if err := tc.SetVideoCodecs(cfg.TranscodingHEVCEnabled, cfg.TranscodingAV1Enabled); err != nil {
+			return fmt.Errorf("TRANSCODING_HEVC_ENABLED/TRANSCODING_AV1_ENABLED: %w", err)
+		}
 		// Encode knobs (ladder/FPS/threads/original-resolution) resolve from the
 		// settings overlay once per job, so changes apply without a restart.
 		tc.SetEncodeSettingsFunc(func() media.HLSEncodeSettings {
@@ -771,7 +780,8 @@ func run() error {
 		hlsTranscoder = tc
 		logger.Info("hls transcoding pipeline wired (ffmpeg + ffprobe found; runtime gate transcoding_enabled)",
 			"enabled_default", cfg.TranscodingEnabled, "vp9", cfg.TranscodingVP9Enabled,
-			"stream_output", cfg.TranscodingStreamOutput, "packager", cfg.Packager())
+			"stream_output", cfg.TranscodingStreamOutput, "packager", cfg.Packager(),
+			"hevc", cfg.TranscodingHEVCEnabled, "av1", cfg.TranscodingAV1Enabled)
 	} else if cfg.TranscodingEnabled {
 		logger.Warn("TRANSCODING_ENABLED=true but ffmpeg/ffprobe not on PATH; transcoding disabled")
 	}
