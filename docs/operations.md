@@ -563,16 +563,77 @@ extra representations. In the manifests:
 * the **MPD** gains one video `AdaptationSet` per codec (a set is what a player
   switches *within*, so codecs are never mixed inside one), plus the same single
   audio set — audio is still encoded and stored **once** for the whole tree;
-* the **HLS master** gains a variant per codec per rung, with **every H.264
-  variant listed first** so a client that simply takes the first playable variant
-  lands on the one everything can play.
+* the **HLS master** gains a variant per codec per rung, each carrying a `SCORE`
+  and an `AVERAGE-BANDWIDTH`.
 
 Trick-play, the progressive downloads and the audio file stay H.264-only.
 
-**What it costs.** Encode time and storage, on every video, forever. HEVC is
-roughly 3–5x H.264's encode time at the same preset and AV1 is more; the segments
-are additive. Turn these on where delivery bandwidth is the expensive thing and
-CPU is not.
+### How a client picks the codec
+
+This is worth knowing before you turn anything on, because the two intuitive
+answers are both wrong.
+
+**It is not the order of the manifest.** hls.js (1.6) re-sorts every variant on
+load — by height, then by its own codec preference — and partitions them into
+codec sets its adaptive-bitrate logic never switches between. Manifest order
+survives only as the seed for the first bandwidth estimate. Vidra still writes
+H.264 first, because it is deterministic and because a hand-rolled client that
+takes the first variant it understands should land on the universally playable
+one, but nothing about correctness depends on it.
+
+**It is `SCORE`, for Apple clients.** Without a `SCORE` attribute, AVFoundation's
+selection is close to "the highest `BANDWIDTH` it can play" — and because an
+efficient codec *declares less*, that picks H.264 and inverts the whole point of
+emitting HEVC. Vidra writes a `SCORE` on every variant: the rung's rank dominates
+(720p always outranks 480p, whatever the codec) and the codec breaks the tie,
+preferring HEVC, then AV1, then H.264. HEVC ranks above AV1 deliberately: on
+Apple hardware HEVC is hardware-decoded essentially everywhere, while AV1
+hardware decode arrived only with the A17 Pro and M3, and a software AV1 decode
+that outranked a hardware HEVC one would cost battery and drop frames to save
+bytes the device was not short of.
+
+**`BANDWIDTH` is a peak, `AVERAGE-BANDWIDTH` is the truth.** `BANDWIDTH` is
+derived from the rung's budget, which every codec's rate control genuinely bounds;
+`AVERAGE-BANDWIDTH` is computed from the bytes the tree actually stored. The gap
+between them is large for AV1 and that is the point — it is rate-capped at the
+budget but encodes to a quality target underneath it, so easy content costs a
+fraction of the ceiling.
+
+### What it costs
+
+Measured end to end on a 720p/480p/360p ladder, one codec against three:
+
+| | 1 codec (default) | 3 codecs | |
+| --- | --- | --- | --- |
+| ffmpeg invocations | 9 | 9 | **unchanged** |
+| source decode passes | 2 | 2 | **unchanged** |
+| wall-clock time | 1.0x | **3.95x** | encoding is the cost |
+| segment bytes | 1.0x | **1.96x** | |
+| objects stored | 31 | 55 (**1.77x**) | |
+| whole stored tree | 1.0x | 1.30x | downloads dominate and stay H.264 |
+
+The strength first: adding codecs does **not** add ffmpeg runs or source decodes.
+The one ladder pass already decodes once and scales each rung once, and the extra
+codecs are extra encoders reading the same scaled frames.
+
+The costs, honestly:
+
+* **CPU is the real bill.** Nearly 4x the wall-clock time per video, permanently.
+  A backlog that used to clear overnight will not.
+* **Objects roughly double.** On a versioned bucket that is ~2x the `PUT`
+  requests as well as the bytes, and every future delete leaves twice as many
+  markers. Check your provider's request pricing, not just its storage pricing.
+* **Scratch is not automatically sized for it.** `TRANSCODING_MIN_FREE_SCRATCH_MB`
+  is an *absolute floor*, not a per-job estimate — the worker refuses new jobs
+  below it and otherwise assumes the job will fit. A three-codec ladder writes
+  roughly twice the segment bytes of a one-codec one before anything is uploaded,
+  so raise that floor when you enable this. (`TRANSCODING_STREAM_OUTPUT=true`
+  avoids the question entirely by streaming segments straight to the object
+  store.)
+* **`transcoding_threads` is a per-encoder floor, not a cap.** The job's budget is
+  divided across the encoders running concurrently, but never below one thread
+  each — so three codecs across four rungs will ask for twelve threads however
+  small the setting is.
 
 **Two hard boot failures, on purpose.** Both are settings whose failure mode is
 otherwise invisible — the site comes up, videos transcode, and the smaller

@@ -388,11 +388,14 @@ a progressive **download alternate** rather than an HLS variant on purpose
 **Extra codecs in the streaming ladder** (`TRANSCODING_HEVC_ENABLED=true` /
 `TRANSCODING_AV1_ENABLED=true`, CMAF packaging only): the same ffmpeg pass that
 encodes the H.264 ladder additionally encodes every rung with `libx265` and/or
-`libsvtav1`, into the **same** CMAF tree. The MPD gains one video adaptation set
-per codec and the HLS master gains a variant per codec per rung — H.264 variants
-first, so a client that takes the first playable variant lands on the universal
-one. Audio is still encoded and stored once for the whole tree, and the
-progressive downloads, the `/download` web videos and trick-play stay H.264.
+`libsvtav1`, into the **same** CMAF tree — one ffmpeg invocation, one source
+decode, one shared segment directory, whatever the codec count. The MPD gains one
+video adaptation set per codec and the HLS master gains a variant per codec per
+rung, each carrying a `SCORE` (which is what actually steers Apple clients toward
+the efficient codec — manifest order does not) and an `AVERAGE-BANDWIDTH`
+computed from the bytes the tree really stored. Audio is still encoded and stored
+once for the whole tree, and the progressive downloads, the `/download` web
+videos and trick-play stay H.264.
 Both are off by default (an ordinary install produces exactly the H.264 ladder it
 always did), both are boot-baked, and both fail boot rather than degrade quietly
 if the packager is `ts` or the encoder is missing from ffmpeg. See
