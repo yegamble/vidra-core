@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -272,6 +273,44 @@ type Config struct {
 	// another.
 	TranscodingHEVCEnabled bool
 	TranscodingAV1Enabled  bool
+
+	// TranscodingHW selects a HARDWARE encoder for the H.264 (and, when it is on,
+	// HEVC) representations of every ladder: "off" (the default), "videotoolbox",
+	// "vaapi", "qsv" or "nvenc". TranscodingHWDevice is the DRM render node the
+	// backends that read one are pointed at; empty means /dev/dri/renderD128, and
+	// it must stay empty for the backends that name no device.
+	//
+	// THERE IS NO "auto", and that is the design rather than an omission. Whether
+	// a backend works is a property of the HOST — the same image runs on a droplet
+	// with no GPU, a server whose /dev/dri was never mapped into the container, and
+	// a GPU instance — so a pipeline that selected an encoder by looking around
+	// would re-tune a whole deployment's picture quality the first time a device
+	// node appeared or vanished. Hardware is opt-in and spelled out; `vidra doctor`
+	// and `vidra setup` say which backends look usable here so the opt-in is easy.
+	//
+	// CMAF-ONLY, like the extra codecs, and for a blunter reason: MPEG-TS is the
+	// frozen rollback path, and "the format we can always go back to" stops meaning
+	// anything if going back also changes which silicon encoded the video.
+	//
+	// The transcoder probes `ffmpeg -encoders` at boot and refuses to start when
+	// the chosen backend's encoder is absent. Note that the SHIPPED image can only
+	// do vaapi: its ffmpeg has h264_vaapi/hevc_vaapi but no *_qsv and no *_nvenc,
+	// so those two need a differently-built image as well as the hardware.
+	//
+	// AV1 is never hardware-encoded whatever this says — hardware AV1 encode exists
+	// on too few devices to switch to blind, so TRANSCODING_AV1_ENABLED stays
+	// libsvtav1.
+	//
+	// There is deliberately NO automatic per-job fallback to the CPU. A deployment
+	// that silently fell back would look healthy while costing several times the
+	// budgeted encode time per video; instead the job fails with the backend and
+	// this knob named, and turning it off is a config-only change that leaves every
+	// already-encoded tree serving.
+	//
+	// Boot-baked for the same reason as the packager and the codecs: a value that
+	// could flip mid-ladder would produce a tree encoded half one way.
+	TranscodingHW       string
+	TranscodingHWDevice string
 
 	// TranscodeHoldTimeout bounds how long a publish-after-transcode video may sit
 	// in the 'transcoding' hold before the stuck-hold sweeper publishes it anyway
@@ -827,6 +866,8 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		TranscodingMinFreeScratchMB:            p.Int("TRANSCODING_MIN_FREE_SCRATCH_MB", 0),
 		TranscodingHEVCEnabled:                 p.Bool("TRANSCODING_HEVC_ENABLED", false),
 		TranscodingAV1Enabled:                  p.Bool("TRANSCODING_AV1_ENABLED", false),
+		TranscodingHW:                          p.Str("TRANSCODING_HW", DefaultTranscodingHW),
+		TranscodingHWDevice:                    strings.TrimSpace(getEnv("TRANSCODING_HW_DEVICE", "")),
 		TranscodeHoldTimeout:                   p.Duration("TRANSCODE_HOLD_TIMEOUT", 12*time.Hour),
 		WhisperEnabled:                         p.Bool("WHISPER_ENABLED", false),
 		WhisperEndpoint:                        strings.TrimRight(getEnv("WHISPER_ENDPOINT", ""), "/"),
@@ -1354,6 +1395,32 @@ func (c *Config) validate() error {
 	default:
 		add(varErrorf("TRANSCODING_PACKAGER", "config: invalid TRANSCODING_PACKAGER %q (want cmaf|ts)", c.TranscodingPackager))
 	}
+	// Hardware transcoding. Three rules, each attributed to the variable that
+	// actually has to change, so a wizard can point at one field.
+	switch hw := c.HardwareTranscode(); {
+	case !slices.Contains(transcodingHWNames, hw):
+		add(varErrorf("TRANSCODING_HW", "config: invalid TRANSCODING_HW %q (want %s)",
+			c.TranscodingHW, strings.Join(transcodingHWNames, "|")))
+	case hw != DefaultTranscodingHW && c.Packager() != DefaultTranscodingPackager:
+		// Same shape as the extra-codec rule above and for a related reason: the
+		// MPEG-TS path is the frozen compatibility/rollback format, and it stays
+		// libx264 so that rolling back to it is a change of container and nothing
+		// else. Refusing beats silently ignoring — the operator asked for faster
+		// encodes and would otherwise never learn they did not get them.
+		add(varErrorf("TRANSCODING_HW",
+			"config: TRANSCODING_HW=%s requires TRANSCODING_PACKAGER=%s (it is %q); the MPEG-TS packager is the frozen rollback format and stays software H.264",
+			hw, DefaultTranscodingPackager, c.Packager()))
+	case c.TranscodingHWDevice != "" && transcodingHWDeviceless[hw]:
+		add(varErrorf("TRANSCODING_HW_DEVICE",
+			"config: TRANSCODING_HW_DEVICE=%q is set but TRANSCODING_HW=%s names no device path; leave it empty",
+			c.TranscodingHWDevice, hw))
+	case c.TranscodingHWDevice != "" && !strings.HasPrefix(c.TranscodingHWDevice, "/"):
+		// A relative path would be resolved against whatever directory the worker
+		// happens to run in, which is not a thing an operator can reason about.
+		add(varErrorf("TRANSCODING_HW_DEVICE",
+			"config: TRANSCODING_HW_DEVICE=%q must be an absolute device path (e.g. /dev/dri/renderD128)",
+			c.TranscodingHWDevice))
+	}
 	if c.WhisperEnabled {
 		u, err := url.Parse(c.WhisperEndpoint)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
@@ -1636,6 +1703,42 @@ func (c *Config) Packager() string {
 		return DefaultTranscodingPackager
 	}
 	return c.TranscodingPackager
+}
+
+// DefaultTranscodingHW is the hardware backend an install gets when
+// TRANSCODING_HW says nothing: none. Software encoding is the compatibility
+// floor — it needs no device, no driver and no rebuilt ffmpeg — and it is what
+// every deployment that has not deliberately opted in must keep getting.
+const DefaultTranscodingHW = "off"
+
+// transcodingHWNames is the accepted TRANSCODING_HW set.
+//
+// Spelled out rather than asked of internal/media for the same reason the
+// packager names are: this package is the leaf every other one configures itself
+// from and imports nothing of the codebase, which is what keeps a config error a
+// config error. media.IsHardwareName is the second gate, at the point the
+// transcoder is actually built, and the two lists have to be changed together.
+var transcodingHWNames = []string{DefaultTranscodingHW, "videotoolbox", "vaapi", "qsv", "nvenc"}
+
+// transcodingHWDeviceless are the backends that name no device PATH: VideoToolbox
+// is the OS, and NVENC's CUDA runtime finds the card itself. Setting
+// TRANSCODING_HW_DEVICE alongside one of them is refused rather than ignored — an
+// operator who wrote a path expects it to be used, and a silently dropped one is
+// how a multi-GPU host ends up on the wrong card with nothing to show for it.
+var transcodingHWDeviceless = map[string]bool{"off": true, "videotoolbox": true, "nvenc": true}
+
+// HardwareTranscode resolves the selected hardware backend, with "" meaning off
+// for the same reason Packager resolves "" to cmaf.
+func (c *Config) HardwareTranscode() string {
+	if v := strings.TrimSpace(c.TranscodingHW); v != "" {
+		return v
+	}
+	return DefaultTranscodingHW
+}
+
+// HardwareTranscodeEnabled reports whether any hardware backend is selected.
+func (c *Config) HardwareTranscodeEnabled() bool {
+	return c.HardwareTranscode() != DefaultTranscodingHW
 }
 
 // StorageMigrationConfigured reports whether a second, destination backend is

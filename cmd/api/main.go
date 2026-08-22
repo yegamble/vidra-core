@@ -758,6 +758,16 @@ func run() error {
 		if err := tc.SetPackager(cfg.Packager()); err != nil {
 			return fmt.Errorf("TRANSCODING_PACKAGER: %w", err)
 		}
+		// Hardware encoding (phase-3 item 7). Off by default and opt-in by name —
+		// there is no auto-detect, because whether a backend works is a property of
+		// this HOST and a pipeline that chose one by looking around would re-tune a
+		// deployment's picture quality the first time a device node moved. Must
+		// precede SetVideoCodecs, which applies the transform and probes the
+		// encoders the choice implies; config has already validated the name and the
+		// packager combination, so a failure here is the second gate closing.
+		if err := tc.SetHardware(cfg.HardwareTranscode(), cfg.TranscodingHWDevice); err != nil {
+			return fmt.Errorf("TRANSCODING_HW: %w", err)
+		}
 		// Extra video codecs (phase-3 item 5). H.264 is always emitted and is not a
 		// choice; these ADD an HEVC and/or AV1 encoding of every rung to the same
 		// CMAF tree. Refusing to boot is deliberate: the two ways this can be wrong
@@ -781,7 +791,15 @@ func run() error {
 		logger.Info("hls transcoding pipeline wired (ffmpeg + ffprobe found; runtime gate transcoding_enabled)",
 			"enabled_default", cfg.TranscodingEnabled, "vp9", cfg.TranscodingVP9Enabled,
 			"stream_output", cfg.TranscodingStreamOutput, "packager", cfg.Packager(),
-			"hevc", cfg.TranscodingHEVCEnabled, "av1", cfg.TranscodingAV1Enabled)
+			"hevc", cfg.TranscodingHEVCEnabled, "av1", cfg.TranscodingAV1Enabled,
+			"hardware", cfg.HardwareTranscode())
+		if cfg.HardwareTranscodeEnabled() {
+			// Logged loudly and once: an operator debugging slow or failed transcodes
+			// needs to know the encoder is not libx264 without reading the env file,
+			// and this is the line that says so.
+			logger.Info("hardware video encoding is ON — H.264 (and HEVC, when enabled) rungs encode on the GPU; there is no automatic per-job fallback to the CPU, set TRANSCODING_HW=off to return to software encoding",
+				"backend", cfg.HardwareTranscode(), "device", cfg.TranscodingHWDevice)
+		}
 	} else if cfg.TranscodingEnabled {
 		logger.Warn("TRANSCODING_ENABLED=true but ffmpeg/ffprobe not on PATH; transcoding disabled")
 	}
