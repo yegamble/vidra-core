@@ -3,6 +3,7 @@ package media
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -570,7 +571,7 @@ func TestFPSAwareBitratesReachTheEncoderAndBothMasters(t *testing.T) {
 		hasAudio:    true,
 		audioRep:    len(rungs),
 	}
-	cmafMaster, err := renderCMAFMasterPlaylist(rungs, layout, nil)
+	cmafMaster, err := renderCMAFMasterPlaylist(rungs, top.AudioKbps, layout, nil)
 	if err != nil {
 		t.Fatalf("renderCMAFMasterPlaylist: %v", err)
 	}
@@ -636,8 +637,8 @@ func TestMetadataAudioOnly(t *testing.T) {
 		{"video with audio", Metadata{Width: 1280, Height: 720, HasAudio: true}, false, ""},
 		{"video without audio", Metadata{Width: 1280, Height: 720}, false,
 			"a silent video is a video"},
-		{"audio beside a zero-height video stream", Metadata{Width: 640, HasAudio: true}, true,
-			"a cover-art attachment leaves one dimension unset and cannot be laddered"},
+		{"audio beside a half-described video stream", Metadata{Width: 640, HasAudio: true}, true,
+			"a stream ffprobe could not fully describe cannot be laddered"},
 	}
 	for _, tc := range cases {
 		if got := tc.md.AudioOnly(); got != tc.want {
@@ -651,5 +652,97 @@ func TestMetadataAudioOnly(t *testing.T) {
 func TestAudioOnlyLadderPlansNothingToEncode(t *testing.T) {
 	if rungs := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 0, 0, 0); rungs != nil {
 		t.Errorf("audio-only source planned %v, want no rungs", rungSizes(rungs))
+	}
+}
+
+// TestAudioOnlyKbpsFor pins the audio-only budget rule: the smallest canonical
+// step whose nominal rate, allowed a 10% overshoot, still covers the source.
+// Without it every podcast was re-encoded at the 160 kbps ceiling — a 64 kbps
+// mono episode came out two and a half times larger carrying no more information
+// than it arrived with, because lossy-to-lossy cannot recover what the first
+// encoder threw away.
+func TestAudioOnlyKbpsFor(t *testing.T) {
+	cases := []struct {
+		sourceKbps, want int
+		why              string
+	}{
+		{0, 160, "an unknown source rate takes the ceiling: guessing low would degrade the whole content"},
+		{64, 64, "a 64k podcast stays 64k"},
+		{64276 / 1000, 64, "and still does when the probe reports container overhead (64276 bps)"},
+		{70, 64, "70 is inside the 10% allowance on the 64 step (70.4)"},
+		{71, 96, "71 is outside it, so the next step covers the source"},
+		{96, 96, ""},
+		{128, 128, ""},
+		{130, 128, "a 128k stream probing high is still the 128 step (140.8)"},
+		{160, 160, ""},
+		{176, 160, "the top step's own allowance"},
+		{192, 160, "above everything the ladder allocates: clamped to the ceiling, never exceeded"},
+		{320, 160, "a 320k master is not re-encoded at 320k"},
+		{32, 64, "below the lowest step: the lowest step covers it"},
+	}
+	for _, tc := range cases {
+		if got := audioOnlyKbpsFor(tc.sourceKbps); got != tc.want {
+			t.Errorf("audioOnlyKbpsFor(%d) = %d, want %d — %s", tc.sourceKbps, got, tc.want, tc.why)
+		}
+	}
+	// It never allocates a rate no video rendition could have, and never exceeds
+	// the ceiling.
+	for source := 0; source <= 400; source++ {
+		got := audioOnlyKbpsFor(source)
+		if got > hlsAudioOnlyKbps {
+			t.Fatalf("audioOnlyKbpsFor(%d) = %d, above the ceiling", source, got)
+		}
+		if !slices.Contains(hlsAudioSteps, got) {
+			t.Fatalf("audioOnlyKbpsFor(%d) = %d, which is not a canonical audio step", source, got)
+		}
+	}
+}
+
+// TestAudioOnlyPlanBudgetFollowsTheSource joins the rule to the plan and to what
+// the manifest declares, so the encoder and the BANDWIDTH cannot disagree.
+func TestAudioOnlyPlanBudgetFollowsTheSource(t *testing.T) {
+	plan := ladderPlan{hasAudio: true, sourceAudioKbps: 64}
+	if got := plan.audioBitrateKbps(); got != 64 {
+		t.Errorf("audio-only plan budget = %d, want the source's own 64", got)
+	}
+	args := strings.Join(cmafPackager{}.LadderOutputArgs(localOutput("/out"), plan), " ")
+	if !strings.Contains(args, "-b:a:0 64k") {
+		t.Errorf("encoder does not use the capped budget:\n%s", args)
+	}
+	// -ac 2 stays: a single-channel HLS rendition is a compatibility question
+	// this rule deliberately does not answer.
+	if !strings.Contains(args, "-ac:a:0 2") {
+		t.Errorf("audio-only output stopped emitting stereo:\n%s", args)
+	}
+	master, err := renderCMAFAudioOnlyMasterPlaylist(plan.audioBitrateKbps(),
+		cmafLayout{hasAudio: true, audioCodecs: "mp4a.40.2"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if want := fmt.Sprintf("BANDWIDTH=%d,", 64*1000*11/10); !strings.Contains(master, want) {
+		t.Errorf("master declares a bandwidth the encoder did not produce, want %q:\n%s", want, master)
+	}
+	// An unknown source rate still takes the ceiling.
+	if got := (ladderPlan{hasAudio: true}).audioBitrateKbps(); got != hlsAudioOnlyKbps {
+		t.Errorf("unknown-source audio-only budget = %d, want the ceiling %d", got, hlsAudioOnlyKbps)
+	}
+}
+
+// TestMetadataAudioOnlyRejectsCoverArtNotDimensions guards against the fix being
+// weakened back into a dimension check. Cover art is rejected by its DISPOSITION;
+// its width and height are perfectly real, which is exactly why the file used to
+// be laddered from a still image.
+func TestMetadataAudioOnlyRejectsCoverArtNotDimensions(t *testing.T) {
+	m, err := parseFFProbe([]byte(ffprobeCoverArt))
+	if err != nil {
+		t.Fatalf("parseFFProbe: %v", err)
+	}
+	if !m.AudioOnly() {
+		t.Fatalf("metadata = %+v, want audio-only", m)
+	}
+	// Prove the fixture really does carry real dimensions, so this test cannot
+	// pass for the wrong reason if the fixture is ever softened.
+	if !strings.Contains(ffprobeCoverArt, `"width": 600`) || !strings.Contains(ffprobeCoverArt, `"height": 600`) {
+		t.Error("fixture no longer describes a cover image with real dimensions")
 	}
 }

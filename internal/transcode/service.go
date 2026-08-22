@@ -606,7 +606,16 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueTransco
 	if len(msg) > maxLastErrorLen {
 		msg = msg[:maxLastErrorLen]
 	}
-	if attempts >= maxAttempts {
+	// A PERMANENT failure has already given its final answer: the source and the
+	// deployment's configuration decided it, and neither changes between
+	// attempts. Retrying spends the job's whole backoff budget — around fifteen
+	// minutes with this schedule — restating it. Dead-letter on the first one,
+	// down the same path a retry-exhausted job takes, so the recorded outcome,
+	// the playlist state and the release hook are all identical; only the waiting
+	// is skipped. (media.IsPermanent rather than a local type because permanence
+	// is decided where the failure is diagnosed, and internal/media cannot import
+	// this package.)
+	if attempts >= maxAttempts || media.IsPermanent(cause) {
 		_ = s.repo.FailTranscodeJob(ctx, sqlcgen.FailTranscodeJobParams{ID: row.ID, LastError: msg})
 		affectsHLS := row.TranscodeType != TargetWebVideo
 		var targetErr *targetRunError

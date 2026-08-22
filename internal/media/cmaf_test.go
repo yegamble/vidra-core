@@ -460,7 +460,7 @@ func TestRenderCMAFMasterPlaylist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	got, err := renderCMAFMasterPlaylist(rungs, layout, map[int]hlsTrickPlayInfo{
+	got, err := renderCMAFMasterPlaylist(rungs, rungs[0].AudioKbps, layout, map[int]hlsTrickPlayInfo{
 		360: {Bandwidth: 120000, Codec: "avc1.4d4015"},
 	})
 	if err != nil {
@@ -512,7 +512,7 @@ func TestRenderCMAFMasterPlaylist(t *testing.T) {
 	t.Run("a variant that references audio must name an audio codec", func(t *testing.T) {
 		broken := layout
 		broken.videoCodecs = []string{"avc1.4d4015", "avc1.4d400d"}
-		if _, err := renderCMAFMasterPlaylist(rungs, broken, nil); err == nil {
+		if _, err := renderCMAFMasterPlaylist(rungs, rungs[0].AudioKbps, broken, nil); err == nil {
 			t.Error("rendered a master whose variants reference the audio group but declare no audio codec")
 		}
 	})
@@ -523,7 +523,7 @@ func TestRenderCMAFMasterPlaylist(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
-		got, err := renderCMAFMasterPlaylist(single, silent, nil)
+		got, err := renderCMAFMasterPlaylist(single, single[0].AudioKbps, silent, nil)
 		if err != nil {
 			t.Fatalf("render: %v", err)
 		}
@@ -728,7 +728,7 @@ func TestRenderCMAFAudioOnlyMasterPlaylist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	got, err := renderCMAFMasterPlaylist(nil, layout, nil)
+	got, err := renderCMAFMasterPlaylist(nil, hlsAudioOnlyKbps, layout, nil)
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -740,7 +740,7 @@ func TestRenderCMAFAudioOnlyMasterPlaylist(t *testing.T) {
 	}
 	// A layout with no audio codec cannot produce a startable master, so it must
 	// fail rather than emit one.
-	if _, err := renderCMAFMasterPlaylist(nil, cmafLayout{hasAudio: true}, nil); err == nil {
+	if _, err := renderCMAFMasterPlaylist(nil, hlsAudioOnlyKbps, cmafLayout{hasAudio: true}, nil); err == nil {
 		t.Error("rendered an audio-only master with no audio codec")
 	}
 }

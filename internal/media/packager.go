@@ -147,6 +147,10 @@ type ladderPlan struct {
 	threads int
 	// hasAudio reports whether the source has an audio stream to encode.
 	hasAudio bool
+	// sourceAudioKbps is the source audio stream's own bitrate (0 = unknown). It
+	// is read only by an audio-only plan, which has no rung to take a budget from
+	// and would otherwise re-encode every podcast at the ceiling.
+	sourceAudioKbps int
 }
 
 // audioOnly reports that this plan has no video at all: the source carried none,
@@ -158,10 +162,10 @@ func (p ladderPlan) audioOnly() bool { return len(p.rungs) == 0 }
 
 // audioBitrateKbps is the AAC budget for the ladder's SINGLE shared audio
 // representation: the top rung's, or — when there are no rungs to read one from
-// — the standalone audio-only budget.
+// — the audio-only budget, which is bounded by what the source actually carries.
 func (p ladderPlan) audioBitrateKbps() int {
 	if p.audioOnly() {
-		return hlsAudioOnlyKbps
+		return audioOnlyKbpsFor(p.sourceAudioKbps)
 	}
 	return p.rungs[0].AudioKbps
 }
@@ -206,7 +210,11 @@ type packageRequest struct {
 	// prefix is the storage-key directory the packaged tree is stored under.
 	prefix string
 	rungs  []HLSRung
-	tools  packageTools
+	// audioKbps is the budget the ladder's single shared audio representation was
+	// ENCODED at, which is what its manifests must declare. It is carried rather
+	// than re-derived because an audio-only tree has no rung to derive it from.
+	audioKbps int
+	tools     packageTools
 	// onPackagingFailed and onStoreFailed report a fatal error through the
 	// caller's per-rung progress projection before it is returned. Both are
 	// optional.

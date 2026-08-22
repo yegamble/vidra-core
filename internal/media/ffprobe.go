@@ -222,6 +222,12 @@ type ffprobeOutput struct {
 		Height       int    `json:"height"`
 		AvgFrameRate string `json:"avg_frame_rate"`
 		RFrameRate   string `json:"r_frame_rate"`
+		BitRate      string `json:"bit_rate"`
+		Disposition  struct {
+			// AttachedPic marks a stream that is a still image carried inside a
+			// media file — album art, a podcast cover — rather than video to play.
+			AttachedPic int `json:"attached_pic"`
+		} `json:"disposition"`
 	} `json:"streams"`
 	Format struct {
 		Duration string `json:"duration"`
@@ -246,23 +252,78 @@ func parseFFProbe(b []byte) (Metadata, error) {
 	}
 	// The video scan stops at the first usable stream (as it always has); the
 	// audio scan cannot, because an audio stream may follow it.
+	//
+	// COVER ART IS NOT VIDEO, and this is the single most important thing this
+	// loop gets right. ffprobe reports an attached picture — the album art on a
+	// music file, the cover on a podcast episode — as a codec_type "video" stream
+	// WITH REAL DIMENSIONS (mjpeg 600x600 is typical). Taking it at face value
+	// means an audio file is never classified audio-only, a whole ABR ladder is
+	// planned from one still image, and the trick-play pass then fails on a
+	// stream with no meaningful timeline — five retries and a dead letter, which
+	// is precisely the failure the audio-only path exists to eliminate, for the
+	// shape most podcast and music uploads actually have. The disposition flag is
+	// the only reliable signal: dimensions, duration and frame rate all look
+	// plausible on an attached picture.
 	video := false
 	for _, s := range out.Streams {
 		switch {
-		case !video && s.CodecType == "video" && s.Width > 0 && s.Height > 0:
+		case !video && s.CodecType == "video" && s.Width > 0 && s.Height > 0 && s.Disposition.AttachedPic == 0:
 			video = true
 			m.Width = s.Width
 			m.Height = s.Height
-			m.FPS = parseFrameRate(s.AvgFrameRate)
-			if m.FPS == 0 {
-				m.FPS = parseFrameRate(s.RFrameRate)
-			}
+			m.FPS = streamFrameRate(s.AvgFrameRate, s.RFrameRate)
 		case s.CodecType == "audio":
 			m.HasAudio = true
+			if m.AudioKbps == 0 {
+				m.AudioKbps = parseBitrateKbps(s.BitRate)
+			}
 		}
 	}
 	return m, nil
 }
+
+// maxFallbackFPS bounds the r_frame_rate FALLBACK. r_frame_rate is not a frame
+// rate at all — it is the smallest tick the stream's timestamps are expressible
+// in — so for a container that reports no usable average it can be the timebase
+// (90000/1 on MPEG-TS-derived streams, 1000/1 on some MP4s) rather than
+// anything the pictures do. 120 is above every real acquisition rate this
+// pipeline plans for and far below those ticks.
+const maxFallbackFPS = 120
+
+// streamFrameRate resolves a video stream's rate: the average when the container
+// gives a usable one, else r_frame_rate — but only when that is PLAUSIBLE.
+//
+// The fallback exists for a real case: a short single-GOP clip, or an MPEG-TS
+// capture, where ffprobe cannot average and reports "0/0" while r_frame_rate is
+// the genuine 25/30/60. It must keep working. What it must not do is let a
+// container's timebase through as a frame rate — that value now drives the
+// ladder's bitrate budget (fpsVideoBitrateMultiplier), so a 90000/1 read would
+// silently buy every rung the 1.6x high-frame-rate budget for standard-rate
+// pictures. Unknown is the safe answer, and unknown means the shipped table.
+func streamFrameRate(avg, r string) float64 {
+	if fps := parseFrameRate(avg); fps > 0 {
+		return fps
+	}
+	if fps := parseFrameRate(r); fps > 0 && fps <= maxFallbackFPS {
+		return fps
+	}
+	return 0
+}
+
+// parseBitrateKbps converts ffprobe's bits-per-second string to whole kbps,
+// rounded to nearest. 0 for absent/unparseable/absurd values ("unknown"), which
+// every caller reads as "no usable hint".
+func parseBitrateKbps(v string) int {
+	bps, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil || bps <= 0 || bps > maxProbeBitrateBps {
+		return 0
+	}
+	return int(bps/1000 + 0.5)
+}
+
+// maxProbeBitrateBps caps a parsed bitrate (1 Gbit/s) so an absurd value a
+// crafted file makes ffprobe emit cannot drive an encode decision.
+const maxProbeBitrateBps = 1e9
 
 // maxProbeFPS caps a parsed frame rate so an absurd value a crafted file makes
 // ffprobe emit can't drive planning decisions (real content tops out well

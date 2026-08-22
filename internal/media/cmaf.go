@@ -403,7 +403,7 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 		}
 	}
 
-	master, err := renderCMAFMasterPlaylist(req.rungs, layout, trickPlay)
+	master, err := renderCMAFMasterPlaylist(req.rungs, req.audioKbps, layout, trickPlay)
 	if err != nil {
 		req.packagingFailed()
 		return packageResult{}, fmt.Errorf("media: cmaf master playlist for %q: %w", req.sourceKey, err)
@@ -829,16 +829,16 @@ func fixCMAFMediaPlaylist(playlist []byte) ([]byte, error) {
 // codec list is wrong or incomplete is exactly what Safari refuses, and a master
 // that is silently unplayable in one browser is far worse than a failed
 // transcode an operator can see.
-func renderCMAFMasterPlaylist(rungs []HLSRung, layout cmafLayout, trickPlay map[int]hlsTrickPlayInfo) (string, error) {
+func renderCMAFMasterPlaylist(rungs []HLSRung, audioKbps int, layout cmafLayout, trickPlay map[int]hlsTrickPlayInfo) (string, error) {
 	if len(rungs) == 0 {
-		return renderCMAFAudioOnlyMasterPlaylist(layout)
+		return renderCMAFAudioOnlyMasterPlaylist(audioKbps, layout)
 	}
 	// Audio is encoded ONCE for the whole ladder, so every variant's peak rate
-	// includes the same audio bitrate — the top rung's. Using each rung's own
-	// AudioKbps here (as the MPEG-TS master legitimately does, because MPEG-TS
-	// really does encode audio per rung) would under-declare BANDWIDTH on every
-	// variant below the top, and RFC 8216 requires it to be the peak.
-	audioKbps := rungs[0].AudioKbps
+	// includes the same audio bitrate — the one the shared representation was
+	// encoded at. Using each rung's own AudioKbps here (as the MPEG-TS master
+	// legitimately does, because MPEG-TS really does encode audio per rung) would
+	// under-declare BANDWIDTH on every variant below the top, and RFC 8216
+	// requires it to be the peak.
 	if !layout.hasAudio {
 		audioKbps = 0
 	}
@@ -890,14 +890,17 @@ func cmafVariantBandwidth(r HLSRung, sharedAudioKbps int) int {
 // EXT-X-MEDIA rendition group — a group describes alternates OF a video
 // presentation, and referencing one from no variant at all is not a playlist any
 // client will start.
-func renderCMAFAudioOnlyMasterPlaylist(layout cmafLayout) (string, error) {
+func renderCMAFAudioOnlyMasterPlaylist(audioKbps int, layout cmafLayout) (string, error) {
 	if !layout.hasAudio || layout.audioCodecs == "" {
 		return "", errors.New("audio-only master needs an audio representation")
+	}
+	if audioKbps <= 0 {
+		return "", errors.New("audio-only master needs the encoded audio budget")
 	}
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
 	fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,CODECS=%q\n",
-		cmafAudioOnlyBandwidth(hlsAudioOnlyKbps), layout.audioCodecs)
+		cmafAudioOnlyBandwidth(audioKbps), layout.audioCodecs)
 	b.WriteString(cmafDirName + "/" + cmafMediaPlaylistName(layout.audioRep) + "\n")
 	return b.String(), nil
 }

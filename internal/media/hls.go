@@ -143,13 +143,52 @@ func effectiveOutputFPS(settings HLSEncodeSettings, sourceFPS float64) float64 {
 	return sourceFPS
 }
 
-// hlsAudioOnlyKbps is the AAC budget for a source that has NO video: the whole
-// deliverable is the audio, so it gets the ladder's top-rung audio budget rather
-// than any lower tier's. There is no rung to read it from — an audio-only plan
-// has none, deliberately: the canonical rung universe is video heights and adding
-// a 0p rung to it was explicitly ruled out (see HLSCanonicalRungHeights and the
-// transcoding_resolutions validator, which both refuse 0).
+// hlsAudioOnlyKbps is the CEILING for a source that has no video: the whole
+// deliverable is the audio, so it may have the ladder's top-rung audio budget
+// rather than any lower tier's. There is no rung to read it from — an audio-only
+// plan has none, deliberately: the canonical rung universe is video heights and
+// adding a 0p rung to it was explicitly ruled out (see HLSCanonicalRungHeights
+// and the transcoding_resolutions validator, which both refuse 0).
 const hlsAudioOnlyKbps = 160
+
+// hlsAudioSteps are the AAC budgets this pipeline allocates, ascending. They are
+// exactly the values in the rung table, so an audio-only rendition never lands on
+// a rate no video rendition could have.
+var hlsAudioSteps = []int{64, 96, 128, 160}
+
+// audioOnlyKbpsFor is the AAC budget for an audio-only rendition given the
+// SOURCE's own audio bitrate in kbps (0 = the container did not say).
+//
+// THE RULE: the smallest step in hlsAudioSteps whose nominal rate, allowed a 10%
+// overshoot, still covers the source — and hlsAudioOnlyKbps when nothing does.
+// An unknown source rate takes the ceiling, because guessing low would degrade
+// audio that is the entire content.
+//
+// It exists because the ceiling alone re-encodes a 64 kbps mono podcast to 160
+// kbps stereo: two and a half times the bytes, none of them information the
+// source ever had. Lossy-to-lossy transcoding cannot recover what the first
+// encoder discarded, so spending above the source is spending on nothing.
+//
+// The 10% allowance is what makes the rule work on real files rather than on
+// nominal ones: a stream authored at 64 kbps probes at 64276 bps once container
+// overhead and VBR are counted, and must still be recognised as the 64 step
+// instead of being promoted to 96. Real steps are 33-50% apart, so the allowance
+// cannot reach the next one.
+//
+// The channel count is deliberately NOT part of this: output stays -ac 2 (a mono
+// source is upmixed) because a single-channel HLS rendition is a compatibility
+// question this is not the place to answer. The bitrate is where the waste was.
+func audioOnlyKbpsFor(sourceKbps int) int {
+	if sourceKbps <= 0 {
+		return hlsAudioOnlyKbps
+	}
+	for _, step := range hlsAudioSteps {
+		if step*11/10 >= sourceKbps {
+			return step
+		}
+	}
+	return hlsAudioOnlyKbps
+}
 
 // HLSCanonicalRungHeights is the full rung universe an admin may enable via
 // transcoding_resolutions, tallest first (PeerTube's resolution set minus the
@@ -1023,7 +1062,11 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		return HLSResult{}, fmt.Errorf("media: source %q has no probeable video dimensions", sourceKey)
 	}
 	if audioOnly && !pkg.SupportsAudioOnly() {
-		return HLSResult{}, fmt.Errorf(
+		// PERMANENT. The verdict is a function of the source and the deployment's
+		// configured packager, neither of which a retry changes: five attempts
+		// would spend a quarter of an hour of backoff arriving at this same
+		// sentence. Dead-letter it now, with the sentence.
+		return HLSResult{}, permanentf(
 			"media: source %q is audio-only, which the %q packager cannot express: audio-only requires the %s packager",
 			sourceKey, pkg.Name(), PackagerCMAF)
 	}
@@ -1120,7 +1163,12 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 			})
 		}
 	}
-	plan := ladderPlan{rungs: rungs, threads: settings.Threads, hasAudio: md.HasAudio}
+	plan := ladderPlan{
+		rungs:           rungs,
+		threads:         settings.Threads,
+		hasAudio:        md.HasAudio,
+		sourceAudioKbps: md.AudioKbps,
+	}
 	reportAll("encoding", ProgressRunning, 1)
 	stderr, runErr := runFFmpegWithProgress(ctx, t.bin, hlsLadderArgsWith(pkg, src, out, plan), md.DurationSeconds, func(percent int) {
 		reportAll("encoding", ProgressRunning, percent*9/10)
@@ -1205,6 +1253,7 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		scratch:   tmp,
 		prefix:    prefix,
 		rungs:     rungs,
+		audioKbps: plan.audioBitrateKbps(),
 		tools:     t.packageTools(),
 		onPackagingFailed: func() {
 			reportAll("packaging", ProgressFailed, 92)

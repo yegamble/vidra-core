@@ -1340,3 +1340,81 @@ func TestStoreResultRecordsTheFormatAndAFailureDoesNotRewriteIt(t *testing.T) {
 		t.Errorf("unset format stored as %q, want %q", legacy.Format, media.HLSFormatTS)
 	}
 }
+
+// --- permanent failures -------------------------------------------------------
+
+// TestPermanentFailureDeadLettersOnTheFirstAttempt pins the short-circuit. Some
+// failures are verdicts, not accidents: "this packager cannot express this
+// source" is decided by the source and the deployment's configuration, and both
+// are identical on attempt five. Retrying spends the job's whole backoff budget
+// — about fifteen minutes with this schedule — restating it, while the operator
+// watches a job sit in 'pending' saying nothing useful.
+func TestPermanentFailureDeadLettersOnTheFirstAttempt(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	const msg = "media: source is audio-only, which the \"ts\" packager cannot express: audio-only requires the cmaf packager"
+	tc := &fakeTargetTranscoder{hlsErr: mediaPermanentError(msg)}
+	svc := NewService(repo, tc)
+
+	if err := svc.EnqueueTarget(context.Background(), videoID, "web-videos/x.m4a", TargetAll); err != nil {
+		t.Fatalf("EnqueueTarget: %v", err)
+	}
+	if n, err := svc.DrainJobs(context.Background(), 10); err != nil || n != 0 {
+		t.Fatalf("DrainJobs = (%d, %v), want (0, nil)", n, err)
+	}
+
+	j := repo.job(t, videoID)
+	if j.State != "failed" {
+		t.Errorf("job state = %q after one attempt, want failed", j.State)
+	}
+	if j.Attempts != 1 {
+		t.Errorf("attempts = %d, want 1 — a permanent verdict must not be retried", j.Attempts)
+	}
+	// The reason must survive: dead-lettering silently is worse than retrying.
+	if !strings.Contains(j.LastError, "audio-only requires the cmaf packager") {
+		t.Errorf("last_error = %q, want the packager the operator must switch to", j.LastError)
+	}
+	// A permanent HLS failure still marks the playlist failed and still fires the
+	// release hook, exactly as a retry-exhausted one does — only the waiting is
+	// skipped.
+	if got := repo.playlists[videoID].State; got != PlaylistFailed {
+		t.Errorf("playlist state = %q, want %q", got, PlaylistFailed)
+	}
+	// And a second drain finds nothing: the row is terminal, not merely deferred.
+	if n, err := svc.DrainJobs(context.Background(), 10); err != nil || n != 0 {
+		t.Fatalf("second DrainJobs = (%d, %v), want (0, nil)", n, err)
+	}
+	if len(tc.allCalls) != 1 {
+		t.Errorf("transcoder ran %d times, want exactly 1", len(tc.allCalls))
+	}
+}
+
+// TestTransientFailureStillRetries is the counterweight: only errors that
+// announce themselves permanent short-circuit. Everything that touches the
+// network, the disk or a subprocess keeps its retry budget.
+func TestTransientFailureStillRetries(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	tc := &fakeTargetTranscoder{hlsErr: errors.New("ffmpeg: signal: killed")}
+	svc := NewService(repo, tc)
+	if err := svc.EnqueueTarget(context.Background(), videoID, "web-videos/x.mp4", TargetAll); err != nil {
+		t.Fatalf("EnqueueTarget: %v", err)
+	}
+	if _, err := svc.DrainJobs(context.Background(), 10); err != nil {
+		t.Fatalf("DrainJobs: %v", err)
+	}
+	if j := repo.job(t, videoID); j.State != "pending" || j.Attempts != 1 {
+		t.Errorf("job = state %q attempts %d, want pending/1 (rescheduled with backoff)", j.State, j.Attempts)
+	}
+}
+
+// mediaPermanentError produces the error shape internal/media returns for a
+// verdict, through the exported predicate the service actually consults — so
+// this test cannot pass by agreeing with a duplicate of the rule.
+func mediaPermanentError(msg string) error {
+	err := media.NewPermanentError(msg)
+	if !media.IsPermanent(err) {
+		panic("fixture is stale: media.NewPermanentError no longer produces a permanent error")
+	}
+	return err
+}

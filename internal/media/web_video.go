@@ -200,6 +200,11 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 		// the caller record nothing, which is exactly right — anything else would
 		// fail a job whose work is genuinely done.
 		if md.AudioOnly() {
+			// Asymmetry worth naming: TranscodeHLS refuses an audio-only source on
+			// the MPEG-TS packager, this succeeds emptily on either. It is right —
+			// there is genuinely no progressive video to build regardless of
+			// packaging — but it does mean a standalone target='web_video' rebuild
+			// of an audio-only video reports success while producing nothing.
 			return nil, nil
 		}
 		return nil, fmt.Errorf("media: source %q has no probeable video dimensions", sourceKey)

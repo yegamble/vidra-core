@@ -989,6 +989,178 @@ func TestCMAFAudioOnlySourceProducesAnAudioRendition(t *testing.T) {
 	}
 }
 
+// coverArtSourcePath generates a real audio file carrying a cover image — the
+// shape a podcast episode or a music track actually has — and writes it to dst.
+// It is built in two steps because ffmpeg only sets the attached_pic disposition
+// on a stream it is muxing from a separate still input.
+func coverArtSourcePath(t *testing.T, dst string) {
+	t.Helper()
+	dir := t.TempDir()
+	audio := filepath.Join(dir, "audio.m4a")
+	if out, err := exec.Command("ffmpeg", "-y", "-f", "lavfi",
+		"-i", "sine=frequency=440:duration=8:sample_rate=48000",
+		"-ac", "1", "-c:a", "aac", "-b:a", "64k", audio).CombinedOutput(); err != nil {
+		t.Fatalf("generate audio: %v\n%s", err, out)
+	}
+	cover := filepath.Join(dir, "cover.png")
+	if out, err := exec.Command("ffmpeg", "-y", "-f", "lavfi",
+		"-i", "color=c=blue:s=600x600:d=1", "-frames:v", "1", cover).CombinedOutput(); err != nil {
+		t.Fatalf("generate cover: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("ffmpeg", "-y", "-i", audio, "-i", cover,
+		"-map", "0:a", "-map", "1:v", "-c:a", "copy", "-c:v", "mjpeg",
+		"-disposition:v", "attached_pic", dst).CombinedOutput(); err != nil {
+		t.Fatalf("mux cover art: %v\n%s", err, out)
+	}
+}
+
+// TestCoverArtSourceIsTranscodedAsAudioOnly is the regression for the failure
+// the audio-only path was shipped to eliminate and, for its most common input,
+// did not. ffprobe reports an attached picture as a codec_type "video" stream
+// WITH REAL DIMENSIONS, so the file was never classified audio-only: a whole ABR
+// ladder was planned from one still image and the trick-play pass then failed
+// with "invalid trick-play segment duration" — five retries and a dead letter.
+//
+// Every step is asserted end to end against real ffmpeg: the probe's verdict,
+// then a successful transcode with the audio-only tree shape.
+func TestCoverArtSourceIsTranscodedAsAudioOnly(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	videoID := uuid.New()
+	srcKey := "web-videos/" + videoID.String() + ".mp4"
+	srcPath, perr := blobs.Path(srcKey)
+	if perr != nil {
+		t.Fatalf("Path: %v", perr)
+	}
+	if merr := os.MkdirAll(filepath.Dir(srcPath), 0o755); merr != nil {
+		t.Fatalf("mkdir: %v", merr)
+	}
+	coverArtSourcePath(t, srcPath)
+
+	// The fixture is only worth anything if ffprobe really does present the
+	// picture as video; if a future ffmpeg stops doing that, say so rather than
+	// passing for the wrong reason.
+	raw, rerr := exec.Command("ffprobe", "-v", "error", "-print_format", "json",
+		"-show_streams", srcPath).Output()
+	if rerr != nil {
+		t.Fatalf("ffprobe: %v", rerr)
+	}
+	if !strings.Contains(string(raw), `"codec_type": "video"`) {
+		t.Skip("this ffmpeg does not mux the cover as a video stream; the fixture would prove nothing")
+	}
+
+	tc, ok := DetectHLSTranscoder(blobs)
+	if !ok {
+		t.Fatal("DetectHLSTranscoder = false")
+	}
+	if serr := tc.SetPackager(PackagerCMAF); serr != nil {
+		t.Fatalf("SetPackager: %v", serr)
+	}
+	md, err := tc.Probe(context.Background(), srcKey)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if md.HasVideo() {
+		t.Fatalf("probe read the cover art as video (%dx%d): the ladder would be planned from a still",
+			md.Width, md.Height)
+	}
+	if !md.AudioOnly() {
+		t.Fatalf("probe verdict = %+v, want audio-only", md)
+	}
+	if md.AudioKbps != 64 {
+		t.Errorf("probed audio bitrate = %d kbps, want the source's 64", md.AudioKbps)
+	}
+
+	res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, md, nil)
+	if err != nil {
+		t.Fatalf("TranscodeAll on an audio-with-cover-art source: %v", err)
+	}
+	if len(res.Renditions) != 0 || len(files) != 0 {
+		t.Errorf("cover-art source produced %d renditions and %d web videos, want none",
+			len(res.Renditions), len(files))
+	}
+	keys, kerr := blobs.ListKeys(context.Background(), HLSKeyPrefix(videoID))
+	if kerr != nil {
+		t.Fatalf("ListKeys: %v", kerr)
+	}
+	var rels []string
+	segRE := regexp.MustCompile(`^cmaf/chunk-0-[0-9]{5}\.m4s$`)
+	for _, k := range keys {
+		rel := strings.TrimPrefix(k, HLSKeyPrefix(videoID)+"/")
+		if !segRE.MatchString(rel) {
+			rels = append(rels, rel)
+		}
+	}
+	sort.Strings(rels)
+	want := []string{"audio.m4a", "cmaf/init-0.mp4", "cmaf/media_0.m3u8", "cmaf/stream.mpd", "master.m3u8"}
+	if strings.Join(rels, "\n") != strings.Join(want, "\n") {
+		t.Errorf("cover-art tree shape:\n got %s\nwant %s", strings.Join(rels, "\n "), strings.Join(want, "\n "))
+	}
+	// No still image was encoded as a rendition, and no rung directory exists.
+	for _, k := range keys {
+		if strings.Contains(k, "600p") || strings.HasSuffix(k, "video.mp4") {
+			t.Errorf("a rendition was built from the cover art: %s", k)
+		}
+	}
+	// The audio budget follows the 64 kbps source rather than the ceiling.
+	master := readObject(t, blobs, res.MasterKey)
+	if wantBW := fmt.Sprintf("BANDWIDTH=%d,", 64*1000*11/10); !strings.Contains(string(master), wantBW) {
+		t.Errorf("master does not declare the capped 64k budget (%s):\n%s", wantBW, master)
+	}
+}
+
+// TestCoverArtSourceOnTSIsRefusedPermanently: the same source on the rollback
+// packager gets the refusal every other audio-only source gets, and it is marked
+// FINAL so the queue does not spend five attempts and a quarter of an hour of
+// backoff rediscovering a verdict about the deployment's configuration.
+func TestCoverArtSourceOnTSIsRefusedPermanently(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	videoID := uuid.New()
+	srcKey := "web-videos/" + videoID.String() + ".mp4"
+	srcPath, perr := blobs.Path(srcKey)
+	if perr != nil {
+		t.Fatalf("Path: %v", perr)
+	}
+	if merr := os.MkdirAll(filepath.Dir(srcPath), 0o755); merr != nil {
+		t.Fatalf("mkdir: %v", merr)
+	}
+	coverArtSourcePath(t, srcPath)
+
+	tc, ok := DetectHLSTranscoder(blobs)
+	if !ok {
+		t.Fatal("DetectHLSTranscoder = false")
+	}
+	if serr := tc.SetPackager(PackagerTS); serr != nil {
+		t.Fatalf("SetPackager: %v", serr)
+	}
+	_, err = tc.Transcode(context.Background(), videoID, srcKey)
+	if err == nil {
+		t.Fatal("the MPEG-TS packager accepted an audio-with-cover-art source")
+	}
+	if !IsPermanent(err) {
+		t.Errorf("error %q is retryable; a packager verdict cannot change between attempts", err)
+	}
+	if !strings.Contains(err.Error(), "audio-only requires the cmaf packager") {
+		t.Errorf("error = %q, want it to name the packager an operator must switch to", err)
+	}
+}
+
 // TestCMAFAudioOnlyStreamedLadder proves the same source survives the streaming
 // transport, where every object is PUT into the store as ffmpeg writes it and
 // finalisation reads its own output back over HTTP.
