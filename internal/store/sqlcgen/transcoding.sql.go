@@ -202,7 +202,7 @@ func (q *Queries) FailTranscodeJob(ctx context.Context, arg FailTranscodeJobPara
 }
 
 const getStreamingPlaylist = `-- name: GetStreamingPlaylist :one
-SELECT video_id, master_key, state, created_at, updated_at FROM streaming_playlists WHERE video_id = $1
+SELECT video_id, master_key, state, created_at, updated_at, format FROM streaming_playlists WHERE video_id = $1
 `
 
 func (q *Queries) GetStreamingPlaylist(ctx context.Context, videoID uuid.UUID) (StreamingPlaylist, error) {
@@ -214,6 +214,7 @@ func (q *Queries) GetStreamingPlaylist(ctx context.Context, videoID uuid.UUID) (
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Format,
 	)
 	return i, err
 }
@@ -342,21 +343,37 @@ func (q *Queries) SweepExpiredTranscodeJobs(ctx context.Context) (int64, error) 
 }
 
 const upsertStreamingPlaylist = `-- name: UpsertStreamingPlaylist :one
-INSERT INTO streaming_playlists (video_id, master_key, state)
-VALUES ($1, $2, $3)
+INSERT INTO streaming_playlists (video_id, master_key, state, format)
+VALUES ($1, $2, $3, COALESCE(NULLIF($4::text, ''), 'hls-ts'))
 ON CONFLICT (video_id) DO UPDATE
-SET master_key = EXCLUDED.master_key, state = EXCLUDED.state, updated_at = now()
-RETURNING video_id, master_key, state, created_at, updated_at
+SET master_key = EXCLUDED.master_key,
+    state = EXCLUDED.state,
+    -- Re-transcoding into the other format REPLACES the record: after a
+    -- TRANSCODING_PACKAGER rollback the row must describe the tree that is
+    -- actually stored, not the one that used to be.
+    format = EXCLUDED.format,
+    updated_at = now()
+RETURNING video_id, master_key, state, created_at, updated_at, format
 `
 
 type UpsertStreamingPlaylistParams struct {
 	VideoID   uuid.UUID `json:"video_id"`
 	MasterKey string    `json:"master_key"`
 	State     string    `json:"state"`
+	Format    string    `json:"format"`
 }
 
+// format records the packaging shape of the tree master_key points at (0108).
+// An empty value folds to 'hls-ts' rather than violating the CHECK: a caller
+// that has no opinion is describing the only shape that existed before CMAF,
+// and the promotion of a tree must never fail on a field it did not set.
 func (q *Queries) UpsertStreamingPlaylist(ctx context.Context, arg UpsertStreamingPlaylistParams) (StreamingPlaylist, error) {
-	row := q.db.QueryRow(ctx, upsertStreamingPlaylist, arg.VideoID, arg.MasterKey, arg.State)
+	row := q.db.QueryRow(ctx, upsertStreamingPlaylist,
+		arg.VideoID,
+		arg.MasterKey,
+		arg.State,
+		arg.Format,
+	)
 	var i StreamingPlaylist
 	err := row.Scan(
 		&i.VideoID,
@@ -364,6 +381,7 @@ func (q *Queries) UpsertStreamingPlaylist(ctx context.Context, arg UpsertStreami
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Format,
 	)
 	return i, err
 }

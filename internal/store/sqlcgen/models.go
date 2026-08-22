@@ -745,6 +745,7 @@ type StreamingPlaylist struct {
 	State     string    `json:"state"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	Format    string    `json:"format"`
 }
 
 type TranscodeJob struct {

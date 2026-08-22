@@ -526,10 +526,16 @@ func (s *Service) storeResult(ctx context.Context, videoID uuid.UUID, res media.
 			return err
 		}
 	}
+	// The promotion. Format records the packaging shape of the tree MasterKey now
+	// points at (migration 0108), so serving can tell a CMAF tree from a legacy
+	// MPEG-TS one without probing storage — and so a TRANSCODING_PACKAGER change
+	// affects only videos transcoded after it. An empty value is the pre-CMAF
+	// shape; the query folds it to 'hls-ts'.
 	_, err := s.repo.UpsertStreamingPlaylist(ctx, sqlcgen.UpsertStreamingPlaylistParams{
 		VideoID:   videoID,
 		MasterKey: res.MasterKey,
 		State:     PlaylistReady,
+		Format:    res.Format,
 	})
 	return err
 }
