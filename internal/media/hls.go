@@ -376,9 +376,12 @@ func hlsLadderArgs(src source, out output, rungs []HLSRung, threads int) []strin
 }
 
 // hlsLadderArgsWith is hlsLadderArgs with the packaging format selected: the
-// ENCODE arguments come from this file and the container arguments from pkg, so
-// a second packaging format is a second Packager rather than a second ladder
-// builder.
+// DECODE half (one input, one filter graph forking it into a branch per rung)
+// comes from this file, and the OUTPUT half — how those branches are wired into
+// outputs, with which encoder and container settings — from pkg. That is why a
+// second packaging format is a second Packager rather than a second ladder
+// builder, even though CMAF's output half is one shared muxer block rather than
+// one per rung.
 func hlsLadderArgsWith(pkg Packager, src source, out output, rungs []HLSRung, threads int) []string {
 	args := []string{"-y"}
 	args = append(args, src.inputArgs()...)
@@ -390,7 +393,7 @@ func hlsLadderArgsWith(pkg Packager, src source, out output, rungs []HLSRung, th
 	}
 	outLabels := make([]string, len(rungs))
 	for i, r := range rungs {
-		vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height)
+		vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height) + pkg.ScaleFilterSuffix()
 		if r.FPS > 0 {
 			vf += fmt.Sprintf(",fps=%d", r.FPS)
 		}
@@ -399,19 +402,7 @@ func hlsLadderArgsWith(pkg Packager, src source, out output, rungs []HLSRung, th
 	}
 	args = append(args, "-filter_complex", strings.Join(chains, ";"))
 
-	per := perOutputThreads(threads, len(rungs))
-	for i, r := range rungs {
-		args = append(args,
-			"-map", "["+outLabels[i]+"]",
-			"-map", "0:a:0?",
-		)
-		if per > 0 {
-			args = append(args, "-threads", strconv.Itoa(per))
-		}
-		args = append(args, hlsRungEncodeArgs(r, "")...)
-		args = append(args, pkg.VariantMuxerArgs(out, rungDest(out, r), r)...)
-	}
-	return args
+	return append(args, pkg.LadderOutputArgs(out, rungs, outLabels, threads)...)
 }
 
 // hlsTrickPlayLadderArgs builds ONE ffmpeg argument vector emitting every rung's
@@ -438,52 +429,103 @@ func hlsTrickPlayLadderArgsWith(pkg Packager, src source, out output, rungs []HL
 	outLabels := make([]string, len(rungs))
 	for i, r := range rungs {
 		outLabels[i] = fmt.Sprintf("t%d", i)
-		chains = append(chains, fmt.Sprintf("[%s]scale=%d:%d,fps=1[%s]", labels[i], r.Width, r.Height, outLabels[i]))
+		chains = append(chains, fmt.Sprintf("[%s]scale=%d:%d%s,fps=1[%s]",
+			labels[i], r.Width, r.Height, pkg.ScaleFilterSuffix(), outLabels[i]))
 	}
 	args = append(args, "-filter_complex", strings.Join(chains, ";"))
 
-	per := perOutputThreads(threads, len(rungs))
-	for i, r := range rungs {
-		args = append(args, "-map", "["+outLabels[i]+"]", "-an")
-		if per > 0 {
-			args = append(args, "-threads", strconv.Itoa(per))
-		}
-		args = append(args, trickPlayEncodeArgs("")...)
-		args = append(args, pkg.TrickPlayMuxerArgs(out, rungDest(out, r), r)...)
-	}
-	return args
+	return append(args, pkg.TrickPlayOutputArgs(out, rungs, outLabels, threads)...)
+}
+
+// streamSpec renders the ffmpeg stream-specifier suffixes ONE stream's encoder
+// options carry on a particular output.
+//
+// It exists because the two packaging formats wire their encoders into outputs
+// differently. MPEG-TS gives every rung its own output holding exactly one video
+// and one audio stream, so its options need no more qualification than the type
+// they have always carried ("-c:v", "-preset"). CMAF puts EVERY rung on one dash
+// output, where an unqualified "-b:v" would be applied to all of them and the
+// ladder would silently collapse to a single bitrate — each option must name its
+// stream ("-c:v:1", "-preset:v:1").
+//
+// typed suffixes options that are already type-qualified today; bare suffixes
+// those written with no specifier at all. Keeping the two apart is what lets the
+// MPEG-TS vectors stay byte-for-byte what they have always been.
+type streamSpec struct {
+	typed string
+	bare  string
+}
+
+// soleVideoStream / soleAudioStream are the specifiers for an output carrying
+// exactly one stream of that type: precisely the qualification this package
+// emitted before CMAF existed.
+var (
+	soleVideoStream = streamSpec{typed: ":v"}
+	soleAudioStream = streamSpec{typed: ":a"}
+)
+
+// sharedVideoStream is the specifier for video stream i of an output carrying
+// several. sharedAudioStream is its audio counterpart.
+func sharedVideoStream(i int) streamSpec {
+	s := ":v:" + strconv.Itoa(i)
+	return streamSpec{typed: s, bare: s}
+}
+
+func sharedAudioStream(i int) streamSpec {
+	s := ":a:" + strconv.Itoa(i)
+	return streamSpec{typed: s, bare: s}
 }
 
 // hlsRungEncodeArgs is one variant's ENCODER configuration — codec, rate control
-// and the key-frame cadence — shared by the ladder and its oracle so they cannot
-// drift. It stops at the elementary streams: what container they land in is the
-// packager's half of the vector (Packager.VariantMuxerArgs). vf is the scale
-// filter chain for the single-rung oracle; the ladder passes "" because its
-// filter graph has already scaled the branch.
+// and the key-frame cadence — for an output that carries it alone, shared by the
+// MPEG-TS ladder and its oracle so they cannot drift. It stops at the elementary
+// streams: what container they land in is the packager's half of the vector. vf
+// is the scale filter chain for the single-rung oracle; the ladder passes ""
+// because its filter graph has already scaled the branch.
 func hlsRungEncodeArgs(r HLSRung, vf string) []string {
+	return append(
+		hlsRungVideoEncodeArgs(r, soleVideoStream, vf),
+		hlsAudioEncodeArgs(r.AudioKbps, soleAudioStream)...,
+	)
+}
+
+// hlsRungVideoEncodeArgs is the VIDEO half of a variant's encoder configuration,
+// qualified by spec so it can be one of several encoders on a shared output.
+func hlsRungVideoEncodeArgs(r HLSRung, spec streamSpec, vf string) []string {
 	args := []string{
-		"-c:v", "libx264",
-		"-profile:v", "main",
-		"-preset", "veryfast",
-		"-pix_fmt", "yuv420p",
+		"-c" + spec.typed, "libx264",
+		"-profile" + spec.typed, "main",
+		"-preset" + spec.bare, "veryfast",
+		"-pix_fmt" + spec.bare, "yuv420p",
 	}
 	if vf != "" {
 		args = append(args, "-vf", vf)
 	}
 	return append(args,
-		"-b:v", fmt.Sprintf("%dk", r.VideoKbps),
-		"-maxrate", fmt.Sprintf("%dk", r.VideoKbps),
-		"-bufsize", fmt.Sprintf("%dk", 2*r.VideoKbps),
+		"-b"+spec.typed, fmt.Sprintf("%dk", r.VideoKbps),
+		"-maxrate"+spec.bare, fmt.Sprintf("%dk", r.VideoKbps),
+		"-bufsize"+spec.bare, fmt.Sprintf("%dk", 2*r.VideoKbps),
 		// The key-frame cadence is an ENCODER setting with a packaging purpose:
 		// every packaging format cuts segments on independently decodable IDR
 		// frames, so one is forced at each segment boundary and the muxer cuts
 		// there. It stays on this side of the seam because only the encoder can
 		// place a key frame.
-		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", hlsSegmentSeconds),
-		"-c:a", "aac",
-		"-b:a", fmt.Sprintf("%dk", r.AudioKbps),
-		"-ac", "2",
+		"-force_key_frames"+spec.bare, fmt.Sprintf("expr:gte(t,n_forced*%d)", hlsSegmentSeconds),
 	)
+}
+
+// hlsAudioEncodeArgs is the AAC configuration for an output's audio stream.
+//
+// MPEG-TS encodes it once per rung (each variant is self-contained); CMAF
+// encodes it ONCE for the whole ladder, as the single audio representation every
+// video representation references — which is why the bitrate is a parameter
+// rather than being read off a rung.
+func hlsAudioEncodeArgs(kbps int, spec streamSpec) []string {
+	return []string{
+		"-c" + spec.typed, "aac",
+		"-b" + spec.typed, fmt.Sprintf("%dk", kbps),
+		"-ac" + spec.bare, "2",
+	}
 }
 
 // trickPlayEncodeArgs is the dense-I-frame ENCODER configuration: one frame per
@@ -540,7 +582,12 @@ type HLSRendition struct {
 // the renditions written under it. When VP9 is enabled it also carries the
 // progressive VP9/WebM alternate's storage key + size (empty/zero otherwise).
 type HLSResult struct {
-	MasterKey  string
+	MasterKey string
+	// Format is the packaging format this tree was written in (HLSFormatTS /
+	// HLSFormatCMAF), recorded per video so serving can tell a CMAF tree from a
+	// legacy MPEG-TS one. Empty from a caller that predates the record; the
+	// store reads that as HLSFormatTS.
+	Format     string
 	Renditions []HLSRendition
 	WebMKey    string
 	WebMHeight int
@@ -697,6 +744,42 @@ func (t *HLSTranscoder) packageTools() packageTools {
 	return packageTools{blobs: t.blobs, ffmpeg: t.bin, ffprobe: t.probe.bin}
 }
 
+// SetPackager selects the packaging format this transcoder emits by name
+// (PackagerTS / PackagerCMAF), the boot-baked TRANSCODING_PACKAGER choice. An
+// unknown name is refused rather than silently falling back, so a typo cannot
+// quietly re-package a whole deployment.
+//
+// It changes only what NEW transcodes produce. Every previously packaged video
+// keeps serving from its own recorded format, which is what makes the rollback
+// to MPEG-TS config-only.
+func (t *HLSTranscoder) SetPackager(name string) error {
+	pkg, ok := packagerByName(name)
+	if !ok {
+		return fmt.Errorf("media: unknown packager %q (want %s|%s)", name, PackagerCMAF, PackagerTS)
+	}
+	t.pkg = pkg
+	return nil
+}
+
+// packagerByName resolves a TRANSCODING_PACKAGER value to its implementation.
+func packagerByName(name string) (Packager, bool) {
+	switch name {
+	case PackagerTS:
+		return tsPackager{}, true
+	case PackagerCMAF:
+		return cmafPackager{}, true
+	default:
+		return nil, false
+	}
+}
+
+// IsPackagerName reports whether name selects a packaging format (the
+// TRANSCODING_PACKAGER validation set).
+func IsPackagerName(name string) bool {
+	_, ok := packagerByName(name)
+	return ok
+}
+
 // SetEncodeSettingsFunc wires the runtime encode-settings provider
 // (transcoding_resolutions / transcoding_max_fps / transcoding_threads /
 // transcoding_original_resolution). cmd/api points it at the instance-settings
@@ -783,11 +866,18 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
-	// Even when the ladder streams, the progressive MP4s need a real file:
-	// +faststart rewinds to move the moov atom to the front, and an HTTP PUT
-	// body cannot be rewound.
-	for _, r := range rungs {
-		if err := os.MkdirAll(filepath.Join(tmp, r.Name()), 0o755); err != nil {
+	// The packaging format contributes the muxer half of every rung's output
+	// arguments to the very same invocation that encodes it — ffmpeg packages as
+	// it encodes, so there is no separate packaging pass to run afterwards (see
+	// packager.go).
+	pkg := t.packager()
+
+	// ffmpeg opens its output files but never creates their directories, and the
+	// progressive MP4s need a real local file even when the ladder streams
+	// (+faststart rewinds to move the moov atom to the front, and an HTTP PUT
+	// body cannot be rewound). Which directories those are is format-specific.
+	for _, dir := range pkg.ScratchDirs(rungs) {
+		if err := os.MkdirAll(filepath.Join(tmp, dir), 0o755); err != nil {
 			return HLSResult{}, err
 		}
 	}
@@ -840,11 +930,6 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 			})
 		}
 	}
-	// The packaging format contributes the muxer half of every rung's output
-	// arguments to the very same invocation that encodes it — ffmpeg packages as
-	// it encodes, so there is no separate packaging pass to run afterwards (see
-	// packager.go).
-	pkg := t.packager()
 	reportAll("encoding", ProgressRunning, 1)
 	stderr, runErr := runFFmpegWithProgress(ctx, t.bin, hlsLadderArgsWith(pkg, src, out, rungs, settings.Threads), md.DurationSeconds, func(percent int) {
 		reportAll("encoding", ProgressRunning, percent*9/10)
@@ -915,7 +1000,7 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		return HLSResult{}, err
 	}
 
-	res := HLSResult{MasterKey: packaged.masterKey}
+	res := HLSResult{MasterKey: packaged.masterKey, Format: packaged.format}
 	for _, r := range rungs {
 		res.Renditions = append(res.Renditions, HLSRendition{
 			Height:    r.Height,

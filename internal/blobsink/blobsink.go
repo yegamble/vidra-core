@@ -67,9 +67,16 @@ import (
 	"time"
 )
 
-// coalescedSuffixes are the outputs the HLS muxer rewrites in place as it goes.
-// They are buffered until Flush instead of being written per rewrite.
-var coalescedSuffixes = []string{".m3u8"}
+// coalescedSuffixes are the outputs a muxer rewrites in place as it goes. They
+// are buffered until Flush instead of being written per rewrite.
+//
+// .m3u8 covers the HLS muxer, which rewrites the whole playlist after every
+// segment. .mpd covers the dash muxer used for CMAF, which is worse: in
+// non-streaming mode it rewrites the MPD *and* every media playlist once per
+// segment (dashenc's dash_flush → write_manifest). Without .mpd here, a
+// one-hour CMAF ladder would leave ~600 billable hidden versions of one manifest
+// on a versioned bucket.
+var coalescedSuffixes = []string{".m3u8", ".mpd"}
 
 // maxCoalescedBytes bounds one buffered playlist. A VOD playlist for a long
 // video is tens of KiB; this is generous enough never to bite in practice and
@@ -434,10 +441,17 @@ func contentTypeFor(key string) string {
 	switch {
 	case strings.HasSuffix(key, ".m3u8"):
 		return "application/vnd.apple.mpegurl"
+	case strings.HasSuffix(key, ".mpd"):
+		return "application/dash+xml"
 	case strings.HasSuffix(key, ".ts"):
 		return "video/mp2t"
 	case strings.HasSuffix(key, ".mp4"):
 		return "video/mp4"
+	case strings.HasSuffix(key, ".m4s"):
+		// CMAF media segments. The pipeline reads them back through this origin
+		// (the progressive remux consumes a media playlist and its segments), so
+		// the type has to be one a demuxer accepts.
+		return "video/iso.segment"
 	default:
 		return "application/octet-stream"
 	}
