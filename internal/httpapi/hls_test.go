@@ -118,9 +118,28 @@ func (f *transcodeFakeRepo) DeleteStreamingPlaylist(_ context.Context, videoID u
 }
 
 func (f *transcodeFakeRepo) UpsertStreamingPlaylist(_ context.Context, a sqlcgen.UpsertStreamingPlaylistParams) (sqlcgen.StreamingPlaylist, error) {
-	sp := sqlcgen.StreamingPlaylist{VideoID: a.VideoID, MasterKey: a.MasterKey, State: a.State}
+	sp := sqlcgen.StreamingPlaylist{VideoID: a.VideoID, MasterKey: a.MasterKey, State: a.State, Format: a.Format}
+	// The query folds an unset format to the pre-CMAF default rather than
+	// violating the CHECK constraint; mirror that here or the fake would let a
+	// caller store a format the database would reject.
+	if sp.Format == "" {
+		sp.Format = media.HLSFormatTS
+	}
 	f.playlists[a.VideoID] = sp
 	return sp, nil
+}
+
+// MarkStreamingPlaylistFailed clears the tree reference and leaves the format
+// alone, as the query does: a failure says nothing about what the last
+// successful transcode wrote.
+func (f *transcodeFakeRepo) MarkStreamingPlaylistFailed(_ context.Context, videoID uuid.UUID) error {
+	sp := f.playlists[videoID]
+	sp.VideoID, sp.MasterKey, sp.State = videoID, "", "failed"
+	if sp.Format == "" {
+		sp.Format = media.HLSFormatTS
+	}
+	f.playlists[videoID] = sp
+	return nil
 }
 
 func (f *transcodeFakeRepo) GetStreamingPlaylist(_ context.Context, videoID uuid.UUID) (sqlcgen.StreamingPlaylist, error) {

@@ -106,6 +106,7 @@ type Repository interface {
 	FailTranscodeJob(ctx context.Context, arg sqlcgen.FailTranscodeJobParams) error
 	HasLiveTranscodeJob(ctx context.Context, videoID uuid.UUID) (bool, error)
 	UpsertStreamingPlaylist(ctx context.Context, arg sqlcgen.UpsertStreamingPlaylistParams) (sqlcgen.StreamingPlaylist, error)
+	MarkStreamingPlaylistFailed(ctx context.Context, videoID uuid.UUID) error
 	GetStreamingPlaylist(ctx context.Context, videoID uuid.UUID) (sqlcgen.StreamingPlaylist, error)
 	DeleteStreamingPlaylist(ctx context.Context, videoID uuid.UUID) error
 	CreateVideoRendition(ctx context.Context, arg sqlcgen.CreateVideoRenditionParams) (sqlcgen.VideoRendition, error)
@@ -583,11 +584,9 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueTransco
 			affectsHLS = targetErr.target == TargetHLS
 		}
 		if affectsHLS {
-			_, _ = s.repo.UpsertStreamingPlaylist(ctx, sqlcgen.UpsertStreamingPlaylistParams{
-				VideoID:   row.VideoID,
-				MasterKey: "",
-				State:     PlaylistFailed,
-			})
+			// Not an Upsert: a failure knows nothing about what format the last
+			// successful transcode wrote, and must not rewrite that record.
+			_ = s.repo.MarkStreamingPlaylistFailed(ctx, row.VideoID)
 		}
 		// Best-effort terminal-failure hook: release a publish-after-transcode
 		// hold so the video publishes from its (playable) original rather than

@@ -182,9 +182,30 @@ func (f *fakeRepo) DeleteStreamingPlaylist(_ context.Context, videoID uuid.UUID)
 func (f *fakeRepo) UpsertStreamingPlaylist(_ context.Context, a sqlcgen.UpsertStreamingPlaylistParams) (sqlcgen.StreamingPlaylist, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	sp := sqlcgen.StreamingPlaylist{VideoID: a.VideoID, MasterKey: a.MasterKey, State: a.State}
+	sp := sqlcgen.StreamingPlaylist{VideoID: a.VideoID, MasterKey: a.MasterKey, State: a.State, Format: a.Format}
+	// The query folds an unset format to the pre-CMAF default rather than
+	// violating the CHECK constraint; mirror that here or the fake would let a
+	// caller store a format the database would reject.
+	if sp.Format == "" {
+		sp.Format = media.HLSFormatTS
+	}
 	f.playlists[a.VideoID] = sp
 	return sp, nil
+}
+
+// MarkStreamingPlaylistFailed clears the tree reference and leaves the format
+// alone, as the query does: a failure says nothing about what the last
+// successful transcode wrote.
+func (f *fakeRepo) MarkStreamingPlaylistFailed(_ context.Context, videoID uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	sp := f.playlists[videoID]
+	sp.VideoID, sp.MasterKey, sp.State = videoID, "", "failed"
+	if sp.Format == "" {
+		sp.Format = media.HLSFormatTS
+	}
+	f.playlists[videoID] = sp
+	return nil
 }
 
 func (f *fakeRepo) GetStreamingPlaylist(_ context.Context, videoID uuid.UUID) (sqlcgen.StreamingPlaylist, error) {
@@ -1185,5 +1206,65 @@ func TestScratchGuardDefaultsTheFloor(t *testing.T) {
 		func() (uint64, error) { return 0, nil }, 0))
 	if svc.minFreeScratch != DefaultMinFreeScratchBytes {
 		t.Errorf("minFreeScratch = %d, want the default %d", svc.minFreeScratch, DefaultMinFreeScratchBytes)
+	}
+}
+
+// TestStoreResultRecordsTheFormatAndAFailureDoesNotRewriteIt covers the record
+// that makes TRANSCODING_PACKAGER a config-only rollback.
+//
+// The failure half matters more than it looks. Dead-lettering a job upserts the
+// playlist row to clear the tree it pointed at; doing that through the ordinary
+// upsert would carry an unset format, which the query folds to the pre-CMAF
+// default — quietly relabelling a CMAF video as MPEG-TS. Today that would still
+// serve correctly, but only because the same statement wipes MasterKey, so
+// nothing consults the format. That is an accident, not a design, and it stops
+// being harmless the first time a failure path keeps the old tree.
+func TestStoreResultRecordsTheFormatAndAFailureDoesNotRewriteIt(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := NewService(repo, &fakeTranscoder{})
+	videoID := uuid.New()
+
+	if err := svc.storeResult(ctx, videoID, media.HLSResult{
+		MasterKey: "streaming-playlists/" + videoID.String() + "/master.m3u8",
+		Format:    media.HLSFormatCMAF,
+	}); err != nil {
+		t.Fatalf("storeResult: %v", err)
+	}
+	sp, err := repo.GetStreamingPlaylist(ctx, videoID)
+	if err != nil {
+		t.Fatalf("GetStreamingPlaylist: %v", err)
+	}
+	if sp.Format != media.HLSFormatCMAF {
+		t.Fatalf("format = %q, want %q", sp.Format, media.HLSFormatCMAF)
+	}
+
+	if err := repo.MarkStreamingPlaylistFailed(ctx, videoID); err != nil {
+		t.Fatalf("MarkStreamingPlaylistFailed: %v", err)
+	}
+	failed, err := repo.GetStreamingPlaylist(ctx, videoID)
+	if err != nil {
+		t.Fatalf("GetStreamingPlaylist: %v", err)
+	}
+	if failed.Format != media.HLSFormatCMAF {
+		t.Errorf("a failed transcode rewrote the format to %q; a failure knows nothing "+
+			"about what the last successful transcode wrote", failed.Format)
+	}
+	if failed.MasterKey != "" || failed.State != PlaylistFailed {
+		t.Errorf("failed playlist = %+v, want an empty master in the failed state", failed)
+	}
+
+	// A caller with no opinion describes the only shape that existed before CMAF,
+	// rather than storing a value the column's CHECK would reject.
+	other := uuid.New()
+	if err := svc.storeResult(ctx, other, media.HLSResult{MasterKey: "k"}); err != nil {
+		t.Fatalf("storeResult: %v", err)
+	}
+	legacy, err := repo.GetStreamingPlaylist(ctx, other)
+	if err != nil {
+		t.Fatalf("GetStreamingPlaylist: %v", err)
+	}
+	if legacy.Format != media.HLSFormatTS {
+		t.Errorf("unset format stored as %q, want %q", legacy.Format, media.HLSFormatTS)
 	}
 }

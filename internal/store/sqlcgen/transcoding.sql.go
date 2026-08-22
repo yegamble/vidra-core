@@ -285,6 +285,28 @@ func (q *Queries) ListVideoRenditions(ctx context.Context, videoID uuid.UUID) ([
 	return items, nil
 }
 
+const markStreamingPlaylistFailed = `-- name: MarkStreamingPlaylistFailed :exec
+INSERT INTO streaming_playlists (video_id, master_key, state)
+VALUES ($1, '', 'failed')
+ON CONFLICT (video_id) DO UPDATE
+SET master_key = '', state = 'failed', updated_at = now()
+`
+
+// Dead-letter a video's playlist: the tree it pointed at is gone or was never
+// finished, so the master key is cleared and playback falls back to the
+// progressive original.
+//
+// Deliberately NOT UpsertStreamingPlaylist with an empty format. That would fold
+// to 'hls-ts' and rewrite the format of an existing CMAF row, which is only
+// harmless today because this statement clears master_key in the same breath —
+// a coupling that would rot the moment a failure path kept the old tree. A
+// failure says nothing about what format the last successful transcode wrote, so
+// it leaves the column alone.
+func (q *Queries) MarkStreamingPlaylistFailed(ctx context.Context, videoID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markStreamingPlaylistFailed, videoID)
+	return err
+}
+
 const renewTranscodeJobLease = `-- name: RenewTranscodeJobLease :exec
 UPDATE transcode_jobs
 SET next_attempt_at = now() + interval '30 minutes'
