@@ -574,3 +574,213 @@ func TestVideoDetailCarriesHLSWhenReady(t *testing.T) {
 		t.Errorf("renditions = %+v, want [{240 320}]", after.Renditions)
 	}
 }
+
+// seedReadyCMAF marks videoID's playlist ready with a CMAF tree: the Go-authored
+// master at the usual key, and one flat "cmaf" directory holding the DASH
+// manifest, the per-representation media playlists, init/media segments and the
+// trick-play pair — the shape internal/media's cmafPackager stores.
+func seedReadyCMAF(t *testing.T, repo *transcodeFakeRepo, blobs storage.Backend, videoID string) {
+	t.Helper()
+	id := uuid.MustParse(videoID)
+	prefix := "streaming-playlists/" + videoID
+	repo.playlists[id] = sqlcgen.StreamingPlaylist{
+		VideoID: id, MasterKey: prefix + "/master.m3u8", State: "ready",
+		Format: media.HLSFormatCMAF,
+	}
+	repo.renditions[id] = append(repo.renditions[id], sqlcgen.VideoRendition{
+		ID: uuid.New(), VideoID: id, Height: 240, Width: 320, KeyPrefix: prefix + "/240p",
+	})
+	put := func(key, content string) {
+		if _, err := blobs.Put(context.Background(), key, strings.NewReader(content)); err != nil {
+			t.Fatalf("Put %q: %v", key, err)
+		}
+	}
+	put(prefix+"/master.m3u8", "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n"+
+		"#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"audio\",DEFAULT=YES,AUTOSELECT=YES,CHANNELS=\"2\",URI=\"cmaf/media_1.m3u8\"\n"+
+		"#EXT-X-STREAM-INF:BANDWIDTH=620400,RESOLUTION=320x240,CODECS=\"avc1.4d400d,mp4a.40.2\",AUDIO=\"audio\"\n"+
+		"cmaf/media_0.m3u8\n"+
+		"#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=60000,RESOLUTION=320x240,CODECS=\"avc1.4d400d\",URI=\"cmaf/iframe-0.m3u8\"\n")
+	put(prefix+"/cmaf/stream.mpd", `<?xml version="1.0" encoding="utf-8"?><MPD type="static">`+
+		`<SegmentTemplate initialization="init-$RepresentationID$.mp4" media="chunk-$RepresentationID$-$Number%05d$.m4s"/></MPD>`)
+	put(prefix+"/cmaf/media_0.m3u8", "#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-PLAYLIST-TYPE:VOD\n"+
+		"#EXT-X-MAP:URI=\"init-0.mp4\"\n#EXTINF:6.000000,\nchunk-0-00001.m4s\n#EXT-X-ENDLIST\n")
+	put(prefix+"/cmaf/media_1.m3u8", "#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-PLAYLIST-TYPE:VOD\n"+
+		"#EXT-X-MAP:URI=\"init-1.mp4\"\n#EXTINF:6.000000,\nchunk-1-00001.m4s\n#EXT-X-ENDLIST\n")
+	put(prefix+"/cmaf/init-0.mp4", "fake-init-0")
+	put(prefix+"/cmaf/init-1.mp4", "fake-init-1")
+	put(prefix+"/cmaf/chunk-0-00001.m4s", "fake-video-segment")
+	put(prefix+"/cmaf/chunk-1-00001.m4s", "fake-audio-segment")
+	put(prefix+"/cmaf/iframe-0.m3u8", "#EXTM3U\n#EXT-X-I-FRAMES-ONLY\n#EXT-X-MAP:URI=\"iframe-0.mp4\",BYTERANGE=\"800@0\"\n"+
+		"#EXTINF:1.0,\n#EXT-X-BYTERANGE:100@800\niframe-0.mp4\n#EXT-X-ENDLIST\n")
+	put(prefix+"/cmaf/iframe-0.mp4", "fake-iframe-fmp4")
+}
+
+// TestHLSServesCMAFTreeThroughOnePseudoRendition walks a CMAF video the way a
+// player does — master, media playlist, init, segment — and then asks for the
+// DASH manifest. Both manifests are reached through the SAME directory, which is
+// the entire reason DASH costs no extra storage: the segments a DASH player
+// fetches are the segments an HLS player fetches.
+func TestHLSServesCMAFTreeThroughOnePseudoRendition(t *testing.T) {
+	srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"CMAF","privacy":"public"}`)
+	seedReadyCMAF(t, tcRepo, blobs, id)
+	version := hlsCacheVersion(tcRepo.playlists[uuid.MustParse(id)])
+
+	// The master is served from the same key as ever, and its relative URIs are
+	// versioned into the cmaf pseudo-rendition.
+	rec := getHLS(srv, "/api/v1/videos/"+id+"/hls/master.m3u8", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("master = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	master := rec.Body.String()
+	for _, want := range []string{
+		"#EXT-X-VERSION:7",
+		`CODECS="avc1.4d400d,mp4a.40.2"`,
+		"\ncmaf/media_0.m3u8?v=" + version + "\n",
+		`URI="cmaf/media_1.m3u8?v=` + version + `"`,
+		`URI="cmaf/iframe-0.m3u8?v=` + version + `"`,
+	} {
+		if !strings.Contains(master, want) {
+			t.Errorf("master missing %q:\n%s", want, master)
+		}
+	}
+
+	// A media playlist: still an m3u8, so it gets the same reference rewrite —
+	// which is what makes its bare sibling names resolve back to this route.
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/cmaf/media_0.m3u8", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("media playlist = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/vnd.apple.mpegurl") {
+		t.Errorf("media playlist Content-Type = %q", ct)
+	}
+	if !strings.Contains(rec.Body.String(), `URI="init-0.mp4?v=`+version+`"`) ||
+		!strings.Contains(rec.Body.String(), "chunk-0-00001.m4s?v="+version) {
+		t.Fatalf("media playlist should version its init and segment references:\n%s", rec.Body.String())
+	}
+
+	// The init segment and a media segment.
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/cmaf/init-0.mp4", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "fake-init-0" {
+		t.Fatalf("init segment = %d %q", rec.Code, rec.Body.String())
+	}
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/cmaf/chunk-0-00001.m4s", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "fake-video-segment" {
+		t.Fatalf("media segment = %d %q", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "video/mp4" {
+		t.Errorf("m4s Content-Type = %q, want video/mp4 (Apple's HLS authoring guidance for fMP4)", ct)
+	}
+
+	// The DASH manifest, at the canonical URL, served verbatim: its
+	// SegmentTemplate patterns are expanded by the player, not followed as URIs,
+	// so there is nothing here to rewrite.
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/"+hlsCMAFRendition+"/"+hlsCMAFManifestFile, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("mpd = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/dash+xml") {
+		t.Errorf("mpd Content-Type = %q, want application/dash+xml", ct)
+	}
+	if !strings.Contains(rec.Body.String(), `initialization="init-$RepresentationID$.mp4"`) {
+		t.Fatalf("mpd should be served verbatim:\n%s", rec.Body.String())
+	}
+	// And it names the very files the HLS side just served, resolved as siblings.
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/cmaf/chunk-1-00001.m4s", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "fake-audio-segment" {
+		t.Fatalf("audio representation segment = %d %q", rec.Code, rec.Body.String())
+	}
+
+	// The playback token propagates through the whole HLS chain, exactly as it
+	// does for MPEG-TS: without it, password-protected CMAF would not play in a
+	// header-less native player.
+	rec = getHLS(srv, "/api/v1/videos/"+id+"/hls/cmaf/media_0.m3u8?pt=secret", "")
+	if !strings.Contains(rec.Body.String(), `URI="init-0.mp4?pt=secret&v=`+version+`"`) ||
+		!strings.Contains(rec.Body.String(), "chunk-0-00001.m4s?pt=secret&v="+version) {
+		t.Fatalf("media playlist should propagate the playback token:\n%s", rec.Body.String())
+	}
+}
+
+// TestHLSCMAFNamesAreCrossCheckedAgainstTheVideosFormat is the fence. The cmaf
+// pseudo-rendition names a whole family of files that mean nothing under an
+// MPEG-TS tree; asking for them against a TS video must be refused on the
+// RECORDED format, not by reaching object storage and hoping for a miss. The
+// reverse — CMAF names that are not the ones the packager emits — must be
+// refused before any lookup at all.
+func TestHLSCMAFNamesAreCrossCheckedAgainstTheVideosFormat(t *testing.T) {
+	t.Run("cmaf names against an MPEG-TS video are 404", func(t *testing.T) {
+		srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
+		tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+		id := createPublishedVideo(t, srv, tok, "ada", `{"title":"TS","privacy":"public"}`)
+		seedReadyHLS(t, tcRepo, blobs, id)
+		if got := tcRepo.playlists[uuid.MustParse(id)].Format; got == media.HLSFormatCMAF {
+			t.Fatalf("fixture is stale: an MPEG-TS video must not record format %q", got)
+		}
+		for _, p := range []string{
+			"/hls/cmaf/stream.mpd",
+			"/hls/cmaf/media_0.m3u8",
+			"/hls/cmaf/init-0.mp4",
+			"/hls/cmaf/chunk-0-00001.m4s",
+		} {
+			if rec := getHLS(srv, "/api/v1/videos/"+id+p, ""); rec.Code != http.StatusNotFound {
+				t.Errorf("GET %s on an MPEG-TS video = %d, want 404", p, rec.Code)
+			}
+		}
+		// The MPEG-TS tree itself keeps serving, untouched.
+		if rec := getHLS(srv, "/api/v1/videos/"+id+"/hls/240p/playlist.m3u8", ""); rec.Code != http.StatusOK {
+			t.Errorf("MPEG-TS variant = %d, want 200 — old videos must play unchanged", rec.Code)
+		}
+	})
+
+	t.Run("names outside the packager's own naming are 404", func(t *testing.T) {
+		srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
+		tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+		id := createPublishedVideo(t, srv, tok, "ada", `{"title":"CMAF","privacy":"public"}`)
+		seedReadyCMAF(t, tcRepo, blobs, id)
+		for _, p := range []string{
+			"/hls/cmaf/ffmpeg-master.m3u8", // discarded during finalisation; never served
+			"/hls/cmaf/master.m3u8",        // the Go master is NOT in this directory
+			"/hls/cmaf/stream.mpd.bak",
+			"/hls/cmaf/media_.m3u8",
+			"/hls/cmaf/media_0.m3u8.bak",
+			"/hls/cmaf/init-.mp4",
+			"/hls/cmaf/chunk-0.m4s",
+			"/hls/cmaf/init-0.m4s",
+			"/hls/cmaf/video.mp4",
+			"/hls/cmaf/other.txt",
+			"/hls/cmaf/..%2Fmaster.m3u8",
+			"/hls/CMAF/stream.mpd",
+			"/hls/240p/stream.mpd",
+		} {
+			if rec := getHLS(srv, "/api/v1/videos/"+id+p, ""); rec.Code != http.StatusNotFound {
+				t.Errorf("GET %s = %d, want 404", p, rec.Code)
+			}
+		}
+	})
+
+	t.Run("a stale generation version is 404 even for cmaf names", func(t *testing.T) {
+		srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
+		tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+		id := createPublishedVideo(t, srv, tok, "ada", `{"title":"CMAF","privacy":"public"}`)
+		seedReadyCMAF(t, tcRepo, blobs, id)
+		for _, p := range []string{"/hls/cmaf/stream.mpd?v=stale", "/hls/cmaf/chunk-0-00001.m4s?v=stale"} {
+			if rec := getHLS(srv, "/api/v1/videos/"+id+p, ""); rec.Code != http.StatusNotFound {
+				t.Errorf("GET %s = %d, want 404", p, rec.Code)
+			}
+		}
+	})
+
+	t.Run("a private CMAF video is owner-only, manifest included", func(t *testing.T) {
+		srv, blobs, tcRepo, _ := videoServerEnv(t, testConfig())
+		tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+		id := createPublishedVideo(t, srv, tok, "ada", `{"title":"CMAF","privacy":"private"}`)
+		seedReadyCMAF(t, tcRepo, blobs, id)
+		if rec := getHLS(srv, "/api/v1/videos/"+id+"/hls/cmaf/stream.mpd", ""); rec.Code != http.StatusNotFound {
+			t.Errorf("anonymous mpd on a private video = %d, want 404", rec.Code)
+		}
+		if rec := getHLS(srv, "/api/v1/videos/"+id+"/hls/cmaf/stream.mpd", tok); rec.Code != http.StatusOK {
+			t.Errorf("owner mpd = %d, want 200", rec.Code)
+		}
+	})
+}

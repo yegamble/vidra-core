@@ -302,3 +302,81 @@ func TestSweepKeepsWholeTreeWithoutAttributableMaster(t *testing.T) {
 		}
 	}
 }
+
+// TestSweepIsBlindToPackagingFormat is the claim that let CMAF ship without
+// touching this package: the sweep's unit is the video id and, for a
+// replacement, the GENERATION directory — it never reads a rendition name, a
+// segment name, or anything else below that. So a CMAF tree, whose media all
+// lives in a "cmaf" directory rather than per-rung ones, is kept and collected
+// on exactly the same rule as an MPEG-TS one, and a mixed library (old MPEG-TS
+// videos, new CMAF videos, and a video re-transcoded from one into the other)
+// sweeps correctly with no format knowledge at all.
+//
+// The dangerous case is the last one: "cmaf" sits in the same path position a
+// generation name does, so if IsHLSGenerationName ever grew loose enough to
+// match it, a legacy-generation CMAF tree would be attributed to a generation
+// that does not exist and swept while it was playing.
+func TestSweepIsBlindToPackagingFormat(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := uuid.New()   // never replaced: CMAF tree at the v0 prefix
+	replaced := uuid.New() // was MPEG-TS, re-transcoded as CMAF into r1
+
+	legacySrc := "web-videos/" + legacy.String() + ".mp4"
+	legacyKeep := []string{
+		legacySrc,
+		"streaming-playlists/" + legacy.String() + "/master.m3u8",
+		"streaming-playlists/" + legacy.String() + "/audio.m4a",
+		"streaming-playlists/" + legacy.String() + "/cmaf/stream.mpd",
+		"streaming-playlists/" + legacy.String() + "/cmaf/media_0.m3u8",
+		"streaming-playlists/" + legacy.String() + "/cmaf/init-0.mp4",
+		"streaming-playlists/" + legacy.String() + "/cmaf/chunk-0-00001.m4s",
+		"streaming-playlists/" + legacy.String() + "/cmaf/iframe-0.mp4",
+		"streaming-playlists/" + legacy.String() + "/720p/video.mp4",
+	}
+
+	replacedSrc := "web-videos/" + replaced.String() + ".r1.mp4"
+	replacedKeep := []string{
+		replacedSrc,
+		"streaming-playlists/" + replaced.String() + "/r1/master.m3u8",
+		"streaming-playlists/" + replaced.String() + "/r1/cmaf/stream.mpd",
+		"streaming-playlists/" + replaced.String() + "/r1/cmaf/chunk-2-00007.m4s",
+		"streaming-playlists/" + replaced.String() + "/r1/1080p/video-only.mp4",
+	}
+	// Its superseded MPEG-TS generation, which must still be collected.
+	replacedOrphans := []string{
+		"web-videos/" + replaced.String() + ".mp4",
+		"streaming-playlists/" + replaced.String() + "/720p/seg_00000.ts",
+		"streaming-playlists/" + replaced.String() + "/master.m3u8",
+	}
+
+	for _, k := range append(append(append([]string{}, legacyKeep...), replacedKeep...), replacedOrphans...) {
+		put(t, blobs, k)
+	}
+
+	repo := &fakeRepo{
+		fileKeys: []string{legacySrc, replacedSrc},
+		videoIDs: []uuid.UUID{legacy, replaced},
+		playlists: []sqlcgen.ListStreamingPlaylistRefsRow{
+			{VideoID: legacy, MasterKey: "streaming-playlists/" + legacy.String() + "/master.m3u8"},
+			{VideoID: replaced, MasterKey: "streaming-playlists/" + replaced.String() + "/r1/master.m3u8"},
+		},
+	}
+	res, err := NewService(repo, blobs).Sweep(ctx, false)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	wantOrphans := append([]string{}, replacedOrphans...)
+	sort.Strings(wantOrphans)
+	if strings.Join(res.Orphans, "|") != strings.Join(wantOrphans, "|") {
+		t.Fatalf("orphans:\n got %v\nwant %v", res.Orphans, wantOrphans)
+	}
+	for _, k := range append(append([]string{}, legacyKeep...), replacedKeep...) {
+		if !exists(t, blobs, k) {
+			t.Errorf("live CMAF key %q was deleted", k)
+		}
+	}
+}

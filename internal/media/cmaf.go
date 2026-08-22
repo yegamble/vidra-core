@@ -105,13 +105,33 @@ type cmafPackager struct{}
 // Name implements Packager.
 func (cmafPackager) Name() string { return PackagerCMAF }
 
-// ScaleFilterSuffix implements Packager. An MPD publishes a per-Representation
-// sar attribute read off the encoded stream, so a source with non-square pixels
-// would have the ladder advertise aspect ratios its own scaling invented. Forcing
-// square pixels after each scale is the fix, and it is applied ONLY here: the
-// MPEG-TS vectors are pinned byte-identical and its playlists carry no such
-// attribute.
-func (cmafPackager) ScaleFilterSuffix() string { return ",setsar=1" }
+// ScaleFilterSuffix implements Packager: every rung is forced to the TOP rung's
+// display aspect ratio.
+//
+// This is not cosmetic. The dash muxer REFUSES to write a manifest whose
+// adaptation set mixes aspect ratios ("Conflicting stream aspect ratios values
+// in Adaptation Set 1") — reasonably, because representations in one adaptation
+// set are supposed to be interchangeable mid-playback, and a player switching
+// between two shapes would visibly jump. Vidra's ladder trips that check on
+// ordinary 16:9 sources: widths are rounded to even for H.264 4:2:0, so a 720p
+// source's 480p rung is 854x480 (1.7792) next to 1280x720 (1.7778) and the mux
+// aborts.
+//
+// setdar reconciles them by deriving each rung's sample aspect ratio from the
+// requested display one, which is also why it SUPERSEDES the plain setsar=1 this
+// path was specified with: square pixels alone are what causes the conflict. The
+// correction is a 0.08% pixel stretch on the one rung whose rounding drifted
+// (sar 1280:1281), and every other rung still comes out exactly 1:1.
+//
+// Applied ONLY here: the MPEG-TS vectors are pinned byte-identical and its
+// playlists advertise no aspect ratio at all.
+func (cmafPackager) ScaleFilterSuffix(rungs []HLSRung) string {
+	if len(rungs) == 0 {
+		return ""
+	}
+	top := rungs[0]
+	return fmt.Sprintf(",setdar=%d/%d", top.Width, top.Height)
+}
 
 // ScratchDirs implements Packager: the per-rung directories the progressive MP4s
 // are written into, plus the shared segment directory the muxer writes into when

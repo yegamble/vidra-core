@@ -80,15 +80,16 @@ type Packager interface {
 
 	// ScaleFilterSuffix is the packaging-driven tail of every rung's filter
 	// chain, appended straight after the scale filter hls.go composes ("" when
-	// the format needs nothing).
+	// the format needs nothing). It takes the whole ladder because the
+	// requirement is about the rungs' relationship to each other, not about any
+	// one of them.
 	//
 	// It is a PACKAGING requirement expressed as an encode-side filter, which is
 	// why it belongs to the packager and not to the ladder builder: an MPD
-	// publishes a per-Representation sar attribute read off the encoded stream,
-	// so a non-square-pixel source must be normalised or the ladder advertises
-	// aspect ratios its own scaling invented. MPEG-TS playlists carry no such
-	// attribute, and its vectors are pinned byte-identical.
-	ScaleFilterSuffix() string
+	// publishes an aspect ratio per Representation, read off the encoded stream.
+	// MPEG-TS playlists carry no such attribute, and its vectors are pinned
+	// byte-identical.
+	ScaleFilterSuffix(rungs []HLSRung) string
 
 	// ScratchDirs are the directories, relative to the transcode's scratch root,
 	// that must exist before the encode starts. ffmpeg's muxers open their output
@@ -241,7 +242,7 @@ func (tsPackager) Name() string { return PackagerTS }
 // ScaleFilterSuffix implements Packager: MPEG-TS playlists advertise no sample
 // aspect ratio, and these vectors are pinned byte-identical to what this package
 // has always emitted, so the filter chain gains nothing.
-func (tsPackager) ScaleFilterSuffix() string { return "" }
+func (tsPackager) ScaleFilterSuffix([]HLSRung) string { return "" }
 
 // ScratchDirs implements Packager: one directory per rung, holding that rung's
 // segments (unless the ladder streams) and always its progressive MP4s.

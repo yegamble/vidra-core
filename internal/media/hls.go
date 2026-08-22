@@ -393,7 +393,7 @@ func hlsLadderArgsWith(pkg Packager, src source, out output, rungs []HLSRung, th
 	}
 	outLabels := make([]string, len(rungs))
 	for i, r := range rungs {
-		vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height) + pkg.ScaleFilterSuffix()
+		vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height) + pkg.ScaleFilterSuffix(rungs)
 		if r.FPS > 0 {
 			vf += fmt.Sprintf(",fps=%d", r.FPS)
 		}
@@ -430,7 +430,7 @@ func hlsTrickPlayLadderArgsWith(pkg Packager, src source, out output, rungs []HL
 	for i, r := range rungs {
 		outLabels[i] = fmt.Sprintf("t%d", i)
 		chains = append(chains, fmt.Sprintf("[%s]scale=%d:%d%s,fps=1[%s]",
-			labels[i], r.Width, r.Height, pkg.ScaleFilterSuffix(), outLabels[i]))
+			labels[i], r.Width, r.Height, pkg.ScaleFilterSuffix(rungs), outLabels[i]))
 	}
 	args = append(args, "-filter_complex", strings.Join(chains, ";"))
 
