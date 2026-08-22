@@ -34,6 +34,9 @@ type cmafFixture struct {
 	// codecs is the codec plan the fixture transcoded with, so an assertion can
 	// walk representation indices the same way the packager laid them out.
 	codecs []codecProfile
+	// sourceKey is the generated source the fixture transcoded, so a test can
+	// re-encode from the very same bytes.
+	sourceKey string
 }
 
 // rep is the representation index of rung `rung` encoded with codec index
@@ -120,7 +123,7 @@ func newFixture(t *testing.T, opts fixtureOpts) cmafFixture {
 	if leftover, _ := filepath.Glob(filepath.Join(scratch, "vidra-hls-*")); len(leftover) != 0 {
 		t.Errorf("scratch tree %v survived the transcode", leftover)
 	}
-	return cmafFixture{blobs: blobs, prefix: prefix, res: res, keys: keys, codecs: tc.videoCodecs()}
+	return cmafFixture{blobs: blobs, prefix: prefix, res: res, keys: keys, codecs: tc.videoCodecs(), sourceKey: srcKey}
 }
 
 func (f cmafFixture) read(t *testing.T, rel string) string {
@@ -1874,14 +1877,23 @@ func TestCMAFAV1Ladder(t *testing.T) {
 		t.Errorf("MPD declares %d av01 representations, want 3:\n%s", n, mpd)
 	}
 
-	// AV1 is budgeted at 0.55 of H.264's, and the manifests must agree with the
-	// encoder — a variant that under-declares its peak is chosen by an ABR player
-	// that cannot carry it.
+	// AV1 is budgeted at 0.55 of H.264's and declared with capped CRF's own peak
+	// allowance — the manifests must agree with the encoder, because a variant
+	// that under-declares its peak is chosen by an ABR player that cannot carry
+	// it, and one that over-declares is passed over by a player that could.
+	audioKbps := hlsRungBitrates[f.res.Renditions[0].Height].AudioKbps
 	for i, r := range f.res.Renditions {
 		rung := HLSRung{Height: r.Height, Width: r.Width, VideoKbps: hlsRungBitrates[r.Height].VideoKbps}
-		want := (av1Profile.videoKbps(rung) + hlsRungBitrates[f.res.Renditions[0].Height].AudioKbps) * 1000 * 11 / 10
-		if !strings.Contains(master, "BANDWIDTH="+strconv.Itoa(want)+",RESOLUTION="+strconv.Itoa(r.Width)) {
+		want := cmafVariantBandwidth(av1Profile.videoKbps(rung), audioKbps, av1Profile)
+		if !strings.Contains(master, "BANDWIDTH="+strconv.Itoa(want)+",") {
 			t.Errorf("AV1 rung %d does not declare its own budget %d:\n%s", i, want, master)
+		}
+		// And it is still the cheapest variant at that resolution, which is the
+		// entire point of shipping it: a wider peak allowance must not price AV1
+		// above the codec it is supposed to undercut.
+		h264 := cmafVariantBandwidth(h264Profile.videoKbps(rung), audioKbps, h264Profile)
+		if want >= h264 {
+			t.Errorf("AV1 rung %d declares %d against H.264's %d — the efficient codec must declare less", i, want, h264)
 		}
 	}
 }
@@ -1935,6 +1947,51 @@ func TestCMAFMultiCodecLadder(t *testing.T) {
 	// And the first STREAM-INF in the file is H.264.
 	if i := strings.Index(master, "#EXT-X-STREAM-INF:"); i < 0 || !strings.Contains(master[i:i+200], `CODECS="avc1.`) {
 		t.Errorf("the first variant is not H.264:\n%s", master)
+	}
+
+	// SCORE is what actually steers an Apple client, and it must rank the way the
+	// registry says: resolution first, efficient codec second. Without it,
+	// AVFoundation's fallback is close to "the highest BANDWIDTH it can play" —
+	// which picks H.264, because an efficient codec declares LESS.
+	scores := masterVariantScores(t, master)
+	if len(scores) != rungs*len(want) {
+		t.Fatalf("only %d of %d variants carry a SCORE:\n%s", len(scores), rungs*len(want), master)
+	}
+	for c, prof := range f.codecs {
+		for i := range f.res.Renditions {
+			if got, expect := scores[f.rep(c, i)], cmafVariantScore(i, rungs, prof); got != expect {
+				t.Errorf("%s rung %d SCORE = %v, want %v", prof.Name, i, got, expect)
+			}
+		}
+	}
+	// The two properties, checked on the rendered manifest rather than on the
+	// formula: the top rung of every codec outranks every lower rung, and at one
+	// resolution hevc > av1 > h264.
+	for i := 1; i < rungs; i++ {
+		for c := range f.codecs {
+			if scores[f.rep(c, 0)] <= scores[f.rep(c, i)] {
+				t.Errorf("codec %d: rung 0 does not outrank rung %d", c, i)
+			}
+		}
+	}
+	for i := range f.res.Renditions {
+		h264, hevc, av1 := scores[f.rep(0, i)], scores[f.rep(1, i)], scores[f.rep(2, i)]
+		if !(hevc > av1 && av1 > h264) {
+			t.Errorf("rung %d ranks h264 %v, hevc %v, av1 %v — want hevc > av1 > h264", i, h264, hevc, av1)
+		}
+	}
+
+	// AVERAGE-BANDWIDTH comes from the bytes the tree actually stored, so every
+	// variant has one and none of them exceeds its own declared peak.
+	declared := declaredBandwidths(t, master)
+	averages := averageBandwidths(t, master)
+	if len(averages) != rungs*len(want) {
+		t.Errorf("only %d of %d variants declare AVERAGE-BANDWIDTH:\n%s", len(averages), rungs*len(want), master)
+	}
+	for rep, avg := range averages {
+		if avg <= 0 || avg > declared[rep] {
+			t.Errorf("variant %d: AVERAGE-BANDWIDTH=%d against BANDWIDTH=%d", rep, avg, declared[rep])
+		}
 	}
 
 	mpd := f.read(t, "cmaf/"+cmafManifestFilename)
@@ -2088,6 +2145,279 @@ func TestMPEGTSRefusesExtraCodecs(t *testing.T) {
 	if err := tc.SetVideoCodecs(false, false); err != nil {
 		t.Fatalf("SetVideoCodecs(false, false): %v", err)
 	}
+}
+
+// --- the declared BANDWIDTH has to bound what is delivered -------------------
+
+// spikySource is 30 seconds of flat grey followed by 6 seconds of dense moving
+// detail — one segment's worth of hard content at the end of a clip the encoder
+// has spent the whole of coasting.
+//
+// It is the shape that catches an UNCAPPED encoder and nothing else does. A
+// uniformly hard clip does not: the encoder never builds up the slack it later
+// spends, so the average and the peak are the same number and any rate control at
+// all looks fine. This one lets an unbounded encoder arrive at the last segment
+// with everything still to spend.
+//
+// The hard tail is a detailed moving PATTERN rather than per-pixel random noise,
+// deliberately. Random noise is the incompressible limit — not video, and no
+// ladder's declared bitrate survives it for any codec; on such a clip H.264 only
+// "passes" because its budget is nearly twice AV1's. testsrc2 is genuinely
+// adversarial while still being something a camera could produce.
+var spikySource = []string{
+	"-f", "lavfi", "-i", "color=c=gray:s=854x480:r=25:d=30,format=yuv420p",
+	"-f", "lavfi", "-i", "testsrc2=s=854x480:r=25:d=6",
+	"-f", "lavfi", "-i", "sine=frequency=440:duration=36",
+	"-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+	"-map", "[v]", "-map", "2:a",
+	"-c:v", "libx264", "-preset", "ultrafast", "-crf", "16", "-pix_fmt", "yuv420p",
+	"-c:a", "aac", "-shortest",
+}
+
+// bandwidthTolerance is how far over its declared BANDWIDTH a variant's worst
+// segment may land.
+//
+// It is deliberately SMALL, because the codec-specific part of the overshoot is
+// declared rather than tolerated: each rate-control mode's own peak allowance is
+// baked into the BANDWIDTH the master publishes (see the peak-permille constants
+// in codec.go), so what is left here is only the container overhead a real
+// segment carries. Measured on this fixture: H.264 1.030x and 1.031x, HEVC
+// 0.945x and 0.928x, AV1 0.842x and 0.622x.
+//
+// Widening this instead would have been the wrong fix twice over: it would mask
+// AV1 behind a number H.264 does not need, and it would stop the test noticing
+// the 2.93x an UNCAPPED AV1 rung produces on the same clip — which the
+// counterfactual below re-measures rather than asserting from memory.
+const bandwidthTolerance = 1.06
+
+// TestCMAFDeclaredBandwidthBoundsWhatIsDelivered is the regression for the AV1
+// rate-control bug, and it is stated for every codec because the property is not
+// AV1's alone: a master playlist's BANDWIDTH is a PROMISE about the worst segment,
+// an ABR player picks on it, and a player cannot un-fetch a segment already in
+// flight. A variant that delivers multiples of its declared peak drains the
+// buffer and stalls — and hls.js's abandon-rules rescue cannot fire, because its
+// expected-length estimate is taken from max(loaded, …) and collapses the very
+// delay it is watching for.
+func TestCMAFDeclaredBandwidthBoundsWhatIsDelivered(t *testing.T) {
+	requireEncoders(t, "libx265", "libsvtav1")
+	f := newFixture(t, fixtureOpts{packager: PackagerCMAF, genArgs: spikySource, hevc: true, av1: true})
+
+	rungs := len(f.res.Renditions)
+	if rungs == 0 {
+		t.Fatal("no renditions")
+	}
+	audioPeak := f.peakRepBitrate(t, rungs*len(f.codecs))
+	if audioPeak <= 0 {
+		t.Fatal("the shared audio representation measured no bitrate")
+	}
+
+	master := f.read(t, "master.m3u8")
+	declared := declaredBandwidths(t, master)
+	if len(declared) != rungs*len(f.codecs) {
+		t.Fatalf("master declares %d variants, want %d", len(declared), rungs*len(f.codecs))
+	}
+	for c, prof := range f.codecs {
+		for i, r := range f.res.Renditions {
+			rep := f.rep(c, i)
+			// What a client actually receives for this variant in its worst
+			// moment: the representation's largest segment, plus the audio
+			// rendition it plays alongside it.
+			peak := f.peakRepBitrate(t, rep) + audioPeak
+			want := declared[rep]
+			ratio := float64(peak) / float64(want)
+			name := strconv.Itoa(r.Height) + "p"
+			t.Logf("%s %s: declared %d, worst segment delivers %d (%.3fx)", prof.Name, name, want, peak, ratio)
+			if ratio > bandwidthTolerance {
+				t.Errorf("%s %s delivers %.3fx its declared BANDWIDTH (%d against %d) — an ABR player picks on the declared number and cannot un-fetch the segment",
+					prof.Name, name, ratio, peak, want)
+			}
+		}
+	}
+
+	// AVERAGE-BANDWIDTH is the other half of an honest declaration, and on this
+	// fixture it is dramatically lower than the peak — 30 seconds of flat grey.
+	// That is exactly the information a steady-state estimator wants and exactly
+	// what a budget-derived number cannot express.
+	for rep, avg := range averageBandwidths(t, master) {
+		if avg <= 0 {
+			t.Errorf("variant %d declares no AVERAGE-BANDWIDTH", rep)
+			continue
+		}
+		if avg > declared[rep] {
+			t.Errorf("variant %d declares an average (%d) above its peak (%d)", rep, avg, declared[rep])
+		}
+	}
+
+	// THE COUNTERFACTUAL, measured rather than remembered: the same AV1 rung,
+	// same budget, same source, encoded the way this pipeline used to — plain VBR
+	// with no ceiling, which is all libsvtav1 accepts alongside -b:v. If this
+	// number ever stops being far outside the tolerance, the fixture has gone
+	// soft and the test above has stopped proving anything.
+	top := f.res.Renditions[0]
+	budget := av1Profile.videoKbps(HLSRung{VideoKbps: hlsRungBitrates[top.Height].VideoKbps})
+	uncapped := uncappedAV1PeakBitrate(t, f, top, budget)
+	capped := f.peakRepBitrate(t, f.rep(len(f.codecs)-1, 0))
+	t.Logf("counterfactual at %dp: uncapped AV1 peaks at %d bps, capped CRF at %d (%.1fx apart)",
+		top.Height, uncapped, capped, float64(uncapped)/float64(capped))
+	if uncapped <= capped {
+		t.Errorf("plain VBR peaked at %d and capped CRF at %d — the fixture no longer distinguishes them, so this test proves nothing", uncapped, capped)
+	}
+	if float64(uncapped) <= float64(declared[f.rep(len(f.codecs)-1, 0)])*bandwidthTolerance {
+		t.Errorf("plain VBR stayed inside the tolerance (%d bps) on this fixture; it must not, or the regression it guards is untestable", uncapped)
+	}
+}
+
+// peakRepBitrate is the worst segment bit rate of one representation: for every
+// segment its stored bytes over its own EXTINF duration, maximised.
+//
+// Per-segment is the right granularity because a segment is the unit a player
+// fetches: it commits to the whole thing on one bandwidth estimate.
+func (f cmafFixture) peakRepBitrate(t *testing.T, rep int) int {
+	t.Helper()
+	playlist := f.read(t, "cmaf/"+cmafMediaPlaylistName(rep))
+	var peak int
+	var duration float64
+	for _, line := range strings.Split(playlist, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#EXTINF:") {
+			d, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimPrefix(line, "#EXTINF:"), ","), 64)
+			if err != nil {
+				t.Fatalf("representation %d: bad EXTINF %q", rep, line)
+			}
+			duration = d
+			continue
+		}
+		if line == "" || strings.HasPrefix(line, "#") || duration <= 0 {
+			continue
+		}
+		p, err := f.blobs.Path(f.prefix + "/cmaf/" + line)
+		if err != nil {
+			t.Fatalf("Path %q: %v", line, err)
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("stat %q: %v", line, err)
+		}
+		if bps := int(float64(info.Size()) * 8 / duration); bps > peak {
+			peak = bps
+		}
+		duration = 0
+	}
+	return peak
+}
+
+// uncappedAV1PeakBitrate re-encodes one rung from the fixture's own source with
+// plain VBR — no ceiling — and returns its worst segment bit rate.
+func uncappedAV1PeakBitrate(t *testing.T, f cmafFixture, r HLSRendition, budgetKbps int) int {
+	t.Helper()
+	src, err := f.blobs.Path(f.sourceKey)
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	dir := t.TempDir()
+	args := []string{
+		"-y", "-i", src,
+		"-filter_complex", fmt.Sprintf("[0:v]scale=%d:%d[v0]", r.Width, r.Height),
+		"-map", "[v0]",
+		"-c:v:0", "libsvtav1", "-preset:v:0", "8", "-pix_fmt:v:0", "yuv420p",
+		"-b:v:0", strconv.Itoa(budgetKbps) + "k",
+		"-force_key_frames:v:0", "expr:gte(t,n_forced*6)",
+		"-f", "dash", "-seg_duration", "6", "-dash_segment_type", "mp4",
+		"-use_template", "1", "-use_timeline", "1", "-ignore_io_errors", "0",
+		"-init_seg_name", cmafInitSegmentPattern, "-media_seg_name", cmafMediaSegmentPattern,
+		"-adaptation_sets", "id=0,streams=v",
+		filepath.Join(dir, cmafManifestFilename),
+	}
+	if out, cerr := exec.Command("ffmpeg", args...).CombinedOutput(); cerr != nil {
+		t.Fatalf("uncapped AV1 encode: %v\n%s", cerr, out)
+	}
+	segments, err := filepath.Glob(filepath.Join(dir, "chunk-0-*.m4s"))
+	if err != nil || len(segments) == 0 {
+		t.Fatalf("uncapped AV1 encode produced no segments: %v", err)
+	}
+	var peak int
+	for _, p := range segments {
+		info, serr := os.Stat(p)
+		if serr != nil {
+			t.Fatalf("stat: %v", serr)
+		}
+		// Every segment but the last is a full hlsSegmentSeconds.
+		if bps := int(info.Size()) * 8 / hlsSegmentSeconds; bps > peak {
+			peak = bps
+		}
+	}
+	return peak
+}
+
+// declaredBandwidths / averageBandwidths read one attribute off every
+// EXT-X-STREAM-INF, keyed by the representation its URI names.
+func declaredBandwidths(t *testing.T, master string) map[int]int {
+	t.Helper()
+	return masterVariantAttr(t, master, "BANDWIDTH")
+}
+
+func averageBandwidths(t *testing.T, master string) map[int]int {
+	t.Helper()
+	return masterVariantAttr(t, master, "AVERAGE-BANDWIDTH")
+}
+
+// masterVariantScores reads the SCORE off every variant, keyed by representation.
+func masterVariantScores(t *testing.T, master string) map[int]float64 {
+	t.Helper()
+	out := map[int]float64{}
+	pending, ok := "", false
+	for _, line := range strings.Split(master, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
+			pending, ok = m3u8Attr(line, "SCORE")
+		case line == "" || strings.HasPrefix(line, "#"):
+		default:
+			if !ok {
+				continue
+			}
+			rep, isRep := cmafRepOfMediaPlaylist(strings.TrimPrefix(line, cmafDirName+"/"))
+			if !isRep {
+				continue
+			}
+			v, err := strconv.ParseFloat(pending, 64)
+			if err != nil {
+				t.Fatalf("variant %d has a non-numeric SCORE %q", rep, pending)
+			}
+			out[rep] = v
+			ok = false
+		}
+	}
+	return out
+}
+
+func masterVariantAttr(t *testing.T, master, attr string) map[int]int {
+	t.Helper()
+	out := map[int]int{}
+	pending, ok := "", false
+	for _, line := range strings.Split(master, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
+			pending, ok = m3u8Attr(line, attr)
+		case line == "" || strings.HasPrefix(line, "#"):
+		default:
+			if !ok {
+				continue
+			}
+			rep, isRep := cmafRepOfMediaPlaylist(strings.TrimPrefix(line, cmafDirName+"/"))
+			if !isRep {
+				continue
+			}
+			n, err := strconv.Atoi(pending)
+			if err != nil {
+				t.Fatalf("variant %d has a non-numeric %s %q", rep, attr, pending)
+			}
+			out[rep] = n
+			ok = false
+		}
+	}
+	return out
 }
 
 // stored reports whether one path relative to the video's prefix is in the tree.

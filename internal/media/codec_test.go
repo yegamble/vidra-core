@@ -133,20 +133,30 @@ func TestHEVCCarriesTheHVC1Tag(t *testing.T) {
 	}
 }
 
-// TestAV1UsesPlainVBR pins the rate-control difference the registry exists to
-// absorb. SVT-AV1 does not merely prefer VBR to capped VBR — it REFUSES the
-// combination ("Max Bitrate only supported with CRF mode") and the whole ffmpeg
-// process dies before it writes a byte, so emitting -maxrate here would break
-// every AV1-enabled transcode rather than degrading one.
-func TestAV1UsesPlainVBR(t *testing.T) {
+// TestAV1IsRateCappedWithCRF pins the rate control that makes AV1's declared
+// BANDWIDTH mean anything.
+//
+// The shape is not a preference. SVT-AV1 refuses `-b:v` together with `-maxrate`
+// outright ("Max Bitrate only supported with CRF mode") and the whole ffmpeg
+// process dies before writing a byte — which is why AV1 first shipped as plain
+// VBR, and why plain VBR was a bug: with no ceiling at all it delivered a segment
+// at 3.4x its declared BANDWIDTH on a flat-then-hard clip. Capped CRF is the same
+// ceiling expressed the way this encoder accepts it.
+func TestAV1IsRateCappedWithCRF(t *testing.T) {
 	got := strings.Join(hlsRungVideoEncodeArgs(HLSRung{VideoKbps: 800}, av1Profile, sharedVideoStream(3), ""), " ")
-	for _, banned := range []string{"-maxrate", "-bufsize"} {
-		if strings.Contains(got, banned) {
-			t.Errorf("AV1 vector carries %s, which libsvtav1 refuses outright: %s", banned, got)
+	// The CEILING, which is what BANDWIDTH promises a player.
+	for _, want := range []string{"-maxrate:v:3 440k", "-bufsize:v:3 880k"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("AV1 vector has no rate ceiling (%s): %s", want, got)
 		}
 	}
-	if !strings.Contains(got, "-b:v:3 440k") {
-		t.Errorf("AV1 vector does not target its own budget: %s", got)
+	// A QUALITY target underneath it, and deliberately no bitrate target: the two
+	// together are what libsvtav1 rejects.
+	if !strings.Contains(got, "-crf:v:3 "+strconv.Itoa(av1CRF)) {
+		t.Errorf("AV1 vector has no CRF target: %s", got)
+	}
+	if strings.Contains(got, "-b:v") {
+		t.Errorf("AV1 vector sets a bitrate target beside its cap, which libsvtav1 refuses outright: %s", got)
 	}
 	// SVT-AV1's preset is a NUMBER; "veryfast" is not a value it has.
 	if !strings.Contains(got, "-preset:v:3 8") {
@@ -161,6 +171,34 @@ func TestAV1UsesPlainVBR(t *testing.T) {
 	// codec-independent — and without it the segments would not align.
 	if !strings.Contains(got, "-force_key_frames:v:3 expr:gte(t,n_forced*6)") {
 		t.Errorf("AV1 vector does not force key frames on segment boundaries: %s", got)
+	}
+}
+
+// TestEveryCodecIsRateCapped is the property that makes the master playlist
+// truthful, stated once for all three: whatever mode a codec uses underneath,
+// every one of them ends at -maxrate on its own budget and -bufsize at twice it.
+// A codec added here without a ceiling would declare a BANDWIDTH it can exceed
+// without limit, which is the AV1 bug this exists to prevent a repeat of.
+func TestEveryCodecIsRateCapped(t *testing.T) {
+	r := HLSRung{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128}
+	for _, prof := range videoCodecProfiles(true, true) {
+		got := strings.Join(hlsRungVideoEncodeArgs(r, prof, soleVideoStream, ""), " ")
+		kbps := prof.videoKbps(r)
+		for _, want := range []string{
+			"-maxrate " + strconv.Itoa(kbps) + "k",
+			"-bufsize " + strconv.Itoa(2*kbps) + "k",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s is not rate-capped (%s missing): %s", prof.Name, want, got)
+			}
+		}
+		// Exactly one of the two targets, never both and never neither.
+		bitrate := strings.Contains(got, "-b:v ")
+		quality := strings.Contains(got, "-crf ")
+		if bitrate == quality {
+			t.Errorf("%s sets %s targets: %s", prof.Name,
+				map[bool]string{true: "both bitrate and quality", false: "neither a bitrate nor a quality"}[bitrate], got)
+		}
 	}
 }
 
@@ -250,9 +288,11 @@ func TestMultiCodecLadderEncodersAreGroupedByCodec(t *testing.T) {
 	for c, prof := range plan.profiles() {
 		for i, r := range plan.rungs {
 			rep := strconv.Itoa(plan.repIndex(c, i))
+			// Every codec is capped at its OWN budget for this rung, whichever
+			// target it uses underneath (see TestEveryCodecIsRateCapped).
 			for _, want := range []string{
 				"-c:v:" + rep + " " + prof.Encoder,
-				"-b:v:" + rep + " " + strconv.Itoa(prof.videoKbps(r)) + "k",
+				"-maxrate:v:" + rep + " " + strconv.Itoa(prof.videoKbps(r)) + "k",
 				"-force_key_frames:v:" + rep + " expr:gte(t,n_forced*6)",
 			} {
 				if !strings.Contains(joined, want) {
@@ -352,12 +392,13 @@ func multiCodecLayout(t *testing.T) cmafLayout {
 	return layout
 }
 
-// TestVerifyCMAFCodecs is the codec half of the mapping check. The resolution
-// half already refuses a master that points a variant at the wrong media
-// playlist; this refuses one that points it at the right playlist holding the
-// wrong CODEC — which plays perfectly and delivers the wrong thing.
-func TestVerifyCMAFCodecs(t *testing.T) {
-	if err := multiCodecLayout(t).verifyCodecs(2); err != nil {
+// TestVerifyCMAFLayoutAgainstPlan covers both halves of the mapping check: which
+// CODEC each representation holds, and which RUNG. Every failure here produces a
+// tree that plays perfectly and delivers the wrong thing, which is why it is
+// checked against ffmpeg's own manifest rather than assumed.
+func TestVerifyCMAFLayoutAgainstPlan(t *testing.T) {
+	rungs := cmafTestRungs()
+	if err := multiCodecLayout(t).verifyAgainstPlan(rungs); err != nil {
 		t.Fatalf("a correct layout was rejected: %v", err)
 	}
 	// H.264-only layouts are verified too, and the shipped ladder passes.
@@ -365,11 +406,11 @@ func TestVerifyCMAFCodecs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if err := plain.verifyCodecs(2); err != nil {
-		t.Errorf("the H.264 ladder failed its own codec check: %v", err)
+	if err := plain.verifyAgainstPlan(rungs); err != nil {
+		t.Errorf("the H.264 ladder failed its own layout check: %v", err)
 	}
 	// Audio-only has no video representations to attribute.
-	if err := (cmafLayout{hasAudio: true}).verifyCodecs(0); err != nil {
+	if err := (cmafLayout{hasAudio: true}).verifyAgainstPlan(nil); err != nil {
 		t.Errorf("audio-only layout: %v", err)
 	}
 
@@ -378,7 +419,7 @@ func TestVerifyCMAFCodecs(t *testing.T) {
 		// The HEVC half came out H.264: the tree plays, at the HEVC rung's
 		// smaller budget, and looks like a quality regression.
 		bad.videoCodecs[2] = "avc1.4d401e,mp4a.40.2"
-		if err := bad.verifyCodecs(2); err == nil {
+		if err := bad.verifyAgainstPlan(rungs); err == nil {
 			t.Error("an H.264 stream in an HEVC representation was accepted")
 		}
 	})
@@ -388,7 +429,7 @@ func TestVerifyCMAFCodecs(t *testing.T) {
 		// This is the literal string ffmpeg writes when HEVC is muxed without the
 		// tag: no video codec at all, and a master no client will start.
 		bad.videoCodecs[2] = ",mp4a.40.2"
-		if err := bad.verifyCodecs(2); err == nil {
+		if err := bad.verifyAgainstPlan(rungs); err == nil {
 			t.Error("a variant with no video codec was accepted")
 		}
 	})
@@ -396,10 +437,163 @@ func TestVerifyCMAFCodecs(t *testing.T) {
 	t.Run("a short layout is refused", func(t *testing.T) {
 		bad := multiCodecLayout(t)
 		bad.videoCodecs = bad.videoCodecs[:3]
-		if err := bad.verifyCodecs(2); err == nil {
+		if err := bad.verifyAgainstPlan(rungs); err == nil {
 			t.Error("a layout missing a representation was accepted")
 		}
 	})
+
+	// THE TRANSPOSITION ATTACK. Two same-codec rungs swapped between each other:
+	// every index exists, every index is unique, every index carries the right
+	// codec. Only the RESOLUTION says anything is wrong — and what is wrong is
+	// that the master labels the 480p variant 720p (so an ABR player fetches a
+	// rung at a bandwidth it budgeted for a different one), the per-rung
+	// progressive downloads are remuxed from the wrong representation, and
+	// trick-play indexes the wrong rung.
+	t.Run("two same-codec rungs swapped are refused", func(t *testing.T) {
+		for _, codec := range []int{0, 1} {
+			bad := multiCodecLayout(t)
+			a, b := codec*len(rungs), codec*len(rungs)+1
+			bad.videoResolutions[a], bad.videoResolutions[b] = bad.videoResolutions[b], bad.videoResolutions[a]
+			err := bad.verifyAgainstPlan(rungs)
+			if err == nil {
+				t.Fatalf("codec %d: transposing representations %d and %d was accepted", codec, a, b)
+			}
+			if !strings.Contains(err.Error(), "RESOLUTION") {
+				t.Errorf("codec %d: error %q does not say what disagreed", codec, err)
+			}
+		}
+	})
+
+	t.Run("a representation with no RESOLUTION is refused", func(t *testing.T) {
+		bad := multiCodecLayout(t)
+		bad.videoResolutions[1] = ""
+		if err := bad.verifyAgainstPlan(rungs); err == nil {
+			t.Error("a variant whose rung cannot be verified was accepted")
+		}
+	})
+
+	t.Run("a resolution that is no rung at all is refused", func(t *testing.T) {
+		bad := multiCodecLayout(t)
+		bad.videoResolutions[0] = "1920x1080"
+		if err := bad.verifyAgainstPlan(rungs); err == nil {
+			t.Error("a variant at a resolution the ladder never planned was accepted")
+		}
+	})
+}
+
+// TestCMAFVariantScore pins the SCORE attribute's two properties: resolution
+// dominates, and the codec breaks the tie in favour of the efficient one. Without
+// SCORE, an Apple client's fallback is close to "the highest BANDWIDTH it can
+// play" — and because an efficient codec DECLARES LESS, that fallback picks
+// H.264 and inverts the entire feature.
+func TestCMAFVariantScore(t *testing.T) {
+	const rungs = 3 // 720p, 480p, 360p — index 0 is the tallest
+	// Resolution dominates: every 720p variant outranks every 480p one, whatever
+	// the codecs are.
+	for _, tall := range videoCodecProfiles(true, true) {
+		for _, short := range videoCodecProfiles(true, true) {
+			if cmafVariantScore(0, rungs, tall) <= cmafVariantScore(1, rungs, short) {
+				t.Errorf("720p %s scores no higher than 480p %s — a codec bonus must never outweigh a rung",
+					tall.Name, short.Name)
+			}
+		}
+	}
+	// Within one rung, hevc > av1 > h264.
+	same := func(p codecProfile) float64 { return cmafVariantScore(0, rungs, p) }
+	if !(same(hevcProfile) > same(av1Profile) && same(av1Profile) > same(h264Profile)) {
+		t.Errorf("codec preference is not hevc > av1 > h264: hevc %v av1 %v h264 %v",
+			same(hevcProfile), same(av1Profile), same(h264Profile))
+	}
+	// No ties anywhere in a full three-codec ladder: a tie is a coin flip the
+	// client makes for us.
+	seen := map[string]string{}
+	for _, prof := range videoCodecProfiles(true, true) {
+		for i := 0; i < rungs; i++ {
+			key := formatScore(cmafVariantScore(i, rungs, prof))
+			if prev, dup := seen[key]; dup {
+				t.Errorf("SCORE %s is shared by %s and %s rung %d", key, prev, prof.Name, i)
+			}
+			seen[key] = prof.Name
+		}
+	}
+	// Rendered as the shortest exact decimal, because it is a decimal attribute
+	// and "3.3" is what an operator reading the manifest expects to see.
+	if got := formatScore(cmafVariantScore(0, rungs, hevcProfile)); got != "3.3" {
+		t.Errorf("top HEVC score renders as %q, want 3.3", got)
+	}
+}
+
+// TestCMAFAverageBandwidthIsMeasuredNotGuessed: AVERAGE-BANDWIDTH describes the
+// tree that exists. It counts the shared audio for the same reason BANDWIDTH
+// does — a variant PLAYS the rendition it references — and it is OMITTED rather
+// than invented when the tree could not be measured, because a made-up average is
+// worse than none.
+func TestCMAFAverageBandwidthIsMeasuredNotGuessed(t *testing.T) {
+	layout := multiCodecLayout(t)
+	if got := cmafVariantAverageBandwidth(layout, 0); got != 0 {
+		t.Errorf("an unmeasured layout produced AVERAGE-BANDWIDTH=%d", got)
+	}
+	// 6 MB of video over 60s = 800,000 bps; 0.9 MB of audio over 60s = 120,000.
+	layout.measured = make([]cmafRepMeasure, layout.audioRep+1)
+	layout.measured[0] = cmafRepMeasure{bytes: 6_000_000, seconds: 60}
+	layout.measured[layout.audioRep] = cmafRepMeasure{bytes: 900_000, seconds: 60}
+	if got := cmafVariantAverageBandwidth(layout, 0); got != 920_000 {
+		t.Errorf("AVERAGE-BANDWIDTH = %d, want 920000 (video 800000 + shared audio 120000)", got)
+	}
+	// A variant whose own representation was not measured has no average, even
+	// though the audio one does.
+	if got := cmafVariantAverageBandwidth(layout, 1); got != 0 {
+		t.Errorf("an unmeasured video representation produced AVERAGE-BANDWIDTH=%d", got)
+	}
+	// A silent tree's average is the video alone.
+	silent := layout
+	silent.hasAudio = false
+	if got := cmafVariantAverageBandwidth(silent, 0); got != 800_000 {
+		t.Errorf("silent AVERAGE-BANDWIDTH = %d, want 800000", got)
+	}
+}
+
+// TestPlaylistDurationSeconds: the duration AVERAGE-BANDWIDTH divides by comes
+// from the playlist's own EXTINF values — what the client itself will add up,
+// short final segment included.
+func TestPlaylistDurationSeconds(t *testing.T) {
+	playlist := strings.Join([]string{
+		"#EXTM3U",
+		`#EXT-X-MAP:URI="init-0.mp4"`,
+		"#EXTINF:6.000000,", "chunk-0-00001.m4s",
+		"#EXTINF:6.000000,", "chunk-0-00002.m4s",
+		"#EXTINF:2.500000,", "chunk-0-00003.m4s",
+		"#EXT-X-ENDLIST", "",
+	}, "\n")
+	if got := playlistDurationSeconds([]byte(playlist)); got != 14.5 {
+		t.Errorf("duration = %v, want 14.5", got)
+	}
+	if got := playlistDurationSeconds([]byte("#EXTM3U\n")); got != 0 {
+		t.Errorf("a playlist with no segments measured %v seconds", got)
+	}
+}
+
+// TestCMAFRepFilePrefixesDoNotCollide is the off-by-one that would silently
+// inflate every average: representation 1's segment prefix must not match
+// representation 10's, 11's and so on.
+func TestCMAFRepFilePrefixesDoNotCollide(t *testing.T) {
+	one := cmafRepFilePrefixes(1)
+	for _, name := range []string{"chunk-10-00001.m4s", "chunk-11-00002.m4s", "init-10.mp4"} {
+		for _, prefix := range one {
+			if strings.HasPrefix(name, prefix) {
+				t.Errorf("representation 1's prefix %q swallows %q", prefix, name)
+			}
+		}
+	}
+	for _, name := range []string{"chunk-1-00001.m4s", "init-1.mp4"} {
+		matched := false
+		for _, prefix := range one {
+			matched = matched || strings.HasPrefix(name, prefix)
+		}
+		if !matched {
+			t.Errorf("representation 1's own file %q is not counted", name)
+		}
+	}
 }
 
 // TestRenderMultiCodecMasterPlaylist pins the master a multi-codec tree serves:

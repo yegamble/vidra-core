@@ -623,6 +623,44 @@ func (io treeIO) write(ctx context.Context, name string, body []byte) error {
 	return os.WriteFile(filepath.Join(io.scratch, name), body, 0o644)
 }
 
+// bytesNamed totals the stored bytes of this directory's files whose names begin
+// with any of the given prefixes, on either transport.
+//
+// It is a NAME prefix and not a directory, because the thing being measured — one
+// CMAF representation's init segment and media segments — shares its directory
+// with every other representation. The prefixes carry the trailing separator
+// ("chunk-1-"), which is what stops representation 1 from swallowing 10's bytes.
+func (io treeIO) bytesNamed(prefixes ...string) (int64, error) {
+	var total int64
+	if io.out.streaming() {
+		for _, prefix := range prefixes {
+			total += io.out.sink.BytesMatching(path.Join(io.rel, prefix))
+		}
+		return total, nil
+	}
+	entries, err := os.ReadDir(io.scratch)
+	if err != nil {
+		return 0, err
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		for _, prefix := range prefixes {
+			if !strings.HasPrefix(e.Name(), prefix) {
+				continue
+			}
+			info, ierr := e.Info()
+			if ierr != nil {
+				return 0, ierr
+			}
+			total += info.Size()
+			break
+		}
+	}
+	return total, nil
+}
+
 // rungIO is treeIO for one ladder rung's own directory.
 type rungIO struct {
 	out     output

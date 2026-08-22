@@ -499,6 +499,14 @@ func splitChain(n int) (chain string, labels []string) {
 // budget belonged to whichever encoder was running. Handing every concurrent
 // encoder the full number instead would multiply a deliberately-restrained
 // setting by the ladder height. 0 (ffmpeg's own default) stays 0.
+//
+// THE FLOOR OF 1 IS AN OVERSHOOT, and always has been. Once the budget is
+// smaller than the number of encoders, every encoder still gets one thread, so a
+// 4-rung ladder under transcoding_threads=2 asks for 4 and a 3-codec 4-rung one
+// asks for 12. The alternative is worse — a share of zero means "ffmpeg's own
+// default", which is every core — so this is the honest local minimum rather
+// than a bug to fix here. An operator running several codecs on a small budget
+// should read transcoding_threads as a per-ENCODER floor, not a hard cap.
 func perOutputThreads(threads, outputs int) int {
 	if threads <= 0 || outputs <= 1 {
 		return threads
@@ -706,14 +714,22 @@ func hlsRungVideoEncodeArgs(r HLSRung, p codecProfile, spec streamSpec, vf strin
 	if vf != "" {
 		args = append(args, "-vf", vf)
 	}
+	// Rate control. Both modes end at the SAME ceiling — -maxrate at the rung's
+	// budget, -bufsize at twice it — because that ceiling is what the master
+	// playlist's BANDWIDTH promises a player. What differs is what the encoder
+	// aims at underneath it: a bitrate target for capped VBR, a quality target
+	// for capped CRF. See rateControl for the measurements behind that split.
 	kbps := p.videoKbps(r)
-	args = append(args, "-b"+spec.typed, fmt.Sprintf("%dk", kbps))
-	if p.CappedRate {
-		args = append(args,
-			"-maxrate"+spec.bare, fmt.Sprintf("%dk", kbps),
-			"-bufsize"+spec.bare, fmt.Sprintf("%dk", 2*kbps),
-		)
+	switch p.Rate {
+	case rateCappedCRF:
+		args = append(args, "-crf"+spec.bare, strconv.Itoa(p.CRF))
+	default:
+		args = append(args, "-b"+spec.typed, fmt.Sprintf("%dk", kbps))
 	}
+	args = append(args,
+		"-maxrate"+spec.bare, fmt.Sprintf("%dk", kbps),
+		"-bufsize"+spec.bare, fmt.Sprintf("%dk", 2*kbps),
+	)
 	return append(args,
 		// The key-frame cadence is an ENCODER setting with a packaging purpose:
 		// every packaging format cuts segments on independently decodable IDR
@@ -1002,21 +1018,26 @@ func (t *HLSTranscoder) SetPackager(name string) error {
 //     a host binary, a distro rebuild or a slimmed image may not.
 //
 // Call it AFTER SetPackager: the first check reads the selected format.
+//
+// The encoder probe runs for EVERY plan, including the H.264-only default. It
+// was once skipped there — nothing extra was enabled, so there was nothing to
+// check — which made the H.264 branch of the probe unreachable and left the one
+// encoder every deployment depends on unverified. An image built without libx264
+// passes the ffmpeg-is-on-PATH check and then fails every transcode; one
+// subprocess at boot is the whole price of catching that.
 func (t *HLSTranscoder) SetVideoCodecs(hevc, av1 bool) error {
 	profiles := videoCodecProfiles(hevc, av1)
-	if len(profiles) > 1 {
-		if !t.packager().SupportsMultiCodec() {
-			var extra []string
-			for _, p := range profiles[1:] {
-				extra = append(extra, p.Name)
-			}
-			return fmt.Errorf(
-				"media: the %q packager emits H.264 only, so it cannot carry %s: use the %s packager or turn the extra codecs off",
-				t.packager().Name(), strings.Join(extra, "+"), PackagerCMAF)
+	if len(profiles) > 1 && !t.packager().SupportsMultiCodec() {
+		var extra []string
+		for _, p := range profiles[1:] {
+			extra = append(extra, p.Name)
 		}
-		if err := verifyVideoEncoders(context.Background(), t.bin, profiles); err != nil {
-			return err
-		}
+		return fmt.Errorf(
+			"media: the %q packager emits H.264 only, so it cannot carry %s: use the %s packager or turn the extra codecs off",
+			t.packager().Name(), strings.Join(extra, "+"), PackagerCMAF)
+	}
+	if err := verifyVideoEncoders(context.Background(), t.bin, profiles); err != nil {
+		return err
 	}
 	t.codecs = profiles
 	return nil
