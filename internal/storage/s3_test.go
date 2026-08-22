@@ -5,10 +5,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minio/minio-go/v7/pkg/lifecycle"
 )
@@ -156,6 +159,135 @@ func TestSniffSize(t *testing.T) {
 			t.Errorf("sniffSize = %d, want SizeUnknown", got)
 		}
 	})
+	t.Run("a SizedReader answers for itself", func(t *testing.T) {
+		if got := sniffSize(sizedReader{Reader: strings.NewReader("abcdefg"), size: 7}); got != 7 {
+			t.Errorf("sniffSize = %d, want 7", got)
+		}
+	})
+	t.Run("a SizedReader that declines is unknown", func(t *testing.T) {
+		// SizeUnknown from the reader must propagate as SizeUnknown, not as a
+		// negative length handed to the SDK.
+		if got := sniffSize(sizedReader{Reader: strings.NewReader("abc"), size: SizeUnknown}); got != SizeUnknown {
+			t.Errorf("sniffSize = %d, want SizeUnknown", got)
+		}
+	})
+	t.Run("the concrete cases beat the interface", func(t *testing.T) {
+		// *bytes.Reader and *strings.Reader BOTH satisfy SizedReader, and their
+		// Size() reports the length they started with rather than what is left.
+		// If the interface case were matched first, a partially-consumed reader
+		// would over-report and the upload would stall waiting for bytes that
+		// are not coming. This pins the type switch's ordering.
+		br := bytes.NewReader([]byte("hello"))
+		sr := strings.NewReader("hello")
+		for _, r := range []io.Reader{br, sr} {
+			if _, err := r.Read(make([]byte, 2)); err != nil {
+				t.Fatalf("Read: %v", err)
+			}
+			if _, ok := r.(SizedReader); !ok {
+				t.Fatalf("%T no longer satisfies SizedReader; this pin no longer proves anything", r)
+			}
+			if got := sniffSize(r); got != 3 {
+				t.Errorf("sniffSize(%T) = %d, want 3 (remaining, not original length)", r, got)
+			}
+		}
+	})
+}
+
+// sizedReader is a reader that knows its own remaining length — the shape
+// S3.Open's reader has, without needing a store to open anything from.
+type sizedReader struct {
+	io.Reader
+	size int64
+}
+
+func (s sizedReader) Size() int64 { return s.size }
+
+// fakeS3Object serves one object over HTTP the way an S3-compatible store does,
+// which is enough for the SDK to build a *minio.Object against it. It exists so
+// the size-carrying reader S3.Open returns is provable WITHOUT a live MinIO —
+// the integration suite needs a container, and this contract is the reason the
+// storage migration does not upload every thumbnail as a multipart.
+func fakeS3Object(t *testing.T, body []byte) *S3 {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+		w.Header().Set("ETag", `"5d41402abc4b2a76b9719d911017c592"`)
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Accept-Ranges", "bytes")
+		http.ServeContent(w, r, "obj.bin", time.Time{}, bytes.NewReader(body))
+	}))
+	t.Cleanup(srv.Close)
+	cfg := validS3Config()
+	cfg.Endpoint = strings.TrimPrefix(srv.URL, "http://")
+	// A region pins the client to it, so no bucket-location round trip is made
+	// against a fake that would not answer one.
+	cfg.Region = "us-east-1"
+	b, err := NewS3(cfg)
+	if err != nil {
+		t.Fatalf("NewS3: %v", err)
+	}
+	return b
+}
+
+// TestS3OpenReaderCarriesTheSize proves S3.Open keeps the length its own Stat
+// already paid for, so a copy INTO another store gets the single-PUT path
+// instead of a multipart upload with a 16 MiB part buffer.
+func TestS3OpenReaderCarriesTheSize(t *testing.T) {
+	body := []byte("0123456789")
+	b := fakeS3Object(t, body)
+	rc, err := b.Open(context.Background(), "thumbnails/x.jpg")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+
+	sized, ok := rc.(SizedReader)
+	if !ok {
+		t.Fatalf("S3 Open returned %T, which is not a SizedReader; every S3→S3 copy would upload with an unknown length", rc)
+	}
+	if got := sized.Size(); got != int64(len(body)) {
+		t.Fatalf("Size = %d, want %d", got, len(body))
+	}
+	// The whole point: this is the value the Put path derives from the reader.
+	if got := sniffSize(rc); got != int64(len(body)) {
+		t.Errorf("sniffSize = %d, want %d", got, len(body))
+	}
+
+	// Size is REMAINING, not the object's length: a partly-read reader must not
+	// over-report, or the destination waits for bytes that are already gone.
+	if _, err := io.ReadFull(rc, make([]byte, 4)); err != nil {
+		t.Fatalf("ReadFull: %v", err)
+	}
+	if got := sized.Size(); got != 6 {
+		t.Errorf("Size after reading 4 bytes = %d, want 6", got)
+	}
+}
+
+// TestS3OpenReaderStaysSeekable pins the capability the size wrapper must not
+// cost: serveStoredObject and blobsink type-assert this reader to io.ReadSeeker
+// for http.ServeContent, and losing Seek would turn every Range request into a
+// silent full-body 200.
+func TestS3OpenReaderStaysSeekable(t *testing.T) {
+	b := fakeS3Object(t, []byte("0123456789"))
+	rc, err := b.Open(context.Background(), "web-videos/x.mp4")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	rs, ok := rc.(io.ReadSeeker)
+	if !ok {
+		t.Fatal("S3 Open reader does not implement io.ReadSeeker; Range serving would silently degrade to full-body 200s")
+	}
+	if _, err := rs.Seek(4, io.SeekStart); err != nil {
+		t.Fatalf("Seek: %v", err)
+	}
+	got, err := io.ReadAll(rs)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(got) != "456789" {
+		t.Errorf("read after seek = %q, want %q", got, "456789")
+	}
 }
 
 // TestPutSizedValidatesKeys proves the sized path enforces the same key contract
