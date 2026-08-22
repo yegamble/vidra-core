@@ -180,6 +180,45 @@ services:
   # deploy/deploy.sh's post-migration ledger assertion keeps working. (The meta
   # repo's separate search-migrate service is the one that must carry
   # &x-migrations-table=vidra_search_migrations.)
+  # One-shot volume preparation. MUST run before api.
+  #
+  # WHY THIS EXISTS: the api image runs as non-root uid 10001 (Dockerfile:39,56).
+  # Docker creates a named volume's mount point owned by root:root 0755 whenever
+  # that path does NOT already exist inside the image — and /app/data and
+  # /scratch do not. Without this, the api gets "permission denied" on the very
+  # first os.MkdirTemp in /scratch (every transcode fails) and on creating
+  # STORAGE_LOCAL_ROOT.
+  #
+  # Idempotent and non-recursive on purpose: it only fixes the mount points, so
+  # it stays instant once the media volume is large. Content created later is
+  # already owned by uid 10001.
+  #
+  # This mirrors the meta repo's docker-compose.prod.yml, which has carried the
+  # same service since production learned this the hard way. The prod file
+  # refines it (it adds vidra-search's model volume) rather than replacing it, so
+  # the two must keep the same NAME — a second differently-named one-shot would
+  # run twice and race on the same chown.
+  #
+  # live_hls is deliberately NOT touched: the api only READS it, and the
+  # `media`-profile rtmp server writes it as its own user.
+  prep-volumes:
+    image: alpine:3.24
+    profiles: ["core"]
+    restart: "no"
+    user: "0:0"
+    # A one-shot that exits is not a server; the api image's baked /healthz probe
+    # does not apply and this image has none, so there is nothing to disable.
+    command:
+      - "sh"
+      - "-euc"
+      - |
+        mkdir -p /app/data/media /scratch
+        chown 10001:10001 /app/data /app/data/media /scratch
+        chmod 0750 /app/data /app/data/media /scratch
+    volumes:
+      - media_data:/app/data
+      - transcode_tmp:/scratch
+
   migrate:
     # Same image as api, by NAME rather than by a second build: block. The
     # migrator IS the api binary, so one build serves both services, and a
@@ -229,6 +268,10 @@ services:
       dockerfile: Dockerfile
     profiles: ["core"]
     depends_on:
+      # Before anything else: the media and scratch mount points have to be
+      # writable by uid 10001 or the first transcode fails on MkdirTemp.
+      prep-volumes:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -492,6 +535,26 @@ services:
       # Free-space floor (MiB) on the transcode scratch volume below which no new
       # job is claimed. 0 = built-in default (10 GiB). See .env.example.
       TRANSCODING_MIN_FREE_SCRATCH_MB: ${TRANSCODING_MIN_FREE_SCRATCH_MB:-0}
+      # Redirects every MkdirTemp/CreateTemp site (HLS ladder, VP9 second encode,
+      # the uncompressed PCM wav Whisper needs, trick-play I-frames) off the
+      # container writable layer and onto the transcode_tmp volume mounted below.
+      # It is also the filesystem TRANSCODING_MIN_FREE_SCRATCH_MB measures, so
+      # without it that admission check guards the wrong disk.
+      TMPDIR: /scratch
+      # Packaging format for NEW transcodes: cmaf (default — one segment set
+      # addressed by both an MPD and HLS playlists) or ts (the frozen MPEG-TS
+      # compatibility path).
+      #
+      # This line is what makes the documented rollback REACHABLE. This env map is
+      # an explicit allow-list and the meta wrapper includes it with
+      # env_file: /dev/null, so a variable that is not named here is not passed to
+      # the api no matter what the operator's env file says — and the symptom of
+      # the omission is the worst kind: `TRANSCODING_PACKAGER=ts` in the env file,
+      # a stack that comes up healthy, and every new video still packaged CMAF.
+      # It changes only what NEW transcodes produce; existing trees keep serving
+      # from their own recorded format, which is what makes the rollback
+      # config-only.
+      TRANSCODING_PACKAGER: ${TRANSCODING_PACKAGER:-cmaf}
       # Extra video codecs: an HEVC and/or AV1 encoding of every ladder rung
       # alongside the H.264 one, in the same CMAF tree. H.264 is always emitted
       # and is not a knob. CMAF-ONLY — with TRANSCODING_PACKAGER=ts the api
@@ -673,10 +736,15 @@ services:
       # Root of the local-disk backend INSIDE the container. The absolute default
       # below is exactly where the config default "./data/media" already resolved
       # (the runtime image's WORKDIR is /app) — it is written out so the path no
-      # longer depends on the WORKDIR. DURABILITY WARNING: with STORAGE_BACKEND=local
-      # this lives on the container's writable layer unless a deployment mounts a
-      # volume at /app/data, in which case `up -d` destroys the media while the
-      # database rows survive pointing at nothing.
+      # longer depends on the WORKDIR.
+      #
+      # It is backed by the media_data volume mounted at /app/data below, and that
+      # mount is load-bearing rather than tidy: without it, media lands on the
+      # container's writable layer and `up -d --force-recreate api` DELETES every
+      # stored video while the database rows survive pointing at nothing. That is
+      # not hypothetical — it happened twice to a validation stack on this very
+      # file before the mount existed. Point this somewhere else and you are
+      # responsible for mounting that path yourself.
       STORAGE_LOCAL_ROOT: ${STORAGE_LOCAL_ROOT:-/app/data/media}
       STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT:-}
       STORAGE_S3_BUCKET: ${STORAGE_S3_BUCKET:-}
@@ -764,10 +832,20 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "${HTTP_PORT:-8080}:8080"
-    # Shared with the `media` profile's rtmp server: it writes live HLS +
-    # recordings here, the api serves/reads them. Harmless (empty) without the
-    # media profile. Point LIVE_HLS_ROOT at /live-hls to enable live serving.
     volumes:
+      # THE DURABILITY MOUNT. STORAGE_LOCAL_ROOT (/app/data/media) lives here, and
+      # without this line every stored video is on the container's writable layer:
+      # `up -d --force-recreate api` — a rebuild, an env change, a tag bump —
+      # deletes the media while the Postgres rows survive pointing at nothing.
+      # Unused with STORAGE_BACKEND=s3, and harmless there.
+      - media_data:/app/data
+      # ffmpeg scratch (TMPDIR below). Keeps the HLS ladder, the VP9 second
+      # encode, Whisper's uncompressed PCM wav and the trick-play I-frames off the
+      # writable layer, where they are both slow and unbounded.
+      - transcode_tmp:/scratch
+      # Shared with the `media` profile's rtmp server: it writes live HLS +
+      # recordings here, the api serves/reads them. Harmless (empty) without the
+      # media profile. Point LIVE_HLS_ROOT at /live-hls to enable live serving.
       - live_hls:/live-hls
 
   # Live RTMP media server (media profile): ingests RTMP, packages HLS, records
@@ -986,6 +1064,13 @@ services:
 
 volumes:
   postgres_data:
+  # STORAGE_BACKEND=local media root (/app/data/media). Unused with s3. Deleting
+  # this volume deletes every stored video; the database rows survive it.
+  media_data:
+  # ffmpeg scratch (TMPDIR=/scratch). Sized for ~4x UPLOAD_MAX_SIZE per concurrent
+  # transcode; on a real deployment back it with its own device rather than the
+  # disk Postgres lives on.
+  transcode_tmp:
   minio_data:
   clamav_data:
   live_hls:
