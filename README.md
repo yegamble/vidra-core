@@ -148,6 +148,7 @@ full table. The load-bearing knobs:
 | Key | Default | Notes |
 | --- | --- | --- |
 | `JWT_SECRET` | dev placeholder | **Required in production** — the HS256 signing secret. |
+| `VIDRA_ROLE` | `all` | Which halves this process runs: `all` \| `api` (HTTP only) \| `worker` (background workers only, no listener). Splits ffmpeg out of the API container. See [operations](docs/operations.md#splitting-the-api-and-the-workers). |
 | `PUBLIC_BASE_URL` | empty | Required for OAuth redirect URIs and `Secure` cookies. |
 | `STORAGE_BACKEND` | `local` | `local` \| `s3`. Local writes under `STORAGE_LOCAL_ROOT`. |
 | `STORAGE_LOCAL_ROOT` | `./data/media` | Root directory for the local backend. |
@@ -169,6 +170,7 @@ Optional Docker Compose profiles layer services onto the `core` stack:
 | Profile | Adds |
 | --- | --- |
 | `core` | postgres, redis, migrate, api |
+| `worker` | background-worker containers (same image, `VIDRA_ROLE=worker`); layers onto `core`, `--scale worker=N` |
 | `storage` | MinIO (S3-compatible object store) |
 | `scan` | ClamAV (malware scanning) |
 | `captions` | Whisper caption server |
