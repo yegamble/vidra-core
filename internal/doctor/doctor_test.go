@@ -1524,16 +1524,133 @@ func TestStorageMigration(t *testing.T) {
 		wantFinding(t, one(t, only(t, "storage migration", withDSN(), p)), StatusWarn, "skipped:", "")
 	})
 
-	t.Run("the bundled Postgres cannot be asked from the host", func(t *testing.T) {
-		// No DATABASE_URL in the env file: docker-compose.prod.yml publishes no
-		// port for it, deliberately, and there is no `migrate version`-shaped
-		// one-shot that prints campaign state.
-		wantFinding(t, one(t, only(t, "storage migration", newFakeHost(), nil)), StatusWarn, "publishes no host port", "")
-	})
-
 	t.Run("an unreadable env file skips", func(t *testing.T) {
 		h := newFakeHost()
 		delete(h.files, filepath.Join(testRoot, "env/production.env"))
 		wantFinding(t, one(t, only(t, "storage migration", h, nil)), StatusWarn, "skipped:", "")
+	})
+}
+
+// TestStorageMigrationViaContainer covers the deployment shape the installer
+// produces by DEFAULT: the bundled Postgres, which publishes no host port, so
+// there is no DATABASE_URL to dial and the check has to ask from inside the
+// network. Before this fallback existed the check could never run at all on such
+// a host — a permanently skipped line, which is a hole in the report that looks
+// like a diagnostic.
+func TestStorageMigrationViaContainer(t *testing.T) {
+	// psqlAnswer replaces just the psql exec, leaving the rest of the healthy
+	// deployment alone.
+	psqlAnswer := func(out Output, err error) *fakeHost {
+		h := newFakeHost()
+		h.respond = func(name string, args []string) (Output, error) {
+			if name == "docker" && strings.Contains(strings.Join(args, " "), "exec -T postgres psql") {
+				return out, err
+			}
+			return h.healthyRespond(name, args)
+		}
+		return h
+	}
+
+	t.Run("nothing in flight is read through the postgres container", func(t *testing.T) {
+		h := newFakeHost() // no DATABASE_URL: the bundled database
+		f := one(t, only(t, "storage migration", h, nil))
+		wantFinding(t, f, StatusOK, "no storage migration in flight", "")
+
+		// The query has to be the one the media-GC interlock asks, run through
+		// the deploy's OWN compose chain, as the user the compose file
+		// provisions. A second opinion about any of the three is a check that
+		// answers about a different deployment or a narrower definition.
+		var psql string
+		for _, c := range h.commands() {
+			if strings.Contains(c, "exec -T postgres psql") {
+				psql = c
+			}
+		}
+		if psql == "" {
+			t.Fatalf("no psql exec was attempted; commands were %v", h.commands())
+		}
+		for _, want := range []string{
+			"--env-file", "-U vidra", "-d vidra", "-tA",
+			"state NOT IN ('done', 'cancelled')",
+		} {
+			if !strings.Contains(psql, want) {
+				t.Errorf("the psql exec does not contain %q: %s", want, psql)
+			}
+		}
+	})
+
+	t.Run("a live campaign warns exactly as the direct path does", func(t *testing.T) {
+		h := psqlAnswer(Output{Stdout: "t\n"}, nil)
+		f := one(t, only(t, "storage migration", h, nil))
+		wantFinding(t, f, StatusWarn, "IN FLIGHT", "restore.sh")
+		// The wording has to be identical whichever way doctor got the answer:
+		// the operator cares about the campaign, not about the plumbing.
+		if f.Detail != storageMigrationFinding(true).Detail {
+			t.Errorf("the container path words the in-flight finding differently from the direct path:\n%s\n%s", f.Detail, storageMigrationFinding(true).Detail)
+		}
+	})
+
+	t.Run("the postgres user and database come from the env file", func(t *testing.T) {
+		h := newFakeHost()
+		h.files[filepath.Join(testRoot, "env/production.env")] = strings.ReplaceAll(
+			strings.ReplaceAll(healthyEnv, "POSTGRES_USER=vidra", "POSTGRES_USER=tube"),
+			"POSTGRES_DB=vidra", "POSTGRES_DB=tubedb")
+		_ = one(t, only(t, "storage migration", h, nil))
+		var psql string
+		for _, c := range h.commands() {
+			if strings.Contains(c, "exec -T postgres psql") {
+				psql = c
+			}
+		}
+		// The image creates no `postgres` role when POSTGRES_USER is set, so
+		// psql's own default would simply fail to connect.
+		if !strings.Contains(psql, "-U tube") || !strings.Contains(psql, "-d tubedb") {
+			t.Errorf("psql was not run as the provisioned user/database: %s", psql)
+		}
+	})
+
+	t.Run("a database older than the tables is a pass, not a skip", func(t *testing.T) {
+		h := psqlAnswer(Output{
+			Stderr:   `ERROR:  relation "storage_migrations" does not exist` + "\nLINE 1: SELECT EXISTS (SELECT 1 FROM storage_migrations WHERE ...\n",
+			ExitCode: 1,
+		}, nil)
+		wantFinding(t, one(t, only(t, "storage migration", h, nil)), StatusOK, "predates the storage-migration tables", "")
+	})
+
+	t.Run("the postgres container being down is a skip", func(t *testing.T) {
+		h := newFakeHost()
+		h.respond = func(name string, args []string) (Output, error) {
+			if name == "docker" && strings.HasPrefix(strings.Join(args, " "), "ps ") {
+				return Output{Stdout: ""}, nil
+			}
+			return h.healthyRespond(name, args)
+		}
+		wantFinding(t, one(t, only(t, "storage migration", h, nil)), StatusWarn, "postgres container is not running", "")
+	})
+
+	t.Run("containers that cannot be inspected is a skip", func(t *testing.T) {
+		h := newFakeHost()
+		h.respond = func(string, []string) (Output, error) { return Output{}, errNotInstalled }
+		wantFinding(t, one(t, only(t, "storage migration", h, nil)), StatusWarn, "could not be inspected", "")
+	})
+
+	t.Run("docker missing is a skip", func(t *testing.T) {
+		h := psqlAnswer(Output{}, errNotInstalled)
+		wantFinding(t, one(t, only(t, "storage migration", h, nil)), StatusWarn, "docker is not on this host's PATH", "")
+	})
+
+	t.Run("an answer psql was not asked for is a skip, never a failure", func(t *testing.T) {
+		// A container that cannot be reached, a psql that is not there, a
+		// password prompt: none of it is evidence about whether media is moving.
+		for _, out := range []Output{
+			{Stderr: "psql: error: connection to server failed\n", ExitCode: 2},
+			{Stdout: "", ExitCode: 0},
+			{Stdout: "maybe\n"},
+		} {
+			f := one(t, only(t, "storage migration", psqlAnswer(out, nil), nil))
+			if f.Status != StatusWarn || !strings.HasPrefix(f.Detail, "skipped:") {
+				t.Errorf("psql answering %+v produced %s %q, want a skip", out, f.Status, f.Detail)
+			}
+		}
 	})
 }
