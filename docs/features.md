@@ -440,6 +440,49 @@ runs the same sweep.
 
 ## Playback
 
+### Playback sessions
+
+**Playback session** (`POST /api/v1/videos/{id}/playback-session`): the one call
+a player makes before it plays. It decides authorization once and returns
+everything needed to run the playback without asking the core API again per
+segment — `session_id`, `packaging_format` (`hls-ts` | `cmaf`), `hls_url`,
+`dash_url` (CMAF trees only), `renditions`, and — only when the video needs one —
+a `playback_token` + `expires_in`. Optional auth; no request body. Authorization
+is the media routes' own gate, so the answers are identical to
+`GET …/hls/master.m3u8`: an invisible video is `404`, and a `password` video with
+no credential is the deliberate `401 code=password_required` the unlock prompt
+renders from. A video whose HLS tree isn't ready yet is `200` with no manifest
+URLs — the caller *is* authorized, there is simply nothing transcoded, and
+progressive `/original` playback still applies.
+
+The token is **conditional by design**. Any media request carrying `?pt=` or an
+`Authorization` header is treated as credentialed, and a credentialed media
+request is never cached, never presigned and never redirected — so a session that
+minted a token for every viewer would silently make all delivery origin-only. It
+is minted only for the one tier that cannot play without it (`privacy=password`),
+which also closes a real gap: the *owner* of a password video previously had no
+way to watch it in Safari, because native HLS can't send a header and the
+password gate has no cookie path.
+
+`session_id` is server-minted per session and is the correlation key for
+quality-of-experience events. It is not the client's `X-Vidra-Session` browse id,
+and it is never an authorization input on its own — for a password video the
+authority is in the token, which is HMAC-signed over that same session id. No
+session table exists: a v1 session holds no server-side state.
+
+Manifest URLs are **origin-relative and carry no credential**. A presigned URL is
+a single-object bearer credential with an hour of life, so delivery-source
+selection (CDN, presigned redirect, IPFS gateway) stays where it is — a
+per-request decision made when the bytes are served. `dash_url` is deliberately
+**unversioned**: a DASH player expands the manifest's `SegmentTemplate` patterns
+itself and fetches segments without a query string, so a version there would
+fence only the manifest.
+
+`packaging_format` and `dash_url` also appear on the video detail response, since
+that is what a client reads first. Without them a CMAF video and an MPEG-TS video
+are indistinguishable — both serve HLS from `hls_url` — and the DASH manifest is
+reachable only by hand.
+
 ### Original streaming
 
 `GET /api/v1/videos/{id}/original` streams the stored original bytes for direct
@@ -465,7 +508,12 @@ accepts it as `Authorization: Bearer <playback_token>` **or** `?pt=<token>` (the
 header-less path for Safari native-HLS and progressive playback); an HLS
 playlist requested with `?pt=` has its relative variant/segment URIs rewritten
 to propagate the token. The unlock endpoint is rate-limited under the same
-budget as login; the token is a secret (never logged). Embed privacy lives in
+budget as login; the token is a secret (never logged). The token payload is
+versioned: newly minted tokens carry a video id, a session id, a scope and an
+expiry, and the unversioned pre-session payload is still *verified* so tokens
+outstanding at upgrade time keep working for the rest of their 6 hours. Both
+mint paths — unlock and the playback session — issue the same kind of
+credential. Embed privacy lives in
 two columns on `videos`: `GET/PUT /api/v1/videos/{id}/embed-privacy`
 (`{status: enabled|disabled|whitelist, allowed_domains?}`; owner-only write, ≤50
 bare hostnames for `whitelist`). Enforcement is at the embed page in

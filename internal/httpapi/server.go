@@ -1349,6 +1349,14 @@ func (s *Server) routes() {
 		// plaintext or hash.
 		unlockMW := []echo.MiddlewareFunc{s.optionalAuth, s.authRateLimit(s.unlockLimit)}
 		api.POST("/videos/:id/unlock", s.handleUnlockVideo, unlockMW...)
+
+		// Playback session (interfaces.md §5, phase-4 item 1): the one call a
+		// player makes before it plays. optionalAuth, and authorized through the
+		// same videoVisibleForMedia the media routes use, so it answers 404/401
+		// exactly as they do. NOT rate-limited alongside unlock: unlock is a
+		// password-GUESSING surface, this endpoint refuses everyone unlock
+		// refuses and mints nothing a caller could not already obtain.
+		api.POST("/videos/:id/playback-session", s.handleCreatePlaybackSession, s.optionalAuth)
 		api.GET("/videos/:id/passwords", s.handleListVideoPasswords, s.requireAuth)
 		api.POST("/videos/:id/passwords", s.handleAddVideoPassword, s.requireAuth)
 		api.PUT("/videos/:id/passwords", s.handleReplaceVideoPasswords, s.requireAuth)

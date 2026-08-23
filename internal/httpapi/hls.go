@@ -457,22 +457,66 @@ type renditionView struct {
 	Width  int32 `json:"width"`
 }
 
-// hlsDetail returns the video-detail HLS fields: the master playlist URL and
-// the available renditions, but only once the playlist is ready (nil/absent
-// otherwise, including when transcoding is not wired).
-func (s *Server) hlsDetail(c echo.Context, id uuid.UUID) (*string, []renditionView) {
+// playbackTree is what a client needs to KNOW about a video's transcoded tree
+// before it can ask for a byte of it: which manifests exist, which packaging
+// format they describe, and what rungs are on the ladder. It is the projection
+// the video detail and the playback session (phase-4 item 1) both render — one
+// readiness decision, two responses, so they cannot disagree about whether a
+// video is playable.
+type playbackTree struct {
+	// hlsURL is the versioned master playlist path. Versioned because ?v= fences
+	// a generation: every URI inside an m3u8 is rewritten to carry it, so the
+	// whole HLS tree is immutable within a generation.
+	hlsURL string
+	// dashURL is the DASH manifest path, set ONLY for a CMAF tree (an MPEG-TS
+	// tree has no MPD). It is deliberately UNVERSIONED: a DASH player expands
+	// SegmentTemplate patterns itself and fetches the siblings without a query
+	// string, so a ?v= here would fence the manifest while its own segments
+	// arrived unversioned — an immutability claim only the manifest could keep.
+	// The MPD is revalidated instead, which is what its segments already do.
+	dashURL string
+	// format is the packaging format the tree was written in (media.HLSFormatTS
+	// "hls-ts" | media.HLSFormatCMAF "cmaf"). A client cannot tell the two apart
+	// from hls_url alone — both serve HLS from master.m3u8 — so this is what an
+	// engine adapter (item 3) selects a manifest on.
+	format string
+	// renditions are the ladder rungs, tallest first.
+	renditions []renditionView
+}
+
+// hlsDetail projects a video's transcoded tree, but only once the playlist is
+// ready (ok=false otherwise, including when transcoding is not wired). It reads
+// the streaming-playlist row it already has in hand for the format rather than
+// making the caller look it up again — a second readiness decision is how a
+// detail response and a session response drift apart.
+func (s *Server) hlsDetail(c echo.Context, id uuid.UUID) (playbackTree, bool) {
 	if s.transcodesvc == nil {
-		return nil, nil
+		return playbackTree{}, false
 	}
 	sp, ok := s.transcodesvc.Playlist(c.Request().Context(), id)
 	if !ok || sp.State != "ready" || sp.MasterKey == "" {
-		return nil, nil
+		return playbackTree{}, false
 	}
-	url := "/api/v1/videos/" + id.String() + "/hls/master.m3u8?" +
-		hlsVersionParam + "=" + hlsCacheVersion(sp)
-	var rends []renditionView
+	base := "/api/v1/videos/" + id.String()
+	tree := playbackTree{
+		hlsURL: base + "/hls/master.m3u8?" + hlsVersionParam + "=" + hlsCacheVersion(sp),
+		format: packagingFormat(sp),
+	}
+	if tree.format == media.HLSFormatCMAF {
+		tree.dashURL = base + "/hls/" + hlsCMAFRendition + "/" + hlsCMAFManifestFile
+	}
 	for _, r := range s.transcodesvc.Renditions(c.Request().Context(), id) {
-		rends = append(rends, renditionView{Height: r.Height, Width: r.Width})
+		tree.renditions = append(tree.renditions, renditionView{Height: r.Height, Width: r.Width})
 	}
-	return &url, rends
+	return tree, true
+}
+
+// packagingFormat reads a playlist row's format, folding an empty value to
+// hls-ts exactly as the column default does. Rows written before CMAF existed
+// (and hand-built fixtures) carry no format, and they are all MPEG-TS trees.
+func packagingFormat(sp sqlcgen.StreamingPlaylist) string {
+	if sp.Format == "" {
+		return media.HLSFormatTS
+	}
+	return sp.Format
 }
