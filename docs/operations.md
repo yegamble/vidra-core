@@ -1234,10 +1234,41 @@ All opt-in and zero-cost when disabled.
 - **Metrics** (`METRICS_ENABLED=true`): Prometheus RED metrics at **`GET /metrics`**
   (`vidra_http_requests_total`, `vidra_http_request_duration_seconds` labelled by
   method / route template / status class — bounded cardinality, no ids or raw
-  URLs) plus a `vidra_queue_depth{queue,state}` gauge. The endpoint is
+  URLs) plus a `vidra_queue_depth{queue,state}` gauge and the connection-pool
+  series `vidra_db_pool_total_conns` / `_idle_conns` / `_acquired_conns` /
+  `_max_conns` with `vidra_db_pool_empty_acquires_total` and
+  `vidra_db_pool_acquire_wait_seconds_total`. The endpoint is
   unauthenticated and lives at the root like the health probes — **network-scope
   it** (internal Prometheus scrape only), do not expose it publicly. It is
   intentionally omitted from the public OpenAPI contract (an ops surface).
+
+  The pool series is the one to watch before adding a replica. `_acquired_conns`
+  pinned at `_max_conns` with a rising `rate(vidra_db_pool_empty_acquires_total)`
+  means requests are queueing for a connection rather than for the database —
+  that is `DB_MAX_CONNS` being too small for this process, not PostgreSQL being
+  slow, and the two have opposite fixes. Each process exports its own; the sum
+  across processes is what PostgreSQL's `max_connections` has to cover.
+- **Health probes**: `GET /healthz` is dependency-free liveness (is the process
+  up). `GET /readyz` is the load balancer's question — *should I send this
+  instance traffic* — and answers it deliberately narrowly:
+
+  | Condition | HTTP | `status` |
+  |---|---|---|
+  | everything reachable | 200 | `ok` |
+  | Redis down, PostgreSQL up | 200 | `degraded` |
+  | PostgreSQL down | 503 | `unavailable` |
+  | SIGTERM received, listener still open | 503 | `draining` |
+
+  **Only PostgreSQL takes a replica out of rotation.** It is the system of
+  record; without it nearly every route is a 500. Redis does not, because every
+  rate limiter fails *open* on a Redis error and the rest of its users are
+  caches — and because all replicas share one Redis, 503ing on it would empty
+  the whole fleet from the load balancer at the same instant, turning a partial
+  loss of rate limiting into a total outage. The body still names the down
+  component either way; `vidra status` renders it as a ⚠.
+
+  The result is cached for ~2s, so polling `/readyz` from a dozen balancers and
+  uptime checks costs the same pooled DB connection as polling it from one.
 - **Tracing** (`OTEL_ENABLED=true`): OTLP spans for HTTP requests, PostgreSQL
   queries, Redis commands, and outbound HTTP (federation/import/whisper/atproto),
   with inbound + outbound W3C `traceparent` propagation. Run a local backend with
@@ -1306,6 +1337,67 @@ leadership only decides *how many* instances sweep, not whether the sweep is
 right. See [Media garbage collection](#media-garbage-collection--the-job-that-deletes).
 Each instance spends its own first-sweep dry run, so a leadership move re-arms
 that rail on the new leader.
+
+### Connection budget — the thing that breaks first
+
+Every process opens its own pgx pool of up to `DB_MAX_CONNS` (default 10)
+connections. PostgreSQL's `max_connections` is server-wide. **The number that has
+to fit is `DB_MAX_CONNS` × processes**, and processes means api replicas *plus*
+worker replicas — the `worker` service merges the same `x-api-env` anchor, so it
+gets the same pool size.
+
+At the defaults, one all-in-one process needs 10 of a stock server's 100. An
+api + worker split needs 20. Three api replicas and three workers need 60, and a
+managed plan capped at 25 or 40 connections is exceeded well before that. The
+failure is not gradual: it is `FATAL: sorry, too many clients already` on
+whichever process connects *last*, which during a rolling deploy is the new one —
+so the deployment that fails is the one you just started, and the one still
+running looks fine.
+
+Lower `DB_MAX_CONNS` per process rather than chasing `max_connections`, which on
+a managed plan you usually cannot move. Two rails exist to keep that honest:
+
+- `DB_MAX_CONNS` must be **at least 2**, and the api refuses to boot below it. On
+  any role that runs workers the singleton-cron elector checks one connection out
+  of this pool and holds it for as long as that instance is the leader (that is
+  what makes the advisory lock release itself on death), so a pool of 1 would
+  leave nothing to run queries on — and the symptom is every request hanging on
+  connection acquire, with no error anywhere.
+- `vidra doctor` reads your server's actual `max_connections` and prints the
+  arithmetic, warning when the pool is tight for more than one process. It never
+  fails a run: a small pool is a legitimate configuration, and doctor cannot see
+  how many processes you are running.
+
+`vidra_db_pool_empty_acquires_total` on `/metrics` is how you tell whether a
+smaller pool is actually costing anything: it counts the acquires that had to
+wait because every connection was checked out.
+
+`DB_MIN_CONNS`, `DB_CONN_MAX_LIFETIME` and `DB_CONN_MAX_IDLE_TIME` come with the
+same defaults the pool always had (1, 1h, 30m). The lifetime is what lets a
+failover, a rotated credential or a connection-pooling proxy take effect without
+restarting the process.
+
+### Rolling restarts — `/readyz` and the drain delay
+
+`/readyz` returns 503 as soon as SIGTERM is received, **while the listener stays
+open**. That gap is what `HTTP_DRAIN_DELAY` (default `0`) is for.
+
+A load balancer finds out a replica is going away by *polling* readiness. With no
+delay the sequence is: last health check passes → listener closes → the requests
+already in flight toward this replica are refused. With one, readiness goes red
+first, the balancer takes the instance out of rotation, and only then does the
+socket close on traffic nobody is routing any more.
+
+Set it to at least **twice your health-check interval** — more if your balancer
+requires several consecutive failures before it acts. It is spent *before* the
+`HTTP_SHUTDOWN_TIMEOUT` drain of in-flight requests, not out of it, so the two add
+up; under Docker both have to fit inside the container's `stop_grace_period`
+(10s by default) or SIGKILL ends the argument. A second SIGTERM ends the wait
+early, so an operator in a hurry does not have to escalate to SIGKILL.
+
+Zero is the right value for a single-node install: nothing is making routing
+decisions about it, so the wait would only slow the restart down. Nothing changes
+for an install that does not set it.
 
 ### What was actually tested
 
@@ -1433,6 +1525,26 @@ new configuration key reaches both halves without anyone remembering to copy it.
 interlock for this and there deliberately is not one: a process cannot tell whether
 some other container is draining the queues.
 
+### Local storage stops working the moment the split crosses machines
+
+`STORAGE_BACKEND=local` writes media to a filesystem. On the stock stack that is
+fine and it is what you get by default: the `api` and `worker` containers are
+different processes on the *same host* sharing the `media_data` volume, so a
+rendition the worker writes is a file the api can open.
+
+Put the worker on a **different machine** and the same configuration is silently
+wrong. The transcode succeeds, the rendition lands on a disk no api instance can
+read, and every playback request for it is a 404 — with nothing in any log to say
+why, because from each process's point of view nothing failed. **A multi-machine
+fleet requires `STORAGE_BACKEND=s3`**, which is the same requirement multiple api
+instances have (see [the multi-instance caveats](#caveats-stated-plainly)).
+
+A worker booting with `VIDRA_ROLE=worker` and `STORAGE_BACKEND=local` logs one
+loud warning saying so. It is a **warning and not a refusal** on purpose: refusing
+would break the default single-host install, which is a legitimate use of exactly
+this configuration, and no process can tell from the inside whether the filesystem
+it is writing to is the same one another container is reading.
+
 ### Sizing
 
 With the split on, the api container's envelope can shrink — it is serving JSON and
@@ -1466,8 +1578,10 @@ disables it (`healthcheck: {disable: true}`), and any hand-rolled deployment mus
 the same or every worker container will be marked unhealthy and anything waiting on
 `service_healthy` will hang. Liveness for a worker is process liveness — let the
 supervisor restart it if it exits. `GET /readyz` on the api still reports PostgreSQL
-and Redis; queue depth and stalled-queue age are on `/metrics`
-(`METRICS_ENABLED=true`), which is where a worker outage is actually visible.
+and Redis — though only PostgreSQL 503s it, see
+[Observability surfaces](#observability-surfaces-p17) — and queue depth and
+stalled-queue age are on `/metrics` (`METRICS_ENABLED=true`), which is where a
+worker outage is actually visible.
 
 ### Shutdown
 
