@@ -46,9 +46,11 @@ func playbackTokenFromRequest(c echo.Context) string {
 	return ""
 }
 
-// hasPlaybackToken reports whether the request carries a valid, unexpired playback
-// token scoped to videoID.
-func (s *Server) hasPlaybackToken(c echo.Context, videoID uuid.UUID) bool {
+// hasPlaybackToken reports whether the request carries a valid, unexpired
+// playback token granting scope on subjectID — a video id for
+// playback.ScopePlayback, a live stream id for playback.ScopeLive. The scope is
+// named by the caller so one gate's credential can never open another's.
+func (s *Server) hasPlaybackToken(c echo.Context, subjectID uuid.UUID, scope playback.Scope) bool {
 	if s.playbackSigner == nil {
 		return false
 	}
@@ -56,7 +58,7 @@ func (s *Server) hasPlaybackToken(c echo.Context, videoID uuid.UUID) bool {
 	if tok == "" {
 		return false
 	}
-	return s.playbackSigner.Verify(tok, videoID)
+	return s.playbackSigner.Verify(tok, subjectID, scope)
 }
 
 // passwordGate enforces the CORE-17 access rule for a password-protected video on
@@ -72,7 +74,7 @@ func (s *Server) passwordGate(c echo.Context, videoID uuid.UUID, privacy string,
 	if userID, role, ok := principalFromContext(c); ok && (userID == ownerID || role == "admin" || role == "moderator") {
 		return nil
 	}
-	if s.hasPlaybackToken(c, videoID) {
+	if s.hasPlaybackToken(c, videoID, playback.ScopePlayback) {
 		return nil
 	}
 	return &PasswordRequiredError{}
