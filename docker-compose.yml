@@ -491,6 +491,37 @@ x-api-env: &api-env
   # any ratio through.
   MEDIA_GC_ENABLED: ${MEDIA_GC_ENABLED:-true}
   MEDIA_GC_MAX_ORPHAN_PERCENT: ${MEDIA_GC_MAX_ORPHAN_PERCENT:-25}
+  # CDN DELIVERY (docs/productionization/phase-4-delivery.md item 2). OFF by
+  # default: empty DELIVERY_CDN_BASE_URL means no CDN source exists at all and
+  # every byte is proxied by the api, which is the shipped behaviour.
+  #
+  # TWO SWITCHES, ON PURPOSE. This key makes the CDN EXIST; the runtime
+  # `delivery_cdn_enabled` instance setting (Admin → Advanced → delivery,
+  # default off) makes it be USED. Setting the base URL alone changes nothing —
+  # which is what lets an operator wire and restart during a calm afternoon and
+  # then flip delivery on, and back off, during an incident without a restart.
+  #
+  # THE CDN'S ORIGIN MUST BE KEY-ADDRESSED — the object-store bucket, or a
+  # static server rooted at the media directory. The edge URL is this base plus
+  # the storage object key. Pointing it at the Vidra api origin 404s every
+  # request: the api addresses media by ROUTE, not by key. Only public,
+  # published, uncredentialed media is ever sent to it; nothing here can put a
+  # private object at an edge.
+  DELIVERY_CDN_BASE_URL: ${DELIVERY_CDN_BASE_URL:-}
+  # Invalidation. Empty PURGE_URL is legal and means the edge cannot be purged
+  # from here — a deletion or privacy flip will not reach it. The template
+  # placeholders are {url} (the edge URL), {url_encoded} (the same, percent-
+  # encoded for a query value) and {key} (the object key). Default method is
+  # PURGE, which is what Varnish, the nginx purge module and most single-URL
+  # vendor APIs accept against the asset's own URL. DELIVERY_CDN_PURGE_TOKEN is
+  # a SECRET sent as the DELIVERY_CDN_PURGE_HEADER header (default
+  # Authorization) — never commit a real value. See .env.example for worked
+  # examples.
+  DELIVERY_CDN_PURGE_URL: ${DELIVERY_CDN_PURGE_URL:-}
+  DELIVERY_CDN_PURGE_METHOD: ${DELIVERY_CDN_PURGE_METHOD:-}
+  DELIVERY_CDN_PURGE_HEADER: ${DELIVERY_CDN_PURGE_HEADER:-}
+  DELIVERY_CDN_PURGE_TOKEN: ${DELIVERY_CDN_PURGE_TOKEN:-}
+  DELIVERY_CDN_PURGE_TIMEOUT: ${DELIVERY_CDN_PURGE_TIMEOUT:-10s}
   # Hybrid IPFS media mirror (fix_plan P19, .ralph/specs/ipfs-media.md). OFF by
   # default. To mirror already-PUBLIC media to the compose kubo node, run the
   # `ipfs` profile (docker compose --profile core --profile ipfs up) and set

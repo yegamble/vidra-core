@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/vidra/vidra-core/internal/cdn"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -1555,5 +1557,213 @@ func TestLoadEmptyTypedEnvMeansUnset(t *testing.T) {
 	}
 	if cfg.InstanceDefaultQuotaBytes != 0 {
 		t.Errorf("InstanceDefaultQuotaBytes = %d, want 0 default", cfg.InstanceDefaultQuotaBytes)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CDN delivery (phase-4 delivery item 2)
+// ---------------------------------------------------------------------------
+
+// TestLoadCDNDeliveryDefaults: the whole surface is inert unless an operator
+// opts in. No base URL means no CDN source is ever built, which is the shipped
+// behaviour every existing install keeps across this change.
+func TestLoadCDNDeliveryDefaults(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load default: %v", err)
+	}
+	if cfg.DeliveryCDNBaseURL != "" || cfg.DeliveryCDNPurgeURL != "" ||
+		cfg.DeliveryCDNPurgeHeader != "" || cfg.DeliveryCDNPurgeToken != "" ||
+		cfg.DeliveryCDNPurgeMethod != "" {
+		t.Errorf("CDN delivery is not inert by default: %+v", cfg.DeliveryCDNBaseURL)
+	}
+	if cfg.DeliveryCDNPurgeTimeout != defaultCDNPurgeTimeout {
+		t.Errorf("DELIVERY_CDN_PURGE_TIMEOUT default = %v, want %v",
+			cfg.DeliveryCDNPurgeTimeout, defaultCDNPurgeTimeout)
+	}
+}
+
+// TestLoadCDNBaseURLIsNormalised: a trailing slash must not survive into the
+// edge URL, which is built as base + "/" + objectKey.
+func TestLoadCDNBaseURLIsNormalised(t *testing.T) {
+	t.Setenv("DELIVERY_CDN_BASE_URL", "  https://cdn.example.com/media/  ")
+	t.Setenv("DELIVERY_CDN_PURGE_METHOD", " post ")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DeliveryCDNBaseURL != "https://cdn.example.com/media" {
+		t.Errorf("base URL = %q, want the trimmed, unslashed form", cfg.DeliveryCDNBaseURL)
+	}
+	if cfg.DeliveryCDNPurgeMethod != "POST" {
+		t.Errorf("purge method = %q, want POST — a hand-edited env file's case is not a config error", cfg.DeliveryCDNPurgeMethod)
+	}
+}
+
+// TestLoadCDNValidation. Every failing row is a way to configure a CDN that
+// LOOKS wired and silently is not: the delivery resolver fails open, so a
+// misconfigured edge degrades quietly to origin serving. Quiet is right at
+// request time and wrong at boot, so boot is where it is loud.
+func TestLoadCDNValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     map[string]string
+		wantErr bool
+	}{
+		{
+			name:    "no cdn at all",
+			env:     map[string]string{},
+			wantErr: false,
+		},
+		{
+			name:    "base url alone is a complete configuration",
+			env:     map[string]string{"DELIVERY_CDN_BASE_URL": "https://cdn.example.com"},
+			wantErr: false,
+		},
+		{
+			name: "base url with a path prefix",
+			env:  map[string]string{"DELIVERY_CDN_BASE_URL": "https://cdn.example.com/media"},
+		},
+		{
+			name:    "base url with no scheme",
+			env:     map[string]string{"DELIVERY_CDN_BASE_URL": "cdn.example.com"},
+			wantErr: true,
+		},
+		{
+			name:    "origin-relative base url has nothing to redirect to",
+			env:     map[string]string{"DELIVERY_CDN_BASE_URL": "/media"},
+			wantErr: true,
+		},
+		{
+			name:    "non-http scheme",
+			env:     map[string]string{"DELIVERY_CDN_BASE_URL": "ftp://cdn.example.com"},
+			wantErr: true,
+		},
+		{
+			// The object key is appended to the PATH, so a query string in the
+			// base silently ends up before it.
+			name:    "base url carrying a query string",
+			env:     map[string]string{"DELIVERY_CDN_BASE_URL": "https://cdn.example.com?sig=x"},
+			wantErr: true,
+		},
+		{
+			// The "I configured the CDN and it does nothing" bug: the operator
+			// filled in the purge half and no source was ever built.
+			name:    "purge url without a base url",
+			env:     map[string]string{"DELIVERY_CDN_PURGE_URL": "https://api.example/purge/{url}"},
+			wantErr: true,
+		},
+		{
+			name:    "purge token without a base url",
+			env:     map[string]string{"DELIVERY_CDN_PURGE_TOKEN": "tok"},
+			wantErr: true,
+		},
+		{
+			// A credential configured with nowhere to send it.
+			name: "purge token without a purge url",
+			env: map[string]string{
+				"DELIVERY_CDN_BASE_URL":    "https://cdn.example.com",
+				"DELIVERY_CDN_PURGE_TOKEN": "tok",
+			},
+			wantErr: true,
+		},
+		{
+			name: "purge url template with placeholders is valid",
+			env: map[string]string{
+				"DELIVERY_CDN_BASE_URL":  "https://cdn.example.com",
+				"DELIVERY_CDN_PURGE_URL": "https://api.example/purge?url={url_encoded}",
+			},
+		},
+		{
+			name: "the whole template can be {url}",
+			env: map[string]string{
+				"DELIVERY_CDN_BASE_URL":  "https://cdn.example.com",
+				"DELIVERY_CDN_PURGE_URL": "{url}",
+			},
+		},
+		{
+			name: "relative purge url",
+			env: map[string]string{
+				"DELIVERY_CDN_BASE_URL":  "https://cdn.example.com",
+				"DELIVERY_CDN_PURGE_URL": "/purge/{key}",
+			},
+			wantErr: true,
+		},
+		{
+			// A method with a space in it produces a request line the edge
+			// answers 400 to, once, in ITS logs.
+			name: "purge method that is not a bare token",
+			env: map[string]string{
+				"DELIVERY_CDN_BASE_URL":     "https://cdn.example.com",
+				"DELIVERY_CDN_PURGE_URL":    "{url}",
+				"DELIVERY_CDN_PURGE_METHOD": "POST /purge",
+			},
+			wantErr: true,
+		},
+		{
+			name: "zero purge timeout",
+			env: map[string]string{
+				"DELIVERY_CDN_BASE_URL":      "https://cdn.example.com",
+				"DELIVERY_CDN_PURGE_TIMEOUT": "0s",
+			},
+			wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			_, err := Load()
+			if tc.wantErr && err == nil {
+				t.Fatalf("Load() = nil error, want error for %s", tc.name)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("Load() = %v, want nil error for %s", err, tc.name)
+			}
+		})
+	}
+}
+
+// TestCDNPlainHTTPEdgeRefusedInProduction. Mixed content is invisible from the
+// server: a browser on an https page blocks http media before the request ever
+// leaves it, so this instance sees no request, no error and no log line. The
+// only place it can be caught is boot.
+func TestCDNPlainHTTPEdgeRefusedInProduction(t *testing.T) {
+	base := map[string]string{
+		"VIDRA_ENV":             "production",
+		"DATABASE_URL":          "postgres://u:p@db:5432/vidra?sslmode=disable",
+		"REDIS_URL":             "redis://redis:6379/0",
+		"JWT_SECRET":            strings.Repeat("k", 48),
+		"PUBLIC_BASE_URL":       "https://vidra.example.com",
+		"DELIVERY_CDN_BASE_URL": "http://cdn.example.com",
+	}
+	for k, v := range base {
+		t.Setenv(k, v)
+	}
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() accepted a plain-http CDN edge in production")
+	}
+	if !strings.Contains(err.Error(), "DELIVERY_CDN_BASE_URL") {
+		t.Fatalf("error does not name the variable: %v", err)
+	}
+
+	// The consented lab/LAN install: the same escape hatch PUBLIC_BASE_URL has.
+	t.Setenv("VIDRA_ALLOW_PLAIN_HTTP", "true")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load with VIDRA_ALLOW_PLAIN_HTTP = %v, want the plain-http edge accepted", err)
+	}
+}
+
+// TestCDNPurgeTimeoutDefaultsAgree is the drift guard for the one number this
+// package spells twice. internal/config is a leaf and does not import the
+// packages that consume its output, so the default lives here as a constant and
+// this test — a TEST-only import, no production coupling — keeps it equal to
+// the value internal/cdn falls back to when handed a non-positive timeout.
+func TestCDNPurgeTimeoutDefaultsAgree(t *testing.T) {
+	if defaultCDNPurgeTimeout != cdn.DefaultPurgeTimeout {
+		t.Fatalf("config default = %s, cdn.DefaultPurgeTimeout = %s; an operator who sets neither would get one of two different timeouts depending on which code path filled it in",
+			defaultCDNPurgeTimeout, cdn.DefaultPurgeTimeout)
 	}
 }

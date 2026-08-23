@@ -27,6 +27,7 @@ import (
 	"github.com/vidra/vidra-core/internal/block"
 	"github.com/vidra/vidra-core/internal/cache"
 	"github.com/vidra/vidra-core/internal/captionjob"
+	"github.com/vidra/vidra-core/internal/cdn"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/channelsync"
 	"github.com/vidra/vidra-core/internal/comment"
@@ -1066,6 +1067,53 @@ func run() error {
 		}
 	} else {
 		logger.Info("direct object delivery disabled while a storage migration target is configured")
+	}
+
+	// CDN DELIVERY (phase-4 delivery item 2). This is the ONE place a CDN is
+	// constructed, and internal/cdn is imported nowhere else: internal/delivery
+	// and internal/httpapi take it as two opaque funcs, so no CDN vendor — and
+	// no HTTP client of a CDN's — can reach core media logic.
+	//
+	// A CDN is NOT wired to the storage backend the way the presigner above is,
+	// and that difference matters. The presigner signs against a bucket this
+	// process holds credentials for, so it can refuse when a migration makes
+	// "which store" ambiguous. A CDN is a third party pulling from an origin
+	// this process does not configure, so nothing here can verify that the base
+	// URL actually fronts these object keys. An operator who points it at the
+	// wrong origin gets 404s from the edge on the first request, loudly, rather
+	// than a wrong answer — which is the correct failure for something
+	// unverifiable, but it does mean the boot log has to say what was accepted.
+	//
+	// Wiring this does NOT enable CDN delivery: the delivery_cdn_enabled admin
+	// setting does, and it defaults off.
+	if cfg.DeliveryCDNBaseURL != "" {
+		cdnProvider, cdnErr := cdn.New(cdn.Config{
+			BaseURL:      cfg.DeliveryCDNBaseURL,
+			PurgeURL:     cfg.DeliveryCDNPurgeURL,
+			PurgeMethod:  cfg.DeliveryCDNPurgeMethod,
+			PurgeHeader:  cfg.DeliveryCDNPurgeHeader,
+			PurgeToken:   cfg.DeliveryCDNPurgeToken,
+			PurgeTimeout: cfg.DeliveryCDNPurgeTimeout,
+		}, logger)
+		// config.validate() already refused everything cdn.New can reject, so
+		// this can only fire if the two ever disagree. Fail the boot rather
+		// than start an instance whose delivery config was silently dropped.
+		if cdnErr != nil {
+			logger.Error("cdn delivery configuration rejected", "error", cdnErr)
+			os.Exit(1)
+		}
+		opts = append(opts, httpapi.WithDeliveryCDN(cdnProvider.EdgeURL, cdnProvider.Purge))
+		logger.Info("cdn delivery available",
+			"cdn", cdnProvider.Describe(),
+			"note", "enable with the delivery_cdn_enabled instance setting")
+		if !cdnProvider.CanPurge() {
+			// Said once, at boot, because the alternative is discovering it
+			// during the takedown that needed it. Not fatal: a deployment whose
+			// media URLs are all generation-versioned genuinely never needs a
+			// purge, and refusing to boot over it would be wrong.
+			logger.Warn("cdn delivery has no purge endpoint",
+				"note", "DELIVERY_CDN_PURGE_URL is unset, so an object cached at the edge cannot be invalidated from here; a privacy flip, deletion or takedown will not reach it")
+		}
 	}
 
 	// When federation is on, fan a local comment on a local video out to the

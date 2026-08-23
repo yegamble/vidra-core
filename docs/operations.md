@@ -875,9 +875,11 @@ the leak was of the signing key itself.
 
 **Cache headers.** Every media response is `private`. Nothing Vidra serves as
 bytes is shared-cacheable, because a shared cache entry can outlive the
-authorization decision that produced it and there is no purge machinery yet
-(`delivery.Resolver.Purge` exists as a no-op hook so that machinery has a place
-to land). Current policy: whole-file media (originals, downloads, webm, audio)
+authorization decision that produced it. `delivery.Resolver.Purge` now has a
+real implementation behind it (see the CDN section below), but nothing calls it
+automatically yet, and header promotion is gated on a purge path that has been
+*exercised* rather than merely built — so the promotion is still deliberately
+unmade. Current policy: whole-file media (originals, downloads, webm, audio)
 `private, max-age=3600, must-revalidate`; per-video assets (thumbnails,
 storyboards, captions) and identity images `private, max-age=300,
 must-revalidate`; HLS `private, max-age=31536000, immutable` on a
@@ -886,6 +888,108 @@ generation-versioned URL and `private, max-age=0, must-revalidate` otherwise; an
 Authorization header. Captions are the one eligible-looking asset that is never
 redirected today — they are read as a stream that does not expose a storage key —
 so they take the cache policy only.
+
+## CDN delivery — an edge in front of your object store
+
+The same machinery as direct delivery above, with a different destination: for a
+request that is already servable to an anonymous visitor, the API answers `307`
+with a **CDN edge URL** instead of proxying the bytes or signing an object-store
+URL. Vidra contains no CDN-vendor code and names no provider; a CDN is described
+entirely by configuration.
+
+**Point the CDN at your object store, not at Vidra.** This is the one thing that
+has to be right and that nothing here can check for you. The delivery layer works
+in storage object keys, so the edge URL is `DELIVERY_CDN_BASE_URL` + `/` + the
+object key:
+
+```text
+DELIVERY_CDN_BASE_URL=https://cdn.example.com
+  → https://cdn.example.com/streaming-playlists/<uuid>/240p/seg_00000.ts
+  → https://cdn.example.com/web-videos/<uuid>.mp4
+```
+
+So the CDN's **origin** must serve those same keys: the bucket, or a static
+server rooted at the media directory. A CDN pointed at the Vidra API origin 404s
+every request — the API addresses media by *route* (`/api/v1/videos/<id>/hls/…`),
+not by key — and a 404 from a third party is indistinguishable from a cold cache,
+so you will only see it in the browser.
+
+**Turning it on is two steps, deliberately.** `DELIVERY_CDN_BASE_URL` (env,
+needs a restart) makes the CDN *exist*; the `delivery_cdn_enabled` admin setting
+on the Advanced page under *Delivery*, default **off**, makes it be *used*.
+Setting the base URL alone changes nothing. That split is what lets you wire and
+restart on a calm afternoon and then flip delivery on — and back off, in seconds,
+with no restart — during an incident. The boot log confirms what was accepted
+(`cdn delivery available`).
+
+**Ordering.** When more than one optional source can serve an object, the order
+is IPFS gateway → CDN → presigned → API proxy. The CDN beats a presigned URL
+because a signed URL is a per-viewer bearer credential that expires, is
+uncacheable at every layer, and meters object-store egress per viewer. The IPFS
+mirror keeps its place ahead of both — it shipped first and has its own master
+switch, so if you want the edge to take thumbnails, turn the mirror off.
+
+**What never goes to the edge** is exactly the direct-delivery table above:
+non-public or unpublished media, anything carrying `?pt=` or an `Authorization`
+header, HLS playlists, and `storyboard.vtt`. A CDN can therefore front only
+public, published, uncredentialed media. **CDN-fronted private playback is not
+this feature** — it needs signed-URLs-at-the-edge, which is a different
+mechanism and a later decision.
+
+**Purge.**
+
+```bash
+DELIVERY_CDN_PURGE_URL={url}            # Varnish / nginx purge module
+DELIVERY_CDN_PURGE_METHOD=PURGE         # the default; may be omitted
+
+DELIVERY_CDN_PURGE_URL=https://api.example.com/purge?url={url_encoded}
+DELIVERY_CDN_PURGE_METHOD=POST
+DELIVERY_CDN_PURGE_TOKEN='Bearer <token>'   # default header: Authorization
+```
+
+Placeholders are `{url}` (the edge URL), `{url_encoded}` (the same, encoded for
+a query value) and `{key}` (the object key alone). `DELIVERY_CDN_PURGE_TOKEN` is
+a **secret**: sent header-only, never logged, and never echoed in an error — the
+request URL is stripped out of transport errors too, because some purge APIs want
+the credential in the query string.
+
+Leaving `DELIVERY_CDN_PURGE_URL` empty is legal and means the edge cannot be
+invalidated from here: a deletion, a privacy flip or a takedown will not reach
+it. The API warns about that once at boot rather than at the moment you need it.
+
+**Nothing calls purge automatically yet**, and that is on purpose. Automatic
+invalidation only becomes load-bearing once a media response is promoted from
+`private` to shared caching, and that promotion is a separate, riskier change
+gated on a purge path that has actually been fired in anger. Until then every
+byte route stays `private`, exactly as documented above, and the edge caches only
+what a viewer's own browser would have.
+
+**Verifying it.** As with direct delivery these are GET requests with the body
+discarded — the media routes are GET-only and a `curl -I` answers `405`.
+
+```bash
+# A public video's original should answer 307 to the edge.
+curl -s -o /dev/null -D - https://example.org/api/v1/videos/<id>/original
+#   HTTP/2 307
+#   location: https://cdn.example.com/web-videos/<id>.mp4
+#   cache-control: private, max-age=300, must-revalidate
+
+# Follow it: the edge must serve the same bytes. A 404 here means the CDN's
+# origin is not key-addressed — see the top of this section.
+curl -s -o /dev/null -D - -L https://example.org/api/v1/videos/<id>/original
+
+# A credentialed request must NOT redirect.
+curl -s -o /dev/null -D - -H "Authorization: Bearer <token>" \
+  https://example.org/api/v1/videos/<id>/original
+#   HTTP/2 200
+#   cache-control: private, no-store
+```
+
+**Rolling back** is the setting, not a migration: turn `delivery_cdn_enabled`
+off and the next request is served by the API again. Turning delivery off does
+**not** evict what the edge already holds — if you are turning it off because
+something leaked, purge the object (or make it non-public, which stops Vidra
+handing out its edge URL) as well.
 
 ## IPFS mirror (pinset) — a distribution surface, not a backup
 

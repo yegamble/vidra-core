@@ -356,9 +356,287 @@ func TestCacheControlPolicy(t *testing.T) {
 	}
 }
 
-// TestPurgeIsWiredAndInert: the hook exists on day one and does nothing yet.
-func TestPurgeIsWiredAndInert(t *testing.T) {
+// TestPurgeIsInertWithoutACDN: with nothing configured there is provably no
+// shared copy of anything, so nil is the honest answer and stays the answer.
+func TestPurgeIsInertWithoutACDN(t *testing.T) {
 	if err := New().Purge(context.Background(), "web-videos/x.mp4"); err != nil {
 		t.Fatalf("Purge = %v, want nil", err)
+	}
+	if err := New(WithMirror(func(context.Context, string, string) (string, bool, error) {
+		return "https://gateway.example/ipfs/bafy", true, nil
+	}, nil)).Purge(context.Background(), "thumbnails/x.jpg"); err != nil {
+		t.Fatalf("Purge with only a mirror = %v, want nil (an IPFS gateway is not a purgeable shared cache)", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CDN source (phase-4 delivery item 2)
+// ---------------------------------------------------------------------------
+
+const testEdgeURL = "https://cdn.example.com/streaming-playlists/x/240p/seg_00000.ts"
+
+func edgeOK(context.Context, string) (string, bool, error) { return testEdgeURL, true, nil }
+
+// TestCDNSourceFences walks every way a CDN source is and is not offered. Each
+// row is a fence that, if it stopped holding, would put bytes somewhere they
+// must not be — or would drop a source an operator paid for.
+func TestCDNSourceFences(t *testing.T) {
+	on := func() bool { return true }
+	off := func() bool { return false }
+	edgeMiss := func(context.Context, string) (string, bool, error) { return "", false, nil }
+	edgeErr := func(context.Context, string) (string, bool, error) {
+		return "", false, errors.New("provider unreachable")
+	}
+	edgeEmpty := func(context.Context, string) (string, bool, error) { return "", true, nil }
+
+	segment := Request{
+		ObjectKey:   "streaming-playlists/x/240p/seg_00000.ts",
+		Class:       ClassHLSSegment,
+		Eligible:    true,
+		ContentType: "video/mp2t",
+	}
+	withReq := func(mut func(*Request)) Request {
+		r := segment
+		mut(&r)
+		return r
+	}
+
+	cases := []struct {
+		name    string
+		edge    CDNLookup
+		enabled func() bool
+		req     Request
+		want    []SourceKind
+	}{
+		{
+			name: "configured, enabled and eligible: the edge is chosen",
+			edge: edgeOK, enabled: on, req: segment,
+			want: []SourceKind{SourceCDN, SourceAPIProxy},
+		},
+		{
+			// The kill switch. Off must mean off on the very next request, with
+			// no restart and no other behaviour change.
+			name: "kill switch off: no edge, api-proxy serves",
+			edge: edgeOK, enabled: off, req: segment,
+			want: []SourceKind{SourceAPIProxy},
+		},
+		{
+			// Eligible is the ONLY authorization input this package has. A CDN
+			// can front public+published media and nothing else, ever.
+			name: "not eligible: never redirected to an edge",
+			edge: edgeOK, enabled: on,
+			req:  withReq(func(r *Request) { r.Eligible = false }),
+			want: []SourceKind{SourceAPIProxy},
+		},
+		{
+			// A ?pt= or Authorization request is scoped to one caller's
+			// authorization; an edge cache is by definition not.
+			name: "credentialed request: never redirected to an edge",
+			edge: edgeOK, enabled: on,
+			req:  withReq(func(r *Request) { r.Credentialed = true }),
+			want: []SourceKind{SourceAPIProxy},
+		},
+		{
+			// A playlist served from the edge points players at URIs the origin
+			// was going to rewrite. Correctness, not policy.
+			name: "HLS playlists are never handed to an edge",
+			edge: edgeOK, enabled: on,
+			req: withReq(func(r *Request) {
+				r.Class = ClassHLSPlaylist
+				r.ObjectKey = "streaming-playlists/x/master.m3u8"
+			}),
+			want: []SourceKind{SourceAPIProxy},
+		},
+		{
+			name: "storyboard VTT is never handed to an edge",
+			edge: edgeOK, enabled: on,
+			req: withReq(func(r *Request) {
+				r.Class = ClassStoryboardVTT
+				r.ObjectKey = "storyboards/x.vtt"
+			}),
+			want: []SourceKind{SourceAPIProxy},
+		},
+		{
+			name: "no object key: nothing to address at the edge",
+			edge: edgeOK, enabled: on,
+			req:  withReq(func(r *Request) { r.ObjectKey = "" }),
+			want: []SourceKind{SourceAPIProxy},
+		},
+		{
+			name: "provider says it cannot serve this key",
+			edge: edgeMiss, enabled: on, req: segment,
+			want: []SourceKind{SourceAPIProxy},
+		},
+		{
+			// Fail-open: a broken provider is never a failed media request.
+			name: "provider error falls open to the authoritative path",
+			edge: edgeErr, enabled: on, req: segment,
+			want: []SourceKind{SourceAPIProxy},
+		},
+		{
+			// ok=true with an empty URL would put a 307 to "" on the wire.
+			name: "ok with an empty URL is not a source",
+			edge: edgeEmpty, enabled: on, req: segment,
+			want: []SourceKind{SourceAPIProxy},
+		},
+		{
+			name: "nil enabled means always on",
+			edge: edgeOK, enabled: nil, req: segment,
+			want: []SourceKind{SourceCDN, SourceAPIProxy},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := New(WithCDN(tc.edge, nil, tc.enabled)).Resolve(context.Background(), tc.req)
+			if !sameKinds(kinds(got), tc.want...) {
+				t.Fatalf("sources = %v, want %v", kinds(got), tc.want)
+			}
+			// The structural guarantee holds on every row, including the ones
+			// where the edge won.
+			if got[len(got)-1].Kind != SourceAPIProxy {
+				t.Fatalf("last source = %q, want api-proxy", got[len(got)-1].Kind)
+			}
+			for _, s := range got {
+				if s.Kind == SourceCDN && s.URL != testEdgeURL {
+					t.Errorf("cdn source URL = %q, want %q", s.URL, testEdgeURL)
+				}
+			}
+		})
+	}
+}
+
+// TestCDNSourceOrdering pins where the edge sits among the others. Both
+// neighbours are arguments, not taste — see Resolve's doc comment — so a
+// reordering has to break a test that says why.
+func TestCDNSourceOrdering(t *testing.T) {
+	on := func() bool { return true }
+	mirror := func(context.Context, string, string) (string, bool, error) {
+		return "https://gateway.example/ipfs/bafy", true, nil
+	}
+	presigner := &stubResponsePresigner{stubPresigner: stubPresigner{url: "https://s3.example/o"}}
+
+	got := kinds(New(
+		WithMirror(mirror, on),
+		WithCDN(edgeOK, nil, on),
+		WithPresign(presigner, time.Minute, on),
+	).Resolve(context.Background(), Request{
+		ObjectKey:   "thumbnails/x.jpg",
+		Class:       ClassThumbnail,
+		Eligible:    true,
+		MirrorClass: "thumbnail",
+		ContentType: "image/jpeg",
+	}))
+	// Mirror first (it shipped first and has its own master switch), edge
+	// second, presign last of the optional three: a presigned URL is a
+	// per-viewer bearer credential that expires, so if the edge can serve the
+	// same object the signed URL is strictly the worse of the two.
+	want := []SourceKind{SourceIPFSGateway, SourceCDN, SourcePresigned, SourceAPIProxy}
+	if !sameKinds(got, want...) {
+		t.Fatalf("sources = %v, want %v", got, want)
+	}
+	if presigner.call != 1 {
+		t.Errorf("presigner called %d times; the resolver builds every source, the CALLER picks", presigner.call)
+	}
+}
+
+// TestCDNRedirectStaysPrivate is the header-promotion guard. This change makes
+// Purge real; it deliberately does NOT make anything shared-cacheable, and the
+// mirror redirect must stay the only `public` value in the system.
+func TestCDNRedirectStaysPrivate(t *testing.T) {
+	src := New(WithCDN(edgeOK, nil, nil)).Resolve(context.Background(), Request{
+		ObjectKey: "web-videos/x.mp4", Class: ClassOriginal, Eligible: true,
+	})
+	if src[0].Kind != SourceCDN {
+		t.Fatalf("first source = %q, want cdn", src[0].Kind)
+	}
+	if src[0].CacheControl != CacheCDNRedirect {
+		t.Errorf("cdn redirect cache-control = %q, want %q", src[0].CacheControl, CacheCDNRedirect)
+	}
+	if !strings.HasPrefix(CacheCDNRedirect, "private") {
+		t.Errorf("CacheCDNRedirect = %q; promoting a byte route to shared caching is a separate change, gated on Purge being EXERCISED", CacheCDNRedirect)
+	}
+	if CacheMirrorRedirect == CacheCDNRedirect {
+		t.Error("the IPFS mirror redirect must remain the one public policy; the CDN redirect must not have joined it")
+	}
+}
+
+// TestPurgeReachesTheProvider: the hook is no longer inert. The key arrives
+// verbatim, and both outcomes propagate — a purge that quietly swallowed a
+// failure would report "nothing stale survives" when something does.
+func TestPurgeReachesTheProvider(t *testing.T) {
+	var got []string
+	purge := func(_ context.Context, key string) error {
+		got = append(got, key)
+		return nil
+	}
+	res := New(WithCDN(edgeOK, purge, func() bool { return true }))
+	if err := res.Purge(context.Background(), "web-videos/x.mp4"); err != nil {
+		t.Fatalf("Purge = %v, want nil", err)
+	}
+	if len(got) != 1 || got[0] != "web-videos/x.mp4" {
+		t.Fatalf("provider saw %v, want one call with the object key", got)
+	}
+
+	boom := errors.New("edge rejected the purge")
+	failing := New(WithCDN(edgeOK, func(context.Context, string) error { return boom }, nil))
+	if err := failing.Purge(context.Background(), "web-videos/x.mp4"); !errors.Is(err, boom) {
+		t.Fatalf("Purge = %v, want the provider error", err)
+	}
+}
+
+// TestPurgeIgnoresTheKillSwitch: turning delivery off stops handing viewers
+// edge URLs. It evicts nothing — and an incident in which an operator has just
+// switched the CDN off is exactly when a purge still has to work.
+func TestPurgeIgnoresTheKillSwitch(t *testing.T) {
+	called := 0
+	res := New(WithCDN(edgeOK, func(context.Context, string) error { called++; return nil },
+		func() bool { return false }))
+	if got := kinds(res.Resolve(context.Background(), Request{
+		ObjectKey: "web-videos/x.mp4", Class: ClassOriginal, Eligible: true,
+	})); !sameKinds(got, SourceAPIProxy) {
+		t.Fatalf("with the switch off sources = %v, want api-proxy only", got)
+	}
+	if err := res.Purge(context.Background(), "web-videos/x.mp4"); err != nil || called != 1 {
+		t.Fatalf("Purge = %v after %d provider calls; want nil after 1", err, called)
+	}
+}
+
+// TestPurgeWithoutAnInvalidationPath is the honesty case. A configured CDN with
+// no purge endpoint has a DIFFERENT postcondition from no CDN at all: with no
+// CDN there is provably no shared copy, and here there may well be one. Nil
+// would tell the eventual header-promotion caller that it is safe to go shared.
+func TestPurgeWithoutAnInvalidationPath(t *testing.T) {
+	res := New(WithCDN(edgeOK, nil, nil))
+	if err := res.Purge(context.Background(), "web-videos/x.mp4"); err == nil {
+		t.Fatal("Purge = nil for a CDN with no purge hook; that claims an invalidation that never happened")
+	}
+	// And an empty key must never be rendered into a purge template: at the
+	// root of most templates it addresses the whole zone.
+	if err := res.Purge(context.Background(), ""); err == nil {
+		t.Fatal("Purge(\"\") = nil; an empty key is not a purge of nothing, it is a purge of everything")
+	}
+}
+
+// TestPurgeFailureDoesNotBreakServing: purge and Resolve are independent paths.
+// A CDN that rejects every invalidation still delivers bytes, and a purge that
+// panicked or errored must not leave the resolver unable to answer — serving is
+// the job that must never fail.
+func TestPurgeFailureDoesNotBreakServing(t *testing.T) {
+	res := New(WithCDN(edgeOK, func(context.Context, string) error {
+		return errors.New("purge API returned 500")
+	}, func() bool { return true }))
+	req := Request{ObjectKey: "web-videos/x.mp4", Class: ClassOriginal, Eligible: true}
+
+	for i := range 3 {
+		if err := res.Purge(context.Background(), req.ObjectKey); err == nil {
+			t.Fatalf("purge %d: want an error", i)
+		}
+		got := res.Resolve(context.Background(), req)
+		if !sameKinds(kinds(got), SourceCDN, SourceAPIProxy) {
+			t.Fatalf("after a failed purge sources = %v, want cdn then api-proxy", kinds(got))
+		}
+		if got[len(got)-1].Kind != SourceAPIProxy {
+			t.Fatalf("after a failed purge the authoritative source is gone: %v", kinds(got))
+		}
 	}
 }
