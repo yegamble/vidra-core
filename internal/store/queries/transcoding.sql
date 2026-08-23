@@ -161,8 +161,18 @@ SELECT size_bytes FROM video_files WHERE storage_key = $1 LIMIT 1;
 -- Push a running job's lease forward. The worker calls this on a ticker while the
 -- job runs, so a job that legitimately outlives one lease is not swept out from
 -- under itself. Guarded on state so a completed or failed job cannot be revived.
+--
+-- updated_at is bumped with the lease, and that is not cosmetic. It is the ONLY
+-- liveness signal the operational projection has: the 0083 trigger copies this
+-- row's updated_at onto job_runs.updated_at, and OperationalJobQueueMetrics
+-- counts a claimed run as `stale_running` when its updated_at is older than the
+-- staleness window (lease_expires_at, its other input, is not populated by
+-- anything yet). Renewing only next_attempt_at therefore left every honestly
+-- healthy job that outlived that window — i.e. every transcode over five
+-- minutes, which is most of them — reported as stale. A renewal IS the worker
+-- saying it is alive; the projection should hear it.
 UPDATE transcode_jobs
-SET next_attempt_at = now() + interval '30 minutes'
+SET next_attempt_at = now() + interval '30 minutes', updated_at = now()
 WHERE id = $1 AND state = 'running';
 
 -- name: SweepExpiredTranscodeJobs :execrows
@@ -177,6 +187,22 @@ WHERE id = $1 AND state = 'running';
 --
 -- attempts is incremented so a job that crashes its worker every time walks its
 -- counter up and dead-letters through the normal path instead of looping forever.
+--
+-- The bounded FOR UPDATE SKIP LOCKED subquery is the fleet-scale half, and it is
+-- there for the same reason it is in ClaimDueTranscodeJobs above. A bare
+-- `UPDATE ... WHERE state = 'running' AND next_attempt_at <= now()` takes its row
+-- locks in table order, so N sweepers hitting the same backlog SERIALISE: each
+-- one blocks on the row the one ahead of it is rewriting, and the tick costs N
+-- times what it should. SKIP LOCKED makes concurrent sweepers take disjoint rows
+-- instead. LIMIT bounds one tick's work, so a large backlog drains over several
+-- ticks rather than in one long transaction that holds locks the whole time —
+-- the sweep runs every two minutes, so the remainder is picked up promptly.
 UPDATE transcode_jobs
 SET state = 'pending', attempts = attempts + 1, updated_at = now()
-WHERE state = 'running' AND next_attempt_at <= now();
+WHERE id IN (
+    SELECT id FROM transcode_jobs
+    WHERE state = 'running' AND next_attempt_at <= now()
+    ORDER BY next_attempt_at
+    LIMIT 1000
+    FOR UPDATE SKIP LOCKED
+);

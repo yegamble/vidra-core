@@ -83,8 +83,14 @@ ON CONFLICT (sync_id, external_id) DO NOTHING;
 -- Push a syncing row's lease forward. The worker calls this on a ticker so a sync
 -- that legitimately runs longer than one lease is not swept out from under
 -- itself. Guarded on state so a finished sync cannot be revived.
+--
+-- updated_at is bumped with the lease so a sync that is actively running does
+-- not look untouched. channel_syncs has no operational-projection trigger, so
+-- unlike RenewTranscodeJobLease the bump feeds no gauge — it keeps updated_at
+-- meaning what it says for the sync list and for anyone debugging a sync that
+-- appears wedged.
 UPDATE channel_syncs
-SET next_run_at = now() + interval '30 minutes'
+SET next_run_at = now() + interval '30 minutes', updated_at = now()
 WHERE id = $1 AND state = 'syncing';
 
 -- name: SweepExpiredChannelSyncs :execrows
@@ -97,6 +103,19 @@ WHERE id = $1 AND state = 'syncing';
 -- channel_syncs has no attempt counter and no dead-lettering: a sync that keeps
 -- failing simply retries on its next cadence, so 'idle' (not 'failed') is the
 -- honest resting state for one that was interrupted rather than rejected.
+--
+-- Bounded FOR UPDATE SKIP LOCKED for the same reason the claim uses it: without
+-- it, concurrent sweepers take their row locks in table order and serialise on
+-- each other; with it they take disjoint rows. LIMIT bounds one tick's work
+-- (see SweepExpiredTranscodeJobs for the full rationale). The lease column here
+-- is next_run_at and the claimed state is 'syncing' — channel_syncs is a
+-- recurring schedule rather than a one-shot job.
 UPDATE channel_syncs
 SET state = 'idle', updated_at = now()
-WHERE state = 'syncing' AND next_run_at <= now();
+WHERE id IN (
+    SELECT id FROM channel_syncs
+    WHERE state = 'syncing' AND next_run_at <= now()
+    ORDER BY next_run_at
+    LIMIT 1000
+    FOR UPDATE SKIP LOCKED
+);
