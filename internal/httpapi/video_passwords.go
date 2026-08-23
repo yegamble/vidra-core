@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/playback"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -123,7 +124,13 @@ func (s *Server) handleUnlockVideo(c echo.Context) error {
 		// throttled by the auth-budget rate limiter (which audits its denials).
 		return echo.NewHTTPError(http.StatusUnauthorized, "incorrect password")
 	}
-	token := s.playbackSigner.Sign(id, playbackTokenTTL)
+	// A correct password opens a playback SESSION, same as POST
+	// /videos/{id}/playback-session does for a caller who already had one: the
+	// token carries this session's id and scope, so an unlock and a session mint
+	// produce the same kind of credential and the same telemetry key. Only the
+	// response shape differs — unlock predates the session object and keeps its
+	// contract so the existing unlock prompt is untouched.
+	token := s.playbackSigner.Sign(id, uuid.New(), playback.ScopePlayback, playbackTokenTTL)
 	return c.JSON(http.StatusOK, unlockResponse{
 		PlaybackToken: token,
 		ExpiresIn:     int(playbackTokenTTL / time.Second),

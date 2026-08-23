@@ -238,6 +238,14 @@ type videoView struct {
 	// Renditions lists the available ladder rungs alongside it.
 	HLSURL     *string         `json:"hls_url,omitempty"`
 	Renditions []renditionView `json:"renditions,omitempty"`
+	// PackagingFormat and DASHURL are the same format discovery the playback
+	// session carries, on the response a client reads FIRST. Without them a CMAF
+	// video and an MPEG-TS video are indistinguishable — both serve HLS from
+	// hls_url — so nothing can choose the DASH manifest that has been shipped
+	// and unconsumed since phase 3. Set alongside hls_url; dash_url only for a
+	// CMAF tree, and deliberately unversioned (see playbackTree).
+	PackagingFormat string  `json:"packaging_format,omitempty"`
+	DASHURL         *string `json:"dash_url,omitempty"`
 	// IPFSPinned drives the card/feed IPFS badge (fix_plan P19): true when at
 	// least one of the video's objects is pinned to IPFS. Emitted only when true
 	// (a false/absent value means not pinned), and never for non-public videos —
@@ -485,7 +493,14 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	views := s.videosvc.Views(c.Request().Context(), id)
 	view.Views = &views
 	s.attachVideoTags(c.Request().Context(), &view, id)
-	view.HLSURL, view.Renditions = s.hlsDetail(c, id)
+	if tree, ok := s.hlsDetail(c, id); ok {
+		view.HLSURL = &tree.hlsURL
+		view.Renditions = tree.renditions
+		view.PackagingFormat = tree.format
+		if tree.dashURL != "" {
+			view.DASHURL = &tree.dashURL
+		}
+	}
 	// "still processing" signal: true while any transcode job is live for the
 	// video. Flips to false once the last job finishes (hls_url then appears).
 	if s.transcodesvc != nil {
