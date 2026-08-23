@@ -19721,6 +19721,23 @@ components:
     QoESourceSummary:
       type: object
       description: One delivery source, merged across the whole window.
+      # The handler's struct carries no omitempty, so every key below is always
+      # on the wire and a client need not defend against a missing count.
+      # engines and error_counts are the exceptions: both are built per source
+      # and are not provably non-nil for every path, so they stay optional
+      # rather than have the contract assert something the server might not do.
+      required:
+        - delivery_source
+        - event_count
+        - start_count
+        - rebuffer_count
+        - bitrate_switch_count
+        - error_count
+        - verified_session_count
+        - ttff
+        - rebuffer
+        - rebuffer_total_ms
+        - partial_percentiles
       properties:
         delivery_source:
           type: string
@@ -19756,6 +19773,23 @@ components:
     QoEBucket:
       type: object
       description: One hour of one (source, engine, packaging format) combination.
+      # error_counts is omitted below for the same reason as on QoESourceSummary.
+      required:
+        - hour_bucket
+        - delivery_source
+        - engine
+        - packaging_format
+        - event_count
+        - start_count
+        - rebuffer_count
+        - bitrate_switch_count
+        - error_count
+        - verified_session_count
+        - ttff
+        - rebuffer
+        - rebuffer_total_ms
+        - rendition_reporting_supported
+        - computed_at
       properties:
         hour_bucket: { type: string, format: date-time }
         delivery_source:
@@ -19785,6 +19819,17 @@ components:
         computed_at: { type: string, format: date-time }
     QoEPlaybackHealth:
       type: object
+      # sources and buckets are initialized to empty slices in the handler, so
+      # they serialize as [] and never null — an instance that has measured
+      # nothing yet still returns both keys.
+      required:
+        - window_start
+        - window_end
+        - sources
+        - buckets
+        - buckets_total
+        - limit
+        - offset
       properties:
         window_start: { type: string, format: date-time }
         window_end: { type: string, format: date-time }
