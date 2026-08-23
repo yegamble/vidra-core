@@ -247,13 +247,19 @@ func (q *Queries) ListChannelSyncsByUser(ctx context.Context, userID uuid.UUID) 
 
 const renewChannelSyncLease = `-- name: RenewChannelSyncLease :exec
 UPDATE channel_syncs
-SET next_run_at = now() + interval '30 minutes'
+SET next_run_at = now() + interval '30 minutes', updated_at = now()
 WHERE id = $1 AND state = 'syncing'
 `
 
 // Push a syncing row's lease forward. The worker calls this on a ticker so a sync
 // that legitimately runs longer than one lease is not swept out from under
 // itself. Guarded on state so a finished sync cannot be revived.
+//
+// updated_at is bumped with the lease so a sync that is actively running does
+// not look untouched. channel_syncs has no operational-projection trigger, so
+// unlike RenewTranscodeJobLease the bump feeds no gauge — it keeps updated_at
+// meaning what it says for the sync list and for anyone debugging a sync that
+// appears wedged.
 func (q *Queries) RenewChannelSyncLease(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, renewChannelSyncLease, id)
 	return err
@@ -262,7 +268,13 @@ func (q *Queries) RenewChannelSyncLease(ctx context.Context, id uuid.UUID) error
 const sweepExpiredChannelSyncs = `-- name: SweepExpiredChannelSyncs :execrows
 UPDATE channel_syncs
 SET state = 'idle', updated_at = now()
-WHERE state = 'syncing' AND next_run_at <= now()
+WHERE id IN (
+    SELECT id FROM channel_syncs
+    WHERE state = 'syncing' AND next_run_at <= now()
+    ORDER BY next_run_at
+    LIMIT 1000
+    FOR UPDATE SKIP LOCKED
+)
 `
 
 // Return syncs whose lease elapsed while they were 'syncing' to the queue.
@@ -274,6 +286,13 @@ WHERE state = 'syncing' AND next_run_at <= now()
 // channel_syncs has no attempt counter and no dead-lettering: a sync that keeps
 // failing simply retries on its next cadence, so 'idle' (not 'failed') is the
 // honest resting state for one that was interrupted rather than rejected.
+//
+// Bounded FOR UPDATE SKIP LOCKED for the same reason the claim uses it: without
+// it, concurrent sweepers take their row locks in table order and serialise on
+// each other; with it they take disjoint rows. LIMIT bounds one tick's work
+// (see SweepExpiredTranscodeJobs for the full rationale). The lease column here
+// is next_run_at and the claimed state is 'syncing' — channel_syncs is a
+// recurring schedule rather than a one-shot job.
 func (q *Queries) SweepExpiredChannelSyncs(ctx context.Context) (int64, error) {
 	result, err := q.db.Exec(ctx, sweepExpiredChannelSyncs)
 	if err != nil {

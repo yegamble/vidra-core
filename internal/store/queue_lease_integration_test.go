@@ -649,3 +649,180 @@ func TestRenewCannotReviveAFinishedJob(t *testing.T) {
 		t.Errorf("renew moved a completed job's lease (%v -> %v); it must only touch running rows", before, after)
 	}
 }
+
+// seedExpiredRunningTranscodeJob leaves one transcode job in the state a dead
+// worker leaves behind: 'running' with a lease that has already elapsed. Each
+// call seeds its own video, because transcode_jobs_active_video_idx allows only
+// one live job per video.
+func seedExpiredRunningTranscodeJob(t *testing.T, st *Store, channelID uuid.UUID) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+	var videoID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO videos (channel_id, title, privacy, state)
+		 VALUES ($1, 'sweep-race', 'public', 'published') RETURNING id`,
+		channelID,
+	).Scan(&videoID); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	var jobID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO transcode_jobs (video_id, source_key, state, next_attempt_at)
+		 VALUES ($1, 'web-videos/x.mp4', 'running', now() - interval '1 minute') RETURNING id`,
+		videoID,
+	).Scan(&jobID); err != nil {
+		t.Fatalf("seed transcode job: %v", err)
+	}
+	return jobID
+}
+
+// TestSweepSkipsRowsAnotherSweeperHolds proves the property that makes the lease
+// sweep safe to run on a worker FLEET rather than merely correct on one node:
+// SweepExpired* takes its rows with FOR UPDATE SKIP LOCKED, so a sweeper that
+// meets a row another transaction is already holding steps over it instead of
+// queueing behind it.
+//
+// The distinguishing evidence is TIME, not row counts. A bare
+// `UPDATE ... WHERE state = 'running' AND next_attempt_at <= now()` returns the
+// same rows in the end — it just blocks on the held row until the other
+// transaction ends first. So the test holds a lock and gives the sweep a
+// deadline: with SKIP LOCKED it finishes immediately having done the rest of the
+// work; without it, it waits for the lock and the deadline fires.
+//
+// A fake repository cannot prove any of this: it is a database behaviour.
+func TestSweepSkipsRowsAnotherSweeperHolds(t *testing.T) {
+	st := leaseStore(t)
+	q := st.Queries()
+	ctx := context.Background()
+
+	_, channelID, cleanup := seedUserAndChannel(t, st)
+	t.Cleanup(cleanup)
+
+	held := seedExpiredRunningTranscodeJob(t, st, channelID)
+	free := seedExpiredRunningTranscodeJob(t, st, channelID)
+
+	// A second sweeper, mid-statement, holding one of the two rows. Its own
+	// connection: a lock taken on the pool connection the sweep then uses would
+	// be re-entrant and prove nothing.
+	blocker, err := st.Pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire blocker connection: %v", err)
+	}
+	defer blocker.Release()
+	tx, err := blocker.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	var locked uuid.UUID
+	if err := tx.QueryRow(ctx,
+		`SELECT id FROM transcode_jobs WHERE id = $1 FOR UPDATE`, held).Scan(&locked); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("lock row: %v", err)
+	}
+
+	sweepCtx, cancelSweep := context.WithTimeout(ctx, 5*time.Second)
+	n, sweepErr := q.SweepExpiredTranscodeJobs(sweepCtx)
+	cancelSweep()
+	if sweepErr != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("the sweep did not step over a locked row — it waited for the lock and hit its deadline "+
+			"(this is what a sweep without FOR UPDATE SKIP LOCKED does, and it is how N sweepers serialise): %v", sweepErr)
+	}
+	if n < 1 {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("sweep requeued %d rows while one of two was locked, want at least the unlocked one", n)
+	}
+
+	var freeState string
+	if err := st.Pool.QueryRow(ctx, `SELECT state FROM transcode_jobs WHERE id = $1`, free).Scan(&freeState); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("read unlocked job: %v", err)
+	}
+	if freeState != "pending" {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("unlocked job state = %q, want pending: skipping a locked row must not cost the rows around it", freeState)
+	}
+	var heldState string
+	if err := st.Pool.QueryRow(ctx, `SELECT state FROM transcode_jobs WHERE id = $1`, held).Scan(&heldState); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("read held job: %v", err)
+	}
+	if heldState != "running" {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("held job state = %q, want running: a row another sweeper holds must be left alone this pass", heldState)
+	}
+
+	// Released, the skipped row is swept on the next pass — skipping defers work,
+	// it never drops it.
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if _, err := q.SweepExpiredTranscodeJobs(ctx); err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if err := st.Pool.QueryRow(ctx, `SELECT state FROM transcode_jobs WHERE id = $1`, held).Scan(&heldState); err != nil {
+		t.Fatalf("read held job: %v", err)
+	}
+	if heldState != "pending" {
+		t.Errorf("held job state after release = %q, want pending: a skipped row must come back on a later tick", heldState)
+	}
+}
+
+// TestLeaseRenewalClearsTheStaleRunningGauge proves the operational projection
+// can tell a live job from an abandoned one.
+//
+// OperationalJobQueueMetrics counts a claimed run as `stale_running` when its
+// job_runs.updated_at is older than the staleness window (lease_expires_at, its
+// other input, is populated by nothing). job_runs.updated_at comes from the
+// source row's updated_at via the 0083 trigger — so while lease renewal touched
+// only next_attempt_at, EVERY honestly healthy job that outlived the window was
+// reported as stale, which for transcodes is most of them. A gauge that fires on
+// every healthy job is not a gauge.
+func TestLeaseRenewalClearsTheStaleRunningGauge(t *testing.T) {
+	st := leaseStore(t)
+	q := st.Queries()
+	ctx := context.Background()
+
+	_, channelID, cleanup := seedUserAndChannel(t, st)
+	t.Cleanup(cleanup)
+
+	jobID := seedExpiredRunningTranscodeJob(t, st, channelID)
+	// A job that has been encoding for an hour: still running, still leased, and
+	// last written to long before the staleness window.
+	if _, err := st.Pool.Exec(ctx,
+		`UPDATE transcode_jobs SET next_attempt_at = now() + interval '30 minutes',
+		        updated_at = now() - interval '1 hour'
+		 WHERE id = $1`, jobID); err != nil {
+		t.Fatalf("age the job: %v", err)
+	}
+
+	const staleSeconds = 300
+	stale := func() int64 {
+		t.Helper()
+		rows, err := q.OperationalJobQueueMetrics(ctx, staleSeconds)
+		if err != nil {
+			t.Fatalf("metrics: %v", err)
+		}
+		for _, r := range rows {
+			if r.Queue == "transcode_jobs" {
+				return r.StaleRunning
+			}
+		}
+		return 0
+	}
+
+	before := stale()
+	if before < 1 {
+		t.Fatalf("stale_running = %d for a job untouched for an hour; the fixture no longer reproduces the gauge", before)
+	}
+
+	if err := q.RenewTranscodeJobLease(ctx, jobID); err != nil {
+		t.Fatalf("renew: %v", err)
+	}
+
+	if after := stale(); after >= before {
+		t.Errorf("stale_running = %d after a lease renewal, was %d: renewing IS the worker saying it is alive, "+
+			"and the projection must hear it (the renew query has to bump updated_at, which the 0083 trigger "+
+			"copies onto job_runs.updated_at)", after, before)
+	}
+}

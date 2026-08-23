@@ -282,6 +282,10 @@ type fakeTargetTranscoder struct {
 	webCalls   []string
 	allCalls   []string
 	probeCalls []string
+	// hlsPercentTicks makes TranscodeHLS report the real transcoder's shape: one
+	// callback per whole percent from the ffmpeg progress scanner, then the
+	// terminal completion. Zero keeps the original two-event fixture.
+	hlsPercentTicks bool
 }
 
 // TranscodeAll mirrors the real transcoder: ONE pass that yields both output
@@ -318,6 +322,14 @@ func (f *fakeTargetTranscoder) Probe(_ context.Context, sourceKey string) (media
 
 func (f *fakeTargetTranscoder) TranscodeHLS(_ context.Context, _ uuid.UUID, sourceKey string, _ media.Metadata, progress media.ProgressFunc) (media.HLSResult, error) {
 	f.hlsCalls = append(f.hlsCalls, sourceKey)
+	if f.hlsPercentTicks && progress != nil {
+		progress(media.TranscodeProgress{Format: media.TranscodeFormatHLS, Height: 720, Width: 1280, State: media.ProgressQueued, Stage: "queued", Percent: 0})
+		for p := 0; p <= 99; p++ {
+			progress(media.TranscodeProgress{Format: media.TranscodeFormatHLS, Height: 720, Width: 1280, State: media.ProgressRunning, Stage: "encoding", Percent: p})
+		}
+		progress(media.TranscodeProgress{Format: media.TranscodeFormatHLS, Height: 720, Width: 1280, State: media.ProgressSucceeded, Stage: "complete", Percent: 100})
+		return f.hlsResult, f.hlsErr
+	}
 	if progress != nil {
 		progress(media.TranscodeProgress{Format: media.TranscodeFormatHLS, Height: 720, Width: 1280, State: media.ProgressRunning, Stage: "encoding", Percent: 42})
 	}
@@ -1417,4 +1429,90 @@ func mediaPermanentError(msg string) error {
 		panic("fixture is stale: media.NewPermanentError no longer produces a permanent error")
 	}
 	return err
+}
+
+// TestProgressWritesAreThrottledButKeepEveryTransition proves the progress-write
+// throttle at the seam that matters: the media layer still calls back once per
+// whole percent (that contract is unchanged), but only a step's worth of
+// movement becomes a database write.
+//
+// The number is the point. The callback runs on the goroutine reading ffmpeg's
+// -progress pipe, so every write it makes stalls the encoder for a round-trip;
+// one write per percent per rung is ~100 stalls per rung per pass, and as many
+// job_events rows behind the 0094 trigger. What must NOT be lost in the
+// thinning is any transition an operator reads — so the terminal 100 is asserted
+// explicitly rather than left to the arithmetic.
+func TestProgressWritesAreThrottledButKeepEveryTransition(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	tc := &fakeTargetTranscoder{
+		hlsPercentTicks: true,
+		hlsResult:       media.HLSResult{MasterKey: "hls/" + videoID.String() + "/master.m3u8"},
+	}
+	svc := NewService(repo, tc)
+
+	if err := svc.EnqueueTarget(context.Background(), videoID, "originals/x.mp4", TargetHLS); err != nil {
+		t.Fatalf("EnqueueTarget: %v", err)
+	}
+	if n, err := svc.DrainJobs(context.Background(), 1); err != nil || n != 1 {
+		t.Fatalf("DrainJobs = (%d, %v), want (1, nil)", n, err)
+	}
+
+	// 102 callbacks went in (queued, 0..99, complete). The encoding ticks may
+	// only be persisted every progressWriteStep percent, so the whole job is
+	// bounded well under half of what an unthrottled seam would write.
+	const reported = 102
+	if len(repo.steps) >= reported/2 {
+		t.Fatalf("persisted %d step writes for %d progress callbacks; the throttle is not engaged", len(repo.steps), reported)
+	}
+
+	var sawQueued, sawComplete bool
+	last := -1
+	for _, s := range repo.steps {
+		if s.State == media.ProgressQueued {
+			sawQueued = true
+		}
+		if s.State == media.ProgressSucceeded && s.Stage == "complete" && s.ProgressPercent == 100 {
+			sawComplete = true
+		}
+		if got := int(s.ProgressPercent); got < last {
+			t.Errorf("persisted progress went backwards: %d after %d", got, last)
+		} else {
+			last = got
+		}
+	}
+	if !sawQueued {
+		t.Error("the queued transition was thinned away; a rung must appear in the projection before it runs")
+	}
+	if !sawComplete {
+		t.Error("the terminal 100/succeeded write was thinned away; the projection would stay stuck mid-encode forever")
+	}
+}
+
+// TestProgressThrottleNeverSwallowsANewRung guards the failure mode a single
+// shared counter would have: rung N+1 opens at 0 while rung N sits near 100, so
+// a throttle that did not key on the rung would drop the whole start of every
+// rung after the first.
+func TestProgressThrottleNeverSwallowsANewRung(t *testing.T) {
+	th := newStepProgressThrottle()
+	first := media.TranscodeProgress{Format: media.TranscodeFormatHLS, Height: 1080, Width: 1920, State: media.ProgressRunning, Stage: "encoding", Percent: 98}
+	if !th.admit(first) {
+		t.Fatal("the first sight of a rung must always be written")
+	}
+	second := media.TranscodeProgress{Format: media.TranscodeFormatHLS, Height: 720, Width: 1280, State: media.ProgressRunning, Stage: "encoding", Percent: 0}
+	if !th.admit(second) {
+		t.Fatal("a different rung opening at 0 was swallowed by another rung's counter")
+	}
+	// Same rung, one percent later: thinned.
+	if th.admit(media.TranscodeProgress{Format: media.TranscodeFormatHLS, Height: 720, Width: 1280, State: media.ProgressRunning, Stage: "encoding", Percent: 1}) {
+		t.Error("a one-percent advance inside the same stage should not reach the database")
+	}
+	// Same rung, same percent, new stage: an event, always written.
+	if !th.admit(media.TranscodeProgress{Format: media.TranscodeFormatHLS, Height: 720, Width: 1280, State: media.ProgressRunning, Stage: "storing", Percent: 1}) {
+		t.Error("a stage change must be written even when the percent has not moved")
+	}
+	// Same rung, same stage, a full step later: written.
+	if !th.admit(media.TranscodeProgress{Format: media.TranscodeFormatHLS, Height: 720, Width: 1280, State: media.ProgressRunning, Stage: "storing", Percent: 1 + progressWriteStep}) {
+		t.Error("a full step of progress must reach the database")
+	}
 }

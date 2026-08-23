@@ -481,6 +481,83 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 	return done, nil
 }
 
+// progressWriteStep is how many whole percent one rung must advance before its
+// progress is written to the database again.
+//
+// Five is chosen against the thing on the other end of the callback rather than
+// against the UI: it turns ~100 synchronous round-trips per rung per pass into
+// ~20, while still keeping a progress bar that visibly moves. Every transition an
+// operator actually reads — a rung appearing, a state change, a stage change, a
+// terminal 100 — is exempt from the step and always written (see admit).
+const progressWriteStep = 5
+
+// stepProgressKey identifies one rung's execution row: the operational
+// projection is keyed per (format, resolution), so each is throttled on its own
+// counter. A shared counter would swallow the start of every rung after the
+// first, since a new rung opens at 0 while the previous one sits near 100.
+type stepProgressKey struct {
+	format string
+	height int
+	width  int
+}
+
+// stepProgressMark is the last state PERSISTED for a rung — not the last state
+// reported. The gap between the two is the point.
+type stepProgressMark struct {
+	state   string
+	stage   string
+	percent int
+}
+
+// stepProgressThrottle decides which of the media layer's per-percent progress
+// callbacks reach the database.
+//
+// WHY THIS EXISTS: the callback is invoked synchronously from the goroutine
+// scanning ffmpeg's -progress pipe (media.runFFmpegWithProgress), once per whole
+// percent, for every rung in the ladder. Writing from inside it means the encode
+// pipe stops being read for the duration of a database round-trip — so database
+// latency BACK-PRESSURES THE ENCODER: ffmpeg blocks on a full stdout pipe while
+// the write completes. A four-rung ladder at one write per percent is ~400
+// round-trips per pass, each one a stall, and each one also fires the 0094
+// trigger that appends a job_events row — roughly a thousand rows of history per
+// video to record a number that only ever goes up.
+//
+// Throttling here rather than in internal/media keeps the media layer's
+// per-percent callback contract intact for every other consumer; this is the
+// only consumer that writes.
+type stepProgressThrottle struct {
+	mu   sync.Mutex
+	last map[stepProgressKey]stepProgressMark
+}
+
+func newStepProgressThrottle() *stepProgressThrottle {
+	return &stepProgressThrottle{last: make(map[stepProgressKey]stepProgressMark)}
+}
+
+// admit reports whether p should be persisted, recording it as that rung's new
+// mark when it is. It is safe for concurrent callers: packaging reports rung
+// completions from its own goroutines.
+func (t *stepProgressThrottle) admit(p media.TranscodeProgress) bool {
+	k := stepProgressKey{format: p.Format, height: p.Height, width: p.Width}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	prev, seen := t.last[k]
+	switch {
+	// Written unconditionally: the first sight of a rung, any state change
+	// (queued→running→succeeded/failed), any stage change
+	// (encoding→packaging→storing), a terminal 100, and any backwards move (a
+	// rung restarting). These are events, not samples of a curve, and dropping
+	// one would leave the projection stuck on a stage that has already ended.
+	case !seen, p.State != prev.state, p.Stage != prev.stage,
+		p.Percent >= 100, p.Percent < prev.percent,
+		p.Percent-prev.percent >= progressWriteStep:
+	default:
+		return false
+	}
+	t.last[k] = stepProgressMark{state: p.State, stage: p.Stage, percent: p.Percent}
+	return true
+}
+
 func (s *Service) runTarget(ctx context.Context, row sqlcgen.ClaimDueTranscodeJobsRow) error {
 	target := row.TranscodeType
 	if target == "" {
@@ -494,9 +571,16 @@ func (s *Service) runTarget(ctx context.Context, row sqlcgen.ClaimDueTranscodeJo
 		}
 		return s.storeResult(ctx, row.VideoID, res)
 	}
+	// One throttle per job: the media layer still calls back once per whole
+	// percent, but only a step's worth of movement (or a real transition) turns
+	// into a write. See stepProgressThrottle for why a write here stalls ffmpeg.
+	throttle := newStepProgressThrottle()
 	progress := func(p media.TranscodeProgress) {
 		repo, ok := s.repo.(stepRepository)
 		if !ok {
+			return
+		}
+		if !throttle.admit(p) {
 			return
 		}
 		_ = repo.UpsertTranscodeStep(ctx, sqlcgen.UpsertTranscodeStepParams{

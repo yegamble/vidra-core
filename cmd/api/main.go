@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/exec"
@@ -1599,6 +1600,24 @@ func run() error {
 	// ROLE: worker-side. Recovery hands abandoned rows back to the queues, which
 	// only the worker role drains; an api-only process requeueing them would be
 	// doing bookkeeping for someone else's crash.
+	//
+	// LEADER-GATED, on the TICKER only. A sweep is not a claim: it does not hand
+	// this instance any work, it hands rows back to the queue every instance
+	// already drains. Whichever instance runs it, the outcome is identical — so
+	// running it on all of them is pure waste, and on a worker fleet it is waste
+	// that scales the wrong way: seven index-or-table scans per instance, every
+	// two minutes, forever.
+	//
+	// The FIRST sweep is deliberately NOT gated. It runs once per process, and it
+	// exists for the case the surrounding comment describes: this boot may itself
+	// be the recovery from the crash that stranded the rows. Gating it would make
+	// it a coin flip on whether the election happened to have completed in the
+	// few milliseconds since cronLeader.Run started — i.e. it would almost always
+	// be skipped, quietly deleting the guarantee. One bounded sweep per boot is
+	// affordable at any fleet size: the SweepExpired* statements take their rows
+	// with a LIMITed FOR UPDATE SKIP LOCKED claim, so simultaneous boot sweeps
+	// across a rolling deploy take disjoint rows instead of queueing on each
+	// other's locks.
 	if runWorkers {
 		sweepCtx, sweepCancel := context.WithCancel(context.Background())
 		defer sweepCancel()
@@ -1626,6 +1645,12 @@ func run() error {
 				case <-sweepCtx.Done():
 					return
 				case <-t.C:
+					// Singleton sweep: exactly one instance runs it. A follower skips
+					// the tick rather than shutting down, because leadership can move
+					// here at any time (see internal/leaderlock).
+					if !cronLeader.IsLeader() {
+						continue
+					}
 					sweep()
 				}
 			}
@@ -2100,15 +2125,51 @@ func run() error {
 	return nil
 }
 
+// jitterStart holds the caller for a uniformly random slice of interval, so the
+// ticker it is about to create lands on a random phase. It returns false if ctx
+// ended while waiting, which is the caller's signal to return instead of
+// starting its loop.
+//
+// Every worker in a deployment boots within seconds of its siblings — that is
+// what a rolling deploy IS — and a ticker created at boot fires on its creation
+// phase for the entire life of the process. Un-jittered, a fleet of N workers
+// therefore hits the database with N simultaneous claim queries every interval
+// and then sits idle for the rest of it, forever: the load is N× peaky for the
+// same throughput, and the peak is exactly when every instance is also
+// contending for the same queue rows. Randomising the phase once, at start,
+// spreads the same work into a trickle and costs one bounded sleep.
+//
+// Deliberately not configurable: a knob here would be a knob whose only correct
+// setting is "on", and an operator who set it wrong would get the phase-locked
+// behaviour back with no symptom to trace it by.
+func jitterStart(ctx context.Context, interval time.Duration) bool {
+	if interval <= 0 {
+		return true
+	}
+	t := time.NewTimer(time.Duration(rand.Int64N(int64(interval))))
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
 // runFederationDeliveryWorker drains the outbound federation delivery queue on a
-// ticker until ctx is canceled. A single worker suffices (deliveries claim without
-// row locking); it logs only claim-query errors — per-delivery failures are
-// recorded in the queue (retry/backoff/dead-letter) rather than logged.
+// ticker until ctx is canceled. One worker goroutine per instance is enough:
+// ClaimDueDeliveries takes its batch with FOR UPDATE SKIP LOCKED, so concurrent
+// drainers — in this process or on another instance — take disjoint rows. It
+// logs only claim-query errors; per-delivery failures are recorded in the queue
+// (retry/backoff/dead-letter) rather than logged.
 func runFederationDeliveryWorker(ctx context.Context, logger *slog.Logger, fedsvc *federation.Service) {
 	const (
 		interval = 10 * time.Second
 		batch    = 20
 	)
+	if !jitterStart(ctx, interval) {
+		return
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -2132,6 +2193,9 @@ func runSearchOutboxWorker(ctx context.Context, logger *slog.Logger, drainer *se
 		interval = 5 * time.Second
 		batch    = 200
 	)
+	if !jitterStart(ctx, interval) {
+		return
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -2202,6 +2266,9 @@ func runATProtoPostWorker(ctx context.Context, logger *slog.Logger, svc *atproto
 		interval = 15 * time.Second
 		batch    = 10
 	)
+	if !jitterStart(ctx, interval) {
+		return
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -2226,6 +2293,9 @@ func runATProtoPostWorker(ctx context.Context, logger *slog.Logger, svc *atproto
 // rather than logged.
 func runTranscodeWorker(ctx context.Context, logger *slog.Logger, svc *transcode.Service) {
 	const interval = 10 * time.Second
+	if !jitterStart(ctx, interval) {
+		return
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -2277,6 +2347,9 @@ func runAccountExportWorker(ctx context.Context, logger *slog.Logger, svc *accou
 		batch      = 2
 		sweepBatch = 50
 	)
+	if !jitterStart(ctx, interval) {
+		return
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -2460,6 +2533,9 @@ func runTranscodeHoldSweepWorker(ctx context.Context, logger *slog.Logger, svc *
 // error is logged.
 func runVideoImportWorker(ctx context.Context, logger *slog.Logger, svc *videoimport.Service) {
 	const interval = 10 * time.Second
+	if !jitterStart(ctx, interval) {
+		return
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -2499,6 +2575,9 @@ func runChannelSyncWorker(ctx context.Context, logger *slog.Logger, svc *channel
 		// 15 per tick).
 		perTick = 15
 	)
+	if !jitterStart(ctx, interval) {
+		return
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -2528,6 +2607,9 @@ func runCaptionJobWorker(ctx context.Context, logger *slog.Logger, svc *captionj
 		interval = 10 * time.Second
 		batch    = 2
 	)
+	if !jitterStart(ctx, interval) {
+		return
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -2594,6 +2676,12 @@ func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirr
 		drainInterval = 10 * time.Second
 		batch         = 8
 	)
+	// Jitter on the drain interval: the drain is the un-leadered, fleet-wide half
+	// of this worker. The reconcile ticker below is leader-gated, so exactly one
+	// instance ever acts on it and there is no phase to spread.
+	if !jitterStart(ctx, drainInterval) {
+		return
+	}
 	drain := time.NewTicker(drainInterval)
 	defer drain.Stop()
 	if reconcileInterval <= 0 {
@@ -2669,6 +2757,9 @@ func runStorageMigrationCopyWorker(ctx context.Context, logger *slog.Logger, svc
 		interval = 10 * time.Second
 		batch    = 4
 	)
+	if !jitterStart(ctx, interval) {
+		return
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -2850,6 +2941,9 @@ func runMediaHashBackfillWorker(ctx context.Context, logger *slog.Logger, svc *m
 // drains at most one per tick; per-run outcomes are persisted to the run row.
 func runPeerTubeImportWorker(ctx context.Context, logger *slog.Logger, svc *peertubeimport.Service) {
 	const interval = 15 * time.Second
+	if !jitterStart(ctx, interval) {
+		return
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {

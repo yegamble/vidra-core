@@ -167,13 +167,17 @@ func (q *Queries) GetLatestImportJobByVideo(ctx context.Context, videoID uuid.UU
 
 const renewImportJobLease = `-- name: RenewImportJobLease :exec
 UPDATE import_jobs
-SET next_attempt_at = now() + interval '30 minutes'
+SET next_attempt_at = now() + interval '30 minutes', updated_at = now()
 WHERE id = $1 AND state = 'running'
 `
 
 // Push a running job's lease forward. The worker calls this on a ticker while the
 // job runs, so a job that legitimately outlives one lease is not swept out from
 // under itself. Guarded on state so a completed or failed job cannot be revived.
+//
+// updated_at is bumped with the lease so the operational projection can tell a
+// live job from an abandoned one — see RenewTranscodeJobLease for why that bump
+// is the whole of the `stale_running` signal.
 func (q *Queries) RenewImportJobLease(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, renewImportJobLease, id)
 	return err
@@ -239,7 +243,13 @@ func (q *Queries) SetImportJobStage(ctx context.Context, arg SetImportJobStagePa
 const sweepExpiredImportJobs = `-- name: SweepExpiredImportJobs :execrows
 UPDATE import_jobs
 SET state = 'pending', attempts = attempts + 1, stage = '', updated_at = now()
-WHERE state = 'running' AND next_attempt_at <= now()
+WHERE id IN (
+    SELECT id FROM import_jobs
+    WHERE state = 'running' AND next_attempt_at <= now()
+    ORDER BY next_attempt_at
+    LIMIT 1000
+    FOR UPDATE SKIP LOCKED
+)
 `
 
 // Return jobs whose lease elapsed while they were 'running' to the queue.
@@ -253,6 +263,11 @@ WHERE state = 'running' AND next_attempt_at <= now()
 //
 // attempts is incremented so a job that crashes its worker every time walks its
 // counter up and dead-letters through the normal path instead of looping forever.
+//
+// Bounded FOR UPDATE SKIP LOCKED for the same reason the claim uses it: without
+// it, concurrent sweepers take their row locks in table order and serialise on
+// each other; with it they take disjoint rows. LIMIT bounds one tick's work
+// (see SweepExpiredTranscodeJobs for the full rationale).
 func (q *Queries) SweepExpiredImportJobs(ctx context.Context) (int64, error) {
 	result, err := q.db.Exec(ctx, sweepExpiredImportJobs)
 	if err != nil {

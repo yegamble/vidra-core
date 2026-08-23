@@ -8,10 +8,24 @@
 --
 -- Each queue now leases on claim, renews while the worker is alive, and has its
 -- own SweepExpired* query beside its other statements (see transcoding.sql,
--- import_jobs.sql, caption_jobs.sql, account_exports.sql, peertube_import.sql
--- and channel_syncs.sql). A sweep only touches rows nobody is renewing, so it is
--- correct with any number of instances and can run periodically instead of only
--- at start-up.
+-- import_jobs.sql, caption_jobs.sql, account_exports.sql, peertube_import.sql,
+-- channel_syncs.sql and storage_migrations.sql). A sweep only touches rows
+-- nobody is renewing, so it is correct with any number of instances and can run
+-- periodically instead of only at start-up. Each of those sweeps takes its rows
+-- with a bounded FOR UPDATE SKIP LOCKED claim (migration 0110 adds the partial
+-- index behind it), so concurrent sweepers on a worker fleet take disjoint rows
+-- instead of serialising on each other's locks.
 --
 -- This file is kept as the signpost: it is where someone looks for "how does a
 -- crashed job come back".
+--
+-- STALE ARTEFACT, read this before believing it: internal/store/sqlcgen/
+-- job_recovery.sql.go is the generated output of an EARLIER version of this
+-- file and was never removed when its queries were. sqlc no longer generates it
+-- (and `sqlc diff` cannot notice a file it would not write), so its doc comment
+-- still describes the boot-time blanket requeue as how recovery works and still
+-- asserts "this process is the only worker" — neither of which has been true
+-- since the lease retrofit. The RequeueRunning* methods it puts on *Queries are
+-- called by nothing in production; only internal/store/job_recovery_integration_
+-- test.go still exercises them. Do not call them on a multi-instance
+-- deployment: they requeue EVERY 'running' row regardless of who is renewing it.

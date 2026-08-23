@@ -142,17 +142,36 @@ RETURNING object_key, campaign_id, attempts;
 -- whole video original over a slow link can outlive one lease; without this the
 -- sweep would hand it to a second worker mid-copy. Guarded on 'copying' so a row
 -- that already finished cannot be revived.
+--
+-- updated_at is bumped with the lease so a row that is being actively copied
+-- does not look untouched. This table has no operational-projection trigger of
+-- its own (only the campaign in storage_migrations does), so unlike
+-- RenewTranscodeJobLease the bump feeds no gauge — it keeps updated_at meaning
+-- what it says, which is what anyone eyeballing a stuck-looking campaign reads.
 UPDATE storage_migration_objects
-SET next_attempt_at = now() + interval '30 minutes'
+SET next_attempt_at = now() + interval '30 minutes', updated_at = now()
 WHERE object_key = $1 AND state = 'copying';
 
 -- name: SweepExpiredStorageMigrationObjects :execrows
 -- Return objects whose lease elapsed while they were 'copying' to the queue.
 -- attempts is incremented so an object that kills its worker every time walks
 -- its counter up and dead-letters through the normal path.
+--
+-- Bounded FOR UPDATE SKIP LOCKED for the same reason the claim uses it: without
+-- it, concurrent sweepers take their row locks in table order and serialise on
+-- each other; with it they take disjoint rows. LIMIT bounds one tick's work
+-- (see SweepExpiredTranscodeJobs for the full rationale). This is the queue
+-- where it matters most: a campaign enumerates a whole library at once, so this
+-- table is the one that actually gets big.
 UPDATE storage_migration_objects
 SET state = 'pending', attempts = attempts + 1, updated_at = now()
-WHERE state = 'copying' AND next_attempt_at <= now();
+WHERE object_key IN (
+    SELECT object_key FROM storage_migration_objects
+    WHERE state = 'copying' AND next_attempt_at <= now()
+    ORDER BY next_attempt_at
+    LIMIT 1000
+    FOR UPDATE SKIP LOCKED
+);
 
 -- name: MarkStorageMigrationObjectVerified :exec
 -- The object is in the target AND was read back from it and re-hashed. This is
