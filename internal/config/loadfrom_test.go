@@ -799,3 +799,110 @@ func TestStorageMigrationTargetValidation(t *testing.T) {
 		}
 	})
 }
+
+// TestProcessRole covers VIDRA_ROLE — the flag that decides whether a process
+// serves HTTP, runs the background workers, or both.
+//
+// The default is the case that must never move: an existing install that has
+// never heard of VIDRA_ROLE has to keep booting as one process that does
+// everything, or an upgrade silently turns a working instance into one with no
+// workers (queues stop draining and nothing in the API says so).
+func TestProcessRole(t *testing.T) {
+	load := func(extra map[string]string) (*Config, error) {
+		env := productionCandidate()
+		for k, v := range extra {
+			env[k] = v
+		}
+		return LoadFrom(func(key string) (string, bool) {
+			v, ok := env[key]
+			return v, ok
+		})
+	}
+
+	t.Run("unset means all: the pre-flag behaviour", func(t *testing.T) {
+		cfg, err := load(nil)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		if cfg.Role != RoleAll {
+			t.Errorf("Role = %q, want %q", cfg.Role, RoleAll)
+		}
+		if !cfg.Role.RunsWorkers() || !cfg.Role.ServesHTTP() {
+			t.Errorf("the default role must do both: RunsWorkers=%v ServesHTTP=%v",
+				cfg.Role.RunsWorkers(), cfg.Role.ServesHTTP())
+		}
+	})
+
+	// An EMPTY value is unset everywhere else in this package (`KEY=` == omitted),
+	// and a generated env file that ships `VIDRA_ROLE=` blank must not refuse to
+	// boot.
+	t.Run("empty is unset, not invalid", func(t *testing.T) {
+		cfg, err := load(map[string]string{"VIDRA_ROLE": ""})
+		if err != nil {
+			t.Fatalf("VIDRA_ROLE= (blank) was rejected: %v", err)
+		}
+		if cfg.Role != RoleAll {
+			t.Errorf("Role = %q, want %q", cfg.Role, RoleAll)
+		}
+	})
+
+	t.Run("each role selects its halves", func(t *testing.T) {
+		for _, tc := range []struct {
+			in          string
+			want        Role
+			runsWorkers bool
+			servesHTTP  bool
+		}{
+			{"all", RoleAll, true, true},
+			{"api", RoleAPI, false, true},
+			{"worker", RoleWorker, true, false},
+			// Case and stray whitespace are normalised, as they are for LOG_LEVEL.
+			{"  Worker ", RoleWorker, true, false},
+			{"API", RoleAPI, false, true},
+		} {
+			cfg, err := load(map[string]string{"VIDRA_ROLE": tc.in})
+			if err != nil {
+				t.Fatalf("VIDRA_ROLE=%q: %v", tc.in, err)
+			}
+			if cfg.Role != tc.want {
+				t.Errorf("VIDRA_ROLE=%q: Role = %q, want %q", tc.in, cfg.Role, tc.want)
+			}
+			if got := cfg.Role.RunsWorkers(); got != tc.runsWorkers {
+				t.Errorf("VIDRA_ROLE=%q: RunsWorkers() = %v, want %v", tc.in, got, tc.runsWorkers)
+			}
+			if got := cfg.Role.ServesHTTP(); got != tc.servesHTTP {
+				t.Errorf("VIDRA_ROLE=%q: ServesHTTP() = %v, want %v", tc.in, got, tc.servesHTTP)
+			}
+		}
+	})
+
+	// Every role runs at least one half. A value that ran neither would be a
+	// container that boots, logs nothing wrong, and does nothing at all.
+	t.Run("no valid role is a no-op process", func(t *testing.T) {
+		for _, r := range []Role{RoleAll, RoleAPI, RoleWorker} {
+			if !r.RunsWorkers() && !r.ServesHTTP() {
+				t.Errorf("role %q neither serves nor works", r)
+			}
+		}
+	})
+
+	// The whole point of making this fatal: "workers", "api-only" and "both" are
+	// the plausible typos, and each of them would otherwise boot a process that
+	// looks healthy and drains nothing.
+	t.Run("an unrecognised role refuses to boot, named", func(t *testing.T) {
+		for _, bad := range []string{"workers", "api-only", "both", "none", "worker,api"} {
+			_, err := load(map[string]string{"VIDRA_ROLE": bad})
+			if err == nil {
+				t.Fatalf("VIDRA_ROLE=%s was accepted", bad)
+			}
+			ve, ok := collectVarErrors(err)["VIDRA_ROLE"]
+			if !ok {
+				t.Errorf("VIDRA_ROLE=%s: the error is not attributed to the variable: %v", bad, err)
+				continue
+			}
+			if !strings.Contains(ve.Msg, "all|api|worker") {
+				t.Errorf("VIDRA_ROLE=%s: the message does not list the legal values: %q", bad, ve.Msg)
+			}
+		}
+	})
+}
