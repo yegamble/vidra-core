@@ -33,6 +33,20 @@ func (r *ctxAwareRepo) RescheduleTranscodeJob(ctx context.Context, a sqlcgen.Res
 	return r.fakeRepo.RescheduleTranscodeJob(ctx, a)
 }
 
+func (r *ctxAwareRepo) FailTranscodeJob(ctx context.Context, a sqlcgen.FailTranscodeJobParams) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return r.fakeRepo.FailTranscodeJob(ctx, a)
+}
+
+func (r *ctxAwareRepo) DeferTranscodeJob(ctx context.Context, a sqlcgen.DeferTranscodeJobParams) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return r.fakeRepo.DeferTranscodeJob(ctx, a)
+}
+
 // cancellingTranscoder simulates SIGTERM landing mid-transcode: it cancels the
 // worker context (as the shutdown path does) and then fails the way an
 // interrupted ffmpeg does.

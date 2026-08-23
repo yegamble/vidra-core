@@ -228,7 +228,11 @@ const healthyModel = `{
 }`
 
 // healthyPS is the label dump doctor reads: the production chain, no override.
+// The baseline env sets VIDRA_EXTERNAL_POSTGRES=false, so the bundled database
+// is one of this deployment's own containers and has to appear here — the
+// storage-migration check reads campaign state by exec'ing psql into it.
 const healthyPS = "vidra-api-1\tvidra\tapi\t/srv/vidra/docker-compose.yml,/srv/vidra/docker-compose.prod.yml\trunning\tUp 2 hours (healthy)\n" +
+	"vidra-postgres-1\tvidra\tpostgres\t/srv/vidra/docker-compose.yml,/srv/vidra/docker-compose.prod.yml\trunning\tUp 2 hours (healthy)\n" +
 	"vidra-search-1\tvidra\tsearch\t/srv/vidra/docker-compose.yml,/srv/vidra/docker-compose.prod.yml\trunning\tUp 2 hours (healthy)\n" +
 	"vidra-caddy-1\tvidra\tcaddy\t/srv/vidra/docker-compose.yml,/srv/vidra/docker-compose.prod.yml\trunning\tUp 2 hours\n"
 
@@ -270,6 +274,10 @@ func (h *fakeHost) healthyRespond(name string, args []string) (Output, error) {
 		return Output{Stdout: healthyInfo}, nil
 	case name == "docker" && strings.Contains(joined, "exec -T api migrate version"):
 		return Output{Stdout: "version=42 dirty=false\n"}, nil
+	case name == "docker" && strings.Contains(joined, "exec -T postgres psql"):
+		// `psql -tA` prints the bare value and nothing else. On a healthy
+		// deployment nothing is being moved between stores.
+		return Output{Stdout: "f\n"}, nil
 	case name == "docker" && strings.Contains(joined, "exec -T api ffmpeg"):
 		return Output{Stdout: "ffmpeg version 7.1 Copyright (c) 2000-2024\n"}, nil
 	case name == "docker" && strings.Contains(joined, "exec -T search wget"):

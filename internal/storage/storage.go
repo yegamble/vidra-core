@@ -144,6 +144,37 @@ type ResponsePresigner interface {
 // cannot pick an upload strategy from the length.
 const SizeUnknown int64 = -1
 
+// SizedReader is an optional capability implemented by readers that already know
+// exactly how many bytes they will still yield. Recognising it is what lets a
+// source that is itself an object store hand the destination a length — see
+// S3.Open, whose reader carries the size the Stat it already performs returned.
+//
+// CAUTION for implementors: several standard-library readers spell a DIFFERENT
+// question `Size() int64`. *bytes.Reader, *strings.Reader and *io.SectionReader
+// all report their ORIGINAL length, which is not the remaining one once anything
+// has been read. This interface's Size is REMAINING bytes, and sniffSize
+// therefore matches the concrete types it already understood first and only
+// falls through to this interface for types it does not recognise.
+type SizedReader interface {
+	io.Reader
+	// Size reports how many bytes are left to read, or SizeUnknown when the
+	// reader cannot say exactly. An inexact answer is worse than none: the
+	// backend reads precisely the length it is told.
+	Size() int64
+}
+
+// SizeOf reports how many bytes r will still yield, or SizeUnknown when that
+// cannot be established without consuming it. Only lengths that are provably
+// exact are returned.
+//
+// It is exported for callers that must WRAP r before handing it to a Put — an
+// io.LimitReader guard, say — because the wrapper hides r's concrete type and
+// with it the single-PUT path. Sniff before wrapping, then pass the answer
+// explicitly. A wrapper that caps rather than bounds (LimitReader with a
+// defensive maximum) must NOT pass its own bound as the size: that is an upper
+// limit, and the backend would sit waiting for bytes that are not coming.
+func SizeOf(r io.Reader) int64 { return sniffSize(r) }
+
 // SizedPutter is an optional capability implemented by backends that can upload
 // more efficiently when the object's exact byte length is known up front. The S3
 // backend implements it because the difference is large and non-obvious: with an
