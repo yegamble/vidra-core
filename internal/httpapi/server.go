@@ -1765,6 +1765,11 @@ func (s *Server) routes() {
 		api.PATCH("/live/:id", s.handleUpdateLiveStream, s.requireAuth)
 		api.POST("/live/:id/key", s.handleRegenerateLiveStreamKey, s.requireAuth)
 		api.DELETE("/live/:id", s.handleDeleteLiveStream, s.requireAuth)
+		// Live playback session (phase-4 item 7): the one call a player makes
+		// before it plays a live stream, answering with the same session object
+		// the VOD endpoint does — and, for a PRIVATE stream, the expiring
+		// live-scoped token that gives live a private-but-shareable tier.
+		api.POST("/live/:id/playback-session", s.handleCreateLivePlaybackSession, s.optionalAuth)
 		// Live HLS serving: the media server writes segments into LIVE_HLS_ROOT
 		// keyed by stream ID; the api serves them privacy/state-gated (404 when
 		// LIVE_HLS_ROOT is unset). Mirrors the VOD /hls routes.

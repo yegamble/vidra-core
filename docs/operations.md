@@ -1297,8 +1297,54 @@ docker compose -f docker-compose.yml -f deploy/docker-compose.soak.yml \
   instances is not.
 - **Local media storage does not scale out.** `STORAGE_BACKEND=local` writes to a
   volume only one host can see; multi-instance requires `STORAGE_BACKEND=s3`.
+- **Live does not scale out at all**, on any storage backend. See below.
 - **The soak ran without an object store or a real search service.** Transcode
   throughput across instances has not been measured under load.
+
+### The live plane is single-host
+
+Everything above is about the api replicas. **Live streaming is not covered by any
+of it, and it is single-host by construction.** This is a supported-topology
+statement, not a defect list — read it before planning a multi-node deployment
+that includes live.
+
+**Live segments never enter the media store.** While a broadcast is running, the
+RTMP media server (nginx-rtmp) writes the HLS playlist and its MPEG-TS segments
+straight onto a **local Docker volume** (`LIVE_HLS_ROOT`, the `live_hls` volume in
+`docker-compose.yml`), and the api serves them by opening the file. They are never
+uploaded to `STORAGE_BACKEND`, they have no storage key, and they exist for a
+window of about twelve seconds before being deleted. The media server also
+**reuses segment names** — the segment called `<id>-0.ts` in this broadcast is a
+different segment from the `<id>-0.ts` of the last one.
+
+Three consequences follow, and none of them are configurable:
+
+- **A second api instance cannot serve live.** An api replica on another host sees
+  an empty `LIVE_HLS_ROOT`, so every live request it receives is a 404 — and a
+  404 that is *indistinguishable* from "no such stream" or "not currently live",
+  because live 404s deliberately do not leak which. If you run more than one api
+  instance, either keep all of them on the host holding the live volume, or route
+  `/api/v1/live/{id}/hls/*` to that host. There is no error message that will tell
+  you that you got this wrong; you will see a live stream that never starts.
+- **There is no CDN, presigned or IPFS path for live.** The whole delivery
+  abstraction (`Direct delivery`, the IPFS mirror, and any CDN configured later)
+  operates on stored objects addressed by a storage key. Live bytes have no key,
+  no immutable version and no durable copy to point a cache at, so they are always
+  served by the api itself, from the origin. A CDN in front of Vidra must not be
+  configured to cache `/api/v1/live/…` — the playlist changes every couple of
+  seconds and the segment names repeat across broadcasts, which is the exact shape
+  of a cache that serves the wrong video. The responses are marked
+  `private, max-age=0, must-revalidate` (or `private, no-store` when they carry a
+  credential) to say so.
+- **Recordings are different.** None of this applies to a replay: when
+  `replay_enabled` is set, the finished broadcast is transcoded into an ordinary
+  video, and from that point on it is a stored object like any other, with every
+  delivery path available to it.
+
+Fixing this properly means replacing the media server's HLS muxer with a
+repackager inside Vidra that writes segments through the storage backend. That is
+a rewrite of the live plane, it is not planned, and no amount of delivery or
+storage configuration substitutes for it.
 
 ## Splitting the api and the workers
 

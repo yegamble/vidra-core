@@ -48,9 +48,17 @@ type playbackSessionResponse struct {
 	// It is server-minted per session and is NOT the X-Vidra-Session browse id,
 	// which is client-generated per tab and carries no authorization meaning.
 	SessionID string `json:"session_id"`
-	// VideoID echoes the video this session is for, so a client holding several
-	// sessions never has to remember which request produced which response.
-	VideoID string `json:"video_id"`
+	// VideoID / LiveStreamID echo the subject this session is for, so a client
+	// holding several sessions never has to remember which request produced which
+	// response. EXACTLY ONE is present, and which one is also how a client knows
+	// what it is playing: a VOD session (POST /videos/{id}/playback-session)
+	// carries video_id, a live session (POST /live/{id}/playback-session, phase-4
+	// item 7) carries live_stream_id. They are separate fields rather than one
+	// polymorphic id because videos and live streams are different tables — a
+	// client that took a live stream's id for a video id would get a 404 from
+	// every video endpoint it tried.
+	VideoID      string `json:"video_id,omitempty"`
+	LiveStreamID string `json:"live_stream_id,omitempty"`
 	// PackagingFormat is "hls-ts" or "cmaf"; omitted when no tree is ready.
 	PackagingFormat string `json:"packaging_format,omitempty"`
 	// HLSURL/DASHURL are ORIGIN-RELATIVE. They are not presigned: a presigned URL
@@ -64,9 +72,10 @@ type playbackSessionResponse struct {
 	// Renditions are the ladder rungs, tallest first — the same list the video
 	// detail carries.
 	Renditions []renditionView `json:"renditions,omitempty"`
-	// PlaybackToken is present ONLY for a video that requires one (privacy =
-	// password). Absent means "play these URLs as they are" — and absent is the
-	// case that keeps CDN and presigned delivery reachable. See the file comment.
+	// PlaybackToken is present ONLY for a subject that requires one: a video with
+	// privacy = password, or a PRIVATE live stream. Absent means "play these URLs
+	// as they are" — and absent is the case that keeps CDN and presigned delivery
+	// reachable. See the file comment.
 	PlaybackToken string `json:"playback_token,omitempty"`
 	// ExpiresIn is the token's lifetime in seconds, present only with a token.
 	ExpiresIn int `json:"expires_in,omitempty"`
