@@ -470,10 +470,12 @@ func TestRenderCMAFMasterPlaylist(t *testing.T) {
 	for _, want := range []string{
 		"#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n",
 		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="audio",DEFAULT=YES,AUTOSELECT=YES,CHANNELS="2",URI="cmaf/media_2.m3u8"`,
-		`#EXT-X-STREAM-INF:BANDWIDTH=985600,RESOLUTION=480x360,CODECS="avc1.4d4015,mp4a.40.2",AUDIO="audio"` + "\ncmaf/media_0.m3u8\n",
+		// SCORE ranks the rungs for the clients that read it (Apple's); it is
+		// the rung's rank from the bottom plus the codec's own bonus.
+		`#EXT-X-STREAM-INF:BANDWIDTH=985600,RESOLUTION=480x360,CODECS="avc1.4d4015,mp4a.40.2",SCORE=2.1,AUDIO="audio"` + "\ncmaf/media_0.m3u8\n",
 		// 655600, not 620400: the low rung's declared peak includes the SHARED
 		// audio bitrate (the top rung's 96k), because that is the audio it plays.
-		`#EXT-X-STREAM-INF:BANDWIDTH=655600,RESOLUTION=320x240,CODECS="avc1.4d400d,mp4a.40.2",AUDIO="audio"` + "\ncmaf/media_1.m3u8\n",
+		`#EXT-X-STREAM-INF:BANDWIDTH=655600,RESOLUTION=320x240,CODECS="avc1.4d400d,mp4a.40.2",SCORE=1.1,AUDIO="audio"` + "\ncmaf/media_1.m3u8\n",
 		`#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=120000,RESOLUTION=480x360,CODECS="avc1.4d4015",URI="cmaf/iframe-0.m3u8"`,
 	} {
 		if !strings.Contains(got, want) {

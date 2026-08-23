@@ -536,6 +536,257 @@ Two things to know before switching:
   `.mp4` (init segments) and `.mpd` (manifest). A CDN or bucket policy that
   allow-lists suffixes needs `.m4s` and `.mpd` added.
 
+## Extra video codecs — HEVC and AV1
+
+By default a transcode encodes each ladder rung once, in **H.264**. That is the
+compatibility floor: every browser, every phone, every set-top box can play it,
+and it is also what the progressive downloads, the `/download` web videos, the
+audio-only extraction and the scrubbing thumbnails are made from. It is always
+emitted and there is no setting that turns it off.
+
+Two settings add a **second and third encoding of the same rungs** to the same
+CMAF tree:
+
+| Setting | Encoder | Bitrate vs H.264 | Plays on |
+| --- | --- | --- | --- |
+| `TRANSCODING_HEVC_ENABLED` | `libx265` | ~65% (a 35% cut) | Safari (macOS/iOS/tvOS), Edge and Chrome on hardware that decodes it, most 2016+ smart TVs. **Not** desktop Firefox |
+| `TRANSCODING_AV1_ENABLED` | `libsvtav1` | ~55% (a 45% cut) | Chrome/Edge 70+, Firefox 67+, Safari 17+ on capable hardware |
+
+Both default to `false`. With both off, a transcode produces byte-for-byte the
+H.264 ladder it always produced.
+
+**What "the same tree" means.** There is no second encode pass and no second set
+of segments to manage. The one ffmpeg invocation that already decodes the source
+once and scales it once grows extra encoders; the shared segment directory grows
+extra representations. In the manifests:
+
+* the **MPD** gains one video `AdaptationSet` per codec (a set is what a player
+  switches *within*, so codecs are never mixed inside one), plus the same single
+  audio set — audio is still encoded and stored **once** for the whole tree;
+* the **HLS master** gains a variant per codec per rung, each carrying a `SCORE`
+  and an `AVERAGE-BANDWIDTH`.
+
+Trick-play, the progressive downloads and the audio file stay H.264-only.
+
+### How a client picks the codec
+
+This is worth knowing before you turn anything on, because the two intuitive
+answers are both wrong.
+
+**It is not the order of the manifest.** hls.js (1.6) re-sorts every variant on
+load — by height, then by its own codec preference — and partitions them into
+codec sets its adaptive-bitrate logic never switches between. Manifest order
+survives only as the seed for the first bandwidth estimate. Vidra still writes
+H.264 first, because it is deterministic and because a hand-rolled client that
+takes the first variant it understands should land on the universally playable
+one, but nothing about correctness depends on it.
+
+**It is `SCORE`, for Apple clients.** Without a `SCORE` attribute, AVFoundation's
+selection is close to "the highest `BANDWIDTH` it can play" — and because an
+efficient codec *declares less*, that picks H.264 and inverts the whole point of
+emitting HEVC. Vidra writes a `SCORE` on every variant: the rung's rank dominates
+(720p always outranks 480p, whatever the codec) and the codec breaks the tie,
+preferring HEVC, then AV1, then H.264. HEVC ranks above AV1 deliberately: on
+Apple hardware HEVC is hardware-decoded essentially everywhere, while AV1
+hardware decode arrived only with the A17 Pro and M3, and a software AV1 decode
+that outranked a hardware HEVC one would cost battery and drop frames to save
+bytes the device was not short of.
+
+**`BANDWIDTH` is a peak, `AVERAGE-BANDWIDTH` is the truth.** `BANDWIDTH` is
+derived from the rung's budget, which every codec's rate control genuinely bounds;
+`AVERAGE-BANDWIDTH` is computed from the bytes the tree actually stored. The gap
+between them is large for AV1 and that is the point — it is rate-capped at the
+budget but encodes to a quality target underneath it, so easy content costs a
+fraction of the ceiling.
+
+### What it costs
+
+Measured end to end on a 720p/480p/360p ladder, one codec against three:
+
+| | 1 codec (default) | 3 codecs | |
+| --- | --- | --- | --- |
+| ffmpeg invocations | 9 | 9 | **unchanged** |
+| source decode passes | 2 | 2 | **unchanged** |
+| wall-clock time | 1.0x | **3.95x** | encoding is the cost |
+| segment bytes | 1.0x | **1.96x** | |
+| objects stored | 31 | 55 (**1.77x**) | |
+| whole stored tree | 1.0x | 1.30x | downloads dominate and stay H.264 |
+
+The strength first: adding codecs does **not** add ffmpeg runs or source decodes.
+The one ladder pass already decodes once and scales each rung once, and the extra
+codecs are extra encoders reading the same scaled frames.
+
+The costs, honestly:
+
+* **CPU is the real bill.** Nearly 4x the wall-clock time per video, permanently.
+  A backlog that used to clear overnight will not.
+* **Objects roughly double.** On a versioned bucket that is ~2x the `PUT`
+  requests as well as the bytes, and every future delete leaves twice as many
+  markers. Check your provider's request pricing, not just its storage pricing.
+* **Scratch is not automatically sized for it.** `TRANSCODING_MIN_FREE_SCRATCH_MB`
+  is an *absolute floor*, not a per-job estimate — the worker refuses new jobs
+  below it and otherwise assumes the job will fit. A three-codec ladder writes
+  roughly twice the segment bytes of a one-codec one before anything is uploaded,
+  so raise that floor when you enable this. (`TRANSCODING_STREAM_OUTPUT=true`
+  avoids the question entirely by streaming segments straight to the object
+  store.)
+* **`transcoding_threads` is a per-encoder floor, not a cap.** The job's budget is
+  divided across the encoders running concurrently, but never below one thread
+  each — so three codecs across four rungs will ask for twelve threads however
+  small the setting is.
+
+**Two hard boot failures, on purpose.** Both are settings whose failure mode is
+otherwise invisible — the site comes up, videos transcode, and the smaller
+deliveries the operator paid CPU for silently never appear:
+
+* **`TRANSCODING_PACKAGER=ts` with either codec on.** MPEG-TS is the frozen
+  rollback path; a variant there is a rendition *directory* named for its height,
+  so there is nowhere to put a second encoding of that height, and multi-codec
+  MPEG-TS masters are deliberately not built. Rolling the packager back to `ts`
+  therefore means turning these off too.
+* **An ffmpeg without the encoder.** The shipped image has `libx265` and
+  `libsvtav1`; a host binary or a slimmed image may not. The api probes
+  `ffmpeg -encoders` at boot and refuses to start, naming the encoder and the
+  setting. `vidra doctor` reports the same thing (the **video encoders** check)
+  against the api container's ffmpeg, so a deploy can be checked before it is
+  rolled out.
+
+**Turning them off is config-only**, exactly like the packager rollback: it
+changes what *new* transcodes produce, already-packaged multi-codec trees keep
+serving every representation they have, and nothing is re-encoded. There is no
+back-catalogue job in either direction.
+
+## Hardware transcoding — encoding on a GPU
+
+By default every rung is encoded by a **software** encoder (`libx264`, and
+`libx265`/`libsvtav1` when the extra codecs are on). That needs no device, no
+driver and no special image, works identically on every host, and is what the
+ladder's bitrate budgets were tuned against. It is also the slowest option: an
+encode is the only part of this pipeline that scales with CPU alone.
+
+`TRANSCODING_HW` moves the **H.264** rungs — and the HEVC ones, when
+`TRANSCODING_HEVC_ENABLED=true` — onto a hardware encoder.
+
+| `TRANSCODING_HW` | Encoders | Where it runs | In the shipped image? |
+| --- | --- | --- | --- |
+| `off` *(default)* | `libx264` / `libx265` | anywhere | yes |
+| `vaapi` | `h264_vaapi`, `hevc_vaapi` | Linux, via a DRM render node | **yes** |
+| `qsv` | `h264_qsv`, `hevc_qsv` | Linux, Intel GPU + oneVPL runtime | no — needs a rebuilt ffmpeg |
+| `nvenc` | `h264_nvenc`, `hevc_nvenc` | Linux, NVIDIA GPU + container runtime | no — needs a rebuilt ffmpeg |
+| `videotoolbox` | `h264_videotoolbox`, `hevc_videotoolbox` | macOS only | n/a — unreachable from a Linux container |
+
+The "in the shipped image" column is measured, not assumed: the image's ffmpeg
+(Alpine 3.24, ffmpeg 8.1.2) carries `h264_vaapi`, `hevc_vaapi`, `av1_vaapi`, the
+Vulkan encoders and the v4l2m2m wrappers, and carries **no** `*_qsv` and **no**
+`*_nvenc`. On a stock deployment, `vaapi` is the only backend that can succeed.
+
+### There is no `auto`, and that is the design
+
+Whether a backend works is a property of the **host**, not of the build. The same
+image runs on a droplet with no GPU, on a server whose `/dev/dri` was never mapped
+into the container, and on a GPU instance. A pipeline that selected an encoder by
+looking around would re-tune a whole deployment's picture quality the first time a
+device node appeared, moved or vanished — on a kernel upgrade, a hypervisor
+migration, or a compose edit made for an unrelated reason.
+
+So hardware is opt-in **by name**, and the tooling makes the opt-in easy instead:
+
+* `vidra doctor` has a **hardware transcode** check. It reports which backends
+  look usable against the *api container's* ffmpeg and this host's devices, and it
+  never fails — a deployment with no GPU is not misconfigured.
+* `vidra setup` prints the same offer as an informational line when it can be sure
+  (it can only ask the *host's* ffmpeg, so on a fresh install it usually stays
+  quiet and points at `doctor`).
+
+### Giving the container the GPU
+
+The environment variable is not enough. `vaapi` and `qsv` read a DRM render node,
+and a container only has one if it is mapped in. `docker-compose.yml` carries
+commented-out exemplars on the `api` service; uncomment the one you need.
+
+```yaml
+# vaapi / qsv
+devices:
+  - "/dev/dri:/dev/dri"
+group_add:
+  - "44"    # video  — check with `getent group video` on the host
+  - "104"   # render — check with `getent group render` on the host
+```
+
+```yaml
+# nvenc — needs nvidia-container-toolkit on the host
+deploy:
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          count: 1
+          capabilities: ["gpu", "video"]
+```
+
+`TRANSCODING_HW_DEVICE` overrides the render node (default
+`/dev/dri/renderD128`). Set it only on a host with more than one GPU — an iGPU
+beside a discrete card gets `renderD129` too, and "the first one" is not a
+preference the pipeline can hold on your behalf. It must stay **empty** for
+`videotoolbox` and `nvenc`, which name no device; the api refuses to boot rather
+than ignore a path you wrote.
+
+> **Security.** Mapping `/dev/dri` (or reserving an NVIDIA device) gives the
+> container direct access to the GPU and its driver — a real kernel attack
+> surface, and one shared with anything else using that card. Do it on hosts you
+> control. It is not appropriate on a shared or multi-tenant machine, and it is
+> the reason these lines ship commented out rather than merely unused.
+
+### What does not change
+
+A hardware backend may change **how** a representation is produced and never
+**what it is**. An H.264 rung encoded by `h264_vaapi` is still `avc1.*`, in the
+same adaptation set, at the same bitrate, with the same segment layout — so the
+manifests, the serving routes, the progressive downloads and the stored rows are
+identical to a software install's. That is what makes turning it back off
+config-only.
+
+Three things stay on the CPU whatever the setting says:
+
+* **AV1**, always. Hardware AV1 *encode* exists on Arc, Ada and RDNA3 and nowhere
+  else, and on other devices it either is not built or produces something these
+  bitrate budgets were never tuned for. `TRANSCODING_AV1_ENABLED` means "spend
+  CPU for ~45% fewer bytes"; silently turning that into something else would be a
+  different setting wearing the same name.
+* **Trick-play**, the dense one-frame-per-second scrubbing rendition. It is its
+  own pass, a hardware encoder buys nothing on it, and its rate control is not
+  tuned for that shape.
+* **The standalone web-video ladder** (`libx264`). On CMAF the `/download` videos
+  are *derived* from the ladder rather than re-encoded, so they inherit whatever
+  encoded the rungs — and are still H.264 either way.
+
+### When it goes wrong
+
+**At boot.** The api probes `ffmpeg -encoders` and refuses to start if the chosen
+backend's encoder is absent, naming the combination. `TRANSCODING_HEVC_ENABLED`
+with a backend that has no HEVC encoder in this build is called out specifically,
+because the fix is usually `TRANSCODING_HW=off` — which keeps HEVC, on
+`libx265` — and not `TRANSCODING_HEVC_ENABLED=false`.
+
+**At job time.** The boot probe proves the *encoder* is in the build. It cannot
+prove the *device* is reachable, and that is the failure a real deployment hits:
+the image has `h264_vaapi`, so the api boots and looks healthy, and nobody mapped
+`/dev/dri` in, so every upload dies. The job error names the backend, the device
+path and this setting. A **missing device node is permanent** — the retry finds
+the same empty `/dev`, so it dead-letters immediately instead of costing a quarter
+of an hour of backoff to say what it already knew. Everything else (a busy GPU, a
+wedged driver, an encoder session limit) stays retryable, because those recover.
+
+**There is no automatic per-job fallback to the CPU, on purpose.** A deployment
+that quietly fell back would have no way to tell "my GPU is working" from "my GPU
+has been broken for a month and every video costs several times what I budgeted";
+the failure mode is a performance cliff nobody sees until the queue backs up. The
+job fails, the error says which knob to turn, and you decide.
+
+**Turning it off is config-only.** `TRANSCODING_HW=off` and a restart. Already-
+encoded trees are ordinary H.264 and keep serving; nothing is re-encoded and there
+is no back-catalogue job in either direction.
+
 ## Direct delivery — presigned redirects instead of proxying every byte
 
 By default every media byte a viewer receives is read out of the store by the Go

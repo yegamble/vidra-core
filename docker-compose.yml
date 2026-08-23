@@ -291,10 +291,26 @@ x-api-env: &api-env
   # Free-space floor (MiB) on the transcode scratch volume below which no new
   # job is claimed. 0 = built-in default (10 GiB). See .env.example.
   TRANSCODING_MIN_FREE_SCRATCH_MB: ${TRANSCODING_MIN_FREE_SCRATCH_MB:-0}
-  # AV1 is DEFERRED (fix_plan P6.3): setting this true is a HARD boot failure,
-  # not a no-op. Passed through only so the key has a compose consumer; leave
-  # it false.
+  # Packaging format for NEW uploads: cmaf (fMP4 segments serving HLS + DASH,
+  # the default) or ts (the frozen legacy MPEG-TS HLS — the config-only
+  # rollback). Old videos keep serving whatever format they were packaged in.
+  TRANSCODING_PACKAGER: ${TRANSCODING_PACKAGER:-cmaf}
+  # Extra video codecs alongside the H.264 compat floor (CMAF-ONLY: either of
+  # these with TRANSCODING_PACKAGER=ts is a hard boot failure). Each enabled
+  # codec re-encodes the whole ladder — see docs/operations.md for the measured
+  # cost — and needs its encoder present in the image's ffmpeg (boot-probed).
+  TRANSCODING_HEVC_ENABLED: ${TRANSCODING_HEVC_ENABLED:-false}
   TRANSCODING_AV1_ENABLED: ${TRANSCODING_AV1_ENABLED:-false}
+  # Hardware H.264/HEVC encoding: off (default) | videotoolbox | vaapi | qsv |
+  # nvenc. CMAF-only, explicit opt-in; the container also needs the device
+  # mapped in (see the commented exemplars on the api service and
+  # docs/operations.md). TRANSCODING_HW_DEVICE picks the DRM render node for
+  # vaapi/qsv on multi-GPU hosts; leave empty elsewhere.
+  TRANSCODING_HW: ${TRANSCODING_HW:-off}
+  TRANSCODING_HW_DEVICE: ${TRANSCODING_HW_DEVICE:-}
+  # ffmpeg scratch: the transcode pipeline's temp files belong on the scratch
+  # volume, not the container's writable layer.
+  TMPDIR: /scratch
   # Age at which the stuck-hold sweeper gives up waiting for a transcode and
   # publishes a publish-after-transcode video from its original anyway. Lower
   # values shorten the window in which a crashed worker keeps a video hidden.
@@ -645,6 +661,45 @@ services:
   # deploy/deploy.sh's post-migration ledger assertion keeps working. (The meta
   # repo's separate search-migrate service is the one that must carry
   # &x-migrations-table=vidra_search_migrations.)
+  # One-shot volume preparation. MUST run before api.
+  #
+  # WHY THIS EXISTS: the api image runs as non-root uid 10001 (Dockerfile:39,56).
+  # Docker creates a named volume's mount point owned by root:root 0755 whenever
+  # that path does NOT already exist inside the image — and /app/data and
+  # /scratch do not. Without this, the api gets "permission denied" on the very
+  # first os.MkdirTemp in /scratch (every transcode fails) and on creating
+  # STORAGE_LOCAL_ROOT.
+  #
+  # Idempotent and non-recursive on purpose: it only fixes the mount points, so
+  # it stays instant once the media volume is large. Content created later is
+  # already owned by uid 10001.
+  #
+  # This mirrors the meta repo's docker-compose.prod.yml, which has carried the
+  # same service since production learned this the hard way. The prod file
+  # refines it (it adds vidra-search's model volume) rather than replacing it, so
+  # the two must keep the same NAME — a second differently-named one-shot would
+  # run twice and race on the same chown.
+  #
+  # live_hls is deliberately NOT touched: the api only READS it, and the
+  # `media`-profile rtmp server writes it as its own user.
+  prep-volumes:
+    image: alpine:3.24
+    profiles: ["core"]
+    restart: "no"
+    user: "0:0"
+    # A one-shot that exits is not a server; the api image's baked /healthz probe
+    # does not apply and this image has none, so there is nothing to disable.
+    command:
+      - "sh"
+      - "-euc"
+      - |
+        mkdir -p /app/data/media /scratch
+        chown 10001:10001 /app/data /app/data/media /scratch
+        chmod 0750 /app/data /app/data/media /scratch
+    volumes:
+      - media_data:/app/data
+      - transcode_tmp:/scratch
+
   migrate:
     # Same image as api, by NAME rather than by a second build: block. The
     # migrator IS the api binary, so one build serves both services, and a
@@ -700,6 +755,10 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      # Before anything else: the media and scratch mount points have to be
+      # owned by uid 10001 — see the prep-volumes one-shot above.
+      prep-volumes:
+        condition: service_completed_successfully
       # Waits for minio only when the storage profile is active (required: false
       # skips the dependency when the service is not enabled).
       minio:
@@ -742,10 +801,16 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "${HTTP_PORT:-8080}:8080"
-    # Shared with the `media` profile's rtmp server: it writes live HLS +
-    # recordings here, the api serves/reads them. Harmless (empty) without the
-    # media profile. Point LIVE_HLS_ROOT at /live-hls to enable live serving.
     volumes:
+      # STORAGE_LOCAL_ROOT (/app/data/media) and the transcode scratch live on
+      # named volumes so `up -d --force-recreate` cannot destroy the media while
+      # the database rows survive pointing at nothing. Prepared (ownership) by
+      # the prep-volumes one-shot above.
+      - media_data:/app/data
+      - transcode_tmp:/scratch
+      # Shared with the `media` profile's rtmp server: it writes live HLS +
+      # recordings here, the api serves/reads them. Harmless (empty) without the
+      # media profile. Point LIVE_HLS_ROOT at /live-hls to enable live serving.
       - live_hls:/live-hls
 
   # ---------------------------------------------------------------------------
@@ -793,6 +858,9 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      # Same mount-point ownership requirement as api: ffmpeg runs HERE.
+      prep-volumes:
+        condition: service_completed_successfully
       # The optional dependencies use the same `required: false` form as api, so
       # they are simply skipped when their profile is not active.
       minio:
@@ -821,10 +889,13 @@ services:
       - "host.docker.internal:host-gateway"
     # NO ports. A worker has nothing to publish, and a fixed host port is exactly
     # what would break `--scale worker=3`.
-    #
-    # The live HLS volume is shared with api because the recording→VOD path reads
-    # the rtmp server's output from here.
     volumes:
+      # The worker runs ffmpeg, so it shares the api's media store and scratch —
+      # same volumes, same prep-volumes ownership guarantee.
+      - media_data:/app/data
+      - transcode_tmp:/scratch
+      # The live HLS volume is shared with api because the recording→VOD path
+      # reads the rtmp server's output from here.
       - live_hls:/live-hls
 
 
@@ -1046,6 +1117,9 @@ volumes:
   postgres_data:
   minio_data:
   clamav_data:
+  # Media store + transcode scratch — prepared by the prep-volumes one-shot.
+  media_data:
+  transcode_tmp:
   live_hls:
   whisper_models:
   ipfs_data:

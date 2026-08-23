@@ -592,10 +592,60 @@ func TestLoadRejectsNonPositiveClamAVTimeoutWhenScanEnabled(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsAV1(t *testing.T) {
+// TestLoadVideoCodecDefaults pins the shape of an ordinary install: H.264 only.
+// Both extra-codec knobs are off, so the ladder a deployment that says nothing
+// about codecs produces is exactly the one it always produced.
+func TestLoadVideoCodecDefaults(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load default: %v", err)
+	}
+	if cfg.TranscodingHEVCEnabled || cfg.TranscodingAV1Enabled {
+		t.Errorf("extra codecs default on (hevc %v, av1 %v); an ordinary install must produce the H.264 ladder unchanged",
+			cfg.TranscodingHEVCEnabled, cfg.TranscodingAV1Enabled)
+	}
+}
+
+// TestLoadAcceptsExtraCodecsOnCMAF: AV1 is no longer a deferred hard failure and
+// HEVC is a real knob, on the packager that can carry them.
+func TestLoadAcceptsExtraCodecsOnCMAF(t *testing.T) {
+	t.Setenv("TRANSCODING_HEVC_ENABLED", "true")
 	t.Setenv("TRANSCODING_AV1_ENABLED", "true")
-	if _, err := Load(); err == nil {
-		t.Fatal("Load() expected error for TRANSCODING_AV1_ENABLED=true (deferred), got nil")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load with hevc+av1 on the default packager: %v", err)
+	}
+	if !cfg.TranscodingHEVCEnabled || !cfg.TranscodingAV1Enabled {
+		t.Errorf("codecs = (hevc %v, av1 %v), want both on", cfg.TranscodingHEVCEnabled, cfg.TranscodingAV1Enabled)
+	}
+}
+
+// TestLoadRejectsExtraCodecsOnMPEGTS pins the CMAF-only rule AND its attribution:
+// the error must name the knob the operator has to change, not the packager they
+// deliberately rolled back to.
+func TestLoadRejectsExtraCodecsOnMPEGTS(t *testing.T) {
+	for _, tc := range []struct{ env, other string }{
+		{"TRANSCODING_HEVC_ENABLED", "TRANSCODING_AV1_ENABLED"},
+		{"TRANSCODING_AV1_ENABLED", "TRANSCODING_HEVC_ENABLED"},
+	} {
+		t.Run(tc.env, func(t *testing.T) {
+			t.Setenv("TRANSCODING_PACKAGER", "ts")
+			t.Setenv(tc.env, "true")
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load() accepted %s=true with the MPEG-TS packager", tc.env)
+			}
+			got := collectVarErrors(err)
+			if got[tc.env] == nil {
+				t.Fatalf("error is not attributed to %s; error tree = %v", tc.env, err)
+			}
+			if got[tc.other] != nil {
+				t.Errorf("error blames %s, which is off: %v", tc.other, got[tc.other])
+			}
+			if !strings.Contains(got[tc.env].Error(), "TRANSCODING_PACKAGER") {
+				t.Errorf("message %q does not tell the operator which packager setting conflicts", got[tc.env])
+			}
+		})
 	}
 }
 

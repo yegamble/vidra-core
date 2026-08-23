@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vidra/vidra-core/internal/dbmigrate"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/setup"
 	"github.com/vidra/vidra-core/internal/storage"
 )
@@ -1021,6 +1022,177 @@ func TestFFmpeg(t *testing.T) {
 	wantFinding(t, one(t, only(t, "ffmpeg", h, nil)), StatusWarn, "not on this host's PATH", "")
 }
 
+// encoderListing is a trimmed `ffmpeg -encoders` in the real layout: a legend
+// whose rows have the same six-character flag block as the encoders, a rule, and
+// then the encoders themselves.
+const encoderListing = `Encoders:
+ V..... = Video
+ A..... = Audio
+ .....D = Supports direct rendering method 1
+ ------
+ V....D libx264              libx264 H.264 / AVC (codec h264)
+ V....D libx265              libx265 H.265 / HEVC (codec hevc)
+ V..... libsvtav1            SVT-AV1 encoder (codec av1)
+ A....D aac                  AAC (Advanced Audio Coding)
+`
+
+// withEncoders makes the api container's ffmpeg answer -encoders with listing,
+// leaving every other command healthy.
+func withEncoders(h *fakeHost, listing string) {
+	h.respond = func(name string, args []string) (Output, error) {
+		joined := strings.Join(args, " ")
+		if name == "docker" && strings.Contains(joined, "exec -T api ffmpeg -hide_banner -encoders") {
+			return Output{Stdout: listing}, nil
+		}
+		return h.healthyRespond(name, args)
+	}
+}
+
+// setEnv rewrites the deployment's env file with extra lines appended.
+func setEnv(h *fakeHost, lines ...string) {
+	path := filepath.Join(testRoot, "env/production.env")
+	h.files[path] = h.files[path] + strings.Join(lines, "\n") + "\n"
+}
+
+func TestVideoEncoders(t *testing.T) {
+	// The default deployment: H.264 only. That is a correct configuration, not an
+	// absent one, so it reports ✓ and asks the container nothing.
+	h := newFakeHost()
+	withEncoders(h, encoderListing)
+	wantFinding(t, one(t, only(t, "video encoders", h, nil)), StatusOK, "only H.264 is enabled", "")
+	for _, cmd := range h.commands() {
+		if strings.Contains(cmd, "-encoders") {
+			t.Errorf("an H.264-only deployment probed the encoder list: %s", cmd)
+		}
+	}
+
+	// Enabled and present.
+	h = newFakeHost()
+	setEnv(h, "TRANSCODING_HEVC_ENABLED=true", "TRANSCODING_AV1_ENABLED=true")
+	withEncoders(h, encoderListing)
+	findings := only(t, "video encoders", h, nil)
+	if len(findings) != 2 {
+		t.Fatalf("got %d findings, want one per enabled codec: %+v", len(findings), findings)
+	}
+	for _, f := range findings {
+		wantFinding(t, f, StatusOK, "api container's ffmpeg", "")
+	}
+
+	// Enabled and MISSING. A ✗, because the api refuses to boot on it — and the
+	// fix must name the knob to turn off, not just the encoder to go and find.
+	h = newFakeHost()
+	setEnv(h, "TRANSCODING_AV1_ENABLED=true")
+	withEncoders(h, strings.Replace(encoderListing, " V..... libsvtav1            SVT-AV1 encoder (codec av1)\n", "", 1))
+	wantFinding(t, one(t, only(t, "video encoders", h, nil)), StatusFail, `no "libsvtav1" encoder`, "TRANSCODING_AV1_ENABLED=false")
+
+	// Enabled, but nothing to ask: the container is down and there is no host
+	// binary either. A ⚠ — the check could not run, which is not the same as a
+	// failure, and the fix says how to make it runnable.
+	h = newFakeHost()
+	setEnv(h, "TRANSCODING_HEVC_ENABLED=true")
+	delete(h.paths, "ffmpeg")
+	h.respond = func(name string, args []string) (Output, error) {
+		if name == "docker" && strings.HasPrefix(strings.Join(args, " "), "ps ") {
+			return Output{Stdout: ""}, nil
+		}
+		return h.healthyRespond(name, args)
+	}
+	wantFinding(t, one(t, only(t, "video encoders", h, nil)), StatusWarn, "could not be asked what it supports", "re-run")
+}
+
+// TestVideoEncodersNeverConvictsOnTheHostBinary is the trap this check fell into
+// once and must not fall into again. Transcodes run INSIDE the api container; the
+// host's ffmpeg is a different build. So when the container is down, whatever the
+// host says is a ⚠ in BOTH directions — a host hit is not proof the deployment
+// works, and a host miss is not proof it is broken. Reporting either as a verdict
+// is worse than reporting neither, because it names the wrong binary with total
+// confidence: the earlier version claimed "the api container's ffmpeg has no
+// libsvtav1" without ever having looked at it.
+func TestVideoEncodersNeverConvictsOnTheHostBinary(t *testing.T) {
+	// The container is down; only the host answers.
+	hostOnly := func(t *testing.T, listing string) *fakeHost {
+		t.Helper()
+		h := newFakeHost()
+		h.respond = func(name string, args []string) (Output, error) {
+			joined := strings.Join(args, " ")
+			if name == "docker" && strings.HasPrefix(joined, "ps ") {
+				return Output{Stdout: ""}, nil
+			}
+			if name == "/usr/bin/ffmpeg" && strings.Contains(joined, "-encoders") {
+				return Output{Stdout: listing}, nil
+			}
+			return h.healthyRespond(name, args)
+		}
+		return h
+	}
+
+	t.Run("a host HIT is still only a warning", func(t *testing.T) {
+		h := hostOnly(t, encoderListing)
+		setEnv(h, "TRANSCODING_HEVC_ENABLED=true")
+		f := one(t, only(t, "video encoders", h, nil))
+		wantFinding(t, f, StatusWarn, "not the ffmpeg that will run the transcodes", "bring the stack up")
+		if strings.Contains(f.Detail, "container's ffmpeg") {
+			t.Errorf("a host answer is attributed to the container: %q", f.Detail)
+		}
+	})
+
+	t.Run("a host MISS is a warning, not a verdict", func(t *testing.T) {
+		h := hostOnly(t, strings.Replace(encoderListing, " V..... libsvtav1            SVT-AV1 encoder (codec av1)\n", "", 1))
+		setEnv(h, "TRANSCODING_AV1_ENABLED=true")
+		f := one(t, only(t, "video encoders", h, nil))
+		wantFinding(t, f, StatusWarn, "says nothing about the image", "bring the stack up")
+		if f.Status == StatusFail {
+			t.Error("the host binary convicted the container")
+		}
+		if strings.Contains(f.Detail, "container's ffmpeg") {
+			t.Errorf("a host answer is attributed to the container: %q", f.Detail)
+		}
+	})
+}
+
+// TestVideoEncoderKnobsMatchTheRegistry pins doctor's copy of the encoder names
+// against internal/media's registry, which is the authority.
+//
+// The import is TEST-ONLY on purpose. This package diagnoses a deployment — an
+// env file and a container — and importing the media pipeline at build time to
+// learn two strings would tie the diagnostic to the thing it diagnoses. A test
+// has no such constraint, so the duplication is checked without being created.
+func TestVideoEncoderKnobsMatchTheRegistry(t *testing.T) {
+	want := media.VideoCodecEncoders()
+	got := map[string]string{}
+	for _, k := range videoEncoderKnobs {
+		got[k.envVar] = k.encoder
+	}
+	if len(got) != len(want) {
+		t.Fatalf("doctor checks %d codec knobs, the registry has %d: %v vs %v", len(got), len(want), got, want)
+	}
+	for envVar, encoder := range want {
+		if got[envVar] != encoder {
+			t.Errorf("%s: doctor checks for %q, the registry needs %q", envVar, got[envVar], encoder)
+		}
+	}
+}
+
+// TestFFmpegEncoderNamesReadsTheRealLayout pins the parser against the shape
+// ffmpeg actually prints, including the legend rows that look exactly like
+// encoder rows until you read the second field.
+func TestFFmpegEncoderNamesReadsTheRealLayout(t *testing.T) {
+	got := ffmpegEncoderNames(encoderListing)
+	for _, want := range []string{"libx264", "libx265", "libsvtav1", "aac"} {
+		if !got[want] {
+			t.Errorf("encoder %q not found in %v", want, got)
+		}
+	}
+	for _, unwanted := range []string{"Encoders:", "=", "------", "Video"} {
+		if got[unwanted] {
+			t.Errorf("parser took %q for an encoder name", unwanted)
+		}
+	}
+	if len(ffmpegEncoderNames("")) != 0 {
+		t.Error("empty output produced encoder names")
+	}
+}
+
 // The trap this check exists for: a bare `docker compose up` auto-loads
 // docker-compose.override.yml, which turns rate limiting off. Nothing about the
 // running stack looks wrong, so the evidence has to come from the labels.
@@ -1528,6 +1700,231 @@ func TestStorageMigration(t *testing.T) {
 		h := newFakeHost()
 		delete(h.files, filepath.Join(testRoot, "env/production.env"))
 		wantFinding(t, one(t, only(t, "storage migration", h, nil)), StatusWarn, "skipped:", "")
+	})
+}
+
+// hwEncoderListing is encoderListing plus the vaapi encoders the shipped image
+// actually has. Measured on the image's own base (alpine 3.24, ffmpeg 8.1.2):
+// h264_vaapi and hevc_vaapi are present, and there is no h264_qsv and no
+// h264_nvenc — which is why the qsv/nvenc cases below are "this ffmpeg cannot"
+// rather than "this host cannot".
+const hwEncoderListing = encoderListing + ` V....D h264_vaapi           H.264/AVC (VAAPI) (codec h264)
+ V....D hevc_vaapi           H.265/HEVC (VAAPI) (codec hevc)
+`
+
+// withRenderNode gives the fake host a DRM render node.
+func withRenderNode(h *fakeHost, path string) {
+	h.files[path] = ""
+}
+
+// TestHardwareTranscodeCheck covers the informational hardware report.
+//
+// The through-line of every case is that it NEVER fails. A deployment with no
+// GPU is not misconfigured — CPU encoding is the default, works everywhere, and
+// is what the ladder is budgeted for — so a ⚠ on every ordinary droplet is
+// exactly how a report teaches people to stop reading it.
+func TestHardwareTranscodeCheck(t *testing.T) {
+	// The ordinary droplet: the encoders are in the image, the GPU is not in the
+	// machine. A plain ✓ that says the default is the correct configuration.
+	h := newFakeHost()
+	withEncoders(h, hwEncoderListing)
+	f := one(t, only(t, "hardware transcode", h, nil))
+	wantFinding(t, f, StatusOK, "no hardware video encoder is usable here", "")
+	if strings.Contains(f.Detail, "TRANSCODING_HW=vaapi") {
+		t.Errorf("a GPU-less host was offered a backend: %s", f.Detail)
+	}
+
+	// The host that HAS the hardware and is not using it. This is the case the
+	// check exists for: the operator is paying for a GPU their transcodes never
+	// touch, and nothing else in the system would ever mention it.
+	h = newFakeHost()
+	withEncoders(h, hwEncoderListing)
+	withRenderNode(h, "/dev/dri/renderD128")
+	f = one(t, only(t, "hardware transcode", h, nil))
+	wantFinding(t, f, StatusOK, "hardware transcode available: vaapi", "")
+	for _, want := range []string{"/dev/dri/renderD128", "TRANSCODING_HW=vaapi", "CPU encoding is the default"} {
+		if !strings.Contains(f.Detail, want) {
+			t.Errorf("the offer %q does not mention %q", f.Detail, want)
+		}
+	}
+
+	// The device half of the AND is necessary: without it, an ffmpeg built with
+	// vaapi would recommend vaapi to every deployment on earth. Asserted directly
+	// above by the GPU-less case; here is the encoder half, a GPU host whose
+	// ffmpeg cannot drive it.
+	h = newFakeHost()
+	withEncoders(h, encoderListing) // no *_vaapi
+	withRenderNode(h, "/dev/dri/renderD128")
+	wantFinding(t, one(t, only(t, "hardware transcode", h, nil)), StatusOK, "no hardware video encoder is usable here", "")
+
+	// Turned ON and working. The device-mapping sentence is asserted because it is
+	// the failure this deployment will actually hit: the encoder is in the image,
+	// so the api boots, and /dev/dri was never mapped into the container, so every
+	// job dies — and doctor reads the HOST's /dev, so it cannot see that.
+	h = newFakeHost()
+	setEnv(h, "TRANSCODING_HW=vaapi")
+	withEncoders(h, hwEncoderListing)
+	withRenderNode(h, "/dev/dri/renderD128")
+	f = one(t, only(t, "hardware transcode", h, nil))
+	wantFinding(t, f, StatusOK, "TRANSCODING_HW=vaapi", "")
+	for _, want := range []string{"h264_vaapi", "hevc_vaapi", "/dev/dri/renderD128", "devices"} {
+		if !strings.Contains(f.Detail, want) {
+			t.Errorf("detail %q does not mention %q", f.Detail, want)
+		}
+	}
+
+	// Turned on for a backend this ffmpeg does not have. The api refuses to boot
+	// on this, and the check still only warns: the stack checks say a dead stack
+	// far more loudly than a line in the reachability section could, and the value
+	// of this line is naming WHY.
+	for _, hw := range []string{"qsv", "nvenc"} {
+		h = newFakeHost()
+		setEnv(h, "TRANSCODING_HW="+hw)
+		withEncoders(h, hwEncoderListing)
+		withRenderNode(h, "/dev/dri/renderD128")
+		f = one(t, only(t, "hardware transcode", h, nil))
+		wantFinding(t, f, StatusWarn, "h264_"+hw, "TRANSCODING_HW=off")
+	}
+
+	// Turned on, encoder present, device gone: the GPU was removed, or /dev/dri
+	// never existed on this host.
+	h = newFakeHost()
+	setEnv(h, "TRANSCODING_HW=vaapi")
+	withEncoders(h, hwEncoderListing)
+	f = one(t, only(t, "hardware transcode", h, nil))
+	wantFinding(t, f, StatusWarn, "render node", "TRANSCODING_HW=off")
+
+	// An explicit off is the default said out loud, and must read the same as
+	// unset rather than as an anomaly.
+	h = newFakeHost()
+	setEnv(h, "TRANSCODING_HW=off")
+	withEncoders(h, hwEncoderListing)
+	withRenderNode(h, "/dev/dri/renderD128")
+	wantFinding(t, one(t, only(t, "hardware transcode", h, nil)), StatusOK, "hardware transcode available: vaapi", "")
+
+	// A value no version knows. Config refuses it at boot, so this is a report of
+	// a stack that will not start — a ⚠ naming the accepted set.
+	h = newFakeHost()
+	setEnv(h, "TRANSCODING_HW=auto")
+	withEncoders(h, hwEncoderListing)
+	f = one(t, only(t, "hardware transcode", h, nil))
+	wantFinding(t, f, StatusWarn, "not a backend this version knows", "videotoolbox")
+	if !strings.Contains(f.Fix, "off") {
+		t.Errorf("fix %q does not list the default", f.Fix)
+	}
+
+	// Nothing to ask, knob off: a skip, because the check could not run — which is
+	// not the same as a finding, and on an off deployment is not even interesting.
+	h = newFakeHost()
+	delete(h.paths, "ffmpeg")
+	h.respond = func(name string, args []string) (Output, error) {
+		if name == "docker" && strings.HasPrefix(strings.Join(args, " "), "ps ") {
+			return Output{Stdout: ""}, nil
+		}
+		return h.healthyRespond(name, args)
+	}
+	wantFinding(t, one(t, only(t, "hardware transcode", h, nil)), StatusWarn, "skipped: the ffmpeg that would encode", "")
+
+	// Same, with the knob ON: now it matters, so it is a ⚠ that says how to make
+	// the check runnable.
+	setEnv(h, "TRANSCODING_HW=vaapi")
+	wantFinding(t, one(t, only(t, "hardware transcode", h, nil)), StatusWarn, "could not be asked what it supports", "re-run")
+}
+
+// TestHardwareTranscodeCheckNeverFails is the blunt statement of the rule, over
+// every configuration the check can meet. A hardware backend is an optimisation;
+// its absence is the normal, correct, budgeted state of a Vidra deployment, and
+// nothing here may colour a report red for it.
+func TestHardwareTranscodeCheckNeverFails(t *testing.T) {
+	for _, hw := range []string{"", "off", "vaapi", "qsv", "nvenc", "videotoolbox", "auto", "garbage"} {
+		for _, node := range []bool{false, true} {
+			for _, listing := range []string{encoderListing, hwEncoderListing} {
+				h := newFakeHost()
+				if hw != "" {
+					setEnv(h, "TRANSCODING_HW="+hw)
+				}
+				withEncoders(h, listing)
+				if node {
+					withRenderNode(h, "/dev/dri/renderD128")
+				}
+				for _, f := range only(t, "hardware transcode", h, nil) {
+					if f.Status == StatusFail {
+						t.Errorf("TRANSCODING_HW=%q (render node %v) produced a ✗: %s", hw, node, f.Detail)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestHardwareTranscodeNeverConvictsOnTheHostBinary applies the same rule the
+// extra-codec check learned to the hardware one, where it lands harder still.
+//
+// BOTH halves of the availability question are measured on the wrong side of the
+// container boundary when the stack is down: this host's ffmpeg is a different
+// build from the image's, and this host's /dev/dri may or may not be inside the
+// container at all. So a host-derived answer is a lead, never a finding — and
+// the offer it makes has to say which binary it asked, because recommending
+// TRANSCODING_HW=vaapi on the strength of a host ffmpeg is how an operator ends
+// up with an api that will not boot.
+func TestHardwareTranscodeNeverConvictsOnTheHostBinary(t *testing.T) {
+	hostOnly := func(t *testing.T, listing string) *fakeHost {
+		t.Helper()
+		h := newFakeHost()
+		h.respond = func(name string, args []string) (Output, error) {
+			joined := strings.Join(args, " ")
+			if name == "docker" && strings.HasPrefix(joined, "ps ") {
+				return Output{Stdout: ""}, nil
+			}
+			if name == "/usr/bin/ffmpeg" && strings.Contains(joined, "-encoders") {
+				return Output{Stdout: listing}, nil
+			}
+			return h.healthyRespond(name, args)
+		}
+		return h
+	}
+
+	t.Run("a host HIT is offered as a lead, naming the binary it asked", func(t *testing.T) {
+		h := hostOnly(t, hwEncoderListing)
+		withRenderNode(h, "/dev/dri/renderD128")
+		f := one(t, only(t, "hardware transcode", h, nil))
+		wantFinding(t, f, StatusOK, "hardware transcode available: vaapi", "")
+		if !strings.Contains(f.Detail, "NOT the ffmpeg that runs the transcodes") {
+			t.Errorf("a host-derived offer does not say so: %q", f.Detail)
+		}
+		if strings.Contains(f.Detail, "the api container's ffmpeg") {
+			t.Errorf("a host answer is attributed to the container: %q", f.Detail)
+		}
+	})
+
+	t.Run("a host MISS is not a verdict about the image", func(t *testing.T) {
+		h := hostOnly(t, encoderListing) // no *_vaapi on the host binary
+		withRenderNode(h, "/dev/dri/renderD128")
+		f := one(t, only(t, "hardware transcode", h, nil))
+		wantFinding(t, f, StatusOK, "not the binary that encodes", "")
+		if f.Status == StatusFail {
+			t.Error("the host binary convicted the container")
+		}
+	})
+
+	t.Run("with the knob ON, a host answer stays a warning either way", func(t *testing.T) {
+		// Present on the host: still only a ⚠, because the encoder that decides
+		// whether the api boots is the container's.
+		h := hostOnly(t, hwEncoderListing)
+		setEnv(h, "TRANSCODING_HW=vaapi")
+		withRenderNode(h, "/dev/dri/renderD128")
+		f := one(t, only(t, "hardware transcode", h, nil))
+		wantFinding(t, f, StatusWarn, "not the ffmpeg that will run the transcodes", "bring the stack up")
+
+		// Absent on the host: also only a ⚠, and it must not read as a diagnosis.
+		h = hostOnly(t, encoderListing)
+		setEnv(h, "TRANSCODING_HW=vaapi")
+		withRenderNode(h, "/dev/dri/renderD128")
+		f = one(t, only(t, "hardware transcode", h, nil))
+		wantFinding(t, f, StatusWarn, "says nothing about the image", "bring the stack up")
+		if f.Status == StatusFail {
+			t.Error("the host binary convicted the container")
+		}
 	})
 }
 

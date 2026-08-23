@@ -499,6 +499,14 @@ func splitChain(n int) (chain string, labels []string) {
 // budget belonged to whichever encoder was running. Handing every concurrent
 // encoder the full number instead would multiply a deliberately-restrained
 // setting by the ladder height. 0 (ffmpeg's own default) stays 0.
+//
+// THE FLOOR OF 1 IS AN OVERSHOOT, and always has been. Once the budget is
+// smaller than the number of encoders, every encoder still gets one thread, so a
+// 4-rung ladder under transcoding_threads=2 asks for 4 and a 3-codec 4-rung one
+// asks for 12. The alternative is worse — a share of zero means "ffmpeg's own
+// default", which is every core — so this is the honest local minimum rather
+// than a bug to fix here. An operator running several codecs on a small budget
+// should read transcoding_threads as a per-ENCODER floor, not a hard cap.
 func perOutputThreads(threads, outputs int) int {
 	if threads <= 0 || outputs <= 1 {
 		return threads
@@ -543,6 +551,11 @@ func hlsLadderArgs(src source, out output, rungs []HLSRung, threads int) []strin
 // across formats is what makes CMAF geometry provably equal to MPEG-TS geometry.
 func hlsLadderArgsWith(pkg Packager, src source, out output, plan ladderPlan) []string {
 	args := []string{"-y"}
+	// The hardware device, when a codec in this plan needs one, is established
+	// BEFORE the input: it is a global option, and both the encoders and the filter
+	// tails that upload into it read the alias it binds. Nil on every software
+	// plan, which is every ordinary install (hwaccel.go).
+	args = append(args, hwInitArgs(plan.profiles())...)
 	args = append(args, src.inputArgs()...)
 
 	// An audio-only plan has no video to fork, so it has no filter graph at all —
@@ -558,18 +571,86 @@ func hlsLadderArgsWith(pkg Packager, src source, out output, plan ladderPlan) []
 	if chain != "" {
 		chains = append(chains, chain)
 	}
-	plan.labels = make([]string, len(plan.rungs))
+	// One filter-graph output per REPRESENTATION — rung × codec — laid out
+	// h264 rungs first in ladder order, then hevc, then av1 (ladderPlan.repIndex).
+	// The rung is SCALED once and the scaled frames are forked to that rung's
+	// encoders, so adding a codec adds encoders and not scalers.
+	profiles := plan.profiles()
+	plan.labels = make([]string, plan.videoReps())
 	for i, r := range plan.rungs {
 		vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height)
 		if r.FPS > 0 {
 			vf += fmt.Sprintf(",fps=%d", r.FPS)
 		}
-		plan.labels[i] = fmt.Sprintf("v%d", i)
-		chains = append(chains, fmt.Sprintf("[%s]%s[%s]", labels[i], vf, plan.labels[i]))
+		outs := make([]string, len(profiles))
+		for c := range profiles {
+			rep := plan.repIndex(c, i)
+			plan.labels[rep] = fmt.Sprintf("v%d", rep)
+			outs[c] = "[" + plan.labels[rep] + "]"
+		}
+		chains = append(chains, rungChains(plan, profiles, labels[i], vf, outs, i)...)
 	}
 	args = append(args, "-filter_complex", strings.Join(chains, ";"))
 
 	return append(args, pkg.LadderOutputArgs(out, plan)...)
+}
+
+// rungChains renders ONE rung's filter-graph links: the scale (already computed
+// as vf) and however much forking the plan's codecs need, ending in the labels
+// their encoders read.
+//
+// There are exactly three shapes, and the first two are the ones that predate
+// hardware support and must stay byte-for-byte what they were:
+//
+//   - one codec, no filter tail — the single chain this package has always
+//     emitted. `split=1` would be legal and would mean the same thing; it would
+//     also change the graph for every deployment that never asked for anything.
+//   - several codecs, no filter tail — one scale, split to the encoders.
+//   - any codec carrying a FilterChain (a GPU upload) — the fork happens FIRST
+//     and each codec gets its own tail, because two codecs on one backend want
+//     their own upload and a codec that stayed on the CPU (AV1 always does) must
+//     keep reading system-memory frames off the same scale.
+//
+// The third shape uploads the same scaled frames once per hardware codec rather
+// than uploading once and splitting on the GPU. That is a real cost and it is
+// paid deliberately: a shared upload would need the split to live on the hardware
+// side of the tail, which is a different graph for every backend and a fourth
+// shape to keep correct, for a saving that only exists on the minority of
+// installs running hardware HEVC alongside hardware H.264.
+func rungChains(plan ladderPlan, profiles []codecProfile, in, vf string, outs []string, rung int) []string {
+	tails := false
+	for _, p := range profiles {
+		if p.FilterChain != "" {
+			tails = true
+			break
+		}
+	}
+	if !tails {
+		fork := ""
+		if len(outs) > 1 {
+			fork = fmt.Sprintf(",split=%d", len(outs))
+		}
+		return []string{fmt.Sprintf("[%s]%s%s%s", in, vf, fork, strings.Join(outs, ""))}
+	}
+	if len(profiles) == 1 {
+		return []string{fmt.Sprintf("[%s]%s,%s%s", in, vf, profiles[0].FilterChain, outs[0])}
+	}
+	mid := make([]string, len(profiles))
+	for c := range profiles {
+		mid[c] = fmt.Sprintf("[u%d]", plan.repIndex(c, rung))
+	}
+	chains := []string{fmt.Sprintf("[%s]%s,split=%d%s", in, vf, len(profiles), strings.Join(mid, ""))}
+	for c, p := range profiles {
+		tail := p.FilterChain
+		if tail == "" {
+			// `null` rather than nothing: a filter-graph link needs a filter, and
+			// this is the codec that stayed on the CPU while its neighbours went to
+			// the GPU.
+			tail = "null"
+		}
+		chains = append(chains, mid[c]+tail+outs[c])
+	}
+	return chains
 }
 
 // hlsTrickPlayLadderArgs builds ONE ffmpeg argument vector emitting every rung's
@@ -650,34 +731,80 @@ func sharedAudioStream(i int) streamSpec {
 // streams: what container they land in is the packager's half of the vector. vf
 // is the scale filter chain for the single-rung oracle; the ladder passes ""
 // because its filter graph has already scaled the branch.
+//
+// It is H.264 by construction and not by default. This is the MPEG-TS shape: one
+// self-contained variant per rung, which is the frozen compatibility/rollback
+// path and stays single-codec (see codec.go).
 func hlsRungEncodeArgs(r HLSRung, vf string) []string {
 	return append(
-		hlsRungVideoEncodeArgs(r, soleVideoStream, vf),
+		hlsRungVideoEncodeArgs(r, h264Profile, soleVideoStream, vf),
 		hlsAudioEncodeArgs(r.AudioKbps, soleAudioStream)...,
 	)
 }
 
-// hlsRungVideoEncodeArgs is the VIDEO half of a variant's encoder configuration,
-// qualified by spec so it can be one of several encoders on a shared output.
-func hlsRungVideoEncodeArgs(r HLSRung, spec streamSpec, vf string) []string {
-	args := []string{
-		"-c" + spec.typed, "libx264",
-		"-profile" + spec.typed, "main",
-		"-preset" + spec.bare, "veryfast",
-		"-pix_fmt" + spec.bare, "yuv420p",
+// hlsRungVideoEncodeArgs is the VIDEO half of ONE representation's encoder
+// configuration: rung r encoded with codec profile p, qualified by spec so it can
+// be one of several encoders on a shared output.
+//
+// The argument ORDER is fixed and the H.264 profile's fields are exactly the
+// values this function used to spell inline, so the vector an ordinary install
+// emits is byte-for-byte the one it emitted before the registry existed. The
+// per-codec variation is entirely in the profile: a container tag (mandatory for
+// HEVC, absent otherwise), whether the encoder has a -profile option at all, the
+// preset's spelling, and whether it accepts capped VBR.
+func hlsRungVideoEncodeArgs(r HLSRung, p codecProfile, spec streamSpec, vf string) []string {
+	args := []string{"-c" + spec.typed, p.Encoder}
+	if p.Tag != "" {
+		// Not cosmetic: without it ffmpeg writes hev1 into fMP4, which Safari
+		// refuses and which makes the muxer's own CODECS string come out empty.
+		args = append(args, "-tag"+spec.typed, p.Tag)
+	}
+	if p.Profile != "" {
+		args = append(args, "-profile"+spec.typed, p.Profile)
+	}
+	// Both are conditional for the same reason: an option an encoder does not have
+	// is a hard ffmpeg error rather than a warning. Every software profile sets
+	// both, so this reads exactly as it always did on an ordinary install; the
+	// hardware backends that expose no preset, or whose frames a filter has already
+	// put in GPU memory, are the ones that leave them empty (hwaccel.go).
+	if p.Preset != "" {
+		args = append(args, "-preset"+spec.bare, p.Preset)
+	}
+	if p.PixFmt != "" {
+		args = append(args, "-pix_fmt"+spec.bare, p.PixFmt)
 	}
 	if vf != "" {
 		args = append(args, "-vf", vf)
 	}
+	// Rate control. Both modes end at the SAME ceiling — -maxrate at the rung's
+	// budget, -bufsize at twice it — because that ceiling is what the master
+	// playlist's BANDWIDTH promises a player. What differs is what the encoder
+	// aims at underneath it: a bitrate target for capped VBR, a quality target
+	// for capped CRF. See rateControl for the measurements behind that split.
+	kbps := p.videoKbps(r)
+	switch p.Rate {
+	case rateCappedCRF:
+		args = append(args, "-crf"+spec.bare, strconv.Itoa(p.CRF))
+	default:
+		args = append(args, "-b"+spec.typed, fmt.Sprintf("%dk", kbps))
+	}
+	args = append(args,
+		"-maxrate"+spec.bare, fmt.Sprintf("%dk", kbps),
+		"-bufsize"+spec.bare, fmt.Sprintf("%dk", 2*kbps),
+	)
+	// Encoder-private options that are neither preset nor rate control — nvenc's
+	// explicit -rc vbr, for one. They follow the rate-control block because that is
+	// what they qualify, and they are nil on every software profile.
+	for _, o := range p.ExtraArgs {
+		args = append(args, o.flag+spec.bare, o.value)
+	}
 	return append(args,
-		"-b"+spec.typed, fmt.Sprintf("%dk", r.VideoKbps),
-		"-maxrate"+spec.bare, fmt.Sprintf("%dk", r.VideoKbps),
-		"-bufsize"+spec.bare, fmt.Sprintf("%dk", 2*r.VideoKbps),
 		// The key-frame cadence is an ENCODER setting with a packaging purpose:
 		// every packaging format cuts segments on independently decodable IDR
 		// frames, so one is forced at each segment boundary and the muxer cuts
 		// there. It stays on this side of the seam because only the encoder can
-		// place a key frame.
+		// place a key frame — and it is codec-independent, because it is ffmpeg's
+		// own frame-level flag rather than any encoder's option.
 		"-force_key_frames"+spec.bare, fmt.Sprintf("expr:gte(t,n_forced*%d)", hlsSegmentSeconds),
 	)
 }
@@ -902,6 +1029,16 @@ type HLSTranscoder struct {
 	// encoders write through and the post-encode finalisation of what they
 	// produced. nil = defaultPackager (MPEG-TS), which is every deployment today.
 	pkg Packager
+	// codecs is the video codec plan every ladder is encoded with, H.264 first
+	// (SetVideoCodecs). nil = defaultVideoCodecs, the single-codec H.264 ladder
+	// this package emitted before codec profiles existed.
+	codecs []codecProfile
+	// hw and hwDevice are the boot-baked hardware backend (TRANSCODING_HW) and the
+	// device path it was pointed at (TRANSCODING_HW_DEVICE), recorded by
+	// SetHardware and applied by SetVideoCodecs. "" is `off` — software encoding,
+	// which is the default and the only configuration guaranteed to work anywhere.
+	hw       string
+	hwDevice string
 }
 
 // packager resolves this transcoder's packaging implementation.
@@ -933,6 +1070,118 @@ func (t *HLSTranscoder) SetPackager(name string) error {
 	}
 	t.pkg = pkg
 	return nil
+}
+
+// SetVideoCodecs selects the ADDITIONAL video codecs every ladder emits
+// alongside H.264 (TRANSCODING_HEVC_ENABLED / TRANSCODING_AV1_ENABLED, both
+// boot-baked). H.264 is not a choice — it is the compatibility floor and the
+// source of the progressive downloads, the derived web videos, the audio-only
+// extraction and trick-play — so this only ever ADDS representations.
+//
+// Both extras are false on an ordinary install, and this then stores nothing:
+// the ladder is the single-codec one, encoder for encoder.
+//
+// It is fallible on purpose, and refuses at BOOT rather than per job, because
+// both ways of getting this wrong are otherwise invisible until the first upload:
+//
+//   - a packaging format that cannot express several codecs (MPEG-TS — a variant
+//     there is a rendition DIRECTORY named for a height, with no room for a
+//     second encoding of the same height). Config refuses the combination too;
+//     this is the second gate, at the point the transcoder is actually built.
+//   - an ffmpeg build without the encoder. The image ships one that has both, but
+//     a host binary, a distro rebuild or a slimmed image may not.
+//
+// Call it AFTER SetPackager and SetHardware: the first check reads the selected
+// format, and the hardware transform is applied to the plan it builds.
+//
+// The encoder probe runs for EVERY plan, including the H.264-only default, so
+// that an ffmpeg which RAN and reported no libx264 is caught at boot rather than
+// per dead-lettered job. What it does NOT do is refuse to boot a default install
+// merely because there is no ffmpeg to ask: that is checkFFmpeg's and `vidra
+// doctor`'s question, and turning it into a startup failure would convert a clear
+// runtime error into an outage. An enabled extra codec is the opposite case and
+// is fatal either way — see verifiedAgainstEncoderListing.
+//
+// A HARDWARE plan lands on the strict side of that line automatically, and by
+// construction rather than by a special case: baselineEncoders is keyed on the
+// ENCODER NAME, so swapping libx264 for h264_vaapi makes the plan non-baseline.
+// That is the right answer for the right reason — hardware availability is a
+// property of the HOST, which is exactly the kind of claim that has to be proven
+// before boot rather than discovered one dead-lettered upload at a time.
+func (t *HLSTranscoder) SetVideoCodecs(hevc, av1 bool) error {
+	profiles := videoCodecProfiles(hevc, av1)
+	if len(profiles) > 1 && !t.packager().SupportsMultiCodec() {
+		var extra []string
+		for _, p := range profiles[1:] {
+			extra = append(extra, p.Name)
+		}
+		return fmt.Errorf(
+			"media: the %q packager emits H.264 only, so it cannot carry %s: use the %s packager or turn the extra codecs off",
+			t.packager().Name(), strings.Join(extra, "+"), PackagerCMAF)
+	}
+	// The hardware transform runs after the plan is built and BEFORE it is probed,
+	// so the probe asks about the encoders that will actually run — h264_vaapi and
+	// not libx264 — which is the only version of the question worth asking.
+	profiles, err := applyHardware(profiles, t.hw, t.hwDevice)
+	if err != nil {
+		return err
+	}
+	if err := verifyVideoEncoders(context.Background(), t.bin, profiles); err != nil {
+		return err
+	}
+	t.codecs = profiles
+	return nil
+}
+
+// SetHardware selects the hardware encoding backend for every H.264 (and, when
+// enabled, HEVC) representation — the boot-baked TRANSCODING_HW choice, with
+// device the TRANSCODING_HW_DEVICE path for the backends that read one.
+//
+// "" and "off" are software encoding: the default, and the only configuration
+// that works on every host. Hardware is opt-in rather than detected, because
+// availability is a property of the MACHINE and a pipeline that switched encoders
+// when a device node appeared would re-tune a whole deployment's picture quality
+// on a kernel upgrade.
+//
+// It is CMAF-only, for a blunter reason than the extra codecs are: MPEG-TS is the
+// frozen rollback path, and "the format we can always go back to" stops meaning
+// anything if going back to it also changes which silicon encoded the video.
+//
+// Call it BEFORE SetVideoCodecs, which is what applies the transform and probes
+// the encoders the choice implies.
+func (t *HLSTranscoder) SetHardware(name, device string) error {
+	if !IsHardwareName(name) {
+		return fmt.Errorf("media: unknown TRANSCODING_HW %q (want %s)", name, strings.Join(HardwareNames(), "|"))
+	}
+	b, _ := hardwareBackend(name)
+	if b.Name != "" && !t.packager().SupportsMultiCodec() {
+		return fmt.Errorf(
+			"media: TRANSCODING_HW=%s needs the %s packager (this deployment is on %q); "+
+				"the MPEG-TS path is the frozen rollback format and stays libx264",
+			name, PackagerCMAF, t.packager().Name())
+	}
+	if device != "" && !b.needsDevicePath() {
+		return fmt.Errorf("media: TRANSCODING_HW_DEVICE is set to %q but TRANSCODING_HW=%s names no device path; leave it empty",
+			device, orDefault(name, HardwareOff))
+	}
+	t.hw, t.hwDevice = name, device
+	return nil
+}
+
+// orDefault is the empty-string fallback the messages above need.
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+// videoCodecs resolves this transcoder's codec plan.
+func (t *HLSTranscoder) videoCodecs() []codecProfile {
+	if len(t.codecs) == 0 {
+		return defaultVideoCodecs
+	}
+	return t.codecs
 }
 
 // packagerByName resolves a TRANSCODING_PACKAGER value to its implementation.
@@ -1170,6 +1419,7 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	}
 	plan := ladderPlan{
 		rungs:           rungs,
+		codecs:          t.videoCodecs(),
 		threads:         settings.Threads,
 		hasAudio:        md.HasAudio,
 		sourceAudioKbps: md.AudioKbps,
@@ -1180,7 +1430,13 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	})
 	if runErr != nil {
 		reportAll(ProgressFailed, "encoding", 0)
-		return HLSResult{}, fmt.Errorf("media: ffmpeg hls ladder for %q: %w: %s", sourceKey, redactSource(src, runErr), tailOf(stderr))
+		// A hardware ladder's failure gets the backend and the knob spelled out, and
+		// a missing device node makes it permanent: the boot probe proved the
+		// ENCODER exists, and the thing it cannot prove — that /dev/dri was mapped
+		// into this container — is precisely what fails here (hwaccel.go).
+		return HLSResult{}, explainHardwareFailure(
+			fmt.Errorf("media: ffmpeg hls ladder for %q: %w: %s", sourceKey, redactSource(src, runErr), tailOf(stderr)),
+			plan.profiles(), t.hwDevice, deviceExists)
 	}
 
 	// Trick-play is a second single-decode pass rather than more outputs on the
@@ -1259,6 +1515,7 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		prefix:    prefix,
 		rungs:     rungs,
 		audioKbps: plan.audioBitrateKbps(),
+		codecs:    plan.profiles(),
 		tools:     t.packageTools(),
 		onPackagingFailed: func() {
 			reportAll(ProgressFailed, "packaging", 92)

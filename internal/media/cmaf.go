@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,10 +35,21 @@ import (
 //     muxed into each rung as MPEG-TS does;
 //   - there is one muxer block for the whole vector, not one per rung.
 //
-// The rung → representation-index mapping is therefore load-bearing and lives
-// here: representation i IS ladder rung i, in ladder order, because that is the
-// order the maps are emitted in. Finalize re-derives it from ffmpeg's own master
-// playlist and refuses to continue if the two disagree.
+// The rung → representation-index mapping is therefore load-bearing. It is
+// ladderPlan.repIndex: each codec's whole ladder in rung order, H.264 first, so
+// representation i is ladder rung i for the single-codec ladder every ordinary
+// install produces. Finalize re-derives BOTH halves of it from ffmpeg's own
+// master playlist — which rung each index holds, and which codec — and refuses
+// to continue if either disagrees with the plan.
+//
+// SEVERAL CODECS AT ONCE (phase-3 item 5) is more representations on that same
+// output, not a second tree: with TRANSCODING_HEVC_ENABLED and/or
+// TRANSCODING_AV1_ENABLED each rung is additionally encoded with libx265 and/or
+// libsvtav1 in the SAME pass, and the manifests gain one video adaptation set
+// (DASH) and one variant per rung (HLS) per codec. Audio is still encoded and
+// stored once for the whole tree. Everything derived — the progressive
+// downloads, the web videos, audio.m4a, trick-play — comes off the H.264
+// representations, which is why they hold indices 0..len(rungs)-1.
 //
 // WHAT FINALISATION FIXES. ffmpeg's manifests are weaker than the ones Vidra
 // already authors in Go: no EXT-X-INDEPENDENT-SEGMENTS, no I-frame streams, and
@@ -93,6 +105,34 @@ func cmafInitSegmentName(rep int) string { return "init-" + strconv.Itoa(rep) + 
 func cmafIFramePlaylistName(rep int) string { return "iframe-" + strconv.Itoa(rep) + ".m3u8" }
 func cmafIFrameMediaName(rep int) string    { return "iframe-" + strconv.Itoa(rep) + ".mp4" }
 
+// cmafRepFilePrefixes are the filename prefixes of everything representation rep
+// stores in the shared directory: its init segment (an exact name) and its media
+// segments (a prefix whose trailing dash is what keeps representation 1 from
+// matching representation 10's chunks).
+func cmafRepFilePrefixes(rep int) []string {
+	return []string{cmafInitSegmentName(rep), "chunk-" + strconv.Itoa(rep) + "-"}
+}
+
+// playlistDurationSeconds sums a media playlist's EXTINF values.
+//
+// The playlist is the right source for this rather than a probe: it is already in
+// hand, it is what the client will itself add up, and it describes the segments
+// that were actually written — including the short final one.
+func playlistDurationSeconds(playlist []byte) float64 {
+	var total float64
+	for _, line := range strings.Split(string(playlist), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "#EXTINF:") {
+			continue
+		}
+		raw := strings.TrimSuffix(strings.TrimPrefix(line, "#EXTINF:"), ",")
+		if d, err := strconv.ParseFloat(raw, 64); err == nil && d > 0 {
+			total += d
+		}
+	}
+	return total
+}
+
 // cmafPackager packages a ladder as CMAF/fMP4 with both manifests. Stateless;
 // everything it needs arrives on the request.
 type cmafPackager struct{}
@@ -107,6 +147,13 @@ func (cmafPackager) Name() string { return PackagerCMAF }
 // fewer adaptation set — and an HLS master whose single variant names the audio
 // media playlist directly, which is precisely RFC 8216's audio-only variant.
 func (cmafPackager) SupportsAudioOnly() bool { return true }
+
+// SupportsMultiCodec implements Packager: yes, and for the same structural
+// reason. Representations here are indices in one shared directory, grouped into
+// adaptation sets; a second codec is a second video adaptation set over more
+// representation indices, and nothing about the tree's shape, its routes or its
+// derived assets changes. See ladderPlan.repIndex for the layout.
+func (cmafPackager) SupportsMultiCodec() bool { return true }
 
 // ASPECT RATIO — WHY THERE IS NO FILTER HERE.
 //
@@ -163,12 +210,18 @@ func (cmafPackager) EphemeralOutputs() []string {
 // rather than optional — for a video ladder a missing audio stream is a silent
 // video, but here it is an empty output the muxer would happily write and
 // finalisation would happily store.
+// MULTI-CODEC is more representations on the SAME output, not a second pass: the
+// rungs' scaled frames are already in the filter graph, so a second codec is
+// extra encoder blocks reading extra fork outputs and one more adaptation set.
+// Every derived asset (progressive downloads, web videos, audio.m4a, trick-play)
+// keeps coming off the H.264 representations, which is why they occupy indices
+// 0..len(rungs)-1 — see ladderPlan.repIndex.
 func (cmafPackager) LadderOutputArgs(out output, plan ladderPlan) []string {
 	var args []string
 	// Every video branch first, then the audio — the map order IS the
 	// representation order, which is the mapping Finalize re-derives and checks.
-	for i := range plan.rungs {
-		args = append(args, "-map", "["+plan.labels[i]+"]")
+	for _, label := range plan.labels {
+		args = append(args, "-map", "["+label+"]")
 	}
 	if plan.audioOnly() {
 		args = append(args, "-map", "0:a:0")
@@ -178,25 +231,70 @@ func (cmafPackager) LadderOutputArgs(out output, plan ladderPlan) []string {
 		args = append(args, "-map", "0:a:0?")
 	}
 
-	per := perOutputThreads(plan.threads, len(plan.rungs))
-	for i, r := range plan.rungs {
-		spec := sharedVideoStream(i)
-		if per > 0 {
-			args = append(args, "-threads"+spec.bare, strconv.Itoa(per))
+	// The thread budget is split across the encoders that run CONCURRENTLY in this
+	// one process, and with several codecs that is every codec's every rung — not
+	// just the rungs.
+	per := perOutputThreads(plan.threads, plan.videoReps())
+	for c, prof := range plan.profiles() {
+		for i, r := range plan.rungs {
+			spec := sharedVideoStream(plan.repIndex(c, i))
+			if per > 0 {
+				args = append(args, "-threads"+spec.bare, strconv.Itoa(per))
+			}
+			args = append(args, hlsRungVideoEncodeArgs(r, prof, spec, "")...)
 		}
-		args = append(args, hlsRungVideoEncodeArgs(r, spec, "")...)
 	}
 	if plan.hasAudio {
 		// One audio encode for the whole ladder, at the TOP rung's audio bitrate:
 		// every video representation references this one rendition, so there is no
-		// per-rung audio quality to choose between.
+		// per-rung audio quality to choose between — and no per-CODEC one either,
+		// which is why a three-codec tree still stores its audio once.
 		args = append(args, hlsAudioEncodeArgs(plan.audioBitrateKbps(), sharedAudioStream(0))...)
 	}
-	return append(args, cmafMuxerArgs(out, plan.hasAudio, plan.audioOnly())...)
+	return append(args, cmafMuxerArgs(out, plan)...)
+}
+
+// cmafAdaptationSets is the -adaptation_sets expression: one video adaptation set
+// PER CODEC, plus the audio set when there is audio.
+//
+// A set is what a player switches WITHIN, so mixing codecs in one would tell it
+// that an H.264 rung and an AV1 rung are interchangeable mid-playback — which
+// they are not for any decoder that only has one of them. One set per codec is
+// also what makes each set's `codecs` attribute mean something.
+//
+// The single-codec expression is the shorthand this package has always emitted,
+// character for character. The multi-codec one has to name stream indices
+// explicitly because "streams=v" means ALL video.
+func cmafAdaptationSets(plan ladderPlan) string {
+	// An audio-only tree declares ONE set, and it is the audio one: an empty video
+	// adaptation set is just as invalid as an empty audio one, so the sets are
+	// exactly the streams that exist.
+	if plan.audioOnly() {
+		return "id=0,streams=a"
+	}
+	profiles := plan.profiles()
+	if len(profiles) == 1 {
+		if plan.hasAudio {
+			return "id=0,streams=v id=1,streams=a"
+		}
+		return "id=0,streams=v"
+	}
+	sets := make([]string, 0, len(profiles)+1)
+	for c := range profiles {
+		reps := make([]string, 0, len(plan.rungs))
+		for i := range plan.rungs {
+			reps = append(reps, strconv.Itoa(plan.repIndex(c, i)))
+		}
+		sets = append(sets, fmt.Sprintf("id=%d,streams=%s", c, strings.Join(reps, ",")))
+	}
+	if plan.hasAudio {
+		sets = append(sets, fmt.Sprintf("id=%d,streams=a", len(profiles)))
+	}
+	return strings.Join(sets, " ")
 }
 
 // cmafMuxerArgs is the shared dash-muxer block that closes the ladder vector.
-func cmafMuxerArgs(out output, hasAudio, audioOnly bool) []string {
+func cmafMuxerArgs(out output, plan ladderPlan) []string {
 	args := []string{
 		"-f", "dash",
 		"-seg_duration", strconv.Itoa(hlsSegmentSeconds),
@@ -218,22 +316,12 @@ func cmafMuxerArgs(out output, hasAudio, audioOnly bool) []string {
 		"-init_seg_name", cmafInitSegmentPattern,
 		"-media_seg_name", cmafMediaSegmentPattern,
 	}
-	// Video representations in one adaptation set, audio in another — the
+	// Video representations grouped into adaptation sets, audio in its own — the
 	// standard demuxed CMAF shape. The audio set is declared only when there IS
 	// audio: the muxer does not drop an adaptation set that ends up with no
 	// streams, it writes an empty <AdaptationSet contentType="audio"/>, and a
 	// Representation-less adaptation set is invalid DASH.
-	//
-	// An audio-only tree declares ONE set, and it is the audio one — for the same
-	// reason: an empty video adaptation set is just as invalid as an empty audio
-	// one, so the sets are exactly the streams that exist.
-	adaptationSets := "id=0,streams=v"
-	if audioOnly {
-		adaptationSets = "id=0,streams=a"
-	} else if hasAudio {
-		adaptationSets += " id=1,streams=a"
-	}
-	args = append(args, "-adaptation_sets", adaptationSets)
+	args = append(args, "-adaptation_sets", cmafAdaptationSets(plan))
 	args = append(args, out.muxerArgs()...)
 	return append(args, out.dest(out.rel(cmafDirName, cmafManifestFilename)))
 }
@@ -305,15 +393,44 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 		req.packagingFailed()
 		return packageResult{}, fmt.Errorf("media: cmaf master playlist for %q: %w", req.sourceKey, err)
 	}
-	layout, err := parseCMAFMasterPlaylist(rawMaster, len(req.rungs))
+	profiles := req.codecs
+	if len(profiles) == 0 {
+		profiles = defaultVideoCodecs
+	}
+	layout, err := parseCMAFMasterPlaylist(rawMaster, len(req.rungs)*len(profiles))
 	if err != nil {
 		req.packagingFailed()
 		return packageResult{}, fmt.Errorf("media: cmaf layout for %q: %w", req.sourceKey, err)
+	}
+	layout.codecs = profiles
+	// Everything the master claims about a representation is now checked against
+	// what the ladder asked for: its CODEC and its RUNG. Both are read out of
+	// ffmpeg's own manifest rather than assumed, because a tree whose
+	// representations are mislabelled plays — it just plays the wrong thing.
+	if verr := layout.verifyAgainstPlan(req.rungs); verr != nil {
+		req.packagingFailed()
+		return packageResult{}, fmt.Errorf("media: cmaf layout for %q: %w", req.sourceKey, verr)
 	}
 
 	// Media playlists: strip the wall-clock date-times and declare VOD. The
 	// rewrite goes through treeIO, so the STORED bytes are the fixed ones whether
 	// the ladder was streamed or is still on scratch.
+	//
+	// The same pass MEASURES each representation, because this is the one moment
+	// the whole tree is addressable and its playlists are already in hand: the
+	// duration comes from summing the playlist's own EXTINF values, the bytes from
+	// the objects the muxer wrote. That is what AVERAGE-BANDWIDTH is computed
+	// from, so the master describes the tree that exists rather than the budget it
+	// was planned at — which matters most for the capped-CRF codec, whose average
+	// on easy content lands far below its ceiling.
+	// Sized by the LARGEST representation index, not by the audio one: a silent
+	// tree has no audio representation at all, so audioRep is 0 there while the
+	// video indices run the whole length of the ladder.
+	measured := len(layout.videoCodecs)
+	if layout.hasAudio && layout.audioRep+1 > measured {
+		measured = layout.audioRep + 1
+	}
+	layout.measured = make([]cmafRepMeasure, measured)
 	for _, rep := range layout.representations() {
 		name := cmafMediaPlaylistName(rep)
 		body, rerr := tree.read(ctx, name)
@@ -330,9 +447,19 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 			req.packagingFailed()
 			return packageResult{}, werr
 		}
+		// Best effort: a measurement that cannot be taken omits one advisory
+		// attribute from the master. It must not fail a transcode whose media is
+		// perfectly good.
+		if bytesN, berr := tree.bytesNamed(cmafRepFilePrefixes(rep)...); berr == nil {
+			layout.measured[rep] = cmafRepMeasure{bytes: bytesN, seconds: playlistDurationSeconds(fixed)}
+		}
 	}
 
-	// Trick-play, per rung, in the shared directory.
+	// Trick-play, per rung, in the shared directory — and H.264 only, so its
+	// representation index is the rung index whatever else the tree carries.
+	// Scrub thumbnails are decoded by every client that has them, including the
+	// ones that cannot decode HEVC or AV1, so the compatibility floor is the only
+	// correct codec for them and a per-codec set would be pure waste.
 	trickPlay := make(map[int]hlsTrickPlayInfo, len(req.rungs))
 	for i, r := range req.rungs {
 		info, terr := finalizeTrickPlayIn(ctx, req.tools.ffprobe, tree,
@@ -347,6 +474,12 @@ func (p cmafPackager) Finalize(ctx context.Context, req packageRequest) (package
 	// Progressive downloads. A CMAF video representation carries no audio, so the
 	// muxed asset is remuxed from TWO inputs — the rung's media playlist and the
 	// shared audio one. Both remain plain `-c copy` passes.
+	//
+	// The rung's playlist is its H.264 representation (index i), and that is not
+	// an oversight to fix by offering HEVC downloads. A downloaded file leaves the
+	// platform and is opened by whatever the person has — an old phone, a TV
+	// stick, a video editor — so it has to be the codec everything decodes. The
+	// same reasoning gives the derived web videos and audio.m4a their codec.
 	audioPlaylist := ""
 	if layout.hasAudio {
 		audioPlaylist = tree.ref(cmafMediaPlaylistName(layout.audioRep))
@@ -550,18 +683,45 @@ func cmafProgressiveMP4Args(videoPlaylist, audioPlaylist, dst string, includeAud
 // --- ffmpeg manifest parsing -------------------------------------------------
 
 // cmafLayout is what ffmpeg's own HLS master playlist says about the tree it just
-// wrote: the CODECS string it computed for each rung's representation, and
-// whether a shared audio representation exists.
+// wrote — the CODECS string and the RESOLUTION it computed for each
+// representation, and whether a shared audio one exists — together with what the
+// ladder ASKED for and what the tree actually cost.
 //
-// It is parsed rather than assumed because the rung → representation mapping is
-// the one thing that would corrupt the whole tree if it silently changed: a
-// master playlist pointing every variant at the wrong media playlist plays, it
-// just plays the wrong resolutions.
+// It is parsed rather than assumed because the representation mapping is the one
+// thing that would corrupt the whole tree if it silently changed: a master
+// playlist pointing every variant at the wrong media playlist plays, it just
+// plays the wrong resolutions.
 type cmafLayout struct {
-	// videoCodecs[i] is the CODECS attribute for ladder rung i, which ffmpeg
-	// wrote as representation i.
+	// videoCodecs[rep] is the CODECS attribute ffmpeg wrote for video
+	// representation rep (ladderPlan.repIndex: every codec's whole ladder in rung
+	// order, H.264 first).
 	videoCodecs []string
-	hasAudio    bool
+	// videoResolutions[rep] is the RESOLUTION attribute for the same variant,
+	// verbatim ("1280x720"), or "" when ffmpeg omitted it.
+	//
+	// It is read for one reason: without it, "the rung → representation mapping is
+	// verified" was only half true. The codec check catches a representation
+	// encoded with the wrong CODEC, and the index check catches a missing or
+	// duplicated one — but two same-codec rungs swapped between each other pass
+	// both, and produce a tree whose 480p variant is labelled 720p, whose
+	// downloads come off the wrong representation and whose trick-play indexes the
+	// wrong rung. Nothing about that tree looks broken.
+	videoResolutions []string
+	// codecs is the codec plan the ladder was ENCODED with — one of the fields
+	// here that is not read out of ffmpeg's manifest. It is carried on the layout
+	// because both consumers need it beside what ffmpeg reported:
+	// verifyAgainstPlan checks one against the other, and the master renderer
+	// needs it to know which rung and which budget each representation is. Empty
+	// means the single-codec H.264 ladder, which is what a layout parsed on its
+	// own resolves to.
+	codecs []codecProfile
+	// measured[rep] is what representation rep actually COST, read back after the
+	// encode: its stored bytes and its duration. It is what AVERAGE-BANDWIDTH is
+	// computed from, so the master describes the tree that exists rather than the
+	// budget it was planned at. Nil when nothing measured it, and the attribute is
+	// then omitted rather than guessed.
+	measured []cmafRepMeasure
+	hasAudio bool
 	// audioRep is the representation index of the shared audio rendition (the
 	// index after the last video one).
 	audioRep      int
@@ -573,8 +733,97 @@ type cmafLayout struct {
 	audioCodecs string
 }
 
+// cmafRepMeasure is one representation's real cost, read back from the tree
+// after the encode: the bytes it stored (init segment plus every media segment)
+// and the seconds those bytes play for.
+type cmafRepMeasure struct {
+	bytes   int64
+	seconds float64
+}
+
+// avgBitrate is the representation's average bit rate in bits per second, 0 when
+// it was not measured or has no duration.
+func (m cmafRepMeasure) avgBitrate() int {
+	if m.bytes <= 0 || m.seconds <= 0 {
+		return 0
+	}
+	return int(math.Round(float64(m.bytes) * 8 / m.seconds))
+}
+
 // audioOnly reports that the tree ffmpeg wrote has no video representations.
 func (l cmafLayout) audioOnly() bool { return len(l.videoCodecs) == 0 }
+
+// measureOf is representation rep's measured cost, or the zero value when it was
+// not measured.
+func (l cmafLayout) measureOf(rep int) cmafRepMeasure {
+	if rep < 0 || rep >= len(l.measured) {
+		return cmafRepMeasure{}
+	}
+	return l.measured[rep]
+}
+
+// profiles is the layout's codec plan, resolved.
+func (l cmafLayout) profiles() []codecProfile {
+	if len(l.codecs) == 0 {
+		return defaultVideoCodecs
+	}
+	return l.codecs
+}
+
+// verifyAgainstPlan checks that the tree ffmpeg actually wrote is the tree the
+// ladder asked for: every representation index holds the RUNG and the CODEC the
+// plan assigned to it.
+//
+// Both halves catch failures that are silent, and they catch different ones.
+//
+// The CODEC half: a tree whose "HEVC" representations are really H.264 plays
+// perfectly — it just delivers H.264 to every client that was told to expect
+// H.265, at the H.265 rung's smaller budget, which looks like a quality
+// regression and nothing else. The specific fault this pipeline has already
+// measured is worse: an HEVC stream written without the hvc1 tag makes ffmpeg
+// compute an EMPTY codec string, producing a master no client will start.
+//
+// The RESOLUTION half: two same-codec rungs swapped between each other pass the
+// codec check AND the index check, because both indices exist, both are unique
+// and both carry the right codec. What they produce is a master whose 480p
+// variant is labelled 720p — so an ABR player fetches a rung at a bandwidth it
+// budgeted for a different one — and whose per-rung downloads and trick-play are
+// built from the wrong representation. Nothing about that tree looks broken from
+// the outside, which is exactly why it is checked here.
+func (l cmafLayout) verifyAgainstPlan(rungs []HLSRung) error {
+	if len(rungs) == 0 {
+		return nil // audio-only: no video representations to attribute
+	}
+	profiles := l.profiles()
+	if want := len(rungs) * len(profiles); want != len(l.videoCodecs) {
+		return fmt.Errorf("ffmpeg wrote %d video representations, want %d (%d rungs × %d codecs)",
+			len(l.videoCodecs), want, len(rungs), len(profiles))
+	}
+	for c, prof := range profiles {
+		for i, r := range rungs {
+			rep := c*len(rungs) + i
+			if !prof.namesCodec(l.videoCodecs[rep]) {
+				return fmt.Errorf(
+					"representation %d is rung %d encoded as %s, but ffmpeg declared CODECS %q, whose video codec is not %s",
+					rep, i, prof.Name, l.videoCodecs[rep], prof.CodecsID)
+			}
+			want := fmt.Sprintf("%dx%d", r.Width, r.Height)
+			got := ""
+			if rep < len(l.videoResolutions) {
+				got = l.videoResolutions[rep]
+			}
+			if got == "" {
+				return fmt.Errorf("representation %d (%s %s) has no RESOLUTION, so the rung it holds cannot be verified",
+					rep, prof.Name, r.Name())
+			}
+			if got != want {
+				return fmt.Errorf("representation %d should be the %s %s rung (%s) but ffmpeg wrote RESOLUTION=%s",
+					rep, prof.Name, r.Name(), want, got)
+			}
+		}
+	}
+	return nil
+}
 
 // representations lists every representation index in the tree, video first.
 func (l cmafLayout) representations() []int {
@@ -590,16 +839,26 @@ func (l cmafLayout) representations() []int {
 
 // parseCMAFMasterPlaylist reads ffmpeg's generated HLS master playlist and
 // verifies the representation layout is exactly the one the ladder asked for:
-// rungs video-first in ladder order, then at most one audio rendition.
-func parseCMAFMasterPlaylist(playlist []byte, rungs int) (cmafLayout, error) {
-	if rungs == 0 {
+// videoReps video representations in the order they were mapped, then at most
+// one audio rendition.
+//
+// videoReps is rungs × codecs, not rungs: with several codecs enabled the same
+// resolution appears once per codec, and the whole point of reading this file is
+// that the index-to-content mapping is checked rather than assumed. WHICH codec
+// each index holds is checked separately, by cmafLayout.verifyCodecs, because
+// only that check needs to know the codec plan.
+func parseCMAFMasterPlaylist(playlist []byte, videoReps int) (cmafLayout, error) {
+	if videoReps == 0 {
 		return parseCMAFAudioOnlyMasterPlaylist(playlist)
 	}
-	layout := cmafLayout{videoCodecs: make([]string, rungs)}
-	seen := make([]bool, rungs)
+	layout := cmafLayout{
+		videoCodecs:      make([]string, videoReps),
+		videoResolutions: make([]string, videoReps),
+	}
+	seen := make([]bool, videoReps)
 
 	lines := strings.Split(string(playlist), "\n")
-	pendingCodecs, pending := "", false
+	pendingCodecs, pendingResolution, pending := "", "", false
 	for _, raw := range lines {
 		line := strings.TrimSpace(raw)
 		if line == "" {
@@ -618,13 +877,17 @@ func parseCMAFMasterPlaylist(playlist []byte, rungs int) (cmafLayout, error) {
 			if !ok {
 				return cmafLayout{}, fmt.Errorf("audio rendition URI %q is not a media playlist", uri)
 			}
-			if rep != rungs {
-				return cmafLayout{}, fmt.Errorf("audio is representation %d, want %d (one per rung, then audio)", rep, rungs)
+			if rep != videoReps {
+				return cmafLayout{}, fmt.Errorf("audio is representation %d, want %d (every video representation, then audio)", rep, videoReps)
 			}
 			layout.hasAudio, layout.audioRep = true, rep
 			layout.audioChannels, _ = m3u8Attr(line, "CHANNELS")
 		case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
 			pendingCodecs, _ = m3u8Attr(line, "CODECS")
+			// RESOLUTION is collected here and CHECKED in verifyAgainstPlan, which
+			// is the only place that knows which rung each index is supposed to
+			// hold. Parsing stays a statement about the manifest's SHAPE.
+			pendingResolution, _ = m3u8Attr(line, "RESOLUTION")
 			pending = true
 		case strings.HasPrefix(line, "#"):
 			// Any other tag; a URI must follow its own STREAM-INF immediately.
@@ -637,18 +900,20 @@ func parseCMAFMasterPlaylist(playlist []byte, rungs int) (cmafLayout, error) {
 			if !ok {
 				return cmafLayout{}, fmt.Errorf("variant URI %q is not a media playlist", line)
 			}
-			if rep < 0 || rep >= rungs {
-				return cmafLayout{}, fmt.Errorf("variant representation %d is outside the %d-rung ladder", rep, rungs)
+			if rep < 0 || rep >= videoReps {
+				return cmafLayout{}, fmt.Errorf("variant representation %d is outside the ladder's %d video representations", rep, videoReps)
 			}
 			if seen[rep] {
 				return cmafLayout{}, fmt.Errorf("representation %d appears twice", rep)
 			}
-			seen[rep], layout.videoCodecs[rep] = true, pendingCodecs
+			seen[rep] = true
+			layout.videoCodecs[rep] = pendingCodecs
+			layout.videoResolutions[rep] = pendingResolution
 		}
 	}
 	for i, ok := range seen {
 		if !ok {
-			return cmafLayout{}, fmt.Errorf("rung %d has no representation", i)
+			return cmafLayout{}, fmt.Errorf("representation %d has no variant", i)
 		}
 		if layout.videoCodecs[i] == "" {
 			return cmafLayout{}, fmt.Errorf("representation %d has no CODECS", i)
@@ -829,6 +1094,36 @@ func fixCMAFMediaPlaylist(playlist []byte) ([]byte, error) {
 // codec list is wrong or incomplete is exactly what Safari refuses, and a master
 // that is silently unplayable in one browser is far worse than a failed
 // transcode an operator can see.
+//
+// HOW A CLIENT ACTUALLY CHOOSES between the codecs, because the obvious answers
+// are both wrong and the code below is shaped by the real ones.
+//
+// It is NOT the order of the file. hls.js 1.6 re-sorts every variant on load —
+// by height, then by its own built-in codec preference (hvc1 > av01 > avc1) —
+// and partitions them into codec sets its ABR controller never switches between;
+// manifest order survives only as the seed for the initial bandwidth estimate.
+// The order this writes is therefore INERT for hls.js. It is kept because it is
+// deterministic, diffable and pleasant to read, and it is deliberately H.264
+// first so a hand-rolled or embedded client that takes the first variant it
+// understands gets the universally decodable one — but nothing about correctness
+// rests on it, and no fix should ever be attempted by reordering.
+//
+// It IS the SCORE attribute, for Apple clients. Without SCORE, AVFoundation's
+// selection is close to "the highest BANDWIDTH it can play" — and since an
+// efficient codec DECLARES LESS, that picks H.264 and inverts the whole point of
+// emitting HEVC. SCORE (RFC 8216bis §4.4.6.2) is the documented way to say "these
+// two variants are the same picture, prefer this one", so every variant carries
+// one: rung rank dominates, codec breaks the tie. See cmafVariantScore.
+//
+// And BANDWIDTH is a PEAK, not an average, so both are declared. BANDWIDTH is
+// derived from the rung's budget — which the encoder's rate control genuinely
+// bounds, see rateControl — and AVERAGE-BANDWIDTH from the bytes the tree
+// actually stored, which is what a steady-state estimator wants and what makes
+// the capped-CRF codec's real cheapness visible instead of hidden behind its
+// ceiling.
+//
+// Trick-play is advertised for the H.264 variants only, because that is the only
+// codec it is encoded in.
 func renderCMAFMasterPlaylist(rungs []HLSRung, audioKbps int, layout cmafLayout, trickPlay map[int]hlsTrickPlayInfo) (string, error) {
 	if len(rungs) == 0 {
 		return renderCMAFAudioOnlyMasterPlaylist(audioKbps, layout)
@@ -855,31 +1150,109 @@ func renderCMAFMasterPlaylist(rungs []HLSRung, audioKbps int, layout cmafLayout,
 		fmt.Fprintf(&b, ",URI=%q\n", cmafDirName+"/"+cmafMediaPlaylistName(layout.audioRep))
 		audioAttr = fmt.Sprintf(",AUDIO=%q", cmafAudioGroupID)
 	}
-	for i, r := range rungs {
-		codecs := layout.videoCodecs[i]
-		// A variant that references the audio rendition group must say so in its
-		// codec list; a player picks a variant on CODECS before it fetches
-		// anything, and one that omits the audio codec is chosen and then fails.
-		if layout.hasAudio && !strings.Contains(codecs, "mp4a.") {
-			return "", fmt.Errorf("variant %d references the audio rendition but its CODECS %q names no audio codec", i, codecs)
-		}
-		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,CODECS=%q%s\n",
-			cmafVariantBandwidth(r, audioKbps), r.Width, r.Height, codecs, audioAttr)
-		b.WriteString(cmafDirName + "/" + cmafMediaPlaylistName(i) + "\n")
-		if tp, ok := trickPlay[r.Height]; ok && tp.Bandwidth > 0 && tp.Codec != "" {
-			fmt.Fprintf(&b,
-				"#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,CODECS=%q,URI=%q\n",
-				tp.Bandwidth, r.Width, r.Height, tp.Codec, cmafDirName+"/"+cmafIFramePlaylistName(i))
+	for c, prof := range layout.profiles() {
+		for i, r := range rungs {
+			rep := c*len(rungs) + i
+			if rep >= len(layout.videoCodecs) {
+				return "", fmt.Errorf("representation %d (%s rung %d) is missing from the layout", rep, prof.Name, i)
+			}
+			codecs := layout.videoCodecs[rep]
+			// A variant that references the audio rendition group must say so in its
+			// codec list; a player picks a variant on CODECS before it fetches
+			// anything, and one that omits the audio codec is chosen and then fails.
+			if layout.hasAudio && !strings.Contains(codecs, "mp4a.") {
+				return "", fmt.Errorf("variant %d references the audio rendition but its CODECS %q names no audio codec", rep, codecs)
+			}
+			// The declared peak is THIS codec's budget for this rung — an HEVC rung
+			// is encoded at its own multiplier of the H.264 one, and declaring the
+			// H.264 number would tell an ABR player the cheap variant costs as much
+			// as the expensive one.
+			fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d", cmafVariantBandwidth(prof.videoKbps(r), audioKbps, prof))
+			// AVERAGE-BANDWIDTH is the measured truth beside that promise: this
+			// representation's stored bytes over its own duration, plus the shared
+			// audio's. Omitted rather than guessed when the tree could not be
+			// measured — an invented average is worse than none.
+			if avg := cmafVariantAverageBandwidth(layout, rep); avg > 0 {
+				fmt.Fprintf(&b, ",AVERAGE-BANDWIDTH=%d", avg)
+			}
+			fmt.Fprintf(&b, ",RESOLUTION=%dx%d,CODECS=%q,SCORE=%s%s\n",
+				r.Width, r.Height, codecs,
+				formatScore(cmafVariantScore(i, len(rungs), prof)), audioAttr)
+			b.WriteString(cmafDirName + "/" + cmafMediaPlaylistName(rep) + "\n")
+			// Trick-play is H.264-only (the compatibility floor), so it is
+			// advertised beside the H.264 variants and nowhere else.
+			if c != 0 {
+				continue
+			}
+			if tp, ok := trickPlay[r.Height]; ok && tp.Bandwidth > 0 && tp.Codec != "" {
+				fmt.Fprintf(&b,
+					"#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,CODECS=%q,URI=%q\n",
+					tp.Bandwidth, r.Width, r.Height, tp.Codec, cmafDirName+"/"+cmafIFramePlaylistName(i))
+			}
 		}
 	}
 	return b.String(), nil
 }
 
-// cmafVariantBandwidth is one CMAF variant's declared peak rate: its own video
-// bitrate plus the ladder's SHARED audio bitrate, with the same ~10% container
-// allowance HLSRung.Bandwidth applies.
-func cmafVariantBandwidth(r HLSRung, sharedAudioKbps int) int {
-	return (r.VideoKbps + sharedAudioKbps) * 1000 * 11 / 10
+// cmafVariantBandwidth is one CMAF variant's declared PEAK rate: its own video
+// bitrate — its CODEC's budget for its rung, allowed its CODEC's overshoot — plus
+// the ladder's SHARED audio bitrate with the ~10% container allowance.
+//
+// The number is only meaningful because every codec here is rate-CAPPED at that
+// budget (rateControl), and it is only TRUE because the allowance is the one that
+// codec's rate control actually needs (see the peak-permille constants). For a
+// capped-VBR codec the allowance is the ~10% this package has always applied, so
+// H.264's and HEVC's declarations are unchanged to the bit.
+//
+// TestCMAFDeclaredBandwidthBoundsWhatIsDelivered is what keeps it honest: it
+// re-measures the worst segment of every variant against this value on a
+// deliberately spiky clip — H.264 1.031x, HEVC 0.945x, AV1 0.842x — and
+// re-measures an uncapped AV1 encode of the same clip at 2.93x, so the guarantee
+// cannot decay into folklore.
+func cmafVariantBandwidth(videoKbps, sharedAudioKbps int, prof codecProfile) int {
+	return videoKbps*peakPermille + sharedAudioKbps*audioPeakPermille
+}
+
+// cmafVariantAverageBandwidth is a variant's measured average rate: its own video
+// representation's stored bytes over its duration, plus the shared audio
+// representation's. 0 when either could not be measured.
+//
+// It counts the audio for the same reason BANDWIDTH does — a variant PLAYS the
+// audio rendition it references, so an average that omitted it would describe a
+// stream nobody receives.
+func cmafVariantAverageBandwidth(layout cmafLayout, rep int) int {
+	video := layout.measureOf(rep).avgBitrate()
+	if video <= 0 {
+		return 0
+	}
+	if !layout.hasAudio {
+		return video
+	}
+	audio := layout.measureOf(layout.audioRep).avgBitrate()
+	if audio <= 0 {
+		return 0
+	}
+	return video + audio
+}
+
+// cmafVariantScore is the SCORE attribute for rung `rung` (0 = tallest, as the
+// ladder is ordered) of a ladder `rungs` tall, encoded with prof.
+//
+// RESOLUTION DOMINATES and codec breaks the tie: a client is told to prefer the
+// highest SCORE it can afford, and a 720p AV1 variant is a better experience than
+// a 360p HEVC one by a margin no codec efficiency closes. So the rung's rank from
+// the bottom is the integer part (360p → 1, 480p → 2, 720p → 3) and the codec
+// contributes a fraction (see the ScoreBonus constants for why hevc > av1 >
+// h264). The result is monotonic in resolution, strictly ordered within a
+// resolution, and never ties.
+func cmafVariantScore(rung, rungs int, prof codecProfile) float64 {
+	return float64(rungs-rung) + prof.ScoreBonus
+}
+
+// formatScore renders a SCORE value as the shortest exact decimal, because it is
+// a decimal-floating-point attribute and "3.3" reads better than "3.300000".
+func formatScore(v float64) string {
+	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
 // renderCMAFAudioOnlyMasterPlaylist renders the master for a tree with no video.
@@ -890,6 +1263,10 @@ func cmafVariantBandwidth(r HLSRung, sharedAudioKbps int) int {
 // EXT-X-MEDIA rendition group — a group describes alternates OF a video
 // presentation, and referencing one from no variant at all is not a playlist any
 // client will start.
+//
+// It carries AVERAGE-BANDWIDTH when the tree was measured, and deliberately NO
+// SCORE: SCORE is a RELATIVE preference between variants, and there is exactly
+// one variant here for it to be relative to.
 func renderCMAFAudioOnlyMasterPlaylist(audioKbps int, layout cmafLayout) (string, error) {
 	if !layout.hasAudio || layout.audioCodecs == "" {
 		return "", errors.New("audio-only master needs an audio representation")
@@ -899,8 +1276,11 @@ func renderCMAFAudioOnlyMasterPlaylist(audioKbps int, layout cmafLayout) (string
 	}
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
-	fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,CODECS=%q\n",
-		cmafAudioOnlyBandwidth(audioKbps), layout.audioCodecs)
+	fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d", cmafAudioOnlyBandwidth(audioKbps))
+	if avg := layout.measureOf(layout.audioRep).avgBitrate(); avg > 0 {
+		fmt.Fprintf(&b, ",AVERAGE-BANDWIDTH=%d", avg)
+	}
+	fmt.Fprintf(&b, ",CODECS=%q\n", layout.audioCodecs)
 	b.WriteString(cmafDirName + "/" + cmafMediaPlaylistName(layout.audioRep) + "\n")
 	return b.String(), nil
 }

@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,7 +32,17 @@ type cmafFixture struct {
 	prefix string
 	res    HLSResult
 	keys   []string
+	// codecs is the codec plan the fixture transcoded with, so an assertion can
+	// walk representation indices the same way the packager laid them out.
+	codecs []codecProfile
+	// sourceKey is the generated source the fixture transcoded, so a test can
+	// re-encode from the very same bytes.
+	sourceKey string
 }
+
+// rep is the representation index of rung `rung` encoded with codec index
+// `codec`, for a fixture's own ladder.
+func (f cmafFixture) rep(codec, rung int) int { return codec*len(f.res.Renditions) + rung }
 
 func newCMAFFixture(t *testing.T, genArgs []string, stream bool) cmafFixture {
 	t.Helper()
@@ -44,12 +55,32 @@ func newCMAFFixture(t *testing.T, genArgs []string, stream bool) cmafFixture {
 // does" as a fact rather than a hope.
 func newPackagedFixture(t *testing.T, packager string, genArgs []string, stream bool) cmafFixture {
 	t.Helper()
+	return newFixture(t, fixtureOpts{packager: packager, genArgs: genArgs, stream: stream})
+}
+
+// fixtureOpts is one transcode fixture's whole configuration.
+type fixtureOpts struct {
+	packager string
+	genArgs  []string
+	stream   bool
+	// hevc and av1 are the extra-codec knobs, exactly as an operator sets them.
+	hevc bool
+	av1  bool
+	// hw and hwDevice are TRANSCODING_HW / TRANSCODING_HW_DEVICE. "" is off,
+	// which is what every fixture that does not mention them gets.
+	hw       string
+	hwDevice string
+}
+
+func newFixture(t *testing.T, opts fixtureOpts) cmafFixture {
+	t.Helper()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not installed")
 	}
 	if _, err := exec.LookPath("ffprobe"); err != nil {
 		t.Skip("ffprobe not installed")
 	}
+	packager, genArgs, stream := opts.packager, opts.genArgs, opts.stream
 	scratch := t.TempDir()
 	t.Setenv("TMPDIR", scratch)
 
@@ -77,6 +108,14 @@ func newPackagedFixture(t *testing.T, packager string, genArgs []string, stream 
 	if err := tc.SetPackager(packager); err != nil {
 		t.Fatalf("SetPackager: %v", err)
 	}
+	// In boot's own order: the hardware choice is recorded before the codec plan
+	// is built, because it is the codec plan that the transform is applied to.
+	if err := tc.SetHardware(opts.hw, opts.hwDevice); err != nil {
+		t.Fatalf("SetHardware(%q, %q): %v", opts.hw, opts.hwDevice, err)
+	}
+	if err := tc.SetVideoCodecs(opts.hevc, opts.av1); err != nil {
+		t.Fatalf("SetVideoCodecs(hevc %v, av1 %v): %v", opts.hevc, opts.av1, err)
+	}
 	tc.SetStreamOutput(stream)
 
 	res, err := tc.Transcode(context.Background(), videoID, srcKey)
@@ -94,7 +133,7 @@ func newPackagedFixture(t *testing.T, packager string, genArgs []string, stream 
 	if leftover, _ := filepath.Glob(filepath.Join(scratch, "vidra-hls-*")); len(leftover) != 0 {
 		t.Errorf("scratch tree %v survived the transcode", leftover)
 	}
-	return cmafFixture{blobs: blobs, prefix: prefix, res: res, keys: keys}
+	return cmafFixture{blobs: blobs, prefix: prefix, res: res, keys: keys, codecs: tc.videoCodecs(), sourceKey: srcKey}
 }
 
 func (f cmafFixture) read(t *testing.T, rel string) string {
@@ -1685,6 +1724,741 @@ func TestAudioOnlyFullJobDerivesNoWebVideos(t *testing.T) {
 	}
 }
 
+// --- phase-3 item 5: HEVC and AV1 representations ----------------------------
+
+// requireEncoders skips when this ffmpeg cannot encode what the test is about.
+// The image ships libx265 and libsvtav1; a developer's Homebrew or distro build
+// may not, and a skipped test is honest where a failed one would be a lie about
+// the code.
+func requireEncoders(t *testing.T, names ...string) {
+	t.Helper()
+	bin, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	out, err := exec.Command(bin, "-hide_banner", "-encoders").Output()
+	if err != nil {
+		t.Skipf("ffmpeg -encoders: %v", err)
+	}
+	have := ffmpegEncoderNames(out)
+	for _, n := range names {
+		if !have[n] {
+			t.Skipf("this ffmpeg has no %q encoder", n)
+		}
+	}
+}
+
+// assertCMAFRepresentation concatenates one representation and asserts it decodes
+// as the codec, tag and size expected. This is the check that catches a
+// mis-mapped representation and a broken init segment, both of which produce a
+// tree that looks perfect and plays nothing.
+func assertCMAFRepresentation(t *testing.T, f cmafFixture, rep int, wantCodec, wantTag string, r HLSRendition) {
+	t.Helper()
+	joined := f.concatRepresentation(t, rep)
+	probe := ffprobeEntries(t, joined, "stream=codec_name,codec_tag_string,width,height:format=duration")
+	if probe["codec_name"] != wantCodec {
+		t.Errorf("representation %d is %q, want %q", rep, probe["codec_name"], wantCodec)
+	}
+	if wantTag != "" && probe["codec_tag_string"] != wantTag {
+		t.Errorf("representation %d sample entry is %q, want %q", rep, probe["codec_tag_string"], wantTag)
+	}
+	if probe["width"] != strconv.Itoa(r.Width) || probe["height"] != strconv.Itoa(r.Height) {
+		t.Errorf("representation %d concatenates to %sx%s, want the %dp rung's %dx%d — it is mapped to the wrong rung",
+			rep, probe["width"], probe["height"], r.Height, r.Width, r.Height)
+	}
+	if d, err := strconv.ParseFloat(probe["duration"], 64); err != nil || d < 7.0 || d > 9.0 {
+		t.Errorf("representation %d concatenates to %s seconds, want the source's 8", rep, probe["duration"])
+	}
+}
+
+// TestCMAFHEVCLadderIsTaggedHVC1 is the end-to-end proof for the one detail that
+// makes HEVC usable at all. ffmpeg writes HEVC into fMP4 as `hev1` unless told
+// otherwise, warns, and carries on; Safari — the browser HEVC exists for here —
+// refuses hev1, and ffmpeg's own master then computes an EMPTY codec string for
+// that variant, so the tree is unplayable everywhere rather than only on Safari.
+// The assertion is on the SAMPLE ENTRY in the stored init segment, not on the
+// argument vector, because that is the artefact a player reads.
+func TestCMAFHEVCLadderIsTaggedHVC1(t *testing.T) {
+	requireEncoders(t, "libx265")
+	f := newFixture(t, fixtureOpts{packager: PackagerCMAF, genArgs: hd720WithAudio, hevc: true})
+
+	if len(f.res.Renditions) != 3 {
+		t.Fatalf("renditions = %+v, want the 720p/480p/360p ladder", f.res.Renditions)
+	}
+	// Renditions are RESOLUTIONS, not representations: a second codec must not
+	// invent three more video_renditions rows for the same three resolutions.
+	for i, r := range f.res.Renditions {
+		if r.KeyPrefix != f.prefix+"/"+strconv.Itoa(r.Height)+"p" {
+			t.Errorf("rendition %d key prefix = %q", i, r.KeyPrefix)
+		}
+	}
+
+	// Six video representations (3 rungs x 2 codecs) plus the ONE shared audio
+	// one: enabling a codec must not duplicate the audio.
+	for rep := 0; rep < 7; rep++ {
+		if !f.stored(t, "cmaf/"+cmafInitSegmentName(rep)) {
+			t.Errorf("representation %d has no init segment", rep)
+		}
+	}
+	if f.stored(t, "cmaf/"+cmafInitSegmentName(7)) {
+		t.Errorf("an eighth representation exists; audio was encoded per codec")
+	}
+
+	for i, r := range f.res.Renditions {
+		assertCMAFRepresentation(t, f, f.rep(0, i), "h264", "avc1", r)
+		assertCMAFRepresentation(t, f, f.rep(1, i), "hevc", "hvc1", r)
+	}
+
+	master := f.read(t, "master.m3u8")
+	if n := strings.Count(master, "#EXT-X-STREAM-INF:"); n != 6 {
+		t.Errorf("master has %d variants, want 6 (3 rungs x 2 codecs):\n%s", n, master)
+	}
+	// `hvc1` alone or `hvc1.<profile/level>`: older ffmpeg builds abbreviate.
+	hvc1 := regexp.MustCompile(`#EXT-X-STREAM-INF:[^\n]*CODECS="hvc1(\.[^",]+)?,mp4a\.40\.2"`)
+	if got := hvc1.FindAllString(master, -1); len(got) != 3 {
+		t.Errorf("only %d of 3 HEVC variants carry an hvc1 CODECS attribute:\n%s", len(got), master)
+	}
+	if strings.Contains(master, "hev1") {
+		t.Errorf("the master advertises hev1, which Safari refuses:\n%s", master)
+	}
+	if strings.Contains(master, `CODECS=",`) {
+		t.Errorf("a variant has an empty video codec — the exact symptom of a missing hvc1 tag:\n%s", master)
+	}
+
+	// The MPD: one video adaptation set per codec, plus audio, and the HEVC set's
+	// representations declare hvc1 too.
+	mpd := f.read(t, "cmaf/"+cmafManifestFilename)
+	if n := strings.Count(mpd, "<AdaptationSet"); n != 3 {
+		t.Errorf("MPD has %d adaptation sets, want 3 (h264, hevc, audio):\n%s", n, mpd)
+	}
+	if n := len(regexp.MustCompile(`codecs="hvc1(\.[^"]*)?"`).FindAllString(mpd, -1)); n != 3 {
+		t.Errorf("MPD declares %d hvc1 representations, want 3:\n%s", n, mpd)
+	}
+	if n := strings.Count(mpd, `contentType="video"`); n != 2 {
+		t.Errorf("MPD has %d video adaptation sets, want one per codec:\n%s", n, mpd)
+	}
+	if n := strings.Count(mpd, `contentType="audio"`); n != 1 {
+		t.Errorf("MPD has %d audio adaptation sets, want 1:\n%s", n, mpd)
+	}
+
+	// The compatibility floor is untouched: downloads, the audio file and
+	// trick-play all still come off the H.264 representations.
+	for _, r := range f.res.Renditions {
+		assertStoredStreamTypes(t, f.blobs, HLSDownloadKey(r.KeyPrefix, true), "video", "audio")
+		p, err := f.blobs.Path(HLSDownloadKey(r.KeyPrefix, false))
+		if err != nil {
+			t.Fatalf("Path: %v", err)
+		}
+		if got := ffprobeEntries(t, p, "stream=codec_name"); got["codec_name"] != "h264" {
+			t.Errorf("the %dp download is %q; downloads are the compatibility floor and must stay H.264", r.Height, got["codec_name"])
+		}
+	}
+	assertStoredStreamTypes(t, f.blobs, HLSAudioDownloadKey(f.res.MasterKey), "audio")
+	if n := strings.Count(master, "#EXT-X-I-FRAME-STREAM-INF:"); n != 3 {
+		t.Errorf("%d trick-play entries, want one per rung (H.264 only):\n%s", n, master)
+	}
+	for rep := 3; rep < 7; rep++ {
+		if f.stored(t, "cmaf/"+cmafIFramePlaylistName(rep)) {
+			t.Errorf("trick-play was encoded for representation %d; it is H.264-only", rep)
+		}
+	}
+}
+
+// TestCMAFAV1Ladder is the same proof for AV1, whose interesting property is the
+// rate control: SVT-AV1 REFUSES -maxrate with -b:v and the whole ffmpeg process
+// dies before writing a byte, so a tree existing at all is the assertion.
+func TestCMAFAV1Ladder(t *testing.T) {
+	requireEncoders(t, "libsvtav1")
+	f := newFixture(t, fixtureOpts{packager: PackagerCMAF, genArgs: hd720WithAudio, av1: true})
+
+	if len(f.res.Renditions) != 3 {
+		t.Fatalf("renditions = %+v", f.res.Renditions)
+	}
+	for i, r := range f.res.Renditions {
+		assertCMAFRepresentation(t, f, f.rep(0, i), "h264", "avc1", r)
+		assertCMAFRepresentation(t, f, f.rep(1, i), "av1", "av01", r)
+	}
+	master := f.read(t, "master.m3u8")
+	av01 := regexp.MustCompile(`#EXT-X-STREAM-INF:[^\n]*CODECS="av01(\.[^",]+)?,mp4a\.40\.2"`)
+	if got := av01.FindAllString(master, -1); len(got) != 3 {
+		t.Errorf("only %d of 3 AV1 variants carry an av01 CODECS attribute:\n%s", len(got), master)
+	}
+	mpd := f.read(t, "cmaf/"+cmafManifestFilename)
+	if n := len(regexp.MustCompile(`codecs="av01(\.[^"]*)?"`).FindAllString(mpd, -1)); n != 3 {
+		t.Errorf("MPD declares %d av01 representations, want 3:\n%s", n, mpd)
+	}
+
+	// AV1 is budgeted at 0.55 of H.264's and declared with capped CRF's own peak
+	// allowance — the manifests must agree with the encoder, because a variant
+	// that under-declares its peak is chosen by an ABR player that cannot carry
+	// it, and one that over-declares is passed over by a player that could.
+	audioKbps := hlsRungBitrates[f.res.Renditions[0].Height].AudioKbps
+	for i, r := range f.res.Renditions {
+		rung := HLSRung{Height: r.Height, Width: r.Width, VideoKbps: hlsRungBitrates[r.Height].VideoKbps}
+		want := cmafVariantBandwidth(av1Profile.videoKbps(rung), audioKbps, av1Profile)
+		if !strings.Contains(master, "BANDWIDTH="+strconv.Itoa(want)+",") {
+			t.Errorf("AV1 rung %d does not declare its own budget %d:\n%s", i, want, master)
+		}
+		// And it is still the cheapest variant at that resolution, which is the
+		// entire point of shipping it: a wider peak allowance must not price AV1
+		// above the codec it is supposed to undercut.
+		h264 := cmafVariantBandwidth(h264Profile.videoKbps(rung), audioKbps, h264Profile)
+		if want >= h264 {
+			t.Errorf("AV1 rung %d declares %d against H.264's %d — the efficient codec must declare less", i, want, h264)
+		}
+	}
+}
+
+// TestCMAFMultiCodecLadder runs all three codecs at once and pins the whole
+// tree: nine video representations plus one audio, every one of them decodable,
+// the master ordered compat-first, and the MPD grouped one set per codec.
+func TestCMAFMultiCodecLadder(t *testing.T) {
+	requireEncoders(t, "libx265", "libsvtav1")
+	f := newFixture(t, fixtureOpts{packager: PackagerCMAF, genArgs: hd720WithAudio, hevc: true, av1: true})
+
+	rungs := len(f.res.Renditions)
+	if rungs != 3 {
+		t.Fatalf("renditions = %+v", f.res.Renditions)
+	}
+	want := []struct{ codec, tag string }{{"h264", "avc1"}, {"hevc", "hvc1"}, {"av1", "av01"}}
+	for c, w := range want {
+		for i, r := range f.res.Renditions {
+			assertCMAFRepresentation(t, f, f.rep(c, i), w.codec, w.tag, r)
+		}
+	}
+	// The audio representation sits after every video one, exactly once.
+	audioRep := rungs * len(want)
+	probe := ffprobeEntries(t, f.concatRepresentation(t, audioRep), "stream=codec_name,channels")
+	if probe["codec_name"] != "aac" || probe["channels"] != "2" {
+		t.Errorf("representation %d = %v, want the single shared aac/2 rendition", audioRep, probe)
+	}
+	if f.stored(t, "cmaf/"+cmafInitSegmentName(audioRep+1)) {
+		t.Errorf("a representation exists past the shared audio one")
+	}
+
+	// Master ordering, pinned exactly: every H.264 variant, then every HEVC one,
+	// then every AV1 one. A client that takes the first playable variant must
+	// land on the codec everything can play.
+	master := f.read(t, "master.m3u8")
+	var variants []string
+	for _, line := range strings.Split(master, "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			variants = append(variants, line)
+		}
+	}
+	var wantOrder []string
+	for c := range want {
+		for i := range f.res.Renditions {
+			wantOrder = append(wantOrder, "cmaf/"+cmafMediaPlaylistName(f.rep(c, i)))
+		}
+	}
+	if strings.Join(variants, ",") != strings.Join(wantOrder, ",") {
+		t.Errorf("variant order:\n got %v\nwant %v", variants, wantOrder)
+	}
+	// And the first STREAM-INF in the file is H.264.
+	if i := strings.Index(master, "#EXT-X-STREAM-INF:"); i < 0 || !regexp.MustCompile(`CODECS="avc1[.,"]`).MatchString(master[i:i+200]) {
+		t.Errorf("the first variant is not H.264:\n%s", master)
+	}
+
+	// SCORE is what actually steers an Apple client, and it must rank the way the
+	// registry says: resolution first, efficient codec second. Without it,
+	// AVFoundation's fallback is close to "the highest BANDWIDTH it can play" —
+	// which picks H.264, because an efficient codec declares LESS.
+	scores := masterVariantScores(t, master)
+	if len(scores) != rungs*len(want) {
+		t.Fatalf("only %d of %d variants carry a SCORE:\n%s", len(scores), rungs*len(want), master)
+	}
+	for c, prof := range f.codecs {
+		for i := range f.res.Renditions {
+			if got, expect := scores[f.rep(c, i)], cmafVariantScore(i, rungs, prof); got != expect {
+				t.Errorf("%s rung %d SCORE = %v, want %v", prof.Name, i, got, expect)
+			}
+		}
+	}
+	// The two properties, checked on the rendered manifest rather than on the
+	// formula: the top rung of every codec outranks every lower rung, and at one
+	// resolution hevc > av1 > h264.
+	for i := 1; i < rungs; i++ {
+		for c := range f.codecs {
+			if scores[f.rep(c, 0)] <= scores[f.rep(c, i)] {
+				t.Errorf("codec %d: rung 0 does not outrank rung %d", c, i)
+			}
+		}
+	}
+	for i := range f.res.Renditions {
+		h264, hevc, av1 := scores[f.rep(0, i)], scores[f.rep(1, i)], scores[f.rep(2, i)]
+		if !(hevc > av1 && av1 > h264) {
+			t.Errorf("rung %d ranks h264 %v, hevc %v, av1 %v — want hevc > av1 > h264", i, h264, hevc, av1)
+		}
+	}
+
+	// AVERAGE-BANDWIDTH comes from the bytes the tree actually stored, so every
+	// variant has one and none of them exceeds its own declared peak.
+	declared := declaredBandwidths(t, master)
+	averages := averageBandwidths(t, master)
+	if len(averages) != rungs*len(want) {
+		t.Errorf("only %d of %d variants declare AVERAGE-BANDWIDTH:\n%s", len(averages), rungs*len(want), master)
+	}
+	for rep, avg := range averages {
+		if avg <= 0 || avg > declared[rep] {
+			t.Errorf("variant %d: AVERAGE-BANDWIDTH=%d against BANDWIDTH=%d", rep, avg, declared[rep])
+		}
+	}
+
+	mpd := f.read(t, "cmaf/"+cmafManifestFilename)
+	if n := strings.Count(mpd, `contentType="video"`); n != 3 {
+		t.Errorf("MPD has %d video adaptation sets, want one per codec:\n%s", n, mpd)
+	}
+	if n := strings.Count(mpd, "<Representation "); n != rungs*len(want)+1 {
+		t.Errorf("MPD has %d representations, want %d:\n%s", n, rungs*len(want)+1, mpd)
+	}
+	// Every segment lives under names the serving route already reaches — the
+	// allow-list regex takes any representation index, and this is what proves it
+	// rather than assuming it.
+	reachable := regexp.MustCompile(
+		`^(stream\.mpd|media_[0-9]+\.m3u8|init-[0-9]+\.mp4|chunk-[0-9]+-[0-9]+\.m4s|iframe-[0-9]+\.m3u8|iframe-[0-9]+\.mp4)$`)
+	for _, rel := range f.rels() {
+		if !strings.HasPrefix(rel, cmafDirName+"/") {
+			continue
+		}
+		if name := strings.TrimPrefix(rel, cmafDirName+"/"); !reachable.MatchString(name) {
+			t.Errorf("stored object %q is not reachable through the HLS file route's allow-list", rel)
+		}
+	}
+	// Rendition sizes still total the stored tree with three codecs' segments in
+	// it: the shared directory is attributed to the top rung whatever is in it.
+	var total, stored int64
+	for _, r := range f.res.Renditions {
+		total += r.SizeBytes
+	}
+	for _, key := range f.keys {
+		p, err := f.blobs.Path(key)
+		if err != nil {
+			t.Fatalf("Path %q: %v", key, err)
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("stat %q: %v", key, err)
+		}
+		stored += info.Size()
+	}
+	if total != stored {
+		t.Errorf("rendition sizes total %d, stored tree is %d", total, stored)
+	}
+}
+
+// TestCMAFMultiCodecGeometryMatchesMPEGTS re-runs the geometry proof with every
+// codec on. The filter graph now forks each rung's scaled frames to several
+// encoders, and the trap it must not fall into is unchanged: the corrective
+// sample aspect ratio scale computes has to survive the fork, for EVERY codec,
+// or a rotated or anamorphic source is rendered at the wrong shape in the
+// representations that H.264-only tests never look at.
+func TestCMAFMultiCodecGeometryMatchesMPEGTS(t *testing.T) {
+	requireEncoders(t, "libx265")
+	anamorphic := []string{
+		"-f", "lavfi", "-i", "testsrc2=duration=4:size=720x576:rate=25",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+		"-c:a", "aac", "-shortest", "-aspect", "16:9",
+	}
+	multi := newFixture(t, fixtureOpts{packager: PackagerCMAF, genArgs: anamorphic, hevc: true})
+	ts := newPackagedFixture(t, PackagerTS, anamorphic, false)
+
+	if len(multi.res.Renditions) != len(ts.res.Renditions) {
+		t.Fatalf("ladders differ: multi-codec %d rungs, ts %d", len(multi.res.Renditions), len(ts.res.Renditions))
+	}
+	for i, r := range multi.res.Renditions {
+		tsPath, err := ts.blobs.Path(HLSDownloadKey(ts.res.Renditions[i].KeyPrefix, false))
+		if err != nil {
+			t.Fatalf("Path: %v", err)
+		}
+		wantDAR := probedDAR(t, tsPath)
+		for c := range multi.codecs {
+			if got := probedDAR(t, multi.concatRepresentation(t, multi.rep(c, i))); got != wantDAR {
+				t.Errorf("rung %dp codec %s: segments display at %s, MPEG-TS at %s",
+					r.Height, multi.codecs[c].Name, got, wantDAR)
+			}
+		}
+	}
+	// Each adaptation set publishes ONE ratio, and it is the same one — the muxer
+	// refuses a set that mixes them, so this doubles as proof the fork did not
+	// introduce a conflict inside either codec's set.
+	mpd := multi.read(t, "cmaf/"+cmafManifestFilename)
+	pars := regexp.MustCompile(`par="([^"]*)"`).FindAllStringSubmatch(mpd, -1)
+	if len(pars) != len(multi.codecs) {
+		t.Fatalf("MPD declares %d video aspect ratios, want one per codec (%d):\n%s", len(pars), len(multi.codecs), mpd)
+	}
+	tsTop, err := ts.blobs.Path(HLSDownloadKey(ts.res.Renditions[0].KeyPrefix, false))
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	want := probedDAR(t, tsTop)
+	for _, p := range pars {
+		if p[1] != want {
+			t.Errorf("adaptation set par = %q, want the source's %q:\n%s", p[1], want, mpd)
+		}
+	}
+}
+
+// TestCMAFMultiCodecStreamedLadder runs a two-codec ladder straight into the
+// object store. The dash muxer now PUTs three times as many objects through the
+// loopback sidecar and finalisation reads more of them back over HTTP; the tree
+// has to come out the same either way, because streaming is a transport choice
+// and nothing more.
+func TestCMAFMultiCodecStreamedLadder(t *testing.T) {
+	requireEncoders(t, "libx265")
+	f := newFixture(t, fixtureOpts{packager: PackagerCMAF, genArgs: hd720WithAudio, hevc: true, stream: true})
+
+	if len(f.res.Renditions) != 3 {
+		t.Fatalf("renditions = %+v", f.res.Renditions)
+	}
+	for rep := 0; rep < 7; rep++ {
+		if !f.stored(t, "cmaf/"+cmafInitSegmentName(rep)) {
+			t.Errorf("streamed tree is missing representation %d's init segment", rep)
+		}
+	}
+	for _, rel := range f.rels() {
+		if strings.HasSuffix(rel, ".tmp") || strings.HasSuffix(rel, cmafFFmpegMasterFilename) {
+			t.Errorf("a non-tree object reached the store: %q", rel)
+		}
+	}
+	assertCMAFRepresentation(t, f, f.rep(1, 0), "hevc", "hvc1", f.res.Renditions[0])
+	if pl := f.read(t, "cmaf/"+cmafMediaPlaylistName(f.rep(1, 0))); strings.Contains(pl, "PROGRAM-DATE-TIME") ||
+		!strings.Contains(pl, "#EXT-X-PLAYLIST-TYPE:VOD") {
+		t.Errorf("an HEVC media playlist was never finalised:\n%s", pl)
+	}
+	assertStoredStreamTypes(t, f.blobs, HLSDownloadKey(f.res.Renditions[0].KeyPrefix, true), "video", "audio")
+}
+
+// TestMPEGTSRefusesExtraCodecs is the rollback contract, stated where an operator
+// meets it. Rolling TRANSCODING_PACKAGER back to `ts` while HEVC is still on must
+// stop the process — quietly writing H.264-only trees while the operator believes
+// they are shipping H.265 is the failure this refuses to have.
+func TestMPEGTSRefusesExtraCodecs(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	tc, ok := DetectHLSTranscoder(blobs)
+	if !ok {
+		t.Fatal("DetectHLSTranscoder = false")
+	}
+	if err := tc.SetPackager(PackagerTS); err != nil {
+		t.Fatalf("SetPackager: %v", err)
+	}
+	if err := tc.SetVideoCodecs(true, false); err == nil {
+		t.Fatal("the MPEG-TS packager accepted HEVC")
+	}
+	// And with the codecs off it is exactly the transcoder it always was.
+	if err := tc.SetVideoCodecs(false, false); err != nil {
+		t.Fatalf("SetVideoCodecs(false, false): %v", err)
+	}
+}
+
+// --- the declared BANDWIDTH has to bound what is delivered -------------------
+
+// spikySource is 30 seconds of flat grey followed by 6 seconds of dense moving
+// detail — one segment's worth of hard content at the end of a clip the encoder
+// has spent the whole of coasting.
+//
+// It is the shape that catches an UNCAPPED encoder and nothing else does. A
+// uniformly hard clip does not: the encoder never builds up the slack it later
+// spends, so the average and the peak are the same number and any rate control at
+// all looks fine. This one lets an unbounded encoder arrive at the last segment
+// with everything still to spend.
+//
+// The hard tail is a detailed moving PATTERN rather than per-pixel random noise,
+// deliberately. Random noise is the incompressible limit — not video, and no
+// ladder's declared bitrate survives it for any codec; on such a clip H.264 only
+// "passes" because its budget is nearly twice AV1's. testsrc2 is genuinely
+// adversarial while still being something a camera could produce.
+var spikySource = []string{
+	"-f", "lavfi", "-i", "color=c=gray:s=854x480:r=25:d=30,format=yuv420p",
+	"-f", "lavfi", "-i", "testsrc2=s=854x480:r=25:d=6",
+	"-f", "lavfi", "-i", "sine=frequency=440:duration=36",
+	"-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+	"-map", "[v]", "-map", "2:a",
+	"-c:v", "libx264", "-preset", "ultrafast", "-crf", "16", "-pix_fmt", "yuv420p",
+	"-c:a", "aac", "-shortest",
+}
+
+// bandwidthTolerance is how far over its declared BANDWIDTH a variant's worst
+// segment may land.
+//
+// What it covers is the part of the overshoot that belongs to the ENCODER BUILD
+// rather than to this code: real container overhead on a real segment, and a rate
+// controller that converges over a window instead of per segment. The
+// codec-specific part is not in here — each codec's own target is chosen to fit
+// its own budget (see av1CRF) so all three land in the same band.
+//
+// Measured across the two ffmpeg builds this project runs against — 8.1 (the
+// shipped Alpine image) and 6.1 (the distribution build on the CI runner and on
+// a Debian/Ubuntu host):
+//
+//	           ffmpeg 8.1        ffmpeg 6.1
+//	H.264      1.030x  1.031x    1.061x  1.077x
+//	HEVC       0.945x  0.928x    0.987x  1.006x
+//	AV1        0.842x  0.622x    0.822x  0.669x
+//
+// 1.10 admits all of it. It does NOT mask AV1, which is the failure this test
+// exists for: AV1's worst measurement is 0.842x, so it would have to regress by
+// a third before this number hid anything — and the uncapped encode it replaced
+// ran at 2.93x on the shipped build. The widest column is H.264's, whose ~10%
+// container allowance predates codec profiles entirely.
+const bandwidthTolerance = 1.10
+
+// TestCMAFDeclaredBandwidthBoundsWhatIsDelivered is the regression for the AV1
+// rate-control bug, and it is stated for every codec because the property is not
+// AV1's alone: a master playlist's BANDWIDTH is a PROMISE about the worst segment,
+// an ABR player picks on it, and a player cannot un-fetch a segment already in
+// flight. A variant that delivers multiples of its declared peak drains the
+// buffer and stalls — and hls.js's abandon-rules rescue cannot fire, because its
+// expected-length estimate is taken from max(loaded, …) and collapses the very
+// delay it is watching for.
+func TestCMAFDeclaredBandwidthBoundsWhatIsDelivered(t *testing.T) {
+	requireEncoders(t, "libx265", "libsvtav1")
+	f := newFixture(t, fixtureOpts{packager: PackagerCMAF, genArgs: spikySource, hevc: true, av1: true})
+
+	rungs := len(f.res.Renditions)
+	if rungs == 0 {
+		t.Fatal("no renditions")
+	}
+	audioPeak := f.peakRepBitrate(t, rungs*len(f.codecs))
+	if audioPeak <= 0 {
+		t.Fatal("the shared audio representation measured no bitrate")
+	}
+
+	master := f.read(t, "master.m3u8")
+	declared := declaredBandwidths(t, master)
+	if len(declared) != rungs*len(f.codecs) {
+		t.Fatalf("master declares %d variants, want %d", len(declared), rungs*len(f.codecs))
+	}
+	for c, prof := range f.codecs {
+		for i, r := range f.res.Renditions {
+			rep := f.rep(c, i)
+			// What a client actually receives for this variant in its worst
+			// moment: the representation's largest segment, plus the audio
+			// rendition it plays alongside it.
+			peak := f.peakRepBitrate(t, rep) + audioPeak
+			want := declared[rep]
+			ratio := float64(peak) / float64(want)
+			name := strconv.Itoa(r.Height) + "p"
+			t.Logf("%s %s: declared %d, worst segment delivers %d (%.3fx)", prof.Name, name, want, peak, ratio)
+			if ratio > bandwidthTolerance {
+				t.Errorf("%s %s delivers %.3fx its declared BANDWIDTH (%d against %d) — an ABR player picks on the declared number and cannot un-fetch the segment",
+					prof.Name, name, ratio, peak, want)
+			}
+		}
+	}
+
+	// AVERAGE-BANDWIDTH is the other half of an honest declaration, and on this
+	// fixture it is dramatically lower than the peak — 30 seconds of flat grey.
+	// That is exactly the information a steady-state estimator wants and exactly
+	// what a budget-derived number cannot express.
+	for rep, avg := range averageBandwidths(t, master) {
+		if avg <= 0 {
+			t.Errorf("variant %d declares no AVERAGE-BANDWIDTH", rep)
+			continue
+		}
+		if avg > declared[rep] {
+			t.Errorf("variant %d declares an average (%d) above its peak (%d)", rep, avg, declared[rep])
+		}
+	}
+
+	// THE COUNTERFACTUAL, measured rather than remembered: the same AV1 rung,
+	// same budget, same source, encoded the way this pipeline used to — plain VBR
+	// with no ceiling, which is all libsvtav1 accepts alongside -b:v.
+	//
+	// Its MAGNITUDE is a property of the SVT-AV1 build and not of this code, so
+	// only its DIRECTION is asserted. Measured: 4.0x apart on SVT-AV1 4.1
+	// (ffmpeg 8.1, the shipped image), where the uncapped encode reaches 2.93x its
+	// declared BANDWIDTH; 1.4x apart on SVT-AV1 1.7 (ffmpeg 6.1), whose plain VBR
+	// happens to track its target far more closely. The bug got WORSE as the
+	// encoder got better, which is exactly the kind of thing a hard-coded
+	// expectation would have hidden.
+	//
+	// The build-independent guard against losing the ceiling is not here at all —
+	// it is TestEveryCodecIsRateCapped, which reads the argument vector and needs
+	// no encoder to run. This measures the outcome on whatever build is present;
+	// that pins the code.
+	top := f.res.Renditions[0]
+	budget := av1Profile.videoKbps(HLSRung{VideoKbps: hlsRungBitrates[top.Height].VideoKbps})
+	uncapped := uncappedAV1PeakBitrate(t, f, top, budget)
+	capped := f.peakRepBitrate(t, f.rep(len(f.codecs)-1, 0))
+	t.Logf("counterfactual at %dp: uncapped AV1 peaks at %d bps, capped CRF at %d (%.1fx apart)",
+		top.Height, uncapped, capped, float64(uncapped)/float64(capped))
+	if uncapped <= capped {
+		t.Errorf("plain VBR peaked at %d and capped CRF at %d — the ceiling is no longer doing anything, or the fixture no longer distinguishes them", uncapped, capped)
+	}
+}
+
+// peakRepBitrate is the worst segment bit rate of one representation: for every
+// segment its stored bytes over its own EXTINF duration, maximised.
+//
+// Per-segment is the right granularity because a segment is the unit a player
+// fetches: it commits to the whole thing on one bandwidth estimate.
+func (f cmafFixture) peakRepBitrate(t *testing.T, rep int) int {
+	t.Helper()
+	playlist := f.read(t, "cmaf/"+cmafMediaPlaylistName(rep))
+	var peak int
+	var duration float64
+	for _, line := range strings.Split(playlist, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#EXTINF:") {
+			d, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimPrefix(line, "#EXTINF:"), ","), 64)
+			if err != nil {
+				t.Fatalf("representation %d: bad EXTINF %q", rep, line)
+			}
+			duration = d
+			continue
+		}
+		if line == "" || strings.HasPrefix(line, "#") || duration <= 0 {
+			continue
+		}
+		p, err := f.blobs.Path(f.prefix + "/cmaf/" + line)
+		if err != nil {
+			t.Fatalf("Path %q: %v", line, err)
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("stat %q: %v", line, err)
+		}
+		if bps := int(float64(info.Size()) * 8 / duration); bps > peak {
+			peak = bps
+		}
+		duration = 0
+	}
+	return peak
+}
+
+// uncappedAV1PeakBitrate re-encodes one rung from the fixture's own source with
+// plain VBR — no ceiling — and returns its worst segment bit rate.
+func uncappedAV1PeakBitrate(t *testing.T, f cmafFixture, r HLSRendition, budgetKbps int) int {
+	t.Helper()
+	src, err := f.blobs.Path(f.sourceKey)
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	dir := t.TempDir()
+	args := []string{
+		"-y", "-i", src,
+		"-filter_complex", fmt.Sprintf("[0:v]scale=%d:%d[v0]", r.Width, r.Height),
+		"-map", "[v0]",
+		"-c:v:0", "libsvtav1", "-preset:v:0", "8", "-pix_fmt:v:0", "yuv420p",
+		"-b:v:0", strconv.Itoa(budgetKbps) + "k",
+		"-force_key_frames:v:0", "expr:gte(t,n_forced*6)",
+		"-f", "dash", "-seg_duration", "6", "-dash_segment_type", "mp4",
+		"-use_template", "1", "-use_timeline", "1", "-ignore_io_errors", "0",
+		"-init_seg_name", cmafInitSegmentPattern, "-media_seg_name", cmafMediaSegmentPattern,
+		"-adaptation_sets", "id=0,streams=v",
+		filepath.Join(dir, cmafManifestFilename),
+	}
+	if out, cerr := exec.Command("ffmpeg", args...).CombinedOutput(); cerr != nil {
+		t.Fatalf("uncapped AV1 encode: %v\n%s", cerr, out)
+	}
+	segments, err := filepath.Glob(filepath.Join(dir, "chunk-0-*.m4s"))
+	if err != nil || len(segments) == 0 {
+		t.Fatalf("uncapped AV1 encode produced no segments: %v", err)
+	}
+	var peak int
+	for _, p := range segments {
+		info, serr := os.Stat(p)
+		if serr != nil {
+			t.Fatalf("stat: %v", serr)
+		}
+		// Every segment but the last is a full hlsSegmentSeconds.
+		if bps := int(info.Size()) * 8 / hlsSegmentSeconds; bps > peak {
+			peak = bps
+		}
+	}
+	return peak
+}
+
+// declaredBandwidths / averageBandwidths read one attribute off every
+// EXT-X-STREAM-INF, keyed by the representation its URI names.
+func declaredBandwidths(t *testing.T, master string) map[int]int {
+	t.Helper()
+	return masterVariantAttr(t, master, "BANDWIDTH")
+}
+
+func averageBandwidths(t *testing.T, master string) map[int]int {
+	t.Helper()
+	return masterVariantAttr(t, master, "AVERAGE-BANDWIDTH")
+}
+
+// masterVariantScores reads the SCORE off every variant, keyed by representation.
+func masterVariantScores(t *testing.T, master string) map[int]float64 {
+	t.Helper()
+	out := map[int]float64{}
+	pending, ok := "", false
+	for _, line := range strings.Split(master, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
+			pending, ok = m3u8Attr(line, "SCORE")
+		case line == "" || strings.HasPrefix(line, "#"):
+		default:
+			if !ok {
+				continue
+			}
+			rep, isRep := cmafRepOfMediaPlaylist(strings.TrimPrefix(line, cmafDirName+"/"))
+			if !isRep {
+				continue
+			}
+			v, err := strconv.ParseFloat(pending, 64)
+			if err != nil {
+				t.Fatalf("variant %d has a non-numeric SCORE %q", rep, pending)
+			}
+			out[rep] = v
+			ok = false
+		}
+	}
+	return out
+}
+
+func masterVariantAttr(t *testing.T, master, attr string) map[int]int {
+	t.Helper()
+	out := map[int]int{}
+	pending, ok := "", false
+	for _, line := range strings.Split(master, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
+			pending, ok = m3u8Attr(line, attr)
+		case line == "" || strings.HasPrefix(line, "#"):
+		default:
+			if !ok {
+				continue
+			}
+			rep, isRep := cmafRepOfMediaPlaylist(strings.TrimPrefix(line, cmafDirName+"/"))
+			if !isRep {
+				continue
+			}
+			n, err := strconv.Atoi(pending)
+			if err != nil {
+				t.Fatalf("variant %d has a non-numeric %s %q", rep, attr, pending)
+			}
+			out[rep] = n
+			ok = false
+		}
+	}
+	return out
+}
+
+// stored reports whether one path relative to the video's prefix is in the tree.
+func (f cmafFixture) stored(t *testing.T, rel string) bool {
+	t.Helper()
+	for _, r := range f.rels() {
+		if r == rel {
+			return true
+		}
+	}
+	return false
+}
+
 // ffprobeStream is ffprobeEntries restricted to ONE stream, so a file with both
 // video and audio does not have its later streams overwrite the earlier ones in
 // the flat key/value output.
@@ -1702,4 +2476,291 @@ func ffprobeStream(t *testing.T, path, selector, entries string) map[string]stri
 		}
 	}
 	return got
+}
+
+// --- phase-3 item 7: hardware transcoding ------------------------------------
+
+// requireHardware skips unless this machine can actually run the backend. It
+// checks BOTH halves of the availability question the detection helper asks —
+// the encoder is in this ffmpeg, and the device is plausibly here — because a
+// build with h264_vaapi on a host with no GPU produces a failure that says
+// nothing about the code under test.
+func requireHardware(t *testing.T, hw string) {
+	t.Helper()
+	bin, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	out, err := exec.Command(bin, "-hide_banner", "-encoders").Output()
+	if err != nil {
+		t.Skipf("ffmpeg -encoders: %v", err)
+	}
+	probe := HardwareProbe{
+		Encoders:    ffmpegEncoderNames(out),
+		GOOS:        runtime.GOOS,
+		RenderNodes: RenderNodes("/dev/dri"),
+	}
+	for _, a := range DetectHardware(probe) {
+		if a.Backend != hw {
+			continue
+		}
+		if !a.Available {
+			t.Skipf("this machine cannot run the %s backend: %s", hw, a.Why)
+		}
+		return
+	}
+	t.Skipf("no such backend %q", hw)
+}
+
+// TestHardwareCMAFLadderPreservesCodecIdentity is the end-to-end proof of the
+// invariant the whole feature rests on: a rung encoded on the GPU is the SAME
+// representation as one encoded on the CPU.
+//
+// The assertions are on the stored artefacts — the concatenated segments, the
+// master ffmpeg wrote, the MPD — rather than on the argument vector, because the
+// vector being right is the unit tests' job and this is the question they cannot
+// answer: does a real hardware encoder, given those arguments, produce avc1 in an
+// avc1 sample entry at the rung's dimensions. If any of that moved, turning the
+// knob on would need every tree re-encoded to turn it back off.
+//
+// VideoToolbox is the backend this runs on because it is the one a developer's
+// machine has. The other three are proven at the argument-vector level and by the
+// boot probe; nothing here is macOS-specific except which backend is available.
+func TestHardwareCMAFLadderPreservesCodecIdentity(t *testing.T) {
+	requireHardware(t, HardwareVideoToolbox)
+	f := newFixture(t, fixtureOpts{packager: PackagerCMAF, genArgs: hd720WithAudio, hw: HardwareVideoToolbox})
+
+	if len(f.res.Renditions) != 3 {
+		t.Fatalf("renditions = %+v, want the 720p/480p/360p ladder", f.res.Renditions)
+	}
+	// The plan really did go to the GPU — otherwise this test proves that software
+	// encoding works, which is not news.
+	if got := hardwareBackendOf(f.codecs); got != HardwareVideoToolbox {
+		t.Fatalf("the fixture encoded with backend %q, want videotoolbox", got)
+	}
+	if enc := f.codecs[0].Encoder; enc != "h264_videotoolbox" {
+		t.Fatalf("H.264 encoder = %q, want h264_videotoolbox", enc)
+	}
+
+	// Three video representations plus the ONE shared audio one, and nothing else:
+	// a backend must not change how many representations a ladder has.
+	for rep := 0; rep < 4; rep++ {
+		if !f.stored(t, "cmaf/"+cmafInitSegmentName(rep)) {
+			t.Errorf("representation %d has no init segment", rep)
+		}
+	}
+	if f.stored(t, "cmaf/"+cmafInitSegmentName(4)) {
+		t.Error("a fifth representation exists")
+	}
+
+	// Every rung decodes as H.264 in an avc1 sample entry at its own dimensions —
+	// the concat-and-ffprobe technique, so a broken init segment or a mis-mapped
+	// representation cannot hide behind a manifest that reads correctly.
+	for i, r := range f.res.Renditions {
+		assertCMAFRepresentation(t, f, i, "h264", "avc1", r)
+	}
+
+	// The manifests: identical in shape to the software ones. CODECS is computed
+	// by ffmpeg from what it actually wrote, so `avc1.<profile><level>` here is the
+	// muxer agreeing that the GPU produced ordinary H.264.
+	master := f.read(t, "master.m3u8")
+	if n := strings.Count(master, "#EXT-X-STREAM-INF:"); n != 3 {
+		t.Errorf("master has %d variants, want 3:\n%s", n, master)
+	}
+	codecsRE := regexp.MustCompile(`#EXT-X-STREAM-INF:[^\n]*CODECS="(avc1\.[0-9a-f]{6},mp4a\.40\.2)"`)
+	if got := codecsRE.FindAllString(master, -1); len(got) != 3 {
+		t.Errorf("only %d of 3 variants declare avc1 — a hardware rung must be indistinguishable from a software one:\n%s", len(got), master)
+	}
+	for _, unwanted := range []string{"hvc1", "hev1", "av01", `CODECS=",`} {
+		if strings.Contains(master, unwanted) {
+			t.Errorf("the master advertises %q:\n%s", unwanted, master)
+		}
+	}
+	for _, want := range []string{"RESOLUTION=1280x720", "RESOLUTION=854x480", "RESOLUTION=640x360",
+		"#EXT-X-MEDIA:TYPE=AUDIO,", "#EXT-X-I-FRAME-STREAM-INF:"} {
+		if !strings.Contains(master, want) {
+			t.Errorf("master missing %q:\n%s", want, master)
+		}
+	}
+	// Every media playlist is a complete VOD playlist, which is what makes the
+	// tree servable at all.
+	for rep := 0; rep < 4; rep++ {
+		playlist := f.read(t, "cmaf/"+cmafMediaPlaylistName(rep))
+		for _, want := range []string{"#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-ENDLIST"} {
+			if !strings.Contains(playlist, want) {
+				t.Errorf("representation %d missing %q:\n%s", rep, want, playlist)
+			}
+		}
+	}
+
+	mpd := f.read(t, "cmaf/"+cmafManifestFilename)
+	if n := strings.Count(mpd, `contentType="video"`); n != 1 {
+		t.Errorf("MPD has %d video adaptation sets, want 1:\n%s", n, mpd)
+	}
+	if n := strings.Count(mpd, `codecs="avc1.`); n != 3 {
+		t.Errorf("MPD declares %d avc1 representations, want 3:\n%s", n, mpd)
+	}
+
+	// The derived assets — the compatibility floor — all still come off the
+	// hardware-encoded H.264 representations, and are still H.264.
+	for _, r := range f.res.Renditions {
+		assertStoredStreamTypes(t, f.blobs, HLSDownloadKey(r.KeyPrefix, true), "video", "audio")
+		p, err := f.blobs.Path(HLSDownloadKey(r.KeyPrefix, false))
+		if err != nil {
+			t.Fatalf("Path: %v", err)
+		}
+		if got := ffprobeEntries(t, p, "stream=codec_name"); got["codec_name"] != "h264" {
+			t.Errorf("the %dp download is %q, want h264", r.Height, got["codec_name"])
+		}
+	}
+	assertStoredStreamTypes(t, f.blobs, HLSAudioDownloadKey(f.res.MasterKey), "audio")
+	// Trick-play stays libx264 — its own pass, at one frame per second, where a
+	// hardware encoder buys nothing — so it must still be there, once per rung.
+	if n := strings.Count(master, "#EXT-X-I-FRAME-STREAM-INF:"); n != 3 {
+		t.Errorf("%d trick-play entries, want one per rung:\n%s", n, master)
+	}
+}
+
+// TestHardwareCMAFGeometryMatchesSoftware runs the SAME sources through a
+// hardware ladder and a software one and requires every rung's decoded display
+// aspect ratio to agree.
+//
+// Geometry is where a hardware backend is most likely to go wrong quietly. The
+// scale filter sets each rung's sample aspect ratio to whatever preserves the
+// source's display shape through that rung's rounding; an encoder that dropped
+// or overrode that signalling produces a tree that plays perfectly and is
+// stretched. The software CMAF ladder is the reference because the existing
+// geometry tests already prove IT equal to MPEG-TS, so agreeing with it closes
+// the chain.
+func TestHardwareCMAFGeometryMatchesSoftware(t *testing.T) {
+	requireHardware(t, HardwareVideoToolbox)
+	for _, tc := range []struct {
+		name    string
+		genArgs []string
+	}{
+		{"square pixels", hd720WithAudio},
+		// Anamorphic SD: coded dimensions that are not display dimensions, which is
+		// the shape that exposes a dropped SAR.
+		{"anamorphic", []string{
+			"-f", "lavfi", "-i", "testsrc2=duration=4:size=720x576:rate=25",
+			"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+			"-vf", "setsar=64/45", "-an",
+		}},
+		// A single-rung source: the branch with no split at all, where the hardware
+		// filter tail is appended directly to the scale.
+		{"single rung", []string{
+			"-f", "lavfi", "-i", "testsrc2=duration=4:size=320x240:rate=25",
+			"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-an",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			soft := newFixture(t, fixtureOpts{packager: PackagerCMAF, genArgs: tc.genArgs})
+			hard := newFixture(t, fixtureOpts{packager: PackagerCMAF, genArgs: tc.genArgs, hw: HardwareVideoToolbox})
+
+			if len(soft.res.Renditions) != len(hard.res.Renditions) {
+				t.Fatalf("ladders differ: software %d rungs, hardware %d",
+					len(soft.res.Renditions), len(hard.res.Renditions))
+			}
+			for i, r := range soft.res.Renditions {
+				if h := hard.res.Renditions[i]; h.Width != r.Width || h.Height != r.Height {
+					t.Errorf("rung %d is %dx%d on hardware, %dx%d on software",
+						i, h.Width, h.Height, r.Width, r.Height)
+				}
+				want := probedDAR(t, soft.concatRepresentation(t, i))
+				if got := probedDAR(t, hard.concatRepresentation(t, i)); got != want {
+					t.Errorf("rung %dp: hardware segments display at %s, software at %s — the ladder renders this source at the wrong shape on the GPU",
+						r.Height, got, want)
+				}
+			}
+			// And the MPD publishes ONE aspect ratio for the whole video adaptation
+			// set, the same one the software tree publishes.
+			pars := func(f cmafFixture) []string {
+				m := regexp.MustCompile(`par="([^"]*)"`).FindAllStringSubmatch(f.read(t, "cmaf/"+cmafManifestFilename), -1)
+				out := make([]string, 0, len(m))
+				for _, g := range m {
+					out = append(out, g[1])
+				}
+				return out
+			}
+			if got, want := pars(hard), pars(soft); strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Errorf("MPD par: hardware %v, software %v", got, want)
+			}
+		})
+	}
+}
+
+// TestHardwareHEVCLadderIsStillTaggedHVC1 proves the tag survives the transform.
+// It is the detail that makes HEVC usable at all — ffmpeg writes hev1 into fMP4
+// unless told otherwise, Safari refuses it, and the master's codec string then
+// comes out EMPTY — and the transform touches the encoder, which is exactly the
+// kind of change that could have dropped a muxer-level option on the way past.
+func TestHardwareHEVCLadderIsStillTaggedHVC1(t *testing.T) {
+	requireHardware(t, HardwareVideoToolbox)
+	requireEncoders(t, "hevc_videotoolbox")
+	f := newFixture(t, fixtureOpts{packager: PackagerCMAF, genArgs: hd720WithAudio, hevc: true, hw: HardwareVideoToolbox})
+
+	if enc := f.codecs[1].Encoder; enc != "hevc_videotoolbox" {
+		t.Fatalf("HEVC encoder = %q, want hevc_videotoolbox", enc)
+	}
+	for i, r := range f.res.Renditions {
+		assertCMAFRepresentation(t, f, f.rep(0, i), "h264", "avc1", r)
+		assertCMAFRepresentation(t, f, f.rep(1, i), "hevc", "hvc1", r)
+	}
+	master := f.read(t, "master.m3u8")
+	hvc1 := regexp.MustCompile(`#EXT-X-STREAM-INF:[^\n]*CODECS="hvc1\.[^",]+,mp4a\.40\.2"`)
+	if got := hvc1.FindAllString(master, -1); len(got) != 3 {
+		t.Errorf("only %d of 3 HEVC variants carry an hvc1 CODECS attribute:\n%s", len(got), master)
+	}
+	if strings.Contains(master, "hev1") {
+		t.Errorf("the master advertises hev1, which Safari refuses:\n%s", master)
+	}
+	if strings.Contains(master, `CODECS=",`) {
+		t.Errorf("a variant has an empty video codec — the symptom of a lost hvc1 tag:\n%s", master)
+	}
+}
+
+// TestHardwareLadderWithASoftwareCodecBesideIt is the mixed case: H.264 and HEVC
+// on the GPU, AV1 on the CPU, in ONE ffmpeg process off one decode. It is the
+// filter graph's hardest shape — the per-codec fork, with a `null` link for the
+// codec that stayed in system memory — and the thing it proves is that all three
+// representations come out of it decodable.
+func TestHardwareLadderWithASoftwareCodecBesideIt(t *testing.T) {
+	requireHardware(t, HardwareVideoToolbox)
+	requireEncoders(t, "hevc_videotoolbox", "libsvtav1")
+	f := newFixture(t, fixtureOpts{packager: PackagerCMAF, genArgs: hd720WithAudio, hevc: true, av1: true, hw: HardwareVideoToolbox})
+
+	// AV1 stayed on libsvtav1 whatever the backend says.
+	if enc := f.codecs[2].Encoder; enc != "libsvtav1" {
+		t.Fatalf("AV1 encoder = %q, want libsvtav1 — hardware AV1 encode is never selected by this knob", enc)
+	}
+	for i, r := range f.res.Renditions {
+		assertCMAFRepresentation(t, f, f.rep(0, i), "h264", "avc1", r)
+		assertCMAFRepresentation(t, f, f.rep(1, i), "hevc", "hvc1", r)
+		assertCMAFRepresentation(t, f, f.rep(2, i), "av1", "av01", r)
+	}
+	mpd := f.read(t, "cmaf/"+cmafManifestFilename)
+	if n := strings.Count(mpd, `contentType="video"`); n != 3 {
+		t.Errorf("MPD has %d video adaptation sets, want one per codec:\n%s", n, mpd)
+	}
+	if n := strings.Count(mpd, `contentType="audio"`); n != 1 {
+		t.Errorf("MPD has %d audio adaptation sets, want 1 — a codec must not duplicate the audio:\n%s", n, mpd)
+	}
+}
+
+// TestHardwareAudioOnlySourceStillTranscodes covers the plan with no video at
+// all. An audio-only ladder has no filter graph, so it also has no place to put a
+// hardware upload — and a backend that initialised a device it then never used
+// would fail a podcast upload on a host whose GPU is busy.
+func TestHardwareAudioOnlySourceStillTranscodes(t *testing.T) {
+	requireHardware(t, HardwareVideoToolbox)
+	f := newFixture(t, fixtureOpts{packager: PackagerCMAF, hw: HardwareVideoToolbox, genArgs: []string{
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=5", "-c:a", "aac",
+	}})
+	if len(f.res.Renditions) != 0 {
+		t.Errorf("renditions = %+v, want none for an audio-only source", f.res.Renditions)
+	}
+	if !f.stored(t, "cmaf/"+cmafInitSegmentName(0)) {
+		t.Error("the audio representation has no init segment")
+	}
+	assertStoredStreamTypes(t, f.blobs, HLSAudioDownloadKey(f.res.MasterKey), "audio")
 }

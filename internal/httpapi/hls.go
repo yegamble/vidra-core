@@ -59,6 +59,13 @@ const (
 // file": this route is an authorization boundary, and the only reason the
 // PeerTube pass-through below gets a loose pattern is that its tree was written
 // by another program whose naming Vidra does not control.
+//
+// The representation index is unbounded on purpose. A tree has one video
+// representation per ladder rung PER CODEC (TRANSCODING_HEVC_ENABLED /
+// TRANSCODING_AV1_ENABLED) plus the shared audio one, so "how many are there"
+// is a packaging decision this route must not restate — the names are what is
+// pinned, not the count. media's own tests assert every stored object matches
+// this pattern.
 var (
 	hlsRenditionName = regexp.MustCompile(`^[0-9]{2,4}p$`)
 	hlsFileName      = regexp.MustCompile(`^(playlist\.m3u8|iframe\.m3u8|iframe\.ts|seg_[0-9]+\.ts)$`)

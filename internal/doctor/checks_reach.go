@@ -7,9 +7,28 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/setup"
 	"github.com/vidra/vidra-core/internal/storage"
 )
+
+// A NOTE ON THE internal/media IMPORT, WHICH IS AN EXCEPTION TO THIS PACKAGE'S
+// OWN RULE. The extra-codec check below spells its two encoder names out rather
+// than reading them from internal/media, because this package diagnoses a
+// DEPLOYMENT — an env file and a container — and importing the media pipeline at
+// build time to learn two strings would tie the diagnostic to the thing it
+// diagnoses. media.VideoCodecEncoders() exists so a TEST-ONLY import can pin the
+// duplication without creating it, and TestVideoEncoderKnobsMatchTheRegistry does
+// exactly that.
+//
+// The hardware check imports it for real, and the trick above does not reach the
+// case. What it needs is not two constants but an ALGORITHM and a four-row table:
+// which encoders each backend names, which device nodes make it plausible, what
+// the host must provide, and the exact sentence that offers the opt-in. A pinning
+// test can compare two tables; it cannot keep a reimplemented availability rule
+// honest. Mirroring here would be duplicating the feature, and the symptom of a
+// mirror gone stale is a report that recommends a backend the api then refuses to
+// boot on — which is worse than the coupling.
 
 // checkObjectStorage makes one authenticated call against the bucket the api
 // would write uploads into.
@@ -257,6 +276,286 @@ func checkFFmpeg(ctx context.Context, s *state) []Finding {
 	return []Finding{warnf(
 		"the api container is not running, so ffmpeg was only found on the host ("+path+")",
 		"transcodes run inside the api container, not here — bring the stack up and re-run to check the binary that actually does the work")}
+}
+
+// videoEncoderKnobs maps the boot-baked extra-codec settings to the ffmpeg
+// encoder each one needs.
+//
+// The names are spelled out rather than read from internal/media for the same
+// reason internal/config spells the packager names out: this package diagnoses a
+// DEPLOYMENT — an env file and a container — and importing the media pipeline to
+// learn two string constants would tie a diagnostic to the thing it diagnoses.
+// The authority they mirror is the codec registry in internal/media/codec.go;
+// they have to be changed together, and the media package's own boot probe is
+// what actually stops a mismatched deployment.
+var videoEncoderKnobs = []struct{ envVar, encoder, codec string }{
+	{"TRANSCODING_HEVC_ENABLED", "libx265", "HEVC/H.265"},
+	{"TRANSCODING_AV1_ENABLED", "libsvtav1", "AV1"},
+}
+
+// checkVideoEncoders answers the question the extra-codec knobs raise: does the
+// ffmpeg that will actually run the transcodes HAVE the encoder they ask for?
+//
+// It mirrors the boot-time probe the api makes of its own binary, and it is
+// checked where it will be USED — inside the api container when that is running,
+// on the host PATH only as a fallback — because a host ffmpeg built with libx265
+// says nothing about the one in the image, and the two are routinely different.
+//
+// A ✗ rather than a ⚠ when an enabled codec's encoder is missing FROM THE
+// CONTAINER: the api refuses to boot on it, so this is not a degradation, it is
+// why the stack is down. Everything the HOST binary says is a ⚠ either way — see
+// the switch below. A deployment with neither knob on gets a plain ✓: the
+// H.264-only default is the correct configuration, not an absence of one, and a
+// permanent ⚠ on it is how a report teaches people to stop reading it.
+func checkVideoEncoders(ctx context.Context, s *state) []Finding {
+	if s.envErr != nil {
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s)", s.envErr))}
+	}
+	var want []struct{ envVar, encoder, codec string }
+	for _, k := range videoEncoderKnobs {
+		if setup.IsTrue(s.value(k.envVar)) {
+			want = append(want, k)
+		}
+	}
+	if len(want) == 0 {
+		return []Finding{okf("only H.264 is enabled, which every client can play and every ffmpeg can encode — there is no extra encoder to check")}
+	}
+	asked := make([]string, 0, len(want))
+	for _, k := range want {
+		asked = append(asked, k.codec)
+	}
+	list, where, container, why := s.ffmpegEncoders(ctx)
+	if why != "" {
+		return []Finding{warnf(
+			fmt.Sprintf("%s %s enabled, but the ffmpeg that would encode %s could not be asked what it supports (%s)",
+				strings.Join(asked, " and "), plural(len(want), "is", "are"), plural(len(want), "it", "them"), why),
+			"bring the stack up and re-run: the api refuses to boot when an enabled codec's encoder is missing, so this check is how you find that out before a deploy rather than after")}
+	}
+	// A HOST answer is only ever a ⚠, whichever way it comes out. Transcodes run
+	// inside the api container, and this host's ffmpeg is a different build that
+	// says nothing about the image's — so "the host has libx265" is not evidence
+	// the deployment works, and "the host lacks libsvtav1" is not evidence it is
+	// broken. Reporting either as a verdict is worse than reporting neither,
+	// because it names the wrong binary with total confidence.
+	hostFix := "transcodes run inside the api container, not here — bring the stack up and re-run to check the binary that actually does the work"
+	var findings []Finding
+	for _, k := range want {
+		switch {
+		case list[k.encoder] && container:
+			findings = append(findings, okf(fmt.Sprintf("%s is enabled and %s has the %s encoder", k.codec, where, k.encoder)))
+		case list[k.encoder]:
+			findings = append(findings, warnf(
+				fmt.Sprintf("%s is enabled and %s has the %s encoder, but that is not the ffmpeg that will run the transcodes", k.codec, where, k.encoder),
+				hostFix))
+		case container:
+			findings = append(findings, failf(
+				fmt.Sprintf("%s=true, but %s has no %q encoder", k.envVar, where, k.encoder),
+				fmt.Sprintf("the api refuses to boot like this, so nothing is transcoding. Either deploy an ffmpeg built with %s or set %s=false in %s and restart",
+					k.encoder, k.envVar, s.envRel)))
+		default:
+			findings = append(findings, warnf(
+				fmt.Sprintf("%s=true and %s has no %q encoder — but the api container was not available, so this says nothing about the image", k.envVar, where, k.encoder),
+				hostFix))
+		}
+	}
+	return findings
+}
+
+// --- hardware transcoding (phase-3 item 7) -----------------------------------
+
+// hwRenderNodeCandidates are the DRM render nodes this check looks for.
+//
+// A fixed list rather than a glob: Host is the read-only machine interface, it
+// has no ReadDir, and adding one so a diagnostic can enumerate /dev/dri would be
+// more surface than the check earns. renderD128 is the first node the kernel
+// hands out and is the answer on every single-GPU host; the three after it cover
+// the iGPU-plus-discrete-card machines where the interesting question is WHICH
+// node, and past that an operator who has four GPUs knows what they have.
+var hwRenderNodeCandidates = []string{
+	"/dev/dri/renderD128", "/dev/dri/renderD129", "/dev/dri/renderD130", "/dev/dri/renderD131",
+}
+
+// checkHardwareTranscode reports what hardware video encoding is possible here,
+// and never fails.
+//
+// It is INFORMATIONAL by construction, and that is the design rather than
+// timidity. A deployment with no GPU is not misconfigured — CPU encoding is the
+// default, works everywhere, and is what the ladder is budgeted for — so a ⚠ on
+// every ordinary droplet is precisely how a report teaches people to stop reading
+// it. What the check is for is the other direction: telling the operator who
+// HAS the hardware that they are paying for a GPU their transcodes never touch,
+// and telling the one who turned it on whether it can actually work.
+//
+// The device half is "plausibly", not "certainly", and the check says so where it
+// matters. doctor reads the HOST's filesystem; the transcodes run in a container
+// that only has /dev/dri if somebody mapped it in. That gap is the single most
+// likely way this feature fails in production, so a deployment that has turned
+// the knob on is told about it here rather than finding out one dead-lettered
+// upload at a time.
+func checkHardwareTranscode(ctx context.Context, s *state) []Finding {
+	if s.envErr != nil {
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s)", s.envErr))}
+	}
+	configured := s.value("TRANSCODING_HW")
+	if configured == "" {
+		configured = media.HardwareOff
+	}
+	on := configured != media.HardwareOff
+
+	list, where, container, why := s.ffmpegEncoders(ctx)
+	if why != "" {
+		if !on {
+			return []Finding{skipf("the ffmpeg that would encode could not be asked what it supports (" + why + "), so there is nothing to report about hardware encoding. CPU encoding is the default and needs no hardware at all")}
+		}
+		return []Finding{warnf(
+			fmt.Sprintf("TRANSCODING_HW=%s, but the ffmpeg that would use it could not be asked what it supports (%s)", configured, why),
+			"bring the stack up and re-run: the api refuses to boot when the chosen backend's encoder is missing, so this check is how you find that out before a deploy rather than after")}
+	}
+
+	// GOOS is deliberately left EMPTY, and this is the one place the difference
+	// bites. runtime.GOOS here is the platform `vidra doctor` is running on; the
+	// transcodes run inside a Linux container, so on a macOS deployment host the
+	// two disagree and every answer derived from the wrong one is wrong — it would
+	// rule VAAPI out as "linux-only" on the very deployment whose api container is
+	// Linux and has h264_vaapi. The encoder set carries the platform anyway: a
+	// Linux ffmpeg never has *_videotoolbox and a macOS one never has *_vaapi, so
+	// the availability AND already excludes the impossible combinations, and it
+	// excludes them by naming the encoder that is missing — which is the more
+	// actionable half of the reason in any case.
+	probe := media.HardwareProbe{Encoders: list, NVIDIA: s.hasNVIDIA()}
+	for _, node := range hwRenderNodeCandidates {
+		if _, err := s.opt.Host.Stat(node); err == nil {
+			probe.RenderNodes = append(probe.RenderNodes, node)
+		}
+	}
+
+	// A HOST answer is never a verdict about the CONTAINER — the rule the extra-
+	// codec check above states, and it lands harder here. Both halves of the
+	// availability AND are measured on the wrong side of the boundary: this host's
+	// ffmpeg is a different build from the image's, and this host's /dev/dri may or
+	// may not be inside the container. So a host-derived answer says what it is,
+	// and the offer it makes is a lead rather than a finding.
+	if !on {
+		offer, ok := media.FirstAvailableHardware(probe)
+		if !ok {
+			if !container {
+				return []Finding{okf("no hardware video encoder is usable according to " + where + " — but that is not the binary that encodes, so this is not a verdict about the deployment. Either way CPU encoding is the default, is what the ladder is budgeted for, and works on every host")}
+			}
+			return []Finding{okf("no hardware video encoder is usable here, so transcodes run on the CPU — which is the default, is what the ladder is budgeted for, and works on every host")}
+		}
+		if !container {
+			return []Finding{okf(offer.Offer() + " — checked against " + where + ", which is NOT the ffmpeg that runs the transcodes. Bring the stack up and re-run to ask the api container's")}
+		}
+		return []Finding{okf(offer.Offer() + " (checked against " + where + ")")}
+	}
+
+	// The knob is on. Report whether it can work, and never harder than a ⚠: a
+	// wrong value here stops the api booting, which the stack checks already say
+	// far more loudly than a line in the reachability section could.
+	for _, a := range media.DetectHardware(probe) {
+		if a.Backend != configured {
+			continue
+		}
+		if !a.Available {
+			if !container {
+				return []Finding{warnf(
+					fmt.Sprintf("TRANSCODING_HW=%s, and according to %s %s — but that is not the ffmpeg that will run the transcodes, so this says nothing about the image", configured, where, a.Why),
+					"bring the stack up and re-run to ask the api container's ffmpeg, which is the binary the api actually probes at boot")}
+			}
+			return []Finding{warnf(
+				fmt.Sprintf("TRANSCODING_HW=%s, but %s", configured, a.Why),
+				fmt.Sprintf("that backend needs %s. Set TRANSCODING_HW=off in %s to encode on the CPU — which always works — or fix the host and re-run. The api refuses to boot when the encoder is missing, so a stack that will not start is probably this",
+					a.Requires, s.envRel))}
+		}
+		if !container {
+			return []Finding{warnf(
+				fmt.Sprintf("TRANSCODING_HW=%s, and %s has %s — but that is not the ffmpeg that will run the transcodes", configured, where, strings.Join(a.Encoders, " + ")),
+				"bring the stack up and re-run: the api container's ffmpeg is a different build, and it is the one whose missing encoder stops the api booting")}
+		}
+		detail := fmt.Sprintf("TRANSCODING_HW=%s and %s has %s", configured, where, strings.Join(a.Encoders, " + "))
+		if a.Device != "" {
+			// Said every time, because it is the failure this deployment will
+			// actually hit: the encoder is in the image, so the api boots, and the
+			// device was never mapped into the container, so every job dies.
+			return []Finding{okf(detail + fmt.Sprintf(", with %s visible on this host — check the api service maps it in (`devices: [\"/dev/dri:/dev/dri\"]`), because doctor reads the host's /dev and the transcodes read the container's",
+				a.Device))}
+		}
+		return []Finding{okf(detail)}
+	}
+	// An unknown value: config refuses it at boot, so this is a report of a stack
+	// that is not going to start, not a diagnosis of one that is.
+	return []Finding{warnf(
+		fmt.Sprintf("TRANSCODING_HW=%q is not a backend this version knows", configured),
+		fmt.Sprintf("the accepted values are %s; the api refuses to boot on anything else, so fix it in %s",
+			strings.Join(media.HardwareNames(), ", "), s.envRel))}
+}
+
+// hasNVIDIA reports whether this host looks like it has NVIDIA hardware: the
+// control device the driver creates, or the tool that ships with it. Either is
+// enough for a report; neither proves the container can see the card.
+func (s *state) hasNVIDIA() bool {
+	if _, err := s.opt.Host.Stat("/dev/nvidiactl"); err == nil {
+		return true
+	}
+	if _, err := s.opt.Host.Stat("/dev/nvidia0"); err == nil {
+		return true
+	}
+	_, err := s.opt.Host.LookPath("nvidia-smi")
+	return err == nil
+}
+
+// ffmpegEncoders lists the encoder names the deployment's ffmpeg has, preferring
+// the api container's binary over the host's. It returns the set, a phrase naming
+// which binary answered, whether that binary was the CONTAINER's — which is the
+// only one whose answer is a verdict — and, when neither could be asked, why not.
+func (s *state) ffmpegEncoders(ctx context.Context) (list map[string]bool, where string, container bool, why string) {
+	running, reason := s.containers(ctx)
+	if reason == "" {
+		if _, ok := serviceContainer(running, "api"); ok {
+			args := s.composeArgs("exec", "-T", "api", "ffmpeg", "-hide_banner", "-encoders")
+			out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
+			if err == nil && out.ExitCode == 0 {
+				return ffmpegEncoderNames(out.Stdout), "the api container's ffmpeg", true, ""
+			}
+		}
+	}
+	path, err := s.opt.Host.LookPath("ffmpeg")
+	if err != nil {
+		return nil, "", false, "the api container was not available and there is no ffmpeg on this host either"
+	}
+	out, err := s.opt.Host.Run(ctx, s.root, path, "-hide_banner", "-encoders")
+	if err != nil || out.ExitCode != 0 {
+		return nil, "", false, "the api container was not available and the host ffmpeg would not list its encoders"
+	}
+	return ffmpegEncoderNames(out.Stdout), "this host's ffmpeg (" + path + ")", false, ""
+}
+
+// ffmpegEncoderNames is the set of encoder names in `ffmpeg -encoders` output.
+// The listing is a legend, a rule of dashes, and then one indented encoder per
+// line as "<six flag characters> <name> <description>". The legend's own rows
+// share that flag block ("V..... = Video"), so they are told apart by their
+// second field being the "=" no encoder is named.
+func ffmpegEncoderNames(out string) map[string]bool {
+	names := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, " ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 || len(fields[0]) != 6 || fields[1] == "=" {
+			continue
+		}
+		names[fields[1]] = true
+	}
+	return names
+}
+
+// plural picks between two spellings for a count of 1 and a count of more.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // isFalseish is setup.IsTrue's opposite for a knob whose DEFAULT is on:

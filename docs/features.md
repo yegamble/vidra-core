@@ -381,8 +381,25 @@ transcoder additionally emits a progressive VP9/WebM file at the top ladder rung
 It is stored as a `webm` file and surfaced by `GET /api/v1/videos/{id}/download`
 (kind `webm`) and served with Range/206 at `GET /api/v1/videos/{id}/webm`. VP9 is
 a progressive **download alternate** rather than an HLS variant on purpose
-(HLS+VP9 needs fMP4/CMAF with patchy client support). **AV1** is deferred:
-`TRANSCODING_AV1_ENABLED=true` fails config validation with a defer note.
+(HLS+VP9 needs fMP4/CMAF with patchy client support).
+
+### HEVC and AV1 ladder representations
+
+**Extra codecs in the streaming ladder** (`TRANSCODING_HEVC_ENABLED=true` /
+`TRANSCODING_AV1_ENABLED=true`, CMAF packaging only): the same ffmpeg pass that
+encodes the H.264 ladder additionally encodes every rung with `libx265` and/or
+`libsvtav1`, into the **same** CMAF tree — one ffmpeg invocation, one source
+decode, one shared segment directory, whatever the codec count. The MPD gains one
+video adaptation set per codec and the HLS master gains a variant per codec per
+rung, each carrying a `SCORE` (which is what actually steers Apple clients toward
+the efficient codec — manifest order does not) and an `AVERAGE-BANDWIDTH`
+computed from the bytes the tree really stored. Audio is still encoded and stored
+once for the whole tree, and the progressive downloads, the `/download` web
+videos and trick-play stay H.264.
+Both are off by default (an ordinary install produces exactly the H.264 ladder it
+always did), both are boot-baked, and both fail boot rather than degrade quietly
+if the packager is `ts` or the encoder is missing from ffmpeg. See
+[operations.md](operations.md) for the bitrate multipliers and client support.
 
 ### Thumbnails
 

@@ -215,7 +215,16 @@ func (s *Sink) Err() error {
 // rendition actually cost — the equivalent of stat-ing the tree it used to
 // write locally. Buffered playlists count at their current size.
 func (s *Sink) BytesUnder(rel string) int64 {
-	want := s.prefix + "/" + strings.Trim(rel, "/") + "/"
+	return s.BytesMatching(strings.Trim(rel, "/") + "/")
+}
+
+// BytesMatching totals the bytes of every object whose relative path STARTS WITH
+// rel. Unlike BytesUnder it does not treat rel as a directory, so a caller can
+// measure the files of one CMAF representation ("cmaf/chunk-3-") inside a
+// directory that several representations share — which is what the average-
+// bandwidth calculation needs and what a directory total cannot express.
+func (s *Sink) BytesMatching(rel string) int64 {
+	want := s.prefix + "/" + strings.TrimPrefix(rel, "/")
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var total int64

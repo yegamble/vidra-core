@@ -95,6 +95,21 @@ type Packager interface {
 	// would be building a second first-class format.
 	SupportsAudioOnly() bool
 
+	// SupportsMultiCodec reports whether this format can carry the SAME ladder
+	// encoded with several video codecs at once — an H.264 rung and an HEVC rung
+	// and an AV1 rung of the same resolution, side by side, for a player to pick
+	// between.
+	//
+	// Like SupportsAudioOnly it is a structural property, not an unfinished one. A
+	// CMAF tree addresses representations by index inside one shared directory and
+	// groups them into adaptation sets, so a second codec is a second adaptation
+	// set over more representations and nothing else moves. An MPEG-TS variant IS
+	// a rendition directory named for its height, reached by a route that only
+	// resolves "<NNN>p" — there is no room in that naming for a second encoding of
+	// the same height, and inventing one would make the rollback path a second
+	// first-class format to maintain.
+	SupportsMultiCodec() bool
+
 	// ScratchDirs are the directories, relative to the transcode's scratch root,
 	// that must exist before the encode starts. ffmpeg's muxers open their output
 	// files but do not create the parent directories, and the progressive MP4s
@@ -140,7 +155,14 @@ type Packager interface {
 // audio optionally into every rung and simply gets nothing.
 type ladderPlan struct {
 	rungs []HLSRung
-	// labels[i] is the filter-graph output label carrying rung i's frames.
+	// codecs is the video codec plan: this ladder emits one encoded
+	// representation per codec per rung. Empty means the single-codec H.264
+	// ladder every ordinary install produces, which is what a plan built before
+	// codec profiles existed (and every MPEG-TS plan) resolves to.
+	codecs []codecProfile
+	// labels[rep] is the filter-graph output label carrying representation rep's
+	// frames, indexed by repIndex — so labels[i] is still rung i for a
+	// single-codec plan, which is what the MPEG-TS packager reads.
 	labels []string
 	// threads is the job's WHOLE budget, to be divided across the encoders that
 	// now run concurrently in one process.
@@ -152,6 +174,29 @@ type ladderPlan struct {
 	// and would otherwise re-encode every podcast at the ceiling.
 	sourceAudioKbps int
 }
+
+// profiles is the plan's codec list, resolved.
+func (p ladderPlan) profiles() []codecProfile {
+	if len(p.codecs) == 0 {
+		return defaultVideoCodecs
+	}
+	return p.codecs
+}
+
+// videoReps is the number of encoded video representations: one per rung per
+// codec. Zero for an audio-only plan.
+func (p ladderPlan) videoReps() int { return len(p.rungs) * len(p.profiles()) }
+
+// repIndex is the representation index of rung `rung` encoded with codec
+// `codec`, and it is THE definition of the tree's layout: every codec's whole
+// ladder in rung order before the next codec starts, H.264 first.
+//
+// Grouping by codec rather than interleaving by rung is what lets an adaptation
+// set be a contiguous stream range, keeps the H.264 representations at indices
+// 0..len(rungs)-1 — which is what every derived asset (downloads, web videos,
+// trick-play) addresses — and puts the H.264 variants first in the HLS master
+// for players that take the first one they understand.
+func (p ladderPlan) repIndex(codec, rung int) int { return codec*len(p.rungs) + rung }
 
 // audioOnly reports that this plan has no video at all: the source carried none,
 // so there is one audio representation and nothing else. An empty rung slice is
@@ -214,7 +259,11 @@ type packageRequest struct {
 	// ENCODED at, which is what its manifests must declare. It is carried rather
 	// than re-derived because an audio-only tree has no rung to derive it from.
 	audioKbps int
-	tools     packageTools
+	// codecs is the codec plan the ladder was encoded with, H.264 first. Never
+	// empty: finalisation checks ffmpeg's own manifest against it, and "no plan"
+	// would make that check vacuous rather than trivially true.
+	codecs []codecProfile
+	tools  packageTools
 	// onPackagingFailed and onStoreFailed report a fatal error through the
 	// caller's per-rung progress projection before it is returned. Both are
 	// optional.
@@ -319,6 +368,12 @@ func (tsPackager) Name() string { return PackagerTS }
 // structural property of the format rather than a gap to be filled in later.
 func (tsPackager) SupportsAudioOnly() bool { return false }
 
+// SupportsMultiCodec implements Packager: no. A variant here is a rendition
+// directory named for its height, which leaves nowhere to put a second encoding
+// of that height — and this format exists as the config-only rollback from CMAF,
+// so it stays frozen at what it has always produced.
+func (tsPackager) SupportsMultiCodec() bool { return false }
+
 // ScratchDirs implements Packager: one directory per rung, holding that rung's
 // segments (unless the ladder streams) and always its progressive MP4s.
 func (tsPackager) ScratchDirs(rungs []HLSRung) []string {
@@ -336,6 +391,11 @@ func (tsPackager) EphemeralOutputs() []string { return nil }
 // LadderOutputArgs implements Packager: one self-contained -f hls output per
 // rung — its own filter branch, its own optional audio map, its own encoder and
 // its own muxer — which is the shape this package has always emitted.
+//
+// It reads plan.labels[i] for rung i, which is the H.264 representation's label
+// under ladderPlan.repIndex. That is correct because this format is single-codec
+// (SupportsMultiCodec) and the transcoder refuses the combination at boot; a
+// multi-codec plan never reaches here.
 func (p tsPackager) LadderOutputArgs(out output, plan ladderPlan) []string {
 	var args []string
 	per := perOutputThreads(plan.threads, len(plan.rungs))
@@ -561,6 +621,44 @@ func (io treeIO) write(ctx context.Context, name string, body []byte) error {
 		return io.out.sink.Replace(ctx, path.Join(io.rel, name), body)
 	}
 	return os.WriteFile(filepath.Join(io.scratch, name), body, 0o644)
+}
+
+// bytesNamed totals the stored bytes of this directory's files whose names begin
+// with any of the given prefixes, on either transport.
+//
+// It is a NAME prefix and not a directory, because the thing being measured — one
+// CMAF representation's init segment and media segments — shares its directory
+// with every other representation. The prefixes carry the trailing separator
+// ("chunk-1-"), which is what stops representation 1 from swallowing 10's bytes.
+func (io treeIO) bytesNamed(prefixes ...string) (int64, error) {
+	var total int64
+	if io.out.streaming() {
+		for _, prefix := range prefixes {
+			total += io.out.sink.BytesMatching(path.Join(io.rel, prefix))
+		}
+		return total, nil
+	}
+	entries, err := os.ReadDir(io.scratch)
+	if err != nil {
+		return 0, err
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		for _, prefix := range prefixes {
+			if !strings.HasPrefix(e.Name(), prefix) {
+				continue
+			}
+			info, ierr := e.Info()
+			if ierr != nil {
+				return 0, ierr
+			}
+			total += info.Size()
+			break
+		}
+	}
+	return total, nil
 }
 
 // rungIO is treeIO for one ladder rung's own directory.

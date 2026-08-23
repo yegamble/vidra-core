@@ -190,6 +190,8 @@ var checks = []check{
 	{"smtp", SectionReach, checkSMTP},
 	{"search service", SectionReach, checkSearchService},
 	{"ffmpeg", SectionReach, checkFFmpeg},
+	{"video encoders", SectionReach, checkVideoEncoders},
+	{"hardware transcode", SectionReach, checkHardwareTranscode},
 }
 
 // Run executes every check against one deployment and returns the report. It

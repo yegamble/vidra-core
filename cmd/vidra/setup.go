@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/preflight"
 	"github.com/vidra/vidra-core/internal/setup"
 	"github.com/vidra/vidra-core/internal/setupweb"
@@ -1268,6 +1269,9 @@ func report(s streams, path, caddyPath, nginxPath string, sources []string, res 
 	for _, w := range res.Warnings {
 		fmt.Fprintf(s.out, "  ⚠ %s\n", w)
 	}
+	if line := hardwareTranscodeOffer(res.Values); line != "" {
+		fmt.Fprintf(s.out, "  · %s\n", line)
+	}
 	fmt.Fprintf(s.out, "\nNext, render the production compose chain with it (from the deployment directory):\n  %s\n", setup.RenderCheckCommand(path, res.Values))
 
 	// The admin account is NOT in this file and cannot be. The api mints a
@@ -1291,6 +1295,51 @@ owner-claim token at boot and prints it in its own log:
 Every api restart mints a fresh token and invalidates the previous one, so take
 the newest line in the log.
 `, origin)
+}
+
+// hardwareTranscodeOffer is the one line `vidra setup` prints when this host
+// looks like it could encode on a GPU and the generated file is not going to.
+//
+// WHY THIS IS A LINE AND NOT A QUESTION. The brief for hardware transcoding asked
+// for the offer to live in the existing setup flow if the engine had a natural
+// place for an optional question. It does not, and that is a real finding rather
+// than a shortcut: this interview is not generated from a settings registry.
+// Every question is a bespoke block with its own prompt, its own validation and
+// its own field on setup.Answers, mirrored by hand in internal/setupweb and held
+// together by the parity test in setupweb_test.go. Adding one means editing four
+// places, and it would be the only question in the interview whose right answer
+// depends on hardware the operator may be about to change — while every other
+// one is deployment topology (domain, TLS, storage, database, mail, signups) that
+// has to be settled before the stack can come up at all. TRANSCODING_HW does not:
+// it is boot-baked, it defaults to off, and turning it on later is one line in
+// the env file and a restart.
+//
+// So the offer is INFORMATIONAL, printed beside the warnings, and needs no
+// answer. It cannot break an unattended install, it cannot be got wrong, and it
+// says the two things the operator could not otherwise know: that this machine
+// has the hardware, and what to write to use it.
+//
+// It is silent unless it is sure. `vidra setup` normally runs before the stack
+// has ever come up, so the ffmpeg it can ask is the HOST's, which on a fresh
+// droplet does not exist — and the image's does, which is the one that matters.
+// Rather than guess, an unaskable ffmpeg produces no line at all and `vidra
+// doctor` makes the same offer once the container is running and can be asked
+// properly.
+func hardwareTranscodeOffer(values map[string]string) string {
+	if hw := strings.TrimSpace(values["TRANSCODING_HW"]); hw != "" && hw != media.HardwareOff {
+		return "" // already asked for; doctor reports whether it works
+	}
+	bin, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	offer, ok := media.FirstAvailableHardware(media.ProbeHardware(ctx, bin))
+	if !ok {
+		return ""
+	}
+	return offer.Offer() + ". Checked against this host's ffmpeg; run `vidra doctor` once the stack is up to check the container's, which is the one that encodes"
 }
 
 // featureFlags is the optional-component block of the command line: one flag per
