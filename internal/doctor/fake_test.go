@@ -104,6 +104,12 @@ type fakeProber struct {
 	storageMigrationActive bool
 	storageMigrationErr    error
 
+	// The server's max_connections. The baseline is PostgreSQL's own default,
+	// which is what the bundled image ships with, so the healthy deployment's
+	// pool arithmetic is the real one.
+	maxConnections    int
+	maxConnectionsErr error
+
 	retention    storage.BucketRetention
 	retentionErr error
 
@@ -150,6 +156,10 @@ func (p *fakeProber) MigrationStatus(_ context.Context, _, table string) (dbmigr
 
 func (p *fakeProber) ActiveStorageMigration(_ context.Context, _ string) (bool, error) {
 	return p.storageMigrationActive, p.storageMigrationErr
+}
+
+func (p *fakeProber) ServerMaxConnections(_ context.Context, _ string) (int, error) {
+	return p.maxConnections, p.maxConnectionsErr
 }
 
 // ---------------------------------------------------------------------------
@@ -275,8 +285,13 @@ func (h *fakeHost) healthyRespond(name string, args []string) (Output, error) {
 	case name == "docker" && strings.Contains(joined, "exec -T api migrate version"):
 		return Output{Stdout: "version=42 dirty=false\n"}, nil
 	case name == "docker" && strings.Contains(joined, "exec -T postgres psql"):
-		// `psql -tA` prints the bare value and nothing else. On a healthy
-		// deployment nothing is being moved between stores.
+		// `psql -tA` prints the bare value and nothing else. Two different
+		// queries reach the bundled Postgres this way, so the answer depends on
+		// which one it is.
+		if strings.Contains(joined, "max_connections") {
+			return Output{Stdout: "100\n"}, nil
+		}
+		// On a healthy deployment nothing is being moved between stores.
 		return Output{Stdout: "f\n"}, nil
 	case name == "docker" && strings.Contains(joined, "exec -T api ffmpeg"):
 		return Output{Stdout: "ffmpeg version 7.1 Copyright (c) 2000-2024\n"}, nil
@@ -304,6 +319,8 @@ func newFakeProber() *fakeProber {
 			"":                {Version: 42, Applied: true},
 			searchLedgerTable: {Version: 7, Applied: true},
 		},
+		// PostgreSQL's own default, which is what the bundled image ships with.
+		maxConnections: 100,
 	}
 }
 
