@@ -17,6 +17,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/delivery"
+	"github.com/vidra/vidra-core/internal/playback"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -466,15 +468,27 @@ func TestLiveHLSServing(t *testing.T) {
 	if ct := m.Header().Get("Content-Type"); !strings.Contains(ct, "mpegurl") {
 		t.Errorf("master content-type = %q, want an m3u8 type", ct)
 	}
-	if cc := m.Header().Get("Cache-Control"); cc != "no-cache, no-store" {
-		t.Errorf("master Cache-Control = %q, want no-cache, no-store", cc)
+	// Cache policy comes from internal/delivery, not from literals in the live
+	// handler: "why is this response private?" has one answer for live and VOD.
+	// A live playlist and a live segment both sit on stable, unversioned URLs
+	// whose bytes are replaced under them — the playlist every ~2 seconds, the
+	// segment names after every restart — so both revalidate.
+	if cc := m.Header().Get("Cache-Control"); cc != delivery.CacheStableRevalidate {
+		t.Errorf("master Cache-Control = %q, want %q", cc, delivery.CacheStableRevalidate)
 	}
 	seg := getWithAuth(srv, "/api/v1/live/"+id+"/hls/"+id+"-0.ts", "")
 	if seg.Code != http.StatusOK || seg.Body.String() != "TSDATA" {
 		t.Fatalf("segment = %d body=%q", seg.Code, seg.Body.String())
 	}
-	if cc := seg.Header().Get("Cache-Control"); cc != "private, max-age=12" {
-		t.Errorf("segment Cache-Control = %q, want private, max-age=12", cc)
+	if cc := seg.Header().Get("Cache-Control"); cc != delivery.CacheStableRevalidate {
+		t.Errorf("segment Cache-Control = %q, want %q", cc, delivery.CacheStableRevalidate)
+	}
+	// A credentialed live request is no-store, exactly as a credentialed VOD
+	// request is: a ?pt= response is scoped to one caller's authorization and
+	// must not survive it in any cache.
+	credentialed := getWithAuth(srv, "/api/v1/live/"+id+"/hls/master.m3u8?pt=whatever", "")
+	if cc := credentialed.Header().Get("Cache-Control"); cc != delivery.CacheNoStore {
+		t.Errorf("credentialed master Cache-Control = %q, want %q", cc, delivery.CacheNoStore)
 	}
 
 	// A file name that is not this stream's playlist/segment is 404.
@@ -528,6 +542,46 @@ func TestLiveHLSPrivacyGate(t *testing.T) {
 	}
 	if g := getWithAuth(srv, "/api/v1/live/"+id+"/hls/master.m3u8", ada); g.Code != http.StatusOK {
 		t.Errorf("owner private hls = %d, want 200", g.Code)
+	}
+
+	// ...and now the tier live never had: a shareable credential. Every one of
+	// these is anonymous — the token is the ONLY thing being tested.
+	streamID := uuid.MustParse(id)
+	valid := srv.playbackSigner.Sign(streamID, uuid.New(), playback.ScopeLive, time.Hour)
+	cases := []struct {
+		name string
+		pt   string
+		want int
+	}{
+		{"a live token for this stream", valid, http.StatusOK},
+		{"a live token for another stream",
+			srv.playbackSigner.Sign(uuid.New(), uuid.New(), playback.ScopeLive, time.Hour),
+			http.StatusNotFound},
+		{"an expired live token",
+			srv.playbackSigner.Sign(streamID, uuid.New(), playback.ScopeLive, -time.Second),
+			http.StatusNotFound},
+		// A video playback token naming this same UUID must not open the stream.
+		// Videos and live streams are different tables, so the scope is the only
+		// thing standing between the two credentials.
+		{"a video token for this id",
+			srv.playbackSigner.Sign(streamID, uuid.New(), playback.ScopePlayback, time.Hour),
+			http.StatusNotFound},
+		{"a garbage token", "not-a-token", http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		got := getWithAuth(srv, "/api/v1/live/"+id+"/hls/master.m3u8?pt="+url.QueryEscape(tc.pt), "")
+		if got.Code != tc.want {
+			t.Errorf("%s: private hls = %d, want %d", tc.name, got.Code, tc.want)
+		}
+	}
+
+	// The credential widens WHO, never WHEN: once the broadcast ends, the token
+	// that worked a moment ago grants nothing. That is live's revocation.
+	if r := ingestReq(srv, "/api/v1/live/ingest/stop", `{"stream_key":"`+key+`"}`, "s3cret"); r.Code != http.StatusNoContent {
+		t.Fatalf("ingest stop = %d", r.Code)
+	}
+	if g := getWithAuth(srv, "/api/v1/live/"+id+"/hls/master.m3u8?pt="+url.QueryEscape(valid), ""); g.Code != http.StatusNotFound {
+		t.Errorf("token after the broadcast ended = %d, want 404", g.Code)
 	}
 }
 

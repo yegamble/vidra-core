@@ -95,7 +95,7 @@ func (s *Server) newLiveStreamView(st live.Stream) liveStreamView {
 		ChannelHandle: st.ChannelHandle, ChannelDisplayName: st.ChannelDisplayName,
 	}
 	if st.State == live.StateLive && s.cfg.LiveHLSRoot != "" {
-		v.HLSURL = "/api/v1/live/" + st.ID.String() + "/hls/master.m3u8"
+		v.HLSURL = liveHLSMasterURL(st.ID)
 	}
 	return v
 }
@@ -157,7 +157,7 @@ func (s *Server) handleListLivePublicStreams(c echo.Context) error {
 			StartedAt: cd.StartedAt, IsLive: true,
 		}
 		if s.cfg.LiveHLSRoot != "" {
-			v.HLSURL = "/api/v1/live/" + cd.ID.String() + "/hls/master.m3u8"
+			v.HLSURL = liveHLSMasterURL(cd.ID)
 		}
 		views = append(views, v)
 	}

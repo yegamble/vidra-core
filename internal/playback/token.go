@@ -1,16 +1,20 @@
-// Package playback mints and verifies short-lived, video-scoped playback tokens.
+// Package playback mints and verifies short-lived, subject-scoped playback
+// tokens.
 //
-// A playback token authorises reading exactly ONE video's media and detail for a
-// bounded time (6h) and carries NO account identity. Every video read endpoint
-// accepts it as `Authorization: Bearer <token>` or, because Safari native-HLS and
-// progressive <video src> playback cannot set request headers, as a `?pt=` query
-// parameter (the only token type ever honoured in a query string).
+// A playback token authorises reading exactly ONE subject's media for a bounded
+// time (6h) and carries NO account identity. The subject is a video for
+// ScopePlayback and a live stream for ScopeLive; scope and subject are checked
+// together, so a token minted for one can never open the other. Every read
+// endpoint accepts it as `Authorization: Bearer <token>` or, because Safari
+// native-HLS and progressive <video src> playback cannot set request headers, as
+// a `?pt=` query parameter (the only token type ever honoured in a query string).
 //
-// Two mint paths exist, and both go through a playback SESSION:
+// Three mint paths exist, and all of them go through a playback SESSION:
 // POST /videos/{id}/playback-session (phase-4 item 1) hands one to a caller who
-// has already cleared the video's authorization, and POST /videos/{id}/unlock
+// has already cleared the video's authorization, POST /live/{id}/playback-session
+// (phase-4 item 7) does the same for a live stream, and POST /videos/{id}/unlock
 // (CORE-17 / W1.C2) hands one to a caller who just proved the password. A token
-// is only ever minted for a video that actually needs one — see
+// is only ever minted for a subject that actually needs one — see
 // httpapi/playback_session.go for why minting one per viewer would be a delivery
 // regression rather than a feature.
 //
@@ -19,8 +23,8 @@
 //
 // # Payload versions
 //
-// v1 (pre-phase-4) is "<videoID>:<expUnix>": no scope, no session, no version
-// discriminator. v2 is "v2:<videoID>:<sessionID>:<scope>:<expUnix>". Only v2 is
+// v1 (pre-phase-4) is "<subjectID>:<expUnix>": no scope, no session, no version
+// discriminator. v2 is "v2:<subjectID>:<sessionID>:<scope>:<expUnix>". Only v2 is
 // minted; v1 is still VERIFIED so the tokens outstanding at deploy time keep
 // working for the rest of their 6h lifetime. The two grammars cannot be confused
 // for one another in either direction: v1's parser reads everything before the
@@ -58,21 +62,33 @@ const payloadV2Prefix = "v2:"
 // Scope names what a token authorises. It is a closed set: an unrecognised scope
 // fails verification rather than being treated as "no restriction", so widening
 // the set is always a deliberate act.
+//
+// A scope is not decoration. Verification takes the scope the CALLER expects and
+// rejects anything else, so the set can grow without any existing gate silently
+// starting to accept the new authority.
 type Scope string
 
-// ScopePlayback authorises reading one video's media and detail — exactly the
-// authority the pre-phase-4 token carried, now named. Later scopes (a DRM
-// license request, a live segment pull) join it here.
-const ScopePlayback Scope = "playback"
+const (
+	// ScopePlayback authorises reading one video's media and detail — exactly the
+	// authority the pre-phase-4 token carried, now named. Its subject is a video
+	// id. Later scopes (a DRM license request) join it here.
+	ScopePlayback Scope = "playback"
+	// ScopeLive authorises pulling one live stream's playlist and segments while
+	// that stream is live. Its subject is a LIVE STREAM id, which is why the two
+	// scopes must be distinguished rather than sharing "playback": they name
+	// rows in different tables and are gated by different code.
+	ScopeLive Scope = "live"
+)
 
-func (sc Scope) valid() bool { return sc == ScopePlayback }
+func (sc Scope) valid() bool { return sc == ScopePlayback || sc == ScopeLive }
 
 // Claims is a verified token's contents.
 type Claims struct {
 	// Version is the payload grammar the token was minted in (1 or 2).
 	Version int
-	// VideoID is the single video this token authorises.
-	VideoID uuid.UUID
+	// SubjectID is the single row this token authorises: a video for
+	// ScopePlayback, a live stream for ScopeLive.
+	SubjectID uuid.UUID
 	// SessionID correlates this token with the playback session that minted it
 	// (the QoE correlation key, phase-4 item 4). Zero for a v1 token: they were
 	// minted before sessions existed.
@@ -99,7 +115,7 @@ func NewSigner(secret []byte) *Signer {
 	return &Signer{key: mac.Sum(nil), now: time.Now}
 }
 
-// Sign returns a v2 token authorising scope on videoID, under sessionID, until
+// Sign returns a v2 token authorising scope on subjectID, under sessionID, until
 // now+ttl. The wire format is unchanged — base64url(payload) "."
 // base64url(HMAC-SHA256(payload)), both RawURL-encoded so the token is a safe
 // ?pt= query value — only the payload grammar is versioned.
@@ -107,32 +123,39 @@ func NewSigner(secret []byte) *Signer {
 // An invalid scope mints nothing (empty string) rather than a token that would
 // fail its own verification: a caller passing a scope this package does not know
 // is a programming error, and an empty token fails every gate loudly.
-func (s *Signer) Sign(videoID, sessionID uuid.UUID, scope Scope, ttl time.Duration) string {
+func (s *Signer) Sign(subjectID, sessionID uuid.UUID, scope Scope, ttl time.Duration) string {
 	if !scope.valid() {
 		return ""
 	}
 	exp := s.now().Add(ttl).Unix()
-	payload := payloadV2Prefix + videoID.String() + ":" + sessionID.String() + ":" +
+	payload := payloadV2Prefix + subjectID.String() + ":" + sessionID.String() + ":" +
 		string(scope) + ":" + strconv.FormatInt(exp, 10)
 	sig := s.mac([]byte(payload))
 	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." +
 		base64.RawURLEncoding.EncodeToString(sig)
 }
 
-// Verify reports whether token is a valid, unexpired token scoped to videoID.
-func (s *Signer) Verify(token string, videoID uuid.UUID) bool {
-	_, ok := s.VerifyClaims(token, videoID)
+// Verify reports whether token is a valid, unexpired token granting scope on
+// subjectID.
+func (s *Signer) Verify(token string, subjectID uuid.UUID, scope Scope) bool {
+	_, ok := s.VerifyClaims(token, subjectID, scope)
 	return ok
 }
 
-// VerifyClaims verifies token against videoID and returns what it carries. It
-// checks the signature in constant time BEFORE trusting any payload contents,
-// and rejects tampering, a token minted for a different video, an unknown
+// VerifyClaims verifies token against subjectID and the scope the caller
+// expects, and returns what it carries. It checks the signature in constant time
+// BEFORE trusting any payload contents, and rejects tampering, a token minted
+// for a different subject, a token minted for a different scope, an unknown
 // scope, expiry, and any malformed input (it never panics).
+//
+// The scope is an ARGUMENT rather than something the caller reads off the
+// returned claims, because a gate that has to remember to check afterwards is a
+// gate that eventually forgets. A v1 token reports ScopePlayback, so the
+// compatibility window covers video playback and nothing else.
 //
 // Both payload versions are accepted here and only here — every caller sees one
 // Claims shape, so the v1 compatibility window is invisible above this line.
-func (s *Signer) VerifyClaims(token string, videoID uuid.UUID) (Claims, bool) {
+func (s *Signer) VerifyClaims(token string, subjectID uuid.UUID, scope Scope) (Claims, bool) {
 	dot := strings.IndexByte(token, '.')
 	if dot <= 0 || dot >= len(token)-1 {
 		return Claims{}, false
@@ -149,7 +172,7 @@ func (s *Signer) VerifyClaims(token string, videoID uuid.UUID) (Claims, bool) {
 		return Claims{}, false
 	}
 	claims, ok := parsePayload(string(payload))
-	if !ok || claims.VideoID != videoID {
+	if !ok || claims.SubjectID != subjectID || claims.Scope != scope {
 		return Claims{}, false
 	}
 	if !s.now().Before(claims.ExpiresAt) {
@@ -174,9 +197,9 @@ func parsePayload(p string) (Claims, bool) {
 	return parsePayloadV1(p)
 }
 
-// parsePayloadV1 splits "<videoID>:<expUnix>". A v2 payload cannot reach a valid
+// parsePayloadV1 splits "<subjectID>:<expUnix>". A v2 payload cannot reach a valid
 // result here: everything before the last ':' has to parse as a UUID, and
-// "v2:<videoID>:<sessionID>:<scope>" does not.
+// "v2:<subjectID>:<sessionID>:<scope>" does not.
 func parsePayloadV1(p string) (Claims, bool) {
 	i := strings.LastIndexByte(p, ':')
 	if i <= 0 {
@@ -192,13 +215,13 @@ func parsePayloadV1(p string) (Claims, bool) {
 	}
 	return Claims{
 		Version:   1,
-		VideoID:   vid,
+		SubjectID: vid,
 		Scope:     ScopePlayback,
 		ExpiresAt: time.Unix(exp, 0),
 	}, true
 }
 
-// parsePayloadV2 splits "<videoID>:<sessionID>:<scope>:<expUnix>" (the "v2:"
+// parsePayloadV2 splits "<subjectID>:<sessionID>:<scope>:<expUnix>" (the "v2:"
 // prefix already removed). Exactly four fields: a scope is drawn from a closed
 // set that contains no ':', so a payload with more separators is malformed
 // rather than "a scope with a colon in it".
@@ -225,7 +248,7 @@ func parsePayloadV2(p string) (Claims, bool) {
 	}
 	return Claims{
 		Version:   2,
-		VideoID:   vid,
+		SubjectID: vid,
 		SessionID: sid,
 		Scope:     scope,
 		ExpiresAt: time.Unix(exp, 0),
