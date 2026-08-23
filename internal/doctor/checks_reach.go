@@ -7,9 +7,28 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/setup"
 	"github.com/vidra/vidra-core/internal/storage"
 )
+
+// A NOTE ON THE internal/media IMPORT, WHICH IS AN EXCEPTION TO THIS PACKAGE'S
+// OWN RULE. The extra-codec check below spells its two encoder names out rather
+// than reading them from internal/media, because this package diagnoses a
+// DEPLOYMENT — an env file and a container — and importing the media pipeline at
+// build time to learn two strings would tie the diagnostic to the thing it
+// diagnoses. media.VideoCodecEncoders() exists so a TEST-ONLY import can pin the
+// duplication without creating it, and TestVideoEncoderKnobsMatchTheRegistry does
+// exactly that.
+//
+// The hardware check imports it for real, and the trick above does not reach the
+// case. What it needs is not two constants but an ALGORITHM and a four-row table:
+// which encoders each backend names, which device nodes make it plausible, what
+// the host must provide, and the exact sentence that offers the opt-in. A pinning
+// test can compare two tables; it cannot keep a reimplemented availability rule
+// honest. Mirroring here would be duplicating the feature, and the symptom of a
+// mirror gone stale is a report that recommends a backend the api then refuses to
+// boot on — which is worse than the coupling.
 
 // checkObjectStorage makes one authenticated call against the bucket the api
 // would write uploads into.
@@ -340,6 +359,149 @@ func checkVideoEncoders(ctx context.Context, s *state) []Finding {
 		}
 	}
 	return findings
+}
+
+// --- hardware transcoding (phase-3 item 7) -----------------------------------
+
+// hwRenderNodeCandidates are the DRM render nodes this check looks for.
+//
+// A fixed list rather than a glob: Host is the read-only machine interface, it
+// has no ReadDir, and adding one so a diagnostic can enumerate /dev/dri would be
+// more surface than the check earns. renderD128 is the first node the kernel
+// hands out and is the answer on every single-GPU host; the three after it cover
+// the iGPU-plus-discrete-card machines where the interesting question is WHICH
+// node, and past that an operator who has four GPUs knows what they have.
+var hwRenderNodeCandidates = []string{
+	"/dev/dri/renderD128", "/dev/dri/renderD129", "/dev/dri/renderD130", "/dev/dri/renderD131",
+}
+
+// checkHardwareTranscode reports what hardware video encoding is possible here,
+// and never fails.
+//
+// It is INFORMATIONAL by construction, and that is the design rather than
+// timidity. A deployment with no GPU is not misconfigured — CPU encoding is the
+// default, works everywhere, and is what the ladder is budgeted for — so a ⚠ on
+// every ordinary droplet is precisely how a report teaches people to stop reading
+// it. What the check is for is the other direction: telling the operator who
+// HAS the hardware that they are paying for a GPU their transcodes never touch,
+// and telling the one who turned it on whether it can actually work.
+//
+// The device half is "plausibly", not "certainly", and the check says so where it
+// matters. doctor reads the HOST's filesystem; the transcodes run in a container
+// that only has /dev/dri if somebody mapped it in. That gap is the single most
+// likely way this feature fails in production, so a deployment that has turned
+// the knob on is told about it here rather than finding out one dead-lettered
+// upload at a time.
+func checkHardwareTranscode(ctx context.Context, s *state) []Finding {
+	if s.envErr != nil {
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s)", s.envErr))}
+	}
+	configured := s.value("TRANSCODING_HW")
+	if configured == "" {
+		configured = media.HardwareOff
+	}
+	on := configured != media.HardwareOff
+
+	list, where, container, why := s.ffmpegEncoders(ctx)
+	if why != "" {
+		if !on {
+			return []Finding{skipf("the ffmpeg that would encode could not be asked what it supports (" + why + "), so there is nothing to report about hardware encoding. CPU encoding is the default and needs no hardware at all")}
+		}
+		return []Finding{warnf(
+			fmt.Sprintf("TRANSCODING_HW=%s, but the ffmpeg that would use it could not be asked what it supports (%s)", configured, why),
+			"bring the stack up and re-run: the api refuses to boot when the chosen backend's encoder is missing, so this check is how you find that out before a deploy rather than after")}
+	}
+
+	// GOOS is deliberately left EMPTY, and this is the one place the difference
+	// bites. runtime.GOOS here is the platform `vidra doctor` is running on; the
+	// transcodes run inside a Linux container, so on a macOS deployment host the
+	// two disagree and every answer derived from the wrong one is wrong — it would
+	// rule VAAPI out as "linux-only" on the very deployment whose api container is
+	// Linux and has h264_vaapi. The encoder set carries the platform anyway: a
+	// Linux ffmpeg never has *_videotoolbox and a macOS one never has *_vaapi, so
+	// the availability AND already excludes the impossible combinations, and it
+	// excludes them by naming the encoder that is missing — which is the more
+	// actionable half of the reason in any case.
+	probe := media.HardwareProbe{Encoders: list, NVIDIA: s.hasNVIDIA()}
+	for _, node := range hwRenderNodeCandidates {
+		if _, err := s.opt.Host.Stat(node); err == nil {
+			probe.RenderNodes = append(probe.RenderNodes, node)
+		}
+	}
+
+	// A HOST answer is never a verdict about the CONTAINER — the rule the extra-
+	// codec check above states, and it lands harder here. Both halves of the
+	// availability AND are measured on the wrong side of the boundary: this host's
+	// ffmpeg is a different build from the image's, and this host's /dev/dri may or
+	// may not be inside the container. So a host-derived answer says what it is,
+	// and the offer it makes is a lead rather than a finding.
+	if !on {
+		offer, ok := media.FirstAvailableHardware(probe)
+		if !ok {
+			if !container {
+				return []Finding{okf("no hardware video encoder is usable according to " + where + " — but that is not the binary that encodes, so this is not a verdict about the deployment. Either way CPU encoding is the default, is what the ladder is budgeted for, and works on every host")}
+			}
+			return []Finding{okf("no hardware video encoder is usable here, so transcodes run on the CPU — which is the default, is what the ladder is budgeted for, and works on every host")}
+		}
+		if !container {
+			return []Finding{okf(offer.Offer() + " — checked against " + where + ", which is NOT the ffmpeg that runs the transcodes. Bring the stack up and re-run to ask the api container's")}
+		}
+		return []Finding{okf(offer.Offer() + " (checked against " + where + ")")}
+	}
+
+	// The knob is on. Report whether it can work, and never harder than a ⚠: a
+	// wrong value here stops the api booting, which the stack checks already say
+	// far more loudly than a line in the reachability section could.
+	for _, a := range media.DetectHardware(probe) {
+		if a.Backend != configured {
+			continue
+		}
+		if !a.Available {
+			if !container {
+				return []Finding{warnf(
+					fmt.Sprintf("TRANSCODING_HW=%s, and according to %s %s — but that is not the ffmpeg that will run the transcodes, so this says nothing about the image", configured, where, a.Why),
+					"bring the stack up and re-run to ask the api container's ffmpeg, which is the binary the api actually probes at boot")}
+			}
+			return []Finding{warnf(
+				fmt.Sprintf("TRANSCODING_HW=%s, but %s", configured, a.Why),
+				fmt.Sprintf("that backend needs %s. Set TRANSCODING_HW=off in %s to encode on the CPU — which always works — or fix the host and re-run. The api refuses to boot when the encoder is missing, so a stack that will not start is probably this",
+					a.Requires, s.envRel))}
+		}
+		if !container {
+			return []Finding{warnf(
+				fmt.Sprintf("TRANSCODING_HW=%s, and %s has %s — but that is not the ffmpeg that will run the transcodes", configured, where, strings.Join(a.Encoders, " + ")),
+				"bring the stack up and re-run: the api container's ffmpeg is a different build, and it is the one whose missing encoder stops the api booting")}
+		}
+		detail := fmt.Sprintf("TRANSCODING_HW=%s and %s has %s", configured, where, strings.Join(a.Encoders, " + "))
+		if a.Device != "" {
+			// Said every time, because it is the failure this deployment will
+			// actually hit: the encoder is in the image, so the api boots, and the
+			// device was never mapped into the container, so every job dies.
+			return []Finding{okf(detail + fmt.Sprintf(", with %s visible on this host — check the api service maps it in (`devices: [\"/dev/dri:/dev/dri\"]`), because doctor reads the host's /dev and the transcodes read the container's",
+				a.Device))}
+		}
+		return []Finding{okf(detail)}
+	}
+	// An unknown value: config refuses it at boot, so this is a report of a stack
+	// that is not going to start, not a diagnosis of one that is.
+	return []Finding{warnf(
+		fmt.Sprintf("TRANSCODING_HW=%q is not a backend this version knows", configured),
+		fmt.Sprintf("the accepted values are %s; the api refuses to boot on anything else, so fix it in %s",
+			strings.Join(media.HardwareNames(), ", "), s.envRel))}
+}
+
+// hasNVIDIA reports whether this host looks like it has NVIDIA hardware: the
+// control device the driver creates, or the tool that ships with it. Either is
+// enough for a report; neither proves the container can see the card.
+func (s *state) hasNVIDIA() bool {
+	if _, err := s.opt.Host.Stat("/dev/nvidiactl"); err == nil {
+		return true
+	}
+	if _, err := s.opt.Host.Stat("/dev/nvidia0"); err == nil {
+		return true
+	}
+	_, err := s.opt.Host.LookPath("nvidia-smi")
+	return err == nil
 }
 
 // ffmpegEncoders lists the encoder names the deployment's ffmpeg has, preferring

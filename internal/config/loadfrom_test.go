@@ -855,3 +855,127 @@ func TestTranscodingPackagerKnob(t *testing.T) {
 		}
 	})
 }
+
+// TestTranscodingHardwareKnob covers the hardware-encoder enum (phase-3 item 7).
+//
+// The default is the whole point of the test: hardware is opt-in by NAME, there
+// is no `auto`, and an install that says nothing must get software encoding —
+// the only configuration that works on a host with no GPU, no driver and no
+// device node, which is most of them.
+func TestTranscodingHardwareKnob(t *testing.T) {
+	load := func(extra map[string]string) (*Config, error) {
+		env := productionCandidate()
+		for k, v := range extra {
+			env[k] = v
+		}
+		return LoadFrom(func(key string) (string, bool) {
+			v, ok := env[key]
+			return v, ok
+		})
+	}
+
+	t.Run("an unset install encodes on the CPU", func(t *testing.T) {
+		cfg, err := load(nil)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		if got := cfg.HardwareTranscode(); got != "off" {
+			t.Errorf("TRANSCODING_HW default = %q, want off", got)
+		}
+		if cfg.HardwareTranscodeEnabled() {
+			t.Error("HardwareTranscodeEnabled on an unset install")
+		}
+		// "" is off too: a Config assembled by hand has the same zero value as one
+		// whose variable was never set, and both must mean software.
+		cfg, err = load(map[string]string{"TRANSCODING_HW": ""})
+		if err != nil {
+			t.Fatalf("TRANSCODING_HW= was rejected: %v", err)
+		}
+		if cfg.HardwareTranscode() != "off" {
+			t.Errorf("TRANSCODING_HW= resolved to %q", cfg.HardwareTranscode())
+		}
+	})
+
+	t.Run("every implemented backend is accepted", func(t *testing.T) {
+		for _, hw := range []string{"off", "videotoolbox", "vaapi", "qsv", "nvenc"} {
+			cfg, err := load(map[string]string{"TRANSCODING_HW": hw})
+			if err != nil {
+				t.Errorf("TRANSCODING_HW=%s was rejected: %v", hw, err)
+				continue
+			}
+			if cfg.HardwareTranscode() != hw {
+				t.Errorf("TRANSCODING_HW=%s resolved to %q", hw, cfg.HardwareTranscode())
+			}
+			if want := hw != "off"; cfg.HardwareTranscodeEnabled() != want {
+				t.Errorf("TRANSCODING_HW=%s: enabled = %v, want %v", hw, cfg.HardwareTranscodeEnabled(), want)
+			}
+		}
+	})
+
+	t.Run("an unknown backend refuses to boot, named", func(t *testing.T) {
+		// "auto" is in the list deliberately. It is the value an operator most
+		// expects to exist, and accepting it — or worse, silently treating it as
+		// off — would make a deployment's encoder depend on what happened to be in
+		// /dev that morning.
+		for _, bad := range []string{"auto", "AUTO", "VAAPI", "vappi", "cuda", "true", "yes", "intel"} {
+			_, err := load(map[string]string{"TRANSCODING_HW": bad})
+			if err == nil {
+				t.Errorf("TRANSCODING_HW=%q was accepted", bad)
+				continue
+			}
+			if _, ok := collectVarErrors(err)["TRANSCODING_HW"]; !ok {
+				t.Errorf("TRANSCODING_HW=%q: the error is not attributed to the variable: %v", bad, err)
+			}
+		}
+	})
+
+	t.Run("hardware needs the CMAF packager", func(t *testing.T) {
+		// Same rule as the extra codecs, for a related reason: MPEG-TS is the frozen
+		// rollback format, and going back to it must be a change of container and
+		// nothing else.
+		for _, hw := range []string{"videotoolbox", "vaapi", "qsv", "nvenc"} {
+			_, err := load(map[string]string{"TRANSCODING_HW": hw, "TRANSCODING_PACKAGER": "ts"})
+			if err == nil {
+				t.Errorf("TRANSCODING_HW=%s was accepted with the MPEG-TS packager", hw)
+				continue
+			}
+			if _, ok := collectVarErrors(err)["TRANSCODING_HW"]; !ok {
+				t.Errorf("TRANSCODING_HW=%s + ts: not attributed to the variable: %v", hw, err)
+			}
+			if !strings.Contains(err.Error(), "TRANSCODING_PACKAGER") {
+				t.Errorf("TRANSCODING_HW=%s + ts: the error does not name the other half: %v", hw, err)
+			}
+		}
+		// off + ts is the ordinary rollback deployment and must stay boot-able.
+		if _, err := load(map[string]string{"TRANSCODING_HW": "off", "TRANSCODING_PACKAGER": "ts"}); err != nil {
+			t.Errorf("off + ts was rejected: %v", err)
+		}
+	})
+
+	t.Run("the device path belongs to the backends that read one", func(t *testing.T) {
+		if _, err := load(map[string]string{"TRANSCODING_HW": "vaapi", "TRANSCODING_HW_DEVICE": "/dev/dri/renderD129"}); err != nil {
+			t.Errorf("vaapi refused its own render node: %v", err)
+		}
+		// Refused rather than ignored: an operator who wrote a path expects it to be
+		// used, and a silently dropped one is how a multi-GPU host ends up on the
+		// wrong card with nothing at all to show for it.
+		for _, hw := range []string{"off", "videotoolbox", "nvenc"} {
+			_, err := load(map[string]string{"TRANSCODING_HW": hw, "TRANSCODING_HW_DEVICE": "/dev/dri/renderD128"})
+			if err == nil {
+				t.Errorf("TRANSCODING_HW=%s accepted a device path it will not use", hw)
+				continue
+			}
+			if _, ok := collectVarErrors(err)["TRANSCODING_HW_DEVICE"]; !ok {
+				t.Errorf("TRANSCODING_HW=%s + device: not attributed to the device variable: %v", hw, err)
+			}
+		}
+		// A relative path resolves against whatever directory the worker happens to
+		// run in, which is not something an operator can reason about.
+		_, err := load(map[string]string{"TRANSCODING_HW": "vaapi", "TRANSCODING_HW_DEVICE": "dri/renderD128"})
+		if err == nil {
+			t.Error("a relative TRANSCODING_HW_DEVICE was accepted")
+		} else if _, ok := collectVarErrors(err)["TRANSCODING_HW_DEVICE"]; !ok {
+			t.Errorf("a relative device path is not attributed to the variable: %v", err)
+		}
+	})
+}

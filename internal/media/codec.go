@@ -29,12 +29,17 @@ import (
 // a codec ends up half-added. They are stated once, here, and the builders read
 // them.
 //
-// WHAT IS DELIBERATELY NOT HERE: hardware encoders (they are a different
-// decision — availability is per HOST, not per build, and a fallback policy has
-// to exist before one can be offered), PER-TITLE analysis (the CRF below is a
-// fixed quality target, not one derived from the source's own complexity), and
-// any MPEG-TS spelling of any of this. TRANSCODING_PACKAGER=ts is the frozen
+// WHAT IS DELIBERATELY NOT HERE: PER-TITLE analysis (the CRF below is a fixed
+// quality target, not one derived from the source's own complexity), and any
+// MPEG-TS spelling of any of this. TRANSCODING_PACKAGER=ts is the frozen
 // compatibility/rollback path and stays single-codec H.264 by construction.
+//
+// HARDWARE ENCODERS ARE NOT ROWS IN THIS REGISTRY. They are a TRANSFORM of these
+// profiles, and they live in hwaccel.go — because availability is per HOST rather
+// than per build, and because the thing a backend is allowed to change is how a
+// representation is produced and never what it IS. h264_videotoolbox emits the
+// same `avc1.*` at the same budget in the same adaptation set as libx264; if it
+// did not, it would be a fourth codec and would belong here instead.
 
 // The operator-facing codec names. They are also what a profile reports as its
 // own Name, so a log line or an error message says "hevc" and not "libx265".
@@ -74,14 +79,27 @@ type codecProfile struct {
 	// what this pipeline emits.
 	Profile string
 
-	// Preset is the -preset value. Note the type collision the registry exists to
-	// absorb: x264/x265 presets are WORDS ("veryfast"), SVT-AV1's is an INTEGER
-	// 0–13 where higher is faster.
+	// Preset is the -preset value, or "" when the encoder has no such option (no
+	// software encoder here is in that position; several hardware ones are). Note
+	// the type collision the registry exists to absorb: x264/x265 presets are
+	// WORDS ("veryfast"), SVT-AV1's is an INTEGER 0–13 where higher is faster.
 	Preset string
+
+	// PixFmt is the -pix_fmt value, or "" to omit it. Every software profile is
+	// yuv420p — 8-bit 4:2:0 is what this pipeline emits and what every decoder
+	// has — and "" exists for the hardware backends whose encoders read frames
+	// that a filter has already put in GPU memory, where naming a software format
+	// contradicts the graph rather than converting anything.
+	PixFmt string
 
 	// Rate is how this encoder is told what to spend. See rateControl: the two
 	// modes exist because the encoders genuinely disagree about what they accept,
 	// and getting it wrong here is what makes a manifest lie.
+	//
+	// A hardware backend inherits it UNCHANGED, along with CRF and ScoreBonus.
+	// That is deliberate and it is the identity rule stated as code: the ceiling
+	// the master playlist promises is a property of the RUNG, not of the silicon,
+	// so h264_vaapi is held to exactly the budget libx264 was.
 	Rate rateControl
 
 	// CRF is the quality target for rateCappedCRF, ignored otherwise.
@@ -113,9 +131,15 @@ type codecProfile struct {
 	// numbers come from.
 	BitrateMultiplier float64
 
-	// EnvVar is the boot-baked knob that turns this codec on, named in the
-	// availability probe's failure so an operator is told what to switch off
-	// rather than left to guess. Empty for H.264, which cannot be turned off.
+	// EnvVar is the boot-baked knob that put this ENCODER in the plan, named in
+	// the availability probe's failure so an operator is told what to switch off
+	// rather than left to guess.
+	//
+	// Empty for software H.264, which cannot be turned off. It is NOT empty for
+	// hardware H.264: once libx264 has been swapped for h264_vaapi there is a knob
+	// again, and it is TRANSCODING_HW (hwaccel.go's withHardware fills it in). That
+	// is why "is this codec optional?" must be asked through codecKnob and not by
+	// testing this field — the two questions came apart when hardware arrived.
 	EnvVar string
 
 	// Compat and Cost are the operator-facing notes: which clients can play this,
@@ -123,6 +147,33 @@ type codecProfile struct {
 	// profile instead of drifting in a wiki.
 	Compat string
 	Cost   string
+
+	// --- the hardware transform's half (hwaccel.go) --------------------------
+	//
+	// All four are zero on every software profile, which is what makes an
+	// ordinary install's argument vector and filter graph byte-for-byte the ones
+	// that predate hardware support.
+
+	// ExtraArgs are encoder-private options beyond preset/profile/rate control,
+	// rendered after the rate-control block.
+	ExtraArgs []encodeOpt
+
+	// FilterChain is the filter tail this profile's representations need appended
+	// to their scaled branch, without a leading comma — the GPU upload for the
+	// backends whose encoders cannot read system memory. It is the one field that
+	// reaches out of the encoder arguments and into the filter graph, and it is
+	// why the graph forks per CODEC and not only per rung when it is set.
+	FilterChain string
+
+	// InitArgs are GLOBAL arguments (before the input) that establish the hardware
+	// device this profile's encoder and filter tail share.
+	InitArgs []string
+
+	// Hardware is the TRANSCODING_HW backend name this profile was transformed
+	// for, "" for software. It is carried so a failure can name the backend and
+	// the knob that turns it off, which is the whole of the no-silent-fallback
+	// policy the pipeline commits to.
+	Hardware string
 }
 
 // rateControl is HOW an encoder is told what to spend — and it is a per-codec
@@ -271,6 +322,7 @@ var (
 		Encoder:           "libx264",
 		Profile:           "main",
 		Preset:            "veryfast",
+		PixFmt:            "yuv420p",
 		Rate:              rateCappedVBR,
 		ScoreBonus:        h264ScoreBonus,
 		CodecsID:          "avc1",
@@ -285,6 +337,7 @@ var (
 		Tag:               "hvc1",
 		Profile:           "main",
 		Preset:            "veryfast",
+		PixFmt:            "yuv420p",
 		Rate:              rateCappedVBR,
 		ScoreBonus:        hevcScoreBonus,
 		CodecsID:          "hvc1",
@@ -301,6 +354,7 @@ var (
 		// is the usual VOD compromise and is roughly comparable in wall-clock to
 		// x265's veryfast on the same content.
 		Preset:            "8",
+		PixFmt:            "yuv420p",
 		Rate:              rateCappedCRF,
 		CRF:               av1CRF,
 		ScoreBonus:        av1ScoreBonus,
@@ -455,6 +509,23 @@ func verifiedAgainstEncoderListing(ffmpegBin string, want []codecProfile, have m
 				continue
 			}
 			knob := p.EnvVar
+			// A hardware plan reaches here BY CONSTRUCTION rather than by a special
+			// case: baselineEncoders is keyed on the encoder name, so swapping
+			// libx264 for h264_vaapi makes the plan non-baseline. It needs its own
+			// sentence for the same reason the listing-succeeded arm below does —
+			// TRANSCODING_HW is an ENUM, and the boolean phrasing further down would
+			// tell the operator to write "TRANSCODING_HW=false", which is not a value
+			// and would not boot.
+			if p.Hardware != "" {
+				if codec := p.codecKnob(); codec != "" {
+					return fmt.Errorf("media: %s=true with TRANSCODING_HW=%s needs the %q encoder, and there is no ffmpeg at %q to check for it; "+
+						"install ffmpeg (built with %s), or set TRANSCODING_HW=off (%s then encodes with %s on the CPU) or %s=false",
+						codec, p.Hardware, p.Encoder, ffmpegBin, p.Encoder, p.Name, softwareEncoderFor(p.Name), codec)
+				}
+				return fmt.Errorf("media: TRANSCODING_HW=%s needs the %q encoder, and there is no ffmpeg at %q to check for it; "+
+					"install ffmpeg (built with %s), or set TRANSCODING_HW=off to encode on the CPU",
+					p.Hardware, p.Encoder, ffmpegBin, p.Encoder)
+			}
 			if knob == "" {
 				return fmt.Errorf("media: the %q encoder is needed but there is no ffmpeg at %q to provide it: %w",
 					p.Encoder, ffmpegBin, listErr)
@@ -474,6 +545,22 @@ func verifiedAgainstEncoderListing(ffmpegBin string, want []codecProfile, have m
 			continue
 		}
 		knob := p.EnvVar
+		// A hardware profile's missing encoder is a different diagnosis from a
+		// software one's, and conflating them sends the operator to the wrong fix.
+		// "This ffmpeg has no hevc_qsv" is never solved by turning HEVC off if what
+		// they wanted was HEVC — it is solved by turning the BACKEND off, which
+		// leaves HEVC on libx265 — so the message names the COMBINATION and offers
+		// both exits in the order that keeps the most of what was asked for.
+		if p.Hardware != "" {
+			if codec := p.codecKnob(); codec != "" {
+				return fmt.Errorf("media: %s=true with TRANSCODING_HW=%s needs the %q encoder and this ffmpeg (%s) does not have it; "+
+					"set TRANSCODING_HW=off (%s then encodes with %s on the CPU) or %s=false, or deploy an ffmpeg built with %q",
+					codec, p.Hardware, p.Encoder, ffmpegBin, p.Name, softwareEncoderFor(p.Name), codec, p.Encoder)
+			}
+			return fmt.Errorf("media: TRANSCODING_HW=%s needs the %q encoder and this ffmpeg (%s) does not have it; "+
+				"set TRANSCODING_HW=off to encode on the CPU, or deploy an ffmpeg built with %s",
+				p.Hardware, p.Encoder, ffmpegBin, p.Encoder)
+		}
 		if knob == "" {
 			// H.264 has no knob to turn off, and an ffmpeg without libx264 cannot
 			// transcode anything at all — say that rather than offering a fix that
@@ -489,6 +576,23 @@ func verifiedAgainstEncoderListing(ffmpegBin string, want []codecProfile, have m
 	return nil
 }
 
+// codecKnob is the knob that put this CODEC in the plan, as distinct from the one
+// that chose its encoder.
+//
+// The two used to be the same field and are not any more. A hardware profile
+// carries EnvVar=TRANSCODING_HW when its codec has no knob of its own — that is
+// what makes the boot probe name something actionable for a missing h264_vaapi —
+// so "EnvVar is empty" stopped meaning "this codec is not optional". Asking that
+// question through this method keeps the hardware arms below from emitting
+// "TRANSCODING_HW=true ... or set TRANSCODING_HW=false", which is a boolean
+// sentence about an enum and names two values that do not exist.
+func (p codecProfile) codecKnob() string {
+	if p.EnvVar == hardwareEnvVar {
+		return ""
+	}
+	return p.EnvVar
+}
+
 // ffmpegBinaryMissing reports that a probe failure was "there is no such binary"
 // rather than "the binary ran and something went wrong".
 //
@@ -497,6 +601,18 @@ func verifiedAgainstEncoderListing(ffmpegBin string, want []codecProfile, have m
 // PathError wrapping fs.ErrNotExist, and the two arrive by different routes.
 func ffmpegBinaryMissing(err error) bool {
 	return errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist)
+}
+
+// softwareEncoderFor is the encoder a codec falls back to with TRANSCODING_HW=off
+// — read off the registry rather than spelled out, so the sentence that offers
+// the fallback cannot name an encoder the fallback would not actually use.
+func softwareEncoderFor(codec string) string {
+	for _, p := range []codecProfile{h264Profile, hevcProfile, av1Profile} {
+		if p.Name == codec {
+			return p.Encoder
+		}
+	}
+	return ""
 }
 
 // ffmpegEncoderNames is the set of encoder names in `ffmpeg -encoders` output.
