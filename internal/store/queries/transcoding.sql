@@ -78,11 +78,37 @@ SET state = 'failed', attempts = attempts + 1, last_error = $2, updated_at = now
 WHERE id = $1;
 
 -- name: UpsertStreamingPlaylist :one
-INSERT INTO streaming_playlists (video_id, master_key, state)
-VALUES ($1, $2, $3)
+-- format records the packaging shape of the tree master_key points at (0108).
+-- An empty value folds to 'hls-ts' rather than violating the CHECK: a caller
+-- that has no opinion is describing the only shape that existed before CMAF,
+-- and the promotion of a tree must never fail on a field it did not set.
+INSERT INTO streaming_playlists (video_id, master_key, state, format)
+VALUES ($1, $2, $3, COALESCE(NULLIF(@format::text, ''), 'hls-ts'))
 ON CONFLICT (video_id) DO UPDATE
-SET master_key = EXCLUDED.master_key, state = EXCLUDED.state, updated_at = now()
+SET master_key = EXCLUDED.master_key,
+    state = EXCLUDED.state,
+    -- Re-transcoding into the other format REPLACES the record: after a
+    -- TRANSCODING_PACKAGER rollback the row must describe the tree that is
+    -- actually stored, not the one that used to be.
+    format = EXCLUDED.format,
+    updated_at = now()
 RETURNING *;
+
+-- name: MarkStreamingPlaylistFailed :exec
+-- Dead-letter a video's playlist: the tree it pointed at is gone or was never
+-- finished, so the master key is cleared and playback falls back to the
+-- progressive original.
+--
+-- Deliberately NOT UpsertStreamingPlaylist with an empty format. That would fold
+-- to 'hls-ts' and rewrite the format of an existing CMAF row, which is only
+-- harmless today because this statement clears master_key in the same breath —
+-- a coupling that would rot the moment a failure path kept the old tree. A
+-- failure says nothing about what format the last successful transcode wrote, so
+-- it leaves the column alone.
+INSERT INTO streaming_playlists (video_id, master_key, state)
+VALUES ($1, '', 'failed')
+ON CONFLICT (video_id) DO UPDATE
+SET master_key = '', state = 'failed', updated_at = now();
 
 -- name: GetStreamingPlaylist :one
 SELECT * FROM streaming_playlists WHERE video_id = $1;

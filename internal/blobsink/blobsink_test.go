@@ -400,3 +400,54 @@ func TestBindsLoopbackOnly(t *testing.T) {
 		t.Errorf("listening on %s, want a loopback address", s.ln.Addr())
 	}
 }
+
+// TestDiscardedOutputIsReadableButNeverStored covers the case where a muxer has
+// to write a file the pipeline only wants to read. ffmpeg's dash muxer always
+// emits its own HLS master playlist; the CMAF packager reads the codec strings
+// out of it and then replaces it with the master Vidra authors.
+//
+// Storing it and deleting it afterwards also "works", which is why it is worth
+// pinning that this does not: on a bucket with versioning on by default
+// (Backblaze B2) that delete leaves a billable hide-marker behind on every
+// single transcode, forever.
+func TestDiscardedOutputIsReadableButNeverStored(t *testing.T) {
+	s, b := newTestSink(t)
+	const rel = "cmaf/ffmpeg-master.m3u8"
+	const key = "streaming-playlists/vid1/" + rel
+	s.Discard(rel)
+
+	_ = do(t, http.MethodPut, s.URL(rel), "#EXTM3U\nffmpeg's own").Body.Close()
+	_ = do(t, http.MethodPut, s.URL("cmaf/media_0.m3u8"), "#EXTM3U\nkeep me").Body.Close()
+
+	if err := s.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if n := b.putCount(key); n != 0 {
+		t.Errorf("discarded object was stored %d times, want 0 (it would need deleting again, "+
+			"which on a versioned bucket is a billable hide-marker per transcode)", n)
+	}
+	// Its sibling still lands, so Discard is not a blanket opt-out of flushing.
+	if got := string(b.object("streaming-playlists/vid1/cmaf/media_0.m3u8")); got != "#EXTM3U\nkeep me" {
+		t.Errorf("non-discarded playlist = %q", got)
+	}
+
+	// Readable AFTER the flush barrier, because that is when the pipeline's
+	// finalisation actually reads it.
+	body, err := s.Get(context.Background(), rel)
+	if err != nil {
+		t.Fatalf("Get after Flush: %v", err)
+	}
+	if string(body) != "#EXTM3U\nffmpeg's own" {
+		t.Errorf("read back %q", body)
+	}
+	resp := do(t, http.MethodGet, s.URL(rel), "")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET discarded object = %d, want 200", resp.StatusCode)
+	}
+
+	// And it is not counted as something this rendition cost to store.
+	if n := s.BytesUnder("cmaf"); n != int64(len("#EXTM3U\nkeep me")) {
+		t.Errorf("BytesUnder = %d, want only the stored sibling (%d)", n, len("#EXTM3U\nkeep me"))
+	}
+}

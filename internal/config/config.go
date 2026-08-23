@@ -267,6 +267,21 @@ type Config struct {
 	// TranscodingEnabled and a non-local storage backend.
 	TranscodingStreamOutput bool
 
+	// TranscodingPackager selects how a transcode PACKAGES the ladder it
+	// encodes: "cmaf" (default) writes one set of CMAF/fMP4 segments addressed
+	// by both an MPEG-DASH manifest and HLS playlists, "ts" writes the legacy
+	// MPEG-TS segments with HLS playlists only.
+	//
+	// It affects NEW transcodes only. Every video records the format its own
+	// tree was written in, so switching back to "ts" is a config-only rollback:
+	// already-packaged CMAF videos keep playing untouched and nothing is
+	// re-encoded. There is deliberately no back-catalogue re-packaging job.
+	//
+	// Boot-baked rather than a runtime instance setting: it changes what a
+	// worker writes to object storage, and a value that could flip mid-ladder
+	// would produce a tree that is half one format and half the other.
+	TranscodingPackager string
+
 	// TranscodingMinFreeScratchMB is the free-space floor (MiB) on the transcode
 	// scratch filesystem below which the worker claims no new jobs. A transcode
 	// writes several times its source before anything is uploaded, and on the
@@ -838,6 +853,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		TranscodingEnabled:                     p.Bool("TRANSCODING_ENABLED", true),
 		TranscodingVP9Enabled:                  p.Bool("TRANSCODING_VP9_ENABLED", false),
 		TranscodingStreamOutput:                p.Bool("TRANSCODING_STREAM_OUTPUT", false),
+		TranscodingPackager:                    p.Str("TRANSCODING_PACKAGER", DefaultTranscodingPackager),
 		TranscodingMinFreeScratchMB:            p.Int("TRANSCODING_MIN_FREE_SCRATCH_MB", 0),
 		TranscodingAV1Enabled:                  p.Bool("TRANSCODING_AV1_ENABLED", false),
 		TranscodeHoldTimeout:                   p.Duration("TRANSCODE_HOLD_TIMEOUT", 12*time.Hour),
@@ -1350,6 +1366,15 @@ func (c *Config) validate() error {
 	if c.TranscodingAV1Enabled {
 		add(varErrorf("TRANSCODING_AV1_ENABLED", "config: TRANSCODING_AV1_ENABLED is not supported yet — AV1 transcoding is deferred (see fix_plan P6.3); leave it false"))
 	}
+	// Spelled out rather than asked of internal/media: this package is the leaf
+	// every other one configures itself from and imports nothing of the codebase,
+	// which is what keeps a config error a config error. media.IsPackagerName is
+	// the second gate, at the point the transcoder is actually built.
+	switch c.Packager() {
+	case DefaultTranscodingPackager, "ts":
+	default:
+		add(varErrorf("TRANSCODING_PACKAGER", "config: invalid TRANSCODING_PACKAGER %q (want cmaf|ts)", c.TranscodingPackager))
+	}
 	if c.WhisperEnabled {
 		u, err := url.Parse(c.WhisperEndpoint)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
@@ -1613,6 +1638,25 @@ func (c *Config) validatePeerTubeImport() error {
 // PeerTubeImportEnabled AND this is true.
 func (c *Config) PeerTubeImportConfigured() bool {
 	return c.PeerTubeImportEnabled && strings.TrimSpace(c.PeerTubeSourceDatabaseURL) != ""
+}
+
+// DefaultTranscodingPackager is the packaging format an install gets when
+// TRANSCODING_PACKAGER says nothing: CMAF/fMP4, one segment set addressed by
+// both an MPD and HLS playlists.
+const DefaultTranscodingPackager = "cmaf"
+
+// Packager resolves the selected packaging format.
+//
+// It exists because the empty string is not a third format: the parser's
+// contract is that an unset or empty variable means "use the default", and a
+// Config assembled by hand (tests, fixtures) has the same zero value. Resolving
+// it here rather than at each call site is what stops "" from being validated as
+// legal in one place and packaged as MPEG-TS in another.
+func (c *Config) Packager() string {
+	if strings.TrimSpace(c.TranscodingPackager) == "" {
+		return DefaultTranscodingPackager
+	}
+	return c.TranscodingPackager
 }
 
 // StorageMigrationConfigured reports whether a second, destination backend is

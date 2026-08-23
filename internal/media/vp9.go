@@ -22,7 +22,18 @@ const WebMContentType = "video/webm"
 // rather than an HLS variant — see .ralph/specs/storage-layout.md. Pure (no
 // exec) so it is unit-testable. The audio map is optional ("0:a:0?") so silent
 // sources still encode.
+//
+// It encodes from the SOURCE rather than from the ladder's output, so it is the
+// one output that has to apply the rung's fps cap itself: everything else
+// inherits it from the shared filter graph. Without that the alternate silently
+// ignored transcoding_max_fps — a 60fps source under a 30fps cap emitted 60fps
+// VP9, and at the standard-rate budget, because planning had already decided the
+// output was 30fps.
 func vp9WebMArgs(src source, dst string, r HLSRung) []string {
+	vf := fmt.Sprintf("scale=%d:%d", r.Width, r.Height)
+	if r.FPS > 0 {
+		vf += fmt.Sprintf(",fps=%d", r.FPS)
+	}
 	args := []string{"-y"}
 	args = append(args, src.inputArgs()...)
 	return append(args,
@@ -35,7 +46,7 @@ func vp9WebMArgs(src source, dst string, r HLSRung) []string {
 		"-deadline", "good",
 		"-cpu-used", "4",
 		"-pix_fmt", "yuv420p",
-		"-vf", fmt.Sprintf("scale=%d:%d", r.Width, r.Height),
+		"-vf", vf,
 		"-c:a", "libopus",
 		"-b:a", fmt.Sprintf("%dk", r.AudioKbps),
 		"-ac", "2",

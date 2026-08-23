@@ -800,6 +800,62 @@ func TestStorageMigrationTargetValidation(t *testing.T) {
 	})
 }
 
+// TestTranscodingPackagerKnob pins the selector that decides what format every
+// new upload is packaged in — and, just as importantly, that the rollback to the
+// legacy format is a spelling an operator can actually reach.
+func TestTranscodingPackagerKnob(t *testing.T) {
+	load := func(extra map[string]string) (*Config, error) {
+		env := productionCandidate()
+		for k, v := range extra {
+			env[k] = v
+		}
+		return LoadFrom(func(key string) (string, bool) {
+			v, ok := env[key]
+			return v, ok
+		})
+	}
+
+	t.Run("new installs package CMAF by default", func(t *testing.T) {
+		cfg, err := load(nil)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		if cfg.TranscodingPackager != "cmaf" {
+			t.Errorf("TRANSCODING_PACKAGER default = %q, want cmaf — an unset install must get the shared HLS+DASH segment set",
+				cfg.TranscodingPackager)
+		}
+	})
+
+	t.Run("the rollback value is accepted", func(t *testing.T) {
+		cfg, err := load(map[string]string{"TRANSCODING_PACKAGER": "ts"})
+		if err != nil {
+			t.Fatalf("TRANSCODING_PACKAGER=ts was rejected: %v", err)
+		}
+		if cfg.TranscodingPackager != "ts" {
+			t.Errorf("TRANSCODING_PACKAGER = %q, want ts", cfg.TranscodingPackager)
+		}
+	})
+
+	t.Run("an unknown format refuses to boot, named", func(t *testing.T) {
+		// Including the plausible near-misses: silently falling back to a default
+		// would package a whole deployment the way the operator did not ask for,
+		// and they would find out from a player, weeks later.
+		// Not "": the parser's contract is that an EMPTY variable means "use the
+		// default" everywhere, so `TRANSCODING_PACKAGER=` in an env file is the
+		// same as omitting it (asserted above).
+		for _, bad := range []string{"CMAF", "dash", "hls", "hls-ts", "fmp4"} {
+			_, err := load(map[string]string{"TRANSCODING_PACKAGER": bad})
+			if err == nil {
+				t.Errorf("TRANSCODING_PACKAGER=%q was accepted", bad)
+				continue
+			}
+			if _, ok := collectVarErrors(err)["TRANSCODING_PACKAGER"]; !ok {
+				t.Errorf("TRANSCODING_PACKAGER=%q: the error is not attributed to the variable: %v", bad, err)
+			}
+		}
+	})
+}
+
 // TestProcessRole covers VIDRA_ROLE — the flag that decides whether a process
 // serves HTTP, runs the background workers, or both.
 //

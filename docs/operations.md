@@ -490,6 +490,52 @@ Failed objects do not block a campaign from reaching `synced` — they are a
 reported fact for you to decide about. They **do** mean the destination is not a
 complete copy, so read `objects_failed` before you cut over.
 
+## Streaming format — CMAF, and how to go back
+
+New transcodes package **CMAF/fMP4**: one set of segments under
+`streaming-playlists/<video-id>[/rN]/cmaf/`, addressed by *both* manifests.
+
+| URL | What it is |
+| --- | --- |
+| `/api/v1/videos/{id}/hls/master.m3u8` | HLS multivariant playlist (unchanged address) |
+| `/api/v1/videos/{id}/hls/cmaf/stream.mpd` | **MPEG-DASH manifest** — the canonical DASH URL |
+| `/api/v1/videos/{id}/hls/cmaf/<file>` | The shared segments and per-representation playlists both manifests point at |
+
+The two manifests name the **same files**. DASH therefore costs no extra storage
+and no extra encode — that is the entire reason for the format change. Both
+manifests carry the same authorization gate as every other media route.
+
+`TRANSCODING_PACKAGER` selects the format:
+
+| Value | Result |
+| --- | --- |
+| `cmaf` *(default)* | Shared CMAF segments, HLS **and** DASH |
+| `ts` | The legacy MPEG-TS segments, HLS only |
+
+**Rolling back is config-only.** Set `TRANSCODING_PACKAGER=ts` and restart. It
+changes what *new* transcodes produce and nothing else:
+
+* every video records the format its own tree was written in
+  (`streaming_playlists.format`), so already-packaged CMAF videos keep playing —
+  their master playlist, segments and DASH manifest are untouched;
+* nothing is re-encoded, and there is deliberately **no** job that re-packages
+  the back catalogue in either direction;
+* the reverse switch (`ts` → `cmaf`) behaves the same way.
+
+A video only changes format when it is transcoded again — a replacement upload or
+a manual re-transcode — at which point it is written whole in whichever format is
+configured then, and the DB row is swapped to the new tree atomically.
+
+Two things to know before switching:
+
+* **Old players.** A CMAF video's HLS master is `#EXT-X-VERSION:7` with fMP4
+  segments. Every current browser and iOS/tvOS 10+ handles it; genuinely ancient
+  HLS clients that only understand MPEG-TS do not. If you support such clients,
+  stay on `ts`.
+* **Direct delivery and CDNs.** The new object suffixes are `.m4s` (segments),
+  `.mp4` (init segments) and `.mpd` (manifest). A CDN or bucket policy that
+  allow-lists suffixes needs `.m4s` and `.mpd` added.
+
 ## Direct delivery — presigned redirects instead of proxying every byte
 
 By default every media byte a viewer receives is read out of the store by the Go

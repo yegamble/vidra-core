@@ -182,9 +182,30 @@ func (f *fakeRepo) DeleteStreamingPlaylist(_ context.Context, videoID uuid.UUID)
 func (f *fakeRepo) UpsertStreamingPlaylist(_ context.Context, a sqlcgen.UpsertStreamingPlaylistParams) (sqlcgen.StreamingPlaylist, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	sp := sqlcgen.StreamingPlaylist{VideoID: a.VideoID, MasterKey: a.MasterKey, State: a.State}
+	sp := sqlcgen.StreamingPlaylist{VideoID: a.VideoID, MasterKey: a.MasterKey, State: a.State, Format: a.Format}
+	// The query folds an unset format to the pre-CMAF default rather than
+	// violating the CHECK constraint; mirror that here or the fake would let a
+	// caller store a format the database would reject.
+	if sp.Format == "" {
+		sp.Format = media.HLSFormatTS
+	}
 	f.playlists[a.VideoID] = sp
 	return sp, nil
+}
+
+// MarkStreamingPlaylistFailed clears the tree reference and leaves the format
+// alone, as the query does: a failure says nothing about what the last
+// successful transcode wrote.
+func (f *fakeRepo) MarkStreamingPlaylistFailed(_ context.Context, videoID uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	sp := f.playlists[videoID]
+	sp.VideoID, sp.MasterKey, sp.State = videoID, "", "failed"
+	if sp.Format == "" {
+		sp.Format = media.HLSFormatTS
+	}
+	f.playlists[videoID] = sp
+	return nil
 }
 
 func (f *fakeRepo) GetStreamingPlaylist(_ context.Context, videoID uuid.UUID) (sqlcgen.StreamingPlaylist, error) {
@@ -259,7 +280,28 @@ type fakeTargetTranscoder struct {
 	probeErr   error
 	hlsCalls   []string
 	webCalls   []string
+	allCalls   []string
 	probeCalls []string
+}
+
+// TranscodeAll mirrors the real transcoder: ONE pass that yields both output
+// classes, recorded separately from the single-target calls so a test can prove
+// a full job never runs the standalone web-video encode.
+func (f *fakeTargetTranscoder) TranscodeAll(ctx context.Context, videoID uuid.UUID, sourceKey string, md media.Metadata, progress media.ProgressFunc) (media.HLSResult, []media.WebVideoResult, error) {
+	f.allCalls = append(f.allCalls, sourceKey)
+	res, err := f.TranscodeHLS(ctx, videoID, sourceKey, md, progress)
+	if err != nil {
+		return media.HLSResult{}, nil, err
+	}
+	// The derivation happens inside HLS packaging, so its progress is reported
+	// under the web-video format without a separate encode.
+	if progress != nil {
+		progress(media.TranscodeProgress{Format: media.TranscodeFormatWebVideo, Height: 720, Width: 1280, State: media.ProgressSucceeded, Stage: "complete", Percent: 100})
+	}
+	if f.webErr != nil {
+		return media.HLSResult{}, nil, f.webErr
+	}
+	return res, f.webResult, nil
 }
 
 func (f *fakeTargetTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, sourceKey string) (media.HLSResult, error) {
@@ -436,8 +478,59 @@ func TestJobProbesSourceOnce(t *testing.T) {
 	if len(tc.probeCalls) != 1 || tc.probeCalls[0] != originalKey {
 		t.Errorf("probe calls = %v, want exactly one against the retained original", tc.probeCalls)
 	}
-	if len(tc.hlsCalls) != 1 || len(tc.webCalls) != 1 {
-		t.Errorf("target calls HLS=%v Web=%v, want each exactly once", tc.hlsCalls, tc.webCalls)
+	// A full job is ONE pass. It used to be two independent calls, which is what
+	// made it decode the source an extra time for progressive MP4s the ladder had
+	// already produced (phase-3 item 6.3).
+	if len(tc.allCalls) != 1 || tc.allCalls[0] != originalKey {
+		t.Errorf("TranscodeAll calls = %v, want exactly one against the retained original", tc.allCalls)
+	}
+	if len(tc.webCalls) != 0 {
+		t.Errorf("a full job ran the standalone web-video encode as well: %v", tc.webCalls)
+	}
+}
+
+// TestFullJobDerivesWebVideosFromTheSamePass pins the outcome of running the two
+// output classes as one operation: the streaming playlist is promoted, the
+// rendition rows are written from the DERIVED files, and no separate web-video
+// encode happens.
+func TestFullJobDerivesWebVideosFromTheSamePass(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	originalKey := "web-videos/" + videoID.String() + ".mp4"
+	tc := &fakeTargetTranscoder{
+		hlsResult: media.HLSResult{MasterKey: "streaming-playlists/" + videoID.String() + "/master.m3u8"},
+		webResult: []media.WebVideoResult{
+			{Height: 720, Width: 1280, StorageKey: "web-videos/" + videoID.String() + "/720p.mp4", SizeBytes: 4096,
+				SHA256: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"},
+		},
+	}
+	svc := NewService(repo, tc)
+	if err := svc.EnqueueTarget(context.Background(), videoID, originalKey, TargetAll); err != nil {
+		t.Fatalf("EnqueueTarget: %v", err)
+	}
+	if n, err := svc.DrainJobs(context.Background(), 1); err != nil || n != 1 {
+		t.Fatalf("DrainJobs = (%d, %v), want (1, nil)", n, err)
+	}
+	if got := repo.playlists[videoID]; got.State != PlaylistReady || got.MasterKey != tc.hlsResult.MasterKey {
+		t.Errorf("playlist = %+v, want promoted to the transcoded master", got)
+	}
+	files := repo.videoFiles[videoID]
+	if len(files) != 1 || files[0].Kind != "rendition" || files[0].StorageKey != tc.webResult[0].StorageKey {
+		t.Fatalf("stored web videos = %+v, want the derived rendition", files)
+	}
+	// The digest still rides out of the transcoder: the derived object is hashed
+	// on the way into the store exactly as an encoded one was.
+	if files[0].Sha256 != tc.webResult[0].SHA256 {
+		t.Errorf("derived rendition sha256 = %q, want the transcoder's digest", files[0].Sha256)
+	}
+	// Both formats still appear in the operational projection, so the admin job
+	// view shows the same executions it always did.
+	formats := map[string]bool{}
+	for _, step := range repo.steps {
+		formats[step.Format] = true
+	}
+	if !formats[media.TranscodeFormatHLS] || !formats[media.TranscodeFormatWebVideo] {
+		t.Errorf("projected formats = %v, want both hls and web_video executions", formats)
 	}
 }
 
@@ -455,8 +548,8 @@ func TestProbeFailureFailsJobWithoutEncoding(t *testing.T) {
 	if n, err := svc.DrainJobs(context.Background(), 1); err != nil || n != 0 {
 		t.Fatalf("DrainJobs = (%d, %v), want (0, nil) for a failed job", n, err)
 	}
-	if len(tc.hlsCalls) != 0 || len(tc.webCalls) != 0 {
-		t.Errorf("encoded despite an unreadable source: HLS=%v Web=%v", tc.hlsCalls, tc.webCalls)
+	if len(tc.hlsCalls) != 0 || len(tc.webCalls) != 0 || len(tc.allCalls) != 0 {
+		t.Errorf("encoded despite an unreadable source: HLS=%v Web=%v All=%v", tc.hlsCalls, tc.webCalls, tc.allCalls)
 	}
 }
 
@@ -1186,4 +1279,142 @@ func TestScratchGuardDefaultsTheFloor(t *testing.T) {
 	if svc.minFreeScratch != DefaultMinFreeScratchBytes {
 		t.Errorf("minFreeScratch = %d, want the default %d", svc.minFreeScratch, DefaultMinFreeScratchBytes)
 	}
+}
+
+// TestStoreResultRecordsTheFormatAndAFailureDoesNotRewriteIt covers the record
+// that makes TRANSCODING_PACKAGER a config-only rollback.
+//
+// The failure half matters more than it looks. Dead-lettering a job upserts the
+// playlist row to clear the tree it pointed at; doing that through the ordinary
+// upsert would carry an unset format, which the query folds to the pre-CMAF
+// default — quietly relabelling a CMAF video as MPEG-TS. Today that would still
+// serve correctly, but only because the same statement wipes MasterKey, so
+// nothing consults the format. That is an accident, not a design, and it stops
+// being harmless the first time a failure path keeps the old tree.
+func TestStoreResultRecordsTheFormatAndAFailureDoesNotRewriteIt(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := NewService(repo, &fakeTranscoder{})
+	videoID := uuid.New()
+
+	if err := svc.storeResult(ctx, videoID, media.HLSResult{
+		MasterKey: "streaming-playlists/" + videoID.String() + "/master.m3u8",
+		Format:    media.HLSFormatCMAF,
+	}); err != nil {
+		t.Fatalf("storeResult: %v", err)
+	}
+	sp, err := repo.GetStreamingPlaylist(ctx, videoID)
+	if err != nil {
+		t.Fatalf("GetStreamingPlaylist: %v", err)
+	}
+	if sp.Format != media.HLSFormatCMAF {
+		t.Fatalf("format = %q, want %q", sp.Format, media.HLSFormatCMAF)
+	}
+
+	if err := repo.MarkStreamingPlaylistFailed(ctx, videoID); err != nil {
+		t.Fatalf("MarkStreamingPlaylistFailed: %v", err)
+	}
+	failed, err := repo.GetStreamingPlaylist(ctx, videoID)
+	if err != nil {
+		t.Fatalf("GetStreamingPlaylist: %v", err)
+	}
+	if failed.Format != media.HLSFormatCMAF {
+		t.Errorf("a failed transcode rewrote the format to %q; a failure knows nothing "+
+			"about what the last successful transcode wrote", failed.Format)
+	}
+	if failed.MasterKey != "" || failed.State != PlaylistFailed {
+		t.Errorf("failed playlist = %+v, want an empty master in the failed state", failed)
+	}
+
+	// A caller with no opinion describes the only shape that existed before CMAF,
+	// rather than storing a value the column's CHECK would reject.
+	other := uuid.New()
+	if err := svc.storeResult(ctx, other, media.HLSResult{MasterKey: "k"}); err != nil {
+		t.Fatalf("storeResult: %v", err)
+	}
+	legacy, err := repo.GetStreamingPlaylist(ctx, other)
+	if err != nil {
+		t.Fatalf("GetStreamingPlaylist: %v", err)
+	}
+	if legacy.Format != media.HLSFormatTS {
+		t.Errorf("unset format stored as %q, want %q", legacy.Format, media.HLSFormatTS)
+	}
+}
+
+// --- permanent failures -------------------------------------------------------
+
+// TestPermanentFailureDeadLettersOnTheFirstAttempt pins the short-circuit. Some
+// failures are verdicts, not accidents: "this packager cannot express this
+// source" is decided by the source and the deployment's configuration, and both
+// are identical on attempt five. Retrying spends the job's whole backoff budget
+// — about fifteen minutes with this schedule — restating it, while the operator
+// watches a job sit in 'pending' saying nothing useful.
+func TestPermanentFailureDeadLettersOnTheFirstAttempt(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	const msg = "media: source is audio-only, which the \"ts\" packager cannot express: audio-only requires the cmaf packager"
+	tc := &fakeTargetTranscoder{hlsErr: mediaPermanentError(msg)}
+	svc := NewService(repo, tc)
+
+	if err := svc.EnqueueTarget(context.Background(), videoID, "web-videos/x.m4a", TargetAll); err != nil {
+		t.Fatalf("EnqueueTarget: %v", err)
+	}
+	if n, err := svc.DrainJobs(context.Background(), 10); err != nil || n != 0 {
+		t.Fatalf("DrainJobs = (%d, %v), want (0, nil)", n, err)
+	}
+
+	j := repo.job(t, videoID)
+	if j.State != "failed" {
+		t.Errorf("job state = %q after one attempt, want failed", j.State)
+	}
+	if j.Attempts != 1 {
+		t.Errorf("attempts = %d, want 1 — a permanent verdict must not be retried", j.Attempts)
+	}
+	// The reason must survive: dead-lettering silently is worse than retrying.
+	if !strings.Contains(j.LastError, "audio-only requires the cmaf packager") {
+		t.Errorf("last_error = %q, want the packager the operator must switch to", j.LastError)
+	}
+	// A permanent HLS failure still marks the playlist failed and still fires the
+	// release hook, exactly as a retry-exhausted one does — only the waiting is
+	// skipped.
+	if got := repo.playlists[videoID].State; got != PlaylistFailed {
+		t.Errorf("playlist state = %q, want %q", got, PlaylistFailed)
+	}
+	// And a second drain finds nothing: the row is terminal, not merely deferred.
+	if n, err := svc.DrainJobs(context.Background(), 10); err != nil || n != 0 {
+		t.Fatalf("second DrainJobs = (%d, %v), want (0, nil)", n, err)
+	}
+	if len(tc.allCalls) != 1 {
+		t.Errorf("transcoder ran %d times, want exactly 1", len(tc.allCalls))
+	}
+}
+
+// TestTransientFailureStillRetries is the counterweight: only errors that
+// announce themselves permanent short-circuit. Everything that touches the
+// network, the disk or a subprocess keeps its retry budget.
+func TestTransientFailureStillRetries(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	tc := &fakeTargetTranscoder{hlsErr: errors.New("ffmpeg: signal: killed")}
+	svc := NewService(repo, tc)
+	if err := svc.EnqueueTarget(context.Background(), videoID, "web-videos/x.mp4", TargetAll); err != nil {
+		t.Fatalf("EnqueueTarget: %v", err)
+	}
+	if _, err := svc.DrainJobs(context.Background(), 10); err != nil {
+		t.Fatalf("DrainJobs: %v", err)
+	}
+	if j := repo.job(t, videoID); j.State != "pending" || j.Attempts != 1 {
+		t.Errorf("job = state %q attempts %d, want pending/1 (rescheduled with backoff)", j.State, j.Attempts)
+	}
+}
+
+// mediaPermanentError produces the error shape internal/media returns for a
+// verdict, through the exported predicate the service actually consults — so
+// this test cannot pass by agreeing with a duplicate of the rule.
+func mediaPermanentError(msg string) error {
+	err := media.NewPermanentError(msg)
+	if !media.IsPermanent(err) {
+		panic("fixture is stale: media.NewPermanentError no longer produces a permanent error")
+	}
+	return err
 }

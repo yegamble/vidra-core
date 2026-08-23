@@ -773,6 +773,13 @@ func run() error {
 	if tc, ok := media.DetectHLSTranscoder(blobs); ok {
 		tc.SetVP9(cfg.TranscodingVP9Enabled)
 		tc.SetStreamOutput(cfg.TranscodingStreamOutput)
+		// Packaging format for NEW transcodes (phase-3 item 3). Config has already
+		// validated the name; a failure here would mean the two lists disagree,
+		// which is a bug rather than an operator mistake — refuse to boot on it
+		// rather than silently packaging a whole deployment the other way.
+		if err := tc.SetPackager(cfg.Packager()); err != nil {
+			return fmt.Errorf("TRANSCODING_PACKAGER: %w", err)
+		}
 		// Encode knobs (ladder/FPS/threads/original-resolution) resolve from the
 		// settings overlay once per job, so changes apply without a restart.
 		tc.SetEncodeSettingsFunc(func() media.HLSEncodeSettings {
@@ -786,7 +793,7 @@ func run() error {
 		hlsTranscoder = tc
 		logger.Info("hls transcoding pipeline wired (ffmpeg + ffprobe found; runtime gate transcoding_enabled)",
 			"enabled_default", cfg.TranscodingEnabled, "vp9", cfg.TranscodingVP9Enabled,
-			"stream_output", cfg.TranscodingStreamOutput)
+			"stream_output", cfg.TranscodingStreamOutput, "packager", cfg.Packager())
 	} else if cfg.TranscodingEnabled {
 		logger.Warn("TRANSCODING_ENABLED=true but ffmpeg/ffprobe not on PATH; transcoding disabled")
 	}

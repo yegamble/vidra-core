@@ -1,0 +1,34 @@
+-- 0108: the packaging format each video's streaming tree was written in
+-- (phase-3 media pipeline, work item 3).
+--
+-- Until now every video's HLS tree had exactly one possible shape — MPEG-TS
+-- segments under per-rung directories — so nothing had to record it. CMAF
+-- packaging makes that false: new transcodes write shared fMP4 segments plus
+-- both an MPD and HLS playlists, and old trees keep serving as they are. Two
+-- shapes coexist indefinitely, because re-packaging the back catalogue is
+-- deliberately NOT part of this change.
+--
+-- The serving layer needs the format as a FACT about the row, not a guess. The
+-- CMAF file route matches a whole family of names (init segments, media
+-- segments, media playlists, the MPD) that mean nothing under an MPEG-TS tree;
+-- without this column it would have to probe object storage on every request to
+-- find out whether the video it is being asked about could possibly have them,
+-- and the answer to "does this key exist" is not an authorization decision. The
+-- column lets the route cross-check the request against the video in one read
+-- it is already doing, exactly as the PeerTube pass-through pseudo-rendition
+-- cross-checks the master key's prefix.
+--
+--   'hls-ts'  HLS over MPEG-TS: seg_NNNNN.ts + playlist.m3u8 per rung. The
+--             DEFAULT, so every row that predates this migration is correctly
+--             described without a backfill, and so is any future write path
+--             that forgets to say (see UpsertStreamingPlaylist, which folds ''
+--             to this value rather than trusting a caller's zero value).
+--   'cmaf'    Shared CMAF/fMP4 segments under <generation>/cmaf/, addressed by
+--             stream.mpd and by media_N.m3u8 playlists over the same files.
+--
+-- Rolling back to MPEG-TS is config-only (TRANSCODING_PACKAGER=ts): videos
+-- already packaged as CMAF keep their row and keep serving, because the format
+-- is recorded per video and never inferred from current configuration.
+ALTER TABLE streaming_playlists
+    ADD COLUMN format TEXT NOT NULL DEFAULT 'hls-ts'
+    CHECK (format IN ('hls-ts', 'cmaf'));

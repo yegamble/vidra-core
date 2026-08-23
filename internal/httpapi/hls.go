@@ -16,6 +16,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/delivery"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -30,6 +31,8 @@ const (
 	contentTypeM3U8 = "application/vnd.apple.mpegurl"
 	contentTypeTS   = "video/mp2t"
 	contentTypeMP4  = "video/mp4"
+	// contentTypeMPD is the MPEG-DASH manifest type (ISO/IEC 23009-1).
+	contentTypeMPD  = "application/dash+xml"
 	hlsVersionParam = "v"
 
 	// HLS routes remain authorization gates, so their immutable cache entries
@@ -42,16 +45,37 @@ const (
 	hlsStableCacheControl    = delivery.CacheStableRevalidate
 )
 
-// The two file shapes a rendition directory contains: its variant playlist and
-// its numbered MPEG-TS segments (as written by the transcoder). Anything else —
-// including any traversal attempt — is 404. Rendition directories are named
-// "<height>p" ("720p").
+// The file shapes reachable under a video's HLS prefix. Anything else —
+// including any traversal attempt — is 404.
+//
+// hlsRenditionName/hlsFileName are the MPEG-TS tree: rendition directories named
+// "<height>p" holding a variant playlist, the trick-play pair, and numbered
+// segments.
+//
+// hlsCMAFFileName is the CMAF tree, which lives in ONE directory ("cmaf") under
+// the same prefix because HLS and DASH must resolve the SAME segments relative
+// to their own manifests. It is deliberately an exhaustive list of the six names
+// the packager emits rather than a permissive "anything that looks like a media
+// file": this route is an authorization boundary, and the only reason the
+// PeerTube pass-through below gets a loose pattern is that its tree was written
+// by another program whose naming Vidra does not control.
 var (
-	hlsRenditionName     = regexp.MustCompile(`^[0-9]{2,4}p$`)
-	hlsFileName          = regexp.MustCompile(`^(playlist\.m3u8|iframe\.m3u8|iframe\.ts|seg_[0-9]+\.ts)$`)
+	hlsRenditionName = regexp.MustCompile(`^[0-9]{2,4}p$`)
+	hlsFileName      = regexp.MustCompile(`^(playlist\.m3u8|iframe\.m3u8|iframe\.ts|seg_[0-9]+\.ts)$`)
+	hlsCMAFFileName  = regexp.MustCompile(
+		`^(stream\.mpd|media_[0-9]+\.m3u8|init-[0-9]+\.mp4|chunk-[0-9]+-[0-9]+\.m4s|iframe-[0-9]+\.m3u8|iframe-[0-9]+\.mp4)$`)
 	hlsPeerTubeFileName  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.(m3u8|mp4|m4s|ts)$`)
 	hlsPlaylistURIAttrRE = regexp.MustCompile(`URI="([^"]+)"`)
 )
+
+// hlsCMAFRendition is the pseudo-rendition the CMAF directory is served under,
+// so /videos/{id}/hls/cmaf/stream.mpd is the DASH manifest and every relative
+// URI inside it resolves against its siblings with no rewriting at all.
+const hlsCMAFRendition = "cmaf"
+
+// hlsCMAFManifestFile is the manifest's name within that directory, so the
+// canonical DASH URL is /api/v1/videos/{id}/hls/cmaf/stream.mpd.
+const hlsCMAFManifestFile = "stream.mpd"
 
 // hlsPlaylistForView authorises serving a video's HLS assets and returns its
 // streaming playlist row together with the video row the authorization decision
@@ -102,12 +126,14 @@ func (s *Server) handleGetHLSMaster(c echo.Context) error {
 	return s.serveHLSPlaylist(c, sp.MasterKey, sp)
 }
 
-// handleGetHLSFile serves one rendition file: a variant playlist
-// (:rendition/playlist.m3u8) or an MPEG-TS segment (:rendition/seg_NNNNN.ts).
-// Playlist URIs are relative, so players resolve segment requests to this same
-// route. Same visibility as the master playlist; path parts that do not match
-// the transcoder's fixed naming are 404 (nothing else under the prefix is
-// reachable).
+// handleGetHLSFile serves one file under a video's streaming prefix: an MPEG-TS
+// rendition's variant playlist or segment (:rendition/playlist.m3u8,
+// :rendition/seg_NNNNN.ts), or — under the "cmaf" pseudo-rendition — the shared
+// CMAF tree's DASH manifest, media playlists, init segments and media segments.
+// Playlist and manifest URIs are relative, so players resolve every follow-up
+// request back to this same route. Same visibility as the master playlist; path
+// parts that do not match the transcoder's fixed naming are 404 (nothing else
+// under the prefix is reachable).
 func (s *Server) handleGetHLSFile(c echo.Context) error {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -115,8 +141,9 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 	}
 	rendition, file := c.Param("rendition"), c.Param("file")
 	canonical := hlsRenditionName.MatchString(rendition) && hlsFileName.MatchString(file)
+	cmaf := rendition == hlsCMAFRendition && hlsCMAFFileName.MatchString(file)
 	peertube := rendition == "peertube" && hlsPeerTubeFileName.MatchString(file)
-	if !canonical && !peertube {
+	if !canonical && !cmaf && !peertube {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	sp, v, err := s.hlsPlaylistForView(c, id)
@@ -125,6 +152,16 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 	}
 	if err := validateHLSVersion(c, sp); err != nil {
 		return err
+	}
+	// Cross-checks: a rendition names a tree SHAPE, and asking for one shape's
+	// names against a video stored in the other must not reach storage and hope
+	// for a miss. Both directions, so the rule is a property of the route rather
+	// than a guard that happens to exist for the new format: the CMAF and MPEG-TS
+	// naming schemes are mutually exclusive and each is refused on the format the
+	// transcode recorded. The PeerTube pass-through has no format of its own and
+	// is fenced on the imported tree's master-key prefix instead.
+	if cmaf != (sp.Format == media.HLSFormatCMAF) && !peertube {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	if peertube && !isPeerTubeHLSMasterKey(sp.MasterKey) {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
@@ -141,6 +178,14 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 	if strings.HasSuffix(file, ".m3u8") {
 		return s.serveHLSPlaylist(c, key, sp)
 	}
+	if cmaf && file == hlsCMAFManifestFile {
+		return s.serveCMAFManifest(c, key, sp)
+	}
+	// .m4s segments are labelled video/mp4 rather than the registered
+	// video/iso.segment: Apple's HLS authoring specification asks for video/mp4
+	// on fMP4 segments, Safari is the client the CMAF master's CODECS attributes
+	// exist for in the first place, and it matches what the PeerTube
+	// pass-through route already returns for the same suffix.
 	contentType := contentTypeMP4
 	if strings.HasSuffix(file, ".ts") {
 		contentType = contentTypeTS
@@ -186,6 +231,40 @@ func (s *Server) serveHLSPlaylist(c echo.Context, key string, sp sqlcgen.Streami
 		return err
 	}
 	return c.Blob(http.StatusOK, contentTypeM3U8, rewritePlaylistReferences(data, "", token, version, false))
+}
+
+// serveCMAFManifest streams a video's DASH manifest from the origin.
+//
+// Unlike an m3u8 it is served VERBATIM. Its segment references are
+// SegmentTemplate patterns ("init-$RepresentationID$.mp4"), not URIs a player
+// follows literally, so the ?pt=/?v= rewrite that makes header-less native HLS
+// work has nothing to rewrite here — a DASH player expands the template itself
+// and requests the sibling unversioned. That is correct but it does mean DASH
+// playback of a password-protected video needs a player that can attach the
+// token, which is phase-4's problem when one is wired; the bytes themselves are
+// gated by exactly the same authorization as every other route here.
+//
+// Origin-served rather than presign-redirected for the same reason playlists
+// are: a manifest is the thing that decides what a client asks for next, so it
+// stays on the authoritative path.
+func (s *Server) serveCMAFManifest(c echo.Context, key string, sp sqlcgen.StreamingPlaylist) error {
+	setHLSCacheControl(c, sp)
+	if s.media == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
+	}
+	rc, err := s.media.Open(c.Request().Context(), key)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		return err
+	}
+	defer func() { _ = rc.Close() }()
+	data, err := io.ReadAll(io.LimitReader(rc, maxPlaylistBytes))
+	if err != nil {
+		return err
+	}
+	return c.Blob(http.StatusOK, contentTypeMPD, data)
 }
 
 func (s *Server) servePeerTubeHLSMaster(c echo.Context, sp sqlcgen.StreamingPlaylist) error {

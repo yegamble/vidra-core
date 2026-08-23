@@ -202,7 +202,7 @@ func (q *Queries) FailTranscodeJob(ctx context.Context, arg FailTranscodeJobPara
 }
 
 const getStreamingPlaylist = `-- name: GetStreamingPlaylist :one
-SELECT video_id, master_key, state, created_at, updated_at FROM streaming_playlists WHERE video_id = $1
+SELECT video_id, master_key, state, created_at, updated_at, format FROM streaming_playlists WHERE video_id = $1
 `
 
 func (q *Queries) GetStreamingPlaylist(ctx context.Context, videoID uuid.UUID) (StreamingPlaylist, error) {
@@ -214,6 +214,7 @@ func (q *Queries) GetStreamingPlaylist(ctx context.Context, videoID uuid.UUID) (
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Format,
 	)
 	return i, err
 }
@@ -284,6 +285,28 @@ func (q *Queries) ListVideoRenditions(ctx context.Context, videoID uuid.UUID) ([
 	return items, nil
 }
 
+const markStreamingPlaylistFailed = `-- name: MarkStreamingPlaylistFailed :exec
+INSERT INTO streaming_playlists (video_id, master_key, state)
+VALUES ($1, '', 'failed')
+ON CONFLICT (video_id) DO UPDATE
+SET master_key = '', state = 'failed', updated_at = now()
+`
+
+// Dead-letter a video's playlist: the tree it pointed at is gone or was never
+// finished, so the master key is cleared and playback falls back to the
+// progressive original.
+//
+// Deliberately NOT UpsertStreamingPlaylist with an empty format. That would fold
+// to 'hls-ts' and rewrite the format of an existing CMAF row, which is only
+// harmless today because this statement clears master_key in the same breath —
+// a coupling that would rot the moment a failure path kept the old tree. A
+// failure says nothing about what format the last successful transcode wrote, so
+// it leaves the column alone.
+func (q *Queries) MarkStreamingPlaylistFailed(ctx context.Context, videoID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markStreamingPlaylistFailed, videoID)
+	return err
+}
+
 const renewTranscodeJobLease = `-- name: RenewTranscodeJobLease :exec
 UPDATE transcode_jobs
 SET next_attempt_at = now() + interval '30 minutes'
@@ -342,21 +365,37 @@ func (q *Queries) SweepExpiredTranscodeJobs(ctx context.Context) (int64, error) 
 }
 
 const upsertStreamingPlaylist = `-- name: UpsertStreamingPlaylist :one
-INSERT INTO streaming_playlists (video_id, master_key, state)
-VALUES ($1, $2, $3)
+INSERT INTO streaming_playlists (video_id, master_key, state, format)
+VALUES ($1, $2, $3, COALESCE(NULLIF($4::text, ''), 'hls-ts'))
 ON CONFLICT (video_id) DO UPDATE
-SET master_key = EXCLUDED.master_key, state = EXCLUDED.state, updated_at = now()
-RETURNING video_id, master_key, state, created_at, updated_at
+SET master_key = EXCLUDED.master_key,
+    state = EXCLUDED.state,
+    -- Re-transcoding into the other format REPLACES the record: after a
+    -- TRANSCODING_PACKAGER rollback the row must describe the tree that is
+    -- actually stored, not the one that used to be.
+    format = EXCLUDED.format,
+    updated_at = now()
+RETURNING video_id, master_key, state, created_at, updated_at, format
 `
 
 type UpsertStreamingPlaylistParams struct {
 	VideoID   uuid.UUID `json:"video_id"`
 	MasterKey string    `json:"master_key"`
 	State     string    `json:"state"`
+	Format    string    `json:"format"`
 }
 
+// format records the packaging shape of the tree master_key points at (0108).
+// An empty value folds to 'hls-ts' rather than violating the CHECK: a caller
+// that has no opinion is describing the only shape that existed before CMAF,
+// and the promotion of a tree must never fail on a field it did not set.
 func (q *Queries) UpsertStreamingPlaylist(ctx context.Context, arg UpsertStreamingPlaylistParams) (StreamingPlaylist, error) {
-	row := q.db.QueryRow(ctx, upsertStreamingPlaylist, arg.VideoID, arg.MasterKey, arg.State)
+	row := q.db.QueryRow(ctx, upsertStreamingPlaylist,
+		arg.VideoID,
+		arg.MasterKey,
+		arg.State,
+		arg.Format,
+	)
 	var i StreamingPlaylist
 	err := row.Scan(
 		&i.VideoID,
@@ -364,6 +403,7 @@ func (q *Queries) UpsertStreamingPlaylist(ctx context.Context, arg UpsertStreami
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Format,
 	)
 	return i, err
 }

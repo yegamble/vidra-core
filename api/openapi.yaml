@@ -4097,14 +4097,29 @@ paths:
   /api/v1/videos/{id}/hls/{rendition}/{file}:
     get:
       operationId: getVideoHLSFile
-      summary: Get an HLS rendition playlist or segment
+      summary: Get a streaming playlist, manifest or segment
       description: >-
-        Serves one file of a transcoded HLS rendition: its variant playlist
-        (file = "playlist.m3u8"), a dense byte-range I-frame trick-play playlist
-        and media object ("iframe.m3u8" / "iframe.ts"), or one MPEG-TS segment
-        (file = "seg_00000.ts"). Rendition directories are named by rung height
-        ("720p"). Same visibility and readiness rules as the master playlist;
-        names outside the transcoder's fixed naming are 404.
+        Serves one file under a video's streaming prefix.
+
+
+        For a video packaged as MPEG-TS, rendition is a rung-height directory
+        ("720p") and file is its variant playlist ("playlist.m3u8"), the dense
+        byte-range I-frame trick-play pair ("iframe.m3u8" / "iframe.ts"), or one
+        segment ("seg_00000.ts").
+
+
+        For a video packaged as CMAF, rendition is the pseudo-rendition "cmaf" —
+        one directory holding the shared fMP4 segments that BOTH manifests point
+        at. `GET /api/v1/videos/{id}/hls/cmaf/stream.mpd` is the video's
+        canonical MPEG-DASH manifest; the same directory also holds the
+        per-representation HLS media playlists ("media_0.m3u8"), init segments
+        ("init-0.mp4"), media segments ("chunk-0-00001.m4s") and the trick-play
+        pair ("iframe-0.m3u8" / "iframe-0.mp4"). Requesting a "cmaf" name against
+        a video that is not packaged as CMAF is 404, as is the reverse.
+
+
+        Same visibility and readiness rules as the master playlist; names outside
+        the transcoder's fixed naming are 404.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -4119,19 +4134,22 @@ paths:
         - name: rendition
           in: path
           required: true
-          description: The rendition directory, e.g. "720p".
+          description: >-
+            A rendition directory ("720p") for an MPEG-TS video, or the "cmaf"
+            pseudo-rendition for a CMAF one.
           schema:
             type: string
-            pattern: '^[0-9]{2,4}p$'
+            pattern: '^([0-9]{2,4}p|cmaf)$'
         - name: file
           in: path
           required: true
           description: >-
-            "playlist.m3u8", "iframe.m3u8", "iframe.ts", or a segment such as
-            "seg_00000.ts".
+            MPEG-TS: "playlist.m3u8", "iframe.m3u8", "iframe.ts", or a segment
+            such as "seg_00000.ts". CMAF: "stream.mpd", "media_0.m3u8",
+            "init-0.mp4", "chunk-0-00001.m4s", "iframe-0.m3u8" or "iframe-0.mp4".
           schema:
             type: string
-            pattern: '^(playlist\.m3u8|iframe\.m3u8|iframe\.ts|seg_[0-9]+\.ts)$'
+            pattern: '^(playlist\.m3u8|iframe\.m3u8|iframe\.ts|seg_[0-9]+\.ts|stream\.mpd|media_[0-9]+\.m3u8|init-[0-9]+\.mp4|chunk-[0-9]+-[0-9]+\.m4s|iframe-[0-9]+\.m3u8|iframe-[0-9]+\.mp4)$'
         - name: v
           in: query
           required: false
@@ -4140,12 +4158,19 @@ paths:
             type: string
       responses:
         "200":
-          description: The rendition playlist or segment.
+          description: The playlist, DASH manifest, or segment.
           content:
             application/vnd.apple.mpegurl:
               schema:
                 type: string
+            application/dash+xml:
+              schema:
+                type: string
             video/mp2t:
+              schema:
+                type: string
+                format: binary
+            video/mp4:
               schema:
                 type: string
                 format: binary

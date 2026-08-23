@@ -67,9 +67,16 @@ import (
 	"time"
 )
 
-// coalescedSuffixes are the outputs the HLS muxer rewrites in place as it goes.
-// They are buffered until Flush instead of being written per rewrite.
-var coalescedSuffixes = []string{".m3u8"}
+// coalescedSuffixes are the outputs a muxer rewrites in place as it goes. They
+// are buffered until Flush instead of being written per rewrite.
+//
+// .m3u8 covers the HLS muxer, which rewrites the whole playlist after every
+// segment. .mpd covers the dash muxer used for CMAF, which is worse: in
+// non-streaming mode it rewrites the MPD *and* every media playlist once per
+// segment (dashenc's dash_flush → write_manifest). Without .mpd here, a
+// one-hour CMAF ladder would leave ~600 billable hidden versions of one manifest
+// on a versioned bucket.
+var coalescedSuffixes = []string{".m3u8", ".mpd"}
 
 // maxCoalescedBytes bounds one buffered playlist. A VOD playlist for a long
 // video is tens of KiB; this is generous enough never to bite in practice and
@@ -88,6 +95,9 @@ type Sink struct {
 
 	mu        sync.Mutex
 	coalesced map[string][]byte
+	// discard are keys the sink buffers for the caller to read back but never
+	// writes to the backend. See Discard.
+	discard map[string]bool
 	// stored is bytes written per key, so the pipeline can total a rendition's
 	// size without a scratch directory to walk.
 	stored map[string]int64
@@ -132,6 +142,7 @@ func New(backend Backend, prefix string) (*Sink, error) {
 		token:     hex.EncodeToString(tok),
 		ln:        ln,
 		coalesced: map[string][]byte{},
+		discard:   map[string]bool{},
 		stored:    map[string]int64{},
 		done:      make(chan struct{}),
 	}
@@ -166,6 +177,30 @@ func (s *Sink) URL(rel string) string {
 	return s.BaseURL() + "/" + strings.Join(parts, "/")
 }
 
+// Discard marks a relative path as an object the sink holds in memory for the
+// caller to read back but MUST NOT store. It has to be called before the encoder
+// writes, and the path must be one of the coalesced kinds (a playlist or
+// manifest) — anything else streams straight through to the backend as it
+// arrives and there is nothing to withhold.
+//
+// It exists because a muxer can be REQUIRED to write a file the pipeline only
+// wants to read: ffmpeg's dash muxer always emits its own HLS master playlist,
+// which the CMAF packager reads for the codec strings it computed and then
+// replaces with the master Vidra authors. Storing that file and deleting it
+// afterwards would work, and is what a first cut does — but on a versioned
+// bucket (Backblaze B2 is versioned by default) the delete leaves a billable
+// hide-marker behind for every transcode, and it costs two requests to end up
+// with nothing. Never writing it is simply correct.
+//
+// The buffer survives Flush, because the pipeline reads its own output back
+// AFTER the flush barrier. It is released with the sink.
+func (s *Sink) Discard(rel string) {
+	key := s.prefix + "/" + strings.Trim(rel, "/")
+	s.mu.Lock()
+	s.discard[key] = true
+	s.mu.Unlock()
+}
+
 // Err reports the first storage failure a request hit, if any. ffmpeg reports a
 // failed PUT only as a generic write error, so callers check this to learn what
 // actually went wrong.
@@ -190,7 +225,9 @@ func (s *Sink) BytesUnder(rel string) int64 {
 		}
 	}
 	for k, b := range s.coalesced {
-		if strings.HasPrefix(k, want) {
+		// A discarded object never reaches the backend, so it is not part of what
+		// this rendition cost to store.
+		if strings.HasPrefix(k, want) && !s.discard[k] {
 			total += int64(len(b))
 		}
 	}
@@ -259,8 +296,18 @@ func (s *Sink) drain() {
 func (s *Sink) Flush(ctx context.Context) error {
 	s.drain()
 	s.mu.Lock()
-	pending := s.coalesced
-	s.coalesced = map[string][]byte{}
+	// Discarded objects stay buffered rather than being written: the pipeline
+	// reads them back after this barrier, and they are not part of the tree.
+	pending := map[string][]byte{}
+	retained := map[string][]byte{}
+	for k, b := range s.coalesced {
+		if s.discard[k] {
+			retained[k] = b
+			continue
+		}
+		pending[k] = b
+	}
+	s.coalesced = retained
 	firstErr := s.err
 	s.mu.Unlock()
 	if firstErr != nil {
@@ -434,10 +481,17 @@ func contentTypeFor(key string) string {
 	switch {
 	case strings.HasSuffix(key, ".m3u8"):
 		return "application/vnd.apple.mpegurl"
+	case strings.HasSuffix(key, ".mpd"):
+		return "application/dash+xml"
 	case strings.HasSuffix(key, ".ts"):
 		return "video/mp2t"
 	case strings.HasSuffix(key, ".mp4"):
 		return "video/mp4"
+	case strings.HasSuffix(key, ".m4s"):
+		// CMAF media segments. The pipeline reads them back through this origin
+		// (the progressive remux consumes a media playlist and its segments), so
+		// the type has to be one a demuxer accepts.
+		return "video/iso.segment"
 	default:
 		return "application/octet-stream"
 	}

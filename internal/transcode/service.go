@@ -111,6 +111,7 @@ type Repository interface {
 	FailTranscodeJob(ctx context.Context, arg sqlcgen.FailTranscodeJobParams) error
 	HasLiveTranscodeJob(ctx context.Context, videoID uuid.UUID) (bool, error)
 	UpsertStreamingPlaylist(ctx context.Context, arg sqlcgen.UpsertStreamingPlaylistParams) (sqlcgen.StreamingPlaylist, error)
+	MarkStreamingPlaylistFailed(ctx context.Context, videoID uuid.UUID) error
 	GetStreamingPlaylist(ctx context.Context, videoID uuid.UUID) (sqlcgen.StreamingPlaylist, error)
 	DeleteStreamingPlaylist(ctx context.Context, videoID uuid.UUID) error
 	CreateVideoRendition(ctx context.Context, arg sqlcgen.CreateVideoRenditionParams) (sqlcgen.VideoRendition, error)
@@ -140,6 +141,13 @@ type TargetTranscoder interface {
 	Probe(ctx context.Context, sourceKey string) (media.Metadata, error)
 	TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, md media.Metadata, progress media.ProgressFunc) (media.HLSResult, error)
 	TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, md media.Metadata, progress media.ProgressFunc) ([]media.WebVideoResult, error)
+	// TranscodeAll is the FULL job, and it is one method rather than a call to
+	// each of the two above because running them independently is what made a
+	// target='all' job decode its source three times. The progressive MP4s are
+	// derived from the streaming tree's own per-rung downloads, which exist only
+	// on local scratch inside the packaging window — so the saving is available
+	// exactly when the two run together, and not otherwise.
+	TranscodeAll(ctx context.Context, videoID uuid.UUID, sourceKey string, md media.Metadata, progress media.ProgressFunc) (media.HLSResult, []media.WebVideoResult, error)
 }
 
 type stepRepository interface {
@@ -509,7 +517,28 @@ func (s *Service) runTarget(ctx context.Context, row sqlcgen.ClaimDueTranscodeJo
 	if err != nil {
 		return err
 	}
-	if target == TargetAll || target == TargetHLS {
+	// A full job runs ONE encode pass and derives both output classes from it.
+	// Splitting it into the two single-target calls below would decode the source
+	// an extra time for files the ladder already produced — see
+	// media.HLSTranscoder.TranscodeAll.
+	//
+	// Its failures are attributed to HLS because that is what actually failed:
+	// the derivation runs inside HLS packaging, where a fault fails the transcode
+	// with nothing promoted, so the playlist state must reflect it.
+	if target == TargetAll {
+		res, files, err := advanced.TranscodeAll(ctx, row.VideoID, row.SourceKey, md, progress)
+		if err != nil {
+			return &targetRunError{target: TargetHLS, err: err}
+		}
+		if err := s.storeResult(ctx, row.VideoID, res); err != nil {
+			return &targetRunError{target: TargetHLS, err: err}
+		}
+		if err := s.storeWebVideos(ctx, row.VideoID, files); err != nil {
+			return &targetRunError{target: TargetWebVideo, err: err}
+		}
+		return nil
+	}
+	if target == TargetHLS {
 		res, err := advanced.TranscodeHLS(ctx, row.VideoID, row.SourceKey, md, progress)
 		if err != nil {
 			return &targetRunError{target: TargetHLS, err: err}
@@ -518,7 +547,9 @@ func (s *Service) runTarget(ctx context.Context, row sqlcgen.ClaimDueTranscodeJo
 			return &targetRunError{target: TargetHLS, err: err}
 		}
 	}
-	if target == TargetAll || target == TargetWebVideo {
+	// A standalone web-video rebuild has no ladder to derive from, so it keeps
+	// the encode.
+	if target == TargetWebVideo {
 		files, err := advanced.TranscodeWebVideos(ctx, row.VideoID, row.SourceKey, md, progress)
 		if err != nil {
 			return &targetRunError{target: TargetWebVideo, err: err}
@@ -569,10 +600,16 @@ func (s *Service) storeResult(ctx context.Context, videoID uuid.UUID, res media.
 			return err
 		}
 	}
+	// The promotion. Format records the packaging shape of the tree MasterKey now
+	// points at (migration 0108), so serving can tell a CMAF tree from a legacy
+	// MPEG-TS one without probing storage — and so a TRANSCODING_PACKAGER change
+	// affects only videos transcoded after it. An empty value is the pre-CMAF
+	// shape; the query folds it to 'hls-ts'.
 	_, err := s.repo.UpsertStreamingPlaylist(ctx, sqlcgen.UpsertStreamingPlaylistParams{
 		VideoID:   videoID,
 		MasterKey: res.MasterKey,
 		State:     PlaylistReady,
+		Format:    res.Format,
 	})
 	return err
 }
@@ -618,7 +655,16 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueTransco
 	if len(msg) > maxLastErrorLen {
 		msg = msg[:maxLastErrorLen]
 	}
-	if attempts >= maxAttempts {
+	// A PERMANENT failure has already given its final answer: the source and the
+	// deployment's configuration decided it, and neither changes between
+	// attempts. Retrying spends the job's whole backoff budget — around fifteen
+	// minutes with this schedule — restating it. Dead-letter on the first one,
+	// down the same path a retry-exhausted job takes, so the recorded outcome,
+	// the playlist state and the release hook are all identical; only the waiting
+	// is skipped. (media.IsPermanent rather than a local type because permanence
+	// is decided where the failure is diagnosed, and internal/media cannot import
+	// this package.)
+	if attempts >= maxAttempts || media.IsPermanent(cause) {
 		if ferr := s.repo.FailTranscodeJob(bookkeeping, sqlcgen.FailTranscodeJobParams{ID: row.ID, LastError: msg}); ferr != nil {
 			slog.ErrorContext(ctx, "transcode: job could not be dead-lettered; the row stays 'running' until the lease sweep",
 				"job_id", row.ID, "video_id", row.VideoID, "error", ferr.Error())
@@ -629,11 +675,9 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueTransco
 			affectsHLS = targetErr.target == TargetHLS
 		}
 		if affectsHLS {
-			_, _ = s.repo.UpsertStreamingPlaylist(bookkeeping, sqlcgen.UpsertStreamingPlaylistParams{
-				VideoID:   row.VideoID,
-				MasterKey: "",
-				State:     PlaylistFailed,
-			})
+			// Not an Upsert: a failure knows nothing about what format the last
+			// successful transcode wrote, and must not rewrite that record.
+			_ = s.repo.MarkStreamingPlaylistFailed(bookkeeping, row.VideoID)
 		}
 		// Best-effort terminal-failure hook: release a publish-after-transcode
 		// hold so the video publishes from its (playable) original rather than

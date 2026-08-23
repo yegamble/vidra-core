@@ -3,6 +3,7 @@ package media
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -391,6 +392,194 @@ func TestPlanHLSLadderWithMaxFPS(t *testing.T) {
 	}
 }
 
+// --- phase-3 item 6.1: frame-rate-aware bitrates ---
+
+// TestPlanHLSLadderBitratesAreFPSAware is the planning-level pin: a 24/30fps
+// source gets the shipped table verbatim, a 50/60fps source gets 1.6x the VIDEO
+// budget on every rung, and the audio budget never moves.
+func TestPlanHLSLadderBitratesAreFPSAware(t *testing.T) {
+	baseline := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 1920, 1080, 24)
+	if len(baseline) != 4 {
+		t.Fatalf("test is stale: 1080p plans %d rungs, want 4", len(baseline))
+	}
+	// The 24fps ladder IS the shipped table — this is the anchor every other
+	// case is expressed against, so it is pinned by literal value.
+	wantVideo := []int{5000, 2800, 1400, 800}
+	wantAudio := []int{160, 128, 128, 96}
+	for i, r := range baseline {
+		if r.VideoKbps != wantVideo[i] || r.AudioKbps != wantAudio[i] {
+			t.Errorf("24fps rung %s = %dk/%dk, want %dk/%dk (the table, unscaled)",
+				r.Name(), r.VideoKbps, r.AudioKbps, wantVideo[i], wantAudio[i])
+		}
+	}
+	// 30fps is the same standard-rate tier.
+	for i, r := range PlanHLSLadderWith(DefaultHLSEncodeSettings(), 1920, 1080, 30) {
+		if r.VideoKbps != wantVideo[i] || r.AudioKbps != wantAudio[i] {
+			t.Errorf("30fps rung %s = %dk/%dk, want the same as 24fps (%dk/%dk)",
+				r.Name(), r.VideoKbps, r.AudioKbps, wantVideo[i], wantAudio[i])
+		}
+	}
+	// 60fps: 1.6x video, identical audio. 5000→8000, 2800→4480, 1400→2240, 800→1280.
+	wantHFR := []int{8000, 4480, 2240, 1280}
+	for _, sourceFPS := range []float64{50, 59.94, 60, 120} {
+		rungs := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 1920, 1080, sourceFPS)
+		for i, r := range rungs {
+			if r.VideoKbps != wantHFR[i] {
+				t.Errorf("%vfps rung %s video = %dk, want %dk (1.6x the %dk table value)",
+					sourceFPS, r.Name(), r.VideoKbps, wantHFR[i], wantVideo[i])
+			}
+			if r.AudioKbps != wantAudio[i] {
+				t.Errorf("%vfps rung %s audio = %dk, want %dk — audio is not frame-rate dependent",
+					sourceFPS, r.Name(), r.AudioKbps, wantAudio[i])
+			}
+		}
+	}
+}
+
+// TestPlanHLSLadderBitratesDegradeToBaselineWhenFPSIsUnknown pins the safe
+// direction: a probe that could not read a frame rate (VFR, absent, degenerate
+// "0/0") budgets the ladder exactly as it was budgeted before this existed.
+func TestPlanHLSLadderBitratesDegradeToBaselineWhenFPSIsUnknown(t *testing.T) {
+	if parseFrameRate("0/0") != 0 || parseFrameRate("N/A") != 0 || parseFrameRate("") != 0 {
+		t.Fatal("test is stale: the probe no longer reports unknown frame rates as 0")
+	}
+	unknown := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 1920, 1080, 0)
+	known := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 1920, 1080, 30)
+	for i := range unknown {
+		if unknown[i] != known[i] {
+			t.Errorf("unknown-fps rung %s = %+v, want the standard-rate plan %+v",
+				unknown[i].Name(), unknown[i], known[i])
+		}
+	}
+}
+
+// TestPlanHLSLadderBitratesFollowTheEFFECTIVEFPS proves the multiplier keys off
+// what the ladder will actually EMIT, not off the source: transcoding_max_fps
+// appends a uniform fps filter, so a 60fps source capped to 30 really does emit
+// standard-rate video and must be budgeted as such.
+func TestPlanHLSLadderBitratesFollowTheEFFECTIVEFPS(t *testing.T) {
+	capped := PlanHLSLadderWith(HLSEncodeSettings{Resolutions: []int{1080, 720}, MaxFPS: 30}, 1920, 1080, 60)
+	for _, r := range capped {
+		if r.FPS != 30 {
+			t.Fatalf("test is stale: a capped 60fps source must plan FPS=30, got %d", r.FPS)
+		}
+	}
+	if capped[0].VideoKbps != 5000 || capped[1].VideoKbps != 2800 {
+		t.Errorf("60fps source capped to 30fps = %dk/%dk, want the standard-rate 5000k/2800k",
+			capped[0].VideoKbps, capped[1].VideoKbps)
+	}
+	// A cap ABOVE the source rate never bites, so the source rate still decides.
+	loose := PlanHLSLadderWith(HLSEncodeSettings{Resolutions: []int{1080}, MaxFPS: 120}, 1920, 1080, 60)
+	if loose[0].FPS != 0 || loose[0].VideoKbps != 8000 {
+		t.Errorf("60fps under a 120fps cap = FPS %d @ %dk, want FPS 0 @ 8000k",
+			loose[0].FPS, loose[0].VideoKbps)
+	}
+	// A cap that bites but stays high-frame-rate keeps the high budget.
+	stillHFR := PlanHLSLadderWith(HLSEncodeSettings{Resolutions: []int{1080}, MaxFPS: 50}, 1920, 1080, 60)
+	if stillHFR[0].FPS != 50 || stillHFR[0].VideoKbps != 8000 {
+		t.Errorf("60fps capped to 50fps = FPS %d @ %dk, want FPS 50 @ 8000k",
+			stillHFR[0].FPS, stillHFR[0].VideoKbps)
+	}
+}
+
+// TestFPSVideoBitrateMultiplier pins the curve itself: flat below the baseline,
+// flat above the high-frame-rate threshold, monotonic and continuous between.
+func TestFPSVideoBitrateMultiplier(t *testing.T) {
+	for _, fps := range []float64{0, 1, 23.976, 25, 29.97, 30, 32} {
+		if got := fpsVideoBitrateMultiplier(fps); got != 1 {
+			t.Errorf("fpsVideoBitrateMultiplier(%v) = %v, want 1 (standard rate)", fps, got)
+		}
+	}
+	for _, fps := range []float64{40, 48, 50, 59.94, 60, 90, 240} {
+		if got := fpsVideoBitrateMultiplier(fps); got != hlsHighFPSVideoMultiplier {
+			t.Errorf("fpsVideoBitrateMultiplier(%v) = %v, want %v", fps, got, hlsHighFPSVideoMultiplier)
+		}
+	}
+	// The ramp: strictly increasing, and it meets both ends without a step.
+	if got := fpsVideoBitrateMultiplier(36); got != 1.3 {
+		t.Errorf("fpsVideoBitrateMultiplier(36) = %v, want 1.3 (the midpoint of the ramp)", got)
+	}
+	prev := 1.0
+	for fps := 32.0; fps <= 40.0; fps += 0.5 {
+		got := fpsVideoBitrateMultiplier(fps)
+		if got < prev {
+			t.Errorf("multiplier fell from %v to %v at %v fps", prev, got, fps)
+		}
+		if got < 1 || got > hlsHighFPSVideoMultiplier {
+			t.Errorf("multiplier %v at %v fps is outside [1, %v]", got, fps, hlsHighFPSVideoMultiplier)
+		}
+		prev = got
+	}
+}
+
+// TestPlanHLSLadderFPSAwareBitratesReachEveryDerivedRung proves the scaling is
+// not confined to the canonical table lookup: the tiny-source fallback and the
+// transcoding_original_resolution rung derive their budgets through their own
+// code paths and must scale too.
+func TestPlanHLSLadderFPSAwareBitratesReachEveryDerivedRung(t *testing.T) {
+	// Tiny-source fallback: inherits the LOWEST enabled rung's budget (360p:
+	// 800k) — scaled.
+	tiny := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 320, 240, 60)
+	if len(tiny) != 1 || tiny[0].VideoKbps != 1280 || tiny[0].AudioKbps != 96 {
+		t.Errorf("60fps tiny-source fallback = %+v, want one rung at 1280k/96k", tiny)
+	}
+	// Original-resolution rung: 1440p's 9000k table value, scaled.
+	st := HLSEncodeSettings{Resolutions: []int{1080, 720}, OriginalResolution: true}
+	orig := PlanHLSLadderWith(st, 2560, 1440, 60)
+	if orig[0].Height != 1440 || orig[0].VideoKbps != 14400 || orig[0].AudioKbps != 160 {
+		t.Errorf("60fps original-resolution rung = %dp @ %dk/%dk, want 1440p @ 14400k/160k",
+			orig[0].Height, orig[0].VideoKbps, orig[0].AudioKbps)
+	}
+}
+
+// TestFPSAwareBitratesReachTheEncoderAndBothMasters closes the loop from the
+// plan to the bytes: the scaled budget must drive -b:v/-maxrate/-bufsize on both
+// packagers and be what BANDWIDTH declares in both master playlists. A ladder
+// encoded at 1.6x whose manifest still advertises the 1x rate would have every
+// ABR player under-estimate what it is about to download.
+func TestFPSAwareBitratesReachTheEncoderAndBothMasters(t *testing.T) {
+	rungs := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 1920, 1080, 60)
+	top := rungs[0]
+	if top.VideoKbps != 8000 {
+		t.Fatalf("test is stale: 60fps 1080p top rung = %dk, want 8000k", top.VideoKbps)
+	}
+
+	// MPEG-TS encoder args.
+	ts := strings.Join(hlsLadderArgs(localSource("/in/src.mp4"), localOutput("/out"), rungs, 0), " ")
+	for _, want := range []string{"-b:v 8000k", "-maxrate 8000k", "-bufsize 16000k"} {
+		if !strings.Contains(ts, want) {
+			t.Errorf("MPEG-TS ladder missing %q\n%s", want, ts)
+		}
+	}
+	// CMAF encoder args (stream-qualified).
+	plan := ladderPlan{rungs: rungs, labels: []string{"v0", "v1", "v2", "v3"}, hasAudio: true}
+	cmaf := strings.Join(cmafPackager{}.LadderOutputArgs(localOutput("/out"), plan), " ")
+	for _, want := range []string{"-b:v:0 8000k", "-maxrate:v:0 8000k", "-bufsize:v:0 16000k"} {
+		if !strings.Contains(cmaf, want) {
+			t.Errorf("CMAF ladder missing %q\n%s", want, cmaf)
+		}
+	}
+
+	// Both masters' BANDWIDTH.
+	wantBW := (8000 + top.AudioKbps) * 1000 * 11 / 10
+	tsMaster := renderMasterPlaylist(rungs, nil)
+	if !strings.Contains(tsMaster, "BANDWIDTH="+fmt.Sprint(wantBW)+",") {
+		t.Errorf("MPEG-TS master does not declare the scaled top-rung bandwidth %d:\n%s", wantBW, tsMaster)
+	}
+	layout := cmafLayout{
+		videoCodecs: []string{"avc1.4d4028,mp4a.40.2", "avc1.4d401f,mp4a.40.2", "avc1.4d401e,mp4a.40.2", "avc1.4d401e,mp4a.40.2"},
+		hasAudio:    true,
+		audioRep:    len(rungs),
+	}
+	cmafMaster, err := renderCMAFMasterPlaylist(rungs, top.AudioKbps, layout, nil)
+	if err != nil {
+		t.Fatalf("renderCMAFMasterPlaylist: %v", err)
+	}
+	if !strings.Contains(cmafMaster, "BANDWIDTH="+fmt.Sprint(wantBW)+",") {
+		t.Errorf("CMAF master does not declare the scaled top-rung bandwidth %d:\n%s", wantBW, cmafMaster)
+	}
+}
+
 func TestHLSRungArgsFPSAndThreads(t *testing.T) {
 	r := HLSRung{Height: 720, Width: 1280, VideoKbps: 2800, AudioKbps: 128, FPS: 30}
 	args := strings.Join(hlsRungArgs(localSource("/in/src.mp4"), "/out/720p", r, 4), " ")
@@ -427,5 +616,133 @@ func TestIsHLSRungHeightAndCanonicalSet(t *testing.T) {
 	// The default ladder is the original hardcoded one.
 	if got := fmt.Sprint(DefaultHLSResolutionHeights); got != "[1080 720 480 360]" {
 		t.Errorf("DefaultHLSResolutionHeights = %v", got)
+	}
+}
+
+// TestMetadataAudioOnly pins the classification the whole audio-only path turns
+// on. It is deliberately narrower than "no video": a file with neither video nor
+// audio is not media at all and must keep failing, and a source WITH video is
+// never audio-only however little else it has.
+func TestMetadataAudioOnly(t *testing.T) {
+	cases := []struct {
+		name string
+		md   Metadata
+		want bool
+		why  string
+	}{
+		{"audio with no video", Metadata{HasAudio: true, DurationSeconds: 90}, true,
+			"a podcast episode: the shape that used to dead-letter"},
+		{"neither audio nor video", Metadata{DurationSeconds: 90}, false,
+			"an unprobeable file must keep failing, not package as silence"},
+		{"video with audio", Metadata{Width: 1280, Height: 720, HasAudio: true}, false, ""},
+		{"video without audio", Metadata{Width: 1280, Height: 720}, false,
+			"a silent video is a video"},
+		{"audio beside a half-described video stream", Metadata{Width: 640, HasAudio: true}, true,
+			"a stream ffprobe could not fully describe cannot be laddered"},
+	}
+	for _, tc := range cases {
+		if got := tc.md.AudioOnly(); got != tc.want {
+			t.Errorf("%s: AudioOnly() = %v, want %v — %s", tc.name, got, tc.want, tc.why)
+		}
+	}
+}
+
+// TestAudioOnlyLadderPlansNothingToEncode: the planner is unchanged, and that is
+// the point. "No rungs" was never wrong — reading it as "unprobeable source" was.
+func TestAudioOnlyLadderPlansNothingToEncode(t *testing.T) {
+	if rungs := PlanHLSLadderWith(DefaultHLSEncodeSettings(), 0, 0, 0); rungs != nil {
+		t.Errorf("audio-only source planned %v, want no rungs", rungSizes(rungs))
+	}
+}
+
+// TestAudioOnlyKbpsFor pins the audio-only budget rule: the smallest canonical
+// step whose nominal rate, allowed a 10% overshoot, still covers the source.
+// Without it every podcast was re-encoded at the 160 kbps ceiling — a 64 kbps
+// mono episode came out two and a half times larger carrying no more information
+// than it arrived with, because lossy-to-lossy cannot recover what the first
+// encoder threw away.
+func TestAudioOnlyKbpsFor(t *testing.T) {
+	cases := []struct {
+		sourceKbps, want int
+		why              string
+	}{
+		{0, 160, "an unknown source rate takes the ceiling: guessing low would degrade the whole content"},
+		{64, 64, "a 64k podcast stays 64k"},
+		{64276 / 1000, 64, "and still does when the probe reports container overhead (64276 bps)"},
+		{70, 64, "70 is inside the 10% allowance on the 64 step (70.4)"},
+		{71, 96, "71 is outside it, so the next step covers the source"},
+		{96, 96, ""},
+		{128, 128, ""},
+		{130, 128, "a 128k stream probing high is still the 128 step (140.8)"},
+		{160, 160, ""},
+		{176, 160, "the top step's own allowance"},
+		{192, 160, "above everything the ladder allocates: clamped to the ceiling, never exceeded"},
+		{320, 160, "a 320k master is not re-encoded at 320k"},
+		{32, 64, "below the lowest step: the lowest step covers it"},
+	}
+	for _, tc := range cases {
+		if got := audioOnlyKbpsFor(tc.sourceKbps); got != tc.want {
+			t.Errorf("audioOnlyKbpsFor(%d) = %d, want %d — %s", tc.sourceKbps, got, tc.want, tc.why)
+		}
+	}
+	// It never allocates a rate no video rendition could have, and never exceeds
+	// the ceiling.
+	for source := 0; source <= 400; source++ {
+		got := audioOnlyKbpsFor(source)
+		if got > hlsAudioOnlyKbps {
+			t.Fatalf("audioOnlyKbpsFor(%d) = %d, above the ceiling", source, got)
+		}
+		if !slices.Contains(hlsAudioSteps, got) {
+			t.Fatalf("audioOnlyKbpsFor(%d) = %d, which is not a canonical audio step", source, got)
+		}
+	}
+}
+
+// TestAudioOnlyPlanBudgetFollowsTheSource joins the rule to the plan and to what
+// the manifest declares, so the encoder and the BANDWIDTH cannot disagree.
+func TestAudioOnlyPlanBudgetFollowsTheSource(t *testing.T) {
+	plan := ladderPlan{hasAudio: true, sourceAudioKbps: 64}
+	if got := plan.audioBitrateKbps(); got != 64 {
+		t.Errorf("audio-only plan budget = %d, want the source's own 64", got)
+	}
+	args := strings.Join(cmafPackager{}.LadderOutputArgs(localOutput("/out"), plan), " ")
+	if !strings.Contains(args, "-b:a:0 64k") {
+		t.Errorf("encoder does not use the capped budget:\n%s", args)
+	}
+	// -ac 2 stays: a single-channel HLS rendition is a compatibility question
+	// this rule deliberately does not answer.
+	if !strings.Contains(args, "-ac:a:0 2") {
+		t.Errorf("audio-only output stopped emitting stereo:\n%s", args)
+	}
+	master, err := renderCMAFAudioOnlyMasterPlaylist(plan.audioBitrateKbps(),
+		cmafLayout{hasAudio: true, audioCodecs: "mp4a.40.2"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if want := fmt.Sprintf("BANDWIDTH=%d,", 64*1000*11/10); !strings.Contains(master, want) {
+		t.Errorf("master declares a bandwidth the encoder did not produce, want %q:\n%s", want, master)
+	}
+	// An unknown source rate still takes the ceiling.
+	if got := (ladderPlan{hasAudio: true}).audioBitrateKbps(); got != hlsAudioOnlyKbps {
+		t.Errorf("unknown-source audio-only budget = %d, want the ceiling %d", got, hlsAudioOnlyKbps)
+	}
+}
+
+// TestMetadataAudioOnlyRejectsCoverArtNotDimensions guards against the fix being
+// weakened back into a dimension check. Cover art is rejected by its DISPOSITION;
+// its width and height are perfectly real, which is exactly why the file used to
+// be laddered from a still image.
+func TestMetadataAudioOnlyRejectsCoverArtNotDimensions(t *testing.T) {
+	m, err := parseFFProbe([]byte(ffprobeCoverArt))
+	if err != nil {
+		t.Fatalf("parseFFProbe: %v", err)
+	}
+	if !m.AudioOnly() {
+		t.Fatalf("metadata = %+v, want audio-only", m)
+	}
+	// Prove the fixture really does carry real dimensions, so this test cannot
+	// pass for the wrong reason if the fixture is ever softened.
+	if !strings.Contains(ffprobeCoverArt, `"width": 600`) || !strings.Contains(ffprobeCoverArt, `"height": 600`) {
+		t.Error("fixture no longer describes a cover image with real dimensions")
 	}
 }
