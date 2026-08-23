@@ -180,9 +180,14 @@ type Server struct {
 	// `media` may be a storage.Fallback dual-read view, which cannot honestly
 	// presign for either store.
 	mediaPresigner storage.Presigner
+	// mediaCDNEdge / mediaCDNPurge are the configured CDN, passed as opaque
+	// funcs so neither this package nor internal/delivery learns the name of a
+	// provider (phase-4 item 2). Both nil — the default — means no CDN source.
+	mediaCDNEdge  delivery.CDNLookup
+	mediaCDNPurge delivery.CDNPurge
 	// deliverysvc decides where each media request's bytes come from
-	// (api-proxy / presigned / ipfs-gateway). Built in New() after the options
-	// have been applied; never nil, so no handler needs a nil check.
+	// (api-proxy / presigned / cdn / ipfs-gateway). Built in New() after the
+	// options have been applied; never nil, so no handler needs a nil check.
 	deliverysvc delivery.Resolver
 	// lookPath is exec.LookPath, indirected so the admin status page's ffmpeg
 	// component can be tested on a machine that does — or does not — have ffmpeg
@@ -556,6 +561,27 @@ func WithIPFSMirrorService(svc ipfsMirrorProvider) Option {
 // delivery_presign_enabled admin setting, default off.
 func WithDeliveryPresigner(p storage.Presigner) Option {
 	return func(s *Server) { s.mediaPresigner = p }
+}
+
+// WithDeliveryCDN wires the configured CDN as the edge source and the purge
+// hook behind it (phase-4 delivery item 2). Unset — the default, and every
+// install that has set no DELIVERY_CDN_BASE_URL — means no CDN source exists at
+// all, which is the shipped behaviour.
+//
+// Both arguments are FUNCS, not a provider type, and that is load-bearing
+// rather than stylistic: it is what keeps every CDN vendor out of this package
+// and out of internal/delivery. cmd/api constructs internal/cdn and passes its
+// two methods through; nothing on this side of the seam can name a provider.
+//
+// Wiring a CDN does NOT turn CDN delivery on: that is the delivery_cdn_enabled
+// admin setting, default off, read per request. purge is deliberately live
+// regardless of that setting — switching delivery off does not evict what the
+// edge is already holding.
+func WithDeliveryCDN(edge delivery.CDNLookup, purge delivery.CDNPurge) Option {
+	return func(s *Server) {
+		s.mediaCDNEdge = edge
+		s.mediaCDNPurge = purge
+	}
 }
 
 // WithMetrics attaches the Prometheus RED-metrics registry. When set AND

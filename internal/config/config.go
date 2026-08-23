@@ -648,6 +648,46 @@ type Config struct {
 	// through. Small sweeps are exempt regardless — see mediagc.breakerFloor.
 	MediaGCMaxOrphanPercent int
 
+	// CDN delivery (docs/productionization/phase-4-delivery.md item 2). Setting
+	// DeliveryCDNBaseURL is what makes a CDN source EXIST; the runtime
+	// delivery_cdn_enabled instance setting (default off) is what makes it be
+	// USED. Both are required, and the split is the point: the env side carries
+	// the wiring an operator sets once and boot-validates, the settings side
+	// carries the posture an operator has to change at 3am without a restart
+	// (interfaces.md §1). None of these are secrets except the purge token.
+	//
+	// THE CDN'S ORIGIN MUST BE KEY-ADDRESSED — the object-store bucket, or a
+	// static server rooted at the media directory. The delivery resolver works
+	// in storage object keys, so the edge URL is BaseURL + "/" + objectKey.
+	// Pointing this at the Vidra API origin 404s every request: the API
+	// addresses media by ROUTE, not by key. See internal/cdn.
+	//
+	// What a CDN may serve is bounded independently of all this: only public,
+	// published, uncredentialed media is ever handed to it (delivery.Request's
+	// Eligible), so no configuration here can put a private object at an edge.
+	DeliveryCDNBaseURL string
+	// DeliveryCDNPurgeURL is the invalidation endpoint template — placeholders
+	// {url}, {url_encoded} and {key}; see internal/cdn.Config. Empty means the
+	// edge cannot be invalidated, which is legal (a purely immutable-URL
+	// deployment never needs it) and which delivery.Purge reports as an error
+	// rather than as success, because "nothing stale survives" is then unknown.
+	DeliveryCDNPurgeURL string
+	// DeliveryCDNPurgeMethod defaults to PURGE — the near-universal spelling
+	// (Varnish, the nginx purge module, most single-URL vendor APIs).
+	DeliveryCDNPurgeMethod string
+	// DeliveryCDNPurgeHeader / DeliveryCDNPurgeToken are the one auth header the
+	// purge request carries: the header NAME (default Authorization) and its
+	// VALUE verbatim, so a Bearer API is `Bearer …` and a bare API-key header is
+	// the key itself. The token is a SECRET — sent header-only, never logged,
+	// never echoed in an error, on the observability.IsSensitiveKey denylist as
+	// cdn_purge_token.
+	DeliveryCDNPurgeHeader string
+	DeliveryCDNPurgeToken  string
+	// DeliveryCDNPurgeTimeout bounds one purge request (default 10s). A purge is
+	// a best-effort side effect; an edge that stopped answering must not hold
+	// the operation that triggered it open.
+	DeliveryCDNPurgeTimeout time.Duration
+
 	// Hybrid IPFS media mirroring (fix_plan P19, .ralph/specs/ipfs-media.md). IPFS
 	// is an orthogonal MIRROR of eligible ALREADY-PUBLIC media, present in
 	// addition to the authoritative local/S3 store — never a replacement backend,
@@ -990,6 +1030,12 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		StorageMigrationGraceHours:             p.Int("STORAGE_MIGRATION_GRACE_HOURS", 168),
 		MediaGCEnabled:                         p.Bool("MEDIA_GC_ENABLED", true),
 		MediaGCMaxOrphanPercent:                p.Int("MEDIA_GC_MAX_ORPHAN_PERCENT", 25),
+		DeliveryCDNBaseURL:                     strings.TrimRight(strings.TrimSpace(getEnv("DELIVERY_CDN_BASE_URL", "")), "/"),
+		DeliveryCDNPurgeURL:                    strings.TrimSpace(getEnv("DELIVERY_CDN_PURGE_URL", "")),
+		DeliveryCDNPurgeMethod:                 strings.ToUpper(strings.TrimSpace(getEnv("DELIVERY_CDN_PURGE_METHOD", ""))),
+		DeliveryCDNPurgeHeader:                 strings.TrimSpace(getEnv("DELIVERY_CDN_PURGE_HEADER", "")),
+		DeliveryCDNPurgeToken:                  getEnv("DELIVERY_CDN_PURGE_TOKEN", ""),
+		DeliveryCDNPurgeTimeout:                p.Duration("DELIVERY_CDN_PURGE_TIMEOUT", defaultCDNPurgeTimeout),
 		IPFSEnabled:                            p.Bool("IPFS_ENABLED", false),
 		IPFSAPIURL:                             strings.TrimRight(getEnv("IPFS_API_URL", ""), "/"),
 		IPFSGatewayURL:                         strings.TrimRight(getEnv("IPFS_GATEWAY_URL", ""), "/"),
@@ -1579,6 +1625,86 @@ func (c *Config) validate() error {
 	}
 	add(c.validatePeerTubeImport())
 	add(c.validateIPFS())
+	add(c.validateDeliveryCDN())
+	return errors.Join(errs...)
+}
+
+// defaultCDNPurgeTimeout is DELIVERY_CDN_PURGE_TIMEOUT's default. It must stay
+// equal to cdn.DefaultPurgeTimeout, which TestCDNPurgeTimeoutDefaultsAgree
+// asserts — spelled here rather than imported because internal/config is a leaf
+// and importing a consumer of its own output to read one number is a worse
+// trade than a constant with a test on it.
+const defaultCDNPurgeTimeout = 10 * time.Second
+
+// validateDeliveryCDN checks the CDN delivery surface (phase-4 item 2). Every
+// value is inert by default — with no DELIVERY_CDN_BASE_URL there is no CDN
+// source at all — so nothing here bites an install that has not opted in.
+//
+// The rules exist because each one is a way to configure a CDN that LOOKS wired
+// and silently is not, and the delivery resolver's fail-open discipline means a
+// misconfigured edge degrades quietly to origin serving rather than erroring.
+// Quiet is right at request time and wrong at boot time, so boot is where this
+// is loud.
+func (c *Config) validateDeliveryCDN() error {
+	var errs []error
+	base := strings.TrimSpace(c.DeliveryCDNBaseURL)
+
+	// Purge settings without a base URL are the "I configured the CDN and it
+	// does nothing" bug: the operator filled in the half they thought mattered
+	// and the source was never built. Refuse rather than ignore.
+	if base == "" {
+		for label, raw := range map[string]string{
+			"DELIVERY_CDN_PURGE_URL":    c.DeliveryCDNPurgeURL,
+			"DELIVERY_CDN_PURGE_HEADER": c.DeliveryCDNPurgeHeader,
+			"DELIVERY_CDN_PURGE_TOKEN":  c.DeliveryCDNPurgeToken,
+		} {
+			if strings.TrimSpace(raw) != "" {
+				errs = append(errs, varErrorf(label, "config: %s is set but DELIVERY_CDN_BASE_URL is empty, so no CDN source exists and nothing would ever be purged — set the base URL or clear this", label))
+			}
+		}
+		return errors.Join(errs...)
+	}
+
+	u, err := url.Parse(base)
+	switch {
+	case err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https"):
+		errs = append(errs, varErrorf("DELIVERY_CDN_BASE_URL", "config: DELIVERY_CDN_BASE_URL must be an absolute http(s) URL (for example https://cdn.example.com)"))
+	case u.RawQuery != "" || u.Fragment != "":
+		errs = append(errs, varErrorf("DELIVERY_CDN_BASE_URL", "config: DELIVERY_CDN_BASE_URL must be a plain path base with no query string or fragment — the object key is appended to it"))
+	case c.Environment == "production" && !c.AllowPlainHTTP && u.Scheme == "http":
+		// Mixed content is the failure this catches, and it is invisible from
+		// the server: an https page whose media is http:// has every request
+		// blocked by the browser, with no request reaching this instance and no
+		// log line anywhere in it.
+		errs = append(errs, varErrorf("DELIVERY_CDN_BASE_URL", "config: DELIVERY_CDN_BASE_URL is a plain-http edge (%q) in production. A browser on an https page blocks http media as mixed content — the request never leaves the browser, so this instance sees nothing at all. Write https://, or set VIDRA_ALLOW_PLAIN_HTTP=true if this really is a lab/LAN install", base))
+	}
+
+	if purge := strings.TrimSpace(c.DeliveryCDNPurgeURL); purge != "" {
+		// Parse the template with the placeholders resolved: {url} is a URL and
+		// leaving it literal makes an otherwise valid template look malformed.
+		probe := strings.NewReplacer(
+			"{url_encoded}", "https%3A%2F%2Fedge.invalid%2Fk",
+			"{url}", "https://edge.invalid/k",
+			"{key}", "k",
+		).Replace(purge)
+		pu, perr := url.Parse(probe)
+		if perr != nil || pu.Host == "" || (pu.Scheme != "http" && pu.Scheme != "https") {
+			errs = append(errs, varErrorf("DELIVERY_CDN_PURGE_URL", "config: DELIVERY_CDN_PURGE_URL must be an absolute http(s) URL template; the placeholders are {url}, {url_encoded} and {key} (for example %q)", "{url}"))
+		}
+	} else if c.DeliveryCDNPurgeToken != "" {
+		errs = append(errs, varErrorf("DELIVERY_CDN_PURGE_TOKEN", "config: DELIVERY_CDN_PURGE_TOKEN is set but DELIVERY_CDN_PURGE_URL is empty, so the credential is never sent anywhere"))
+	}
+
+	// An HTTP method is a token: no spaces, no separators. A value with a space
+	// in it produces a request line the edge answers 400 to, once, in its logs.
+	if m := c.DeliveryCDNPurgeMethod; m != "" && strings.TrimFunc(m, func(r rune) bool {
+		return r >= 'A' && r <= 'Z'
+	}) != "" {
+		errs = append(errs, varErrorf("DELIVERY_CDN_PURGE_METHOD", "config: DELIVERY_CDN_PURGE_METHOD must be a bare HTTP method (PURGE, POST, DELETE), not %q", m))
+	}
+	if c.DeliveryCDNPurgeTimeout <= 0 {
+		errs = append(errs, varErrorf("DELIVERY_CDN_PURGE_TIMEOUT", "config: DELIVERY_CDN_PURGE_TIMEOUT must be positive"))
+	}
 	return errors.Join(errs...)
 }
 

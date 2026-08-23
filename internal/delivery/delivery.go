@@ -22,11 +22,14 @@
 //     authorization and never presigns past a wall it cannot see: Request.
 //     Eligible must mean "these bytes are servable to an anonymous public
 //     visitor", and nothing else.
-//   - **Purge exists from day one**, before any CDN does. A shared cache that
+//   - **Purge existed from day one**, before any CDN did. A shared cache that
 //     cannot be invalidated must not be allowed to hold media whose
 //     authorization can change (a privacy flip, a deletion, a takedown), so the
-//     hook has to be part of the interface before the first `public` cache
-//     header is ever emitted for a byte payload.
+//     hook had to be part of the interface before the first `public` cache
+//     header is ever emitted for a byte payload. It now has a real
+//     implementation behind it (internal/cdn); the header promotion it gates
+//     is still deliberately unmade, because that gate is Purge being EXERCISED,
+//     not Purge merely existing.
 package delivery
 
 import "context"
@@ -45,8 +48,9 @@ const (
 	// SourceIPFSGateway is the configured public gateway URL for an
 	// already-pinned public asset (an immutable CID).
 	SourceIPFSGateway SourceKind = "ipfs-gateway"
-	// SourceCDN is a CDN edge URL. No provider implements it yet; the constant
-	// exists so the ordering contract is written down before one does.
+	// SourceCDN is a CDN edge URL: the operator's cache, in front of the same
+	// storage objects, addressed by the SAME object key. The provider is wired
+	// as opaque funcs (CDNLookup/CDNPurge) so no vendor reaches this package.
 	SourceCDN SourceKind = "cdn"
 )
 
@@ -126,6 +130,25 @@ const (
 	// stay far below PresignTTL: a redirect cached past the signature's
 	// expiry sends the viewer to a 403 the API can no longer rescue.
 	CachePresignedRedirect = CacheShortLived
+	// CacheCDNRedirect is the CDN-edge redirect's own cache policy, and it is
+	// PRIVATE deliberately — which is NOT the obvious answer, so the reasoning
+	// is written down rather than inferred.
+	//
+	// Unlike a presigned URL the edge URL is no credential: it is stable,
+	// unsigned, and identical for every viewer, so a shared cache holding
+	// "this application URL → that edge URL" would leak nothing. What stops it
+	// is sequencing, not secrecy. Promoting a media response from private to
+	// shared is the step that lets a cache entry outlive the authorization
+	// decision that produced it, and the gate on that step has always been a
+	// working Purge (risks.md §6) — real AND exercised, not merely implemented.
+	// This change makes Purge real. Nothing yet calls it, so nothing here moves
+	// to `public`; that is one separate, reversible change on top of a purge
+	// path an operator has actually fired.
+	//
+	// Five revalidated minutes matches the mirror redirect's window, so an
+	// operator flipping delivery_cdn_enabled off during an incident sees the
+	// last viewer stop following the edge within minutes rather than an hour.
+	CacheCDNRedirect = CacheShortLived
 )
 
 // Source is one place a viewer may fetch the object from. URL is empty for
@@ -179,7 +202,17 @@ type Resolver interface {
 	Resolve(ctx context.Context, req Request) []Source
 	// Purge invalidates every shared-cache copy of an object. It is the
 	// precondition for ever promoting a byte response from private to shared
-	// caching, and is wired (as a no-op) before any such promotion exists.
+	// caching.
+	//
+	// It is deliberately NOT gated on the CDN kill switch. Turning delivery off
+	// stops handing viewers edge URLs; it does not evict what the edge already
+	// holds, and an incident in which an operator has just switched the CDN off
+	// is exactly when a purge has to still work.
+	//
+	// With no CDN configured this returns nil, because there genuinely is no
+	// shared copy to invalidate. With a CDN configured but no purge endpoint it
+	// returns an error, because there is one and it cannot be reached — a state
+	// that must be loud rather than silently indistinguishable from success.
 	Purge(ctx context.Context, objectKey string) error
 }
 

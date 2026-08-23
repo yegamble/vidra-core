@@ -282,6 +282,25 @@ const (
 	// filesystem backend has no HTTP surface, so on a local install the setting
 	// is inert rather than broken.
 	KeyDeliveryPresignEnabled = "delivery_presign_enabled"
+
+	// KeyDeliveryCDNEnabled is the CDN-delivery toggle (phase-4 delivery, item
+	// 2): when on, a media request that is already servable to an anonymous
+	// public visitor is answered with a 307 to the configured CDN edge instead
+	// of being proxied byte-for-byte through the API.
+	//
+	// It is the presign toggle's exact twin, for the same reason and with the
+	// same default. A CDN you cannot turn off without a restart is not
+	// shippable: the incidents this exists for — an edge serving stale or wrong
+	// bytes, a purge that did not take, a bill running away, a provider outage
+	// that answers slowly rather than failing — all want the same 30-second
+	// response, which is "stop sending viewers there, keep serving". Flipping
+	// this back to false does exactly that on the next request; it does not
+	// evict what the edge already holds, which is what Purge is for.
+	//
+	// EFFECTIVE availability is this AND a configured DELIVERY_CDN_BASE_URL. On
+	// an install with no CDN the setting is inert rather than broken, exactly
+	// as delivery_presign_enabled is on a local-filesystem install.
+	KeyDeliveryCDNEnabled = "delivery_cdn_enabled"
 )
 
 // SearchSettingKeys are the settings whose change pushes a search.config_updated
@@ -856,6 +875,13 @@ var specs = []spec{
 	// 'delivery' section — the metadata-driven admin UI auto-renders it, so this
 	// entry is the whole admin surface.
 	{key: KeyDeliveryPresignEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageAdvanced, section: "delivery"},
+
+	// CDN delivery (phase-4 delivery item 2). Same page, same section and same
+	// default-off posture as the presign toggle above — the two are the same
+	// kind of decision about the same requests, and an operator triaging "where
+	// are my bytes coming from" should find both levers in one place.
+	{key: KeyDeliveryCDNEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageAdvanced, section: "delivery"},
 }
 

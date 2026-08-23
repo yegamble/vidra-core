@@ -173,10 +173,12 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// (search-service W9) + 6 featured-banner keys (home-featured-banner)
 	// + report_email_alerts_enabled (new-report staff alerts)
 	// + delivery_presign_enabled (phase-2 storage item 6 — the registry's first
-	// storage-area key; credentials stay env-side, this is runtime posture).
+	// storage-area key; credentials stay env-side, this is runtime posture)
+	// + delivery_cdn_enabled (phase-4 delivery item 2 — its twin: the CDN base
+	// URL is env-side and boot-validated, this is the incident-time switch).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 110 {
-		t.Fatalf("settings count = %d, want 110", len(got.Settings))
+	if len(got.Settings) != 111 {
+		t.Fatalf("settings count = %d, want 111", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

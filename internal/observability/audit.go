@@ -187,6 +187,11 @@ var sensitiveKeys = map[string]bool{
 	"ipfs_cluster_token":         true,
 	"ipfs_private_cluster_token": true,
 	"cluster_token":              true,
+	// CDN delivery (phase-4 item 2): the purge credential. It is sent
+	// header-only, and internal/cdn additionally strips the request URL out of
+	// transport errors — some purge APIs want the credential in the query
+	// string, so the URL is as sensitive as the header here.
+	"cdn_purge_token": true,
 }
 
 // IsSensitiveKey reports whether a structured-log key is on the denylist

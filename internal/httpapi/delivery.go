@@ -63,6 +63,14 @@ func (s *Server) newDeliveryResolver() delivery.Resolver {
 			return s.ipfsmirrorsvc.PublicAssetURL(ctx, objectKey, ipfsmirror.MediaClass(class))
 		}, s.ipfsMirrorEnabled),
 	}
+	// No CDN configured (no DELIVERY_CDN_BASE_URL — the default) means the CDN
+	// source simply does not exist. The purge hook rides along with the edge
+	// lookup: they are the same provider, and a resolver that could redirect to
+	// an edge it cannot invalidate is precisely the pairing this seam exists to
+	// make impossible to assemble by accident.
+	if s.mediaCDNEdge != nil {
+		opts = append(opts, delivery.WithCDN(s.mediaCDNEdge, s.mediaCDNPurge, s.cdnDeliveryEnabled))
+	}
 	// No presigner wired (local storage, or a migration fallback is active —
 	// see cmd/api) means the presigned source simply does not exist.
 	if s.mediaPresigner != nil {
@@ -77,6 +85,15 @@ func (s *Server) newDeliveryResolver() delivery.Resolver {
 // about how bytes are served until an operator says so.
 func (s *Server) presignedDeliveryEnabled() bool {
 	return s.settingBool(instancesettings.KeyDeliveryPresignEnabled, false)
+}
+
+// cdnDeliveryEnabled reports the runtime CDN toggle (delivery_cdn_enabled).
+// Default OFF, off for every unit-test server, and read PER REQUEST — flipping
+// it stops the next viewer being sent to the edge without a restart, which is
+// the only incident response worth having for a delivery path a third party
+// operates.
+func (s *Server) cdnDeliveryEnabled() bool {
+	return s.settingBool(instancesettings.KeyDeliveryCDNEnabled, false)
 }
 
 // credentialedMediaRequest reports whether the request carried a credential: a
