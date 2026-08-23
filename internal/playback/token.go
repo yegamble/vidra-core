@@ -71,16 +71,31 @@ type Scope string
 const (
 	// ScopePlayback authorises reading one video's media and detail — exactly the
 	// authority the pre-phase-4 token carried, now named. Its subject is a video
-	// id. Later scopes (a DRM license request) join it here.
+	// id. ScopeLicense joined it here, as that comment predicted.
 	ScopePlayback Scope = "playback"
 	// ScopeLive authorises pulling one live stream's playlist and segments while
 	// that stream is live. Its subject is a LIVE STREAM id, which is why the two
 	// scopes must be distinguished rather than sharing "playback": they name
 	// rows in different tables and are gated by different code.
 	ScopeLive Scope = "live"
+	// ScopeLicense authorises requesting a DRM license for one video
+	// (interfaces.md §10, phase-5). Its subject is a video id.
+	//
+	// NOTHING MINTS IT YET, and that is the point of adding it now. A license
+	// request is a different authority from playing the segments — it asks for
+	// the KEY rather than for the bytes — and the set of scopes is CLOSED, so
+	// the day a provider needs to hand out a license-only credential the
+	// authority has to already exist here or verification would reject it as an
+	// unknown scope. Defining it does not grant it: a scope the signer can
+	// verify but nothing mints opens nothing, and the license endpoint today
+	// authorises through the media path (videoVisibleForMedia) exactly as the
+	// segments do.
+	ScopeLicense Scope = "license"
 )
 
-func (sc Scope) valid() bool { return sc == ScopePlayback || sc == ScopeLive }
+func (sc Scope) valid() bool {
+	return sc == ScopePlayback || sc == ScopeLive || sc == ScopeLicense
+}
 
 // Claims is a verified token's contents.
 type Claims struct {

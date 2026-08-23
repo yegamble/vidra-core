@@ -732,6 +732,32 @@ type Config struct {
 	// the operation that triggered it open.
 	DeliveryCDNPurgeTimeout time.Duration
 
+	// Content protection (docs/productionization/interfaces.md §10, phase-5).
+	//
+	// DRMProvider selects the internal/drm provider: "none" (the default, and
+	// no content protection anywhere) or "clearkey-test". The set is CLOSED and
+	// checked at boot — a typo must refuse to start rather than fall through to
+	// the null provider, because "DRM is configured, and it is off" is a
+	// failure an operator would discover from a leak rather than from a log.
+	//
+	// Selecting a provider does NOT encrypt anything. Protection is a property
+	// of a video that has been through packaging with keys, and until that
+	// slice lands no video has, so every read path reports clear media whatever
+	// this says.
+	DRMProvider string
+	// DRMKeyKEK is the key-encryption key that seals CENC content keys at rest
+	// (internal/secretbox, table video_drm_keys): standard-base64 of exactly 32
+	// bytes, like every other *_KEK. A SECRET.
+	//
+	// UNLIKE MFAKeyKEK and ATProtoKeyKEK, IT HAS NO FALLBACK TO
+	// FederationKeyKEK. There is no accessor here that would provide one, and
+	// that omission is the design: those two seal credentials this instance
+	// holds on a user's behalf, while a content key is the asset an entire DRM
+	// deployment exists to protect. Sharing one secret across both trust
+	// domains would mean a federation-key compromise is a content-key
+	// compromise. validateDRM says so in the error an operator actually reads.
+	DRMKeyKEK string
+
 	// Hybrid IPFS media mirroring (fix_plan P19, .ralph/specs/ipfs-media.md). IPFS
 	// is an orthogonal MIRROR of eligible ALREADY-PUBLIC media, present in
 	// addition to the authoritative local/S3 store — never a replacement backend,
@@ -1102,6 +1128,8 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		DeliveryCDNPurgeHeader:                 strings.TrimSpace(getEnv("DELIVERY_CDN_PURGE_HEADER", "")),
 		DeliveryCDNPurgeToken:                  getEnv("DELIVERY_CDN_PURGE_TOKEN", ""),
 		DeliveryCDNPurgeTimeout:                p.Duration("DELIVERY_CDN_PURGE_TIMEOUT", defaultCDNPurgeTimeout),
+		DRMProvider:                            strings.ToLower(strings.TrimSpace(getEnv("DRM_PROVIDER", drmProviderNone))),
+		DRMKeyKEK:                              strings.TrimSpace(getEnv("DRM_KEY_KEK", "")),
 		IPFSEnabled:                            p.Bool("IPFS_ENABLED", false),
 		IPFSAPIURL:                             strings.TrimRight(getEnv("IPFS_API_URL", ""), "/"),
 		IPFSGatewayURL:                         strings.TrimRight(getEnv("IPFS_GATEWAY_URL", ""), "/"),
@@ -1718,6 +1746,7 @@ func (c *Config) validate() error {
 	add(c.validatePeerTubeImport())
 	add(c.validateIPFS())
 	add(c.validateDeliveryCDN())
+	add(c.validateDRM())
 	return errors.Join(errs...)
 }
 
@@ -1796,6 +1825,62 @@ func (c *Config) validateDeliveryCDN() error {
 	}
 	if c.DeliveryCDNPurgeTimeout <= 0 {
 		errs = append(errs, varErrorf("DELIVERY_CDN_PURGE_TIMEOUT", "config: DELIVERY_CDN_PURGE_TIMEOUT must be positive"))
+	}
+	return errors.Join(errs...)
+}
+
+// drmProviderNone / drmProviderClearKeyTest are the accepted DRM_PROVIDER
+// values. They must stay equal to drm.ProviderNone and drm.ProviderClearKeyTest,
+// which TestDRMProviderNamesAgree asserts — spelled here rather than imported
+// for the same reason defaultCDNPurgeTimeout is: internal/config is a leaf and
+// does not import the packages that consume its output.
+const (
+	drmProviderNone         = "none"
+	drmProviderClearKeyTest = "clearkey-test"
+)
+
+// validateDRM checks the content-protection surface (interfaces.md §10,
+// phase-5). Everything is inert by default: DRM_PROVIDER defaults to "none",
+// which is no protection anywhere, so nothing here bites an install that has
+// not opted in.
+//
+// The three rules are each a way to believe DRM is on while it is not, or to
+// turn it on in a way that destroys the thing it protects:
+//
+//   - AN UNKNOWN PROVIDER NAME REFUSES TO BOOT. Falling through a typo to the
+//     null provider would serve unprotected media to an operator who configured
+//     protection, and nothing in the running system would ever say so.
+//   - A PROVIDER THAT STORES KEYS NEEDS A KEK. Without one, content keys would
+//     have to be written unsealed, which is precisely the doctrine §10 states.
+//     internal/drm refuses the same combination; this is the half that fails at
+//     boot instead of at first use.
+//   - A KEK WITH NO PROVIDER IS REFUSED RATHER THAN IGNORED. It is the
+//     "I configured DRM and it does nothing" shape that
+//     DELIVERY_CDN_PURGE_URL-without-a-base-URL already has: the operator
+//     filled in the half they thought mattered.
+func (c *Config) validateDRM() error {
+	var errs []error
+	provider := c.DRMProvider
+
+	switch provider {
+	case "", drmProviderNone, drmProviderClearKeyTest:
+	default:
+		errs = append(errs, varErrorf("DRM_PROVIDER", "config: DRM_PROVIDER %q is not a provider this build knows (%s, %s). A misspelled provider must not fall back to %q — that would serve unprotected media on an instance configured for protection", provider, drmProviderNone, drmProviderClearKeyTest, drmProviderNone))
+		return errors.Join(errs...)
+	}
+
+	protecting := provider == drmProviderClearKeyTest
+	kek := c.DRMKeyKEK
+
+	switch {
+	case protecting && kek == "":
+		errs = append(errs, varErrorf("DRM_KEY_KEK", "config: DRM_KEY_KEK is required when DRM_PROVIDER=%s — content keys are sealed at rest and are never stored in plaintext. Generate one with `openssl rand -base64 32`. It deliberately does NOT fall back to FEDERATION_KEY_KEK: a content key and an ActivityPub actor key are different trust domains, and one secret for both would make a federation-key compromise a content-key compromise", drmProviderClearKeyTest))
+	case !protecting && kek != "":
+		errs = append(errs, varErrorf("DRM_KEY_KEK", "config: DRM_KEY_KEK is set but DRM_PROVIDER is %s, so no content key is ever sealed with it and the value does nothing — set a provider or clear this", drmProviderNone))
+	case kek != "":
+		if k, err := base64.StdEncoding.DecodeString(kek); err != nil || len(k) != 32 {
+			errs = append(errs, varErrorf("DRM_KEY_KEK", "config: DRM_KEY_KEK must be base64 of exactly 32 bytes (`openssl rand -base64 32`)"))
+		}
 	}
 	return errors.Join(errs...)
 }

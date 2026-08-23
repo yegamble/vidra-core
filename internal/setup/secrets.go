@@ -53,7 +53,13 @@ type secretSpec struct {
 //	MFA_KEY_KEK            openssl rand -base64 32   config: base64 of EXACTLY 32 bytes
 //	FEDERATION_KEY_KEK     openssl rand -base64 32   config: base64 of EXACTLY 32 bytes
 //	ATPROTO_KEY_KEK        openssl rand -base64 32   config: base64 of EXACTLY 32 bytes (falls back to FEDERATION_KEY_KEK)
+//	DRM_KEY_KEK            openssl rand -base64 32   config: base64 of EXACTLY 32 bytes (NO fallback — see below)
 //	LIVE_INGEST_SECRET     openssl rand -hex 24      shared secret on the internal /live/ingest hooks
+//
+// DRM_KEY_KEK is the one KEK with no fallback to FEDERATION_KEY_KEK. A content
+// key and an ActivityPub actor key are different trust domains (internal/config
+// validateDRM says why), so an install that turns DRM on must mint a second
+// secret rather than reuse one it already has.
 //
 // SEARCH_INTERNAL_SECRET is ONE variable on purpose: the compose chain feeds it
 // to the api as SEARCH_INTERNAL_SECRET and to the search service as
@@ -82,6 +88,8 @@ var secretManifest = map[string]secretSpec{
 		why: "it seals the ActivityPub actor private keys already in the database, and ATPROTO_KEY_KEK falls back to it, so linked Bluesky credentials break too"},
 	"ATPROTO_KEY_KEK": {kind: secretBase64, size: 32, kek: true, openssl: "openssl rand -base64 32",
 		why: "it seals the linked-Bluesky app passwords already in the database; every linked account must be re-authorised"},
+	"DRM_KEY_KEK": {kind: secretBase64, size: 32, kek: true, openssl: "openssl rand -base64 32",
+		why: "it seals the CENC content keys already in the database, and those keys are the ONLY thing that can decrypt media already packaged under them — there is no re-wrap job and no second copy, so every encrypted video becomes permanently unplayable and must be re-packaged from its source"},
 	"LIVE_INGEST_SECRET": {kind: secretHex, size: 24, openssl: "openssl rand -hex 24"},
 }
 

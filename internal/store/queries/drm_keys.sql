@@ -1,0 +1,35 @@
+-- CENC content keys (migration 0111, phase-5 enterprise,
+-- docs/productionization/interfaces.md §10).
+--
+-- Two queries, and between them they make a content key IMPOSSIBLE TO REPLACE
+-- by accident. There is deliberately no UPDATE and no upsert-with-DO-UPDATE
+-- here: overwriting the key of a video whose media is already encrypted under
+-- the old one orphans that media permanently, with no error and no way back.
+-- The insert is ON CONFLICT DO NOTHING and the provider reads back afterwards,
+-- so two packagers racing on the same video both end up with the SAME key
+-- rather than one silently invalidating the other's output. Rotating a content
+-- key on purpose is re-packaging the asset, which is a different operation than
+-- this file offers.
+--
+-- The sealed key is a SECRET: it is selected only by the provider that is about
+-- to open it, and no query here ever returns it alongside anything a log line
+-- or an API response is built from.
+
+-- name: GetVideoDRMKey :many
+-- This video's content key row, or no rows at all.
+--
+-- :many with LIMIT 1 rather than :one so "this video has no keys" is an EMPTY
+-- RESULT instead of a driver sentinel error the caller has to recognise. That
+-- is the same choice LatestQoERollupHour makes, and it is what keeps
+-- internal/drm free of a pgx import and its test fake a three-line struct.
+SELECT video_id, key_id, content_key_sealed
+FROM video_drm_keys
+WHERE video_id = $1
+LIMIT 1;
+
+-- name: InsertVideoDRMKey :exec
+-- Records a newly minted content key, and does NOTHING if this video already
+-- has one. See the file comment: DO NOTHING is the whole safety property.
+INSERT INTO video_drm_keys (video_id, key_id, content_key_sealed)
+VALUES ($1, $2, $3)
+ON CONFLICT (video_id) DO NOTHING;

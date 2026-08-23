@@ -79,6 +79,18 @@ type playbackSessionResponse struct {
 	PlaybackToken string `json:"playback_token,omitempty"`
 	// ExpiresIn is the token's lifetime in seconds, present only with a token.
 	ExpiresIn int `json:"expires_in,omitempty"`
+	// DRM is the content-protection block (interfaces.md §10, phase-5): how the
+	// media is encrypted and where a license comes from. ABSENT for clear
+	// media, which is every video on every install — no packaging step writes
+	// content keys yet — so this field changes no shipped response. See
+	// httpapi/drm.go, and TestPlaybackSessionJSONUnchangedByDefault for the
+	// regression test that keeps the default session byte-identical.
+	//
+	// It lands HERE, on the response the player already calls, which is the
+	// reason this endpoint shipped before any of phase 5 existed (see the file
+	// comment). A live session never carries it: live media is not packaged and
+	// has nothing to protect.
+	DRM *playbackSessionDRM `json:"drm,omitempty"`
 }
 
 // handleCreatePlaybackSession mints a playback session for one video.
@@ -118,6 +130,7 @@ func (s *Server) handleCreatePlaybackSession(c echo.Context) error {
 		resp.PlaybackToken = token
 		resp.ExpiresIn = int(ttl / time.Second)
 	}
+	resp.DRM = s.sessionDRM(c, id, sessionID)
 	return c.JSON(http.StatusOK, resp)
 }
 
