@@ -1679,3 +1679,33 @@ instance's row counts as an illustration of the scale involved:
 | `videoSource` | 623 | original-file provenance records |
 
 Run `--dry-run` first: it reports the plan and the conflicts and writes nothing.
+
+### Reference mode works, with one cosmetic gap
+
+Verified end to end against a real instance: `--media-mode=reference` records the
+source's object keys, Vidra resolves them against its configured store, and the
+bytes stream correctly — master playlist, variant playlist and segments all
+served, including `206 Partial Content` for Range requests, which is what a
+player needs to seek.
+
+Two things to know before choosing it:
+
+- **The store has to BE the source bucket.** Reference mode records
+  bucket-relative keys, so they only resolve if Vidra points at the bucket the
+  objects are in. The imported instance is therefore *not* independent of the
+  source. Give it a **read-only** credential so it structurally cannot modify
+  the origin instance's media, and keep `MEDIA_GC_ENABLED=false` — GC's ownership
+  marker will also refuse to sweep an unowned bucket on its own, so the two
+  together are defence in depth. **Do not adopt the bucket**; adopting stamps
+  ownership and re-enables destructive sweeps against media Vidra has no rows for.
+- **No rendition rows are created.** The API reports `renditions: []` even though
+  the imported master carries variants (240p/360p/480p in the case measured), so
+  any UI driven by that field shows an empty quality menu. Playback and ABR are
+  unaffected — hls.js reads levels from the manifest itself, not from the API —
+  but the quality selector is empty until renditions are backfilled.
+
+Note also that **copy mode is not a copy**: it regenerates HLS through Vidra's
+transcoding pipeline. On a catalogue of any size that is the dominant cost — 2,039
+hours of source on 4 vCPU is months of wall clock, not hours. If independence from
+the source bucket is the goal, a server-side object-store copy of the referenced
+keys is the cheaper route: it duplicates the media without re-encoding a frame.
