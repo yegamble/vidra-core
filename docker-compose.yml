@@ -446,6 +446,51 @@ x-api-env: &api-env
   STORAGE_S3_REGION: ${STORAGE_S3_REGION:-}
   STORAGE_S3_USE_SSL: ${STORAGE_S3_USE_SSL:-true}
   STORAGE_S3_FORCE_PATH_STYLE: ${STORAGE_S3_FORCE_PATH_STYLE:-false}
+  # THE SECOND STORE a migration campaign copies media INTO (vidra-core
+  # docs/operations.md, "Moving the media store"). Empty — the default — means
+  # the feature is OFF: no target backend is built, the copy and sweep workers
+  # never start, and POST /admin/storage/migrations answers 503. Set the backend
+  # to local|s3 and fill in the matching keys below to arm a campaign. The
+  # credentials are SECRETS under exactly the same rules as STORAGE_S3_* above —
+  # never log or commit a real value.
+  #
+  # AT CUTOVER THE OPERATOR SWAPS BOTH SETS: STORAGE_* comes to name the NEW
+  # store and STORAGE_MIGRATION_TARGET_* the OLD one, which is how the process
+  # learns the cutover happened and what gives the delete-source pass a handle on
+  # the store it is about to empty. Both halves therefore have to be settable
+  # from the env file, and this anchor is the only place that can happen.
+  #
+  # A local target is a path INSIDE the container, like STORAGE_LOCAL_ROOT above,
+  # and needs its own mount for the same durability reason.
+  STORAGE_MIGRATION_TARGET_BACKEND: ${STORAGE_MIGRATION_TARGET_BACKEND:-}
+  STORAGE_MIGRATION_TARGET_LOCAL_ROOT: ${STORAGE_MIGRATION_TARGET_LOCAL_ROOT:-}
+  STORAGE_MIGRATION_TARGET_S3_ENDPOINT: ${STORAGE_MIGRATION_TARGET_S3_ENDPOINT:-}
+  STORAGE_MIGRATION_TARGET_S3_BUCKET: ${STORAGE_MIGRATION_TARGET_S3_BUCKET:-}
+  STORAGE_MIGRATION_TARGET_S3_ACCESS_KEY: ${STORAGE_MIGRATION_TARGET_S3_ACCESS_KEY:-}
+  STORAGE_MIGRATION_TARGET_S3_SECRET_KEY: ${STORAGE_MIGRATION_TARGET_S3_SECRET_KEY:-}
+  STORAGE_MIGRATION_TARGET_S3_REGION: ${STORAGE_MIGRATION_TARGET_S3_REGION:-}
+  STORAGE_MIGRATION_TARGET_S3_USE_SSL: ${STORAGE_MIGRATION_TARGET_S3_USE_SSL:-true}
+  STORAGE_MIGRATION_TARGET_S3_FORCE_PATH_STYLE: ${STORAGE_MIGRATION_TARGET_S3_FORCE_PATH_STYLE:-false}
+  # How long the OLD store keeps its copies after cutover before the campaign
+  # deletes them — the undo window, during which reverting the swap above is a
+  # restart rather than a restore. A week by default, deliberately long: object
+  # storage is cheap and a migration that deleted the only other copy the same
+  # afternoon makes every later surprise unrecoverable.
+  STORAGE_MIGRATION_GRACE_HOURS: ${STORAGE_MIGRATION_GRACE_HOURS:-168}
+  # Media garbage collection: the daily sweep that DELETES stored objects no
+  # database row references. ON by default. Off means the worker never starts;
+  # the admin endpoint stays mounted, because an operator asking for a sweep by
+  # hand is not the hazard the flag exists for.
+  #
+  # MEDIA_GC_MAX_ORPHAN_PERCENT is the circuit breaker: a sweep that finds more
+  # than this share of what it scanned to be orphans deletes NOTHING and reports
+  # why. That is the guard against a sweep whose reference set came back wrong —
+  # a half-restored database, a bucket belonging to someone else, a migration in
+  # flight — which all look like "almost everything is an orphan", and are
+  # exactly the sweeps that must not run. 0 disables deletion entirely, 100 lets
+  # any ratio through.
+  MEDIA_GC_ENABLED: ${MEDIA_GC_ENABLED:-true}
+  MEDIA_GC_MAX_ORPHAN_PERCENT: ${MEDIA_GC_MAX_ORPHAN_PERCENT:-25}
   # Hybrid IPFS media mirror (fix_plan P19, .ralph/specs/ipfs-media.md). OFF by
   # default. To mirror already-PUBLIC media to the compose kubo node, run the
   # `ipfs` profile (docker compose --profile core --profile ipfs up) and set
