@@ -153,6 +153,61 @@ func TestStatusDegradedReadyz(t *testing.T) {
 	}
 }
 
+// A 200 from /readyz with a component down is the api saying "still serving, but
+// worse than it should be" — a Redis outage leaves every rate limiter failing
+// open without taking the instance out of rotation. Green would hide it; red
+// would claim an outage there is not, and would make this command unusable as a
+// gate for a condition that does not stop traffic.
+func TestStatusReadyzDegradedButServing(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK,
+			`{"status":"degraded","components":{"postgres":{"status":"ok"},"redis":{"status":"down","error":"dial tcp 172.18.0.3:6379: connect: connection refused"}}}`)
+	})
+	mux.HandleFunc("/schemaz", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, `{"software":{"version":"v0.2.0"},"schema":{"version":104,"applied":true}}`)
+	})
+	st := newStatusStage(t, mux, healthyFrontend())
+	st.runner.onCapture = runningStack
+
+	h := newHarness(t)
+	if err := h.run("status", "-C", st.dir); err != nil {
+		t.Fatalf("status = %v, want success — a degraded-but-serving api is not a gate failure:\n%s", err, h.out.String())
+	}
+	out := h.out.String()
+	for _, want := range []string{glyphWarn + " /readyz", "serving but DEGRADED", "redis down"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the report is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// A replica that has been told to shut down is not broken. It answers 503 on
+// purpose so a load balancer stops routing to it, and a status command that went
+// red during every rolling restart is one nobody would run during a deploy.
+func TestStatusReadyzDraining(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusServiceUnavailable, `{"status":"draining","components":{}}`)
+	})
+	mux.HandleFunc("/schemaz", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, `{"software":{"version":"v0.2.0"},"schema":{"version":104,"applied":true}}`)
+	})
+	st := newStatusStage(t, mux, healthyFrontend())
+	st.runner.onCapture = runningStack
+
+	h := newHarness(t)
+	if err := h.run("status", "-C", st.dir); err != nil {
+		t.Fatalf("status = %v, want success — a draining replica is a graceful shutdown, not a fault:\n%s", err, h.out.String())
+	}
+	out := h.out.String()
+	for _, want := range []string{glyphWarn + " /readyz", "DRAINING", "HTTP_DRAIN_DELAY"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the report is missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // An image older than /schemaz is not a fault. A status command that went red
 // for a working deployment on last month's image is one people stop running.
 func TestStatusSchemazMissingIsAWarning(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -240,6 +241,24 @@ type Server struct {
 	// /instance path stays DB-free for the post-claim life of the process.
 	ownerClaimMu      sync.Mutex
 	ownerClaimSettled bool
+
+	// draining is set by Drain() when the process has decided to stop serving,
+	// and is what makes /readyz answer 503 BEFORE the listener closes. It is the
+	// only signal a load balancer polling readiness can act on: a listener that
+	// is already closed produces connection refusals on requests the balancer
+	// had no reason not to send. Never cleared — a process that has begun
+	// shutting down does not come back.
+	draining atomic.Bool
+
+	// The /readyz result cache. Readiness is polled by every load balancer,
+	// orchestrator and uptime check in front of the instance, several times a
+	// minute forever, and each uncached probe spends a pooled DB connection plus
+	// a Redis round trip. Caching for readinessCacheTTL makes the cost
+	// independent of how many things are watching, at the price of reporting a
+	// dependency's state up to two seconds late — which is well inside the
+	// several-consecutive-failures threshold every balancer applies anyway.
+	readinessMu     sync.Mutex
+	readinessCached *readinessSnapshot
 }
 
 // uploadRoutePath is the Echo route template for the original-file upload. It is
@@ -1839,6 +1858,28 @@ func (s *Server) Handler() *echo.Echo { return s.echo }
 func (s *Server) Start() error {
 	return s.echo.Start(s.cfg.HTTPAddr())
 }
+
+// Drain marks this process as going away WITHOUT closing the listener: from
+// here on GET /readyz answers 503 while every other route keeps working
+// normally.
+//
+// It is the first half of a two-phase shutdown, and the half that only matters
+// when something in front of the instance is making routing decisions. A load
+// balancer learns that a replica is leaving by polling readiness, so between the
+// last successful health check and the moment the socket closes it is still
+// sending real user requests to a process that is about to stop accepting them.
+// Drain opens that gap deliberately: readiness goes red, the balancer notices
+// over the next HTTP_DRAIN_DELAY, and only then does the listener close on
+// traffic nobody is routing any more.
+//
+// It is idempotent and one-way. A process that has begun shutting down does not
+// change its mind, so there is no Undrain.
+func (s *Server) Drain() {
+	s.draining.Store(true)
+}
+
+// Draining reports whether Drain has been called.
+func (s *Server) Draining() bool { return s.draining.Load() }
 
 // Shutdown gracefully drains in-flight requests, bounded by ctx.
 func (s *Server) Shutdown(ctx context.Context) error {
