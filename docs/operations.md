@@ -1195,3 +1195,92 @@ docker compose -f docker-compose.yml -f deploy/docker-compose.soak.yml \
   volume only one host can see; multi-instance requires `STORAGE_BACKEND=s3`.
 - **The soak ran without an object store or a real search service.** Transcode
   throughput across instances has not been measured under load.
+
+## Splitting the api and the workers
+
+A default install runs one process that does everything: it serves HTTP *and* runs
+every background worker. That is `VIDRA_ROLE=all`, and nothing below is required to
+run Vidra.
+
+The reason to split is **ffmpeg**. Transcoding runs inside the api process, so in
+the single-container topology a busy transcode queue competes with request handling
+for the same CPU and memory, and the only way to give the transcoder more headroom
+is to give the HTTP server more too. `VIDRA_ROLE` separates the two halves of the
+same binary — same image, same configuration — so each can be sized and scaled for
+what it actually does:
+
+| `VIDRA_ROLE` | HTTP listener | Background workers |
+|---|---|---|
+| `all` (default) | yes | yes |
+| `api` | yes | **no** |
+| `worker` | **no** | yes |
+
+An unrecognised value refuses to boot. The failure it prevents is the quiet one: an
+install where nothing transcodes, imports, mirrors or sweeps, whose only symptom is
+a queue depth that grows forever.
+
+### Doing it with Compose
+
+```sh
+# Add workers beside a full api (the api still runs workers too).
+docker compose --profile core --profile worker up -d --scale worker=3
+
+# The real split: the api serves only, the workers do all the background work.
+API_ROLE=api docker compose --profile core --profile worker up -d --scale worker=3
+```
+
+`worker` layers onto `core`; it is not a stack of its own. The worker service is the
+api service with one variable changed — it merges the same `x-api-env` anchor, so a
+new configuration key reaches both halves without anyone remembering to copy it.
+
+**If you set `API_ROLE=api`, you must run at least one worker.** There is no
+interlock for this and there deliberately is not one: a process cannot tell whether
+some other container is draining the queues.
+
+### Sizing
+
+With the split on, the api container's envelope can shrink — it is serving JSON and
+streaming bytes, not encoding video. In the production overlay that is `API_CPUS` /
+`API_MEM_LIMIT`; give the freed capacity to the workers (`WORKER_CPUS` /
+`WORKER_MEM_LIMIT`) and budget roughly **4× `UPLOAD_MAX_SIZE` of scratch per
+concurrent transcode** on the worker's `TMPDIR` volume.
+
+Scaling workers is safe for the same two reasons running several api instances is
+(see [Running more than one api instance](#running-more-than-one-api-instance)):
+queue work is leased and claimed with `FOR UPDATE SKIP LOCKED`, and the sweep-only
+crons are behind a single advisory lock. `--scale worker=3` is three times the
+transcode throughput, not three times the same job.
+
+### The leader-election rule
+
+The singleton-cron elector runs **only in roles that run workers**. An api-only
+process does not stand for election at all.
+
+This is not an optimisation. If an api-only process could win the advisory lock, it
+would hold it while running zero leader-gated sweeps — media GC, the content-hash
+backfill, operational-job retention, the transcode-hold sweep and the rest would
+simply stop — and the worker that *can* run them would sit as a follower waiting for
+a leader that never yields. The symptom would be nothing at all in the logs.
+
+### Health checks
+
+**A worker has no HTTP listener, so it has no health endpoint.** The image bakes an
+HTTP `HEALTHCHECK`, which a worker can only ever fail; the Compose `worker` service
+disables it (`healthcheck: {disable: true}`), and any hand-rolled deployment must do
+the same or every worker container will be marked unhealthy and anything waiting on
+`service_healthy` will hang. Liveness for a worker is process liveness — let the
+supervisor restart it if it exits. `GET /readyz` on the api still reports PostgreSQL
+and Redis; queue depth and stalled-queue age are on `/metrics`
+(`METRICS_ENABLED=true`), which is where a worker outage is actually visible.
+
+### Shutdown
+
+A worker exits on `SIGTERM` without draining in-flight jobs, by design. Every claim
+is held under a renewed lease, so a job interrupted mid-flight is handed back by the
+lease-expiry recovery sweep — running on whichever instance is still up — within one
+lease. Nothing has to know which workers were alive.
+
+### Rolling it back
+
+Config-only, no data change: drop `API_ROLE` (or set it to `all`), stop the `worker`
+profile, restart. The api is running every worker again on the next boot.

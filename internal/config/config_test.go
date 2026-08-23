@@ -1062,7 +1062,11 @@ func TestFederationRejectsBadBaseURL(t *testing.T) {
 // only the KEK — so validate()'s only remaining variable is FEDERATION_KEY_KEK.
 func prodFedConfig(kek string) *Config {
 	return &Config{
-		Environment:              "production",
+		Environment: "production",
+		// Stated explicitly because this Config never went through LoadFrom, which
+		// is what applies the "all" default. validate() rejects an unrecognised
+		// role, and the zero value is one.
+		Role:                     RoleAll,
 		LogLevel:                 "info",
 		LogFormat:                "json",
 		HTTPPort:                 8080,

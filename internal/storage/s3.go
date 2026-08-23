@@ -374,6 +374,13 @@ func (s *S3) PresignGetAs(ctx context.Context, key string, ttl time.Duration, re
 // be established without consuming it. Only types whose remaining length is
 // exact and free to query are recognised — a wrong answer would fail the upload,
 // so anything uncertain must report unknown.
+//
+// The ORDER of the cases is load-bearing. The concrete standard-library types
+// are matched first and answer with Len(), their REMAINING length; the
+// SizedReader case is the fallback for types this package does not know. Putting
+// the interface first would change the answer for a partially-read *bytes.Reader
+// or *strings.Reader, whose Size() reports the length they STARTED with — an
+// over-report, and an upload that stalls waiting for bytes that never come.
 func sniffSize(r io.Reader) int64 {
 	switch v := r.(type) {
 	case *bytes.Reader:
@@ -398,14 +405,66 @@ func sniffSize(r io.Reader) int64 {
 			return remaining
 		}
 		return SizeUnknown
+	case SizedReader:
+		// A reader that answers for itself (see storage.SizedReader): the
+		// object-store reader S3.Open returns is the one that matters here,
+		// because without it every S3→S3 copy — the storage migration, a
+		// PeerTube import from an S3 source — reached the destination with an
+		// unknown length and uploaded a 4 KB thumbnail as a multipart.
+		if n := v.Size(); n >= 0 {
+			return n
+		}
+		return SizeUnknown
 	default:
 		return SizeUnknown
 	}
 }
 
+// s3Object is the reader S3.Open returns: the SDK's object, plus the length the
+// Stat that Open already performs established.
+//
+// It exists because that Stat's answer used to be thrown away. Every copy whose
+// SOURCE is an object store therefore reached PutSized with SizeUnknown, and an
+// unknown length means multipart with a 16 MiB part buffer per concurrent
+// copy — for a 4 KB thumbnail as readily as for an original.
+//
+// *minio.Object is EMBEDDED rather than held in a field so Read, Seek, ReadAt,
+// Stat and Close all still reach it. Callers type-assert this reader to
+// io.ReadSeeker (internal/httpapi's serveStoredObject, internal/blobsink) to get
+// http.ServeContent's Range support; a wrapper that hid Seek would silently turn
+// every 206 into a full-body 200.
+type s3Object struct {
+	*minio.Object
+	// total is the object's length as the store reported it, or negative when
+	// the store did not say.
+	total int64
+}
+
+var _ SizedReader = (*s3Object)(nil)
+
+// Size reports the bytes REMAINING, not the object's length, because that is
+// what storage.SizedReader promises and what an upload needs: a caller may read
+// or seek before handing the reader on. Anything it cannot establish exactly —
+// an object the store gave no length for, a closed or errored reader, an offset
+// past the end — is SizeUnknown rather than a guess.
+func (o *s3Object) Size() int64 {
+	if o.total < 0 {
+		return SizeUnknown
+	}
+	// Open has already forced the first request, so the object's info is set and
+	// this seek is a local read of the current offset, not a round trip.
+	offset, err := o.Seek(0, io.SeekCurrent)
+	if err != nil || offset < 0 || offset > o.total {
+		return SizeUnknown
+	}
+	return o.total - offset
+}
+
 // Open returns a reader for the object at key, or ErrNotFound. The returned
 // reader is an io.ReadSeeker (seeks translate to ranged GETs), so callers like
-// http.ServeContent get Range/206 support without a local file.
+// http.ServeContent get Range/206 support without a local file, and a
+// storage.SizedReader, so a copy INTO another store knows the length up front
+// (see s3Object).
 func (s *S3) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 	if err := validateKey(key); err != nil {
 		return nil, err
@@ -415,15 +474,18 @@ func (s *S3) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("storage: s3: open %q: %w", key, err)
 	}
 	// GetObject is lazy — force the first request so a missing object surfaces
-	// here as ErrNotFound (matching Local) rather than on the first Read.
-	if _, err := obj.Stat(); err != nil {
+	// here as ErrNotFound (matching Local) rather than on the first Read. The
+	// ObjectInfo it returns is kept rather than discarded: it is the object's
+	// length, already paid for.
+	info, err := obj.Stat()
+	if err != nil {
 		_ = obj.Close()
 		if isS3NotFound(err) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("storage: s3: open %q: %w", key, err)
 	}
-	return obj, nil
+	return &s3Object{Object: obj, total: info.Size}, nil
 }
 
 // Delete removes the object at key; missing objects are not an error.

@@ -147,10 +147,32 @@ func run() error {
 	}
 	logger.Info("configuration loaded",
 		"env", cfg.Environment,
+		"role", cfg.Role.String(),
 		"addr", cfg.HTTPAddr(),
 		"log_level", cfg.LogLevel,
 		"log_format", cfg.LogFormat,
 	)
+
+	// PROCESS ROLE (phase-3 item 8). ONE binary, two halves: the HTTP listener and
+	// the background workers. VIDRA_ROLE decides which halves this process runs —
+	// `all` (the default, and byte-for-byte the pre-flag behaviour), `api`, or
+	// `worker`.
+	//
+	// Everything BETWEEN here and the two gates is built in EVERY role. Services
+	// are constructed identically because a worker needs the same video/transcode/
+	// storage machinery an HTTP handler does, and because "the api container wires
+	// something the worker container does not" is precisely the class of drift a
+	// split topology must not be able to grow. What differs is only which
+	// goroutines start and whether a listener opens.
+	//
+	// The split exists so ffmpeg stops living inside the API container's resource
+	// envelope: with the compose `worker` profile on, the api can be sized for
+	// JSON and the workers scaled independently (`--scale worker=3`).
+	runWorkers := cfg.Role.RunsWorkers()
+	if !runWorkers {
+		logger.Info("background workers are disabled by VIDRA_ROLE; this process only serves HTTP",
+			"role", cfg.Role.String())
+	}
 
 	// OpenTelemetry tracing (no-op with zero cost when OTEL_ENABLED is false).
 	otelShutdown, err := observability.SetupTracing(context.Background(), observability.TracingConfig{
@@ -1459,8 +1481,17 @@ func run() error {
 	// media garbage collection is destructive. One PostgreSQL advisory lock, held
 	// on a dedicated connection, elects exactly one instance to run them; it is
 	// released automatically if that instance dies.
+	//
+	// ROLE: the elector is CONSTRUCTED in every role but only RUN where workers
+	// run. Both halves of that matter. Running it in an api-only process would let
+	// that process WIN the lock and then run zero leader-gated sweeps while the
+	// real worker sat as a follower — media GC, retention and the hold sweep would
+	// simply stop. And constructing it unconditionally (rather than leaving it nil
+	// in the api role) is the fail-safe direction: IsLeader() on a NIL elector
+	// returns true, so a nil here would make any leader-gated call site that ever
+	// escaped the worker gate run on every api replica at once.
 	cronLeader := leaderlock.New(db.Pool, leaderlock.SingletonCronClass, leaderlock.SingletonCronsKey, "singleton-crons", logger)
-	{
+	if runWorkers {
 		leaderCtx, leaderCancel := context.WithCancel(context.Background())
 		defer leaderCancel()
 		go cronLeader.Run(leaderCtx)
@@ -1478,7 +1509,11 @@ func run() error {
 	// next deploy. The first sweep still happens immediately, because a crash
 	// right before this boot is the most likely reason there is anything to
 	// recover.
-	{
+	//
+	// ROLE: worker-side. Recovery hands abandoned rows back to the queues, which
+	// only the worker role drains; an api-only process requeueing them would be
+	// doing bookkeeping for someone else's crash.
+	if runWorkers {
 		sweepCtx, sweepCancel := context.WithCancel(context.Background())
 		defer sweepCancel()
 		sweep := func() {
@@ -1513,7 +1548,7 @@ func run() error {
 
 	// Drain the outbound federation delivery queue in the background (signed
 	// Accept/activity delivery with retry + dead-letter). Only when enabled.
-	if cfg.FederationEnabled {
+	if runWorkers && cfg.FederationEnabled {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runFederationDeliveryWorker(workerCtx, logger, fedsvc)
@@ -1522,7 +1557,7 @@ func run() error {
 
 	// Drain the outbound ATProto auto-post queue in the background (fresh session
 	// + app.bsky.feed.post with retry/backoff + dead-letter). Only when enabled.
-	if cfg.ATProtoEnabled {
+	if runWorkers && cfg.ATProtoEnabled {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runATProtoPostWorker(workerCtx, logger, atprotosvc)
@@ -1531,7 +1566,7 @@ func run() error {
 
 	// Drain the transcode job queue in the background (ffmpeg HLS ladder with
 	// retry + dead-letter). Only when the transcoder is available.
-	if hlsTranscoder != nil {
+	if runWorkers && hlsTranscoder != nil {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runTranscodeWorker(workerCtx, logger, transcodesvc)
@@ -1541,7 +1576,7 @@ func run() error {
 	// Drain the account-export job queue and sweep expired archives in the
 	// background (always on: the due/expiry scans are cheap partial-index
 	// lookups and exports must work on every instance).
-	{
+	if runWorkers {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runAccountExportWorker(workerCtx, logger, accountsvc)
@@ -1551,7 +1586,7 @@ func run() error {
 	// Hard-delete expired disappearing E2EE messages in the background (always
 	// on: the expiry scan is a cheap partial-index lookup; reads additionally
 	// filter expired rows so expiry is correct between sweeps).
-	{
+	if runWorkers {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runE2EESweepWorker(workerCtx, logger, e2eesvc, cronLeader)
@@ -1562,7 +1597,7 @@ func run() error {
 	// on: the due scan is a cheap partial-index lookup, and the transition runs
 	// the same publish hooks (federation announce, transcode enqueue) as a
 	// direct publish.
-	{
+	if runWorkers {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runScheduledPublishWorker(workerCtx, logger, videosvc, cronLeader)
@@ -1573,7 +1608,7 @@ func run() error {
 	// on: the stuck scan is a cheap partial-index lookup. This is the safety net
 	// for crashed workers / lost jobs — the primary release paths are the
 	// transcode completion and terminal-failure hooks.
-	{
+	if runWorkers {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runTranscodeHoldSweepWorker(workerCtx, logger, videosvc, cfg.TranscodeHoldTimeout, cronLeader)
@@ -1583,7 +1618,7 @@ func run() error {
 	// Drain the URL-import queue in the background (SSRF-guarded fetch → the same
 	// AttachOriginal → Process pipeline, with retry + dead-letter). Always on: the
 	// due scan is a cheap partial-index lookup.
-	{
+	if runWorkers {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runVideoImportWorker(workerCtx, logger, importsvc)
@@ -1594,7 +1629,7 @@ func run() error {
 	// channel and enqueue `ytdlp` imports for unseen uploads. Only started when the
 	// feature is effective (CHANNEL_SYNC_ENABLED + yt-dlp import); otherwise the
 	// service is wired for its stable 503 contract but no worker runs.
-	if channelsyncsvc.Enabled() {
+	if runWorkers && channelsyncsvc.Enabled() {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runChannelSyncWorker(workerCtx, logger, channelsyncsvc)
@@ -1604,7 +1639,7 @@ func run() error {
 	// Drain the auto-caption (Whisper) queue in the background: extract audio →
 	// transcribe → upsert the caption via the shared AddCaption path → notify the
 	// owner, with retry + dead-letter. Only when auto-captioning is enabled.
-	if captionjobsvc.Enabled() {
+	if runWorkers && captionjobsvc.Enabled() {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runCaptionJobWorker(workerCtx, logger, captionjobsvc)
@@ -1615,7 +1650,7 @@ func run() error {
 	// that exceed live_max_duration_secs. Always on — the scan is a cheap lookup
 	// over the handful of state='live' rows and an immediate no-op while the
 	// limit is 0/unset, so the knob applies without a restart.
-	{
+	if runWorkers {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runLiveDurationWatchdog(workerCtx, logger, livesvc, cronLeader)
@@ -1625,7 +1660,7 @@ func run() error {
 	// Sweep expired/cancelled resumable-upload sessions (the failed-upload
 	// cleanup): removes the chunk blobs then the row. Always on: the sweep scan
 	// is a cheap indexed lookup.
-	{
+	if runWorkers {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runUploadSweepWorker(workerCtx, logger, uploadsvc, cronLeader)
@@ -1636,22 +1671,29 @@ func run() error {
 	// unattended sweep DELETES, so it is the one worker with an off switch —
 	// boot-baked, because a runtime toggle would put an irreversible operation
 	// behind a settings mistake.
-	if cfg.MediaGCEnabled {
-		workerCtx, workerCancel := context.WithCancel(context.Background())
-		defer workerCancel()
-		go runMediaGCWorker(workerCtx, logger, mediagcsvc, auditsvc, cronLeader)
-		logger.Info("media gc worker started",
-			"max_orphan_percent", cfg.MediaGCMaxOrphanPercent,
-			"bucket_ownership", string(bucketOwnership))
-	} else {
-		logger.Info("media gc worker disabled (MEDIA_GC_ENABLED=false); orphaned objects accumulate until an admin sweeps by hand")
+	//
+	// The role gate is kept SEPARATE from the feature flag here, unlike the other
+	// workers: the `else` below tells an operator their orphans are accumulating
+	// and names MEDIA_GC_ENABLED as the reason. In an api-only process that
+	// sentence would be false and would send them to edit the wrong variable.
+	if runWorkers {
+		if cfg.MediaGCEnabled {
+			workerCtx, workerCancel := context.WithCancel(context.Background())
+			defer workerCancel()
+			go runMediaGCWorker(workerCtx, logger, mediagcsvc, auditsvc, cronLeader)
+			logger.Info("media gc worker started",
+				"max_orphan_percent", cfg.MediaGCMaxOrphanPercent,
+				"bucket_ownership", string(bucketOwnership))
+		} else {
+			logger.Info("media gc worker disabled (MEDIA_GC_ENABLED=false); orphaned objects accumulate until an admin sweeps by hand")
+		}
 	}
 
 	// Content-hash backfill. Always on and with no flag: it only ever READS
 	// objects and writes one text column, it drains to a no-op query once the
 	// library is hashed, and every later phase-2 step (verified migration,
 	// post-restore consistency) is unusable without it.
-	{
+	if runWorkers {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runMediaHashBackfillWorker(workerCtx, logger, mediahashsvc, cronLeader)
@@ -1672,7 +1714,7 @@ func run() error {
 	// Only started when a target is configured: with none there is nothing to copy
 	// to, and the admin surface (which can still cancel a leftover campaign) is
 	// mounted regardless.
-	if storagemigrationsvc.Enabled() {
+	if runWorkers && storagemigrationsvc.Enabled() {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runStorageMigrationCopyWorker(workerCtx, logger, storagemigrationsvc)
@@ -1688,22 +1730,38 @@ func run() error {
 	if searchDrainer != nil {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
-		go runSearchOutboxWorker(workerCtx, logger, searchDrainer)
-		go runSearchReconcileWorker(workerCtx, logger, searchEnqueuer, cfg.SearchReconcileInterval, cronLeader)
 		// Active health prober (W9): drives Client.Healthy() so the routing policy
 		// fails over to backup the moment /healthz goes down. Context-cancelled on
 		// shutdown; never blocks it.
+		//
+		// ROLE EXCEPTION — this runs in EVERY role, api included, and is the one
+		// "worker" here that is not worker-side at all. Its output is read on the
+		// REQUEST path: internal/httpapi/search.go:59 gates whether the search
+		// service is offered for a live query, and :479 decides per request whether
+		// to route to it or fall back. Gate the prober on the worker role and an
+		// api-only process would answer from a Healthy() that nothing ever updates
+		// — the client starts OPTIMISTIC (searchclient/client.go:80), so it would
+		// keep routing traffic at a dead search service forever, which is exactly
+		// the failure the prober was added to prevent.
 		go searchClient.RunHealthProbe(workerCtx)
-		// Seed the effective config once at startup so a freshly-started search
-		// service is configured even if no admin change follows.
-		searchEnqueuer.EnqueueConfigUpdated(context.Background(), searchConfigFromSettings(settingssvc))
-		logger.Info("search outbox + reconcile workers started", "reconcile_interval", cfg.SearchReconcileInterval.String(), "health_interval", cfg.SearchHealthInterval.String())
+		logger.Info("search health prober started", "health_interval", cfg.SearchHealthInterval.String())
+
+		if runWorkers {
+			go runSearchOutboxWorker(workerCtx, logger, searchDrainer)
+			go runSearchReconcileWorker(workerCtx, logger, searchEnqueuer, cfg.SearchReconcileInterval, cronLeader)
+			// Seed the effective config once at startup so a freshly-started search
+			// service is configured even if no admin change follows. Worker-side: it
+			// writes to the outbox the drainer owns, and in a split topology every
+			// api replica doing it would enqueue the same event N times.
+			searchEnqueuer.EnqueueConfigUpdated(context.Background(), searchConfigFromSettings(settingssvc))
+			logger.Info("search outbox + reconcile workers started", "reconcile_interval", cfg.SearchReconcileInterval.String())
+		}
 	}
 
 	// Drain the IPFS mirror pin/unpin queue and periodically re-arm dead-letters
 	// (fix_plan P19). Only when IPFS_ENABLED — the mirror is a sidecar, so this
 	// never affects the authoritative write/serve paths.
-	if ipfsMirror.Enabled() {
+	if runWorkers && ipfsMirror.Enabled() {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runIPFSMirrorWorker(workerCtx, logger, ipfsMirror, cfg.IPFSReconcileInterval, cronLeader)
@@ -1714,7 +1772,7 @@ func run() error {
 	// endpoint (P17.4) and the queue-depth Prometheus gauge both read from here.
 	jobStatusSvc := jobstatus.NewService(db.Queries())
 	opts = append(opts, httpapi.WithJobStatusService(jobStatusSvc))
-	{
+	if runWorkers {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runOperationalJobRetentionWorker(workerCtx, logger, jobStatusSvc, cronLeader)
@@ -1785,7 +1843,7 @@ func run() error {
 	}
 	ptImportSvc := peertubeimport.NewService(db.Queries(), ptImportOpts...)
 	opts = append(opts, httpapi.WithPeerTubeImportService(ptImportSvc))
-	if ptImportSvc.Configured() {
+	if runWorkers && ptImportSvc.Configured() {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runPeerTubeImportWorker(workerCtx, logger, ptImportSvc)
@@ -1832,6 +1890,33 @@ func run() error {
 		logger.Info("prometheus metrics enabled", "route", "/metrics")
 	}
 
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+	// PROCESS ROLE, the other gate: a worker-only process never opens a listener.
+	// The server is not even CONSTRUCTED — httpapi.New mounts routes and the rate
+	// limiter, none of which a role with no listener should own — but the ~250
+	// option appends above still ran, unchanged, in every role: they are how the
+	// services get wired to each other, and only the last step is skipped.
+	//
+	// SHUTDOWN is deliberately just "stop": there is no worker drain to wait for.
+	// Every queue claims under a renewed lease, so a worker killed mid-job has its
+	// rows handed back by the lease-expiry sweep (jobrecovery, phase-3 items 9/10)
+	// within one lease — on whichever instance is still up. Tracking in-flight work
+	// here would duplicate that machinery and would still not cover the case it
+	// exists for, which is a worker that dies without running any shutdown code.
+	//
+	// NOTE FOR OPERATORS: the image bakes an HTTP HEALTHCHECK, which a worker can
+	// never satisfy. The compose `worker` service disables it; a hand-rolled
+	// deployment must do the same or every worker container is marked unhealthy.
+	if !cfg.Role.ServesHTTP() {
+		logger.Info("worker-only process ready; no HTTP listener in this role", "role", cfg.Role.String())
+		sig := <-stop
+		logger.Info("shutdown signal received", "signal", sig.String())
+		logger.Info("shutdown complete")
+		return nil
+	}
+
 	srv := httpapi.New(cfg, db, rdb, opts...)
 
 	// Run the server in the background so we can wait for a shutdown signal.
@@ -1842,9 +1927,6 @@ func run() error {
 			serverErr <- err
 		}
 	}()
-
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
 	select {
 	case err := <-serverErr:

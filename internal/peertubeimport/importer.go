@@ -355,8 +355,21 @@ func (im *Importer) copyMedia(ctx context.Context, srcKey, destKey string) (int6
 		return 0, "", err
 	}
 	defer func() { _ = rc.Close() }()
+	// The LimitReader below is a CAP, not a length: maxSourceFileBytes+1 exists
+	// so an absurd source object trips the guard after it, and passing it as the
+	// upload size would tell the destination to expect 16 GiB of a 4 KB
+	// thumbnail. So the length is taken from the SOURCE READER before it is
+	// wrapped — the wrapper hides its concrete type, and without this every
+	// import copied with an unknown length and paid for a multipart upload per
+	// object. Only a size that is provably the whole object is passed: an object
+	// bigger than the cap still goes up unsized, so the check below still sees
+	// cap+1 bytes and rejects it.
+	size := storage.SizeUnknown
+	if n := storage.SizeOf(rc); n >= 0 && n <= maxSourceFileBytes {
+		size = n
+	}
 	limited := io.LimitReader(rc, maxSourceFileBytes+1)
-	n, sum, err := storage.PutSizedHashed(ctx, im.destMedia, destKey, limited, storage.SizeUnknown)
+	n, sum, err := storage.PutSizedHashed(ctx, im.destMedia, destKey, limited, size)
 	if err != nil {
 		return 0, "", err
 	}

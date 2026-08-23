@@ -25,10 +25,56 @@ import (
 	"github.com/labstack/gommon/bytes"
 )
 
+// Role selects WHICH HALVES of the process run: the HTTP listener, the
+// background workers, or both. One binary, one image, one configuration surface
+// — the only thing that changes is which halves boot.
+//
+// It is deliberately BOOT-BAKED (VIDRA_ROLE, never the instancesettings DB
+// overlay) for the same reason MEDIA_GC_ENABLED is: process TOPOLOGY is a
+// property of how the deployment was started, not of what an admin typed into a
+// settings form. A runtime toggle would mean a settings mistake could silently
+// leave an install with no worker at all — every queue stops draining and
+// nothing in the API surface says so — or start ffmpeg inside a container that
+// was sized for JSON.
+type Role string
+
+const (
+	// RoleAll is the default and the only single-container topology: this process
+	// serves HTTP *and* runs every background worker. An install that never sets
+	// VIDRA_ROLE behaves exactly as it did before the flag existed.
+	RoleAll Role = "all"
+	// RoleAPI serves HTTP only. It starts no workers, and — critically — it does
+	// not stand for singleton-cron leader election either: an api-only process
+	// that won the advisory lock would hold it while running zero leader-gated
+	// sweeps, and the real worker would sit as a follower forever.
+	RoleAPI Role = "api"
+	// RoleWorker runs the background workers only and never opens a listener. It
+	// is the role that moves ffmpeg out of the API container's resource envelope,
+	// and it is scale-safe: the durable queues claim with FOR UPDATE SKIP LOCKED
+	// under a renewed lease, so `--scale worker=3` is more throughput, not
+	// double-processing.
+	RoleWorker Role = "worker"
+)
+
+// RunsWorkers reports whether this role starts the background workers (and the
+// singleton-cron leader election that arbitrates the sweep-only ones).
+func (r Role) RunsWorkers() bool { return r == RoleAll || r == RoleWorker }
+
+// ServesHTTP reports whether this role opens the HTTP listener.
+func (r Role) ServesHTTP() bool { return r == RoleAll || r == RoleAPI }
+
+// String makes Role printable in logs without a conversion at every call site.
+func (r Role) String() string { return string(r) }
+
 // Config holds all runtime configuration for the vidra-core API service.
 type Config struct {
 	// Environment is one of "development", "test", or "production".
 	Environment string
+
+	// Role is "all" (default), "api", or "worker" — see the Role type. Anything
+	// else refuses to boot; a typo must not silently produce a deployment with
+	// no workers.
+	Role Role
 
 	// Logging. LogLevel is the minimum emitted level (debug|info|warn|error,
 	// default info); LogFormat selects the slog handler (json — default,
@@ -834,8 +880,16 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 
 	env := getEnv("VIDRA_ENV", "development")
 
+	// Process role. Read out here (like VIDRA_ENV) rather than inline so the
+	// normalisation is visible: case- and whitespace-insensitive, as LOG_LEVEL /
+	// LOG_FORMAT are, because `VIDRA_ROLE=Worker ` in a hand-edited env file is a
+	// typo an operator cannot see. An unrecognised value is still fatal —
+	// validate() rejects it.
+	role := Role(strings.ToLower(strings.TrimSpace(getEnv("VIDRA_ROLE", string(RoleAll)))))
+
 	cfg := &Config{
 		Environment:                            env,
+		Role:                                   role,
 		LogLevel:                               strings.ToLower(getEnv("LOG_LEVEL", "info")),
 		LogFormat:                              strings.ToLower(getEnv("LOG_FORMAT", "json")),
 		OTelEnabled:                            p.Bool("OTEL_ENABLED", false),
@@ -1143,6 +1197,16 @@ func (c *Config) validate() error {
 		}
 		seen[key] = true
 		errs = append(errs, err)
+	}
+
+	// Process topology. An unrecognised role is fatal rather than "assume all":
+	// the mistake this catches (VIDRA_ROLE=workers, VIDRA_ROLE=api-only) would
+	// otherwise boot a container that looks healthy and drains nothing, and the
+	// symptom — a queue depth that only ever grows — surfaces hours later.
+	switch c.Role {
+	case RoleAll, RoleAPI, RoleWorker:
+	default:
+		add(varErrorf("VIDRA_ROLE", "config: invalid VIDRA_ROLE %q (want all|api|worker)", c.Role))
 	}
 
 	switch c.Environment {

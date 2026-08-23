@@ -864,8 +864,12 @@ func (s *Service) copyAndVerify(ctx context.Context, key string) (string, int64,
 		return "", 0, err
 	}
 	// SizeUnknown lets PutSizedHashed sniff the length itself, which it can do
-	// for the local backend (an *os.File) — that is the local→S3 case, and the
-	// one where a wrong answer costs a 16 MiB buffer per object.
+	// for BOTH source backends: the local one hands back an *os.File, and the S3
+	// one hands back a reader carrying the length its own Stat established
+	// (storage.SizedReader). Sniffing here rather than passing a size keeps this
+	// one call correct whatever the source is; the alternative was an S3→S3
+	// campaign uploading every 4 KB thumbnail as a multipart with a 16 MiB part
+	// buffer per concurrent worker.
 	size, sent, err := storage.PutSizedHashed(ctx, s.target, key, rc, storage.SizeUnknown)
 	closeErr := rc.Close()
 	if err != nil {

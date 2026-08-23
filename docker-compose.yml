@@ -2,6 +2,11 @@
 #
 # Profiles let you run subsets of the stack:
 #   core    -> postgres, redis, migrate, api  (default for `docker compose up`)
+#   worker  -> background-worker containers (same image, VIDRA_ROLE=worker), so
+#              ffmpeg runs outside the api container and scales on its own:
+#                docker compose --profile core --profile worker up -d --scale worker=3
+#              Add API_ROLE=api to make the split complete (api serves only).
+#              LAYERS ONTO core — it is not a stack of its own. See docs/operations.md.
 #   storage -> minio (S3-compatible object storage for STORAGE_BACKEND=s3)
 #   scan    -> clamav (virus scanning for MALWARE_SCAN_ENABLED=true)
 #   media   -> rtmp (nginx-rtmp live ingest + HLS + session recording; P12).
@@ -36,6 +41,482 @@
 # STORAGE_S3_ENDPOINT=localhost:9000 / S3_TEST_ENDPOINT=localhost:9000 instead.
 #
 # A federation profile will be added as that subsystem's local deps land.
+
+# THE API ENVIRONMENT, hoisted out of the service so the optional `worker` service
+# below can run the IDENTICAL configuration. That is the whole point: one binary in
+# one image, and the only difference between an api container and a worker container
+# is VIDRA_ROLE. A worker needs every one of these keys — it is the half of the
+# process that transcodes, imports, mirrors and sweeps — so anything that lived only
+# on `api` would be a worker that silently cannot do its job.
+#
+# `x-` keys are ignored by Compose; both services pull this in with a YAML merge
+# (`<<: *api-env`) and override per-service keys AFTER it. Still an explicit
+# allow-list, and still NO env_file: anywhere in the stack — see the JWT_SECRET note
+# inside for why that is deliberate.
+#
+# ADDING A KEY: add it here, not on a service, unless it is genuinely role-specific.
+x-api-env: &api-env
+  VIDRA_ENV: ${VIDRA_ENV:-development}
+  # HTTP_HOST is the IN-CONTAINER bind address and must stay 0.0.0.0 —
+  # otherwise Caddy and the frontend container cannot reach the api at all.
+  # Loopback hardening belongs on the compose PORT PUBLISH (a production
+  # overlay binds "127.0.0.1:8080:8080"), never on this bind address.
+  HTTP_HOST: ${HTTP_HOST:-0.0.0.0}
+  HTTP_PORT: "8080"
+  # DATABASE_URL / REDIS_URL are OVERRIDES, not constructions: the defaults are
+  # the compose-network postgres/redis this file defines, but a managed-database
+  # deployment can replace the whole DSN (its own host, credentials and
+  # ?sslmode=require) from the env file. Both are SECRETS once real credentials
+  # are in them — never log or commit a live value. Keep the redis DB index at
+  # /0: vidra-search uses /1 on the same server and the two must not collide.
+  DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-vidra}:${POSTGRES_PASSWORD:-vidra}@postgres:5432/${POSTGRES_DB:-vidra}?sslmode=disable}
+  # DISPLAY-ONLY: say true when DATABASE_URL points at a database this stack
+  # does not run (a managed instance, another server). Nothing behaves
+  # differently — it decides which BACKUP story the admin infrastructure page
+  # tells, and the two are opposite advice ("the nightly pg_dump this stack
+  # writes" vs "your provider's snapshots — check they are actually on"). A
+  # DSN cannot be inspected for the difference, so the operator says.
+  VIDRA_EXTERNAL_POSTGRES: ${VIDRA_EXTERNAL_POSTGRES:-false}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+  INSTANCE_NAME: ${INSTANCE_NAME:-Vidra (dev)}
+  # Optional about/legal metadata, served publicly at GET /api/v1/instance (and
+  # the contact address is surfaced in NodeInfo). Emitted verbatim — supply full
+  # absolute URLs. Empty is valid.
+  INSTANCE_DESCRIPTION: ${INSTANCE_DESCRIPTION:-}
+  INSTANCE_TERMS_URL: ${INSTANCE_TERMS_URL:-}
+  INSTANCE_PRIVACY_URL: ${INSTANCE_PRIVACY_URL:-}
+  INSTANCE_CONTACT_EMAIL: ${INSTANCE_CONTACT_EMAIL:-}
+  # Logging. Structured JSON is already the default; these exist so an operator
+  # can raise verbosity or switch to human-readable text without editing compose.
+  # LOG_LEVEL is debug|info|warn|error and LOG_FORMAT is json|text — anything
+  # else is a hard boot failure (config validate()).
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  # Prometheus RED metrics at GET /metrics. Opt-in and zero-cost when off.
+  # SECURITY: /metrics is root-mounted with NO authentication, so a reverse
+  # proxy in front of a public deployment must 404 that path before this is
+  # flipped on.
+  METRICS_ENABLED: ${METRICS_ENABLED:-false}
+  # OpenTelemetry tracing (the `otel` profile above runs a local collector +
+  # Jaeger). Pass all four together: when OTEL_ENABLED=true the endpoint becomes
+  # REQUIRED and boot fails without it. The protocol default is grpc, which is
+  # why the collector publishes 4317 — switching to http/protobuf means pointing
+  # at 4318 as well. OTEL_SERVICE_NAME is deliberately core-specific so the
+  # frontend's spans (vidra-user) stay distinguishable in the same trace.
+  OTEL_ENABLED: ${OTEL_ENABLED:-false}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+  OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-vidra-core}
+  # Default per-user storage quota in bytes (0/unset = unlimited). Admins can
+  # override per account via PATCH /api/v1/admin/users/{id}.
+  INSTANCE_DEFAULT_QUOTA_BYTES: ${INSTANCE_DEFAULT_QUOTA_BYTES:-0}
+  # HTTP server timings. HTTP_REQUEST_TIMEOUT is the per-request context
+  # deadline handlers and DB calls observe; it is a HARD cap on slow uploads
+  # and long media reads, so a deployment on residential upstream bandwidth
+  # will want it well above the 30s default (an 8 MiB resumable chunk needs a
+  # sustained ~2.2 Mbit/s to land inside 30s). HTTP_SHUTDOWN_TIMEOUT bounds the
+  # graceful SIGTERM drain — Docker's default stop grace is 10s, so a larger
+  # value only takes effect if the deployment also raises stop_grace_period.
+  # HTTP_READ_TIMEOUT / HTTP_WRITE_TIMEOUT are parsed by config today but not
+  # yet applied to the http.Server; they are passed through so the key has a
+  # consumer and does not silently rot out of the config surface.
+  HTTP_REQUEST_TIMEOUT: ${HTTP_REQUEST_TIMEOUT:-30s}
+  # The longer deadline used INSTEAD of HTTP_REQUEST_TIMEOUT on the streaming
+  # routes (resumable chunk PUTs, direct upload/replace POSTs, DM attachment
+  # uploads, and the media GETs). Those are bounded by the client's link speed
+  # rather than by server work. A deadline is still applied — not none — so a
+  # stalled peer eventually releases its goroutine and pooled DB connection.
+  HTTP_STREAM_REQUEST_TIMEOUT: ${HTTP_STREAM_REQUEST_TIMEOUT:-1h}
+  HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-15s}
+  HTTP_WRITE_TIMEOUT: ${HTTP_WRITE_TIMEOUT:-30s}
+  HTTP_SHUTDOWN_TIMEOUT: ${HTTP_SHUTDOWN_TIMEOUT:-20s}
+  # Max accepted request body (Echo size string). UPLOAD_MAX_SIZE overrides this
+  # on the upload route only; everything else gets 413 past this.
+  HTTP_BODY_LIMIT: ${HTTP_BODY_LIMIT:-8M}
+  # Rate limiting is on by default. End-to-end / backend-backed test runs set
+  # RATE_LIMIT_ENABLED=false so the auth limiter (10/min per IP) doesn't throttle
+  # a suite that makes many register/login calls from one host. Rate limiting
+  # has dedicated unit tests, so the e2e suite need not exercise it.
+  RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+  # Blanket per-IP budget for the /api/v1 surface, and the window both it and
+  # the auth limiter share. NOTE for real deployments: one home page is a feed
+  # call plus ~20 thumbnail GETs and HLS playback adds ~10 segment GETs a
+  # minute, so 120/1m is easily exceeded by a single ordinary viewer — raise it
+  # (or exempt the media routes) before opening a site to the public.
+  RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-120}
+  RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-1m}
+  # Stricter per-IP budget (same window) for login/register/password-reset/
+  # email-verify/MFA-challenge. 10 per window is already the right production
+  # value — do NOT raise it.
+  AUTH_RATE_LIMIT_REQUESTS: ${AUTH_RATE_LIMIT_REQUESTS:-10}
+  # Much larger per-IP budget (same window) for the media GETs — thumbnails,
+  # HLS playlists/segments, storyboards, downloads, avatars/banners. These are
+  # cheap cacheable blob reads that need a ceiling against scraping, not the
+  # API budget; 3000/1m is ~50 reads a second from one IP.
+  MEDIA_RATE_LIMIT_REQUESTS: ${MEDIA_RATE_LIMIT_REQUESTS:-3000}
+  # Per-authenticated-USER (not per-IP) budget for DM attachment uploads, on its
+  # own window. DM attachments do not count against the storage quota, so this
+  # is the compensating anti-abuse control.
+  ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS: ${ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS:-60}
+  ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW: ${ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW:-10m}
+  # WHO the per-IP budgets above are charged to. The api believes an
+  # X-Forwarded-For hop only when the peer that sent it is loopback,
+  # RFC1918/ULA or link-local — the compose network and this host — and
+  # otherwise charges the PROXY itself, which is fail-safe rather than
+  # fail-open. A TLS terminator on a PUBLIC address (a cloud load balancer, a
+  # CDN edge, the operator-run proxy of VIDRA_TLS_MODE=external) is therefore
+  # untrusted by default, and every visitor behind it shares one login budget.
+  # Naming its network here is the deliberate fix; only list networks you
+  # control, because trusting an address means believing the client IP it
+  # claims. Comma-separated CIDRs, e.g. 203.0.113.7/32,2001:db8::/32.
+  TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+  # Master switch for self-service signup. Default true so local dev and the
+  # e2e suites can register freely. First-boot note: signups stay closed
+  # (403 owner_claim_required) on a fresh instance until the operator redeems
+  # the boot-logged setup token at POST /api/v1/setup/claim-owner — the owner
+  # account is claimed, never won by registering first.
+  REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-true}
+  # When true, signups file a pending registration request an admin must
+  # approve (the registration approval queue). Overridable so approval-mode
+  # backed e2e runs can flip it without editing the file. Default off.
+  REGISTRATION_REQUIRE_APPROVAL: ${REGISTRATION_REQUIRE_APPROVAL:-false}
+  # When true, uploads by non-privileged users land in 'quarantined' for
+  # moderator approval instead of publishing. A public-launch moderation lever;
+  # off by default.
+  QUARANTINE_NEW_UPLOADS: ${QUARANTINE_NEW_UPLOADS:-false}
+  # Boot-time seeds for the runtime-mutable instance feature flags (admins
+  # change them live via PATCH /api/v1/admin/instance-settings, and the DB
+  # overlay wins once set — these only supply the initial value).
+  # FEATURE_LIVE_ENABLED CAVEAT: it defaults true, but with no RTMP ingest
+  # running (the `media` profile) and LIVE_RTMP_URL empty, creators get a
+  # stream key pointing nowhere and the UI hides the server-URL row — a
+  # deployment without live ingest should set it false.
+  FEATURE_UPLOADS_ENABLED: ${FEATURE_UPLOADS_ENABLED:-true}
+  FEATURE_IMPORTS_ENABLED: ${FEATURE_IMPORTS_ENABLED:-true}
+  FEATURE_LIVE_ENABLED: ${FEATURE_LIVE_ENABLED:-true}
+  FEATURE_COMMENTS_ENABLED: ${FEATURE_COMMENTS_ENABLED:-true}
+  # JWT access tokens (HS256) + the opaque rotating refresh session.
+  #
+  # JWT_SECRET IS THE ONE KEY A PRODUCTION DEPLOYMENT CANNOT BOOT WITHOUT.
+  # This map is an explicit allow-list and there is no env_file: anywhere in
+  # the stack, so before this line existed `--env-file env/production.env`
+  # could only feed compose SUBSTITUTION and JWT_SECRET never reached the
+  # container at all — the api fell back to the dev default and hard-exited.
+  #
+  # Deliberately `:-` and NOT the required `${JWT_SECRET:?...}` form: this file
+  # is `include:`d by the meta repo, whose `make dev`/`make up` and whose CI
+  # (`docker compose --profile core config -q`, the backed-e2e stack) run with
+  # no .env file at all, and a required-variable reference aborts compose
+  # RENDERING outright. Empty is safe because config.Load() treats an empty
+  # value as unset and falls back to the dev constant, which validate()
+  # REJECTS when VIDRA_ENV=production ("JWT_SECRET must be set in production"),
+  # as it also rejects anything under 32 bytes. Production therefore still
+  # fails closed and loudly; it just fails at api boot rather than at render.
+  # A production compose overlay is the right place for a `:?` assertion.
+  JWT_SECRET: ${JWT_SECRET:-}
+  # Issuer/audience are ENFORCED on verification, so changing either invalidates
+  # every outstanding access token — treat a change as logging everyone out.
+  JWT_ISSUER: ${JWT_ISSUER:-vidra}
+  JWT_AUDIENCE: ${JWT_AUDIENCE:-vidra}
+  JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+  JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-720h}
+  # Base64 32-byte KEK that envelope-encrypts TOTP shared secrets at rest.
+  # SILENT-FAILURE WARNING: when this AND FEDERATION_KEY_KEK are both empty,
+  # TOTP secrets are written to the database in PLAINTEXT. There is no boot
+  # error — only a warning in the api log. Empty stays the default so dev keeps
+  # working; any real deployment must set it. NEVER commit a real value.
+  MFA_KEY_KEK: ${MFA_KEY_KEK:-}
+  # Label authenticator apps display for this instance. MUST keep the EMPTY
+  # default: config falls back to INSTANCE_NAME in Go, after this literal is
+  # read, and that fallback cannot be expressed in compose substitution.
+  TOTP_ISSUER: ${TOTP_ISSUER:-}
+  # OAuth/OIDC login providers (comma list; disabled when empty). Compose has
+  # no wildcard passthrough, so each named provider's OAUTH_<NAME>_ISSUER /
+  # _CLIENT_ID / _CLIENT_SECRET (+ optional _SCOPES) must also be added here
+  # for your provider names. PUBLIC_BASE_URL is required when any provider
+  # is set. The client secret is a secret: never commit a real value.
+  OAUTH_PROVIDERS: ${OAUTH_PROVIDERS:-}
+  # Real outbound email over SMTP (password reset / email verification).
+  # SMTP_HOST + SMTP_FROM are required when enabled; SMTP_PASSWORD is a
+  # secret (never commit/log it). DEV_MAIL_CAPTURE_ENABLED wins when both
+  # are on. Default off.
+  MAIL_ENABLED: ${MAIL_ENABLED:-false}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:-}
+  # DEV-ONLY: when true, account-security tokens (reset / verify) are captured
+  # in memory and retrievable via GET /api/v1/dev/email-token so end-to-end
+  # tests can complete the token flows. NEVER enable in production. Default off.
+  DEV_MAIL_CAPTURE_ENABLED: ${DEV_MAIL_CAPTURE_ENABLED:-false}
+  # DEV/TEST-ONLY: when true, the URL-import SSRF guard permits private/loopback
+  # addresses so backed e2e can import from a loopback/compose-network origin (a
+  # public origin isn't reachable in CI). NEVER enable in production. Default off.
+  HTTP_IMPORT_ALLOW_PRIVATE_URLS: ${HTTP_IMPORT_ALLOW_PRIVATE_URLS:-false}
+  # DEV/TEST-ONLY: pins the first-run owner-claim mint to a fixed value so a
+  # test harness can redeem POST /api/v1/setup/claim-owner deterministically
+  # instead of scraping the boot log (config enforces >=16 chars and refuses
+  # the variable outright in production). Empty (default) keeps the random
+  # per-boot mint.
+  OWNER_CLAIM_TOKEN: ${OWNER_CLAIM_TOKEN:-}
+  # Malware scanning: when MALWARE_SCAN_ENABLED=true, uploaded originals are
+  # streamed to the clamd at CLAMAV_ADDR before publish. Run the bundled clamd
+  # with the "scan" profile (CLAMAV_ADDR=clamav:3310) or point at your own.
+  MALWARE_SCAN_ENABLED: ${MALWARE_SCAN_ENABLED:-false}
+  CLAMAV_ADDR: ${CLAMAV_ADDR:-}
+  # CLAMAV_TIMEOUT bounds a single scan (dial + stream + verdict); a slow/wedged
+  # clamd surfaces as a scan error (resolved by MALWARE_SCAN_MODE) not a hang.
+  CLAMAV_TIMEOUT: ${CLAMAV_TIMEOUT:-60s}
+  # MALWARE_SCAN_MODE: fallback policy on a scan ERROR — fail-closed (default;
+  # unscannable media is not published), fail-open (publish anyway, logged
+  # loudly), or quarantine (park for moderator review). Infected media always
+  # fails, in every mode.
+  MALWARE_SCAN_MODE: ${MALWARE_SCAN_MODE:-fail-closed}
+  # HLS transcoding: when TRANSCODING_ENABLED=true, published videos are
+  # transcoded to an H.264/AAC HLS ladder by an in-process worker (ffmpeg is
+  # in the image) and served at /api/v1/videos/{id}/hls/*, which powers the
+  # player's quality selector. On by default so `make dev` uploads produce
+  # the full ladder; set TRANSCODING_ENABLED=false to serve originals only.
+  TRANSCODING_ENABLED: ${TRANSCODING_ENABLED:-true}
+  # TRANSCODING_VP9_ENABLED additionally emits a progressive VP9/WebM alternate
+  # per video (surfaced via /download). AV1 is deferred and rejected if enabled.
+  TRANSCODING_VP9_ENABLED: ${TRANSCODING_VP9_ENABLED:-false}
+  # TRANSCODING_STREAM_OUTPUT streams the HLS ladder into object storage
+  # instead of staging it on the scratch volume. Trades scratch disk for
+  # object-store egress (the pipeline reads its output back to build the
+  # progressive downloads). See .env.example. Off by default.
+  TRANSCODING_STREAM_OUTPUT: ${TRANSCODING_STREAM_OUTPUT:-false}
+  # Free-space floor (MiB) on the transcode scratch volume below which no new
+  # job is claimed. 0 = built-in default (10 GiB). See .env.example.
+  TRANSCODING_MIN_FREE_SCRATCH_MB: ${TRANSCODING_MIN_FREE_SCRATCH_MB:-0}
+  # Packaging format for NEW uploads: cmaf (fMP4 segments serving HLS + DASH,
+  # the default) or ts (the frozen legacy MPEG-TS HLS — the config-only
+  # rollback). Old videos keep serving whatever format they were packaged in.
+  TRANSCODING_PACKAGER: ${TRANSCODING_PACKAGER:-cmaf}
+  # Extra video codecs alongside the H.264 compat floor (CMAF-ONLY: either of
+  # these with TRANSCODING_PACKAGER=ts is a hard boot failure). Each enabled
+  # codec re-encodes the whole ladder — see docs/operations.md for the measured
+  # cost — and needs its encoder present in the image's ffmpeg (boot-probed).
+  TRANSCODING_HEVC_ENABLED: ${TRANSCODING_HEVC_ENABLED:-false}
+  TRANSCODING_AV1_ENABLED: ${TRANSCODING_AV1_ENABLED:-false}
+  # Hardware H.264/HEVC encoding: off (default) | videotoolbox | vaapi | qsv |
+  # nvenc. CMAF-only, explicit opt-in; the container also needs the device
+  # mapped in (see the commented exemplars on the api service and
+  # docs/operations.md). TRANSCODING_HW_DEVICE picks the DRM render node for
+  # vaapi/qsv on multi-GPU hosts; leave empty elsewhere.
+  TRANSCODING_HW: ${TRANSCODING_HW:-off}
+  TRANSCODING_HW_DEVICE: ${TRANSCODING_HW_DEVICE:-}
+  # ffmpeg scratch: the transcode pipeline's temp files belong on the scratch
+  # volume, not the container's writable layer.
+  TMPDIR: /scratch
+  # Age at which the stuck-hold sweeper gives up waiting for a transcode and
+  # publishes a publish-after-transcode video from its original anyway. Lower
+  # values shorten the window in which a crashed worker keeps a video hidden.
+  TRANSCODE_HOLD_TIMEOUT: ${TRANSCODE_HOLD_TIMEOUT:-12h}
+  # Auto-caption (Whisper): when WHISPER_ENABLED=true, video owners can request
+  # an auto-generated WebVTT caption track; an in-process worker extracts the
+  # audio (ffmpeg) and POSTs it to WHISPER_ENDPOINT (whisper.cpp /inference-
+  # compatible). Run the bundled whisper.cpp server with the "captions" profile
+  # (WHISPER_ENDPOINT=http://whisper:8080) or point at your own. Off by default.
+  WHISPER_ENABLED: ${WHISPER_ENABLED:-false}
+  WHISPER_ENDPOINT: ${WHISPER_ENDPOINT:-}
+  # Caption language used when a request omits one (also the transcription hint).
+  WHISPER_DEFAULT_LANGUAGE: ${WHISPER_DEFAULT_LANGUAGE:-en}
+  # yt-dlp platform-URL import (W2.C1, UPLOAD-09). OFF by default — admin/config
+  # opt-in. When YTDLP_IMPORT_ENABLED=true, a URL import may resolve through the
+  # HARD-SANDBOXED yt-dlp extractor (fixed argv, --ignore-config, no shell, no
+  # --exec, no runtime self-update, private tmp workdir, hard timeout,
+  # --max-filesize). Bytes still land ONLY via AttachOriginal → Process, so the
+  # ClamAV scan hook fires before anything is servable.
+  #
+  # SECURITY — RESIDUAL RISK + EGRESS PROXY (spec §5): yt-dlp makes its OWN
+  # outbound HTTP fetches, which the dial-time SSRF guard cannot pin, so a
+  # hostile page could try to redirect it to internal addresses. Mitigations, in
+  # order: (1) it is OFF by default; (2) set YTDLP_PROXY to a forward proxy that
+  # DENIES RFC1918/loopback/link-local (see the commented `ytdlp-egress` sketch
+  # below); (3) run the api/worker on a network with no route to internal
+  # services. The yt-dlp binary must be PINNED in the image — never self-updated
+  # at runtime.
+  YTDLP_IMPORT_ENABLED: ${YTDLP_IMPORT_ENABLED:-false}
+  YTDLP_PATH: ${YTDLP_PATH:-yt-dlp}
+  YTDLP_TIMEOUT: ${YTDLP_TIMEOUT:-15m}
+  YTDLP_MAX_HEIGHT: ${YTDLP_MAX_HEIGHT:-1080}
+  # Recommended in production: route the extractor through an egress proxy that
+  # blocks internal ranges (e.g. YTDLP_PROXY=http://ytdlp-egress:3128). Empty by
+  # default (documented, not enforced — self-hosting the proxy has a cost).
+  YTDLP_PROXY: ${YTDLP_PROXY:-}
+  # Channel auto-sync (W2.C4, UPLOAD-13). Mirrors an external platform channel's
+  # recent uploads into a LOCAL channel by listing it with the sandboxed yt-dlp
+  # extractor (--flat-playlist) and enqueuing `ytdlp` imports for unseen entries
+  # — so bytes still land via AttachOriginal → Process (the ClamAV scan hook).
+  # OFF by default and effective ONLY when YTDLP_IMPORT_ENABLED is also true
+  # (the sync IS a yt-dlp import path); the same egress-proxy / no-internal-route
+  # stance above therefore applies. Synced uploads are created as PRIVATE drafts
+  # for the owner to review — never auto-published.
+  CHANNEL_SYNC_ENABLED: ${CHANNEL_SYNC_ENABLED:-false}
+  CHANNEL_SYNC_INTERVAL: ${CHANNEL_SYNC_INTERVAL:-1h}
+  CHANNEL_SYNC_MAX_PER_USER: ${CHANNEL_SYNC_MAX_PER_USER:-5}
+  CHANNEL_SYNC_BATCH: ${CHANNEL_SYNC_BATCH:-15}
+  # Minimum spacing between manual POST .../sync-now triggers for one channel
+  # (<=0 disables the throttle entirely).
+  CHANNEL_SYNC_COOLDOWN: ${CHANNEL_SYNC_COOLDOWN:-1m}
+  # vidra-search integration. EMPTY DISABLES THE WHOLE INTEGRATION (suggestions
+  # go empty, search/recommendations fall back to local SQL, no outbox or
+  # reconcile worker runs) — deliberately safe degradation.
+  # NOTE: for local development the meta repo's auto-loaded
+  # docker-compose.override.yml pins SEARCH_SERVICE_URL to http://search:8080
+  # and merges AFTER this file, so it still wins and `make dev` is unchanged.
+  # A deployment that uses an explicit `-f` chain does NOT auto-load that
+  # override, so it must set SEARCH_SERVICE_URL itself or it silently loses
+  # search. SEARCH_INTERNAL_SECRET is a SECRET and must equal the search
+  # service's INTERNAL_SECRET; it is required (>=32 chars) in production
+  # whenever the URL is set, so a half-configured deployment fails loudly.
+  SEARCH_SERVICE_URL: ${SEARCH_SERVICE_URL:-}
+  SEARCH_INTERNAL_SECRET: ${SEARCH_INTERNAL_SECRET:-}
+  # Per-endpoint client deadline overrides in ms; 0 means "use the client
+  # default" (250 / 800 / 800 ms) and is equivalent to leaving them unset.
+  SEARCH_SUGGEST_TIMEOUT_MS: ${SEARCH_SUGGEST_TIMEOUT_MS:-0}
+  SEARCH_QUERY_TIMEOUT_MS: ${SEARCH_QUERY_TIMEOUT_MS:-0}
+  SEARCH_RECS_TIMEOUT_MS: ${SEARCH_RECS_TIMEOUT_MS:-0}
+  # Cadence of the full index reconcile sweep, and of the background health
+  # prober (jittered ±20%) that keeps a down search service from costing every
+  # request a full timeout. Both only run when SEARCH_SERVICE_URL is set.
+  SEARCH_RECONCILE_INTERVAL: ${SEARCH_RECONCILE_INTERVAL:-24h}
+  SEARCH_HEALTH_INTERVAL: ${SEARCH_HEALTH_INTERVAL:-15s}
+  # LIVE_RTMP_URL is the base RTMP ingest URL returned to a streamer alongside a
+  # freshly minted stream key (informational; empty by default).
+  LIVE_RTMP_URL: ${LIVE_RTMP_URL:-}
+  # LIVE_INGEST_SECRET is the shared secret the media server (RTMP ingest) presents
+  # on the media-server-facing /live/ingest hooks. When empty (default) the hooks
+  # are disabled (404). Set it to enable them (dev/test harnesses; a real deploy
+  # sets a strong value). NEVER commit a real secret here.
+  LIVE_INGEST_SECRET: ${LIVE_INGEST_SECRET:-}
+  # LIVE_HLS_ROOT is the directory the RTMP media server (the `media` profile)
+  # writes live HLS + session recordings into, shared with the api. When set,
+  # the api serves live HLS by stream ID at /api/v1/live/{id}/hls/* and
+  # republishes replay-enabled sessions as VODs. For the media profile use
+  # /live-hls (the shared live_hls volume mount below). Empty (default) leaves
+  # live HLS serving + replay off.
+  LIVE_HLS_ROOT: ${LIVE_HLS_ROOT:-}
+  # ActivityPub federation. Off by default; when FEDERATION_ENABLED=true, set
+  # PUBLIC_BASE_URL to this instance's canonical origin. See .ralph/specs/federation.md.
+  FEDERATION_ENABLED: ${FEDERATION_ENABLED:-false}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+  # Consent to a PLAIN-HTTP public origin in production (VIDRA_TLS_MODE=
+  # plain-http: a lab, a LAN, an air-gapped install). Without it an http://
+  # PUBLIC_BASE_URL in production is a hard boot failure, deliberately — over
+  # http the api cannot set Secure cookies and browsers ignore HSTS, and a
+  # typed http:// that silently dropped both would do it on exactly the
+  # deployment where they matter most. With it, the https-derived defaults go
+  # off together instead of half-applying. NOT for anything public.
+  VIDRA_ALLOW_PLAIN_HTTP: ${VIDRA_ALLOW_PLAIN_HTTP:-false}
+  # Base64 32-byte KEK for actor private-key envelope encryption (required in
+  # production when federation is on). NEVER commit a real value.
+  FEDERATION_KEY_KEK: ${FEDERATION_KEY_KEK:-}
+  # Outbound Bluesky/atproto cross-posting. Off by default. When true in
+  # production, ATPROTO_KEY_KEK (or FEDERATION_KEY_KEK, which it falls back to)
+  # becomes REQUIRED — enable the flag and the key in the same change or the
+  # api will not boot. ATPROTO_KEY_KEK is a SECRET: it envelope-encrypts linked
+  # Bluesky app passwords at rest, so because of that FEDERATION_KEY_KEK
+  # fallback, rotating the federation KEK silently breaks atproto keys too.
+  ATPROTO_ENABLED: ${ATPROTO_ENABLED:-false}
+  ATPROTO_KEY_KEK: ${ATPROTO_KEY_KEK:-}
+  # "Sign in with Bluesky" is INDEPENDENT of cross-posting: it is identity-only,
+  # keeps no PDS tokens and needs no KEK. When false the /auth/atproto/*
+  # endpoints answer 503.
+  ATPROTO_LOGIN_ENABLED: ${ATPROTO_LOGIN_ENABLED:-false}
+  # Media storage backend: local (default) or s3. For s3 against the compose
+  # minio service (`--profile storage`), see the header of this file. The S3
+  # credentials are secrets — never log or commit real values.
+  STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+  # Root of the local-disk backend INSIDE the container. The absolute default
+  # below is exactly where the config default "./data/media" already resolved
+  # (the runtime image's WORKDIR is /app) — it is written out so the path no
+  # longer depends on the WORKDIR. DURABILITY WARNING: with STORAGE_BACKEND=local
+  # this lives on the container's writable layer unless a deployment mounts a
+  # volume at /app/data, in which case `up -d` destroys the media while the
+  # database rows survive pointing at nothing.
+  STORAGE_LOCAL_ROOT: ${STORAGE_LOCAL_ROOT:-/app/data/media}
+  STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT:-}
+  STORAGE_S3_BUCKET: ${STORAGE_S3_BUCKET:-}
+  STORAGE_S3_ACCESS_KEY: ${STORAGE_S3_ACCESS_KEY:-}
+  STORAGE_S3_SECRET_KEY: ${STORAGE_S3_SECRET_KEY:-}
+  STORAGE_S3_REGION: ${STORAGE_S3_REGION:-}
+  STORAGE_S3_USE_SSL: ${STORAGE_S3_USE_SSL:-true}
+  STORAGE_S3_FORCE_PATH_STYLE: ${STORAGE_S3_FORCE_PATH_STYLE:-false}
+  # Hybrid IPFS media mirror (fix_plan P19, .ralph/specs/ipfs-media.md). OFF by
+  # default. To mirror already-PUBLIC media to the compose kubo node, run the
+  # `ipfs` profile (docker compose --profile core --profile ipfs up) and set
+  # IPFS_ENABLED=true — IPFS_API_URL/IPFS_GATEWAY_URL already default to that
+  # service. IPFS is a SIDECAR: local/S3 stays authoritative and an IPFS outage
+  # never blocks uploads or playback. PRIVACY INVARIANT: nothing non-public is
+  # ever pinned (private/unlisted/quarantined videos, DM attachments, exports,
+  # upload chunks, the live edge, and remote thumbnails are all excluded).
+  IPFS_ENABLED: ${IPFS_ENABLED:-false}
+  IPFS_API_URL: ${IPFS_API_URL:-http://ipfs:5001}
+  IPFS_GATEWAY_URL: ${IPFS_GATEWAY_URL:-http://localhost:9090}
+  IPFS_ADD_TIMEOUT: ${IPFS_ADD_TIMEOUT:-60s}
+  IPFS_PIN_CONCURRENCY: ${IPFS_PIN_CONCURRENCY:-2}
+  IPFS_RECONCILE_INTERVAL: ${IPFS_RECONCILE_INTERVAL:-5m}
+  # Optional IPFS Cluster replication of the PUBLIC tier (STOR-05). IPFS_CLUSTER_TOKEN
+  # is a SECRET (Bearer) — never commit a real value.
+  IPFS_CLUSTER_API_URL: ${IPFS_CLUSTER_API_URL:-}
+  IPFS_CLUSTER_TOKEN: ${IPFS_CLUSTER_TOKEN:-}
+  # PRIVATE mirroring tier (fix_plan P19.P, .ralph/specs/ipfs-media-private.md). OFF by
+  # default. When true it mirrors non-public media (private/unlisted videos + their
+  # derivatives, unlisted-owner avatars/banners, non-public playlist covers) to a
+  # DEDICATED, swarm.key'd private kubo — NEVER the public node (dual-homing is a hard
+  # config error). Private CIDs never appear in any API response and there is
+  # deliberately NO IPFS_PRIVATE_GATEWAY_URL knob (replication, not distribution).
+  # NOTE: this supersedes the older "IPFS_MIRROR_PRIVATE requires IPFS_CLUSTER_API_URL"
+  # guard — the real requirement is now a dedicated IPFS_PRIVATE_API_URL.
+  # To try it locally: `docker compose --profile core --profile ipfs-private up` then set
+  # IPFS_MIRROR_PRIVATE=true (IPFS_PRIVATE_API_URL already defaults to the kubo-private
+  # service). Private-media mirroring may run standalone (IPFS_ENABLED=false).
+  IPFS_MIRROR_PRIVATE: ${IPFS_MIRROR_PRIVATE:-false}
+  IPFS_PRIVATE_API_URL: ${IPFS_PRIVATE_API_URL:-http://kubo-private:5001}
+  # Optional IPFS Cluster on the PRIVATE swarm (P19.P3; a fully separate cluster from
+  # the public one). IPFS_PRIVATE_CLUSTER_TOKEN is a SECRET — never commit a real value.
+  IPFS_PRIVATE_CLUSTER_API_URL: ${IPFS_PRIVATE_CLUSTER_API_URL:-}
+  IPFS_PRIVATE_CLUSTER_TOKEN: ${IPFS_PRIVATE_CLUSTER_TOKEN:-}
+  # Private-worker tuning; inherit the public IPFS_ADD_TIMEOUT / IPFS_PIN_CONCURRENCY
+  # when blank.
+  IPFS_PRIVATE_ADD_TIMEOUT: ${IPFS_PRIVATE_ADD_TIMEOUT:-}
+  IPFS_PRIVATE_PIN_CONCURRENCY: ${IPFS_PRIVATE_PIN_CONCURRENCY:-}
+  # Max size of one original-file upload (Echo size string); overrides
+  # HTTP_BODY_LIMIT on the upload route only. SIZING COUPLING: transcode
+  # scratch space needs roughly 4x this value per concurrent transcode job, so
+  # raising it without growing the scratch volume fills the disk.
+  UPLOAD_MAX_SIZE: ${UPLOAD_MAX_SIZE:-2G}
+  # Most ACTIVE (unfinished, unexpired) resumable upload sessions one user may
+  # hold at once; 0 disables the cap. Opening one past the cap is a 429 with
+  # the stable code too_many_active_uploads, which batch-upload clients queue on.
+  UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER: ${UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER:-5}
+  # PeerTube import (fix_plan P18). Everything OFF by default; the standalone
+  # cmd/peertube-import CLI takes its own flags and needs none of this — these
+  # configure the ADMIN API path + its worker only. PEERTUBE_IMPORT_ENABLED=true
+  # makes PEERTUBE_SOURCE_DATABASE_URL required.
+  # PEERTUBE_SOURCE_DATABASE_URL and the two S3 keys are SECRETS. Point the DSN
+  # at a restored dump or a read-only replica with a least-privilege role.
+  # PEERTUBE_SOURCE_S3_ENDPOINT is host[:port] with NO scheme and is rejected
+  # for containing "://" even when import is disabled. The conflict policy
+  # (skip|rename|merge|fail) and media mode (copy|reference|none) are likewise
+  # validated unconditionally.
+  PEERTUBE_IMPORT_ENABLED: ${PEERTUBE_IMPORT_ENABLED:-false}
+  PEERTUBE_SOURCE_DATABASE_URL: ${PEERTUBE_SOURCE_DATABASE_URL:-}
+  PEERTUBE_SOURCE_STORAGE_BACKEND: ${PEERTUBE_SOURCE_STORAGE_BACKEND:-local}
+  PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT: ${PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT:-}
+  PEERTUBE_SOURCE_S3_ENDPOINT: ${PEERTUBE_SOURCE_S3_ENDPOINT:-}
+  PEERTUBE_SOURCE_S3_BUCKET: ${PEERTUBE_SOURCE_S3_BUCKET:-}
+  PEERTUBE_SOURCE_S3_ACCESS_KEY: ${PEERTUBE_SOURCE_S3_ACCESS_KEY:-}
+  PEERTUBE_SOURCE_S3_SECRET_KEY: ${PEERTUBE_SOURCE_S3_SECRET_KEY:-}
+  PEERTUBE_SOURCE_S3_REGION: ${PEERTUBE_SOURCE_S3_REGION:-}
+  PEERTUBE_SOURCE_S3_USE_SSL: ${PEERTUBE_SOURCE_S3_USE_SSL:-true}
+  PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE: ${PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE:-false}
+  PEERTUBE_IMPORT_CONFLICT_POLICY: ${PEERTUBE_IMPORT_CONFLICT_POLICY:-skip}
+  PEERTUBE_IMPORT_MEDIA_MODE: ${PEERTUBE_IMPORT_MEDIA_MODE:-copy}
 
 services:
   postgres:
@@ -268,15 +749,15 @@ services:
       dockerfile: Dockerfile
     profiles: ["core"]
     depends_on:
-      # Before anything else: the media and scratch mount points have to be
-      # writable by uid 10001 or the first transcode fails on MkdirTemp.
-      prep-volumes:
-        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      # Before anything else: the media and scratch mount points have to be
+      # owned by uid 10001 — see the prep-volumes one-shot above.
+      prep-volumes:
         condition: service_completed_successfully
       # Waits for minio only when the storage profile is active (required: false
       # skips the dependency when the service is not enabled).
@@ -300,530 +781,18 @@ services:
         condition: service_healthy
         required: false
     environment:
-      VIDRA_ENV: ${VIDRA_ENV:-development}
-      # HTTP_HOST is the IN-CONTAINER bind address and must stay 0.0.0.0 —
-      # otherwise Caddy and the frontend container cannot reach the api at all.
-      # Loopback hardening belongs on the compose PORT PUBLISH (a production
-      # overlay binds "127.0.0.1:8080:8080"), never on this bind address.
-      HTTP_HOST: ${HTTP_HOST:-0.0.0.0}
-      HTTP_PORT: "8080"
-      # DATABASE_URL / REDIS_URL are OVERRIDES, not constructions: the defaults are
-      # the compose-network postgres/redis this file defines, but a managed-database
-      # deployment can replace the whole DSN (its own host, credentials and
-      # ?sslmode=require) from the env file. Both are SECRETS once real credentials
-      # are in them — never log or commit a live value. Keep the redis DB index at
-      # /0: vidra-search uses /1 on the same server and the two must not collide.
-      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-vidra}:${POSTGRES_PASSWORD:-vidra}@postgres:5432/${POSTGRES_DB:-vidra}?sslmode=disable}
-      # DISPLAY-ONLY: say true when DATABASE_URL points at a database this stack
-      # does not run (a managed instance, another server). Nothing behaves
-      # differently — it decides which BACKUP story the admin infrastructure page
-      # tells, and the two are opposite advice ("the nightly pg_dump this stack
-      # writes" vs "your provider's snapshots — check they are actually on"). A
-      # DSN cannot be inspected for the difference, so the operator says.
-      VIDRA_EXTERNAL_POSTGRES: ${VIDRA_EXTERNAL_POSTGRES:-false}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
-      INSTANCE_NAME: ${INSTANCE_NAME:-Vidra (dev)}
-      # Optional about/legal metadata, served publicly at GET /api/v1/instance (and
-      # the contact address is surfaced in NodeInfo). Emitted verbatim — supply full
-      # absolute URLs. Empty is valid.
-      INSTANCE_DESCRIPTION: ${INSTANCE_DESCRIPTION:-}
-      INSTANCE_TERMS_URL: ${INSTANCE_TERMS_URL:-}
-      INSTANCE_PRIVACY_URL: ${INSTANCE_PRIVACY_URL:-}
-      INSTANCE_CONTACT_EMAIL: ${INSTANCE_CONTACT_EMAIL:-}
-      # Logging. Structured JSON is already the default; these exist so an operator
-      # can raise verbosity or switch to human-readable text without editing compose.
-      # LOG_LEVEL is debug|info|warn|error and LOG_FORMAT is json|text — anything
-      # else is a hard boot failure (config validate()).
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-json}
-      # Prometheus RED metrics at GET /metrics. Opt-in and zero-cost when off.
-      # SECURITY: /metrics is root-mounted with NO authentication, so a reverse
-      # proxy in front of a public deployment must 404 that path before this is
-      # flipped on.
-      METRICS_ENABLED: ${METRICS_ENABLED:-false}
-      # OpenTelemetry tracing (the `otel` profile above runs a local collector +
-      # Jaeger). Pass all four together: when OTEL_ENABLED=true the endpoint becomes
-      # REQUIRED and boot fails without it. The protocol default is grpc, which is
-      # why the collector publishes 4317 — switching to http/protobuf means pointing
-      # at 4318 as well. OTEL_SERVICE_NAME is deliberately core-specific so the
-      # frontend's spans (vidra-user) stay distinguishable in the same trace.
-      OTEL_ENABLED: ${OTEL_ENABLED:-false}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-vidra-core}
-      # Default per-user storage quota in bytes (0/unset = unlimited). Admins can
-      # override per account via PATCH /api/v1/admin/users/{id}.
-      INSTANCE_DEFAULT_QUOTA_BYTES: ${INSTANCE_DEFAULT_QUOTA_BYTES:-0}
-      # HTTP server timings. HTTP_REQUEST_TIMEOUT is the per-request context
-      # deadline handlers and DB calls observe; it is a HARD cap on slow uploads
-      # and long media reads, so a deployment on residential upstream bandwidth
-      # will want it well above the 30s default (an 8 MiB resumable chunk needs a
-      # sustained ~2.2 Mbit/s to land inside 30s). HTTP_SHUTDOWN_TIMEOUT bounds the
-      # graceful SIGTERM drain — Docker's default stop grace is 10s, so a larger
-      # value only takes effect if the deployment also raises stop_grace_period.
-      # HTTP_READ_TIMEOUT / HTTP_WRITE_TIMEOUT are parsed by config today but not
-      # yet applied to the http.Server; they are passed through so the key has a
-      # consumer and does not silently rot out of the config surface.
-      HTTP_REQUEST_TIMEOUT: ${HTTP_REQUEST_TIMEOUT:-30s}
-      # The longer deadline used INSTEAD of HTTP_REQUEST_TIMEOUT on the streaming
-      # routes (resumable chunk PUTs, direct upload/replace POSTs, DM attachment
-      # uploads, and the media GETs). Those are bounded by the client's link speed
-      # rather than by server work. A deadline is still applied — not none — so a
-      # stalled peer eventually releases its goroutine and pooled DB connection.
-      HTTP_STREAM_REQUEST_TIMEOUT: ${HTTP_STREAM_REQUEST_TIMEOUT:-1h}
-      HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-15s}
-      HTTP_WRITE_TIMEOUT: ${HTTP_WRITE_TIMEOUT:-30s}
-      HTTP_SHUTDOWN_TIMEOUT: ${HTTP_SHUTDOWN_TIMEOUT:-20s}
-      # Max accepted request body (Echo size string). UPLOAD_MAX_SIZE overrides this
-      # on the upload route only; everything else gets 413 past this.
-      HTTP_BODY_LIMIT: ${HTTP_BODY_LIMIT:-8M}
-      # Rate limiting is on by default. End-to-end / backend-backed test runs set
-      # RATE_LIMIT_ENABLED=false so the auth limiter (10/min per IP) doesn't throttle
-      # a suite that makes many register/login calls from one host. Rate limiting
-      # has dedicated unit tests, so the e2e suite need not exercise it.
-      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
-      # Blanket per-IP budget for the /api/v1 surface, and the window both it and
-      # the auth limiter share. NOTE for real deployments: one home page is a feed
-      # call plus ~20 thumbnail GETs and HLS playback adds ~10 segment GETs a
-      # minute, so 120/1m is easily exceeded by a single ordinary viewer — raise it
-      # (or exempt the media routes) before opening a site to the public.
-      RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-120}
-      RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-1m}
-      # Stricter per-IP budget (same window) for login/register/password-reset/
-      # email-verify/MFA-challenge. 10 per window is already the right production
-      # value — do NOT raise it.
-      AUTH_RATE_LIMIT_REQUESTS: ${AUTH_RATE_LIMIT_REQUESTS:-10}
-      # Much larger per-IP budget (same window) for the media GETs — thumbnails,
-      # HLS playlists/segments, storyboards, downloads, avatars/banners. These are
-      # cheap cacheable blob reads that need a ceiling against scraping, not the
-      # API budget; 3000/1m is ~50 reads a second from one IP.
-      MEDIA_RATE_LIMIT_REQUESTS: ${MEDIA_RATE_LIMIT_REQUESTS:-3000}
-      # Per-authenticated-USER (not per-IP) budget for DM attachment uploads, on its
-      # own window. DM attachments do not count against the storage quota, so this
-      # is the compensating anti-abuse control.
-      ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS: ${ATTACHMENT_UPLOAD_RATE_LIMIT_REQUESTS:-60}
-      ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW: ${ATTACHMENT_UPLOAD_RATE_LIMIT_WINDOW:-10m}
-      # WHO the per-IP budgets above are charged to. The api believes an
-      # X-Forwarded-For hop only when the peer that sent it is loopback,
-      # RFC1918/ULA or link-local — the compose network and this host — and
-      # otherwise charges the PROXY itself, which is fail-safe rather than
-      # fail-open. A TLS terminator on a PUBLIC address (a cloud load balancer, a
-      # CDN edge, the operator-run proxy of VIDRA_TLS_MODE=external) is therefore
-      # untrusted by default, and every visitor behind it shares one login budget.
-      # Naming its network here is the deliberate fix; only list networks you
-      # control, because trusting an address means believing the client IP it
-      # claims. Comma-separated CIDRs, e.g. 203.0.113.7/32,2001:db8::/32.
-      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
-      # Master switch for self-service signup. Default true so local dev and the
-      # e2e suites can register freely. First-boot note: signups stay closed
-      # (403 owner_claim_required) on a fresh instance until the operator redeems
-      # the boot-logged setup token at POST /api/v1/setup/claim-owner — the owner
-      # account is claimed, never won by registering first.
-      REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-true}
-      # When true, signups file a pending registration request an admin must
-      # approve (the registration approval queue). Overridable so approval-mode
-      # backed e2e runs can flip it without editing the file. Default off.
-      REGISTRATION_REQUIRE_APPROVAL: ${REGISTRATION_REQUIRE_APPROVAL:-false}
-      # When true, uploads by non-privileged users land in 'quarantined' for
-      # moderator approval instead of publishing. A public-launch moderation lever;
-      # off by default.
-      QUARANTINE_NEW_UPLOADS: ${QUARANTINE_NEW_UPLOADS:-false}
-      # Boot-time seeds for the runtime-mutable instance feature flags (admins
-      # change them live via PATCH /api/v1/admin/instance-settings, and the DB
-      # overlay wins once set — these only supply the initial value).
-      # FEATURE_LIVE_ENABLED CAVEAT: it defaults true, but with no RTMP ingest
-      # running (the `media` profile) and LIVE_RTMP_URL empty, creators get a
-      # stream key pointing nowhere and the UI hides the server-URL row — a
-      # deployment without live ingest should set it false.
-      FEATURE_UPLOADS_ENABLED: ${FEATURE_UPLOADS_ENABLED:-true}
-      FEATURE_IMPORTS_ENABLED: ${FEATURE_IMPORTS_ENABLED:-true}
-      FEATURE_LIVE_ENABLED: ${FEATURE_LIVE_ENABLED:-true}
-      FEATURE_COMMENTS_ENABLED: ${FEATURE_COMMENTS_ENABLED:-true}
-      # JWT access tokens (HS256) + the opaque rotating refresh session.
+      # Every key comes from the x-api-env anchor at the top of this file, shared
+      # verbatim with the `worker` service. Overrides go BELOW the merge.
+      <<: *api-env
+      # PROCESS ROLE (phase-3 item 8). `all` — this container serves HTTP *and*
+      # runs every background worker — is the default and the only topology a
+      # single-container install has. Set API_ROLE=api and start the `worker`
+      # profile to split them: ffmpeg then runs in the worker containers, and this
+      # one can be sized for JSON.
       #
-      # JWT_SECRET IS THE ONE KEY A PRODUCTION DEPLOYMENT CANNOT BOOT WITHOUT.
-      # This map is an explicit allow-list and there is no env_file: anywhere in
-      # the stack, so before this line existed `--env-file env/production.env`
-      # could only feed compose SUBSTITUTION and JWT_SECRET never reached the
-      # container at all — the api fell back to the dev default and hard-exited.
-      #
-      # Deliberately `:-` and NOT the required `${JWT_SECRET:?...}` form: this file
-      # is `include:`d by the meta repo, whose `make dev`/`make up` and whose CI
-      # (`docker compose --profile core config -q`, the backed-e2e stack) run with
-      # no .env file at all, and a required-variable reference aborts compose
-      # RENDERING outright. Empty is safe because config.Load() treats an empty
-      # value as unset and falls back to the dev constant, which validate()
-      # REJECTS when VIDRA_ENV=production ("JWT_SECRET must be set in production"),
-      # as it also rejects anything under 32 bytes. Production therefore still
-      # fails closed and loudly; it just fails at api boot rather than at render.
-      # A production compose overlay is the right place for a `:?` assertion.
-      JWT_SECRET: ${JWT_SECRET:-}
-      # Issuer/audience are ENFORCED on verification, so changing either invalidates
-      # every outstanding access token — treat a change as logging everyone out.
-      JWT_ISSUER: ${JWT_ISSUER:-vidra}
-      JWT_AUDIENCE: ${JWT_AUDIENCE:-vidra}
-      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
-      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-720h}
-      # Base64 32-byte KEK that envelope-encrypts TOTP shared secrets at rest.
-      # SILENT-FAILURE WARNING: when this AND FEDERATION_KEY_KEK are both empty,
-      # TOTP secrets are written to the database in PLAINTEXT. There is no boot
-      # error — only a warning in the api log. Empty stays the default so dev keeps
-      # working; any real deployment must set it. NEVER commit a real value.
-      MFA_KEY_KEK: ${MFA_KEY_KEK:-}
-      # Label authenticator apps display for this instance. MUST keep the EMPTY
-      # default: config falls back to INSTANCE_NAME in Go, after this literal is
-      # read, and that fallback cannot be expressed in compose substitution.
-      TOTP_ISSUER: ${TOTP_ISSUER:-}
-      # OAuth/OIDC login providers (comma list; disabled when empty). Compose has
-      # no wildcard passthrough, so each named provider's OAUTH_<NAME>_ISSUER /
-      # _CLIENT_ID / _CLIENT_SECRET (+ optional _SCOPES) must also be added here
-      # for your provider names. PUBLIC_BASE_URL is required when any provider
-      # is set. The client secret is a secret: never commit a real value.
-      OAUTH_PROVIDERS: ${OAUTH_PROVIDERS:-}
-      # Real outbound email over SMTP (password reset / email verification).
-      # SMTP_HOST + SMTP_FROM are required when enabled; SMTP_PASSWORD is a
-      # secret (never commit/log it). DEV_MAIL_CAPTURE_ENABLED wins when both
-      # are on. Default off.
-      MAIL_ENABLED: ${MAIL_ENABLED:-false}
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USERNAME: ${SMTP_USERNAME:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM: ${SMTP_FROM:-}
-      # DEV-ONLY: when true, account-security tokens (reset / verify) are captured
-      # in memory and retrievable via GET /api/v1/dev/email-token so end-to-end
-      # tests can complete the token flows. NEVER enable in production. Default off.
-      DEV_MAIL_CAPTURE_ENABLED: ${DEV_MAIL_CAPTURE_ENABLED:-false}
-      # DEV/TEST-ONLY: when true, the URL-import SSRF guard permits private/loopback
-      # addresses so backed e2e can import from a loopback/compose-network origin (a
-      # public origin isn't reachable in CI). NEVER enable in production. Default off.
-      HTTP_IMPORT_ALLOW_PRIVATE_URLS: ${HTTP_IMPORT_ALLOW_PRIVATE_URLS:-false}
-      # DEV/TEST-ONLY: pins the first-run owner-claim mint to a fixed value so a
-      # test harness can redeem POST /api/v1/setup/claim-owner deterministically
-      # instead of scraping the boot log (config enforces >=16 chars and refuses
-      # the variable outright in production). Empty (default) keeps the random
-      # per-boot mint.
-      OWNER_CLAIM_TOKEN: ${OWNER_CLAIM_TOKEN:-}
-      # Malware scanning: when MALWARE_SCAN_ENABLED=true, uploaded originals are
-      # streamed to the clamd at CLAMAV_ADDR before publish. Run the bundled clamd
-      # with the "scan" profile (CLAMAV_ADDR=clamav:3310) or point at your own.
-      MALWARE_SCAN_ENABLED: ${MALWARE_SCAN_ENABLED:-false}
-      CLAMAV_ADDR: ${CLAMAV_ADDR:-}
-      # CLAMAV_TIMEOUT bounds a single scan (dial + stream + verdict); a slow/wedged
-      # clamd surfaces as a scan error (resolved by MALWARE_SCAN_MODE) not a hang.
-      CLAMAV_TIMEOUT: ${CLAMAV_TIMEOUT:-60s}
-      # MALWARE_SCAN_MODE: fallback policy on a scan ERROR — fail-closed (default;
-      # unscannable media is not published), fail-open (publish anyway, logged
-      # loudly), or quarantine (park for moderator review). Infected media always
-      # fails, in every mode.
-      MALWARE_SCAN_MODE: ${MALWARE_SCAN_MODE:-fail-closed}
-      # HLS transcoding: when TRANSCODING_ENABLED=true, published videos are
-      # transcoded to an H.264/AAC HLS ladder by an in-process worker (ffmpeg is
-      # in the image) and served at /api/v1/videos/{id}/hls/*, which powers the
-      # player's quality selector. On by default so `make dev` uploads produce
-      # the full ladder; set TRANSCODING_ENABLED=false to serve originals only.
-      TRANSCODING_ENABLED: ${TRANSCODING_ENABLED:-true}
-      # TRANSCODING_VP9_ENABLED additionally emits a progressive VP9/WebM alternate
-      # per video (surfaced via /download).
-      TRANSCODING_VP9_ENABLED: ${TRANSCODING_VP9_ENABLED:-false}
-      # TRANSCODING_STREAM_OUTPUT streams the HLS ladder into object storage
-      # instead of staging it on the scratch volume. Trades scratch disk for
-      # object-store egress (the pipeline reads its output back to build the
-      # progressive downloads). See .env.example. Off by default.
-      TRANSCODING_STREAM_OUTPUT: ${TRANSCODING_STREAM_OUTPUT:-false}
-      # Free-space floor (MiB) on the transcode scratch volume below which no new
-      # job is claimed. 0 = built-in default (10 GiB). See .env.example.
-      TRANSCODING_MIN_FREE_SCRATCH_MB: ${TRANSCODING_MIN_FREE_SCRATCH_MB:-0}
-      # Redirects every MkdirTemp/CreateTemp site (HLS ladder, VP9 second encode,
-      # the uncompressed PCM wav Whisper needs, trick-play I-frames) off the
-      # container writable layer and onto the transcode_tmp volume mounted below.
-      # It is also the filesystem TRANSCODING_MIN_FREE_SCRATCH_MB measures, so
-      # without it that admission check guards the wrong disk.
-      TMPDIR: /scratch
-      # Packaging format for NEW transcodes: cmaf (default — one segment set
-      # addressed by both an MPD and HLS playlists) or ts (the frozen MPEG-TS
-      # compatibility path).
-      #
-      # This line is what makes the documented rollback REACHABLE. This env map is
-      # an explicit allow-list and the meta wrapper includes it with
-      # env_file: /dev/null, so a variable that is not named here is not passed to
-      # the api no matter what the operator's env file says — and the symptom of
-      # the omission is the worst kind: `TRANSCODING_PACKAGER=ts` in the env file,
-      # a stack that comes up healthy, and every new video still packaged CMAF.
-      # It changes only what NEW transcodes produce; existing trees keep serving
-      # from their own recorded format, which is what makes the rollback
-      # config-only.
-      TRANSCODING_PACKAGER: ${TRANSCODING_PACKAGER:-cmaf}
-      # Extra video codecs: an HEVC and/or AV1 encoding of every ladder rung
-      # alongside the H.264 one, in the same CMAF tree. H.264 is always emitted
-      # and is not a knob. CMAF-ONLY — with TRANSCODING_PACKAGER=ts the api
-      # refuses to boot — and each needs its encoder in the image (libx265,
-      # libsvtav1; both are present). Off by default. See .env.example.
-      TRANSCODING_HEVC_ENABLED: ${TRANSCODING_HEVC_ENABLED:-false}
-      TRANSCODING_AV1_ENABLED: ${TRANSCODING_AV1_ENABLED:-false}
-      # Hardware encoding: off | videotoolbox | vaapi | qsv | nvenc. Off by
-      # default and opt-in BY NAME — there is deliberately no "auto", because
-      # whether a backend works is a property of this host and a pipeline that
-      # chose one by looking around would re-tune the whole deployment's picture
-      # quality the first time a device node moved. CMAF-only, like the extra
-      # codecs. `vidra doctor` says which backends look usable here.
-      #
-      # The environment variable is NOT enough on its own: vaapi and qsv read a
-      # DRM render node, which a container only has if it is mapped in — see the
-      # commented block below. AV1 always stays on the CPU whatever this says.
-      TRANSCODING_HW: ${TRANSCODING_HW:-off}
-      # The DRM render node vaapi/qsv use; empty = /dev/dri/renderD128. Set it
-      # only on a host with more than one GPU, and leave it empty for
-      # videotoolbox and nvenc, which name no device (the api refuses to boot
-      # otherwise rather than silently ignoring it).
-      TRANSCODING_HW_DEVICE: ${TRANSCODING_HW_DEVICE:-}
-      #
-      # --- GPU access for TRANSCODING_HW ------------------------------------
-      #
-      # Commented out because it is wrong on most hosts and a compose file that
-      # names a device the machine does not have will not start at all. Uncomment
-      # the block that matches the backend you set above.
-      #
-      # VAAPI or QSV — map the DRM render node in. The container's user must be
-      # able to open it; on most distributions that means adding the `video` and
-      # `render` group IDs (`getent group render` on the host) with `group_add`.
-      # Mapping /dev/dri gives the container direct access to the GPU: it is a
-      # real privilege escalation surface, so do it on hosts you control and not
-      # on shared or multi-tenant machines.
-      #
-      #   devices:
-      #     - "/dev/dri:/dev/dri"
-      #   group_add:
-      #     - "44"    # video  — check with `getent group video` on the host
-      #     - "104"   # render — check with `getent group render` on the host
-      #
-      # NVENC — the NVIDIA container runtime, which injects the driver and the
-      # device nodes. Needs nvidia-container-toolkit installed on the host AND an
-      # image whose ffmpeg was built with --enable-nvenc; the shipped one is not.
-      #
-      #   deploy:
-      #     resources:
-      #       reservations:
-      #         devices:
-      #           - driver: nvidia
-      #             count: 1
-      #             capabilities: ["gpu", "video"]
-      #
-      # VideoToolbox needs nothing here and cannot work here: it is macOS's own
-      # framework and is unreachable from a Linux container. It is for a host
-      # binary on a Mac, not for this stack.
-      # Age at which the stuck-hold sweeper gives up waiting for a transcode and
-      # publishes a publish-after-transcode video from its original anyway. Lower
-      # values shorten the window in which a crashed worker keeps a video hidden.
-      TRANSCODE_HOLD_TIMEOUT: ${TRANSCODE_HOLD_TIMEOUT:-12h}
-      # Auto-caption (Whisper): when WHISPER_ENABLED=true, video owners can request
-      # an auto-generated WebVTT caption track; an in-process worker extracts the
-      # audio (ffmpeg) and POSTs it to WHISPER_ENDPOINT (whisper.cpp /inference-
-      # compatible). Run the bundled whisper.cpp server with the "captions" profile
-      # (WHISPER_ENDPOINT=http://whisper:8080) or point at your own. Off by default.
-      WHISPER_ENABLED: ${WHISPER_ENABLED:-false}
-      WHISPER_ENDPOINT: ${WHISPER_ENDPOINT:-}
-      # Caption language used when a request omits one (also the transcription hint).
-      WHISPER_DEFAULT_LANGUAGE: ${WHISPER_DEFAULT_LANGUAGE:-en}
-      # yt-dlp platform-URL import (W2.C1, UPLOAD-09). OFF by default — admin/config
-      # opt-in. When YTDLP_IMPORT_ENABLED=true, a URL import may resolve through the
-      # HARD-SANDBOXED yt-dlp extractor (fixed argv, --ignore-config, no shell, no
-      # --exec, no runtime self-update, private tmp workdir, hard timeout,
-      # --max-filesize). Bytes still land ONLY via AttachOriginal → Process, so the
-      # ClamAV scan hook fires before anything is servable.
-      #
-      # SECURITY — RESIDUAL RISK + EGRESS PROXY (spec §5): yt-dlp makes its OWN
-      # outbound HTTP fetches, which the dial-time SSRF guard cannot pin, so a
-      # hostile page could try to redirect it to internal addresses. Mitigations, in
-      # order: (1) it is OFF by default; (2) set YTDLP_PROXY to a forward proxy that
-      # DENIES RFC1918/loopback/link-local (see the commented `ytdlp-egress` sketch
-      # below); (3) run the api/worker on a network with no route to internal
-      # services. The yt-dlp binary must be PINNED in the image — never self-updated
-      # at runtime.
-      YTDLP_IMPORT_ENABLED: ${YTDLP_IMPORT_ENABLED:-false}
-      YTDLP_PATH: ${YTDLP_PATH:-yt-dlp}
-      YTDLP_TIMEOUT: ${YTDLP_TIMEOUT:-15m}
-      YTDLP_MAX_HEIGHT: ${YTDLP_MAX_HEIGHT:-1080}
-      # Recommended in production: route the extractor through an egress proxy that
-      # blocks internal ranges (e.g. YTDLP_PROXY=http://ytdlp-egress:3128). Empty by
-      # default (documented, not enforced — self-hosting the proxy has a cost).
-      YTDLP_PROXY: ${YTDLP_PROXY:-}
-      # Channel auto-sync (W2.C4, UPLOAD-13). Mirrors an external platform channel's
-      # recent uploads into a LOCAL channel by listing it with the sandboxed yt-dlp
-      # extractor (--flat-playlist) and enqueuing `ytdlp` imports for unseen entries
-      # — so bytes still land via AttachOriginal → Process (the ClamAV scan hook).
-      # OFF by default and effective ONLY when YTDLP_IMPORT_ENABLED is also true
-      # (the sync IS a yt-dlp import path); the same egress-proxy / no-internal-route
-      # stance above therefore applies. Synced uploads are created as PRIVATE drafts
-      # for the owner to review — never auto-published.
-      CHANNEL_SYNC_ENABLED: ${CHANNEL_SYNC_ENABLED:-false}
-      CHANNEL_SYNC_INTERVAL: ${CHANNEL_SYNC_INTERVAL:-1h}
-      CHANNEL_SYNC_MAX_PER_USER: ${CHANNEL_SYNC_MAX_PER_USER:-5}
-      CHANNEL_SYNC_BATCH: ${CHANNEL_SYNC_BATCH:-15}
-      # Minimum spacing between manual POST .../sync-now triggers for one channel
-      # (<=0 disables the throttle entirely).
-      CHANNEL_SYNC_COOLDOWN: ${CHANNEL_SYNC_COOLDOWN:-1m}
-      # vidra-search integration. EMPTY DISABLES THE WHOLE INTEGRATION (suggestions
-      # go empty, search/recommendations fall back to local SQL, no outbox or
-      # reconcile worker runs) — deliberately safe degradation.
-      # NOTE: for local development the meta repo's auto-loaded
-      # docker-compose.override.yml pins SEARCH_SERVICE_URL to http://search:8080
-      # and merges AFTER this file, so it still wins and `make dev` is unchanged.
-      # A deployment that uses an explicit `-f` chain does NOT auto-load that
-      # override, so it must set SEARCH_SERVICE_URL itself or it silently loses
-      # search. SEARCH_INTERNAL_SECRET is a SECRET and must equal the search
-      # service's INTERNAL_SECRET; it is required (>=32 chars) in production
-      # whenever the URL is set, so a half-configured deployment fails loudly.
-      SEARCH_SERVICE_URL: ${SEARCH_SERVICE_URL:-}
-      SEARCH_INTERNAL_SECRET: ${SEARCH_INTERNAL_SECRET:-}
-      # Per-endpoint client deadline overrides in ms; 0 means "use the client
-      # default" (250 / 800 / 800 ms) and is equivalent to leaving them unset.
-      SEARCH_SUGGEST_TIMEOUT_MS: ${SEARCH_SUGGEST_TIMEOUT_MS:-0}
-      SEARCH_QUERY_TIMEOUT_MS: ${SEARCH_QUERY_TIMEOUT_MS:-0}
-      SEARCH_RECS_TIMEOUT_MS: ${SEARCH_RECS_TIMEOUT_MS:-0}
-      # Cadence of the full index reconcile sweep, and of the background health
-      # prober (jittered ±20%) that keeps a down search service from costing every
-      # request a full timeout. Both only run when SEARCH_SERVICE_URL is set.
-      SEARCH_RECONCILE_INTERVAL: ${SEARCH_RECONCILE_INTERVAL:-24h}
-      SEARCH_HEALTH_INTERVAL: ${SEARCH_HEALTH_INTERVAL:-15s}
-      # LIVE_RTMP_URL is the base RTMP ingest URL returned to a streamer alongside a
-      # freshly minted stream key (informational; empty by default).
-      LIVE_RTMP_URL: ${LIVE_RTMP_URL:-}
-      # LIVE_INGEST_SECRET is the shared secret the media server (RTMP ingest) presents
-      # on the media-server-facing /live/ingest hooks. When empty (default) the hooks
-      # are disabled (404). Set it to enable them (dev/test harnesses; a real deploy
-      # sets a strong value). NEVER commit a real secret here.
-      LIVE_INGEST_SECRET: ${LIVE_INGEST_SECRET:-}
-      # LIVE_HLS_ROOT is the directory the RTMP media server (the `media` profile)
-      # writes live HLS + session recordings into, shared with the api. When set,
-      # the api serves live HLS by stream ID at /api/v1/live/{id}/hls/* and
-      # republishes replay-enabled sessions as VODs. For the media profile use
-      # /live-hls (the shared live_hls volume mount below). Empty (default) leaves
-      # live HLS serving + replay off.
-      LIVE_HLS_ROOT: ${LIVE_HLS_ROOT:-}
-      # ActivityPub federation. Off by default; when FEDERATION_ENABLED=true, set
-      # PUBLIC_BASE_URL to this instance's canonical origin. See .ralph/specs/federation.md.
-      FEDERATION_ENABLED: ${FEDERATION_ENABLED:-false}
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
-      # Consent to a PLAIN-HTTP public origin in production (VIDRA_TLS_MODE=
-      # plain-http: a lab, a LAN, an air-gapped install). Without it an http://
-      # PUBLIC_BASE_URL in production is a hard boot failure, deliberately — over
-      # http the api cannot set Secure cookies and browsers ignore HSTS, and a
-      # typed http:// that silently dropped both would do it on exactly the
-      # deployment where they matter most. With it, the https-derived defaults go
-      # off together instead of half-applying. NOT for anything public.
-      VIDRA_ALLOW_PLAIN_HTTP: ${VIDRA_ALLOW_PLAIN_HTTP:-false}
-      # Base64 32-byte KEK for actor private-key envelope encryption (required in
-      # production when federation is on). NEVER commit a real value.
-      FEDERATION_KEY_KEK: ${FEDERATION_KEY_KEK:-}
-      # Outbound Bluesky/atproto cross-posting. Off by default. When true in
-      # production, ATPROTO_KEY_KEK (or FEDERATION_KEY_KEK, which it falls back to)
-      # becomes REQUIRED — enable the flag and the key in the same change or the
-      # api will not boot. ATPROTO_KEY_KEK is a SECRET: it envelope-encrypts linked
-      # Bluesky app passwords at rest, so because of that FEDERATION_KEY_KEK
-      # fallback, rotating the federation KEK silently breaks atproto keys too.
-      ATPROTO_ENABLED: ${ATPROTO_ENABLED:-false}
-      ATPROTO_KEY_KEK: ${ATPROTO_KEY_KEK:-}
-      # "Sign in with Bluesky" is INDEPENDENT of cross-posting: it is identity-only,
-      # keeps no PDS tokens and needs no KEK. When false the /auth/atproto/*
-      # endpoints answer 503.
-      ATPROTO_LOGIN_ENABLED: ${ATPROTO_LOGIN_ENABLED:-false}
-      # Media storage backend: local (default) or s3. For s3 against the compose
-      # minio service (`--profile storage`), see the header of this file. The S3
-      # credentials are secrets — never log or commit real values.
-      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
-      # Root of the local-disk backend INSIDE the container. The absolute default
-      # below is exactly where the config default "./data/media" already resolved
-      # (the runtime image's WORKDIR is /app) — it is written out so the path no
-      # longer depends on the WORKDIR.
-      #
-      # It is backed by the media_data volume mounted at /app/data below, and that
-      # mount is load-bearing rather than tidy: without it, media lands on the
-      # container's writable layer and `up -d --force-recreate api` DELETES every
-      # stored video while the database rows survive pointing at nothing. That is
-      # not hypothetical — it happened twice to a validation stack on this very
-      # file before the mount existed. Point this somewhere else and you are
-      # responsible for mounting that path yourself.
-      STORAGE_LOCAL_ROOT: ${STORAGE_LOCAL_ROOT:-/app/data/media}
-      STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT:-}
-      STORAGE_S3_BUCKET: ${STORAGE_S3_BUCKET:-}
-      STORAGE_S3_ACCESS_KEY: ${STORAGE_S3_ACCESS_KEY:-}
-      STORAGE_S3_SECRET_KEY: ${STORAGE_S3_SECRET_KEY:-}
-      STORAGE_S3_REGION: ${STORAGE_S3_REGION:-}
-      STORAGE_S3_USE_SSL: ${STORAGE_S3_USE_SSL:-true}
-      STORAGE_S3_FORCE_PATH_STYLE: ${STORAGE_S3_FORCE_PATH_STYLE:-false}
-      # Hybrid IPFS media mirror (fix_plan P19, .ralph/specs/ipfs-media.md). OFF by
-      # default. To mirror already-PUBLIC media to the compose kubo node, run the
-      # `ipfs` profile (docker compose --profile core --profile ipfs up) and set
-      # IPFS_ENABLED=true — IPFS_API_URL/IPFS_GATEWAY_URL already default to that
-      # service. IPFS is a SIDECAR: local/S3 stays authoritative and an IPFS outage
-      # never blocks uploads or playback. PRIVACY INVARIANT: nothing non-public is
-      # ever pinned (private/unlisted/quarantined videos, DM attachments, exports,
-      # upload chunks, the live edge, and remote thumbnails are all excluded).
-      IPFS_ENABLED: ${IPFS_ENABLED:-false}
-      IPFS_API_URL: ${IPFS_API_URL:-http://ipfs:5001}
-      IPFS_GATEWAY_URL: ${IPFS_GATEWAY_URL:-http://localhost:9090}
-      IPFS_ADD_TIMEOUT: ${IPFS_ADD_TIMEOUT:-60s}
-      IPFS_PIN_CONCURRENCY: ${IPFS_PIN_CONCURRENCY:-2}
-      IPFS_RECONCILE_INTERVAL: ${IPFS_RECONCILE_INTERVAL:-5m}
-      # Optional IPFS Cluster replication of the PUBLIC tier (STOR-05). IPFS_CLUSTER_TOKEN
-      # is a SECRET (Bearer) — never commit a real value.
-      IPFS_CLUSTER_API_URL: ${IPFS_CLUSTER_API_URL:-}
-      IPFS_CLUSTER_TOKEN: ${IPFS_CLUSTER_TOKEN:-}
-      # PRIVATE mirroring tier (fix_plan P19.P, .ralph/specs/ipfs-media-private.md). OFF by
-      # default. When true it mirrors non-public media (private/unlisted videos + their
-      # derivatives, unlisted-owner avatars/banners, non-public playlist covers) to a
-      # DEDICATED, swarm.key'd private kubo — NEVER the public node (dual-homing is a hard
-      # config error). Private CIDs never appear in any API response and there is
-      # deliberately NO IPFS_PRIVATE_GATEWAY_URL knob (replication, not distribution).
-      # NOTE: this supersedes the older "IPFS_MIRROR_PRIVATE requires IPFS_CLUSTER_API_URL"
-      # guard — the real requirement is now a dedicated IPFS_PRIVATE_API_URL.
-      # To try it locally: `docker compose --profile core --profile ipfs-private up` then set
-      # IPFS_MIRROR_PRIVATE=true (IPFS_PRIVATE_API_URL already defaults to the kubo-private
-      # service). Private-media mirroring may run standalone (IPFS_ENABLED=false).
-      IPFS_MIRROR_PRIVATE: ${IPFS_MIRROR_PRIVATE:-false}
-      IPFS_PRIVATE_API_URL: ${IPFS_PRIVATE_API_URL:-http://kubo-private:5001}
-      # Optional IPFS Cluster on the PRIVATE swarm (P19.P3; a fully separate cluster from
-      # the public one). IPFS_PRIVATE_CLUSTER_TOKEN is a SECRET — never commit a real value.
-      IPFS_PRIVATE_CLUSTER_API_URL: ${IPFS_PRIVATE_CLUSTER_API_URL:-}
-      IPFS_PRIVATE_CLUSTER_TOKEN: ${IPFS_PRIVATE_CLUSTER_TOKEN:-}
-      # Private-worker tuning; inherit the public IPFS_ADD_TIMEOUT / IPFS_PIN_CONCURRENCY
-      # when blank.
-      IPFS_PRIVATE_ADD_TIMEOUT: ${IPFS_PRIVATE_ADD_TIMEOUT:-}
-      IPFS_PRIVATE_PIN_CONCURRENCY: ${IPFS_PRIVATE_PIN_CONCURRENCY:-}
-      # Max size of one original-file upload (Echo size string); overrides
-      # HTTP_BODY_LIMIT on the upload route only. SIZING COUPLING: transcode
-      # scratch space needs roughly 4x this value per concurrent transcode job, so
-      # raising it without growing the scratch volume fills the disk.
-      UPLOAD_MAX_SIZE: ${UPLOAD_MAX_SIZE:-2G}
-      # Most ACTIVE (unfinished, unexpired) resumable upload sessions one user may
-      # hold at once; 0 disables the cap. Opening one past the cap is a 429 with
-      # the stable code too_many_active_uploads, which batch-upload clients queue on.
-      UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER: ${UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER:-5}
-      # PeerTube import (fix_plan P18). Everything OFF by default; the standalone
-      # cmd/peertube-import CLI takes its own flags and needs none of this — these
-      # configure the ADMIN API path + its worker only. PEERTUBE_IMPORT_ENABLED=true
-      # makes PEERTUBE_SOURCE_DATABASE_URL required.
-      # PEERTUBE_SOURCE_DATABASE_URL and the two S3 keys are SECRETS. Point the DSN
-      # at a restored dump or a read-only replica with a least-privilege role.
-      # PEERTUBE_SOURCE_S3_ENDPOINT is host[:port] with NO scheme and is rejected
-      # for containing "://" even when import is disabled. The conflict policy
-      # (skip|rename|merge|fail) and media mode (copy|reference|none) are likewise
-      # validated unconditionally.
-      PEERTUBE_IMPORT_ENABLED: ${PEERTUBE_IMPORT_ENABLED:-false}
-      PEERTUBE_SOURCE_DATABASE_URL: ${PEERTUBE_SOURCE_DATABASE_URL:-}
-      PEERTUBE_SOURCE_STORAGE_BACKEND: ${PEERTUBE_SOURCE_STORAGE_BACKEND:-local}
-      PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT: ${PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT:-}
-      PEERTUBE_SOURCE_S3_ENDPOINT: ${PEERTUBE_SOURCE_S3_ENDPOINT:-}
-      PEERTUBE_SOURCE_S3_BUCKET: ${PEERTUBE_SOURCE_S3_BUCKET:-}
-      PEERTUBE_SOURCE_S3_ACCESS_KEY: ${PEERTUBE_SOURCE_S3_ACCESS_KEY:-}
-      PEERTUBE_SOURCE_S3_SECRET_KEY: ${PEERTUBE_SOURCE_S3_SECRET_KEY:-}
-      PEERTUBE_SOURCE_S3_REGION: ${PEERTUBE_SOURCE_S3_REGION:-}
-      PEERTUBE_SOURCE_S3_USE_SSL: ${PEERTUBE_SOURCE_S3_USE_SSL:-true}
-      PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE: ${PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE:-false}
-      PEERTUBE_IMPORT_CONFLICT_POLICY: ${PEERTUBE_IMPORT_CONFLICT_POLICY:-skip}
-      PEERTUBE_IMPORT_MEDIA_MODE: ${PEERTUBE_IMPORT_MEDIA_MODE:-copy}
+      # An unrecognised value is a BOOT FAILURE, not a fallback, so a typo here
+      # cannot quietly produce an install whose queues never drain.
+      VIDRA_ROLE: ${API_ROLE:-all}
     # Make the host reachable as host.docker.internal on Linux too (Docker Desktop
     # provides it already). Lets a backed e2e point URL import at a media origin
     # served on the host (paired with HTTP_IMPORT_ALLOW_PRIVATE_URLS=true). No
@@ -833,20 +802,102 @@ services:
     ports:
       - "${HTTP_PORT:-8080}:8080"
     volumes:
-      # THE DURABILITY MOUNT. STORAGE_LOCAL_ROOT (/app/data/media) lives here, and
-      # without this line every stored video is on the container's writable layer:
-      # `up -d --force-recreate api` — a rebuild, an env change, a tag bump —
-      # deletes the media while the Postgres rows survive pointing at nothing.
-      # Unused with STORAGE_BACKEND=s3, and harmless there.
+      # STORAGE_LOCAL_ROOT (/app/data/media) and the transcode scratch live on
+      # named volumes so `up -d --force-recreate` cannot destroy the media while
+      # the database rows survive pointing at nothing. Prepared (ownership) by
+      # the prep-volumes one-shot above.
       - media_data:/app/data
-      # ffmpeg scratch (TMPDIR below). Keeps the HLS ladder, the VP9 second
-      # encode, Whisper's uncompressed PCM wav and the trick-play I-frames off the
-      # writable layer, where they are both slow and unbounded.
       - transcode_tmp:/scratch
       # Shared with the `media` profile's rtmp server: it writes live HLS +
       # recordings here, the api serves/reads them. Harmless (empty) without the
       # media profile. Point LIVE_HLS_ROOT at /live-hls to enable live serving.
       - live_hls:/live-hls
+
+  # ---------------------------------------------------------------------------
+  # BACKGROUND WORKERS (`worker` profile) — the same image and the same binary as
+  # the api, started with VIDRA_ROLE=worker so it runs every background worker and
+  # opens no listener.
+  #
+  # WHY: ffmpeg lives inside this process. In the default single-container topology
+  # a transcode competes with request handling for the api container's CPU and
+  # memory, and the only way to give the transcoder more headroom is to give the
+  # HTTP server more too. Splitting them lets each be sized for what it actually
+  # does, and lets the transcoding half scale on its own.
+  #
+  #   docker compose --profile core --profile worker up -d --scale worker=3
+  #   API_ROLE=api docker compose --profile core --profile worker up -d
+  #
+  # The first line ADDS workers beside a full api (which still runs workers itself).
+  # The second is the real split: the api serves only, and every queue is drained by
+  # the worker containers.
+  #
+  # `worker` LAYERS ONTO `core`; it is not a stack of its own. It depends on the
+  # postgres/redis/migrate services `core` defines, so `--profile worker` alone is
+  # an invalid project — exactly as `--profile media` alone already is.
+  #
+  # SCALE-SAFE BY CONSTRUCTION: no container_name and no ports, because both are
+  # unique-per-container and `--scale` refuses them. Every durable queue claims with
+  # FOR UPDATE SKIP LOCKED under a renewed lease, and the sweep-only crons are behind
+  # one PostgreSQL advisory lock, so N workers is N times the throughput rather than
+  # N times the same job.
+  worker:
+    # Same image as api, by NAME rather than a second `build:` — see the migrate
+    # one-shot's note. api is the single producer of vidra-core-api:local.
+    image: vidra-core-api:local
+    profiles: ["worker"]
+    # The api image bakes an HTTP HEALTHCHECK (/healthz). A worker deliberately has
+    # no listener, so that probe can only ever fail — every worker container would
+    # sit "unhealthy" and any depends_on: service_healthy pointed at it would hang.
+    # Disabled for the same reason the migrate one-shot disables it.
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      # Same mount-point ownership requirement as api: ffmpeg runs HERE.
+      prep-volumes:
+        condition: service_completed_successfully
+      # The optional dependencies use the same `required: false` form as api, so
+      # they are simply skipped when their profile is not active.
+      minio:
+        condition: service_healthy
+        required: false
+      clamav:
+        condition: service_healthy
+        required: false
+      whisper:
+        condition: service_healthy
+        required: false
+      ipfs:
+        condition: service_healthy
+        required: false
+      kubo-private:
+        condition: service_healthy
+        required: false
+    environment:
+      <<: *api-env
+      # The one key that differs from api. Not overridable: a container in the
+      # `worker` profile that served HTTP would be a second api on a port nothing
+      # published.
+      VIDRA_ROLE: worker
+    # Same reason as api: lets a backed e2e reach a media origin on the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # NO ports. A worker has nothing to publish, and a fixed host port is exactly
+    # what would break `--scale worker=3`.
+    volumes:
+      # The worker runs ffmpeg, so it shares the api's media store and scratch —
+      # same volumes, same prep-volumes ownership guarantee.
+      - media_data:/app/data
+      - transcode_tmp:/scratch
+      # The live HLS volume is shared with api because the recording→VOD path
+      # reads the rtmp server's output from here.
+      - live_hls:/live-hls
+
 
   # Live RTMP media server (media profile): ingests RTMP, packages HLS, records
   # sessions, and drives the api's live lifecycle via the ingest hooks. Uses
@@ -1064,15 +1115,11 @@ services:
 
 volumes:
   postgres_data:
-  # STORAGE_BACKEND=local media root (/app/data/media). Unused with s3. Deleting
-  # this volume deletes every stored video; the database rows survive it.
-  media_data:
-  # ffmpeg scratch (TMPDIR=/scratch). Sized for ~4x UPLOAD_MAX_SIZE per concurrent
-  # transcode; on a real deployment back it with its own device rather than the
-  # disk Postgres lives on.
-  transcode_tmp:
   minio_data:
   clamav_data:
+  # Media store + transcode scratch — prepared by the prep-volumes one-shot.
+  media_data:
+  transcode_tmp:
   live_hls:
   whisper_models:
   ipfs_data:

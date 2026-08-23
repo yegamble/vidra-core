@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -240,29 +241,104 @@ func checkStorageMigration(ctx context.Context, s *state) []Finding {
 	}
 	dsn := s.value("DATABASE_URL")
 	if dsn == "" {
-		// The bundled Postgres publishes no host port by design. checkSchemaLedger
-		// can still get its answer because the api image has a `migrate version`
-		// subcommand that prints the ledger; there is no equivalent one-shot that
-		// prints campaign state, and inventing one just for this would put a
-		// diagnostic's convenience ahead of the api's surface area. The admin
-		// storage-migration view answers it from inside.
-		return []Finding{skipf("this deployment uses the bundled Postgres, which publishes no host port (by design), and there is no `migrate version`-style one-shot that reports storage-migration state — read it at GET /api/v1/admin/storage/migrations instead")}
+		// The bundled Postgres publishes no host port by design, so there is
+		// nothing to dial from out here. That used to end the check — which made
+		// it a check that could never run on the deployment shape the installer
+		// produces by default, and a permanently skipped line is one operators
+		// learn to read past. It is asked from INSIDE the network instead.
+		return []Finding{s.storageMigrationViaContainer(ctx)}
 	}
 	active, err := s.opt.Prober.ActiveStorageMigration(ctx, dsn)
 	if err != nil {
 		if isMissingRelation(err) {
-			// A database older than migration 0107. Nothing can be migrating,
-			// because the feature does not exist there yet.
-			return []Finding{okf("no storage migration in flight (this database predates the storage-migration tables, so there is nothing that could be)")}
+			return []Finding{storageMigrationPredatesTables}
 		}
 		return []Finding{skipf("the storage-migration state could not be read: " + reachSummary(err) + " (the core ledger check above reports the connection in full)")}
 	}
-	if !active {
-		return []Finding{okf("no storage migration in flight — media is served from, and garbage-collected in, one store")}
+	return []Finding{storageMigrationFinding(active)}
+}
+
+// activeStorageMigrationSQL is the sqlc query HasActiveStorageMigration,
+// transcribed for psql. It is a transcription rather than a second opinion: the
+// definition is deliberately WIDER than "live" (a 'failed' campaign still
+// counts, because a move that stopped half-way is exactly the state in which "no
+// database row references this object" stops being evidence about either store),
+// and a doctor that quietly used a narrower one would tell an operator the coast
+// was clear while the sweep was still refusing to delete.
+//
+// If the query in internal/store/queries/storage_migrations.sql ever changes,
+// this has to change with it.
+const activeStorageMigrationSQL = `SELECT EXISTS (SELECT 1 FROM storage_migrations WHERE state NOT IN ('done', 'cancelled'))`
+
+// storageMigrationViaContainer reads campaign state from inside the stack, which
+// is the only way when the bundled Postgres is used.
+//
+// Every way this can fail is a SKIP, never a ✗. The direct-DSN path above is a
+// question asked of a database this host can reach; this one is asked through a
+// container that may not be running, a docker that may not be installed, and a
+// psql that may answer something unexpected. None of that is evidence about
+// whether media is moving — a check that cannot run is not a check that failed,
+// and a red line for a diagnostic's own plumbing is how a report teaches people
+// to ignore it. The one exception is a database too old to have the tables,
+// which is a definitive answer: nothing can be migrating.
+func (s *state) storageMigrationViaContainer(ctx context.Context) Finding {
+	const noPort = "this deployment uses the bundled Postgres, which publishes no host port (by design), so campaign state was read from inside the network"
+	running, why := s.containers(ctx)
+	if why != "" {
+		return skipf(noPort + ", and the running containers could not be inspected (" + why + ") — read it at GET /api/v1/admin/storage/migrations instead")
 	}
-	return []Finding{warnf(
+	if _, ok := serviceContainer(running, "postgres"); !ok {
+		return skipf(noPort + ", and the postgres container is not running to read it from — read it at GET /api/v1/admin/storage/migrations instead")
+	}
+	// The same user and database the compose service is provisioned with (its
+	// own healthcheck runs `pg_isready -U ${POSTGRES_USER:-vidra} -d
+	// ${POSTGRES_DB:-vidra}`). With POSTGRES_USER set to anything, the image does
+	// NOT create a `postgres` role, so psql's default would not connect.
+	args := s.composeArgs("exec", "-T", "postgres", "psql",
+		"-U", orDefault(s.value("POSTGRES_USER"), "vidra"),
+		"-d", orDefault(s.value("POSTGRES_DB"), "vidra"),
+		// -t drops the header and row count, -A the column padding: what comes
+		// back is one line that is exactly `t` or `f`.
+		"-tA", "-c", activeStorageMigrationSQL)
+	out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
+	if err != nil {
+		return skipf(noPort + ", and docker is not on this host's PATH to read it from the postgres container")
+	}
+	text := strings.TrimSpace(out.Stdout)
+	switch {
+	case text == "f":
+		return storageMigrationFinding(false)
+	case text == "t":
+		return storageMigrationFinding(true)
+	}
+	// psql prints its errors on stderr and exits non-zero; the query itself
+	// prints nothing there.
+	problem := firstLine(orDefault(out.Stderr, text))
+	if isMissingRelation(errors.New(problem)) {
+		return storageMigrationPredatesTables
+	}
+	if problem == "" {
+		problem = "it answered nothing"
+	}
+	return skipf(noPort + ", and the postgres container did not answer the query (" + problem + ") — read it at GET /api/v1/admin/storage/migrations instead")
+}
+
+// storageMigrationPredatesTables is the answer for a database older than
+// migration 0107: nothing can be migrating, because the feature does not exist
+// there yet. Both paths reach it — one from pgx's SQLSTATE, one from psql's
+// stderr — and it has to read the same either way.
+var storageMigrationPredatesTables = okf("no storage migration in flight (this database predates the storage-migration tables, so there is nothing that could be)")
+
+// storageMigrationFinding is the verdict, shared so the direct-DSN path and the
+// through-the-container fallback say exactly the same thing. The answer is what
+// matters to an operator; how doctor got it is not.
+func storageMigrationFinding(active bool) Finding {
+	if !active {
+		return okf("no storage migration in flight — media is served from, and garbage-collected in, one store")
+	}
+	return warnf(
 		"a storage migration campaign is IN FLIGHT: media is being copied to the STORAGE_MIGRATION_TARGET_* store. While it runs, media garbage collection is forced to a dry run (nothing is deleted), presigned direct delivery is withheld so every byte proxies through the api, and the two stores are deliberately out of step",
-		"that is the designed behaviour, not a fault — let it finish. Do NOT run ./deploy/restore.sh and do NOT edit STORAGE_* except at the point the cutover runbook says to (\"Moving the media store\" in vidra-core/docs/operations.md): a restore mid-campaign reinstates rows for objects the move has not copied, and an early env swap makes the api serve from a store that is not finished. Watch progress at GET /api/v1/admin/storage/migrations; `docker compose … run --rm api verify-blobs` after the campaign completes is what proves the destination is whole")}
+		"that is the designed behaviour, not a fault — let it finish. Do NOT run ./deploy/restore.sh and do NOT edit STORAGE_* except at the point the cutover runbook says to (\"Moving the media store\" in vidra-core/docs/operations.md): a restore mid-campaign reinstates rows for objects the move has not copied, and an early env swap makes the api serve from a store that is not finished. Watch progress at GET /api/v1/admin/storage/migrations; `docker compose … run --rm api verify-blobs` after the campaign completes is what proves the destination is whole")
 }
 
 // isMissingRelation reports whether an error is Postgres saying the table is not
