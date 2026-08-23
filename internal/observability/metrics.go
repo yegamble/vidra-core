@@ -180,6 +180,109 @@ func (m *Metrics) RegisterSearchServiceHealthSource(source func() float64) {
 	})
 }
 
+// DBPoolStats is one sample of the pgx connection pool, taken at scrape time.
+// It mirrors the subset of pgxpool.Stat an operator can act on and deliberately
+// nothing else: this package must not import the database driver, so cmd/api
+// does the (trivial) translation at the wiring seam.
+type DBPoolStats struct {
+	// The four sizing numbers. Acquired + Idle + Constructing == Total, and
+	// Total can never exceed Max — which is what makes "Acquired is pinned at
+	// Max" the readable signal that the pool is the bottleneck.
+	TotalConns    int32
+	IdleConns     int32
+	AcquiredConns int32
+	MaxConns      int32
+	// The acquire counters. EmptyAcquireCount is the one that matters on a
+	// multi-node install: it counts the acquires that had to WAIT because every
+	// connection was checked out, and it is what distinguishes "the database is
+	// slow" from "this process's pool is too small for its own concurrency".
+	// AcquireDuration is the cumulative time spent in those waits, exported as a
+	// counter of seconds so a rate() over it reads as wait-seconds per second.
+	AcquireCount         int64
+	EmptyAcquireCount    int64
+	CanceledAcquireCount int64
+	AcquireDuration      time.Duration
+	// NewConnsCount and MaxLifetimeDestroyCount together show churn: a pool that
+	// opens and retires connections continuously is paying a TLS handshake per
+	// query burst, which usually means MinConns is too low for the workload.
+	NewConnsCount           int64
+	MaxLifetimeDestroyCount int64
+}
+
+// RegisterDBPoolSource installs the vidra_db_pool_* gauges and counters, pulled
+// from source at scrape time like every other gauge here — no background
+// goroutine, and nothing to keep in step with the pool's real state.
+//
+// This is the multi-node instrument. PostgreSQL's max_connections is a
+// SERVER-WIDE budget and each process holds a slice of it (DB_MAX_CONNS ×
+// api and worker processes), so the question an operator has to answer before
+// adding a replica — "how much of my pool am I actually using?" — is not
+// answerable from the database side alone: the server sees connections, not
+// which of them are idle in somebody's pool. Call at most once.
+func (m *Metrics) RegisterDBPoolSource(source func() DBPoolStats) {
+	m.registry.MustRegister(&dbPoolCollector{
+		total: prometheus.NewDesc("vidra_db_pool_total_conns",
+			"Connections currently held by this process's PostgreSQL pool (idle + acquired + constructing).", nil, nil),
+		idle: prometheus.NewDesc("vidra_db_pool_idle_conns",
+			"Pooled PostgreSQL connections currently idle in this process.", nil, nil),
+		acquired: prometheus.NewDesc("vidra_db_pool_acquired_conns",
+			"Pooled PostgreSQL connections currently checked out in this process. Includes the one the singleton-cron leader elector pins for as long as this instance is the leader.", nil, nil),
+		max: prometheus.NewDesc("vidra_db_pool_max_conns",
+			"Configured ceiling on this process's PostgreSQL pool (DB_MAX_CONNS). Server-wide demand is this times the number of api and worker processes.", nil, nil),
+		acquires: prometheus.NewDesc("vidra_db_pool_acquires_total",
+			"Total successful connection acquires from this process's pool.", nil, nil),
+		emptyAcquires: prometheus.NewDesc("vidra_db_pool_empty_acquires_total",
+			"Acquires that had to wait because every pooled connection was checked out. A rising rate means this process's pool is too small for its own concurrency.", nil, nil),
+		canceledAcquires: prometheus.NewDesc("vidra_db_pool_canceled_acquires_total",
+			"Acquires abandoned because the caller's context was canceled or its deadline passed while waiting for a connection.", nil, nil),
+		acquireWait: prometheus.NewDesc("vidra_db_pool_acquire_wait_seconds_total",
+			"Cumulative seconds spent waiting for a pooled connection. rate() over it is wait-seconds per second.", nil, nil),
+		newConns: prometheus.NewDesc("vidra_db_pool_new_conns_total",
+			"Connections this process has opened to PostgreSQL. Continuous growth against a flat total is pool churn.", nil, nil),
+		lifetimeDestroys: prometheus.NewDesc("vidra_db_pool_max_lifetime_destroys_total",
+			"Connections retired for reaching DB_CONN_MAX_LIFETIME.", nil, nil),
+		source: source,
+	})
+}
+
+// dbPoolCollector samples the pool on each scrape.
+type dbPoolCollector struct {
+	total, idle, acquired, max                *prometheus.Desc
+	acquires, emptyAcquires, canceledAcquires *prometheus.Desc
+	acquireWait, newConns, lifetimeDestroys   *prometheus.Desc
+	source                                    func() DBPoolStats
+}
+
+func (c *dbPoolCollector) Describe(ch chan<- *prometheus.Desc) {
+	for _, d := range []*prometheus.Desc{
+		c.total, c.idle, c.acquired, c.max,
+		c.acquires, c.emptyAcquires, c.canceledAcquires,
+		c.acquireWait, c.newConns, c.lifetimeDestroys,
+	} {
+		ch <- d
+	}
+}
+
+func (c *dbPoolCollector) Collect(ch chan<- prometheus.Metric) {
+	s := c.source()
+	gauge := func(d *prometheus.Desc, v float64) {
+		ch <- prometheus.MustNewConstMetric(d, prometheus.GaugeValue, v)
+	}
+	counter := func(d *prometheus.Desc, v float64) {
+		ch <- prometheus.MustNewConstMetric(d, prometheus.CounterValue, v)
+	}
+	gauge(c.total, float64(s.TotalConns))
+	gauge(c.idle, float64(s.IdleConns))
+	gauge(c.acquired, float64(s.AcquiredConns))
+	gauge(c.max, float64(s.MaxConns))
+	counter(c.acquires, float64(s.AcquireCount))
+	counter(c.emptyAcquires, float64(s.EmptyAcquireCount))
+	counter(c.canceledAcquires, float64(s.CanceledAcquireCount))
+	counter(c.acquireWait, s.AcquireDuration.Seconds())
+	counter(c.newConns, float64(s.NewConnsCount))
+	counter(c.lifetimeDestroys, float64(s.MaxLifetimeDestroyCount))
+}
+
 // Handler returns the Prometheus scrape handler for this registry.
 func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})

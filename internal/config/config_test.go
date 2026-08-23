@@ -1068,10 +1068,17 @@ func prodFedConfig(kek string) *Config {
 		// Stated explicitly because this Config never went through LoadFrom, which
 		// is what applies the "all" default. validate() rejects an unrecognised
 		// role, and the zero value is one.
-		Role:                     RoleAll,
-		LogLevel:                 "info",
-		LogFormat:                "json",
-		HTTPPort:                 8080,
+		Role:      RoleAll,
+		LogLevel:  "info",
+		LogFormat: "json",
+		HTTPPort:  8080,
+		// Same reason as Role: the pool sizing has a validated floor (DB_MAX_CONNS
+		// >= 2, for the leader elector's pinned connection) and the zero value is
+		// below it, so a literal Config has to state what LoadFrom would default.
+		DBMaxConns:               DefaultDBMaxConns,
+		DBMinConns:               DefaultDBMinConns,
+		DBConnMaxLifetime:        DefaultDBConnMaxLifetime,
+		DBConnMaxIdleTime:        DefaultDBConnMaxIdleTime,
 		DatabaseURL:              "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable",
 		RedisURL:                 "redis://localhost:6379/0",
 		HTTPRequestTimeout:       time.Second,
