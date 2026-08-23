@@ -45,6 +45,7 @@ import (
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
+	"github.com/vidra/vidra-core/internal/qoe"
 	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
@@ -203,6 +204,21 @@ type Server struct {
 	// that unlock password-protected videos (CORE-17 / W1.C2). Derived in New()
 	// from the JWT secret via domain separation, so it is always present.
 	playbackSigner *playback.Signer
+	// qoesvc records playback quality measurements (phase-4 delivery item 4).
+	// Nil in unit tests and on any install without a database, where the beacon
+	// route is simply absent. qoeHealthSvc is the same object seen through the
+	// admin read seam.
+	qoesvc       qoeRecorder
+	qoeHealthSvc qoeHealthProvider
+	// qoeDigester turns a request principal into the keyed, day-scoped viewer
+	// digest stored on a QoE row. Nil yields an empty digest rather than an
+	// unkeyed hash — see internal/qoe/digest.go for why that is the safe
+	// degradation.
+	qoeDigester *qoe.Digester
+	// qoeClassifier maps the origin a client reports having fetched from onto
+	// the closed delivery-source vocabulary. Nil classifies everything as
+	// 'other', which is honest for an instance that configured no origins.
+	qoeClassifier *qoe.Classifier
 	// devMailCapture, when set (DEV_MAIL_CAPTURE_ENABLED only), exposes captured
 	// account-security tokens via GET /api/v1/dev/email-token. Nil in production.
 	devMailCapture *auth.CaptureMailer
@@ -524,6 +540,29 @@ func WithJobStatusService(svc jobStatusProvider) Option {
 		if operations, ok := svc.(jobOperationsProvider); ok {
 			s.jobOperationsSvc = operations
 		}
+	}
+}
+
+// WithQoEService mounts the playback-quality beacon and the admin
+// playback-health read (phase-4 delivery item 4).
+//
+// digester and classifier are separate arguments rather than fields on the
+// service because they are REQUEST-side concerns: one turns a request principal
+// into a stored digest, the other turns a client-reported origin into a delivery
+// source, and neither has anything to do with rolling up or pruning. Keeping
+// them out of qoe.Service is what lets the rollup worker run in a process that
+// never sees a request.
+//
+// Either may be nil and degrades safely: no digester means events carry no
+// viewer field, and no classifier means every origin is 'other'.
+func WithQoEService(svc qoeRecorder, digester *qoe.Digester, classifier *qoe.Classifier) Option {
+	return func(s *Server) {
+		s.qoesvc = svc
+		if health, ok := svc.(qoeHealthProvider); ok {
+			s.qoeHealthSvc = health
+		}
+		s.qoeDigester = digester
+		s.qoeClassifier = classifier
 	}
 }
 
@@ -1657,6 +1696,16 @@ func (s *Server) routes() {
 	// Durable audit trail (admin-only), when the audit-log service is wired.
 	if s.auditLog != nil {
 		api.GET("/admin/audit-log", s.handleListAuditLog, s.requireAuth, s.requireRole("admin"))
+	}
+
+	// Playback quality telemetry (phase-4 delivery item 4). The beacon is
+	// optionalAuth — anonymous playback is the common case and is exactly the
+	// playback worth measuring — and the read is admin-only.
+	if s.qoesvc != nil {
+		api.POST("/qoe/events", s.handleQoEEvents, s.optionalAuth)
+	}
+	if s.qoeHealthSvc != nil {
+		api.GET("/admin/qoe/playback-health", s.handleQoEPlaybackHealth, s.requireAuth, s.requireRole("admin"))
 	}
 
 	// Admin operational status. Depends only on core wiring; auth guards it.

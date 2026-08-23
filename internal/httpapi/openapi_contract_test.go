@@ -36,6 +36,7 @@ import (
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
+	"github.com/vidra/vidra-core/internal/qoe"
 	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/rating"
 	"github.com/vidra/vidra-core/internal/remotevideo"
@@ -93,6 +94,11 @@ func fullRouteOptions() []Option {
 		// Start answers 503 in that configuration.
 		WithStorageMigrationService(storagemigration.NewService(nil, nil, nil, storagemigration.Config{})),
 		WithJobStatusService(jobstatus.NewService(nil)),
+		// Playback QoE: always part of the contract. cmd/api wires it
+		// unconditionally (it needs only the database), and the
+		// qoe_collection_enabled setting gates collection at request time
+		// rather than making the route come and go.
+		WithQoEService(qoe.NewService(nil, nil), nil, nil),
 		WithPeerTubeImportService(peertubeimport.NewService(nil)),
 		// Mounts the REST remote-follow routes. The AP root routes stay excluded
 		// from the drift guard: they additionally require cfg.FederationEnabled,

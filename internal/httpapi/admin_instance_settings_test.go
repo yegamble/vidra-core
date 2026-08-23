@@ -175,10 +175,13 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// + delivery_presign_enabled (phase-2 storage item 6 — the registry's first
 	// storage-area key; credentials stay env-side, this is runtime posture)
 	// + delivery_cdn_enabled (phase-4 delivery item 2 — its twin: the CDN base
-	// URL is env-side and boot-validated, this is the incident-time switch).
+	// URL is env-side and boot-validated, this is the incident-time switch)
+	// + qoe_collection_enabled (phase-4 delivery item 4 — the playback-quality
+	// beacon's switch; same section as the two delivery toggles, but default ON,
+	// because it involves no third party, no egress and no cost).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 111 {
-		t.Fatalf("settings count = %d, want 111", len(got.Settings))
+	if len(got.Settings) != 112 {
+		t.Fatalf("settings count = %d, want 112", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

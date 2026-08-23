@@ -991,6 +991,52 @@ off and the next request is served by the API again. Turning delivery off does
 something leaked, purge the object (or make it non-public, which stops Vidra
 handing out its edge URL) as well.
 
+## Playback quality (QoE) — measuring whether delivery is actually better
+
+Enabling a CDN raises an obvious question the section above cannot answer: is it
+faster for *your* viewers? `GET /api/v1/admin/qoe/playback-health` answers it.
+With no parameters it reports time-to-first-frame and rebuffer percentiles per
+delivery source for the last 24 hours, so `cdn` and `api-proxy` sit next to each
+other in the same table.
+
+Nothing is sent anywhere. There is no analytics provider, no external service and
+no egress; the measurements are stored in this instance's own database and aged
+out on a fixed schedule.
+
+**The switch** is the `qoe_collection_enabled` instance setting (Advanced →
+delivery, beside the two delivery toggles). Unlike those two it defaults **on**,
+because it costs nothing and an instance that measures nothing cannot answer the
+question above. Turning it off stops collection on the very next beacon — no
+restart — and leaves what is already stored alone.
+
+**What is stored about a viewer.** No IP address and no account id. Each event
+carries a keyed digest derived from the instance's `JWT_SECRET`, scoped to a
+single UTC day: within one day two events from the same viewer are recognisable
+as the same viewer (which is how you tell one bad connection from a thousand),
+and across days nothing links. Rotating `JWT_SECRET` re-derives the key, so
+digests written before and after a rotation never correlate — that is intended,
+and it changes no count, percentile or rollup.
+
+**Retention** is fixed and enforced by a leader-elected worker, so exactly one
+instance prunes no matter how many are running:
+
+| Table         | Kept     | What it is                                    |
+| ------------- | -------- | --------------------------------------------- |
+| `qoe_events`  | 7 days   | Individual measurements — the incident detail. |
+| `qoe_rollups` | 90 days  | Hourly counts and percentiles — what the admin view reads. |
+
+A second leader-elected worker turns closed hours into rollups every 10 minutes.
+If both api and worker roles are running (see *Splitting the api and the
+workers*), the workers run in the **worker** role only.
+
+**Two numbers that mean less than they look.** `verified_session_count` is how
+many events carried a playback session id the server could check against a
+signed token — which today happens only for password-protected videos, so on a
+normal public catalogue it is 0 and the session ids are client-asserted. And
+`rendition_reporting_supported` is `false` for the `native-hls` engine (Safari,
+iOS) permanently: the browser picks the variant itself and exposes no hook, so
+zero bitrate switches there is a capability gap, not flawless adaptive streaming.
+
 ## IPFS mirror (pinset) — a distribution surface, not a backup
 
 When `IPFS_ENABLED=true` (`IPFS_API_URL` + `IPFS_GATEWAY_URL` required), the mirror

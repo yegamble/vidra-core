@@ -11497,6 +11497,135 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /api/v1/qoe/events:
+    post:
+      operationId: recordQoEEvents
+      summary: Record playback quality-of-experience measurements
+      description: >-
+        Accepts a batch (<= 20) of playback measurements — time to first frame,
+        a rebuffer that has ended, an ABR rung change, or a playback error —
+        enriches each with a keyed viewer digest, classifies the reported origin
+        into a bounded delivery source, and records them (phase-4 delivery item
+        4). Optional auth. Validation is all-or-nothing: one unsupported event
+        type, engine, packaging format or error class rejects the whole batch.
+        Always 202 on a well-formed batch, whether or not a row landed — the
+        write is best-effort and a viewer's playback must never depend on it.
+        Also 202, with nothing recorded, when the qoe_collection_enabled
+        instance setting is off.
+
+
+        The client reports `source_url`, the final URL it actually fetched media
+        from; the SERVER classifies it against its own configured CDN base, IPFS
+        gateway, object store and public origin. An unrecognised origin becomes
+        `other` and never a value of its own, which is what keeps the dimension
+        bounded. The URL is never stored.
+
+
+        `session_id` is client-asserted unless the batch also carries the
+        matching `playback_token`, which only a password-protected video has;
+        the stored row and the admin rollups record which it was.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [events]
+              properties:
+                events:
+                  type: array
+                  maxItems: 20
+                  items:
+                    $ref: "#/components/schemas/QoEEventInput"
+      responses:
+        "202":
+          description: Batch accepted (or silently dropped because collection is off).
+        "400":
+          description: Malformed body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422":
+          description: More than 20 events, or an event that failed validation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /api/v1/admin/qoe/playback-health:
+    get:
+      operationId: getQoEPlaybackHealth
+      summary: Playback quality rollups for a time window (admin)
+      description: >-
+        Returns playback quality for a window, read entirely from the hourly
+        rollup table (phase-4 delivery item 4). This is the backend contract
+        behind the admin playback-health page and the phase-4 exit criterion:
+        with no parameters it answers "TTFF/rebuffer percentiles per source for
+        the last 24h".
+
+
+        Two projections come back. `sources` merges every row in the window into
+        one entry per delivery source and is NOT paged — a page of a summary is
+        not a summary — and its percentiles are recomputed from the summed
+        histograms rather than averaged from the hourly ones, because
+        percentiles do not merge. `buckets` is the hourly detail behind it,
+        paged with limit/offset.
+
+
+        Percentiles are null, not zero, when the window recorded no measurement
+        of that kind. `rendition_reporting_supported` is false for the
+        native-hls engine permanently: the browser owns variant selection there
+        and exposes no hook, so zero bitrate switches is a capability gap and
+        not a quality result. `verified_session_count` below `event_count` means
+        the rest of the events carried a session id the server could not attest.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: since
+          in: query
+          description: Window start, RFC3339. Snapped down to the hour. Defaults to 24h before `until`.
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          description: Window end (exclusive), RFC3339. Snapped up to the hour. Defaults to now.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          description: Hourly buckets per page.
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: The window summary plus one page of hourly buckets.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QoEPlaybackHealth"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422":
+          description: Unparseable timestamp, or a window wider than 7 days.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "503":
+          description: Playback telemetry is not wired on this instance.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /api/v1/admin/instance-settings:
     get:
       operationId: getInstanceSettings
@@ -19514,3 +19643,160 @@ components:
             Opt the new session into cookie mode (browser clients), exactly
             like login: the rotating refresh token is set as an httpOnly
             `vidra_refresh` cookie and omitted from the response body.
+    QoEEventInput:
+      type: object
+      required: [type, video_id, engine, packaging_format]
+      description: >-
+        One playback measurement. Every vocabulary is closed and validated at
+        the edge; an unknown value rejects the whole batch rather than being
+        stored.
+      properties:
+        type:
+          type: string
+          enum: [playback.start, playback.rebuffer, playback.bitrate_switch, playback.error]
+        video_id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+          description: >-
+            The playback session's id. Client-asserted unless playback_token is
+            also present and verifies.
+        playback_token:
+          type: string
+          description: >-
+            The session's playback token, when the video had one (password
+            privacy only). Presenting it makes session_id attestable.
+        source_url:
+          type: string
+          maxLength: 2048
+          description: >-
+            The final URL the client fetched media from. Classified server-side
+            into a delivery source and then discarded — never stored.
+        engine:
+          type: string
+          enum: [hls-js, native-hls, progressive, shaka]
+        packaging_format:
+          type: string
+          enum: [hls-ts, cmaf, progressive]
+        ttff_ms:
+          type: integer
+          minimum: 0
+          maximum: 3600000
+          description: Required on playback.start, and rejected on every other type.
+        rebuffer_ms:
+          type: integer
+          minimum: 0
+          maximum: 3600000
+          description: >-
+            Duration of one rebuffer that has ENDED. Required on
+            playback.rebuffer, and rejected on every other type.
+        rendition_height:
+          type: integer
+          minimum: 1
+          maximum: 8640
+          description: >-
+            The rung in play. Optional, and rejected outright from the
+            native-hls engine, which cannot know it.
+        error_class:
+          type: string
+          enum: [network, media, manifest, decrypt, timeout, other]
+          description: Required on playback.error, and rejected on every other type.
+        metadata:
+          type: object
+          description: >-
+            Optional extras, deny-by-default: only a short allowlist of bounded
+            enum/number/boolean keys survives, everything else is discarded.
+          additionalProperties: true
+    QoEPercentiles:
+      type: object
+      description: >-
+        p50/p95/p99 in milliseconds. Each is null — never 0 — when the window
+        recorded no measurement of that kind.
+      properties:
+        p50_ms: { type: [integer, "null"] }
+        p95_ms: { type: [integer, "null"] }
+        p99_ms: { type: [integer, "null"] }
+    QoESourceSummary:
+      type: object
+      description: One delivery source, merged across the whole window.
+      properties:
+        delivery_source:
+          type: string
+          enum: [api-proxy, presigned, cdn, ipfs-gateway, origin-live, other]
+        event_count: { type: integer, format: int64 }
+        start_count: { type: integer, format: int64 }
+        rebuffer_count: { type: integer, format: int64 }
+        bitrate_switch_count: { type: integer, format: int64 }
+        error_count: { type: integer, format: int64 }
+        verified_session_count:
+          type: integer
+          format: int64
+          description: >-
+            How many of these events carried a session id the server could
+            verify against a signed playback token. Below event_count means the
+            remainder are client-asserted.
+        ttff: { $ref: "#/components/schemas/QoEPercentiles" }
+        rebuffer: { $ref: "#/components/schemas/QoEPercentiles" }
+        rebuffer_total_ms: { type: integer, format: int64 }
+        error_counts:
+          type: object
+          description: Counts keyed by the closed error-class vocabulary.
+          additionalProperties: { type: integer, format: int64 }
+        engines:
+          type: array
+          items: { type: string, enum: [hls-js, native-hls, progressive, shaka] }
+        partial_percentiles:
+          type: boolean
+          description: >-
+            True when at least one row in the window was written by a different
+            histogram version and was excluded from the percentile merge. Counts
+            still include it.
+    QoEBucket:
+      type: object
+      description: One hour of one (source, engine, packaging format) combination.
+      properties:
+        hour_bucket: { type: string, format: date-time }
+        delivery_source:
+          type: string
+          enum: [api-proxy, presigned, cdn, ipfs-gateway, origin-live, other]
+        engine: { type: string, enum: [hls-js, native-hls, progressive, shaka] }
+        packaging_format: { type: string, enum: [hls-ts, cmaf, progressive] }
+        event_count: { type: integer, format: int64 }
+        start_count: { type: integer, format: int64 }
+        rebuffer_count: { type: integer, format: int64 }
+        bitrate_switch_count: { type: integer, format: int64 }
+        error_count: { type: integer, format: int64 }
+        verified_session_count: { type: integer, format: int64 }
+        ttff: { $ref: "#/components/schemas/QoEPercentiles" }
+        rebuffer: { $ref: "#/components/schemas/QoEPercentiles" }
+        rebuffer_total_ms: { type: integer, format: int64 }
+        error_counts:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+        rendition_reporting_supported:
+          type: boolean
+          description: >-
+            False for native-hls, permanently: the browser owns variant
+            selection through the manifest SCORE attribute and exposes no hook,
+            so zero bitrate switches there is a capability gap rather than
+            flawless ABR.
+        computed_at: { type: string, format: date-time }
+    QoEPlaybackHealth:
+      type: object
+      properties:
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        sources:
+          type: array
+          description: >-
+            One merged entry per delivery source over the whole window. Never
+            paged.
+          items: { $ref: "#/components/schemas/QoESourceSummary" }
+        buckets:
+          type: array
+          items: { $ref: "#/components/schemas/QoEBucket" }
+        buckets_total: { type: integer, format: int64 }
+        limit: { type: integer }
+        offset: { type: integer }

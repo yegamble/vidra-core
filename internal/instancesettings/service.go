@@ -301,6 +301,27 @@ const (
 	// an install with no CDN the setting is inert rather than broken, exactly
 	// as delivery_presign_enabled is on a local-filesystem install.
 	KeyDeliveryCDNEnabled = "delivery_cdn_enabled"
+
+	// KeyQoECollectionEnabled is the playback-telemetry collection switch
+	// (phase-4 delivery item 4): when on, the batched QoE beacon records TTFF,
+	// rebuffering, bitrate switches and playback errors per delivery source.
+	//
+	// Unlike the two delivery toggles above it defaults ON, and the difference
+	// is the point rather than an oversight. Those two send a viewer's request
+	// to a third party and cost money; this one writes bounded, keyed, locally
+	// retained rows and involves no external service at all — a basic install
+	// needs no analytics provider for it to work. An instance that measures
+	// nothing cannot answer the one question the whole delivery phase exists to
+	// make answerable ("is the CDN actually faster for my viewers?"), and a
+	// default that has to be discovered on a settings page is a default that is
+	// discovered after the incident.
+	//
+	// It is a runtime switch rather than an env key for the usual reason: an
+	// operator who wants collection to stop — a privacy request, an unexpected
+	// write load — wants it to stop now, not at the next restart. Turning it off
+	// stops collection on the very next beacon and leaves the rollups already
+	// written intact; retention still ages them out on its own schedule.
+	KeyQoECollectionEnabled = "qoe_collection_enabled"
 )
 
 // SearchSettingKeys are the settings whose change pushes a search.config_updated
@@ -882,6 +903,13 @@ var specs = []spec{
 	// kind of decision about the same requests, and an operator triaging "where
 	// are my bytes coming from" should find both levers in one place.
 	{key: KeyDeliveryCDNEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageAdvanced, section: "delivery"},
+
+	// Playback quality telemetry (phase-4 delivery item 4). Same page and same
+	// section as the two delivery toggles: an operator asking "where are my
+	// bytes coming from" and an operator asking "and is it any good" are the
+	// same operator, in the same minute. Default ON — see the key's comment.
+	{key: KeyQoECollectionEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
 		page: PageAdvanced, section: "delivery"},
 }
 

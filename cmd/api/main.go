@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -60,6 +61,7 @@ import (
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
+	"github.com/vidra/vidra-core/internal/qoe"
 	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/rating"
@@ -1827,6 +1829,33 @@ func run() error {
 		logger.Info("operational job retention worker started")
 	}
 
+	// Playback quality telemetry (phase-4 delivery item 4). Three pieces: the
+	// beacon's writer, the classifier that turns a client-reported origin into a
+	// bounded delivery source, and the keyed digest that stands in for a viewer.
+	//
+	// The classifier is built from the SAME config the delivery chain is built
+	// from, which is what makes its answers true: a CDN source exists exactly
+	// when DELIVERY_CDN_BASE_URL is set, and a presigned source exactly when the
+	// backend is S3 — so a classifier fed those two values reports what actually
+	// happened rather than what was configured to be possible.
+	var qoeOpts []qoe.Option
+	if metrics != nil {
+		qoeOpts = append(qoeOpts, qoe.WithMetrics(metrics))
+	}
+	qoeSvc := qoe.NewService(db.Queries(), logger, qoeOpts...)
+	opts = append(opts, httpapi.WithQoEService(
+		qoeSvc,
+		qoe.NewDigester([]byte(cfg.JWTSecret)),
+		qoe.NewClassifier(cfg.DeliveryCDNBaseURL, cfg.IPFSGatewayURL, objectStorePublicBase(cfg), cfg.PublicBaseURL),
+	))
+	if runWorkers {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runQoERollupWorker(workerCtx, logger, qoeSvc, cronLeader)
+		go runQoERetentionWorker(workerCtx, logger, qoeSvc, cronLeader)
+		logger.Info("qoe rollup + retention workers started")
+	}
+
 	// PeerTube import / migration (fix_plan P18). The admin API is ALWAYS wired
 	// (stable contract for the vidra-user import UI); the launch endpoint answers
 	// 503 until a source is configured (PEERTUBE_IMPORT_ENABLED +
@@ -2785,6 +2814,92 @@ func runOperationalJobRetentionWorker(ctx context.Context, logger *slog.Logger, 
 			}
 		}
 	}
+}
+
+// runQoERollupWorker turns raw playback measurements into hourly rollups
+// (phase-4 delivery item 4).
+//
+// Ten minutes rather than an hour: an hour becomes rollable five minutes after
+// it closes, and an operator watching an incident should not wait most of an
+// hour for the hour that just ended to appear. The sweep is idempotent, so a
+// tick that finds nothing complete is free.
+func runQoERollupWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Service, leader *leaderlock.Elector) {
+	const interval = 10 * time.Minute
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			// Singleton sweep: exactly one instance runs it. A follower skips the
+			// tick rather than shutting down, because leadership can move here at
+			// any time (see internal/leaderlock).
+			if !leader.IsLeader() {
+				continue
+			}
+			hours, err := svc.RollUp(ctx, now.UTC())
+			if err != nil {
+				logger.Warn("qoe rollup failed", "error", err)
+				continue
+			}
+			if hours > 0 {
+				logger.Info("qoe rollup wrote hourly buckets", "hours", hours)
+			}
+		}
+	}
+}
+
+// runQoERetentionWorker enforces the QoE retention windows (7 days of raw
+// measurements, 90 days of rollups).
+//
+// Hourly rather than daily, unlike the operational-job retention worker it is
+// otherwise modelled on: that table grows with operator activity, this one grows
+// with traffic, and a daily sweep on a busy instance would leave a day's worth
+// of expired rows sitting in the table for most of every day.
+func runQoERetentionWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Service, leader *leaderlock.Elector) {
+	const interval = time.Hour
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			if !leader.IsLeader() {
+				continue
+			}
+			events, rollups, err := svc.Prune(ctx, now.UTC())
+			if err != nil {
+				logger.Warn("qoe retention failed", "error", err)
+				continue
+			}
+			if events+rollups > 0 {
+				logger.Info("qoe retention pruned rows", "events", events, "rollups", rollups)
+			}
+		}
+	}
+}
+
+// objectStorePublicBase is the origin a presigned URL points at, or "" when this
+// install cannot presign at all.
+//
+// It is derived from the same three settings the S3 client is built from rather
+// than from a new config key, because a fourth spelling of "where the bucket is"
+// is a fourth thing that can disagree with the other three. The local filesystem
+// backend has no HTTP surface and therefore no presigned origin — which is
+// correct, not a gap: on that install, 'presigned' is a delivery source that
+// cannot occur, so a classifier that never returns it is telling the truth.
+func objectStorePublicBase(cfg *config.Config) string {
+	endpoint := strings.TrimSpace(cfg.StorageS3Endpoint)
+	if cfg.StorageBackend != "s3" || endpoint == "" {
+		return ""
+	}
+	scheme := "https://"
+	if !cfg.StorageS3UseSSL {
+		scheme = "http://"
+	}
+	return scheme + strings.TrimRight(endpoint, "/")
 }
 
 // storageSpec is one store's worth of configuration, so the primary media
