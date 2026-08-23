@@ -38,6 +38,12 @@ type Metrics struct {
 	// (search-service W4). Labels are the fixed event-type set — bounded.
 	searchEnqueueFailures *prometheus.CounterVec
 	searchDeadLetters     *prometheus.CounterVec
+	// qoeDrops counts playback-telemetry events that could not be stored
+	// (phase-4 delivery item 4). The label is the four-member QoE event type
+	// and nothing else: QoE itself is an event/rollup stream and never becomes
+	// Prometheus labels, so the only thing metered here is the health of the
+	// pipeline, not the content of a measurement.
+	qoeDrops *prometheus.CounterVec
 }
 
 // NewMetrics builds the RED instruments on a fresh private registry, together
@@ -65,8 +71,12 @@ func NewMetrics() *Metrics {
 			Name: "vidra_search_dead_letters_total",
 			Help: "Search-outbox events dead-lettered after the retry cap, by event type.",
 		}, []string{"event_type"}),
+		qoeDrops: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "vidra_qoe_events_dropped_total",
+			Help: "Playback QoE measurements dropped before storage (best-effort), by event type.",
+		}, []string{"event_type"}),
 	}
-	reg.MustRegister(m.requests, m.duration, m.searchEnqueueFailures, m.searchDeadLetters)
+	reg.MustRegister(m.requests, m.duration, m.searchEnqueueFailures, m.searchDeadLetters, m.qoeDrops)
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
@@ -95,6 +105,11 @@ func (m *Metrics) IncSearchEnqueueFailure(eventType string) {
 // IncSearchDeadLetter counts one dead-lettered search event (drain-time).
 func (m *Metrics) IncSearchDeadLetter(eventType string) {
 	m.searchDeadLetters.WithLabelValues(eventType).Inc()
+}
+
+// IncQoEDrop counts one playback measurement that could not be stored.
+func (m *Metrics) IncQoEDrop(eventType string) {
+	m.qoeDrops.WithLabelValues(eventType).Inc()
 }
 
 // QueueDepth is one durable-queue depth sample: how many rows sit in a given

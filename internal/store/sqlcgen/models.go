@@ -597,6 +597,50 @@ type PlaylistItem struct {
 	AddedAt    time.Time `json:"added_at"`
 }
 
+type QoeEvent struct {
+	ID              uuid.UUID   `json:"id"`
+	ReceivedAt      time.Time   `json:"received_at"`
+	EventType       string      `json:"event_type"`
+	DeliverySource  string      `json:"delivery_source"`
+	Engine          string      `json:"engine"`
+	PackagingFormat string      `json:"packaging_format"`
+	VideoID         pgtype.UUID `json:"video_id"`
+	LiveStreamID    pgtype.UUID `json:"live_stream_id"`
+	SessionID       pgtype.UUID `json:"session_id"`
+	SessionVerified bool        `json:"session_verified"`
+	ViewerDigest    string      `json:"viewer_digest"`
+	TtffMs          *int32      `json:"ttff_ms"`
+	RebufferMs      *int32      `json:"rebuffer_ms"`
+	RenditionHeight *int32      `json:"rendition_height"`
+	ErrorClass      *string     `json:"error_class"`
+	Metadata        []byte      `json:"metadata"`
+}
+
+type QoeRollup struct {
+	HourBucket         time.Time `json:"hour_bucket"`
+	DeliverySource     string    `json:"delivery_source"`
+	Engine             string    `json:"engine"`
+	PackagingFormat    string    `json:"packaging_format"`
+	EventCount         int64     `json:"event_count"`
+	StartCount         int64     `json:"start_count"`
+	RebufferCount      int64     `json:"rebuffer_count"`
+	BitrateSwitchCount int64     `json:"bitrate_switch_count"`
+	ErrorCount         int64     `json:"error_count"`
+	VerifiedCount      int64     `json:"verified_count"`
+	TtffP50Ms          *int32    `json:"ttff_p50_ms"`
+	TtffP95Ms          *int32    `json:"ttff_p95_ms"`
+	TtffP99Ms          *int32    `json:"ttff_p99_ms"`
+	RebufferP50Ms      *int32    `json:"rebuffer_p50_ms"`
+	RebufferP95Ms      *int32    `json:"rebuffer_p95_ms"`
+	RebufferP99Ms      *int32    `json:"rebuffer_p99_ms"`
+	RebufferTotalMs    int64     `json:"rebuffer_total_ms"`
+	HistogramVersion   int16     `json:"histogram_version"`
+	TtffHistogram      []int64   `json:"ttff_histogram"`
+	RebufferHistogram  []int64   `json:"rebuffer_histogram"`
+	ErrorCounts        []byte    `json:"error_counts"`
+	ComputedAt         time.Time `json:"computed_at"`
+}
+
 type RegistrationRequest struct {
 	ID            uuid.UUID          `json:"id"`
 	Username      string             `json:"username"`
