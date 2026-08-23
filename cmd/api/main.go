@@ -36,6 +36,7 @@ import (
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/diskspace"
 	"github.com/vidra/vidra-core/internal/donation"
+	"github.com/vidra/vidra-core/internal/drm"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/httpapi"
@@ -1153,6 +1154,35 @@ func run() error {
 			logger.Warn("cdn delivery has no purge endpoint",
 				"note", "DELIVERY_CDN_PURGE_URL is unset, so an object cached at the edge cannot be invalidated from here; a privacy flip, deletion or takedown will not reach it")
 		}
+	}
+
+	// Content protection (interfaces.md §10, phase-5). Constructed
+	// UNCONDITIONALLY, exactly as the QoE service is: with no DRM_PROVIDER this
+	// is drm.NoDRM, which reports clear media for every video, so wiring it
+	// costs one interface value and changes no response.
+	//
+	// A rejected provider FAILS THE BOOT rather than degrading to NoDRM.
+	// config.validateDRM already refused everything drm.New can reject, so this
+	// can only fire if the two ever disagree — and the one outcome that must be
+	// impossible is an instance that starts with content protection silently
+	// off while its operator believes it is on.
+	drmProvider, drmErr := drm.New(drm.Config{
+		Provider: cfg.DRMProvider,
+		KeyKEK:   cfg.DRMKeyKEK,
+		Repo:     db.Queries(),
+	})
+	if drmErr != nil {
+		logger.Error("drm configuration rejected", "error", drmErr)
+		os.Exit(1)
+	}
+	opts = append(opts, httpapi.WithDRM(drmProvider))
+	if cfg.DRMProvider != "" && cfg.DRMProvider != "none" {
+		// Said once, at boot, because ClearKey's whole property is one an
+		// operator must not discover later: it hands the content key to every
+		// authorised viewer in the clear.
+		logger.Warn("drm provider enabled",
+			"provider", cfg.DRMProvider,
+			"note", "clearkey-test is a TEST provider — it serves content keys in the clear to any authorised viewer and protects nothing; no media is encrypted until the packaging integration lands")
 	}
 
 	// When federation is on, fan a local comment on a local video out to the

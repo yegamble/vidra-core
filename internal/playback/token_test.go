@@ -167,6 +167,45 @@ func TestTokenIsScopeBound(t *testing.T) {
 	}
 }
 
+// TestLicenseScopeIsClosedAndDistinct. ScopeLicense is a different authority
+// from ScopePlayback — it asks for the KEY rather than for the bytes — so the
+// two credentials must not be interchangeable in either direction. Nothing
+// mints a license token yet (see the constant's comment); adding the scope to
+// the closed set now is what lets a future gate name it without verification
+// rejecting it as unknown, and this test is what keeps it from quietly
+// collapsing into an alias for playback.
+func TestLicenseScopeIsClosedAndDistinct(t *testing.T) {
+	s := NewSigner([]byte("test-secret-material"))
+	id := uuid.New()
+	sid := uuid.New()
+
+	license := s.Sign(id, sid, ScopeLicense, time.Hour)
+	if license == "" {
+		t.Fatal("ScopeLicense minted nothing; it is not in the closed set")
+	}
+	claims, ok := s.VerifyClaims(license, id, ScopeLicense)
+	if !ok {
+		t.Fatal("a license token does not verify for its own scope")
+	}
+	if claims.Scope != ScopeLicense || claims.SessionID != sid || claims.Version != 2 {
+		t.Errorf("claims = %+v, want scope %q, session %s, version 2", claims, ScopeLicense, sid)
+	}
+
+	for _, other := range []Scope{ScopePlayback, ScopeLive} {
+		if s.Verify(license, id, other) {
+			t.Errorf("a license token verified as %q", other)
+		}
+		if s.Verify(s.Sign(id, sid, other, time.Hour), id, ScopeLicense) {
+			t.Errorf("a %q token verified as a license token", other)
+		}
+	}
+	// A pre-scope token predates the license authority entirely and must never
+	// be read as carrying it.
+	if s.Verify(s.signV1(id, time.Hour), id, ScopeLicense) {
+		t.Error("a v1 token must not verify as a license token")
+	}
+}
+
 // TestTokenExpires proves a token past its TTL no longer verifies.
 func TestTokenExpires(t *testing.T) {
 	base := time.Now()

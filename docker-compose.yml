@@ -545,6 +545,25 @@ x-api-env: &api-env
   DELIVERY_CDN_PURGE_HEADER: ${DELIVERY_CDN_PURGE_HEADER:-}
   DELIVERY_CDN_PURGE_TOKEN: ${DELIVERY_CDN_PURGE_TOKEN:-}
   DELIVERY_CDN_PURGE_TIMEOUT: ${DELIVERY_CDN_PURGE_TIMEOUT:-10s}
+  # CONTENT PROTECTION / DRM (docs/productionization/interfaces.md §10, phase-5).
+  # OFF by default and NOT USABLE YET: `none` is no content protection anywhere,
+  # and nothing encrypts media in this build — the provider seam and its key
+  # store exist, the packaging step that would use them does not. Turning a
+  # provider on today wires plumbing and protects nothing.
+  #
+  # `clearkey-test` is EME ClearKey and the name is the warning: it serves the
+  # content key in the clear to any authorised viewer. It proves the path; it
+  # protects nothing. A misspelled value refuses to boot rather than silently
+  # falling back to `none`.
+  #
+  # DRM_KEY_KEK seals content keys at rest (base64 of 32 bytes,
+  # `openssl rand -base64 32`). It is a SECRET, it is REQUIRED by any provider
+  # other than `none`, it is REFUSED alongside `none`, and — unlike MFA_KEY_KEK
+  # and ATPROTO_KEY_KEK — it does NOT fall back to FEDERATION_KEY_KEK: a content
+  # key is a different trust domain from an actor key. Rotating it is
+  # unrecoverable; `vidra setup` demands --rotate DRM_KEY_KEK --yes-i-know.
+  DRM_PROVIDER: ${DRM_PROVIDER:-none}
+  DRM_KEY_KEK: ${DRM_KEY_KEK:-}
   # Hybrid IPFS media mirror (fix_plan P19, .ralph/specs/ipfs-media.md). OFF by
   # default. To mirror already-PUBLIC media to the compose kubo node, run the
   # `ipfs` profile (docker compose --profile core --profile ipfs up) and set

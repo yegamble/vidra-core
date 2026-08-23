@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vidra/vidra-core/internal/cdn"
+	"github.com/vidra/vidra-core/internal/drm"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -1760,6 +1761,130 @@ func TestCDNPlainHTTPEdgeRefusedInProduction(t *testing.T) {
 	t.Setenv("VIDRA_ALLOW_PLAIN_HTTP", "true")
 	if _, err := Load(); err != nil {
 		t.Fatalf("Load with VIDRA_ALLOW_PLAIN_HTTP = %v, want the plain-http edge accepted", err)
+	}
+}
+
+// TestLoadDRMValidation. Every failing row is a way to end up with an instance
+// whose operator believes content is protected while it is not, or one that
+// would write content keys unsealed. Both are silent at request time, so boot is
+// where they are loud.
+func TestLoadDRMValidation(t *testing.T) {
+	kek := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("d", 32)))
+	cases := []struct {
+		name    string
+		env     map[string]string
+		wantErr bool
+	}{
+		{
+			name: "no drm at all is the shipped configuration",
+			env:  map[string]string{},
+		},
+		{
+			name: "explicit none",
+			env:  map[string]string{"DRM_PROVIDER": "none"},
+		},
+		{
+			// An explicitly empty value is the same as unset everywhere else in
+			// this file; it must not become an unknown provider.
+			name: "empty is none",
+			env:  map[string]string{"DRM_PROVIDER": ""},
+		},
+		{
+			name: "clearkey-test with a KEK",
+			env:  map[string]string{"DRM_PROVIDER": "clearkey-test", "DRM_KEY_KEK": kek},
+		},
+		{
+			name: "case and whitespace are normalised, not rejected",
+			env:  map[string]string{"DRM_PROVIDER": "  ClearKey-Test  ", "DRM_KEY_KEK": kek},
+		},
+		{
+			// The failure the closed set exists for: falling through to "none"
+			// would serve unprotected media on an instance configured for
+			// protection, and nothing would ever say so.
+			name:    "a misspelled provider must not fall back to none",
+			env:     map[string]string{"DRM_PROVIDER": "clearkey", "DRM_KEY_KEK": kek},
+			wantErr: true,
+		},
+		{
+			name:    "a provider not built into this binary",
+			env:     map[string]string{"DRM_PROVIDER": "widevine", "DRM_KEY_KEK": kek},
+			wantErr: true,
+		},
+		{
+			// Without a KEK the content keys would have to be stored unsealed,
+			// which is exactly the doctrine interfaces.md §10 states.
+			name:    "clearkey-test with no KEK",
+			env:     map[string]string{"DRM_PROVIDER": "clearkey-test"},
+			wantErr: true,
+		},
+		{
+			// The "I configured DRM and it does nothing" shape.
+			name:    "a KEK with no provider is refused, not ignored",
+			env:     map[string]string{"DRM_KEY_KEK": kek},
+			wantErr: true,
+		},
+		{
+			name:    "a KEK that is not 32 bytes",
+			env:     map[string]string{"DRM_PROVIDER": "clearkey-test", "DRM_KEY_KEK": base64.StdEncoding.EncodeToString([]byte("too short"))},
+			wantErr: true,
+		},
+		{
+			name:    "a KEK that is not base64",
+			env:     map[string]string{"DRM_PROVIDER": "clearkey-test", "DRM_KEY_KEK": "!!! not base64 !!!"},
+			wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			_, err := Load()
+			if tc.wantErr && err == nil {
+				t.Fatalf("Load() = nil error, want error for %s", tc.name)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("Load() = %v, want nil error for %s", err, tc.name)
+			}
+		})
+	}
+}
+
+// TestDRMKeyKEKHasNoFallback. MFA_KEY_KEK and ATPROTO_KEY_KEK both fall back to
+// FEDERATION_KEY_KEK; DRM_KEY_KEK deliberately does not, because a content key
+// and an ActivityPub actor key are different trust domains. The absence of a
+// fallback is a design decision, so it gets a test rather than only a comment —
+// adding a DRMKEK() accessor later would silently make a federation-key
+// compromise a content-key compromise.
+func TestDRMKeyKEKHasNoFallback(t *testing.T) {
+	t.Setenv("FEDERATION_KEY_KEK", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("f", 32))))
+	t.Setenv("DRM_PROVIDER", "clearkey-test")
+	if _, err := Load(); err == nil {
+		t.Fatal("clearkey-test booted with only FEDERATION_KEY_KEK set; DRM_KEY_KEK must not fall back to it")
+	}
+	t.Setenv("DRM_KEY_KEK", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("d", 32))))
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load with both KEKs: %v", err)
+	}
+	if cfg.DRMKeyKEK == cfg.FederationKeyKEK {
+		t.Error("the DRM KEK resolved to the federation KEK")
+	}
+}
+
+// TestDRMProviderNamesAgree is the drift guard for the two strings this package
+// spells twice, for the same reason TestCDNPurgeTimeoutDefaultsAgree exists:
+// internal/config is a leaf and does not import the packages that consume its
+// output, so the accepted values live here as constants and a TEST-only import
+// keeps them equal to the provider names internal/drm dispatches on. If they
+// diverged, config would accept a value drm.New then rejects — turning a
+// friendly boot message into a bare "unknown provider" crash.
+func TestDRMProviderNamesAgree(t *testing.T) {
+	if drmProviderNone != drm.ProviderNone {
+		t.Errorf("config %q != drm.ProviderNone %q", drmProviderNone, drm.ProviderNone)
+	}
+	if drmProviderClearKeyTest != drm.ProviderClearKeyTest {
+		t.Errorf("config %q != drm.ProviderClearKeyTest %q", drmProviderClearKeyTest, drm.ProviderClearKeyTest)
 	}
 }
 

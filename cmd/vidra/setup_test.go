@@ -13,6 +13,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/preflight"
+	"github.com/vidra/vidra-core/internal/setup"
 )
 
 // A minimal template in the deployment format: comments, a blank secret, a
@@ -558,6 +559,84 @@ func TestSetupRotateKEKRequiresItsOwnConfirmation(t *testing.T) {
 	}
 	if jwt(t, after) != jwt(t, before) {
 		t.Error("JWT_SECRET changed while only MFA_KEY_KEK was rotated")
+	}
+}
+
+// DRM_KEY_KEK is the newest *_KEK and the most destructive one to rotate: it
+// seals the CENC content keys, and those keys are the ONLY thing that can
+// decrypt media already packaged under them — there is no re-wrap job and no
+// second copy, so a rotation makes every encrypted video permanently unplayable.
+// It therefore has to be inside the same gate MFA_KEY_KEK is, and this is the
+// test that says so rather than trusting that adding a manifest entry was
+// enough.
+//
+// The template here turns the key ON, which the shipped one does not: that is
+// exactly the "for the day a template turns them on" case internal/setup's
+// manifest comment describes, and it is the only way to exercise the mint,
+// preserve and rotate path for a key whose feature is off by default.
+func TestSetupGuardsTheDRMKEKRotation(t *testing.T) {
+	h := newHarness(t)
+	drmTemplate := cliTemplate + "\n# DESTRUCTIVE TO ROTATE.\n#   generate: openssl rand -base64 32\nDRM_PROVIDER=clearkey-test\nDRM_KEY_KEK=<generate: openssl rand -base64 32>\n"
+	if err := os.WriteFile(h.template, []byte(drmTemplate), 0o644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+
+	if err := h.run(h.setupArgs()...); err != nil {
+		t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
+	}
+	before := h.readOutput(t)
+	minted := valueOf(t, before, "DRM_KEY_KEK")
+	if minted == "" || setup.IsPlaceholder(minted) {
+		t.Fatalf("DRM_KEY_KEK = %q, want a generated value", minted)
+	}
+	if raw, err := base64.StdEncoding.DecodeString(minted); err != nil || len(raw) != 32 {
+		t.Fatalf("DRM_KEY_KEK is not base64 of 32 bytes (config would refuse to boot): %v", err)
+	}
+
+	// The everyday re-run preserves it. A KEK re-minted by a routine re-deploy
+	// would orphan the library without anyone typing anything unusual.
+	if err := h.run(h.setupArgs("--yes")...); err != nil {
+		t.Fatalf("re-run: %v (stderr: %s)", err, h.err.String())
+	}
+	if got := valueOf(t, h.readOutput(t), "DRM_KEY_KEK"); got != minted {
+		t.Fatal("a routine --yes re-run re-minted DRM_KEY_KEK")
+	}
+
+	// The routine intent flag is not the destructive one, and naming a --from
+	// does not pre-authorise it either. The refusal has to say what would be
+	// lost, because "DESTRUCTIVE" alone does not tell an operator that the
+	// library is what goes.
+	for _, args := range [][]string{
+		{"--yes", "--rotate", "DRM_KEY_KEK"},
+		{"--from", h.output, "--yes", "--rotate", "DRM_KEY_KEK"},
+	} {
+		err := h.run(h.setupArgs(args...)...)
+		if err == nil {
+			t.Fatalf("run %v rotated a content-key KEK with no destructive confirmation", args)
+		}
+		for _, want := range []string{"DRM_KEY_KEK", "--yes-i-know", "content keys"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("refusal %q does not mention %q", err, want)
+			}
+		}
+		if valueOf(t, h.readOutput(t), "DRM_KEY_KEK") != minted {
+			t.Fatal("a refused rotation still replaced the KEK")
+		}
+	}
+
+	// The named escape hatch rotates THIS key and nothing else.
+	if err := h.run(h.setupArgs("--yes", "--rotate", "DRM_KEY_KEK", "--yes-i-know")...); err != nil {
+		t.Fatalf("confirmed rotation: %v (stderr: %s)", err, h.err.String())
+	}
+	after := h.readOutput(t)
+	if valueOf(t, after, "DRM_KEY_KEK") == minted {
+		t.Error("DRM_KEY_KEK was not rotated")
+	}
+	if kek(t, after) != kek(t, before) {
+		t.Error("MFA_KEY_KEK changed while only DRM_KEY_KEK was rotated")
+	}
+	if jwt(t, after) != jwt(t, before) {
+		t.Error("JWT_SECRET changed while only DRM_KEY_KEK was rotated")
 	}
 }
 

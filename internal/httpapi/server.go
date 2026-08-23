@@ -30,6 +30,7 @@ import (
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/donation"
+	"github.com/vidra/vidra-core/internal/drm"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/instancedocs"
@@ -205,6 +206,11 @@ type Server struct {
 	// that unlock password-protected videos (CORE-17 / W1.C2). Derived in New()
 	// from the JWT secret via domain separation, so it is always present.
 	playbackSigner *playback.Signer
+	// drmProvider answers "is this video protected, and where does a license
+	// come from" (interfaces.md §10, phase-5). Nil — every unit test, and any
+	// embedder that wires nothing — is read through drm.NoDRM by drmOrNone(),
+	// so there is one code path and no nil check at any call site.
+	drmProvider drm.Provider
 	// qoesvc records playback quality measurements (phase-4 delivery item 4).
 	// Nil in unit tests and on any install without a database, where the beacon
 	// route is simply absent. qoeHealthSvc is the same object seen through the
@@ -640,6 +646,26 @@ func WithDeliveryCDN(edge delivery.CDNLookup, purge delivery.CDNPurge) Option {
 		s.mediaCDNEdge = edge
 		s.mediaCDNPurge = purge
 	}
+}
+
+// WithDRM wires the configured content-protection provider (interfaces.md §10,
+// phase-5). Unset — every install that has set no DRM_PROVIDER — is read as
+// drm.NoDRM, which reports clear media for every video, so the routes and the
+// session response are unchanged from before the seam existed.
+//
+// A PROVIDER, not opaque funcs, unlike WithDeliveryCDN. That option takes funcs
+// because internal/delivery's import list is the enforcement of "no CDN vendor
+// in core media logic". Here the vendor-neutrality is enforced INSIDE
+// internal/drm — nothing in that package imports or names a vendor — so
+// consuming its interface directly couples this package to a Vidra abstraction
+// rather than to a vendor, and three opaque funcs would only obscure that the
+// three calls are one object.
+//
+// Wiring a provider does NOT protect anything: content protection is a property
+// of a video that has been packaged with keys, and the packaging half of the
+// seam has not landed.
+func WithDRM(p drm.Provider) Option {
+	return func(s *Server) { s.drmProvider = p }
 }
 
 // WithMetrics attaches the Prometheus RED-metrics registry. When set AND
@@ -1441,6 +1467,14 @@ func (s *Server) routes() {
 		// password-GUESSING surface, this endpoint refuses everyone unlock
 		// refuses and mints nothing a caller could not already obtain.
 		api.POST("/videos/:id/playback-session", s.handleCreatePlaybackSession, s.optionalAuth)
+		// ClearKey license (interfaces.md §10, phase-5). Registered
+		// UNCONDITIONALLY so the documented route surface does not change with
+		// DRM_PROVIDER: with no provider (the default) it answers 404 for every
+		// video, which is the same answer a provider that has protected nothing
+		// gives, and neither reveals which it was. Authorised through
+		// videoVisibleForMedia, so a license request clears exactly the gate the
+		// segments do.
+		api.POST("/videos/:id/license/clearkey", s.handleClearKeyLicense, s.optionalAuth)
 		api.GET("/videos/:id/passwords", s.handleListVideoPasswords, s.requireAuth)
 		api.POST("/videos/:id/passwords", s.handleAddVideoPassword, s.requireAuth)
 		api.PUT("/videos/:id/passwords", s.handleReplaceVideoPasswords, s.requireAuth)

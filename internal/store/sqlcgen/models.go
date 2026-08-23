@@ -947,6 +947,17 @@ type VideoChapter struct {
 	Title        string    `json:"title"`
 }
 
+// CENC content keys, sealed under DRM_KEY_KEK (internal/secretbox). The plaintext key exists only in process memory; it is never stored in, and never returned from, any queryable column.
+type VideoDrmKey struct {
+	VideoID uuid.UUID `json:"video_id"`
+	// Public CENC key id (KID). Travels in manifests and license requests; names a key rather than being one.
+	KeyID uuid.UUID `json:"key_id"`
+	// SECRET. secretbox-sealed 16-byte AES content key ("enc:" + base64(nonce||ciphertext)). Never logged, never returned by any API.
+	ContentKeySealed string    `json:"content_key_sealed"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
 type VideoFile struct {
 	ID           uuid.UUID `json:"id"`
 	VideoID      uuid.UUID `json:"video_id"`
