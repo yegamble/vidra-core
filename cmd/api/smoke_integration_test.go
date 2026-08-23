@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -48,15 +49,27 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
-// TestAPIStartupSmoke boots the built binary, waits for readiness, asserts the
-// operational endpoints respond, and shuts it down cleanly with SIGTERM.
-func TestAPIStartupSmoke(t *testing.T) {
-	if os.Getenv("DATABASE_URL") == "" || os.Getenv("REDIS_URL") == "" {
-		t.Skip("DATABASE_URL/REDIS_URL not set; skipping startup smoke test")
-	}
+// bootedAPI is a running api process under test: where to reach it, what it has
+// logged, and how to find out that it has exited.
+type bootedAPI struct {
+	base   string
+	logs   *syncBuffer
+	cmd    *exec.Cmd
+	exited chan error
+	// done is set once the exit result has been consumed, so the cleanup never
+	// kills a reaped process or blocks on an empty channel.
+	done bool
+}
 
-	// Build the real binary (this package). The test binary's own wiring is not
-	// enough: exec'ing the artifact proves main() end to end.
+// startAPI builds the real binary, boots it against the live PostgreSQL and
+// Redis with extraEnv layered on, and waits until GET /readyz says it is ready.
+//
+// Exec'ing the artifact is the point: the test binary's own wiring proves
+// nothing about main(), which is where config load, pool sizing, service
+// construction and the shutdown sequence actually live.
+func startAPI(t *testing.T, extraEnv ...string) *bootedAPI {
+	t.Helper()
+
 	bin := filepath.Join(t.TempDir(), "api")
 	build := exec.Command("go", "build", "-o", bin, ".")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -70,47 +83,44 @@ func TestAPIStartupSmoke(t *testing.T) {
 	}
 	port := l.Addr().(*net.TCPAddr).Port
 	_ = l.Close()
-	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 
-	var logs syncBuffer
-	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(),
+	api := &bootedAPI{
+		base:   fmt.Sprintf("http://127.0.0.1:%d", port),
+		logs:   &syncBuffer{},
+		exited: make(chan error, 1),
+	}
+	api.cmd = exec.Command(bin)
+	api.cmd.Env = append(os.Environ(), append([]string{
 		"HTTP_HOST=127.0.0.1",
 		fmt.Sprintf("HTTP_PORT=%d", port),
-		"STORAGE_LOCAL_ROOT="+t.TempDir(),
+		"STORAGE_LOCAL_ROOT=" + t.TempDir(),
 		"LOG_FORMAT=json",
-	)
-	cmd.Stdout = &logs
-	cmd.Stderr = &logs
-	if err := cmd.Start(); err != nil {
+	}, extraEnv...)...)
+	api.cmd.Stdout = api.logs
+	api.cmd.Stderr = api.logs
+	if err := api.cmd.Start(); err != nil {
 		t.Fatalf("start api: %v", err)
 	}
 	// Watch for early exit so a boot failure surfaces immediately (with logs)
-	// instead of as a poll timeout. processDone tracks whether the exit result
-	// was already consumed, so the cleanup defer never kills a reaped process
-	// or blocks on an empty channel.
-	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
-	processDone := false
-	defer func() {
-		if !processDone { // still running: don't leak it on test failure
-			_ = cmd.Process.Kill()
-			<-exited
+	// instead of as a poll timeout.
+	go func() { api.exited <- api.cmd.Wait() }()
+	t.Cleanup(func() {
+		if !api.done { // still running: don't leak it on test failure
+			_ = api.cmd.Process.Kill()
+			<-api.exited
 		}
-	}()
+	})
 
 	client := &http.Client{Timeout: 2 * time.Second}
-
-	// Wait for readiness: /readyz 200 means postgres AND redis pinged OK.
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		select {
-		case err := <-exited:
-			processDone = true
-			t.Fatalf("api exited before becoming ready: %v\nlogs:\n%s", err, logs.String())
+		case err := <-api.exited:
+			api.done = true
+			t.Fatalf("api exited before becoming ready: %v\nlogs:\n%s", err, api.logs.String())
 		default:
 		}
-		resp, err := client.Get(base + "/readyz")
+		resp, err := client.Get(api.base + "/readyz")
 		if err == nil {
 			if resp.StatusCode == http.StatusOK {
 				var ready struct {
@@ -128,15 +138,28 @@ func TestAPIStartupSmoke(t *testing.T) {
 					ready.Components["redis"].Status != "ok" {
 					t.Fatalf("/readyz = %+v, want ok with postgres+redis ok", ready)
 				}
-				break
+				return api
 			}
 			_ = resp.Body.Close()
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("api not ready within 30s\nlogs:\n%s", logs.String())
+			t.Fatalf("api not ready within 30s\nlogs:\n%s", api.logs.String())
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// TestAPIStartupSmoke boots the built binary, waits for readiness, asserts the
+// operational endpoints respond, and shuts it down cleanly with SIGTERM.
+func TestAPIStartupSmoke(t *testing.T) {
+	if os.Getenv("DATABASE_URL") == "" || os.Getenv("REDIS_URL") == "" {
+		t.Skip("DATABASE_URL/REDIS_URL not set; skipping startup smoke test")
+	}
+
+	api := startAPI(t)
+	base, logs, cmd, exited := api.base, api.logs, api.cmd, api.exited
+
+	client := &http.Client{Timeout: 2 * time.Second}
 
 	// Liveness.
 	resp, err := client.Get(base + "/healthz")
@@ -178,7 +201,7 @@ func TestAPIStartupSmoke(t *testing.T) {
 	}
 	select {
 	case err := <-exited:
-		processDone = true
+		api.done = true
 		if err != nil {
 			t.Fatalf("api exited non-zero after SIGTERM: %v\nlogs:\n%s", err, logs.String())
 		}
@@ -187,5 +210,158 @@ func TestAPIStartupSmoke(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "shutdown complete") {
 		t.Errorf("logs missing \"shutdown complete\"; got:\n%s", logs.String())
+	}
+}
+
+// TestAPIPoolSizingReachesPgx closes the loop on DB_MAX_CONNS: env → config →
+// store.Option → pgxpool → the gauge an operator actually reads.
+//
+// Every link in that chain has its own unit test and none of them proves the
+// chain. A pool option that silently did not apply would leave the config test
+// green, the metrics test green, and the deployment opening ten connections per
+// process while its operator believed it was opening three.
+func TestAPIPoolSizingReachesPgx(t *testing.T) {
+	if os.Getenv("DATABASE_URL") == "" || os.Getenv("REDIS_URL") == "" {
+		t.Skip("DATABASE_URL/REDIS_URL not set; skipping pool sizing test")
+	}
+
+	// Deliberately not the default: a test that asserts the default cannot tell
+	// "the option applied" from "the option was ignored".
+	api := startAPI(t, "DB_MAX_CONNS=3", "DB_MIN_CONNS=2", "METRICS_ENABLED=true")
+	defer func() {
+		_ = api.cmd.Process.Signal(syscall.SIGTERM)
+		select {
+		case <-api.exited:
+			api.done = true
+		case <-time.After(15 * time.Second):
+		}
+	}()
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(api.base + "/metrics")
+	if err != nil {
+		t.Fatalf("GET /metrics: %v", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("read /metrics: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/metrics = %d, want 200", resp.StatusCode)
+	}
+	scrape := string(body)
+
+	// The ceiling is the configured one, in the pool the process is really using.
+	if !strings.Contains(scrape, "vidra_db_pool_max_conns 3") {
+		t.Errorf("/metrics does not report vidra_db_pool_max_conns 3 — DB_MAX_CONNS did not reach pgx\nlogs:\n%s", api.logs.String())
+	}
+	// And the rest of the series is exported, so a dashboard built on it is not
+	// built on names that do not exist.
+	for _, name := range []string{
+		"vidra_db_pool_total_conns",
+		"vidra_db_pool_idle_conns",
+		"vidra_db_pool_acquired_conns",
+		"vidra_db_pool_empty_acquires_total",
+		"vidra_db_pool_acquire_wait_seconds_total",
+	} {
+		if !strings.Contains(scrape, name) {
+			t.Errorf("/metrics is missing %s", name)
+		}
+	}
+	// DB_MIN_CONNS=2 means the pool keeps two connections warm, so the process
+	// is holding at least that many before anything asks it for one.
+	if !strings.Contains(scrape, "vidra_db_pool_total_conns 2") &&
+		!strings.Contains(scrape, "vidra_db_pool_total_conns 3") {
+		t.Logf("total_conns is not yet at DB_MIN_CONNS; the pool fills asynchronously. Scrape:\n%s",
+			poolLines(scrape))
+	}
+}
+
+// poolLines extracts just the vidra_db_pool_* samples from a scrape, so a
+// failure message is readable.
+func poolLines(scrape string) string {
+	var out []string
+	for _, line := range strings.Split(scrape, "\n") {
+		if strings.HasPrefix(line, "vidra_db_pool_") {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// TestAPIDrainPhase proves the two-phase shutdown against the real binary: after
+// SIGTERM the process must go NOT READY while it is still SERVING.
+//
+// That gap is the whole point of HTTP_DRAIN_DELAY, and it cannot be tested from
+// inside the process — the thing being proven is that a socket which is still
+// accepting connections answers /readyz with a 503, which is a statement about
+// the running artifact and its signal handling, not about a handler.
+func TestAPIDrainPhase(t *testing.T) {
+	if os.Getenv("DATABASE_URL") == "" || os.Getenv("REDIS_URL") == "" {
+		t.Skip("DATABASE_URL/REDIS_URL not set; skipping drain test")
+	}
+
+	// Long enough to observe the drain without making the suite slow. The
+	// assertions below all happen inside this window.
+	const drain = 6 * time.Second
+	api := startAPI(t, "HTTP_DRAIN_DELAY="+drain.String())
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	if err := api.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("SIGTERM: %v", err)
+	}
+
+	// Poll for the flip rather than sleeping a fixed amount: the signal handler
+	// runs asynchronously, and a fixed sleep is either flaky or slow.
+	var (
+		code   int
+		status string
+	)
+	deadline := time.Now().Add(drain - 2*time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(api.base + "/readyz")
+		if err != nil {
+			t.Fatalf("GET /readyz during the drain window: %v — the listener must stay OPEN while draining\nlogs:\n%s", err, api.logs.String())
+		}
+		var body struct {
+			Status string `json:"status"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		_ = resp.Body.Close()
+		code, status = resp.StatusCode, body.Status
+		if code == http.StatusServiceUnavailable {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if code != http.StatusServiceUnavailable || status != "draining" {
+		t.Fatalf("/readyz after SIGTERM = %d %q, want 503 \"draining\"\nlogs:\n%s", code, status, api.logs.String())
+	}
+
+	// And the other half: it is still SERVING. A drain that stopped answering
+	// would be an outage with extra steps.
+	resp, err := client.Get(api.base + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz while draining: %v — the listener must stay open for the whole delay", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("/healthz while draining = %d, want 200: liveness is not readiness", resp.StatusCode)
+	}
+
+	select {
+	case err := <-api.exited:
+		api.done = true
+		if err != nil {
+			t.Fatalf("api exited non-zero: %v\nlogs:\n%s", err, api.logs.String())
+		}
+	case <-time.After(drain + 15*time.Second):
+		t.Fatalf("api did not exit within the drain delay plus 15s\nlogs:\n%s", api.logs.String())
+	}
+	for _, want := range []string{"draining", "shutdown complete"} {
+		if !strings.Contains(api.logs.String(), want) {
+			t.Errorf("logs missing %q; got:\n%s", want, api.logs.String())
+		}
 	}
 }

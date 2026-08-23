@@ -193,7 +193,16 @@ func run() error {
 	// it is genuinely zero-cost off: pgx query spans, Redis command spans, and the
 	// outbound client-span + W3C traceparent injection on EVERY SSRF-guarded client
 	// (federation/import/whisper/atproto/link-preview) via one wrapper seam.
-	var storeOpts []store.Option
+	// Pool sizing first, so it is applied whether or not tracing is on. The pool
+	// is a PER-PROCESS slice of the server-wide max_connections: the number
+	// PostgreSQL sees is DB_MAX_CONNS times the api and worker processes pointed
+	// at it, which is why it is configurable at all.
+	storeOpts := []store.Option{
+		store.WithMaxConns(cfg.DBMaxConns),
+		store.WithMinConns(cfg.DBMinConns),
+		store.WithConnMaxLifetime(cfg.DBConnMaxLifetime),
+		store.WithConnMaxIdleTime(cfg.DBConnMaxIdleTime),
+	}
 	var cacheOpts []cache.Option
 	if cfg.OTelEnabled {
 		storeOpts = append(storeOpts, store.WithTracing())
@@ -216,7 +225,12 @@ func run() error {
 		return err
 	}
 	defer db.Close()
-	logger.Info("connected to postgres")
+	logger.Info("connected to postgres",
+		"pool_max_conns", cfg.DBMaxConns,
+		"pool_min_conns", cfg.DBMinConns,
+		"conn_max_lifetime", cfg.DBConnMaxLifetime.String(),
+		"conn_max_idle_time", cfg.DBConnMaxIdleTime.String(),
+	)
 	// GET /schemaz reads the migration ledger over this same pool, so the version
 	// probe costs a pooled query rather than a connection.
 	opts = append(opts, httpapi.WithSchemaLedger(db.Pool))
@@ -563,6 +577,28 @@ func run() error {
 		)
 	} else {
 		logger.Info("media storage configured", "backend", cfg.StorageBackend)
+	}
+
+	// A worker writing to LOCAL storage is correct on the stock single-host
+	// install and wrong the moment the fleet spans machines — and the two look
+	// identical from inside the process, so this is a warning and NOT an
+	// interlock.
+	//
+	// The default compose stack legitimately runs `api` and `worker` as separate
+	// containers sharing the `media_data` volume: same filesystem, different
+	// processes, and refusing to boot on that would break the install everybody
+	// has. On two machines the same configuration produces a transcode that
+	// finishes, writes its rendition to the worker's own disk, and is served as
+	// a 404 by every api instance that cannot see it — with nothing in any log
+	// to say why. One loud line at boot is the only honest thing a single
+	// process can do about it.
+	if cfg.Role == config.RoleWorker && cfg.StorageBackend == "local" {
+		logger.Warn("worker is writing media to LOCAL storage: this is only correct while the api and this worker share the same filesystem",
+			"role", cfg.Role.String(),
+			"storage_backend", cfg.StorageBackend,
+			"local_root", cfg.StorageLocalRoot,
+			"detail", "the stock single-host compose stack shares the media_data volume between the api and worker containers, which is fine. A worker on a DIFFERENT MACHINE from the api is not: its output lands on a disk no api instance can read, and the symptom is a video that transcodes successfully and then 404s. Multi-machine fleets require STORAGE_BACKEND=s3 — see \"Splitting the api and the workers\" in docs/operations.md",
+		)
 	}
 
 	// Bucket ownership for media GC (phase-2 storage, item 1). Resolved here
@@ -1963,6 +1999,24 @@ func run() error {
 			}
 			return out, nil
 		})
+		// The pool gauges (phase-5 multi-node floor). Sampled at scrape time from
+		// the live pool; this is the only place the driver's Stat type is
+		// translated, so internal/observability stays free of a pgx dependency.
+		metrics.RegisterDBPoolSource(func() observability.DBPoolStats {
+			st := db.Pool.Stat()
+			return observability.DBPoolStats{
+				TotalConns:              st.TotalConns(),
+				IdleConns:               st.IdleConns(),
+				AcquiredConns:           st.AcquiredConns(),
+				MaxConns:                st.MaxConns(),
+				AcquireCount:            st.AcquireCount(),
+				EmptyAcquireCount:       st.EmptyAcquireCount(),
+				CanceledAcquireCount:    st.CanceledAcquireCount(),
+				AcquireDuration:         st.AcquireDuration(),
+				NewConnsCount:           st.NewConnsCount(),
+				MaxLifetimeDestroyCount: st.MaxLifetimeDestroyCount(),
+			}
+		})
 		opts = append(opts, httpapi.WithMetrics(metrics))
 		logger.Info("prometheus metrics enabled", "route", "/metrics")
 	}
@@ -2010,6 +2064,31 @@ func run() error {
 		return err
 	case sig := <-stop:
 		logger.Info("shutdown signal received", "signal", sig.String())
+	}
+
+	// Phase one of shutdown: stop being READY while still SERVING. /readyz turns
+	// 503 immediately; every other route keeps working. Nothing changes for a
+	// single-node install, where HTTP_DRAIN_DELAY is 0 and the wait below
+	// returns at once.
+	//
+	// The delay is what a load balancer needs. It learns this replica is going
+	// away by polling readiness, so without a pause the sequence is "last health
+	// check passed → listener closed → the requests already in flight toward us
+	// are refused". With one, readiness goes red first and the balancer has
+	// HTTP_DRAIN_DELAY to take this instance out of rotation before the socket
+	// closes.
+	srv.Drain()
+	if cfg.HTTPDrainDelay > 0 {
+		logger.Info("draining: /readyz now reports 503 while the listener stays open",
+			"drain_delay", cfg.HTTPDrainDelay.String())
+		select {
+		case <-time.After(cfg.HTTPDrainDelay):
+		case sig := <-stop:
+			// A second signal is an operator (or an orchestrator's escalation)
+			// saying "now". Skip the rest of the wait rather than making them
+			// send SIGKILL.
+			logger.Info("second shutdown signal received; ending the drain early", "signal", sig.String())
+		}
 	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.HTTPShutdownTimeout)
