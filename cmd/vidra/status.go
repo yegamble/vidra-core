@@ -244,9 +244,24 @@ func readyLine(ctx context.Context, client *http.Client, port string) statusLine
 	var parsed readinessBody
 	_ = json.Unmarshal(body, &parsed)
 	switch {
+	case status == http.StatusOK && readyHasDownComponent(parsed):
+		// 200 with something down is the api saying "I am still serving, but
+		// not on all cylinders" — a Redis outage, for instance, which leaves
+		// every rate limiter failing open rather than taking the instance out
+		// of rotation. Green would hide it; red would claim an outage there
+		// is not.
+		line.status = preflight.StatusWarn
+		line.detail = "the api is serving but DEGRADED" + componentSummary(parsed)
+		line.fix = "a non-critical dependency is down — the api stays in rotation without it, but something is worse than it should be (with Redis down, every rate limit fails open). `vidra logs redis` is the usual next line"
 	case status == http.StatusOK:
 		line.status = preflight.StatusOK
 		line.detail = "the api is ready" + componentSummary(parsed)
+	case status == http.StatusServiceUnavailable && parsed.Status == "draining":
+		// A replica that has been told to stop is not broken. Saying so keeps
+		// `vidra status` usable as a gate during a rolling restart.
+		line.status = preflight.StatusWarn
+		line.detail = "the api is DRAINING: it has been told to shut down and is refusing readiness so a load balancer stops routing to it"
+		line.fix = "this is what a graceful shutdown looks like (HTTP_DRAIN_DELAY). Run it again once the restart has finished; if it stays this way, the process is stuck between SIGTERM and exit and `vidra logs api` says where"
 	case status == http.StatusServiceUnavailable:
 		line.status = preflight.StatusFail
 		line.detail = "the api is up but NOT ready" + componentSummary(parsed)
@@ -257,6 +272,18 @@ func readyLine(ctx context.Context, client *http.Client, port string) statusLine
 		line.fix = "check HTTP_PORT — another process may hold that port on this host"
 	}
 	return line
+}
+
+// readyHasDownComponent reports whether any dependency in a /readyz body says
+// "down". "not_configured" is not one: an install with no search service or no
+// mail is a supported deployment, not a fault.
+func readyHasDownComponent(b readinessBody) bool {
+	for _, c := range b.Components {
+		if c.Status == "down" {
+			return true
+		}
+	}
+	return false
 }
 
 // componentSummary renders /readyz's per-dependency block as "(postgres ok,

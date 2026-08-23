@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/dbmigrate"
 	"github.com/vidra/vidra-core/internal/setup"
 )
@@ -525,6 +526,116 @@ func roundAge(d time.Duration) string {
 		return d.Round(time.Minute).String()
 	}
 	return d.Round(time.Second).String()
+}
+
+// superuserReserved is PostgreSQL's own superuser_reserved_connections default:
+// slots held back so an administrator can still get in when the server is at
+// its limit. An application that plans to use every connection up to
+// max_connections is planning to be locked out of its own database at the worst
+// possible moment, so the headroom arithmetic subtracts it.
+const superuserReserved = 3
+
+// checkDBPoolSizing compares the per-process pool against the server-wide limit.
+//
+// It exists because those two numbers live in different places and neither one
+// is wrong on its own. `DB_MAX_CONNS` caps ONE process's pgx pool; PostgreSQL's
+// `max_connections` caps the WHOLE server; and the total demand is the first
+// times the number of processes — which is at least two the moment an install
+// splits the api from the worker, and more with every replica. Nothing warns
+// about the product until it is exceeded, and then the failure is
+// "FATAL: sorry, too many clients already" on whichever process connected last
+// — on a rolling deploy, the new one.
+//
+// It NEVER fails a run. A tight pool budget is a legitimate configuration (a
+// small managed plan is exactly that), the process count is something doctor
+// cannot see from here, and a ✗ for a deployment that is working is how a report
+// teaches people to ignore it.
+func checkDBPoolSizing(ctx context.Context, s *state) []Finding {
+	if s.envErr != nil {
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s), so there is no connection string", s.envErr))}
+	}
+	pool := config.DefaultDBMaxConns
+	if raw := s.value("DB_MAX_CONNS"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 2 {
+			// The configuration check reports the bad value in full, attributed
+			// to the variable. Saying it twice in different words is noise.
+			return []Finding{skipf("DB_MAX_CONNS is " + raw + ", which the configuration check above reports — the pool arithmetic needs a usable number")}
+		}
+		pool = n
+	}
+
+	dsn := s.value("DATABASE_URL")
+	if dsn == "" {
+		return []Finding{s.poolSizingViaContainer(ctx, pool)}
+	}
+	limit, err := s.opt.Prober.ServerMaxConnections(ctx, dsn)
+	if err != nil {
+		return []Finding{skipf("the server's max_connections could not be read: " + reachSummary(err) + " (the core ledger check above reports the connection in full)")}
+	}
+	return []Finding{poolSizingFinding(pool, limit)}
+}
+
+// poolSizingViaContainer reads max_connections from inside the stack, which is
+// the only way when the bundled Postgres is used (it publishes no host port, by
+// design). Every failure here is a SKIP: none of it is evidence about the
+// sizing.
+func (s *state) poolSizingViaContainer(ctx context.Context, pool int) Finding {
+	const noPort = "this deployment uses the bundled Postgres, which publishes no host port (by design), so max_connections was read from inside the network"
+	running, why := s.containers(ctx)
+	if why != "" {
+		return skipf(noPort + ", and the running containers could not be inspected (" + why + ")")
+	}
+	if _, ok := serviceContainer(running, "postgres"); !ok {
+		return skipf(noPort + ", and the postgres container is not running to read it from")
+	}
+	args := s.composeArgs("exec", "-T", "postgres", "psql",
+		"-U", orDefault(s.value("POSTGRES_USER"), "vidra"),
+		"-d", orDefault(s.value("POSTGRES_DB"), "vidra"),
+		"-tA", "-c", "SHOW max_connections")
+	out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
+	if err != nil {
+		return skipf(noPort + ", and docker is not on this host's PATH to read it from the postgres container")
+	}
+	limit, convErr := strconv.Atoi(strings.TrimSpace(out.Stdout))
+	if convErr != nil {
+		problem := firstLine(orDefault(out.Stderr, strings.TrimSpace(out.Stdout)))
+		if problem == "" {
+			problem = "it answered nothing"
+		}
+		return skipf(noPort + ", and the postgres container did not answer the query (" + problem + ")")
+	}
+	return poolSizingFinding(pool, limit)
+}
+
+// poolSizingFinding is the verdict, shared so the direct-DSN path and the
+// through-the-container fallback say exactly the same thing.
+//
+// The multiplier is TWO, and it is stated rather than guessed at: the stock
+// split-role deployment is one api and one worker, both of which open a pool of
+// this size. doctor cannot see how many replicas of either are running — that is
+// a property of how the stack was started, on hosts it is not looking at — so it
+// prints the arithmetic and lets the operator multiply.
+func poolSizingFinding(pool, limit int) Finding {
+	const processes = 2
+	usable := limit - superuserReserved
+	demand := pool * processes
+	arithmetic := fmt.Sprintf(
+		"each process opens up to %d connections (DB_MAX_CONNS) and this PostgreSQL accepts %d, of which %d are reserved for superusers — so %d usable. Total demand is DB_MAX_CONNS × PROCESSES: %d for the stock api+worker split (%d), and more for every extra replica",
+		pool, limit, superuserReserved, usable, demand, processes)
+
+	switch {
+	case pool > usable:
+		return warnf(
+			"the connection pool does not fit: "+arithmetic,
+			fmt.Sprintf("lower DB_MAX_CONNS to at most %d, or raise the server's max_connections. As it stands a SINGLE process cannot fill its own pool, and the connection that fails is not a slow query — it is `FATAL: sorry, too many clients already`", usable))
+	case demand > usable:
+		return warnf(
+			"the connection pool is tight for more than one process: "+arithmetic,
+			fmt.Sprintf("this is fine on a single all-in-one process and NOT fine the moment you split the api from the worker or add a replica. Before you do, either lower DB_MAX_CONNS to %d or below, or raise max_connections (a managed plan usually means the former — it is the only lever a fixed plan leaves). Watch vidra_db_pool_empty_acquires_total on /metrics to see whether the smaller pool is actually costing you anything", usable/processes))
+	default:
+		return okf("the connection pool fits the server: " + arithmetic)
+	}
 }
 
 func orDefault(v, fallback string) string {

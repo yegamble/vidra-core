@@ -21,11 +21,78 @@ type Store struct {
 	Pool *pgxpool.Pool
 }
 
+// The pool defaults. They are what the pool was hardcoded to before the sizing
+// became configurable, so a caller that passes no sizing Option — `vidra
+// doctor`'s prober, a one-shot command, a test — opens exactly the pool it
+// always did.
+//
+// internal/config restates these as DefaultDBMaxConns and friends, because that
+// package is the configuration surface and must not depend on the database
+// driver; config's TestPoolDefaultsMatchStore asserts the two agree.
+const (
+	DefaultMaxConns        = 10
+	DefaultMinConns        = 1
+	DefaultConnMaxLifetime = time.Hour
+	DefaultConnMaxIdleTime = 30 * time.Minute
+)
+
 // Option customises the pool at construction.
 type Option func(*options)
 
 type options struct {
-	tracer pgx.QueryTracer
+	tracer          pgx.QueryTracer
+	maxConns        int32
+	minConns        int32
+	maxConnLifetime time.Duration
+	maxConnIdleTime time.Duration
+}
+
+// WithMaxConns caps the pool. It is a PER-PROCESS budget against a SERVER-WIDE
+// max_connections, so the number that matters to PostgreSQL is this one times
+// the number of api and worker processes pointed at it.
+//
+// Two is the floor the api enforces in config validation (the leader elector
+// pins one connection), but this package does not re-litigate it: a
+// non-positive value is ignored and leaves the default in place, so a caller
+// that simply did not set the field cannot accidentally open a pool of zero.
+func WithMaxConns(n int) Option {
+	return func(o *options) {
+		if n > 0 {
+			o.maxConns = int32(n)
+		}
+	}
+}
+
+// WithMinConns sets the number of connections the pool keeps warm. Zero is
+// meaningful here (open nothing until asked), so unlike the other three this
+// takes any non-negative value.
+func WithMinConns(n int) Option {
+	return func(o *options) {
+		if n >= 0 {
+			o.minConns = int32(n)
+		}
+	}
+}
+
+// WithConnMaxLifetime bounds how long any one connection is reused before the
+// pool retires it. It is what lets a connection-pooling proxy, a failover or a
+// rotated credential take effect without a restart.
+func WithConnMaxLifetime(d time.Duration) Option {
+	return func(o *options) {
+		if d > 0 {
+			o.maxConnLifetime = d
+		}
+	}
+}
+
+// WithConnMaxIdleTime retires connections that have gone unused for this long,
+// returning the server-side slots an idle replica is holding.
+func WithConnMaxIdleTime(d time.Duration) Option {
+	return func(o *options) {
+		if d > 0 {
+			o.maxConnIdleTime = d
+		}
+	}
 }
 
 // WithTracing enables OpenTelemetry spans around every pgx query. Install it only
@@ -42,7 +109,12 @@ func WithTracing() Option {
 // New opens a pooled connection to PostgreSQL using the given DSN and verifies
 // connectivity with a ping bounded by ctx.
 func New(ctx context.Context, databaseURL string, opts ...Option) (*Store, error) {
-	var o options
+	o := options{
+		maxConns:        DefaultMaxConns,
+		minConns:        DefaultMinConns,
+		maxConnLifetime: DefaultConnMaxLifetime,
+		maxConnIdleTime: DefaultConnMaxIdleTime,
+	}
 	for _, opt := range opts {
 		opt(&o)
 	}
@@ -50,10 +122,10 @@ func New(ctx context.Context, databaseURL string, opts ...Option) (*Store, error
 	if err != nil {
 		return nil, fmt.Errorf("store: parse database url: %w", err)
 	}
-	cfg.MaxConns = 10
-	cfg.MinConns = 1
-	cfg.MaxConnLifetime = time.Hour
-	cfg.MaxConnIdleTime = 30 * time.Minute
+	cfg.MaxConns = o.maxConns
+	cfg.MinConns = o.minConns
+	cfg.MaxConnLifetime = o.maxConnLifetime
+	cfg.MaxConnIdleTime = o.maxConnIdleTime
 	if o.tracer != nil {
 		cfg.ConnConfig.Tracer = o.tracer
 	}

@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,6 +95,11 @@ type Prober interface {
 	// same question the media-GC interlock asks, so doctor and the sweep can
 	// never disagree about whether a move is happening.
 	ActiveStorageMigration(ctx context.Context, dsn string) (bool, error)
+	// ServerMaxConnections reads the SERVER's max_connections. It is the other
+	// half of a question DB_MAX_CONNS alone cannot answer: the pool is a
+	// per-process budget and this is the total, so what an operator needs is the
+	// arithmetic between them.
+	ServerMaxConnections(ctx context.Context, dsn string) (int, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +248,33 @@ func (RealProber) ActiveStorageMigration(ctx context.Context, dsn string) (bool,
 	}
 	defer db.Close()
 	return db.Queries().HasActiveStorageMigration(ctx)
+}
+
+// ServerMaxConnections reads `SHOW max_connections` over a pool opened for the
+// one query and closed again. A connect timeout is pushed into the DSN for the
+// same reason the two probes above do it.
+//
+// The value comes back as TEXT (SHOW always does), so it is parsed rather than
+// scanned into an int.
+func (RealProber) ServerMaxConnections(ctx context.Context, dsn string) (int, error) {
+	dsn, err := addDSNParams(dsn, map[string]string{"connect_timeout": "5"})
+	if err != nil {
+		return 0, err
+	}
+	db, err := store.New(ctx, dsn)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	var raw string
+	if err := db.Pool.QueryRow(ctx, "SHOW max_connections").Scan(&raw); err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("max_connections is %q, which is not a number", raw)
+	}
+	return n, nil
 }
 
 func timeoutOf(ctx context.Context) time.Duration {

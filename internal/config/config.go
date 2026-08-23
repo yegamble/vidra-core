@@ -102,6 +102,25 @@ type Config struct {
 	HTTPReadTimeout     time.Duration
 	HTTPWriteTimeout    time.Duration
 	HTTPShutdownTimeout time.Duration
+	// HTTPDrainDelay is how long this process keeps serving AFTER SIGTERM and
+	// after /readyz starts answering 503, before the listener is closed. Zero —
+	// the default — is exactly the behaviour that shipped before this key
+	// existed, which is what a single-node install wants: nothing is routing to
+	// it, so waiting only delays the restart.
+	//
+	// It exists for the multi-node case, where the load balancer learns that a
+	// replica is going away by POLLING /readyz. Between the last successful
+	// health check and the moment the listener closes, the balancer is still
+	// sending requests to a process that is about to stop accepting them, and
+	// those arrive as connection resets on real user requests. The delay is the
+	// window in which the balancer notices: set it to at least twice the health
+	// check interval (plus the unhealthy-threshold count) so every balancer in
+	// the fleet has seen a 503 before the socket goes.
+	//
+	// It is spent BEFORE the HTTP_SHUTDOWN_TIMEOUT drain, not out of it, so the
+	// two add up — and under Docker both have to fit inside the container's stop
+	// grace period or SIGKILL ends the argument.
+	HTTPDrainDelay time.Duration
 	// HTTPRequestTimeout bounds per-request handler work via a context deadline
 	// (DB/Redis/outbound calls observe it). HTTPWriteTimeout is the hard backstop.
 	HTTPRequestTimeout time.Duration
@@ -160,6 +179,31 @@ type Config struct {
 	// refuse to BOOT an instance over the spelling of a variable that governs one
 	// paragraph of display copy. Nothing here is ever a config error.
 	ExternalPostgres bool
+
+	// DBMaxConns / DBMinConns / DBConnMaxLifetime / DBConnMaxIdleTime size the
+	// pgx connection pool this process opens against DATABASE_URL. The defaults
+	// are exactly the values the pool was hardcoded to before these keys
+	// existed, so an install that sets none of them behaves identically.
+	//
+	// They are here because the pool is a PER-PROCESS budget and PostgreSQL's
+	// max_connections is a SERVER-WIDE one. The moment a deployment runs more
+	// than one process — an api and a worker, or three api replicas behind a
+	// load balancer — total demand is DBMaxConns × processes, and the failure
+	// when that exceeds the server's limit is not a slow instance: it is
+	// "FATAL: sorry, too many clients already" on whichever process connects
+	// last, which on a rolling deploy is the new one. Sizing down per process is
+	// the only lever a fixed managed-Postgres plan leaves.
+	//
+	// DBMaxConns must be at least 2, and that floor is not cosmetic: on a role
+	// that runs workers the singleton-cron elector CHECKS ONE CONNECTION OUT OF
+	// THIS POOL and keeps it for as long as the instance is the leader (see
+	// internal/leaderlock — a session-scoped advisory lock has to be held on a
+	// session). A pool of 1 would hand the elector the only connection and leave
+	// every query behind it waiting for a connection that is never coming back.
+	DBMaxConns        int
+	DBMinConns        int
+	DBConnMaxLifetime time.Duration
+	DBConnMaxIdleTime time.Duration
 
 	// Redis connection (URL form, e.g. redis://host:6379/0).
 	RedisURL string
@@ -894,6 +938,23 @@ const devJWTSecret = "dev-insecure-jwt-secret-change-me-0000000000000000"
 // skipping the server's unrelated runtime validation.
 const DefaultDatabaseURL = "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable"
 
+// The pgx pool defaults. They are the values internal/store hardcoded before
+// DB_MAX_CONNS and friends existed, restated here because this package is the
+// configuration surface and .env.example quotes these numbers.
+//
+// They MUST equal store.DefaultMaxConns / DefaultMinConns /
+// DefaultConnMaxLifetime / DefaultConnMaxIdleTime — a difference would mean the
+// pool a bare store.New() opens is not the pool the api opens, and the two are
+// meant to be the same pool with the same sizing. TestPoolDefaultsMatchStore
+// pins the equality; the constants are duplicated rather than imported so the
+// validation engine stays free of a dependency on the database driver.
+const (
+	DefaultDBMaxConns        = 10
+	DefaultDBMinConns        = 1
+	DefaultDBConnMaxLifetime = time.Hour
+	DefaultDBConnMaxIdleTime = 30 * time.Minute
+)
+
 // Load reads configuration from the process environment, applying safe
 // development defaults. It returns an error if a required value is missing or
 // malformed.
@@ -994,11 +1055,16 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		OwnerClaimToken:                        getEnv("OWNER_CLAIM_TOKEN", ""),
 		DatabaseURL:                            getEnv("DATABASE_URL", DefaultDatabaseURL),
 		ExternalPostgres:                       isShellTrue(getEnv("VIDRA_EXTERNAL_POSTGRES", "")),
+		DBMaxConns:                             p.Int("DB_MAX_CONNS", DefaultDBMaxConns),
+		DBMinConns:                             p.Int("DB_MIN_CONNS", DefaultDBMinConns),
+		DBConnMaxLifetime:                      p.Duration("DB_CONN_MAX_LIFETIME", DefaultDBConnMaxLifetime),
+		DBConnMaxIdleTime:                      p.Duration("DB_CONN_MAX_IDLE_TIME", DefaultDBConnMaxIdleTime),
 		RedisURL:                               getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		CORSAllowedOrigins:                     splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")),
 		HTTPReadTimeout:                        p.Duration("HTTP_READ_TIMEOUT", 15*time.Second),
 		HTTPWriteTimeout:                       p.Duration("HTTP_WRITE_TIMEOUT", 30*time.Second),
 		HTTPShutdownTimeout:                    p.Duration("HTTP_SHUTDOWN_TIMEOUT", 20*time.Second),
+		HTTPDrainDelay:                         p.Duration("HTTP_DRAIN_DELAY", 0),
 		HTTPRequestTimeout:                     p.Duration("HTTP_REQUEST_TIMEOUT", 30*time.Second),
 		HTTPStreamRequestTimeout:               p.Duration("HTTP_STREAM_REQUEST_TIMEOUT", time.Hour),
 		HTTPBodyLimit:                          getEnv("HTTP_BODY_LIMIT", "8M"),
@@ -1288,6 +1354,32 @@ func (c *Config) validate() error {
 	}
 	if strings.TrimSpace(c.RedisURL) == "" {
 		add(varErrorf("REDIS_URL", "config: REDIS_URL is required"))
+	}
+	// The pool. The floor of 2 is the leader elector's pinned connection: on a
+	// role that runs workers it holds one connection out of this pool for as
+	// long as the instance is the leader, so a pool of 1 would leave nothing for
+	// the queries — and the symptom is every request hanging on Acquire, not an
+	// error anybody can read.
+	if c.DBMaxConns < 2 {
+		add(varErrorf("DB_MAX_CONNS", "config: DB_MAX_CONNS must be at least 2 (got %d): the singleton-cron leader elector pins one connection out of this pool for as long as this instance is the leader, so a pool of 1 leaves nothing to run queries on", c.DBMaxConns))
+	}
+	if c.DBMinConns < 0 {
+		add(varErrorf("DB_MIN_CONNS", "config: DB_MIN_CONNS must not be negative (got %d)", c.DBMinConns))
+	}
+	if c.DBMinConns > c.DBMaxConns {
+		add(varErrorf("DB_MIN_CONNS", "config: DB_MIN_CONNS (%d) must not exceed DB_MAX_CONNS (%d)", c.DBMinConns, c.DBMaxConns))
+	}
+	if c.DBConnMaxLifetime <= 0 {
+		add(varErrorf("DB_CONN_MAX_LIFETIME", "config: DB_CONN_MAX_LIFETIME must be positive"))
+	}
+	if c.DBConnMaxIdleTime <= 0 {
+		add(varErrorf("DB_CONN_MAX_IDLE_TIME", "config: DB_CONN_MAX_IDLE_TIME must be positive"))
+	}
+	// A negative drain delay would sleep forever's opposite — time.After of a
+	// negative duration fires immediately — so it is not dangerous, just a value
+	// nobody meant to write.
+	if c.HTTPDrainDelay < 0 {
+		add(varErrorf("HTTP_DRAIN_DELAY", "config: HTTP_DRAIN_DELAY must not be negative (0 disables the drain phase)"))
 	}
 	if c.HTTPRequestTimeout <= 0 {
 		add(varErrorf("HTTP_REQUEST_TIMEOUT", "config: HTTP_REQUEST_TIMEOUT must be positive"))

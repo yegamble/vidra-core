@@ -1703,6 +1703,78 @@ func TestStorageMigration(t *testing.T) {
 	})
 }
 
+// The pool check is arithmetic between two numbers that live in different
+// places — DB_MAX_CONNS caps ONE process, max_connections caps the server — and
+// it is informational by construction: a tight budget is a legitimate
+// configuration, and doctor cannot see how many processes are running.
+func TestDBPoolSizing(t *testing.T) {
+	// A managed database is dialled directly, which is the path that reads
+	// max_connections without going through a container.
+	withDSN := func(extra string) *fakeHost {
+		h := newFakeHost()
+		h.files[filepath.Join(testRoot, "env/production.env")] = healthyEnv +
+			"DATABASE_URL=postgres://u:p@db.example.net:25060/defaultdb?sslmode=require\n" + extra
+		return h
+	}
+
+	t.Run("the default pool against a default server is a pass", func(t *testing.T) {
+		f := one(t, only(t, "db pool sizing", withDSN(""), nil))
+		wantFinding(t, f, StatusOK, "the connection pool fits", "")
+		// The arithmetic is the finding: a line that says "fine" without the
+		// numbers cannot be checked by the person reading it.
+		for _, phrase := range []string{"DB_MAX_CONNS", "100", "DB_MAX_CONNS × PROCESSES"} {
+			if !strings.Contains(f.Detail, phrase) {
+				t.Errorf("the finding never mentions %q: %s", phrase, f.Detail)
+			}
+		}
+	})
+
+	t.Run("a pool that fits one process but not two warns before the split", func(t *testing.T) {
+		p := newFakeProber()
+		p.maxConnections = 25
+		f := one(t, only(t, "db pool sizing", withDSN("DB_MAX_CONNS=20\n"), p))
+		wantFinding(t, f, StatusWarn, "tight for more than one process", "lower DB_MAX_CONNS")
+	})
+
+	t.Run("a pool larger than the whole server warns hardest", func(t *testing.T) {
+		p := newFakeProber()
+		p.maxConnections = 20
+		f := one(t, only(t, "db pool sizing", withDSN("DB_MAX_CONNS=50\n"), p))
+		wantFinding(t, f, StatusWarn, "does not fit", "too many clients")
+	})
+
+	t.Run("a generous server passes even split several ways", func(t *testing.T) {
+		p := newFakeProber()
+		p.maxConnections = 500
+		wantFinding(t, one(t, only(t, "db pool sizing", withDSN("DB_MAX_CONNS=25\n"), p)), StatusOK, "fits", "")
+	})
+
+	t.Run("the bundled Postgres is asked from inside the network", func(t *testing.T) {
+		// The baseline env has no DATABASE_URL, which is the compose default:
+		// the bundled Postgres publishes no host port, so the only way to the
+		// answer is through the container.
+		wantFinding(t, one(t, only(t, "db pool sizing", newFakeHost(), nil)), StatusOK, "the connection pool fits", "")
+	})
+
+	t.Run("an unreachable database is a skip, not a failure", func(t *testing.T) {
+		p := newFakeProber()
+		p.maxConnectionsErr = errors.New("dial tcp 10.0.0.1:5432: connect: connection refused")
+		wantFinding(t, one(t, only(t, "db pool sizing", withDSN(""), p)), StatusWarn, "skipped:", "")
+	})
+
+	t.Run("a DB_MAX_CONNS the config check already rejects is a skip", func(t *testing.T) {
+		// One bad variable must produce ONE finding, on the check whose job it
+		// is; a second one in different words is how a report gets ignored.
+		wantFinding(t, one(t, only(t, "db pool sizing", withDSN("DB_MAX_CONNS=1\n"), nil)), StatusWarn, "skipped:", "")
+	})
+
+	t.Run("an unreadable env file skips", func(t *testing.T) {
+		h := newFakeHost()
+		delete(h.files, filepath.Join(testRoot, "env/production.env"))
+		wantFinding(t, one(t, only(t, "db pool sizing", h, nil)), StatusWarn, "skipped:", "")
+	})
+}
+
 // hwEncoderListing is encoderListing plus the vaapi encoders the shipped image
 // actually has. Measured on the image's own base (alpine 3.24, ffmpeg 8.1.2):
 // h264_vaapi and hevc_vaapi are present, and there is no h264_qsv and no

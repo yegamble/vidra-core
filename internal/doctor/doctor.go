@@ -178,6 +178,7 @@ var checks = []check{
 
 	{"schema ledger", SectionState, checkSchemaLedger},
 	{"search ledger", SectionState, checkSearchLedger},
+	{"db pool sizing", SectionState, checkDBPoolSizing},
 	{"backups", SectionState, checkBackupAge},
 	{"backup timer", SectionState, checkBackupTimer},
 	{"disk space", SectionState, checkDiskSpace},
