@@ -24,15 +24,52 @@ tool *moves content in*, once.
 - Regular playlists + their items.
 - Tags.
 - Subscriptions (local user → local channel follows).
+- **View totals** — each video's lifetime count (see §1.1 for what that does and
+  does not mean).
+- **Chapters** — seek-bar marks. `has_chapters` on the video detail is derived
+  from the rows, so it flips on by itself.
+- **Ratings** — likes/dislikes cast by local accounts on local videos.
+- **HLS ladder rungs** in reference mode — one `video_renditions` row per rung of
+  the referenced tree, so the quality selector has something to render.
 
 **Deferred / mode-dependent** (reconcile or regenerate afterwards):
 
 - **HLS streaming playlists in copy mode** — reference mode reuses PeerTube's
   existing HLS objects; copy mode still relies on Vidra's own transcoding
-  pipeline (`TRANSCODING_ENABLED`) after import.
+  pipeline (`TRANSCODING_ENABLED`) after import. Ladder rungs follow the tree:
+  in copy mode Vidra's own transcode writes them.
+- **Per-day view history** — see §1.1.
 - **Moderation state** (video blacklist, account/server blocklists, abuse reports).
 - **User notification settings and watch history.**
+- **Account and channel avatars/banners** (`actorImage`) and original-file
+  provenance (`videoSource`).
 - Live sessions, plugins, themes, runners, redundancy config, any payment data.
+
+### 1.1 What happens to view counts
+
+PeerTube stores **one lifetime number per video** and no history behind it.
+Vidra stores both a lifetime total (`video_view_counts`) and a per-UTC-day
+rollup (`video_view_days`) that feeds the creator statistics chart.
+
+The total is carried. **The day rollup is left empty** — not one backfilled
+bucket, not a spread across the video's lifetime. Both of those would invent a
+shape of data the source never had: a single bucket claims a whole catalogue's
+views happened on one calendar day, and a spread claims a daily history nobody
+measured. An absent day row already means zero (migration 0046 never backfilled
+either), so an imported video's chart reads as *no daily data before the import,
+real daily data after it* — which is the truth.
+
+The write is a **delta, never an assignment**, which is what makes the scheduled
+re-run safe:
+
+- an unchanged source contributes nothing, so re-running does not double;
+- views Vidra served between runs survive, because the source total is never
+  assigned over them;
+- a source that gained views contributes only the gain.
+
+A source total of **zero is read as "no data", not "withdraw everything"** — a
+source that stopped carrying the column would otherwise wipe the instance's view
+history on one run.
 
 See the full entity mapping table in `.ralph/specs/peertube-import.md`.
 

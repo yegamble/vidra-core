@@ -531,14 +531,15 @@ type PasswordResetToken struct {
 }
 
 type PeertubeImportLedger struct {
-	ID         uuid.UUID   `json:"id"`
-	EntityKind string      `json:"entity_kind"`
-	SourceID   string      `json:"source_id"`
-	VidraID    pgtype.UUID `json:"vidra_id"`
-	Status     string      `json:"status"`
-	Note       string      `json:"note"`
-	CreatedAt  time.Time   `json:"created_at"`
-	UpdatedAt  time.Time   `json:"updated_at"`
+	ID          uuid.UUID   `json:"id"`
+	EntityKind  string      `json:"entity_kind"`
+	SourceID    string      `json:"source_id"`
+	VidraID     pgtype.UUID `json:"vidra_id"`
+	Status      string      `json:"status"`
+	Note        string      `json:"note"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
+	SourceValue int64       `json:"source_value"`
 }
 
 type PeertubeImportRun struct {

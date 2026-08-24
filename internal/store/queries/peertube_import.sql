@@ -243,3 +243,88 @@ WHERE id IN (
     LIMIT 1000
     FOR UPDATE SKIP LOCKED
 );
+
+-- ───────────── per-video data carried after the video itself ─────────────
+-- Views, chapters, ratings and renditions are per-video data that hangs off an
+-- already-imported video rather than being part of its insert. They are carried
+-- by their own passes, keyed by their own ledger rows, so a re-run of the
+-- importer BACKFILLS them onto videos an earlier release already imported —
+-- a pass folded into the video insert would be skipped for every one of them.
+--
+-- The rule they all share: the import never overwrites a row Vidra already has.
+-- ON CONFLICT DO NOTHING everywhere, so an operator-edited chapter set, a rating
+-- cast on the new instance, or a rendition row a Vidra re-transcode wrote all
+-- survive an import running on a schedule. Views are the one exception, and they
+-- are not an overwrite either — see ImportApplyVideoViewDelta.
+
+-- name: ImportApplyVideoViewDelta :exec
+-- Apply the CHANGE in a source video's lifetime view total to Vidra's counter.
+--
+-- This is a delta, never an assignment, and that is the whole design. Vidra's
+-- counter is live: it has been incremented by every view served since the last
+-- import. Assigning the source total would erase those; adding the source total
+-- again would double the history. Adding only what the source gained since the
+-- last run does neither, and a run against an unchanged source passes a delta of
+-- zero. The caller stores the total it applied in peertube_import_ledger
+-- .source_value; the delta is (new source total - that).
+--
+-- GREATEST(..., 0) floors the result: a source whose total went DOWN (a purge, a
+-- re-count) can walk Vidra's counter back but never below zero.
+INSERT INTO video_view_counts (video_id, views, updated_at)
+VALUES (sqlc.arg('video_id'), GREATEST(sqlc.arg('delta')::bigint, 0), now())
+ON CONFLICT (video_id) DO UPDATE
+SET views = GREATEST(video_view_counts.views + sqlc.arg('delta')::bigint, 0),
+    updated_at = now();
+
+-- name: UpsertImportLedgerCounter :exec
+-- The ledger upsert for a COUNTER kind: same idempotency key as
+-- UpsertImportLedgerEntry, but it also records the source total that was applied
+-- so the next run can compute a delta instead of re-applying the whole number.
+INSERT INTO peertube_import_ledger (entity_kind, source_id, vidra_id, status, note, source_value)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (entity_kind, source_id)
+DO UPDATE SET vidra_id     = EXCLUDED.vidra_id,
+              status       = EXCLUDED.status,
+              note         = EXCLUDED.note,
+              source_value = EXCLUDED.source_value,
+              updated_at   = now();
+
+-- name: ImportInsertVideoChapter :exec
+-- One seek-bar chapter mark. (video_id, start_seconds) is the table's primary
+-- key, so DO NOTHING is what makes a repeated import a no-op — and it is also
+-- what stops a scheduled import from stamping on a chapter set the operator
+-- edited on the new instance.
+INSERT INTO video_chapters (video_id, start_seconds, title)
+VALUES ($1, $2, $3)
+ON CONFLICT (video_id, start_seconds) DO NOTHING;
+
+-- name: ImportInsertVideoRating :exec
+-- One user's like/dislike, with the source's timestamps preserved. DO NOTHING on
+-- the (user_id, video_id) key: if this pair already has a rating it was either
+-- cast on Vidra or written by an earlier import, and neither is ours to replace.
+INSERT INTO video_ratings (video_id, user_id, rating, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $4)
+ON CONFLICT (user_id, video_id) DO NOTHING;
+
+-- name: ImportInsertVideoRendition :exec
+-- One rung of an imported HLS ladder, so the quality selector has something to
+-- render for a video whose manifest Vidra did not write. key_prefix points at
+-- the source tree's directory: there are no progressive per-rung download assets
+-- under it, and the download endpoint already skips a rung whose asset is
+-- missing, so the row advertises the rung without promising a file.
+--
+-- DO NOTHING on (video_id, height): a Vidra re-transcode owns its own rendition
+-- rows, and overwriting one of those with a source key_prefix would break the
+-- per-rung download it does have.
+INSERT INTO video_renditions (video_id, height, width, key_prefix, size_bytes)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (video_id, height) DO NOTHING;
+
+-- name: ImportVideoHasReadyPlaylist :one
+-- Whether a video has a ready HLS tree recorded. Rendition rows are only
+-- meaningful alongside one: a video whose media was copied (and will be
+-- transcoded by Vidra) gets its ladder from that transcode instead.
+SELECT EXISTS (
+    SELECT 1 FROM streaming_playlists
+    WHERE video_id = $1 AND state = 'ready' AND master_key <> ''
+);

@@ -24,6 +24,13 @@ type Source struct {
 	actorLinksOnActor        bool
 	thumbnailTypeChecked     bool
 	thumbnailTypeColumnFound bool
+	// colCache / tblCache memoise information_schema probes. The importer never
+	// assumes a source column or table exists — PeerTube renames and adds across
+	// the schema range this tool accepts, and the difference between "probed and
+	// absent" and "assumed present" is the difference between an import that
+	// carries less and one that dies mid-run on a SQL error.
+	colCache map[string]bool
+	tblCache map[string]bool
 }
 
 // OpenSource dials the source PeerTube database and verifies connectivity. The
@@ -98,6 +105,80 @@ func (s *Source) hasColumn(ctx context.Context, table, column string) (bool, err
 		return false, fmt.Errorf("peertubeimport: inspect source schema column %s.%s: %w", table, column, err)
 	}
 	return exists, nil
+}
+
+// columnExists is the memoised form of hasColumn. Every optional source field
+// the importer reads goes through it, so one probe per (table, column) is paid
+// per run no matter how many passes ask.
+func (s *Source) columnExists(ctx context.Context, table, column string) (bool, error) {
+	key := table + "." + column
+	s.mu.Lock()
+	if found, ok := s.colCache[key]; ok {
+		s.mu.Unlock()
+		return found, nil
+	}
+	s.mu.Unlock()
+
+	found, err := s.hasColumn(ctx, table, column)
+	if err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	if s.colCache == nil {
+		s.colCache = map[string]bool{}
+	}
+	s.colCache[key] = found
+	s.mu.Unlock()
+	return found, nil
+}
+
+// tableExists reports whether a source table is present at all. Whole families
+// come and go across the accepted schema range — "videoChapter" does not exist
+// on a PeerTube old enough to sit at the bottom of it — and a missing table is a
+// family the source simply does not have, not a failure.
+func (s *Source) tableExists(ctx context.Context, table string) (bool, error) {
+	s.mu.Lock()
+	if found, ok := s.tblCache[table]; ok {
+		s.mu.Unlock()
+		return found, nil
+	}
+	s.mu.Unlock()
+
+	var exists bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = $1
+		)`, table).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("peertubeimport: inspect source schema table %s: %w", table, err)
+	}
+	s.mu.Lock()
+	if s.tblCache == nil {
+		s.tblCache = map[string]bool{}
+	}
+	s.tblCache[table] = exists
+	s.mu.Unlock()
+	return exists, nil
+}
+
+// firstColumn returns the first of candidates that exists on table, or "" when
+// none do. It is how a field PeerTube has spelled more than one way is read
+// without the importer guessing: the spellings are tried against
+// information_schema, and a source carrying none of them yields "" so the caller
+// can report the family as unreadable instead of issuing SQL that cannot parse.
+func (s *Source) firstColumn(ctx context.Context, table string, candidates ...string) (string, error) {
+	for _, c := range candidates {
+		found, err := s.columnExists(ctx, table, c)
+		if err != nil {
+			return "", err
+		}
+		if found {
+			return c, nil
+		}
+	}
+	return "", nil
 }
 
 func (s *Source) actorLinksLiveOnActor(ctx context.Context) (bool, error) {
@@ -192,6 +273,13 @@ type SourceVideo struct {
 	Language    *string
 	Duration    int
 	CreatedAt   time.Time
+	// Views is the source's LIFETIME view total for this video — one number, with
+	// no daily breakdown behind it. 0 when the source does not carry the column.
+	Views int64
+	// AspectRatio is the source's recorded width/height ratio (0 when the source
+	// does not record one). It is the only real evidence available for an HLS
+	// rung's width when the stored file carries no dimensions.
+	AspectRatio float64
 }
 
 // SourceVideoFile is one stored media file for a video (web/webseed download).
@@ -332,9 +420,24 @@ func (s *Source) Videos(ctx context.Context) ([]SourceVideo, error) {
 	if onActor {
 		actorJoin = `act."videoChannelId" = vc.id`
 	}
+	// views is probed rather than assumed: it is the one column here whose absence
+	// should cost the view totals and nothing else, not the whole video pass.
+	viewsExpr := `0::bigint`
+	if hasViews, err := s.columnExists(ctx, "video", "views"); err != nil {
+		return nil, err
+	} else if hasViews {
+		viewsExpr = `COALESCE(v.views, 0)::bigint`
+	}
+	aspectExpr := `0::double precision`
+	if hasAspect, err := s.columnExists(ctx, "video", "aspectRatio"); err != nil {
+		return nil, err
+	} else if hasAspect {
+		aspectExpr = `COALESCE(v."aspectRatio", 0)::double precision`
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT v.id, v.uuid::text, v."channelId", v.name, COALESCE(v.description, ''),
-		       v.privacy, v.state, v.category, v.licence, v.language, v.duration, v."createdAt"
+		       v.privacy, v.state, v.category, v.licence, v.language, v.duration, v."createdAt",
+		       `+viewsExpr+`, `+aspectExpr+`
 		FROM video v
 		JOIN "videoChannel" vc ON vc.id = v."channelId"
 		JOIN actor act ON `+actorJoin+`
@@ -349,7 +452,8 @@ func (s *Source) Videos(ctx context.Context) ([]SourceVideo, error) {
 		var v SourceVideo
 		var uuidStr string
 		if err := rows.Scan(&v.ID, &uuidStr, &v.ChannelID, &v.Title, &v.Description,
-			&v.Privacy, &v.State, &v.Category, &v.Licence, &v.Language, &v.Duration, &v.CreatedAt); err != nil {
+			&v.Privacy, &v.State, &v.Category, &v.Licence, &v.Language, &v.Duration, &v.CreatedAt,
+			&v.Views, &v.AspectRatio); err != nil {
 			return nil, fmt.Errorf("peertubeimport: scan video: %w", err)
 		}
 		v.UUID = uuidStr
@@ -586,6 +690,200 @@ func (s *Source) Follows(ctx context.Context) ([]SourceFollow, error) {
 			return nil, fmt.Errorf("peertubeimport: scan follow: %w", err)
 		}
 		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// ── per-video data read in bulk (chapters, ratings, HLS rungs) ──
+//
+// These three are read with ONE query each for the whole instance rather than
+// one per video. The per-video shape the older families use costs a round trip
+// per video, which on a real catalogue (14,766 videos) turns a 20-second re-run
+// into minutes over an SSH tunnel — and these families are exactly the ones an
+// operator re-runs on a schedule. Each is ordered by video so the caller walks
+// them alongside its own per-video state.
+
+// SourceChapter is one seek-bar chapter mark on a video.
+type SourceChapter struct {
+	ID       int64
+	VideoID  int64
+	Timecode int // seconds from the start
+	Title    string
+}
+
+// Chapters returns every chapter on every LOCAL video, oldest video first and
+// in playback order within a video. ok=false means the source has no chapter
+// table at all (PeerTube grew chapters part-way through the accepted schema
+// range), which is a family the source does not have — not a failure.
+func (s *Source) Chapters(ctx context.Context) ([]SourceChapter, bool, error) {
+	present, err := s.tableExists(ctx, "videoChapter")
+	if err != nil {
+		return nil, false, err
+	}
+	if !present {
+		return nil, false, nil
+	}
+	// The start-offset column: PeerTube calls it "timecode". The alternatives are
+	// tried in case an older/newer schema in the accepted range spells it
+	// differently; none of them found means the table is not one we can read.
+	timecodeCol, err := s.firstColumn(ctx, "videoChapter", "timecode", "startTimecode", "start")
+	if err != nil {
+		return nil, false, err
+	}
+	if timecodeCol == "" {
+		return nil, false, fmt.Errorf(`peertubeimport: source "videoChapter" has no recognised start-offset column`)
+	}
+	onActor, err := s.actorLinksLiveOnActor(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	actorJoin := `act.id = vc."actorId"`
+	if onActor {
+		actorJoin = `act."videoChannelId" = vc.id`
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT ch.id, ch."videoId", ch."`+timecodeCol+`", COALESCE(ch.title, '')
+		FROM "videoChapter" ch
+		JOIN video v ON v.id = ch."videoId"
+		JOIN "videoChannel" vc ON vc.id = v."channelId"
+		JOIN actor act ON `+actorJoin+`
+		WHERE act."serverId" IS NULL
+		ORDER BY ch."videoId", ch."`+timecodeCol+`"`)
+	if err != nil {
+		return nil, false, fmt.Errorf("peertubeimport: read chapters: %w", err)
+	}
+	defer rows.Close()
+	var out []SourceChapter
+	for rows.Next() {
+		var c SourceChapter
+		if err := rows.Scan(&c.ID, &c.VideoID, &c.Timecode, &c.Title); err != nil {
+			return nil, false, fmt.Errorf("peertubeimport: scan chapter: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, true, rows.Err()
+}
+
+// SourceRating is one LOCAL user's like/dislike of a video. Type is the source's
+// own spelling ('like' / 'dislike'); the caller validates it.
+type SourceRating struct {
+	ID        int64
+	VideoID   int64
+	RaterUser int64
+	Type      string
+	CreatedAt time.Time
+}
+
+// Ratings returns every rating cast by a LOCAL user on a LOCAL video. Remote
+// accounts' ratings are excluded for the same reason remote comments are: there
+// is no Vidra user to attribute them to, and video_ratings is keyed by one.
+func (s *Source) Ratings(ctx context.Context) ([]SourceRating, bool, error) {
+	present, err := s.tableExists(ctx, "accountVideoRate")
+	if err != nil {
+		return nil, false, err
+	}
+	if !present {
+		return nil, false, nil
+	}
+	onActor, err := s.actorLinksLiveOnActor(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	accountJoin := `act.id = acc."actorId"`
+	if onActor {
+		accountJoin = `act."accountId" = acc.id`
+	}
+	channelJoin := `vact.id = vc."actorId"`
+	if onActor {
+		channelJoin = `vact."videoChannelId" = vc.id`
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT r.id, r."videoId", acc."userId", r.type, r."createdAt"
+		FROM "accountVideoRate" r
+		JOIN account acc ON acc.id = r."accountId"
+		JOIN actor act ON `+accountJoin+`
+		JOIN video v ON v.id = r."videoId"
+		JOIN "videoChannel" vc ON vc.id = v."channelId"
+		JOIN actor vact ON `+channelJoin+`
+		WHERE act."serverId" IS NULL AND vact."serverId" IS NULL
+		  AND acc."userId" IS NOT NULL
+		ORDER BY r."videoId", r.id`)
+	if err != nil {
+		return nil, false, fmt.Errorf("peertubeimport: read ratings: %w", err)
+	}
+	defer rows.Close()
+	var out []SourceRating
+	for rows.Next() {
+		var r SourceRating
+		if err := rows.Scan(&r.ID, &r.VideoID, &r.RaterUser, &r.Type, &r.CreatedAt); err != nil {
+			return nil, false, fmt.Errorf("peertubeimport: scan rating: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, true, rows.Err()
+}
+
+// SourceRendition is one rung of a video's HLS ladder on the source: a stored
+// media file attached to a streaming playlist rather than to the video directly.
+// Width is what the source recorded when it records one at all — see
+// renditionWidth for what happens when it does not.
+type SourceRendition struct {
+	FileID     int64
+	VideoID    int64
+	VideoUUID  string
+	Resolution int // PeerTube's rung height in pixels; 0 means audio-only
+	Size       int64
+	Width      int // 0 when the source records no width
+	Height     int // 0 when the source records no height
+}
+
+// Renditions returns every HLS ladder rung of every LOCAL video, tallest first
+// within a video. These are the rungs the source's own master playlist
+// advertises, which is why an imported video can play a quality ladder while
+// reporting no renditions: the manifest has them, the database did not.
+func (s *Source) Renditions(ctx context.Context) ([]SourceRendition, error) {
+	onActor, err := s.actorLinksLiveOnActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	actorJoin := `act.id = vc."actorId"`
+	if onActor {
+		actorJoin = `act."videoChannelId" = vc.id`
+	}
+	// Pixel dimensions per stored file are a newer addition; probed, not assumed.
+	widthExpr, heightExpr := `0`, `0`
+	if has, err := s.columnExists(ctx, "videoFile", "width"); err != nil {
+		return nil, err
+	} else if has {
+		widthExpr = `COALESCE(f.width, 0)`
+	}
+	if has, err := s.columnExists(ctx, "videoFile", "height"); err != nil {
+		return nil, err
+	} else if has {
+		heightExpr = `COALESCE(f.height, 0)`
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT f.id, vsp."videoId", v.uuid::text, f.resolution, f.size,
+		       `+widthExpr+`, `+heightExpr+`
+		FROM "videoFile" f
+		JOIN "videoStreamingPlaylist" vsp ON vsp.id = f."videoStreamingPlaylistId"
+		JOIN video v ON v.id = vsp."videoId"
+		JOIN "videoChannel" vc ON vc.id = v."channelId"
+		JOIN actor act ON `+actorJoin+`
+		WHERE act."serverId" IS NULL
+		ORDER BY vsp."videoId", f.resolution DESC, f.id`)
+	if err != nil {
+		return nil, fmt.Errorf("peertubeimport: read renditions: %w", err)
+	}
+	defer rows.Close()
+	var out []SourceRendition
+	for rows.Next() {
+		var r SourceRendition
+		if err := rows.Scan(&r.FileID, &r.VideoID, &r.VideoUUID, &r.Resolution, &r.Size,
+			&r.Width, &r.Height); err != nil {
+			return nil, fmt.Errorf("peertubeimport: scan rendition: %w", err)
+		}
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }

@@ -18858,7 +18858,14 @@ components:
           type: string
         entities:
           type: object
-          description: Per-entity-kind counts, keyed by entity kind (user, channel, video, …).
+          description: >-
+            Per-entity-kind counts, keyed by entity kind (user, channel, video,
+            video_file, hls_playlist, thumbnail, caption, tag, view_count,
+            chapter, rating, rendition, comment, playlist, playlist_item,
+            follow). view_count counts VIDEOS whose view total was carried, never
+            views: the source records one lifetime number per video and no daily
+            breakdown, so the total is applied as a delta to the video's counter
+            and no per-day rows are invented.
           additionalProperties:
             $ref: "#/components/schemas/PeerTubeImportCounts"
         deferred:
