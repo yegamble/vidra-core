@@ -8,9 +8,17 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// DefaultReconcilePageSize is the reconcile sweep's keyset page size
-// (MASTER-PLAN §2.3: 500 docs/page).
-const DefaultReconcilePageSize = 500
+// DefaultReconcilePageSize is the reconcile sweep's keyset page size.
+//
+// Lowered from the original 500 (MASTER-PLAN §2.3) so that ONE page reliably
+// fits inside maxRequestPayloadBytes. The drainer already refuses to put more
+// than a budget's worth of payload in a request, but a page bigger than the
+// whole budget has to be sent alone, and a page bigger than the RECEIVER's body
+// limit cannot be delivered at all — it would retry to the cap and dead-letter,
+// which is the failure this whole bound exists to prevent. Documents vary in
+// size (a long description is worth many short ones), so the margin is
+// deliberately wide rather than tuned to an average.
+const DefaultReconcilePageSize = 200
 
 // RunReconcile emits a full index-reconciliation sweep to the outbox: one
 // reconcile.begin, then reconcile.page events (each carrying up to pageSize full

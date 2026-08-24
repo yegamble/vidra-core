@@ -107,17 +107,20 @@ func (f *fakeOutbox) DeadLetterSearchEvent(_ context.Context, a sqlcgen.DeadLett
 	return nil
 }
 
-// fakeSender records batches and returns a canned result/err.
+// fakeSender records batches and returns a canned result/err. sent keeps every
+// batch, not just the last, because one Drain may now issue several requests.
 type fakeSender struct {
 	result EventBatchResult
 	err    error
 	calls  int
 	last   EventBatch
+	sent   []EventBatch
 }
 
 func (s *fakeSender) SendEvents(_ context.Context, b EventBatch) (EventBatchResult, error) {
 	s.calls++
 	s.last = b
+	s.sent = append(s.sent, b)
 	return s.result, s.err
 }
 
@@ -277,6 +280,76 @@ func TestDrainHappyMarksAllDelivered(t *testing.T) {
 	}
 	if sender.last.Events[0].SchemaVersion != SchemaVersion {
 		t.Errorf("schema_version not stamped")
+	}
+}
+
+// A claimed batch whose payloads exceed the per-request budget must be split
+// across several requests, each within the budget. Before this, one Drain sent
+// everything in a single request: on a real catalogue that was megabytes of
+// reconcile pages, the receiver answered 413, and the whole batch — including
+// small unrelated events sharing it — retried to the cap and dead-lettered, so
+// search silently never indexed.
+func TestDrainSplitsOversizedBatchAcrossRequests(t *testing.T) {
+	const (
+		rowPayload = 300 << 10 // 300 KiB each
+		rowCount   = 8         // 2.4 MiB total, well over the 1 MiB budget
+	)
+	repo := newFakeOutbox()
+	repo.due = dueRows(rowCount)
+	for i := range repo.due {
+		repo.due[i].Payload = make([]byte, rowPayload)
+	}
+	sender := &fakeSender{result: EventBatchResult{Accepted: rowCount}}
+	d := NewDrainer(repo, sender, testLogger())
+
+	n, err := d.Drain(context.Background(), 200)
+	if err != nil {
+		t.Fatalf("drain error: %v", err)
+	}
+	if n != rowCount {
+		t.Fatalf("delivered = %d, want %d", n, rowCount)
+	}
+	if sender.calls < 2 {
+		t.Fatalf("sent %d request(s); an oversized batch must be split", sender.calls)
+	}
+
+	seen := 0
+	for i, b := range sender.sent {
+		size := 0
+		for _, e := range b.Events {
+			size += len(e.Payload)
+		}
+		seen += len(b.Events)
+		// A lone row over budget is allowed through (it cannot be split); any
+		// request carrying more than one event must respect the budget.
+		if len(b.Events) > 1 && size > maxRequestPayloadBytes {
+			t.Errorf("request %d carried %d bytes over %d events, budget %d",
+				i, size, len(b.Events), maxRequestPayloadBytes)
+		}
+	}
+	if seen != rowCount {
+		t.Errorf("requests carried %d events in total, want %d", seen, rowCount)
+	}
+}
+
+// A single event larger than the budget is still attempted, alone, so it
+// dead-letters on its own rather than taking unrelated events down with it.
+func TestDrainSendsAnOversizedSingleEventAlone(t *testing.T) {
+	repo := newFakeOutbox()
+	repo.due = dueRows(3)
+	repo.due[1].Payload = make([]byte, 2*maxRequestPayloadBytes)
+	sender := &fakeSender{result: EventBatchResult{Accepted: 3}}
+	d := NewDrainer(repo, sender, testLogger())
+
+	if _, err := d.Drain(context.Background(), 200); err != nil {
+		t.Fatalf("drain error: %v", err)
+	}
+	for _, b := range sender.sent {
+		for _, e := range b.Events {
+			if len(e.Payload) > maxRequestPayloadBytes && len(b.Events) != 1 {
+				t.Fatalf("oversized event shared a request with %d others", len(b.Events)-1)
+			}
+		}
 	}
 }
 
