@@ -328,3 +328,30 @@ SELECT EXISTS (
     SELECT 1 FROM streaming_playlists
     WHERE video_id = $1 AND state = 'ready' AND master_key <> ''
 );
+
+-- ───────────── the instance's own category taxonomy ─────────────
+-- A PeerTube instance can replace the stock 1–18 category list wholesale
+-- (peertube-plugin-categories does exactly that), and the import already carries
+-- each video's category id across. Carried ids with no taxonomy behind them
+-- validate against nothing, so the taxonomy is carried too — into the
+-- instance_custom_categories setting, which REPLACES the built-in list.
+--
+-- It is one SETTING, not a set of rows, and one an operator may also edit by
+-- hand. So the ledger remembers the exact value the import applied (0113) and
+-- the pass compares before writing: its own earlier value may be updated when
+-- the source moves, anything else is a human's and is left alone.
+
+-- name: UpsertImportLedgerApplied :exec
+-- The ledger upsert for a SINGLE-VALUE kind: same idempotency key as
+-- UpsertImportLedgerEntry, but it also records the value that was applied so the
+-- next run can tell its own write apart from an operator's edit. A pass that
+-- decided NOT to write passes the value it read back, so a skip never erases the
+-- memory of an earlier write.
+INSERT INTO peertube_import_ledger (entity_kind, source_id, vidra_id, status, note, applied_value)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (entity_kind, source_id)
+DO UPDATE SET vidra_id      = EXCLUDED.vidra_id,
+              status        = EXCLUDED.status,
+              note          = EXCLUDED.note,
+              applied_value = EXCLUDED.applied_value,
+              updated_at    = now();

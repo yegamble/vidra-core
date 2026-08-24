@@ -178,7 +178,7 @@ func (q *Queries) FailImportRun(ctx context.Context, arg FailImportRunParams) er
 const getImportLedgerEntry = `-- name: GetImportLedgerEntry :one
 
 
-SELECT id, entity_kind, source_id, vidra_id, status, note, created_at, updated_at, source_value FROM peertube_import_ledger
+SELECT id, entity_kind, source_id, vidra_id, status, note, created_at, updated_at, source_value, applied_value FROM peertube_import_ledger
 WHERE entity_kind = $1 AND source_id = $2
 `
 
@@ -207,6 +207,7 @@ func (q *Queries) GetImportLedgerEntry(ctx context.Context, arg GetImportLedgerE
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SourceValue,
+		&i.AppliedValue,
 	)
 	return i, err
 }
@@ -773,7 +774,7 @@ func (q *Queries) ImportVideoHasReadyPlaylist(ctx context.Context, videoID uuid.
 }
 
 const listImportLedgerConflicts = `-- name: ListImportLedgerConflicts :many
-SELECT id, entity_kind, source_id, vidra_id, status, note, created_at, updated_at, source_value FROM peertube_import_ledger
+SELECT id, entity_kind, source_id, vidra_id, status, note, created_at, updated_at, source_value, applied_value FROM peertube_import_ledger
 WHERE status IN ('skipped', 'failed', 'unsupported') OR note <> ''
 ORDER BY entity_kind, source_id
 LIMIT $1
@@ -800,6 +801,7 @@ func (q *Queries) ListImportLedgerConflicts(ctx context.Context, limit int32) ([
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.SourceValue,
+			&i.AppliedValue,
 		); err != nil {
 			return nil, err
 		}
@@ -945,6 +947,55 @@ func (q *Queries) UpdateImportRunProgress(ctx context.Context, arg UpdateImportR
 	return err
 }
 
+const upsertImportLedgerApplied = `-- name: UpsertImportLedgerApplied :exec
+
+INSERT INTO peertube_import_ledger (entity_kind, source_id, vidra_id, status, note, applied_value)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (entity_kind, source_id)
+DO UPDATE SET vidra_id      = EXCLUDED.vidra_id,
+              status        = EXCLUDED.status,
+              note          = EXCLUDED.note,
+              applied_value = EXCLUDED.applied_value,
+              updated_at    = now()
+`
+
+type UpsertImportLedgerAppliedParams struct {
+	EntityKind   string      `json:"entity_kind"`
+	SourceID     string      `json:"source_id"`
+	VidraID      pgtype.UUID `json:"vidra_id"`
+	Status       string      `json:"status"`
+	Note         string      `json:"note"`
+	AppliedValue string      `json:"applied_value"`
+}
+
+// ───────────── the instance's own category taxonomy ─────────────
+// A PeerTube instance can replace the stock 1–18 category list wholesale
+// (peertube-plugin-categories does exactly that), and the import already carries
+// each video's category id across. Carried ids with no taxonomy behind them
+// validate against nothing, so the taxonomy is carried too — into the
+// instance_custom_categories setting, which REPLACES the built-in list.
+//
+// It is one SETTING, not a set of rows, and one an operator may also edit by
+// hand. So the ledger remembers the exact value the import applied (0113) and
+// the pass compares before writing: its own earlier value may be updated when
+// the source moves, anything else is a human's and is left alone.
+// The ledger upsert for a SINGLE-VALUE kind: same idempotency key as
+// UpsertImportLedgerEntry, but it also records the value that was applied so the
+// next run can tell its own write apart from an operator's edit. A pass that
+// decided NOT to write passes the value it read back, so a skip never erases the
+// memory of an earlier write.
+func (q *Queries) UpsertImportLedgerApplied(ctx context.Context, arg UpsertImportLedgerAppliedParams) error {
+	_, err := q.db.Exec(ctx, upsertImportLedgerApplied,
+		arg.EntityKind,
+		arg.SourceID,
+		arg.VidraID,
+		arg.Status,
+		arg.Note,
+		arg.AppliedValue,
+	)
+	return err
+}
+
 const upsertImportLedgerCounter = `-- name: UpsertImportLedgerCounter :exec
 INSERT INTO peertube_import_ledger (entity_kind, source_id, vidra_id, status, note, source_value)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -988,7 +1039,7 @@ DO UPDATE SET vidra_id = EXCLUDED.vidra_id,
               status   = EXCLUDED.status,
               note     = EXCLUDED.note,
               updated_at = now()
-RETURNING id, entity_kind, source_id, vidra_id, status, note, created_at, updated_at, source_value
+RETURNING id, entity_kind, source_id, vidra_id, status, note, created_at, updated_at, source_value, applied_value
 `
 
 type UpsertImportLedgerEntryParams struct {
@@ -1022,6 +1073,7 @@ func (q *Queries) UpsertImportLedgerEntry(ctx context.Context, arg UpsertImportL
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SourceValue,
+		&i.AppliedValue,
 	)
 	return i, err
 }

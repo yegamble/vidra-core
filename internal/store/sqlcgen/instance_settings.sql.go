@@ -25,6 +25,28 @@ func (q *Queries) DeleteInstanceSetting(ctx context.Context, key string) (int64,
 	return result.RowsAffected(), nil
 }
 
+const getInstanceSetting = `-- name: GetInstanceSetting :one
+SELECT key, value, updated_by, updated_at
+FROM instance_settings
+WHERE key = $1
+`
+
+// One stored override by key, or no rows when the key is not overridden. The
+// settings service reads the whole set into its cache; this is for a writer
+// OUTSIDE the request path (the PeerTube import) that has to see the row as it
+// stands in the database rather than as some process cached it.
+func (q *Queries) GetInstanceSetting(ctx context.Context, key string) (InstanceSetting, error) {
+	row := q.db.QueryRow(ctx, getInstanceSetting, key)
+	var i InstanceSetting
+	err := row.Scan(
+		&i.Key,
+		&i.Value,
+		&i.UpdatedBy,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listInstanceSettings = `-- name: ListInstanceSettings :many
 SELECT key, value, updated_by, updated_at
 FROM instance_settings

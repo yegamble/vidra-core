@@ -1,0 +1,21 @@
+-- 0113: give the PeerTube import ledger a place to remember the VALUE it last
+-- applied for a single-value entity — today the instance category taxonomy.
+--
+-- 0112 solved the same shape of problem for a counter (how much of a number have
+-- I already applied?). This is its sibling: the taxonomy is one setting, not a
+-- set of rows, so "already imported, skip" cannot be asked of it either. The
+-- source's taxonomy keeps moving until cutover and the operator runs the import
+-- on a schedule to track it, so the import must be able to UPDATE its own
+-- earlier write. But the same key is one an operator may edit by hand, and an
+-- import that overwrites on every run would silently undo that edit every night.
+--
+-- Remembering exactly what the import wrote is what separates the two: a stored
+-- value that still equals this column is the import's own and may be updated; a
+-- stored value that does not is a human's and is left alone. Without the memory
+-- there is no third behaviour — only "always overwrite" (clobbers the operator)
+-- and "never overwrite" (a scheduled import stops carrying the source after the
+-- first run).
+--
+-- It stays '' for every other entity kind, which never reads it.
+ALTER TABLE peertube_import_ledger
+    ADD COLUMN applied_value TEXT NOT NULL DEFAULT '';

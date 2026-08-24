@@ -5,18 +5,22 @@ import "fmt"
 // Entity kinds — the stable ledger entity_kind values and the report's per-kind
 // keys. They also name what a --dry-run plan counts.
 const (
-	KindUser         = "user"
-	KindChannel      = "channel"
-	KindVideo        = "video"
-	KindVideoFile    = "video_file"
-	KindHLSPlaylist  = "hls_playlist"
-	KindThumbnail    = "thumbnail"
-	KindCaption      = "caption"
-	KindTag          = "tag"
-	KindComment      = "comment"
-	KindPlaylist     = "playlist"
-	KindPlaylistItem = "playlist_item"
-	KindFollow       = "follow"
+	// KindCategoryTaxonomy is the INSTANCE's category list, not an entity of the
+	// catalogue: at most one per run, and 0 for the great majority of sources,
+	// which offer the stock taxonomy and need no override written.
+	KindCategoryTaxonomy = "category_taxonomy"
+	KindUser             = "user"
+	KindChannel          = "channel"
+	KindVideo            = "video"
+	KindVideoFile        = "video_file"
+	KindHLSPlaylist      = "hls_playlist"
+	KindThumbnail        = "thumbnail"
+	KindCaption          = "caption"
+	KindTag              = "tag"
+	KindComment          = "comment"
+	KindPlaylist         = "playlist"
+	KindPlaylistItem     = "playlist_item"
+	KindFollow           = "follow"
 	// KindViewCount counts VIDEOS whose view total was carried, not views. One
 	// source video contributes at most one to it per run, and contributes nothing
 	// on a run where its total has not moved.
@@ -29,6 +33,7 @@ const (
 // orderedKinds is the stable order entities are imported and reported in
 // (parents before children).
 var orderedKinds = []string{
+	KindCategoryTaxonomy,
 	KindUser, KindChannel, KindVideo, KindVideoFile, KindHLSPlaylist, KindThumbnail,
 	KindCaption, KindTag, KindViewCount, KindChapter, KindRating, KindRendition,
 	KindComment, KindPlaylist, KindPlaylistItem, KindFollow,
