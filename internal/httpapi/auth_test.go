@@ -175,6 +175,22 @@ func (f *authFakeRepo) UpdateUserPassword(_ context.Context, a sqlcgen.UpdateUse
 
 func (f *authFakeRepo) CountUsers(context.Context) (int64, error) { return int64(len(f.users)), nil }
 
+// CountUsersMatching mirrors ListUsers' username/email substring filter.
+func (f *authFakeRepo) CountUsersMatching(_ context.Context, query string) (int64, error) {
+	if query == "" {
+		return int64(len(f.users)), nil
+	}
+	q := strings.ToLower(query)
+	var n int64
+	for _, u := range f.users {
+		if strings.Contains(strings.ToLower(u.Username), q) ||
+			strings.Contains(strings.ToLower(u.Email), q) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (f *authFakeRepo) CreateSession(_ context.Context, a sqlcgen.CreateSessionParams) (sqlcgen.CreateSessionRow, error) {
 	id := uuid.New()
 	f.sessions[id] = &sqlcgen.GetSessionByRefreshHashRow{

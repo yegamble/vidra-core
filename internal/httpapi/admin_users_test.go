@@ -178,3 +178,35 @@ func TestAdminSetsEmailVerified(t *testing.T) {
 		t.Errorf("audit events missing email_verified changes (on=%v off=%v)", sawOn, sawOff)
 	}
 }
+
+// The total must describe the SAME set as the page it labels: filtered when the
+// request is filtered, and unchanged by page size. Before this the endpoint
+// returned no total at all, so the admin UI hardcoded a 100-row page and an
+// instance with thousands of accounts had no way to reach the rest.
+func TestAdminUserListTotalTracksFilterAndPaging(t *testing.T) {
+	srv := videoServer(t)
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	registerAndToken(t, srv, `{"username":"bobby","email":"bobby@example.test","password":"supersecret"}`)
+
+	all := adminUsers(t, srv, "", adminTok)
+	if all.Total != 3 || len(all.Users) != 3 {
+		t.Fatalf("unfiltered = %d users / total %d, want 3/3", len(all.Users), all.Total)
+	}
+
+	// A filtered page reports the size of its own result set.
+	filtered := adminUsers(t, srv, "?q=bob", adminTok)
+	if filtered.Total != 2 {
+		t.Errorf("total for q=bob is %d, want 2 (bob, bobby)", filtered.Total)
+	}
+
+	// Paging shrinks the page, never the total — that is what makes the page
+	// count derivable by a client.
+	paged := adminUsers(t, srv, "?limit=1", adminTok)
+	if len(paged.Users) != 1 || paged.Limit != 1 {
+		t.Fatalf("limit=1 returned %d users, limit echoed %d", len(paged.Users), paged.Limit)
+	}
+	if paged.Total != 3 {
+		t.Errorf("total under limit=1 is %d, want 3", paged.Total)
+	}
+}

@@ -109,6 +109,18 @@ WHERE (sqlc.arg('query')::text = ''
 ORDER BY u.created_at DESC, u.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: CountUsersMatching :one
+-- How many accounts ListUsers would return for the same query, ignoring
+-- pagination. The WHERE clause MUST stay identical to ListUsers': a total that
+-- counts a different set than the page it labels is worse than no total, since
+-- the admin UI derives its page count from it. CountUsers (unfiltered) is a
+-- different question and is kept for callers that ask it.
+SELECT count(*)
+FROM users u
+WHERE (sqlc.arg('query')::text = ''
+       OR u.username ILIKE '%' || sqlc.arg('query') || '%'
+       OR u.email ILIKE '%' || sqlc.arg('query') || '%');
+
 -- name: AdminUpdateUser :one
 -- Admin edit of a user's role, active flag, email_verified flag, quarantine
 -- bypass, and/or storage quota (partial: NULL role/is_active/email_verified/

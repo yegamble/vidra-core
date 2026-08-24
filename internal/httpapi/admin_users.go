@@ -63,24 +63,43 @@ func newAdminUserViewFromRow(r sqlcgen.ListUsersRow) adminUserView {
 	}, r.StorageUsedBytes)
 }
 
-// adminUserListResponse is the paginated admin user list.
+// Page bounds for the admin user list. These are the user list's OWN limits:
+// it previously borrowed the video feed's, which is why an instance with
+// thousands of accounts could only ever show 100 of them — the feed's ceiling
+// was never a statement about how many accounts an admin may page through.
+const (
+	defaultUserPageLimit = 50
+	maxUserPageLimit     = 200
+)
+
+// adminUserListResponse is the paginated admin user list. Total is how many
+// accounts match the same query, so a client can tell how many pages exist;
+// without it a caller cannot distinguish "last page" from "there is more".
 type adminUserListResponse struct {
 	Users  []adminUserView `json:"users"`
+	Total  int64           `json:"total"`
 	Limit  int             `json:"limit"`
 	Offset int             `json:"offset"`
 }
 
 // handleListUsers returns accounts, newest first, optionally filtered by ?q
 // (username/email substring). Behind requireRole(admin). Pagination via ?limit
-// (1–100, default 20) and ?offset.
+// (1–200, default 50) and ?offset.
 func (s *Server) handleListUsers(c echo.Context) error {
+	ctx := c.Request().Context()
 	query := strings.TrimSpace(c.QueryParam("q"))
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
+	limit := clampInt(queryInt(c, "limit", defaultUserPageLimit), 1, maxUserPageLimit)
 	offset := queryInt(c, "offset", 0)
 	if offset < 0 {
 		offset = 0
 	}
-	users, err := s.adminsvc.ListUsers(c.Request().Context(), query, int32(limit), int32(offset))
+	users, err := s.adminsvc.ListUsers(ctx, query, int32(limit), int32(offset))
+	if err != nil {
+		return err
+	}
+	// Counted with the SAME query as the page, so a filtered page reports the
+	// size of its own result set rather than the instance total.
+	total, err := s.adminsvc.CountUsersMatching(ctx, query)
 	if err != nil {
 		return err
 	}
@@ -88,7 +107,9 @@ func (s *Server) handleListUsers(c echo.Context) error {
 	for _, u := range users {
 		views = append(views, newAdminUserViewFromRow(u))
 	}
-	return c.JSON(http.StatusOK, adminUserListResponse{Users: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, adminUserListResponse{
+		Users: views, Total: total, Limit: limit, Offset: offset,
+	})
 }
 
 // updateUserRequest is the PATCH /admin/users/{id} body. Fields are optional;
