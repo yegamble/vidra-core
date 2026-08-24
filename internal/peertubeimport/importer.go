@@ -36,7 +36,11 @@ type Importer struct {
 	// sealKey seals an actor private-key PEM for at-rest storage (secretbox under
 	// the KEK). Nil → store raw (dev only), matching the federation service.
 	sealKey func(pem string) (string, error)
-	logger  *slog.Logger
+	// reloadSettings invalidates + reloads the running server's instance-settings
+	// cache after the import writes one of those settings. Nil (the CLI, which
+	// exits) → nothing to reload.
+	reloadSettings func(context.Context) error
+	logger         *slog.Logger
 
 	// videosByID caches the source videos by numeric id, built once so
 	// comments/playlist-elements/renditions (which reference the numeric id) can
@@ -59,7 +63,13 @@ type Options struct {
 	SrcMedia  storage.Backend
 	DestMedia storage.Backend
 	SealKey   func(pem string) (string, error)
-	Logger    *slog.Logger
+	// ReloadSettings reloads the instance-settings overlay after the import
+	// writes one (today: the instance category taxonomy). The server caches that
+	// overlay in memory and only reloads it after its own writes, so without this
+	// a carried taxonomy sits in the database without taking effect until the
+	// next restart. Nil in a one-shot process.
+	ReloadSettings func(context.Context) error
+	Logger         *slog.Logger
 }
 
 // NewImporter builds an importer over an open Vidra pool and source.
@@ -77,16 +87,17 @@ func NewImporter(dest *pgxpool.Pool, src *Source, opts Options) *Importer {
 		mediaMode = MediaModeCopy
 	}
 	return &Importer{
-		dest:      dest,
-		q:         sqlcgen.New(dest),
-		src:       src,
-		srcMedia:  opts.SrcMedia,
-		destMedia: opts.DestMedia,
-		mediaMode: mediaMode,
-		policy:    policy,
-		force:     opts.Force,
-		sealKey:   opts.SealKey,
-		logger:    logger,
+		dest:           dest,
+		q:              sqlcgen.New(dest),
+		src:            src,
+		srcMedia:       opts.SrcMedia,
+		destMedia:      opts.DestMedia,
+		mediaMode:      mediaMode,
+		policy:         policy,
+		force:          opts.Force,
+		sealKey:        opts.SealKey,
+		reloadSettings: opts.ReloadSettings,
+		logger:         logger,
 	}
 }
 
@@ -154,6 +165,10 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 	r := NewReport(true, im.policy)
 	r.SourceVersion = version
 	r.Deferred = deferredFamilies()
+
+	if err := im.planCategoryTaxonomy(ctx, r); err != nil {
+		return nil, err
+	}
 
 	users, err := im.src.Users(ctx)
 	if err != nil {
@@ -280,6 +295,10 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 		name string
 		fn   func(context.Context, *Report) error
 	}{
+		// The instance taxonomy goes first: it has no parents to wait for, and a
+		// video's category id only means something once the list that defines it
+		// is in place. See entities_taxonomy.go.
+		{"category taxonomy", im.importCategoryTaxonomy},
 		{"users", im.importUsers},
 		{"channels", im.importChannels},
 		{"videos", im.importVideos},

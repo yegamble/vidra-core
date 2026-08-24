@@ -18,3 +18,12 @@ SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()
 -- Remove one instance setting override, resetting the key to its config
 -- default. Returns the number of rows removed (0 when the key was not overridden).
 DELETE FROM instance_settings WHERE key = $1;
+
+-- name: GetInstanceSetting :one
+-- One stored override by key, or no rows when the key is not overridden. The
+-- settings service reads the whole set into its cache; this is for a writer
+-- OUTSIDE the request path (the PeerTube import) that has to see the row as it
+-- stands in the database rather than as some process cached it.
+SELECT key, value, updated_by, updated_at
+FROM instance_settings
+WHERE key = $1;

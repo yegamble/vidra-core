@@ -31,6 +31,9 @@ tool *moves content in*, once.
 - **Ratings** — likes/dislikes cast by local accounts on local videos.
 - **HLS ladder rungs** in reference mode — one `video_renditions` row per rung of
   the referenced tree, so the quality selector has something to render.
+- **The instance's category taxonomy**, when the source replaces the stock one
+  (see §1.2). Without it the category ids the videos carry would mean nothing
+  here.
 
 **Deferred / mode-dependent** (reconcile or regenerate afterwards):
 
@@ -44,6 +47,13 @@ tool *moves content in*, once.
 - **Account and channel avatars/banners** (`actorImage`) and original-file
   provenance (`videoSource`).
 - Live sessions, plugins, themes, runners, redundancy config, any payment data.
+  (The categories plugin's *taxonomy* is read — see §1.2 — but no plugin is
+  installed, enabled or otherwise carried.)
+- **The instance's own name, description and terms.** They are not in the source
+  database at all: `application.configPart` holds only object-storage config, and
+  the identity lives in `config/local-production.json` on the source **host**,
+  which `--source-dsn` cannot reach. Copy them into Vidra's admin settings by
+  hand after the import.
 
 ### 1.1 What happens to view counts
 
@@ -70,6 +80,42 @@ re-run safe:
 A source total of **zero is read as "no data", not "withdraw everything"** — a
 source that stopped carrying the column would otherwise wipe the instance's view
 history on one run.
+
+### 1.2 What happens to the category taxonomy
+
+Vidra ships PeerTube's stock 1–18 category ids on purpose: that is what lets an
+imported video's `category` come across unchanged. But an instance running
+**`peertube-plugin-categories`** has replaced that taxonomy — the plugin deletes
+the stock entries and adds the instance's own at higher ids — and importing one
+without its taxonomy leaves every video pointing at an id that validates against
+nothing.
+
+So the taxonomy is carried into the **`instance_custom_categories`** setting,
+which replaces the built-in list when set. It is read from the source's `plugin`
+row (settings key `json-categories-as-text`, whose value is a JSON string
+containing JSON), and `add` and `delete` are both applied, so what Vidra offers
+is what the source offers. An `add` on a surviving stock id is a rename and is
+carried as one.
+
+The import is run on a schedule until cutover, so two rules make the re-run safe:
+
+- **No plugin, no override.** Absent, disabled, uninstalled, carrying no
+  taxonomy, or describing exactly the built-in list: nothing is written and
+  Vidra's built-in taxonomy stands. Most PeerTube instances are this case.
+- **An operator edit is never overwritten.** The ledger records the exact value
+  the import applied (migration 0113). A stored value that still equals it is the
+  import's own and is updated when the source's taxonomy moves; anything else is
+  a human's and is left alone, with a note in the report's `conflicts` so the
+  divergence is visible. Clearing the setting is also a decision: the import does
+  not refill it. And nothing is ever removed — a source that drops its plugin
+  leaves the last carried taxonomy in place, because the imported videos still
+  carry its ids.
+
+One operational wrinkle: a running server caches the settings overlay. An import
+run through the **admin API** reloads it as part of the run; an import run from
+the **CLI** against a database a server is already serving writes the row, but
+that server keeps serving the old taxonomy until it restarts (or an admin saves
+any instance setting).
 
 See the full entity mapping table in `.ralph/specs/peertube-import.md`.
 
@@ -259,10 +305,16 @@ fails the run with a clear message for a human to act on.
    authenticated proxy. In copy mode, the original plays immediately; enable
    `TRANSCODING_ENABLED` if you want Vidra to generate a fresh adaptive ladder.
 4. **Channels/playlists/comments/follows** appear as expected.
-5. **Federation continuity** (if enabled): imported actors keep their keypairs,
+5. **Categories.** If the source ran a custom taxonomy, an imported video's
+   category should read as its own name, not as blank or as a stock label. The
+   effective list is `GET /api/v1/videos/config`; the stored override is
+   `instance_custom_categories` in the admin instance settings. A blank category
+   on a video whose source category was *deleted there too* is correct — that is
+   what the source showed.
+6. **Federation continuity** (if enabled): imported actors keep their keypairs,
    so remote followers continue to resolve them. If you changed domains, plan an
    ActivityPub `Move`/`alsoKnownAs` redirect (see `.ralph/specs/federation.md`).
-6. **Audit trail.** `GET /api/v1/admin/audit-log` (or the logs) show the
+7. **Audit trail.** `GET /api/v1/admin/audit-log` (or the logs) show the
    `admin.peertube_import.start`/`finish` events — no secrets.
 
 ---

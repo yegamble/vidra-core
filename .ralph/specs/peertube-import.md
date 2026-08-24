@@ -74,7 +74,9 @@ version — regenerate/reconcile post-import). Only LOCAL entities are imported
 | `videoCategory`/`videoLicence`/`videoLanguage` | `videos.category/license/language` | supported | Numeric ids carried as text (PeerTube-compatible, migration 0025). |
 | `userNotificationSetting`, `userVideoHistory` | — | deferred | Preferences/history not migrated (defaults applied). |
 | `videoBlacklist`, `accountBlocklist`/`serverBlocklist`, `abuse` | — | deferred | Moderation state not migrated this version. |
-| plugins, themes, runners/jobs, redundancy, live sessions, premium/payment | — | unsupported | Out of scope. |
+| `plugin` (`categories`) settings | `instance_settings.instance_custom_categories` | supported | The instance's category TAXONOMY is read (`json-categories-as-text`, JSON inside JSON; `add` + `delete` folded onto the built-in list) so the category ids the videos carry still mean something. No plugin is installed or enabled. Never written over an operator's own taxonomy — the ledger's `applied_value` (0113) is what tells the two apart. |
+| plugins, themes, runners/jobs, redundancy, live sessions, premium/payment | — | unsupported | Out of scope (the categories plugin's taxonomy excepted — see above). |
+| instance name / description / terms | — | unsupported | Not in the source DATABASE: `application.configPart` holds only object-storage config and the identity lives in `config/local-production.json` on the source host. Manual step. |
 
 Durable bookkeeping: `peertube_import_ledger` (migration 0067) maps
 `(entity_kind, source_id) → vidra_id + status` for idempotency/resume, and

@@ -2003,7 +2003,13 @@ func run() error {
 					SrcMedia:  srcMedia,
 					DestMedia: blobs,
 					SealKey:   ptSeal,
-					Logger:    logger,
+					// The import can write an instance setting (the source's category
+					// taxonomy). This server holds that overlay in memory and only
+					// reloads it after its OWN writes, so without this the carried
+					// taxonomy would sit in the database and take effect at the next
+					// restart rather than at the end of the run.
+					ReloadSettings: settingssvc.Load,
+					Logger:         logger,
 				})
 				return imp, func() { src.Close() }, nil
 			}))

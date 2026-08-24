@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,6 +40,12 @@ const testPassword = "correct-horse-battery-staple"
 // secretPrivKey and secretHash below are seeded into the source and MUST NEVER
 // appear in logs. testHash is a real bcrypt hash carried through the import.
 const secretPrivKeyAlice = "PRIVKEY-ALICE-DO-NOT-LOG"
+
+// sourceCategorySettings is a categories-plugin settings blob in the shape a
+// LIVE instance stores: the taxonomy sits in the JSON settings column as a
+// STRING that is itself JSON, so it has to be decoded twice. The stock ids are
+// all deleted and the instance's own are added above them.
+const sourceCategorySettings = `{"json-categories-as-text": "{\"add\":[{\"key\":51,\"label\":\"Giantess\"},{\"key\":52,\"label\":\"Shrunken\"}],\"delete\":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]}"}`
 
 func TestPeerTubeImportEndToEnd(t *testing.T) {
 	base := os.Getenv("DATABASE_URL")
@@ -122,6 +129,13 @@ func TestPeerTubeImportEndToEnd(t *testing.T) {
 	if got := plan.Entities[KindRendition].Planned; got != 2 {
 		t.Errorf("plan renditions planned = %d, want 2 (audio-only rung is not a rung)", got)
 	}
+	// The instance's own category taxonomy: one setting, planned once.
+	if got := plan.Entities[KindCategoryTaxonomy].Planned; got != 1 {
+		t.Errorf("plan category taxonomy planned = %d, want 1 (this source replaces the stock list)", got)
+	}
+	if n := countRows(t, ctx, dest, "instance_settings"); n != 0 {
+		t.Fatalf("dry-run wrote %d instance settings, want 0", n)
+	}
 	if n := countRows(t, ctx, dest, "users"); n != 0 {
 		t.Fatalf("dry-run wrote %d users, want 0 (must write nothing)", n)
 	}
@@ -151,6 +165,16 @@ func TestPeerTubeImportEndToEnd(t *testing.T) {
 	}
 	if report.Entities[KindFollow].Imported != 1 {
 		t.Errorf("follows imported = %d, want 1", report.Entities[KindFollow].Imported)
+	}
+	if report.Entities[KindCategoryTaxonomy].Imported != 1 {
+		t.Errorf("category taxonomy imported = %d, want 1", report.Entities[KindCategoryTaxonomy].Imported)
+	}
+	// The source's taxonomy is now the instance's, which is what makes the
+	// category ids the videos carry mean something. Video 1 carries category 1 —
+	// deleted on the source — so it reads as no category rather than as "Music",
+	// exactly as it did on the instance it came from.
+	if got := readInstanceSetting(t, ctx, dest, "instance_custom_categories"); got != `["51:Giantess","52:Shrunken"]` {
+		t.Errorf("instance_custom_categories = %s, want the source's own two categories", got)
 	}
 
 	// ── assert the mapped Vidra state ──
@@ -631,6 +655,239 @@ func TestImportViewCountsAreDeltaNotDouble(t *testing.T) {
 	}
 }
 
+// readInstanceSetting returns the stored override for a key, or "" when the key
+// is not overridden at all (which is what "the built-in taxonomy stands" looks
+// like in the database).
+func readInstanceSetting(t *testing.T, ctx context.Context, pool *pgxpool.Pool, key string) string {
+	t.Helper()
+	var v string
+	err := pool.QueryRow(ctx, `SELECT value FROM instance_settings WHERE key=$1`, key).Scan(&v)
+	if err == pgx.ErrNoRows {
+		return ""
+	}
+	if err != nil {
+		t.Fatalf("read instance setting %s: %v", key, err)
+	}
+	return v
+}
+
+// The taxonomy pass is the one the operator runs REPEATEDLY: a scheduled import
+// tracks a source that keeps changing until cutover, against a target the
+// operator is also configuring by hand. This walks that whole sequence.
+func TestImportCategoryTaxonomyIsRerunSafe(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	reloads := 0
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{
+		Policy:         PolicySkip,
+		ReloadSettings: func(context.Context) error { reloads++; return nil },
+	})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	const key = "instance_custom_categories"
+	const sourceTaxonomy = `["51:Giantess","52:Shrunken"]`
+	// Rewriting the source's plugin settings is the TEST's doing; the importer's
+	// own connection to the source is read-only.
+	setSourceTaxonomy := func(taxonomy string) {
+		t.Helper()
+		mustExec(t, ctx, src,
+			`UPDATE "plugin" SET settings = jsonb_set(settings, '{json-categories-as-text}', to_jsonb($1::text)) WHERE name='categories'`,
+			taxonomy)
+	}
+	const allStockDeleted = `"delete":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]`
+
+	// 1. First run carries the source's taxonomy and tells the running server to
+	//    reload its overlay — a taxonomy in the database but not in effect until
+	//    the next restart is the silent half-success this pass exists to avoid.
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if got := readInstanceSetting(t, ctx, dest, key); got != sourceTaxonomy {
+		t.Fatalf("after first run = %s, want %s", got, sourceTaxonomy)
+	}
+	if reloads != 1 {
+		t.Errorf("settings cache reloaded %d times, want 1", reloads)
+	}
+
+	// 2. An unchanged source writes NOTHING at all on the next scheduled run —
+	//    not even the same value again. updated_at is the proof: an upsert that
+	//    stored an identical value would still move it.
+	var writtenAt time.Time
+	if err := dest.QueryRow(ctx, `SELECT updated_at FROM instance_settings WHERE key=$1`, key).Scan(&writtenAt); err != nil {
+		t.Fatalf("read setting timestamp: %v", err)
+	}
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if got := report.Entities[KindCategoryTaxonomy]; got.Imported != 0 || got.Skipped != 1 {
+		t.Errorf("unchanged re-run reported %+v, want 0 imported / 1 skipped", got)
+	}
+	var stillAt time.Time
+	if err := dest.QueryRow(ctx, `SELECT updated_at FROM instance_settings WHERE key=$1`, key).Scan(&stillAt); err != nil {
+		t.Fatalf("re-read setting timestamp: %v", err)
+	}
+	if !stillAt.Equal(writtenAt) {
+		t.Errorf("the setting was rewritten by an unchanged re-run (%s -> %s)", writtenAt, stillAt)
+	}
+	if reloads != 1 {
+		t.Errorf("settings cache reloaded %d times, want 1 — a run that wrote nothing reloaded anyway", reloads)
+	}
+
+	// 3. The source adds a category before the next run. The stored value is
+	//    still the one the import wrote, so the import updates its own value.
+	setSourceTaxonomy(`{"add":[{"key":51,"label":"Giantess"},{"key":52,"label":"Shrunken"},{"key":53,"label":"Growth"}],` + allStockDeleted + `}`)
+	report, err = imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("third run: %v", err)
+	}
+	if got := report.Entities[KindCategoryTaxonomy].Imported; got != 1 {
+		t.Errorf("category taxonomy imported = %d, want 1 (the source gained a category)", got)
+	}
+	if got := readInstanceSetting(t, ctx, dest, key); got != `["51:Giantess","52:Shrunken","53:Growth"]` {
+		t.Fatalf("after the source moved = %s, want the new category carried", got)
+	}
+
+	// 3b. The source's plugin now deletes everything and adds nothing. There is
+	//     no taxonomy to carry — and the one already carried is NOT withdrawn:
+	//     the videos imported under it still carry its ids.
+	setSourceTaxonomy(`{"add":[],` + allStockDeleted + `}`)
+	report, err = imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("run against an empty source taxonomy: %v", err)
+	}
+	if got := report.Entities[KindCategoryTaxonomy]; got.Unsupported != 1 || got.Imported != 0 {
+		t.Errorf("run against an empty source taxonomy reported %+v, want 1 unsupported / 0 imported", got)
+	}
+	if got := readInstanceSetting(t, ctx, dest, key); got != `["51:Giantess","52:Shrunken","53:Growth"]` {
+		t.Fatalf("after an empty source taxonomy = %s, want the carried taxonomy left standing", got)
+	}
+
+	// 3c. The source defines categories again. This still has to be recognised as
+	//     the import's OWN value — which it only can be if the runs that wrote
+	//     nothing preserved the ledger's memory of what was applied instead of
+	//     blanking it.
+	setSourceTaxonomy(`{"add":[{"key":51,"label":"Giantess"},{"key":52,"label":"Shrunken"}],` + allStockDeleted + `}`)
+	report, err = imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("run after the source defined categories again: %v", err)
+	}
+	if got := report.Entities[KindCategoryTaxonomy].Imported; got != 1 {
+		t.Errorf("category taxonomy imported = %d, want 1 — the import no longer recognises its own value", got)
+	}
+	if got := readInstanceSetting(t, ctx, dest, key); got != sourceTaxonomy {
+		t.Fatalf("after the source defined categories again = %s, want %s", got, sourceTaxonomy)
+	}
+
+	// 4. The OPERATOR edits the taxonomy. From here the import must never touch
+	//    it again, however much the source moves — a scheduled import that
+	//    overwrites this every night is a nightly silent undo of a human's work.
+	const operatorTaxonomy = `["51:Giantess","52:Shrunken","99:Operator's Own"]`
+	mustExec(t, ctx, dest, `UPDATE instance_settings SET value=$1 WHERE key=$2`, operatorTaxonomy, key)
+	setSourceTaxonomy(`{"add":[{"key":51,"label":"Giantess"},{"key":54,"label":"Later"}],` + allStockDeleted + `}`)
+	report, err = imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("fourth run: %v", err)
+	}
+	if got := readInstanceSetting(t, ctx, dest, key); got != operatorTaxonomy {
+		t.Fatalf("after an operator edit = %s, want the operator's value untouched", got)
+	}
+	if got := report.Entities[KindCategoryTaxonomy]; got.Imported != 0 || got.Skipped != 1 {
+		t.Errorf("run over an operator edit reported %+v, want 0 imported / 1 skipped", got)
+	}
+	if len(report.Conflicts) == 0 {
+		t.Error("leaving the operator's taxonomy alone was not reported as a conflict; the operator would never learn the source diverged")
+	}
+
+	// 5. The operator clears the key back to the built-ins. That is a decision,
+	//    not a gap for the next run to refill.
+	mustExec(t, ctx, dest, `DELETE FROM instance_settings WHERE key=$1`, key)
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("fifth run: %v", err)
+	}
+	if got := readInstanceSetting(t, ctx, dest, key); got != "" {
+		t.Errorf("after the operator cleared the key = %s, want it to stay cleared", got)
+	}
+}
+
+// Most PeerTube instances run the stock taxonomy. For them the import must write
+// NO override at all: an override that restates the built-in list freezes a
+// shipped list against every future change to it.
+func TestImportCategoryTaxonomyLeavesBuiltinsAloneWithoutAPlugin(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const key = "instance_custom_categories"
+
+	for _, tc := range []struct {
+		name  string
+		stage string // SQL the TEST runs on the source to create the case
+	}{
+		{"no plugin table at all", `DROP TABLE "plugin"`},
+		{"no categories plugin installed", `DELETE FROM "plugin" WHERE name='categories'`},
+		{"the plugin is installed but disabled", `UPDATE "plugin" SET enabled=false WHERE name='categories'`},
+		{"the plugin is uninstalled", `UPDATE "plugin" SET uninstalled=true WHERE name='categories'`},
+		{"the plugin holds no taxonomy", `UPDATE "plugin" SET settings='{"other-setting":1}'::jsonb WHERE name='categories'`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src, _ := newScratchDB(t, ctx, base)
+			dest, _ := newScratchDB(t, ctx, base)
+			applyMigrations(t, ctx, dest)
+			seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+			mustExec(t, ctx, src, tc.stage)
+
+			imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip})
+			version, err := imp.Preflight(ctx)
+			if err != nil {
+				t.Fatalf("preflight: %v", err)
+			}
+			report, err := imp.Run(ctx, version, nil)
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if got := readInstanceSetting(t, ctx, dest, key); got != "" {
+				t.Errorf("wrote %s, want no override at all (the built-in taxonomy stands)", got)
+			}
+			if got := report.Entities[KindCategoryTaxonomy].Imported; got != 0 {
+				t.Errorf("category taxonomy imported = %d, want 0", got)
+			}
+			var deferredSeen bool
+			for _, d := range report.Deferred {
+				if strings.Contains(d, "category taxonomy") {
+					deferredSeen = true
+				}
+			}
+			if !deferredSeen {
+				t.Error("the report does not say the source defines no taxonomy")
+			}
+		})
+	}
+}
+
 func TestPeerTubeImportConflictPolicies(t *testing.T) {
 	base := os.Getenv("DATABASE_URL")
 	if base == "" {
@@ -886,6 +1143,10 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		`CREATE TABLE "accountVideoRate" (
 			id serial PRIMARY KEY, type text NOT NULL, "accountId" integer NOT NULL,
 			"videoId" integer NOT NULL, url text, "createdAt" timestamptz NOT NULL DEFAULT now())`,
+		`CREATE TABLE "plugin" (
+			id serial PRIMARY KEY, name text NOT NULL, type integer NOT NULL DEFAULT 1,
+			version text, enabled boolean NOT NULL DEFAULT true, uninstalled boolean NOT NULL DEFAULT false,
+			settings jsonb, storage jsonb, "createdAt" timestamptz NOT NULL DEFAULT now())`,
 
 		// ── fixtures ──
 		`INSERT INTO "application" ("migrationVersion") VALUES (800)`,
@@ -950,6 +1211,14 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 			(1,1,1,1),(2,2,2,1)`,
 		// bob (actor 3) follows alice_channel (actor 2).
 		`INSERT INTO "actorFollow" (id,state,"actorId","targetActorId") VALUES (1,'accepted',3,2)`,
+		// This source runs peertube-plugin-categories: it withdraws the stock 1-18
+		// and defines its own at 51/52, which is why an import that carried the
+		// videos' category ids without the taxonomy left every one of them pointing
+		// at nothing. The other plugin row is here so the read has to FIND the
+		// categories one rather than take the first plugin installed.
+		`INSERT INTO "plugin" (id,name,enabled,uninstalled,settings) VALUES
+			(1,'livechat',true,false,'{}'::jsonb),
+			(2,'categories',true,false,$plug$` + sourceCategorySettings + `$plug$::jsonb)`,
 	}
 	for _, s := range stmts {
 		mustExec(t, ctx, pool, s)

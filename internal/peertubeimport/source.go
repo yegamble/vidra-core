@@ -887,3 +887,75 @@ func (s *Source) Renditions(ctx context.Context) ([]SourceRendition, error) {
 	}
 	return out, rows.Err()
 }
+
+// ── the instance's own category taxonomy ──
+
+// SourceCategory is one category the source's categories plugin defines: a
+// numeric id (PeerTube's own, which is what makes an imported video's category
+// id still mean something) and the label the instance shows for it.
+type SourceCategory struct {
+	ID    int
+	Label string
+}
+
+// SourceCategoryTaxonomy is the source instance's replacement taxonomy as the
+// plugin records it: Add defines the instance's own categories, Delete lists the
+// stock ids it has withdrawn. Both are needed to arrive at what the instance
+// actually offers — an instance that deletes all eighteen stock entries and adds
+// its own is the case this exists for.
+type SourceCategoryTaxonomy struct {
+	Add    []SourceCategory
+	Delete []int
+}
+
+// CategoryTaxonomy reads the source's custom category taxonomy out of the
+// plugin settings. ok=false means this source does not define one — no plugin
+// table, no categories plugin row, an installed-but-disabled one, or a row whose
+// settings carry no taxonomy — and in every one of those cases the built-in
+// taxonomy stands. That is the common case: most PeerTube instances run the
+// stock list, and an import must not write an override for them.
+//
+// Nothing about the schema is assumed. The plugin table itself and each column
+// the filter uses are probed through information_schema first: a source without
+// them is a source that has no plugin taxonomy, not a failed run.
+func (s *Source) CategoryTaxonomy(ctx context.Context) (SourceCategoryTaxonomy, bool, error) {
+	present, err := s.tableExists(ctx, "plugin")
+	if err != nil || !present {
+		return SourceCategoryTaxonomy{}, false, err
+	}
+	hasSettings, err := s.columnExists(ctx, "plugin", "settings")
+	if err != nil || !hasSettings {
+		return SourceCategoryTaxonomy{}, false, err
+	}
+	// An installed-but-disabled (or uninstalled) plugin is not defining the
+	// instance's taxonomy — PeerTube stops applying it, so neither do we.
+	where := `name IN ('categories', 'peertube-plugin-categories')`
+	if has, err := s.columnExists(ctx, "plugin", "enabled"); err != nil {
+		return SourceCategoryTaxonomy{}, false, err
+	} else if has {
+		where += ` AND COALESCE(enabled, true) = true`
+	}
+	if has, err := s.columnExists(ctx, "plugin", "uninstalled"); err != nil {
+		return SourceCategoryTaxonomy{}, false, err
+	} else if has {
+		where += ` AND COALESCE(uninstalled, false) = false`
+	}
+	// settings::text, not a typed scan: the column is jsonb on the schemas this
+	// tool accepts, and the value inside is itself JSON-encoded a second time
+	// (see parsePluginCategories), so it is decoded here, once, from its text form.
+	var raw string
+	err = s.pool.QueryRow(ctx, `
+		SELECT COALESCE(settings::text, '')
+		FROM plugin
+		WHERE `+where+`
+		ORDER BY id
+		LIMIT 1`).Scan(&raw)
+	if err == pgx.ErrNoRows {
+		return SourceCategoryTaxonomy{}, false, nil
+	}
+	if err != nil {
+		return SourceCategoryTaxonomy{}, false, fmt.Errorf("peertubeimport: read category plugin settings: %w", err)
+	}
+	tax, ok := parsePluginCategories(raw)
+	return tax, ok, nil
+}
