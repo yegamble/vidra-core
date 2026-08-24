@@ -823,6 +823,119 @@ func (s *Source) Ratings(ctx context.Context) ([]SourceRating, bool, error) {
 	return out, true, rows.Err()
 }
 
+// ── actor images (account + channel avatars and banners) ──
+
+// SourceActorImage is one row of the source's actorImage table, with the local
+// account or channel it belongs to already resolved. Exactly one of UserID /
+// ChannelID is set for a row this importer can use; both nil means the actor is
+// neither a local account with a user nor a local channel (the instance's own
+// system actor, or an account whose user row is gone).
+type SourceActorImage struct {
+	ID       int64
+	Filename string
+	// Type is PeerTube's ActorImageType: 1 = avatar, 2 = banner. Sources too old
+	// to carry the column report 1, because before banners existed every row was
+	// an avatar.
+	Type      int
+	UserID    *int64
+	ChannelID *int64
+}
+
+// ActorImages returns every actorImage row belonging to a LOCAL actor, with its
+// owning user or channel resolved. ok=false means the source has no actorImage
+// table at all (PeerTube kept avatars in a separate `avatar` table before it),
+// which is a family the source does not have rather than a failure.
+//
+// The LOCAL filter is what makes this pass small: a federated instance's
+// actorImage table is mostly rows for REMOTE actors it has cached (on the
+// migration this was written for, 12,893 rows down to the ~1,362 files that
+// actually exist on disk). Remote actors are not imported, so their images are
+// not either.
+func (s *Source) ActorImages(ctx context.Context) ([]SourceActorImage, bool, error) {
+	present, err := s.tableExists(ctx, "actorImage")
+	if err != nil {
+		return nil, false, err
+	}
+	if !present {
+		return nil, false, nil
+	}
+	// The avatar/banner discriminator arrived with banners. A source without it
+	// only ever had avatars, so every row reads as type 1 rather than as an
+	// unreadable family.
+	typeExpr := `1`
+	if hasType, err := s.columnExists(ctx, "actorImage", "type"); err != nil {
+		return nil, false, err
+	} else if hasType {
+		typeExpr = `COALESCE(ai.type, 1)`
+	}
+	onActor, err := s.actorLinksLiveOnActor(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	accountJoin := `acc."actorId" = a.id`
+	channelJoin := `vc."actorId" = a.id`
+	if onActor {
+		accountJoin = `acc.id = a."accountId"`
+		channelJoin = `vc.id = a."videoChannelId"`
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT ai.id, COALESCE(ai.filename, ''), `+typeExpr+`,
+		       acc."userId", vc.id
+		FROM "actorImage" ai
+		JOIN actor a ON a.id = ai."actorId"
+		LEFT JOIN account acc ON `+accountJoin+`
+		LEFT JOIN "videoChannel" vc ON `+channelJoin+`
+		WHERE a."serverId" IS NULL
+		ORDER BY ai.id`)
+	if err != nil {
+		return nil, false, fmt.Errorf("peertubeimport: read actor images: %w", err)
+	}
+	defer rows.Close()
+	var out []SourceActorImage
+	for rows.Next() {
+		var img SourceActorImage
+		if err := rows.Scan(&img.ID, &img.Filename, &img.Type, &img.UserID, &img.ChannelID); err != nil {
+			return nil, false, fmt.Errorf("peertubeimport: scan actor image: %w", err)
+		}
+		out = append(out, img)
+	}
+	return out, true, rows.Err()
+}
+
+// LocalActorURLs returns the canonical URLs of the source's own actors
+// (https://host/accounts/<name>, https://host/video-channels/<name>). It is how
+// the importer learns the source's PUBLIC ORIGIN without asking the operator for
+// it — see fetchActorImage for why an origin is needed at all. Bounded, because
+// only the origin is wanted and every local actor carries the same one; the
+// caller takes the majority so one stale row cannot misdirect the whole run.
+func (s *Source) LocalActorURLs(ctx context.Context) ([]string, error) {
+	has, err := s.columnExists(ctx, "actor", "url")
+	if err != nil {
+		return nil, err
+	}
+	if !has {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT url FROM actor
+		WHERE "serverId" IS NULL AND url LIKE 'http%'
+		ORDER BY id
+		LIMIT 64`)
+	if err != nil {
+		return nil, fmt.Errorf("peertubeimport: read actor urls: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil, fmt.Errorf("peertubeimport: scan actor url: %w", err)
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 // SourceRendition is one rung of a video's HLS ladder on the source: a stored
 // media file attached to a streaming playlist rather than to the video directly.
 // Width is what the source recorded when it records one at all — see

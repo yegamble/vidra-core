@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -53,6 +54,15 @@ type Importer struct {
 	// dropped at the start of every Run/Plan: a reused importer must never answer
 	// from the source as it stood on a previous run.
 	videoVidraByID map[int64]uuid.UUID
+
+	// The source instance's public HTTP origin, derived once from its own actors'
+	// canonical URLs (see sourceOrigin). Unlike the video maps this is NOT reset
+	// between runs: an instance's own origin is a property of the source, not of
+	// the data in it, and it changing mid-migration would break far more than
+	// avatars.
+	originOnce sync.Once
+	origin     string
+	originErr  error
 }
 
 // Options customise an Importer.
@@ -196,6 +206,10 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 		}
 	}
 
+	if err := im.planActorImages(ctx, r); err != nil {
+		return nil, err
+	}
+
 	videos, err := im.src.Videos(ctx)
 	if err != nil {
 		return nil, err
@@ -271,7 +285,6 @@ func deferredFamilies() []string {
 		"moderation state (video blacklist, account/server blocklists, abuse reports)",
 		"user notification settings and watch history",
 		"live sessions, plugins, themes, runners, redundancy config",
-		"account + channel avatars and banners (actorImage)",
 		"original-file provenance records (videoSource)",
 		"per-day view history: the source records one lifetime total per video and no daily breakdown, so the total is carried and video_view_days is left empty rather than inventing buckets",
 	}
@@ -301,6 +314,10 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 		{"category taxonomy", im.importCategoryTaxonomy},
 		{"users", im.importUsers},
 		{"channels", im.importChannels},
+		// Avatars/banners run after both, as a pass of their own for the same
+		// reason the per-video families do — so a re-run backfills faces onto
+		// accounts an earlier release already imported. See entities_actorimages.go.
+		{"actor images", im.importActorImages},
 		{"videos", im.importVideos},
 		// Per-video data runs AFTER videos and as passes of its own, so a re-run
 		// backfills it onto videos an earlier release already imported. See

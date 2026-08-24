@@ -18,12 +18,16 @@ import (
 	"encoding/hex"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -888,6 +892,209 @@ func TestImportCategoryTaxonomyLeavesBuiltinsAloneWithoutAPlugin(t *testing.T) {
 	}
 }
 
+// TestPeerTubeImportActorImages is the proof for the avatar/banner pass: type 1
+// lands in the avatar slot and type 2 in the banner slot, only LOCAL actors are
+// ever fetched, a source that answers with something other than a real image has
+// nothing stored for it, one broken image does not fail the run, and a second
+// run fetches nothing it already has.
+func TestPeerTubeImportActorImages(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	// The source instance, serving its avatars the way a real one does. Every
+	// request is recorded so the test can assert what was NOT asked for.
+	var (
+		mu       sync.Mutex
+		requests = map[string]int{}
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := path.Base(r.URL.Path)
+		mu.Lock()
+		requests[name]++
+		mu.Unlock()
+		switch name {
+		case "bob-avatar.png":
+			// A transient failure: the run must survive it and retry next time.
+			w.WriteHeader(http.StatusInternalServerError)
+		case "bob-channel-avatar.png":
+			// The /static/ trap: 200, but it is the single-page app's HTML.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(spaHTML)
+		default:
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(pngBytes)
+		}
+	}))
+	defer srv.Close()
+
+	// The importer learns the origin from the source's own actors — no flag, no
+	// extra operator input. Only LOCAL actors get one, exactly as PeerTube does.
+	mustExec(t, ctx, src,
+		`UPDATE "actor" SET url = $1 || '/accounts/' || "preferredUsername" WHERE "serverId" IS NULL`, srv.URL)
+
+	destMediaDir := t.TempDir()
+	destMedia, err := storage.NewLocal(destMediaDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Reference mode ON PURPOSE: avatars are never in the source's object store,
+	// so there is nothing to reference and they must be fetched anyway.
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{
+		Policy: PolicySkip, MediaMode: MediaModeReference, DestMedia: destMedia,
+	})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+
+	plan, err := imp.Plan(ctx, version)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	// 4 usable avatars (ids 1,3,4,5) — the remote actor's row is not a candidate
+	// at all, and the unrecognised type 9 is not counted as either slot.
+	if got := plan.Entities[KindActorAvatar].Planned; got != 4 {
+		t.Errorf("plan actor avatars = %d, want 4", got)
+	}
+	if got := plan.Entities[KindActorBanner].Planned; got != 1 {
+		t.Errorf("plan actor banners = %d, want 1", got)
+	}
+	mu.Lock()
+	planRequests := len(requests)
+	mu.Unlock()
+	if planRequests != 0 {
+		t.Fatalf("--dry-run made %d HTTP requests to the source; it must write and fetch nothing", planRequests)
+	}
+
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// alice's avatar + channel avatar landed; bob's 500'd; bob_channel's was HTML.
+	if got := report.Entities[KindActorAvatar].Imported; got != 2 {
+		t.Errorf("actor avatars imported = %d, want 2 (alice + alice_channel)", got)
+	}
+	if got := report.Entities[KindActorBanner].Imported; got != 1 {
+		t.Errorf("actor banners imported = %d, want 1", got)
+	}
+	if got := report.Entities[KindActorAvatar].Failed; got != 1 {
+		t.Errorf("actor avatars failed = %d, want 1 (bob's 500) — and the run still returned nil", got)
+	}
+	// The HTML answer and the unrecognised type are facts about the source, not
+	// transient failures, so both are terminal-unsupported.
+	if got := report.Entities[KindActorAvatar].Unsupported; got != 2 {
+		t.Errorf("actor avatars unsupported = %d, want 2 (the SPA HTML + the unrecognised type)", got)
+	}
+
+	// The remote actor's image must never have been requested.
+	mu.Lock()
+	remoteHits := requests["remote-avatar.png"]
+	bobHits := requests["bob-avatar.png"]
+	aliceHits := requests["alice-avatar.png"]
+	mu.Unlock()
+	if remoteHits != 0 {
+		t.Errorf("the REMOTE actor's avatar was fetched %d times; remote actors are not imported, so their images are not either", remoteHits)
+	}
+	if aliceHits != 1 {
+		t.Errorf("alice's avatar was fetched %d times, want 1", aliceHits)
+	}
+
+	// The images are in the normal places, under the normal key layout, with the
+	// content type derived from the BYTES.
+	var aliceID uuid.UUID
+	if err := dest.QueryRow(ctx, `SELECT id FROM users WHERE username='alice'`).Scan(&aliceID); err != nil {
+		t.Fatalf("read alice: %v", err)
+	}
+	assertImage := func(table, col string, owner uuid.UUID, kind, wantPrefix string) string {
+		t.Helper()
+		var key, ct string
+		var size int64
+		q := `SELECT storage_key, content_type, size_bytes FROM ` + table + ` WHERE ` + col + ` = $1 AND kind = $2`
+		if err := dest.QueryRow(ctx, q, owner, kind).Scan(&key, &ct, &size); err != nil {
+			t.Fatalf("read %s %s: %v", table, kind, err)
+		}
+		if !strings.HasPrefix(key, wantPrefix) {
+			t.Errorf("%s %s key = %q, want prefix %q", table, kind, key, wantPrefix)
+		}
+		if !strings.HasSuffix(key, ".png") || ct != "image/png" {
+			t.Errorf("%s %s stored as %q/%q, want a .png/image/png (the sniffed type wins)", table, kind, key, ct)
+		}
+		if size != int64(len(pngBytes)) {
+			t.Errorf("%s %s size = %d, want %d", table, kind, size, len(pngBytes))
+		}
+		if _, err := os.Stat(filepath.Join(destMediaDir, filepath.FromSlash(key))); err != nil {
+			t.Errorf("%s %s blob is not on disk: %v", table, kind, err)
+		}
+		return key
+	}
+	assertImage("user_images", "user_id", aliceID, "avatar", "avatars/users/")
+	assertImage("user_images", "user_id", aliceID, "banner", "banners/users/")
+
+	var aliceChannelID uuid.UUID
+	if err := dest.QueryRow(ctx, `SELECT id FROM channels WHERE handle='alice_channel'`).Scan(&aliceChannelID); err != nil {
+		t.Fatalf("read alice_channel: %v", err)
+	}
+	assertImage("channel_images", "channel_id", aliceChannelID, "avatar", "avatars/channels/")
+
+	// Nothing was stored for the HTML answer.
+	var bobChannelID uuid.UUID
+	if err := dest.QueryRow(ctx, `SELECT id FROM channels WHERE handle='bob_channel'`).Scan(&bobChannelID); err != nil {
+		t.Fatalf("read bob_channel: %v", err)
+	}
+	var n int
+	if err := dest.QueryRow(ctx, `SELECT count(*) FROM channel_images WHERE channel_id = $1`, bobChannelID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("bob_channel has %d images; the source served HTML, which must never be stored as an avatar", n)
+	}
+
+	// ── the second run: idempotent ──
+	report2, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if got := report2.Entities[KindActorAvatar].Imported + report2.Entities[KindActorBanner].Imported; got != 0 {
+		t.Errorf("second run imported %d actor images, want 0", got)
+	}
+	mu.Lock()
+	aliceHits2, bobHits2 := requests["alice-avatar.png"], requests["bob-avatar.png"]
+	mu.Unlock()
+	if aliceHits2 != 1 {
+		t.Errorf("alice's avatar was fetched %d times across two runs, want 1 — a scheduled re-run must not re-fetch", aliceHits2)
+	}
+	// A FAILED row is deliberately not terminal: the source's 500 may have been a
+	// blip, so the next run asks once more.
+	if bobHits2 != bobHits+1 {
+		t.Errorf("bob's failed avatar was fetched %d times across two runs, want %d — a transient failure must be retried", bobHits2, bobHits+1)
+	}
+
+	// ── an image Vidra already has is never overwritten ──
+	mustExec(t, ctx, dest, `UPDATE user_images SET storage_key = 'avatars/users/hand-picked.png' WHERE user_id = $1 AND kind = 'avatar'`, aliceID)
+	mustExec(t, ctx, src, `UPDATE "actorImage" SET id = 101 WHERE id = 1`) // the source replaced the file
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("third run: %v", err)
+	}
+	var key string
+	if err := dest.QueryRow(ctx, `SELECT storage_key FROM user_images WHERE user_id = $1 AND kind='avatar'`, aliceID).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	if key != "avatars/users/hand-picked.png" {
+		t.Errorf("storage_key = %q; an import must fill gaps, never overwrite an image the instance already has", key)
+	}
+}
+
 func TestPeerTubeImportConflictPolicies(t *testing.T) {
 	base := os.Getenv("DATABASE_URL")
 	if base == "" {
@@ -1147,6 +1354,13 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 			id serial PRIMARY KEY, name text NOT NULL, type integer NOT NULL DEFAULT 1,
 			version text, enabled boolean NOT NULL DEFAULT true, uninstalled boolean NOT NULL DEFAULT false,
 			settings jsonb, storage jsonb, "createdAt" timestamptz NOT NULL DEFAULT now())`,
+		// The real column set on schema 1040. fileUrl/cached are NULL/false for a
+		// LOCAL actor's image; a remote actor's row carries them.
+		`CREATE TABLE "actorImage" (
+			id serial PRIMARY KEY, filename text NOT NULL, height integer, width integer,
+			"fileUrl" text, type integer NOT NULL DEFAULT 1, "actorId" integer NOT NULL,
+			cached boolean NOT NULL DEFAULT false,
+			"createdAt" timestamptz NOT NULL DEFAULT now(), "updatedAt" timestamptz NOT NULL DEFAULT now())`,
 
 		// ── fixtures ──
 		`INSERT INTO "application" ("migrationVersion") VALUES (800)`,
@@ -1219,6 +1433,18 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		`INSERT INTO "plugin" (id,name,enabled,uninstalled,settings) VALUES
 			(1,'livechat',true,false,'{}'::jsonb),
 			(2,'categories',true,false,$plug$` + sourceCategorySettings + `$plug$::jsonb)`,
+		// Actor images. 1/2 = alice's account avatar + banner, 3 = alice_channel's
+		// avatar, 4 = bob's avatar (the server 500s on it), 5 = bob_channel's avatar
+		// (the server answers with the SPA's HTML), 6 = an unrecognised type, and
+		// 7 belongs to the REMOTE actor — the row this importer must never fetch.
+		`INSERT INTO "actorImage" (id,filename,type,"actorId","fileUrl",cached) VALUES
+			(1,'alice-avatar.png',1,1,NULL,false),
+			(2,'alice-banner.png',2,1,NULL,false),
+			(3,'alice-channel-avatar.png',1,2,NULL,false),
+			(4,'bob-avatar.png',1,3,NULL,false),
+			(5,'bob-channel-avatar.png',1,4,NULL,false),
+			(6,'weird.png',9,3,NULL,false),
+			(7,'remote-avatar.png',1,5,'https://remote.example/lazy-static/avatars/remote-avatar.png',true)`,
 	}
 	for _, s := range stmts {
 		mustExec(t, ctx, pool, s)
