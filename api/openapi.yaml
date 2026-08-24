@@ -13168,8 +13168,9 @@ paths:
       summary: List accounts (admin)
       description: >-
         Returns accounts, newest first, optionally filtered by a username/email
-        substring (q). Restricted to admins. Paginated via limit (1–100, default
-        20) and offset.
+        substring (q). Restricted to admins. Paginated via limit (1–200, default
+        50) and offset; `total` counts the accounts matching the same q, so a
+        client can tell how many pages exist.
       tags: [admin]
       security:
         - bearerAuth: []
@@ -13186,8 +13187,8 @@ paths:
           schema:
             type: integer
             minimum: 1
-            maximum: 100
-            default: 20
+            maximum: 200
+            default: 50
         - name: offset
           in: query
           required: false
