@@ -3,10 +3,12 @@ package peertubeimport
 import (
 	"encoding/json"
 	"math"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -106,6 +108,76 @@ func normalizeChapterTitle(title string) string {
 		t = strings.TrimSpace(string(runes[:maxChapterTitle]))
 	}
 	return t
+}
+
+// mapActorImageKind maps PeerTube's ActorImageType (1 AVATAR, 2 BANNER) to the
+// Vidra image kind. Anything else is a type this tool has not seen and is
+// reported as unsupported rather than guessed into an avatar — a banner stored
+// in the avatar slot is a visibly broken profile, not a near-miss.
+func mapActorImageKind(ptType int) (string, bool) {
+	switch ptType {
+	case 1:
+		return profileimage.KindAvatar, true
+	case 2:
+		return profileimage.KindBanner, true
+	default:
+		return "", false
+	}
+}
+
+// deriveSourceOrigin picks the source instance's public origin out of its own
+// actors' canonical URLs (https://host/accounts/alice → https://host).
+//
+// It takes the MAJORITY origin rather than the first one. Every local actor on a
+// PeerTube instance carries the same origin by construction, so a disagreeing
+// row is a leftover from a rename or a hand-edited database — and since this
+// origin is the single host the import will make ~1,400 requests against, one
+// odd row must not be able to point them all somewhere else. Ties break on the
+// origin seen first, so the result is deterministic. "" means no local actor
+// carried a usable absolute URL, which is the caller's signal that this source
+// cannot be asked for its images.
+func deriveSourceOrigin(urls []string) string {
+	counts := map[string]int{}
+	var order []string
+	for _, raw := range urls {
+		u, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil || u.Host == "" {
+			continue
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			continue
+		}
+		origin := u.Scheme + "://" + u.Host
+		if counts[origin] == 0 {
+			order = append(order, origin)
+		}
+		counts[origin]++
+	}
+	best, bestN := "", 0
+	for _, origin := range order {
+		if counts[origin] > bestN {
+			best, bestN = origin, counts[origin]
+		}
+	}
+	return best
+}
+
+// imageExtForSniffedType maps a SNIFFED content type onto the file extension the
+// profile-image store accepts. It is deliberately narrower than "any image":
+// Vidra's own avatar upload accepts JPEG, PNG and WebP only, so a source GIF or
+// SVG is reported as unsupported instead of being stored as something the rest
+// of the instance cannot serve. "" means "not an image Vidra stores".
+func imageExtForSniffedType(contentType string) string {
+	switch strings.ToLower(strings.TrimSpace(contentType)) {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ""
+	}
 }
 
 // renditionHeight is the rung's pixel height: the height the source recorded for

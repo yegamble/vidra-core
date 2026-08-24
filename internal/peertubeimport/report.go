@@ -28,15 +28,21 @@ const (
 	KindChapter   = "chapter"
 	KindRating    = "rating"
 	KindRendition = "rendition"
+	// KindActorAvatar / KindActorBanner count the source's actorImage rows,
+	// split by which slot they fill. They are two kinds rather than one so the
+	// report answers the question an operator actually asks after a migration —
+	// "did the avatars come across?" — without the banners diluting the count.
+	KindActorAvatar = "actor_avatar"
+	KindActorBanner = "actor_banner"
 )
 
 // orderedKinds is the stable order entities are imported and reported in
 // (parents before children).
 var orderedKinds = []string{
 	KindCategoryTaxonomy,
-	KindUser, KindChannel, KindVideo, KindVideoFile, KindHLSPlaylist, KindThumbnail,
-	KindCaption, KindTag, KindViewCount, KindChapter, KindRating, KindRendition,
-	KindComment, KindPlaylist, KindPlaylistItem, KindFollow,
+	KindUser, KindChannel, KindActorAvatar, KindActorBanner, KindVideo, KindVideoFile,
+	KindHLSPlaylist, KindThumbnail, KindCaption, KindTag, KindViewCount, KindChapter,
+	KindRating, KindRendition, KindComment, KindPlaylist, KindPlaylistItem, KindFollow,
 }
 
 // Counts tallies one entity kind's outcome. Planned is what a dry-run found;

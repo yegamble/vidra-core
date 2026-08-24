@@ -165,9 +165,19 @@ func TestReportCarriesPerVideoKinds(t *testing.T) {
 	r := NewReport(true, PolicySkip)
 	// The JSON shape is a frontend contract: every kind is present from the start,
 	// so a dry-run that plans nothing still reports zeroes rather than gaps.
-	for _, kind := range []string{KindViewCount, KindChapter, KindRating, KindRendition} {
+	for _, kind := range []string{KindViewCount, KindChapter, KindRating, KindRendition, KindActorAvatar, KindActorBanner} {
 		if r.Entities[kind] == nil {
 			t.Errorf("report must initialise %q", kind)
+		}
+	}
+}
+
+// Avatars and banners are no longer a family the operator has to reconcile by
+// hand; the report must stop saying they are.
+func TestDeferredFamiliesNoLongerClaimActorImages(t *testing.T) {
+	for _, note := range deferredFamilies() {
+		if strings.Contains(strings.ToLower(note), "avatar") {
+			t.Errorf("deferred families still lists %q, but the importer carries actor images now", note)
 		}
 	}
 }
