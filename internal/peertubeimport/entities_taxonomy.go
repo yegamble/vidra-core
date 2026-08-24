@@ -28,7 +28,8 @@ import (
 // video's category id is only meaningful once the taxonomy that defines it is in
 // place.
 
-// KindCategoryTaxonomy's ledger key. The taxonomy is ONE thing per instance, so
+// taxonomyLedgerID is KindCategoryTaxonomy's ledger key. The taxonomy is ONE
+// thing per instance, so
 // the key is fixed rather than derived from the plugin row: a source that spells
 // its plugin's name differently, or reinstalls it, must still line up with what
 // an earlier run recorded — that memory is the whole clobber guard.

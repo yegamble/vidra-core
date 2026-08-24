@@ -1696,6 +1696,12 @@ data" rather than "withdraw everything". The **per-day** rollup
 number and no daily history, and inventing buckets for it would fabricate a
 shape of data that was never measured. See `docs/peertube-migration.md` §1.1.
 
+Run `--dry-run` first: it reports the plan and the conflicts and writes nothing.
+Its `entities` map now carries `category_taxonomy`, `view_count`, `chapter`,
+`rating` and `rendition` alongside the older kinds. `view_count` counts
+**videos** whose total would be carried, never views; `category_taxonomy` is one
+setting, so it is 0 or 1.
+
 ### The category taxonomy comes across with the categories
 
 The importer has always carried each video's numeric `category` id, because
@@ -1748,12 +1754,6 @@ usually reaches it through an SSH tunnel).
 So this stays a **manual step**: copy those values into Vidra's admin settings
 after the import. Do not go looking for them in the source database; they are not
 in it.
-
-Run `--dry-run` first: it reports the plan and the conflicts and writes nothing.
-Its `entities` map now carries `category_taxonomy`, `view_count`, `chapter`,
-`rating` and `rendition` alongside the older kinds. `view_count` counts
-**videos** whose total would be carried, never views; `category_taxonomy` is one
-setting, so it is 0 or 1.
 
 ### Reference mode works
 
