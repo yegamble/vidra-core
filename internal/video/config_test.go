@@ -41,3 +41,33 @@ func TestConfigValidators(t *testing.T) {
 		t.Errorf("first privacy id = %q; want public", Privacies[0].ID)
 	}
 }
+
+// A registered provider replaces the built-in taxonomy for validation. Without
+// this, an instance whose categories came from a PeerTube import (ids well
+// outside the built-in 1..18) rejects every one of them on write.
+func TestCategoryProviderReplacesBuiltins(t *testing.T) {
+	t.Cleanup(func() { SetCategoryProvider(nil) })
+
+	if !IsCategory("1") || IsCategory("51") {
+		t.Fatalf("baseline: built-ins should accept 1 and reject 51")
+	}
+
+	SetCategoryProvider(func() []ConfigOption {
+		return []ConfigOption{{ID: "51", Label: "Giantess"}, {ID: "65", Label: "Giant (Men)"}}
+	})
+	if !IsCategory("51") || !IsCategory("65") {
+		t.Error("provider ids must validate")
+	}
+	if IsCategory("1") {
+		t.Error("a provider REPLACES the built-ins; stock ids must stop validating")
+	}
+	if got := CategoryOptions(); len(got) != 2 || got[0].Label != "Giantess" {
+		t.Errorf("CategoryOptions() = %+v, want the provider's set with labels", got)
+	}
+
+	// An empty provider result falls back rather than leaving no taxonomy at all.
+	SetCategoryProvider(func() []ConfigOption { return nil })
+	if !IsCategory("1") {
+		t.Error("an empty provider must fall back to the built-ins, not reject everything")
+	}
+}

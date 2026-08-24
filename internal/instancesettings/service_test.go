@@ -1085,3 +1085,27 @@ func TestApplyReportsEveryInvalidKey(t *testing.T) {
 		t.Error("uploads_enabled changed despite the batch being rejected")
 	}
 }
+
+// An operator-defined taxonomy REPLACES the built-in list, and ids outside the
+// built-in 1..18 must validate — otherwise an instance importing from PeerTube
+// with peertube-plugin-categories (which deletes the stock entries and adds its
+// own at higher ids) has every category rejected.
+func TestCustomCategoriesReplaceBuiltins(t *testing.T) {
+	if _, err := parseCustomCategory("51:Giantess"); err != nil {
+		t.Fatalf("parse valid entry: %v", err)
+	}
+	if opt, _ := parseCustomCategory(" 64 : Sound: Track "); opt.ID != "64" || opt.Label != "Sound: Track" {
+		t.Errorf("label may contain a colon; got id=%q label=%q", opt.ID, opt.Label)
+	}
+	for _, bad := range []string{"Giantess", "51:", ":Giantess", "5a:Nope", ""} {
+		if _, err := parseCustomCategory(bad); err == nil {
+			t.Errorf("parseCustomCategory(%q) accepted a malformed entry", bad)
+		}
+	}
+	if err := validateCustomCategories(`["51:Giantess","51:Dup"]`); err == nil {
+		t.Error("duplicate ids must be rejected; the effective set would depend on order")
+	}
+	if err := validateCustomCategories(`["51:Giantess","52:Shrunken"]`); err != nil {
+		t.Errorf("valid list rejected: %v", err)
+	}
+}

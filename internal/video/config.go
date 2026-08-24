@@ -103,8 +103,36 @@ func hasOption(opts []ConfigOption, id string) bool {
 	return false
 }
 
+// categoryProvider, when set, supplies the INSTANCE's category taxonomy in
+// place of the built-in list. It is a function rather than a slice on purpose:
+// it is called on every read, so an operator changing the taxonomy takes effect
+// on the next request instead of at the next restart.
+//
+// This indirection exists because category validation is reached from request
+// Validate() methods, which satisfy a shared interface and therefore cannot take
+// the instance as an argument. Rather than change that interface across every
+// request type, the instance registers its taxonomy here once at startup.
+var categoryProvider func() []ConfigOption
+
+// SetCategoryProvider registers the instance taxonomy source. Called once during
+// server construction; a nil provider restores the built-in list.
+func SetCategoryProvider(f func() []ConfigOption) { categoryProvider = f }
+
+// CategoryOptions returns the taxonomy in force: the instance's when a provider
+// is registered and returns a non-empty set, otherwise the built-in list.
+func CategoryOptions() []ConfigOption {
+	if categoryProvider != nil {
+		if opts := categoryProvider(); len(opts) > 0 {
+			return opts
+		}
+	}
+	return Categories
+}
+
 // IsCategory / IsLicense / IsLanguage report whether an id is a known taxonomy
 // value. They are the source of truth for validating video-metadata input.
-func IsCategory(id string) bool { return hasOption(Categories, id) }
+// IsCategory honours the instance taxonomy; licences and languages are fixed
+// vocabularies with no per-instance variation.
+func IsCategory(id string) bool { return hasOption(CategoryOptions(), id) }
 func IsLicense(id string) bool  { return hasOption(Licenses, id) }
 func IsLanguage(id string) bool { return hasOption(Languages, id) }
