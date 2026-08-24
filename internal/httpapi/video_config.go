@@ -18,11 +18,15 @@ type videoConfigResponse struct {
 	Privacies  []video.ConfigOption `json:"privacies"`
 }
 
-// handleVideoConfig returns the selectable video-metadata taxonomy. Public and
-// static (no auth, no DB) — safe to cache.
+// handleVideoConfig returns the selectable video-metadata taxonomy. Public, and
+// no longer wholly static: categories are the INSTANCE's taxonomy, which an
+// operator can replace (see instancesettings.KeyInstanceCustomCategories). The
+// other three are fixed vocabularies and stay compiled in.
 func (s *Server) handleVideoConfig(c echo.Context) error {
 	return c.JSON(http.StatusOK, videoConfigResponse{
-		Categories: video.Categories,
+		// Same accessor validation uses, so what the picker offers and what a
+		// write accepts cannot drift apart.
+		Categories: video.CategoryOptions(),
 		Licenses:   video.Licenses,
 		Languages:  video.Languages,
 		Privacies:  video.Privacies,

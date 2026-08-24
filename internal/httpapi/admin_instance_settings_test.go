@@ -179,9 +179,13 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// + qoe_collection_enabled (phase-4 delivery item 4 — the playback-quality
 	// beacon's switch; same section as the two delivery toggles, but default ON,
 	// because it involves no third party, no egress and no cost).
+	// + instance_custom_categories (operator-defined video taxonomy: when set it
+	// REPLACES the built-in category list, so an instance importing from a
+	// PeerTube that customised its categories keeps them instead of having every
+	// one rejected).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 112 {
-		t.Fatalf("settings count = %d, want 112", len(got.Settings))
+	if len(got.Settings) != 113 {
+		t.Fatalf("settings count = %d, want 113", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

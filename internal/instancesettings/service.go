@@ -82,6 +82,21 @@ const (
 	KeyInstanceIsSensitive      = "instance_is_sensitive"
 	KeySensitiveContentPolicy   = "sensitive_content_policy"
 	KeyInstanceCategories       = "instance_categories"
+	// KeyInstanceCustomCategories REPLACES the built-in video category taxonomy
+	// when it is non-empty. Entries are "<numeric id>:<label>".
+	//
+	// The built-in list exists because its ids match PeerTube's, which is what
+	// makes an import carry a video's category across unchanged. But a PeerTube
+	// instance can replace that taxonomy wholesale — peertube-plugin-categories
+	// does exactly that, deleting the stock entries and adding its own at higher
+	// ids — and an instance that has done so imports videos whose category ids
+	// mean nothing here. Every one of them fails validation and the taxonomy is
+	// silently lost, which is the opposite of import compatibility.
+	//
+	// Replace rather than extend, deliberately: an instance that has defined its
+	// own categories does not want the stock eighteen offered alongside them, and
+	// "add" plus "delete" is the shape the ecosystem already uses.
+	KeyInstanceCustomCategories = "instance_custom_categories"
 	KeyModeratorLanguages       = "moderator_languages"
 
 	// Operational-limit keys (config-parity slice). Group-A overlays on already
@@ -633,6 +648,9 @@ var specs = []spec{
 		page: PageGeneral, section: "moderation"},
 	{key: KeyInstanceCategories, kind: KindList, defString: hardcoded(emptyList),
 		validate: listOf(video.IsCategory, "category"),
+		page:     PageGeneral, section: "identity"},
+	{key: KeyInstanceCustomCategories, kind: KindList, defString: hardcoded(emptyList),
+		validate: validateCustomCategories,
 		page:     PageGeneral, section: "identity"},
 	{key: KeyModeratorLanguages, kind: KindList, defString: hardcoded(emptyList),
 		validate: listOf(video.IsLanguage, "language"),
@@ -1341,6 +1359,84 @@ func listOf(valid func(string) bool, itemName string) func(string) error {
 		}
 		return nil
 	}
+}
+
+// parseCustomCategory reads one "<id>:<label>" entry of
+// KeyInstanceCustomCategories. The id is numeric so it can carry a PeerTube
+// category id across an import unchanged; the label is everything after the
+// FIRST colon, so a label may itself contain one.
+func parseCustomCategory(entry string) (video.ConfigOption, error) {
+	id, label, found := strings.Cut(entry, ":")
+	id, label = strings.TrimSpace(id), strings.TrimSpace(label)
+	if !found || id == "" || label == "" {
+		return video.ConfigOption{}, fmt.Errorf("category %q must be \"<id>:<label>\"", entry)
+	}
+	for _, r := range id {
+		if r < '0' || r > '9' {
+			return video.ConfigOption{}, fmt.Errorf("category id %q must be numeric", id)
+		}
+	}
+	return video.ConfigOption{ID: id, Label: label}, nil
+}
+
+// validateCustomCategories checks every entry parses and that no id repeats — a
+// duplicate id would make the effective taxonomy depend on iteration order.
+func validateCustomCategories(v string) error {
+	items, err := parseList(v)
+	if err != nil {
+		return errors.New("must be an array of strings")
+	}
+	seen := make(map[string]struct{}, len(items))
+	for _, it := range items {
+		opt, err := parseCustomCategory(it)
+		if err != nil {
+			return err
+		}
+		if _, dup := seen[opt.ID]; dup {
+			return fmt.Errorf("duplicate category id %q", opt.ID)
+		}
+		seen[opt.ID] = struct{}{}
+	}
+	return nil
+}
+
+// Categories returns the taxonomy this instance actually offers: the
+// operator-defined set when one is configured, otherwise the built-in list.
+// A nil Service answers with the built-ins so callers without settings wired
+// (tests, one-shot tools) behave as they did before this setting existed.
+func (s *Service) Categories() []video.ConfigOption {
+	if s == nil {
+		return video.Categories
+	}
+	custom := s.Strings(KeyInstanceCustomCategories)
+	if len(custom) == 0 {
+		return video.Categories
+	}
+	out := make([]video.ConfigOption, 0, len(custom))
+	for _, it := range custom {
+		// Validation ran at write time; a malformed entry here would mean the
+		// stored value was edited around it. Skip it rather than fail closed —
+		// dropping the whole taxonomy would take every category with it.
+		if opt, err := parseCustomCategory(it); err == nil {
+			out = append(out, opt)
+		}
+	}
+	if len(out) == 0 {
+		return video.Categories
+	}
+	return out
+}
+
+// IsCategory reports whether id belongs to the taxonomy this instance offers.
+// Prefer this over video.IsCategory anywhere an instance is in scope: the
+// package-level function only knows the built-ins.
+func (s *Service) IsCategory(id string) bool {
+	for _, o := range s.Categories() {
+		if o.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // emptyList is the canonical stored form of an empty list value.

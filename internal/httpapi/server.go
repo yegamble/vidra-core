@@ -754,7 +754,15 @@ func WithInstanceModerationService(svc *instancemod.Service) Option {
 // /api/v1/admin/instance-settings routes are registered. When unset, those gates
 // fall back to the static config and the admin routes are not mounted.
 func WithSettingsService(svc *instancesettings.Service) Option {
-	return func(s *Server) { s.settingssvc = svc }
+	return func(s *Server) {
+		s.settingssvc = svc
+		// Register the instance taxonomy so video.IsCategory validates against
+		// what this instance actually offers. The provider is a function, so a
+		// category added or removed by an admin applies on the next request
+		// rather than at the next restart. Without this, an instance whose
+		// categories came from a PeerTube import would reject every one of them.
+		video.SetCategoryProvider(svc.Categories)
+	}
 }
 
 // WithSearchClient wires the vidra-search internal-API gateway (search-service
