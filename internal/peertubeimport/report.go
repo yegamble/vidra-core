@@ -17,13 +17,21 @@ const (
 	KindPlaylist     = "playlist"
 	KindPlaylistItem = "playlist_item"
 	KindFollow       = "follow"
+	// KindViewCount counts VIDEOS whose view total was carried, not views. One
+	// source video contributes at most one to it per run, and contributes nothing
+	// on a run where its total has not moved.
+	KindViewCount = "view_count"
+	KindChapter   = "chapter"
+	KindRating    = "rating"
+	KindRendition = "rendition"
 )
 
 // orderedKinds is the stable order entities are imported and reported in
 // (parents before children).
 var orderedKinds = []string{
 	KindUser, KindChannel, KindVideo, KindVideoFile, KindHLSPlaylist, KindThumbnail,
-	KindCaption, KindTag, KindComment, KindPlaylist, KindPlaylistItem, KindFollow,
+	KindCaption, KindTag, KindViewCount, KindChapter, KindRating, KindRendition,
+	KindComment, KindPlaylist, KindPlaylistItem, KindFollow,
 }
 
 // Counts tallies one entity kind's outcome. Planned is what a dry-run found;

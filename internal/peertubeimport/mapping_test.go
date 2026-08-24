@@ -94,3 +94,80 @@ func TestReportCountsAndSummary(t *testing.T) {
 		}
 	}
 }
+
+func TestMapRating(t *testing.T) {
+	for _, in := range []string{"like", "LIKE", " like "} {
+		if got, ok := mapRating(in); !ok || got != "like" {
+			t.Errorf("mapRating(%q) = (%q,%v), want (like,true)", in, got, ok)
+		}
+	}
+	if got, ok := mapRating("dislike"); !ok || got != "dislike" {
+		t.Errorf("mapRating(dislike) = (%q,%v), want (dislike,true)", got, ok)
+	}
+	// A cleared rating in PeerTube is a 'none' row. Coercing it into a like would
+	// invent an opinion the user retracted.
+	for _, in := range []string{"none", "", "LOVE"} {
+		if got, ok := mapRating(in); ok {
+			t.Errorf("mapRating(%q) = (%q,true), want unsupported", in, got)
+		}
+	}
+}
+
+func TestNormalizeChapterTitle(t *testing.T) {
+	if got := normalizeChapterTitle("  Intro  "); got != "Intro" {
+		t.Errorf("normalizeChapterTitle trims: got %q", got)
+	}
+	if got := normalizeChapterTitle("   "); got != "" {
+		t.Errorf("a blank title is not a chapter: got %q", got)
+	}
+	// video_chapters CHECKs char_length 1..120, which counts CHARACTERS. A
+	// 200-rune multi-byte title must come back at 120 runes, not 120 bytes.
+	long := strings.Repeat("é", 200)
+	got := normalizeChapterTitle(long)
+	if n := len([]rune(got)); n != 120 {
+		t.Errorf("truncated title = %d runes, want 120", n)
+	}
+	if len(got) == 120 {
+		t.Error("truncation counted bytes, not characters")
+	}
+}
+
+func TestRenditionHeight(t *testing.T) {
+	if got := renditionHeight(720, 0); got != 720 {
+		t.Errorf("with no recorded height the resolution label IS the height: got %d", got)
+	}
+	// A source that records the real stored height wins over the label.
+	if got := renditionHeight(720, 718); got != 718 {
+		t.Errorf("recorded height must win: got %d", got)
+	}
+}
+
+func TestRenditionWidth(t *testing.T) {
+	// 1. the source's own width, when it has one — never overridden by a guess.
+	if got := renditionWidth(480, 640, 16.0/9.0); got != 640 {
+		t.Errorf("recorded width must win: got %d, want 640", got)
+	}
+	// 2. the video's recorded aspect ratio.
+	if got := renditionWidth(480, 0, 4.0/3.0); got != 640 {
+		t.Errorf("4:3 480p width = %d, want 640", got)
+	}
+	// 3. only then 16:9, and always even (an odd pixel width is not a thing an
+	// encoder produces, and a UI reading it back would render 853x480 oddly).
+	if got := renditionWidth(480, 0, 0); got != 854 {
+		t.Errorf("16:9 480p width = %d, want 854 (rounded up to even)", got)
+	}
+	if got := renditionWidth(0, 0, 0); got != 0 {
+		t.Errorf("no height means no width: got %d", got)
+	}
+}
+
+func TestReportCarriesPerVideoKinds(t *testing.T) {
+	r := NewReport(true, PolicySkip)
+	// The JSON shape is a frontend contract: every kind is present from the start,
+	// so a dry-run that plans nothing still reports zeroes rather than gaps.
+	for _, kind := range []string{KindViewCount, KindChapter, KindRating, KindRendition} {
+		if r.Entities[kind] == nil {
+			t.Errorf("report must initialise %q", kind)
+		}
+	}
+}

@@ -38,10 +38,17 @@ type Importer struct {
 	sealKey func(pem string) (string, error)
 	logger  *slog.Logger
 
-	// videoUUIDByID caches the source video numeric-id → uuid map, built once so
-	// comments/playlist-elements (which reference the numeric id) can resolve the
-	// ledger entry, which is keyed by the video UUID.
-	videoUUIDByID map[int64]string
+	// videosByID caches the source videos by numeric id, built once so
+	// comments/playlist-elements/renditions (which reference the numeric id) can
+	// resolve the ledger entry, which is keyed by the video UUID — and so the
+	// per-video passes read the video list from the source once rather than once
+	// each.
+	videosByID map[int64]SourceVideo
+	// videoVidraByID memoises the source-numeric-id → Vidra-video-id resolution
+	// for one run (uuid.Nil = the video is not in the ledger). Both maps are
+	// dropped at the start of every Run/Plan: a reused importer must never answer
+	// from the source as it stood on a previous run.
+	videoVidraByID map[int64]uuid.UUID
 }
 
 // Options customise an Importer.
@@ -143,6 +150,7 @@ func (im *Importer) estimateBytes(ctx context.Context) (int64, error) {
 // (no ledger rows, no entities, no media). The returned Report is the mapping
 // plan the operator reviews before running for real.
 func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
+	im.videosByID, im.videoVidraByID = nil, nil // the source moves between runs; never plan off a stale list
 	r := NewReport(true, im.policy)
 	r.SourceVersion = version
 	r.Deferred = deferredFamilies()
@@ -208,6 +216,10 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 		r.count(KindTag).Planned += len(tags)
 	}
 
+	if err := im.planPerVideo(ctx, r, videos); err != nil {
+		return nil, err
+	}
+
 	comments, err := im.src.Comments(ctx)
 	if err != nil {
 		return nil, err
@@ -244,6 +256,9 @@ func deferredFamilies() []string {
 		"moderation state (video blacklist, account/server blocklists, abuse reports)",
 		"user notification settings and watch history",
 		"live sessions, plugins, themes, runners, redundancy config",
+		"account + channel avatars and banners (actorImage)",
+		"original-file provenance records (videoSource)",
+		"per-day view history: the source records one lifetime total per video and no daily breakdown, so the total is carried and video_view_days is left empty rather than inventing buckets",
 	}
 }
 
@@ -252,6 +267,11 @@ func deferredFamilies() []string {
 // so a caller can persist a snapshot. On the 'fail' policy a collision aborts
 // with ErrConflictFail. The returned Report is the final tally.
 func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)) (*Report, error) {
+	// Drop the cached source video list: an importer reused across runs (and the
+	// scheduled-import workflow is exactly that) would otherwise resolve children
+	// against the video set as it stood the FIRST time, so every video added to
+	// the source since would silently lose its comments, chapters and ratings.
+	im.videosByID, im.videoVidraByID = nil, nil
 	r := NewReport(false, im.policy)
 	r.SourceVersion = version
 	r.Deferred = deferredFamilies()
@@ -263,6 +283,13 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 		{"users", im.importUsers},
 		{"channels", im.importChannels},
 		{"videos", im.importVideos},
+		// Per-video data runs AFTER videos and as passes of its own, so a re-run
+		// backfills it onto videos an earlier release already imported. See
+		// entities_pervideo.go.
+		{"view counts", im.importViewCounts},
+		{"chapters", im.importChapters},
+		{"ratings", im.importRatings},
+		{"renditions", im.importRenditions},
 		{"comments", im.importComments},
 		{"playlists", im.importPlaylists},
 		{"follows", im.importFollows},

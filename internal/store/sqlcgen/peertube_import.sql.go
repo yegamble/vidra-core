@@ -178,7 +178,7 @@ func (q *Queries) FailImportRun(ctx context.Context, arg FailImportRunParams) er
 const getImportLedgerEntry = `-- name: GetImportLedgerEntry :one
 
 
-SELECT id, entity_kind, source_id, vidra_id, status, note, created_at, updated_at FROM peertube_import_ledger
+SELECT id, entity_kind, source_id, vidra_id, status, note, created_at, updated_at, source_value FROM peertube_import_ledger
 WHERE entity_kind = $1 AND source_id = $2
 `
 
@@ -206,6 +206,7 @@ func (q *Queries) GetImportLedgerEntry(ctx context.Context, arg GetImportLedgerE
 		&i.Note,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceValue,
 	)
 	return i, err
 }
@@ -260,6 +261,49 @@ func (q *Queries) GetLatestImportRun(ctx context.Context) (PeertubeImportRun, er
 		&i.FinishedAt,
 	)
 	return i, err
+}
+
+const importApplyVideoViewDelta = `-- name: ImportApplyVideoViewDelta :exec
+
+INSERT INTO video_view_counts (video_id, views, updated_at)
+VALUES ($1, GREATEST($2::bigint, 0), now())
+ON CONFLICT (video_id) DO UPDATE
+SET views = GREATEST(video_view_counts.views + $2::bigint, 0),
+    updated_at = now()
+`
+
+type ImportApplyVideoViewDeltaParams struct {
+	VideoID uuid.UUID `json:"video_id"`
+	Delta   int64     `json:"delta"`
+}
+
+// ───────────── per-video data carried after the video itself ─────────────
+// Views, chapters, ratings and renditions are per-video data that hangs off an
+// already-imported video rather than being part of its insert. They are carried
+// by their own passes, keyed by their own ledger rows, so a re-run of the
+// importer BACKFILLS them onto videos an earlier release already imported —
+// a pass folded into the video insert would be skipped for every one of them.
+//
+// The rule they all share: the import never overwrites a row Vidra already has.
+// ON CONFLICT DO NOTHING everywhere, so an operator-edited chapter set, a rating
+// cast on the new instance, or a rendition row a Vidra re-transcode wrote all
+// survive an import running on a schedule. Views are the one exception, and they
+// are not an overwrite either — see ImportApplyVideoViewDelta.
+// Apply the CHANGE in a source video's lifetime view total to Vidra's counter.
+//
+// This is a delta, never an assignment, and that is the whole design. Vidra's
+// counter is live: it has been incremented by every view served since the last
+// import. Assigning the source total would erase those; adding the source total
+// again would double the history. Adding only what the source gained since the
+// last run does neither, and a run against an unchanged source passes a delta of
+// zero. The caller stores the total it applied in peertube_import_ledger
+// .source_value; the delta is (new source total - that).
+//
+// GREATEST(..., 0) floors the result: a source whose total went DOWN (a purge, a
+// re-count) can walk Vidra's counter back but never below zero.
+func (q *Queries) ImportApplyVideoViewDelta(ctx context.Context, arg ImportApplyVideoViewDeltaParams) error {
+	_, err := q.db.Exec(ctx, importApplyVideoViewDelta, arg.VideoID, arg.Delta)
+	return err
 }
 
 const importFindChannelByHandle = `-- name: ImportFindChannelByHandle :one
@@ -486,6 +530,27 @@ func (q *Queries) ImportInsertVideo(ctx context.Context, arg ImportInsertVideoPa
 	return id, err
 }
 
+const importInsertVideoChapter = `-- name: ImportInsertVideoChapter :exec
+INSERT INTO video_chapters (video_id, start_seconds, title)
+VALUES ($1, $2, $3)
+ON CONFLICT (video_id, start_seconds) DO NOTHING
+`
+
+type ImportInsertVideoChapterParams struct {
+	VideoID      uuid.UUID `json:"video_id"`
+	StartSeconds int32     `json:"start_seconds"`
+	Title        string    `json:"title"`
+}
+
+// One seek-bar chapter mark. (video_id, start_seconds) is the table's primary
+// key, so DO NOTHING is what makes a repeated import a no-op — and it is also
+// what stops a scheduled import from stamping on a chapter set the operator
+// edited on the new instance.
+func (q *Queries) ImportInsertVideoChapter(ctx context.Context, arg ImportInsertVideoChapterParams) error {
+	_, err := q.db.Exec(ctx, importInsertVideoChapter, arg.VideoID, arg.StartSeconds, arg.Title)
+	return err
+}
+
 const importInsertVideoFile = `-- name: ImportInsertVideoFile :one
 INSERT INTO video_files (video_id, kind, storage_key, content_type, original_name, size_bytes, sha256)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -518,6 +583,66 @@ func (q *Queries) ImportInsertVideoFile(ctx context.Context, arg ImportInsertVid
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const importInsertVideoRating = `-- name: ImportInsertVideoRating :exec
+INSERT INTO video_ratings (video_id, user_id, rating, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $4)
+ON CONFLICT (user_id, video_id) DO NOTHING
+`
+
+type ImportInsertVideoRatingParams struct {
+	VideoID   uuid.UUID `json:"video_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Rating    string    `json:"rating"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// One user's like/dislike, with the source's timestamps preserved. DO NOTHING on
+// the (user_id, video_id) key: if this pair already has a rating it was either
+// cast on Vidra or written by an earlier import, and neither is ours to replace.
+func (q *Queries) ImportInsertVideoRating(ctx context.Context, arg ImportInsertVideoRatingParams) error {
+	_, err := q.db.Exec(ctx, importInsertVideoRating,
+		arg.VideoID,
+		arg.UserID,
+		arg.Rating,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const importInsertVideoRendition = `-- name: ImportInsertVideoRendition :exec
+INSERT INTO video_renditions (video_id, height, width, key_prefix, size_bytes)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (video_id, height) DO NOTHING
+`
+
+type ImportInsertVideoRenditionParams struct {
+	VideoID   uuid.UUID `json:"video_id"`
+	Height    int32     `json:"height"`
+	Width     int32     `json:"width"`
+	KeyPrefix string    `json:"key_prefix"`
+	SizeBytes int64     `json:"size_bytes"`
+}
+
+// One rung of an imported HLS ladder, so the quality selector has something to
+// render for a video whose manifest Vidra did not write. key_prefix points at
+// the source tree's directory: there are no progressive per-rung download assets
+// under it, and the download endpoint already skips a rung whose asset is
+// missing, so the row advertises the rung without promising a file.
+//
+// DO NOTHING on (video_id, height): a Vidra re-transcode owns its own rendition
+// rows, and overwriting one of those with a source key_prefix would break the
+// per-rung download it does have.
+func (q *Queries) ImportInsertVideoRendition(ctx context.Context, arg ImportInsertVideoRenditionParams) error {
+	_, err := q.db.Exec(ctx, importInsertVideoRendition,
+		arg.VideoID,
+		arg.Height,
+		arg.Width,
+		arg.KeyPrefix,
+		arg.SizeBytes,
+	)
+	return err
 }
 
 const importInsertVideoTag = `-- name: ImportInsertVideoTag :exec
@@ -630,8 +755,25 @@ func (q *Queries) ImportUpsertVideoMetadata(ctx context.Context, arg ImportUpser
 	return err
 }
 
+const importVideoHasReadyPlaylist = `-- name: ImportVideoHasReadyPlaylist :one
+SELECT EXISTS (
+    SELECT 1 FROM streaming_playlists
+    WHERE video_id = $1 AND state = 'ready' AND master_key <> ''
+)
+`
+
+// Whether a video has a ready HLS tree recorded. Rendition rows are only
+// meaningful alongside one: a video whose media was copied (and will be
+// transcoded by Vidra) gets its ladder from that transcode instead.
+func (q *Queries) ImportVideoHasReadyPlaylist(ctx context.Context, videoID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, importVideoHasReadyPlaylist, videoID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listImportLedgerConflicts = `-- name: ListImportLedgerConflicts :many
-SELECT id, entity_kind, source_id, vidra_id, status, note, created_at, updated_at FROM peertube_import_ledger
+SELECT id, entity_kind, source_id, vidra_id, status, note, created_at, updated_at, source_value FROM peertube_import_ledger
 WHERE status IN ('skipped', 'failed', 'unsupported') OR note <> ''
 ORDER BY entity_kind, source_id
 LIMIT $1
@@ -657,6 +799,7 @@ func (q *Queries) ListImportLedgerConflicts(ctx context.Context, limit int32) ([
 			&i.Note,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SourceValue,
 		); err != nil {
 			return nil, err
 		}
@@ -802,6 +945,41 @@ func (q *Queries) UpdateImportRunProgress(ctx context.Context, arg UpdateImportR
 	return err
 }
 
+const upsertImportLedgerCounter = `-- name: UpsertImportLedgerCounter :exec
+INSERT INTO peertube_import_ledger (entity_kind, source_id, vidra_id, status, note, source_value)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (entity_kind, source_id)
+DO UPDATE SET vidra_id     = EXCLUDED.vidra_id,
+              status       = EXCLUDED.status,
+              note         = EXCLUDED.note,
+              source_value = EXCLUDED.source_value,
+              updated_at   = now()
+`
+
+type UpsertImportLedgerCounterParams struct {
+	EntityKind  string      `json:"entity_kind"`
+	SourceID    string      `json:"source_id"`
+	VidraID     pgtype.UUID `json:"vidra_id"`
+	Status      string      `json:"status"`
+	Note        string      `json:"note"`
+	SourceValue int64       `json:"source_value"`
+}
+
+// The ledger upsert for a COUNTER kind: same idempotency key as
+// UpsertImportLedgerEntry, but it also records the source total that was applied
+// so the next run can compute a delta instead of re-applying the whole number.
+func (q *Queries) UpsertImportLedgerCounter(ctx context.Context, arg UpsertImportLedgerCounterParams) error {
+	_, err := q.db.Exec(ctx, upsertImportLedgerCounter,
+		arg.EntityKind,
+		arg.SourceID,
+		arg.VidraID,
+		arg.Status,
+		arg.Note,
+		arg.SourceValue,
+	)
+	return err
+}
+
 const upsertImportLedgerEntry = `-- name: UpsertImportLedgerEntry :one
 INSERT INTO peertube_import_ledger (entity_kind, source_id, vidra_id, status, note)
 VALUES ($1, $2, $3, $4, $5)
@@ -810,7 +988,7 @@ DO UPDATE SET vidra_id = EXCLUDED.vidra_id,
               status   = EXCLUDED.status,
               note     = EXCLUDED.note,
               updated_at = now()
-RETURNING id, entity_kind, source_id, vidra_id, status, note, created_at, updated_at
+RETURNING id, entity_kind, source_id, vidra_id, status, note, created_at, updated_at, source_value
 `
 
 type UpsertImportLedgerEntryParams struct {
@@ -843,6 +1021,7 @@ func (q *Queries) UpsertImportLedgerEntry(ctx context.Context, arg UpsertImportL
 		&i.Note,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceValue,
 	)
 	return i, err
 }

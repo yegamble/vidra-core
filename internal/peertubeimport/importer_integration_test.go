@@ -108,6 +108,20 @@ func TestPeerTubeImportEndToEnd(t *testing.T) {
 	if got := plan.Entities[KindFollow].Planned; got != 1 {
 		t.Errorf("plan follows planned = %d, want 1", got)
 	}
+	// The per-video families are in the plan too, so --dry-run shows what a run
+	// would carry. view_count counts VIDEOS carrying a total, never views.
+	if got := plan.Entities[KindViewCount].Planned; got != 1 {
+		t.Errorf("plan view counts planned = %d, want 1 (only video 1 has views)", got)
+	}
+	if got := plan.Entities[KindChapter].Planned; got != 3 {
+		t.Errorf("plan chapters planned = %d, want 3", got)
+	}
+	if got := plan.Entities[KindRating].Planned; got != 3 {
+		t.Errorf("plan ratings planned = %d, want 3 (remote account's rating excluded)", got)
+	}
+	if got := plan.Entities[KindRendition].Planned; got != 2 {
+		t.Errorf("plan renditions planned = %d, want 2 (audio-only rung is not a rung)", got)
+	}
 	if n := countRows(t, ctx, dest, "users"); n != 0 {
 		t.Fatalf("dry-run wrote %d users, want 0 (must write nothing)", n)
 	}
@@ -261,13 +275,70 @@ func TestPeerTubeImportEndToEnd(t *testing.T) {
 		t.Errorf("bob→alice_channel follows = %d, want 1", follows)
 	}
 
+	// Per-video data: the view total, the chapters, the ratings.
+	var views int64
+	if err := dest.QueryRow(ctx, `SELECT views FROM video_view_counts WHERE video_id=$1`, vidID).Scan(&views); err != nil {
+		t.Fatalf("read view count: %v", err)
+	}
+	if views != 100 {
+		t.Errorf("views = %d, want the source's 100", views)
+	}
+	// The day rollup is deliberately EMPTY: the source carries one lifetime total
+	// and no daily breakdown, so writing a bucket would invent a history.
+	if n := countRows(t, ctx, dest, "video_view_days"); n != 0 {
+		t.Errorf("video_view_days rows = %d, want 0 (no daily data exists to import)", n)
+	}
+	chapterTitles := scanStrings(t, ctx, dest, `SELECT title FROM video_chapters WHERE video_id=$1 ORDER BY start_seconds`, vidID)
+	if len(chapterTitles) != 2 || chapterTitles[0] != "Intro" || chapterTitles[1] != "Middle" {
+		t.Errorf("chapters = %v, want [Intro Middle] (the blank-title row is unsupported)", chapterTitles)
+	}
+	if report.Entities[KindChapter].Unsupported != 1 {
+		t.Errorf("chapters unsupported = %d, want 1 (blank title)", report.Entities[KindChapter].Unsupported)
+	}
+	var likes, dislikes int
+	if err := dest.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE rating='like'), count(*) FILTER (WHERE rating='dislike')
+		FROM video_ratings WHERE video_id=$1`, vidID).Scan(&likes, &dislikes); err != nil {
+		t.Fatalf("read ratings: %v", err)
+	}
+	if likes != 1 || dislikes != 1 {
+		t.Errorf("ratings = %d like / %d dislike, want 1/1 (remote rating excluded)", likes, dislikes)
+	}
+	if report.Entities[KindRating].Unsupported != 1 {
+		t.Errorf("ratings unsupported = %d, want 1 (a cleared 'none' rating)", report.Entities[KindRating].Unsupported)
+	}
+	// Copy mode re-transcodes through Vidra, which writes its own ladder — so the
+	// source's rungs are NOT claimed here. Only the audio-only rung is terminal.
+	if n := countRows(t, ctx, dest, "video_renditions"); n != 0 {
+		t.Errorf("video_renditions = %d, want 0 in copy mode (Vidra's transcode owns the ladder)", n)
+	}
+
 	// ── idempotency: a re-run creates nothing new ──
 	usersBefore := countRows(t, ctx, dest, "users")
 	videosBefore := countRows(t, ctx, dest, "videos")
 	commentsBefore := countRows(t, ctx, dest, "comments")
+	chaptersBefore := countRows(t, ctx, dest, "video_chapters")
+	ratingsBefore := countRows(t, ctx, dest, "video_ratings")
 	report2, err := imp.Run(ctx, version, nil)
 	if err != nil {
 		t.Fatalf("re-run: %v", err)
+	}
+	if report2.Entities[KindViewCount].Imported != 0 || report2.Entities[KindChapter].Imported != 0 ||
+		report2.Entities[KindRating].Imported != 0 {
+		t.Errorf("re-run imported per-video data again (views=%d chapters=%d ratings=%d), want 0",
+			report2.Entities[KindViewCount].Imported, report2.Entities[KindChapter].Imported,
+			report2.Entities[KindRating].Imported)
+	}
+	if countRows(t, ctx, dest, "video_chapters") != chaptersBefore ||
+		countRows(t, ctx, dest, "video_ratings") != ratingsBefore {
+		t.Error("re-run duplicated chapters or ratings — not idempotent")
+	}
+	var viewsAfter int64
+	if err := dest.QueryRow(ctx, `SELECT views FROM video_view_counts WHERE video_id=$1`, vidID).Scan(&viewsAfter); err != nil {
+		t.Fatalf("read view count after re-run: %v", err)
+	}
+	if viewsAfter != 100 {
+		t.Errorf("re-run changed views to %d, want the same 100 (a re-run must not double a counter)", viewsAfter)
 	}
 	if report2.Entities[KindUser].Imported != 0 || report2.Entities[KindVideo].Imported != 0 {
 		t.Errorf("re-run imported new rows (users=%d videos=%d), want 0 (idempotent)",
@@ -368,6 +439,46 @@ func TestPeerTubeImportReferenceMediaMode(t *testing.T) {
 	if hlsKey != "streaming-playlists/hls/11111111-1111-1111-1111-111111111111/v1-master.m3u8" {
 		t.Errorf("hls key = %q, want existing PeerTube master key", hlsKey)
 	}
+	// The gap this closes: an imported video PLAYS its ladder (hls.js reads the
+	// levels out of the master playlist) while the API reported renditions: [] and
+	// the quality menu rendered empty. One row per rung of the referenced tree.
+	if got := report.Entities[KindRendition].Imported; got != 2 {
+		t.Errorf("renditions imported = %d, want 2 (720p + 480p; the audio rung is not one)", got)
+	}
+	if got := report.Entities[KindRendition].Unsupported; got != 1 {
+		t.Errorf("renditions unsupported = %d, want 1 (the audio-only rung)", got)
+	}
+	type rung struct {
+		height, width int
+		prefix        string
+	}
+	rungRows, err := dest.Query(ctx, `SELECT height, width, key_prefix FROM video_renditions WHERE video_id=$1 ORDER BY height DESC`, vidID)
+	if err != nil {
+		t.Fatalf("read renditions: %v", err)
+	}
+	var rungs []rung
+	for rungRows.Next() {
+		var r rung
+		if err := rungRows.Scan(&r.height, &r.width, &r.prefix); err != nil {
+			t.Fatal(err)
+		}
+		rungs = append(rungs, r)
+	}
+	rungRows.Close()
+	wantPrefix := "streaming-playlists/hls/11111111-1111-1111-1111-111111111111"
+	// Heights come from the source. Widths are derived 16:9 here because this
+	// fixture's videoFile carries no dimensions and its video no aspect ratio —
+	// 480p rounds UP to an even 854, never an odd 853.
+	want := []rung{{720, 1280, wantPrefix}, {480, 854, wantPrefix}}
+	if len(rungs) != len(want) {
+		t.Fatalf("renditions = %+v, want %+v", rungs, want)
+	}
+	for i := range want {
+		if rungs[i] != want[i] {
+			t.Errorf("rendition[%d] = %+v, want %+v", i, rungs[i], want[i])
+		}
+	}
+
 	rc, err := sharedMedia.Open(ctx, hlsKey)
 	if err != nil {
 		t.Fatalf("open referenced hls master: %v", err)
@@ -381,6 +492,142 @@ func TestPeerTubeImportReferenceMediaMode(t *testing.T) {
 	_ = rc.Close()
 	if string(got) != string(sourceVideoBytes) {
 		t.Errorf("referenced original bytes mismatch")
+	}
+}
+
+// TestImportViewCountsAreDeltaNotDouble is the proof the scheduled-import
+// workflow rests on. The operator runs this tool repeatedly against a live
+// PeerTube right up to the cutover, so "run it twice" is the normal case, not
+// the edge case — and a view total is the one thing here that is a running
+// counter rather than a set of rows.
+//
+// It pins all three ways the arithmetic can be wrong:
+//
+//   - re-running an UNCHANGED source must add nothing (naive addition doubles);
+//   - views Vidra served between runs must SURVIVE (assignment erases them);
+//   - a source that gained views must contribute only the gain.
+//
+// Chapters are checked alongside for the set-shaped half of the same promise.
+func TestImportViewCountsAreDeltaNotDouble(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	var vidID uuid.UUID
+	if err := dest.QueryRow(ctx, `SELECT id FROM videos WHERE title='First Video'`).Scan(&vidID); err != nil {
+		t.Fatalf("read video: %v", err)
+	}
+	readViews := func(what string) int64 {
+		t.Helper()
+		var n int64
+		if err := dest.QueryRow(ctx, `SELECT views FROM video_view_counts WHERE video_id=$1`, vidID).Scan(&n); err != nil {
+			t.Fatalf("read views (%s): %v", what, err)
+		}
+		return n
+	}
+	if got := readViews("after first run"); got != 100 {
+		t.Fatalf("views after first run = %d, want the source's 100", got)
+	}
+
+	// 1. An unchanged source. A second run must be arithmetic-neutral.
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if got := readViews("after unchanged re-run"); got != 100 {
+		t.Fatalf("views after an unchanged re-run = %d, want 100 — the counter was applied twice", got)
+	}
+	if got := report.Entities[KindViewCount].Imported; got != 0 {
+		t.Errorf("unchanged re-run reported %d view counts imported, want 0", got)
+	}
+	if n := countRows(t, ctx, dest, "video_chapters"); n != 2 {
+		t.Fatalf("chapters after re-run = %d, want the same 2 — the set was re-inserted", n)
+	}
+
+	// 2. Vidra serves 7 real views of its own between runs, exactly as the live
+	//    counter would record them.
+	mustExec(t, ctx, dest, `UPDATE video_view_counts SET views = views + 7 WHERE video_id = $1`, vidID)
+
+	// 3. The source gains 50 views and one new chapter before the next scheduled
+	//    run. (Writing to the source is the TEST's doing — the importer's own
+	//    connection is read-only.)
+	mustExec(t, ctx, src, `UPDATE "video" SET views = 150 WHERE id = 1`)
+	mustExec(t, ctx, src, `INSERT INTO "videoChapter" (id,"videoId",timecode,title) VALUES (4,1,200,'Outro')`)
+
+	report, err = imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("third run: %v", err)
+	}
+	// 100 carried + 7 served by Vidra + 50 gained on the source. Assignment would
+	// give 150 (Vidra's 7 erased); re-adding the total would give 257.
+	if got := readViews("after source gained views"); got != 157 {
+		t.Errorf("views = %d, want 157 (100 imported + 7 served by Vidra + 50 new on the source)", got)
+	}
+	if got := report.Entities[KindViewCount].Imported; got != 1 {
+		t.Errorf("view counts imported = %d, want 1 (the one video whose total moved)", got)
+	}
+	// The new chapter arrives; the two already there are not duplicated.
+	titles := scanStrings(t, ctx, dest, `SELECT title FROM video_chapters WHERE video_id=$1 ORDER BY start_seconds`, vidID)
+	if len(titles) != 3 || titles[2] != "Outro" {
+		t.Errorf("chapters = %v, want [Intro Middle Outro]", titles)
+	}
+
+	// 4. A source whose total goes DOWN (a purge, a re-count) walks the counter
+	//    back by the same difference.
+	mustExec(t, ctx, src, `UPDATE "video" SET views = 120 WHERE id = 1`)
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("fourth run: %v", err)
+	}
+	if got := readViews("after source total dropped"); got != 127 {
+		t.Errorf("views = %d, want 127 (157 less the 30 the source withdrew)", got)
+	}
+
+	// 5. A source total of ZERO is "no data here", NOT "withdraw everything". It
+	//    has to be, because a source that stops carrying the column at all reads
+	//    as zero for every video — and treating that as a withdrawal would wipe
+	//    the whole instance's view history on one bad run.
+	mustExec(t, ctx, src, `UPDATE "video" SET views = 0 WHERE id = 1`)
+	report, err = imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("fifth run: %v", err)
+	}
+	if got := readViews("after source total went to zero"); got != 127 {
+		t.Errorf("views = %d, want 127 unchanged — a zero source total must not erase carried views", got)
+	}
+	if got := report.Entities[KindViewCount].Imported; got != 0 {
+		t.Errorf("view counts imported = %d, want 0 for a source with nothing to carry", got)
+	}
+
+	// 6. The floor: a withdrawal larger than what Vidra holds stops at zero
+	//    rather than going negative. Vidra's counter is reset to 3 to stage it.
+	mustExec(t, ctx, dest, `UPDATE video_view_counts SET views = 3 WHERE video_id = $1`, vidID)
+	mustExec(t, ctx, src, `UPDATE "video" SET views = 1 WHERE id = 1`)
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("sixth run: %v", err)
+	}
+	if got := readViews("after an oversized withdrawal"); got != 0 {
+		t.Errorf("views = %d, want 0 — a counter must never go negative", got)
 	}
 }
 
@@ -605,7 +852,8 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		`CREATE TABLE "video" (
 			id serial PRIMARY KEY, uuid uuid NOT NULL, "channelId" integer NOT NULL, name text NOT NULL,
 			description text, privacy integer NOT NULL, state integer NOT NULL, category integer, licence integer,
-			language text, duration integer NOT NULL DEFAULT 0, "createdAt" timestamptz NOT NULL DEFAULT now())`,
+			language text, duration integer NOT NULL DEFAULT 0, views integer NOT NULL DEFAULT 0,
+			"createdAt" timestamptz NOT NULL DEFAULT now())`,
 		`CREATE TABLE "videoFile" (
 			id serial PRIMARY KEY, "videoId" integer, "videoStreamingPlaylistId" integer,
 			resolution integer NOT NULL, size bigint NOT NULL, extname text, fps integer, filename text)`,
@@ -632,6 +880,12 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		`CREATE TABLE "actorFollow" (
 			id serial PRIMARY KEY, state text NOT NULL, "actorId" integer NOT NULL,
 			"targetActorId" integer NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now())`,
+		`CREATE TABLE "videoChapter" (
+			id serial PRIMARY KEY, "videoId" integer NOT NULL, timecode integer NOT NULL,
+			title text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now())`,
+		`CREATE TABLE "accountVideoRate" (
+			id serial PRIMARY KEY, type text NOT NULL, "accountId" integer NOT NULL,
+			"videoId" integer NOT NULL, url text, "createdAt" timestamptz NOT NULL DEFAULT now())`,
 
 		// ── fixtures ──
 		`INSERT INTO "application" ("migrationVersion") VALUES (800)`,
@@ -650,14 +904,36 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 			(1,'Alice',1,1),(2,'Bob',2,3),(5,'Remote',NULL,5)`,
 		`INSERT INTO "videoChannel" (id,name,description,"accountId","actorId") VALUES
 			(1,'Alice Channel','a desc',1,2),(2,'Bob Channel','',2,4)`,
-		`INSERT INTO "video" (id,uuid,"channelId",name,description,privacy,state,category,licence,language,duration) VALUES
-			(1,'11111111-1111-1111-1111-111111111111',1,'First Video','hello',1,1,1,1,'en',120),
-			(2,'22222222-2222-2222-2222-222222222222',1,'Second Video','',3,1,NULL,NULL,NULL,60)`,
+		`INSERT INTO "video" (id,uuid,"channelId",name,description,privacy,state,category,licence,language,duration,views) VALUES
+			(1,'11111111-1111-1111-1111-111111111111',1,'First Video','hello',1,1,1,1,'en',120,100),
+			(2,'22222222-2222-2222-2222-222222222222',1,'Second Video','',3,1,NULL,NULL,NULL,60,0)`,
 		`INSERT INTO "videoFile" (id,"videoId",resolution,size,extname,filename) VALUES
 			(1,1,720,` + strconv.Itoa(len(sourceVideoBytes)) + `,'.mp4','v1-720.mp4'),
 			(2,1,480,10,'.mp4','v1-480.mp4')`,
 		`INSERT INTO "videoStreamingPlaylist" (id,"videoId","playlistFilename") VALUES
 			(1,1,'v1-master.m3u8')`,
+		// The HLS ladder: videoFile rows hang off the STREAMING PLAYLIST, not the
+		// video, which is why the older per-video file read never saw them. File 5
+		// is PeerTube's audio-only rung (resolution 0) — not a rung of the quality
+		// ladder, and unstorable in video_renditions, which CHECKs height > 0.
+		`INSERT INTO "videoFile" (id,"videoStreamingPlaylistId",resolution,size,extname,filename) VALUES
+			(3,1,720,4096,'.mp4','v1-720-fragmented.mp4'),
+			(4,1,480,2048,'.mp4','v1-480-fragmented.mp4'),
+			(5,1,0,64,'.mp4','v1-audio-fragmented.mp4')`,
+		// Chapter 3 has a blank title: video_chapters CHECKs 1..120 characters, so
+		// it is reported unsupported rather than written as an empty mark.
+		`INSERT INTO "videoChapter" (id,"videoId",timecode,title) VALUES
+			(1,1,0,'Intro'),
+			(2,1,90,'Middle'),
+			(3,1,150,'   ')`,
+		// alice likes video 1, bob dislikes it, the REMOTE account's like is excluded
+		// (no Vidra user to attribute it to), and alice's 'none' row on video 2 is a
+		// cleared rating, not an opinion.
+		`INSERT INTO "accountVideoRate" (id,type,"accountId","videoId") VALUES
+			(1,'like',1,1),
+			(2,'dislike',2,1),
+			(3,'like',5,1),
+			(4,'none',1,2)`,
 		`INSERT INTO "thumbnail" (id,filename,type,"videoId") VALUES (1,'v1-thumb.jpg',1,1)`,
 		`INSERT INTO "videoCaption" (id,language,filename,"videoId") VALUES (1,'en','v1-en.vtt',1)`,
 		`INSERT INTO "tag" (id,name) VALUES (1,'music'),(2,'test')`,

@@ -1,0 +1,21 @@
+-- 0112: give the PeerTube import ledger a place to remember a COUNTER's last
+-- imported value.
+--
+-- Every other family the importer carries is a set of rows: a source entity
+-- either has a ledger row (already imported, skip it) or it does not. A view
+-- total is not that shape. It is a running number that keeps growing on the
+-- source right up to the cutover, and the operator runs the import repeatedly to
+-- track it, so "already imported" is the wrong question — the right one is "how
+-- much of it have I already applied?".
+--
+-- Without that memory there are only two behaviours, and both are wrong:
+-- re-applying the source total ADDS it a second time (a re-run doubles every
+-- video's views), and overwriting Vidra's counter with the source total ERASES
+-- every view Vidra has served since the last run. source_value is what makes the
+-- third behaviour possible: store the source total that was applied, and on the
+-- next run apply only the difference. A run against an unchanged source computes
+-- a delta of zero and writes nothing at all.
+--
+-- It stays 0 for every other entity kind, which never reads it.
+ALTER TABLE peertube_import_ledger
+    ADD COLUMN source_value BIGINT NOT NULL DEFAULT 0;

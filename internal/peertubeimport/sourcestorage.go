@@ -78,7 +78,18 @@ func sourceCaptionKey(filename string) string {
 	return ptCaptionDir + "/" + path.Base(filename)
 }
 func sourceHLSKey(videoUUID, filename string) string {
-	return ptHLSDir + "/" + path.Base(videoUUID) + "/" + path.Base(filename)
+	return sourceHLSDir(videoUUID) + "/" + path.Base(filename)
+}
+
+// sourceHLSDir is the directory holding a video's whole HLS tree on the source:
+// its master playlist, every variant playlist and every segment. PeerTube keeps
+// all rungs of a ladder side by side in it rather than in a directory per rung,
+// so every imported rendition of a video shares this prefix. It is recorded on
+// video_renditions.key_prefix — the honest answer to "where does this rung's
+// playlist live", even though it is not the per-rung directory a Vidra-produced
+// rendition points at.
+func sourceHLSDir(videoUUID string) string {
+	return ptHLSDir + "/" + path.Base(videoUUID)
 }
 
 // File-type allowlists applied to what is copied from the source. A source row

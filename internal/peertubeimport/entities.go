@@ -697,25 +697,57 @@ func (im *Importer) importOneComment(ctx context.Context, cm SourceComment, c *C
 	})
 }
 
+// sourceVideosByID returns the source's local videos keyed by numeric id,
+// reading them from the source once per importer and caching the result. Every
+// family that references a video by its numeric id goes through this.
+func (im *Importer) sourceVideosByID(ctx context.Context) (map[int64]SourceVideo, error) {
+	if im.videosByID != nil {
+		return im.videosByID, nil
+	}
+	videos, err := im.src.Videos(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[int64]SourceVideo, len(videos))
+	for _, v := range videos {
+		byID[v.ID] = v
+	}
+	im.videosByID = byID
+	return byID, nil
+}
+
 // resolveVideoByNumericID maps a source video numeric id to its Vidra id. The
 // ledger keys videos by UUID, so we translate the numeric id to the UUID via the
-// source, then look up the ledger. The small numeric→uuid map is cached.
+// source, then look up the ledger.
+//
+// The answer is memoised for the run. Every family that hangs off a video asks
+// this, once per row — on a real instance that is ~100,000 asks for ~15,000
+// distinct videos, and the video ledger cannot move underneath them because the
+// video pass has already finished by the time any of them runs.
 func (im *Importer) resolveVideoByNumericID(ctx context.Context, numericID int64) (uuid.UUID, bool, error) {
-	if im.videoUUIDByID == nil {
-		im.videoUUIDByID = map[int64]string{}
-		videos, err := im.src.Videos(ctx)
-		if err != nil {
-			return uuid.Nil, false, err
-		}
-		for _, v := range videos {
-			im.videoUUIDByID[v.ID] = v.UUID
-		}
+	if id, ok := im.videoVidraByID[numericID]; ok {
+		return id, id != uuid.Nil, nil
 	}
-	uuidStr, ok := im.videoUUIDByID[numericID]
+	byID, err := im.sourceVideosByID(ctx)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	v, ok := byID[numericID]
 	if !ok {
 		return uuid.Nil, false, nil
 	}
-	return im.resolveParent(ctx, KindVideo, uuidStr)
+	id, found, err := im.resolveParent(ctx, KindVideo, v.UUID)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	if !found {
+		id = uuid.Nil
+	}
+	if im.videoVidraByID == nil {
+		im.videoVidraByID = map[int64]uuid.UUID{}
+	}
+	im.videoVidraByID[numericID] = id
+	return id, found, nil
 }
 
 // ── playlists (+ elements) ──
