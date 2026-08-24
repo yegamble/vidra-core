@@ -29,6 +29,22 @@ const (
 	maxDrainBackoff = time.Hour
 	// maxLastErrorLen bounds the stored last_error string.
 	maxLastErrorLen = 500
+	// maxRequestPayloadBytes bounds ONE HTTP request to the search service.
+	//
+	// It is deliberately below vidra-search's default HTTP_BODY_LIMIT (2M) so
+	// the two sides agree without an operator configuring either. Before this
+	// bound existed the drainer sent every claimed row in a single request, and
+	// on a real catalogue that request was megabytes of reconcile pages: the
+	// receiver answered 413, the WHOLE batch was rescheduled — including small,
+	// unrelated events that merely shared it — and after maxDrainAttempts the
+	// reconcile dead-lettered. The visible symptom was search that silently
+	// never indexed anything, with nothing in the API logs, because the failure
+	// was entirely on the delivery side.
+	//
+	// Raising the receiver's limit alone does not fix it: a request large enough
+	// to be accepted is then large enough to exceed the client's send deadline.
+	// The payload has to be bounded, not the limit raised.
+	maxRequestPayloadBytes = 1 << 20 // 1 MiB
 )
 
 // DrainRepository is the outbox data access the drainer needs.
@@ -79,11 +95,18 @@ func NewDrainer(repo DrainRepository, sender Sender, logger *slog.Logger, opts .
 	return d
 }
 
-// Drain claims up to limit due events and delivers them in one batch. On a
-// transport/5xx failure the whole batch is rescheduled/dead-lettered; on a 200
-// each event is marked delivered unless the search service reported it in
+// Drain claims up to limit due events and delivers them in one or more batches.
+// On a transport/5xx failure the affected batch is rescheduled/dead-lettered; on
+// a 200 each event is marked delivered unless the search service reported it in
 // Failed[], in which case only that event retries. Returns the number delivered;
 // only the claim-query error is surfaced (per-event outcomes are persisted).
+//
+// The claimed rows are split so that no single request exceeds
+// maxRequestPayloadBytes. Row COUNT is not a useful bound on its own: a
+// reconcile.page carries a whole page of documents, so a batch of them is orders
+// of magnitude larger than the same number of video.upsert events, and an
+// unbounded request is rejected outright by the receiver's body limit. See
+// maxRequestPayloadBytes.
 func (d *Drainer) Drain(ctx context.Context, limit int32) (int, error) {
 	rows, err := d.repo.ClaimDueSearchEvents(ctx, sqlcgen.ClaimDueSearchEventsParams{
 		BatchSize:    limit,
@@ -96,6 +119,20 @@ func (d *Drainer) Drain(ctx context.Context, limit int32) (int, error) {
 		return 0, nil
 	}
 
+	delivered := 0
+	var firstErr error
+	for _, chunk := range chunkByPayload(rows, maxRequestPayloadBytes) {
+		n, sendErr := d.sendChunk(ctx, chunk)
+		delivered += n
+		if sendErr != nil && firstErr == nil {
+			firstErr = sendErr
+		}
+	}
+	return delivered, firstErr
+}
+
+// sendChunk delivers one payload-bounded group and records each row's outcome.
+func (d *Drainer) sendChunk(ctx context.Context, rows []sqlcgen.ClaimDueSearchEventsRow) (int, error) {
 	batch := EventBatch{Events: make([]Envelope, 0, len(rows))}
 	for _, r := range rows {
 		batch.Events = append(batch.Events, Envelope{
@@ -133,6 +170,30 @@ func (d *Drainer) Drain(ctx context.Context, limit int32) (int, error) {
 		delivered++
 	}
 	return delivered, nil
+}
+
+// chunkByPayload splits rows into groups whose summed payload stays under
+// budget. A single row larger than the budget is sent alone: it cannot be split
+// here, and sending it is strictly better than never attempting it — if the
+// receiver rejects it, that row dead-letters on its own instead of taking a
+// whole batch of unrelated events down with it, which is what used to happen.
+func chunkByPayload(rows []sqlcgen.ClaimDueSearchEventsRow, budget int) [][]sqlcgen.ClaimDueSearchEventsRow {
+	var out [][]sqlcgen.ClaimDueSearchEventsRow
+	var cur []sqlcgen.ClaimDueSearchEventsRow
+	size := 0
+	for _, r := range rows {
+		n := len(r.Payload)
+		if len(cur) > 0 && size+n > budget {
+			out = append(out, cur)
+			cur, size = nil, 0
+		}
+		cur = append(cur, r)
+		size += n
+	}
+	if len(cur) > 0 {
+		out = append(out, cur)
+	}
+	return out
 }
 
 // recordFailure reschedules with backoff, or dead-letters after the cap.
