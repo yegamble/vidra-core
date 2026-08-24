@@ -127,6 +127,26 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countUsersMatching = `-- name: CountUsersMatching :one
+SELECT count(*)
+FROM users u
+WHERE ($1::text = ''
+       OR u.username ILIKE '%' || $1 || '%'
+       OR u.email ILIKE '%' || $1 || '%')
+`
+
+// How many accounts ListUsers would return for the same query, ignoring
+// pagination. The WHERE clause MUST stay identical to ListUsers': a total that
+// counts a different set than the page it labels is worse than no total, since
+// the admin UI derives its page count from it. CountUsers (unfiltered) is a
+// different question and is kept for callers that ask it.
+func (q *Queries) CountUsersMatching(ctx context.Context, query string) (int64, error) {
+	row := q.db.QueryRow(ctx, countUsersMatching, query)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
 VALUES ($1, $2, $3, $4, $5, $6)

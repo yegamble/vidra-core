@@ -28,6 +28,23 @@ func newFakeRepo() *fakeRepo {
 }
 
 func (f *fakeRepo) CountUsers(_ context.Context) (int64, error) { return int64(len(f.users)), nil }
+
+// CountUsersMatching mirrors ListUsers' filter so a test asserting the total
+// against a filtered page is actually asserting something.
+func (f *fakeRepo) CountUsersMatching(_ context.Context, query string) (int64, error) {
+	if query == "" {
+		return int64(len(f.users)), nil
+	}
+	q := strings.ToLower(query)
+	var n int64
+	for _, u := range f.users {
+		if strings.Contains(strings.ToLower(u.Username), q) ||
+			strings.Contains(strings.ToLower(u.Email), q) {
+			n++
+		}
+	}
+	return n, nil
+}
 func (f *fakeRepo) CountPublicVideos(_ context.Context) (int64, error) {
 	return f.publicVideos, nil
 }

@@ -38,6 +38,7 @@ var (
 // satisfies it directly; tests substitute an in-memory fake.
 type Repository interface {
 	ListUsers(ctx context.Context, arg sqlcgen.ListUsersParams) ([]sqlcgen.ListUsersRow, error)
+	CountUsersMatching(ctx context.Context, query string) (int64, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
 	AdminUpdateUser(ctx context.Context, arg sqlcgen.AdminUpdateUserParams) (sqlcgen.User, error)
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
@@ -70,6 +71,14 @@ func (s *Service) ListUsers(ctx context.Context, query string, limit, offset int
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
+}
+
+// CountUsersMatching returns how many accounts ListUsers would return for the
+// same query, ignoring pagination — the total a caller needs to know how many
+// pages exist. It counts the SAME set the page came from, so it moves with the
+// search filter rather than reporting the instance total next to a filtered page.
+func (s *Service) CountUsersMatching(ctx context.Context, query string) (int64, error) {
+	return s.repo.CountUsersMatching(ctx, query)
 }
 
 // UpdateUserInput is a partial admin edit of an account; nil Role/IsActive/

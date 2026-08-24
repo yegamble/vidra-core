@@ -16967,15 +16967,24 @@ components:
           format: date-time
     AdminUserListResponse:
       type: object
-      required: [users, limit, offset]
+      required: [users, total, limit, offset]
       properties:
         users:
           type: array
           items:
             $ref: "#/components/schemas/AdminUser"
+        total:
+          type: integer
+          format: int64
+          description: >-
+            How many accounts match the same query, ignoring pagination. Counted
+            with the request's own `q`, so a filtered page reports the size of
+            its own result set rather than the instance total. Without it a
+            client cannot tell a last page from a truncated one.
+          example: 4649
         limit:
           type: integer
-          example: 20
+          example: 50
         offset:
           type: integer
           example: 0
