@@ -3,6 +3,7 @@ package media
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,18 @@ import (
 
 	"github.com/vidra/vidra-core/internal/storage"
 )
+
+// ErrNoMeasurableDuration is returned when neither the caller's hint nor a probe
+// of the source produced a duration, so PlanStoryboard has nothing to lay a
+// sprite sheet out from.
+//
+// It is a SENTINEL rather than a plain error because it is the one storyboard
+// failure that is provably permanent: the input to the plan is the duration and
+// nothing else, so re-running against the same object re-runs the same probe and
+// reaches the same answer. A retrying caller (the storyboard backfill) matches on
+// it to give up immediately instead of spending its retry budget re-decoding
+// media that can never yield a sheet.
+var ErrNoMeasurableDuration = errors.New("media: storyboard: source has no measurable duration")
 
 // Storyboard sprite geometry: a grid of small poster tiles the player shows as a
 // seek-bar hover preview. Tiles are 160x90 (16:9 scaled with padding), packed
@@ -224,7 +237,7 @@ func (t *Storyboarder) Storyboard(ctx context.Context, key string, durationSecon
 	}
 	plan, ok := PlanStoryboard(durationSeconds)
 	if !ok {
-		return nil, nil, fmt.Errorf("media: storyboard: source %q has no measurable duration", key)
+		return nil, nil, fmt.Errorf("%w: %q", ErrNoMeasurableDuration, key)
 	}
 
 	src, cleanup, err := openSource(ctx, t.blobs, key)

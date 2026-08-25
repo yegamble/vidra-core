@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -60,6 +61,11 @@ var (
 	// ErrThumbnailUnavailable means server-side frame extraction is not available
 	// (no ffmpeg-backed thumbnailer wired). The HTTP layer maps it to 503 (W2.C5).
 	ErrThumbnailUnavailable = errors.New("video: thumbnail frame extraction unavailable")
+	// ErrStoryboarderUnavailable means no storyboard generator is wired (ffmpeg or
+	// ffprobe missing at boot). Nothing serves it over HTTP; it exists so
+	// GenerateStoryboard's caller can tell "there is no generator here" apart from
+	// "the generator ran and failed".
+	ErrStoryboarderUnavailable = errors.New("video: storyboard generation unavailable")
 	// ErrNoProcessedOriginal means a frame-pick was requested before the video has
 	// a processed original — no stored original, or no probed duration yet. The
 	// HTTP layer maps it to 409 (W2.C5).
@@ -1340,31 +1346,64 @@ func (s *Service) HasStoryboard(ctx context.Context, videoID uuid.UUID) bool {
 	return err == nil
 }
 
-// generateStoryboard renders the seek-preview sprite sheet + WebVTT map for the
-// video and stores them as kind='storyboard'/'storyboard_vtt' files, replacing
-// any previous pair. Best-effort: any failure is swallowed so it never blocks
-// publishing.
+// generateStoryboard is the BEST-EFFORT face of GenerateStoryboard, for the
+// publish paths (Process, ReplaceSource) where a missing seek preview must never
+// stop a video going live. It exists only to make that swallow explicit at the
+// call site; the work itself is GenerateStoryboard's and is not duplicated here.
 func (s *Service) generateStoryboard(ctx context.Context, videoID uuid.UUID, originalKey string, durationHint int) {
+	_ = s.GenerateStoryboard(ctx, videoID, originalKey, durationHint)
+}
+
+// GenerateStoryboard renders the seek-preview sprite sheet + WebVTT map for the
+// video and stores them as kind='storyboard'/'storyboard_vtt' files, replacing
+// any previous pair. durationHint (0 if unknown) is passed to the generator,
+// which probes the source when it has nothing better.
+//
+// It reports WHY it could not, which is the whole reason it is separate from the
+// unexported wrapper above. The publish paths genuinely do not care — a video
+// with no storyboard is a video that plays — but the backfill worker
+// (internal/storyboardbackfill) has to tell "the object store blipped, try again
+// tomorrow" apart from "this source has no duration and never will", and it can
+// only do that if the error survives. media.ErrNoMeasurableDuration is the
+// permanent one; everything else is treated as retryable.
+//
+// Two callers, one implementation: nothing here may be copied into the backfill,
+// because the pair of blob writes and the delete-then-insert of the two
+// video_files rows is exactly the part that must not drift between the publish
+// path and the repair path.
+func (s *Service) GenerateStoryboard(ctx context.Context, videoID uuid.UUID, originalKey string, durationHint int) error {
 	if s.blobs == nil {
-		return
+		return ErrStorageUnavailable
+	}
+	if s.storyboarder == nil {
+		return ErrStoryboarderUnavailable
 	}
 	sprite, vtt, err := s.storyboarder.Storyboard(ctx, originalKey, durationHint)
-	if err != nil || len(sprite) == 0 || len(vtt) == 0 {
-		return
+	if err != nil {
+		return err
+	}
+	if len(sprite) == 0 || len(vtt) == 0 {
+		// Not an error from the generator's point of view, but there is nothing to
+		// store and the caller must not record a success.
+		return fmt.Errorf("video: storyboard generator returned an empty sheet or map for %q", originalKey)
 	}
 	jpgKey := media.StoryboardKeyJPG(videoID)
 	vttKey := media.StoryboardKeyVTT(videoID)
 	_, spriteSum, err := storage.PutSizedHashed(ctx, s.blobs, jpgKey, bytes.NewReader(sprite), int64(len(sprite)))
 	if err != nil {
-		return
+		return err
 	}
 	_, vttSum, err := storage.PutSizedHashed(ctx, s.blobs, vttKey, bytes.NewReader(vtt), int64(len(vtt)))
 	if err != nil {
-		return
+		return err
 	}
-	_ = s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{VideoID: videoID, Kind: "storyboard"})
-	_ = s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{VideoID: videoID, Kind: "storyboard_vtt"})
-	_, _ = s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
+	if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{VideoID: videoID, Kind: "storyboard"}); err != nil {
+		return err
+	}
+	if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{VideoID: videoID, Kind: "storyboard_vtt"}); err != nil {
+		return err
+	}
+	if _, err := s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
 		VideoID:      videoID,
 		Kind:         "storyboard",
 		StorageKey:   jpgKey,
@@ -1372,8 +1411,10 @@ func (s *Service) generateStoryboard(ctx context.Context, videoID uuid.UUID, ori
 		OriginalName: "storyboard.jpg",
 		SizeBytes:    int64(len(sprite)),
 		Sha256:       spriteSum,
-	})
-	_, _ = s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
+	}); err != nil {
+		return err
+	}
+	if _, err := s.repo.CreateVideoFile(ctx, sqlcgen.CreateVideoFileParams{
 		VideoID:      videoID,
 		Kind:         "storyboard_vtt",
 		StorageKey:   vttKey,
@@ -1381,7 +1422,10 @@ func (s *Service) generateStoryboard(ctx context.Context, videoID uuid.UUID, ori
 		OriginalName: "storyboard.vtt",
 		SizeBytes:    int64(len(vtt)),
 		Sha256:       vttSum,
-	})
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 // acceptedImageExt returns the served content type for filename when it is an
