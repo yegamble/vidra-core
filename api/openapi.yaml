@@ -18838,9 +18838,9 @@ components:
             are resolved. Defaults to skip (safest, non-destructive).
         source_authoritative:
           type: boolean
-          default: false
           description: >-
-            Whether the SOURCE wins where it and this instance have diverged. It
+            Optional; omitted means false. Whether the SOURCE wins where it and
+            this instance have diverged. It
             is a SECOND, ORTHOGONAL axis, not another conflict_policy value: the
             policy resolves natural-key collisions at insert time, this decides
             whether a re-run may UPDATE the rows the import already owns. It
