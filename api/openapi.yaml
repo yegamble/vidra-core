@@ -1715,10 +1715,17 @@ paths:
       description: >-
         The channels the caller OWNS plus the channels shared with them as an
         editor collaborator (migration 0097), owned first. Each channel carries
-        a `role` of "owner" or "editor".
+        a `role` of "owner" or "editor" and its follower count.
+
+
+        BREAKING (this release): paginated, with a `total`. It previously
+        returned every channel unbounded.
       tags: [channels]
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: The user's owned + collaborated channels (possibly empty).
@@ -1739,6 +1746,9 @@ paths:
       description: >-
         The channel's editor collaborators. Visible to the channel owner and to
         existing members; anyone else gets 403 (unknown handle → 404).
+
+
+        BREAKING (this release): paginated, with a `total`.
       tags: [channels]
       security:
         - bearerAuth: []
@@ -1748,6 +1758,8 @@ paths:
           required: true
           schema:
             type: string
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: The channel's members (possibly empty).
@@ -2924,21 +2936,8 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of followed channels (possibly empty).
@@ -2970,21 +2969,8 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of videos from followed channels (possibly empty).
@@ -3062,6 +3048,11 @@ paths:
         The channel owner (bearer token) sees all of their videos (any state);
         everyone else sees only public, published ones. Each item carries its
         view count and whether a poster image exists.
+
+
+        BREAKING (this release): this route is now PAGINATED and reports `total`.
+        It previously returned every video in the channel on every request, so a
+        channel with tens of thousands of videos serialised all of them.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -3072,6 +3063,20 @@ paths:
           required: true
           schema:
             type: string
+        - name: sort
+          in: query
+          required: false
+          description: >-
+            Ordering by publish time. `-published_at` (newest first) is the
+            default and reproduces the previous fixed ordering; `published_at`
+            is oldest first. These back the Latest/Oldest chips on the channel
+            page.
+          schema:
+            type: string
+            enum: [-published_at, published_at]
+            default: -published_at
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: The channel's videos (possibly empty).
@@ -3156,21 +3161,8 @@ paths:
             Unknown value -> 422.
           schema:
             type: string
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of public videos.
@@ -3247,21 +3239,8 @@ paths:
           schema:
             type: string
             maxLength: 100
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
         - name: tag
           in: query
           required: false
@@ -5906,9 +5885,15 @@ paths:
         Returns the authenticated user's channel syncs (newest first), each with
         its state (waiting_first_run, syncing, idle, failed), last_sync_at, and a
         safe last_error.
+
+
+        BREAKING (this release): paginated, with a `total`.
       tags: [channels]
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: The caller's channel syncs.
@@ -6319,21 +6304,8 @@ paths:
           schema:
             type: string
             format: uuid
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of comments (possibly empty).
@@ -6820,21 +6792,8 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of saved videos (possibly empty).
@@ -6951,21 +6910,8 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: The caller's search history.
@@ -7060,21 +7006,8 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
         - name: progress
           in: query
           required: false
@@ -7242,21 +7175,8 @@ paths:
           description: When true, return only unread notifications.
           schema:
             type: boolean
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of notifications (possibly empty).
@@ -7517,10 +7437,18 @@ paths:
     get:
       operationId: listMyPlaylists
       summary: List the caller's playlists
-      description: Returns the caller's playlists, newest first, each with its public video count.
+      description: >-
+        Returns the caller's playlists, newest first, each with its public video
+        count.
+
+
+        BREAKING (this release): paginated, with a `total`.
       tags: [playlists]
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: The caller's playlists.
@@ -7539,9 +7467,13 @@ paths:
       operationId: getPlaylist
       summary: Get a playlist and its videos
       description: >-
-        Returns a playlist with its ordered public, published video cards.
-        Public/unlisted playlists are visible to anyone; a private playlist is
-        visible only to its owner (otherwise 404).
+        Returns a playlist with one page of its ordered public, published video
+        cards. Public/unlisted playlists are visible to anyone; a private
+        playlist is visible only to its owner (otherwise 404).
+
+
+        BREAKING (this release): the item list is paginated, and
+        total/limit/offset describe the VIDEOS.
       tags: [playlists]
       security: []
       parameters:
@@ -7551,6 +7483,8 @@ paths:
           schema:
             type: string
             format: uuid
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: The playlist and its videos.
@@ -8043,8 +7977,8 @@ paths:
       summary: List the moderation queue
       description: >-
         Returns abuse reports, newest first, with the reporter and target
-        context. Restricted to moderators/admins. status=open returns only
-        unresolved reports. Paginated via limit (1–100, default 20) and offset.
+        context, plus a `total` counting the reports that match the same status
+        filter. Restricted to moderators/admins.
       tags: [moderation]
       security:
         - bearerAuth: []
@@ -8052,25 +7986,18 @@ paths:
         - name: status
           in: query
           required: false
-          description: Set to "open" to return only unresolved reports.
+          description: >-
+            Which half of the queue to return. `open` is unresolved; `resolved`
+            is everything already accepted or rejected; `all` (the default, and
+            what an absent parameter means) is both. An unrecognised value is a
+            400 — it previously meant "all", so `?status=resolved` silently
+            returned the entire queue.
           schema:
             type: string
-            enum: [open]
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+            enum: [open, resolved, all]
+            default: all
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of reports (possibly empty).
@@ -8193,21 +8120,8 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of watched words (possibly empty).
@@ -8373,21 +8287,8 @@ paths:
           description: Case-insensitive body substring filter.
           schema:
             type: string
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of comments (possibly empty).
@@ -8412,10 +8313,27 @@ paths:
       operationId: listAdminVideos
       summary: List all videos (admin/moderator overview)
       description: >-
-        The admin/moderator videos overview: every video (any privacy/state),
-        newest first, each with its owning channel, view count, and whether it is
-        currently blocked. Restricted to moderators/admins. Optional q filters by
-        title substring. Paginated via limit (1–100, default 20) and offset.
+        The admin/moderator videos overview: local videos AND federated metadata
+        rows (any privacy/state), each with its owning channel, view count, file
+        facts and whether it is currently blocked. Restricted to
+        moderators/admins.
+
+
+        `total` reports how many videos match the SAME filters, ignoring
+        pagination — the number an "N videos" header should render. Reading the
+        page length instead is what made this view report "100" on instances
+        with far more.
+
+
+        Every filter is optional and their effects intersect. An unrecognised
+        value for any of them is a 400, never a silently ignored no-op.
+
+
+        There is deliberately no storage-location filter: `object_storage` is
+        derived from the instance-wide storage backend, not per-file truth, so
+        every local video reports the same value and filtering on it would be
+        meaningless. PeerTube can offer that filter because it records a per-file
+        storage enum; vidra has no equivalent yet.
       tags: [moderation]
       security:
         - bearerAuth: []
@@ -8426,21 +8344,110 @@ paths:
           description: Case-insensitive title substring filter.
           schema:
             type: string
-        - name: limit
+        - name: sort
           in: query
           required: false
+          description: >-
+            Ordering. Each key is accepted bare (ascending) or `-`-prefixed
+            (descending). `published_at` is an ALIAS of `created_at`: videos
+            carry no separate published_at column and the federated arm projects
+            its own publish time into created_at, so they order the same rows the
+            same way. The default reproduces the previous fixed ordering.
           schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
+            type: string
+            enum:
+              [
+                -created_at, created_at, -published_at, published_at,
+                -views, views, -duration, duration,
+                title, -title, state, -state,
+                -likes, likes, -comments, comments,
+                -size_bytes, size_bytes,
+              ]
+            default: -created_at
+        - name: state
           in: query
           required: false
+          description: >-
+            Lifecycle states to include. Repeatable and/or comma-separated
+            (`?state=draft&state=failed` and `?state=draft,failed` are
+            equivalent). Absent means all states.
+          explode: true
           schema:
-            type: integer
-            minimum: 0
-            default: 0
+            type: array
+            items:
+              type: string
+              enum: [draft, processing, scheduled, quarantined, transcoding, published, failed]
+        - name: privacy
+          in: query
+          required: false
+          description: >-
+            Privacy tiers to include. Repeatable and/or comma-separated. Absent
+            means all tiers.
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [public, unlisted, private, password]
+        - name: scope
+          in: query
+          required: false
+          description: Whether to include locally hosted rows, federated rows, or both.
+          schema:
+            type: string
+            enum: [local, remote, all]
+            default: all
+        - name: channel
+          in: query
+          required: false
+          description: >-
+            Exact channel handle. Federated rows match on their
+            `name@domain` handle.
+          schema:
+            type: string
+            maxLength: 255
+        - name: published_after
+          in: query
+          required: false
+          description: Only videos published at or after this instant (RFC3339).
+          schema:
+            type: string
+            format: date-time
+        - name: published_before
+          in: query
+          required: false
+          description: >-
+            Only videos published at or before this instant (RFC3339). An
+            inverted window (after > before) is a 400 rather than an empty page
+            that looks like "no data".
+          schema:
+            type: string
+            format: date-time
+        - name: has_original
+          in: query
+          required: false
+          description: >-
+            Whether the video retains its uploaded original. TRI-STATE: absent
+            means "all", not "false" — a plain boolean would make "videos with no
+            original" unexpressible.
+          schema:
+            type: boolean
+        - name: has_hls
+          in: query
+          required: false
+          description: Whether the video has any HLS renditions. Tri-state; absent means all.
+          schema:
+            type: boolean
+        - name: has_web_files
+          in: query
+          required: false
+          description: >-
+            Whether the video has any progressive web files (video_files of kind
+            rendition or webm). Tri-state; absent means all.
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of videos (possibly empty).
@@ -8550,21 +8557,8 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of blocked videos (possibly empty).
@@ -8598,21 +8592,8 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of quarantined videos (possibly empty).
@@ -8834,21 +8815,8 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of muted accounts (possibly empty).
@@ -8939,21 +8907,8 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of muted instances (possibly empty).
@@ -9042,21 +8997,8 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of blocked instances (possibly empty).
@@ -9272,21 +9214,8 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of blocked remote videos (possibly empty).
@@ -9458,21 +9387,8 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of remote follows (possibly empty).
@@ -9649,21 +9565,8 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of blocked accounts (possibly empty).
@@ -9810,6 +9713,9 @@ paths:
         Lists the caller's live streams for a channel they own, newest first.
         Behind auth; a non-owner is 403, an unknown channel 404. Stream keys are
         never included.
+
+
+        BREAKING (this release): paginated, with a `total`.
       tags: [live]
       security:
         - bearerAuth: []
@@ -9819,6 +9725,8 @@ paths:
           required: true
           schema:
             type: string
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: The channel's live streams (possibly empty).
@@ -9878,13 +9786,7 @@ paths:
             minimum: 1
             maximum: 100
             default: 30
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: The currently-live public streams (possibly empty).
@@ -12897,32 +12799,25 @@ paths:
       summary: List the registration approval queue
       description: >-
         Returns registration requests, newest first, with the reviewing admin's
-        username. Restricted to admins. status=pending returns only unresolved
-        requests. Paginated via limit (1–100, default 20) and offset. The stored
-        password hash is never exposed.
+        username, plus a `total` counting the requests that match the same status
+        filter. Restricted to admins. The stored password hash is never exposed.
       tags: [admin]
       security:
         - bearerAuth: []
       parameters:
         - name: status
           in: query
-          description: Set to "pending" to return only unresolved requests.
+          description: >-
+            Lifecycle state to return. `all` (the default, and what an absent
+            parameter means) returns every request. An unrecognised value is a
+            400 — it previously meant "all", so `?status=approved` silently
+            returned the entire queue.
           schema:
             type: string
-            enum: [pending]
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: offset
-          in: query
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+            enum: [pending, approved, rejected, all]
+            default: all
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of registration requests (possibly empty).
@@ -13197,13 +13092,7 @@ paths:
             minimum: 1
             maximum: 200
             default: 50
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+        - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
           description: A page of accounts.
@@ -13334,7 +13223,65 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  parameters:
+    # The page bounds shared by every list endpoint whose ceiling is 100. A few
+    # endpoints have their own bounds (the admin user list pages to 200) and keep
+    # their parameter inline; everything else points here so "how big is a page"
+    # is answered once.
+    PageLimit:
+      name: limit
+      in: query
+      required: false
+      description: >-
+        Page size. Any value in [1, 100] is accepted — this is a RANGE, not a
+        fixed set of options. Out-of-range and malformed values are clamped, never
+        rejected, so an existing client sending limit=500 keeps receiving the
+        first 100 rows rather than a 4xx.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    PageOffset:
+      name: offset
+      in: query
+      required: false
+      description: Rows to skip. Negative values are clamped to 0.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
   schemas:
+    PageMeta:
+      type: object
+      description: >-
+        The pagination envelope every list response carries. It is composed into
+        each list schema with allOf rather than re-declared, so the wire shape is
+        defined in exactly one place; the fields stay at the TOP LEVEL of the
+        response object, not nested.
+      required: [total, limit, offset]
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            How many rows match the SAME filters as this page, ignoring limit and
+            offset. Without it a client cannot tell "last page" from "there is
+            more" and can only render the page length — which is how the admin
+            videos view came to report "100" on an instance with far more. A
+            filtered request reports the size of its own filtered result set, not
+            the instance total.
+          example: 4649
+        limit:
+          type: integer
+          minimum: 1
+          description: The page size actually applied, after clamping.
+          example: 20
+        offset:
+          type: integer
+          minimum: 0
+          example: 0
     LivenessResponse:
       type: object
       required: [status]
@@ -13781,7 +13728,7 @@ components:
           description: >-
             Operator-tuned client behaviour defaults (W5/W9 consume): what
             anonymous visitors see first and how publish forms are seeded.
-          required: [feed_sort, feed_scope, landing_page, theme,
+          required: [feed_sort, feed_scope, browse_scroll_mode, landing_page, theme,
                      player_autoplay, miniature_prefer_author_display_name, publish]
           properties:
             feed_sort:
@@ -13790,6 +13737,20 @@ components:
             feed_scope:
               type: string
               enum: [local, all]
+            browse_scroll_mode:
+              type: string
+              enum: [button, auto]
+              # No `default:` here on purpose. This is a RESPONSE property and it
+              # is already in `required`, so the field is always present; with
+              # openapi-typescript a `default:` additionally makes a property
+              # mandatory for typed clients, and that footgun is not worth
+              # re-stating a default the description already gives.
+              description: >-
+                How a browse list advances past its first page: "button" is an
+                explicit pager / Load more control (the default, and the shipped
+                behaviour), "auto" is infinite scroll. Operator-level because it
+                is an accessibility and data-usage decision — infinite scroll
+                strands keyboard users and anything below the list.
             landing_page:
               type: string
               enum: [home-recent, trending, local, home]
@@ -14422,13 +14383,15 @@ components:
             Toggle ATProto/Bluesky cross-posting for this channel (owner only).
             Absent leaves it unchanged.
     ChannelListResponse:
-      type: object
-      required: [channels]
-      properties:
-        channels:
-          type: array
-          items:
-            $ref: "#/components/schemas/Channel"
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [channels]
+          properties:
+            channels:
+              type: array
+              items:
+                $ref: "#/components/schemas/Channel"
     ChannelMember:
       type: object
       description: A channel collaborator (migration 0097).
@@ -14451,13 +14414,15 @@ components:
           type: string
           format: date-time
     ChannelMembersResponse:
-      type: object
-      required: [members]
-      properties:
-        members:
-          type: array
-          items:
-            $ref: "#/components/schemas/ChannelMember"
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [members]
+          properties:
+            members:
+              type: array
+              items:
+                $ref: "#/components/schemas/ChannelMember"
     AddChannelMemberRequest:
       type: object
       required: [handle]
@@ -14504,17 +14469,15 @@ components:
           type: string
           enum: [all, none]
     FollowedChannelsResponse:
-      type: object
-      required: [channels, limit, offset]
-      properties:
-        channels:
-          type: array
-          items:
-            $ref: "#/components/schemas/FollowedChannel"
-        limit:
-          type: integer
-        offset:
-          type: integer
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [channels]
+          properties:
+            channels:
+              type: array
+              items:
+                $ref: "#/components/schemas/FollowedChannel"
     DonationAddress:
       type: object
       description: >-
@@ -15680,17 +15643,15 @@ components:
             True when the video's creator has hearted this comment (a like
             from the uploader).
     CommentListResponse:
-      type: object
-      required: [comments, limit, offset]
-      properties:
-        comments:
-          type: array
-          items:
-            $ref: "#/components/schemas/Comment"
-        limit:
-          type: integer
-        offset:
-          type: integer
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [comments]
+          properties:
+            comments:
+              type: array
+              items:
+                $ref: "#/components/schemas/Comment"
     UpdateCommentRequest:
       type: object
       required: [body]
@@ -15715,17 +15676,15 @@ components:
           type: string
           format: date-time
     MutedAccountListResponse:
-      type: object
-      required: [accounts, limit, offset]
-      properties:
-        accounts:
-          type: array
-          items:
-            $ref: "#/components/schemas/MutedAccount"
-        limit:
-          type: integer
-        offset:
-          type: integer
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [accounts]
+          properties:
+            accounts:
+              type: array
+              items:
+                $ref: "#/components/schemas/MutedAccount"
     MutedInstance:
       type: object
       required: [domain, muted_at]
@@ -15736,17 +15695,15 @@ components:
           type: string
           format: date-time
     MutedInstanceListResponse:
-      type: object
-      required: [instances, limit, offset]
-      properties:
-        instances:
-          type: array
-          items:
-            $ref: "#/components/schemas/MutedInstance"
-        limit:
-          type: integer
-        offset:
-          type: integer
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [instances]
+          properties:
+            instances:
+              type: array
+              items:
+                $ref: "#/components/schemas/MutedInstance"
     BlockInstanceRequest:
       type: object
       required: [domain]
@@ -15774,17 +15731,15 @@ components:
           type: string
           format: date-time
     BlockedInstanceListResponse:
-      type: object
-      required: [instances, limit, offset]
-      properties:
-        instances:
-          type: array
-          items:
-            $ref: "#/components/schemas/BlockedInstance"
-        limit:
-          type: integer
-        offset:
-          type: integer
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [instances]
+          properties:
+            instances:
+              type: array
+              items:
+                $ref: "#/components/schemas/BlockedInstance"
     RemoteVideo:
       type: object
       required: [id, remote, domain, title, description, object_url, watch_url, has_thumbnail]
@@ -15925,17 +15880,15 @@ components:
           type: string
           format: date-time
     RemoteFollowListResponse:
-      type: object
-      required: [follows, limit, offset]
-      properties:
-        follows:
-          type: array
-          items:
-            $ref: "#/components/schemas/RemoteFollow"
-        limit:
-          type: integer
-        offset:
-          type: integer
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [follows]
+          properties:
+            follows:
+              type: array
+              items:
+                $ref: "#/components/schemas/RemoteFollow"
     BlockedUser:
       type: object
       required: [user_id, username, display_name, blocked_at]
@@ -15951,17 +15904,15 @@ components:
           type: string
           format: date-time
     BlockedUserListResponse:
-      type: object
-      required: [users, limit, offset]
-      properties:
-        users:
-          type: array
-          items:
-            $ref: "#/components/schemas/BlockedUser"
-        limit:
-          type: integer
-        offset:
-          type: integer
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [users]
+          properties:
+            users:
+              type: array
+              items:
+                $ref: "#/components/schemas/BlockedUser"
     VideoRating:
       type: object
       required: [like_count, dislike_count, my_rating]
@@ -15977,13 +15928,15 @@ components:
           enum: [like, dislike, null]
           description: The caller's own rating, or null when anonymous or unrated.
     VideoListResponse:
-      type: object
-      required: [videos]
-      properties:
-        videos:
-          type: array
-          items:
-            $ref: "#/components/schemas/Video"
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [videos]
+          properties:
+            videos:
+              type: array
+              items:
+                $ref: "#/components/schemas/Video"
     VideoConfigOption:
       type: object
       required: [id, label]
@@ -16020,59 +15973,51 @@ components:
           items:
             $ref: "#/components/schemas/VideoConfigOption"
     VideoFeedResponse:
-      type: object
-      required: [videos, sort, limit, offset]
-      properties:
-        videos:
-          type: array
-          items:
-            $ref: "#/components/schemas/Video"
-        sort:
-          type: string
-          enum: [recent, popular, trending]
-          description: The ordering actually applied (normalised from the request).
-        scope:
-          type: string
-          enum: [local, all]
-          description: >-
-            The feed scope actually applied (normalised from the request);
-            present on the public feed only. "all" mixes federated remote
-            videos (remote:true cards) into the feed.
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [videos, sort]
+          properties:
+            videos:
+              type: array
+              items:
+                $ref: "#/components/schemas/Video"
+            sort:
+              type: string
+              enum: [recent, popular, trending]
+              description: The ordering actually applied (normalised from the request).
+            scope:
+              type: string
+              enum: [local, all]
+              description: >-
+                The feed scope actually applied (normalised from the request);
+                present on the public feed only. "all" mixes federated remote
+                videos (remote:true cards) into the feed.
     VideoSearchResponse:
-      type: object
-      required: [query, videos, limit, offset]
-      properties:
-        query:
-          type: string
-          example: go concurrency
-        videos:
-          type: array
-          items:
-            $ref: "#/components/schemas/Video"
-        remote:
-          type: array
-          description: >-
-            Remote-URI search hits (config-parity W13). Present only on the
-            first page (offset 0) when the query was URI/handle-shaped, the
-            caller's auth-state gate (search_remote_uri_users /
-            search_remote_uri_anonymous) allowed resolution, AND the target
-            resolved within the strict deadline; omitted otherwise —
-            unresolvable/timeout/rate-limited resolution degrades silently to
-            local-only results.
-          items:
-            $ref: "#/components/schemas/RemoteSearchResult"
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [query, videos]
+          properties:
+            query:
+              type: string
+              example: go concurrency
+            videos:
+              type: array
+              items:
+                $ref: "#/components/schemas/Video"
+            remote:
+              type: array
+              description: >-
+                Remote-URI search hits (config-parity W13). Present only on the
+                first page (offset 0) when the query was URI/handle-shaped, the
+                caller's auth-state gate (search_remote_uri_users /
+                search_remote_uri_anonymous) allowed resolution, AND the target
+                resolved within the strict deadline; omitted otherwise —
+                unresolvable/timeout/rate-limited resolution degrades silently to
+                local-only results.
+              items:
+                $ref: "#/components/schemas/RemoteSearchResult"
     RecommendationsResponse:
       type: object
       required: [items, personalized, source]
@@ -16176,19 +16121,15 @@ components:
               format: date-time
               description: When the caller last watched this video.
     WatchHistoryResponse:
-      type: object
-      required: [videos, limit, offset]
-      properties:
-        videos:
-          type: array
-          items:
-            $ref: "#/components/schemas/HistoryItem"
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [videos]
+          properties:
+            videos:
+              type: array
+              items:
+                $ref: "#/components/schemas/HistoryItem"
     NotificationActor:
       type: object
       required: [username, display_name]
@@ -16249,22 +16190,18 @@ components:
           enum: [video, comment, account, remote_video, message]
           description: What the report targeted (new_report and report_resolved notifications).
     NotificationListResponse:
-      type: object
-      required: [notifications, unread_count, limit, offset]
-      properties:
-        notifications:
-          type: array
-          items:
-            $ref: "#/components/schemas/Notification"
-        unread_count:
-          type: integer
-          format: int64
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [notifications, unread_count]
+          properties:
+            notifications:
+              type: array
+              items:
+                $ref: "#/components/schemas/Notification"
+            unread_count:
+              type: integer
+              format: int64
     UnreadCountResponse:
       type: object
       required: [unread_count]
@@ -16407,17 +16344,23 @@ components:
           type: string
           format: date-time
     PlaylistListResponse:
-      type: object
-      required: [playlists]
-      properties:
-        playlists:
-          type: array
-          items:
-            $ref: "#/components/schemas/Playlist"
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [playlists]
+          properties:
+            playlists:
+              type: array
+              items:
+                $ref: "#/components/schemas/Playlist"
     PlaylistDetailResponse:
-      description: A playlist's fields plus its ordered public, published video cards.
+      description: >-
+        A playlist's fields plus one page of its ordered public, published video
+        cards. total/limit/offset describe the VIDEOS; the playlist's own
+        video_count is unchanged.
       allOf:
         - $ref: "#/components/schemas/Playlist"
+        - $ref: "#/components/schemas/PageMeta"
         - type: object
           required: [videos]
           properties:
@@ -16526,19 +16469,15 @@ components:
           type: string
           format: date-time
     QuarantinedVideoListResponse:
-      type: object
-      required: [videos, limit, offset]
-      properties:
-        videos:
-          type: array
-          items:
-            $ref: "#/components/schemas/QuarantinedVideo"
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [videos]
+          properties:
+            videos:
+              type: array
+              items:
+                $ref: "#/components/schemas/QuarantinedVideo"
     RejectQuarantinedVideoRequest:
       type: object
       description: >-
@@ -16616,19 +16555,15 @@ components:
           type: string
           description: Snapshot of the reported message body at report time (survives a sender tombstone).
     ReportListResponse:
-      type: object
-      required: [reports, limit, offset]
-      properties:
-        reports:
-          type: array
-          items:
-            $ref: "#/components/schemas/Report"
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [reports]
+          properties:
+            reports:
+              type: array
+              items:
+                $ref: "#/components/schemas/Report"
     BlockedVideo:
       type: object
       description: A currently-blocked video, for the moderation block-list.
@@ -16659,19 +16594,15 @@ components:
           type: string
           format: date-time
     BlockedVideoListResponse:
-      type: object
-      required: [videos, limit, offset]
-      properties:
-        videos:
-          type: array
-          items:
-            $ref: "#/components/schemas/BlockedVideo"
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [videos]
+          properties:
+            videos:
+              type: array
+              items:
+                $ref: "#/components/schemas/BlockedVideo"
     BlockedRemoteVideo:
       type: object
       description: A currently-blocked federated remote video, for the moderation block-list.
@@ -16704,19 +16635,15 @@ components:
           type: string
           format: date-time
     BlockedRemoteVideoListResponse:
-      type: object
-      required: [videos, limit, offset]
-      properties:
-        videos:
-          type: array
-          items:
-            $ref: "#/components/schemas/BlockedRemoteVideo"
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [videos]
+          properties:
+            videos:
+              type: array
+              items:
+                $ref: "#/components/schemas/BlockedRemoteVideo"
     AdminVideo:
       type: object
       description: A local or federated video in the moderator inventory, with media/storage facts.
@@ -16772,7 +16699,11 @@ components:
           minimum: 0
         object_storage:
           type: boolean
-          description: Whether the local media backend is S3-compatible object storage.
+          description: >-
+            Whether the local media backend is S3-compatible object storage.
+            Derived from the INSTANCE storage backend, not per-file truth: every
+            local video reports the same value. That is why this endpoint offers
+            no filter over it.
         size_bytes:
           type: integer
           format: int64
@@ -16780,20 +16711,28 @@ components:
         blocked:
           type: boolean
           description: Whether the video is currently blocked (hidden from public surfaces).
+        likes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            Like count. Always 0 for a federated row, which has no local ratings.
+        comments:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            Live (non-tombstoned) comment count. Always 0 for a federated row.
     AdminVideoListResponse:
-      type: object
-      required: [videos, limit, offset]
-      properties:
-        videos:
-          type: array
-          items:
-            $ref: "#/components/schemas/AdminVideo"
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [videos]
+          properties:
+            videos:
+              type: array
+              items:
+                $ref: "#/components/schemas/AdminVideo"
     AdminComment:
       type: object
       description: A comment in the admin/moderator overview, with author + video context.
@@ -16828,19 +16767,15 @@ components:
             True for a tombstoned comment (its author's account was permanently
             deleted); body renders as "[deleted]".
     AdminCommentListResponse:
-      type: object
-      required: [comments, limit, offset]
-      properties:
-        comments:
-          type: array
-          items:
-            $ref: "#/components/schemas/AdminComment"
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [comments]
+          properties:
+            comments:
+              type: array
+              items:
+                $ref: "#/components/schemas/AdminComment"
     WatchedWord:
       type: object
       description: A term on the instance-wide watched-words list.
@@ -16858,19 +16793,15 @@ components:
           type: string
           format: date-time
     WatchedWordListResponse:
-      type: object
-      required: [words, limit, offset]
-      properties:
-        words:
-          type: array
-          items:
-            $ref: "#/components/schemas/WatchedWord"
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [words]
+          properties:
+            words:
+              type: array
+              items:
+                $ref: "#/components/schemas/WatchedWord"
     WatchedWordMatch:
       type: object
       description: >-
@@ -16911,19 +16842,15 @@ components:
           type: string
           format: date-time
     WatchedWordMatchListResponse:
-      type: object
-      required: [matches, limit, offset]
-      properties:
-        matches:
-          type: array
-          items:
-            $ref: "#/components/schemas/WatchedWordMatch"
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [matches]
+          properties:
+            matches:
+              type: array
+              items:
+                $ref: "#/components/schemas/WatchedWordMatch"
     CreateWatchedWordRequest:
       type: object
       required: [word]
@@ -16975,28 +16902,15 @@ components:
           type: string
           format: date-time
     AdminUserListResponse:
-      type: object
-      required: [users, total, limit, offset]
-      properties:
-        users:
-          type: array
-          items:
-            $ref: "#/components/schemas/AdminUser"
-        total:
-          type: integer
-          format: int64
-          description: >-
-            How many accounts match the same query, ignoring pagination. Counted
-            with the request's own `q`, so a filtered page reports the size of
-            its own result set rather than the instance total. Without it a
-            client cannot tell a last page from a truncated one.
-          example: 4649
-        limit:
-          type: integer
-          example: 50
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [users]
+          properties:
+            users:
+              type: array
+              items:
+                $ref: "#/components/schemas/AdminUser"
     QuotaStatus:
       type: object
       description: >-
@@ -17419,13 +17333,15 @@ components:
           type: string
           description: RTMP ingest base URL (omitted when no ingest is configured).
     LiveStreamListResponse:
-      type: object
-      required: [live_streams]
-      properties:
-        live_streams:
-          type: array
-          items:
-            $ref: "#/components/schemas/LiveStream"
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [live_streams]
+          properties:
+            live_streams:
+              type: array
+              items:
+                $ref: "#/components/schemas/LiveStream"
     LiveStreamCard:
       type: object
       description: >-
@@ -17461,17 +17377,15 @@ components:
             Live HLS playlist path, present only when a media server
             (LIVE_HLS_ROOT) is configured to serve it.
     LivePublicListResponse:
-      type: object
-      required: [live_streams, limit, offset]
-      properties:
-        live_streams:
-          type: array
-          items:
-            $ref: "#/components/schemas/LiveStreamCard"
-        limit:
-          type: integer
-        offset:
-          type: integer
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [live_streams]
+          properties:
+            live_streams:
+              type: array
+              items:
+                $ref: "#/components/schemas/LiveStreamCard"
     LiveStreamKey:
       type: object
       required: [stream_key]
@@ -17571,19 +17485,15 @@ components:
           format: int64
           description: The caller's unread messages (peer messages past their read watermark).
     ConversationListResponse:
-      type: object
-      required: [conversations, limit, offset]
-      properties:
-        conversations:
-          type: array
-          items:
-            $ref: "#/components/schemas/ConversationSummary"
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [conversations]
+          properties:
+            conversations:
+              type: array
+              items:
+                $ref: "#/components/schemas/ConversationSummary"
     SendMessageRequest:
       type: object
       description: >-
@@ -18070,19 +17980,15 @@ components:
           type: string
           maxLength: 256
     AuditLogListResponse:
-      type: object
-      required: [entries, limit, offset]
-      properties:
-        entries:
-          type: array
-          items:
-            $ref: "#/components/schemas/AuditLogEntry"
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [entries]
+          properties:
+            entries:
+              type: array
+              items:
+                $ref: "#/components/schemas/AuditLogEntry"
     MediaGCRequest:
       type: object
       description: Media garbage-collection request. dry_run defaults to true.
@@ -18675,18 +18581,17 @@ components:
         trace_id: { type: string, maxLength: 32 }
         occurred_at: { type: string, format: date-time }
     JobRunsResponse:
-      type: object
-      required: [runs, total, limit, offset, event_cursor]
-      properties:
-        runs:
-          type: array
-          items: { $ref: "#/components/schemas/JobRun" }
-        total: { type: integer, format: int64, minimum: 0 }
-        limit: { type: integer, minimum: 1, maximum: 100 }
-        offset: { type: integer, minimum: 0 }
-        event_cursor:
-          type: string
-          pattern: "^[0-9]+$"
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [runs, event_cursor]
+          properties:
+            runs:
+              type: array
+              items: { $ref: "#/components/schemas/JobRun" }
+            event_cursor:
+              type: string
+              pattern: "^[0-9]+$"
     JobRunDetailResponse:
       type: object
       required: [run, events, events_total, events_limit, events_offset, event_cursor]
@@ -19478,13 +19383,15 @@ components:
         channel_sync:
           $ref: "#/components/schemas/ChannelSync"
     ChannelSyncListResponse:
-      type: object
-      required: [channel_syncs]
-      properties:
-        channel_syncs:
-          type: array
-          items:
-            $ref: "#/components/schemas/ChannelSync"
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [channel_syncs]
+          properties:
+            channel_syncs:
+              type: array
+              items:
+                $ref: "#/components/schemas/ChannelSync"
     AutoCaptionRequest:
       type: object
       description: >-
@@ -19803,19 +19710,15 @@ components:
           type: string
           description: Username of the admin who reviewed it; omitted while pending.
     RegistrationRequestListResponse:
-      type: object
-      required: [requests, limit, offset]
-      properties:
-        requests:
-          type: array
-          items:
-            $ref: "#/components/schemas/RegistrationRequest"
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [requests]
+          properties:
+            requests:
+              type: array
+              items:
+                $ref: "#/components/schemas/RegistrationRequest"
     RejectRegistrationRequest:
       type: object
       properties:
@@ -19855,19 +19758,15 @@ components:
           type: string
           format: date-time
     FederationFollowerRequestListResponse:
-      type: object
-      required: [requests, limit, offset]
-      properties:
-        requests:
-          type: array
-          items:
-            $ref: "#/components/schemas/FederationFollowerRequest"
-        limit:
-          type: integer
-          example: 20
-        offset:
-          type: integer
-          example: 0
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [requests]
+          properties:
+            requests:
+              type: array
+              items:
+                $ref: "#/components/schemas/FederationFollowerRequest"
     LoginRequest:
       type: object
       required: [email, password]
