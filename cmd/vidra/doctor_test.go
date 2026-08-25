@@ -38,7 +38,7 @@ func TestDoctorHelpSucceedsOnStdout(t *testing.T) {
 			}
 			// The exit-code contract and the two spellings of the repo flag are the
 			// things a wrapper-script author needs from the help text.
-			for _, want := range []string{"It exits 0 unless", "-repo", "-C", "-env", "-timeout"} {
+			for _, want := range []string{"It exits 0 unless", "-repo", "-C", "-env", "-timeout", "-write-probe"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("help does not document %q:\n%s", want, out)
 				}
@@ -47,6 +47,23 @@ func TestDoctorHelpSucceedsOnStdout(t *testing.T) {
 				t.Errorf("help wrote to stderr:\n%s", h.err.String())
 			}
 		})
+	}
+}
+
+// The write probe is the one check that changes anything in the deployment it is
+// diagnosing, so the help text has to say both that it exists — an operator who
+// does not know it exists never learns their key is read-only — and that it
+// writes. A flag that quietly PUTs to production storage is worse than no flag.
+func TestDoctorHelpExplainsTheWriteProbeIsOptInBecauseItWrites(t *testing.T) {
+	h := newHarness(t)
+	if err := h.run("doctor", "--help"); err != nil {
+		t.Fatalf("`doctor --help` = %v, want success", err)
+	}
+	out := h.out.String()
+	for _, want := range []string{"--write-probe", "deletes it again", "opt-in"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("help does not explain the write probe (%q):\n%s", want, out)
+		}
 	}
 }
 

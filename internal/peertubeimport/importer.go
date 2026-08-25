@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -34,6 +35,9 @@ type Importer struct {
 	mediaMode MediaMode
 	policy    ConflictPolicy
 	force     bool
+	// sourceAuthoritative says the SOURCE wins where the two sides diverge, rather
+	// than the import only filling gaps. See Options.SourceAuthoritative.
+	sourceAuthoritative bool
 	// sealKey seals an actor private-key PEM for at-rest storage (secretbox under
 	// the KEK). Nil → store raw (dev only), matching the federation service.
 	sealKey func(pem string) (string, error)
@@ -73,6 +77,25 @@ type Options struct {
 	SrcMedia  storage.Backend
 	DestMedia storage.Backend
 	SealKey   func(pem string) (string, error)
+	// SourceAuthoritative says the SOURCE is the truth where the two sides
+	// diverge, instead of the import only filling gaps on this instance.
+	//
+	// The default (false) is gap-filling, and it is the right default: an import
+	// that overwrites is an import that can quietly undo somebody's work. It
+	// exists because the migration workflow this tool is actually used for is a
+	// REPEATED sync — the operator runs it against a still-live PeerTube on a
+	// schedule up to cutover, editing the new instance in between — and for that
+	// operator "the source wins" is the correct answer, not a hazard.
+	//
+	// TODAY ONLY THE ACTOR-IMAGE PASS READS IT. Every family the import can
+	// re-assert (chapters, ratings, renditions, the instance taxonomy) needs to
+	// answer to the same switch before it means "the source is authoritative" as a
+	// whole, and that is a separate piece of work; wiring a flag to it before then
+	// would promise more than it does. This field is the seam that work plugs into
+	// — the per-family decision is a pure function of (source, instance, what the
+	// import last wrote, mode), so honouring it elsewhere is a branch, not a
+	// redesign. There is deliberately no CLI or API flag for it yet.
+	SourceAuthoritative bool
 	// ReloadSettings reloads the instance-settings overlay after the import
 	// writes one (today: the instance category taxonomy). The server caches that
 	// overlay in memory and only reloads it after its own writes, so without this
@@ -97,31 +120,44 @@ func NewImporter(dest *pgxpool.Pool, src *Source, opts Options) *Importer {
 		mediaMode = MediaModeCopy
 	}
 	return &Importer{
-		dest:           dest,
-		q:              sqlcgen.New(dest),
-		src:            src,
-		srcMedia:       opts.SrcMedia,
-		destMedia:      opts.DestMedia,
-		mediaMode:      mediaMode,
-		policy:         policy,
-		force:          opts.Force,
-		sealKey:        opts.SealKey,
-		reloadSettings: opts.ReloadSettings,
-		logger:         logger,
+		dest:                dest,
+		q:                   sqlcgen.New(dest),
+		src:                 src,
+		srcMedia:            opts.SrcMedia,
+		destMedia:           opts.DestMedia,
+		mediaMode:           mediaMode,
+		policy:              policy,
+		force:               opts.Force,
+		sourceAuthoritative: opts.SourceAuthoritative,
+		sealKey:             opts.SealKey,
+		reloadSettings:      opts.ReloadSettings,
+		logger:              logger,
 	}
 }
 
 // Preflight verifies the source is reachable and its schema version is supported
-// (or --force is set), pings the destination, and — for a local destination
-// media store — checks there is plausibly enough free disk. It returns the
-// detected source schema version. An unsupported version without force is a hard
-// stop (VersionError); callers MUST NOT set force autonomously.
+// (or --force is set), pings the destination, proves the destination media store
+// will accept a write, and — for a local destination media store — checks there
+// is plausibly enough free disk. It returns the detected source schema version.
+// An unsupported version without force is a hard stop (VersionError); callers
+// MUST NOT set force autonomously.
+//
+// Everything here is a question whose answer would otherwise arrive minutes into
+// a run, in the middle of an operation that is half done. That is the standard
+// each check is held to.
 func (im *Importer) Preflight(ctx context.Context) (int, error) {
 	if err := im.src.Ping(ctx); err != nil {
-		return 0, fmt.Errorf("peertubeimport: source database unreachable: %w", err)
+		return 0, fmt.Errorf("peertubeimport: source database unreachable: %w%s", err, sourceDialAdvice(err))
 	}
 	if err := im.dest.Ping(ctx); err != nil {
 		return 0, fmt.Errorf("peertubeimport: destination database unreachable: %w", err)
+	}
+	// Before the version probe, because it is the cheaper question and the more
+	// expensive answer: an unsupported version stops a run that has done nothing,
+	// while a destination nobody can write to stops one that has already created
+	// accounts, channels and videos.
+	if err := im.checkDestinationWritable(ctx); err != nil {
+		return 0, err
 	}
 	version, err := im.src.DetectVersion(ctx)
 	if err != nil {
@@ -144,6 +180,88 @@ func (im *Importer) Preflight(ctx context.Context) (int, error) {
 		}
 	}
 	return version, nil
+}
+
+// checkDestinationWritable proves the destination media store will accept an
+// object from these credentials, by storing a tiny scratch object at a key no
+// data lives under and removing it again (storage.ProbeWrite).
+//
+// It exists because a real migration ran for three minutes and then failed 1,321
+// avatar uploads with `s3: put "avatars/users/…": not entitled`: the destination
+// Backblaze B2 key had `readFiles` and not `writeFiles`. Nothing in this
+// codebase noticed. Every other thing that touches the destination store before
+// the first write is a read — the bucket head, the ownership marker, the
+// lifecycle configuration — and a read-only credential passes all of them, so
+// the first write in the run IS the check, and by then the operator is watching
+// a wall of per-image warnings and deciding whether to let it finish.
+//
+// It runs for --dry-run too, and that is the point of a rehearsal: the run that
+// is supposed to tell you what will happen must be the one that tells you the
+// destination will refuse it. The probe object is removed again, so a dry run
+// still leaves no trace — no ledger rows, no entities, no media.
+//
+// --media-mode=none skips it: that mode imports metadata and writes no objects
+// at all, so there is nothing to prove. REFERENCE mode does NOT skip it, because
+// reference is only reference for video: actor images are fetched over HTTP and
+// stored, whatever the mode says.
+//
+// A failed CLEANUP never stops the run. A store that took the write has answered
+// the question that was asked, and refusing to migrate into a store that can
+// hold the migration because a scratch object could not be tidied away would be
+// the wrong end of the trade — it is logged, with the key, so the operator can
+// remove it.
+func (im *Importer) checkDestinationWritable(ctx context.Context) error {
+	if im.destMedia == nil || im.mediaMode == MediaModeNone {
+		return nil
+	}
+	res, err := storage.ProbeWrite(ctx, im.destMedia)
+	if err != nil {
+		// The message is persisted on the run row and shown to an admin, so it
+		// carries the store's IDENTITY (endpoint and bucket, never a key or a
+		// secret) and what to grant, rather than a wrapped stack of SDK errors.
+		return fmt.Errorf("peertubeimport: the destination media store %s refused a test write, so every object this run would store fails the same way: %w — grant this credential write access to the bucket (Backblaze B2: the `writeFiles` capability, which a `readFiles`-only key does not imply; AWS/MinIO/Spaces: `s3:PutObject`), then re-run",
+			storage.Describe(im.destMedia), err)
+	}
+	if res.Leaked() && im.logger != nil {
+		im.logger.WarnContext(ctx, "peertube import: destination write probe could not clean up after itself",
+			"key", res.Key, "store", storage.Describe(im.destMedia), "error", res.CleanupErr)
+	}
+	return nil
+}
+
+// sourceDialAdvice names the most likely cause of a failed connection to the
+// source database, as a clause to append to the driver's own message. It returns
+// "" when nothing in the error is recognisable — a wrong guess sends an operator
+// to the wrong machine, which is worse than no guess.
+//
+// It exists because pgx's message is accurate and unreadable at the moment it is
+// needed. The two failures a real migration actually hit were `dial unix
+// /tmp/.s.PGSQL.15432` — which is what a DSN with no usable host in it does,
+// silently, rather than reporting a bad host — and a source PostgreSQL listening
+// on 127.0.0.1 only, which from another machine is an ordinary connection
+// refused. Neither says what to change.
+//
+// The advice never echoes the DSN: this string is persisted on the import run
+// row and shown to admins.
+func sourceDialAdvice(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "dial unix") || strings.Contains(msg, ".s.pgsql."):
+		return " — that is a LOCAL unix socket, not the source host: PostgreSQL drivers fall back to one when the connection string carries no usable host, so a typo'd or missing host silently becomes a path on THIS machine. --source-dsn should be postgres://user:password@host:port/database naming the source; if you are tunnelling, name the local end of the tunnel (127.0.0.1:<local port>)"
+	case strings.Contains(msg, "connection refused"):
+		return " — the address answered and nothing is listening on that port. A PeerTube database is bound to 127.0.0.1 by default, so it is unreachable from anywhere else until listen_addresses and pg_hba.conf say otherwise; an SSH tunnel (ssh -L 15432:127.0.0.1:5432 <source host>, then --source-dsn against 127.0.0.1:15432) is the safer way and needs no change on the source"
+	case strings.Contains(msg, "no such host") || strings.Contains(msg, "lookup "):
+		return " — the host name in --source-dsn does not resolve from here. Check the spelling, or use the source's IP address"
+	case strings.Contains(msg, "i/o timeout") || strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline exceeded"):
+		return " — the packets are being dropped rather than refused, which is a firewall or a cloud security group between here and the source rather than PostgreSQL itself. Open the port from this host, or tunnel over SSH (ssh -L 15432:127.0.0.1:5432 <source host>)"
+	case strings.Contains(msg, "authentication failed") || strings.Contains(msg, "does not exist") || strings.Contains(msg, "pg_hba"):
+		return " — the source is REACHABLE and it rejected the login, so this is the credentials, the database name, or the source's pg_hba.conf rules rather than the network. A read-only role on the PeerTube database is all this tool needs"
+	default:
+		return ""
+	}
 }
 
 // estimateBytes sums the highest-resolution web file size across all source

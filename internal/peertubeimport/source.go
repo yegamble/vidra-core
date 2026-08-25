@@ -57,7 +57,11 @@ func OpenSource(ctx context.Context, dsn string) (*Source, error) {
 	defer cancel()
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("peertubeimport: source unreachable: %w", err)
+		// The same advice Preflight appends, because this is the dial that
+		// actually fails first: the CLI opens the source before it preflights, so a
+		// wrong --source-dsn never reaches the preflight that would have explained
+		// it.
+		return nil, fmt.Errorf("peertubeimport: source unreachable: %w%s", err, sourceDialAdvice(err))
 	}
 	return &Source{pool: pool}, nil
 }
@@ -839,18 +843,39 @@ type SourceActorImage struct {
 	Type      int
 	UserID    *int64
 	ChannelID *int64
+	// Width and Height are the pixel size the source recorded for this variant, 0
+	// when it records none. They are carried so the ledger note can say WHICH
+	// variant was chosen — see ActorImages for why there is a choice to make.
+	Width  int
+	Height int
 }
 
-// ActorImages returns every actorImage row belonging to a LOCAL actor, with its
-// owning user or channel resolved. ok=false means the source has no actorImage
-// table at all (PeerTube kept avatars in a separate `avatar` table before it),
-// which is a family the source does not have rather than a failure.
+// ActorImages returns ONE actorImage row per local actor per image type — the
+// LARGEST variant the source offers for that slot. ok=false means the source has
+// no actorImage table at all (PeerTube kept avatars in a separate `avatar` table
+// before it), which is a family the source does not have rather than a failure.
 //
 // The LOCAL filter is what makes this pass small: a federated instance's
 // actorImage table is mostly rows for REMOTE actors it has cached (on the
 // migration this was written for, 12,893 rows down to the ~1,362 files that
 // actually exist on disk). Remote actors are not imported, so their images are
 // not either.
+//
+// ── why this deduplicates, and why "largest" ──
+//
+// PeerTube stores SEVERAL resolutions of every avatar — it generates a set of
+// square thumbnails from one upload and keeps a row per size. Every one of those
+// rows names the same slot on this side (a user has one avatar), and the
+// destination key is derived from the Vidra id, so they all resolve to the SAME
+// object key and overwrite each other. The pass runs at concurrency 4, so which
+// one survived was a race.
+//
+// It was not a theoretical race. On a real migration this returned 1,316 rows
+// for 309 distinct actors and 137 of the 229 imported user avatars ended up
+// under 5 KB — thumbnails — while the largest variant available was 2.1 MB.
+// Picking the biggest row per slot is what makes the outcome both correct and
+// deterministic; even where the source records no sizes, collapsing to one row
+// per slot is what removes the race.
 func (s *Source) ActorImages(ctx context.Context) ([]SourceActorImage, bool, error) {
 	present, err := s.tableExists(ctx, "actorImage")
 	if err != nil {
@@ -861,12 +886,39 @@ func (s *Source) ActorImages(ctx context.Context) ([]SourceActorImage, bool, err
 	}
 	// The avatar/banner discriminator arrived with banners. A source without it
 	// only ever had avatars, so every row reads as type 1 rather than as an
-	// unreadable family.
-	typeExpr := `1`
+	// unreadable family — and the slot key is then the actor alone, because an
+	// actor could not have had two kinds of image.
+	typeExpr, dedupKey := `1`, `ai."actorId"`
 	if hasType, err := s.columnExists(ctx, "actorImage", "type"); err != nil {
 		return nil, false, err
 	} else if hasType {
 		typeExpr = `COALESCE(ai.type, 1)`
+		dedupKey = `ai."actorId", ` + typeExpr
+	}
+	// The size columns are PROBED, never assumed. PeerTube spells them width and
+	// height on the schema range this tool accepts, but a column that is not there
+	// is a syntax error rather than a NULL, and this whole family is optional. A
+	// source that records no sizes still gets exactly one row per slot — the
+	// newest — because the DEDUP is what fixes the race; preferring the largest is
+	// what fixes the resolution.
+	hasWidth, err := s.columnExists(ctx, "actorImage", "width")
+	if err != nil {
+		return nil, false, err
+	}
+	hasHeight, err := s.columnExists(ctx, "actorImage", "height")
+	if err != nil {
+		return nil, false, err
+	}
+	widthExpr, heightExpr, sizeOrder := `0`, `0`, ``
+	if hasWidth {
+		widthExpr = `COALESCE(ai.width, 0)`
+		// DESC alone would sort NULLs FIRST in PostgreSQL, i.e. a row whose size
+		// the source never recorded would beat every row whose size it did.
+		sizeOrder += `ai.width DESC NULLS LAST, `
+	}
+	if hasHeight {
+		heightExpr = `COALESCE(ai.height, 0)`
+		sizeOrder += `ai.height DESC NULLS LAST, `
 	}
 	onActor, err := s.actorLinksLiveOnActor(ctx)
 	if err != nil {
@@ -878,15 +930,27 @@ func (s *Source) ActorImages(ctx context.Context) ([]SourceActorImage, bool, err
 		accountJoin = `acc.id = a."accountId"`
 		channelJoin = `vc.id = a."videoChannelId"`
 	}
+	// DISTINCT ON keeps the first row of each slot group, so the ORDER BY inside
+	// the subquery IS the choice: biggest first, newest id breaking every tie.
 	rows, err := s.pool.Query(ctx, `
-		SELECT ai.id, COALESCE(ai.filename, ''), `+typeExpr+`,
-		       acc."userId", vc.id
-		FROM "actorImage" ai
-		JOIN actor a ON a.id = ai."actorId"
-		LEFT JOIN account acc ON `+accountJoin+`
-		LEFT JOIN "videoChannel" vc ON `+channelJoin+`
-		WHERE a."serverId" IS NULL
-		ORDER BY ai.id`)
+		SELECT id, filename, image_type, user_id, channel_id, width, height
+		FROM (
+			SELECT DISTINCT ON (`+dedupKey+`)
+			       ai.id                     AS id,
+			       COALESCE(ai.filename, '') AS filename,
+			       `+typeExpr+`              AS image_type,
+			       acc."userId"              AS user_id,
+			       vc.id                     AS channel_id,
+			       `+widthExpr+`             AS width,
+			       `+heightExpr+`            AS height
+			FROM "actorImage" ai
+			JOIN actor a ON a.id = ai."actorId"
+			LEFT JOIN account acc ON `+accountJoin+`
+			LEFT JOIN "videoChannel" vc ON `+channelJoin+`
+			WHERE a."serverId" IS NULL
+			ORDER BY `+dedupKey+`, `+sizeOrder+`ai.id DESC
+		) best
+		ORDER BY best.id`)
 	if err != nil {
 		return nil, false, fmt.Errorf("peertubeimport: read actor images: %w", err)
 	}
@@ -894,7 +958,7 @@ func (s *Source) ActorImages(ctx context.Context) ([]SourceActorImage, bool, err
 	var out []SourceActorImage
 	for rows.Next() {
 		var img SourceActorImage
-		if err := rows.Scan(&img.ID, &img.Filename, &img.Type, &img.UserID, &img.ChannelID); err != nil {
+		if err := rows.Scan(&img.ID, &img.Filename, &img.Type, &img.UserID, &img.ChannelID, &img.Width, &img.Height); err != nil {
 			return nil, false, fmt.Errorf("peertubeimport: scan actor image: %w", err)
 		}
 		out = append(out, img)

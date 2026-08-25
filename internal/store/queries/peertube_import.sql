@@ -25,6 +25,26 @@ DO UPDATE SET vidra_id = EXCLUDED.vidra_id,
               updated_at = now()
 RETURNING *;
 
+-- name: GetImportLedgerLastWriteForTarget :one
+-- The import's most recent COMPLETED write onto one Vidra row, within one entity
+-- kind — "did I put the avatar that is in this slot there, and what was it?".
+--
+-- The ledger is keyed by SOURCE id, which is the wrong key for that question:
+-- PeerTube keeps several actorImage rows per avatar and writes a new one every
+-- time the picture changes, so the row that describes the slot's current
+-- occupant is a DIFFERENT source id from the one a later run is looking at.
+-- Keying the lookup on vidra_id instead follows the slot rather than the file.
+--
+-- applied_value (0113) is the fingerprint of what was written; it is empty for
+-- rows written before that memory existed, and updated_at is then the evidence
+-- available — the ledger row lands AFTER the image write, so a slot whose image
+-- is newer than this row was filled by somebody else.
+SELECT applied_value, updated_at
+FROM peertube_import_ledger
+WHERE entity_kind = $1 AND vidra_id = $2 AND status = 'done'
+ORDER BY updated_at DESC, source_id DESC
+LIMIT 1;
+
 -- name: CountImportLedgerByKindStatus :many
 -- Per-entity outcome tally for run progress + post-import verification.
 SELECT entity_kind, status, count(*) AS n

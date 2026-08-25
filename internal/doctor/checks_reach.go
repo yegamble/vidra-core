@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -49,15 +50,7 @@ func checkObjectStorage(ctx context.Context, s *state) []Finding {
 		// local-storage instance is how a report trains people to stop reading it.
 		return []Finding{okf(fmt.Sprintf("STORAGE_BACKEND=%s — media lives in the media_data volume, so there is no object store to reach (make sure that volume is in your backups)", orDefault(backend, "local")))}
 	}
-	cfg := storage.S3Config{
-		Endpoint:       s.value("STORAGE_S3_ENDPOINT"),
-		Bucket:         s.value("STORAGE_S3_BUCKET"),
-		AccessKey:      s.value("STORAGE_S3_ACCESS_KEY"),
-		SecretKey:      s.value("STORAGE_S3_SECRET_KEY"),
-		Region:         s.value("STORAGE_S3_REGION"),
-		UseSSL:         !isFalseish(s.value("STORAGE_S3_USE_SSL")),
-		ForcePathStyle: setup.IsTrue(s.value("STORAGE_S3_FORCE_PATH_STYLE")),
-	}
+	cfg := s.s3Config()
 	exists, err := s.opt.Prober.CheckBucket(ctx, cfg)
 	switch {
 	case err != nil:
@@ -71,6 +64,146 @@ func checkObjectStorage(ctx context.Context, s *state) []Finding {
 	default:
 		return []Finding{okf(fmt.Sprintf("the bucket %q at %s answers an authenticated request", cfg.Bucket, cfg.Endpoint))}
 	}
+}
+
+// s3Config is the object store the api would use, read out of the deployment's
+// own env file. Every object-store check reads the SAME credentials the api
+// uploads with — a check that assembled the config differently would answer
+// about a store nothing deploys.
+func (s *state) s3Config() storage.S3Config {
+	return storage.S3Config{
+		Endpoint:       s.value("STORAGE_S3_ENDPOINT"),
+		Bucket:         s.value("STORAGE_S3_BUCKET"),
+		AccessKey:      s.value("STORAGE_S3_ACCESS_KEY"),
+		SecretKey:      s.value("STORAGE_S3_SECRET_KEY"),
+		Region:         s.value("STORAGE_S3_REGION"),
+		UseSSL:         !isFalseish(s.value("STORAGE_S3_USE_SSL")),
+		ForcePathStyle: setup.IsTrue(s.value("STORAGE_S3_FORCE_PATH_STYLE")),
+	}
+}
+
+// checkObjectWrite proves the credentials can actually STORE an object, which
+// nothing else in this report — or anywhere else in this codebase — does.
+//
+// Every other object-store probe here is a read, and a credential scoped to
+// reads passes all of them: HeadBucket answers, the ownership marker reads back,
+// the lifecycle configuration is legible. A real migration was configured with
+// exactly such a key (Backblaze B2 `readFiles` without `writeFiles`), ran for
+// three minutes, and then failed 1,321 avatar uploads with
+// `s3: put "avatars/users/…": not entitled` — one warning per image, in the
+// middle of a run, which is where the operator found out. This check is those
+// three minutes turned into two seconds.
+//
+// WHY IT IS OPT-IN. `vidra doctor` is documented as safe to run anytime and to
+// change nothing — "It reads; it changes nothing, creates no bucket and sends no
+// mail" — and it is run on a hunch, in a hurry, by people who did not write it.
+// A PUT and a DELETE against production storage on every run breaks that
+// promise for a question whose answer changes only when someone rotates a key.
+// So the write happens when it is asked for, and the run that most needs it — a
+// migration preflight, about to copy an entire instance's media — asks for it
+// always (internal/peertubeimport.Importer.Preflight), which is where one PUT is
+// obviously worth paying.
+//
+// The default line is ✓ and not ⚠, deliberately. ⚠ in this package means "I
+// could not tell", and it is reserved for that; a permanent ⚠ on every ordinary
+// run is precisely how a report teaches people to stop reading it. What the
+// line does instead is SAY the write path is unproven and name the flag that
+// proves it, because not knowing that was the whole failure.
+//
+// It is S3-only for the same reason the ffmpeg checks trust the container over
+// the host: a local-storage deployment writes to /app/data/media INSIDE the api
+// container, and doctor writing to a host path that may not even be the same
+// filesystem would prove nothing about the binary that does the work.
+func checkObjectWrite(ctx context.Context, s *state) []Finding {
+	if s.envErr != nil {
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s)", s.envErr))}
+	}
+	backend := strings.ToLower(s.value("STORAGE_BACKEND"))
+	if backend != "s3" {
+		return []Finding{okf(fmt.Sprintf("STORAGE_BACKEND=%s — media lives in the media_data volume, so there is no object-store credential that could turn out to be read-only", orDefault(backend, "local")))}
+	}
+	cfg := s.s3Config()
+	if !s.opt.WriteProbe {
+		return []Finding{okf(fmt.Sprintf("not attempted — proving %q is writable means storing an object in it, and `vidra doctor` otherwise only reads. Run `vidra doctor --write-probe` to check it: a credential that can read but not write passes every other object-store check in this report and then fails every single upload", cfg.Bucket))}
+	}
+
+	res, err := s.opt.Prober.CheckBucketWrite(ctx, cfg)
+	switch {
+	case err != nil && storeUnreachable(err):
+		// The store never answered, so this says nothing about the credential's
+		// rights. Blaming permissions here would send an operator to their bucket
+		// console over a DNS entry.
+		return []Finding{failf(
+			fmt.Sprintf("the object store at %s could not be reached, so whether it would accept an upload is still unknown: %s", cfg.Endpoint, reachSummary(err)),
+			"check STORAGE_S3_ENDPOINT (host only, no scheme), STORAGE_S3_REGION and this host's egress in "+s.envRel+", then re-run with --write-probe")}
+	case err != nil:
+		return []Finding{failf(
+			fmt.Sprintf("the store answered, and refused to store an object in %q: %s — every upload, every transcoded rendition and every imported avatar fails like this", cfg.Bucket, storeRefusal(err)),
+			"grant this key write access to the bucket: on Backblaze B2 that is the `writeFiles` capability (a key with only `readFiles` passes every other check here), on AWS/MinIO/Spaces it is `s3:PutObject`. A migration is the worst place to learn this — one ran three minutes before failing 1,321 avatar uploads on exactly this")}
+	case res.Leaked():
+		// The write SUCCEEDED, which is what was asked. A store that will not let
+		// the key delete is its own condition — B2 grants `deleteFiles`
+		// separately — and it is a ⚠ for the same reason the retention check is
+		// one: nothing a viewer sees breaks, bytes accumulate.
+		return []Finding{warnf(
+			fmt.Sprintf("%q accepted a test object but this key could not delete it again, so %s is still there: %s", cfg.Bucket, res.Key, storeRefusal(res.CleanupErr)),
+			"remove that object by hand, and grant the key delete access (`deleteFiles` on Backblaze B2, `s3:DeleteObject` elsewhere). Without it media garbage collection frees nothing, every resumable upload's chunks stay in the bucket after assembly, and superseded HLS trees accumulate — all of it billed")}
+	default:
+		return []Finding{okf(fmt.Sprintf("%q stored a test object and removed it again, so these credentials can upload media", cfg.Bucket))}
+	}
+}
+
+// storeUnreachable reports whether an object-store error is the store failing to
+// ANSWER rather than the store answering "no". The distinction is the whole
+// difference between two findings that send an operator to opposite ends of
+// their infrastructure — the endpoint/egress on one side, the key's capabilities
+// on the other.
+//
+// Transport failures arrive as net.Error (which *net.OpError, *net.DNSError and
+// *url.Error all satisfy) or as a cancelled context; a refusal arrives as the
+// SDK's own response type carrying a status. The text markers are a backstop for
+// the errors an SDK has flattened into a string on the way out.
+func storeUnreachable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{"no such host", "connection refused", "network is unreachable", "i/o timeout", "timed out", "context deadline exceeded", "tls", "certificate", "eof"} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// storeRefusal turns an object store's refusal into the one clause an operator
+// can act on — reachSummary's job, for the other half of the object-store
+// surface.
+//
+// The provider's own word for it is the most useful token in the whole error and
+// the one they will search for: "not entitled" is Backblaze B2 for "this key
+// does not hold the capability", and it looks nothing like the "Access Denied"
+// every S3 document describes. Known spellings are named; anything else is
+// reported as a plain refusal rather than passed through raw, because a raw SDK
+// error can carry the request signature and the full endpoint URL.
+func storeRefusal(err error) string {
+	if err == nil {
+		return "no reason given"
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{"not entitled", "access denied", "unauthorized", "forbidden", "invalid access key", "signature does not match", "no such bucket", "quota", "insufficient storage", "read-only"} {
+		if strings.Contains(msg, marker) {
+			return marker
+		}
+	}
+	return "the store refused the request"
 }
 
 // checkObjectRetention answers a question an operator cannot see from their
@@ -99,15 +232,7 @@ func checkObjectRetention(ctx context.Context, s *state) []Finding {
 	if strings.ToLower(s.value("STORAGE_BACKEND")) != "s3" {
 		return []Finding{okf("media lives on local disk, where a delete frees the bytes immediately — object versioning does not apply")}
 	}
-	cfg := storage.S3Config{
-		Endpoint:       s.value("STORAGE_S3_ENDPOINT"),
-		Bucket:         s.value("STORAGE_S3_BUCKET"),
-		AccessKey:      s.value("STORAGE_S3_ACCESS_KEY"),
-		SecretKey:      s.value("STORAGE_S3_SECRET_KEY"),
-		Region:         s.value("STORAGE_S3_REGION"),
-		UseSSL:         !isFalseish(s.value("STORAGE_S3_USE_SSL")),
-		ForcePathStyle: setup.IsTrue(s.value("STORAGE_S3_FORCE_PATH_STYLE")),
-	}
+	cfg := s.s3Config()
 	retention, err := s.opt.Prober.CheckBucketRetention(ctx, cfg)
 	if err != nil {
 		// The reachability check above already reports an unreachable store; a
@@ -155,15 +280,7 @@ func checkBucketOwnership(ctx context.Context, s *state) []Finding {
 	if strings.ToLower(s.value("STORAGE_BACKEND")) != "s3" {
 		return []Finding{okf("media lives on local disk, which this instance populated itself — there is no shared bucket to mistake for its own, so the ownership marker does not apply")}
 	}
-	cfg := storage.S3Config{
-		Endpoint:       s.value("STORAGE_S3_ENDPOINT"),
-		Bucket:         s.value("STORAGE_S3_BUCKET"),
-		AccessKey:      s.value("STORAGE_S3_ACCESS_KEY"),
-		SecretKey:      s.value("STORAGE_S3_SECRET_KEY"),
-		Region:         s.value("STORAGE_S3_REGION"),
-		UseSSL:         !isFalseish(s.value("STORAGE_S3_USE_SSL")),
-		ForcePathStyle: setup.IsTrue(s.value("STORAGE_S3_FORCE_PATH_STYLE")),
-	}
+	cfg := s.s3Config()
 	found, _, err := s.opt.Prober.CheckBucketMarker(ctx, cfg)
 	switch {
 	case err != nil:

@@ -154,16 +154,31 @@ Consequences worth knowing before you run it:
   not the response's declared type. `/static/avatars/<name>` (as opposed to
   `/lazy-static/…`) answers `200` with the web app's HTML shell rather than a
   404, and a naive fetch would happily store 62 KB of HTML as somebody's face.
-- **An image this instance already has is never written over.** The import fills
-  gaps. If an account changes its avatar on the source *after* the first run has
-  carried one across, the change does not follow — the report records it as
-  skipped with the reason. Delete the Vidra-side image and re-run if you want
-  the newer one.
+- **The largest variant wins.** PeerTube generates several resolutions from one
+  avatar upload and keeps a row per size. They all name the same slot here, so
+  the import takes the biggest one per account/channel per slot and ignores the
+  rest. (Before it did, all of them were carried concurrently and raced for the
+  same object key: on a real migration that left 137 of 229 user avatars as
+  sub-5 KB thumbnails while 2.1 MB originals sat in the source.) A source that
+  records no pixel sizes still gets one row per slot — the newest.
+- **An avatar somebody uploaded here is never written over.** The import fills
+  gaps and updates images *it* wrote; anything else it leaves exactly as it is
+  and lists under `conflicts` in the report, so the divergence is visible rather
+  than silent. The ledger remembers what each import write produced, which is
+  how the two are told apart.
+- **An image the import wrote does follow the source.** If an account changes
+  its avatar on the source between runs — or the earlier run picked the wrong
+  variant — the next run replaces what it put there. An unchanged source costs
+  nothing: no fetch, no upload.
+- **An oversize image is recorded `unsupported`, not `failed`.** How big a file
+  the source holds is a fact about the source, so it is ruled out once instead
+  of being re-downloaded and re-rejected on every run.
 - The source is a live production instance during a migration, so the fetches
   are deliberately unhurried: four connections, a 20-second ceiling per image,
   an 8 MiB cap, and one host contacted for the whole run.
 
-Re-runs cost nothing here: an image with a ledger row is never fetched again.
+Re-runs are cheap here: a slot that already holds what the source offers is
+settled from the database, without contacting the source at all.
 
 See the full entity mapping table in `.ralph/specs/peertube-import.md`.
 
@@ -199,6 +214,30 @@ See the full entity mapping table in `.ralph/specs/peertube-import.md`.
    `--force` overrides the refusal, but is for a **human who has verified
    compatibility** — automated agents must never pass it.
 
+5. **Destination storage credentials that can WRITE.** Preflight proves it: it
+   stores a tiny object under `.vidra/write-probe/` and deletes it again, before
+   the run touches anything. A read-only key passes every other check there is —
+   the bucket answers a `HeadBucket`, the ownership marker reads back — and then
+   fails **every** upload. One real migration ran three minutes and failed 1,321
+   avatar uploads with `s3: put "avatars/users/…": not entitled`, which is
+   Backblaze B2 for *this key does not have the `writeFiles` capability*. On
+   AWS/MinIO/Spaces the action is `s3:PutObject`. `--media-mode=none` skips the
+   probe; `--media-mode=reference` does **not**, because actor images are stored
+   in the destination whatever the media mode says.
+
+   Delete access (`deleteFiles` / `s3:DeleteObject`) is not required for an
+   import, and preflight will not stop for its absence — but without it media
+   garbage collection frees nothing later. `vidra doctor --write-probe` reports
+   the same two facts about a running deployment.
+
+> A source DSN that will not connect is diagnosed rather than passed through:
+> `dial unix /tmp/.s.PGSQL.15432` means the connection string carried no usable
+> host and the driver fell back to a **local** socket, and a plain
+> `connection refused` from another machine is usually a PeerTube PostgreSQL
+> still bound to `127.0.0.1` — for which an SSH tunnel
+> (`ssh -L 15432:127.0.0.1:5432 <source host>`) is the answer that changes
+> nothing on the source.
+
 > Password hashes: PeerTube and Vidra both use bcrypt, and a bcrypt hash encodes
 > its own cost, so carried hashes verify directly — users keep their passwords.
 > If you ever import from a system with an incompatible scheme, import with
@@ -209,7 +248,10 @@ See the full entity mapping table in `.ralph/specs/peertube-import.md`.
 ## 3. Dry run first (writes nothing)
 
 Always dry-run first. It reports the counts, the mapping plan, conflicts, and the
-deferred families, and writes **nothing**.
+deferred families, and writes **nothing**: no ledger rows, no entities, no media.
+(Preflight still runs its write probe first, and a rehearsal is exactly where you
+want to find out the destination credentials are read-only — the probe object is
+removed again, so the dry run still leaves no trace.)
 
 ```bash
 DATABASE_URL=postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable \
