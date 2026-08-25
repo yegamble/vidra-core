@@ -27,6 +27,10 @@ func runDoctor(s streams, args []string) error {
 		repo    = fs.String("repo", ".", "`path` to the deployment directory — the checkout holding docker-compose.yml, deploy/ and env/")
 		envFile = fs.String("env", doctor.DefaultEnvFile, "`path` to the deployment's env file, absolute or relative to --repo")
 		timeout = fs.Duration("timeout", doctor.DefaultTimeout, "how long any single check may take before it gives up and reports that it could not complete")
+		// The one check that writes, and therefore the one flag: everything else
+		// here reads, and this stores a tiny object in the media bucket and deletes
+		// it again to prove the credentials can upload at all.
+		writeProbe = fs.Bool("write-probe", false, "additionally prove the object-store credentials can WRITE, by storing a small test object and removing it again. Off by default because every other check only reads")
 	)
 	// -C is the short spelling, matching make and git: `vidra doctor -C ..` from
 	// inside a component checkout is the common invocation.
@@ -43,6 +47,12 @@ something is ✗, so it is usable as a pre-deploy gate.
 Every finding is derived from a file, the rendered compose model, the database or
 the docker daemon — never from what a document says should be true. It reads;
 it changes nothing, creates no bucket and sends no mail.
+
+--write-probe is the single exception, and it is opt-in for that reason: it
+stores a small object in the media bucket and deletes it again, which is the only
+way to find out whether the credentials can upload. A key that can read but not
+write passes every other object-store check here and then fails every upload, so
+run it after changing storage credentials and before a migration.
 
 Run it from the deployment directory (the one deploy.sh lives in), or point --repo
 at it. Checks whose dependency is missing here — no systemd on a laptop, no
@@ -73,9 +83,10 @@ flags:
 	}
 
 	report, err := doctor.Run(context.Background(), doctor.Options{
-		Root:    *repo,
-		EnvFile: *envFile,
-		Timeout: *timeout,
+		Root:       *repo,
+		EnvFile:    *envFile,
+		Timeout:    *timeout,
+		WriteProbe: *writeProbe,
 	})
 	if err != nil {
 		return err
