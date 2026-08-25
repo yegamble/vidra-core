@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -54,6 +55,16 @@ func (s *Server) serveVideoStoryboard(c echo.Context, kind, contentType string) 
 	if kind == "storyboard" {
 		asset.class = delivery.ClassStoryboard
 		asset.mirrorClass = ipfsmirror.ClassStoryboard
+		// The sprite's type is whatever its video_files row RECORDS, not whatever
+		// this route was written assuming. Locally rendered sheets and the ones the
+		// PeerTube importer carries across are both JPEG today, so nothing is
+		// currently served wrong — but the row is the source of truth for every
+		// other stored file, and a sheet that ever arrives as anything else should
+		// be labelled as what it is rather than as what image/jpeg claims. Rows
+		// with an empty content_type keep the constant.
+		if ct := strings.TrimSpace(f.ContentType); ct != "" {
+			asset.contentType = ct
+		}
 	}
 	return s.serveMediaAsset(c, asset)
 }
