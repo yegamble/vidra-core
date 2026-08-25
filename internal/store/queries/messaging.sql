@@ -121,6 +121,15 @@ LEFT JOIN LATERAL (
 ORDER BY c.updated_at DESC, c.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: CountConversations :one
+-- How many rows ListConversations would return, ignoring pagination. The
+-- participant JOINs are the predicate: only 1:1 conversations the caller is in.
+SELECT count(*)::bigint
+FROM conversations c
+JOIN conversation_participants me ON me.conversation_id = c.id AND me.user_id = sqlc.arg('user_id')
+JOIN conversation_participants other ON other.conversation_id = c.id AND other.user_id <> sqlc.arg('user_id')
+JOIN users ou ON ou.id = other.user_id;
+
 -- ============================================================================
 -- DM completeness (product-decisions.md §14): read receipts, attachments,
 -- link previews, per-message delete/report support.

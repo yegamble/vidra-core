@@ -41,24 +41,30 @@ func newRegistrationRequestView(r auth.RegistrationRequest) registrationRequestV
 	}
 }
 
+// registrationRequestStatuses are the accepted ?status values; statusFilterAll
+// is the "no filter" sentinel, which the service maps to a NULL predicate.
+var registrationRequestStatuses = []string{"pending", "approved", "rejected", statusFilterAll}
+
 // registrationRequestListResponse is the paginated approval queue.
 type registrationRequestListResponse struct {
 	Requests []registrationRequestView `json:"requests"`
-	Limit    int                       `json:"limit"`
-	Offset   int                       `json:"offset"`
+	pageMeta
 }
 
-// handleListRegistrationRequests returns the registration approval queue. Behind
-// requireRole(admin). ?status=pending (default all) returns only pending
-// requests; pagination via ?limit (1–100, default 20) and ?offset.
+// handleListRegistrationRequests returns the registration approval queue with
+// its total. Behind requireRole(admin). ?status is pending|approved|rejected|all
+// (default all); pagination via ?limit (1–100, default 20) and ?offset.
+//
+// This used to be `c.QueryParam("status") == "pending"`, so ?status=approved —
+// a perfectly reasonable request — silently returned the ENTIRE queue instead of
+// the approved ones. An unrecognised status is now a 400.
 func (s *Server) handleListRegistrationRequests(c echo.Context) error {
-	pendingOnly := c.QueryParam("status") == "pending"
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
+	status, err := parseEnumParam(c, "status", registrationRequestStatuses, statusFilterAll)
+	if err != nil {
+		return err
 	}
-	items, err := s.authsvc.ListRegistrationRequests(c.Request().Context(), pendingOnly, int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, total, err := s.authsvc.ListRegistrationRequests(c.Request().Context(), listFilterValue(status), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -66,7 +72,7 @@ func (s *Server) handleListRegistrationRequests(c echo.Context) error {
 	for _, it := range items {
 		views = append(views, newRegistrationRequestView(it))
 	}
-	return c.JSON(http.StatusOK, registrationRequestListResponse{Requests: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, registrationRequestListResponse{Requests: views, pageMeta: page.meta(total)})
 }
 
 // handleApproveRegistration approves a pending request, creating the account.

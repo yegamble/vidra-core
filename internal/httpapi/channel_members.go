@@ -59,6 +59,7 @@ type channelMemberView struct {
 // channelMembersResponse wraps the members list.
 type channelMembersResponse struct {
 	Members []channelMemberView `json:"members"`
+	pageMeta
 }
 
 func newChannelMemberView(m channel.Member) channelMemberView {
@@ -111,7 +112,8 @@ func (s *Server) handleListChannelMembers(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	members, err := s.channelsvc.ListMembers(c.Request().Context(), userID, c.Param("handle"))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	members, total, err := s.channelsvc.ListMembers(c.Request().Context(), userID, c.Param("handle"), page.Limit32(), page.Offset32())
 	if err != nil {
 		return memberError(err)
 	}
@@ -119,7 +121,7 @@ func (s *Server) handleListChannelMembers(c echo.Context) error {
 	for _, m := range members {
 		views = append(views, newChannelMemberView(m))
 	}
-	return c.JSON(http.StatusOK, channelMembersResponse{Members: views})
+	return c.JSON(http.StatusOK, channelMembersResponse{Members: views, pageMeta: page.meta(total)})
 }
 
 // handleAddChannelMember invites a local user as an editor of the channel. Owner

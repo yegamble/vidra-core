@@ -131,8 +131,7 @@ type liveStreamCardView struct {
 // liveStreamPublicListResponse is the public "Live now" listing envelope.
 type liveStreamPublicListResponse struct {
 	LiveStreams []liveStreamCardView `json:"live_streams"`
-	Limit       int                  `json:"limit"`
-	Offset      int                  `json:"offset"`
+	pageMeta
 }
 
 // handleListLivePublicStreams lists the currently-live PUBLIC streams across all
@@ -143,9 +142,8 @@ type liveStreamPublicListResponse struct {
 // creation/ingest) — when live is disabled there are simply no live streams to
 // list.
 func (s *Server) handleListLivePublicStreams(c echo.Context) error {
-	limit := clampInt(queryInt(c, "limit", defaultLivePublicLimit), 1, maxLivePublicLimit)
-	offset := queryInt(c, "offset", 0)
-	cards, err := s.livesvc.ListLivePublic(c.Request().Context(), limit, offset)
+	page := parsePage(c, defaultLivePublicLimit, maxLivePublicLimit)
+	cards, total, err := s.livesvc.ListLivePublic(c.Request().Context(), page.Limit, page.Offset)
 	if err != nil {
 		return err
 	}
@@ -161,7 +159,7 @@ func (s *Server) handleListLivePublicStreams(c echo.Context) error {
 		}
 		views = append(views, v)
 	}
-	return c.JSON(http.StatusOK, liveStreamPublicListResponse{LiveStreams: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, liveStreamPublicListResponse{LiveStreams: views, pageMeta: page.meta(total)})
 }
 
 // liveStreamKeyView carries the raw stream key + ingest URL, returned only on
@@ -179,6 +177,7 @@ type createLiveStreamResponse struct {
 
 type liveStreamListResponse struct {
 	LiveStreams []liveStreamView `json:"live_streams"`
+	pageMeta
 }
 
 // handleCreateLiveStream creates a live stream for a channel the caller owns and
@@ -282,7 +281,8 @@ func (s *Server) handleListLiveStreams(c echo.Context) error {
 	if !s.canManageChannelContent(ctx, userID, ch.ID) {
 		return echo.NewHTTPError(http.StatusForbidden, "you do not manage this channel")
 	}
-	streams, err := s.livesvc.ListByChannel(ctx, ch.ID)
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	streams, total, err := s.livesvc.ListByChannel(ctx, ch.ID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -290,7 +290,7 @@ func (s *Server) handleListLiveStreams(c echo.Context) error {
 	for _, st := range streams {
 		views = append(views, s.newLiveStreamView(st))
 	}
-	return c.JSON(http.StatusOK, liveStreamListResponse{LiveStreams: views})
+	return c.JSON(http.StatusOK, liveStreamListResponse{LiveStreams: views, pageMeta: page.meta(total)})
 }
 
 // handleGetLiveStream returns a live stream's public metadata. Behind

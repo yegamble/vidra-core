@@ -19,8 +19,13 @@ WHERE ls.id = $1;
 -- A channel's live streams, newest first (owner management list). No key hash.
 SELECT id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at
 FROM live_streams
-WHERE channel_id = $1
-ORDER BY created_at DESC, id;
+WHERE channel_id = sqlc.arg('channel_id')
+ORDER BY created_at DESC, id
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountLiveStreamsByChannel :one
+-- How many rows ListLiveStreamsByChannel would return, ignoring pagination.
+SELECT count(*)::bigint FROM live_streams WHERE channel_id = sqlc.arg('channel_id');
 
 -- name: ListLivePublicStreams :many
 -- Public "Live now" listing: currently-live PUBLIC streams across all channels,
@@ -32,7 +37,17 @@ FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
 WHERE ls.state = 'live' AND ls.privacy = 'public'
 ORDER BY ls.started_at DESC NULLS LAST, ls.id
-LIMIT $1 OFFSET $2;
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountLivePublicStreams :one
+-- How many rows ListLivePublicStreams would return, ignoring pagination. The
+-- channels JOIN is part of the predicate. CountLiveStreamsLive below counts
+-- ALL live sessions (including private/unlisted) for the instance-wide publish
+-- cap and would over-report this public rail.
+SELECT count(*)::bigint
+FROM live_streams ls
+JOIN channels ch ON ch.id = ls.channel_id
+WHERE ls.state = 'live' AND ls.privacy = 'public';
 
 -- name: UpdateLiveStreamKey :exec
 -- Rotate a stream's key (store the new hash).

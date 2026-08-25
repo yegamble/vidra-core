@@ -162,7 +162,7 @@ type suggestionsResponse struct {
 // errors.
 func (s *Server) handleSearchSuggestions(c echo.Context) error {
 	q := strings.TrimSpace(c.QueryParam("q"))
-	limit := clampInt(queryInt(c, "limit", 10), 1, 20)
+	limit := parseLimit(c, 10, 20)
 	resp := suggestionsResponse{Query: q, Suggestions: []suggestionView{}}
 
 	// Backup path (empty list, never an error) when the query is empty, smart
@@ -253,7 +253,7 @@ func (s *Server) hydrateRankedRecs(ctx context.Context, items []searchclient.Rec
 // Tries vidra-search (personalized when the instance + user allow it and the
 // caller is signed in); on disable/error/empty falls back to the trending feed.
 func (s *Server) handleHomeRecommendations(c echo.Context) error {
-	limit := clampInt(queryInt(c, "limit", 20), 1, 50)
+	limit := parseLimit(c, 20, 50)
 	ctx := c.Request().Context()
 	viewerID, _, authed := principalFromContext(c)
 	userID, prefs, _ := s.searchUserPrefs(c)
@@ -285,7 +285,7 @@ func (s *Server) handleHomeRecommendations(c echo.Context) error {
 // unavailable or returns nothing.
 func (s *Server) homeRecommendationsFallback(c echo.Context, limit int, viewerID uuid.UUID, authed bool) error {
 	ctx := c.Request().Context()
-	items, err := s.videosvc.ListPublic(ctx, "trending", "local",
+	items, _, err := s.videosvc.ListPublic(ctx, "trending", "local",
 		video.FeedFilter{HideSensitive: s.effectiveHideSensitive(c)}, viewerID, authed, int32(limit), 0)
 	if err != nil {
 		return err
@@ -310,7 +310,7 @@ func (s *Server) handleVideoRecommendations(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
-	limit := clampInt(queryInt(c, "limit", 12), 1, 50)
+	limit := parseLimit(c, 12, 50)
 	ctx := c.Request().Context()
 	viewerID, _, authed := principalFromContext(c)
 	userID, prefs, _ := s.searchUserPrefs(c)
@@ -493,13 +493,9 @@ func (s *Server) handleGetSearchHistory(c echo.Context) error {
 	if err := s.searchHistoryGate(); err != nil {
 		return err
 	}
-	limit := clampInt(queryInt(c, "limit", 20), 1, 100)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
+	page := parsePage(c, 20, 100)
 	out, err := s.searchClient.GetUserHistory(c.Request().Context(), searchclient.HistoryParams{
-		UserID: userID, Limit: limit, Offset: offset,
+		UserID: userID, Limit: page.Limit, Offset: page.Offset,
 	})
 	if err != nil {
 		return &SearchUnavailableError{}

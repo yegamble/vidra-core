@@ -386,7 +386,7 @@ func TestUnlistedOwnerExcludedFromDiscovery(t *testing.T) {
 	}
 
 	// Direct channel list still serves the video.
-	direct, err := q.ListPublicVideosByChannel(ctx, channelID)
+	direct, err := q.ListPublicVideosByChannel(ctx, sqlcgen.ListPublicVideosByChannelParams{ChannelID: channelID, ResultLimit: 100})
 	if err != nil || len(direct) != 1 || direct[0].ID != videoID {
 		t.Fatalf("direct channel list while unlisted = (%v, %v), want the video", direct, err)
 	}

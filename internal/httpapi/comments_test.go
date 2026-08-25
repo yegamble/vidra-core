@@ -544,3 +544,15 @@ func TestCommentPinRejectsReply(t *testing.T) {
 		t.Errorf("heart reply = %d, want 200", rec.Code)
 	}
 }
+
+func (f *commentFakeRepo) CountCommentsByVideo(ctx context.Context, a sqlcgen.CountCommentsByVideoParams) (int64, error) {
+	rows, err := f.ListCommentsByVideo(ctx, sqlcgen.ListCommentsByVideoParams{
+		VideoID: a.VideoID, ViewerID: a.ViewerID, ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
+}
+
+func (f *commentFakeRepo) CountAdminComments(ctx context.Context, query *string) (int64, error) {
+	rows, err := f.ListAdminComments(ctx, sqlcgen.ListAdminCommentsParams{Query: query, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}

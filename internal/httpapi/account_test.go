@@ -102,7 +102,7 @@ func (f *accountFakeRepo) RevokeAllUserSessions(_ context.Context, userID uuid.U
 func (f *accountFakeRepo) ListChannelsByOwner(context.Context, uuid.UUID) ([]sqlcgen.Channel, error) {
 	return nil, nil
 }
-func (f *accountFakeRepo) ListVideosByChannel(context.Context, uuid.UUID) ([]sqlcgen.ListVideosByChannelRow, error) {
+func (f *accountFakeRepo) ListVideoIDsByChannel(context.Context, uuid.UUID) ([]uuid.UUID, error) {
 	return nil, nil
 }
 func (f *accountFakeRepo) DeleteChannel(context.Context, uuid.UUID) error { return nil }
@@ -274,7 +274,7 @@ func (f *accountFakeRepo) ListSavedVideosByUserForExport(context.Context, uuid.U
 func (f *accountFakeRepo) ListWatchHistoryByUserForExport(context.Context, uuid.UUID) ([]sqlcgen.ListWatchHistoryByUserForExportRow, error) {
 	return nil, nil
 }
-func (f *accountFakeRepo) ListPlaylistsByOwner(context.Context, uuid.UUID) ([]sqlcgen.ListPlaylistsByOwnerRow, error) {
+func (f *accountFakeRepo) ListPlaylistsByOwnerForExport(context.Context, uuid.UUID) ([]sqlcgen.ListPlaylistsByOwnerForExportRow, error) {
 	return nil, nil
 }
 func (f *accountFakeRepo) ListPlaylistItemVideoIDs(context.Context, uuid.UUID) ([]uuid.UUID, error) {

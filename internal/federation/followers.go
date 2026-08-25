@@ -42,14 +42,18 @@ type FollowerRequest struct {
 }
 
 // ListFollowerRequests returns the pending follower-approval queue, newest
-// first. The caller clamps limit/offset.
-func (s *Service) ListFollowerRequests(ctx context.Context, limit, offset int32) ([]FollowerRequest, error) {
+// first, with how many requests are pending. The caller clamps limit/offset.
+func (s *Service) ListFollowerRequests(ctx context.Context, limit, offset int32) ([]FollowerRequest, int64, error) {
 	rows, err := s.repo.ListPendingRemoteFollows(ctx, sqlcgen.ListPendingRemoteFollowsParams{
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountPendingRemoteFollows(ctx)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]FollowerRequest, 0, len(rows))
 	for _, r := range rows {
@@ -66,7 +70,7 @@ func (s *Service) ListFollowerRequests(ctx context.Context, limit, offset int32)
 		}
 		out = append(out, fr)
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // ApproveFollowerRequest flips one pending follower request to accepted and

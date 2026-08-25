@@ -226,3 +226,13 @@ func TestRemoteFollowFederationDisabled(t *testing.T) {
 		t.Errorf("list while disabled = %d, want 200", rec.Code)
 	}
 }
+
+func (f *followFakeRepo) CountRemoteChannelFollows(ctx context.Context, userID uuid.UUID) (int64, error) {
+	rows, err := f.ListRemoteChannelFollows(ctx, sqlcgen.ListRemoteChannelFollowsParams{UserID: userID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *followFakeRepo) CountPendingRemoteFollows(ctx context.Context) (int64, error) {
+	rows, err := f.ListPendingRemoteFollows(ctx, sqlcgen.ListPendingRemoteFollowsParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}

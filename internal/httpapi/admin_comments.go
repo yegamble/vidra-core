@@ -26,8 +26,7 @@ type adminCommentView struct {
 // adminCommentListResponse is the paginated admin comments overview.
 type adminCommentListResponse struct {
 	Comments []adminCommentView `json:"comments"`
-	Limit    int                `json:"limit"`
-	Offset   int                `json:"offset"`
+	pageMeta
 }
 
 // handleListAdminComments returns all comments newest first for moderators/admins,
@@ -35,12 +34,8 @@ type adminCommentListResponse struct {
 // Optional ?q filters by body; pagination via ?limit (1–100, default 20)/?offset.
 func (s *Server) handleListAdminComments(c echo.Context) error {
 	q := c.QueryParam("q")
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.commentsvc.ListForAdmin(c.Request().Context(), q, int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, total, err := s.commentsvc.ListForAdmin(c.Request().Context(), q, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -63,5 +58,5 @@ func (s *Server) handleListAdminComments(c echo.Context) error {
 		}
 		views = append(views, v)
 	}
-	return c.JSON(http.StatusOK, adminCommentListResponse{Comments: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, adminCommentListResponse{Comments: views, pageMeta: page.meta(total)})
 }

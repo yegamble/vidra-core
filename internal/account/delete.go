@@ -62,16 +62,16 @@ func (s *Service) Delete(ctx context.Context, userID uuid.UUID) error {
 		return fmt.Errorf("account: list channels: %w", err)
 	}
 	for _, ch := range channels {
-		videos, err := s.repo.ListVideosByChannel(ctx, ch.ID)
+		videoIDs, err := s.repo.ListVideoIDsByChannel(ctx, ch.ID)
 		if err != nil {
 			return fmt.Errorf("account: list channel videos: %w", err)
 		}
-		for _, v := range videos {
+		for _, vid := range videoIDs {
 			// Gather the video's recorded blob keys BEFORE the rows cascade away.
-			keys := s.videoBlobKeys(ctx, v.ID)
+			keys := s.videoBlobKeys(ctx, vid)
 			if s.videos != nil {
-				if err := s.videos.Delete(ctx, userID, v.ID); err != nil {
-					return fmt.Errorf("account: delete video %s: %w", v.ID, err)
+				if err := s.videos.Delete(ctx, userID, vid); err != nil {
+					return fmt.Errorf("account: delete video %s: %w", vid, err)
 				}
 			}
 			// Best-effort media cleanup: a missing/failing blob never aborts the
@@ -79,7 +79,7 @@ func (s *Service) Delete(ctx context.Context, userID uuid.UUID) error {
 			for _, key := range keys {
 				s.blobDelete(ctx, key)
 			}
-			s.blobDeletePrefix(ctx, media.HLSKeyPrefix(v.ID))
+			s.blobDeletePrefix(ctx, media.HLSKeyPrefix(vid))
 		}
 		// Channel avatar/banner blobs (their rows cascade with the channel).
 		for _, kind := range []string{"avatar", "banner"} {

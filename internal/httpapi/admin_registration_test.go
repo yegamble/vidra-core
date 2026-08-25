@@ -118,3 +118,59 @@ func TestRegistrationRejectFlow(t *testing.T) {
 		t.Errorf("re-reject = %d, want 404", rec.Code)
 	}
 }
+
+// TestRegistrationRequestsStatusFilterIsValidated mirrors the reports fix: the
+// handler used to be `c.QueryParam("status") == "pending"`, so ?status=approved
+// silently returned the whole queue.
+func TestRegistrationRequestsStatusFilterIsValidated(t *testing.T) {
+	srv, cfg := approvalServer(t)
+	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	cfg.RegistrationRequireApproval = true
+	for _, u := range []string{"bob", "cass"} {
+		if rec := postTo(srv, "/api/v1/auth/register",
+			`{"username":"`+u+`","email":"`+u+`@example.test","password":"supersecret"}`); rec.Code != http.StatusAccepted {
+			t.Fatalf("register %s = %d; body=%s", u, rec.Code, rec.Body.String())
+		}
+	}
+	list := func(query string) registrationRequestListResponse {
+		t.Helper()
+		rec := getWithAuth(srv, "/api/v1/admin/registration-requests"+query, admin)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list%s = %d; body=%s", query, rec.Code, rec.Body.String())
+		}
+		var out registrationRequestListResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return out
+	}
+
+	pending := list("?status=pending")
+	if pending.Total != 2 {
+		t.Fatalf("pending total = %d, want 2", pending.Total)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/registration-requests/"+pending.Requests[0].ID+"/approve", "", admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("approve = %d", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/registration-requests/"+pending.Requests[1].ID+"/reject", `{"note":"no"}`, admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("reject = %d", rec.Code)
+	}
+
+	for _, tc := range []struct {
+		query string
+		want  int64
+	}{
+		{query: "?status=pending", want: 0},
+		// The bug: both of these used to return 2.
+		{query: "?status=approved", want: 1},
+		{query: "?status=rejected", want: 1},
+		{query: "?status=all", want: 2},
+		{query: "", want: 2},
+	} {
+		if got := list(tc.query); got.Total != tc.want || int64(len(got.Requests)) != tc.want {
+			t.Errorf("registration-requests%s = %d rows / total %d, want %d", tc.query, len(got.Requests), got.Total, tc.want)
+		}
+	}
+
+	if rec := getWithAuth(srv, "/api/v1/admin/registration-requests?status=nonsense", admin); rec.Code != http.StatusBadRequest {
+		t.Errorf("status=nonsense = %d, want 400", rec.Code)
+	}
+}

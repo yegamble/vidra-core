@@ -90,30 +90,48 @@ type adminVideoView struct {
 	HasOriginal        bool      `json:"has_original"`
 	HLSCount           int32     `json:"hls_count"`
 	WebVideoCount      int32     `json:"web_video_count"`
-	ObjectStorage      bool      `json:"object_storage"`
-	SizeBytes          int64     `json:"size_bytes"`
-	Blocked            bool      `json:"blocked"`
+	// ObjectStorage is derived from the INSTANCE storage backend, not from
+	// per-file truth: with STORAGE_BACKEND=s3 every local video reports true and
+	// with local storage every local video reports false. That is why there is
+	// deliberately no ?storage= filter on this endpoint — filtering on a value
+	// that is constant across the whole result set would be meaningless. PeerTube
+	// can offer that filter because it stores a per-file `storage` enum
+	// (FileStorage.OBJECT_STORAGE); vidra has no per-file equivalent, and
+	// recording that gap honestly is better than shipping a filter that lies.
+	ObjectStorage bool  `json:"object_storage"`
+	SizeBytes     int64 `json:"size_bytes"`
+	Blocked       bool  `json:"blocked"`
+	// Likes/Comments are the engagement counts the inventory sorts on. Federated
+	// rows have no local ratings or comments and always report 0.
+	Likes    int64 `json:"likes"`
+	Comments int64 `json:"comments"`
 }
 
 // adminVideoListResponse is the paginated admin videos overview.
 type adminVideoListResponse struct {
 	Videos []adminVideoView `json:"videos"`
-	Limit  int              `json:"limit"`
-	Offset int              `json:"offset"`
+	pageMeta
 }
 
-// handleListAdminVideos returns all videos (any privacy/state) newest first for
-// moderators/admins, each with its current block status. Behind
-// requireRole(admin, moderator). Optional ?q filters by title; pagination via
-// ?limit (1–100, default 20) and ?offset.
+// handleListAdminVideos returns the moderation inventory (local + federated,
+// any privacy/state), each row with its current block status, plus `total` —
+// how many videos match the SAME filters. Behind requireRole(admin, moderator).
+//
+// ?sort defaults to -created_at (the previous fixed ordering). ?q filters by
+// title. ?state and ?privacy are repeatable and/or comma-separated. ?scope is
+// local|remote|all. ?channel is an exact handle. ?published_after/?published_before
+// are RFC3339. ?has_original/?has_hls/?has_web_files are tri-state: absent means
+// "all", true/false narrow. Pagination via ?limit (1–100, default 20)/?offset.
+//
+// An unrecognised value for any of these is a 400 rather than a silent
+// no-op — see parseEnumParam.
 func (s *Server) handleListAdminVideos(c echo.Context) error {
-	q := c.QueryParam("q")
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
+	filter, err := parseAdminVideoFilter(c)
+	if err != nil {
+		return err
 	}
-	items, err := s.videosvc.ListAdmin(c.Request().Context(), q, int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, total, err := s.videosvc.ListAdmin(c.Request().Context(), filter, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -141,9 +159,61 @@ func (s *Server) handleListAdminVideos(c echo.Context) error {
 			ObjectStorage:      it.IsLocal && s.cfg.StorageBackend == "s3",
 			SizeBytes:          it.SizeBytes,
 			Blocked:            it.Blocked,
+			Likes:              it.Likes,
+			Comments:           it.Comments,
 		})
 	}
-	return c.JSON(http.StatusOK, adminVideoListResponse{Videos: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, adminVideoListResponse{Videos: views, pageMeta: page.meta(total)})
+}
+
+// parseAdminVideoFilter reads the inventory's sort + filter query params,
+// rejecting anything outside the supported sets. The accepted values come from
+// the video package (which derives them from the schema's own CHECK
+// constraints), so there is no second hand-maintained copy to drift.
+//
+// There is deliberately no storage-location filter here; see the comment on
+// adminVideoView.ObjectStorage.
+func parseAdminVideoFilter(c echo.Context) (video.AdminFilter, error) {
+	f := video.AdminFilter{
+		Query:   strings.TrimSpace(c.QueryParam("q")),
+		Channel: strings.TrimSpace(c.QueryParam("channel")),
+	}
+	var err error
+	if f.Sort, err = parseSortParam(c, video.AdminSorts(), video.AdminSortDefault); err != nil {
+		return f, err
+	}
+	if f.States, err = parseCSVEnumParam(c, "state", video.AdminStates()); err != nil {
+		return f, err
+	}
+	if f.Privacies, err = parseCSVEnumParam(c, "privacy", video.AdminPrivacies()); err != nil {
+		return f, err
+	}
+	if f.Scope, err = parseScopeParam(c); err != nil {
+		return f, err
+	}
+	if f.PublishedAfter, f.PublishedBefore, err = parseTimeRangeParams(c, "published_after", "published_before"); err != nil {
+		return f, err
+	}
+	if f.HasOriginal, err = parseBoolParam(c, "has_original"); err != nil {
+		return f, err
+	}
+	if f.HasHLS, err = parseBoolParam(c, "has_hls"); err != nil {
+		return f, err
+	}
+	if f.HasWebFiles, err = parseBoolParam(c, "has_web_files"); err != nil {
+		return f, err
+	}
+	if len(f.Channel) > 255 {
+		return f, echo.NewHTTPError(http.StatusBadRequest, "channel must be at most 255 characters")
+	}
+	// There is deliberately no ?live filter either. PeerTube can offer one
+	// because a live video IS a video row with an isLive flag; in vidra
+	// live_streams is a SEPARATE table that this inventory does not union in, and
+	// a stream recorded to VOD becomes an ordinary draft video with a "(replay)"
+	// title suffix and no structural marker (migration 0061). There is no column
+	// to filter on, and inventing one from a title suffix would be a filter that
+	// lies. Recording the gap is better than faking the feature.
+	return f, nil
 }
 
 // quarantinedVideoView is the moderation quarantine-queue projection of a held
@@ -162,20 +232,15 @@ type quarantinedVideoView struct {
 // quarantinedVideoListResponse is the paginated quarantine queue.
 type quarantinedVideoListResponse struct {
 	Videos []quarantinedVideoView `json:"videos"`
-	Limit  int                    `json:"limit"`
-	Offset int                    `json:"offset"`
+	pageMeta
 }
 
 // handleListQuarantinedVideos returns quarantined uploads newest first for the
 // moderation review queue (§11). Behind requireRole(admin, moderator).
 // Pagination via ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListQuarantinedVideos(c echo.Context) error {
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.videosvc.ListQuarantined(c.Request().Context(), int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, total, err := s.videosvc.ListQuarantined(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -192,7 +257,7 @@ func (s *Server) handleListQuarantinedVideos(c echo.Context) error {
 			CreatedAt:          it.CreatedAt,
 		})
 	}
-	return c.JSON(http.StatusOK, quarantinedVideoListResponse{Videos: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, quarantinedVideoListResponse{Videos: views, pageMeta: page.meta(total)})
 }
 
 // handleApproveQuarantinedVideo releases a quarantined video: it publishes

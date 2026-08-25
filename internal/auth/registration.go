@@ -77,17 +77,24 @@ func (s *Service) RequestRegistration(ctx context.Context, in RegisterInput, not
 	}, nil
 }
 
-// ListRegistrationRequests returns the approval queue, newest first. When
-// pendingOnly is true, only unresolved requests are returned. The caller clamps
-// limit/offset.
-func (s *Service) ListRegistrationRequests(ctx context.Context, pendingOnly bool, limit, offset int32) ([]RegistrationRequest, error) {
+// ListRegistrationRequests returns the approval queue, newest first, together
+// with how many requests match the same status filter. status is the exact
+// lifecycle state to show, or "" for all of them — it used to be a pendingOnly
+// bool, which made ?status=approved indistinguishable from no filter. The
+// caller clamps limit/offset.
+func (s *Service) ListRegistrationRequests(ctx context.Context, status string, limit, offset int32) ([]RegistrationRequest, int64, error) {
+	filter := nilIfEmptyString(status)
 	rows, err := s.repo.ListRegistrationRequests(ctx, sqlcgen.ListRegistrationRequestsParams{
-		PendingOnly:  pendingOnly,
+		Status:       filter,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountRegistrationRequests(ctx, filter)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]RegistrationRequest, 0, len(rows))
 	for _, r := range rows {
@@ -101,7 +108,16 @@ func (s *Service) ListRegistrationRequests(ctx context.Context, pendingOnly bool
 			ReviewedAt: tsPtr(r.ReviewedAt), CreatedAt: r.CreatedAt, ReviewerUsername: reviewer,
 		})
 	}
-	return out, nil
+	return out, total, nil
+}
+
+// nilIfEmptyString maps an empty filter string to a NULL query parameter ("no
+// filter"), so "" returns every row rather than rows with an empty status.
+func nilIfEmptyString(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
 }
 
 // ApproveRegistration approves a pending request, creating the account from the

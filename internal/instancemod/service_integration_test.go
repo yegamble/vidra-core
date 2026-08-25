@@ -54,7 +54,7 @@ func TestInstanceModerationPersists(t *testing.T) {
 	if err := svc.MuteInstance(ctx, u.ID, domain); err != nil {
 		t.Fatalf("re-MuteInstance: %v", err)
 	}
-	mutes, err := svc.ListMutedInstances(ctx, u.ID, 20, 0)
+	mutes, _, err := svc.ListMutedInstances(ctx, u.ID, 20, 0)
 	if err != nil {
 		t.Fatalf("ListMutedInstances: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestInstanceModerationPersists(t *testing.T) {
 	if err := svc.UnmuteInstance(ctx, u.ID, domain); err != nil {
 		t.Fatalf("UnmuteInstance: %v", err)
 	}
-	if mutes, _ := svc.ListMutedInstances(ctx, u.ID, 20, 0); len(mutes) != 0 {
+	if mutes, _, _ := svc.ListMutedInstances(ctx, u.ID, 20, 0); len(mutes) != 0 {
 		t.Errorf("after unmute mutes = %+v, want none", mutes)
 	}
 
@@ -80,7 +80,7 @@ func TestInstanceModerationPersists(t *testing.T) {
 	if isBlocked, err := q.IsInstanceBlocked(ctx, blocked); err != nil || !isBlocked {
 		t.Fatalf("IsInstanceBlocked = %v, %v; want true", isBlocked, err)
 	}
-	list, err := svc.ListBlockedInstances(ctx, 100, 0)
+	list, _, err := svc.ListBlockedInstances(ctx, 100, 0)
 	if err != nil {
 		t.Fatalf("ListBlockedInstances: %v", err)
 	}

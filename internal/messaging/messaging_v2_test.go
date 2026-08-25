@@ -126,7 +126,7 @@ func TestAvatarFlags(t *testing.T) {
 	if len(msgs) != 1 || msgs[0].SenderHasAvatar {
 		t.Fatalf("sender_has_avatar = %v, want false", msgs)
 	}
-	inbox, _ := svc.ListConversations(ctx, bob, 20, 0)
+	inbox, _, _ := svc.ListConversations(ctx, bob, 20, 0)
 	if len(inbox) != 1 || inbox[0].OtherHasAvatar {
 		t.Fatalf("other_has_avatar = %v, want false", inbox)
 	}
@@ -137,7 +137,7 @@ func TestAvatarFlags(t *testing.T) {
 	if !msgs[0].SenderHasAvatar {
 		t.Error("sender_has_avatar = false after avatar set, want true")
 	}
-	inbox, _ = svc.ListConversations(ctx, bob, 20, 0)
+	inbox, _, _ = svc.ListConversations(ctx, bob, 20, 0)
 	if !inbox[0].OtherHasAvatar {
 		t.Error("other_has_avatar = false after avatar set, want true")
 	}

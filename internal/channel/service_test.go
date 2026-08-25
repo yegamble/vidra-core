@@ -72,7 +72,8 @@ func (f *fakeRepo) DeleteChannelMember(_ context.Context, a sqlcgen.DeleteChanne
 	return 0, nil
 }
 
-func (f *fakeRepo) ListChannelMembers(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListChannelMembersRow, error) {
+func (f *fakeRepo) ListChannelMembers(_ context.Context, a sqlcgen.ListChannelMembersParams) ([]sqlcgen.ListChannelMembersRow, error) {
+	channelID := a.ChannelID
 	var out []sqlcgen.ListChannelMembersRow
 	for _, m := range f.members {
 		if m.ChannelID != channelID {
@@ -399,23 +400,23 @@ func TestChannelMembersLifecycle(t *testing.T) {
 	}
 
 	// ListManaged: owner sees it as "owner"; editor sees it as "editor".
-	ownerList, _ := svc.ListManaged(ctx, owner)
+	ownerList, _, _ := svc.ListManaged(ctx, owner, 100, 0)
 	if len(ownerList) != 1 || ownerList[0].Role != RoleOwner {
 		t.Errorf("owner ListManaged = %+v", ownerList)
 	}
-	editorList, _ := svc.ListManaged(ctx, editor)
+	editorList, _, _ := svc.ListManaged(ctx, editor, 100, 0)
 	if len(editorList) != 1 || editorList[0].Role != RoleEditor || editorList[0].Channel.ID != ch.ID {
 		t.Errorf("editor ListManaged = %+v", editorList)
 	}
 
 	// ListMembers: owner and editor may view; a stranger gets ErrForbidden.
-	if members, err := svc.ListMembers(ctx, owner, "ada"); err != nil || len(members) != 1 {
+	if members, _, err := svc.ListMembers(ctx, owner, "ada", 100, 0); err != nil || len(members) != 1 {
 		t.Errorf("owner ListMembers = %+v, err %v", members, err)
 	}
-	if _, err := svc.ListMembers(ctx, editor, "ada"); err != nil {
+	if _, _, err := svc.ListMembers(ctx, editor, "ada", 100, 0); err != nil {
 		t.Errorf("editor ListMembers err = %v, want nil", err)
 	}
-	if _, err := svc.ListMembers(ctx, stranger, "ada"); !errors.Is(err, ErrForbidden) {
+	if _, _, err := svc.ListMembers(ctx, stranger, "ada", 100, 0); !errors.Is(err, ErrForbidden) {
 		t.Errorf("stranger ListMembers err = %v, want ErrForbidden", err)
 	}
 
@@ -544,7 +545,7 @@ func TestListFollowed(t *testing.T) {
 
 	follower := uuid.New()
 	// A follower with no follows gets an empty (non-nil) slice.
-	if got, err := svc.ListFollowed(ctx, follower, 20, 0); err != nil || len(got) != 0 {
+	if got, _, err := svc.ListFollowed(ctx, follower, 20, 0); err != nil || len(got) != 0 {
 		t.Fatalf("ListFollowed empty = (%v, %v), want ([], nil)", got, err)
 	}
 
@@ -559,7 +560,7 @@ func TestListFollowed(t *testing.T) {
 		t.Fatalf("second follow ada: %v", err)
 	}
 
-	got, err := svc.ListFollowed(ctx, follower, 20, 0)
+	got, _, err := svc.ListFollowed(ctx, follower, 20, 0)
 	if err != nil {
 		t.Fatalf("ListFollowed: %v", err)
 	}
@@ -580,7 +581,7 @@ func TestListFollowed(t *testing.T) {
 	}
 
 	// Pagination: limit 1 offset 1 → the second newest ("north").
-	page, err := svc.ListFollowed(ctx, follower, 1, 1)
+	page, _, err := svc.ListFollowed(ctx, follower, 1, 1)
 	if err != nil {
 		t.Fatalf("ListFollowed page: %v", err)
 	}
@@ -732,7 +733,7 @@ func TestListFollowedCarriesTheBell(t *testing.T) {
 		t.Fatalf("mute ada: %v", err)
 	}
 
-	followed, err := svc.ListFollowed(ctx, follower, 20, 0)
+	followed, _, err := svc.ListFollowed(ctx, follower, 20, 0)
 	if err != nil {
 		t.Fatalf("ListFollowed: %v", err)
 	}
@@ -743,4 +744,58 @@ func TestListFollowedCarriesTheBell(t *testing.T) {
 	if got["ada"] != NotifyNone || got["bob"] != NotifyAll {
 		t.Fatalf("bells = %v, want ada=%s bob=%s", got, NotifyNone, NotifyAll)
 	}
+}
+
+// Counts delegate to the matching List so the fake cannot disagree with itself.
+func (f *fakeRepo) CountChannelMembers(ctx context.Context, channelID uuid.UUID) (int64, error) {
+	rows, err := f.ListChannelMembers(ctx, sqlcgen.ListChannelMembersParams{ChannelID: channelID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountFollowedChannels(ctx context.Context, followerID uuid.UUID) (int64, error) {
+	rows, err := f.ListFollowedChannels(ctx, sqlcgen.ListFollowedChannelsParams{FollowerID: followerID, Limit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+// ListManagedChannels mirrors the UNION query: owned channels first, then the
+// ones shared with the caller as an editor, each with its follower count.
+func (f *fakeRepo) ListManagedChannels(ctx context.Context, a sqlcgen.ListManagedChannelsParams) ([]sqlcgen.ListManagedChannelsRow, error) {
+	owned, err := f.ListChannelsByOwner(ctx, a.UserID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sqlcgen.ListManagedChannelsRow, 0, len(owned))
+	for _, ch := range owned {
+		n, _ := f.CountChannelFollowers(ctx, ch.ID)
+		out = append(out, sqlcgen.ListManagedChannelsRow{
+			ID: ch.ID, OwnerID: ch.OwnerID, Handle: ch.Handle, DisplayName: ch.DisplayName,
+			Description: ch.Description, CreatedAt: ch.CreatedAt, UpdatedAt: ch.UpdatedAt,
+			ActivitypubEnabled: ch.ActivitypubEnabled, AtprotoEnabled: ch.AtprotoEnabled,
+			Role: "owner", FollowerCount: n,
+		})
+	}
+	shared, err := f.ListChannelsForMember(ctx, a.UserID)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range shared {
+		n, _ := f.CountChannelFollowers(ctx, r.ID)
+		out = append(out, sqlcgen.ListManagedChannelsRow{
+			ID: r.ID, OwnerID: r.OwnerID, Handle: r.Handle, DisplayName: r.DisplayName,
+			Description: r.Description, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			ActivitypubEnabled: r.ActivitypubEnabled, AtprotoEnabled: r.AtprotoEnabled,
+			Role: r.Role, FollowerCount: n,
+		})
+	}
+	off := min(int(a.ResultOffset), len(out))
+	out = out[off:]
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(out) {
+		out = out[:a.ResultLimit]
+	}
+	return out, nil
+}
+
+func (f *fakeRepo) CountManagedChannels(ctx context.Context, userID uuid.UUID) (int64, error) {
+	rows, err := f.ListManagedChannels(ctx, sqlcgen.ListManagedChannelsParams{UserID: userID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

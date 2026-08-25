@@ -29,6 +29,15 @@ WHERE rf.state = 'pending'
 ORDER BY rf.created_at DESC, rf.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: CountPendingRemoteFollows :one
+-- How many rows ListPendingRemoteFollows would return, ignoring pagination. The
+-- channels JOIN is part of the predicate (a follow whose channel is gone is not
+-- listed) and the state filter must stay identical.
+SELECT count(*)::bigint
+FROM remote_follows rf
+JOIN channels c ON c.id = rf.channel_id
+WHERE rf.state = 'pending';
+
 -- name: AcceptPendingRemoteFollowByID :one
 -- Admin approval: flips one pending follow to accepted and returns what the
 -- Accept delivery needs. Resolved/unknown ids match no row (pgx.ErrNoRows).

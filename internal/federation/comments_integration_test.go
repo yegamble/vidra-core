@@ -196,7 +196,8 @@ func TestRemoteVideoModerationPersists(t *testing.T) {
 		t.Error("reporting an unknown remote video did not violate the FK")
 	}
 	// The queue row carries the remote-video context.
-	reports, err := q.ListReports(ctx, sqlcgen.ListReportsParams{OpenOnly: true, ResultLimit: 200})
+	openStatus := "open"
+	reports, err := q.ListReports(ctx, sqlcgen.ListReportsParams{Status: &openStatus, ResultLimit: 200})
 	if err != nil {
 		t.Fatalf("ListReports: %v", err)
 	}

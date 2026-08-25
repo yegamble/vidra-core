@@ -59,7 +59,7 @@ func TestMuteUnmuteList(t *testing.T) {
 	ctx := context.Background()
 	muter, target := uuid.New(), uuid.New()
 
-	if items, _ := svc.List(ctx, muter, 20, 0); len(items) != 0 {
+	if items, _, _ := svc.List(ctx, muter, 20, 0); len(items) != 0 {
 		t.Fatalf("muted before = %d, want 0", len(items))
 	}
 	if err := svc.Mute(ctx, muter, target); err != nil {
@@ -69,7 +69,7 @@ func TestMuteUnmuteList(t *testing.T) {
 	if err := svc.Mute(ctx, muter, target); err != nil {
 		t.Fatalf("re-Mute: %v", err)
 	}
-	items, err := svc.List(ctx, muter, 20, 0)
+	items, _, err := svc.List(ctx, muter, 20, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestMuteUnmuteList(t *testing.T) {
 	if err := svc.Unmute(ctx, muter, target); err != nil {
 		t.Errorf("idempotent Unmute: %v", err)
 	}
-	if items, _ := svc.List(ctx, muter, 20, 0); len(items) != 0 {
+	if items, _, _ := svc.List(ctx, muter, 20, 0); len(items) != 0 {
 		t.Errorf("muted after unmute = %d, want 0", len(items))
 	}
 }
@@ -101,4 +101,9 @@ func TestMuteUnknownTarget(t *testing.T) {
 	if err := svc.Mute(context.Background(), uuid.New(), uuid.New()); err != ErrUserNotFound {
 		t.Errorf("unknown-target err = %v, want ErrUserNotFound", err)
 	}
+}
+
+func (f *fakeRepo) CountMutedAccounts(ctx context.Context, muterID uuid.UUID) (int64, error) {
+	rows, err := f.ListMutedAccounts(ctx, sqlcgen.ListMutedAccountsParams{MuterID: muterID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

@@ -131,15 +131,19 @@ func (s *Server) handleCreatePlaylist(c echo.Context) error {
 // playlistListResponse wraps a list of playlists.
 type playlistListResponse struct {
 	Playlists []playlistView `json:"playlists"`
+	pageMeta
 }
 
-// handleListMyPlaylists lists the authenticated user's playlists, newest first.
+// handleListMyPlaylists lists the authenticated user's playlists, newest first,
+// paginated via ?limit (1–100, default 20)/?offset with a true total. It
+// previously returned every playlist unbounded.
 func (s *Server) handleListMyPlaylists(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	rows, err := s.playlistsvc.ListOwn(c.Request().Context(), userID)
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	rows, total, err := s.playlistsvc.ListOwn(c.Request().Context(), userID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -156,7 +160,7 @@ func (s *Server) handleListMyPlaylists(c echo.Context) error {
 			UpdatedAt:    r.UpdatedAt,
 		})
 	}
-	return c.JSON(http.StatusOK, playlistListResponse{Playlists: views})
+	return c.JSON(http.StatusOK, playlistListResponse{Playlists: views, pageMeta: page.meta(total)})
 }
 
 // playlistDetailResponse is a playlist plus its ordered video cards. The
@@ -164,6 +168,9 @@ func (s *Server) handleListMyPlaylists(c echo.Context) error {
 type playlistDetailResponse struct {
 	playlistView
 	Videos []videoView `json:"videos"`
+	// The item list is paginated, so total/limit/offset describe the VIDEOS, not
+	// the playlist. video_count on the playlist itself is unchanged.
+	pageMeta
 }
 
 // handleGetPlaylist returns a playlist and its videos. Behind optionalAuth:
@@ -185,7 +192,8 @@ func (s *Server) handleGetPlaylist(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
 		}
 	}
-	items, err := s.playlistsvc.ListItems(ctx, id)
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, total, err := s.playlistsvc.ListItems(ctx, id, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -193,7 +201,9 @@ func (s *Server) handleGetPlaylist(c echo.Context) error {
 	for _, it := range items {
 		videos = append(videos, playlistCardView(it))
 	}
-	return c.JSON(http.StatusOK, playlistDetailResponse{playlistView: playlistViewRow(p), Videos: videos})
+	return c.JSON(http.StatusOK, playlistDetailResponse{
+		playlistView: playlistViewRow(p), Videos: videos, pageMeta: page.meta(total),
+	})
 }
 
 // updatePlaylistRequest is the PATCH /api/v1/playlists/{id} body. Fields are

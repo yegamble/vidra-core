@@ -34,6 +34,22 @@ func (q *Queries) AcceptRemoteChannelFollowByActivity(ctx context.Context, arg A
 	return result.RowsAffected(), nil
 }
 
+const countRemoteChannelFollows = `-- name: CountRemoteChannelFollows :one
+SELECT count(*)::bigint
+FROM remote_channel_follows f
+JOIN remote_actors ra ON ra.actor_url = f.remote_actor_url
+WHERE f.user_id = $1
+`
+
+// How many rows ListRemoteChannelFollows would return, ignoring pagination. The
+// remote_actors JOIN is part of the predicate.
+func (q *Queries) CountRemoteChannelFollows(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countRemoteChannelFollows, userID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deleteRemoteChannelFollowByActivity = `-- name: DeleteRemoteChannelFollowByActivity :execrows
 DELETE FROM remote_channel_follows
 WHERE follow_activity_url = $1 AND remote_actor_url = $2

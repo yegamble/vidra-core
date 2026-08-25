@@ -13,6 +13,36 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countLivePublicStreams = `-- name: CountLivePublicStreams :one
+SELECT count(*)::bigint
+FROM live_streams ls
+JOIN channels ch ON ch.id = ls.channel_id
+WHERE ls.state = 'live' AND ls.privacy = 'public'
+`
+
+// How many rows ListLivePublicStreams would return, ignoring pagination. The
+// channels JOIN is part of the predicate. CountLiveStreamsLive below counts
+// ALL live sessions (including private/unlisted) for the instance-wide publish
+// cap and would over-report this public rail.
+func (q *Queries) CountLivePublicStreams(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countLivePublicStreams)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countLiveStreamsByChannel = `-- name: CountLiveStreamsByChannel :one
+SELECT count(*)::bigint FROM live_streams WHERE channel_id = $1
+`
+
+// How many rows ListLiveStreamsByChannel would return, ignoring pagination.
+func (q *Queries) CountLiveStreamsByChannel(ctx context.Context, channelID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveStreamsByChannel, channelID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countLiveStreamsLive = `-- name: CountLiveStreamsLive :one
 SELECT count(*) FROM live_streams WHERE state = 'live'
 `
@@ -202,12 +232,12 @@ FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
 WHERE ls.state = 'live' AND ls.privacy = 'public'
 ORDER BY ls.started_at DESC NULLS LAST, ls.id
-LIMIT $1 OFFSET $2
+LIMIT $2 OFFSET $1
 `
 
 type ListLivePublicStreamsParams struct {
-	Limit  int32 `json:"limit"`
-	Offset int32 `json:"offset"`
+	ResultOffset int32 `json:"result_offset"`
+	ResultLimit  int32 `json:"result_limit"`
 }
 
 type ListLivePublicStreamsRow struct {
@@ -223,7 +253,7 @@ type ListLivePublicStreamsRow struct {
 // most-recently-started first. Unlisted/private streams and offline/ended streams
 // never appear. Joined with the owning channel for display; never the key hash.
 func (q *Queries) ListLivePublicStreams(ctx context.Context, arg ListLivePublicStreamsParams) ([]ListLivePublicStreamsRow, error) {
-	rows, err := q.db.Query(ctx, listLivePublicStreams, arg.Limit, arg.Offset)
+	rows, err := q.db.Query(ctx, listLivePublicStreams, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +284,14 @@ SELECT id, channel_id, title, description, privacy, state, permanent, replay_ena
 FROM live_streams
 WHERE channel_id = $1
 ORDER BY created_at DESC, id
+LIMIT $3 OFFSET $2
 `
+
+type ListLiveStreamsByChannelParams struct {
+	ChannelID    uuid.UUID `json:"channel_id"`
+	ResultOffset int32     `json:"result_offset"`
+	ResultLimit  int32     `json:"result_limit"`
+}
 
 type ListLiveStreamsByChannelRow struct {
 	ID            uuid.UUID          `json:"id"`
@@ -271,8 +308,8 @@ type ListLiveStreamsByChannelRow struct {
 }
 
 // A channel's live streams, newest first (owner management list). No key hash.
-func (q *Queries) ListLiveStreamsByChannel(ctx context.Context, channelID uuid.UUID) ([]ListLiveStreamsByChannelRow, error) {
-	rows, err := q.db.Query(ctx, listLiveStreamsByChannel, channelID)
+func (q *Queries) ListLiveStreamsByChannel(ctx context.Context, arg ListLiveStreamsByChannelParams) ([]ListLiveStreamsByChannelRow, error) {
+	rows, err := q.db.Query(ctx, listLiveStreamsByChannel, arg.ChannelID, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}

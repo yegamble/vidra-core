@@ -58,7 +58,8 @@ func (f *csFakeRepo) CreateChannelSync(_ context.Context, arg sqlcgen.CreateChan
 	return s, nil
 }
 
-func (f *csFakeRepo) ListChannelSyncsByUser(_ context.Context, userID uuid.UUID) ([]sqlcgen.ChannelSync, error) {
+func (f *csFakeRepo) ListChannelSyncsByUser(_ context.Context, a sqlcgen.ListChannelSyncsByUserParams) ([]sqlcgen.ChannelSync, error) {
+	userID := a.UserID
 	var out []sqlcgen.ChannelSync
 	for _, s := range f.syncs {
 		if s.UserID == userID {

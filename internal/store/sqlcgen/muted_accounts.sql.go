@@ -12,6 +12,21 @@ import (
 	"github.com/google/uuid"
 )
 
+const countMutedAccounts = `-- name: CountMutedAccounts :one
+SELECT count(*)::bigint
+FROM muted_accounts m
+JOIN users u ON u.id = m.muted_id
+WHERE m.muter_id = $1
+`
+
+// How many rows ListMutedAccounts would return, ignoring pagination.
+func (q *Queries) CountMutedAccounts(ctx context.Context, muterID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countMutedAccounts, muterID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listMutedAccounts = `-- name: ListMutedAccounts :many
 SELECT m.muted_id, u.username, u.display_name, m.created_at
 FROM muted_accounts m

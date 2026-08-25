@@ -7,6 +7,7 @@ package sqlcgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -20,6 +21,34 @@ func (q *Queries) CountChannelsByOwner(ctx context.Context, ownerID uuid.UUID) (
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countManagedChannels = `-- name: CountManagedChannels :one
+SELECT count(*)::bigint
+FROM (
+    SELECT c.id, c.owner_id, c.handle, c.display_name, c.description,
+           c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
+           'owner'::text AS role
+    FROM channels c
+    WHERE c.owner_id = $1
+
+    UNION ALL
+
+    SELECT c.id, c.owner_id, c.handle, c.display_name, c.description,
+           c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
+           cm.role
+    FROM channel_members cm
+    JOIN channels c ON c.id = cm.channel_id
+    WHERE cm.user_id = $1
+) managed
+`
+
+// How many rows ListManagedChannels would return, ignoring pagination.
+func (q *Queries) CountManagedChannels(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countManagedChannels, userID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const createChannel = `-- name: CreateChannel :one
@@ -138,6 +167,87 @@ func (q *Queries) ListChannelsByOwner(ctx context.Context, ownerID uuid.UUID) ([
 			&i.UpdatedAt,
 			&i.ActivitypubEnabled,
 			&i.AtprotoEnabled,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listManagedChannels = `-- name: ListManagedChannels :many
+SELECT managed.id, managed.owner_id, managed.handle, managed.display_name, managed.description, managed.created_at, managed.updated_at, managed.activitypub_enabled, managed.atproto_enabled, managed.role,
+       (SELECT count(*) FROM channel_follows cf WHERE cf.channel_id = managed.id)::bigint AS follower_count
+FROM (
+    SELECT c.id, c.owner_id, c.handle, c.display_name, c.description,
+           c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
+           'owner'::text AS role
+    FROM channels c
+    WHERE c.owner_id = $1
+
+    UNION ALL
+
+    SELECT c.id, c.owner_id, c.handle, c.display_name, c.description,
+           c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
+           cm.role
+    FROM channel_members cm
+    JOIN channels c ON c.id = cm.channel_id
+    WHERE cm.user_id = $1
+) managed
+ORDER BY (managed.role = 'owner') DESC, managed.created_at, managed.id
+LIMIT $3 OFFSET $2
+`
+
+type ListManagedChannelsParams struct {
+	UserID       uuid.UUID `json:"user_id"`
+	ResultOffset int32     `json:"result_offset"`
+	ResultLimit  int32     `json:"result_limit"`
+}
+
+type ListManagedChannelsRow struct {
+	ID                 uuid.UUID `json:"id"`
+	OwnerID            uuid.UUID `json:"owner_id"`
+	Handle             string    `json:"handle"`
+	DisplayName        string    `json:"display_name"`
+	Description        string    `json:"description"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	ActivitypubEnabled bool      `json:"activitypub_enabled"`
+	AtprotoEnabled     bool      `json:"atproto_enabled"`
+	Role               string    `json:"role"`
+	FollowerCount      int64     `json:"follower_count"`
+}
+
+// GET /me/channels: the channels a user OWNS plus the ones shared with them as
+// an editor member (migration 0097), each tagged with the caller's role, owned
+// first. This replaces a Go-side merge of ListChannelsByOwner and
+// ListChannelsForMember, which could not be paginated and which then issued one
+// CountChannelFollowers per row — an N+1 that grew with the user's channel
+// count. The follower count comes back inline as one scalar subquery per row.
+func (q *Queries) ListManagedChannels(ctx context.Context, arg ListManagedChannelsParams) ([]ListManagedChannelsRow, error) {
+	rows, err := q.db.Query(ctx, listManagedChannels, arg.UserID, arg.ResultOffset, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListManagedChannelsRow
+	for rows.Next() {
+		var i ListManagedChannelsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Handle,
+			&i.DisplayName,
+			&i.Description,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ActivitypubEnabled,
+			&i.AtprotoEnabled,
+			&i.Role,
+			&i.FollowerCount,
 		); err != nil {
 			return nil, err
 		}

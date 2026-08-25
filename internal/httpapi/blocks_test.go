@@ -314,3 +314,8 @@ func TestMessagingBlockedByUserBlock(t *testing.T) {
 		t.Fatalf("ada send after unblock = %d, want 201; body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func (f *blockFakeRepo) CountBlockedUsers(ctx context.Context, blockerID uuid.UUID) (int64, error) {
+	rows, err := f.ListBlockedUsers(ctx, sqlcgen.ListBlockedUsersParams{BlockerID: blockerID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}

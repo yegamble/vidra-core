@@ -23,6 +23,7 @@ import (
 type Repository interface {
 	InsertAuditLog(ctx context.Context, arg sqlcgen.InsertAuditLogParams) error
 	ListAuditLog(ctx context.Context, arg sqlcgen.ListAuditLogParams) ([]sqlcgen.ListAuditLogRow, error)
+	CountAuditLog(ctx context.Context, action *string) (int64, error)
 }
 
 // Service persists and reads the audit trail.
@@ -98,8 +99,9 @@ type Entry struct {
 }
 
 // List returns audit entries newest first, optionally filtered by action (empty
-// = all). The caller clamps limit/offset.
-func (s *Service) List(ctx context.Context, action string, limit, offset int32) ([]Entry, error) {
+// = all), with how many entries match the same filter. The caller clamps
+// limit/offset.
+func (s *Service) List(ctx context.Context, action string, limit, offset int32) ([]Entry, int64, error) {
 	var actionFilter *string
 	if action != "" {
 		actionFilter = &action
@@ -110,7 +112,11 @@ func (s *Service) List(ctx context.Context, action string, limit, offset int32) 
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountAuditLog(ctx, actionFilter)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]Entry, 0, len(rows))
 	for _, r := range rows {
@@ -135,14 +141,14 @@ func (s *Service) List(ctx context.Context, action string, limit, offset int32) 
 			e.JobID = uuid.UUID(r.JobID.Bytes).String()
 		}
 		if err := json.Unmarshal(r.Metadata, &e.Metadata); err != nil {
-			return nil, fmt.Errorf("audit: decode metadata for %s: %w", r.ID, err)
+			return nil, 0, fmt.Errorf("audit: decode metadata for %s: %w", r.ID, err)
 		}
 		if err := json.Unmarshal(r.Changes, &e.Changes); err != nil {
-			return nil, fmt.Errorf("audit: decode changes for %s: %w", r.ID, err)
+			return nil, 0, fmt.Errorf("audit: decode changes for %s: %w", r.ID, err)
 		}
 		out = append(out, e)
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // parseActor renders a string actor id as a nullable pgtype.UUID; "" or a

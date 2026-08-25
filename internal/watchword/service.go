@@ -27,11 +27,13 @@ var ErrAlreadyExists = errors.New("watchword: already exists")
 type Repository interface {
 	CreateWatchedWord(ctx context.Context, arg sqlcgen.CreateWatchedWordParams) (sqlcgen.WatchedWord, error)
 	ListWatchedWords(ctx context.Context, arg sqlcgen.ListWatchedWordsParams) ([]sqlcgen.ListWatchedWordsRow, error)
+	CountWatchedWords(ctx context.Context) (int64, error)
 	DeleteWatchedWord(ctx context.Context, id uuid.UUID) (int64, error)
 	MatchWatchedWords(ctx context.Context, text string) ([]sqlcgen.MatchWatchedWordsRow, error)
 	RecordWatchedWordMatch(ctx context.Context, arg sqlcgen.RecordWatchedWordMatchParams) error
 	RecordWatchedWordVideoMatch(ctx context.Context, arg sqlcgen.RecordWatchedWordVideoMatchParams) error
 	ListWatchedWordMatches(ctx context.Context, arg sqlcgen.ListWatchedWordMatchesParams) ([]sqlcgen.ListWatchedWordMatchesRow, error)
+	CountWatchedWordMatches(ctx context.Context) (int64, error)
 }
 
 // Service holds the watched-words application logic.
@@ -68,14 +70,19 @@ func (s *Service) Add(ctx context.Context, word string, createdBy uuid.UUID) (Wa
 	return WatchedWord{ID: row.ID, Word: row.Word, CreatedAt: row.CreatedAt}, nil
 }
 
-// List returns the watched words, newest first. The caller clamps limit/offset.
-func (s *Service) List(ctx context.Context, limit, offset int32) ([]WatchedWord, error) {
+// List returns the watched words, newest first, with the total. The caller
+// clamps limit/offset.
+func (s *Service) List(ctx context.Context, limit, offset int32) ([]WatchedWord, int64, error) {
 	rows, err := s.repo.ListWatchedWords(ctx, sqlcgen.ListWatchedWordsParams{
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountWatchedWords(ctx)
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]WatchedWord, 0, len(rows))
 	for _, r := range rows {
@@ -85,7 +92,7 @@ func (s *Service) List(ctx context.Context, limit, offset int32) ([]WatchedWord,
 		}
 		items = append(items, item)
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // Delete removes a term from the list (idempotent: removing an absent term is a
@@ -159,15 +166,19 @@ type Match struct {
 	CreatedAt      time.Time
 }
 
-// ListMatches returns flagged comments and videos, newest match first. The
-// caller clamps limit/offset.
-func (s *Service) ListMatches(ctx context.Context, limit, offset int32) ([]Match, error) {
+// ListMatches returns flagged comments and videos, newest match first, with the
+// total. The caller clamps limit/offset.
+func (s *Service) ListMatches(ctx context.Context, limit, offset int32) ([]Match, int64, error) {
 	rows, err := s.repo.ListWatchedWordMatches(ctx, sqlcgen.ListWatchedWordMatchesParams{
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountWatchedWordMatches(ctx)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]Match, 0, len(rows))
 	for _, r := range rows {
@@ -187,7 +198,7 @@ func (s *Service) ListMatches(ctx context.Context, limit, offset int32) ([]Match
 		}
 		out = append(out, m)
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // sqlState returns the SQLSTATE code of a PostgreSQL error, "" otherwise.

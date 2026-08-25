@@ -72,7 +72,7 @@ type Repository interface {
 	GetChannelByID(ctx context.Context, id uuid.UUID) (sqlcgen.Channel, error)
 
 	CreateChannelSync(ctx context.Context, arg sqlcgen.CreateChannelSyncParams) (sqlcgen.ChannelSync, error)
-	ListChannelSyncsByUser(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ChannelSync, error)
+	ListChannelSyncsByUser(ctx context.Context, arg sqlcgen.ListChannelSyncsByUserParams) ([]sqlcgen.ChannelSync, error)
 	GetChannelSyncByID(ctx context.Context, id uuid.UUID) (sqlcgen.ChannelSync, error)
 	CountChannelSyncsByUser(ctx context.Context, userID uuid.UUID) (int64, error)
 	DeleteChannelSync(ctx context.Context, id uuid.UUID) error
@@ -285,8 +285,22 @@ func (s *Service) Create(ctx context.Context, userID, channelID uuid.UUID, exter
 }
 
 // ListForUser returns all channel syncs owned by userID (newest first).
-func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ChannelSync, error) {
-	return s.repo.ListChannelSyncsByUser(ctx, userID)
+func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]sqlcgen.ChannelSync, int64, error) {
+	rows, err := s.repo.ListChannelSyncsByUser(ctx, sqlcgen.ListChannelSyncsByUserParams{
+		UserID:       userID,
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	// CountChannelSyncsByUser already existed for the per-user cap; it asks the
+	// same question as this list, so it is the total.
+	total, err := s.repo.CountChannelSyncsByUser(ctx, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
 }
 
 // Delete removes a channel sync the caller owns. Unknown id → ErrNotFound; a sync

@@ -42,8 +42,7 @@ func newRemoteFollowView(f federation.RemoteFollow) remoteFollowView {
 // remoteFollowListResponse is the caller's paginated remote-follow list.
 type remoteFollowListResponse struct {
 	Follows []remoteFollowView `json:"follows"`
-	Limit   int                `json:"limit"`
-	Offset  int                `json:"offset"`
+	pageMeta
 }
 
 // maxFollowTargetLen bounds the submitted handle/actor URL.
@@ -121,12 +120,8 @@ func (s *Server) handleListRemoteFollows(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.fedsvc.ListRemoteFollows(c.Request().Context(), userID, int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, total, err := s.fedsvc.ListRemoteFollows(c.Request().Context(), userID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -134,7 +129,7 @@ func (s *Server) handleListRemoteFollows(c echo.Context) error {
 	for _, it := range items {
 		views = append(views, newRemoteFollowView(it))
 	}
-	return c.JSON(http.StatusOK, remoteFollowListResponse{Follows: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, remoteFollowListResponse{Follows: views, pageMeta: page.meta(total)})
 }
 
 // handleDeleteRemoteFollow unfollows a remote channel by follow row id: the

@@ -107,7 +107,7 @@ type fakeRepo struct {
 	follows       []sqlcgen.ListFollowedChannelsByUserRow
 	saved         []sqlcgen.ListSavedVideosByUserForExportRow
 	history       []sqlcgen.ListWatchHistoryByUserForExportRow
-	playlists     []sqlcgen.ListPlaylistsByOwnerRow
+	playlists     []sqlcgen.ListPlaylistsByOwnerForExportRow
 	playlistItems map[uuid.UUID][]uuid.UUID
 
 	// import records
@@ -165,8 +165,12 @@ func (f *fakeRepo) ListChannelsByOwner(_ context.Context, _ uuid.UUID) ([]sqlcge
 	return f.channels, nil
 }
 
-func (f *fakeRepo) ListVideosByChannel(_ context.Context, ch uuid.UUID) ([]sqlcgen.ListVideosByChannelRow, error) {
-	return f.videos[ch], nil
+func (f *fakeRepo) ListVideoIDsByChannel(_ context.Context, ch uuid.UUID) ([]uuid.UUID, error) {
+	ids := make([]uuid.UUID, 0, len(f.videos[ch]))
+	for _, v := range f.videos[ch] {
+		ids = append(ids, v.ID)
+	}
+	return ids, nil
 }
 
 func (f *fakeRepo) DeleteChannel(_ context.Context, id uuid.UUID) error {
@@ -408,7 +412,7 @@ func (f *fakeRepo) ListSavedVideosByUserForExport(context.Context, uuid.UUID) ([
 func (f *fakeRepo) ListWatchHistoryByUserForExport(context.Context, uuid.UUID) ([]sqlcgen.ListWatchHistoryByUserForExportRow, error) {
 	return f.history, nil
 }
-func (f *fakeRepo) ListPlaylistsByOwner(context.Context, uuid.UUID) ([]sqlcgen.ListPlaylistsByOwnerRow, error) {
+func (f *fakeRepo) ListPlaylistsByOwnerForExport(context.Context, uuid.UUID) ([]sqlcgen.ListPlaylistsByOwnerForExportRow, error) {
 	return f.playlists, nil
 }
 func (f *fakeRepo) ListPlaylistItemVideoIDs(_ context.Context, id uuid.UUID) ([]uuid.UUID, error) {
@@ -687,7 +691,7 @@ func TestDrainExportsBuildsArchiveWithoutSecrets(t *testing.T) {
 		State: "published", Category: &cat, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}}
 	repo.tags[vID] = []string{"go", "video"}
-	repo.playlists = []sqlcgen.ListPlaylistsByOwnerRow{{ID: plID, OwnerID: user.ID, Title: "Faves", Visibility: "private"}}
+	repo.playlists = []sqlcgen.ListPlaylistsByOwnerForExportRow{{ID: plID, OwnerID: user.ID, Title: "Faves", Visibility: "private"}}
 	repo.playlistItems[plID] = []uuid.UUID{vID}
 	repo.prefs = []sqlcgen.ListNotificationPrefsRow{{Type: "follow", Enabled: false}}
 	repo.comments = []sqlcgen.ListCommentsByUserForExportRow{{ID: uuid.New(), VideoID: vID, Body: "nice"}}
@@ -926,7 +930,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 
 	vID, plID := uuid.New(), uuid.New()
 	repo.localVideos[vID] = true
-	repo.playlists = []sqlcgen.ListPlaylistsByOwnerRow{{ID: plID, OwnerID: user.ID, Title: "Mix", Visibility: "public"}}
+	repo.playlists = []sqlcgen.ListPlaylistsByOwnerForExportRow{{ID: plID, OwnerID: user.ID, Title: "Mix", Visibility: "public"}}
 	repo.playlistItems[plID] = []uuid.UUID{vID}
 	repo.prefs = []sqlcgen.ListNotificationPrefsRow{{Type: "follow", Enabled: false}}
 

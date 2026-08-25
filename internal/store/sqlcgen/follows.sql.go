@@ -23,6 +23,22 @@ func (q *Queries) CountChannelFollowers(ctx context.Context, channelID uuid.UUID
 	return count, err
 }
 
+const countFollowedChannels = `-- name: CountFollowedChannels :one
+SELECT count(*)::bigint
+FROM channel_follows cf
+JOIN channels c ON c.id = cf.channel_id
+WHERE cf.follower_id = $1
+`
+
+// How many rows ListFollowedChannels would return, ignoring pagination. The
+// channels JOIN is part of the predicate.
+func (q *Queries) CountFollowedChannels(ctx context.Context, followerID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countFollowedChannels, followerID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countFollowersByOwner = `-- name: CountFollowersByOwner :many
 SELECT c.id AS channel_id, count(cf.follower_id)::bigint AS followers
 FROM channels c

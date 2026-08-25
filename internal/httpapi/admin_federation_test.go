@@ -202,3 +202,13 @@ func TestFederationFollowerQueueRequiresAdmin(t *testing.T) {
 		t.Errorf("list unauthenticated = %d, want 401", rec.Code)
 	}
 }
+
+func (f followerQueueRepo) CountPendingRemoteFollows(ctx context.Context) (int64, error) {
+	rows, err := f.ListPendingRemoteFollows(ctx, sqlcgen.ListPendingRemoteFollowsParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f followerQueueRepo) CountRemoteChannelFollows(ctx context.Context, userID uuid.UUID) (int64, error) {
+	rows, err := f.ListRemoteChannelFollows(ctx, sqlcgen.ListRemoteChannelFollowsParams{UserID: userID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}

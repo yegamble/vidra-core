@@ -172,14 +172,18 @@ func (s *Service) UnfollowRemoteChannel(ctx context.Context, userID, followID uu
 
 // ListRemoteFollows returns the user's outbound remote-channel follows, newest
 // first. The caller clamps limit/offset.
-func (s *Service) ListRemoteFollows(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]RemoteFollow, error) {
+func (s *Service) ListRemoteFollows(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]RemoteFollow, int64, error) {
 	rows, err := s.repo.ListRemoteChannelFollows(ctx, sqlcgen.ListRemoteChannelFollowsParams{
 		UserID:       userID,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountRemoteChannelFollows(ctx, userID)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]RemoteFollow, 0, len(rows))
 	for _, r := range rows {
@@ -192,7 +196,7 @@ func (s *Service) ListRemoteFollows(ctx context.Context, userID uuid.UUID, limit
 			CreatedAt: r.CreatedAt,
 		})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // resolveFollowTarget turns the submitted target (a full actor URL, or a

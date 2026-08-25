@@ -138,17 +138,24 @@ var acceptedImageExts = map[string]string{
 type Repository interface {
 	CreateVideo(ctx context.Context, arg sqlcgen.CreateVideoParams) (sqlcgen.Video, error)
 	GetVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
-	ListVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.ListVideosByChannelRow, error)
-	ListPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.ListPublicVideosByChannelRow, error)
+	ListVideosByChannel(ctx context.Context, arg sqlcgen.ListVideosByChannelParams) ([]sqlcgen.ListVideosByChannelRow, error)
+	CountVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error)
+	ListPublicVideosByChannel(ctx context.Context, arg sqlcgen.ListPublicVideosByChannelParams) ([]sqlcgen.ListPublicVideosByChannelRow, error)
+	CountPublicVideosByChannelVisible(ctx context.Context, arg sqlcgen.CountPublicVideosByChannelVisibleParams) (int64, error)
 	ListPublicVideosSorted(ctx context.Context, arg sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error)
+	CountPublicVideosSorted(ctx context.Context, arg sqlcgen.CountPublicVideosSortedParams) (int64, error)
 	ListSubscriptionVideos(ctx context.Context, arg sqlcgen.ListSubscriptionVideosParams) ([]sqlcgen.ListSubscriptionVideosRow, error)
+	CountSubscriptionVideos(ctx context.Context, followerID uuid.UUID) (int64, error)
 	ListSavedVideos(ctx context.Context, arg sqlcgen.ListSavedVideosParams) ([]sqlcgen.ListSavedVideosRow, error)
+	CountSavedVideos(ctx context.Context, userID uuid.UUID) (int64, error)
 	SaveVideo(ctx context.Context, arg sqlcgen.SaveVideoParams) error
 	UnsaveVideo(ctx context.Context, arg sqlcgen.UnsaveVideoParams) error
 	SearchPublicVideos(ctx context.Context, arg sqlcgen.SearchPublicVideosParams) ([]sqlcgen.SearchPublicVideosRow, error)
+	CountSearchPublicVideos(ctx context.Context, arg sqlcgen.CountSearchPublicVideosParams) (int64, error)
 	ListPublicVideosByIDs(ctx context.Context, arg sqlcgen.ListPublicVideosByIDsParams) ([]sqlcgen.ListPublicVideosByIDsRow, error)
 	ListRelatedVideosFallback(ctx context.Context, arg sqlcgen.ListRelatedVideosFallbackParams) ([]sqlcgen.ListRelatedVideosFallbackRow, error)
 	ListAdminVideos(ctx context.Context, arg sqlcgen.ListAdminVideosParams) ([]sqlcgen.ListAdminVideosRow, error)
+	CountAdminVideos(ctx context.Context, arg sqlcgen.CountAdminVideosParams) (int64, error)
 	UpdateVideo(ctx context.Context, arg sqlcgen.UpdateVideoParams) (sqlcgen.Video, error)
 	DeleteVideo(ctx context.Context, id uuid.UUID) error
 	CreateVideoFile(ctx context.Context, arg sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error)
@@ -161,6 +168,7 @@ type Repository interface {
 	SetVideoState(ctx context.Context, arg sqlcgen.SetVideoStateParams) (sqlcgen.Video, error)
 	UploadRequiresQuarantine(ctx context.Context, id uuid.UUID) (bool, error)
 	ListQuarantinedVideos(ctx context.Context, arg sqlcgen.ListQuarantinedVideosParams) ([]sqlcgen.ListQuarantinedVideosRow, error)
+	CountQuarantinedVideos(ctx context.Context) (int64, error)
 	DeleteVideoTags(ctx context.Context, videoID uuid.UUID) error
 	InsertVideoTags(ctx context.Context, arg sqlcgen.InsertVideoTagsParams) error
 	ListVideoTags(ctx context.Context, videoID uuid.UUID) ([]string, error)
@@ -195,7 +203,9 @@ type Repository interface {
 	UpsertWatchProgress(ctx context.Context, arg sqlcgen.UpsertWatchProgressParams) (sqlcgen.WatchHistory, error)
 	GetWatchProgress(ctx context.Context, arg sqlcgen.GetWatchProgressParams) (sqlcgen.WatchHistory, error)
 	ListWatchHistory(ctx context.Context, arg sqlcgen.ListWatchHistoryParams) ([]sqlcgen.ListWatchHistoryRow, error)
+	CountWatchHistory(ctx context.Context, userID uuid.UUID) (int64, error)
 	ListWatchHistoryInProgress(ctx context.Context, arg sqlcgen.ListWatchHistoryInProgressParams) ([]sqlcgen.ListWatchHistoryInProgressRow, error)
+	CountWatchHistoryInProgress(ctx context.Context, userID uuid.UUID) (int64, error)
 	DeleteWatchHistoryEntry(ctx context.Context, arg sqlcgen.DeleteWatchHistoryEntryParams) error
 	ClearWatchHistory(ctx context.Context, userID uuid.UUID) error
 }
@@ -1128,13 +1138,17 @@ type QuarantinedVideo struct {
 
 // ListQuarantined returns quarantined videos newest first for the moderation
 // queue. The caller clamps limit/offset.
-func (s *Service) ListQuarantined(ctx context.Context, limit, offset int32) ([]QuarantinedVideo, error) {
+func (s *Service) ListQuarantined(ctx context.Context, limit, offset int32) ([]QuarantinedVideo, int64, error) {
 	rows, err := s.repo.ListQuarantinedVideos(ctx, sqlcgen.ListQuarantinedVideosParams{
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountQuarantinedVideos(ctx)
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]QuarantinedVideo, 0, len(rows))
 	for _, r := range rows {
@@ -1149,7 +1163,7 @@ func (s *Service) ListQuarantined(ctx context.Context, limit, offset int32) ([]Q
 			CreatedAt:          r.CreatedAt,
 		})
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // ApproveQuarantined releases a quarantined video through THE publish
@@ -1900,12 +1914,24 @@ func (s *Service) DeleteForActor(ctx context.Context, actorID, id uuid.UUID, can
 	return nil
 }
 
-// ListByChannel returns every video in a channel (the owner's view), newest
-// first, with discovery-card data.
-func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID) ([]FeedItem, error) {
-	rows, err := s.repo.ListVideosByChannel(ctx, channelID)
+// ListByChannel returns one page of a channel's videos (the owner's view) with
+// discovery-card data, plus the channel's total. sort is "published_at" (oldest
+// first) or anything else for newest first — the previous fixed behaviour and
+// the default. This used to return EVERY video in the channel; the caller clamps
+// limit/offset.
+func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID, sort string, limit, offset int32) ([]FeedItem, int64, error) {
+	rows, err := s.repo.ListVideosByChannel(ctx, sqlcgen.ListVideosByChannelParams{
+		ChannelID:    channelID,
+		Sort:         NormalizeChannelSort(sort),
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountVideosByChannel(ctx, channelID)
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
@@ -1914,27 +1940,40 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID) ([]Fee
 		it.PublishAt = TimePtr(r.PublishAt) // studio view: badge scheduled videos
 		items = append(items, it)
 	}
-	return items, nil
+	return items, total, nil
 }
 
-// ListPublicByChannel returns only the channel's public, published videos (the
-// anonymous view), newest first, with discovery-card data. When hideSensitive is
-// true, sensitive videos are excluded for the instance-level "hide" policy.
-func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID, hideSensitive bool) ([]FeedItem, error) {
-	rows, err := s.repo.ListPublicVideosByChannel(ctx, channelID)
+// ListPublicByChannel returns one page of a channel's public, published videos
+// (the anonymous view) with discovery-card data, plus the matching total. When
+// hideSensitive is true, sensitive videos are excluded for the instance-level
+// "hide" policy — that exclusion is now applied IN THE QUERY rather than by
+// skipping rows here, because a Go-side skip under a LIMIT would hand back short
+// pages and a total counting rows the viewer can never see. sort is
+// "published_at" (oldest first) or anything else for newest first.
+func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID, hideSensitive bool, sort string, limit, offset int32) ([]FeedItem, int64, error) {
+	rows, err := s.repo.ListPublicVideosByChannel(ctx, sqlcgen.ListPublicVideosByChannelParams{
+		ChannelID:     channelID,
+		HideSensitive: hideSensitive,
+		Sort:          NormalizeChannelSort(sort),
+		ResultLimit:   limit,
+		ResultOffset:  offset,
+	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountPublicVideosByChannelVisible(ctx, sqlcgen.CountPublicVideosByChannelVisibleParams{
+		ChannelID: channelID, HideSensitive: hideSensitive,
+	})
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
-		if hideSensitive && r.IsSensitive {
-			continue
-		}
 		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, it)
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // FeedItem is a video plus discovery-card data: its view count, whether a
@@ -2040,20 +2079,36 @@ type FeedFilter struct {
 // tag/category/language filter is active — remote videos carry no local
 // taxonomy); the default local scope never includes them. The caller clamps
 // limit/offset.
-func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, error) {
+func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, int64, error) {
+	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
+	includeRemote := NormalizeFeedScope(scope) == FeedScopeAll
+	tag, category, language := nilIfEmpty(strings.ToLower(filter.Tag)), nilIfEmpty(filter.Category), nilIfEmpty(filter.Language)
 	rows, err := s.repo.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
 		Sort:          NormalizeFeedSort(sort),
-		IncludeRemote: NormalizeFeedScope(scope) == FeedScopeAll,
-		ViewerID:      pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
-		Tag:           nilIfEmpty(strings.ToLower(filter.Tag)),
-		Category:      nilIfEmpty(filter.Category),
-		Language:      nilIfEmpty(filter.Language),
+		IncludeRemote: includeRemote,
+		ViewerID:      viewer,
+		Tag:           tag,
+		Category:      category,
+		Language:      language,
 		HideSensitive: filter.HideSensitive,
 		ResultLimit:   limit,
 		ResultOffset:  offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	// Same filters, same viewer, same scope — only the ordering and the page
+	// bounds are dropped.
+	total, err := s.repo.CountPublicVideosSorted(ctx, sqlcgen.CountPublicVideosSortedParams{
+		IncludeRemote: includeRemote,
+		ViewerID:      viewer,
+		Tag:           tag,
+		Category:      category,
+		Language:      language,
+		HideSensitive: filter.HideSensitive,
+	})
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
@@ -2061,21 +2116,26 @@ func (s *Service) ListPublic(ctx context.Context, sort, scope string, filter Fee
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // ListSubscriptions returns the user's subscriptions feed (remote-content §3):
 // public, published videos from the LOCAL channels they follow UNIONed with the
 // ingested remote videos of their ACCEPTED remote-channel follows, newest
-// first, each carrying discovery-card data. The caller clamps limit/offset.
-func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]FeedItem, error) {
+// first, each carrying discovery-card data, with the matching total. The caller
+// clamps limit/offset.
+func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]FeedItem, int64, error) {
 	rows, err := s.repo.ListSubscriptionVideos(ctx, sqlcgen.ListSubscriptionVideosParams{
 		FollowerID:   userID,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountSubscriptionVideos(ctx, userID)
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
@@ -2083,7 +2143,7 @@ func (s *Service) ListSubscriptions(ctx context.Context, userID uuid.UUID, limit
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // Save adds videoID to userID's library (idempotent). The caller confirms the
@@ -2098,15 +2158,19 @@ func (s *Service) Unsave(ctx context.Context, videoID, userID uuid.UUID) error {
 }
 
 // ListSaved returns userID's saved public, published videos as feed cards,
-// newest-saved first. The caller clamps limit/offset.
-func (s *Service) ListSaved(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]FeedItem, error) {
+// newest-saved first, with the matching total. The caller clamps limit/offset.
+func (s *Service) ListSaved(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]FeedItem, int64, error) {
 	rows, err := s.repo.ListSavedVideos(ctx, sqlcgen.ListSavedVideosParams{
 		UserID:       userID,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountSavedVideos(ctx, userID)
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
@@ -2114,7 +2178,7 @@ func (s *Service) ListSaved(ctx context.Context, userID uuid.UUID, limit, offset
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, it)
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // HistoryItem is a watched video as a discovery card plus the viewer's saved
@@ -2157,7 +2221,7 @@ func (s *Service) Progress(ctx context.Context, videoID, userID uuid.UUID) (int3
 // returns the "Continue watching" subset: entries with position >= 5s that are
 // not effectively finished (>= 95% of the known duration), excluding
 // barely-started and completed videos.
-func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offset int32, inProgress bool) ([]HistoryItem, error) {
+func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offset int32, inProgress bool) ([]HistoryItem, int64, error) {
 	if inProgress {
 		rows, err := s.repo.ListWatchHistoryInProgress(ctx, sqlcgen.ListWatchHistoryInProgressParams{
 			UserID:       userID,
@@ -2165,7 +2229,12 @@ func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offs
 			ResultOffset: offset,
 		})
 		if err != nil {
-			return nil, err
+			return nil, 0, err
+		}
+		// Counted over the same in-progress window, not the whole history.
+		total, err := s.repo.CountWatchHistoryInProgress(ctx, userID)
+		if err != nil {
+			return nil, 0, err
 		}
 		items := make([]HistoryItem, 0, len(rows))
 		for _, r := range rows {
@@ -2177,7 +2246,7 @@ func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offs
 				WatchedAt:       r.WatchedAt,
 			})
 		}
-		return items, nil
+		return items, total, nil
 	}
 	rows, err := s.repo.ListWatchHistory(ctx, sqlcgen.ListWatchHistoryParams{
 		UserID:       userID,
@@ -2185,7 +2254,11 @@ func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offs
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountWatchHistory(ctx, userID)
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]HistoryItem, 0, len(rows))
 	for _, r := range rows {
@@ -2197,7 +2270,7 @@ func (s *Service) ListHistory(ctx context.Context, userID uuid.UUID, limit, offs
 			WatchedAt:       r.WatchedAt,
 		})
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // RemoveHistoryEntry removes a single video from the user's history (idempotent).
@@ -2217,19 +2290,32 @@ func (s *Service) ClearHistory(ctx context.Context, userID uuid.UUID) error {
 // tag/category/language facet filters narrow the local results (mirroring the
 // feed); any active filter excludes remote videos (they carry no local
 // taxonomy). The caller validates/clamps query, limit, and offset.
-func (s *Service) SearchPublic(ctx context.Context, query string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, error) {
+func (s *Service) SearchPublic(ctx context.Context, query string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, int64, error) {
+	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
+	tag, category, language := nilIfEmpty(strings.ToLower(filter.Tag)), nilIfEmpty(filter.Category), nilIfEmpty(filter.Language)
 	rows, err := s.repo.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
 		Query:         query,
-		ViewerID:      pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
-		Tag:           nilIfEmpty(strings.ToLower(filter.Tag)),
-		Category:      nilIfEmpty(filter.Category),
-		Language:      nilIfEmpty(filter.Language),
+		ViewerID:      viewer,
+		Tag:           tag,
+		Category:      category,
+		Language:      language,
 		HideSensitive: filter.HideSensitive,
 		ResultLimit:   limit,
 		ResultOffset:  offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountSearchPublicVideos(ctx, sqlcgen.CountSearchPublicVideosParams{
+		Query:         query,
+		ViewerID:      viewer,
+		Tag:           tag,
+		Category:      category,
+		Language:      language,
+		HideSensitive: filter.HideSensitive,
+	})
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, r := range rows {
@@ -2237,7 +2323,21 @@ func (s *Service) SearchPublic(ctx context.Context, query string, filter FeedFil
 		it.AuthorDisplayName = r.AuthorDisplayName
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
-	return items, nil
+	return items, total, nil
+}
+
+// CountSearchPublic is SearchPublic's total without the page — the count the
+// search endpoint needs when vidra-search ranked the page and therefore
+// returned ids but no corpus size.
+func (s *Service) CountSearchPublic(ctx context.Context, query string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool) (int64, error) {
+	return s.repo.CountSearchPublicVideos(ctx, sqlcgen.CountSearchPublicVideosParams{
+		Query:         query,
+		ViewerID:      pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
+		Tag:           nilIfEmpty(strings.ToLower(filter.Tag)),
+		Category:      nilIfEmpty(filter.Category),
+		Language:      nilIfEmpty(filter.Language),
+		HideSensitive: filter.HideSensitive,
+	})
 }
 
 // HydrateByIDs resolves a ranked list of video ids to discovery cards under the
@@ -2306,8 +2406,25 @@ func derefString(p *string) string {
 	return *p
 }
 
+// ChannelSortOldest is the only non-default ordering a channel video list
+// accepts; anything else means newest first. The channel page offers exactly
+// these two chips.
+const ChannelSortOldest = "published_at"
+
+// NormalizeChannelSort maps a client ?sort value onto the two orderings the
+// channel-video query has CASE branches for. Unknown values fall back to newest
+// first, which is what the endpoint did before it took a sort at all.
+func NormalizeChannelSort(sort string) string {
+	if strings.TrimSpace(sort) == ChannelSortOldest {
+		return ChannelSortOldest
+	}
+	return "-" + ChannelSortOldest
+}
+
 // AdminVideo is a video as seen in the admin/moderator videos overview: any
 // privacy/state, with the owning channel, view count, and current block status.
+// Likes/Comments are the engagement counts the inventory can sort on; they are
+// always 0 for federated rows, which carry no local ratings or comments.
 type AdminVideo struct {
 	ID                 uuid.UUID
 	Title              string
@@ -2329,23 +2446,133 @@ type AdminVideo struct {
 	WebVideoCount      int32
 	SizeBytes          int64
 	Blocked            bool
+	Likes              int64
+	Comments           int64
 }
 
-// ListAdmin returns all videos (any privacy/state) newest first for the
-// admin/moderator overview. A non-empty query filters by title substring. The
-// caller clamps limit/offset.
-func (s *Service) ListAdmin(ctx context.Context, query string, limit, offset int32) ([]AdminVideo, error) {
-	var q *string
-	if trimmed := strings.TrimSpace(query); trimmed != "" {
-		q = &trimmed
+// Admin inventory sort keys. Each is accepted bare (ascending) or "-"-prefixed
+// (descending), the convention PeerTube uses. The default is AdminSortDefault,
+// which reproduces the previous fixed newest-first ordering.
+//
+// AdminSortPublishedAt is an ALIAS of AdminSortCreatedAt, not a second column:
+// videos carry no published_at, and the federated arm of the inventory already
+// projects COALESCE(published_at, fetched_at) into created_at. Vidra also has no
+// originally_published_at column, so PeerTube's key of that name has no
+// equivalent here and is deliberately absent rather than faked.
+const (
+	AdminSortCreatedAt   = "-created_at"
+	AdminSortPublishedAt = "-published_at"
+	AdminSortViews       = "-views"
+	AdminSortDuration    = "-duration"
+	AdminSortTitle       = "title"
+	AdminSortState       = "state"
+	AdminSortLikes       = "-likes"
+	AdminSortComments    = "-comments"
+	AdminSortSizeBytes   = "-size_bytes"
+
+	AdminSortDefault = AdminSortCreatedAt
+)
+
+// adminSorts is the closed set the SQL ORDER BY has a CASE branch for. Anything
+// outside it must be rejected by the HTTP layer rather than passed through: an
+// unrecognised value would fall through every branch and silently produce
+// id-DESC order.
+var adminSorts = []string{
+	"-created_at", "created_at", "-published_at", "published_at",
+	"-views", "views", "-duration", "duration",
+	"title", "-title", "state", "-state",
+	"-likes", "likes", "-comments", "comments",
+	"-size_bytes", "size_bytes",
+}
+
+// AdminSorts returns the accepted ?sort values for the admin inventory.
+func AdminSorts() []string { return append([]string(nil), adminSorts...) }
+
+// adminStates is the videos.state CHECK constraint's value set (migrations
+// 0006/0045/0048/0098), and adminPrivacies is videos.privacy's (0006/0074).
+var (
+	adminStates    = []string{"draft", "processing", "scheduled", "quarantined", "transcoding", "published", "failed"}
+	adminPrivacies = []string{"public", "unlisted", "private", "password"}
+)
+
+// AdminStates and AdminPrivacies are the accepted ?state / ?privacy filter
+// values, exported so the HTTP layer validates against the same set the schema
+// enforces instead of a second hand-maintained copy.
+func AdminStates() []string    { return append([]string(nil), adminStates...) }
+func AdminPrivacies() []string { return append([]string(nil), adminPrivacies...) }
+
+// AdminFilter narrows the admin/moderator inventory. Every field is optional:
+// the zero value is "no filter" and reproduces the previous unfiltered list.
+// The three file-type fields are tri-state POINTERS on purpose — nil means
+// "all", not false, or "videos with no HLS" could not be expressed.
+type AdminFilter struct {
+	Query           string
+	States          []string
+	Privacies       []string
+	Scope           string // "", "all", "local" or "remote"
+	Channel         string // exact channel handle (name@domain for remote rows)
+	PublishedAfter  *time.Time
+	PublishedBefore *time.Time
+	HasOriginal     *bool
+	HasHLS          *bool
+	HasWebFiles     *bool
+	Sort            string
+}
+
+// adminParams renders the filter as the shared query arguments. ListAdminVideos
+// and CountAdminVideos MUST be fed from this one function: the moment their
+// predicates diverge the total stops describing the page it labels.
+func (f AdminFilter) scope() string {
+	if f.Scope == "" {
+		return "all"
 	}
+	return f.Scope
+}
+
+func (f AdminFilter) sort() string {
+	if f.Sort == "" {
+		return AdminSortDefault
+	}
+	return f.Sort
+}
+
+// ListAdmin returns one page of the admin/moderator inventory under filter,
+// plus how many videos match the SAME filter. That total is the whole point of
+// this call: the admin "All videos" header used to render len(page), so an
+// instance with 155k videos reported "100".
+func (s *Service) ListAdmin(ctx context.Context, filter AdminFilter, limit, offset int32) ([]AdminVideo, int64, error) {
 	rows, err := s.repo.ListAdminVideos(ctx, sqlcgen.ListAdminVideosParams{
-		Query:        q,
-		ResultLimit:  limit,
-		ResultOffset: offset,
+		Query:           nilIfEmpty(strings.TrimSpace(filter.Query)),
+		States:          filter.States,
+		Privacies:       filter.Privacies,
+		Scope:           filter.scope(),
+		Channel:         nilIfEmpty(strings.TrimSpace(filter.Channel)),
+		PublishedAfter:  timestamptz(filter.PublishedAfter),
+		PublishedBefore: timestamptz(filter.PublishedBefore),
+		HasOriginal:     filter.HasOriginal,
+		HasHls:          filter.HasHLS,
+		HasWebFiles:     filter.HasWebFiles,
+		Sort:            filter.sort(),
+		ResultLimit:     limit,
+		ResultOffset:    offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountAdminVideos(ctx, sqlcgen.CountAdminVideosParams{
+		Query:           nilIfEmpty(strings.TrimSpace(filter.Query)),
+		States:          filter.States,
+		Privacies:       filter.Privacies,
+		Scope:           filter.scope(),
+		Channel:         nilIfEmpty(strings.TrimSpace(filter.Channel)),
+		PublishedAfter:  timestamptz(filter.PublishedAfter),
+		PublishedBefore: timestamptz(filter.PublishedBefore),
+		HasOriginal:     filter.HasOriginal,
+		HasHls:          filter.HasHLS,
+		HasWebFiles:     filter.HasWebFiles,
+	})
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]AdminVideo, 0, len(rows))
 	for _, r := range rows {
@@ -2370,9 +2597,11 @@ func (s *Service) ListAdmin(ctx context.Context, query string, limit, offset int
 			WebVideoCount:      r.WebVideoCount,
 			SizeBytes:          r.SizeBytes,
 			Blocked:            r.Blocked,
+			Likes:              r.LikeCount,
+			Comments:           r.CommentCount,
 		})
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // trimPtr trims a non-nil string pointer's value, leaving nil untouched so a

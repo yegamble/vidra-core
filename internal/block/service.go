@@ -33,6 +33,7 @@ type Repository interface {
 	BlockUser(ctx context.Context, arg sqlcgen.BlockUserParams) (int64, error)
 	UnblockUser(ctx context.Context, arg sqlcgen.UnblockUserParams) (int64, error)
 	ListBlockedUsers(ctx context.Context, arg sqlcgen.ListBlockedUsersParams) ([]sqlcgen.ListBlockedUsersRow, error)
+	CountBlockedUsers(ctx context.Context, blockerID uuid.UUID) (int64, error)
 	IsBlockedBetween(ctx context.Context, arg sqlcgen.IsBlockedBetweenParams) (bool, error)
 }
 
@@ -76,14 +77,18 @@ func (s *Service) Unblock(ctx context.Context, blockerID, blockedID uuid.UUID) e
 
 // List returns the accounts blockerID has blocked, newest block first. The
 // caller clamps limit/offset.
-func (s *Service) List(ctx context.Context, blockerID uuid.UUID, limit, offset int32) ([]BlockedUser, error) {
+func (s *Service) List(ctx context.Context, blockerID uuid.UUID, limit, offset int32) ([]BlockedUser, int64, error) {
 	rows, err := s.repo.ListBlockedUsers(ctx, sqlcgen.ListBlockedUsersParams{
 		BlockerID:    blockerID,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountBlockedUsers(ctx, blockerID)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]BlockedUser, 0, len(rows))
 	for _, r := range rows {
@@ -94,7 +99,7 @@ func (s *Service) List(ctx context.Context, blockerID uuid.UUID, limit, offset i
 			BlockedAt:   r.CreatedAt,
 		})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // IsBlockedBetween reports whether either user has blocked the other. Used by

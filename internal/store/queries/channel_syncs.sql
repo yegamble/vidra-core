@@ -11,9 +11,12 @@ VALUES ($1, $2, $3)
 RETURNING *;
 
 -- name: ListChannelSyncsByUser :many
+-- Paginated (this had no LIMIT). CountChannelSyncsByUser below is the matching
+-- total and already existed for the per-user cap.
 SELECT * FROM channel_syncs
-WHERE user_id = $1
-ORDER BY created_at DESC, id DESC;
+WHERE user_id = sqlc.arg('user_id')
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: GetChannelSyncByID :one
 SELECT * FROM channel_syncs

@@ -51,13 +51,15 @@ const streamKeyBytes = 32
 type Repository interface {
 	CreateLiveStream(ctx context.Context, arg sqlcgen.CreateLiveStreamParams) (sqlcgen.CreateLiveStreamRow, error)
 	GetLiveStreamByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetLiveStreamByIDRow, error)
-	ListLiveStreamsByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.ListLiveStreamsByChannelRow, error)
+	ListLiveStreamsByChannel(ctx context.Context, arg sqlcgen.ListLiveStreamsByChannelParams) ([]sqlcgen.ListLiveStreamsByChannelRow, error)
+	CountLiveStreamsByChannel(ctx context.Context, channelID uuid.UUID) (int64, error)
 	UpdateLiveStreamKey(ctx context.Context, arg sqlcgen.UpdateLiveStreamKeyParams) error
 	UpdateLiveStream(ctx context.Context, arg sqlcgen.UpdateLiveStreamParams) (sqlcgen.UpdateLiveStreamRow, error)
 	DeleteLiveStream(ctx context.Context, id uuid.UUID) (int64, error)
 	GetLiveStreamByKeyHash(ctx context.Context, streamKeyHash string) (sqlcgen.GetLiveStreamByKeyHashRow, error)
 	SetLiveStreamState(ctx context.Context, arg sqlcgen.SetLiveStreamStateParams) error
 	ListLivePublicStreams(ctx context.Context, arg sqlcgen.ListLivePublicStreamsParams) ([]sqlcgen.ListLivePublicStreamsRow, error)
+	CountLivePublicStreams(ctx context.Context) (int64, error)
 	// Simultaneous-live caps + duration watchdog (config-parity W11).
 	CountLiveStreamsLive(ctx context.Context) (int64, error)
 	CountLiveStreamsLiveByOwner(ctx context.Context, ownerID uuid.UUID) (int64, error)
@@ -347,11 +349,21 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Stream, error) {
 	}, nil
 }
 
-// ListByChannel returns a channel's live streams, newest first.
-func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID) ([]Stream, error) {
-	rows, err := s.repo.ListLiveStreamsByChannel(ctx, channelID)
+// ListByChannel returns one page of a channel's live streams, newest first,
+// with the total. This used to return every stream a channel had ever created;
+// the caller clamps limit/offset.
+func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID, limit, offset int32) ([]Stream, int64, error) {
+	rows, err := s.repo.ListLiveStreamsByChannel(ctx, sqlcgen.ListLiveStreamsByChannelParams{
+		ChannelID:    channelID,
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountLiveStreamsByChannel(ctx, channelID)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]Stream, 0, len(rows))
 	for _, r := range rows {
@@ -361,20 +373,25 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID) ([]Str
 			StartedAt: timePtr(r.StartedAt), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // ListLivePublic returns the public "Live now" listing: currently-live PUBLIC
-// streams across all channels, most-recently-started first, paginated. Unlisted
-// and private streams (and any not currently live) never appear. limit/offset are
-// assumed already clamped by the caller.
-func (s *Service) ListLivePublic(ctx context.Context, limit, offset int) ([]LiveCard, error) {
+// streams across all channels, most-recently-started first, paginated, with the
+// total matching the same predicate. Unlisted and private streams (and any not
+// currently live) never appear. limit/offset are assumed already clamped by the
+// caller.
+func (s *Service) ListLivePublic(ctx context.Context, limit, offset int) ([]LiveCard, int64, error) {
 	rows, err := s.repo.ListLivePublicStreams(ctx, sqlcgen.ListLivePublicStreamsParams{
-		Limit:  int32(limit),
-		Offset: int32(offset),
+		ResultLimit:  int32(limit),
+		ResultOffset: int32(offset),
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountLivePublicStreams(ctx)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]LiveCard, 0, len(rows))
 	for _, r := range rows {
@@ -384,7 +401,7 @@ func (s *Service) ListLivePublic(ctx context.Context, limit, offset int) ([]Live
 			StartedAt: timePtr(r.StartedAt),
 		})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // RegenerateKey rotates a stream's key and returns the new raw key (once). The

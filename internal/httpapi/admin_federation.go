@@ -50,20 +50,15 @@ func newFederationFollowerRequestView(r federation.FollowerRequest) federationFo
 // federationFollowerRequestListResponse is the paginated approval queue.
 type federationFollowerRequestListResponse struct {
 	Requests []federationFollowerRequestView `json:"requests"`
-	Limit    int                             `json:"limit"`
-	Offset   int                             `json:"offset"`
+	pageMeta
 }
 
 // handleListFederationFollowerRequests returns the pending follower-approval
 // queue, newest first. Behind requireRole(admin). Pagination via ?limit
 // (1–100, default 20) and ?offset.
 func (s *Server) handleListFederationFollowerRequests(c echo.Context) error {
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.fedsvc.ListFollowerRequests(c.Request().Context(), int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, total, err := s.fedsvc.ListFollowerRequests(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -71,7 +66,7 @@ func (s *Server) handleListFederationFollowerRequests(c echo.Context) error {
 	for _, it := range items {
 		views = append(views, newFederationFollowerRequestView(it))
 	}
-	return c.JSON(http.StatusOK, federationFollowerRequestListResponse{Requests: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, federationFollowerRequestListResponse{Requests: views, pageMeta: page.meta(total)})
 }
 
 // handleApproveFederationFollowerRequest approves a pending follower request:

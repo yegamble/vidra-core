@@ -37,9 +37,11 @@ type Repository interface {
 	MuteInstance(ctx context.Context, arg sqlcgen.MuteInstanceParams) (int64, error)
 	UnmuteInstance(ctx context.Context, arg sqlcgen.UnmuteInstanceParams) (int64, error)
 	ListMutedInstances(ctx context.Context, arg sqlcgen.ListMutedInstancesParams) ([]sqlcgen.ListMutedInstancesRow, error)
+	CountMutedInstances(ctx context.Context, muterID uuid.UUID) (int64, error)
 	BlockInstance(ctx context.Context, arg sqlcgen.BlockInstanceParams) (int64, error)
 	UnblockInstance(ctx context.Context, domain string) (int64, error)
 	ListBlockedInstances(ctx context.Context, arg sqlcgen.ListBlockedInstancesParams) ([]sqlcgen.BlockedInstance, error)
+	CountBlockedInstances(ctx context.Context) (int64, error)
 }
 
 // Service holds the instance-moderation application logic.
@@ -105,20 +107,24 @@ func (s *Service) UnmuteInstance(ctx context.Context, muterID uuid.UUID, domain 
 
 // ListMutedInstances returns the instances muterID has muted, newest first.
 // The caller clamps limit/offset.
-func (s *Service) ListMutedInstances(ctx context.Context, muterID uuid.UUID, limit, offset int32) ([]MutedInstance, error) {
+func (s *Service) ListMutedInstances(ctx context.Context, muterID uuid.UUID, limit, offset int32) ([]MutedInstance, int64, error) {
 	rows, err := s.repo.ListMutedInstances(ctx, sqlcgen.ListMutedInstancesParams{
 		MuterID:      muterID,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountMutedInstances(ctx, muterID)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]MutedInstance, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, MutedInstance{Domain: r.Domain, MutedAt: r.CreatedAt})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // BlockInstance adds a domain to the admin blocklist (idempotent; re-blocking
@@ -151,13 +157,17 @@ func (s *Service) UnblockInstance(ctx context.Context, domain string) error {
 
 // ListBlockedInstances returns the admin blocklist, newest block first. The
 // caller clamps limit/offset.
-func (s *Service) ListBlockedInstances(ctx context.Context, limit, offset int32) ([]BlockedInstance, error) {
+func (s *Service) ListBlockedInstances(ctx context.Context, limit, offset int32) ([]BlockedInstance, int64, error) {
 	rows, err := s.repo.ListBlockedInstances(ctx, sqlcgen.ListBlockedInstancesParams{
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountBlockedInstances(ctx)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]BlockedInstance, 0, len(rows))
 	for _, r := range rows {
@@ -168,5 +178,5 @@ func (s *Service) ListBlockedInstances(ctx context.Context, limit, offset int32)
 		}
 		out = append(out, bi)
 	}
-	return out, nil
+	return out, total, nil
 }

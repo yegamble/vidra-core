@@ -47,6 +47,21 @@ func (q *Queries) AddChannelMember(ctx context.Context, arg AddChannelMemberPara
 	return i, err
 }
 
+const countChannelMembers = `-- name: CountChannelMembers :one
+SELECT count(*)::bigint
+FROM channel_members cm
+JOIN users u ON u.id = cm.user_id
+WHERE cm.channel_id = $1
+`
+
+// How many rows ListChannelMembers would return, ignoring pagination.
+func (q *Queries) CountChannelMembers(ctx context.Context, channelID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countChannelMembers, channelID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deleteChannelMember = `-- name: DeleteChannelMember :execrows
 DELETE FROM channel_members WHERE channel_id = $1 AND user_id = $2
 `
@@ -118,8 +133,15 @@ SELECT cm.user_id, cm.role, cm.invited_by, cm.created_at,
 FROM channel_members cm
 JOIN users u ON u.id = cm.user_id
 WHERE cm.channel_id = $1
-ORDER BY cm.created_at
+ORDER BY cm.created_at, cm.user_id
+LIMIT $3 OFFSET $2
 `
+
+type ListChannelMembersParams struct {
+	ChannelID    uuid.UUID `json:"channel_id"`
+	ResultOffset int32     `json:"result_offset"`
+	ResultLimit  int32     `json:"result_limit"`
+}
 
 type ListChannelMembersRow struct {
 	UserID      uuid.UUID   `json:"user_id"`
@@ -131,8 +153,8 @@ type ListChannelMembersRow struct {
 }
 
 // Members of a channel, oldest first, joined to the user for the display fields.
-func (q *Queries) ListChannelMembers(ctx context.Context, channelID uuid.UUID) ([]ListChannelMembersRow, error) {
-	rows, err := q.db.Query(ctx, listChannelMembers, channelID)
+func (q *Queries) ListChannelMembers(ctx context.Context, arg ListChannelMembersParams) ([]ListChannelMembersRow, error) {
+	rows, err := q.db.Query(ctx, listChannelMembers, arg.ChannelID, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}

@@ -63,12 +63,13 @@ func newNotificationView(it notification.Item) notificationView {
 }
 
 // notificationListResponse is the paginated notification list plus the caller's
-// current unread count (for a badge).
+// current unread count (for a badge). Total and UnreadCount answer DIFFERENT
+// questions: an unread_count of 3 says nothing about how many read
+// notifications sit behind the current page, which is what Total is for.
 type notificationListResponse struct {
 	Notifications []notificationView `json:"notifications"`
 	UnreadCount   int64              `json:"unread_count"`
-	Limit         int                `json:"limit"`
-	Offset        int                `json:"offset"`
+	pageMeta
 }
 
 type unreadCountResponse struct {
@@ -84,13 +85,9 @@ func (s *Server) handleListNotifications(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
 	unreadOnly := c.QueryParam("unread") == "true"
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	ctx := c.Request().Context()
-	items, err := s.notifsvc.List(ctx, userID, unreadOnly, int32(limit), int32(offset))
+	items, total, err := s.notifsvc.List(ctx, userID, unreadOnly, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -103,7 +100,7 @@ func (s *Server) handleListNotifications(c echo.Context) error {
 		views = append(views, newNotificationView(it))
 	}
 	return c.JSON(http.StatusOK, notificationListResponse{
-		Notifications: views, UnreadCount: unread, Limit: limit, Offset: offset,
+		Notifications: views, UnreadCount: unread, pageMeta: page.meta(total),
 	})
 }
 

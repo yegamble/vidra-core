@@ -77,15 +77,19 @@ type Repository interface {
 	CountChannelFollowers(ctx context.Context, channelID uuid.UUID) (int64, error)
 	CountFollowersByOwner(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.CountFollowersByOwnerRow, error)
 	ListFollowedChannels(ctx context.Context, arg sqlcgen.ListFollowedChannelsParams) ([]sqlcgen.ListFollowedChannelsRow, error)
+	CountFollowedChannels(ctx context.Context, followerID uuid.UUID) (int64, error)
 
 	// Collaborators (migration 0097).
 	GetUserByUsername(ctx context.Context, lowerUsername string) (sqlcgen.User, error)
 	AddChannelMember(ctx context.Context, arg sqlcgen.AddChannelMemberParams) (sqlcgen.ChannelMember, error)
 	GetChannelMember(ctx context.Context, arg sqlcgen.GetChannelMemberParams) (sqlcgen.ChannelMember, error)
 	DeleteChannelMember(ctx context.Context, arg sqlcgen.DeleteChannelMemberParams) (int64, error)
-	ListChannelMembers(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.ListChannelMembersRow, error)
+	ListChannelMembers(ctx context.Context, arg sqlcgen.ListChannelMembersParams) ([]sqlcgen.ListChannelMembersRow, error)
+	CountChannelMembers(ctx context.Context, channelID uuid.UUID) (int64, error)
 	IsChannelManager(ctx context.Context, arg sqlcgen.IsChannelManagerParams) (bool, error)
 	ListChannelsForMember(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ListChannelsForMemberRow, error)
+	ListManagedChannels(ctx context.Context, arg sqlcgen.ListManagedChannelsParams) ([]sqlcgen.ListManagedChannelsRow, error)
+	CountManagedChannels(ctx context.Context, userID uuid.UUID) (int64, error)
 }
 
 // Service holds the channel application logic.
@@ -326,14 +330,18 @@ type Followed struct {
 // ListFollowed returns the local channels followerID follows (the "FOLLOWING"
 // list), most recently followed first, paginated. limit is clamped to [1,100]
 // and offset to >= 0 by the caller.
-func (s *Service) ListFollowed(ctx context.Context, followerID uuid.UUID, limit, offset int32) ([]Followed, error) {
+func (s *Service) ListFollowed(ctx context.Context, followerID uuid.UUID, limit, offset int32) ([]Followed, int64, error) {
 	rows, err := s.repo.ListFollowedChannels(ctx, sqlcgen.ListFollowedChannelsParams{
 		FollowerID: followerID,
 		Limit:      limit,
 		Offset:     offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountFollowedChannels(ctx, followerID)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]Followed, 0, len(rows))
 	for _, r := range rows {
@@ -354,7 +362,7 @@ func (s *Service) ListFollowed(ctx context.Context, followerID uuid.UUID, limit,
 			NotificationSetting: r.NotificationSetting,
 		})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // CanManageContent reports whether userID may manage channelID's content — the
@@ -381,23 +389,31 @@ type Member struct {
 
 // ListMembers returns a channel's members. The owner and existing members may
 // view the roster; anyone else gets ErrForbidden. Unknown handle → ErrNotFound.
-func (s *Service) ListMembers(ctx context.Context, requesterID uuid.UUID, handle string) ([]Member, error) {
+func (s *Service) ListMembers(ctx context.Context, requesterID uuid.UUID, handle string, limit, offset int32) ([]Member, int64, error) {
 	ch, err := s.GetByHandle(ctx, handle)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if ch.OwnerID != requesterID {
 		manages, err := s.CanManageContent(ctx, ch.ID, requesterID)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if !manages {
-			return nil, ErrForbidden
+			return nil, 0, ErrForbidden
 		}
 	}
-	rows, err := s.repo.ListChannelMembers(ctx, ch.ID)
+	rows, err := s.repo.ListChannelMembers(ctx, sqlcgen.ListChannelMembersParams{
+		ChannelID:    ch.ID,
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountChannelMembers(ctx, ch.ID)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]Member, 0, len(rows))
 	for _, r := range rows {
@@ -409,7 +425,7 @@ func (s *Service) ListMembers(ctx context.Context, requesterID uuid.UUID, handle
 			CreatedAt:   r.CreatedAt,
 		})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // AddMember invites the local user identified by targetHandle as a member of
@@ -482,25 +498,32 @@ func (s *Service) RemoveMember(ctx context.Context, ownerID uuid.UUID, handle st
 type Managed struct {
 	Channel sqlcgen.Channel
 	Role    string
+	// FollowerCount comes back with the row. It used to be fetched with one
+	// CountChannelFollowers call PER channel in the HTTP handler — an N+1 that
+	// grew with the user's channel count and could not be paginated away.
+	FollowerCount int64
 }
 
-// ListManaged returns every channel the user can act on: the ones they OWN
-// (role "owner") plus the ones they are a member of (role "editor"), owned
-// first. It backs GET /me/channels ("your channels" + "shared with you").
-func (s *Service) ListManaged(ctx context.Context, userID uuid.UUID) ([]Managed, error) {
-	owned, err := s.repo.ListChannelsByOwner(ctx, userID)
+// ListManaged returns one page of every channel the user can act on: the ones
+// they OWN (role "owner") plus the ones they are a member of (role "editor"),
+// owned first, with the total. One UNION query replaces the previous Go-side
+// merge of two unbounded lists, and carries each channel's follower count
+// inline instead of a per-row count call. The caller clamps limit/offset.
+func (s *Service) ListManaged(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]Managed, int64, error) {
+	rows, err := s.repo.ListManagedChannels(ctx, sqlcgen.ListManagedChannelsParams{
+		UserID:       userID,
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	out := make([]Managed, 0, len(owned))
-	for _, ch := range owned {
-		out = append(out, Managed{Channel: ch, Role: RoleOwner})
-	}
-	shared, err := s.repo.ListChannelsForMember(ctx, userID)
+	total, err := s.repo.CountManagedChannels(ctx, userID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	for _, r := range shared {
+	out := make([]Managed, 0, len(rows))
+	for _, r := range rows {
 		out = append(out, Managed{
 			Channel: sqlcgen.Channel{
 				ID:                 r.ID,
@@ -513,10 +536,11 @@ func (s *Service) ListManaged(ctx context.Context, userID uuid.UUID) ([]Managed,
 				CreatedAt:          r.CreatedAt,
 				UpdatedAt:          r.UpdatedAt,
 			},
-			Role: r.Role,
+			Role:          r.Role,
+			FollowerCount: r.FollowerCount,
 		})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // trimPtr trims a non-nil string pointer's value, leaving nil untouched so a

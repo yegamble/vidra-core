@@ -131,7 +131,7 @@ func TestFlagCommentAndListMatches(t *testing.T) {
 		t.Fatalf("re-FlagComment: %v", err)
 	}
 
-	matches, err := svc.ListMatches(ctx, 20, 0)
+	matches, _, err := svc.ListMatches(ctx, 20, 0)
 	if err != nil {
 		t.Fatalf("ListMatches: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestFlagVideoAndListMatches(t *testing.T) {
 		t.Fatalf("re-FlagVideo: %v", err)
 	}
 
-	matches, err := svc.ListMatches(ctx, 20, 0)
+	matches, _, err := svc.ListMatches(ctx, 20, 0)
 	if err != nil {
 		t.Fatalf("ListMatches: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestFlagVideoAndListMatches(t *testing.T) {
 	if _, err := svc.FlagComment(ctx, c1, "more spam"); err != nil {
 		t.Fatalf("FlagComment: %v", err)
 	}
-	mixed, _ := svc.ListMatches(ctx, 20, 0)
+	mixed, _, _ := svc.ListMatches(ctx, 20, 0)
 	if len(mixed) != 3 || mixed[0].Type != MatchTargetComment || mixed[0].CommentID != c1 {
 		t.Fatalf("mixed queue = %+v, want the comment match newest-first", mixed)
 	}
@@ -217,7 +217,7 @@ func TestAddListDelete(t *testing.T) {
 		t.Fatalf("Add abuse: %v", err)
 	}
 
-	items, err := svc.List(ctx, 20, 0)
+	items, _, err := svc.List(ctx, 20, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestAddListDelete(t *testing.T) {
 	if err := svc.Delete(ctx, uuid.New()); err != nil {
 		t.Errorf("idempotent Delete: %v", err)
 	}
-	if items, _ := svc.List(ctx, 20, 0); len(items) != 1 || items[0].Word != "abuse" {
+	if items, _, _ := svc.List(ctx, 20, 0); len(items) != 1 || items[0].Word != "abuse" {
 		t.Errorf("list after delete = %+v, want [abuse]", items)
 	}
 }
@@ -247,4 +247,14 @@ func TestAddDuplicate(t *testing.T) {
 	if _, err := svc.Add(ctx, "spam", uuid.New()); err != ErrAlreadyExists {
 		t.Errorf("duplicate Add = %v, want ErrAlreadyExists", err)
 	}
+}
+
+func (f *fakeRepo) CountWatchedWords(ctx context.Context) (int64, error) {
+	rows, err := f.ListWatchedWords(ctx, sqlcgen.ListWatchedWordsParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountWatchedWordMatches(ctx context.Context) (int64, error) {
+	rows, err := f.ListWatchedWordMatches(ctx, sqlcgen.ListWatchedWordMatchesParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

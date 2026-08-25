@@ -20,8 +20,16 @@ SELECT cm.user_id, cm.role, cm.invited_by, cm.created_at,
        u.username, u.display_name
 FROM channel_members cm
 JOIN users u ON u.id = cm.user_id
-WHERE cm.channel_id = $1
-ORDER BY cm.created_at;
+WHERE cm.channel_id = sqlc.arg('channel_id')
+ORDER BY cm.created_at, cm.user_id
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountChannelMembers :one
+-- How many rows ListChannelMembers would return, ignoring pagination.
+SELECT count(*)::bigint
+FROM channel_members cm
+JOIN users u ON u.id = cm.user_id
+WHERE cm.channel_id = sqlc.arg('channel_id');
 
 -- name: IsChannelManager :one
 -- Whether a user may manage a channel's content: the owner OR an editor member.

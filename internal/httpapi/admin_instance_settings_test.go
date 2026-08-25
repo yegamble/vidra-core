@@ -183,9 +183,12 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// REPLACES the built-in category list, so an instance importing from a
 	// PeerTube that customised its categories keeps them instead of having every
 	// one rejected).
+	// + browse_scroll_mode (button|auto: whether a browse list advances with an
+	// explicit control or on scroll; default "button" reproduces today's
+	// behaviour exactly).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 113 {
-		t.Fatalf("settings count = %d, want 113", len(got.Settings))
+	if len(got.Settings) != 114 {
+		t.Fatalf("settings count = %d, want 114", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

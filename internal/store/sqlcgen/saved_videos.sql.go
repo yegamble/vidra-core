@@ -12,6 +12,25 @@ import (
 	"github.com/google/uuid"
 )
 
+const countSavedVideos = `-- name: CountSavedVideos :one
+SELECT count(*)::bigint
+FROM saved_videos s
+JOIN videos v ON v.id = s.video_id
+JOIN channels c ON c.id = v.channel_id
+WHERE s.user_id = $1
+  AND v.privacy = 'public' AND v.state = 'published'
+`
+
+// How many rows ListSavedVideos would return, ignoring pagination. The
+// public+published predicate must stay identical: a saved video since made
+// private is not listed and must not be counted.
+func (q *Queries) CountSavedVideos(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countSavedVideos, userID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listSavedVideos = `-- name: ListSavedVideos :many
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at,

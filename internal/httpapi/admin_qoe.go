@@ -59,13 +59,9 @@ func (s *Server) handleQoEPlaybackHealth(c echo.Context) error {
 		return &ValidationError{Fields: []FieldError{{Field: "since", Message: "must be an RFC3339 timestamp"}}}
 	}
 
-	limit := clampInt(queryInt(c, "limit", defaultQoEBucketLimit), 1, maxQoEBucketLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
+	page := parsePage(c, defaultQoEBucketLimit, maxQoEBucketLimit)
 
-	health, err := s.qoeHealthSvc.PlaybackHealth(c.Request().Context(), since, end, limit, offset)
+	health, err := s.qoeHealthSvc.PlaybackHealth(c.Request().Context(), since, end, page.Limit, page.Offset)
 	switch {
 	case errors.Is(err, qoe.ErrWindowTooWide):
 		return &ValidationError{Fields: []FieldError{

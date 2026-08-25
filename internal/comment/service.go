@@ -40,7 +40,9 @@ var (
 type Repository interface {
 	CreateComment(ctx context.Context, arg sqlcgen.CreateCommentParams) (sqlcgen.Comment, error)
 	ListCommentsByVideo(ctx context.Context, arg sqlcgen.ListCommentsByVideoParams) ([]sqlcgen.ListCommentsByVideoRow, error)
+	CountCommentsByVideo(ctx context.Context, arg sqlcgen.CountCommentsByVideoParams) (int64, error)
 	ListAdminComments(ctx context.Context, arg sqlcgen.ListAdminCommentsParams) ([]sqlcgen.ListAdminCommentsRow, error)
+	CountAdminComments(ctx context.Context, query *string) (int64, error)
 	GetComment(ctx context.Context, id uuid.UUID) (sqlcgen.Comment, error)
 	UpdateComment(ctx context.Context, arg sqlcgen.UpdateCommentParams) (sqlcgen.Comment, error)
 	DeleteComment(ctx context.Context, id uuid.UUID) error
@@ -172,15 +174,24 @@ func (s *Service) Create(ctx context.Context, videoID, userID uuid.UUID, body st
 // from accounts (and remote instances) viewerID has muted are hidden; for an
 // anonymous viewer (viewerAuthed false) only the admin instance blocklist
 // filters. Remote-authored rows are flagged Remote with their origin domain.
-func (s *Service) ListByVideo(ctx context.Context, videoID, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]WithAuthor, error) {
+func (s *Service) ListByVideo(ctx context.Context, videoID, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]WithAuthor, int64, error) {
+	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
 	rows, err := s.repo.ListCommentsByVideo(ctx, sqlcgen.ListCommentsByVideoParams{
 		VideoID:      videoID,
-		ViewerID:     pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
+		ViewerID:     viewer,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	// Counted for THIS viewer, so a viewer whose mutes hide half the thread is
+	// not told there are pages they can never reach.
+	total, err := s.repo.CountCommentsByVideo(ctx, sqlcgen.CountCommentsByVideoParams{
+		VideoID: videoID, ViewerID: viewer,
+	})
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]WithAuthor, 0, len(rows))
 	for _, r := range rows {
@@ -202,7 +213,7 @@ func (s *Service) ListByVideo(ctx context.Context, videoID, viewerID uuid.UUID, 
 		}
 		out = append(out, wa)
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // Delete removes a comment. The comment's author may always delete it; a
@@ -379,7 +390,7 @@ type AdminComment struct {
 // ListForAdmin returns all comments newest first for the admin/moderator
 // overview. A non-empty query filters by body substring. The caller clamps
 // limit/offset.
-func (s *Service) ListForAdmin(ctx context.Context, query string, limit, offset int32) ([]AdminComment, error) {
+func (s *Service) ListForAdmin(ctx context.Context, query string, limit, offset int32) ([]AdminComment, int64, error) {
 	var q *string
 	if trimmed := strings.TrimSpace(query); trimmed != "" {
 		q = &trimmed
@@ -390,7 +401,11 @@ func (s *Service) ListForAdmin(ctx context.Context, query string, limit, offset 
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountAdminComments(ctx, q)
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]AdminComment, 0, len(rows))
 	for _, r := range rows {
@@ -412,5 +427,5 @@ func (s *Service) ListForAdmin(ctx context.Context, query string, limit, offset 
 		}
 		items = append(items, ac)
 	}
-	return items, nil
+	return items, total, nil
 }

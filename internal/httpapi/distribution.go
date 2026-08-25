@@ -148,12 +148,11 @@ func (s *Server) handleVideosFeed(c echo.Context) error {
 		}
 		// Anonymous surface: honour the INSTANCE sensitive-content policy (0100).
 		// Under "hide", flagged videos never leak into the public feed.
-		items, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, s.hideSensitiveVideos())
+		// The feed cap is the query's LIMIT now, so the RSS route never pulls a
+		// whole channel into memory to throw most of it away.
+		items, _, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, s.hideSensitiveVideos(), "", feedItemLimit, 0)
 		if err != nil {
 			return err
-		}
-		if len(items) > feedItemLimit {
-			items = items[:feedItemLimit]
 		}
 		title = ch.DisplayName + " — " + instance
 		link = s.channelURL(ch.Handle)
@@ -161,7 +160,7 @@ func (s *Server) handleVideosFeed(c echo.Context) error {
 		descText = "Latest public videos from " + ch.DisplayName + " on " + instance
 	} else {
 		// Anonymous surface: honour the INSTANCE sensitive-content policy (0100).
-		items, err = s.videosvc.ListPublic(ctx, "recent", "local",
+		items, _, err = s.videosvc.ListPublic(ctx, "recent", "local",
 			video.FeedFilter{HideSensitive: s.hideSensitiveVideos()}, uuid.Nil, false, feedItemLimit, 0)
 		if err != nil {
 			return err
@@ -353,7 +352,7 @@ func (s *Server) handleSitemap(c echo.Context) error {
 
 	// Anonymous surface: honour the INSTANCE sensitive-content policy (0100), so
 	// flagged videos never leak into the sitemap under the "hide" policy.
-	items, err := s.videosvc.ListPublic(ctx, "recent", "local",
+	items, _, err := s.videosvc.ListPublic(ctx, "recent", "local",
 		video.FeedFilter{HideSensitive: s.hideSensitiveVideos()}, uuid.Nil, false, sitemapVideoLimit, 0)
 	if err != nil {
 		return err

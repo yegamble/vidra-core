@@ -14,6 +14,10 @@ LEFT JOIN users u ON u.id = w.created_by
 ORDER BY w.created_at DESC, w.id
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: CountWatchedWords :one
+-- How many rows ListWatchedWords would return, ignoring pagination.
+SELECT count(*)::bigint FROM watched_words;
+
 -- name: DeleteWatchedWord :execrows
 -- Remove a watched word (idempotent). Returns rows deleted (0 = no such word).
 DELETE FROM watched_words WHERE id = $1;
@@ -56,3 +60,11 @@ LEFT JOIN channels ch ON ch.id = v.channel_id
 LEFT JOIN users vu ON vu.id = ch.owner_id
 ORDER BY m.created_at DESC, m.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountWatchedWordMatches :one
+-- How many rows ListWatchedWordMatches would return, ignoring pagination. The
+-- watched_words JOIN is part of the predicate (a match whose term was deleted
+-- is not listed); the LEFT JOINs only add context and cannot change the count.
+SELECT count(*)::bigint
+FROM watched_word_matches m
+JOIN watched_words w ON w.id = m.watched_word_id;

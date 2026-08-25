@@ -203,3 +203,13 @@ func TestWatchedWordsAuth(t *testing.T) {
 		}
 	}
 }
+
+func (f *watchwordFakeRepo) CountWatchedWords(ctx context.Context) (int64, error) {
+	rows, err := f.ListWatchedWords(ctx, sqlcgen.ListWatchedWordsParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *watchwordFakeRepo) CountWatchedWordMatches(ctx context.Context) (int64, error) {
+	rows, err := f.ListWatchedWordMatches(ctx, sqlcgen.ListWatchedWordMatchesParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}

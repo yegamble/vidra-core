@@ -67,7 +67,8 @@ func (f *fakeRepo) GetLiveStreamByID(_ context.Context, id uuid.UUID) (sqlcgen.G
 	return r, nil
 }
 
-func (f *fakeRepo) ListLiveStreamsByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListLiveStreamsByChannelRow, error) {
+func (f *fakeRepo) ListLiveStreamsByChannel(_ context.Context, a sqlcgen.ListLiveStreamsByChannelParams) ([]sqlcgen.ListLiveStreamsByChannelRow, error) {
+	channelID := a.ChannelID
 	var out []sqlcgen.ListLiveStreamsByChannelRow
 	for _, r := range f.rows {
 		if r.ChannelID == channelID {
@@ -150,11 +151,11 @@ func (f *fakeRepo) ListLivePublicStreams(_ context.Context, a sqlcgen.ListLivePu
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].StartedAt.Time.After(rows[j].StartedAt.Time) })
-	lo := int(a.Offset)
+	lo := int(a.ResultOffset)
 	if lo > len(rows) {
 		lo = len(rows)
 	}
-	hi := lo + int(a.Limit)
+	hi := lo + int(a.ResultLimit)
 	if hi > len(rows) {
 		hi = len(rows)
 	}
@@ -231,7 +232,7 @@ func TestGetAndListAndDelete(t *testing.T) {
 		t.Errorf("Get(unknown) = %v, want ErrNotFound", err)
 	}
 
-	list, _ := svc.ListByChannel(ctx, ch)
+	list, _, _ := svc.ListByChannel(ctx, ch, 100, 0)
 	if len(list) != 2 {
 		t.Fatalf("list len = %d, want 2", len(list))
 	}
@@ -563,7 +564,7 @@ func TestListLivePublicExcludesNonPublicAndOffline(t *testing.T) {
 	mk("Private live", "private", true)
 	pub2 := mk("Public B", "public", true)
 
-	cards, err := svc.ListLivePublic(ctx, 30, 0)
+	cards, _, err := svc.ListLivePublic(ctx, 30, 0)
 	if err != nil {
 		t.Fatalf("ListLivePublic: %v", err)
 	}
@@ -582,11 +583,11 @@ func TestListLivePublicExcludesNonPublicAndOffline(t *testing.T) {
 	}
 
 	// Pagination: limit clamps the page; offset skips.
-	page1, _ := svc.ListLivePublic(ctx, 1, 0)
+	page1, _, _ := svc.ListLivePublic(ctx, 1, 0)
 	if len(page1) != 1 {
 		t.Fatalf("limit=1 returned %d, want 1", len(page1))
 	}
-	page2, _ := svc.ListLivePublic(ctx, 1, 1)
+	page2, _, _ := svc.ListLivePublic(ctx, 1, 1)
 	if len(page2) != 1 {
 		t.Fatalf("limit=1 offset=1 returned %d, want 1", len(page2))
 	}
@@ -603,7 +604,7 @@ func TestListLivePublicExcludesNonPublicAndOffline(t *testing.T) {
 	if err := repo.SetLiveStreamState(ctx, sqlcgen.SetLiveStreamStateParams{ID: st.ID, State: "ended"}); err != nil {
 		t.Fatal(err)
 	}
-	after, _ := svc.ListLivePublic(ctx, 30, 0)
+	after, _, _ := svc.ListLivePublic(ctx, 30, 0)
 	if len(after) != 1 {
 		t.Fatalf("after ending pub1, got %d cards, want 1", len(after))
 	}
@@ -613,4 +614,14 @@ func TestListLivePublicExcludesNonPublicAndOffline(t *testing.T) {
 	if ended, _ := svc.Get(ctx, pub1); ended.StartedAt != nil {
 		t.Errorf("ended stream still has started_at = %v, want nil", ended.StartedAt)
 	}
+}
+
+func (f *fakeRepo) CountLiveStreamsByChannel(ctx context.Context, channelID uuid.UUID) (int64, error) {
+	rows, err := f.ListLiveStreamsByChannel(ctx, sqlcgen.ListLiveStreamsByChannelParams{ChannelID: channelID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountLivePublicStreams(ctx context.Context) (int64, error) {
+	rows, err := f.ListLivePublicStreams(ctx, sqlcgen.ListLivePublicStreamsParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

@@ -21,8 +21,7 @@ type mutedInstanceView struct {
 // mutedInstanceListResponse is the paginated list of instances the caller has muted.
 type mutedInstanceListResponse struct {
 	Instances []mutedInstanceView `json:"instances"`
-	Limit     int                 `json:"limit"`
-	Offset    int                 `json:"offset"`
+	pageMeta
 }
 
 // handleMuteInstance mutes a whole remote instance for the caller: remote
@@ -65,12 +64,8 @@ func (s *Server) handleListMutedInstances(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.instancemodsvc.ListMutedInstances(c.Request().Context(), userID, int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, total, err := s.instancemodsvc.ListMutedInstances(c.Request().Context(), userID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -78,7 +73,7 @@ func (s *Server) handleListMutedInstances(c echo.Context) error {
 	for _, it := range items {
 		views = append(views, mutedInstanceView{Domain: it.Domain, MutedAt: it.MutedAt})
 	}
-	return c.JSON(http.StatusOK, mutedInstanceListResponse{Instances: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, mutedInstanceListResponse{Instances: views, pageMeta: page.meta(total)})
 }
 
 // blockedInstanceView is one entry of the admin instance blocklist.
@@ -92,8 +87,7 @@ type blockedInstanceView struct {
 // blockedInstanceListResponse is the paginated admin instance blocklist.
 type blockedInstanceListResponse struct {
 	Instances []blockedInstanceView `json:"instances"`
-	Limit     int                   `json:"limit"`
-	Offset    int                   `json:"offset"`
+	pageMeta
 }
 
 // blockInstanceRequest is the POST /admin/instances/blocked body. The reason is
@@ -162,12 +156,8 @@ func (s *Server) handleUnblockInstance(c echo.Context) error {
 // first. Behind requireRole(admin, moderator). Pagination via ?limit (1–100,
 // default 20) and ?offset.
 func (s *Server) handleListBlockedInstances(c echo.Context) error {
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.instancemodsvc.ListBlockedInstances(c.Request().Context(), int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, total, err := s.instancemodsvc.ListBlockedInstances(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -179,5 +169,5 @@ func (s *Server) handleListBlockedInstances(c echo.Context) error {
 		}
 		views = append(views, v)
 	}
-	return c.JSON(http.StatusOK, blockedInstanceListResponse{Instances: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, blockedInstanceListResponse{Instances: views, pageMeta: page.meta(total)})
 }

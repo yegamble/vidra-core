@@ -200,21 +200,26 @@ func newReportView(it moderation.Item) reportView {
 // reportListResponse is the paginated moderation queue.
 type reportListResponse struct {
 	Reports []reportView `json:"reports"`
-	Limit   int          `json:"limit"`
-	Offset  int          `json:"offset"`
+	pageMeta
 }
 
-// handleListReports returns the moderation queue. Behind requireRole(admin,
-// moderator). ?status=open returns only unresolved reports; pagination via
-// ?limit (1–100, default 20) and ?offset.
+// reportStatuses are the accepted ?status values for the moderation queue.
+var reportStatuses = []string{moderation.StatusOpen, moderation.StatusResolved, statusFilterAll}
+
+// handleListReports returns the moderation queue with its total. Behind
+// requireRole(admin, moderator). ?status is open|resolved|all (default all);
+// pagination via ?limit (1–100, default 20) and ?offset.
+//
+// This used to be `c.QueryParam("status") == "open"`, so ?status=resolved — the
+// obvious way to ask for the closed queue — silently returned EVERY report. An
+// unrecognised status is now a 400.
 func (s *Server) handleListReports(c echo.Context) error {
-	openOnly := c.QueryParam("status") == "open"
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
+	status, err := parseEnumParam(c, "status", reportStatuses, statusFilterAll)
+	if err != nil {
+		return err
 	}
-	items, err := s.moderationsvc.List(c.Request().Context(), openOnly, int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, total, err := s.moderationsvc.List(c.Request().Context(), listFilterValue(status), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -222,7 +227,7 @@ func (s *Server) handleListReports(c echo.Context) error {
 	for _, it := range items {
 		views = append(views, newReportView(it))
 	}
-	return c.JSON(http.StatusOK, reportListResponse{Reports: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, reportListResponse{Reports: views, pageMeta: page.meta(total)})
 }
 
 // resolveReportRequest is the body for resolving a report.

@@ -29,7 +29,7 @@ func TestRequestRegistrationCreatesPending(t *testing.T) {
 	}
 
 	// It shows in the pending queue.
-	list, err := svc.ListRegistrationRequests(ctx, true, 20, 0)
+	list, _, err := svc.ListRegistrationRequests(ctx, "pending", 20, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestApproveRegistrationCreatesAccount(t *testing.T) {
 		t.Errorf("re-approve err = %v, want ErrRegistrationRequestNotFound", err)
 	}
 	// It is no longer pending.
-	if list, _ := svc.ListRegistrationRequests(ctx, true, 20, 0); len(list) != 0 {
+	if list, _, _ := svc.ListRegistrationRequests(ctx, "pending", 20, 0); len(list) != 0 {
 		t.Errorf("pending after approve = %d, want 0", len(list))
 	}
 }

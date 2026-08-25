@@ -155,3 +155,8 @@ func TestAuditAutomaticallyAttachesRequestCorrelationAndTrace(t *testing.T) {
 		t.Errorf("audit actor snapshot = kind %q id %+v, want a user UUID", login.ActorKind, login.ActorID)
 	}
 }
+
+func (f *httpAuditFakeRepo) CountAuditLog(ctx context.Context, action *string) (int64, error) {
+	rows, err := f.ListAuditLog(ctx, sqlcgen.ListAuditLogParams{Action: action, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}

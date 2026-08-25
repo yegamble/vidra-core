@@ -212,10 +212,19 @@ const listChannelSyncsByUser = `-- name: ListChannelSyncsByUser :many
 SELECT id, channel_id, user_id, external_channel_url, state, last_sync_at, last_error, next_run_at, created_at, updated_at FROM channel_syncs
 WHERE user_id = $1
 ORDER BY created_at DESC, id DESC
+LIMIT $3 OFFSET $2
 `
 
-func (q *Queries) ListChannelSyncsByUser(ctx context.Context, userID uuid.UUID) ([]ChannelSync, error) {
-	rows, err := q.db.Query(ctx, listChannelSyncsByUser, userID)
+type ListChannelSyncsByUserParams struct {
+	UserID       uuid.UUID `json:"user_id"`
+	ResultOffset int32     `json:"result_offset"`
+	ResultLimit  int32     `json:"result_limit"`
+}
+
+// Paginated (this had no LIMIT). CountChannelSyncsByUser below is the matching
+// total and already existed for the per-user cap.
+func (q *Queries) ListChannelSyncsByUser(ctx context.Context, arg ListChannelSyncsByUserParams) ([]ChannelSync, error) {
+	rows, err := q.db.Query(ctx, listChannelSyncsByUser, arg.UserID, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}

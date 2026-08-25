@@ -79,7 +79,7 @@ func TestChannelSyncQueriesPersist(t *testing.T) {
 	}
 
 	// List + count.
-	list, err := q.ListChannelSyncsByUser(ctx, userID)
+	list, err := q.ListChannelSyncsByUser(ctx, sqlcgen.ListChannelSyncsByUserParams{UserID: userID, ResultLimit: 100})
 	if err != nil || len(list) != 1 || list[0].ID != sync.ID {
 		t.Fatalf("ListChannelSyncsByUser = %+v, %v", list, err)
 	}
