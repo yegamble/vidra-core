@@ -262,8 +262,56 @@ func TestPeerTubeImportEndToEnd(t *testing.T) {
 	if origSize != int64(len(sourceVideoBytes)) {
 		t.Errorf("recorded size = %d, want %d", origSize, len(sourceVideoBytes))
 	}
-	if n := countRows(t, ctx, dest, "video_files"); n < 2 {
-		t.Errorf("video_files = %d, want >=2 (original + thumbnail)", n)
+	if n := countRows(t, ctx, dest, "video_files"); n < 4 {
+		t.Errorf("video_files = %d, want >=4 (original + thumbnail + storyboard + storyboard vtt)", n)
+	}
+	// The poster lands on VIDRA's key, not the source's: an imported poster has
+	// to be indistinguishable from a generated one, or the endpoints that serve
+	// it and the GC that sweeps it disagree about where it lives.
+	var thumbKey string
+	var thumbSize int64
+	if err := dest.QueryRow(ctx, `SELECT storage_key, size_bytes FROM video_files WHERE video_id=$1 AND kind='thumbnail'`, vidID).Scan(&thumbKey, &thumbSize); err != nil {
+		t.Fatalf("read thumbnail: %v", err)
+	}
+	if want := "thumbnails/" + vidID.String() + ".jpg"; thumbKey != want {
+		t.Errorf("thumbnail key = %q, want the native key %q", thumbKey, want)
+	}
+	if ok, _ := destMedia.Exists(ctx, thumbKey); !ok {
+		t.Errorf("thumbnail row points at %q and there is no such object — the exact failure this pass exists to fix", thumbKey)
+	}
+	if thumbSize != int64(len(jpegBytes)) {
+		t.Errorf("thumbnail size = %d, want %d", thumbSize, len(jpegBytes))
+	}
+	// The storyboard comes across as BOTH rows. PeerTube stores the sprite sheet
+	// and no WebVTT map, so the map is synthesised from its geometry columns; a
+	// sprite with no map is a has_storyboard:true that renders nothing.
+	var spriteKey, vttKey string
+	if err := dest.QueryRow(ctx, `SELECT storage_key FROM video_files WHERE video_id=$1 AND kind='storyboard'`, vidID).Scan(&spriteKey); err != nil {
+		t.Fatalf("read storyboard sprite: %v", err)
+	}
+	if err := dest.QueryRow(ctx, `SELECT storage_key FROM video_files WHERE video_id=$1 AND kind='storyboard_vtt'`, vidID).Scan(&vttKey); err != nil {
+		t.Fatalf("read storyboard vtt: %v", err)
+	}
+	if spriteKey != "storyboards/"+vidID.String()+".jpg" || vttKey != "storyboards/"+vidID.String()+".vtt" {
+		t.Errorf("storyboard keys = %q / %q, want the native pair", spriteKey, vttKey)
+	}
+	vttRC, err := destMedia.Open(ctx, vttKey)
+	if err != nil {
+		t.Fatalf("open synthesised vtt: %v", err)
+	}
+	vttBody, _ := io.ReadAll(vttRC)
+	_ = vttRC.Close()
+	if !strings.HasPrefix(string(vttBody), "WEBVTT") {
+		t.Errorf("synthesised map is not a WebVTT file:\n%s", vttBody)
+	}
+	// 120s of video at 30s a tile is four cues, and the sprite is referenced
+	// RELATIVELY — the .vtt route depends on that, which is why it is never
+	// redirectable.
+	if n := strings.Count(string(vttBody), "storyboard.jpg#xywh="); n != 4 {
+		t.Errorf("vtt has %d cues, want 4 (120s / 30s a tile):\n%s", n, vttBody)
+	}
+	if strings.Contains(string(vttBody), "/storyboards/") {
+		t.Errorf("the sprite must be referenced relatively:\n%s", vttBody)
 	}
 	var capLang string
 	if err := dest.QueryRow(ctx, `SELECT language FROM captions WHERE video_id=$1`, vidID).Scan(&capLang); err != nil {
@@ -450,11 +498,25 @@ func TestPeerTubeImportReferenceMediaMode(t *testing.T) {
 	if originalKey != "web-videos/v1-720.mp4" {
 		t.Errorf("original key = %q, want existing PeerTube key", originalKey)
 	}
-	if err := dest.QueryRow(ctx, `SELECT storage_key FROM video_files WHERE video_id=$1 AND kind='thumbnail'`, vidID).Scan(&thumbKey); err != nil {
+	// The poster is NOT referenced, and that is the point. PeerTube's object
+	// storage covers five families and thumbnails are not one of them, so
+	// thumbnails/<source-filename> names nothing: a row pointing there is the
+	// broken image on every card that this pass was written to stop. With no
+	// source media root and no reachable origin the family is DEFERRED, loudly,
+	// instead of being recorded as carried.
+	if err := dest.QueryRow(ctx, `SELECT storage_key FROM video_files WHERE video_id=$1 AND kind='thumbnail'`, vidID).Scan(&thumbKey); err == nil {
+		t.Errorf("reference mode recorded a thumbnail at %q; PeerTube never stores one in object storage", thumbKey)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("read thumbnail key: %v", err)
 	}
-	if thumbKey != "thumbnails/v1-thumb.jpg" {
-		t.Errorf("thumbnail key = %q, want existing PeerTube key", thumbKey)
+	var deferredThumbs bool
+	for _, d := range report.Deferred {
+		if strings.Contains(d, "video thumbnails") {
+			deferredThumbs = true
+		}
+	}
+	if !deferredThumbs {
+		t.Errorf("nothing in the report says the posters were not carried: %v", report.Deferred)
 	}
 	if err := dest.QueryRow(ctx, `SELECT storage_key FROM captions WHERE video_id=$1 AND language='en'`, vidID).Scan(&thumbKey); err != nil {
 		t.Fatalf("read caption key: %v", err)
@@ -2059,7 +2121,10 @@ func seedSourceMedia(t *testing.T, root string) {
 		}
 	}
 	write("web-videos/v1-720.mp4", sourceVideoBytes)
-	write("thumbnails/v1-thumb.jpg", []byte("FAKE-JPG"))
+	// Real JPEG magic, because the import sniffs what these bytes ARE before it
+	// stores them — the gate that stops an HTML error page becoming a poster.
+	write("thumbnails/v1-thumb.jpg", jpegBytes)
+	write("storyboards/v1-storyboard.jpg", jpegBytes)
 	write("captions/v1-en.vtt", []byte("WEBVTT\n\n00:00.000 --> 00:01.000\nhi\n"))
 	write("streaming-playlists/hls/11111111-1111-1111-1111-111111111111/v1-master.m3u8",
 		[]byte("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720\nv1-720.m3u8\n"))
@@ -2203,6 +2268,17 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		`CREATE TABLE "thumbnail" (
 			id serial PRIMARY KEY, filename text NOT NULL, type integer NOT NULL, "videoId" integer,
 			height integer, width integer)`,
+		// PeerTube writes NO migration for this table — it is created by
+		// sequelizeTypescript.sync() on boot — which is why the importer probes
+		// information_schema for it instead of inferring it from the version.
+		`CREATE TABLE "storyboard" (
+			id serial PRIMARY KEY, filename text NOT NULL,
+			"totalHeight" integer NOT NULL, "totalWidth" integer NOT NULL,
+			"spriteHeight" integer NOT NULL, "spriteWidth" integer NOT NULL,
+			"spriteDuration" integer NOT NULL,
+			"fileUrl" text, cached boolean NOT NULL DEFAULT false,
+			"videoId" integer NOT NULL UNIQUE,
+			"createdAt" timestamptz NOT NULL DEFAULT now(), "updatedAt" timestamptz NOT NULL DEFAULT now())`,
 		`CREATE TABLE "videoCaption" (
 			id serial PRIMARY KEY, language text NOT NULL, filename text, "videoId" integer NOT NULL)`,
 		`CREATE TABLE "videoComment" (
@@ -2287,6 +2363,11 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 			(3,'like',5,1),
 			(4,'none',1,2)`,
 		`INSERT INTO "thumbnail" (id,filename,type,"videoId") VALUES (1,'v1-thumb.jpg',1,1)`,
+		// A 2x2 grid of 192x108 sprites at 30s each. Video 1 is 120s long, so all
+		// four cells hold a real frame; the tile count still comes from the
+		// DURATION and not from the grid (see media.PlanFromSprites).
+		`INSERT INTO "storyboard" (id,filename,"totalWidth","totalHeight","spriteWidth","spriteHeight","spriteDuration","videoId")
+			VALUES (1,'v1-storyboard.jpg',384,216,192,108,30,1)`,
 		`INSERT INTO "videoCaption" (id,language,filename,"videoId") VALUES (1,'en','v1-en.vtt',1)`,
 		`INSERT INTO "tag" (id,name) VALUES (1,'music'),(2,'test')`,
 		`INSERT INTO "videoTag" ("videoId","tagId") VALUES (1,1),(1,2)`,
@@ -2325,5 +2406,343 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 	}
 	for _, s := range stmts {
 		mustExec(t, ctx, pool, s)
+	}
+}
+
+// ── video posters and storyboards ──
+
+// PeerTube 8.1 unified previews and miniatures into one table and started
+// writing ONE ROW PER CONFIGURED SIZE. Exactly one of them can be this video's
+// poster here, so the read has to choose — and "whichever the source inserted
+// first", which is what the old query took, lands on the 280x157 thumbnail.
+func TestPeerTubeImportThumbnailVariantSelection(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	t.Run("an 8.2 source, which has no type column at all", func(t *testing.T) {
+		src, _ := newScratchDB(t, ctx, base)
+		seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+		// The 8.1 refactor DROPPED `type`; the sizes are the shipped defaults plus
+		// the 1400x1400 square PeerTube generates "for podcast applications".
+		mustExec(t, ctx, src, `DELETE FROM "thumbnail"`)
+		mustExec(t, ctx, src, `ALTER TABLE "thumbnail" DROP COLUMN type`)
+		mustExec(t, ctx, src, `INSERT INTO "thumbnail" (id,filename,"videoId",width,height) VALUES
+			(1,'v1-280.jpg',1,280,157),
+			(2,'v1-850.jpg',1,850,480),
+			(3,'v1-1280.jpg',1,1280,720),
+			(4,'v1-1920.jpg',1,1920,1080),
+			(5,'v1-square.jpg',1,1400,1400)`)
+
+		thumbs, present, err := NewSourceFromPool(src).VideoThumbnails(ctx)
+		if err != nil {
+			t.Fatalf("read thumbnails: %v", err)
+		}
+		if !present {
+			t.Fatal("the source has a thumbnail table")
+		}
+		if len(thumbs) != 1 {
+			t.Fatalf("got %d rows, want exactly one per video — five variants all name the same poster here", len(thumbs))
+		}
+		// 1400x1400 has 1.96M pixels to 1920x1080's 2.07M, so largest-by-area alone
+		// would be right here by luck; the square rule is what makes it right when
+		// the admin's configured sizes are not the shipped ones. Both are asserted.
+		if thumbs[0].Filename != "v1-1920.jpg" {
+			t.Fatalf("chose %q (%dx%d), want the 1920x1080 variant", thumbs[0].Filename, thumbs[0].Width, thumbs[0].Height)
+		}
+	})
+
+	t.Run("a square variant never wins on area alone", func(t *testing.T) {
+		src, _ := newScratchDB(t, ctx, base)
+		seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+		mustExec(t, ctx, src, `DELETE FROM "thumbnail"`)
+		mustExec(t, ctx, src, `ALTER TABLE "thumbnail" DROP COLUMN type`)
+		// An instance whose configured square is BIGGER than its widescreen. Area
+		// alone would pick it, and every card in the catalogue would be letterboxed.
+		mustExec(t, ctx, src, `INSERT INTO "thumbnail" (id,filename,"videoId",width,height) VALUES
+			(1,'v1-1280.jpg',1,1280,720),
+			(2,'v1-square.jpg',1,2000,2000)`)
+
+		thumbs, _, err := NewSourceFromPool(src).VideoThumbnails(ctx)
+		if err != nil {
+			t.Fatalf("read thumbnails: %v", err)
+		}
+		if len(thumbs) != 1 || thumbs[0].Filename != "v1-1280.jpg" {
+			t.Fatalf("chose %+v, want the 16:9 variant; Vidra renders one poster into 16:9 surfaces", thumbs)
+		}
+	})
+
+	t.Run("a pre-8.1 source, where a PREVIEW beats a MINIATURE", func(t *testing.T) {
+		src, _ := newScratchDB(t, ctx, base)
+		seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+		// ThumbnailType = { MINIATURE: 1, PREVIEW: 2 }. The preview is the full-size
+		// one, and the old query filtered to type = 1.
+		mustExec(t, ctx, src, `DELETE FROM "thumbnail"`)
+		mustExec(t, ctx, src, `INSERT INTO "thumbnail" (id,filename,type,"videoId",width,height) VALUES
+			(1,'v1-miniature.jpg',1,1,223,122),
+			(2,'v1-preview.jpg',2,1,850,480)`)
+
+		thumbs, _, err := NewSourceFromPool(src).VideoThumbnails(ctx)
+		if err != nil {
+			t.Fatalf("read thumbnails: %v", err)
+		}
+		if len(thumbs) != 1 || thumbs[0].Filename != "v1-preview.jpg" {
+			t.Fatalf("chose %+v, want the PREVIEW", thumbs)
+		}
+	})
+
+	t.Run("a playlist thumbnail is not a video's", func(t *testing.T) {
+		src, _ := newScratchDB(t, ctx, base)
+		seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+		mustExec(t, ctx, src, `ALTER TABLE "thumbnail" ADD COLUMN "videoPlaylistId" integer`)
+		mustExec(t, ctx, src, `ALTER TABLE "thumbnail" ALTER COLUMN "videoId" DROP NOT NULL`)
+		mustExec(t, ctx, src, `INSERT INTO "thumbnail" (id,filename,type,"videoId","videoPlaylistId")
+			VALUES (99,'playlist-cover.jpg',1,NULL,1)`)
+
+		thumbs, _, err := NewSourceFromPool(src).VideoThumbnails(ctx)
+		if err != nil {
+			t.Fatalf("read thumbnails: %v", err)
+		}
+		for _, th := range thumbs {
+			if th.Filename == "playlist-cover.jpg" {
+				t.Fatal("a videoPlaylistId row was read as a video's poster")
+			}
+		}
+	})
+}
+
+// A source too old to have storyboards at all. PeerTube writes no migration for
+// that table — it is schema-synced on boot — so its absence cannot be inferred
+// from the version and MUST be a clean deferral rather than a failed run.
+func TestPeerTubeImportStoryboardTableAbsentIsDeferred(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+	mustExec(t, ctx, src, `DROP TABLE "storyboard"`)
+
+	srcMediaDir := t.TempDir()
+	seedSourceMedia(t, srcMediaDir)
+	srcMedia, err := storage.NewLocal(srcMediaDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destMedia, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{
+		Policy: PolicySkip, SrcMedia: srcMedia, DestMedia: destMedia,
+	})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("run: %v — a source without the table is a family it does not have, not a failure", err)
+	}
+	var deferred bool
+	for _, d := range report.Deferred {
+		if strings.Contains(d, "storyboard") {
+			deferred = true
+		}
+	}
+	if !deferred {
+		t.Errorf("nothing in the report mentions storyboards: %v", report.Deferred)
+	}
+	if got := report.Entities[KindStoryboard].Failed; got != 0 {
+		t.Errorf("storyboard failures = %d, want 0", got)
+	}
+	if n := countRows(t, ctx, dest, "video_files WHERE kind LIKE 'storyboard%'"); n != 0 {
+		t.Errorf("%d storyboard rows written for a source that has none", n)
+	}
+	// ...and the posters, which the same source DOES have, still come across.
+	if got := report.Entities[KindThumbnail].Imported; got != 1 {
+		t.Errorf("thumbnails imported = %d, want 1 — one family's absence must not cost another", got)
+	}
+}
+
+// The instance this whole change was written for: ~12–16k videos whose
+// kind='thumbnail' row points at thumbnails/<peertube-filename>, an object
+// PeerTube never stored. has_thumbnail said true and GET /thumbnail 404'd on 40
+// of 40 sampled. The old importer wrote no ledger row for a poster, so the key
+// shape and the object are the only provenance there is — once.
+func TestPeerTubeImportThumbnailRepairsWhatAnOlderReleaseWrote(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	var (
+		mu       sync.Mutex
+		requests = map[string]int{}
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests[path.Base(r.URL.Path)]++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write(jpegBytes)
+	}))
+	defer srv.Close()
+	hits := func(name string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		return requests[name]
+	}
+	mustExec(t, ctx, src,
+		`UPDATE "actor" SET url = $1 || '/accounts/' || "preferredUsername" WHERE "serverId" IS NULL`, srv.URL)
+
+	destMedia, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	newImporter := func(sourceAuthoritative bool) *Importer {
+		return NewImporter(dest, NewSourceFromPool(src), Options{
+			Policy: PolicySkip, MediaMode: MediaModeReference, DestMedia: destMedia,
+			SourceAuthoritative: sourceAuthoritative,
+		})
+	}
+	imp := newImporter(false)
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	var vidID uuid.UUID
+	if err := dest.QueryRow(ctx, `SELECT id FROM videos WHERE title='First Video'`).Scan(&vidID); err != nil {
+		t.Fatalf("read video: %v", err)
+	}
+	nativeKey := "thumbnails/" + vidID.String() + ".jpg"
+	poster := func() (string, int64) {
+		t.Helper()
+		var key string
+		var size int64
+		if err := dest.QueryRow(ctx,
+			`SELECT storage_key, size_bytes FROM video_files WHERE video_id=$1 AND kind='thumbnail'`, vidID).Scan(&key, &size); err != nil {
+			t.Fatalf("read poster: %v", err)
+		}
+		return key, size
+	}
+	if key, _ := poster(); key != nativeKey {
+		t.Fatalf("first run stored the poster at %q, want %q", key, nativeKey)
+	}
+	if ok, _ := destMedia.Exists(ctx, nativeKey); !ok {
+		t.Fatal("the poster row points at an object that is not there")
+	}
+
+	// ── an unchanged source costs nothing: no fetch, no PUT ──
+	before := hits("v1-thumb.jpg")
+	report, err := newImporter(false).Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if got := hits("v1-thumb.jpg"); got != before {
+		t.Errorf("the source was asked for %d more posters; an unchanged slot must be settled from the database", got-before)
+	}
+	if got := report.Entities[KindThumbnail].Imported; got != 0 {
+		t.Errorf("second run imported %d posters, want 0", got)
+	}
+
+	// ── the state a reference-mode migration is actually in ──
+	// A row at the SOURCE's key, no object behind it, and no ledger provenance
+	// because the old importer recorded none.
+	mustExec(t, ctx, dest, `DELETE FROM peertube_import_ledger WHERE entity_kind = 'thumbnail'`)
+	mustExec(t, ctx, dest,
+		`UPDATE video_files SET storage_key = 'thumbnails/v1-thumb.jpg', size_bytes = 0 WHERE video_id = $1 AND kind = 'thumbnail'`, vidID)
+	_ = destMedia.Delete(ctx, nativeKey)
+	if _, err := newImporter(false).Run(ctx, version, nil); err != nil {
+		t.Fatalf("healing run: %v", err)
+	}
+	key, size := poster()
+	if key != nativeKey || size != int64(len(jpegBytes)) {
+		t.Fatalf("healing run left the poster at %q (%d bytes); a row whose object is not there is a gap in any mode", key, size)
+	}
+	if ok, _ := destMedia.Exists(ctx, nativeKey); !ok {
+		t.Fatal("the healed poster row still points at nothing")
+	}
+
+	// ── the configuration that ALWAYS worked must not regress ──
+	// --source-local-root copy mode wrote thumbnails/<random-uuid>.jpg AND the
+	// bytes. No ledger provenance, a non-native key — and a perfectly good poster.
+	mustExec(t, ctx, dest, `DELETE FROM peertube_import_ledger WHERE entity_kind = 'thumbnail'`)
+	legacyKey := "thumbnails/" + uuid.NewString() + ".jpg"
+	if _, err := destMedia.Put(ctx, legacyKey, bytes.NewReader(jpegBytes)); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, ctx, dest,
+		`UPDATE video_files SET storage_key = $2, size_bytes = $3 WHERE video_id = $1 AND kind = 'thumbnail'`,
+		vidID, legacyKey, int64(len(jpegBytes)))
+	before = hits("v1-thumb.jpg")
+	if _, err := newImporter(false).Run(ctx, version, nil); err != nil {
+		t.Fatalf("adoption run: %v", err)
+	}
+	if key, _ := poster(); key != legacyKey {
+		t.Errorf("poster moved to %q; a copy-mode migration's own working poster must be left exactly as it is", key)
+	}
+	if got := hits("v1-thumb.jpg"); got != before {
+		t.Errorf("the source was asked for %d more posters; a working poster costs no fetch", got-before)
+	}
+
+	// ── a creator's poster is never written over ──
+	// SetThumbnail lands on the NATIVE key, which is what stops the bridge above
+	// claiming it.
+	mustExec(t, ctx, dest, `DELETE FROM peertube_import_ledger WHERE entity_kind = 'thumbnail'`)
+	if _, err := destMedia.Put(ctx, nativeKey, bytes.NewReader(append(jpegBytes, 'x'))); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, ctx, dest,
+		`UPDATE video_files SET storage_key = $2, size_bytes = 4242 WHERE video_id = $1 AND kind = 'thumbnail'`, vidID, nativeKey)
+	before = hits("v1-thumb.jpg")
+	report, err = newImporter(false).Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("gap-fill run: %v", err)
+	}
+	if _, size := poster(); size != 4242 {
+		t.Errorf("size_bytes = %d, want 4242 — an import must never overwrite a poster a creator uploaded", size)
+	}
+	if got := hits("v1-thumb.jpg"); got != before {
+		t.Errorf("the source was asked for %d more posters; a slot the import will not write must not be fetched", got-before)
+	}
+	var conflict bool
+	for _, c := range report.Conflicts {
+		if strings.Contains(c, "thumbnail") && strings.Contains(c, "left unchanged") {
+			conflict = true
+		}
+	}
+	if !conflict {
+		t.Errorf("nothing in the report says the poster was left alone: %v — divergence nobody is told about is the failure this guards against", report.Conflicts)
+	}
+
+	// ── the seam: same state, source-authoritative, opposite outcome ──
+	if _, err := newImporter(true).Run(ctx, version, nil); err != nil {
+		t.Fatalf("source-authoritative run: %v", err)
+	}
+	if _, size := poster(); size != int64(len(jpegBytes)) {
+		t.Errorf("source-authoritative run left %d bytes, want the source's poster (%d)", size, len(jpegBytes))
 	}
 }

@@ -164,10 +164,10 @@ func TestDecideActorImage(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := decideActorImage(tc.slot, actorImageGapFill); got != tc.gapFill {
+			if got := decideActorImage(tc.slot, modeGapFill); got != tc.gapFill {
 				t.Errorf("gap-fill = %v, want %v (%s)", got, tc.gapFill, tc.why)
 			}
-			if got := decideActorImage(tc.slot, actorImageSourceAuthoritative); got != tc.sourceAuthority {
+			if got := decideActorImage(tc.slot, modeSourceAuthoritative); got != tc.sourceAuthority {
 				t.Errorf("source-authoritative = %v, want %v (%s)", got, tc.sourceAuthority, tc.why)
 			}
 		})
@@ -222,15 +222,15 @@ func TestActorImageLedgerNote(t *testing.T) {
 // expensive half is still spent only where the two sides differ.
 func TestDecideActorImageModeIsTheOnlySwitch(t *testing.T) {
 	operatorOwned := actorImageSlot{present: true, current: "avatars/users/u.png|4096", carried: "avatars/users/u.png|1000", wroteBefore: true}
-	if got := decideActorImage(operatorOwned, actorImageGapFill); got != actorImageOperatorOwned {
+	if got := decideActorImage(operatorOwned, modeGapFill); got != actorImageOperatorOwned {
 		t.Fatalf("gap-fill = %v, want the image left alone", got)
 	}
-	if got := decideActorImage(operatorOwned, actorImageSourceAuthoritative); got != actorImageReplace {
+	if got := decideActorImage(operatorOwned, modeSourceAuthoritative); got != actorImageReplace {
 		t.Fatalf("source-authoritative = %v, want the same image replaced", got)
 	}
 
 	unchanged := actorImageSlot{present: true, current: "avatars/users/u.png|1000", carried: "avatars/users/u.png|1000", wroteBefore: true, untouched: true, carriedThisFile: true}
-	for _, mode := range []actorImageMode{actorImageGapFill, actorImageSourceAuthoritative} {
+	for _, mode := range []importMode{modeGapFill, modeSourceAuthoritative} {
 		if got := decideActorImage(unchanged, mode); got != actorImageUpToDate {
 			t.Fatalf("mode %v turned an unchanged slot into %v; neither mode may re-fetch what is already there", mode, got)
 		}

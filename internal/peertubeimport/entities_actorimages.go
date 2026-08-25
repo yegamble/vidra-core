@@ -52,17 +52,20 @@ import (
 // policy: an image that still matches the fingerprint is the import's to update,
 // anything else is somebody's and is left alone AND reported.
 
-// actorImageMode says how far a run may go when a slot on this instance is
-// already filled with something the import did not write.
-type actorImageMode int
+// importMode says how far a run may go when a slot on this instance is already
+// filled with something the import did not write. It is the same question, and
+// the same answer, for every media slot the import owns — actor images here,
+// video posters and storyboards in entities_videoimages.go — so it is named for
+// the run and not for one family.
+type importMode int
 
 const (
-	// actorImageGapFill is the default and the conservative one: fill empty
-	// slots, update an image the import can prove it wrote, never touch one a
-	// person put there.
-	actorImageGapFill actorImageMode = iota
-	// actorImageSourceAuthoritative makes the SOURCE the truth for these slots —
-	// for the operator who is syncing a live PeerTube onto an instance they also
+	// modeGapFill is the default and the conservative one: fill empty slots,
+	// update an image the import can prove it wrote, never touch one a person
+	// put there.
+	modeGapFill importMode = iota
+	// modeSourceAuthoritative makes the SOURCE the truth for these slots — for
+	// the operator who is syncing a live PeerTube onto an instance they also
 	// edit and has said which side wins.
 	//
 	// It changes exactly one thing: the two outcomes that would leave a divergent
@@ -70,7 +73,7 @@ const (
 	// "the slot already holds what the import put there" still writes NOTHING, so
 	// the expensive half (a fetch from the live source, a PUT into object storage)
 	// is spent only where the two sides actually differ.
-	actorImageSourceAuthoritative
+	modeSourceAuthoritative
 )
 
 // actorImageSlot is the DESTINATION's side of the decision for one avatar or
@@ -133,11 +136,11 @@ const (
 // which side the operator said wins. The source's side of it is one bit —
 // carriedThisFile — because by the time this is asked the source has already
 // been reduced to ONE best variant per slot.
-func decideActorImage(s actorImageSlot, mode actorImageMode) actorImageAction {
+func decideActorImage(s actorImageSlot, mode importMode) actorImageAction {
 	switch {
 	case !s.present:
 		if s.carried != "" || s.wroteBefore || s.carriedThisFile {
-			if mode == actorImageSourceAuthoritative {
+			if mode == modeSourceAuthoritative {
 				return actorImageWrite
 			}
 			return actorImageCleared
@@ -159,7 +162,7 @@ func decideActorImage(s actorImageSlot, mode actorImageMode) actorImageAction {
 		// the write records a fingerprint and the branch above takes over.
 		return actorImageReplace
 
-	case mode == actorImageSourceAuthoritative:
+	case mode == modeSourceAuthoritative:
 		return actorImageReplace
 
 	default:
@@ -223,12 +226,12 @@ func actorImageFingerprint(img profileimage.Image) string {
 	return img.StorageKey + "|" + strconv.FormatInt(img.SizeBytes, 10)
 }
 
-// actorImageMode resolves the run's mode from the importer's options.
-func (im *Importer) actorImageMode() actorImageMode {
+// importMode resolves the run's mode from the importer's options.
+func (im *Importer) importMode() importMode {
 	if im.sourceAuthoritative {
-		return actorImageSourceAuthoritative
+		return modeSourceAuthoritative
 	}
-	return actorImageGapFill
+	return modeGapFill
 }
 
 // ── the pass ──
@@ -351,7 +354,7 @@ func (im *Importer) resolveActorImageTargets(
 	images []SourceActorImage,
 	r *Report,
 ) ([]actorImageTarget, error) {
-	mode := im.actorImageMode()
+	mode := im.importMode()
 	var targets []actorImageTarget
 	for _, img := range images {
 		imageKind, ok := mapActorImageKind(img.Type)

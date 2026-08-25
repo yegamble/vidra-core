@@ -490,30 +490,12 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 		}
 	}
 
-	var thumbKey string
-	var thumbType string
-	var thumbSHA string
-	thumbFilename, err := im.src.ThumbnailFilename(ctx, v.ID)
-	if err != nil {
-		return err
-	}
-	if thumbFilename != "" && allowedImageExt[extOf(thumbFilename)] {
-		switch im.mediaMode {
-		case MediaModeCopy:
-			if im.srcMedia != nil && im.destMedia != nil {
-				thumbKey = "thumbnails/" + mediaID.String() + ".jpg"
-				thumbType = imageContentTypeForExt(extOf(thumbFilename))
-				_, sum, cerr := im.copyMedia(ctx, sourceThumbnailKey(thumbFilename), thumbKey)
-				if cerr != nil {
-					return cerr
-				}
-				thumbSHA = sum
-			}
-		case MediaModeReference:
-			thumbKey = sourceThumbnailKey(thumbFilename)
-			thumbType = imageContentTypeForExt(extOf(thumbFilename))
-		}
-	}
+	// NOTE: the poster is NOT written here. It used to be, pointing at
+	// thumbnails/<peertube-filename> in the source's object store — a key
+	// PeerTube never writes, because thumbnails are not one of the five families
+	// its object storage covers. It is carried by importVideoThumbnails instead,
+	// which fetches it and can also backfill onto videos this run does not touch;
+	// see entities_videoimages.go.
 
 	captions, err := im.src.Captions(ctx, v.ID)
 	if err != nil {
@@ -593,17 +575,6 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 				return err
 			}
 		}
-		if thumbKey != "" {
-			if _, err := q.ImportInsertVideoFile(ctx, sqlcgen.ImportInsertVideoFileParams{
-				VideoID:     id,
-				Kind:        "thumbnail",
-				StorageKey:  thumbKey,
-				ContentType: thumbType,
-				Sha256:      thumbSHA,
-			}); err != nil {
-				return err
-			}
-		}
 		if haveHLS {
 			if _, err := q.UpsertStreamingPlaylist(ctx, sqlcgen.UpsertStreamingPlaylistParams{
 				VideoID:   id,
@@ -642,9 +613,6 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 	}
 	if haveHLS {
 		r.count(KindHLSPlaylist).Imported++
-	}
-	if thumbKey != "" {
-		r.count(KindThumbnail).Imported++
 	}
 	r.count(KindCaption).Imported += len(copiedCaps)
 	for _, tag := range tags {

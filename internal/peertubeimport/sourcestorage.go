@@ -32,11 +32,18 @@ type SourceStorageConfig struct {
 // PeerTube's default object buckets (subdirectories under the media root). The
 // verified 5.x–8.x layout. Documented in docs/peertube-migration.md; operators
 // on an older layout mount their tree to match.
+// Only the first and the last two are ever in a PeerTube OBJECT store; the
+// thumbnail/preview/storyboard directories exist only on the source HOST's
+// filesystem, so they are reachable through this backend exactly when the
+// operator pointed --source-local-root at that host's storage tree. Everywhere
+// else those three families come over HTTP (see lazystatic.go).
 const (
-	ptWebVideosDir = "web-videos"
-	ptThumbnailDir = "thumbnails"
-	ptCaptionDir   = "captions"
-	ptHLSDir       = "streaming-playlists/hls"
+	ptWebVideosDir  = "web-videos"
+	ptThumbnailDir  = "thumbnails"
+	ptPreviewDir    = "previews"
+	ptStoryboardDir = "storyboards"
+	ptCaptionDir    = "captions"
+	ptHLSDir        = "streaming-playlists/hls"
 )
 
 // OpenSourceStorage builds a read-only media backend for the source instance.
@@ -74,6 +81,21 @@ func sourceWebVideoKey(filename string) string {
 func sourceThumbnailKey(filename string) string {
 	return ptThumbnailDir + "/" + path.Base(filename)
 }
+
+// sourcePreviewKey is the SECOND place a thumbnail file can be on a source host.
+// PeerTube 8.1 unified previews into the thumbnail table, but the files were
+// moved by a migration script (server/scripts/migrations/peertube-8.1.ts) that
+// an admin has to run BY HAND, while the DB migration that dropped the `type`
+// column ran on its own. So on a source where that script was skipped, the
+// database describes every row as a plain thumbnail while the ex-preview FILES
+// still sit in storage/previews/. Try thumbnails/ first, then here.
+func sourcePreviewKey(filename string) string {
+	return ptPreviewDir + "/" + path.Base(filename)
+}
+
+func sourceStoryboardKey(filename string) string {
+	return ptStoryboardDir + "/" + path.Base(filename)
+}
 func sourceCaptionKey(filename string) string {
 	return ptCaptionDir + "/" + path.Base(filename)
 }
@@ -97,9 +119,6 @@ func sourceHLSDir(videoUUID string) string {
 var (
 	allowedVideoExt = map[string]bool{
 		".mp4": true, ".webm": true, ".mkv": true, ".mov": true, ".m4v": true, ".ogv": true, ".avi": true,
-	}
-	allowedImageExt = map[string]bool{
-		".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true,
 	}
 	allowedCaptionExt = map[string]bool{
 		".vtt": true, ".srt": true,

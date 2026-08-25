@@ -83,6 +83,11 @@ type Importer struct {
 	originOnce sync.Once
 	origin     string
 	originErr  error
+
+	// videoImageMu guards the report while the thumbnail/storyboard passes fan
+	// out across workers. Their per-row outcomes are the only counters written
+	// from more than one goroutine.
+	videoImageMu sync.Mutex
 }
 
 // Options customise an Importer.
@@ -378,11 +383,6 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 		} else if ok {
 			r.count(KindHLSPlaylist).Planned++
 		}
-		if thumb, err := im.src.ThumbnailFilename(ctx, v.ID); err != nil {
-			return nil, err
-		} else if thumb != "" {
-			r.count(KindThumbnail).Planned++
-		}
 		caps, err := im.src.Captions(ctx, v.ID)
 		if err != nil {
 			return nil, err
@@ -396,6 +396,16 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 	}
 
 	if err := im.planPerVideo(ctx, r, videos); err != nil {
+		return nil, err
+	}
+
+	// Posters and storyboards are counted from their own bulk source reads, not
+	// from the per-video loop above: both are one row per video on the source and
+	// both are carried by passes of their own. See entities_videoimages.go.
+	if err := im.planVideoThumbnails(ctx, r); err != nil {
+		return nil, err
+	}
+	if err := im.planStoryboards(ctx, r); err != nil {
 		return nil, err
 	}
 
@@ -482,6 +492,13 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 		// accounts an earlier release already imported. See entities_actorimages.go.
 		{"actor images", im.importActorImages},
 		{"videos", im.importVideos},
+		// Posters and storyboards run after videos, as passes of their own, for
+		// exactly the reason the per-video families do — and because the posters
+		// the old in-video path wrote point at objects PeerTube never stored, so
+		// the catalogue that is already migrated is the one that needs them. See
+		// entities_videoimages.go.
+		{"thumbnails", im.importVideoThumbnails},
+		{"storyboards", im.importStoryboards},
 		// Per-video data runs AFTER videos and as passes of its own, so a re-run
 		// backfills it onto videos an earlier release already imported. See
 		// entities_pervideo.go.
