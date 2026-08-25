@@ -1409,6 +1409,39 @@ func TestPeerTubeImportConfig(t *testing.T) {
 			t.Error("must be configured when enabled with a source DSN")
 		}
 	})
+
+	// The DSN's shape is checked so `vidra setup` can reject an answer at the
+	// prompt with the api's own rule rather than a friendlier second opinion.
+	t.Run("enabled with a DSN that is not one is rejected", func(t *testing.T) {
+		clean(t)
+		t.Setenv("PEERTUBE_IMPORT_ENABLED", "true")
+		t.Setenv("PEERTUBE_SOURCE_DATABASE_URL", "peertube-db.internal")
+		if _, err := Load(); err == nil {
+			t.Error("a value that is not a connection string was accepted")
+		}
+	})
+
+	// …and ONLY inside the enabled guard. A half-written DSN left in an env file
+	// by a migration that finished last month must never become a boot failure a
+	// year later, on a deployment that has no import surface at all.
+	t.Run("a disabled import never fails on the source DSN", func(t *testing.T) {
+		clean(t)
+		t.Setenv("PEERTUBE_SOURCE_DATABASE_URL", "peertube-db.internal")
+		if _, err := Load(); err != nil {
+			t.Errorf("a disabled import refused to boot over its leftover source: %v", err)
+		}
+	})
+
+	// The keyword/value dialect pgx also accepts. An operator whose read-only
+	// replica is addressed that way has a working DSN.
+	t.Run("the keyword/value DSN dialect is accepted", func(t *testing.T) {
+		clean(t)
+		t.Setenv("PEERTUBE_IMPORT_ENABLED", "true")
+		t.Setenv("PEERTUBE_SOURCE_DATABASE_URL", "host=oldhost user=ro dbname=peertube sslmode=require")
+		if _, err := Load(); err != nil {
+			t.Errorf("a keyword/value DSN was refused: %v", err)
+		}
+	})
 }
 
 func TestYtdlpImportConfig(t *testing.T) {

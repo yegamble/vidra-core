@@ -325,6 +325,76 @@ button.ghost{background:transparent}
         <div><label for="f-reg-approval">Require an admin to approve each signup</label></div>
       </div>
     </fieldset>
+
+    <!-- Hand-sync: interview()'s peerTubeInterview(), cmd/vidra/setup.go. ONE
+         gate, and nine questions behind it, in the interview's own order. It is
+         last here as it is last there: it is the only block about a DIFFERENT
+         instance. -->
+    <fieldset>
+      <legend>Migrating from PeerTube</legend>
+      <div class="check">
+        <input type="checkbox" id="f-pt-on">
+        <div><label for="f-pt-on">Migrate from an existing PeerTube instance</label>
+        <p class="hint">Its database and media are read, never written. Nothing is imported here: this wizard only writes the source down, and the importer runs inside the api container — the last step gives you the address to start it from.</p></div>
+      </div>
+      <div id="w-pt" hidden>
+        <div class="field">
+          <label for="f-pt-url">Source PeerTube database DSN</label>
+          <p class="hint" id="pt-url-hint">Write-only.</p>
+          <input type="password" id="f-pt-url" autocomplete="new-password" placeholder="postgres://readonly:PASSWORD@HOST:5432/peertube_prod?sslmode=require" aria-describedby="e-pt-url">
+          <p class="hint">Point it at a restored dump or a read-only replica and connect with a least-privilege read-only role. It is checked for SHAPE only — nothing is dialled from here, because the stack this is configuring does not exist yet.</p>
+          <p class="err" id="e-pt-url" role="alert"></p>
+        </div>
+        <div class="field">
+          <label for="f-pt-storage">Where the source instance's media lives</label>
+          <select id="f-pt-storage">
+            <option value="local">local — a copy of its media tree, mounted read-only into the api container</option>
+            <option value="s3">s3 — the source instance's own object store</option>
+          </select>
+        </div>
+        <div class="field" id="w-pt-local">
+          <label for="f-pt-local-root">Path the source media tree is mounted at</label>
+          <p class="hint">Read-only, and path-traversal-guarded on every read.</p>
+          <input type="text" id="f-pt-local-root" spellcheck="false" placeholder="/srv/peertube-source/storage">
+        </div>
+        <fieldset id="w-pt-s3" hidden>
+          <legend>Source object store</legend>
+          <div class="field">
+            <label for="f-pt-s3-endpoint">Endpoint host</label>
+            <p class="hint">HOST ONLY, no scheme — same rule as this instance's own endpoint.</p>
+            <input type="text" id="f-pt-s3-endpoint" spellcheck="false" aria-describedby="e-pt-s3-endpoint">
+            <p class="err" id="e-pt-s3-endpoint" role="alert"></p>
+          </div>
+          <div class="field"><label for="f-pt-s3-region">Region</label><input type="text" id="f-pt-s3-region" spellcheck="false"></div>
+          <div class="field"><label for="f-pt-s3-bucket">Bucket</label><input type="text" id="f-pt-s3-bucket" spellcheck="false"></div>
+          <div class="field"><label for="f-pt-s3-access">Access key</label><input type="text" id="f-pt-s3-access" spellcheck="false"></div>
+          <div class="field">
+            <label for="f-pt-s3-secret">Secret key</label>
+            <p class="hint" id="pt-s3-secret-hint">Write-only: it is sent when you type one and is never sent back to this page.</p>
+            <input type="password" id="f-pt-s3-secret" autocomplete="new-password">
+          </div>
+        </fieldset>
+        <div class="field">
+          <label for="f-pt-media">Media handling for an import</label>
+          <select id="f-pt-media">
+            <option value="copy">copy — stream the source files into this instance's storage</option>
+            <option value="reference">reference — record the source object keys and serve from the source bucket</option>
+            <option value="none">none — metadata only, no media</option>
+          </select>
+          <p class="hint">copy is the answer for a real migration. reference leaves every byte in the SOURCE bucket and ties this instance's playback to it, so the old instance's storage can never be turned off — pick it only if that bucket is one you are keeping and this instance's own STORAGE_* already points at it.</p>
+        </div>
+        <div class="field">
+          <label for="f-pt-conflict">Collision handling for an import</label>
+          <select id="f-pt-conflict">
+            <option value="skip">skip — keep the row this instance already has</option>
+            <option value="rename">rename — import under a de-duplicated identifier</option>
+            <option value="merge">merge — attach the source entity's children to the existing row</option>
+            <option value="fail">fail — abort the whole import on the first collision</option>
+          </select>
+          <p class="hint">Both of these are DEFAULTS for a run you launch later; the import screen can override either per run.</p>
+        </div>
+      </div>
+    </fieldset>
   </section>
 
   <!-- 7 — REVIEW. The dry run: every file, every secret by name, every warning,
@@ -735,7 +805,11 @@ button.ghost{background:transparent}
   // fieldInput maps a validated field to its input element, so validateField can
   // put the aria state on the right control without every caller passing it.
   function fieldInput(field) {
-    return { tls_mode: $("f-tls"), domain: $("f-domain"), acme_email: $("f-acme") }[field] || null;
+    return {
+      tls_mode: $("f-tls"), domain: $("f-domain"), acme_email: $("f-acme"),
+      peertube_source_url: $("f-pt-url"),
+      peertube_source_s3_endpoint: $("f-pt-s3-endpoint"),
+    }[field] || null;
   }
 
   // Field validation is ONE request per field, and the answer is the engine's.
@@ -827,10 +901,23 @@ button.ghost{background:transparent}
     kept($("f-smtp-pass"), $("smtp-pass-hint"), seed.mail.password_set);
     $("f-reg-open").checked = !!seed.registration.enabled;
     $("f-reg-approval").checked = !!seed.registration.require_approval;
+    const pt = seed.peertube || {};
+    $("f-pt-on").checked = !!pt.enabled;
+    kept($("f-pt-url"), $("pt-url-hint"), pt.source_url_set);
+    $("f-pt-storage").value = pt.storage || "local";
+    $("f-pt-local-root").value = pt.local_root || "";
+    $("f-pt-s3-endpoint").value = pt.s3_endpoint || "";
+    $("f-pt-s3-region").value = pt.s3_region || "";
+    $("f-pt-s3-bucket").value = pt.s3_bucket || "";
+    $("f-pt-s3-access").value = pt.s3_access_key || "";
+    kept($("f-pt-s3-secret"), $("pt-s3-secret-hint"), pt.s3_secret_key_set);
+    $("f-pt-media").value = pt.media_mode || "copy";
+    $("f-pt-conflict").value = pt.conflict_policy || "skip";
     onStorageChange();
     onMailToggle();
     onRegToggle();
     onDatastoreToggle();
+    onPeerTubeToggle();
     setMode(false);
   }
 
@@ -850,6 +937,18 @@ button.ghost{background:transparent}
   function onDatastoreToggle() {
     $("w-db-url").hidden = !$("f-db-external").checked;
     $("w-redis-url").hidden = !$("f-redis-external").checked;
+  }
+  // The migration block's two toggles. Declining the gate hides nine questions,
+  // which is the whole point of the gate: most installs are starting an
+  // instance, not moving one.
+  function onPeerTubeToggle() {
+    $("w-pt").hidden = !$("f-pt-on").checked;
+    onPeerTubeStorageChange();
+  }
+  function onPeerTubeStorageChange() {
+    const s3 = $("f-pt-storage").value === "s3";
+    $("w-pt-s3").hidden = !s3;
+    $("w-pt-local").hidden = s3;
   }
 
   function collect() {
@@ -904,6 +1003,32 @@ button.ghost{background:transparent}
         username: $("f-smtp-user").value.trim(), password: $("f-smtp-pass").value,
         from: $("f-smtp-from").value.trim(),
       };
+    }
+    // ALWAYS sent, unlike the components: this block is on the Optional step in
+    // both Basic and Advanced, so by the time anything is posted the operator has
+    // seen the gate and its state is an answer. Leaving it out would mean "leave
+    // the source alone", which is a different thing and belongs to a caller
+    // driving this API by hand.
+    //
+    // The fields a gated-off block would carry are excluded, not merely ignored,
+    // for onTLSChange's reason: a source typed and then switched away from cannot
+    // ride into the written env. The engine reads an empty secret as "keep what
+    // the file has", so a re-run that touches nothing here keeps the DSN.
+    form.peertube = { enabled: $("f-pt-on").checked };
+    if (form.peertube.enabled) {
+      const s3 = $("f-pt-storage").value === "s3";
+      form.peertube.source_url = $("f-pt-url").value;
+      form.peertube.storage = $("f-pt-storage").value;
+      form.peertube.local_root = s3 ? "" : $("f-pt-local-root").value.trim();
+      form.peertube.s3 = s3 ? {
+        endpoint: $("f-pt-s3-endpoint").value.trim(),
+        region: $("f-pt-s3-region").value.trim(),
+        bucket: $("f-pt-s3-bucket").value.trim(),
+        access_key: $("f-pt-s3-access").value.trim(),
+        secret_key: $("f-pt-s3-secret").value,
+      } : { endpoint: "", region: "", bucket: "", access_key: "", secret_key: "" };
+      form.peertube.media_mode = $("f-pt-media").value;
+      form.peertube.conflict_policy = $("f-pt-conflict").value;
     }
     return form;
   }
@@ -1138,6 +1263,23 @@ button.ghost{background:transparent}
     p.appendChild(link);
     claim.appendChild(p);
     claim.appendChild(el("div", "note", "Every api restart mints a fresh token and invalidates the previous one, so take the newest line in the log."));
+    // The migration handoff, and only for the deployment that asked for one: the
+    // server sends import_url solely when the env file it just wrote says there
+    // is a PeerTube source. This wizard could not run the import even if it
+    // wanted to — the importer lives in the api container — so what it owes an
+    // operator here is the address, after the account that can reach it.
+    if (r.import_url) {
+      claim.appendChild(el("h2", null, "Run the PeerTube migration"));
+      claim.appendChild(el("p", "lede", "The source is configured and nothing has been imported yet. Once you are signed in as admin, start and watch the migration here:"));
+      const imp = document.createElement("a");
+      imp.href = r.import_url;
+      imp.textContent = r.import_url;
+      imp.rel = "noreferrer";
+      const ip = el("p");
+      ip.appendChild(imp);
+      claim.appendChild(ip);
+      claim.appendChild(el("p", "hint", "It reads the source and never writes to it, and it is safe to re-run — every entity already carried across is recorded, so a second run moves only what changed."));
+    }
     claim.appendChild(el("p", "hint", "Pressing Finish shuts this wizard down. It holds a one-time credential that can write your env file and run a deploy, so it does not stay open."));
   }
 
@@ -1185,6 +1327,19 @@ button.ghost{background:transparent}
       if (!okDomain) { focusInvalid($("f-domain")); return; }
       if (!okEmail) { focusInvalid($("f-acme")); return; }
     }
+    if (id === "s-features" && $("f-pt-on").checked) {
+      // The two free-text answers in the migration block, through the ENGINE, at
+      // the step they were typed on. The three enumerated ones are <select>s of
+      // the engine's own values, so there is nothing a browser could get wrong
+      // about them; the server validates them anyway for a caller using curl.
+      const okURL = await validateField("peertube_source_url", $("f-pt-url").value, $("e-pt-url"));
+      let okEndpoint = true;
+      if ($("f-pt-storage").value === "s3") {
+        okEndpoint = await validateField("peertube_source_s3_endpoint", $("f-pt-s3-endpoint").value.trim(), $("e-pt-s3-endpoint"));
+      }
+      if (!okURL) { focusInvalid($("f-pt-url")); return; }
+      if (!okEndpoint) { focusInvalid($("f-pt-s3-endpoint")); return; }
+    }
     if (id === "s-review" && (!app.review || !app.review.ok)) return;
     if (id === "s-success") { await finish(); return; }
     if (app.step < STEPS.length - 1) show(app.step + 1);
@@ -1216,6 +1371,11 @@ button.ghost{background:transparent}
     $("f-reg-open").addEventListener("change", onRegToggle);
     $("f-db-external").addEventListener("change", onDatastoreToggle);
     $("f-redis-external").addEventListener("change", onDatastoreToggle);
+    $("f-pt-on").addEventListener("change", onPeerTubeToggle);
+    $("f-pt-storage").addEventListener("change", onPeerTubeStorageChange);
+    $("f-pt-url").addEventListener("input", () => clearFieldError($("f-pt-url"), $("e-pt-url")));
+    $("f-pt-url").addEventListener("blur", () => validateField("peertube_source_url", $("f-pt-url").value, $("e-pt-url")));
+    $("f-pt-s3-endpoint").addEventListener("blur", () => validateField("peertube_source_s3_endpoint", $("f-pt-s3-endpoint").value.trim(), $("e-pt-s3-endpoint")));
     $("btn-install").addEventListener("click", () => { runInstall(); });
     $("btn-install-manual").addEventListener("click", showManual);
   }
