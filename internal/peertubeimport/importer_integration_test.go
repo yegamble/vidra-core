@@ -1844,7 +1844,7 @@ func TestPeerTubeImportActorImageOversizeIsTerminal(t *testing.T) {
 	applyMigrations(t, ctx, dest)
 	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
 
-	oversize := append(append([]byte{}, pngBytes...), bytes.Repeat([]byte("x"), maxActorImageBytes)...)
+	oversize := append(append([]byte{}, pngBytes...), bytes.Repeat([]byte("x"), maxLazyStaticBytes)...)
 	var (
 		mu       sync.Mutex
 		requests = map[string]int{}

@@ -1507,10 +1507,12 @@ func (s *Service) SetThumbnailFromFrame(ctx context.Context, ownerID, videoID uu
 }
 
 // thumbnailKey is the deterministic storage key for a video's poster image.
-// PeerTube-aligned layout: one top-level dir per asset kind (see
-// .ralph/specs/storage-layout.md), so thumbnails live under thumbnails/.
+// The layout lives in internal/media (media.VideoThumbnailKey) because the
+// PeerTube importer has to recognise the same key shape to tell a native poster
+// apart from one an older release of it wrote; a second spelling of the
+// convention here is exactly how those two would drift apart.
 func thumbnailKey(videoID uuid.UUID) string {
-	return "thumbnails/" + videoID.String() + ".jpg"
+	return media.VideoThumbnailKey(videoID)
 }
 
 // GetMetadata returns a video's stored technical metadata. The bool is false

@@ -5,22 +5,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"mime"
-	"net/http"
-	"net/url"
-	"path"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
-	"github.com/vidra/vidra-core/internal/urlsafety"
 )
 
 // This file carries account and channel AVATARS and BANNERS (the source's
@@ -33,137 +26,11 @@ import (
 // shipped and leave every already-migrated instance faceless. Its own pass
 // backfills onto the users and channels that are already there.
 //
-// ── why this family is fetched over HTTP and not copied out of storage ──
-//
-// Every other media family the importer moves is read through srcMedia, the
-// source's object store. Actor images are not there. PeerTube's object-storage
-// config covers streaming playlists, web videos, captions and originals — NOT
-// avatars, which stay on the source host's local filesystem no matter how the
-// rest of the instance is configured. So --source-storage=s3 cannot see them,
-// and --source-local-root cannot either unless the import happens to run on the
-// source host itself.
-//
-// They ARE served publicly, by the source instance, at
-// <origin>/lazy-static/avatars/<filename>. That endpoint is the only way to get
-// these bytes from another machine, so that is what this pass uses.
-//
-// NOTE the path: /static/avatars/<filename> answers 200 with the single-page
-// app's HTML shell, not a 404. An implementation that trusted the status code
-// would store 62 KB of HTML as every account's avatar. Hence the content-type
-// gate below, which checks what the bytes ARE and not what the response claims.
-
-// Actor-image tuning. The source is a LIVE PRODUCTION instance during a
-// migration — the operator re-runs this on a schedule right up to cutover — so
-// the client is deliberately unhurried: a handful of connections, a bounded
-// wait, and a size cap well under the source's own upload limit.
-const (
-	actorImageConcurrency = 4
-	actorImageTimeout     = 20 * time.Second
-	maxActorImageBytes    = 8 << 20 // 8 MiB, matching HTTP_BODY_LIMIT's default
-	actorImageLazyStatic  = "/lazy-static/avatars/"
-	actorImageUserAgent   = "vidra-peertube-import/1.0"
-)
-
-// errActorImageNotAnImage is the content-type gate's rejection: the source
-// answered, but with something that is not an image Vidra stores. It is
-// recorded as unsupported (a fact about the source) rather than failed (a
-// transient problem worth retrying).
-var errActorImageNotAnImage = errors.New("peertubeimport: response is not a supported image")
-
-// errActorImageTooLarge is the size cap's rejection, and it is the SAME KIND of
-// answer as the one above: how big a file the source holds is a fact about the
-// source, and it will be exactly as big on every future run. Left classified as
-// a generic failure it produced 5 rows that were retried on every single run and
-// failed identically every time — a permanent, self-inflicted load on a live
-// production instance. Genuine transients (a 500, a dropped connection, a
-// storage error) stay retryable; only this one is terminal.
-var errActorImageTooLarge = errors.New("peertubeimport: actor image exceeds the size cap")
-
-// actorImageFetcher pulls avatar/banner bytes from the source instance's public
-// origin. The origin is PINNED for the whole run: one host is contacted, and a
-// filename from the source database can only ever select a leaf under one known
-// prefix (path.Base strips any directory the source recorded), so no row in the
-// source database can steer a fetch somewhere else.
-type actorImageFetcher struct {
-	origin string
-	client *http.Client
-}
-
-func newActorImageFetcher(origin string) *actorImageFetcher {
-	// AllowPrivate is set on purpose. A migration source is routinely reachable
-	// only on a LAN or through a tunnel, and this URL is not user input: it is
-	// derived from the operator's own source database, the same database this
-	// tool already reads password hashes and actor private keys out of. The
-	// scheme/userinfo checks and the per-redirect re-validation still apply.
-	client := urlsafety.Guard{AllowPrivate: true}.NewClient(actorImageTimeout)
-	return &actorImageFetcher{origin: strings.TrimSuffix(origin, "/"), client: client}
-}
-
-// fetch returns the image bytes and the extension they should be stored under.
-// The extension comes from what the bytes ARE, never from the source filename:
-// the stored content type is derived from the extension downstream, so trusting
-// a filename would let a mislabelled source file be served as the wrong type.
-func (f *actorImageFetcher) fetch(ctx context.Context, filename string) ([]byte, string, error) {
-	name := path.Base(strings.TrimSpace(filename))
-	if name == "" || name == "." || name == "/" {
-		return nil, "", fmt.Errorf("%w: empty filename", errActorImageNotAnImage)
-	}
-	target := f.origin + actorImageLazyStatic + url.PathEscape(name)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-	if err != nil {
-		return nil, "", err
-	}
-	req.Header.Set("User-Agent", actorImageUserAgent)
-	req.Header.Set("Accept", "image/*")
-	resp, err := f.client.Do(req)
-	if err != nil {
-		return nil, "", err
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("peertubeimport: source answered %d for actor image", resp.StatusCode)
-	}
-	// First gate, before a single byte of body is read: the SPA fallback answers
-	// text/html, and there is no reason to download a page to find that out. A
-	// response that declares NOTHING falls through to the sniff instead of being
-	// rejected — the header is here to save a download, not to be the ruling.
-	declared, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	declared = strings.ToLower(strings.TrimSpace(declared))
-	if declared != "" && !strings.HasPrefix(declared, "image/") {
-		return nil, "", fmt.Errorf("%w: declared %q", errActorImageNotAnImage, declared)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxActorImageBytes+1))
-	if err != nil {
-		return nil, "", err
-	}
-	if int64(len(body)) > maxActorImageBytes {
-		return nil, "", fmt.Errorf("%w of %d bytes", errActorImageTooLarge, int64(maxActorImageBytes))
-	}
-	if len(body) == 0 {
-		return nil, "", fmt.Errorf("%w: empty body", errActorImageNotAnImage)
-	}
-	// Second gate, and the authoritative one: sniff the bytes. A source that
-	// declares image/png and serves anything else is caught here, and the
-	// extension the object is stored under comes from this answer.
-	ext := imageExtForSniffedType(sniffContentType(body))
-	if ext == "" {
-		return nil, "", fmt.Errorf("%w: sniffed %q", errActorImageNotAnImage, sniffContentType(body))
-	}
-	return body, ext, nil
-}
-
-// sniffContentType classifies the leading bytes of a response body. It is
-// http.DetectContentType with the standard 512-byte window.
-func sniffContentType(body []byte) string {
-	head := body
-	if len(head) > 512 {
-		head = head[:512]
-	}
-	return strings.ToLower(strings.TrimSpace(strings.SplitN(http.DetectContentType(head), ";", 2)[0]))
-}
+// Actor images are one of the three families PeerTube keeps OFF its object
+// store, so they are fetched over HTTP from the source's public origin rather
+// than read through srcMedia. The whole of that reasoning — including the
+// /static/ SPA-fallback trap the content-type gate exists for — is in
+// lazystatic.go, which owns the fetcher this pass drives.
 
 // ── deciding what to do with a slot that is already filled ──
 //
@@ -429,9 +296,9 @@ func (im *Importer) importActorImages(ctx context.Context, r *Report) error {
 		return nil
 	}
 
-	fetcher := newActorImageFetcher(origin)
+	fetcher := newLazyStaticFetcher(origin, lazyStaticAvatars)
 	im.logger.InfoContext(ctx, "peertube import: fetching actor images",
-		"origin", origin, "images", len(targets), "concurrency", actorImageConcurrency)
+		"origin", origin, "images", len(targets), "concurrency", lazyStaticConcurrency)
 
 	// Bounded concurrency: a few connections to one live production host, not a
 	// thundering herd. A per-image failure is recorded and the run continues —
@@ -441,7 +308,7 @@ func (im *Importer) importActorImages(ctx context.Context, r *Report) error {
 		wg   sync.WaitGroup
 		work = make(chan actorImageTarget)
 	)
-	for i := 0; i < actorImageConcurrency; i++ {
+	for i := 0; i < lazyStaticConcurrency; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -689,7 +556,7 @@ func (im *Importer) recordActorImage(ctx context.Context, t actorImageTarget, ap
 // on, under the same key layout an upload would use.
 func (im *Importer) importOneActorImage(
 	ctx context.Context,
-	fetcher *actorImageFetcher,
+	fetcher *lazyStaticFetcher,
 	svc *profileimage.Service,
 	t actorImageTarget,
 	mu *sync.Mutex,
@@ -702,10 +569,10 @@ func (im *Importer) importOneActorImage(
 		// terminal stops the next run asking the same question again.
 		var reason string
 		switch {
-		case errors.Is(err, errActorImageNotAnImage):
+		case errors.Is(err, errNotAnImage):
 			reason = "source did not serve a JPEG, PNG or WebP"
-		case errors.Is(err, errActorImageTooLarge):
-			reason = fmt.Sprintf("source image is larger than the %d-byte cap this import accepts", int64(maxActorImageBytes))
+		case errors.Is(err, errImageTooLarge):
+			reason = fmt.Sprintf("source image is larger than the %d-byte cap this import accepts", int64(maxLazyStaticBytes))
 		default:
 			return err
 		}
