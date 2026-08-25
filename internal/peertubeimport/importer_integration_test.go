@@ -1095,6 +1095,399 @@ func TestPeerTubeImportActorImages(t *testing.T) {
 	}
 }
 
+// TestPeerTubeSourceActorImagesPicksOneVariantPerSlot is the proof for the read
+// half of the resolution bug: PeerTube keeps SEVERAL resolutions of every avatar
+// and the old read returned all of them, so four rows raced for one destination
+// key at concurrency 4 and whichever finished last won. On a real migration that
+// produced 1,316 rows for 309 actors and left 137 of 229 user avatars under 5 KB
+// while 2.1 MB originals sat in the source.
+func TestPeerTubeSourceActorImagesPicksOneVariantPerSlot(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+	// The shape a live instance actually stores: one upload, several generated
+	// sizes, the small ones first because they were inserted first. Alice's
+	// channel avatar keeps a NULL size next to a real one — that pair is what
+	// catches a plain `width DESC`, which sorts NULLs FIRST in PostgreSQL and so
+	// would prefer the row whose size the source never recorded.
+	mustExec(t, ctx, src, `UPDATE "actorImage" SET width = 48, height = 48 WHERE id = 1`)
+	mustExec(t, ctx, src, `INSERT INTO "actorImage" (id,filename,type,"actorId",width,height) VALUES
+		(20,'alice-avatar-120.png',1,1,120,120),
+		(21,'alice-avatar-1500.png',1,1,1500,1500),
+		(22,'alice-avatar-600.png',1,1,600,600),
+		(23,'alice-channel-avatar-500.png',1,2,500,500)`)
+
+	images, ok, err := NewSourceFromPool(src).ActorImages(ctx)
+	if err != nil || !ok {
+		t.Fatalf("ActorImages = %v, %v", ok, err)
+	}
+	type slot struct {
+		user, channel int64
+		kind          int
+	}
+	seen := map[slot]SourceActorImage{}
+	for _, img := range images {
+		k := slot{kind: img.Type}
+		if img.UserID != nil {
+			k.user = *img.UserID
+		}
+		if img.ChannelID != nil {
+			k.channel = *img.ChannelID
+		}
+		if dup, exists := seen[k]; exists {
+			t.Fatalf("slot %+v got two rows (%d %q and %d %q); every one of them writes the same destination key, so the pass would race with itself",
+				k, dup.ID, dup.Filename, img.ID, img.Filename)
+		}
+		seen[k] = img
+	}
+	if got := seen[slot{user: 1, kind: 1}]; got.Filename != "alice-avatar-1500.png" || got.Width != 1500 {
+		t.Errorf("alice's avatar = %q (%dpx), want the 1500px original — the largest variant, not whichever row sorted first", got.Filename, got.Width)
+	}
+	if got := seen[slot{channel: 1, kind: 1}]; got.Filename != "alice-channel-avatar-500.png" {
+		t.Errorf("alice_channel's avatar = %q, want the 500px row: a recorded size must beat a NULL one", got.Filename)
+	}
+	// The other slots are untouched by dedup and must all still be there.
+	for _, want := range []struct {
+		s        slot
+		filename string
+	}{
+		{slot{user: 1, kind: 2}, "alice-banner.png"},
+		{slot{user: 2, kind: 1}, "bob-avatar.png"},
+		{slot{user: 2, kind: 9}, "weird.png"},
+		{slot{channel: 2, kind: 1}, "bob-channel-avatar.png"},
+	} {
+		if got := seen[want.s]; got.Filename != want.filename {
+			t.Errorf("slot %+v = %q, want %q", want.s, got.Filename, want.filename)
+		}
+	}
+	if len(images) != 6 {
+		t.Errorf("got %d rows for 6 slots: %+v", len(images), images)
+	}
+}
+
+// A source that records no sizes still has the race, and collapsing to one row
+// per slot is what removes it — the size columns only decide WHICH row wins.
+// They are probed through information_schema rather than assumed, because a
+// column that is not there is a syntax error and not a NULL.
+func TestPeerTubeSourceActorImagesWithoutSizeColumns(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+	mustExec(t, ctx, src, `INSERT INTO "actorImage" (id,filename,type,"actorId") VALUES
+		(20,'alice-avatar-b.png',1,1),
+		(21,'alice-avatar-c.png',1,1)`)
+	mustExec(t, ctx, src, `ALTER TABLE "actorImage" DROP COLUMN width, DROP COLUMN height`)
+
+	images, ok, err := NewSourceFromPool(src).ActorImages(ctx)
+	if err != nil || !ok {
+		t.Fatalf("ActorImages = %v, %v", ok, err)
+	}
+	var aliceAvatars []SourceActorImage
+	for _, img := range images {
+		if img.UserID != nil && *img.UserID == 1 && img.Type == 1 {
+			aliceAvatars = append(aliceAvatars, img)
+		}
+		if img.Width != 0 || img.Height != 0 {
+			t.Errorf("row %d reports %dx%d on a source that records no sizes", img.ID, img.Width, img.Height)
+		}
+	}
+	if len(aliceAvatars) != 1 {
+		t.Fatalf("alice's avatar slot got %d rows, want 1 — the dedup, not the sizes, is what fixes the race", len(aliceAvatars))
+	}
+	if aliceAvatars[0].ID != 21 {
+		t.Errorf("chose row %d, want 21: with no size to compare, the newest row is the best evidence available", aliceAvatars[0].ID)
+	}
+}
+
+// TestPeerTubeImportActorImageOwnership is the proof for the write half: an
+// import that never overwrites can never repair its own mistake, and one that
+// always overwrites quietly undoes a person's work every night. The ledger's
+// memory of what the import itself wrote is what separates the two.
+func TestPeerTubeImportActorImageOwnership(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	// Two variants of one upload, distinguishable by stored SIZE so every
+	// assertion below can say which one is in the slot.
+	smallPNG := append(append([]byte{}, pngBytes...), bytes.Repeat([]byte("s"), 32)...)
+	largePNG := append(append([]byte{}, pngBytes...), bytes.Repeat([]byte("L"), 4096)...)
+	var (
+		mu        sync.Mutex
+		requests  = map[string]int{}
+		failLarge bool
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := path.Base(r.URL.Path)
+		mu.Lock()
+		requests[name]++
+		down := failLarge
+		mu.Unlock()
+		if name == "alice-large.png" && down {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		switch name {
+		case "alice-small.png":
+			_, _ = w.Write(smallPNG)
+		case "alice-large.png":
+			_, _ = w.Write(largePNG)
+		default:
+			_, _ = w.Write(pngBytes)
+		}
+	}))
+	defer srv.Close()
+	hits := func(name string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		return requests[name]
+	}
+	setFailLarge := func(v bool) {
+		mu.Lock()
+		failLarge = v
+		mu.Unlock()
+	}
+
+	mustExec(t, ctx, src, `DELETE FROM "actorImage"`)
+	mustExec(t, ctx, src, `INSERT INTO "actorImage" (id,filename,type,"actorId",width,height) VALUES (1,'alice-small.png',1,1,48,48)`)
+	mustExec(t, ctx, src,
+		`UPDATE "actor" SET url = $1 || '/accounts/' || "preferredUsername" WHERE "serverId" IS NULL`, srv.URL)
+
+	destMedia, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	newImporter := func(sourceAuthoritative bool) *Importer {
+		return NewImporter(dest, NewSourceFromPool(src), Options{
+			Policy: PolicySkip, MediaMode: MediaModeReference, DestMedia: destMedia,
+			SourceAuthoritative: sourceAuthoritative,
+		})
+	}
+	imp := newImporter(false)
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	var aliceID uuid.UUID
+	if err := dest.QueryRow(ctx, `SELECT id FROM users WHERE username='alice'`).Scan(&aliceID); err != nil {
+		t.Fatalf("read alice: %v", err)
+	}
+	avatarSize := func() int64 {
+		t.Helper()
+		var n int64
+		if err := dest.QueryRow(ctx, `SELECT size_bytes FROM user_images WHERE user_id=$1 AND kind='avatar'`, aliceID).Scan(&n); err != nil {
+			t.Fatalf("read alice's avatar: %v", err)
+		}
+		return n
+	}
+	if got := avatarSize(); got != int64(len(smallPNG)) {
+		t.Fatalf("first run stored %d bytes, want the source's only variant (%d)", got, len(smallPNG))
+	}
+
+	// ── an unchanged source costs nothing: no fetch, no PUT ──
+	report, err := newImporter(false).Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if got := hits("alice-small.png"); got != 1 {
+		t.Errorf("alice's avatar was fetched %d times across two runs, want 1", got)
+	}
+	if got := report.Entities[KindActorAvatar].Imported; got != 0 {
+		t.Errorf("second run imported %d avatars, want 0", got)
+	}
+
+	// ── the state an instance migrated with the resolution bug is actually in ──
+	// Both variants carry a completed ledger row (the old pass wrote all of them,
+	// racing for one key) and neither carries a fingerprint, because that memory
+	// did not exist yet. The slot holds the SMALL one, which is how 137 of 229
+	// avatars ended up as thumbnails.
+	mustExec(t, ctx, src, `INSERT INTO "actorImage" (id,filename,type,"actorId",width,height) VALUES (2,'alice-large.png',1,1,1500,1500)`)
+	mustExec(t, ctx, dest, `UPDATE peertube_import_ledger SET applied_value = '' WHERE entity_kind = 'actor_avatar'`)
+	mustExec(t, ctx, dest,
+		`INSERT INTO peertube_import_ledger (entity_kind, source_id, vidra_id, status, note, applied_value)
+		 VALUES ('actor_avatar', '2', $1, 'done', '', '')`, aliceID)
+
+	// A transient failure DURING the heal must not cost the slot its ownership
+	// memory: a 'failed' stamp over the completed row would erase the only
+	// evidence the import owns this avatar, and every later run would read a
+	// person's picture where there is none and refuse to touch it forever.
+	// Reduced here to the one completed row so that row IS the only memory —
+	// which is exactly the shape of an actor whose source offers one variant.
+	mustExec(t, ctx, dest, `DELETE FROM peertube_import_ledger WHERE entity_kind='actor_avatar' AND source_id='1'`)
+	setFailLarge(true)
+	report, err = newImporter(false).Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("failing healing run: %v", err)
+	}
+	if got := report.Entities[KindActorAvatar].Failed; got != 1 {
+		t.Fatalf("failed = %d, want 1 (the source 500'd)", got)
+	}
+	if got := avatarSize(); got != int64(len(smallPNG)) {
+		t.Fatalf("a failed fetch changed the slot to %d bytes", got)
+	}
+	setFailLarge(false)
+
+	if _, err := newImporter(false).Run(ctx, version, nil); err != nil {
+		t.Fatalf("healing run: %v", err)
+	}
+	if got := avatarSize(); got != int64(len(largePNG)) {
+		t.Fatalf("healing run left %d bytes in the slot, want the full-size original (%d) — an import that can never replace its own write can never repair this", got, len(largePNG))
+	}
+
+	// ── a person uploads their own avatar: never overwritten, always reported ──
+	mustExec(t, ctx, dest,
+		`UPDATE user_images SET size_bytes = 4242, updated_at = now() WHERE user_id = $1 AND kind = 'avatar'`, aliceID)
+	before := hits("alice-large.png")
+	report, err = newImporter(false).Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("gap-fill run: %v", err)
+	}
+	if got := avatarSize(); got != 4242 {
+		t.Errorf("size_bytes = %d, want 4242 — an import must never overwrite an image a person put there", got)
+	}
+	if got := hits("alice-large.png"); got != before {
+		t.Errorf("the source was asked for %d more images; a slot the import will not write must not be fetched either", got-before)
+	}
+	var conflict bool
+	for _, c := range report.Conflicts {
+		if strings.Contains(c, "avatar") && strings.Contains(c, "left unchanged") {
+			conflict = true
+		}
+	}
+	if !conflict {
+		t.Errorf("nothing in the report says the avatar was left alone: %v — divergence nobody is told about is the failure this guards against", report.Conflicts)
+	}
+
+	// ── the seam: same state, source-authoritative, opposite outcome ──
+	if _, err := newImporter(true).Run(ctx, version, nil); err != nil {
+		t.Fatalf("source-authoritative run: %v", err)
+	}
+	if got := avatarSize(); got != int64(len(largePNG)) {
+		t.Fatalf("source-authoritative run left %d bytes, want the source's variant (%d)", got, len(largePNG))
+	}
+
+	// ...and it is still not a re-fetch-everything mode: once the two sides agree
+	// it writes exactly as little as gap-fill does.
+	before = hits("alice-large.png")
+	if _, err := newImporter(true).Run(ctx, version, nil); err != nil {
+		t.Fatalf("second source-authoritative run: %v", err)
+	}
+	if got := hits("alice-large.png"); got != before {
+		t.Errorf("source-authoritative re-fetched %d images from a source that had not moved", got-before)
+	}
+}
+
+// An oversize source image is a fact about the source: it will be exactly as big
+// next time. Recorded as a plain failure it was retried on every single run and
+// failed identically every time — 5 rows of permanent, self-inflicted load on a
+// live production instance.
+func TestPeerTubeImportActorImageOversizeIsTerminal(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	oversize := append(append([]byte{}, pngBytes...), bytes.Repeat([]byte("x"), maxActorImageBytes)...)
+	var (
+		mu       sync.Mutex
+		requests = map[string]int{}
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := path.Base(r.URL.Path)
+		mu.Lock()
+		requests[name]++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "image/png")
+		if name == "alice-huge.png" {
+			_, _ = w.Write(oversize)
+			return
+		}
+		_, _ = w.Write(pngBytes)
+	}))
+	defer srv.Close()
+
+	mustExec(t, ctx, src, `DELETE FROM "actorImage"`)
+	mustExec(t, ctx, src, `INSERT INTO "actorImage" (id,filename,type,"actorId",width,height) VALUES (1,'alice-huge.png',1,1,4000,4000)`)
+	mustExec(t, ctx, src,
+		`UPDATE "actor" SET url = $1 || '/accounts/' || "preferredUsername" WHERE "serverId" IS NULL`, srv.URL)
+
+	destMedia, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{
+		Policy: PolicySkip, MediaMode: MediaModeReference, DestMedia: destMedia,
+	})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if got := report.Entities[KindActorAvatar].Unsupported; got != 1 {
+		t.Errorf("unsupported = %d, want 1 — too big is a fact about the source, not a transient error", got)
+	}
+	if got := report.Entities[KindActorAvatar].Failed; got != 0 {
+		t.Errorf("failed = %d, want 0 — a failed row is retried forever and this one can only ever fail", got)
+	}
+	var status string
+	if err := dest.QueryRow(ctx,
+		`SELECT status FROM peertube_import_ledger WHERE entity_kind='actor_avatar' AND source_id='1'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "unsupported" {
+		t.Fatalf("ledger status = %q, want unsupported", status)
+	}
+
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	mu.Lock()
+	got := requests["alice-huge.png"]
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("the oversize image was downloaded %d times across two runs, want 1", got)
+	}
+}
+
 func TestPeerTubeImportConflictPolicies(t *testing.T) {
 	base := os.Getenv("DATABASE_URL")
 	if base == "" {

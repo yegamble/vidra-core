@@ -34,6 +34,9 @@ type Importer struct {
 	mediaMode MediaMode
 	policy    ConflictPolicy
 	force     bool
+	// sourceAuthoritative says the SOURCE wins where the two sides diverge, rather
+	// than the import only filling gaps. See Options.SourceAuthoritative.
+	sourceAuthoritative bool
 	// sealKey seals an actor private-key PEM for at-rest storage (secretbox under
 	// the KEK). Nil → store raw (dev only), matching the federation service.
 	sealKey func(pem string) (string, error)
@@ -73,6 +76,25 @@ type Options struct {
 	SrcMedia  storage.Backend
 	DestMedia storage.Backend
 	SealKey   func(pem string) (string, error)
+	// SourceAuthoritative says the SOURCE is the truth where the two sides
+	// diverge, instead of the import only filling gaps on this instance.
+	//
+	// The default (false) is gap-filling, and it is the right default: an import
+	// that overwrites is an import that can quietly undo somebody's work. It
+	// exists because the migration workflow this tool is actually used for is a
+	// REPEATED sync — the operator runs it against a still-live PeerTube on a
+	// schedule up to cutover, editing the new instance in between — and for that
+	// operator "the source wins" is the correct answer, not a hazard.
+	//
+	// TODAY ONLY THE ACTOR-IMAGE PASS READS IT. Every family the import can
+	// re-assert (chapters, ratings, renditions, the instance taxonomy) needs to
+	// answer to the same switch before it means "the source is authoritative" as a
+	// whole, and that is a separate piece of work; wiring a flag to it before then
+	// would promise more than it does. This field is the seam that work plugs into
+	// — the per-family decision is a pure function of (source, instance, what the
+	// import last wrote, mode), so honouring it elsewhere is a branch, not a
+	// redesign. There is deliberately no CLI or API flag for it yet.
+	SourceAuthoritative bool
 	// ReloadSettings reloads the instance-settings overlay after the import
 	// writes one (today: the instance category taxonomy). The server caches that
 	// overlay in memory and only reloads it after its own writes, so without this
@@ -97,17 +119,18 @@ func NewImporter(dest *pgxpool.Pool, src *Source, opts Options) *Importer {
 		mediaMode = MediaModeCopy
 	}
 	return &Importer{
-		dest:           dest,
-		q:              sqlcgen.New(dest),
-		src:            src,
-		srcMedia:       opts.SrcMedia,
-		destMedia:      opts.DestMedia,
-		mediaMode:      mediaMode,
-		policy:         policy,
-		force:          opts.Force,
-		sealKey:        opts.SealKey,
-		reloadSettings: opts.ReloadSettings,
-		logger:         logger,
+		dest:                dest,
+		q:                   sqlcgen.New(dest),
+		src:                 src,
+		srcMedia:            opts.SrcMedia,
+		destMedia:           opts.DestMedia,
+		mediaMode:           mediaMode,
+		policy:              policy,
+		force:               opts.Force,
+		sourceAuthoritative: opts.SourceAuthoritative,
+		sealKey:             opts.SealKey,
+		reloadSettings:      opts.ReloadSettings,
+		logger:              logger,
 	}
 }
 
