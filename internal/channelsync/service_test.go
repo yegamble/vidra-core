@@ -642,8 +642,3 @@ func TestMaxPerUserFunc(t *testing.T) {
 
 // RenewChannelSyncLease is the lease heartbeat; the fake has no leases to keep.
 func (*fakeRepo) RenewChannelSyncLease(_ context.Context, _ uuid.UUID) error { return nil }
-
-func (f *fakeRepo) CountChannelSyncsByUserList(ctx context.Context, userID uuid.UUID) (int64, error) {
-	rows, err := f.ListChannelSyncsByUser(ctx, sqlcgen.ListChannelSyncsByUserParams{UserID: userID, ResultLimit: 1 << 30})
-	return int64(len(rows)), err
-}
