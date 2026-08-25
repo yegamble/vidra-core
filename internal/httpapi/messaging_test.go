@@ -612,3 +612,8 @@ func TestMessagingFlow(t *testing.T) {
 		}
 	}
 }
+
+func (f *messagingFakeRepo) CountConversations(ctx context.Context, userID uuid.UUID) (int64, error) {
+	rows, err := f.ListConversations(ctx, sqlcgen.ListConversationsParams{UserID: userID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}

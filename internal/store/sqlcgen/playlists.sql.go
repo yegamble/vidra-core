@@ -42,6 +42,37 @@ func (q *Queries) ClearPlaylistThumbnail(ctx context.Context, id uuid.UUID) erro
 	return err
 }
 
+const countPlaylistItems = `-- name: CountPlaylistItems :one
+SELECT count(*)::bigint
+FROM playlist_items pi
+JOIN videos v ON v.id = pi.video_id
+JOIN channels c ON c.id = v.channel_id
+WHERE pi.playlist_id = $1
+  AND v.privacy = 'public' AND v.state = 'published'
+`
+
+// How many rows ListPlaylistItems would return, ignoring pagination. The
+// public+published predicate must stay identical: an item whose video went
+// private is not listed and must not be counted.
+func (q *Queries) CountPlaylistItems(ctx context.Context, playlistID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countPlaylistItems, playlistID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countPlaylistsByOwner = `-- name: CountPlaylistsByOwner :one
+SELECT count(*)::bigint FROM playlists p WHERE p.owner_id = $1
+`
+
+// How many rows ListPlaylistsByOwner would return, ignoring pagination.
+func (q *Queries) CountPlaylistsByOwner(ctx context.Context, ownerID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countPlaylistsByOwner, ownerID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createPlaylist = `-- name: CreatePlaylist :one
 INSERT INTO playlists (owner_id, title, description, visibility)
 VALUES ($1, $2, $3, $4)
@@ -170,7 +201,14 @@ LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 WHERE pi.playlist_id = $1
   AND v.privacy = 'public' AND v.state = 'published'
 ORDER BY pi.position ASC, pi.added_at ASC
+LIMIT $3 OFFSET $2
 `
+
+type ListPlaylistItemsParams struct {
+	PlaylistID   uuid.UUID `json:"playlist_id"`
+	ResultOffset int32     `json:"result_offset"`
+	ResultLimit  int32     `json:"result_limit"`
+}
 
 type ListPlaylistItemsRow struct {
 	ID                 uuid.UUID `json:"id"`
@@ -189,8 +227,8 @@ type ListPlaylistItemsRow struct {
 
 // A playlist's videos in order, as discovery cards (the same card data as the
 // main feed). Only public, published videos are returned.
-func (q *Queries) ListPlaylistItems(ctx context.Context, playlistID uuid.UUID) ([]ListPlaylistItemsRow, error) {
-	rows, err := q.db.Query(ctx, listPlaylistItems, playlistID)
+func (q *Queries) ListPlaylistItems(ctx context.Context, arg ListPlaylistItemsParams) ([]ListPlaylistItemsRow, error) {
+	rows, err := q.db.Query(ctx, listPlaylistItems, arg.PlaylistID, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +268,14 @@ SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, 
 FROM playlists p
 WHERE p.owner_id = $1
 ORDER BY p.created_at DESC, p.id DESC
+LIMIT $3 OFFSET $2
 `
+
+type ListPlaylistsByOwnerParams struct {
+	OwnerID      uuid.UUID `json:"owner_id"`
+	ResultOffset int32     `json:"result_offset"`
+	ResultLimit  int32     `json:"result_limit"`
+}
 
 type ListPlaylistsByOwnerRow struct {
 	ID           uuid.UUID `json:"id"`
@@ -245,8 +290,8 @@ type ListPlaylistsByOwnerRow struct {
 }
 
 // The user's playlists, newest first, each with its public+published video count.
-func (q *Queries) ListPlaylistsByOwner(ctx context.Context, ownerID uuid.UUID) ([]ListPlaylistsByOwnerRow, error) {
-	rows, err := q.db.Query(ctx, listPlaylistsByOwner, ownerID)
+func (q *Queries) ListPlaylistsByOwner(ctx context.Context, arg ListPlaylistsByOwnerParams) ([]ListPlaylistsByOwnerRow, error) {
+	rows, err := q.db.Query(ctx, listPlaylistsByOwner, arg.OwnerID, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -254,6 +299,62 @@ func (q *Queries) ListPlaylistsByOwner(ctx context.Context, ownerID uuid.UUID) (
 	var items []ListPlaylistsByOwnerRow
 	for rows.Next() {
 		var i ListPlaylistsByOwnerRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Title,
+			&i.Description,
+			&i.Visibility,
+			&i.ThumbnailExt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.VideoCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPlaylistsByOwnerForExport = `-- name: ListPlaylistsByOwnerForExport :many
+SELECT p.id, p.owner_id, p.title, p.description, p.visibility, p.thumbnail_ext, p.created_at, p.updated_at,
+       (SELECT count(*) FROM playlist_items pi
+        JOIN videos v ON v.id = pi.video_id
+        WHERE pi.playlist_id = p.id AND v.privacy = 'public' AND v.state = 'published')::bigint AS video_count
+FROM playlists p
+WHERE p.owner_id = $1
+ORDER BY p.created_at DESC, p.id DESC
+`
+
+type ListPlaylistsByOwnerForExportRow struct {
+	ID           uuid.UUID `json:"id"`
+	OwnerID      uuid.UUID `json:"owner_id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Visibility   string    `json:"visibility"`
+	ThumbnailExt *string   `json:"thumbnail_ext"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	VideoCount   int64     `json:"video_count"`
+}
+
+// Every playlist a user owns, UNPAGINATED. The account data export is the one
+// caller that must see all of them — an archive that silently stopped at the UI
+// page size would be a broken export, not a large one. Kept separate from
+// ListPlaylistsByOwner so the UI list can never accidentally lose its LIMIT again.
+func (q *Queries) ListPlaylistsByOwnerForExport(ctx context.Context, ownerID uuid.UUID) ([]ListPlaylistsByOwnerForExportRow, error) {
+	rows, err := q.db.Query(ctx, listPlaylistsByOwnerForExport, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPlaylistsByOwnerForExportRow
+	for rows.Next() {
+		var i ListPlaylistsByOwnerForExportRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OwnerID,

@@ -70,7 +70,7 @@ func TestRecordAndList(t *testing.T) {
 		t.Fatalf("Record: %v", err)
 	}
 
-	all, err := svc.List(ctx, "", 20, 0)
+	all, _, err := svc.List(ctx, "", 20, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestRecordAndList(t *testing.T) {
 	}
 
 	// Action filter.
-	logins, err := svc.List(ctx, "auth.login", 20, 0)
+	logins, _, err := svc.List(ctx, "auth.login", 20, 0)
 	if err != nil {
 		t.Fatalf("List(filter): %v", err)
 	}
@@ -139,7 +139,7 @@ func TestRecordBoundsReasonWithoutSplittingUTF8(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
-	rows, err := svc.List(context.Background(), "", 20, 0)
+	rows, _, err := svc.List(context.Background(), "", 20, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestRecordAllowsReasonProvidedClassification(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
-	rows, err := svc.List(context.Background(), "", 20, 0)
+	rows, _, err := svc.List(context.Background(), "", 20, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -208,11 +208,18 @@ func TestRecordActorParsing(t *testing.T) {
 		t.Fatalf("system actor carrying user id error = %v, want ErrInvalidEvent", err)
 	}
 
-	entries, err := svc.List(ctx, "", 20, 0)
+	entries, _, err := svc.List(ctx, "", 20, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	if len(entries) != 1 || entries[0].ActorID != "" || entries[0].ActorKind != "anonymous" {
 		t.Errorf("entries = %+v, want one anonymous actor", entries)
 	}
+}
+
+// CountAuditLog mirrors ListAuditLog exactly by delegating to it unpaginated —
+// which is the invariant the real query has to hold too.
+func (f *fakeRepo) CountAuditLog(ctx context.Context, action *string) (int64, error) {
+	rows, err := f.ListAuditLog(ctx, sqlcgen.ListAuditLogParams{Action: action, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

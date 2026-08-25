@@ -74,6 +74,7 @@ type Repository interface {
 
 	CreateRegistrationRequest(ctx context.Context, arg sqlcgen.CreateRegistrationRequestParams) (sqlcgen.CreateRegistrationRequestRow, error)
 	ListRegistrationRequests(ctx context.Context, arg sqlcgen.ListRegistrationRequestsParams) ([]sqlcgen.ListRegistrationRequestsRow, error)
+	CountRegistrationRequests(ctx context.Context, status *string) (int64, error)
 	ApproveRegistrationRequest(ctx context.Context, arg sqlcgen.ApproveRegistrationRequestParams) (sqlcgen.ApproveRegistrationRequestRow, error)
 	RejectRegistrationRequest(ctx context.Context, arg sqlcgen.RejectRegistrationRequestParams) (int64, error)
 

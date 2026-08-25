@@ -114,8 +114,7 @@ type historyItemView struct {
 // historyListResponse is the paginated watch-history list.
 type historyListResponse struct {
 	Videos []historyItemView `json:"videos"`
-	Limit  int               `json:"limit"`
-	Offset int               `json:"offset"`
+	pageMeta
 }
 
 // handleListHistory returns the caller's watch history as cards, most-recently
@@ -130,7 +129,7 @@ func (s *Server) handleListHistory(c echo.Context) error {
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	inProgress := c.QueryParam("progress") == "in_progress"
-	items, err := s.videosvc.ListHistory(c.Request().Context(), userID, page.Limit32(), page.Offset32(), inProgress)
+	items, total, err := s.videosvc.ListHistory(c.Request().Context(), userID, page.Limit32(), page.Offset32(), inProgress)
 	if err != nil {
 		return err
 	}
@@ -142,7 +141,7 @@ func (s *Server) handleListHistory(c echo.Context) error {
 			WatchedAt:       it.WatchedAt,
 		})
 	}
-	return c.JSON(http.StatusOK, historyListResponse{Videos: views, Limit: page.Limit, Offset: page.Offset})
+	return c.JSON(http.StatusOK, historyListResponse{Videos: views, pageMeta: page.meta(total)})
 }
 
 // handleDeleteHistoryEntry removes a single video from the caller's history

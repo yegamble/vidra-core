@@ -66,8 +66,7 @@ type conversationSummaryView struct {
 
 type conversationListResponse struct {
 	Conversations []conversationSummaryView `json:"conversations"`
-	Limit         int                       `json:"limit"`
-	Offset        int                       `json:"offset"`
+	pageMeta
 }
 
 // envelopeIn is one per-recipient-device ciphertext blob of an encrypted send.
@@ -288,7 +287,7 @@ func (s *Server) handleListConversations(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
-	items, err := s.messagingsvc.ListConversations(c.Request().Context(), userID, page.Limit32(), page.Offset32())
+	items, total, err := s.messagingsvc.ListConversations(c.Request().Context(), userID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -302,7 +301,7 @@ func (s *Server) handleListConversations(c echo.Context) error {
 			UnreadCount: it.UnreadCount,
 		})
 	}
-	return c.JSON(http.StatusOK, conversationListResponse{Conversations: views, Limit: page.Limit, Offset: page.Offset})
+	return c.JSON(http.StatusOK, conversationListResponse{Conversations: views, pageMeta: page.meta(total)})
 }
 
 // handleListMessages returns a conversation's messages, newest first. Behind

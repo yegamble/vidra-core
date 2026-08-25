@@ -31,6 +31,23 @@ func (q *Queries) AddConversationParticipant(ctx context.Context, arg AddConvers
 	return err
 }
 
+const countConversations = `-- name: CountConversations :one
+SELECT count(*)::bigint
+FROM conversations c
+JOIN conversation_participants me ON me.conversation_id = c.id AND me.user_id = $1
+JOIN conversation_participants other ON other.conversation_id = c.id AND other.user_id <> $1
+JOIN users ou ON ou.id = other.user_id
+`
+
+// How many rows ListConversations would return, ignoring pagination. The
+// participant JOINs are the predicate: only 1:1 conversations the caller is in.
+func (q *Queries) CountConversations(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countConversations, userID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createConversation = `-- name: CreateConversation :one
 INSERT INTO conversations (dm_key)
 VALUES ($1)

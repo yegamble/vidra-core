@@ -153,7 +153,7 @@ func TestCreateAndListByVideo(t *testing.T) {
 	if _, err := svc.Create(context.Background(), video, user, "first!", nil); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	items, err := svc.ListByVideo(context.Background(), video, uuid.Nil, false, 20, 0)
+	items, _, err := svc.ListByVideo(context.Background(), video, uuid.Nil, false, 20, 0)
 	if err != nil {
 		t.Fatalf("ListByVideo: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestListForAdmin(t *testing.T) {
 	_, _ = svc.Create(ctx, uuid.New(), user, "hello world", nil)
 	_, _ = svc.Create(ctx, uuid.New(), user, "spam spam", nil)
 
-	all, err := svc.ListForAdmin(ctx, "", 20, 0)
+	all, _, err := svc.ListForAdmin(ctx, "", 20, 0)
 	if err != nil {
 		t.Fatalf("ListForAdmin: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestListForAdmin(t *testing.T) {
 		t.Errorf("author = %q, want ada", all[0].AuthorUsername)
 	}
 	// The body filter narrows the result.
-	filtered, _ := svc.ListForAdmin(ctx, "spam", 20, 0)
+	filtered, _, _ := svc.ListForAdmin(ctx, "spam", 20, 0)
 	if len(filtered) != 1 || filtered[0].Body != "spam spam" {
 		t.Errorf("q=spam = %+v, want only [spam spam]", filtered)
 	}
@@ -240,7 +240,7 @@ func TestDeleteOnlyByAuthor(t *testing.T) {
 	if err := svc.Delete(context.Background(), c.ID, authorID, false); err != nil {
 		t.Errorf("author delete = %v, want nil", err)
 	}
-	if items, _ := svc.ListByVideo(context.Background(), c.VideoID, uuid.Nil, false, 20, 0); len(items) != 0 {
+	if items, _, _ := svc.ListByVideo(context.Background(), c.VideoID, uuid.Nil, false, 20, 0); len(items) != 0 {
 		t.Errorf("comment should be deleted, still %d", len(items))
 	}
 }
@@ -320,7 +320,7 @@ func TestPinSwapUnpinAndList(t *testing.T) {
 	}
 
 	// The list returns B first, flagged pinned.
-	items, _ := svc.ListByVideo(ctx, video, uuid.Nil, false, 20, 0)
+	items, _, _ := svc.ListByVideo(ctx, video, uuid.Nil, false, 20, 0)
 	if len(items) != 2 || items[0].Comment.ID != b.ID || !items[0].Pinned {
 		t.Fatalf("list[0] = %+v, want B pinned-first", items[0])
 	}
@@ -411,7 +411,7 @@ func TestHeartRoundTripLocalAndRemote(t *testing.T) {
 		t.Fatalf("heart remote = %+v, err %v", wa, err)
 	}
 
-	items, _ := svc.ListByVideo(ctx, video, uuid.Nil, false, 20, 0)
+	items, _, _ := svc.ListByVideo(ctx, video, uuid.Nil, false, 20, 0)
 	for _, it := range items {
 		if it.Comment.ID == remote.ID && !it.Comment.Hearted {
 			t.Error("remote heart not reflected in the list")
@@ -457,4 +457,16 @@ func TestPinHeartDoNotFederate(t *testing.T) {
 	if creates != 0 || updates != 0 || deletes != 0 {
 		t.Errorf("pin/heart federated: create=%d update=%d delete=%d, want 0/0/0", creates, updates, deletes)
 	}
+}
+
+func (f *fakeRepo) CountCommentsByVideo(ctx context.Context, a sqlcgen.CountCommentsByVideoParams) (int64, error) {
+	rows, err := f.ListCommentsByVideo(ctx, sqlcgen.ListCommentsByVideoParams{
+		VideoID: a.VideoID, ViewerID: a.ViewerID, ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountAdminComments(ctx context.Context, query *string) (int64, error) {
+	rows, err := f.ListAdminComments(ctx, sqlcgen.ListAdminCommentsParams{Query: query, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

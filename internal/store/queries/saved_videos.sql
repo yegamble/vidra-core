@@ -31,3 +31,14 @@ WHERE s.user_id = sqlc.arg('user_id')
   AND v.privacy = 'public' AND v.state = 'published'
 ORDER BY s.created_at DESC, v.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountSavedVideos :one
+-- How many rows ListSavedVideos would return, ignoring pagination. The
+-- public+published predicate must stay identical: a saved video since made
+-- private is not listed and must not be counted.
+SELECT count(*)::bigint
+FROM saved_videos s
+JOIN videos v ON v.id = s.video_id
+JOIN channels c ON c.id = v.channel_id
+WHERE s.user_id = sqlc.arg('user_id')
+  AND v.privacy = 'public' AND v.state = 'published';

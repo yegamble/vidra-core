@@ -93,6 +93,21 @@ func (q *Queries) ApproveRegistrationRequest(ctx context.Context, arg ApproveReg
 	return i, err
 }
 
+const countRegistrationRequests = `-- name: CountRegistrationRequests :one
+SELECT count(*)::bigint
+FROM registration_requests r
+WHERE ($1::text IS NULL OR r.status = $1::text)
+`
+
+// How many rows ListRegistrationRequests would return for the same status
+// filter, ignoring pagination. The WHERE must stay identical to it.
+func (q *Queries) CountRegistrationRequests(ctx context.Context, status *string) (int64, error) {
+	row := q.db.QueryRow(ctx, countRegistrationRequests, status)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createRegistrationRequest = `-- name: CreateRegistrationRequest :one
 INSERT INTO registration_requests (username, email, password_hash, note)
 VALUES ($1, $2, $3, $4)
@@ -147,15 +162,15 @@ SELECT r.id, r.username, r.email, r.note, r.status, r.moderator_note,
        u.username AS reviewer_username
 FROM registration_requests r
 LEFT JOIN users u ON u.id = r.reviewed_by
-WHERE (NOT $1::bool OR r.status = 'pending')
+WHERE ($1::text IS NULL OR r.status = $1::text)
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT $3 OFFSET $2
 `
 
 type ListRegistrationRequestsParams struct {
-	PendingOnly  bool  `json:"pending_only"`
-	ResultOffset int32 `json:"result_offset"`
-	ResultLimit  int32 `json:"result_limit"`
+	Status       *string `json:"status"`
+	ResultOffset int32   `json:"result_offset"`
+	ResultLimit  int32   `json:"result_limit"`
 }
 
 type ListRegistrationRequestsRow struct {
@@ -171,10 +186,13 @@ type ListRegistrationRequestsRow struct {
 }
 
 // The approval queue, newest first, with the reviewing admin's username resolved.
-// When pending_only is true, only unresolved requests are returned. The
-// password hash is never selected.
+// status is the exact lifecycle state to show, or NULL for all of them. It used
+// to be a pending_only BOOLEAN fed by `?status == "pending"` in the handler,
+// which meant ?status=approved silently returned the whole queue; the filter is
+// now the value itself so an unknown one is rejected up front instead of
+// collapsing into "no filter". The password hash is never selected.
 func (q *Queries) ListRegistrationRequests(ctx context.Context, arg ListRegistrationRequestsParams) ([]ListRegistrationRequestsRow, error) {
-	rows, err := q.db.Query(ctx, listRegistrationRequests, arg.PendingOnly, arg.ResultOffset, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listRegistrationRequests, arg.Status, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}

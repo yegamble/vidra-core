@@ -76,10 +76,8 @@ const (
 // accounts match the same query, so a client can tell how many pages exist;
 // without it a caller cannot distinguish "last page" from "there is more".
 type adminUserListResponse struct {
-	Users  []adminUserView `json:"users"`
-	Total  int64           `json:"total"`
-	Limit  int             `json:"limit"`
-	Offset int             `json:"offset"`
+	Users []adminUserView `json:"users"`
+	pageMeta
 }
 
 // handleListUsers returns accounts, newest first, optionally filtered by ?q
@@ -103,9 +101,7 @@ func (s *Server) handleListUsers(c echo.Context) error {
 	for _, u := range users {
 		views = append(views, newAdminUserViewFromRow(u))
 	}
-	return c.JSON(http.StatusOK, adminUserListResponse{
-		Users: views, Total: total, Limit: page.Limit, Offset: page.Offset,
-	})
+	return c.JSON(http.StatusOK, adminUserListResponse{Users: views, pageMeta: page.meta(total)})
 }
 
 // updateUserRequest is the PATCH /admin/users/{id} body. Fields are optional;

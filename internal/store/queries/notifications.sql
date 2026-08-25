@@ -107,6 +107,17 @@ WHERE n.user_id = sqlc.arg('user_id')
 ORDER BY n.created_at DESC, n.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: CountNotifications :one
+-- How many rows ListNotifications would return for the same user and
+-- ?unread filter, ignoring pagination. This is the LIST total; the
+-- CountUnreadNotifications badge below is a different question and both are
+-- returned side by side (an unread_count of 3 says nothing about how many
+-- pages of read notifications sit behind it).
+SELECT count(*)::bigint
+FROM notifications n
+WHERE n.user_id = sqlc.arg('user_id')
+  AND (NOT sqlc.arg('unread_only')::bool OR n.read_at IS NULL);
+
 -- name: CountUnreadNotifications :one
 SELECT count(*) FROM notifications
 WHERE user_id = $1 AND read_at IS NULL;

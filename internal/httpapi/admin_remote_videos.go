@@ -107,8 +107,7 @@ type blockedRemoteVideoView struct {
 // blockedRemoteVideoListResponse is the paginated remote-video block-list.
 type blockedRemoteVideoListResponse struct {
 	Videos []blockedRemoteVideoView `json:"videos"`
-	Limit  int                      `json:"limit"`
-	Offset int                      `json:"offset"`
+	pageMeta
 }
 
 // handleListBlockedRemoteVideos returns currently-blocked remote videos
@@ -116,7 +115,7 @@ type blockedRemoteVideoListResponse struct {
 // ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListBlockedRemoteVideos(c echo.Context) error {
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
-	items, err := s.moderationsvc.ListBlockedRemote(c.Request().Context(), page.Limit32(), page.Offset32())
+	items, total, err := s.moderationsvc.ListBlockedRemote(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -134,5 +133,5 @@ func (s *Server) handleListBlockedRemoteVideos(c echo.Context) error {
 			BlockedAt:     it.BlockedAt,
 		})
 	}
-	return c.JSON(http.StatusOK, blockedRemoteVideoListResponse{Videos: views, Limit: page.Limit, Offset: page.Offset})
+	return c.JSON(http.StatusOK, blockedRemoteVideoListResponse{Videos: views, pageMeta: page.meta(total)})
 }

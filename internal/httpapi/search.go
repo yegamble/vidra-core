@@ -285,7 +285,7 @@ func (s *Server) handleHomeRecommendations(c echo.Context) error {
 // unavailable or returns nothing.
 func (s *Server) homeRecommendationsFallback(c echo.Context, limit int, viewerID uuid.UUID, authed bool) error {
 	ctx := c.Request().Context()
-	items, err := s.videosvc.ListPublic(ctx, "trending", "local",
+	items, _, err := s.videosvc.ListPublic(ctx, "trending", "local",
 		video.FeedFilter{HideSensitive: s.effectiveHideSensitive(c)}, viewerID, authed, int32(limit), 0)
 	if err != nil {
 		return err

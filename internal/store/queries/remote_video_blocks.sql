@@ -34,3 +34,11 @@ JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
 LEFT JOIN users u ON u.id = b.blocked_by
 ORDER BY b.created_at DESC, b.remote_video_id
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountBlockedRemoteVideos :one
+-- How many rows ListBlockedRemoteVideos would return, ignoring pagination. The
+-- inner JOINs are part of the predicate and must stay identical.
+SELECT count(*)::bigint
+FROM remote_video_blocks b
+JOIN remote_videos rv ON rv.id = b.remote_video_id
+JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url;

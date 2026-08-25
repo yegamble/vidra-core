@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -83,7 +84,8 @@ func (f *channelFakeRepo) DeleteChannelMember(_ context.Context, a sqlcgen.Delet
 	return 0, nil
 }
 
-func (f *channelFakeRepo) ListChannelMembers(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListChannelMembersRow, error) {
+func (f *channelFakeRepo) ListChannelMembers(_ context.Context, a sqlcgen.ListChannelMembersParams) ([]sqlcgen.ListChannelMembersRow, error) {
+	channelID := a.ChannelID
 	var out []sqlcgen.ListChannelMembersRow
 	for _, m := range f.members {
 		if m.ChannelID != channelID {
@@ -827,4 +829,69 @@ func TestFollowNotificationBellEndpoint(t *testing.T) {
 	if v := channelAs(followerTok); *v.IsFollowing || v.NotificationSetting != "" {
 		t.Fatalf("after unfollow: is_following=%v setting=%q, want false and no bell", *v.IsFollowing, v.NotificationSetting)
 	}
+}
+
+// Counts and the managed-channel UNION mirror their List so the fake pair can
+// never disagree.
+func (f *channelFakeRepo) CountChannelMembers(ctx context.Context, channelID uuid.UUID) (int64, error) {
+	rows, err := f.ListChannelMembers(ctx, sqlcgen.ListChannelMembersParams{ChannelID: channelID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *channelFakeRepo) CountFollowedChannels(ctx context.Context, followerID uuid.UUID) (int64, error) {
+	rows, err := f.ListFollowedChannels(ctx, sqlcgen.ListFollowedChannelsParams{FollowerID: followerID, Limit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *channelFakeRepo) ListManagedChannels(ctx context.Context, a sqlcgen.ListManagedChannelsParams) ([]sqlcgen.ListManagedChannelsRow, error) {
+	owned, err := f.ListChannelsByOwner(ctx, a.UserID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sqlcgen.ListManagedChannelsRow, 0, len(owned))
+	add := func(ch sqlcgen.Channel, role string) {
+		n, _ := f.CountChannelFollowers(ctx, ch.ID)
+		out = append(out, sqlcgen.ListManagedChannelsRow{
+			ID: ch.ID, OwnerID: ch.OwnerID, Handle: ch.Handle, DisplayName: ch.DisplayName,
+			Description: ch.Description, CreatedAt: ch.CreatedAt, UpdatedAt: ch.UpdatedAt,
+			ActivitypubEnabled: ch.ActivitypubEnabled, AtprotoEnabled: ch.AtprotoEnabled,
+			Role: role, FollowerCount: n,
+		})
+	}
+	for _, ch := range owned {
+		add(ch, "owner")
+	}
+	shared, err := f.ListChannelsForMember(ctx, a.UserID)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range shared {
+		add(sqlcgen.Channel{
+			ID: r.ID, OwnerID: r.OwnerID, Handle: r.Handle, DisplayName: r.DisplayName,
+			Description: r.Description, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			ActivitypubEnabled: r.ActivitypubEnabled, AtprotoEnabled: r.AtprotoEnabled,
+		}, r.Role)
+	}
+	// The fake's owner list walks a map, so impose the query's deterministic
+	// ORDER BY (owned first, then oldest first, id as tiebreak) before paging.
+	sort.SliceStable(out, func(i, j int) bool {
+		if (out[i].Role == "owner") != (out[j].Role == "owner") {
+			return out[i].Role == "owner"
+		}
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID.String() < out[j].ID.String()
+	})
+	lo := min(int(a.ResultOffset), len(out))
+	out = out[lo:]
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(out) {
+		out = out[:a.ResultLimit]
+	}
+	return out, nil
+}
+
+func (f *channelFakeRepo) CountManagedChannels(ctx context.Context, userID uuid.UUID) (int64, error) {
+	rows, err := f.ListManagedChannels(ctx, sqlcgen.ListManagedChannelsParams{UserID: userID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

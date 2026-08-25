@@ -100,3 +100,18 @@ func clampInt(v, lo, hi int) int {
 	}
 	return v
 }
+
+// statusFilterAll is the "no status filter" sentinel every admin queue accepts.
+// It is an explicit value rather than an empty string so a client can say "give
+// me everything" positively, and so an unrecognised status is a 400 instead of
+// collapsing into "all" the way `?status == "open"` used to.
+const statusFilterAll = "all"
+
+// listFilterValue maps the all-sentinel back to the empty string the service
+// layer reads as "no filter".
+func listFilterValue(v string) string {
+	if v == statusFilterAll {
+		return ""
+	}
+	return v
+}

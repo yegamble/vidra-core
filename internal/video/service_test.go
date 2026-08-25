@@ -288,7 +288,8 @@ func rowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 	}
 }
 
-func (f *fakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListVideosByChannelRow, error) {
+func (f *fakeRepo) ListVideosByChannel(_ context.Context, a sqlcgen.ListVideosByChannelParams) ([]sqlcgen.ListVideosByChannelRow, error) {
+	channelID := a.ChannelID
 	var out []sqlcgen.ListVideosByChannelRow
 	for _, r := range f.videos {
 		if r.ChannelID == channelID {
@@ -299,14 +300,34 @@ func (f *fakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UUID) (
 			})
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
-	return out, nil
+	// "published_at" is oldest-first; anything else is newest-first, matching the
+	// query's CASE branches.
+	sort.SliceStable(out, func(i, j int) bool {
+		if a.Sort == "published_at" {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return pageSlice(out, a.ResultLimit, a.ResultOffset), nil
 }
 
-func (f *fakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListPublicVideosByChannelRow, error) {
+func pageSlice[T any](rows []T, limit, offset int32) []T {
+	lo := min(int(offset), len(rows))
+	rows = rows[lo:]
+	if limit > 0 && int(limit) < len(rows) {
+		rows = rows[:limit]
+	}
+	return rows
+}
+
+func (f *fakeRepo) ListPublicVideosByChannel(_ context.Context, a sqlcgen.ListPublicVideosByChannelParams) ([]sqlcgen.ListPublicVideosByChannelRow, error) {
+	channelID := a.ChannelID
 	var out []sqlcgen.ListPublicVideosByChannelRow
 	for _, r := range f.videos {
 		if r.ChannelID == channelID && r.Privacy == "public" && r.State == "published" {
+			if a.HideSensitive && r.IsSensitive {
+				continue
+			}
 			out = append(out, sqlcgen.ListPublicVideosByChannelRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
@@ -315,8 +336,25 @@ func (f *fakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.U
 			})
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
-	return out, nil
+	sort.SliceStable(out, func(i, j int) bool {
+		if a.Sort == "published_at" {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return pageSlice(out, a.ResultLimit, a.ResultOffset), nil
+}
+
+func (f *fakeRepo) CountVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error) {
+	rows, err := f.ListVideosByChannel(ctx, sqlcgen.ListVideosByChannelParams{ChannelID: channelID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountPublicVideosByChannelVisible(ctx context.Context, a sqlcgen.CountPublicVideosByChannelVisibleParams) (int64, error) {
+	rows, err := f.ListPublicVideosByChannel(ctx, sqlcgen.ListPublicVideosByChannelParams{
+		ChannelID: a.ChannelID, HideSensitive: a.HideSensitive, ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
 }
 
 func (f *fakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoParams) (sqlcgen.Video, error) {
@@ -602,7 +640,7 @@ func TestListSubscriptionsOnlyFollowedChannels(t *testing.T) {
 	}
 	repo.followed[followed] = true
 
-	items, err := NewService(repo, nil).ListSubscriptions(context.Background(), uuid.New(), 20, 0)
+	items, _, err := NewService(repo, nil).ListSubscriptions(context.Background(), uuid.New(), 20, 0)
 	if err != nil {
 		t.Fatalf("ListSubscriptions: %v", err)
 	}
@@ -635,7 +673,7 @@ func TestWatchHistoryRecordListAndProgress(t *testing.T) {
 	if err := svc.RecordProgress(ctx, v2, user, 12); err != nil {
 		t.Fatalf("RecordProgress v2: %v", err)
 	}
-	items, err := svc.ListHistory(ctx, user, 20, 0, false)
+	items, _, err := svc.ListHistory(ctx, user, 20, 0, false)
 	if err != nil {
 		t.Fatalf("ListHistory: %v", err)
 	}
@@ -652,13 +690,13 @@ func TestWatchHistoryRecordListAndProgress(t *testing.T) {
 	if err := svc.RemoveHistoryEntry(ctx, v2, user); err != nil {
 		t.Fatalf("RemoveHistoryEntry: %v", err)
 	}
-	if items, _ := svc.ListHistory(ctx, user, 20, 0, false); len(items) != 1 || items[0].Video.ID != v1 {
+	if items, _, _ := svc.ListHistory(ctx, user, 20, 0, false); len(items) != 1 || items[0].Video.ID != v1 {
 		t.Fatalf("after remove, history = %+v, want [v1]", items)
 	}
 	if err := svc.ClearHistory(ctx, user); err != nil {
 		t.Fatalf("ClearHistory: %v", err)
 	}
-	if items, _ := svc.ListHistory(ctx, user, 20, 0, false); len(items) != 0 {
+	if items, _, _ := svc.ListHistory(ctx, user, 20, 0, false); len(items) != 0 {
 		t.Fatalf("after clear, history = %+v, want empty", items)
 	}
 }
@@ -736,14 +774,14 @@ func TestListPublicPaginates(t *testing.T) {
 	}
 	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "priv", Privacy: "private"})
 
-	page1, err := svc.ListPublic(ctx, "recent", "local", FeedFilter{}, uuid.Nil, false, 2, 0)
+	page1, _, err := svc.ListPublic(ctx, "recent", "local", FeedFilter{}, uuid.Nil, false, 2, 0)
 	if err != nil {
 		t.Fatalf("ListPublic: %v", err)
 	}
 	if len(page1) != 2 {
 		t.Errorf("page1 = %d, want 2", len(page1))
 	}
-	page2, _ := svc.ListPublic(ctx, "recent", "local", FeedFilter{}, uuid.Nil, false, 2, 2)
+	page2, _, _ := svc.ListPublic(ctx, "recent", "local", FeedFilter{}, uuid.Nil, false, 2, 2)
 	if len(page2) != 1 { // only 3 public total
 		t.Errorf("page2 = %d, want 1", len(page2))
 	}
@@ -768,7 +806,7 @@ func TestListPublicSortModes(t *testing.T) {
 	}
 	_, _ = repo.IncrementVideoViews(ctx, a.ID)
 
-	popular, _ := svc.ListPublic(ctx, "popular", "local", FeedFilter{}, uuid.Nil, false, 20, 0)
+	popular, _, _ := svc.ListPublic(ctx, "popular", "local", FeedFilter{}, uuid.Nil, false, 20, 0)
 	if len(popular) != 2 || popular[0].Video.ID != b.ID {
 		t.Errorf("popular order = %v, want most-viewed (b) first", feedIDs(popular))
 	}
@@ -776,7 +814,7 @@ func TestListPublicSortModes(t *testing.T) {
 		t.Errorf("top item views = %d, want 5", popular[0].Views)
 	}
 	// Unknown sort falls back to recent (newest first -> b created after a).
-	recent, _ := svc.ListPublic(ctx, "bogus", "local", FeedFilter{}, uuid.Nil, false, 20, 0)
+	recent, _, _ := svc.ListPublic(ctx, "bogus", "local", FeedFilter{}, uuid.Nil, false, 20, 0)
 	if len(recent) != 2 || recent[0].Video.ID != b.ID {
 		t.Errorf("fallback order = %v, want recent (b first)", feedIDs(recent))
 	}
@@ -811,7 +849,7 @@ func TestFeedCardsCarryDuration(t *testing.T) {
 		t.Fatalf("UpsertVideoMetadata: %v", err)
 	}
 
-	feed, err := svc.ListPublic(ctx, "recent", "local", FeedFilter{}, uuid.Nil, false, 20, 0)
+	feed, _, err := svc.ListPublic(ctx, "recent", "local", FeedFilter{}, uuid.Nil, false, 20, 0)
 	if err != nil {
 		t.Fatalf("ListPublic: %v", err)
 	}
@@ -831,7 +869,7 @@ func TestFeedCardsCarryDuration(t *testing.T) {
 	if err := svc.RecordProgress(ctx, withDur.ID, owner, 42); err != nil {
 		t.Fatalf("RecordProgress: %v", err)
 	}
-	hist, err := svc.ListHistory(ctx, owner, 20, 0, false)
+	hist, _, err := svc.ListHistory(ctx, owner, 20, 0, false)
 	if err != nil {
 		t.Fatalf("ListHistory: %v", err)
 	}
@@ -878,7 +916,7 @@ func TestListHistoryInProgressFilter(t *testing.T) {
 	}
 
 	// Unfiltered: every recorded entry is present.
-	all, err := svc.ListHistory(ctx, user, 20, 0, false)
+	all, _, err := svc.ListHistory(ctx, user, 20, 0, false)
 	if err != nil {
 		t.Fatalf("ListHistory(all): %v", err)
 	}
@@ -888,7 +926,7 @@ func TestListHistoryInProgressFilter(t *testing.T) {
 
 	// in_progress: halfway + noDur only. finished (>= 95%), barely (< 5s) and
 	// zeroPos (0s) are all excluded.
-	inProg, err := svc.ListHistory(ctx, user, 20, 0, true)
+	inProg, _, err := svc.ListHistory(ctx, user, 20, 0, true)
 	if err != nil {
 		t.Fatalf("ListHistory(in_progress): %v", err)
 	}
@@ -921,7 +959,7 @@ func TestListHistoryInProgressFilter(t *testing.T) {
 	if err := svc.RecordProgress(ctx, zeroDur.ID, user, 30); err != nil {
 		t.Fatalf("RecordProgress(zeroDur): %v", err)
 	}
-	inProg2, err := svc.ListHistory(ctx, user, 20, 0, true)
+	inProg2, _, err := svc.ListHistory(ctx, user, 20, 0, true)
 	if err != nil {
 		t.Fatalf("ListHistory(in_progress) 2: %v", err)
 	}
@@ -945,7 +983,7 @@ func TestSearchPublicMatchesTitleAndExcludesPrivate(t *testing.T) {
 	publishDraft(t, svc, ctx, ch, CreateInput{Title: "Rust basics", Privacy: "public"})
 	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "Go internals", Privacy: "private"})
 
-	res, err := svc.SearchPublic(ctx, "go", FeedFilter{}, uuid.Nil, false, 20, 0)
+	res, _, err := svc.SearchPublic(ctx, "go", FeedFilter{}, uuid.Nil, false, 20, 0)
 	if err != nil {
 		t.Fatalf("SearchPublic: %v", err)
 	}
@@ -962,11 +1000,11 @@ func TestListByChannelVsPublic(t *testing.T) {
 	publishDraft(t, svc, ctx, ch, CreateInput{Title: "pub", Privacy: "public"})
 	_, _ = svc.CreateDraft(ctx, ch, CreateInput{Title: "priv", Privacy: "private"})
 
-	all, _ := svc.ListByChannel(ctx, ch)
+	all, _, _ := svc.ListByChannel(ctx, ch, "", 100, 0)
 	if len(all) != 2 {
 		t.Errorf("ListByChannel = %d, want 2 (owner sees all states)", len(all))
 	}
-	pub, _ := svc.ListPublicByChannel(ctx, ch, false)
+	pub, _, _ := svc.ListPublicByChannel(ctx, ch, false, "", 100, 0)
 	if len(pub) != 1 || pub[0].Video.Privacy != "public" {
 		t.Errorf("ListPublicByChannel = %+v, want 1 public", pub)
 	}
@@ -980,14 +1018,14 @@ func TestListPublicByChannelCanHideSensitive(t *testing.T) {
 	publishDraft(t, svc, ctx, ch, CreateInput{Title: "visible", Privacy: "public"})
 	publishDraft(t, svc, ctx, ch, CreateInput{Title: "sensitive", Privacy: "public", IsSensitive: true})
 
-	all, err := svc.ListPublicByChannel(ctx, ch, false)
+	all, _, err := svc.ListPublicByChannel(ctx, ch, false, "", 100, 0)
 	if err != nil {
 		t.Fatalf("ListPublicByChannel all: %v", err)
 	}
 	if len(all) != 2 {
 		t.Fatalf("ListPublicByChannel all = %d, want 2", len(all))
 	}
-	filtered, err := svc.ListPublicByChannel(ctx, ch, true)
+	filtered, _, err := svc.ListPublicByChannel(ctx, ch, true, "", 100, 0)
 	if err != nil {
 		t.Fatalf("ListPublicByChannel filtered: %v", err)
 	}
@@ -1805,4 +1843,58 @@ func TestAttachOriginalAdditionalExtGateRuntimeFlip(t *testing.T) {
 	if _, _, err := def.AttachOriginal(ctx, owner, v3.ID, UploadInput{Filename: "clip.mkv", Reader: strings.NewReader("x")}); err != nil {
 		t.Fatalf("default gate .mkv err = %v, want ok (pre-W10 behavior)", err)
 	}
+}
+
+// The Count fakes delegate to their List so the pair can never disagree — the
+// same invariant the real SQL pairs must hold.
+func (f *fakeRepo) CountAdminVideos(ctx context.Context, a sqlcgen.CountAdminVideosParams) (int64, error) {
+	rows, err := f.ListAdminVideos(ctx, sqlcgen.ListAdminVideosParams{
+		Query: a.Query, States: a.States, Privacies: a.Privacies, Scope: a.Scope,
+		Channel: a.Channel, PublishedAfter: a.PublishedAfter, PublishedBefore: a.PublishedBefore,
+		HasOriginal: a.HasOriginal, HasHls: a.HasHls, HasWebFiles: a.HasWebFiles,
+		ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountQuarantinedVideos(ctx context.Context) (int64, error) {
+	rows, err := f.ListQuarantinedVideos(ctx, sqlcgen.ListQuarantinedVideosParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountPublicVideosSorted(ctx context.Context, a sqlcgen.CountPublicVideosSortedParams) (int64, error) {
+	rows, err := f.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
+		IncludeRemote: a.IncludeRemote, ViewerID: a.ViewerID, Tag: a.Tag,
+		Category: a.Category, Language: a.Language, HideSensitive: a.HideSensitive,
+		Sort: "recent", ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountSubscriptionVideos(ctx context.Context, followerID uuid.UUID) (int64, error) {
+	rows, err := f.ListSubscriptionVideos(ctx, sqlcgen.ListSubscriptionVideosParams{FollowerID: followerID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountSavedVideos(ctx context.Context, userID uuid.UUID) (int64, error) {
+	rows, err := f.ListSavedVideos(ctx, sqlcgen.ListSavedVideosParams{UserID: userID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountWatchHistory(ctx context.Context, userID uuid.UUID) (int64, error) {
+	rows, err := f.ListWatchHistory(ctx, sqlcgen.ListWatchHistoryParams{UserID: userID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountWatchHistoryInProgress(ctx context.Context, userID uuid.UUID) (int64, error) {
+	rows, err := f.ListWatchHistoryInProgress(ctx, sqlcgen.ListWatchHistoryInProgressParams{UserID: userID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountSearchPublicVideos(ctx context.Context, a sqlcgen.CountSearchPublicVideosParams) (int64, error) {
+	rows, err := f.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
+		Query: a.Query, ViewerID: a.ViewerID, Tag: a.Tag, Category: a.Category,
+		Language: a.Language, HideSensitive: a.HideSensitive, ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
 }

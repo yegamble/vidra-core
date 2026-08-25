@@ -35,3 +35,13 @@ JOIN channels c ON c.id = v.channel_id
 LEFT JOIN users u ON u.id = b.blocked_by
 ORDER BY b.created_at DESC, b.video_id
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountBlockedVideos :one
+-- How many rows ListBlockedVideos would return, ignoring pagination. The FROM
+-- and (absent) WHERE must stay identical to it — the JOINs are part of the
+-- predicate here: a block whose video or channel row is gone is not listed and
+-- must not be counted.
+SELECT count(*)::bigint
+FROM video_blocks b
+JOIN videos v   ON v.id = b.video_id
+JOIN channels c ON c.id = v.channel_id;

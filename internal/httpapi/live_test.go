@@ -70,7 +70,8 @@ func (f *liveFakeRepo) GetLiveStreamByID(_ context.Context, id uuid.UUID) (sqlcg
 	}, nil
 }
 
-func (f *liveFakeRepo) ListLiveStreamsByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListLiveStreamsByChannelRow, error) {
+func (f *liveFakeRepo) ListLiveStreamsByChannel(_ context.Context, a sqlcgen.ListLiveStreamsByChannelParams) ([]sqlcgen.ListLiveStreamsByChannelRow, error) {
+	channelID := a.ChannelID
 	var out []sqlcgen.ListLiveStreamsByChannelRow
 	for _, r := range f.rows {
 		if r.ChannelID == channelID {
@@ -94,11 +95,11 @@ func (f *liveFakeRepo) ListLivePublicStreams(_ context.Context, a sqlcgen.ListLi
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].StartedAt.Time.After(rows[j].StartedAt.Time) })
-	lo := int(a.Offset)
+	lo := int(a.ResultOffset)
 	if lo > len(rows) {
 		lo = len(rows)
 	}
-	hi := lo + int(a.Limit)
+	hi := lo + int(a.ResultLimit)
 	if hi > len(rows) {
 		hi = len(rows)
 	}
@@ -965,4 +966,14 @@ func TestListLivePublicStreamsUngatedRead(t *testing.T) {
 	if len(out.LiveStreams) != 0 {
 		t.Fatalf("want 0 live streams, got %d", len(out.LiveStreams))
 	}
+}
+
+func (f *liveFakeRepo) CountLiveStreamsByChannel(ctx context.Context, channelID uuid.UUID) (int64, error) {
+	rows, err := f.ListLiveStreamsByChannel(ctx, sqlcgen.ListLiveStreamsByChannelParams{ChannelID: channelID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *liveFakeRepo) CountLivePublicStreams(ctx context.Context) (int64, error) {
+	rows, err := f.ListLivePublicStreams(ctx, sqlcgen.ListLivePublicStreamsParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

@@ -13,6 +13,111 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countAdminVideos = `-- name: CountAdminVideos :one
+SELECT count(*)::bigint
+FROM (
+    SELECT v.id, v.title, v.privacy, v.state,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           COALESCE(vc.views, 0)::bigint AS views,
+           v.created_at,
+           vm.duration_seconds,
+           true AS is_local,
+           ''::text AS origin_domain,
+           ''::text AS watch_url,
+           v.is_sensitive,
+           EXISTS (SELECT 1 FROM import_jobs ij WHERE ij.video_id = v.id) AS external_link,
+           EXISTS (SELECT 1 FROM video_files f WHERE f.video_id = v.id AND f.kind = 'thumbnail') AS has_thumbnail,
+           EXISTS (SELECT 1 FROM video_files f WHERE f.video_id = v.id AND f.kind = 'original') AS has_original,
+           (SELECT count(*)::int FROM video_renditions r WHERE r.video_id = v.id) AS hls_count,
+           (SELECT count(*)::int FROM video_files f WHERE f.video_id = v.id AND f.kind IN ('rendition', 'webm')) AS web_video_count,
+           (
+               COALESCE((SELECT sum(f.size_bytes) FROM video_files f WHERE f.video_id = v.id), 0) +
+               COALESCE((SELECT sum(r.size_bytes) FROM video_renditions r WHERE r.video_id = v.id), 0)
+           )::bigint AS size_bytes,
+           EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked,
+           (SELECT count(*) FROM video_ratings vr
+             WHERE vr.video_id = v.id AND vr.rating = 'like')::bigint AS like_count,
+           (SELECT count(*) FROM comments cm
+             WHERE cm.video_id = v.id AND cm.deleted_at IS NULL)::bigint AS comment_count
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+
+    UNION ALL
+
+    SELECT rv.id, rv.title, 'public'::text AS privacy, 'published'::text AS state,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username::text AS channel_display_name,
+           0::bigint AS views,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at,
+           rv.duration_seconds,
+           false AS is_local,
+           ra.domain AS origin_domain,
+           rv.watch_url,
+           false AS is_sensitive,
+           false AS external_link,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           false AS has_original,
+           0::int AS hls_count,
+           0::int AS web_video_count,
+           0::bigint AS size_bytes,
+           EXISTS (SELECT 1 FROM remote_video_blocks b WHERE b.remote_video_id = rv.id) AS blocked,
+           0::bigint AS like_count,
+           0::bigint AS comment_count
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+) inventory
+WHERE ($1::text IS NULL OR inventory.title ILIKE '%' || $1 || '%')
+  AND ($2::text[] IS NULL OR inventory.state = ANY($2::text[]))
+  AND ($3::text[] IS NULL OR inventory.privacy = ANY($3::text[]))
+  AND ($4::text = 'all'
+       OR ($4::text = 'local' AND inventory.is_local)
+       OR ($4::text = 'remote' AND NOT inventory.is_local))
+  AND ($5::text IS NULL OR inventory.channel_handle = $5::text)
+  AND ($6::timestamptz IS NULL OR inventory.created_at >= $6::timestamptz)
+  AND ($7::timestamptz IS NULL OR inventory.created_at <= $7::timestamptz)
+  AND ($8::boolean IS NULL OR inventory.has_original = $8::boolean)
+  AND ($9::boolean IS NULL OR (inventory.hls_count > 0) = $9::boolean)
+  AND ($10::boolean IS NULL OR (inventory.web_video_count > 0) = $10::boolean)
+`
+
+type CountAdminVideosParams struct {
+	Query           *string            `json:"query"`
+	States          []string           `json:"states"`
+	Privacies       []string           `json:"privacies"`
+	Scope           string             `json:"scope"`
+	Channel         *string            `json:"channel"`
+	PublishedAfter  pgtype.Timestamptz `json:"published_after"`
+	PublishedBefore pgtype.Timestamptz `json:"published_before"`
+	HasOriginal     *bool              `json:"has_original"`
+	HasHls          *bool              `json:"has_hls"`
+	HasWebFiles     *bool              `json:"has_web_files"`
+}
+
+// How many rows ListAdminVideos would return for the same filters, ignoring
+// pagination. The inner UNION and the whole WHERE are repeated verbatim: this
+// is the number the admin "All videos" header shows, and it reported
+// len(page) — permanently "100" — before this query existed. The ORDER BY is
+// dropped; ordering cannot change a count.
+func (q *Queries) CountAdminVideos(ctx context.Context, arg CountAdminVideosParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAdminVideos,
+		arg.Query,
+		arg.States,
+		arg.Privacies,
+		arg.Scope,
+		arg.Channel,
+		arg.PublishedAfter,
+		arg.PublishedBefore,
+		arg.HasOriginal,
+		arg.HasHls,
+		arg.HasWebFiles,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countPublicVideos = `-- name: CountPublicVideos :one
 SELECT count(*) FROM videos WHERE privacy = 'public' AND state = 'published'
 `
@@ -36,6 +141,369 @@ func (q *Queries) CountPublicVideosByChannel(ctx context.Context, channelID uuid
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countPublicVideosByChannelVisible = `-- name: CountPublicVideosByChannelVisible :one
+SELECT count(*)::bigint
+FROM videos v
+WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND (NOT $2::bool OR NOT v.is_sensitive)
+`
+
+type CountPublicVideosByChannelVisibleParams struct {
+	ChannelID     uuid.UUID `json:"channel_id"`
+	HideSensitive bool      `json:"hide_sensitive"`
+}
+
+// How many rows ListPublicVideosByChannel would return, ignoring pagination.
+// The block predicate must stay identical: CountPublicVideosByChannel above
+// answers the AP outbox's question (it counts blocked videos too) and would
+// over-report this list.
+func (q *Queries) CountPublicVideosByChannelVisible(ctx context.Context, arg CountPublicVideosByChannelVisibleParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countPublicVideosByChannelVisible, arg.ChannelID, arg.HideSensitive)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countPublicVideosSorted = `-- name: CountPublicVideosSorted :one
+SELECT count(*)::bigint
+FROM (
+    SELECT v.id,
+           false AS remote,
+           v.channel_id,
+           v.title, v.description, v.privacy, v.state,
+           v.created_at, v.updated_at,
+           COALESCE(vc.views, 0)::bigint AS views,
+           EXISTS (
+               SELECT 1 FROM video_files f
+               WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+           ) AS has_thumbnail,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           au.display_name AS author_display_name,
+           vm.duration_seconds,
+           ''::text AS domain,
+           ''::text AS watch_url,
+           NULL::text AS stream_url,
+           v.is_sensitive,
+           v.sensitive_reason
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    JOIN users au ON au.id = c.owner_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+    WHERE v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_accounts m
+          WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
+      )
+      -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
+      AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE ub.blocker_id = $1 AND ub.blocked_id = c.owner_id
+      )
+      AND ($2::text IS NULL OR EXISTS (
+          SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = $2
+      ))
+      AND ($3::text IS NULL OR v.category = $3)
+      AND ($4::text IS NULL OR v.language = $4)
+      -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
+      AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+      -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
+      -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
+      AND (NOT $5::bool OR NOT v.is_sensitive)
+    UNION ALL
+    SELECT rv.id,
+           true AS remote,
+           '00000000-0000-0000-0000-000000000000'::uuid AS channel_id,
+           rv.title, rv.description, ''::text AS privacy, ''::text AS state,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
+           0::bigint AS views,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username AS channel_display_name,
+           ''::text AS author_display_name,
+           rv.duration_seconds,
+           ra.domain,
+           rv.watch_url,
+           rv.stream_url,
+           false AS is_sensitive,
+           ''::text AS sensitive_reason
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+    WHERE $6::bool
+      AND $2::text IS NULL
+      AND $3::text IS NULL
+      AND $4::text IS NULL
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_instances mi
+          WHERE mi.muter_id = $1 AND mi.domain = ra.domain
+      )
+) AS feed
+`
+
+type CountPublicVideosSortedParams struct {
+	ViewerID      pgtype.UUID `json:"viewer_id"`
+	Tag           *string     `json:"tag"`
+	Category      *string     `json:"category"`
+	Language      *string     `json:"language"`
+	HideSensitive bool        `json:"hide_sensitive"`
+	IncludeRemote bool        `json:"include_remote"`
+}
+
+// How many rows ListPublicVideosSorted would return for the same filters,
+// viewer and scope, ignoring pagination. The whole UNION body is repeated
+// verbatim because every one of its predicates is per-request: mutes and
+// blocks are per-VIEWER, and ?scope=local drops the remote arm entirely. A
+// total taken over anything wider would promise pages the feed cannot serve.
+// The sort mode is deliberately absent: ordering cannot change a count.
+func (q *Queries) CountPublicVideosSorted(ctx context.Context, arg CountPublicVideosSortedParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countPublicVideosSorted,
+		arg.ViewerID,
+		arg.Tag,
+		arg.Category,
+		arg.Language,
+		arg.HideSensitive,
+		arg.IncludeRemote,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countQuarantinedVideos = `-- name: CountQuarantinedVideos :one
+SELECT count(*)::bigint
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users u ON u.id = c.owner_id
+WHERE v.state = 'quarantined'
+`
+
+// How many rows ListQuarantinedVideos would return, ignoring pagination. The
+// channels/users JOINs are part of the predicate and the state filter must stay
+// identical.
+func (q *Queries) CountQuarantinedVideos(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countQuarantinedVideos)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countSearchPublicVideos = `-- name: CountSearchPublicVideos :one
+SELECT count(*)::bigint
+FROM (
+    SELECT v.id,
+           false AS remote,
+           v.channel_id,
+           v.title, v.description, v.privacy, v.state,
+           v.created_at, v.updated_at,
+           COALESCE(vc.views, 0)::bigint AS views,
+           EXISTS (
+               SELECT 1 FROM video_files f
+               WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+           ) AS has_thumbnail,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           au.display_name AS author_display_name,
+           vm.duration_seconds,
+           ''::text AS domain,
+           ''::text AS watch_url,
+           NULL::text AS stream_url,
+           v.is_sensitive,
+           v.sensitive_reason,
+           similarity(v.title, $1) AS search_rank
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    JOIN users au ON au.id = c.owner_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+    WHERE v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_accounts m
+          WHERE m.muter_id = $2 AND m.muted_id = c.owner_id
+      )
+      -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
+      AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE ub.blocker_id = $2 AND ub.blocked_id = c.owner_id
+      )
+      AND (v.title ILIKE '%' || $1 || '%'
+           OR EXISTS (
+               SELECT 1 FROM video_tags t
+               WHERE t.video_id = v.id AND t.tag ILIKE '%' || $1 || '%'
+           ))
+      -- Optional facet filters (NULL = off), mirroring the feed: an exact
+      -- free-form tag and the category/language taxonomy ids.
+      AND ($3::text IS NULL OR EXISTS (
+          SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = $3
+      ))
+      AND ($4::text IS NULL OR v.category = $4)
+      AND ($5::text IS NULL OR v.language = $5)
+      -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
+      AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+      -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
+      -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
+      AND (NOT $6::bool OR NOT v.is_sensitive)
+    UNION ALL
+    SELECT rv.id,
+           true AS remote,
+           '00000000-0000-0000-0000-000000000000'::uuid AS channel_id,
+           rv.title, rv.description, ''::text AS privacy, ''::text AS state,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
+           0::bigint AS views,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username AS channel_display_name,
+           ''::text AS author_display_name,
+           rv.duration_seconds,
+           ra.domain,
+           rv.watch_url,
+           rv.stream_url,
+           false AS is_sensitive,
+           ''::text AS sensitive_reason,
+           similarity(rv.title, $1) AS search_rank
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+    -- Remote videos carry no local taxonomy/tags, so any active facet filter
+    -- excludes them (matching the main feed's behavior).
+    WHERE $3::text IS NULL
+      AND $4::text IS NULL
+      AND $5::text IS NULL
+      AND rv.title ILIKE '%' || $1 || '%'
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_instances mi
+          WHERE mi.muter_id = $2 AND mi.domain = ra.domain
+      )
+) AS feed
+`
+
+type CountSearchPublicVideosParams struct {
+	Query         string      `json:"query"`
+	ViewerID      pgtype.UUID `json:"viewer_id"`
+	Tag           *string     `json:"tag"`
+	Category      *string     `json:"category"`
+	Language      *string     `json:"language"`
+	HideSensitive bool        `json:"hide_sensitive"`
+}
+
+// How many rows SearchPublicVideos would return for the same query, filters
+// and viewer, ignoring pagination. The match predicates are repeated
+// verbatim; only the relevance ORDER BY is dropped, which cannot change a
+// count.
+func (q *Queries) CountSearchPublicVideos(ctx context.Context, arg CountSearchPublicVideosParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countSearchPublicVideos,
+		arg.Query,
+		arg.ViewerID,
+		arg.Tag,
+		arg.Category,
+		arg.Language,
+		arg.HideSensitive,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countSubscriptionVideos = `-- name: CountSubscriptionVideos :one
+SELECT count(*)::bigint
+FROM (
+    SELECT v.id,
+           false AS remote,
+           v.channel_id,
+           v.title, v.description, v.privacy, v.state,
+           v.created_at, v.updated_at,
+           COALESCE(vc.views, 0)::bigint AS views,
+           EXISTS (
+               SELECT 1 FROM video_files f
+               WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+           ) AS has_thumbnail,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           au.display_name AS author_display_name,
+           vm.duration_seconds,
+           ''::text AS domain,
+           ''::text AS watch_url,
+           NULL::text AS stream_url,
+           v.is_sensitive,
+           v.sensitive_reason
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    JOIN users au ON au.id = c.owner_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+    WHERE v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_accounts m
+          WHERE m.muter_id = $1 AND m.muted_id = c.owner_id
+      )
+      -- §13: owners the follower has BLOCKED are hidden too.
+      AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE ub.blocker_id = $1 AND ub.blocked_id = c.owner_id
+      )
+      AND v.channel_id IN (
+          SELECT channel_id FROM channel_follows WHERE follower_id = $1
+      )
+    UNION ALL
+    SELECT rv.id,
+           true AS remote,
+           '00000000-0000-0000-0000-000000000000'::uuid AS channel_id,
+           rv.title, rv.description, ''::text AS privacy, ''::text AS state,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
+           0::bigint AS views,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username AS channel_display_name,
+           ''::text AS author_display_name,
+           rv.duration_seconds,
+           ra.domain,
+           rv.watch_url,
+           rv.stream_url,
+           false AS is_sensitive,
+           ''::text AS sensitive_reason
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+    WHERE EXISTS (
+          SELECT 1 FROM remote_channel_follows rcf
+          WHERE rcf.user_id = $1
+            AND rcf.remote_actor_url = rv.remote_actor_url
+            AND rcf.state = 'accepted'
+      )
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_instances mi
+          WHERE mi.muter_id = $1 AND mi.domain = ra.domain
+      )
+) AS feed
+`
+
+// How many rows ListSubscriptionVideos would return for the same follower,
+// ignoring pagination. The follow sets, mutes, blocks and instance
+// blocklist are all part of the predicate and are repeated verbatim.
+func (q *Queries) CountSubscriptionVideos(ctx context.Context, followerID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countSubscriptionVideos, followerID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countVideosByChannel = `-- name: CountVideosByChannel :one
+SELECT count(*)::bigint FROM videos v WHERE v.channel_id = $1
+`
+
+// How many rows ListVideosByChannel would return, ignoring pagination.
+func (q *Queries) CountVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countVideosByChannel, channelID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const createVideo = `-- name: CreateVideo :one
@@ -177,7 +645,7 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 }
 
 const listAdminVideos = `-- name: ListAdminVideos :many
-SELECT inventory.id, inventory.title, inventory.privacy, inventory.state, inventory.channel_handle, inventory.channel_display_name, inventory.views, inventory.created_at, inventory.duration_seconds, inventory.is_local, inventory.origin_domain, inventory.watch_url, inventory.is_sensitive, inventory.external_link, inventory.has_thumbnail, inventory.has_original, inventory.hls_count, inventory.web_video_count, inventory.size_bytes, inventory.blocked
+SELECT inventory.id, inventory.title, inventory.privacy, inventory.state, inventory.channel_handle, inventory.channel_display_name, inventory.views, inventory.created_at, inventory.duration_seconds, inventory.is_local, inventory.origin_domain, inventory.watch_url, inventory.is_sensitive, inventory.external_link, inventory.has_thumbnail, inventory.has_original, inventory.hls_count, inventory.web_video_count, inventory.size_bytes, inventory.blocked, inventory.like_count, inventory.comment_count
 FROM (
     SELECT v.id, v.title, v.privacy, v.state,
            c.handle AS channel_handle, c.display_name AS channel_display_name,
@@ -197,7 +665,11 @@ FROM (
                COALESCE((SELECT sum(f.size_bytes) FROM video_files f WHERE f.video_id = v.id), 0) +
                COALESCE((SELECT sum(r.size_bytes) FROM video_renditions r WHERE r.video_id = v.id), 0)
            )::bigint AS size_bytes,
-           EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked
+           EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked,
+           (SELECT count(*) FROM video_ratings vr
+             WHERE vr.video_id = v.id AND vr.rating = 'like')::bigint AS like_count,
+           (SELECT count(*) FROM comments cm
+             WHERE cm.video_id = v.id AND cm.deleted_at IS NULL)::bigint AS comment_count
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
@@ -221,19 +693,59 @@ FROM (
            0::int AS hls_count,
            0::int AS web_video_count,
            0::bigint AS size_bytes,
-           EXISTS (SELECT 1 FROM remote_video_blocks b WHERE b.remote_video_id = rv.id) AS blocked
+           EXISTS (SELECT 1 FROM remote_video_blocks b WHERE b.remote_video_id = rv.id) AS blocked,
+           0::bigint AS like_count,
+           0::bigint AS comment_count
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
 ) inventory
 WHERE ($1::text IS NULL OR inventory.title ILIKE '%' || $1 || '%')
-ORDER BY inventory.created_at DESC, inventory.id DESC
-LIMIT $3 OFFSET $2
+  AND ($2::text[] IS NULL OR inventory.state = ANY($2::text[]))
+  AND ($3::text[] IS NULL OR inventory.privacy = ANY($3::text[]))
+  AND ($4::text = 'all'
+       OR ($4::text = 'local' AND inventory.is_local)
+       OR ($4::text = 'remote' AND NOT inventory.is_local))
+  AND ($5::text IS NULL OR inventory.channel_handle = $5::text)
+  AND ($6::timestamptz IS NULL OR inventory.created_at >= $6::timestamptz)
+  AND ($7::timestamptz IS NULL OR inventory.created_at <= $7::timestamptz)
+  AND ($8::boolean IS NULL OR inventory.has_original = $8::boolean)
+  AND ($9::boolean IS NULL OR (inventory.hls_count > 0) = $9::boolean)
+  AND ($10::boolean IS NULL OR (inventory.web_video_count > 0) = $10::boolean)
+ORDER BY
+    CASE WHEN $11::text IN ('created_at', 'published_at') THEN inventory.created_at END ASC,
+    CASE WHEN $11::text IN ('-created_at', '-published_at') THEN inventory.created_at END DESC,
+    CASE WHEN $11::text = 'views' THEN inventory.views END ASC,
+    CASE WHEN $11::text = '-views' THEN inventory.views END DESC,
+    CASE WHEN $11::text = 'duration' THEN inventory.duration_seconds END ASC,
+    CASE WHEN $11::text = '-duration' THEN inventory.duration_seconds END DESC,
+    CASE WHEN $11::text = 'title' THEN inventory.title END ASC,
+    CASE WHEN $11::text = '-title' THEN inventory.title END DESC,
+    CASE WHEN $11::text = 'state' THEN inventory.state END ASC,
+    CASE WHEN $11::text = '-state' THEN inventory.state END DESC,
+    CASE WHEN $11::text = 'likes' THEN inventory.like_count END ASC,
+    CASE WHEN $11::text = '-likes' THEN inventory.like_count END DESC,
+    CASE WHEN $11::text = 'comments' THEN inventory.comment_count END ASC,
+    CASE WHEN $11::text = '-comments' THEN inventory.comment_count END DESC,
+    CASE WHEN $11::text = 'size_bytes' THEN inventory.size_bytes END ASC,
+    CASE WHEN $11::text = '-size_bytes' THEN inventory.size_bytes END DESC,
+    inventory.id DESC
+LIMIT $13 OFFSET $12
 `
 
 type ListAdminVideosParams struct {
-	Query        *string `json:"query"`
-	ResultOffset int32   `json:"result_offset"`
-	ResultLimit  int32   `json:"result_limit"`
+	Query           *string            `json:"query"`
+	States          []string           `json:"states"`
+	Privacies       []string           `json:"privacies"`
+	Scope           string             `json:"scope"`
+	Channel         *string            `json:"channel"`
+	PublishedAfter  pgtype.Timestamptz `json:"published_after"`
+	PublishedBefore pgtype.Timestamptz `json:"published_before"`
+	HasOriginal     *bool              `json:"has_original"`
+	HasHls          *bool              `json:"has_hls"`
+	HasWebFiles     *bool              `json:"has_web_files"`
+	Sort            string             `json:"sort"`
+	ResultOffset    int32              `json:"result_offset"`
+	ResultLimit     int32              `json:"result_limit"`
 }
 
 type ListAdminVideosRow struct {
@@ -257,13 +769,44 @@ type ListAdminVideosRow struct {
 	WebVideoCount      int32     `json:"web_video_count"`
 	SizeBytes          int64     `json:"size_bytes"`
 	Blocked            bool      `json:"blocked"`
+	LikeCount          int64     `json:"like_count"`
+	CommentCount       int64     `json:"comment_count"`
 }
 
 // The moderation inventory includes both locally hosted videos and federated
 // metadata rows. Local file facts are derived from the authoritative media
 // tables; remote rows never pretend to own files.
+//
+// Sorting: sqlc cannot parameterise ORDER BY, so each supported ordering gets a
+// CASE branch over the bound `sort` argument — a branch that does not match
+// evaluates to NULL for every row and is therefore a no-op. `id` is the final
+// tiebreaker on every branch so a page boundary can never duplicate or drop a
+// row. The default '-created_at' reproduces the previous fixed
+// `created_at DESC, id DESC` exactly. 'published_at' is accepted as an alias of
+// 'created_at': videos carry no separate published_at column, and the remote arm
+// already projects COALESCE(published_at, fetched_at) INTO created_at, so they
+// are the same column by construction.
+//
+// Filtering: every predicate is optional (NULL/'all' = off). states/privacies
+// are arrays so the admin UI can check several boxes at once. The file-type
+// filters are tri-state on purpose — absent means "all", not "false", or
+// "videos with no HLS" would be unexpressible.
 func (q *Queries) ListAdminVideos(ctx context.Context, arg ListAdminVideosParams) ([]ListAdminVideosRow, error) {
-	rows, err := q.db.Query(ctx, listAdminVideos, arg.Query, arg.ResultOffset, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listAdminVideos,
+		arg.Query,
+		arg.States,
+		arg.Privacies,
+		arg.Scope,
+		arg.Channel,
+		arg.PublishedAfter,
+		arg.PublishedBefore,
+		arg.HasOriginal,
+		arg.HasHls,
+		arg.HasWebFiles,
+		arg.Sort,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -292,6 +835,8 @@ func (q *Queries) ListAdminVideos(ctx context.Context, arg ListAdminVideosParams
 			&i.WebVideoCount,
 			&i.SizeBytes,
 			&i.Blocked,
+			&i.LikeCount,
+			&i.CommentCount,
 		); err != nil {
 			return nil, err
 		}
@@ -400,8 +945,25 @@ LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
-ORDER BY v.created_at DESC
+  -- Sensitive-content "hide" moved INTO the query (it used to be a Go-side skip
+  -- over the whole result set). With a LIMIT that filter has to be in SQL or a
+  -- page would silently return fewer rows than asked for and the total would
+  -- count rows the caller can never see.
+  AND (NOT $2::bool OR NOT v.is_sensitive)
+ORDER BY
+    CASE WHEN $3::text = 'published_at' THEN v.created_at END ASC,
+    CASE WHEN $3::text <> 'published_at' THEN v.created_at END DESC,
+    v.id DESC
+LIMIT $5 OFFSET $4
 `
+
+type ListPublicVideosByChannelParams struct {
+	ChannelID     uuid.UUID `json:"channel_id"`
+	HideSensitive bool      `json:"hide_sensitive"`
+	Sort          string    `json:"sort"`
+	ResultOffset  int32     `json:"result_offset"`
+	ResultLimit   int32     `json:"result_limit"`
+}
 
 type ListPublicVideosByChannelRow struct {
 	ID                 uuid.UUID `json:"id"`
@@ -423,8 +985,14 @@ type ListPublicVideosByChannelRow struct {
 }
 
 // A channel's public, published videos with discovery-card data.
-func (q *Queries) ListPublicVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]ListPublicVideosByChannelRow, error) {
-	rows, err := q.db.Query(ctx, listPublicVideosByChannel, channelID)
+func (q *Queries) ListPublicVideosByChannel(ctx context.Context, arg ListPublicVideosByChannelParams) ([]ListPublicVideosByChannelRow, error) {
+	rows, err := q.db.Query(ctx, listPublicVideosByChannel,
+		arg.ChannelID,
+		arg.HideSensitive,
+		arg.Sort,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1123,6 +1691,34 @@ func (q *Queries) ListSubscriptionVideos(ctx context.Context, arg ListSubscripti
 	return items, nil
 }
 
+const listVideoIDsByChannel = `-- name: ListVideoIDsByChannel :many
+SELECT id FROM videos WHERE channel_id = $1 ORDER BY id
+`
+
+// Every video id in a channel, UNPAGINATED — the account-deletion sweep, which
+// must visit all of them (a delete that stopped at the UI page size would leave
+// orphaned blobs). Kept separate from ListVideosByChannel so the paginated UI
+// list can never lose its LIMIT again; only the id is needed here.
+func (q *Queries) ListVideoIDsByChannel(ctx context.Context, channelID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listVideoIDsByChannel, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVideoIDsByOwner = `-- name: ListVideoIDsByOwner :many
 SELECT v.id
 FROM videos v
@@ -1173,8 +1769,19 @@ JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.channel_id = $1
-ORDER BY v.created_at DESC
+ORDER BY
+    CASE WHEN $2::text = 'published_at' THEN v.created_at END ASC,
+    CASE WHEN $2::text <> 'published_at' THEN v.created_at END DESC,
+    v.id DESC
+LIMIT $4 OFFSET $3
 `
+
+type ListVideosByChannelParams struct {
+	ChannelID    uuid.UUID `json:"channel_id"`
+	Sort         string    `json:"sort"`
+	ResultOffset int32     `json:"result_offset"`
+	ResultLimit  int32     `json:"result_limit"`
+}
 
 type ListVideosByChannelRow struct {
 	ID                 uuid.UUID          `json:"id"`
@@ -1197,9 +1804,18 @@ type ListVideosByChannelRow struct {
 }
 
 // A channel's videos (owner view, all states) with discovery-card data plus
-// publish_at so the studio can badge scheduled videos.
-func (q *Queries) ListVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]ListVideosByChannelRow, error) {
-	rows, err := q.db.Query(ctx, listVideosByChannel, channelID)
+// publish_at so the studio can badge scheduled videos. Paginated: this used to
+// have no LIMIT at all, so a channel with 50k videos serialised 50k rows on
+// every studio page load. sort accepts 'published_at' (oldest first) or
+// '-published_at' (newest first, the previous fixed behaviour and the default);
+// the id tiebreaker makes page boundaries stable.
+func (q *Queries) ListVideosByChannel(ctx context.Context, arg ListVideosByChannelParams) ([]ListVideosByChannelRow, error) {
+	rows, err := q.db.Query(ctx, listVideosByChannel,
+		arg.ChannelID,
+		arg.Sort,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

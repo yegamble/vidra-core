@@ -38,11 +38,9 @@ const (
 )
 
 type jobRunsResponse struct {
-	Runs        []jobstatus.Run `json:"runs"`
-	Total       int64           `json:"total"`
-	Limit       int             `json:"limit"`
-	Offset      int             `json:"offset"`
-	EventCursor string          `json:"event_cursor"`
+	Runs []jobstatus.Run `json:"runs"`
+	pageMeta
+	EventCursor string `json:"event_cursor"`
 }
 
 type jobRunDetailResponse struct {
@@ -81,7 +79,7 @@ func (s *Server) handleListJobRuns(c echo.Context) error {
 		runs = []jobstatus.Run{}
 	}
 	return c.JSON(http.StatusOK, jobRunsResponse{
-		Runs: runs, Total: total, Limit: page.Limit, Offset: page.Offset,
+		Runs: runs, pageMeta: page.meta(total),
 		EventCursor: strconv.FormatInt(cursor, 10),
 	})
 }

@@ -21,9 +21,8 @@ type blockedUserView struct {
 
 // blockedUserListResponse is the paginated list of accounts the caller has blocked.
 type blockedUserListResponse struct {
-	Users  []blockedUserView `json:"users"`
-	Limit  int               `json:"limit"`
-	Offset int               `json:"offset"`
+	Users []blockedUserView `json:"users"`
+	pageMeta
 }
 
 // handleBlockUser blocks another account for the caller. Behind requireAuth.
@@ -74,7 +73,7 @@ func (s *Server) handleListBlockedUsers(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
-	items, err := s.blocksvc.List(c.Request().Context(), userID, page.Limit32(), page.Offset32())
+	items, total, err := s.blocksvc.List(c.Request().Context(), userID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -87,5 +86,5 @@ func (s *Server) handleListBlockedUsers(c echo.Context) error {
 			BlockedAt:   it.BlockedAt,
 		})
 	}
-	return c.JSON(http.StatusOK, blockedUserListResponse{Users: views, Limit: page.Limit, Offset: page.Offset})
+	return c.JSON(http.StatusOK, blockedUserListResponse{Users: views, pageMeta: page.meta(total)})
 }

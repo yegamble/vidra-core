@@ -35,6 +35,30 @@ func (q *Queries) BlockInstance(ctx context.Context, arg BlockInstanceParams) (i
 	return result.RowsAffected(), nil
 }
 
+const countBlockedInstances = `-- name: CountBlockedInstances :one
+SELECT count(*)::bigint FROM blocked_instances
+`
+
+// How many rows ListBlockedInstances would return, ignoring pagination.
+func (q *Queries) CountBlockedInstances(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countBlockedInstances)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countMutedInstances = `-- name: CountMutedInstances :one
+SELECT count(*)::bigint FROM muted_instances WHERE muter_id = $1
+`
+
+// How many rows ListMutedInstances would return, ignoring pagination.
+func (q *Queries) CountMutedInstances(ctx context.Context, muterID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countMutedInstances, muterID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const isInstanceBlocked = `-- name: IsInstanceBlocked :one
 SELECT EXISTS (SELECT 1 FROM blocked_instances WHERE domain = $1)
 `

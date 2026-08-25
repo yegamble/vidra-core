@@ -13,6 +13,34 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countWatchedWordMatches = `-- name: CountWatchedWordMatches :one
+SELECT count(*)::bigint
+FROM watched_word_matches m
+JOIN watched_words w ON w.id = m.watched_word_id
+`
+
+// How many rows ListWatchedWordMatches would return, ignoring pagination. The
+// watched_words JOIN is part of the predicate (a match whose term was deleted
+// is not listed); the LEFT JOINs only add context and cannot change the count.
+func (q *Queries) CountWatchedWordMatches(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countWatchedWordMatches)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countWatchedWords = `-- name: CountWatchedWords :one
+SELECT count(*)::bigint FROM watched_words
+`
+
+// How many rows ListWatchedWords would return, ignoring pagination.
+func (q *Queries) CountWatchedWords(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countWatchedWords)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createWatchedWord = `-- name: CreateWatchedWord :one
 INSERT INTO watched_words (word, created_by)
 VALUES ($1, $2)

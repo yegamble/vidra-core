@@ -479,7 +479,8 @@ func vidRowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 	}
 }
 
-func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListVideosByChannelRow, error) {
+func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, a sqlcgen.ListVideosByChannelParams) ([]sqlcgen.ListVideosByChannelRow, error) {
+	channelID := a.ChannelID
 	var out []sqlcgen.ListVideosByChannelRow
 	for _, r := range f.videos {
 		if r.ChannelID == channelID {
@@ -491,8 +492,24 @@ func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, channelID uuid.UU
 			})
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
-	return out, nil
+	// "published_at" is oldest-first, anything else newest-first — the query's
+	// two CASE branches.
+	sort.SliceStable(out, func(i, j int) bool {
+		if a.Sort == "published_at" {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return pageRows(out, a.ResultLimit, a.ResultOffset), nil
+}
+
+func pageRows[T any](rows []T, limit, offset int32) []T {
+	lo := min(int(offset), len(rows))
+	rows = rows[lo:]
+	if limit > 0 && int(limit) < len(rows) {
+		rows = rows[:limit]
+	}
+	return rows
 }
 
 func (f *videoFakeRepo) ListDueScheduledVideos(_ context.Context, limit int32) ([]sqlcgen.ListDueScheduledVideosRow, error) {
@@ -542,9 +559,13 @@ func (f *videoFakeRepo) PublishTranscodingVideo(_ context.Context, id uuid.UUID)
 	return 1, nil
 }
 
-func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, channelID uuid.UUID) ([]sqlcgen.ListPublicVideosByChannelRow, error) {
+func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, a sqlcgen.ListPublicVideosByChannelParams) ([]sqlcgen.ListPublicVideosByChannelRow, error) {
+	channelID := a.ChannelID
 	var out []sqlcgen.ListPublicVideosByChannelRow
 	for _, r := range f.videos {
+		if a.HideSensitive && r.IsSensitive {
+			continue
+		}
 		if r.ChannelID == channelID && r.Privacy == "public" && r.State == "published" {
 			out = append(out, sqlcgen.ListPublicVideosByChannelRow{
 				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
@@ -554,8 +575,13 @@ func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, channelID u
 			})
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
-	return out, nil
+	sort.SliceStable(out, func(i, j int) bool {
+		if a.Sort == "published_at" {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return pageRows(out, a.ResultLimit, a.ResultOffset), nil
 }
 
 func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoParams) (sqlcgen.Video, error) {
@@ -808,10 +834,32 @@ func (f *videoFakeRepo) ListRelatedVideosFallback(_ context.Context, a sqlcgen.L
 
 // ListAdminVideos returns all videos (any privacy/state) with the current block
 // status, mirroring the real admin overview query. An optional title filter.
-func (f *videoFakeRepo) ListAdminVideos(_ context.Context, a sqlcgen.ListAdminVideosParams) ([]sqlcgen.ListAdminVideosRow, error) {
+// adminInventory mirrors the real ListAdminVideos/CountAdminVideos pair: it
+// builds the unfiltered inventory, applies EVERY filter, then sorts. Both fake
+// methods go through it for the same reason the SQL pair shares its WHERE — a
+// total that counts a different set than the page it labels is worse than none.
+func (f *videoFakeRepo) adminInventory(a sqlcgen.ListAdminVideosParams) []sqlcgen.ListAdminVideosRow {
+	contains := func(set []string, v string) bool {
+		for _, x := range set {
+			if x == v {
+				return true
+			}
+		}
+		return false
+	}
 	var rows []sqlcgen.ListAdminVideosRow
 	for _, r := range f.videos {
 		if a.Query != nil && !strings.Contains(strings.ToLower(r.Title), strings.ToLower(*a.Query)) {
+			continue
+		}
+		if len(a.States) > 0 && !contains(a.States, r.State) {
+			continue
+		}
+		if len(a.Privacies) > 0 && !contains(a.Privacies, r.Privacy) {
+			continue
+		}
+		// The fake holds only local videos, so scope=remote matches nothing.
+		if a.Scope == "remote" {
 			continue
 		}
 		blocked := false
@@ -819,32 +867,89 @@ func (f *videoFakeRepo) ListAdminVideos(_ context.Context, a sqlcgen.ListAdminVi
 			blocked, _ = f.blocks.IsVideoBlocked(context.Background(), r.ID)
 		}
 		ch, cn := f.channelInfo(r.ChannelID)
+		if a.Channel != nil && ch != *a.Channel {
+			continue
+		}
+		if a.PublishedAfter.Valid && r.CreatedAt.Before(a.PublishedAfter.Time) {
+			continue
+		}
+		if a.PublishedBefore.Valid && r.CreatedAt.After(a.PublishedBefore.Time) {
+			continue
+		}
 		var duration *int32
 		if md, ok := f.metadata[r.ID]; ok {
 			duration = md.DurationSeconds
 		}
 		var hasThumbnail, hasOriginal bool
 		var sizeBytes int64
+		var webVideoCount int32
 		for _, file := range f.files[r.ID] {
 			hasThumbnail = hasThumbnail || file.Kind == "thumbnail"
 			hasOriginal = hasOriginal || file.Kind == "original"
+			if file.Kind == "rendition" || file.Kind == "webm" {
+				webVideoCount++
+			}
 			sizeBytes += file.SizeBytes
+		}
+		if a.HasOriginal != nil && hasOriginal != *a.HasOriginal {
+			continue
+		}
+		if a.HasHls != nil && *a.HasHls {
+			continue // the fake records no renditions, so hls_count is always 0
+		}
+		if a.HasWebFiles != nil && (webVideoCount > 0) != *a.HasWebFiles {
+			continue
 		}
 		rows = append(rows, sqlcgen.ListAdminVideosRow{
 			ID: r.ID, Title: r.Title, Privacy: r.Privacy, State: r.State,
 			ChannelHandle: ch, ChannelDisplayName: cn,
 			Views: f.views[r.ID], CreatedAt: r.CreatedAt, DurationSeconds: duration,
 			IsLocal: true, IsSensitive: r.IsSensitive, HasThumbnail: hasThumbnail,
-			HasOriginal: hasOriginal, SizeBytes: sizeBytes, Blocked: blocked,
+			HasOriginal: hasOriginal, WebVideoCount: webVideoCount,
+			SizeBytes: sizeBytes, Blocked: blocked,
 		})
 	}
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
+	less := func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) }
+	switch a.Sort {
+	case "created_at", "published_at":
+		less = func(i, j int) bool { return rows[i].CreatedAt.Before(rows[j].CreatedAt) }
+	case "views":
+		less = func(i, j int) bool { return rows[i].Views < rows[j].Views }
+	case "-views":
+		less = func(i, j int) bool { return rows[i].Views > rows[j].Views }
+	case "title":
+		less = func(i, j int) bool { return rows[i].Title < rows[j].Title }
+	case "-title":
+		less = func(i, j int) bool { return rows[i].Title > rows[j].Title }
+	case "state":
+		less = func(i, j int) bool { return rows[i].State < rows[j].State }
+	case "-state":
+		less = func(i, j int) bool { return rows[i].State > rows[j].State }
+	case "size_bytes":
+		less = func(i, j int) bool { return rows[i].SizeBytes < rows[j].SizeBytes }
+	case "-size_bytes":
+		less = func(i, j int) bool { return rows[i].SizeBytes > rows[j].SizeBytes }
+	}
+	sort.SliceStable(rows, less)
+	return rows
+}
+
+func (f *videoFakeRepo) ListAdminVideos(_ context.Context, a sqlcgen.ListAdminVideosParams) ([]sqlcgen.ListAdminVideosRow, error) {
+	rows := f.adminInventory(a)
 	lo := min(int(a.ResultOffset), len(rows))
 	rows = rows[lo:]
 	if a.ResultLimit > 0 && int(a.ResultLimit) < len(rows) {
 		rows = rows[:a.ResultLimit]
 	}
 	return rows, nil
+}
+
+func (f *videoFakeRepo) CountAdminVideos(_ context.Context, a sqlcgen.CountAdminVideosParams) (int64, error) {
+	return int64(len(f.adminInventory(sqlcgen.ListAdminVideosParams{
+		Query: a.Query, States: a.States, Privacies: a.Privacies, Scope: a.Scope,
+		Channel: a.Channel, PublishedAfter: a.PublishedAfter, PublishedBefore: a.PublishedBefore,
+		HasOriginal: a.HasOriginal, HasHls: a.HasHls, HasWebFiles: a.HasWebFiles,
+	}))), nil
 }
 
 func (f *videoFakeRepo) hasThumb(id uuid.UUID) bool {
@@ -2400,3 +2505,59 @@ func TestFeedCardsCarryChannelInfo(t *testing.T) {
 
 // RenewCaptionJobLease is the lease heartbeat; the fake has no leases to keep.
 func (*captionJobFakeRepo) RenewCaptionJobLease(_ context.Context, _ uuid.UUID) error { return nil }
+
+// Every Count delegates to its List so the fake pair can never disagree — the
+// invariant the real Count/List SQL pairs must hold.
+func (f *videoFakeRepo) CountVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error) {
+	rows, err := f.ListVideosByChannel(ctx, sqlcgen.ListVideosByChannelParams{ChannelID: channelID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *videoFakeRepo) CountPublicVideosByChannelVisible(ctx context.Context, a sqlcgen.CountPublicVideosByChannelVisibleParams) (int64, error) {
+	rows, err := f.ListPublicVideosByChannel(ctx, sqlcgen.ListPublicVideosByChannelParams{
+		ChannelID: a.ChannelID, HideSensitive: a.HideSensitive, ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
+}
+
+func (f *videoFakeRepo) CountQuarantinedVideos(ctx context.Context) (int64, error) {
+	rows, err := f.ListQuarantinedVideos(ctx, sqlcgen.ListQuarantinedVideosParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *videoFakeRepo) CountPublicVideosSorted(ctx context.Context, a sqlcgen.CountPublicVideosSortedParams) (int64, error) {
+	rows, err := f.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
+		IncludeRemote: a.IncludeRemote, ViewerID: a.ViewerID, Tag: a.Tag,
+		Category: a.Category, Language: a.Language, HideSensitive: a.HideSensitive,
+		Sort: "recent", ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
+}
+
+func (f *videoFakeRepo) CountSubscriptionVideos(ctx context.Context, followerID uuid.UUID) (int64, error) {
+	rows, err := f.ListSubscriptionVideos(ctx, sqlcgen.ListSubscriptionVideosParams{FollowerID: followerID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *videoFakeRepo) CountSavedVideos(ctx context.Context, userID uuid.UUID) (int64, error) {
+	rows, err := f.ListSavedVideos(ctx, sqlcgen.ListSavedVideosParams{UserID: userID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *videoFakeRepo) CountWatchHistory(ctx context.Context, userID uuid.UUID) (int64, error) {
+	rows, err := f.ListWatchHistory(ctx, sqlcgen.ListWatchHistoryParams{UserID: userID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *videoFakeRepo) CountWatchHistoryInProgress(ctx context.Context, userID uuid.UUID) (int64, error) {
+	rows, err := f.ListWatchHistoryInProgress(ctx, sqlcgen.ListWatchHistoryInProgressParams{UserID: userID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *videoFakeRepo) CountSearchPublicVideos(ctx context.Context, a sqlcgen.CountSearchPublicVideosParams) (int64, error) {
+	rows, err := f.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
+		Query: a.Query, ViewerID: a.ViewerID, Tag: a.Tag, Category: a.Category,
+		Language: a.Language, HideSensitive: a.HideSensitive, ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
+}

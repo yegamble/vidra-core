@@ -40,6 +40,17 @@ WHERE wh.user_id = sqlc.arg('user_id')
 ORDER BY wh.updated_at DESC, v.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: CountWatchHistory :one
+-- How many rows ListWatchHistory would return, ignoring pagination. The
+-- public+published predicate must stay identical: history entries for videos
+-- since made private are not listed and must not be counted.
+SELECT count(*)::bigint
+FROM watch_history wh
+JOIN videos v ON v.id = wh.video_id
+JOIN channels c ON c.id = v.channel_id
+WHERE wh.user_id = sqlc.arg('user_id')
+  AND v.privacy = 'public' AND v.state = 'published';
+
 -- name: ListWatchHistoryInProgress :many
 -- The user's IN-PROGRESS watch history (the "Continue watching" shelf): same
 -- shape and ordering as ListWatchHistory, but excludes entries that are barely
@@ -71,6 +82,21 @@ WHERE wh.user_id = sqlc.arg('user_id')
        OR wh.position_seconds::float / vm.duration_seconds::float < 0.95)
 ORDER BY wh.updated_at DESC, v.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountWatchHistoryInProgress :one
+-- How many rows ListWatchHistoryInProgress would return, ignoring pagination.
+-- The started/not-finished window must stay identical to it.
+SELECT count(*)::bigint
+FROM watch_history wh
+JOIN videos v ON v.id = wh.video_id
+JOIN channels c ON c.id = v.channel_id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE wh.user_id = sqlc.arg('user_id')
+  AND v.privacy = 'public' AND v.state = 'published'
+  AND wh.position_seconds >= 5
+  AND (vm.duration_seconds IS NULL
+       OR vm.duration_seconds <= 0
+       OR wh.position_seconds::float / vm.duration_seconds::float < 0.95);
 
 -- name: DeleteWatchHistoryEntry :exec
 -- Remove a single video from the user's history (idempotent). No public-video

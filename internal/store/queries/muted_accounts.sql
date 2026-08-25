@@ -18,3 +18,10 @@ JOIN users u ON u.id = m.muted_id
 WHERE m.muter_id = $1
 ORDER BY m.created_at DESC, m.muted_id
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountMutedAccounts :one
+-- How many rows ListMutedAccounts would return, ignoring pagination.
+SELECT count(*)::bigint
+FROM muted_accounts m
+JOIN users u ON u.id = m.muted_id
+WHERE m.muter_id = $1;

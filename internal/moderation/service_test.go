@@ -107,8 +107,14 @@ func (f *fakeRepo) ListReports(_ context.Context, a sqlcgen.ListReportsParams) (
 	var rows []sqlcgen.ListReportsRow
 	for i := len(f.reports) - 1; i >= 0; i-- { // newest first
 		r := f.reports[i]
-		if a.OpenOnly && r.status != StatusOpen {
-			continue
+		if a.Status != nil {
+			if *a.Status == StatusResolved {
+				if r.status == StatusOpen {
+					continue
+				}
+			} else if r.status != *a.Status {
+				continue
+			}
 		}
 		row := sqlcgen.ListReportsRow{
 			ID: r.id, TargetType: r.targetType, VideoID: r.videoID, CommentID: r.commentID,
@@ -279,7 +285,7 @@ func TestReportListAndDedup(t *testing.T) {
 		t.Fatalf("ReportComment: %v", err)
 	}
 
-	items, err := svc.List(ctx, false, 20, 0)
+	items, _, err := svc.List(ctx, "", 20, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -311,7 +317,7 @@ func TestReportAccount(t *testing.T) {
 	if _, err := svc.ReportAccount(ctx, reporter, target, "harassment again"); err != nil {
 		t.Fatalf("ReportAccount dup: %v", err)
 	}
-	items, err := svc.List(ctx, false, 20, 0)
+	items, _, err := svc.List(ctx, "", 20, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -346,7 +352,7 @@ func TestReportMessage(t *testing.T) {
 	if _, err := svc.ReportMessage(ctx, reporter, msgID, "the reported text", "abuse again"); err != nil {
 		t.Fatalf("ReportMessage dup: %v", err)
 	}
-	items, err := svc.List(ctx, false, 20, 0)
+	items, _, err := svc.List(ctx, "", 20, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -396,7 +402,7 @@ func TestListBlocked(t *testing.T) {
 	mod := uuid.New()
 	v1, v2 := uuid.New(), uuid.New()
 
-	if items, _ := svc.ListBlocked(ctx, 20, 0); len(items) != 0 {
+	if items, _, _ := svc.ListBlocked(ctx, 20, 0); len(items) != 0 {
 		t.Fatalf("blocked list before any block = %d, want 0", len(items))
 	}
 	if err := svc.BlockVideo(ctx, mod, v1, "spam"); err != nil {
@@ -405,7 +411,7 @@ func TestListBlocked(t *testing.T) {
 	if err := svc.BlockVideo(ctx, mod, v2, "abuse"); err != nil {
 		t.Fatalf("block v2: %v", err)
 	}
-	items, err := svc.ListBlocked(ctx, 20, 0)
+	items, _, err := svc.ListBlocked(ctx, 20, 0)
 	if err != nil {
 		t.Fatalf("ListBlocked: %v", err)
 	}
@@ -423,7 +429,7 @@ func TestListBlocked(t *testing.T) {
 	if err := svc.UnblockVideo(ctx, v1); err != nil {
 		t.Fatalf("unblock v1: %v", err)
 	}
-	items, _ = svc.ListBlocked(ctx, 20, 0)
+	items, _, _ = svc.ListBlocked(ctx, 20, 0)
 	if len(items) != 1 || items[0].VideoID != v2 {
 		t.Errorf("blocked list after unblock = %+v, want [v2]", items)
 	}
@@ -443,7 +449,7 @@ func TestResolveAndNotFound(t *testing.T) {
 	reporter, vid, mod := uuid.New(), uuid.New(), uuid.New()
 	_, _ = svc.ReportVideo(ctx, reporter, vid, "spam")
 
-	items, _ := svc.List(ctx, true, 20, 0)
+	items, _, _ := svc.List(ctx, StatusOpen, 20, 0)
 	id := items[0].ID
 
 	got, err := svc.Resolve(ctx, mod, id, StatusAccepted, "actioned")
@@ -455,7 +461,7 @@ func TestResolveAndNotFound(t *testing.T) {
 		t.Errorf("Resolve reporter = %s, want %s", got, reporter)
 	}
 	// It's no longer in the open queue.
-	if open, _ := svc.List(ctx, true, 20, 0); len(open) != 0 {
+	if open, _, _ := svc.List(ctx, StatusOpen, 20, 0); len(open) != 0 {
 		t.Errorf("open after resolve = %d, want 0", len(open))
 	}
 	// Unknown id → ErrNotFound.
@@ -475,7 +481,7 @@ func TestDeleteReport(t *testing.T) {
 	if _, err := svc.ReportVideo(ctx, reporter, video, "spam"); err != nil {
 		t.Fatalf("ReportVideo: %v", err)
 	}
-	items, _ := svc.List(ctx, false, 20, 0)
+	items, _, _ := svc.List(ctx, "", 20, 0)
 	if len(items) != 1 {
 		t.Fatalf("reports = %d, want 1", len(items))
 	}
@@ -484,7 +490,7 @@ func TestDeleteReport(t *testing.T) {
 	if err := svc.Delete(ctx, id); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if items, _ := svc.List(ctx, false, 20, 0); len(items) != 0 {
+	if items, _, _ := svc.List(ctx, "", 20, 0); len(items) != 0 {
 		t.Fatalf("reports after delete = %d, want 0", len(items))
 	}
 	// Idempotent: unknown/already-deleted ids are a no-op.
@@ -494,4 +500,19 @@ func TestDeleteReport(t *testing.T) {
 	if err := svc.Delete(ctx, uuid.New()); err != nil {
 		t.Errorf("delete unknown = %v, want nil", err)
 	}
+}
+
+func (f *fakeRepo) CountReports(ctx context.Context, status *string) (int64, error) {
+	rows, err := f.ListReports(ctx, sqlcgen.ListReportsParams{Status: status, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountBlockedVideos(ctx context.Context) (int64, error) {
+	rows, err := f.ListBlockedVideos(ctx, sqlcgen.ListBlockedVideosParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountBlockedRemoteVideos(ctx context.Context) (int64, error) {
+	rows, err := f.ListBlockedRemoteVideos(ctx, sqlcgen.ListBlockedRemoteVideosParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

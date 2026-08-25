@@ -72,7 +72,7 @@ func (f *fakeRepo) ListRegistrationRequests(_ context.Context, a sqlcgen.ListReg
 	var rows []sqlcgen.ListRegistrationRequestsRow
 	for i := len(f.regReqs) - 1; i >= 0; i-- { // newest first
 		r := f.regReqs[i]
-		if a.PendingOnly && r.status != "pending" {
+		if a.Status != nil && r.status != *a.Status {
 			continue
 		}
 		rows = append(rows, sqlcgen.ListRegistrationRequestsRow{
@@ -539,4 +539,9 @@ func TestLogoutUnknownTokenIsNoError(t *testing.T) {
 	if err := svc.Logout(context.Background(), "unknown"); err != nil {
 		t.Fatalf("Logout(unknown) = %v, want nil (idempotent)", err)
 	}
+}
+
+func (f *fakeRepo) CountRegistrationRequests(ctx context.Context, status *string) (int64, error) {
+	rows, err := f.ListRegistrationRequests(ctx, sqlcgen.ListRegistrationRequestsParams{Status: status, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

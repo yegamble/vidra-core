@@ -63,7 +63,7 @@ func TestBlockUnblockList(t *testing.T) {
 	ctx := context.Background()
 	blocker, target := uuid.New(), uuid.New()
 
-	if items, _ := svc.List(ctx, blocker, 20, 0); len(items) != 0 {
+	if items, _, _ := svc.List(ctx, blocker, 20, 0); len(items) != 0 {
 		t.Fatalf("blocked before = %d, want 0", len(items))
 	}
 	if err := svc.Block(ctx, blocker, target); err != nil {
@@ -73,7 +73,7 @@ func TestBlockUnblockList(t *testing.T) {
 	if err := svc.Block(ctx, blocker, target); err != nil {
 		t.Fatalf("re-Block: %v", err)
 	}
-	items, err := svc.List(ctx, blocker, 20, 0)
+	items, _, err := svc.List(ctx, blocker, 20, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestBlockUnblockList(t *testing.T) {
 	if err := svc.Unblock(ctx, blocker, target); err != nil {
 		t.Errorf("idempotent Unblock: %v", err)
 	}
-	if items, _ := svc.List(ctx, blocker, 20, 0); len(items) != 0 {
+	if items, _, _ := svc.List(ctx, blocker, 20, 0); len(items) != 0 {
 		t.Errorf("blocked after unblock = %d, want 0", len(items))
 	}
 }
@@ -126,4 +126,9 @@ func TestIsBlockedBetweenIsSymmetric(t *testing.T) {
 	if blocked, _ := svc.IsBlockedBetween(ctx, bob, ada); !blocked {
 		t.Error("bob→ada should also be blocked (symmetric)")
 	}
+}
+
+func (f *fakeRepo) CountBlockedUsers(ctx context.Context, blockerID uuid.UUID) (int64, error) {
+	rows, err := f.ListBlockedUsers(ctx, sqlcgen.ListBlockedUsersParams{BlockerID: blockerID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

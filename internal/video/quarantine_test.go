@@ -87,7 +87,7 @@ func TestProcessQuarantinesNonPrivilegedUpload(t *testing.T) {
 	}
 
 	// The moderation queue lists it.
-	queue, err := svc.ListQuarantined(context.Background(), 20, 0)
+	queue, _, err := svc.ListQuarantined(context.Background(), 20, 0)
 	if err != nil || len(queue) != 1 || queue[0].ID != id {
 		t.Fatalf("ListQuarantined = (%+v, %v), want the held video", queue, err)
 	}
@@ -108,7 +108,7 @@ func TestProcessQuarantinesNonPrivilegedUpload(t *testing.T) {
 	if _, err := svc.ApproveQuarantined(context.Background(), id); !errors.Is(err, ErrNotQuarantined) {
 		t.Errorf("re-approve = %v, want ErrNotQuarantined", err)
 	}
-	if queue, _ := svc.ListQuarantined(context.Background(), 20, 0); len(queue) != 0 {
+	if queue, _, _ := svc.ListQuarantined(context.Background(), 20, 0); len(queue) != 0 {
 		t.Errorf("queue after approve = %d entries, want 0", len(queue))
 	}
 }

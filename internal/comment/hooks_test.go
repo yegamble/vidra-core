@@ -116,7 +116,7 @@ func TestListByVideoFlagsRemoteRows(t *testing.T) {
 	// The fake list mirrors the SQL projection for remote rows.
 	repo.remoteRows = map[uuid.UUID]remoteRowMeta{rc.ID: {name: "movies", domain: "tube.example"}}
 
-	items, err := svc.ListByVideo(context.Background(), videoID, uuid.Nil, false, 20, 0)
+	items, _, err := svc.ListByVideo(context.Background(), videoID, uuid.Nil, false, 20, 0)
 	if err != nil {
 		t.Fatalf("ListByVideo: %v", err)
 	}

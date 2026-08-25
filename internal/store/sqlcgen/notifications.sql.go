@@ -13,6 +13,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countNotifications = `-- name: CountNotifications :one
+SELECT count(*)::bigint
+FROM notifications n
+WHERE n.user_id = $1
+  AND (NOT $2::bool OR n.read_at IS NULL)
+`
+
+type CountNotificationsParams struct {
+	UserID     uuid.UUID `json:"user_id"`
+	UnreadOnly bool      `json:"unread_only"`
+}
+
+// How many rows ListNotifications would return for the same user and
+// ?unread filter, ignoring pagination. This is the LIST total; the
+// CountUnreadNotifications badge below is a different question and both are
+// returned side by side (an unread_count of 3 says nothing about how many
+// pages of read notifications sit behind it).
+func (q *Queries) CountNotifications(ctx context.Context, arg CountNotificationsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countNotifications, arg.UserID, arg.UnreadOnly)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countUnreadNotifications = `-- name: CountUnreadNotifications :one
 SELECT count(*) FROM notifications
 WHERE user_id = $1 AND read_at IS NULL

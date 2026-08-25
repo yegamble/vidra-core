@@ -331,7 +331,7 @@ func (f *authFakeRepo) ListRegistrationRequests(_ context.Context, a sqlcgen.Lis
 	var rows []sqlcgen.ListRegistrationRequestsRow
 	for i := len(f.regReqs) - 1; i >= 0; i-- { // newest first
 		r := f.regReqs[i]
-		if a.PendingOnly && r.status != "pending" {
+		if a.Status != nil && r.status != *a.Status {
 			continue
 		}
 		rows = append(rows, sqlcgen.ListRegistrationRequestsRow{
@@ -1167,4 +1167,9 @@ func TestDeactivateAccountValidatesPassword(t *testing.T) {
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("status = %d, want 422", rec.Code)
 	}
+}
+
+func (f *authFakeRepo) CountRegistrationRequests(ctx context.Context, status *string) (int64, error) {
+	rows, err := f.ListRegistrationRequests(ctx, sqlcgen.ListRegistrationRequestsParams{Status: status, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

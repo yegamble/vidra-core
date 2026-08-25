@@ -13,6 +13,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countReports = `-- name: CountReports :one
+SELECT count(*)::bigint
+FROM reports r
+JOIN users u ON u.id = r.reporter_id
+WHERE ($1::text IS NULL
+       -- 'resolved' is the queue's other half, not a stored value: reports.status
+       -- is open/accepted/rejected, so "resolved" means "no longer open".
+       OR ($1::text = 'resolved' AND r.status <> 'open')
+       OR r.status = $1::text)
+`
+
+// How many rows ListReports would return for the same status filter, ignoring
+// pagination. The WHERE must stay identical to it; the users JOIN is part of
+// the predicate (a report whose reporter account is gone is not listed).
+func (q *Queries) CountReports(ctx context.Context, status *string) (int64, error) {
+	row := q.db.QueryRow(ctx, countReports, status)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createAccountReport = `-- name: CreateAccountReport :one
 INSERT INTO reports (reporter_id, target_type, reported_user_id, reason)
 VALUES ($1, 'account', $2, $3)
@@ -172,15 +193,19 @@ LEFT JOIN comments cm ON cm.id = r.comment_id
 LEFT JOIN users ru ON ru.id = r.reported_user_id
 LEFT JOIN remote_videos rv ON rv.id = r.remote_video_id
 LEFT JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
-WHERE (NOT $1::bool OR r.status = 'open')
+WHERE ($1::text IS NULL
+       -- 'resolved' is the queue's other half, not a stored value: reports.status
+       -- is open/accepted/rejected, so "resolved" means "no longer open".
+       OR ($1::text = 'resolved' AND r.status <> 'open')
+       OR r.status = $1::text)
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT $3 OFFSET $2
 `
 
 type ListReportsParams struct {
-	OpenOnly     bool  `json:"open_only"`
-	ResultOffset int32 `json:"result_offset"`
-	ResultLimit  int32 `json:"result_limit"`
+	Status       *string `json:"status"`
+	ResultOffset int32   `json:"result_offset"`
+	ResultLimit  int32   `json:"result_limit"`
 }
 
 type ListReportsRow struct {
@@ -207,10 +232,12 @@ type ListReportsRow struct {
 
 // The moderation queue, newest first, with the reporter's username and the
 // target context (video title / comment body / reported account username /
-// remote video title+domain / message body snapshot). When open_only is true,
-// only unresolved (status='open') reports are returned.
+// remote video title+domain / message body snapshot). status is the exact
+// lifecycle state to show, or NULL for all of them. It used to be an open_only
+// BOOLEAN fed by `?status == "open"` in the handler, so ?status=resolved
+// silently returned the whole queue.
 func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]ListReportsRow, error) {
-	rows, err := q.db.Query(ctx, listReports, arg.OpenOnly, arg.ResultOffset, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listReports, arg.Status, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}

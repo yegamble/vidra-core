@@ -60,6 +60,32 @@ WHERE c.video_id = $1
 ORDER BY (c.id IS NOT DISTINCT FROM v.pinned_comment_id) DESC, c.created_at DESC, c.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: CountCommentsByVideo :one
+-- How many comments ListCommentsByVideo would return for the same viewer,
+-- ignoring pagination. Every mute/block/instance predicate is repeated verbatim:
+-- the count is per-VIEWER, so counting the raw comments rows would tell a viewer
+-- there are more comments than they can ever page to.
+SELECT count(*)::bigint
+FROM comments c
+JOIN videos v ON v.id = c.video_id
+LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
+WHERE c.video_id = $1
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.user_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.user_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_instances mi
+      WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
+  );
+
 -- name: GetComment :one
 SELECT id, video_id, user_id, body, created_at, updated_at, parent_id,
        remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted
@@ -142,6 +168,17 @@ JOIN videos v ON v.id = c.video_id
 WHERE (sqlc.narg('query')::text IS NULL OR c.body ILIKE '%' || sqlc.narg('query') || '%')
 ORDER BY c.created_at DESC, c.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountAdminComments :one
+-- How many rows ListAdminComments would return for the same ?q filter, ignoring
+-- pagination. CountComments above answers a DIFFERENT question (local comments
+-- for NodeInfo, remote-authored ones excluded) and must not be reused here: it
+-- would under-report the admin queue by exactly the federated comments a
+-- moderator most needs to see. The videos JOIN is part of the predicate.
+SELECT count(*)::bigint
+FROM comments c
+JOIN videos v ON v.id = c.video_id
+WHERE (sqlc.narg('query')::text IS NULL OR c.body ILIKE '%' || sqlc.narg('query') || '%');
 
 -- name: TombstoneUserComments :exec
 -- §1 hard delete: a deleted account's comments become tombstones — the body is

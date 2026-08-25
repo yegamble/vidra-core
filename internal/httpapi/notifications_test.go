@@ -504,3 +504,10 @@ func TestDisabledPrefSuppressesFollowNotification(t *testing.T) {
 		t.Errorf("unread after re-enabled follow = %d, want 1", got)
 	}
 }
+
+func (f *notifFakeRepo) CountNotifications(ctx context.Context, a sqlcgen.CountNotificationsParams) (int64, error) {
+	rows, err := f.ListNotifications(ctx, sqlcgen.ListNotificationsParams{
+		UserID: a.UserID, UnreadOnly: a.UnreadOnly, ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
+}

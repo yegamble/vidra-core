@@ -25,7 +25,11 @@ const (
 	TargetRemoteVideo = "remote_video"
 	TargetMessage     = "message"
 
-	StatusOpen     = "open"
+	StatusOpen = "open"
+	// StatusResolved is a QUERY value, not a stored one: a resolved report is
+	// accepted or rejected. It exists so the moderation queue can be asked for
+	// "everything I already dealt with" in one filter.
+	StatusResolved = "resolved"
 	StatusAccepted = "accepted"
 	StatusRejected = "rejected"
 )
@@ -53,17 +57,20 @@ type Repository interface {
 	CreateAccountReport(ctx context.Context, arg sqlcgen.CreateAccountReportParams) (uuid.UUID, error)
 	CreateMessageReport(ctx context.Context, arg sqlcgen.CreateMessageReportParams) (uuid.UUID, error)
 	ListReports(ctx context.Context, arg sqlcgen.ListReportsParams) ([]sqlcgen.ListReportsRow, error)
+	CountReports(ctx context.Context, status *string) (int64, error)
 	ResolveReport(ctx context.Context, arg sqlcgen.ResolveReportParams) (uuid.UUID, error)
 	DeleteReport(ctx context.Context, id uuid.UUID) (int64, error)
 	BlockVideo(ctx context.Context, arg sqlcgen.BlockVideoParams) (int64, error)
 	UnblockVideo(ctx context.Context, videoID uuid.UUID) (int64, error)
 	IsVideoBlocked(ctx context.Context, videoID uuid.UUID) (bool, error)
 	ListBlockedVideos(ctx context.Context, arg sqlcgen.ListBlockedVideosParams) ([]sqlcgen.ListBlockedVideosRow, error)
+	CountBlockedVideos(ctx context.Context) (int64, error)
 	// Remote-video moderation (remote-content §8).
 	CreateRemoteVideoReport(ctx context.Context, arg sqlcgen.CreateRemoteVideoReportParams) (uuid.UUID, error)
 	BlockRemoteVideo(ctx context.Context, arg sqlcgen.BlockRemoteVideoParams) (int64, error)
 	UnblockRemoteVideo(ctx context.Context, remoteVideoID uuid.UUID) (int64, error)
 	ListBlockedRemoteVideos(ctx context.Context, arg sqlcgen.ListBlockedRemoteVideosParams) ([]sqlcgen.ListBlockedRemoteVideosRow, error)
+	CountBlockedRemoteVideos(ctx context.Context) (int64, error)
 }
 
 // Service holds the moderation application logic.
@@ -196,16 +203,24 @@ func (s *Service) ReportMessage(ctx context.Context, reporterID, messageID uuid.
 	return id, err
 }
 
-// List returns the moderation queue, newest first. When openOnly is true, only
-// unresolved reports are returned. The caller clamps limit/offset.
-func (s *Service) List(ctx context.Context, openOnly bool, limit, offset int32) ([]Item, error) {
+// List returns the moderation queue, newest first, together with how many
+// reports match the same status filter (so a caller can tell "last page" from
+// "there is more"). status is the exact lifecycle state to show, or "" for all
+// of them — it used to be an openOnly bool, which made ?status=resolved
+// indistinguishable from no filter. The caller clamps limit/offset.
+func (s *Service) List(ctx context.Context, status string, limit, offset int32) ([]Item, int64, error) {
+	filter := nilIfEmpty(status)
 	rows, err := s.repo.ListReports(ctx, sqlcgen.ListReportsParams{
-		OpenOnly:     openOnly,
+		Status:       filter,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountReports(ctx, filter)
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]Item, 0, len(rows))
 	for _, r := range rows {
@@ -231,7 +246,7 @@ func (s *Service) List(ctx context.Context, openOnly bool, limit, offset int32) 
 			MessageBody:       r.MessageBodySnapshot,
 		})
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // Resolve marks a report accepted/rejected with a moderator note and returns
@@ -306,15 +321,19 @@ type BlockedItem struct {
 	BlockedAt          time.Time
 }
 
-// ListBlocked returns currently-blocked videos, newest block first. The caller
-// clamps limit/offset.
-func (s *Service) ListBlocked(ctx context.Context, limit, offset int32) ([]BlockedItem, error) {
+// ListBlocked returns currently-blocked videos, newest block first, with the
+// total matching the same query. The caller clamps limit/offset.
+func (s *Service) ListBlocked(ctx context.Context, limit, offset int32) ([]BlockedItem, int64, error) {
 	rows, err := s.repo.ListBlockedVideos(ctx, sqlcgen.ListBlockedVideosParams{
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountBlockedVideos(ctx)
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]BlockedItem, 0, len(rows))
 	for _, r := range rows {
@@ -330,7 +349,7 @@ func (s *Service) ListBlocked(ctx context.Context, limit, offset int32) ([]Block
 			BlockedAt:          r.BlockedAt,
 		})
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // BlockRemoteVideo hides a federated remote video from all local surfaces
@@ -373,14 +392,18 @@ type BlockedRemoteItem struct {
 }
 
 // ListBlockedRemote returns currently-blocked remote videos, newest block
-// first. The caller clamps limit/offset.
-func (s *Service) ListBlockedRemote(ctx context.Context, limit, offset int32) ([]BlockedRemoteItem, error) {
+// first, with the total matching the same query. The caller clamps limit/offset.
+func (s *Service) ListBlockedRemote(ctx context.Context, limit, offset int32) ([]BlockedRemoteItem, int64, error) {
 	rows, err := s.repo.ListBlockedRemoteVideos(ctx, sqlcgen.ListBlockedRemoteVideosParams{
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountBlockedRemoteVideos(ctx)
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]BlockedRemoteItem, 0, len(rows))
 	for _, r := range rows {
@@ -396,7 +419,7 @@ func (s *Service) ListBlockedRemote(ctx context.Context, limit, offset int32) ([
 			BlockedAt:         r.BlockedAt,
 		})
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // pgUUID wraps a uuid.UUID as a non-null pgtype.UUID for a query parameter.
@@ -434,4 +457,14 @@ func deref(p *string) string {
 func isForeignKeyViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
+
+// nilIfEmpty maps an empty filter string to a NULL query parameter ("no
+// filter"), so a caller passing "" gets every row rather than rows whose status
+// is the empty string.
+func nilIfEmpty(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
 }

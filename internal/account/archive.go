@@ -212,7 +212,7 @@ func (s *Service) buildArchive(ctx context.Context, user sqlcgen.User) (Archive,
 		})
 	}
 
-	playlists, err := s.repo.ListPlaylistsByOwner(ctx, user.ID)
+	playlists, err := s.repo.ListPlaylistsByOwnerForExport(ctx, user.ID)
 	if err != nil {
 		return Archive{}, fmt.Errorf("account: export playlists: %w", err)
 	}

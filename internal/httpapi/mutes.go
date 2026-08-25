@@ -22,8 +22,7 @@ type mutedAccountView struct {
 // mutedAccountListResponse is the paginated list of accounts the caller has muted.
 type mutedAccountListResponse struct {
 	Accounts []mutedAccountView `json:"accounts"`
-	Limit    int                `json:"limit"`
-	Offset   int                `json:"offset"`
+	pageMeta
 }
 
 // handleMuteAccount mutes another account for the caller. Behind requireAuth.
@@ -74,7 +73,7 @@ func (s *Server) handleListMutedAccounts(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
-	items, err := s.mutesvc.List(c.Request().Context(), userID, page.Limit32(), page.Offset32())
+	items, total, err := s.mutesvc.List(c.Request().Context(), userID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -87,5 +86,5 @@ func (s *Server) handleListMutedAccounts(c echo.Context) error {
 			MutedAt:     it.MutedAt,
 		})
 	}
-	return c.JSON(http.StatusOK, mutedAccountListResponse{Accounts: views, Limit: page.Limit, Offset: page.Offset})
+	return c.JSON(http.StatusOK, mutedAccountListResponse{Accounts: views, pageMeta: page.meta(total)})
 }

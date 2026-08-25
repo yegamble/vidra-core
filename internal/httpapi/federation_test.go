@@ -584,3 +584,9 @@ func TestFederationRoutesAbsentWhenDisabled(t *testing.T) {
 		}
 	}
 }
+
+func (fakeFedRepo) CountPendingRemoteFollows(context.Context) (int64, error) { return 0, nil }
+
+func (fakeFedRepo) CountRemoteChannelFollows(context.Context, uuid.UUID) (int64, error) {
+	return 0, nil
+}

@@ -129,8 +129,14 @@ func (f *moderationFakeRepo) ListReports(_ context.Context, a sqlcgen.ListReport
 	var rows []sqlcgen.ListReportsRow
 	for i := len(f.reports) - 1; i >= 0; i-- {
 		r := f.reports[i]
-		if a.OpenOnly && r.status != "open" {
-			continue
+		if a.Status != nil {
+			if *a.Status == "resolved" {
+				if r.status == "open" {
+					continue
+				}
+			} else if r.status != *a.Status {
+				continue
+			}
 		}
 		row := sqlcgen.ListReportsRow{
 			ID: r.id, TargetType: r.targetType, VideoID: r.videoID, CommentID: r.commentID,
@@ -847,4 +853,21 @@ func TestNewReportEmailsOperator(t *testing.T) {
 	if got := unreadCount(t, srv, admin); got != 2 {
 		t.Errorf("admin unread = %d, want 2 (in-app fan-out unaffected by the email switch)", got)
 	}
+}
+
+// Each Count delegates to its List so the fake pair cannot disagree — the same
+// invariant the real Count/List SQL pairs must hold.
+func (f *moderationFakeRepo) CountReports(ctx context.Context, status *string) (int64, error) {
+	rows, err := f.ListReports(ctx, sqlcgen.ListReportsParams{Status: status, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *moderationFakeRepo) CountBlockedVideos(ctx context.Context) (int64, error) {
+	rows, err := f.ListBlockedVideos(ctx, sqlcgen.ListBlockedVideosParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *moderationFakeRepo) CountBlockedRemoteVideos(ctx context.Context) (int64, error) {
+	rows, err := f.ListBlockedRemoteVideos(ctx, sqlcgen.ListBlockedRemoteVideosParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

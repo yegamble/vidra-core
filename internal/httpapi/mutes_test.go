@@ -161,3 +161,8 @@ func TestMuteAccountSelfUnknownAndAuth(t *testing.T) {
 		}
 	}
 }
+
+func (f *muteFakeRepo) CountMutedAccounts(ctx context.Context, muterID uuid.UUID) (int64, error) {
+	rows, err := f.ListMutedAccounts(ctx, sqlcgen.ListMutedAccountsParams{MuterID: muterID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}

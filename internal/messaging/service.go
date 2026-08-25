@@ -192,6 +192,7 @@ type Repository interface {
 	ListMessages(ctx context.Context, arg sqlcgen.ListMessagesParams) ([]sqlcgen.ListMessagesRow, error)
 	ListMessagesBefore(ctx context.Context, arg sqlcgen.ListMessagesBeforeParams) ([]sqlcgen.ListMessagesBeforeRow, error)
 	ListConversations(ctx context.Context, arg sqlcgen.ListConversationsParams) ([]sqlcgen.ListConversationsRow, error)
+	CountConversations(ctx context.Context, userID uuid.UUID) (int64, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
 	GetUserByUsername(ctx context.Context, lower string) (sqlcgen.User, error)
 	// DM completeness (§14).
@@ -448,14 +449,18 @@ func (s *Service) ResolveRecipientUsername(ctx context.Context, username string)
 
 // ListConversations returns the caller's conversations, most-recently-active
 // first. The caller clamps limit/offset.
-func (s *Service) ListConversations(ctx context.Context, meID uuid.UUID, limit, offset int32) ([]Summary, error) {
+func (s *Service) ListConversations(ctx context.Context, meID uuid.UUID, limit, offset int32) ([]Summary, int64, error) {
 	rows, err := s.repo.ListConversations(ctx, sqlcgen.ListConversationsParams{
 		UserID:       meID,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountConversations(ctx, meID)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]Summary, 0, len(rows))
 	for _, r := range rows {
@@ -467,7 +472,7 @@ func (s *Service) ListConversations(ctx context.Context, meID uuid.UUID, limit, 
 			UnreadCount: r.UnreadCount,
 		})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // SendMessage posts a message to a conversation. The caller must be a

@@ -33,6 +33,14 @@ WHERE f.user_id = $1
 ORDER BY f.created_at DESC, f.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: CountRemoteChannelFollows :one
+-- How many rows ListRemoteChannelFollows would return, ignoring pagination. The
+-- remote_actors JOIN is part of the predicate.
+SELECT count(*)::bigint
+FROM remote_channel_follows f
+JOIN remote_actors ra ON ra.actor_url = f.remote_actor_url
+WHERE f.user_id = $1;
+
 -- name: DeleteRemoteChannelFollowByID :execrows
 -- Local unfollow (local intent wins: the row goes immediately; the Undo is
 -- queued separately). Scoped by user_id; rows report whether anything existed.

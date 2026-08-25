@@ -23,6 +23,48 @@ func (q *Queries) ClearWatchHistory(ctx context.Context, userID uuid.UUID) error
 	return err
 }
 
+const countWatchHistory = `-- name: CountWatchHistory :one
+SELECT count(*)::bigint
+FROM watch_history wh
+JOIN videos v ON v.id = wh.video_id
+JOIN channels c ON c.id = v.channel_id
+WHERE wh.user_id = $1
+  AND v.privacy = 'public' AND v.state = 'published'
+`
+
+// How many rows ListWatchHistory would return, ignoring pagination. The
+// public+published predicate must stay identical: history entries for videos
+// since made private are not listed and must not be counted.
+func (q *Queries) CountWatchHistory(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countWatchHistory, userID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countWatchHistoryInProgress = `-- name: CountWatchHistoryInProgress :one
+SELECT count(*)::bigint
+FROM watch_history wh
+JOIN videos v ON v.id = wh.video_id
+JOIN channels c ON c.id = v.channel_id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE wh.user_id = $1
+  AND v.privacy = 'public' AND v.state = 'published'
+  AND wh.position_seconds >= 5
+  AND (vm.duration_seconds IS NULL
+       OR vm.duration_seconds <= 0
+       OR wh.position_seconds::float / vm.duration_seconds::float < 0.95)
+`
+
+// How many rows ListWatchHistoryInProgress would return, ignoring pagination.
+// The started/not-finished window must stay identical to it.
+func (q *Queries) CountWatchHistoryInProgress(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countWatchHistoryInProgress, userID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deleteWatchHistoryEntry = `-- name: DeleteWatchHistoryEntry :exec
 DELETE FROM watch_history
 WHERE user_id = $1 AND video_id = $2

@@ -44,12 +44,14 @@ var acceptedImageExts = map[string]string{
 type Repository interface {
 	CreatePlaylist(ctx context.Context, arg sqlcgen.CreatePlaylistParams) (sqlcgen.Playlist, error)
 	GetPlaylistByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetPlaylistByIDRow, error)
-	ListPlaylistsByOwner(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.ListPlaylistsByOwnerRow, error)
+	ListPlaylistsByOwner(ctx context.Context, arg sqlcgen.ListPlaylistsByOwnerParams) ([]sqlcgen.ListPlaylistsByOwnerRow, error)
+	CountPlaylistsByOwner(ctx context.Context, ownerID uuid.UUID) (int64, error)
 	UpdatePlaylist(ctx context.Context, arg sqlcgen.UpdatePlaylistParams) (sqlcgen.Playlist, error)
 	DeletePlaylist(ctx context.Context, id uuid.UUID) error
 	AddPlaylistItem(ctx context.Context, arg sqlcgen.AddPlaylistItemParams) error
 	RemovePlaylistItem(ctx context.Context, arg sqlcgen.RemovePlaylistItemParams) error
-	ListPlaylistItems(ctx context.Context, playlistID uuid.UUID) ([]sqlcgen.ListPlaylistItemsRow, error)
+	ListPlaylistItems(ctx context.Context, arg sqlcgen.ListPlaylistItemsParams) ([]sqlcgen.ListPlaylistItemsRow, error)
+	CountPlaylistItems(ctx context.Context, playlistID uuid.UUID) (int64, error)
 	ListPlaylistItemVideoIDs(ctx context.Context, playlistID uuid.UUID) ([]uuid.UUID, error)
 	ReorderPlaylistItems(ctx context.Context, arg sqlcgen.ReorderPlaylistItemsParams) error
 	SetPlaylistThumbnail(ctx context.Context, arg sqlcgen.SetPlaylistThumbnailParams) error
@@ -139,8 +141,20 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetPlaylis
 }
 
 // ListOwn returns all playlists owned by the given user, newest first.
-func (s *Service) ListOwn(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.ListPlaylistsByOwnerRow, error) {
-	return s.repo.ListPlaylistsByOwner(ctx, ownerID)
+func (s *Service) ListOwn(ctx context.Context, ownerID uuid.UUID, limit, offset int32) ([]sqlcgen.ListPlaylistsByOwnerRow, int64, error) {
+	rows, err := s.repo.ListPlaylistsByOwner(ctx, sqlcgen.ListPlaylistsByOwnerParams{
+		OwnerID:      ownerID,
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.CountPlaylistsByOwner(ctx, ownerID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
 }
 
 // UpdateInput is a partial playlist update: nil fields are left unchanged.
@@ -270,10 +284,18 @@ func samePermutation(want, have []uuid.UUID) bool {
 }
 
 // ListItems returns a playlist's public, published videos in order, as cards.
-func (s *Service) ListItems(ctx context.Context, playlistID uuid.UUID) ([]VideoCard, error) {
-	rows, err := s.repo.ListPlaylistItems(ctx, playlistID)
+func (s *Service) ListItems(ctx context.Context, playlistID uuid.UUID, limit, offset int32) ([]VideoCard, int64, error) {
+	rows, err := s.repo.ListPlaylistItems(ctx, sqlcgen.ListPlaylistItemsParams{
+		PlaylistID:   playlistID,
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountPlaylistItems(ctx, playlistID)
+	if err != nil {
+		return nil, 0, err
 	}
 	cards := make([]VideoCard, 0, len(rows))
 	for _, r := range rows {
@@ -284,7 +306,7 @@ func (s *Service) ListItems(ctx context.Context, playlistID uuid.UUID) ([]VideoC
 			ChannelHandle: r.ChannelHandle, ChannelDisplayName: r.ChannelDisplayName,
 		})
 	}
-	return cards, nil
+	return cards, total, nil
 }
 
 // UploadInput is an uploaded cover image: its declared filename (used only to

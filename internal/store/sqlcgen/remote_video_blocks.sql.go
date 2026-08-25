@@ -40,6 +40,22 @@ func (q *Queries) BlockRemoteVideo(ctx context.Context, arg BlockRemoteVideoPara
 	return result.RowsAffected(), nil
 }
 
+const countBlockedRemoteVideos = `-- name: CountBlockedRemoteVideos :one
+SELECT count(*)::bigint
+FROM remote_video_blocks b
+JOIN remote_videos rv ON rv.id = b.remote_video_id
+JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+`
+
+// How many rows ListBlockedRemoteVideos would return, ignoring pagination. The
+// inner JOINs are part of the predicate and must stay identical.
+func (q *Queries) CountBlockedRemoteVideos(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countBlockedRemoteVideos)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listBlockedRemoteVideos = `-- name: ListBlockedRemoteVideos :many
 SELECT
     b.remote_video_id,

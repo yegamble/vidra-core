@@ -61,7 +61,8 @@ func (f *playlistFakeRepo) GetPlaylistByID(_ context.Context, id uuid.UUID) (sql
 	}, nil
 }
 
-func (f *playlistFakeRepo) ListPlaylistsByOwner(_ context.Context, ownerID uuid.UUID) ([]sqlcgen.ListPlaylistsByOwnerRow, error) {
+func (f *playlistFakeRepo) ListPlaylistsByOwner(_ context.Context, a sqlcgen.ListPlaylistsByOwnerParams) ([]sqlcgen.ListPlaylistsByOwnerRow, error) {
+	ownerID := a.OwnerID
 	var rows []sqlcgen.ListPlaylistsByOwnerRow
 	for _, p := range f.playlists {
 		if p.OwnerID == ownerID {
@@ -119,7 +120,8 @@ func (f *playlistFakeRepo) RemovePlaylistItem(_ context.Context, a sqlcgen.Remov
 	return nil
 }
 
-func (f *playlistFakeRepo) ListPlaylistItems(_ context.Context, playlistID uuid.UUID) ([]sqlcgen.ListPlaylistItemsRow, error) {
+func (f *playlistFakeRepo) ListPlaylistItems(_ context.Context, a sqlcgen.ListPlaylistItemsParams) ([]sqlcgen.ListPlaylistItemsRow, error) {
+	playlistID := a.PlaylistID
 	var rows []sqlcgen.ListPlaylistItemsRow
 	for _, vid := range f.items[playlistID] {
 		v, ok := f.pubPub(vid)
@@ -360,4 +362,14 @@ func TestPlaylistReorder(t *testing.T) {
 	if rec := reorder(`{"video_ids":["`+v1+`"]}`, ""); rec.Code != http.StatusUnauthorized {
 		t.Errorf("anon = %d, want 401", rec.Code)
 	}
+}
+
+func (f *playlistFakeRepo) CountPlaylistsByOwner(ctx context.Context, ownerID uuid.UUID) (int64, error) {
+	rows, err := f.ListPlaylistsByOwner(ctx, sqlcgen.ListPlaylistsByOwnerParams{OwnerID: ownerID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *playlistFakeRepo) CountPlaylistItems(ctx context.Context, playlistID uuid.UUID) (int64, error) {
+	rows, err := f.ListPlaylistItems(ctx, sqlcgen.ListPlaylistItemsParams{PlaylistID: playlistID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

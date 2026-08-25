@@ -113,7 +113,7 @@ func TestMuteUnmuteListInstances(t *testing.T) {
 	if err := svc.MuteInstance(ctx, user, "spam.example"); err != nil {
 		t.Fatalf("re-MuteInstance: %v", err)
 	}
-	items, err := svc.ListMutedInstances(ctx, user, 20, 0)
+	items, _, err := svc.ListMutedInstances(ctx, user, 20, 0)
 	if err != nil {
 		t.Fatalf("ListMutedInstances: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestMuteUnmuteListInstances(t *testing.T) {
 	if err := svc.UnmuteInstance(ctx, user, "SPAM.example"); err != nil {
 		t.Fatalf("UnmuteInstance: %v", err)
 	}
-	if items, _ := svc.ListMutedInstances(ctx, user, 20, 0); len(items) != 0 {
+	if items, _, _ := svc.ListMutedInstances(ctx, user, 20, 0); len(items) != 0 {
 		t.Errorf("after unmute items = %+v, want none", items)
 	}
 	if err := svc.MuteInstance(ctx, user, "https://spam.example"); err != ErrInvalidDomain {
@@ -141,7 +141,7 @@ func TestBlockUnblockListInstances(t *testing.T) {
 	if err := svc.BlockInstance(ctx, adm, "Bad.Example", longReason); err != nil {
 		t.Fatalf("BlockInstance: %v", err)
 	}
-	items, err := svc.ListBlockedInstances(ctx, 20, 0)
+	items, _, err := svc.ListBlockedInstances(ctx, 20, 0)
 	if err != nil {
 		t.Fatalf("ListBlockedInstances: %v", err)
 	}
@@ -160,10 +160,22 @@ func TestBlockUnblockListInstances(t *testing.T) {
 	if err := svc.UnblockInstance(ctx, "bad.example"); err != nil {
 		t.Fatalf("UnblockInstance: %v", err)
 	}
-	if items, _ := svc.ListBlockedInstances(ctx, 20, 0); len(items) != 0 {
+	if items, _, _ := svc.ListBlockedInstances(ctx, 20, 0); len(items) != 0 {
 		t.Errorf("after unblock items = %+v, want none", items)
 	}
 	if err := svc.BlockInstance(ctx, adm, "bad domain", ""); err != ErrInvalidDomain {
 		t.Errorf("block of an invalid domain = %v, want ErrInvalidDomain", err)
 	}
+}
+
+// Counts delegate to the matching List so the fake cannot drift from itself —
+// the same invariant the real Count/List pairs must hold.
+func (f *fakeRepo) CountMutedInstances(ctx context.Context, muterID uuid.UUID) (int64, error) {
+	rows, err := f.ListMutedInstances(ctx, sqlcgen.ListMutedInstancesParams{MuterID: muterID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountBlockedInstances(ctx context.Context) (int64, error) {
+	rows, err := f.ListBlockedInstances(ctx, sqlcgen.ListBlockedInstancesParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

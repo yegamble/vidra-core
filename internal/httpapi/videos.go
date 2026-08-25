@@ -529,6 +529,7 @@ func (s *Server) videoVisibleForDetail(c echo.Context, videoID uuid.UUID) (sqlcg
 // videoListResponse wraps a list of videos.
 type videoListResponse struct {
 	Videos []videoView `json:"videos"`
+	pageMeta
 }
 
 // videoFeedResponse is the paginated cross-channel public feed. Scope is set on
@@ -538,8 +539,7 @@ type videoFeedResponse struct {
 	Videos []videoView `json:"videos"`
 	Sort   string      `json:"sort"`
 	Scope  string      `json:"scope,omitempty"`
-	Limit  int         `json:"limit"`
-	Offset int         `json:"offset"`
+	pageMeta
 }
 
 const (
@@ -624,7 +624,7 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 		return &ValidationError{Fields: fes}
 	}
 	viewerID, _, authed := principalFromContext(c)
-	items, err := s.videosvc.ListPublic(c.Request().Context(), sort, scope, filter, viewerID, authed, page.Limit32(), page.Offset32())
+	items, total, err := s.videosvc.ListPublic(c.Request().Context(), sort, scope, filter, viewerID, authed, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -633,7 +633,7 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 		views = append(views, feedItemView(it))
 	}
 	s.attachIPFSPinned(c.Request().Context(), views)
-	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: sort, Scope: scope, Limit: page.Limit, Offset: page.Offset})
+	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: sort, Scope: scope, pageMeta: page.meta(total)})
 }
 
 // handleListSubscriptionVideos returns the authenticated user's "subscriptions"
@@ -645,7 +645,7 @@ func (s *Server) handleListSubscriptionVideos(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
-	items, err := s.videosvc.ListSubscriptions(c.Request().Context(), userID, page.Limit32(), page.Offset32())
+	items, total, err := s.videosvc.ListSubscriptions(c.Request().Context(), userID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -654,7 +654,7 @@ func (s *Server) handleListSubscriptionVideos(c echo.Context) error {
 		views = append(views, feedItemView(it))
 	}
 	s.attachIPFSPinned(c.Request().Context(), views)
-	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: "recent", Limit: page.Limit, Offset: page.Offset})
+	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: "recent", pageMeta: page.meta(total)})
 }
 
 // maxSearchQueryLen bounds the search term to keep queries cheap.
@@ -669,8 +669,7 @@ type videoSearchResponse struct {
 	Query  string                   `json:"query"`
 	Videos []videoView              `json:"videos"`
 	Remote []remoteSearchResultView `json:"remote,omitempty"`
-	Limit  int                      `json:"limit"`
-	Offset int                      `json:"offset"`
+	pageMeta
 }
 
 // handleSearchVideos searches public video titles. No auth required. Requires a
@@ -727,18 +726,27 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	// healthy still falls back (ok == false) as the last-resort safety. The public
 	// response contract is identical on every path.
 	var views []videoView
+	var total int64
 	source := "local"
 	if s.useSearchService() {
 		if svcViews, ok := s.searchViaService(c, q, filter, page.Limit, page.Offset, viewerID, authed); ok {
 			views = svcViews
 			source = "search"
+			// vidra-search ranks and returns ids, never a corpus size, so the
+			// total is core's own count of matching visible videos. It labels the
+			// same corpus under the same per-viewer visibility; only the ORDER
+			// comes from the service.
+			if n, cerr := s.videosvc.CountSearchPublic(c.Request().Context(), q, filter, viewerID, authed); cerr == nil {
+				total = n
+			}
 		}
 	}
 	if source == "local" {
-		items, err := s.videosvc.SearchPublic(c.Request().Context(), q, filter, viewerID, authed, page.Limit32(), page.Offset32())
+		items, n, err := s.videosvc.SearchPublic(c.Request().Context(), q, filter, viewerID, authed, page.Limit32(), page.Offset32())
 		if err != nil {
 			return err
 		}
+		total = n
 		views = make([]videoView, 0, len(items))
 		for _, it := range items {
 			views = append(views, feedItemView(it))
@@ -747,7 +755,7 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	s.attachIPFSPinned(c.Request().Context(), views)
 	// Additive: record the search as a behavioural event (async via the outbox).
 	s.emitSearchSubmitted(c, q, len(views), source)
-	resp := videoSearchResponse{Query: q, Videos: views, Limit: page.Limit, Offset: page.Offset}
+	resp := videoSearchResponse{Query: q, Videos: views, pageMeta: page.meta(total)}
 	if remoteCh != nil {
 		resp.Remote = <-remoteCh // always delivers within the resolve deadline
 	}
@@ -756,6 +764,13 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 
 // handleListChannelVideos lists a channel's videos. Behind optionalAuth: the
 // channel owner sees all of their videos; everyone else sees only public ones.
+//
+// BREAKING: this is now paginated (?limit 1–100 default 20, ?offset) and returns
+// a total. It previously returned EVERY video in the channel, so a channel with
+// 50k videos serialised 50k rows on every page load. ?sort accepts
+// published_at (oldest first) or -published_at (newest first, the default and
+// the previous fixed behaviour) — the Latest/Oldest chips the channel page
+// already shows.
 func (s *Server) handleListChannelVideos(c echo.Context) error {
 	ctx := c.Request().Context()
 	ch, err := s.channelsvc.GetByHandle(ctx, c.Param("handle"))
@@ -763,13 +778,16 @@ func (s *Server) handleListChannelVideos(c echo.Context) error {
 		return channelError(err) // ErrNotFound -> 404
 	}
 
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	sort := video.NormalizeChannelSort(c.QueryParam("sort"))
 	var items []video.FeedItem
+	var total int64
 	// The owner and editor collaborators (migration 0097) see the full list
 	// (drafts, scheduled, private); everyone else sees only public videos.
 	if userID, _, ok := principalFromContext(c); ok && s.canManageChannelContent(ctx, userID, ch.ID) {
-		items, err = s.videosvc.ListByChannel(ctx, ch.ID)
+		items, total, err = s.videosvc.ListByChannel(ctx, ch.ID, sort, page.Limit32(), page.Offset32())
 	} else {
-		items, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, s.effectiveHideSensitive(c))
+		items, total, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, s.effectiveHideSensitive(c), sort, page.Limit32(), page.Offset32())
 	}
 	if err != nil {
 		return err
@@ -779,7 +797,7 @@ func (s *Server) handleListChannelVideos(c echo.Context) error {
 		views = append(views, feedItemView(it))
 	}
 	s.attachIPFSPinned(c.Request().Context(), views)
-	return c.JSON(http.StatusOK, videoListResponse{Videos: views})
+	return c.JSON(http.StatusOK, videoListResponse{Videos: views, pageMeta: page.meta(total)})
 }
 
 // updateVideoRequest is the PATCH /api/v1/videos/{id} body. Fields are optional;
@@ -1541,8 +1559,7 @@ type blockedVideoView struct {
 // blockedVideoListResponse is the paginated moderation block-list.
 type blockedVideoListResponse struct {
 	Videos []blockedVideoView `json:"videos"`
-	Limit  int                `json:"limit"`
-	Offset int                `json:"offset"`
+	pageMeta
 }
 
 // handleListBlockedVideos returns currently-blocked videos (newest block first)
@@ -1550,7 +1567,7 @@ type blockedVideoListResponse struct {
 // Pagination via ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListBlockedVideos(c echo.Context) error {
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
-	items, err := s.moderationsvc.ListBlocked(c.Request().Context(), page.Limit32(), page.Offset32())
+	items, total, err := s.moderationsvc.ListBlocked(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -1568,7 +1585,7 @@ func (s *Server) handleListBlockedVideos(c echo.Context) error {
 			BlockedAt:          it.BlockedAt,
 		})
 	}
-	return c.JSON(http.StatusOK, blockedVideoListResponse{Videos: views, Limit: page.Limit, Offset: page.Offset})
+	return c.JSON(http.StatusOK, blockedVideoListResponse{Videos: views, pageMeta: page.meta(total)})
 }
 
 // videoError maps video service sentinels to HTTP error envelopes. A non-owner

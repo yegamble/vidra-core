@@ -74,6 +74,7 @@ type channelSyncResponse struct {
 // channelSyncListResponse wraps the caller's syncs.
 type channelSyncListResponse struct {
 	ChannelSyncs []channelSyncView `json:"channel_syncs"`
+	pageMeta
 }
 
 // handleCreateChannelSync binds a local channel to an external channel URL for
@@ -102,13 +103,16 @@ func (s *Server) handleCreateChannelSync(c echo.Context) error {
 	return c.JSON(http.StatusCreated, channelSyncResponse{ChannelSync: newChannelSyncView(sync)})
 }
 
-// handleListChannelSyncs lists the authenticated user's channel syncs.
+// handleListChannelSyncs lists the authenticated user's channel syncs,
+// paginated via ?limit (1–100, default 20)/?offset with a true total. It
+// previously returned every sync unbounded.
 func (s *Server) handleListChannelSyncs(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	syncs, err := s.channelsyncsvc.ListForUser(c.Request().Context(), userID)
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	syncs, total, err := s.channelsyncsvc.ListForUser(c.Request().Context(), userID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -116,7 +120,7 @@ func (s *Server) handleListChannelSyncs(c echo.Context) error {
 	for _, sync := range syncs {
 		views = append(views, newChannelSyncView(sync))
 	}
-	return c.JSON(http.StatusOK, channelSyncListResponse{ChannelSyncs: views})
+	return c.JSON(http.StatusOK, channelSyncListResponse{ChannelSyncs: views, pageMeta: page.meta(total)})
 }
 
 // handleDeleteChannelSync removes a channel sync the caller owns.

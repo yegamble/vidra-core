@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -192,4 +194,14 @@ func TestBlockInstanceFlow(t *testing.T) {
 	if len(list.Instances) != 0 {
 		t.Errorf("after unblock instances = %+v, want none", list.Instances)
 	}
+}
+
+func (f *instanceModFakeRepo) CountMutedInstances(ctx context.Context, muterID uuid.UUID) (int64, error) {
+	rows, err := f.ListMutedInstances(ctx, sqlcgen.ListMutedInstancesParams{MuterID: muterID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *instanceModFakeRepo) CountBlockedInstances(ctx context.Context) (int64, error) {
+	rows, err := f.ListBlockedInstances(ctx, sqlcgen.ListBlockedInstancesParams{ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

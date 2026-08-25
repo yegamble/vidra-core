@@ -59,3 +59,11 @@ JOIN channels c ON c.id = cf.channel_id
 WHERE cf.follower_id = $1
 ORDER BY cf.created_at DESC, c.id
 LIMIT $2 OFFSET $3;
+
+-- name: CountFollowedChannels :one
+-- How many rows ListFollowedChannels would return, ignoring pagination. The
+-- channels JOIN is part of the predicate.
+SELECT count(*)::bigint
+FROM channel_follows cf
+JOIN channels c ON c.id = cf.channel_id
+WHERE cf.follower_id = $1;

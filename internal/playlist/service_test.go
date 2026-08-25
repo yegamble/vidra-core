@@ -42,7 +42,8 @@ func (f *fakeRepo) GetPlaylistByID(_ context.Context, id uuid.UUID) (sqlcgen.Get
 	}, nil
 }
 
-func (f *fakeRepo) ListPlaylistsByOwner(_ context.Context, ownerID uuid.UUID) ([]sqlcgen.ListPlaylistsByOwnerRow, error) {
+func (f *fakeRepo) ListPlaylistsByOwner(_ context.Context, a sqlcgen.ListPlaylistsByOwnerParams) ([]sqlcgen.ListPlaylistsByOwnerRow, error) {
+	ownerID := a.OwnerID
 	var rows []sqlcgen.ListPlaylistsByOwnerRow
 	for _, p := range f.playlists {
 		if p.OwnerID == ownerID {
@@ -100,7 +101,8 @@ func (f *fakeRepo) RemovePlaylistItem(_ context.Context, a sqlcgen.RemovePlaylis
 	return nil
 }
 
-func (f *fakeRepo) ListPlaylistItems(_ context.Context, playlistID uuid.UUID) ([]sqlcgen.ListPlaylistItemsRow, error) {
+func (f *fakeRepo) ListPlaylistItems(_ context.Context, a sqlcgen.ListPlaylistItemsParams) ([]sqlcgen.ListPlaylistItemsRow, error) {
+	playlistID := a.PlaylistID
 	var rows []sqlcgen.ListPlaylistItemsRow
 	for _, v := range f.items[playlistID] {
 		rows = append(rows, sqlcgen.ListPlaylistItemsRow{ID: v, Title: "v-" + v.String()[:8]})
@@ -155,7 +157,7 @@ func TestCreateGetAndItems(t *testing.T) {
 	if err := svc.AddItem(ctx, owner, p.ID, v1); err != nil { // idempotent
 		t.Fatalf("AddItem v1 again: %v", err)
 	}
-	items, err := svc.ListItems(ctx, p.ID)
+	items, _, err := svc.ListItems(ctx, p.ID, 100, 0)
 	if err != nil {
 		t.Fatalf("ListItems: %v", err)
 	}
@@ -170,7 +172,7 @@ func TestCreateGetAndItems(t *testing.T) {
 	if err := svc.RemoveItem(ctx, owner, p.ID, v1); err != nil {
 		t.Fatalf("RemoveItem: %v", err)
 	}
-	if items, _ := svc.ListItems(ctx, p.ID); len(items) != 1 || items[0].ID != v2 {
+	if items, _, _ := svc.ListItems(ctx, p.ID, 100, 0); len(items) != 1 || items[0].ID != v2 {
 		t.Errorf("after remove = %+v, want [v2]", items)
 	}
 }
@@ -258,4 +260,14 @@ func TestReorderItems(t *testing.T) {
 	if err := svc.ReorderItems(ctx, owner, empty.ID, nil); err != nil {
 		t.Errorf("empty reorder = %v, want nil", err)
 	}
+}
+
+func (f *fakeRepo) CountPlaylistsByOwner(ctx context.Context, ownerID uuid.UUID) (int64, error) {
+	rows, err := f.ListPlaylistsByOwner(ctx, sqlcgen.ListPlaylistsByOwnerParams{OwnerID: ownerID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}
+
+func (f *fakeRepo) CountPlaylistItems(ctx context.Context, playlistID uuid.UUID) (int64, error) {
+	rows, err := f.ListPlaylistItems(ctx, sqlcgen.ListPlaylistItemsParams{PlaylistID: playlistID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
 }

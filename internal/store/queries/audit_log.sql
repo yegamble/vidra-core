@@ -34,3 +34,11 @@ LEFT JOIN users u ON u.id = a.actor_id
 WHERE (sqlc.narg('action')::text IS NULL OR a.action = sqlc.narg('action')::text)
 ORDER BY a.occurred_at DESC, a.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountAuditLog :one
+-- How many rows ListAuditLog would return for the same ?action filter, ignoring
+-- pagination. The WHERE must stay identical: the admin UI derives its page count
+-- from this, so a total that counts unfiltered rows would page into emptiness.
+SELECT count(*)::bigint
+FROM audit_log a
+WHERE (sqlc.narg('action')::text IS NULL OR a.action = sqlc.narg('action')::text);

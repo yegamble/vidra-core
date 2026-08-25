@@ -13,6 +13,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countAdminComments = `-- name: CountAdminComments :one
+SELECT count(*)::bigint
+FROM comments c
+JOIN videos v ON v.id = c.video_id
+WHERE ($1::text IS NULL OR c.body ILIKE '%' || $1 || '%')
+`
+
+// How many rows ListAdminComments would return for the same ?q filter, ignoring
+// pagination. CountComments above answers a DIFFERENT question (local comments
+// for NodeInfo, remote-authored ones excluded) and must not be reused here: it
+// would under-report the admin queue by exactly the federated comments a
+// moderator most needs to see. The videos JOIN is part of the predicate.
+func (q *Queries) CountAdminComments(ctx context.Context, query *string) (int64, error) {
+	row := q.db.QueryRow(ctx, countAdminComments, query)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countComments = `-- name: CountComments :one
 SELECT count(*) FROM comments WHERE user_id IS NOT NULL
 `
@@ -24,6 +43,45 @@ func (q *Queries) CountComments(ctx context.Context) (int64, error) {
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countCommentsByVideo = `-- name: CountCommentsByVideo :one
+SELECT count(*)::bigint
+FROM comments c
+JOIN videos v ON v.id = c.video_id
+LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
+WHERE c.video_id = $1
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = c.user_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = c.user_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_instances mi
+      WHERE mi.muter_id = $2 AND mi.domain = ra.domain
+  )
+`
+
+type CountCommentsByVideoParams struct {
+	VideoID  uuid.UUID   `json:"video_id"`
+	ViewerID pgtype.UUID `json:"viewer_id"`
+}
+
+// How many comments ListCommentsByVideo would return for the same viewer,
+// ignoring pagination. Every mute/block/instance predicate is repeated verbatim:
+// the count is per-VIEWER, so counting the raw comments rows would tell a viewer
+// there are more comments than they can ever page to.
+func (q *Queries) CountCommentsByVideo(ctx context.Context, arg CountCommentsByVideoParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countCommentsByVideo, arg.VideoID, arg.ViewerID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const createComment = `-- name: CreateComment :one

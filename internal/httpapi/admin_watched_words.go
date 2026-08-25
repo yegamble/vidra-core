@@ -24,9 +24,8 @@ type watchedWordView struct {
 
 // watchedWordListResponse is the paginated watched-words list.
 type watchedWordListResponse struct {
-	Words  []watchedWordView `json:"words"`
-	Limit  int               `json:"limit"`
-	Offset int               `json:"offset"`
+	Words []watchedWordView `json:"words"`
+	pageMeta
 }
 
 // createWatchedWordRequest is the POST /admin/watched-words body.
@@ -49,7 +48,7 @@ func (r createWatchedWordRequest) Validate() []FieldError {
 // requireRole(admin, moderator). Pagination via ?limit (1–100, default 20)/?offset.
 func (s *Server) handleListWatchedWords(c echo.Context) error {
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
-	items, err := s.watchwordsvc.List(c.Request().Context(), page.Limit32(), page.Offset32())
+	items, total, err := s.watchwordsvc.List(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -62,7 +61,7 @@ func (s *Server) handleListWatchedWords(c echo.Context) error {
 			CreatedAt:         it.CreatedAt,
 		})
 	}
-	return c.JSON(http.StatusOK, watchedWordListResponse{Words: views, Limit: page.Limit, Offset: page.Offset})
+	return c.JSON(http.StatusOK, watchedWordListResponse{Words: views, pageMeta: page.meta(total)})
 }
 
 // handleAddWatchedWord adds a term to the watched-words list. Behind
@@ -120,8 +119,7 @@ type watchedWordMatchView struct {
 // watchedWordMatchListResponse is the paginated flagged-content queue.
 type watchedWordMatchListResponse struct {
 	Matches []watchedWordMatchView `json:"matches"`
-	Limit   int                    `json:"limit"`
-	Offset  int                    `json:"offset"`
+	pageMeta
 }
 
 // handleListWatchedWordMatches returns content flagged by the watched-words
@@ -130,7 +128,7 @@ type watchedWordMatchListResponse struct {
 // Pagination via ?limit (1–100, default 20)/?offset.
 func (s *Server) handleListWatchedWordMatches(c echo.Context) error {
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
-	items, err := s.watchwordsvc.ListMatches(c.Request().Context(), page.Limit32(), page.Offset32())
+	items, total, err := s.watchwordsvc.ListMatches(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -151,5 +149,5 @@ func (s *Server) handleListWatchedWordMatches(c echo.Context) error {
 		}
 		views = append(views, view)
 	}
-	return c.JSON(http.StatusOK, watchedWordMatchListResponse{Matches: views, Limit: page.Limit, Offset: page.Offset})
+	return c.JSON(http.StatusOK, watchedWordMatchListResponse{Matches: views, pageMeta: page.meta(total)})
 }

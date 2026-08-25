@@ -213,8 +213,7 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 // commentListResponse is the paginated comment list for a video.
 type commentListResponse struct {
 	Comments []commentView `json:"comments"`
-	Limit    int           `json:"limit"`
-	Offset   int           `json:"offset"`
+	pageMeta
 }
 
 // handleListComments returns a public+published video's comments, newest first.
@@ -227,7 +226,7 @@ func (s *Server) handleListComments(c echo.Context) error {
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	viewerID, _, authed := principalFromContext(c)
-	items, err := s.commentsvc.ListByVideo(c.Request().Context(), videoID, viewerID, authed, page.Limit32(), page.Offset32())
+	items, total, err := s.commentsvc.ListByVideo(c.Request().Context(), videoID, viewerID, authed, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -239,7 +238,7 @@ func (s *Server) handleListComments(c echo.Context) error {
 		v.Pinned = it.Pinned
 		views = append(views, v)
 	}
-	return c.JSON(http.StatusOK, commentListResponse{Comments: views, Limit: page.Limit, Offset: page.Offset})
+	return c.JSON(http.StatusOK, commentListResponse{Comments: views, pageMeta: page.meta(total)})
 }
 
 // handleDeleteComment removes a comment. Behind requireAuth. The comment's author

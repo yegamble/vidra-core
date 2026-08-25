@@ -64,6 +64,7 @@ type Repository interface {
 	// approval queue and the auto-follow-back edges (migration 0087).
 	InsertRemoteFollowPending(ctx context.Context, arg sqlcgen.InsertRemoteFollowPendingParams) error
 	ListPendingRemoteFollows(ctx context.Context, arg sqlcgen.ListPendingRemoteFollowsParams) ([]sqlcgen.ListPendingRemoteFollowsRow, error)
+	CountPendingRemoteFollows(ctx context.Context) (int64, error)
 	AcceptPendingRemoteFollowByID(ctx context.Context, id uuid.UUID) (sqlcgen.AcceptPendingRemoteFollowByIDRow, error)
 	DeletePendingRemoteFollowByID(ctx context.Context, id uuid.UUID) (sqlcgen.DeletePendingRemoteFollowByIDRow, error)
 	InsertChannelFollowBackIfAbsent(ctx context.Context, arg sqlcgen.InsertChannelFollowBackIfAbsentParams) (int64, error)
@@ -75,6 +76,7 @@ type Repository interface {
 	UpsertRemoteChannelFollow(ctx context.Context, arg sqlcgen.UpsertRemoteChannelFollowParams) (sqlcgen.RemoteChannelFollow, error)
 	GetRemoteChannelFollowByID(ctx context.Context, arg sqlcgen.GetRemoteChannelFollowByIDParams) (sqlcgen.GetRemoteChannelFollowByIDRow, error)
 	ListRemoteChannelFollows(ctx context.Context, arg sqlcgen.ListRemoteChannelFollowsParams) ([]sqlcgen.ListRemoteChannelFollowsRow, error)
+	CountRemoteChannelFollows(ctx context.Context, userID uuid.UUID) (int64, error)
 	DeleteRemoteChannelFollowByID(ctx context.Context, arg sqlcgen.DeleteRemoteChannelFollowByIDParams) (int64, error)
 	AcceptRemoteChannelFollowByActivity(ctx context.Context, arg sqlcgen.AcceptRemoteChannelFollowByActivityParams) (int64, error)
 	DeleteRemoteChannelFollowByActivity(ctx context.Context, arg sqlcgen.DeleteRemoteChannelFollowByActivityParams) (int64, error)

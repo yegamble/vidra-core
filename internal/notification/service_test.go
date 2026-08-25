@@ -165,7 +165,7 @@ func TestNotifyAndList(t *testing.T) {
 	if n, _ := svc.UnreadCount(ctx, owner); n != 2 {
 		t.Fatalf("unread = %d, want 2", n)
 	}
-	items, err := svc.List(ctx, owner, false, 20, 0)
+	items, _, err := svc.List(ctx, owner, false, 20, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestNotifyMessage(t *testing.T) {
 		t.Fatalf("self NotifyMessage: %v", err)
 	}
 
-	items, err := svc.List(ctx, recipient, false, 20, 0)
+	items, _, err := svc.List(ctx, recipient, false, 20, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestNotifyReportResolved(t *testing.T) {
 		t.Fatalf("self NotifyReportResolved: %v", err)
 	}
 
-	items, err := svc.List(ctx, reporter, false, 20, 0)
+	items, _, err := svc.List(ctx, reporter, false, 20, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestMarkReadAndAll(t *testing.T) {
 	_ = svc.NotifyFollow(ctx, owner, fan, uuid.New())
 	_ = svc.NotifyFollow(ctx, owner, fan, uuid.New())
 
-	items, _ := svc.List(ctx, owner, false, 20, 0)
+	items, _, _ := svc.List(ctx, owner, false, 20, 0)
 	first := items[0].ID
 
 	// Mark one read → unread drops to 1; marking again is idempotent.
@@ -270,7 +270,7 @@ func TestMarkReadAndAll(t *testing.T) {
 	if n, _ := svc.UnreadCount(ctx, owner); n != 0 {
 		t.Fatalf("unread after mark-all = %d, want 0", n)
 	}
-	if unread, _ := svc.List(ctx, owner, true, 20, 0); len(unread) != 0 {
+	if unread, _, _ := svc.List(ctx, owner, true, 20, 0); len(unread) != 0 {
 		t.Errorf("unread-only list = %d, want 0", len(unread))
 	}
 }
@@ -443,4 +443,11 @@ func TestNewVideoIsAKnownPreferenceType(t *testing.T) {
 	if enabled, ok := prefs[TypeNewVideo]; !ok || !enabled {
 		t.Fatalf("prefs[%s] = (%v, %v), want (true, true) by default", TypeNewVideo, enabled, ok)
 	}
+}
+
+func (f *fakeRepo) CountNotifications(ctx context.Context, a sqlcgen.CountNotificationsParams) (int64, error) {
+	rows, err := f.ListNotifications(ctx, sqlcgen.ListNotificationsParams{
+		UserID: a.UserID, UnreadOnly: a.UnreadOnly, ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
 }

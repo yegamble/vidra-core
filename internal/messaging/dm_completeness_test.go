@@ -170,7 +170,7 @@ func TestReadReceiptsAndUnread(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inbox, _ := svc.ListConversations(ctx, ada, 20, 0)
+	inbox, _, _ := svc.ListConversations(ctx, ada, 20, 0)
 	if len(inbox) != 1 || inbox[0].UnreadCount != 2 {
 		t.Fatalf("ada unread = %+v, want 2", inbox)
 	}
@@ -178,7 +178,7 @@ func TestReadReceiptsAndUnread(t *testing.T) {
 	if err := svc.MarkRead(ctx, ada, conv, nil); err != nil {
 		t.Fatalf("MarkRead: %v", err)
 	}
-	inbox, _ = svc.ListConversations(ctx, ada, 20, 0)
+	inbox, _, _ = svc.ListConversations(ctx, ada, 20, 0)
 	if inbox[0].UnreadCount != 0 {
 		t.Errorf("after read unread = %d, want 0", inbox[0].UnreadCount)
 	}

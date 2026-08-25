@@ -100,6 +100,7 @@ func newChannelView(c sqlcgen.Channel, followerCount int64) channelView {
 // channelListResponse wraps a list of channels.
 type channelListResponse struct {
 	Channels []channelView `json:"channels"`
+	pageMeta
 }
 
 // followedChannelView is a channel the caller follows, with the follow time and
@@ -122,8 +123,7 @@ type followNotificationsResponse struct {
 // followedChannelsResponse is a page of the caller's followed channels.
 type followedChannelsResponse struct {
 	Channels []followedChannelView `json:"channels"`
-	Limit    int                   `json:"limit"`
-	Offset   int                   `json:"offset"`
+	pageMeta
 }
 
 // handleCreateChannel creates a channel owned by the authenticated user. 422
@@ -159,31 +159,31 @@ func (s *Server) handleCreateChannel(c echo.Context) error {
 	return c.JSON(http.StatusCreated, view)
 }
 
-// handleListMyChannels lists the authenticated user's channels.
+// handleListMyChannels lists the authenticated user's channels: the ones they
+// own plus the ones shared with them as an editor (migration 0097), each tagged
+// with the caller's role. Paginated via ?limit (1–100, default 20)/?offset with
+// a true total — it previously returned every channel unbounded and issued one
+// follower-count query per row.
 func (s *Server) handleListMyChannels(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
 	ctx := c.Request().Context()
-	// Owned channels PLUS channels shared with the caller as an editor
-	// (migration 0097), each tagged with the caller's role.
-	managed, err := s.channelsvc.ListManaged(ctx, userID)
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	managed, total, err := s.channelsvc.ListManaged(ctx, userID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
 	views := make([]channelView, 0, len(managed))
 	for _, m := range managed {
-		count, err := s.channelsvc.FollowerCount(ctx, m.Channel.ID)
-		if err != nil {
-			return err
-		}
-		view := s.channelViewFor(ctx, m.Channel, count)
+		// The follower count rides along on the row now; no per-channel query.
+		view := s.channelViewFor(ctx, m.Channel, m.FollowerCount)
 		view.AtprotoActive = s.atprotoActive(ctx, m.Channel)
 		view.Role = m.Role
 		views = append(views, view)
 	}
-	return c.JSON(http.StatusOK, channelListResponse{Channels: views})
+	return c.JSON(http.StatusOK, channelListResponse{Channels: views, pageMeta: page.meta(total)})
 }
 
 // handleListFollowedChannels lists the LOCAL channels the authenticated user
@@ -196,7 +196,7 @@ func (s *Server) handleListFollowedChannels(c echo.Context) error {
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	ctx := c.Request().Context()
-	followed, err := s.channelsvc.ListFollowed(ctx, userID, page.Limit32(), page.Offset32())
+	followed, total, err := s.channelsvc.ListFollowed(ctx, userID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -211,7 +211,7 @@ func (s *Server) handleListFollowedChannels(c echo.Context) error {
 			FollowedAt:  f.FollowedAt,
 		})
 	}
-	return c.JSON(http.StatusOK, followedChannelsResponse{Channels: views, Limit: page.Limit, Offset: page.Offset})
+	return c.JSON(http.StatusOK, followedChannelsResponse{Channels: views, pageMeta: page.meta(total)})
 }
 
 // updateChannelRequest is the PATCH /api/v1/channels/{handle} body. Fields are

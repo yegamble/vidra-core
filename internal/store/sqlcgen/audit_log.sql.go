@@ -13,6 +13,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countAuditLog = `-- name: CountAuditLog :one
+SELECT count(*)::bigint
+FROM audit_log a
+WHERE ($1::text IS NULL OR a.action = $1::text)
+`
+
+// How many rows ListAuditLog would return for the same ?action filter, ignoring
+// pagination. The WHERE must stay identical: the admin UI derives its page count
+// from this, so a total that counts unfiltered rows would page into emptiness.
+func (q *Queries) CountAuditLog(ctx context.Context, action *string) (int64, error) {
+	row := q.db.QueryRow(ctx, countAuditLog, action)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const insertAuditLog = `-- name: InsertAuditLog :exec
 INSERT INTO audit_log (
     id, schema_version, domain, action, result,

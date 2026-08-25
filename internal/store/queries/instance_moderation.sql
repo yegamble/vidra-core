@@ -20,6 +20,10 @@ WHERE muter_id = $1
 ORDER BY created_at DESC, domain
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: CountMutedInstances :one
+-- How many rows ListMutedInstances would return, ignoring pagination.
+SELECT count(*)::bigint FROM muted_instances WHERE muter_id = $1;
+
 -- name: BlockInstance :execrows
 -- Admin-block a remote instance (idempotent; re-blocking refreshes the reason
 -- and blocking admin).
@@ -37,6 +41,10 @@ SELECT domain, reason, blocked_by, created_at
 FROM blocked_instances
 ORDER BY created_at DESC, domain
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountBlockedInstances :one
+-- How many rows ListBlockedInstances would return, ignoring pagination.
+SELECT count(*)::bigint FROM blocked_instances;
 
 -- name: IsInstanceBlocked :one
 -- The cheap inbox/drain check: is this (lowercased) domain on the blocklist?

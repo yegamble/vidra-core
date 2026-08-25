@@ -150,7 +150,7 @@ func TestFollowerApprovalRecordsPendingWithoutAccept(t *testing.T) {
 		t.Errorf("deliveries = %d, want 0 (the Accept waits for approval)", len(repo.deliveries))
 	}
 	// The queue lists it.
-	reqs, err := svc.ListFollowerRequests(context.Background(), 20, 0)
+	reqs, _, err := svc.ListFollowerRequests(context.Background(), 20, 0)
 	if err != nil {
 		t.Fatalf("ListFollowerRequests: %v", err)
 	}

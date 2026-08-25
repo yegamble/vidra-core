@@ -30,6 +30,7 @@ type Repository interface {
 	MuteAccount(ctx context.Context, arg sqlcgen.MuteAccountParams) (int64, error)
 	UnmuteAccount(ctx context.Context, arg sqlcgen.UnmuteAccountParams) (int64, error)
 	ListMutedAccounts(ctx context.Context, arg sqlcgen.ListMutedAccountsParams) ([]sqlcgen.ListMutedAccountsRow, error)
+	CountMutedAccounts(ctx context.Context, muterID uuid.UUID) (int64, error)
 }
 
 // Service holds the mute application logic.
@@ -72,14 +73,18 @@ func (s *Service) Unmute(ctx context.Context, muterID, mutedID uuid.UUID) error 
 
 // List returns the accounts muterID has muted, newest mute first. The caller
 // clamps limit/offset.
-func (s *Service) List(ctx context.Context, muterID uuid.UUID, limit, offset int32) ([]MutedAccount, error) {
+func (s *Service) List(ctx context.Context, muterID uuid.UUID, limit, offset int32) ([]MutedAccount, int64, error) {
 	rows, err := s.repo.ListMutedAccounts(ctx, sqlcgen.ListMutedAccountsParams{
 		MuterID:      muterID,
 		ResultLimit:  limit,
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total, err := s.repo.CountMutedAccounts(ctx, muterID)
+	if err != nil {
+		return nil, 0, err
 	}
 	out := make([]MutedAccount, 0, len(rows))
 	for _, r := range rows {
@@ -90,7 +95,7 @@ func (s *Service) List(ctx context.Context, muterID uuid.UUID, limit, offset int
 			MutedAt:     r.CreatedAt,
 		})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // sqlState returns the SQLSTATE code of a PostgreSQL error, "" otherwise.

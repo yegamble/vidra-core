@@ -46,7 +46,11 @@ ORDER BY v.id;
 
 -- name: ListVideosByChannel :many
 -- A channel's videos (owner view, all states) with discovery-card data plus
--- publish_at so the studio can badge scheduled videos.
+-- publish_at so the studio can badge scheduled videos. Paginated: this used to
+-- have no LIMIT at all, so a channel with 50k videos serialised 50k rows on
+-- every studio page load. sort accepts 'published_at' (oldest first) or
+-- '-published_at' (newest first, the previous fixed behaviour and the default);
+-- the id tiebreaker makes page boundaries stable.
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        v.created_at, v.updated_at, v.publish_at,
        COALESCE(vc.views, 0)::bigint AS views,
@@ -62,8 +66,23 @@ JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
-WHERE v.channel_id = $1
-ORDER BY v.created_at DESC;
+WHERE v.channel_id = sqlc.arg('channel_id')
+ORDER BY
+    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN v.created_at END ASC,
+    CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN v.created_at END DESC,
+    v.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountVideosByChannel :one
+-- How many rows ListVideosByChannel would return, ignoring pagination.
+SELECT count(*)::bigint FROM videos v WHERE v.channel_id = sqlc.arg('channel_id');
+
+-- name: ListVideoIDsByChannel :many
+-- Every video id in a channel, UNPAGINATED — the account-deletion sweep, which
+-- must visit all of them (a delete that stopped at the UI page size would leave
+-- orphaned blobs). Kept separate from ListVideosByChannel so the paginated UI
+-- list can never lose its LIMIT again; only the id is needed here.
+SELECT id FROM videos WHERE channel_id = $1 ORDER BY id;
 
 -- name: ListPublicVideosByChannel :many
 -- A channel's public, published videos with discovery-card data.
@@ -82,9 +101,29 @@ JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
 LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
-WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+WHERE v.channel_id = sqlc.arg('channel_id') AND v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
-ORDER BY v.created_at DESC;
+  -- Sensitive-content "hide" moved INTO the query (it used to be a Go-side skip
+  -- over the whole result set). With a LIMIT that filter has to be in SQL or a
+  -- page would silently return fewer rows than asked for and the total would
+  -- count rows the caller can never see.
+  AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive)
+ORDER BY
+    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN v.created_at END ASC,
+    CASE WHEN sqlc.arg('sort')::text <> 'published_at' THEN v.created_at END DESC,
+    v.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountPublicVideosByChannelVisible :one
+-- How many rows ListPublicVideosByChannel would return, ignoring pagination.
+-- The block predicate must stay identical: CountPublicVideosByChannel above
+-- answers the AP outbox's question (it counts blocked videos too) and would
+-- over-report this list.
+SELECT count(*)::bigint
+FROM videos v
+WHERE v.channel_id = sqlc.arg('channel_id') AND v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive);
 
 -- name: ListPublicVideosSorted :many
 -- The public feed, joined with view counts and thumbnail availability so cards
@@ -190,6 +229,90 @@ ORDER BY
     feed.created_at DESC, feed.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: CountPublicVideosSorted :one
+-- How many rows ListPublicVideosSorted would return for the same filters,
+-- viewer and scope, ignoring pagination. The whole UNION body is repeated
+-- verbatim because every one of its predicates is per-request: mutes and
+-- blocks are per-VIEWER, and ?scope=local drops the remote arm entirely. A
+-- total taken over anything wider would promise pages the feed cannot serve.
+-- The sort mode is deliberately absent: ordering cannot change a count.
+SELECT count(*)::bigint
+FROM (
+    SELECT v.id,
+           false AS remote,
+           v.channel_id,
+           v.title, v.description, v.privacy, v.state,
+           v.created_at, v.updated_at,
+           COALESCE(vc.views, 0)::bigint AS views,
+           EXISTS (
+               SELECT 1 FROM video_files f
+               WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+           ) AS has_thumbnail,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           au.display_name AS author_display_name,
+           vm.duration_seconds,
+           ''::text AS domain,
+           ''::text AS watch_url,
+           NULL::text AS stream_url,
+           v.is_sensitive,
+           v.sensitive_reason
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    JOIN users au ON au.id = c.owner_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+    WHERE v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_accounts m
+          WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
+      )
+      -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
+      AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
+      )
+      AND (sqlc.narg('tag')::text IS NULL OR EXISTS (
+          SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = sqlc.narg('tag')
+      ))
+      AND (sqlc.narg('category')::text IS NULL OR v.category = sqlc.narg('category'))
+      AND (sqlc.narg('language')::text IS NULL OR v.language = sqlc.narg('language'))
+      -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
+      AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+      -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
+      -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
+      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive)
+    UNION ALL
+    SELECT rv.id,
+           true AS remote,
+           '00000000-0000-0000-0000-000000000000'::uuid AS channel_id,
+           rv.title, rv.description, ''::text AS privacy, ''::text AS state,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
+           0::bigint AS views,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username AS channel_display_name,
+           ''::text AS author_display_name,
+           rv.duration_seconds,
+           ra.domain,
+           rv.watch_url,
+           rv.stream_url,
+           false AS is_sensitive,
+           ''::text AS sensitive_reason
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+    WHERE sqlc.arg('include_remote')::bool
+      AND sqlc.narg('tag')::text IS NULL
+      AND sqlc.narg('category')::text IS NULL
+      AND sqlc.narg('language')::text IS NULL
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_instances mi
+          WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
+      )
+) AS feed;
+
 -- name: ListSubscriptionVideos :many
 -- The "subscriptions" feed (remote-content §3): a UNION of public, published
 -- videos from the LOCAL channels the user follows and the ingested remote
@@ -275,6 +398,82 @@ FROM (
 ) AS feed
 ORDER BY feed.created_at DESC, feed.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountSubscriptionVideos :one
+-- How many rows ListSubscriptionVideos would return for the same follower,
+-- ignoring pagination. The follow sets, mutes, blocks and instance
+-- blocklist are all part of the predicate and are repeated verbatim.
+SELECT count(*)::bigint
+FROM (
+    SELECT v.id,
+           false AS remote,
+           v.channel_id,
+           v.title, v.description, v.privacy, v.state,
+           v.created_at, v.updated_at,
+           COALESCE(vc.views, 0)::bigint AS views,
+           EXISTS (
+               SELECT 1 FROM video_files f
+               WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+           ) AS has_thumbnail,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           au.display_name AS author_display_name,
+           vm.duration_seconds,
+           ''::text AS domain,
+           ''::text AS watch_url,
+           NULL::text AS stream_url,
+           v.is_sensitive,
+           v.sensitive_reason
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    JOIN users au ON au.id = c.owner_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+    WHERE v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_accounts m
+          WHERE m.muter_id = sqlc.arg('follower_id') AND m.muted_id = c.owner_id
+      )
+      -- §13: owners the follower has BLOCKED are hidden too.
+      AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE ub.blocker_id = sqlc.arg('follower_id') AND ub.blocked_id = c.owner_id
+      )
+      AND v.channel_id IN (
+          SELECT channel_id FROM channel_follows WHERE follower_id = sqlc.arg('follower_id')
+      )
+    UNION ALL
+    SELECT rv.id,
+           true AS remote,
+           '00000000-0000-0000-0000-000000000000'::uuid AS channel_id,
+           rv.title, rv.description, ''::text AS privacy, ''::text AS state,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
+           0::bigint AS views,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username AS channel_display_name,
+           ''::text AS author_display_name,
+           rv.duration_seconds,
+           ra.domain,
+           rv.watch_url,
+           rv.stream_url,
+           false AS is_sensitive,
+           ''::text AS sensitive_reason
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+    WHERE EXISTS (
+          SELECT 1 FROM remote_channel_follows rcf
+          WHERE rcf.user_id = sqlc.arg('follower_id')
+            AND rcf.remote_actor_url = rv.remote_actor_url
+            AND rcf.state = 'accepted'
+      )
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_instances mi
+          WHERE mi.muter_id = sqlc.arg('follower_id') AND mi.domain = ra.domain
+      )
+) AS feed;
 
 -- name: SearchPublicVideos :many
 -- Public, published title search with discovery-card data. A local video also
@@ -377,6 +576,99 @@ FROM (
 ) AS feed
 ORDER BY feed.search_rank DESC, feed.created_at DESC, feed.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountSearchPublicVideos :one
+-- How many rows SearchPublicVideos would return for the same query, filters
+-- and viewer, ignoring pagination. The match predicates are repeated
+-- verbatim; only the relevance ORDER BY is dropped, which cannot change a
+-- count.
+SELECT count(*)::bigint
+FROM (
+    SELECT v.id,
+           false AS remote,
+           v.channel_id,
+           v.title, v.description, v.privacy, v.state,
+           v.created_at, v.updated_at,
+           COALESCE(vc.views, 0)::bigint AS views,
+           EXISTS (
+               SELECT 1 FROM video_files f
+               WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+           ) AS has_thumbnail,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           au.display_name AS author_display_name,
+           vm.duration_seconds,
+           ''::text AS domain,
+           ''::text AS watch_url,
+           NULL::text AS stream_url,
+           v.is_sensitive,
+           v.sensitive_reason,
+           similarity(v.title, sqlc.arg('query')) AS search_rank
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    JOIN users au ON au.id = c.owner_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+    WHERE v.privacy = 'public' AND v.state = 'published'
+      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_accounts m
+          WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
+      )
+      -- §13: owners the viewer has BLOCKED are hidden too (per-viewer, like mutes).
+      AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
+      )
+      AND (v.title ILIKE '%' || sqlc.arg('query') || '%'
+           OR EXISTS (
+               SELECT 1 FROM video_tags t
+               WHERE t.video_id = v.id AND t.tag ILIKE '%' || sqlc.arg('query') || '%'
+           ))
+      -- Optional facet filters (NULL = off), mirroring the feed: an exact
+      -- free-form tag and the category/language taxonomy ids.
+      AND (sqlc.narg('tag')::text IS NULL OR EXISTS (
+          SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = sqlc.narg('tag')
+      ))
+      AND (sqlc.narg('category')::text IS NULL OR v.category = sqlc.narg('category'))
+      AND (sqlc.narg('language')::text IS NULL OR v.language = sqlc.narg('language'))
+      -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
+      AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
+      -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
+      -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
+      AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive)
+    UNION ALL
+    SELECT rv.id,
+           true AS remote,
+           '00000000-0000-0000-0000-000000000000'::uuid AS channel_id,
+           rv.title, rv.description, ''::text AS privacy, ''::text AS state,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at, rv.updated_at,
+           0::bigint AS views,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username AS channel_display_name,
+           ''::text AS author_display_name,
+           rv.duration_seconds,
+           ra.domain,
+           rv.watch_url,
+           rv.stream_url,
+           false AS is_sensitive,
+           ''::text AS sensitive_reason,
+           similarity(rv.title, sqlc.arg('query')) AS search_rank
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+    -- Remote videos carry no local taxonomy/tags, so any active facet filter
+    -- excludes them (matching the main feed's behavior).
+    WHERE sqlc.narg('tag')::text IS NULL
+      AND sqlc.narg('category')::text IS NULL
+      AND sqlc.narg('language')::text IS NULL
+      AND rv.title ILIKE '%' || sqlc.arg('query') || '%'
+      AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+      AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM muted_instances mi
+          WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
+      )
+) AS feed;
 
 -- name: ListPublicVideosByIDs :many
 -- Hydrate a set of ranked video ids to discovery cards under the FULL canonical
@@ -549,6 +841,16 @@ WHERE v.state = 'quarantined'
 ORDER BY v.created_at DESC, v.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
+-- name: CountQuarantinedVideos :one
+-- How many rows ListQuarantinedVideos would return, ignoring pagination. The
+-- channels/users JOINs are part of the predicate and the state filter must stay
+-- identical.
+SELECT count(*)::bigint
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+JOIN users u ON u.id = c.owner_id
+WHERE v.state = 'quarantined';
+
 -- name: DeleteVideo :exec
 DELETE FROM videos WHERE id = $1;
 
@@ -556,6 +858,21 @@ DELETE FROM videos WHERE id = $1;
 -- The moderation inventory includes both locally hosted videos and federated
 -- metadata rows. Local file facts are derived from the authoritative media
 -- tables; remote rows never pretend to own files.
+--
+-- Sorting: sqlc cannot parameterise ORDER BY, so each supported ordering gets a
+-- CASE branch over the bound `sort` argument — a branch that does not match
+-- evaluates to NULL for every row and is therefore a no-op. `id` is the final
+-- tiebreaker on every branch so a page boundary can never duplicate or drop a
+-- row. The default '-created_at' reproduces the previous fixed
+-- `created_at DESC, id DESC` exactly. 'published_at' is accepted as an alias of
+-- 'created_at': videos carry no separate published_at column, and the remote arm
+-- already projects COALESCE(published_at, fetched_at) INTO created_at, so they
+-- are the same column by construction.
+--
+-- Filtering: every predicate is optional (NULL/'all' = off). states/privacies
+-- are arrays so the admin UI can check several boxes at once. The file-type
+-- filters are tri-state on purpose — absent means "all", not "false", or
+-- "videos with no HLS" would be unexpressible.
 SELECT inventory.*
 FROM (
     SELECT v.id, v.title, v.privacy, v.state,
@@ -576,7 +893,11 @@ FROM (
                COALESCE((SELECT sum(f.size_bytes) FROM video_files f WHERE f.video_id = v.id), 0) +
                COALESCE((SELECT sum(r.size_bytes) FROM video_renditions r WHERE r.video_id = v.id), 0)
            )::bigint AS size_bytes,
-           EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked
+           EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked,
+           (SELECT count(*) FROM video_ratings vr
+             WHERE vr.video_id = v.id AND vr.rating = 'like')::bigint AS like_count,
+           (SELECT count(*) FROM comments cm
+             WHERE cm.video_id = v.id AND cm.deleted_at IS NULL)::bigint AS comment_count
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
     LEFT JOIN video_view_counts vc ON vc.video_id = v.id
@@ -600,10 +921,113 @@ FROM (
            0::int AS hls_count,
            0::int AS web_video_count,
            0::bigint AS size_bytes,
-           EXISTS (SELECT 1 FROM remote_video_blocks b WHERE b.remote_video_id = rv.id) AS blocked
+           EXISTS (SELECT 1 FROM remote_video_blocks b WHERE b.remote_video_id = rv.id) AS blocked,
+           0::bigint AS like_count,
+           0::bigint AS comment_count
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
 ) inventory
 WHERE (sqlc.narg('query')::text IS NULL OR inventory.title ILIKE '%' || sqlc.narg('query') || '%')
-ORDER BY inventory.created_at DESC, inventory.id DESC
+  AND (sqlc.narg('states')::text[] IS NULL OR inventory.state = ANY(sqlc.narg('states')::text[]))
+  AND (sqlc.narg('privacies')::text[] IS NULL OR inventory.privacy = ANY(sqlc.narg('privacies')::text[]))
+  AND (sqlc.arg('scope')::text = 'all'
+       OR (sqlc.arg('scope')::text = 'local' AND inventory.is_local)
+       OR (sqlc.arg('scope')::text = 'remote' AND NOT inventory.is_local))
+  AND (sqlc.narg('channel')::text IS NULL OR inventory.channel_handle = sqlc.narg('channel')::text)
+  AND (sqlc.narg('published_after')::timestamptz IS NULL OR inventory.created_at >= sqlc.narg('published_after')::timestamptz)
+  AND (sqlc.narg('published_before')::timestamptz IS NULL OR inventory.created_at <= sqlc.narg('published_before')::timestamptz)
+  AND (sqlc.narg('has_original')::boolean IS NULL OR inventory.has_original = sqlc.narg('has_original')::boolean)
+  AND (sqlc.narg('has_hls')::boolean IS NULL OR (inventory.hls_count > 0) = sqlc.narg('has_hls')::boolean)
+  AND (sqlc.narg('has_web_files')::boolean IS NULL OR (inventory.web_video_count > 0) = sqlc.narg('has_web_files')::boolean)
+ORDER BY
+    CASE WHEN sqlc.arg('sort')::text IN ('created_at', 'published_at') THEN inventory.created_at END ASC,
+    CASE WHEN sqlc.arg('sort')::text IN ('-created_at', '-published_at') THEN inventory.created_at END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'views' THEN inventory.views END ASC,
+    CASE WHEN sqlc.arg('sort')::text = '-views' THEN inventory.views END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'duration' THEN inventory.duration_seconds END ASC,
+    CASE WHEN sqlc.arg('sort')::text = '-duration' THEN inventory.duration_seconds END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'title' THEN inventory.title END ASC,
+    CASE WHEN sqlc.arg('sort')::text = '-title' THEN inventory.title END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'state' THEN inventory.state END ASC,
+    CASE WHEN sqlc.arg('sort')::text = '-state' THEN inventory.state END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'likes' THEN inventory.like_count END ASC,
+    CASE WHEN sqlc.arg('sort')::text = '-likes' THEN inventory.like_count END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'comments' THEN inventory.comment_count END ASC,
+    CASE WHEN sqlc.arg('sort')::text = '-comments' THEN inventory.comment_count END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'size_bytes' THEN inventory.size_bytes END ASC,
+    CASE WHEN sqlc.arg('sort')::text = '-size_bytes' THEN inventory.size_bytes END DESC,
+    inventory.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountAdminVideos :one
+-- How many rows ListAdminVideos would return for the same filters, ignoring
+-- pagination. The inner UNION and the whole WHERE are repeated verbatim: this
+-- is the number the admin "All videos" header shows, and it reported
+-- len(page) — permanently "100" — before this query existed. The ORDER BY is
+-- dropped; ordering cannot change a count.
+SELECT count(*)::bigint
+FROM (
+    SELECT v.id, v.title, v.privacy, v.state,
+           c.handle AS channel_handle, c.display_name AS channel_display_name,
+           COALESCE(vc.views, 0)::bigint AS views,
+           v.created_at,
+           vm.duration_seconds,
+           true AS is_local,
+           ''::text AS origin_domain,
+           ''::text AS watch_url,
+           v.is_sensitive,
+           EXISTS (SELECT 1 FROM import_jobs ij WHERE ij.video_id = v.id) AS external_link,
+           EXISTS (SELECT 1 FROM video_files f WHERE f.video_id = v.id AND f.kind = 'thumbnail') AS has_thumbnail,
+           EXISTS (SELECT 1 FROM video_files f WHERE f.video_id = v.id AND f.kind = 'original') AS has_original,
+           (SELECT count(*)::int FROM video_renditions r WHERE r.video_id = v.id) AS hls_count,
+           (SELECT count(*)::int FROM video_files f WHERE f.video_id = v.id AND f.kind IN ('rendition', 'webm')) AS web_video_count,
+           (
+               COALESCE((SELECT sum(f.size_bytes) FROM video_files f WHERE f.video_id = v.id), 0) +
+               COALESCE((SELECT sum(r.size_bytes) FROM video_renditions r WHERE r.video_id = v.id), 0)
+           )::bigint AS size_bytes,
+           EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked,
+           (SELECT count(*) FROM video_ratings vr
+             WHERE vr.video_id = v.id AND vr.rating = 'like')::bigint AS like_count,
+           (SELECT count(*) FROM comments cm
+             WHERE cm.video_id = v.id AND cm.deleted_at IS NULL)::bigint AS comment_count
+    FROM videos v
+    JOIN channels c ON c.id = v.channel_id
+    LEFT JOIN video_view_counts vc ON vc.video_id = v.id
+    LEFT JOIN video_metadata vm ON vm.video_id = v.id
+
+    UNION ALL
+
+    SELECT rv.id, rv.title, 'public'::text AS privacy, 'published'::text AS state,
+           (ra.preferred_username || '@' || ra.domain)::text AS channel_handle,
+           ra.preferred_username::text AS channel_display_name,
+           0::bigint AS views,
+           COALESCE(rv.published_at, rv.fetched_at) AS created_at,
+           rv.duration_seconds,
+           false AS is_local,
+           ra.domain AS origin_domain,
+           rv.watch_url,
+           false AS is_sensitive,
+           false AS external_link,
+           (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
+           false AS has_original,
+           0::int AS hls_count,
+           0::int AS web_video_count,
+           0::bigint AS size_bytes,
+           EXISTS (SELECT 1 FROM remote_video_blocks b WHERE b.remote_video_id = rv.id) AS blocked,
+           0::bigint AS like_count,
+           0::bigint AS comment_count
+    FROM remote_videos rv
+    JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
+) inventory
+WHERE (sqlc.narg('query')::text IS NULL OR inventory.title ILIKE '%' || sqlc.narg('query') || '%')
+  AND (sqlc.narg('states')::text[] IS NULL OR inventory.state = ANY(sqlc.narg('states')::text[]))
+  AND (sqlc.narg('privacies')::text[] IS NULL OR inventory.privacy = ANY(sqlc.narg('privacies')::text[]))
+  AND (sqlc.arg('scope')::text = 'all'
+       OR (sqlc.arg('scope')::text = 'local' AND inventory.is_local)
+       OR (sqlc.arg('scope')::text = 'remote' AND NOT inventory.is_local))
+  AND (sqlc.narg('channel')::text IS NULL OR inventory.channel_handle = sqlc.narg('channel')::text)
+  AND (sqlc.narg('published_after')::timestamptz IS NULL OR inventory.created_at >= sqlc.narg('published_after')::timestamptz)
+  AND (sqlc.narg('published_before')::timestamptz IS NULL OR inventory.created_at <= sqlc.narg('published_before')::timestamptz)
+  AND (sqlc.narg('has_original')::boolean IS NULL OR inventory.has_original = sqlc.narg('has_original')::boolean)
+  AND (sqlc.narg('has_hls')::boolean IS NULL OR (inventory.hls_count > 0) = sqlc.narg('has_hls')::boolean)
+  AND (sqlc.narg('has_web_files')::boolean IS NULL OR (inventory.web_video_count > 0) = sqlc.narg('has_web_files')::boolean);

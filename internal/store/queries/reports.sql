@@ -51,8 +51,10 @@ RETURNING id;
 -- name: ListReports :many
 -- The moderation queue, newest first, with the reporter's username and the
 -- target context (video title / comment body / reported account username /
--- remote video title+domain / message body snapshot). When open_only is true,
--- only unresolved (status='open') reports are returned.
+-- remote video title+domain / message body snapshot). status is the exact
+-- lifecycle state to show, or NULL for all of them. It used to be an open_only
+-- BOOLEAN fed by `?status == "open"` in the handler, so ?status=resolved
+-- silently returned the whole queue.
 SELECT r.id, r.target_type, r.video_id, r.comment_id, r.reported_user_id, r.remote_video_id,
        r.message_id, r.message_body_snapshot,
        r.reason, r.status,
@@ -70,9 +72,26 @@ LEFT JOIN comments cm ON cm.id = r.comment_id
 LEFT JOIN users ru ON ru.id = r.reported_user_id
 LEFT JOIN remote_videos rv ON rv.id = r.remote_video_id
 LEFT JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
-WHERE (NOT sqlc.arg('open_only')::bool OR r.status = 'open')
+WHERE (sqlc.narg('status')::text IS NULL
+       -- 'resolved' is the queue's other half, not a stored value: reports.status
+       -- is open/accepted/rejected, so "resolved" means "no longer open".
+       OR (sqlc.narg('status')::text = 'resolved' AND r.status <> 'open')
+       OR r.status = sqlc.narg('status')::text)
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountReports :one
+-- How many rows ListReports would return for the same status filter, ignoring
+-- pagination. The WHERE must stay identical to it; the users JOIN is part of
+-- the predicate (a report whose reporter account is gone is not listed).
+SELECT count(*)::bigint
+FROM reports r
+JOIN users u ON u.id = r.reporter_id
+WHERE (sqlc.narg('status')::text IS NULL
+       -- 'resolved' is the queue's other half, not a stored value: reports.status
+       -- is open/accepted/rejected, so "resolved" means "no longer open".
+       OR (sqlc.narg('status')::text = 'resolved' AND r.status <> 'open')
+       OR r.status = sqlc.narg('status')::text);
 
 -- name: DeleteReport :execrows
 -- Hard-delete a report row (admin purge). Notifications referencing it cascade

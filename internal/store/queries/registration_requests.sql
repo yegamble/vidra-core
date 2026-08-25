@@ -8,16 +8,26 @@ RETURNING id, username, email, note, status, moderator_note, reviewed_at, create
 
 -- name: ListRegistrationRequests :many
 -- The approval queue, newest first, with the reviewing admin's username resolved.
--- When pending_only is true, only unresolved requests are returned. The
--- password hash is never selected.
+-- status is the exact lifecycle state to show, or NULL for all of them. It used
+-- to be a pending_only BOOLEAN fed by `?status == "pending"` in the handler,
+-- which meant ?status=approved silently returned the whole queue; the filter is
+-- now the value itself so an unknown one is rejected up front instead of
+-- collapsing into "no filter". The password hash is never selected.
 SELECT r.id, r.username, r.email, r.note, r.status, r.moderator_note,
        r.reviewed_at, r.created_at,
        u.username AS reviewer_username
 FROM registration_requests r
 LEFT JOIN users u ON u.id = r.reviewed_by
-WHERE (NOT sqlc.arg('pending_only')::bool OR r.status = 'pending')
+WHERE (sqlc.narg('status')::text IS NULL OR r.status = sqlc.narg('status')::text)
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountRegistrationRequests :one
+-- How many rows ListRegistrationRequests would return for the same status
+-- filter, ignoring pagination. The WHERE must stay identical to it.
+SELECT count(*)::bigint
+FROM registration_requests r
+WHERE (sqlc.narg('status')::text IS NULL OR r.status = sqlc.narg('status')::text);
 
 -- name: ApproveRegistrationRequest :one
 -- Atomically approve a PENDING request: create the user account from the stored

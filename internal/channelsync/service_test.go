@@ -73,7 +73,8 @@ func (f *fakeRepo) CreateChannelSync(_ context.Context, arg sqlcgen.CreateChanne
 	return s, nil
 }
 
-func (f *fakeRepo) ListChannelSyncsByUser(_ context.Context, userID uuid.UUID) ([]sqlcgen.ChannelSync, error) {
+func (f *fakeRepo) ListChannelSyncsByUser(_ context.Context, a sqlcgen.ListChannelSyncsByUserParams) ([]sqlcgen.ChannelSync, error) {
+	userID := a.UserID
 	var out []sqlcgen.ChannelSync
 	for _, s := range f.syncs {
 		if s.UserID == userID {
@@ -641,3 +642,8 @@ func TestMaxPerUserFunc(t *testing.T) {
 
 // RenewChannelSyncLease is the lease heartbeat; the fake has no leases to keep.
 func (*fakeRepo) RenewChannelSyncLease(_ context.Context, _ uuid.UUID) error { return nil }
+
+func (f *fakeRepo) CountChannelSyncsByUserList(ctx context.Context, userID uuid.UUID) (int64, error) {
+	rows, err := f.ListChannelSyncsByUser(ctx, sqlcgen.ListChannelSyncsByUserParams{UserID: userID, ResultLimit: 1 << 30})
+	return int64(len(rows)), err
+}

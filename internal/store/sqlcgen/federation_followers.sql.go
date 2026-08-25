@@ -54,6 +54,23 @@ func (q *Queries) AcceptPendingRemoteFollowByID(ctx context.Context, id uuid.UUI
 	return i, err
 }
 
+const countPendingRemoteFollows = `-- name: CountPendingRemoteFollows :one
+SELECT count(*)::bigint
+FROM remote_follows rf
+JOIN channels c ON c.id = rf.channel_id
+WHERE rf.state = 'pending'
+`
+
+// How many rows ListPendingRemoteFollows would return, ignoring pagination. The
+// channels JOIN is part of the predicate (a follow whose channel is gone is not
+// listed) and the state filter must stay identical.
+func (q *Queries) CountPendingRemoteFollows(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countPendingRemoteFollows)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deleteChannelFollowBackByActivity = `-- name: DeleteChannelFollowBackByActivity :execrows
 DELETE FROM channel_follow_backs
 WHERE follow_activity_url = $1 AND remote_actor_url = $2

@@ -47,7 +47,7 @@ type Repository interface {
 
 	// Owned content (channels → videos) + their recorded blob keys.
 	ListChannelsByOwner(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.Channel, error)
-	ListVideosByChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.ListVideosByChannelRow, error)
+	ListVideoIDsByChannel(ctx context.Context, channelID uuid.UUID) ([]uuid.UUID, error)
 	DeleteChannel(ctx context.Context, id uuid.UUID) error
 	ListVideoFiles(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.VideoFile, error)
 	ListCaptionsByVideo(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.Caption, error)
@@ -95,7 +95,7 @@ type Repository interface {
 	ListFollowedChannelsByUser(ctx context.Context, followerID uuid.UUID) ([]sqlcgen.ListFollowedChannelsByUserRow, error)
 	ListSavedVideosByUserForExport(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ListSavedVideosByUserForExportRow, error)
 	ListWatchHistoryByUserForExport(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ListWatchHistoryByUserForExportRow, error)
-	ListPlaylistsByOwner(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.ListPlaylistsByOwnerRow, error)
+	ListPlaylistsByOwnerForExport(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.ListPlaylistsByOwnerForExportRow, error)
 	ListPlaylistItemVideoIDs(ctx context.Context, playlistID uuid.UUID) ([]uuid.UUID, error)
 	ListNotificationPrefs(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationPrefsRow, error)
 

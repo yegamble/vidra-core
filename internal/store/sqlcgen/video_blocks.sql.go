@@ -37,6 +37,24 @@ func (q *Queries) BlockVideo(ctx context.Context, arg BlockVideoParams) (int64, 
 	return result.RowsAffected(), nil
 }
 
+const countBlockedVideos = `-- name: CountBlockedVideos :one
+SELECT count(*)::bigint
+FROM video_blocks b
+JOIN videos v   ON v.id = b.video_id
+JOIN channels c ON c.id = v.channel_id
+`
+
+// How many rows ListBlockedVideos would return, ignoring pagination. The FROM
+// and (absent) WHERE must stay identical to it — the JOINs are part of the
+// predicate here: a block whose video or channel row is gone is not listed and
+// must not be counted.
+func (q *Queries) CountBlockedVideos(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countBlockedVideos)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const isVideoBlocked = `-- name: IsVideoBlocked :one
 SELECT EXISTS (SELECT 1 FROM video_blocks WHERE video_id = $1) AS blocked
 `

@@ -62,6 +62,7 @@ var (
 type Repository interface {
 	CreateNotification(ctx context.Context, arg sqlcgen.CreateNotificationParams) (sqlcgen.Notification, error)
 	ListNotifications(ctx context.Context, arg sqlcgen.ListNotificationsParams) ([]sqlcgen.ListNotificationsRow, error)
+	CountNotifications(ctx context.Context, arg sqlcgen.CountNotificationsParams) (int64, error)
 	CountUnreadNotifications(ctx context.Context, userID uuid.UUID) (int64, error)
 	MarkNotificationRead(ctx context.Context, arg sqlcgen.MarkNotificationReadParams) (int64, error)
 	MarkAllNotificationsRead(ctx context.Context, userID uuid.UUID) error
@@ -273,7 +274,7 @@ func (s *Service) NotifyCaptionReady(ctx context.Context, recipientID, videoID u
 
 // List returns the user's notifications, newest first. When unreadOnly is true,
 // only unread notifications are returned. The caller clamps limit/offset.
-func (s *Service) List(ctx context.Context, userID uuid.UUID, unreadOnly bool, limit, offset int32) ([]Item, error) {
+func (s *Service) List(ctx context.Context, userID uuid.UUID, unreadOnly bool, limit, offset int32) ([]Item, int64, error) {
 	rows, err := s.repo.ListNotifications(ctx, sqlcgen.ListNotificationsParams{
 		UserID:       userID,
 		UnreadOnly:   unreadOnly,
@@ -281,7 +282,15 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, unreadOnly bool, l
 		ResultOffset: offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	// The LIST total, honouring ?unread — distinct from the unread badge, which
+	// says nothing about how many read notifications sit behind the page.
+	total, err := s.repo.CountNotifications(ctx, sqlcgen.CountNotificationsParams{
+		UserID: userID, UnreadOnly: unreadOnly,
+	})
+	if err != nil {
+		return nil, 0, err
 	}
 	items := make([]Item, 0, len(rows))
 	for _, r := range rows {
@@ -303,7 +312,7 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, unreadOnly bool, l
 			ReportTargetType:   deref(r.ReportTargetType),
 		})
 	}
-	return items, nil
+	return items, total, nil
 }
 
 // UnreadCount returns how many unread notifications the user has.

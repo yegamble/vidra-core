@@ -34,6 +34,22 @@ func (q *Queries) BlockUser(ctx context.Context, arg BlockUserParams) (int64, er
 	return result.RowsAffected(), nil
 }
 
+const countBlockedUsers = `-- name: CountBlockedUsers :one
+SELECT count(*)::bigint
+FROM user_blocks b
+JOIN users u ON u.id = b.blocked_id
+WHERE b.blocker_id = $1
+`
+
+// How many rows ListBlockedUsers would return, ignoring pagination. The users
+// JOIN is part of the predicate (a block on a deleted account is not listed).
+func (q *Queries) CountBlockedUsers(ctx context.Context, blockerID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countBlockedUsers, blockerID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const isBlockedBetween = `-- name: IsBlockedBetween :one
 SELECT EXISTS (
     SELECT 1 FROM user_blocks
