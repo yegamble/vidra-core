@@ -3,6 +3,7 @@ package channel
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -793,6 +794,55 @@ func (f *fakeRepo) ListManagedChannels(ctx context.Context, a sqlcgen.ListManage
 		out = out[:a.ResultLimit]
 	}
 	return out, nil
+}
+
+// SearchPublicChannels mirrors the local trigram search: handle OR display-name
+// substring, the owner's active/unlisted gate resolved through usersByName (a
+// repo with no user rows treats every owner as visible), ranked by follower
+// count with a handle tiebreak so pages are deterministic.
+func (f *fakeRepo) SearchPublicChannels(ctx context.Context, a sqlcgen.SearchPublicChannelsParams) ([]sqlcgen.SearchPublicChannelsRow, error) {
+	q := strings.ToLower(a.Query)
+	var out []sqlcgen.SearchPublicChannelsRow
+	for _, ch := range f.byHandle {
+		if !strings.Contains(strings.ToLower(ch.Handle), q) && !strings.Contains(strings.ToLower(ch.DisplayName), q) {
+			continue
+		}
+		visible := true
+		for _, u := range f.usersByName {
+			if u.ID == ch.OwnerID {
+				visible = u.IsActive && !u.Unlisted
+			}
+		}
+		if !visible {
+			continue
+		}
+		n, _ := f.CountChannelFollowers(ctx, ch.ID)
+		out = append(out, sqlcgen.SearchPublicChannelsRow{
+			ID: ch.ID, OwnerID: ch.OwnerID, Handle: ch.Handle, DisplayName: ch.DisplayName,
+			Description: ch.Description, CreatedAt: ch.CreatedAt, UpdatedAt: ch.UpdatedAt,
+			ActivitypubEnabled: ch.ActivitypubEnabled, AtprotoEnabled: ch.AtprotoEnabled,
+			FollowerCount: n,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].FollowerCount != out[j].FollowerCount {
+			return out[i].FollowerCount > out[j].FollowerCount
+		}
+		return out[i].Handle < out[j].Handle
+	})
+	lo := min(int(a.ResultOffset), len(out))
+	out = out[lo:]
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(out) {
+		out = out[:a.ResultLimit]
+	}
+	return out, nil
+}
+
+func (f *fakeRepo) CountSearchPublicChannels(ctx context.Context, a sqlcgen.CountSearchPublicChannelsParams) (int64, error) {
+	rows, err := f.SearchPublicChannels(ctx, sqlcgen.SearchPublicChannelsParams{
+		Query: a.Query, ViewerID: a.ViewerID, ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
 }
 
 func (f *fakeRepo) CountManagedChannels(ctx context.Context, userID uuid.UUID) (int64, error) {

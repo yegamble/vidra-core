@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"errors"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -370,6 +372,41 @@ func (f *fakeRepo) GetPublicUserProfileByUsername(_ context.Context, username st
 		}
 	}
 	return sqlcgen.GetPublicUserProfileByUsernameRow{}, errors.New("not found")
+}
+
+// SearchPublicAccounts mirrors the real query's gate exactly:
+// GetPublicUserProfileByUsername's active+profile_public rule, plus the
+// discovery opt-out a result list has to honour and a direct profile lookup
+// does not.
+func (f *fakeRepo) SearchPublicAccounts(_ context.Context, a sqlcgen.SearchPublicAccountsParams) ([]sqlcgen.SearchPublicAccountsRow, error) {
+	q := lower(a.Query)
+	var out []sqlcgen.SearchPublicAccountsRow
+	for _, u := range f.byEmail {
+		if !u.IsActive || !u.ProfilePublic || u.Unlisted {
+			continue
+		}
+		if !strings.Contains(lower(u.Username), q) && !strings.Contains(lower(u.DisplayName), q) {
+			continue
+		}
+		out = append(out, sqlcgen.SearchPublicAccountsRow{
+			ID: u.ID, Username: u.Username, DisplayName: u.DisplayName,
+			Bio: u.Bio, CreatedAt: u.CreatedAt,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
+	lo := min(int(a.ResultOffset), len(out))
+	out = out[lo:]
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(out) {
+		out = out[:a.ResultLimit]
+	}
+	return out, nil
+}
+
+func (f *fakeRepo) CountSearchPublicAccounts(ctx context.Context, a sqlcgen.CountSearchPublicAccountsParams) (int64, error) {
+	rows, err := f.SearchPublicAccounts(ctx, sqlcgen.SearchPublicAccountsParams{
+		Query: a.Query, ViewerID: a.ViewerID, ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
 }
 
 func lower(s string) string {

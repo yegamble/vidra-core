@@ -343,11 +343,28 @@ FROM (
       ))
       AND ($4::text IS NULL OR v.category = $4)
       AND ($5::text IS NULL OR v.language = $5)
+      -- Tag SETS (NULL = off). one_of is a disjunction; all_of demands every
+      -- listed tag, counted DISTINCT so a caller repeating a tag cannot make the
+      -- comparison unsatisfiable. Both arrive lowercased, like ?tag.
+      AND ($6::text[] IS NULL OR EXISTS (
+          SELECT 1 FROM video_tags t
+          WHERE t.video_id = v.id AND t.tag = ANY ($6::text[])
+      ))
+      AND ($7::text[] IS NULL OR (
+          SELECT count(DISTINCT t.tag) FROM video_tags t
+          WHERE t.video_id = v.id AND t.tag = ANY ($7::text[])
+      ) = (
+          -- The DISTINCT count of the REQUESTED tags, not cardinality(): a
+          -- caller sending ?tags_all_of=go,go would otherwise be asking for two
+          -- matches of one tag, which the left side (also DISTINCT) can never
+          -- reach, and the filter would silently match nothing.
+          SELECT count(DISTINCT want) FROM unnest($7::text[]) AS want
+      ))
       -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND (NOT $6::bool OR NOT v.is_sensitive)
+      AND (NOT $8::bool OR NOT v.is_sensitive)
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -369,10 +386,14 @@ FROM (
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     -- Remote videos carry no local taxonomy/tags, so any active facet filter
-    -- excludes them (matching the main feed's behavior).
+    -- excludes them (matching the main feed's behavior). The tag SETS are part
+    -- of that rule for the same reason; duration and the publish window are not,
+    -- because a remote row does carry both and is filtered on them below.
     WHERE $3::text IS NULL
       AND $4::text IS NULL
       AND $5::text IS NULL
+      AND $6::text[] IS NULL
+      AND $7::text[] IS NULL
       AND rv.title ILIKE '%' || $1 || '%'
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
@@ -381,15 +402,25 @@ FROM (
           WHERE mi.muter_id = $2 AND mi.domain = ra.domain
       )
 ) AS feed
+WHERE ($9::int IS NULL OR feed.duration_seconds >= $9::int)
+  AND ($10::int IS NULL OR feed.duration_seconds <= $10::int)
+  AND ($11::timestamptz IS NULL OR feed.created_at >= $11::timestamptz)
+  AND ($12::timestamptz IS NULL OR feed.created_at <= $12::timestamptz)
 `
 
 type CountSearchPublicVideosParams struct {
-	Query         string      `json:"query"`
-	ViewerID      pgtype.UUID `json:"viewer_id"`
-	Tag           *string     `json:"tag"`
-	Category      *string     `json:"category"`
-	Language      *string     `json:"language"`
-	HideSensitive bool        `json:"hide_sensitive"`
+	Query           string             `json:"query"`
+	ViewerID        pgtype.UUID        `json:"viewer_id"`
+	Tag             *string            `json:"tag"`
+	Category        *string            `json:"category"`
+	Language        *string            `json:"language"`
+	TagsOneOf       []string           `json:"tags_one_of"`
+	TagsAllOf       []string           `json:"tags_all_of"`
+	HideSensitive   bool               `json:"hide_sensitive"`
+	DurationMin     *int32             `json:"duration_min"`
+	DurationMax     *int32             `json:"duration_max"`
+	PublishedAfter  pgtype.Timestamptz `json:"published_after"`
+	PublishedBefore pgtype.Timestamptz `json:"published_before"`
 }
 
 // How many rows SearchPublicVideos would return for the same query, filters
@@ -403,7 +434,13 @@ func (q *Queries) CountSearchPublicVideos(ctx context.Context, arg CountSearchPu
 		arg.Tag,
 		arg.Category,
 		arg.Language,
+		arg.TagsOneOf,
+		arg.TagsAllOf,
 		arg.HideSensitive,
+		arg.DurationMin,
+		arg.DurationMax,
+		arg.PublishedAfter,
+		arg.PublishedBefore,
 	)
 	var column_1 int64
 	err := row.Scan(&column_1)
@@ -1927,11 +1964,28 @@ FROM (
       ))
       AND ($4::text IS NULL OR v.category = $4)
       AND ($5::text IS NULL OR v.language = $5)
+      -- Tag SETS (NULL = off). one_of is a disjunction; all_of demands every
+      -- listed tag, counted DISTINCT so a caller repeating a tag cannot make the
+      -- comparison unsatisfiable. Both arrive lowercased, like ?tag.
+      AND ($6::text[] IS NULL OR EXISTS (
+          SELECT 1 FROM video_tags t
+          WHERE t.video_id = v.id AND t.tag = ANY ($6::text[])
+      ))
+      AND ($7::text[] IS NULL OR (
+          SELECT count(DISTINCT t.tag) FROM video_tags t
+          WHERE t.video_id = v.id AND t.tag = ANY ($7::text[])
+      ) = (
+          -- The DISTINCT count of the REQUESTED tags, not cardinality(): a
+          -- caller sending ?tags_all_of=go,go would otherwise be asking for two
+          -- matches of one tag, which the left side (also DISTINCT) can never
+          -- reach, and the filter would silently match nothing.
+          SELECT count(DISTINCT want) FROM unnest($7::text[]) AS want
+      ))
       -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND (NOT $6::bool OR NOT v.is_sensitive)
+      AND (NOT $8::bool OR NOT v.is_sensitive)
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -1953,10 +2007,14 @@ FROM (
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     -- Remote videos carry no local taxonomy/tags, so any active facet filter
-    -- excludes them (matching the main feed's behavior).
+    -- excludes them (matching the main feed's behavior). The tag SETS are part
+    -- of that rule for the same reason; duration and the publish window are not,
+    -- because a remote row does carry both and is filtered on them below.
     WHERE $3::text IS NULL
       AND $4::text IS NULL
       AND $5::text IS NULL
+      AND $6::text[] IS NULL
+      AND $7::text[] IS NULL
       AND rv.title ILIKE '%' || $1 || '%'
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
@@ -1965,19 +2023,36 @@ FROM (
           WHERE mi.muter_id = $2 AND mi.domain = ra.domain
       )
 ) AS feed
-ORDER BY feed.search_rank DESC, feed.created_at DESC, feed.id DESC
-LIMIT $8 OFFSET $7
+WHERE ($9::int IS NULL OR feed.duration_seconds >= $9::int)
+  AND ($10::int IS NULL OR feed.duration_seconds <= $10::int)
+  AND ($11::timestamptz IS NULL OR feed.created_at >= $11::timestamptz)
+  AND ($12::timestamptz IS NULL OR feed.created_at <= $12::timestamptz)
+ORDER BY
+    CASE WHEN $13::text = 'relevance' THEN feed.search_rank END DESC,
+    CASE WHEN $13::text = 'published_at' THEN feed.created_at END ASC,
+    CASE WHEN $13::text = '-published_at' THEN feed.created_at END DESC,
+    CASE WHEN $13::text = 'views' THEN feed.views END ASC,
+    CASE WHEN $13::text = '-views' THEN feed.views END DESC,
+    feed.created_at DESC, feed.id DESC
+LIMIT $15 OFFSET $14
 `
 
 type SearchPublicVideosParams struct {
-	Query         string      `json:"query"`
-	ViewerID      pgtype.UUID `json:"viewer_id"`
-	Tag           *string     `json:"tag"`
-	Category      *string     `json:"category"`
-	Language      *string     `json:"language"`
-	HideSensitive bool        `json:"hide_sensitive"`
-	ResultOffset  int32       `json:"result_offset"`
-	ResultLimit   int32       `json:"result_limit"`
+	Query           string             `json:"query"`
+	ViewerID        pgtype.UUID        `json:"viewer_id"`
+	Tag             *string            `json:"tag"`
+	Category        *string            `json:"category"`
+	Language        *string            `json:"language"`
+	TagsOneOf       []string           `json:"tags_one_of"`
+	TagsAllOf       []string           `json:"tags_all_of"`
+	HideSensitive   bool               `json:"hide_sensitive"`
+	DurationMin     *int32             `json:"duration_min"`
+	DurationMax     *int32             `json:"duration_max"`
+	PublishedAfter  pgtype.Timestamptz `json:"published_after"`
+	PublishedBefore pgtype.Timestamptz `json:"published_before"`
+	Sort            string             `json:"sort"`
+	ResultOffset    int32              `json:"result_offset"`
+	ResultLimit     int32              `json:"result_limit"`
 }
 
 type SearchPublicVideosRow struct {
@@ -2009,6 +2084,23 @@ type SearchPublicVideosRow struct {
 // Ingested remote videos are UNIONed in by title match (remote-content §4),
 // flagged remote with origin domain + watch/stream URLs; blocked instances
 // hide them for everyone and a signed-in viewer's instance mutes hide them too.
+//
+// Sorting follows ListAdminVideos: sqlc cannot parameterise ORDER BY, so each
+// accepted ordering is a CASE branch over the bound `sort` argument and a branch
+// that does not match evaluates to NULL for every row, which is a no-op.
+// 'relevance' is the default and reproduces the previous fixed
+// `search_rank DESC, created_at DESC, id DESC` exactly. As in the admin list,
+// 'published_at' is created_at: local videos carry no separate published_at
+// column and the remote arm already projects COALESCE(published_at, fetched_at)
+// INTO created_at, so they are the same column by construction.
+//
+// The duration and publish-window filters are applied at the OUTER level, over
+// the union, so they narrow local and remote rows by the same predicate. A row
+// whose duration is unknown (NULL — no probe has run, or a remote actor that
+// never advertised one) fails a duration bound rather than passing it: the
+// filter answers "provably within the range", and an unknown length cannot be
+// proven to be. The tag-set filters are local-only, like the single ?tag: remote
+// rows carry no local taxonomy, so any active tag set excludes them outright.
 func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideosParams) ([]SearchPublicVideosRow, error) {
 	rows, err := q.db.Query(ctx, searchPublicVideos,
 		arg.Query,
@@ -2016,7 +2108,14 @@ func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideos
 		arg.Tag,
 		arg.Category,
 		arg.Language,
+		arg.TagsOneOf,
+		arg.TagsAllOf,
 		arg.HideSensitive,
+		arg.DurationMin,
+		arg.DurationMax,
+		arg.PublishedAfter,
+		arg.PublishedBefore,
+		arg.Sort,
 		arg.ResultOffset,
 		arg.ResultLimit,
 	)

@@ -91,43 +91,83 @@ func parseTimeRangeParams(c echo.Context, afterName, beforeName string) (after, 
 	return after, before, nil
 }
 
-// parseCSVEnumParam reads a repeatable and/or comma-separated multi-value
-// filter (?state=draft&state=failed and ?state=draft,failed are equivalent).
-// Every value must be in allowed. Duplicates collapse; an empty result means
-// "no filter".
-func parseCSVEnumParam(c echo.Context, name string, allowed []string) ([]string, error) {
+// parseCSVParam reads a repeatable and/or comma-separated multi-value filter
+// (?tag=a&tag=b and ?tag=a,b are equivalent) with no constrained value set.
+// Blanks are dropped and duplicates collapse; nil means "no filter".
+func parseCSVParam(c echo.Context, name string) []string {
 	values := c.QueryParams()[name]
 	if len(values) == 0 {
-		return nil, nil
+		return nil
 	}
-	seen := make(map[string]bool, len(allowed))
-	out := make([]string, 0, len(allowed))
+	seen := map[string]bool{}
+	var out []string
 	for _, group := range values {
 		for _, part := range strings.Split(group, ",") {
 			part = strings.TrimSpace(part)
-			if part == "" {
+			if part == "" || seen[part] {
 				continue
 			}
-			ok := false
-			for _, a := range allowed {
-				if part == a {
-					ok = true
-					break
-				}
+			seen[part] = true
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// parseCSVEnumParam is parseCSVParam constrained to a fixed value set: every
+// value must be in allowed, or the request is rejected rather than silently
+// narrowed.
+func parseCSVEnumParam(c echo.Context, name string, allowed []string) ([]string, error) {
+	out := parseCSVParam(c, name)
+	for _, v := range out {
+		ok := false
+		for _, a := range allowed {
+			if v == a {
+				ok = true
+				break
 			}
-			if !ok {
-				return nil, echo.NewHTTPError(http.StatusBadRequest, name+" must be one of "+strings.Join(allowed, ", "))
-			}
-			if !seen[part] {
-				seen[part] = true
-				out = append(out, part)
-			}
+		}
+		if !ok {
+			return nil, echo.NewHTTPError(http.StatusBadRequest, name+" must be one of "+strings.Join(allowed, ", "))
 		}
 	}
 	if len(out) == 0 {
 		return nil, nil
 	}
 	return out, nil
+}
+
+// parseInt32Param reads an optional non-negative integer filter. nil when
+// absent; a malformed or negative value is an error rather than a silent zero,
+// which for a lower bound would be a no-op and for an upper bound would filter
+// away every row.
+func parseInt32Param(c echo.Context, name string) (*int32, error) {
+	raw := strings.TrimSpace(c.QueryParam(name))
+	if raw == "" {
+		return nil, nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || n < 0 {
+		return nil, echo.NewHTTPError(http.StatusBadRequest, name+" must be a non-negative integer")
+	}
+	v := int32(n)
+	return &v, nil
+}
+
+// parseInt32RangeParams reads an inclusive [min, max] window and rejects an
+// inverted one. Like parseTimeRangeParams, an inverted range is always a client
+// bug and would otherwise return an empty page indistinguishable from "no data".
+func parseInt32RangeParams(c echo.Context, minName, maxName string) (lo, hi *int32, err error) {
+	if lo, err = parseInt32Param(c, minName); err != nil {
+		return nil, nil, err
+	}
+	if hi, err = parseInt32Param(c, maxName); err != nil {
+		return nil, nil, err
+	}
+	if lo != nil && hi != nil && *lo > *hi {
+		return nil, nil, echo.NewHTTPError(http.StatusBadRequest, minName+" must not be greater than "+maxName)
+	}
+	return lo, hi, nil
 }
 
 // parseSortParam reads a ?sort= key constrained to the endpoint's supported

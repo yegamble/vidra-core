@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countChannelsByOwner = `-- name: CountChannelsByOwner :one
@@ -46,6 +47,41 @@ FROM (
 // How many rows ListManagedChannels would return, ignoring pagination.
 func (q *Queries) CountManagedChannels(ctx context.Context, userID uuid.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, countManagedChannels, userID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countSearchPublicChannels = `-- name: CountSearchPublicChannels :one
+SELECT count(*)::bigint
+FROM channels c
+JOIN users u ON u.id = c.owner_id
+WHERE u.is_active = TRUE
+  AND NOT u.unlisted
+  AND (c.handle ILIKE '%' || $1::text || '%'
+       OR c.display_name ILIKE '%' || $1::text || '%')
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = c.owner_id
+  )
+`
+
+type CountSearchPublicChannelsParams struct {
+	Query    string      `json:"query"`
+	ViewerID pgtype.UUID `json:"viewer_id"`
+}
+
+// How many rows SearchPublicChannels would return for the same query and
+// viewer, ignoring pagination. Every predicate is repeated VERBATIM — the count
+// is per-viewer, so counting raw channels would promise a muted viewer more
+// pages than they can ever reach. Only the ORDER BY is dropped; ordering cannot
+// change a count.
+func (q *Queries) CountSearchPublicChannels(ctx context.Context, arg CountSearchPublicChannelsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countSearchPublicChannels, arg.Query, arg.ViewerID)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -247,6 +283,112 @@ func (q *Queries) ListManagedChannels(ctx context.Context, arg ListManagedChanne
 			&i.ActivitypubEnabled,
 			&i.AtprotoEnabled,
 			&i.Role,
+			&i.FollowerCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchPublicChannels = `-- name: SearchPublicChannels :many
+SELECT c.id, c.owner_id, c.handle, c.display_name, c.description,
+       c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
+       (SELECT count(*) FROM channel_follows cf WHERE cf.channel_id = c.id)::bigint AS follower_count
+FROM channels c
+JOIN users u ON u.id = c.owner_id
+WHERE u.is_active = TRUE
+  AND NOT u.unlisted
+  AND (c.handle ILIKE '%' || $1::text || '%'
+       OR c.display_name ILIKE '%' || $1::text || '%')
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = c.owner_id
+  )
+ORDER BY greatest(similarity(c.handle, $1),
+                  similarity(c.display_name, $1)) DESC,
+         follower_count DESC, c.id DESC
+LIMIT $4 OFFSET $3
+`
+
+type SearchPublicChannelsParams struct {
+	Query        string      `json:"query"`
+	ViewerID     pgtype.UUID `json:"viewer_id"`
+	ResultOffset int32       `json:"result_offset"`
+	ResultLimit  int32       `json:"result_limit"`
+}
+
+type SearchPublicChannelsRow struct {
+	ID                 uuid.UUID `json:"id"`
+	OwnerID            uuid.UUID `json:"owner_id"`
+	Handle             string    `json:"handle"`
+	DisplayName        string    `json:"display_name"`
+	Description        string    `json:"description"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	ActivitypubEnabled bool      `json:"activitypub_enabled"`
+	AtprotoEnabled     bool      `json:"atproto_enabled"`
+	FollowerCount      int64     `json:"follower_count"`
+}
+
+// Channel search (GET /api/v1/search/channels), backed by core's own Postgres
+// rather than vidra-search. The search service indexes VIDEOS; a channel exists
+// there only as denormalised columns on video rows, so a channel that has not
+// published anything is invisible to it. That blind spot is exactly the case a
+// channel search has to get right, which is why this is a local trigram query.
+//
+// Matching is an unanchored, case-insensitive substring over the handle and the
+// display name; 0003 indexes the handle for trigrams and 0118 the display name,
+// so the OR is a BitmapOr of two index scans rather than a seq scan.
+//
+// Visibility. A channel is a public publishing identity, so there is no
+// per-channel privacy flag to honour — the gate is on its OWNER:
+//   - is_active — a deactivated or hard-deleted account (both set is_active
+//     FALSE) takes its channels out of discovery with it.
+//   - NOT unlisted — the account-level discovery opt-out (§16). Every other
+//     discovery surface already excludes unlisted owners (see
+//     SearchPublicVideos and ListPublicVideosSorted); a channel search is a
+//     discovery surface, so it does too. Direct /channels/{handle} URLs keep
+//     serving, which is the whole point of the flag.
+//
+// profile_public is deliberately NOT consulted here: it governs whether the
+// ACCOUNT page exists, not whether the account's channels do.
+//
+// The viewer's own mutes and blocks are applied the same one-directional way as
+// every other list (their block hides the other party from them; it does not
+// hide them from the other party).
+func (q *Queries) SearchPublicChannels(ctx context.Context, arg SearchPublicChannelsParams) ([]SearchPublicChannelsRow, error) {
+	rows, err := q.db.Query(ctx, searchPublicChannels,
+		arg.Query,
+		arg.ViewerID,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchPublicChannelsRow
+	for rows.Next() {
+		var i SearchPublicChannelsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Handle,
+			&i.DisplayName,
+			&i.Description,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ActivitypubEnabled,
+			&i.AtprotoEnabled,
 			&i.FollowerCount,
 		); err != nil {
 			return nil, err

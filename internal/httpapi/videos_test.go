@@ -126,6 +126,15 @@ func (f *videoFakeRepo) ListVideoTags(_ context.Context, videoID uuid.UUID) ([]s
 }
 
 // hasTag mirrors the feed query's exact-match tag EXISTS clause.
+// durationOf mirrors the LEFT JOIN on video_metadata: nil when no probe has
+// recorded a duration for the video.
+func (f *videoFakeRepo) durationOf(videoID uuid.UUID) *int32 {
+	if md, ok := f.metadata[videoID]; ok {
+		return md.DurationSeconds
+	}
+	return nil
+}
+
 func (f *videoFakeRepo) hasTag(videoID uuid.UUID, tag string) bool {
 	for _, t := range f.tags[videoID] {
 		if t == tag {
@@ -731,12 +740,64 @@ func (f *videoFakeRepo) SetVideoState(_ context.Context, a sqlcgen.SetVideoState
 	return vidRowToVideo(r), nil
 }
 
+// hasAllTags/hasAnyTag mirror the ?tags_all_of / ?tags_one_of set filters. Tags
+// reach the repo already lowercased, as they are in the table.
+func (f *videoFakeRepo) hasAllTags(videoID uuid.UUID, want []string) bool {
+	for _, t := range want {
+		if !f.hasTag(videoID, t) {
+			return false
+		}
+	}
+	return true
+}
+
+func (f *videoFakeRepo) hasAnyTag(videoID uuid.UUID, want []string) bool {
+	for _, t := range want {
+		if f.hasTag(videoID, t) {
+			return true
+		}
+	}
+	return false
+}
+
+// durationInRange mirrors the SQL's duration bounds, including the part that is
+// easy to get wrong: an UNKNOWN duration fails a bound rather than passing it,
+// because `NULL >= 60` is NULL, not true.
+func durationInRange(d *int32, lo, hi *int32) bool {
+	if lo == nil && hi == nil {
+		return true
+	}
+	if d == nil {
+		return false
+	}
+	return (lo == nil || *d >= *lo) && (hi == nil || *d <= *hi)
+}
+
 func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPublicVideosParams) ([]sqlcgen.SearchPublicVideosRow, error) {
 	q := strings.ToLower(a.Query)
+	// Any active taxonomy/tag-set filter excludes remote rows, exactly as the
+	// SQL's remote arm does.
+	localOnly := a.Tag != nil || a.Category != nil || a.Language != nil ||
+		len(a.TagsAllOf) > 0 || len(a.TagsOneOf) > 0
 	var all []sqlcgen.SearchPublicVideosRow
 	for _, r := range f.videos {
 		if a.HideSensitive && r.IsSensitive {
 			continue // sensitive-content policy "hide" mirrors the SQL filter
+		}
+		if a.Tag != nil && !f.hasTag(r.ID, *a.Tag) {
+			continue
+		}
+		if a.Category != nil && (r.Category == nil || *r.Category != *a.Category) {
+			continue
+		}
+		if a.Language != nil && (r.Language == nil || *r.Language != *a.Language) {
+			continue
+		}
+		if len(a.TagsAllOf) > 0 && !f.hasAllTags(r.ID, a.TagsAllOf) {
+			continue
+		}
+		if len(a.TagsOneOf) > 0 && !f.hasAnyTag(r.ID, a.TagsOneOf) {
+			continue
 		}
 		if r.Privacy == "public" && r.State == "published" &&
 			(strings.Contains(strings.ToLower(r.Title), q) || f.tagMatches(r.ID, q)) &&
@@ -746,6 +807,7 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 				AuthorDisplayName: f.authorName(r.ChannelID),
+				DurationSeconds:   f.durationOf(r.ID),
 				IsSensitive:       r.IsSensitive,
 				SensitiveReason:   r.SensitiveReason,
 			})
@@ -753,12 +815,46 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 	}
 	// Remote branch of the UNION (remote-content §4): seeded remote cards,
 	// title-matched like the SQL.
-	for _, rr := range f.remoteSearch {
-		if strings.Contains(strings.ToLower(rr.Title), q) {
-			all = append(all, rr)
+	if !localOnly {
+		for _, rr := range f.remoteSearch {
+			if strings.Contains(strings.ToLower(rr.Title), q) {
+				all = append(all, rr)
+			}
 		}
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
+	// The outer WHERE: duration and the publish window narrow BOTH arms.
+	kept := all[:0]
+	for _, r := range all {
+		if !durationInRange(r.DurationSeconds, a.DurationMin, a.DurationMax) {
+			continue
+		}
+		if a.PublishedAfter.Valid && r.CreatedAt.Before(a.PublishedAfter.Time) {
+			continue
+		}
+		if a.PublishedBefore.Valid && r.CreatedAt.After(a.PublishedBefore.Time) {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	all = kept
+	// The ORDER BY. The fake has no trigram similarity, so 'relevance' keeps the
+	// created_at tiebreak the SQL falls through to — which is also what the
+	// endpoint returned before it took a sort at all.
+	sort.SliceStable(all, func(i, j int) bool {
+		switch a.Sort {
+		case "published_at":
+			return all[i].CreatedAt.Before(all[j].CreatedAt)
+		case "views":
+			if all[i].Views != all[j].Views {
+				return all[i].Views < all[j].Views
+			}
+		case "-views":
+			if all[i].Views != all[j].Views {
+				return all[i].Views > all[j].Views
+			}
+		}
+		return all[i].CreatedAt.After(all[j].CreatedAt)
+	})
 	lo := int(a.ResultOffset)
 	if lo > len(all) {
 		lo = len(all)
@@ -1135,6 +1231,10 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	// content-hiding mirrors in the video/comment fakes.
 	userBlockRepo := &blockFakeRepo{auth: authRepo}
 	repo.userBlocks = userBlockRepo
+	// The channel- and account-search fakes apply the same per-viewer
+	// mute/block predicates their SQL does, so they read the same two fakes.
+	chRepo.mutes, chRepo.userBlocks = muteRepo, userBlockRepo
+	authRepo.mutes, authRepo.userBlocks = muteRepo, userBlockRepo
 	cmRepo := &commentFakeRepo{users: authRepo, mutes: muteRepo, userBlocks: userBlockRepo, videos: repo}
 	modRepo := &moderationFakeRepo{auth: authRepo, videos: repo, comments: cmRepo}
 	repo.blocks = modRepo
@@ -2557,7 +2657,11 @@ func (f *videoFakeRepo) CountWatchHistoryInProgress(ctx context.Context, userID 
 func (f *videoFakeRepo) CountSearchPublicVideos(ctx context.Context, a sqlcgen.CountSearchPublicVideosParams) (int64, error) {
 	rows, err := f.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
 		Query: a.Query, ViewerID: a.ViewerID, Tag: a.Tag, Category: a.Category,
-		Language: a.Language, HideSensitive: a.HideSensitive, ResultLimit: 1 << 30,
+		Language: a.Language, TagsAllOf: a.TagsAllOf, TagsOneOf: a.TagsOneOf,
+		HideSensitive: a.HideSensitive,
+		DurationMin:   a.DurationMin, DurationMax: a.DurationMax,
+		PublishedAfter: a.PublishedAfter, PublishedBefore: a.PublishedBefore,
+		ResultLimit: 1 << 30,
 	})
 	return int64(len(rows)), err
 }

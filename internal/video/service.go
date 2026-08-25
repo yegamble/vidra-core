@@ -2283,37 +2283,149 @@ func (s *Service) ClearHistory(ctx context.Context, userID uuid.UUID) error {
 	return s.repo.ClearWatchHistory(ctx, userID)
 }
 
+// Accepted ?sort values for the public video search. SearchSortRelevance is the
+// default and reproduces the endpoint's behaviour from before it took a sort at
+// all: trigram similarity, then recency. The other four use the same
+// `-field`/`field` convention as the admin inventory, and `published_at` is the
+// same created_at alias it is there.
+const (
+	SearchSortRelevance   = "relevance"
+	SearchSortNewest      = "-published_at"
+	SearchSortOldest      = "published_at"
+	SearchSortMostViewed  = "-views"
+	SearchSortLeastViewed = "views"
+	SearchSortDefault     = SearchSortRelevance
+)
+
+// searchSorts is the closed set the SearchPublicVideos ORDER BY has a CASE
+// branch for. As with adminSorts, anything outside it must be REJECTED by the
+// HTTP layer rather than passed through: an unrecognised value matches no
+// branch and silently degrades to created_at-DESC, which looks like a working
+// sort and is not one.
+var searchSorts = []string{
+	SearchSortRelevance,
+	SearchSortNewest, SearchSortOldest,
+	SearchSortMostViewed, SearchSortLeastViewed,
+}
+
+// SearchSorts returns the accepted ?sort values for the public video search.
+func SearchSorts() []string { return append([]string(nil), searchSorts...) }
+
+// SearchFilter is FeedFilter plus the narrowing filters that exist only on the
+// search endpoint. Every added field is optional and its zero value is "no
+// filter".
+//
+// It is a separate type rather than more fields on FeedFilter on purpose: the
+// feed queries have no CASE branch or predicate for any of these, so a field
+// set on a FeedFilter handed to ListPublic would be silently ignored. Keeping
+// them in a type only SearchPublic accepts means that mistake cannot compile.
+type SearchFilter struct {
+	FeedFilter
+	// DurationMin/DurationMax bound the video length in SECONDS, inclusive. The
+	// UI renders PeerTube's short/medium/long buckets on top of this, but the
+	// API takes a range because ranges compose and buckets do not. A video whose
+	// duration is unknown fails either bound rather than passing it.
+	DurationMin *int32
+	DurationMax *int32
+	// PublishedAfter/PublishedBefore bound the publish time, inclusive.
+	PublishedAfter  *time.Time
+	PublishedBefore *time.Time
+	// TagsAllOf demands every listed tag; TagsOneOf demands at least one. Both
+	// are matched against the stored (lowercased) tag set and are independent of
+	// the single Tag field, which stays for compatibility. Either set excludes
+	// remote videos, which carry no local tags.
+	TagsAllOf []string
+	TagsOneOf []string
+}
+
+// Narrows reports whether the filter uses any predicate BEYOND the
+// tag/category/language facets vidra-search itself accepts. It is the routing
+// question the search handler asks: the search service ranks and pages over a
+// corpus it filtered itself, so a filter it has never heard of cannot be
+// honoured by post-filtering its truncated id list without lying about recall.
+// When this is true the request must take the local SQL path, where the
+// predicate is real.
+func (f SearchFilter) Narrows() bool {
+	return f.DurationMin != nil || f.DurationMax != nil ||
+		f.PublishedAfter != nil || f.PublishedBefore != nil ||
+		len(f.TagsAllOf) > 0 || len(f.TagsOneOf) > 0
+}
+
+// searchParams builds the shared bound arguments for the list and count
+// queries. Both call it so the two WHERE clauses cannot drift: the moment they
+// do, the total stops describing the page.
+func (f SearchFilter) searchParams(query string, viewer pgtype.UUID) sqlcgen.CountSearchPublicVideosParams {
+	return sqlcgen.CountSearchPublicVideosParams{
+		Query:           query,
+		ViewerID:        viewer,
+		Tag:             nilIfEmpty(strings.ToLower(f.Tag)),
+		Category:        nilIfEmpty(f.Category),
+		Language:        nilIfEmpty(f.Language),
+		TagsAllOf:       lowerTags(f.TagsAllOf),
+		TagsOneOf:       lowerTags(f.TagsOneOf),
+		HideSensitive:   f.HideSensitive,
+		DurationMin:     f.DurationMin,
+		DurationMax:     f.DurationMax,
+		PublishedAfter:  nullableTime(f.PublishedAfter),
+		PublishedBefore: nullableTime(f.PublishedBefore),
+	}
+}
+
+// lowerTags lowercases a tag set, returning nil (the SQL "no filter" sentinel)
+// for an empty one. Tags are stored lowercased, so an unlowered value would
+// simply never match.
+func lowerTags(tags []string) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		out = append(out, strings.ToLower(t))
+	}
+	return out
+}
+
+// nullableTime maps an optional timestamp onto the pgtype the query wants; nil
+// is SQL NULL, which every timestamp predicate reads as "no filter".
+func nullableTime(t *time.Time) pgtype.Timestamptz {
+	if t == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: *t, Valid: true}
+}
+
 // SearchPublic returns public, published videos whose title matches query
-// (case-insensitive substring, ranked by trigram similarity then recency),
-// paginated, with discovery-card data. Ingested federated remote videos are
-// UNIONed in by title match, flagged remote (remote-content §4). Optional
-// tag/category/language facet filters narrow the local results (mirroring the
-// feed); any active filter excludes remote videos (they carry no local
-// taxonomy). The caller validates/clamps query, limit, and offset.
-func (s *Service) SearchPublic(ctx context.Context, query string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, int64, error) {
+// (case-insensitive substring), paginated, with discovery-card data. Ingested
+// federated remote videos are UNIONed in by title match, flagged remote
+// (remote-content §4). Optional tag/category/language facet filters narrow the
+// local results (mirroring the feed); any active taxonomy filter excludes remote
+// videos (they carry no local taxonomy), while the duration and publish-window
+// filters apply to both arms. sort must be one of SearchSorts() — the caller
+// validates it, along with query, limit, and offset.
+func (s *Service) SearchPublic(ctx context.Context, query string, filter SearchFilter, sort string, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]FeedItem, int64, error) {
 	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
-	tag, category, language := nilIfEmpty(strings.ToLower(filter.Tag)), nilIfEmpty(filter.Category), nilIfEmpty(filter.Language)
+	countArgs := filter.searchParams(query, viewer)
 	rows, err := s.repo.SearchPublicVideos(ctx, sqlcgen.SearchPublicVideosParams{
-		Query:         query,
-		ViewerID:      viewer,
-		Tag:           tag,
-		Category:      category,
-		Language:      language,
-		HideSensitive: filter.HideSensitive,
-		ResultLimit:   limit,
-		ResultOffset:  offset,
+		Query:           countArgs.Query,
+		ViewerID:        countArgs.ViewerID,
+		Tag:             countArgs.Tag,
+		Category:        countArgs.Category,
+		Language:        countArgs.Language,
+		TagsAllOf:       countArgs.TagsAllOf,
+		TagsOneOf:       countArgs.TagsOneOf,
+		HideSensitive:   countArgs.HideSensitive,
+		DurationMin:     countArgs.DurationMin,
+		DurationMax:     countArgs.DurationMax,
+		PublishedAfter:  countArgs.PublishedAfter,
+		PublishedBefore: countArgs.PublishedBefore,
+		Sort:            sort,
+		ResultLimit:     limit,
+		ResultOffset:    offset,
 	})
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := s.repo.CountSearchPublicVideos(ctx, sqlcgen.CountSearchPublicVideosParams{
-		Query:         query,
-		ViewerID:      viewer,
-		Tag:           tag,
-		Category:      category,
-		Language:      language,
-		HideSensitive: filter.HideSensitive,
-	})
+	total, err := s.repo.CountSearchPublicVideos(ctx, countArgs)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -2327,17 +2439,14 @@ func (s *Service) SearchPublic(ctx context.Context, query string, filter FeedFil
 }
 
 // CountSearchPublic is SearchPublic's total without the page — the count the
-// search endpoint needs when vidra-search ranked the page and therefore
-// returned ids but no corpus size.
-func (s *Service) CountSearchPublic(ctx context.Context, query string, filter FeedFilter, viewerID uuid.UUID, viewerAuthed bool) (int64, error) {
-	return s.repo.CountSearchPublicVideos(ctx, sqlcgen.CountSearchPublicVideosParams{
-		Query:         query,
-		ViewerID:      pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
-		Tag:           nilIfEmpty(strings.ToLower(filter.Tag)),
-		Category:      nilIfEmpty(filter.Category),
-		Language:      nilIfEmpty(filter.Language),
-		HideSensitive: filter.HideSensitive,
-	})
+// search endpoint needs when vidra-search ranked the page. vidra-search DOES
+// now return a corpus size of its own, but that size is not per-viewer: the
+// index holds static eligibility and knows nothing about this caller's mutes,
+// blocks, or the unlisted owners it cannot see. This count is the number of
+// rows the caller could actually be shown, which is what a "N results" label
+// has to mean.
+func (s *Service) CountSearchPublic(ctx context.Context, query string, filter SearchFilter, viewerID uuid.UUID, viewerAuthed bool) (int64, error) {
+	return s.repo.CountSearchPublicVideos(ctx, filter.searchParams(query, pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}))
 }
 
 // HydrateByIDs resolves a ranked list of video ids to discovery cards under the

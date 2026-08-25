@@ -104,8 +104,8 @@ SELECT u.id, u.username, u.email, u.password_hash, u.role, u.email_verified, u.i
          WHERE c.owner_id = u.id) AS storage_used_bytes
 FROM users u
 WHERE (sqlc.arg('query')::text = ''
-       OR u.username ILIKE '%' || sqlc.arg('query') || '%'
-       OR u.email ILIKE '%' || sqlc.arg('query') || '%')
+       OR u.username ILIKE '%' || sqlc.arg('query')::text || '%'
+       OR u.email ILIKE '%' || sqlc.arg('query')::text || '%')
 ORDER BY u.created_at DESC, u.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
@@ -118,8 +118,8 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 SELECT count(*)
 FROM users u
 WHERE (sqlc.arg('query')::text = ''
-       OR u.username ILIKE '%' || sqlc.arg('query') || '%'
-       OR u.email ILIKE '%' || sqlc.arg('query') || '%');
+       OR u.username ILIKE '%' || sqlc.arg('query')::text || '%'
+       OR u.email ILIKE '%' || sqlc.arg('query')::text || '%');
 
 -- name: AdminUpdateUser :one
 -- Admin edit of a user's role, active flag, email_verified flag, quarantine
@@ -158,3 +158,73 @@ SET username      = sqlc.arg('username'),
     deleted_at    = now(),
     updated_at    = now()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL;
+
+-- name: SearchPublicAccounts :many
+-- Account search (GET /api/v1/search/accounts), backed by core's own Postgres:
+-- vidra-search does not index accounts at all, so there is no service path to
+-- be consistent with.
+--
+-- VISIBILITY IS THE WHOLE POINT OF THIS QUERY. The gate is the one
+-- GetPublicUserProfileByUsername already enforces, reproduced here so the two
+-- can only ever agree:
+--
+--   is_active     = TRUE   deactivated, suspended (an admin clearing is_active),
+--                          and hard-deleted accounts all collapse into this one
+--                          flag, and all three are excluded.
+--   profile_public = TRUE  the account opted its profile in. Without this, an
+--                          account with no public page would still be
+--                          enumerable by name, which is precisely the leak
+--                          profile_public exists to prevent.
+--
+-- Plus one predicate the profile lookup does NOT have, and must not: NOT
+-- unlisted. unlisted (§16) is the discovery opt-out — "keep serving my direct
+-- URLs, keep me out of discovery". A profile fetched BY USERNAME is a direct
+-- URL, so it ignores the flag; a search result list is discovery, so it honours
+-- it, exactly as SearchPublicVideos already does for video owners. Applying the
+-- profile rule alone here would put every unlisted account back into the one
+-- surface it asked to leave.
+--
+-- Matching is unanchored and case-insensitive over username and display name
+-- (0002 and 0118 index both for trigrams). The viewer's own mutes and blocks
+-- are applied the same one-directional way as every other list.
+SELECT u.id, u.username, u.display_name, u.bio, u.created_at
+FROM users u
+WHERE u.is_active = TRUE
+  AND u.profile_public = TRUE
+  AND NOT u.unlisted
+  AND (u.username ILIKE '%' || sqlc.arg('query')::text || '%'
+       OR u.display_name ILIKE '%' || sqlc.arg('query')::text || '%')
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = u.id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = u.id
+  )
+ORDER BY greatest(similarity(u.username, sqlc.arg('query')),
+                  similarity(u.display_name, sqlc.arg('query'))) DESC,
+         u.created_at DESC, u.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountSearchPublicAccounts :one
+-- How many rows SearchPublicAccounts would return for the same query and
+-- viewer, ignoring pagination. Every visibility and per-viewer predicate is
+-- repeated VERBATIM: a total computed over a wider WHERE than the page would
+-- leak the existence of the accounts it refuses to list, which is the same leak
+-- from the other direction.
+SELECT count(*)::bigint
+FROM users u
+WHERE u.is_active = TRUE
+  AND u.profile_public = TRUE
+  AND NOT u.unlisted
+  AND (u.username ILIKE '%' || sqlc.arg('query')::text || '%'
+       OR u.display_name ILIKE '%' || sqlc.arg('query')::text || '%')
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = u.id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = u.id
+  );

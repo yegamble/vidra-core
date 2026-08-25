@@ -116,6 +116,41 @@ func (q *Queries) AnonymizeDeletedUser(ctx context.Context, arg AnonymizeDeleted
 	return result.RowsAffected(), nil
 }
 
+const countSearchPublicAccounts = `-- name: CountSearchPublicAccounts :one
+SELECT count(*)::bigint
+FROM users u
+WHERE u.is_active = TRUE
+  AND u.profile_public = TRUE
+  AND NOT u.unlisted
+  AND (u.username ILIKE '%' || $1::text || '%'
+       OR u.display_name ILIKE '%' || $1::text || '%')
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = u.id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = u.id
+  )
+`
+
+type CountSearchPublicAccountsParams struct {
+	Query    string      `json:"query"`
+	ViewerID pgtype.UUID `json:"viewer_id"`
+}
+
+// How many rows SearchPublicAccounts would return for the same query and
+// viewer, ignoring pagination. Every visibility and per-viewer predicate is
+// repeated VERBATIM: a total computed over a wider WHERE than the page would
+// leak the existence of the accounts it refuses to list, which is the same leak
+// from the other direction.
+func (q *Queries) CountSearchPublicAccounts(ctx context.Context, arg CountSearchPublicAccountsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countSearchPublicAccounts, arg.Query, arg.ViewerID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countUsers = `-- name: CountUsers :one
 SELECT count(*) FROM users
 `
@@ -131,8 +166,8 @@ const countUsersMatching = `-- name: CountUsersMatching :one
 SELECT count(*)
 FROM users u
 WHERE ($1::text = ''
-       OR u.username ILIKE '%' || $1 || '%'
-       OR u.email ILIKE '%' || $1 || '%')
+       OR u.username ILIKE '%' || $1::text || '%'
+       OR u.email ILIKE '%' || $1::text || '%')
 `
 
 // How many accounts ListUsers would return for the same query, ignoring
@@ -441,8 +476,8 @@ SELECT u.id, u.username, u.email, u.password_hash, u.role, u.email_verified, u.i
          WHERE c.owner_id = u.id) AS storage_used_bytes
 FROM users u
 WHERE ($1::text = ''
-       OR u.username ILIKE '%' || $1 || '%'
-       OR u.email ILIKE '%' || $1 || '%')
+       OR u.username ILIKE '%' || $1::text || '%'
+       OR u.email ILIKE '%' || $1::text || '%')
 ORDER BY u.created_at DESC, u.id DESC
 LIMIT $3 OFFSET $2
 `
@@ -508,6 +543,101 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 			&i.HistoryEnabled,
 			&i.ProfilePublic,
 			&i.StorageUsedBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchPublicAccounts = `-- name: SearchPublicAccounts :many
+SELECT u.id, u.username, u.display_name, u.bio, u.created_at
+FROM users u
+WHERE u.is_active = TRUE
+  AND u.profile_public = TRUE
+  AND NOT u.unlisted
+  AND (u.username ILIKE '%' || $1::text || '%'
+       OR u.display_name ILIKE '%' || $1::text || '%')
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = u.id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = u.id
+  )
+ORDER BY greatest(similarity(u.username, $1),
+                  similarity(u.display_name, $1)) DESC,
+         u.created_at DESC, u.id DESC
+LIMIT $4 OFFSET $3
+`
+
+type SearchPublicAccountsParams struct {
+	Query        string      `json:"query"`
+	ViewerID     pgtype.UUID `json:"viewer_id"`
+	ResultOffset int32       `json:"result_offset"`
+	ResultLimit  int32       `json:"result_limit"`
+}
+
+type SearchPublicAccountsRow struct {
+	ID          uuid.UUID `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	Bio         string    `json:"bio"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// Account search (GET /api/v1/search/accounts), backed by core's own Postgres:
+// vidra-search does not index accounts at all, so there is no service path to
+// be consistent with.
+//
+// VISIBILITY IS THE WHOLE POINT OF THIS QUERY. The gate is the one
+// GetPublicUserProfileByUsername already enforces, reproduced here so the two
+// can only ever agree:
+//
+//	is_active     = TRUE   deactivated, suspended (an admin clearing is_active),
+//	                       and hard-deleted accounts all collapse into this one
+//	                       flag, and all three are excluded.
+//	profile_public = TRUE  the account opted its profile in. Without this, an
+//	                       account with no public page would still be
+//	                       enumerable by name, which is precisely the leak
+//	                       profile_public exists to prevent.
+//
+// Plus one predicate the profile lookup does NOT have, and must not: NOT
+// unlisted. unlisted (§16) is the discovery opt-out — "keep serving my direct
+// URLs, keep me out of discovery". A profile fetched BY USERNAME is a direct
+// URL, so it ignores the flag; a search result list is discovery, so it honours
+// it, exactly as SearchPublicVideos already does for video owners. Applying the
+// profile rule alone here would put every unlisted account back into the one
+// surface it asked to leave.
+//
+// Matching is unanchored and case-insensitive over username and display name
+// (0002 and 0118 index both for trigrams). The viewer's own mutes and blocks
+// are applied the same one-directional way as every other list.
+func (q *Queries) SearchPublicAccounts(ctx context.Context, arg SearchPublicAccountsParams) ([]SearchPublicAccountsRow, error) {
+	rows, err := q.db.Query(ctx, searchPublicAccounts,
+		arg.Query,
+		arg.ViewerID,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchPublicAccountsRow
+	for rows.Next() {
+		var i SearchPublicAccountsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Username,
+			&i.DisplayName,
+			&i.Bio,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

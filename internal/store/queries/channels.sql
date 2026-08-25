@@ -82,3 +82,73 @@ RETURNING id, owner_id, handle, display_name, description, created_at, updated_a
 
 -- name: DeleteChannel :exec
 DELETE FROM channels WHERE id = $1;
+
+-- name: SearchPublicChannels :many
+-- Channel search (GET /api/v1/search/channels), backed by core's own Postgres
+-- rather than vidra-search. The search service indexes VIDEOS; a channel exists
+-- there only as denormalised columns on video rows, so a channel that has not
+-- published anything is invisible to it. That blind spot is exactly the case a
+-- channel search has to get right, which is why this is a local trigram query.
+--
+-- Matching is an unanchored, case-insensitive substring over the handle and the
+-- display name; 0003 indexes the handle for trigrams and 0118 the display name,
+-- so the OR is a BitmapOr of two index scans rather than a seq scan.
+--
+-- Visibility. A channel is a public publishing identity, so there is no
+-- per-channel privacy flag to honour — the gate is on its OWNER:
+--   * is_active — a deactivated or hard-deleted account (both set is_active
+--     FALSE) takes its channels out of discovery with it.
+--   * NOT unlisted — the account-level discovery opt-out (§16). Every other
+--     discovery surface already excludes unlisted owners (see
+--     SearchPublicVideos and ListPublicVideosSorted); a channel search is a
+--     discovery surface, so it does too. Direct /channels/{handle} URLs keep
+--     serving, which is the whole point of the flag.
+-- profile_public is deliberately NOT consulted here: it governs whether the
+-- ACCOUNT page exists, not whether the account's channels do.
+--
+-- The viewer's own mutes and blocks are applied the same one-directional way as
+-- every other list (their block hides the other party from them; it does not
+-- hide them from the other party).
+SELECT c.id, c.owner_id, c.handle, c.display_name, c.description,
+       c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
+       (SELECT count(*) FROM channel_follows cf WHERE cf.channel_id = c.id)::bigint AS follower_count
+FROM channels c
+JOIN users u ON u.id = c.owner_id
+WHERE u.is_active = TRUE
+  AND NOT u.unlisted
+  AND (c.handle ILIKE '%' || sqlc.arg('query')::text || '%'
+       OR c.display_name ILIKE '%' || sqlc.arg('query')::text || '%')
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
+  )
+ORDER BY greatest(similarity(c.handle, sqlc.arg('query')),
+                  similarity(c.display_name, sqlc.arg('query'))) DESC,
+         follower_count DESC, c.id DESC
+LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
+
+-- name: CountSearchPublicChannels :one
+-- How many rows SearchPublicChannels would return for the same query and
+-- viewer, ignoring pagination. Every predicate is repeated VERBATIM — the count
+-- is per-viewer, so counting raw channels would promise a muted viewer more
+-- pages than they can ever reach. Only the ORDER BY is dropped; ordering cannot
+-- change a count.
+SELECT count(*)::bigint
+FROM channels c
+JOIN users u ON u.id = c.owner_id
+WHERE u.is_active = TRUE
+  AND NOT u.unlisted
+  AND (c.handle ILIKE '%' || sqlc.arg('query')::text || '%'
+       OR c.display_name ILIKE '%' || sqlc.arg('query')::text || '%')
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
+  );
