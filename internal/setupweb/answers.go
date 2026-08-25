@@ -87,6 +87,26 @@ func BuildAnswers(form Form, tmpl, existing *setup.EnvFile) setup.Answers {
 	if r := form.Registration; r != nil {
 		a.Registration = &setup.RegistrationAnswers{Enabled: r.Enabled, RequireApproval: r.RequireApproval}
 	}
+	if p := form.PeerTube; p != nil {
+		a.PeerTube = &setup.PeerTubeAnswers{
+			Enabled: p.Enabled,
+			// NOT trimmed, for the reason S3.SecretKey is not: a connection string
+			// is a credential, and trimming one is a silent edit to it. The terminal
+			// does not trim it either.
+			DatabaseURL:    p.SourceURL,
+			StorageBackend: strings.TrimSpace(p.Storage),
+			LocalRoot:      strings.TrimSpace(p.LocalRoot),
+			S3: setup.S3Answers{
+				Endpoint:  strings.TrimSpace(p.S3.Endpoint),
+				Region:    strings.TrimSpace(p.S3.Region),
+				Bucket:    strings.TrimSpace(p.S3.Bucket),
+				AccessKey: strings.TrimSpace(p.S3.AccessKey),
+				SecretKey: p.S3.SecretKey,
+			},
+			MediaMode:      strings.TrimSpace(p.MediaMode),
+			ConflictPolicy: strings.TrimSpace(p.ConflictPol),
+		}
+	}
 	return a
 }
 
@@ -142,6 +162,23 @@ func SeedFor(tmpl, existing *setup.EnvFile) Seed {
 		Registration: RegistrationForm{
 			Enabled:         boolValue(eff("REGISTRATION_ENABLED"), false),
 			RequireApproval: boolValue(eff("REGISTRATION_REQUIRE_APPROVAL"), false),
+		},
+		// The three enumerated answers fall back to the CODE's defaults, exactly
+		// as the interview's brackets do (firstAnswer in cmd/vidra/setup.go): a
+		// template that predates this block would otherwise open the wizard's
+		// dropdowns on an empty option nobody chose.
+		PeerTube: PeerTubeSeed{
+			Enabled:        boolValue(eff("PEERTUBE_IMPORT_ENABLED"), false),
+			SourceURLSet:   set("PEERTUBE_SOURCE_DATABASE_URL"),
+			Storage:        firstNonEmpty(eff("PEERTUBE_SOURCE_STORAGE_BACKEND"), "local"),
+			LocalRoot:      eff("PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT"),
+			S3Endpoint:     eff("PEERTUBE_SOURCE_S3_ENDPOINT"),
+			S3Region:       eff("PEERTUBE_SOURCE_S3_REGION"),
+			S3Bucket:       eff("PEERTUBE_SOURCE_S3_BUCKET"),
+			S3AccessKey:    eff("PEERTUBE_SOURCE_S3_ACCESS_KEY"),
+			S3SecretKeySet: set("PEERTUBE_SOURCE_S3_SECRET_KEY"),
+			MediaMode:      firstNonEmpty(eff("PEERTUBE_IMPORT_MEDIA_MODE"), "copy"),
+			ConflictPol:    firstNonEmpty(eff("PEERTUBE_IMPORT_CONFLICT_POLICY"), "skip"),
 		},
 	}
 	// The interview's own test for "is SMTP working today", restated because the

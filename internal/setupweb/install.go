@@ -232,6 +232,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if src, err := s.load(); err == nil && src.existing != nil {
 		if origin := setup.Effective(nil, src.existing, "PUBLIC_BASE_URL"); origin != "" {
 			out.ClaimURL = strings.TrimSuffix(origin, "/") + "/setup/claim"
+			// The migration handoff, for the operator who said they were migrating
+			// and nobody else. It is read off the FILE rather than off the form for
+			// the reason the claim URL is: this step is about the deployment that
+			// EXISTS, and after Apply that is what the env file says.
+			if setup.IsTrue(setup.Effective(nil, src.existing, "PEERTUBE_IMPORT_ENABLED")) {
+				out.ImportURL = strings.TrimSuffix(origin, "/") + "/admin/import-peertube"
+			}
 		}
 	}
 	if s.opt.Status != nil {
