@@ -73,12 +73,8 @@ func (s *Server) handleListBlockedUsers(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.blocksvc.List(c.Request().Context(), userID, int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, err := s.blocksvc.List(c.Request().Context(), userID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -91,5 +87,5 @@ func (s *Server) handleListBlockedUsers(c echo.Context) error {
 			BlockedAt:   it.BlockedAt,
 		})
 	}
-	return c.JSON(http.StatusOK, blockedUserListResponse{Users: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, blockedUserListResponse{Users: views, Limit: page.Limit, Offset: page.Offset})
 }

@@ -53,12 +53,8 @@ type registrationRequestListResponse struct {
 // requests; pagination via ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListRegistrationRequests(c echo.Context) error {
 	pendingOnly := c.QueryParam("status") == "pending"
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.authsvc.ListRegistrationRequests(c.Request().Context(), pendingOnly, int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, err := s.authsvc.ListRegistrationRequests(c.Request().Context(), pendingOnly, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -66,7 +62,7 @@ func (s *Server) handleListRegistrationRequests(c echo.Context) error {
 	for _, it := range items {
 		views = append(views, newRegistrationRequestView(it))
 	}
-	return c.JSON(http.StatusOK, registrationRequestListResponse{Requests: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, registrationRequestListResponse{Requests: views, Limit: page.Limit, Offset: page.Offset})
 }
 
 // handleApproveRegistration approves a pending request, creating the account.

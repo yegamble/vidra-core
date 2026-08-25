@@ -209,12 +209,8 @@ type reportListResponse struct {
 // ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListReports(c echo.Context) error {
 	openOnly := c.QueryParam("status") == "open"
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.moderationsvc.List(c.Request().Context(), openOnly, int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, err := s.moderationsvc.List(c.Request().Context(), openOnly, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -222,7 +218,7 @@ func (s *Server) handleListReports(c echo.Context) error {
 	for _, it := range items {
 		views = append(views, newReportView(it))
 	}
-	return c.JSON(http.StatusOK, reportListResponse{Reports: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, reportListResponse{Reports: views, Limit: page.Limit, Offset: page.Offset})
 }
 
 // resolveReportRequest is the body for resolving a report.

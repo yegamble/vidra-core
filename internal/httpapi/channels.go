@@ -194,13 +194,9 @@ func (s *Server) handleListFollowedChannels(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	ctx := c.Request().Context()
-	followed, err := s.channelsvc.ListFollowed(ctx, userID, int32(limit), int32(offset))
+	followed, err := s.channelsvc.ListFollowed(ctx, userID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -215,7 +211,7 @@ func (s *Server) handleListFollowedChannels(c echo.Context) error {
 			FollowedAt:  f.FollowedAt,
 		})
 	}
-	return c.JSON(http.StatusOK, followedChannelsResponse{Channels: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, followedChannelsResponse{Channels: views, Limit: page.Limit, Offset: page.Offset})
 }
 
 // updateChannelRequest is the PATCH /api/v1/channels/{handle} body. Fields are

@@ -108,12 +108,8 @@ type adminVideoListResponse struct {
 // ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListAdminVideos(c echo.Context) error {
 	q := c.QueryParam("q")
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.videosvc.ListAdmin(c.Request().Context(), q, int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, err := s.videosvc.ListAdmin(c.Request().Context(), q, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -143,7 +139,7 @@ func (s *Server) handleListAdminVideos(c echo.Context) error {
 			Blocked:            it.Blocked,
 		})
 	}
-	return c.JSON(http.StatusOK, adminVideoListResponse{Videos: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, adminVideoListResponse{Videos: views, Limit: page.Limit, Offset: page.Offset})
 }
 
 // quarantinedVideoView is the moderation quarantine-queue projection of a held
@@ -170,12 +166,8 @@ type quarantinedVideoListResponse struct {
 // moderation review queue (§11). Behind requireRole(admin, moderator).
 // Pagination via ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListQuarantinedVideos(c echo.Context) error {
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.videosvc.ListQuarantined(c.Request().Context(), int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, err := s.videosvc.ListQuarantined(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -192,7 +184,7 @@ func (s *Server) handleListQuarantinedVideos(c echo.Context) error {
 			CreatedAt:          it.CreatedAt,
 		})
 	}
-	return c.JSON(http.StatusOK, quarantinedVideoListResponse{Videos: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, quarantinedVideoListResponse{Videos: views, Limit: page.Limit, Offset: page.Offset})
 }
 
 // handleApproveQuarantinedVideo releases a quarantined video: it publishes

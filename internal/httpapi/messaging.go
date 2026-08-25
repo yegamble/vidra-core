@@ -287,12 +287,8 @@ func (s *Server) handleListConversations(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.messagingsvc.ListConversations(c.Request().Context(), userID, int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, err := s.messagingsvc.ListConversations(c.Request().Context(), userID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -306,7 +302,7 @@ func (s *Server) handleListConversations(c echo.Context) error {
 			UnreadCount: it.UnreadCount,
 		})
 	}
-	return c.JSON(http.StatusOK, conversationListResponse{Conversations: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, conversationListResponse{Conversations: views, Limit: page.Limit, Offset: page.Offset})
 }
 
 // handleListMessages returns a conversation's messages, newest first. Behind
@@ -321,11 +317,7 @@ func (s *Server) handleListMessages(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "conversation not found")
 	}
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	// Optional keyset cursor: return only messages strictly older than before_id
 	// (stable upward history paging). Mutually exclusive with offset — both is a
 	// 422; a malformed id is a 422. Unknown/foreign cursors 422 in the service.
@@ -356,16 +348,16 @@ func (s *Server) handleListMessages(c echo.Context) error {
 		}
 		if encrypted {
 			if useKeyset {
-				return s.listEncryptedMessagesBefore(c, userID, convID, beforeID, limit)
+				return s.listEncryptedMessagesBefore(c, userID, convID, beforeID, page.Limit)
 			}
-			return s.listEncryptedMessages(c, userID, convID, limit, offset)
+			return s.listEncryptedMessages(c, userID, convID, page.Limit, page.Offset)
 		}
 	}
 	var msgs []messaging.Message
 	if useKeyset {
-		msgs, err = s.messagingsvc.ListMessagesBefore(ctx, userID, convID, beforeID, int32(limit))
+		msgs, err = s.messagingsvc.ListMessagesBefore(ctx, userID, convID, beforeID, page.Limit32())
 	} else {
-		msgs, err = s.messagingsvc.ListMessages(ctx, userID, convID, int32(limit), int32(offset))
+		msgs, err = s.messagingsvc.ListMessages(ctx, userID, convID, page.Limit32(), page.Offset32())
 	}
 	if err != nil {
 		switch {
@@ -377,13 +369,13 @@ func (s *Server) handleListMessages(c echo.Context) error {
 		return err
 	}
 	if useKeyset {
-		offset = 0 // keyset paging has no offset
+		page.Offset = 0 // keyset paging has no offset
 	}
 	views := make([]messageView, 0, len(msgs))
 	for _, m := range msgs {
 		views = append(views, newMessageView(m))
 	}
-	resp := messageListResponse{Messages: views, Limit: limit, Offset: offset}
+	resp := messageListResponse{Messages: views, Limit: page.Limit, Offset: page.Offset}
 	// Expose the peer's read watermark for a "seen" indicator (hidden when they
 	// have read nothing or disabled read receipts).
 	if wm, ok, werr := s.messagingsvc.PeerReadWatermark(c.Request().Context(), userID, convID); werr == nil && ok {

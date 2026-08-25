@@ -72,12 +72,8 @@ func (s *Server) handleListJobRuns(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	limit := clampInt(queryInt(c, "limit", defaultJobPageLimit), 1, maxJobPageLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	runs, total, cursor, err := s.jobOperationsSvc.ListRuns(c.Request().Context(), filter, int32(limit), int32(offset))
+	page := parsePage(c, defaultJobPageLimit, maxJobPageLimit)
+	runs, total, cursor, err := s.jobOperationsSvc.ListRuns(c.Request().Context(), filter, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -85,7 +81,7 @@ func (s *Server) handleListJobRuns(c echo.Context) error {
 		runs = []jobstatus.Run{}
 	}
 	return c.JSON(http.StatusOK, jobRunsResponse{
-		Runs: runs, Total: total, Limit: limit, Offset: offset,
+		Runs: runs, Total: total, Limit: page.Limit, Offset: page.Offset,
 		EventCursor: strconv.FormatInt(cursor, 10),
 	})
 }
@@ -95,12 +91,8 @@ func (s *Server) handleGetJobRun(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid job run id")
 	}
-	limit := clampInt(queryInt(c, "events_limit", defaultJobPageLimit), 1, maxJobPageLimit)
-	offset := queryInt(c, "events_offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	detail, err := s.jobOperationsSvc.GetDetail(c.Request().Context(), id, int32(limit), int32(offset))
+	page := parsePageNamed(c, "events_limit", "events_offset", defaultJobPageLimit, maxJobPageLimit)
+	detail, err := s.jobOperationsSvc.GetDetail(c.Request().Context(), id, page.Limit32(), page.Offset32())
 	if errors.Is(err, jobstatus.ErrRunNotFound) {
 		return echo.NewHTTPError(http.StatusNotFound, "job run not found")
 	}
@@ -112,7 +104,7 @@ func (s *Server) handleGetJobRun(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, jobRunDetailResponse{
 		Run: detail.Run, Events: detail.Events, EventsTotal: detail.EventsTotal,
-		EventsLimit: limit, EventsOffset: offset,
+		EventsLimit: page.Limit, EventsOffset: page.Offset,
 		EventCursor: strconv.FormatInt(detail.EventCursor, 10),
 	})
 }

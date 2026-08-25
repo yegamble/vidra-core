@@ -48,12 +48,8 @@ func (r createWatchedWordRequest) Validate() []FieldError {
 // handleListWatchedWords returns the watched-words list, newest first. Behind
 // requireRole(admin, moderator). Pagination via ?limit (1–100, default 20)/?offset.
 func (s *Server) handleListWatchedWords(c echo.Context) error {
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.watchwordsvc.List(c.Request().Context(), int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, err := s.watchwordsvc.List(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -66,7 +62,7 @@ func (s *Server) handleListWatchedWords(c echo.Context) error {
 			CreatedAt:         it.CreatedAt,
 		})
 	}
-	return c.JSON(http.StatusOK, watchedWordListResponse{Words: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, watchedWordListResponse{Words: views, Limit: page.Limit, Offset: page.Offset})
 }
 
 // handleAddWatchedWord adds a term to the watched-words list. Behind
@@ -133,12 +129,8 @@ type watchedWordMatchListResponse struct {
 // badge and its target context. Behind requireRole(admin, moderator).
 // Pagination via ?limit (1–100, default 20)/?offset.
 func (s *Server) handleListWatchedWordMatches(c echo.Context) error {
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.watchwordsvc.ListMatches(c.Request().Context(), int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, err := s.watchwordsvc.ListMatches(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -159,5 +151,5 @@ func (s *Server) handleListWatchedWordMatches(c echo.Context) error {
 		}
 		views = append(views, view)
 	}
-	return c.JSON(http.StatusOK, watchedWordMatchListResponse{Matches: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, watchedWordMatchListResponse{Matches: views, Limit: page.Limit, Offset: page.Offset})
 }

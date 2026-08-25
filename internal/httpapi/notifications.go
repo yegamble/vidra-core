@@ -84,13 +84,9 @@ func (s *Server) handleListNotifications(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
 	unreadOnly := c.QueryParam("unread") == "true"
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	ctx := c.Request().Context()
-	items, err := s.notifsvc.List(ctx, userID, unreadOnly, int32(limit), int32(offset))
+	items, err := s.notifsvc.List(ctx, userID, unreadOnly, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -103,7 +99,7 @@ func (s *Server) handleListNotifications(c echo.Context) error {
 		views = append(views, newNotificationView(it))
 	}
 	return c.JSON(http.StatusOK, notificationListResponse{
-		Notifications: views, UnreadCount: unread, Limit: limit, Offset: offset,
+		Notifications: views, UnreadCount: unread, Limit: page.Limit, Offset: page.Offset,
 	})
 }
 

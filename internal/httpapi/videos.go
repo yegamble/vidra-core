@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -601,11 +600,7 @@ func feedItemView(it video.FeedItem) videoView {
 func (s *Server) handleListPublicVideos(c echo.Context) error {
 	sort := video.NormalizeFeedSort(c.QueryParam("sort"))
 	scope := video.NormalizeFeedScope(c.QueryParam("scope"))
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	filter := video.FeedFilter{
 		Tag:      strings.TrimSpace(c.QueryParam("tag")),
 		Category: strings.TrimSpace(c.QueryParam("category")),
@@ -629,7 +624,7 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 		return &ValidationError{Fields: fes}
 	}
 	viewerID, _, authed := principalFromContext(c)
-	items, err := s.videosvc.ListPublic(c.Request().Context(), sort, scope, filter, viewerID, authed, int32(limit), int32(offset))
+	items, err := s.videosvc.ListPublic(c.Request().Context(), sort, scope, filter, viewerID, authed, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -638,7 +633,7 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 		views = append(views, feedItemView(it))
 	}
 	s.attachIPFSPinned(c.Request().Context(), views)
-	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: sort, Scope: scope, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: sort, Scope: scope, Limit: page.Limit, Offset: page.Offset})
 }
 
 // handleListSubscriptionVideos returns the authenticated user's "subscriptions"
@@ -649,12 +644,8 @@ func (s *Server) handleListSubscriptionVideos(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.videosvc.ListSubscriptions(c.Request().Context(), userID, int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, err := s.videosvc.ListSubscriptions(c.Request().Context(), userID, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -663,7 +654,7 @@ func (s *Server) handleListSubscriptionVideos(c echo.Context) error {
 		views = append(views, feedItemView(it))
 	}
 	s.attachIPFSPinned(c.Request().Context(), views)
-	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: "recent", Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, videoFeedResponse{Videos: views, Sort: "recent", Limit: page.Limit, Offset: page.Offset})
 }
 
 // maxSearchQueryLen bounds the search term to keep queries cheap.
@@ -696,11 +687,7 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	if len(q) > maxSearchQueryLen {
 		return echo.NewHTTPError(http.StatusBadRequest, "query parameter q is too long")
 	}
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	filter := video.FeedFilter{
 		Tag:      strings.TrimSpace(c.QueryParam("tag")),
 		Category: strings.TrimSpace(c.QueryParam("category")),
@@ -729,7 +716,7 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	// under its own strict deadline (see search_remote.go). Later pages never
 	// re-resolve (the remote hit rode page one).
 	var remoteCh <-chan []remoteSearchResultView
-	if offset == 0 {
+	if page.Offset == 0 {
 		remoteCh = s.startRemoteSearch(c, q)
 	}
 	// vidra-search routing (search-service W4/W9): when the service is the
@@ -742,13 +729,13 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	var views []videoView
 	source := "local"
 	if s.useSearchService() {
-		if svcViews, ok := s.searchViaService(c, q, filter, limit, offset, viewerID, authed); ok {
+		if svcViews, ok := s.searchViaService(c, q, filter, page.Limit, page.Offset, viewerID, authed); ok {
 			views = svcViews
 			source = "search"
 		}
 	}
 	if source == "local" {
-		items, err := s.videosvc.SearchPublic(c.Request().Context(), q, filter, viewerID, authed, int32(limit), int32(offset))
+		items, err := s.videosvc.SearchPublic(c.Request().Context(), q, filter, viewerID, authed, page.Limit32(), page.Offset32())
 		if err != nil {
 			return err
 		}
@@ -760,35 +747,11 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	s.attachIPFSPinned(c.Request().Context(), views)
 	// Additive: record the search as a behavioural event (async via the outbox).
 	s.emitSearchSubmitted(c, q, len(views), source)
-	resp := videoSearchResponse{Query: q, Videos: views, Limit: limit, Offset: offset}
+	resp := videoSearchResponse{Query: q, Videos: views, Limit: page.Limit, Offset: page.Offset}
 	if remoteCh != nil {
 		resp.Remote = <-remoteCh // always delivers within the resolve deadline
 	}
 	return c.JSON(http.StatusOK, resp)
-}
-
-// queryInt reads an integer query param, returning def when absent or malformed.
-func queryInt(c echo.Context, name string, def int) int {
-	raw := c.QueryParam(name)
-	if raw == "" {
-		return def
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		return def
-	}
-	return n
-}
-
-// clampInt bounds v to [lo, hi].
-func clampInt(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }
 
 // handleListChannelVideos lists a channel's videos. Behind optionalAuth: the
@@ -1586,12 +1549,8 @@ type blockedVideoListResponse struct {
 // for the moderation block-list. Behind requireRole(admin, moderator).
 // Pagination via ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListBlockedVideos(c echo.Context) error {
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	items, err := s.moderationsvc.ListBlocked(c.Request().Context(), int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	items, err := s.moderationsvc.ListBlocked(c.Request().Context(), page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -1609,7 +1568,7 @@ func (s *Server) handleListBlockedVideos(c echo.Context) error {
 			BlockedAt:          it.BlockedAt,
 		})
 	}
-	return c.JSON(http.StatusOK, blockedVideoListResponse{Videos: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, blockedVideoListResponse{Videos: views, Limit: page.Limit, Offset: page.Offset})
 }
 
 // videoError maps video service sentinels to HTTP error envelopes. A non-owner

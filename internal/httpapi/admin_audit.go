@@ -60,12 +60,8 @@ type auditLogListResponse struct {
 // via ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListAuditLog(c echo.Context) error {
 	action := c.QueryParam("action")
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	entries, err := s.auditLog.List(c.Request().Context(), action, int32(limit), int32(offset))
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
+	entries, err := s.auditLog.List(c.Request().Context(), action, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -73,5 +69,5 @@ func (s *Server) handleListAuditLog(c echo.Context) error {
 	for _, e := range entries {
 		views = append(views, newAuditLogEntryView(e))
 	}
-	return c.JSON(http.StatusOK, auditLogListResponse{Entries: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, auditLogListResponse{Entries: views, Limit: page.Limit, Offset: page.Offset})
 }

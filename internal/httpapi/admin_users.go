@@ -88,12 +88,8 @@ type adminUserListResponse struct {
 func (s *Server) handleListUsers(c echo.Context) error {
 	ctx := c.Request().Context()
 	query := strings.TrimSpace(c.QueryParam("q"))
-	limit := clampInt(queryInt(c, "limit", defaultUserPageLimit), 1, maxUserPageLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
-	users, err := s.adminsvc.ListUsers(ctx, query, int32(limit), int32(offset))
+	page := parsePage(c, defaultUserPageLimit, maxUserPageLimit)
+	users, err := s.adminsvc.ListUsers(ctx, query, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -108,7 +104,7 @@ func (s *Server) handleListUsers(c echo.Context) error {
 		views = append(views, newAdminUserViewFromRow(u))
 	}
 	return c.JSON(http.StatusOK, adminUserListResponse{
-		Users: views, Total: total, Limit: limit, Offset: offset,
+		Users: views, Total: total, Limit: page.Limit, Offset: page.Offset,
 	})
 }
 

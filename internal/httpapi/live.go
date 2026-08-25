@@ -143,9 +143,8 @@ type liveStreamPublicListResponse struct {
 // creation/ingest) — when live is disabled there are simply no live streams to
 // list.
 func (s *Server) handleListLivePublicStreams(c echo.Context) error {
-	limit := clampInt(queryInt(c, "limit", defaultLivePublicLimit), 1, maxLivePublicLimit)
-	offset := queryInt(c, "offset", 0)
-	cards, err := s.livesvc.ListLivePublic(c.Request().Context(), limit, offset)
+	page := parsePage(c, defaultLivePublicLimit, maxLivePublicLimit)
+	cards, err := s.livesvc.ListLivePublic(c.Request().Context(), page.Limit, page.Offset)
 	if err != nil {
 		return err
 	}
@@ -161,7 +160,7 @@ func (s *Server) handleListLivePublicStreams(c echo.Context) error {
 		}
 		views = append(views, v)
 	}
-	return c.JSON(http.StatusOK, liveStreamPublicListResponse{LiveStreams: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, liveStreamPublicListResponse{LiveStreams: views, Limit: page.Limit, Offset: page.Offset})
 }
 
 // liveStreamKeyView carries the raw stream key + ingest URL, returned only on

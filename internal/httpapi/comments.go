@@ -225,13 +225,9 @@ func (s *Server) handleListComments(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	limit := clampInt(queryInt(c, "limit", defaultVideoFeedLimit), 1, maxVideoFeedLimit)
-	offset := queryInt(c, "offset", 0)
-	if offset < 0 {
-		offset = 0
-	}
+	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	viewerID, _, authed := principalFromContext(c)
-	items, err := s.commentsvc.ListByVideo(c.Request().Context(), videoID, viewerID, authed, int32(limit), int32(offset))
+	items, err := s.commentsvc.ListByVideo(c.Request().Context(), videoID, viewerID, authed, page.Limit32(), page.Offset32())
 	if err != nil {
 		return err
 	}
@@ -243,7 +239,7 @@ func (s *Server) handleListComments(c echo.Context) error {
 		v.Pinned = it.Pinned
 		views = append(views, v)
 	}
-	return c.JSON(http.StatusOK, commentListResponse{Comments: views, Limit: limit, Offset: offset})
+	return c.JSON(http.StatusOK, commentListResponse{Comments: views, Limit: page.Limit, Offset: page.Offset})
 }
 
 // handleDeleteComment removes a comment. Behind requireAuth. The comment's author
