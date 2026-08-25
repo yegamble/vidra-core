@@ -3,6 +3,7 @@ package media
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,18 @@ import (
 
 	"github.com/vidra/vidra-core/internal/storage"
 )
+
+// ErrNoMeasurableDuration is returned when neither the caller's hint nor a probe
+// of the source produced a duration, so PlanStoryboard has nothing to lay a
+// sprite sheet out from.
+//
+// It is a SENTINEL rather than a plain error because it is the one storyboard
+// failure that is provably permanent: the input to the plan is the duration and
+// nothing else, so re-running against the same object re-runs the same probe and
+// reaches the same answer. A retrying caller (the storyboard backfill) matches on
+// it to give up immediately instead of spending its retry budget re-decoding
+// media that can never yield a sheet.
+var ErrNoMeasurableDuration = errors.New("media: storyboard: source has no measurable duration")
 
 // Storyboard sprite geometry: a grid of small poster tiles the player shows as a
 // seek-bar hover preview. Tiles are 160x90 (16:9 scaled with padding), packed
@@ -70,6 +83,63 @@ func PlanStoryboard(durationSeconds int) (StoryboardPlan, bool) {
 		Rows:            rows,
 		TileW:           storyboardTileW,
 		TileH:           storyboardTileH,
+	}, true
+}
+
+// PlanFromSprites reconstructs a StoryboardPlan from a sprite sheet SOMEBODY
+// ELSE produced, given its measured geometry and the duration of the video it
+// covers. It is what lets an imported PeerTube storyboard be described by the
+// same plan a locally-rendered one is, so RenderStoryboardVTT can emit the
+// WebVTT map the source never stored.
+//
+// spriteDurationSeconds is how much video each tile spans; totalW/totalH are the
+// sheet's measured pixel size and spriteW/spriteH one tile's. ok=false means the
+// numbers cannot describe a usable sheet, and the caller should record the
+// storyboard as unsupported rather than emit cues over nothing.
+//
+// ── the trap this exists to avoid ──
+//
+// THE TILE COUNT IS NOT THE GRID CAPACITY. A generator lays out a grid big
+// enough to hold the tiles and ffmpeg's `tile` filter pads the unused trailing
+// cells with BLACK, so cols*rows is routinely larger than the number of real
+// frames. Deriving the count from the geometry puts black frames at the end of
+// every scrub bar. The real count is ceil(duration / spriteDuration), and the
+// grid is only a ceiling on it.
+//
+// That is also why a non-positive duration is refused rather than defaulted:
+// without it there is no honest tile count, only the grid — which is the wrong
+// answer.
+func PlanFromSprites(totalW, totalH, spriteW, spriteH, spriteDurationSeconds, videoDurationSeconds int) (StoryboardPlan, bool) {
+	if totalW <= 0 || totalH <= 0 || spriteW <= 0 || spriteH <= 0 {
+		return StoryboardPlan{}, false
+	}
+	if spriteDurationSeconds <= 0 || videoDurationSeconds <= 0 {
+		return StoryboardPlan{}, false
+	}
+	cols := totalW / spriteW
+	rows := totalH / spriteH
+	if cols < 1 || rows < 1 {
+		// A sheet smaller than one of its own tiles is not a sheet.
+		return StoryboardPlan{}, false
+	}
+	tiles := (videoDurationSeconds + spriteDurationSeconds - 1) / spriteDurationSeconds
+	if tiles < 1 {
+		tiles = 1
+	}
+	if capacity := cols * rows; tiles > capacity {
+		// The source recorded a longer video than its sheet covers (a re-encode
+		// that lengthened the media, most often). Cues past the last real tile
+		// would point outside the image, so the count is clamped to what is
+		// actually there and the tail of the video simply has no preview.
+		tiles = capacity
+	}
+	return StoryboardPlan{
+		Tiles:           tiles,
+		IntervalSeconds: spriteDurationSeconds,
+		Cols:            cols,
+		Rows:            rows,
+		TileW:           spriteW,
+		TileH:           spriteH,
 	}, true
 }
 
@@ -167,7 +237,7 @@ func (t *Storyboarder) Storyboard(ctx context.Context, key string, durationSecon
 	}
 	plan, ok := PlanStoryboard(durationSeconds)
 	if !ok {
-		return nil, nil, fmt.Errorf("media: storyboard: source %q has no measurable duration", key)
+		return nil, nil, fmt.Errorf("%w: %q", ErrNoMeasurableDuration, key)
 	}
 
 	src, cleanup, err := openSource(ctx, t.blobs, key)

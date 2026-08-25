@@ -19,11 +19,9 @@ import (
 type Source struct {
 	pool *pgxpool.Pool
 
-	mu                       sync.Mutex
-	actorLinksChecked        bool
-	actorLinksOnActor        bool
-	thumbnailTypeChecked     bool
-	thumbnailTypeColumnFound bool
+	mu                sync.Mutex
+	actorLinksChecked bool
+	actorLinksOnActor bool
 	// colCache / tblCache memoise information_schema probes. The importer never
 	// assumes a source column or table exists — PeerTube renames and adds across
 	// the schema range this tool accepts, and the difference between "probed and
@@ -209,26 +207,6 @@ func (s *Source) actorLinksLiveOnActor(ctx context.Context) (bool, error) {
 	s.actorLinksChecked = true
 	s.mu.Unlock()
 	return onActor, nil
-}
-
-func (s *Source) thumbnailHasTypeColumn(ctx context.Context) (bool, error) {
-	s.mu.Lock()
-	if s.thumbnailTypeChecked {
-		found := s.thumbnailTypeColumnFound
-		s.mu.Unlock()
-		return found, nil
-	}
-	s.mu.Unlock()
-
-	found, err := s.hasColumn(ctx, "thumbnail", "type")
-	if err != nil {
-		return false, err
-	}
-	s.mu.Lock()
-	s.thumbnailTypeColumnFound = found
-	s.thumbnailTypeChecked = true
-	s.mu.Unlock()
-	return found, nil
 }
 
 // ── source entity structs (Vidra-shaped, resolved from PeerTube joins) ──
@@ -509,29 +487,211 @@ func (s *Source) HLSPlaylist(ctx context.Context, videoID int64) (SourceHLSPlayl
 	return p, true, nil
 }
 
-// ThumbnailFilename returns the miniature thumbnail filename for a video ("" when
-// none). PeerTube thumbnail type 1 = MINIATURE.
-func (s *Source) ThumbnailFilename(ctx context.Context, videoID int64) (string, error) {
-	hasType, err := s.thumbnailHasTypeColumn(ctx)
-	if err != nil {
-		return "", err
+// SourceVideoThumbnail is the ONE thumbnail row chosen for a local video, with
+// the pixel size the source recorded for it (0 when it records none).
+type SourceVideoThumbnail struct {
+	ID       int64
+	VideoID  int64
+	Filename string
+	Width    int
+	Height   int
+}
+
+// VideoThumbnails returns one thumbnail row per LOCAL video — the best poster
+// the source offers for it. ok=false means the source has no thumbnail table at
+// all, which is a family the source does not have rather than a failure.
+//
+// ── why there is a choice to make, and how it is made ──
+//
+// PeerTube 8.1 unified previews and miniatures into one table and started
+// writing ONE ROW PER CONFIGURED SIZE: the shipped set is 280x157, 850x480,
+// 1280x720, 1920x1080 and a 1400x1400 square "for podcast applications", and an
+// admin can change it. They all describe the same video, so exactly one of them
+// can be this video's poster here, and the older read ("ORDER BY id LIMIT 1",
+// with a type filter that is inert on 8.1+) took whichever the source happened
+// to insert first — on a multi-size source, the 280x157 thumbnail. That is the
+// same defect that left 137 avatars as thumbnails, in the same shape, so this is
+// the same fix: DISTINCT ON the video, and let the ORDER BY be the choice.
+//
+// The order is, in priority:
+//
+//  1. On a PRE-8.1 source, which still has `type`, a PREVIEW (2) beats a
+//     MINIATURE (1). Both exist there and the preview is the full-size one.
+//  2. A NON-SQUARE row beats a square one. Vidra renders one poster into 16:9
+//     card and watch-page surfaces, and PeerTube's 1400x1400 podcast variant has
+//     MORE PIXELS than its 1280x720 — so a naive largest-first rule picks the
+//     square and every card in the catalogue gets a letterboxed poster.
+//  3. Then the largest by area, and then the newest id, so the answer is
+//     deterministic even on a source that records no sizes at all.
+//
+// Every optional column is probed rather than assumed: `type` was DROPPED in 8.1
+// and a source that lacks it must still be readable, and a column that is not
+// there is a syntax error rather than a NULL.
+//
+// The same table also holds PLAYLIST thumbnails (videoPlaylistId set, videoId
+// null), which are not this family; the filter excludes them.
+func (s *Source) VideoThumbnails(ctx context.Context) ([]SourceVideoThumbnail, bool, error) {
+	present, err := s.tableExists(ctx, "thumbnail")
+	if err != nil || !present {
+		return nil, false, err
 	}
-	where := `"videoId" = $1`
+	hasType, err := s.columnExists(ctx, "thumbnail", "type")
+	if err != nil {
+		return nil, false, err
+	}
+	hasWidth, err := s.columnExists(ctx, "thumbnail", "width")
+	if err != nil {
+		return nil, false, err
+	}
+	hasHeight, err := s.columnExists(ctx, "thumbnail", "height")
+	if err != nil {
+		return nil, false, err
+	}
+	widthExpr, heightExpr := `0`, `0`
+	if hasWidth {
+		widthExpr = `COALESCE(t.width, 0)`
+	}
+	if hasHeight {
+		heightExpr = `COALESCE(t.height, 0)`
+	}
+	var order string
 	if hasType {
-		where += ` AND type = 1`
+		order += `CASE WHEN t.type = 2 THEN 0 ELSE 1 END, `
 	}
-	var filename string
-	err = s.pool.QueryRow(ctx, `
-		SELECT filename FROM thumbnail
-		WHERE `+where+`
-		ORDER BY id LIMIT 1`, videoID).Scan(&filename)
-	if err == pgx.ErrNoRows {
-		return "", nil
+	if hasWidth && hasHeight {
+		// A square is sorted LAST, and only when the source actually recorded a
+		// size — with no sizes recorded every row reads 0x0 and this is inert.
+		order += `CASE WHEN ` + widthExpr + ` > 0 AND ` + widthExpr + ` = ` + heightExpr + ` THEN 1 ELSE 0 END, `
+		order += `(` + widthExpr + ` * ` + heightExpr + `) DESC, `
+	} else if hasWidth {
+		// DESC alone would sort NULLs FIRST in PostgreSQL, i.e. a row whose size
+		// the source never recorded would beat every row whose size it did.
+		order += `t.width DESC NULLS LAST, `
+	} else if hasHeight {
+		order += `t.height DESC NULLS LAST, `
 	}
+	onActor, err := s.actorLinksLiveOnActor(ctx)
 	if err != nil {
-		return "", fmt.Errorf("peertubeimport: read thumbnail: %w", err)
+		return nil, false, err
 	}
-	return filename, nil
+	actorJoin := `act.id = vc."actorId"`
+	if onActor {
+		actorJoin = `act."videoChannelId" = vc.id`
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, video_id, filename, width, height
+		FROM (
+			SELECT DISTINCT ON (t."videoId")
+			       t.id                     AS id,
+			       t."videoId"              AS video_id,
+			       COALESCE(t.filename, '') AS filename,
+			       `+widthExpr+`            AS width,
+			       `+heightExpr+`           AS height
+			FROM thumbnail t
+			JOIN video v ON v.id = t."videoId"
+			JOIN "videoChannel" vc ON vc.id = v."channelId"
+			JOIN actor act ON `+actorJoin+`
+			WHERE t."videoId" IS NOT NULL AND act."serverId" IS NULL
+			ORDER BY t."videoId", `+order+`t.id DESC
+		) best
+		ORDER BY best.video_id`)
+	if err != nil {
+		return nil, false, fmt.Errorf("peertubeimport: read video thumbnails: %w", err)
+	}
+	defer rows.Close()
+	var out []SourceVideoThumbnail
+	for rows.Next() {
+		var th SourceVideoThumbnail
+		if err := rows.Scan(&th.ID, &th.VideoID, &th.Filename, &th.Width, &th.Height); err != nil {
+			return nil, false, fmt.Errorf("peertubeimport: scan video thumbnail: %w", err)
+		}
+		out = append(out, th)
+	}
+	return out, true, rows.Err()
+}
+
+// SourceStoryboard is one video's seek-preview sprite sheet on the source: the
+// stored file plus the geometry needed to describe it, since PeerTube stores the
+// sheet and no WebVTT map to go with it.
+type SourceStoryboard struct {
+	ID          int64
+	VideoID     int64
+	Filename    string
+	TotalWidth  int
+	TotalHeight int
+	SpriteWidth int
+	// SpriteHeight and SpriteDuration complete the grid: how tall one tile is,
+	// and how many SECONDS of video it spans.
+	SpriteHeight   int
+	SpriteDuration int
+}
+
+// Storyboards returns every LOCAL video's storyboard row. ok=false means the
+// source has no storyboard table, which is every PeerTube older than 6.0 and is
+// a family the source does not have rather than a failure.
+//
+// The table MUST be probed and cannot be inferred from the schema version:
+// PeerTube never wrote a migration for it — it is created by
+// sequelizeTypescript.sync() on boot — so migrationVersion says nothing at all
+// about whether it is there.
+//
+// Expect legitimate absences even on a source that has the table: PeerTube's
+// generation job returns early for a video shorter than three seconds and writes
+// no row for it.
+func (s *Source) Storyboards(ctx context.Context) ([]SourceStoryboard, bool, error) {
+	present, err := s.tableExists(ctx, "storyboard")
+	if err != nil || !present {
+		return nil, false, err
+	}
+	// The geometry columns have been there since the table was, but the table is
+	// schema-synced rather than migrated, so nothing about it is guaranteed. A
+	// column that is missing reads 0 and the row is reported unsupported by the
+	// pass, which is a far better outcome than SQL that cannot parse.
+	geom := map[string]string{}
+	for _, col := range []string{"totalWidth", "totalHeight", "spriteWidth", "spriteHeight", "spriteDuration"} {
+		has, err := s.columnExists(ctx, "storyboard", col)
+		if err != nil {
+			return nil, false, err
+		}
+		if has {
+			geom[col] = `COALESCE(sb."` + col + `", 0)`
+		} else {
+			geom[col] = `0`
+		}
+	}
+	onActor, err := s.actorLinksLiveOnActor(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	actorJoin := `act.id = vc."actorId"`
+	if onActor {
+		actorJoin = `act."videoChannelId" = vc.id`
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT sb.id, sb."videoId", COALESCE(sb.filename, ''),
+		       `+geom["totalWidth"]+`, `+geom["totalHeight"]+`,
+		       `+geom["spriteWidth"]+`, `+geom["spriteHeight"]+`,
+		       `+geom["spriteDuration"]+`
+		FROM storyboard sb
+		JOIN video v ON v.id = sb."videoId"
+		JOIN "videoChannel" vc ON vc.id = v."channelId"
+		JOIN actor act ON `+actorJoin+`
+		WHERE act."serverId" IS NULL
+		ORDER BY sb."videoId", sb.id`)
+	if err != nil {
+		return nil, false, fmt.Errorf("peertubeimport: read storyboards: %w", err)
+	}
+	defer rows.Close()
+	var out []SourceStoryboard
+	for rows.Next() {
+		var sb SourceStoryboard
+		if err := rows.Scan(&sb.ID, &sb.VideoID, &sb.Filename, &sb.TotalWidth, &sb.TotalHeight,
+			&sb.SpriteWidth, &sb.SpriteHeight, &sb.SpriteDuration); err != nil {
+			return nil, false, fmt.Errorf("peertubeimport: scan storyboard: %w", err)
+		}
+		out = append(out, sb)
+	}
+	return out, true, rows.Err()
 }
 
 // Captions returns a video's caption tracks.

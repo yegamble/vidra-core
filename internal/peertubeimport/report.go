@@ -14,13 +14,20 @@ const (
 	KindVideo            = "video"
 	KindVideoFile        = "video_file"
 	KindHLSPlaylist      = "hls_playlist"
-	KindThumbnail        = "thumbnail"
-	KindCaption          = "caption"
-	KindTag              = "tag"
-	KindComment          = "comment"
-	KindPlaylist         = "playlist"
-	KindPlaylistItem     = "playlist_item"
-	KindFollow           = "follow"
+	// KindThumbnail / KindStoryboard count VIDEOS whose poster and seek-preview
+	// sprite sheet were carried — one source row each per video, which is what
+	// the source reads already reduce to. They are two kinds rather than one for
+	// the same reason avatars and banners are: they answer different questions
+	// ("did the posters come across?" is the one an operator asks first) and a
+	// source with no storyboards at all must not dilute the poster count.
+	KindThumbnail    = "thumbnail"
+	KindStoryboard   = "storyboard"
+	KindCaption      = "caption"
+	KindTag          = "tag"
+	KindComment      = "comment"
+	KindPlaylist     = "playlist"
+	KindPlaylistItem = "playlist_item"
+	KindFollow       = "follow"
 	// KindViewCount counts VIDEOS whose view total was carried, not views. One
 	// source video contributes at most one to it per run, and contributes nothing
 	// on a run where its total has not moved.
@@ -41,8 +48,9 @@ const (
 var orderedKinds = []string{
 	KindCategoryTaxonomy,
 	KindUser, KindChannel, KindActorAvatar, KindActorBanner, KindVideo, KindVideoFile,
-	KindHLSPlaylist, KindThumbnail, KindCaption, KindTag, KindViewCount, KindChapter,
-	KindRating, KindRendition, KindComment, KindPlaylist, KindPlaylistItem, KindFollow,
+	KindHLSPlaylist, KindThumbnail, KindStoryboard, KindCaption, KindTag, KindViewCount,
+	KindChapter, KindRating, KindRendition, KindComment, KindPlaylist, KindPlaylistItem,
+	KindFollow,
 }
 
 // Counts tallies one entity kind's outcome. Planned is what a dry-run found;

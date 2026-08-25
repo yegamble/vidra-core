@@ -74,6 +74,7 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/storagemigration"
 	"github.com/vidra/vidra-core/internal/store"
+	"github.com/vidra/vidra-core/internal/storyboardbackfill"
 	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/upload"
 	"github.com/vidra/vidra-core/internal/urlsafety"
@@ -745,8 +746,13 @@ func run() error {
 	} else {
 		logger.Warn("thumbnail generation disabled (ffmpeg not on PATH); videos publish without a poster")
 	}
+	// storyboardsCapable is remembered because the backfill worker further down
+	// needs the same answer: with no generator wired there is nothing for it to
+	// run, and starting it would only produce a failure per video per tick.
+	storyboardsCapable := false
 	if sb, ok := media.DetectStoryboarder(blobs); ok {
 		vopts = append(vopts, video.WithStoryboarder(sb))
+		storyboardsCapable = true
 		logger.Info("storyboard generation enabled (ffmpeg + ffprobe found)")
 	} else {
 		logger.Warn("storyboard generation disabled (ffmpeg/ffprobe not on PATH); videos publish without a storyboard")
@@ -774,9 +780,17 @@ func run() error {
 	// Storyboard generation follows the storyboards_enabled overlay at runtime
 	// (config-parity W8, default on). Stored storyboards keep serving when the
 	// gate is off — it covers generation only.
-	vopts = append(vopts, video.WithStoryboardGate(func() bool {
+	//
+	// The SAME closure gates the backfill worker below. It is one gate, not two,
+	// deliberately: an admin who turned storyboards off has turned off storyboard
+	// generation, and a repair worker quietly generating them anyway would be the
+	// setting silently not working. Reusing the closure is also what keeps this
+	// off the env-config surface — this repo has already shipped config keys that
+	// were unsettable because they never reached the compose env anchors.
+	storyboardsEnabled := func() bool {
 		return settingssvc.Bool(instancesettings.KeyStoryboardsEnabled)
-	}))
+	}
+	vopts = append(vopts, video.WithStoryboardGate(storyboardsEnabled))
 	// Instance publish defaults (config-parity W9): fields a creator leaves
 	// unset on a new video seed from the defaults.publish settings, read live
 	// per CreateDraft so admin changes apply without a restart. Covers every
@@ -1252,6 +1266,14 @@ func run() error {
 	// they actually contain. No API surface — it exists only to give the
 	// integrity-verified storage migration a baseline for the WHOLE library.
 	mediahashsvc := mediahash.NewService(db.Queries(), blobs, logger)
+
+	// Storyboard backfill: generates the seek previews the two publish seams
+	// never made — because the box had no ffmpeg that day, because the
+	// storyboards_enabled overlay was off, or because a PeerTube source had no
+	// sprite sheet to carry across — and remembers the ones it has given up on.
+	// No API surface; the worker logs. It calls straight into videosvc, so there
+	// is exactly one implementation of "render and store a storyboard".
+	storyboardbackfillsvc := storyboardbackfill.NewService(db.Queries(), videosvc, logger)
 
 	// Storage migration (phase-2 storage, items 4-5). Constructed unconditionally,
 	// with a possibly-nil target: Start answers 503 without one, but the read and
@@ -1839,6 +1861,21 @@ func run() error {
 		defer workerCancel()
 		go runMediaHashBackfillWorker(workerCtx, logger, mediahashsvc, cronLeader)
 		logger.Info("media hash backfill worker started")
+	}
+
+	// Storyboard backfill. Unlike the hash backfill above this one is NOT
+	// unconditional, because it cannot be: with no ffmpeg there is no generator
+	// at all, and every tick would be a batch of identical failures booked
+	// against videos that are perfectly fine. The runtime storyboards_enabled
+	// gate is checked per tick inside the worker instead of here, so an admin
+	// toggling it takes effect without a restart, exactly as it does on publish.
+	if runWorkers && storyboardsCapable {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runStoryboardBackfillWorker(workerCtx, logger, storyboardbackfillsvc, storyboardsEnabled, cronLeader)
+		logger.Info("storyboard backfill worker started")
+	} else if runWorkers {
+		logger.Info("storyboard backfill worker not started (no ffmpeg/ffprobe); videos without a seek preview keep none")
 	}
 
 	// Storage migration (phase-2 storage, items 4-5). TWO workers, split the way
@@ -2981,6 +3018,91 @@ func runMediaHashBackfillWorker(ctx context.Context, logger *slog.Logger, svc *m
 			drained = false
 			logger.Info("media hash backfill progressed",
 				"scanned", res.Scanned, "hashed", res.Hashed, "missing", res.Missing, "failed", res.Failed)
+		}
+	}
+}
+
+// runStoryboardBackfillWorker generates the seek-preview storyboards that the
+// publish seams never made, a small batch per tick, until ctx is canceled.
+//
+// PACING. This is the one thing that makes it different from the hash backfill
+// above, and it is worth the arithmetic. A hashed object costs a streaming read;
+// a storyboard costs a FULL DECODE of a video original, because the sprite sheet
+// samples one frame every few seconds but ffmpeg still has to walk the file to
+// find them. So the numbers are chosen for a 4-vCPU box that is also
+// transcoding, on a catalogue the size of the beta migration (~13k videos):
+//
+//	batch = 4, interval = 5m  →  at most 48 videos an hour, ~1,150 a day,
+//	                             so ~13k drains in about eleven days.
+//
+// Days, not hours, is the intent: the backlog is a cosmetic gap that has already
+// been there for the life of those videos, and finishing it a week sooner is
+// worth nothing next to a box that cannot keep up with uploads while it does.
+//
+// The batch is SMALL for a second reason: BackfillOnce is sequential, so a pass
+// is at most four decodes back to back. That bounds how long a pass can overrun
+// its interval — minutes, not an hour — which is what makes losing leadership or
+// shutting down land promptly. And because it is sequential, at most ONE ffmpeg
+// is ever in flight no matter what the batch is; the interval only sets the idle
+// floor between passes.
+//
+// On the transcoder's admission control: internal/transcode has a scratch-space
+// guard (a free-bytes floor plus a per-job estimate) and this worker deliberately
+// does NOT go through it. That guard exists because a transcode writes several
+// times its source into the scratch volume — the volume Postgres also lives on —
+// so one job can fill the disk and take the instance down. Storyboarding writes
+// one small JPEG, and reads the source in place (a local path) or over a
+// presigned URL, so its scratch footprint is kilobytes. Its one exception is a
+// backend that is neither path-providing nor presigning, where media.openSource
+// falls back to downloading the original to a temp file: that is 1x the source,
+// once, for one video at a time, which the transcoder's 10 GiB floor would not
+// meaningfully protect against anyway.
+func runStoryboardBackfillWorker(ctx context.Context, logger *slog.Logger, svc *storyboardbackfill.Service, enabled func() bool, leader *leaderlock.Elector) {
+	const (
+		interval = 5 * time.Minute
+		batch    = 4
+	)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	// Logged on the edge, not every tick: an idle backfill would otherwise write
+	// a line every five minutes forever.
+	idle := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Singleton sweep: exactly one instance runs it. A follower skips the
+			// tick rather than shutting down, because leadership can move here at
+			// any time (see internal/leaderlock).
+			if !leader.IsLeader() {
+				continue
+			}
+			// The runtime storyboards_enabled overlay, the same closure the publish
+			// path consults. Read per tick so an admin turning generation off stops
+			// this worker within one interval, with no restart — and so turning it
+			// back on resumes without one either.
+			if !enabled() {
+				continue
+			}
+			res, err := svc.BackfillOnce(ctx, batch)
+			if err != nil {
+				logger.Warn("storyboard backfill failed", "error", err)
+				continue
+			}
+			if res.Scanned == 0 {
+				if !idle {
+					idle = true
+					// Deliberately "nothing due" and not "complete": a video parked
+					// behind a retry backoff is not scanned either, so an empty pass
+					// is not proof the catalogue is finished.
+					logger.Info("storyboard backfill has nothing due: every published video either has a seek preview, has no original to build one from, has been given up on, or is waiting out a retry")
+				}
+				continue
+			}
+			idle = false
+			logger.Info("storyboard backfill progressed",
+				"scanned", res.Scanned, "generated", res.Generated, "retrying", res.Retrying, "gave_up", res.GaveUp)
 		}
 	}
 }

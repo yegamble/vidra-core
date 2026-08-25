@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -50,6 +52,43 @@ func TestVideoStoryboardServing(t *testing.T) {
 	}
 	if body := vtt.Body.String(); !strings.HasPrefix(body, "WEBVTT") {
 		t.Errorf("storyboard.vtt body should start with WEBVTT, got %q", body)
+	}
+}
+
+// The sprite's Content-Type comes from the video_files ROW, not from the
+// constant the route was written around. Both generated and PeerTube-imported
+// sheets are JPEG today, so this asserts a property rather than fixing an
+// observed bug — but the row is the source of truth for every other stored file,
+// and the header must follow it if one ever arrives as something else.
+func TestVideoStoryboardServesTheRecordedContentType(t *testing.T) {
+	srv, _, _, _, repo := videoServerFull(t, testConfig(), video.WithStoryboarder(storyboarderStub{}))
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createPublishedVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
+
+	vid := uuid.MustParse(id)
+	for i, f := range repo.files[vid] {
+		if f.Kind == "storyboard" {
+			repo.files[vid][i].ContentType = "image/webp"
+		}
+	}
+	sb := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/"+id+"/storyboard.jpg", "", "")
+	if sb.Code != http.StatusOK {
+		t.Fatalf("storyboard.jpg = %d, want 200", sb.Code)
+	}
+	if ct := sb.Header().Get("Content-Type"); ct != "image/webp" {
+		t.Errorf("storyboard.jpg content-type = %q, want the row's image/webp", ct)
+	}
+
+	// An empty column keeps the route's constant, which is what rows written
+	// before the write paths recorded a type look like.
+	for i, f := range repo.files[vid] {
+		if f.Kind == "storyboard" {
+			repo.files[vid][i].ContentType = ""
+		}
+	}
+	sb = sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/"+id+"/storyboard.jpg", "", "")
+	if ct := sb.Header().Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("storyboard.jpg content-type with an empty column = %q, want the image/jpeg fallback", ct)
 	}
 }
 

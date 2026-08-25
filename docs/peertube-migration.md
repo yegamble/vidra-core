@@ -18,8 +18,8 @@ tool *moves content in*, once.
   their ActivityPub actor keypairs (for federation continuity).
 - Channels.
 - Videos + their metadata (title, description, privacy, category/licence/
-  language, duration), the primary web video file, thumbnail, captions, and
-  existing PeerTube HLS playlists when `--media-mode=reference` is used.
+  language, duration), the primary web video file, captions, and existing
+  PeerTube HLS playlists when `--media-mode=reference` is used.
 - Threaded comments (locally authored).
 - Regular playlists + their items.
 - Tags.
@@ -34,8 +34,11 @@ tool *moves content in*, once.
 - **The instance's category taxonomy**, when the source replaces the stock one
   (see §1.2). Without it the category ids the videos carry would mean nothing
   here.
-- **Account and channel avatars and banners** (`actorImage`) — see §1.3, because
-  these are the one family fetched over HTTP rather than copied from storage.
+- **Account and channel avatars and banners** (`actorImage`), **video posters**
+  (`thumbnail`) and **seek-preview storyboards** (`storyboard`) — see §1.3.
+  These three are the families PeerTube keeps off its object store, so they are
+  acquired differently from everything else. A storyboard also gains a WebVTT
+  sprite map that the source does not store.
 
 **Deferred / mode-dependent** (reconcile or regenerate afterwards):
 
@@ -117,68 +120,118 @@ run through the **admin API** reloads it as part of the run; an import run from
 the **CLI** against a database a server is already serving writes the row, but
 that server keeps serving the old taxonomy until it restarts (or an admin saves
 any instance setting).
-### 1.3 What happens to avatars and banners
+### 1.3 What happens to avatars, banners, video posters and storyboards
 
-Every other media family is read out of the source's object store. Actor images
-are not there to read. PeerTube's S3/B2 configuration covers streaming
-playlists, web videos, captions and originals — **never avatars**, which stay on
-the source host's local filesystem however the rest of the instance is set up.
-So `--source-storage=s3` cannot see them, and `--source-local-root` cannot
-either unless the import happens to run on the source machine.
+Every other media family is read out of the source's object store. **These four
+are not there to read.** PeerTube's `object_storage` configuration covers
+exactly five families — streaming playlists, web videos, user exports, original
+files and captions — and avatars, banners, thumbnails, previews and storyboards
+are none of them. They stay on the source host's local filesystem however the
+rest of the instance is set up, so `--source-storage=s3` cannot see them at all,
+and `--source-local-root` can only see them when it points at the source host's
+own storage tree.
 
-They *are* served publicly by the source instance, so that is where they are
-fetched from: `GET <origin>/lazy-static/avatars/<filename>`.
+So they are acquired in two steps, in this order:
+
+1. **From `--source-local-root`, if you gave one** and the file is under it
+   (`thumbnails/`, `previews/`, `storyboards/`). This is the one configuration
+   in which these families were ever readable from storage, and it is still the
+   cheapest.
+2. **Otherwise over HTTP from the source instance**, which serves them publicly:
+   `GET <origin>/lazy-static/{avatars,thumbnails,storyboards}/<filename>`.
+
+> **This is what a broken card grid means.** An earlier release recorded every
+> video's poster as `thumbnails/<peertube-filename>` in the source's object
+> store — a key PeerTube never writes. `has_thumbnail` came back true for the
+> whole catalogue and every `GET /api/v1/videos/{id}/thumbnail` returned 404. If
+> you migrated before this fix, **re-run the importer**: it repairs those rows in
+> place (see "the import repairs its own earlier posters" below). Nothing has to
+> be re-imported from scratch.
 
 **The origin is derived, not configured.** The importer reads the canonical URLs
 the source's own local actors carry (`https://host/accounts/alice`) and takes
 the majority origin. There is no `--source-origin` flag: an operator who has
 already given this tool a database and a media root should not have to know that
 one more family needs one more input, and every local actor on an instance
-carries the same origin by construction. A source whose actors carry no absolute
-URL reports the family as deferred and the rest of the import proceeds.
+carries the same origin by construction. A source with neither a usable media
+root nor a discoverable origin reports the family as deferred and the rest of
+the import proceeds.
 
 Consequences worth knowing before you run it:
 
-- **Avatars are fetched even under `--media-mode=reference`.** Reference mode
+- **All four are carried even under `--media-mode=reference`.** Reference mode
   works for video because Vidra can point at object keys the source already has
-  in a shared bucket; there is no such key for an avatar, so referencing is not
-  a thing that can be done. The choice is between fetching them and an instance
-  whose accounts have no faces. `--media-mode=none` *is* respected — it says
-  "import no media", and this is media.
-- **The source instance must still be reachable over HTTP** when the import
-  runs. If it is not, each image is recorded as a failure and a later run picks
-  them up; nothing else in the import is affected.
+  in a shared bucket; there is no such key for any of these, so referencing is
+  not a thing that can be done. The choice is between carrying them and an
+  instance whose accounts have no faces and whose cards have no pictures.
+  `--media-mode=none` *is* respected — it says "import no media", and this is
+  media.
+- **The source instance must still be reachable** when the import runs, unless
+  everything is under `--source-local-root`. If it is not, each asset is
+  recorded as a failure and a later run picks it up; nothing else is affected.
 - **Only JPEG, PNG and WebP are stored**, because that is what Vidra's own
-  avatar upload accepts. Anything else is recorded as `unsupported`.
+  image upload accepts. Anything else is recorded as `unsupported`.
 - **What the bytes are decides how they are stored** — not the source filename,
   not the response's declared type. `/static/avatars/<name>` (as opposed to
   `/lazy-static/…`) answers `200` with the web app's HTML shell rather than a
   404, and a naive fetch would happily store 62 KB of HTML as somebody's face.
 - **The largest variant wins.** PeerTube generates several resolutions from one
-  avatar upload and keeps a row per size. They all name the same slot here, so
-  the import takes the biggest one per account/channel per slot and ignores the
-  rest. (Before it did, all of them were carried concurrently and raced for the
-  same object key: on a real migration that left 137 of 229 user avatars as
-  sub-5 KB thumbnails while 2.1 MB originals sat in the source.) A source that
-  records no pixel sizes still gets one row per slot — the newest.
-- **An avatar somebody uploaded here is never written over.** The import fills
-  gaps and updates images *it* wrote; anything else it leaves exactly as it is
-  and lists under `conflicts` in the report, so the divergence is visible rather
-  than silent. The ledger remembers what each import write produced, which is
-  how the two are told apart.
-- **An image the import wrote does follow the source.** If an account changes
-  its avatar on the source between runs — or the earlier run picked the wrong
-  variant — the next run replaces what it put there. An unchanged source costs
-  nothing: no fetch, no upload.
+  upload and keeps a row per size — for avatars, and since 8.1 for video posters
+  too (the shipped set is 280×157, 850×480, 1280×720, 1920×1080 and a 1400×1400
+  square "for podcast applications", and an admin can change it). They all name
+  the same slot here, so exactly one is chosen per slot: for posters a *preview*
+  over a *miniature* where a pre-8.1 source still distinguishes them, then a
+  non-square over a square, then the largest by area. The square rule is not
+  cosmetic — 1400×1400 has more pixels than 1280×720, and a largest-first rule
+  would letterbox every card in the catalogue. (Before avatars deduplicated,
+  every variant was carried concurrently and raced for the same object key: on a
+  real migration that left 137 of 229 user avatars as sub-5 KB thumbnails while
+  2.1 MB originals sat in the source.)
+- **An image somebody put here is never written over.** The import fills gaps and
+  updates assets *it* wrote; anything else it leaves exactly as it is and lists
+  under `conflicts` in the report, so the divergence is visible rather than
+  silent. The ledger remembers what each import write produced, which is how the
+  two are told apart. A creator who uploads a poster after the migration is
+  safe: Vidra's own writers use a deterministic key the import recognises.
+- **The import repairs its own earlier posters.** A `kind='thumbnail'` row the
+  import wrote before the ledger remembered these families is identified by its
+  key shape, and then by whether the object is actually in the store. Bytes
+  missing → repaired. Bytes present → left exactly as they are, which is what
+  keeps a correct `--source-local-root` copy-mode migration untouched. After one
+  run every slot carries a ledger fingerprint and the key-shape rule is retired.
+- **An asset the import wrote does follow the source.** If a video's poster
+  changes upstream between runs — or an earlier run picked the wrong variant —
+  the next run replaces what it put there. An unchanged source costs nothing: no
+  fetch, no upload.
 - **An oversize image is recorded `unsupported`, not `failed`.** How big a file
   the source holds is a fact about the source, so it is ruled out once instead
   of being re-downloaded and re-rejected on every run.
 - The source is a live production instance during a migration, so the fetches
-  are deliberately unhurried: four connections, a 20-second ceiling per image,
+  are deliberately unhurried: four connections, a 20-second ceiling per asset,
   an 8 MiB cap, and one host contacted for the whole run.
 
 Re-runs are cheap here: a slot that already holds what the source offers is
 settled from the database, without contacting the source at all.
+
+**Storyboards have two wrinkles of their own.**
+
+- **Expect fewer storyboards than videos.** PeerTube's generation job returns
+  early for a video shorter than **three seconds** and writes no row at all, so
+  those videos legitimately have none — and a video Vidra imported before this
+  feature existed simply gains one on the next run.
+- **Vidra synthesises the WebVTT sprite map.** PeerTube stores the sprite sheet
+  and the grid geometry (`totalWidth`/`totalHeight`, `spriteWidth`/
+  `spriteHeight`, `spriteDuration`) but no `.vtt`, and Vidra serves both. The map
+  is derived from that geometry, with the number of cues taken from the
+  **video's duration** (`ceil(duration / spriteDuration)`) and never from the
+  grid: the grid is sized to fit and its unused trailing cells are padded with
+  black, so counting cells would put black frames at the end of every scrub bar.
+  The sheet and the map are written together or not at all — a sheet with no map
+  is a `has_storyboard: true` that renders nothing.
+- A source too old to have the `storyboard` table (before PeerTube 6.0) reports
+  the family as deferred. **The table's presence cannot be inferred from the
+  schema version**, because PeerTube writes no migration for it — it is created
+  by a schema sync on boot — so the importer probes `information_schema` for it.
 
 See the full entity mapping table in `.ralph/specs/peertube-import.md`.
 
@@ -201,8 +254,14 @@ See the full entity mapping table in `.ralph/specs/peertube-import.md`.
      Instead, Vidra stores PeerTube's existing object keys and the running Vidra
      server must have `STORAGE_*` pointed at that same object store.
 
-   The importer expects PeerTube's default object layout: `web-videos/`,
-   `thumbnails/`, `captions/`, and `streaming-playlists/hls/`.
+   The importer expects PeerTube's default object layout. In an **object store**
+   that is `web-videos/`, `captions/` and `streaming-playlists/hls/` — and only
+   those, because PeerTube's `object_storage` configuration has no setting that
+   would put anything else there. A **local media root** additionally holds
+   `thumbnails/` (and, on a source whose admin skipped PeerTube 8.1's manual
+   file-moving script, `previews/`), `storyboards/` and `avatars/`, which is why
+   a local root is the cheaper source for those families and an S3 source cannot
+   serve them at all. See §1.3.
 
 3. **A running Vidra instance** (this destination) with its `DATABASE_URL`,
    storage backend (`STORAGE_*`), and — if you want actor keys sealed at rest —
@@ -318,6 +377,7 @@ someone registered here, a channel made here) is invisible to it:
 | subscriptions | unsubscribes (removals only; the follow itself is already carried) |
 | category taxonomy | overwrites a taxonomy configured here |
 | avatars / banners | replaces an image the import did not write |
+| video posters / storyboards | replaces an asset the import did not write |
 
 **What it never touches, in any mode.**
 
@@ -331,8 +391,8 @@ someone registered here, a channel made here) is invisible to it:
   correctly, as a delta.
 - **Renditions.** The ledger cannot prove which rendition rows the import wrote,
   and overwriting one a Vidra re-transcode wrote breaks its per-rung download.
-- **Media.** No object is re-copied and no avatar is re-fetched for a metadata
-  change.
+- **Media.** No object is re-copied, and no avatar, poster or storyboard is
+  re-fetched for a metadata change.
 - **`is_active`.** The importer never reads the source's blocked flag, so an
   account suspended here stays suspended.
 
@@ -375,8 +435,9 @@ peertube-import \
 
 Use `--media-mode=reference` when the new Vidra server should serve objects
 directly from the current PeerTube bucket. This is the fastest path for a test
-replacement server: the import writes DB rows only, leaving video, thumbnail,
-caption, and HLS bytes in place.
+replacement server: the import writes DB rows only, leaving video, caption and
+HLS bytes in place. Posters, storyboards and avatars are still **carried**, not
+referenced — there is no object key in that bucket to point at (§1.3).
 
 Configure the Vidra runtime storage (`STORAGE_*`) to the current bucket first:
 
@@ -403,8 +464,12 @@ peertube-import \
 ```
 
 Drop `--dry-run` to commit. Referenced media rows keep PeerTube keys like
-`web-videos/<file>.mp4`, `thumbnails/<file>.jpg`, `captions/<file>.vtt`, and
-`streaming-playlists/hls/<source-video-uuid>/<playlist>.m3u8`.
+`web-videos/<file>.mp4`, `captions/<file>.vtt`, and
+`streaming-playlists/hls/<source-video-uuid>/<playlist>.m3u8`. Posters and
+storyboards do NOT: they are stored under Vidra's own keys
+(`thumbnails/<video_id>.jpg`, `storyboards/<video_id>.{jpg,vtt}`), because a
+PeerTube bucket has no thumbnail in it to reference. An earlier release did
+write those source-shaped keys, and every one of them 404s.
 
 `--media-mode none` (or the older `--no-media`) imports metadata only and writes
 no media rows.

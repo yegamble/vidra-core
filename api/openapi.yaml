@@ -18933,8 +18933,9 @@ components:
           description: >-
             Per-entity-kind counts, keyed by entity kind (category_taxonomy,
             user, channel, actor_avatar, actor_banner, video, video_file,
-            hls_playlist, thumbnail, caption, tag, view_count, chapter, rating,
-            rendition, comment, playlist, playlist_item, follow). view_count
+            hls_playlist, thumbnail, storyboard, caption, tag, view_count,
+            chapter, rating, rendition, comment, playlist, playlist_item,
+            follow). view_count
             counts VIDEOS whose view total was carried, never views: the source
             records one lifetime number per video and no daily breakdown, so the
             total is applied as a delta to the video's counter and no per-day
@@ -18946,7 +18947,16 @@ components:
             channel profile images, which are FETCHED over HTTP from the source
             instance rather than read from its object store (no PeerTube
             configuration puts them there), and which are never written over an
-            image this instance already has.
+            image this instance already has. thumbnail and storyboard count
+            VIDEOS whose poster and seek-preview sprite sheet were carried, and
+            they follow the same rules: PeerTube keeps neither in object storage
+            either, so both are read from a mounted source media root when there
+            is one and fetched over HTTP otherwise, and neither is written over
+            an asset this instance already holds. A storyboard is carried as its
+            sprite sheet AND a WebVTT map synthesised from the source's grid
+            geometry, because PeerTube stores no map of its own; expect a source
+            to have fewer storyboards than videos, since it generates none for a
+            video shorter than three seconds.
           additionalProperties:
             $ref: "#/components/schemas/PeerTubeImportCounts"
         deferred:

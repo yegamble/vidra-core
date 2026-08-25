@@ -165,7 +165,10 @@ func TestReportCarriesPerVideoKinds(t *testing.T) {
 	r := NewReport(true, PolicySkip, false)
 	// The JSON shape is a frontend contract: every kind is present from the start,
 	// so a dry-run that plans nothing still reports zeroes rather than gaps.
-	for _, kind := range []string{KindViewCount, KindChapter, KindRating, KindRendition, KindActorAvatar, KindActorBanner} {
+	for _, kind := range []string{
+		KindViewCount, KindChapter, KindRating, KindRendition,
+		KindActorAvatar, KindActorBanner, KindThumbnail, KindStoryboard,
+	} {
 		if r.Entities[kind] == nil {
 			t.Errorf("report must initialise %q", kind)
 		}

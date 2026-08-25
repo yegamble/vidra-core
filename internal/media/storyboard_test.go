@@ -195,3 +195,113 @@ func TestStoryboardKeys(t *testing.T) {
 		t.Errorf("StoryboardKeyVTT = %q, want %q", got, want)
 	}
 }
+
+// PlanFromSprites describes a sheet SOMEBODY ELSE produced. The thing it must
+// get right is the tile count: the grid is a ceiling, not a census.
+func TestPlanFromSprites(t *testing.T) {
+	t.Run("a realistic PeerTube 8.2 sheet", func(t *testing.T) {
+		// 11x11 grid of 192x108 sprites, 3 seconds each, over a 5-minute video.
+		// Capacity is 121 tiles; the video only needs 100.
+		p, ok := PlanFromSprites(192*11, 108*11, 192, 108, 3, 300)
+		if !ok {
+			t.Fatal("a well-formed source sheet must produce a plan")
+		}
+		if p.Cols != 11 || p.Rows != 11 {
+			t.Fatalf("grid = %dx%d, want 11x11", p.Cols, p.Rows)
+		}
+		if p.TileW != 192 || p.TileH != 108 {
+			t.Fatalf("tile = %dx%d, want 192x108", p.TileW, p.TileH)
+		}
+		if p.IntervalSeconds != 3 {
+			t.Fatalf("interval = %d, want the source's spriteDuration (3)", p.IntervalSeconds)
+		}
+		if p.Tiles != 100 {
+			t.Fatalf("tiles = %d, want ceil(300/3) = 100", p.Tiles)
+		}
+	})
+
+	// THE TRAP. ffmpeg's tile filter pads the unused trailing cells with BLACK,
+	// so a plan that counted the grid would emit 21 cues over black frames at the
+	// end of every scrub bar.
+	t.Run("the count comes from the duration, never from the grid", func(t *testing.T) {
+		p, ok := PlanFromSprites(192*11, 108*11, 192, 108, 3, 30)
+		if !ok {
+			t.Fatal("not ok")
+		}
+		if capacity := p.Cols * p.Rows; capacity != 121 {
+			t.Fatalf("capacity = %d, want 121", capacity)
+		}
+		if p.Tiles != 10 {
+			t.Fatalf("tiles = %d, want ceil(30/3) = 10 — the other 111 cells are black padding", p.Tiles)
+		}
+		vtt := RenderStoryboardVTT(p)
+		if n := strings.Count(vtt, "storyboard.jpg#xywh="); n != 10 {
+			t.Fatalf("VTT has %d cues, want 10", n)
+		}
+	})
+
+	t.Run("a partial interval still gets a tile", func(t *testing.T) {
+		// 31 seconds at 3s a tile is 11 tiles: the last one covers 30-33.
+		p, ok := PlanFromSprites(192*11, 108*11, 192, 108, 3, 31)
+		if !ok || p.Tiles != 11 {
+			t.Fatalf("tiles = %d (ok=%v), want 11", p.Tiles, ok)
+		}
+	})
+
+	t.Run("a duration longer than the sheet covers is clamped to the sheet", func(t *testing.T) {
+		// 4x4 = 16 cells, but the duration asks for 40 tiles. Cues past the last
+		// real tile would point outside the image.
+		p, ok := PlanFromSprites(400, 400, 100, 100, 3, 120)
+		if !ok {
+			t.Fatal("not ok")
+		}
+		if p.Tiles != 16 {
+			t.Fatalf("tiles = %d, want the grid's 16", p.Tiles)
+		}
+	})
+
+	t.Run("a non-positive duration is refused, not defaulted", func(t *testing.T) {
+		for _, d := range []int{0, -1} {
+			if _, ok := PlanFromSprites(1920, 1080, 192, 108, 3, d); ok {
+				t.Fatalf("duration %d produced a plan; without a duration there is no honest tile count", d)
+			}
+		}
+	})
+
+	t.Run("degenerate geometry is refused", func(t *testing.T) {
+		cases := map[string][6]int{
+			"no sheet width":       {0, 1080, 192, 108, 3, 300},
+			"no sheet height":      {1920, 0, 192, 108, 3, 300},
+			"no sprite width":      {1920, 1080, 0, 108, 3, 300},
+			"no sprite height":     {1920, 1080, 192, 0, 3, 300},
+			"negative sprite":      {1920, 1080, -192, 108, 3, 300},
+			"no sprite duration":   {1920, 1080, 192, 108, 0, 300},
+			"sheet under one tile": {100, 50, 192, 108, 3, 300},
+		}
+		for name, a := range cases {
+			if _, ok := PlanFromSprites(a[0], a[1], a[2], a[3], a[4], a[5]); ok {
+				t.Errorf("%s produced a plan", name)
+			}
+		}
+	})
+
+	// The whole point of reconstructing the plan: RenderStoryboardVTT must accept
+	// it unchanged and emit the RELATIVE sprite reference the .vtt route needs.
+	t.Run("the reconstructed plan renders a usable VTT", func(t *testing.T) {
+		p, _ := PlanFromSprites(384, 216, 192, 108, 5, 20)
+		vtt := RenderStoryboardVTT(p)
+		if !strings.HasPrefix(vtt, "WEBVTT") {
+			t.Fatalf("VTT must start with WEBVTT:\n%s", vtt)
+		}
+		if !strings.Contains(vtt, "storyboard.jpg#xywh=0,0,192,108") {
+			t.Errorf("first cue should be the top-left tile:\n%s", vtt)
+		}
+		// Tile 2 wraps to row 1 in a 2-column grid.
+		if !strings.Contains(vtt, "00:00:10.000 --> 00:00:15.000\nstoryboard.jpg#xywh=0,108,192,108") {
+			t.Errorf("tile 2 should wrap to row 1:\n%s", vtt)
+		}
+		if strings.Contains(vtt, "/api/") || strings.Contains(vtt, "/storyboard.jpg") {
+			t.Errorf("sprite reference must stay relative:\n%s", vtt)
+		}
+	})
+}

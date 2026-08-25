@@ -1726,27 +1726,38 @@ data" rather than "withdraw everything". The **per-day** rollup
 number and no daily history, and inventing buckets for it would fabricate a
 shape of data that was never measured. See `docs/peertube-migration.md` §1.1.
 
-Avatars and banners are the odd one out: they are **fetched over HTTP from the
-source instance**, not read from its storage. No PeerTube configuration puts
-actor images in object storage — they live on the source host's local disk
-whatever the S3 settings say — so neither `--source-storage=s3` nor
-`--source-local-root` can see them from another machine. The importer derives
-the source's public origin from its own actors' canonical URLs (no new flag) and
-fetches `/lazy-static/avatars/<filename>`, four connections at a time, with the
-bytes content-sniffed before anything is stored. That last part is not
-belt-and-braces: `/static/avatars/<name>` answers **200 with the web app's HTML**
-rather than a 404, and a fetch that trusted the status code would give every
-account a 62 KB HTML "avatar". They are fetched under `--media-mode=reference`
-too, because there is no object key to reference; `--media-mode=none` skips
-them. An image the instance already has is never written over. See
-`docs/peertube-migration.md` §1.3.
+Avatars, banners, **video posters and storyboards** are the odd ones out: they
+are read from a mounted `--source-local-root` when there is one and otherwise
+**fetched over HTTP from the source instance**, never from its object store. No
+PeerTube configuration puts any of them there — `object_storage` covers
+streaming playlists, web videos, user exports, originals and captions, full stop
+— so they live on the source host's local disk whatever the S3 settings say, and
+`--source-storage=s3` cannot see them at all. The importer derives the source's
+public origin from its own actors' canonical URLs (no new flag) and fetches
+`/lazy-static/{avatars,thumbnails,storyboards}/<filename>`, four connections at
+a time, with the bytes content-sniffed before anything is stored. That last part
+is not belt-and-braces: `/static/avatars/<name>` answers **200 with the web
+app's HTML** rather than a 404, and a fetch that trusted the status code would
+give every account a 62 KB HTML "avatar". All four are carried under
+`--media-mode=reference` too, because there is no object key to reference;
+`--media-mode=none` skips them. An asset the instance already has is never
+written over. See `docs/peertube-migration.md` §1.3.
+
+> **If your migrated instance shows a broken image on every card, re-run the
+> importer.** A release before this one recorded each poster as an object key in
+> the source's bucket, which PeerTube never writes — so `has_thumbnail` said true
+> and every `/thumbnail` returned 404. The poster pass repairs those rows in
+> place and backfills storyboards onto the same catalogue; nothing needs
+> re-importing from scratch.
 
 Run `--dry-run` first: it reports the plan and the conflicts and writes nothing
-(and, for actor images, sends not one HTTP request to the source). Its
+(and, for the image families, sends not one HTTP request to the source). Its
 `entities` map now carries `category_taxonomy`, `view_count`, `chapter`,
-`rating`, `rendition`, `actor_avatar` and `actor_banner` alongside the older
-kinds. `view_count` counts **videos** whose total would be carried, never views;
-`category_taxonomy` is one setting, so it is 0 or 1.
+`rating`, `rendition`, `actor_avatar`, `actor_banner`, `thumbnail` and
+`storyboard` alongside the older kinds. `view_count` counts **videos** whose
+total would be carried, never views; `category_taxonomy` is one setting, so it is
+0 or 1; and `storyboard` is legitimately lower than the video count, because
+PeerTube generates none for a video shorter than three seconds.
 
 ### The category taxonomy comes across with the categories
 
