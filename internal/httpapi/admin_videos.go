@@ -206,6 +206,13 @@ func parseAdminVideoFilter(c echo.Context) (video.AdminFilter, error) {
 	if len(f.Channel) > 255 {
 		return f, echo.NewHTTPError(http.StatusBadRequest, "channel must be at most 255 characters")
 	}
+	// There is deliberately no ?live filter either. PeerTube can offer one
+	// because a live video IS a video row with an isLive flag; in vidra
+	// live_streams is a SEPARATE table that this inventory does not union in, and
+	// a stream recorded to VOD becomes an ordinary draft video with a "(replay)"
+	// title suffix and no structural marker (migration 0061). There is no column
+	// to filter on, and inventing one from a title suffix would be a filter that
+	// lies. Recording the gap is better than faking the feature.
 	return f, nil
 }
 

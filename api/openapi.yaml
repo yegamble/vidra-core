@@ -8329,11 +8329,14 @@ paths:
         value for any of them is a 400, never a silently ignored no-op.
 
 
-        There is deliberately no storage-location filter: `object_storage` is
-        derived from the instance-wide storage backend, not per-file truth, so
-        every local video reports the same value and filtering on it would be
-        meaningless. PeerTube can offer that filter because it records a per-file
-        storage enum; vidra has no equivalent yet.
+        Two PeerTube filters are deliberately absent because vidra has no data
+        behind them. `storage`: `object_storage` here is derived from the
+        instance-wide storage backend, not per-file truth, so every local video
+        reports the same value and filtering on it would be meaningless
+        (PeerTube records a per-file storage enum; vidra does not). `isLive`:
+        vidra keeps live streams in a separate table that this inventory does not
+        include, and a stream recorded to VOD becomes an ordinary video with no
+        structural marker, so there is no column to filter on.
       tags: [moderation]
       security:
         - bearerAuth: []
