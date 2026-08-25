@@ -154,16 +154,31 @@ Consequences worth knowing before you run it:
   not the response's declared type. `/static/avatars/<name>` (as opposed to
   `/lazy-static/…`) answers `200` with the web app's HTML shell rather than a
   404, and a naive fetch would happily store 62 KB of HTML as somebody's face.
-- **An image this instance already has is never written over.** The import fills
-  gaps. If an account changes its avatar on the source *after* the first run has
-  carried one across, the change does not follow — the report records it as
-  skipped with the reason. Delete the Vidra-side image and re-run if you want
-  the newer one.
+- **The largest variant wins.** PeerTube generates several resolutions from one
+  avatar upload and keeps a row per size. They all name the same slot here, so
+  the import takes the biggest one per account/channel per slot and ignores the
+  rest. (Before it did, all of them were carried concurrently and raced for the
+  same object key: on a real migration that left 137 of 229 user avatars as
+  sub-5 KB thumbnails while 2.1 MB originals sat in the source.) A source that
+  records no pixel sizes still gets one row per slot — the newest.
+- **An avatar somebody uploaded here is never written over.** The import fills
+  gaps and updates images *it* wrote; anything else it leaves exactly as it is
+  and lists under `conflicts` in the report, so the divergence is visible rather
+  than silent. The ledger remembers what each import write produced, which is
+  how the two are told apart.
+- **An image the import wrote does follow the source.** If an account changes
+  its avatar on the source between runs — or the earlier run picked the wrong
+  variant — the next run replaces what it put there. An unchanged source costs
+  nothing: no fetch, no upload.
+- **An oversize image is recorded `unsupported`, not `failed`.** How big a file
+  the source holds is a fact about the source, so it is ruled out once instead
+  of being re-downloaded and re-rejected on every run.
 - The source is a live production instance during a migration, so the fetches
   are deliberately unhurried: four connections, a 20-second ceiling per image,
   an 8 MiB cap, and one host contacted for the whole run.
 
-Re-runs cost nothing here: an image with a ledger row is never fetched again.
+Re-runs are cheap here: a slot that already holds what the source offers is
+settled from the database, without contacting the source at all.
 
 See the full entity mapping table in `.ralph/specs/peertube-import.md`.
 

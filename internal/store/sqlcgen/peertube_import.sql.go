@@ -212,6 +212,44 @@ func (q *Queries) GetImportLedgerEntry(ctx context.Context, arg GetImportLedgerE
 	return i, err
 }
 
+const getImportLedgerLastWriteForTarget = `-- name: GetImportLedgerLastWriteForTarget :one
+SELECT applied_value, updated_at
+FROM peertube_import_ledger
+WHERE entity_kind = $1 AND vidra_id = $2 AND status = 'done'
+ORDER BY updated_at DESC, source_id DESC
+LIMIT 1
+`
+
+type GetImportLedgerLastWriteForTargetParams struct {
+	EntityKind string      `json:"entity_kind"`
+	VidraID    pgtype.UUID `json:"vidra_id"`
+}
+
+type GetImportLedgerLastWriteForTargetRow struct {
+	AppliedValue string    `json:"applied_value"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// The import's most recent COMPLETED write onto one Vidra row, within one entity
+// kind — "did I put the avatar that is in this slot there, and what was it?".
+//
+// The ledger is keyed by SOURCE id, which is the wrong key for that question:
+// PeerTube keeps several actorImage rows per avatar and writes a new one every
+// time the picture changes, so the row that describes the slot's current
+// occupant is a DIFFERENT source id from the one a later run is looking at.
+// Keying the lookup on vidra_id instead follows the slot rather than the file.
+//
+// applied_value (0113) is the fingerprint of what was written; it is empty for
+// rows written before that memory existed, and updated_at is then the evidence
+// available — the ledger row lands AFTER the image write, so a slot whose image
+// is newer than this row was filled by somebody else.
+func (q *Queries) GetImportLedgerLastWriteForTarget(ctx context.Context, arg GetImportLedgerLastWriteForTargetParams) (GetImportLedgerLastWriteForTargetRow, error) {
+	row := q.db.QueryRow(ctx, getImportLedgerLastWriteForTarget, arg.EntityKind, arg.VidraID)
+	var i GetImportLedgerLastWriteForTargetRow
+	err := row.Scan(&i.AppliedValue, &i.UpdatedAt)
+	return i, err
+}
+
 const getImportRun = `-- name: GetImportRun :one
 SELECT id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at FROM peertube_import_runs WHERE id = $1
 `
