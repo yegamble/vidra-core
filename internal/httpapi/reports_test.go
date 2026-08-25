@@ -871,3 +871,63 @@ func (f *moderationFakeRepo) CountBlockedRemoteVideos(ctx context.Context) (int6
 	rows, err := f.ListBlockedRemoteVideos(ctx, sqlcgen.ListBlockedRemoteVideosParams{ResultLimit: 1 << 30})
 	return int64(len(rows)), err
 }
+
+// TestReportsStatusFilterIsValidated is the regression test for a silent
+// filter: handleListReports used to be `c.QueryParam("status") == "open"`, so
+// ?status=resolved — the obvious way to ask for the closed queue — meant "no
+// filter" and returned EVERY report. Asking for resolved must return resolved.
+func TestReportsStatusFilterIsValidated(t *testing.T) {
+	srv := videoServer(t)
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	one := createPublishedVideo(t, srv, admin, "ada", `{"title":"one","privacy":"public"}`)
+	two := createPublishedVideo(t, srv, admin, "ada", `{"title":"two","privacy":"public"}`)
+	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	for _, vid := range []string{one, two} {
+		if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/report", `{"reason":"spam"}`, bob); rec.Code != http.StatusNoContent {
+			t.Fatalf("report %s = %d", vid, rec.Code)
+		}
+	}
+	list := func(query string) reportListResponse {
+		t.Helper()
+		rec := listReports(srv, query, admin)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list%s = %d; body=%s", query, rec.Code, rec.Body.String())
+		}
+		var out reportListResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return out
+	}
+
+	// Resolve exactly one of the two.
+	open := list("?status=open")
+	if open.Total != 2 {
+		t.Fatalf("open total = %d, want 2", open.Total)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/reports/"+open.Reports[0].ID+"/resolve", `{"status":"accepted"}`, admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("resolve = %d", rec.Code)
+	}
+
+	for _, tc := range []struct {
+		query string
+		want  int64
+	}{
+		{query: "?status=open", want: 1},
+		// The bug: this used to return 2.
+		{query: "?status=resolved", want: 1},
+		{query: "?status=all", want: 2},
+		{query: "", want: 2}, // absent still means "everything", as before
+	} {
+		got := list(tc.query)
+		if got.Total != tc.want {
+			t.Errorf("reports%s total = %d, want %d", tc.query, got.Total, tc.want)
+		}
+		if int64(len(got.Reports)) != tc.want {
+			t.Errorf("reports%s rows = %d, want %d", tc.query, len(got.Reports), tc.want)
+		}
+	}
+
+	// An unrecognised status is rejected instead of quietly meaning "all".
+	if rec := listReports(srv, "?status=nonsense", admin); rec.Code != http.StatusBadRequest {
+		t.Errorf("status=nonsense = %d, want 400", rec.Code)
+	}
+}

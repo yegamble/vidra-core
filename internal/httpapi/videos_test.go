@@ -2561,3 +2561,103 @@ func (f *videoFakeRepo) CountSearchPublicVideos(ctx context.Context, a sqlcgen.C
 	})
 	return int64(len(rows)), err
 }
+
+// channelVideosPage is GET /channels/{handle}/videos, which now carries the
+// pagination envelope it lacked entirely.
+type channelVideosPage struct {
+	Videos []struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	} `json:"videos"`
+	Total  int64 `json:"total"`
+	Limit  int   `json:"limit"`
+	Offset int   `json:"offset"`
+}
+
+// TestChannelVideosArePaginated pins the intended BREAKING change: this route
+// used to serialise every video in the channel on every request, so a channel
+// with 50k videos was a 50k-row response. It now pages and reports a total.
+func TestChannelVideosArePaginated(t *testing.T) {
+	srv := videoServer(t)
+	owner := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	// Created oldest→newest.
+	titles := []string{"first", "second", "third", "fourth", "fifth"}
+	for _, title := range titles {
+		createPublishedVideo(t, srv, owner, "ada", `{"title":"`+title+`","privacy":"public"}`)
+	}
+
+	page := func(query string) channelVideosPage {
+		t.Helper()
+		rec := get(t, srv, "/api/v1/channels/ada/videos"+query)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("channel videos%s = %d; body=%s", query, rec.Code, rec.Body.String())
+		}
+		var out channelVideosPage
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+
+	first := page("?limit=2")
+	if len(first.Videos) != 2 {
+		t.Fatalf("page size = %d, want 2 — the route must honour ?limit now", len(first.Videos))
+	}
+	if first.Total != 5 {
+		t.Errorf("total = %d, want 5", first.Total)
+	}
+	if first.Limit != 2 || first.Offset != 0 {
+		t.Errorf("limit/offset = %d/%d, want 2/0", first.Limit, first.Offset)
+	}
+
+	// Default ordering is newest-first, unchanged from before pagination.
+	if first.Videos[0].Title != "fifth" || first.Videos[1].Title != "fourth" {
+		t.Errorf("default order = %+v, want fifth then fourth (newest first)", first.Videos)
+	}
+
+	// The Latest/Oldest chips the channel page already shows.
+	oldest := page("?sort=published_at&limit=2")
+	if oldest.Videos[0].Title != "first" || oldest.Videos[1].Title != "second" {
+		t.Errorf("sort=published_at = %+v, want first then second (oldest first)", oldest.Videos)
+	}
+	if oldest.Total != first.Total {
+		t.Errorf("sorting changed the total: %d vs %d", oldest.Total, first.Total)
+	}
+
+	// Paging walks the whole set without gaps or duplicates.
+	seen := map[string]bool{}
+	for offset := 0; offset < 5; offset += 2 {
+		for _, v := range page("?limit=2&offset=" + strconv.Itoa(offset)).Videos {
+			if seen[v.ID] {
+				t.Errorf("video %s returned on two pages", v.ID)
+			}
+			seen[v.ID] = true
+		}
+	}
+	if len(seen) != 5 {
+		t.Errorf("paged through %d distinct videos, want 5", len(seen))
+	}
+}
+
+// TestPublicFeedReportsTotal covers the shared videoFeedResponse envelope, which
+// backs /videos, /me/saved and /me/subscriptions.
+func TestPublicFeedReportsTotal(t *testing.T) {
+	srv := videoServer(t)
+	owner := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	for i := 0; i < 4; i++ {
+		createPublishedVideo(t, srv, owner, "ada", `{"title":"feed `+strconv.Itoa(i)+`","privacy":"public"}`)
+	}
+	rec := get(t, srv, "/api/v1/videos?limit=2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("feed = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Videos []struct{} `json:"videos"`
+		Total  int64      `json:"total"`
+		Limit  int        `json:"limit"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if len(body.Videos) != 2 || body.Total != 4 || body.Limit != 2 {
+		t.Errorf("feed = %d rows / total %d / limit %d, want 2 / 4 / 2", len(body.Videos), body.Total, body.Limit)
+	}
+}

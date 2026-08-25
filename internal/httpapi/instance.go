@@ -120,8 +120,13 @@ type instancePublishDefaults struct {
 // instanceDefaults carries the operator-tuned client behaviour defaults
 // (feed/landing/theme/player; W5 wires the frontend consumers).
 type instanceDefaults struct {
-	FeedSort                         string                  `json:"feed_sort"`
-	FeedScope                        string                  `json:"feed_scope"`
+	FeedSort  string `json:"feed_sort"`
+	FeedScope string `json:"feed_scope"`
+	// BrowseScrollMode is "button" (an explicit pager/Load more — the default
+	// and the shipped behaviour) or "auto" (infinite scroll). It sits beside
+	// feed_sort/feed_scope because it is the same kind of decision: how the
+	// operator wants browse lists to behave before any viewer touches them.
+	BrowseScrollMode                 string                  `json:"browse_scroll_mode"`
 	LandingPage                      string                  `json:"landing_page"`
 	Theme                            string                  `json:"theme"`
 	PlayerAutoplay                   bool                    `json:"player_autoplay"`
@@ -475,6 +480,7 @@ func (s *Server) instanceDefaultsBlock() instanceDefaults {
 	return instanceDefaults{
 		FeedSort:                         s.settingString(instancesettings.KeyDefaultFeedSort, instancesettings.DefaultFeedSort),
 		FeedScope:                        s.settingString(instancesettings.KeyDefaultFeedScope, instancesettings.DefaultFeedScope),
+		BrowseScrollMode:                 s.settingString(instancesettings.KeyBrowseScrollMode, instancesettings.DefaultBrowseScrollMode),
 		LandingPage:                      s.settingString(instancesettings.KeyDefaultLandingPage, instancesettings.DefaultLandingPage),
 		Theme:                            s.settingString(instancesettings.KeyDefaultTheme, instancesettings.DefaultTheme),
 		PlayerAutoplay:                   s.settingBool(instancesettings.KeyDefaultPlayerAutoplay, true),

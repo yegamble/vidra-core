@@ -133,8 +133,13 @@ const (
 	KeyFeaturedCTALabel    = "featured_cta_label"
 	KeyFeaturedLabel       = "featured_label" // featured|sponsored
 
-	KeyDefaultFeedSort                  = "default_feed_sort"
-	KeyDefaultFeedScope                 = "default_feed_scope"
+	KeyDefaultFeedSort  = "default_feed_sort"
+	KeyDefaultFeedScope = "default_feed_scope"
+	// KeyBrowseScrollMode: how a browse list advances past its first page —
+	// "button" (an explicit Load more / pager, the shipped behaviour) or "auto"
+	// (infinite scroll). Operator-level because it is an accessibility and
+	// data-usage decision, not a per-render one.
+	KeyBrowseScrollMode                 = "browse_scroll_mode"
 	KeyDefaultLandingPage               = "default_landing_page"
 	KeyDefaultTheme                     = "default_theme"
 	KeyDefaultPlayerAutoplay            = "default_player_autoplay"
@@ -447,6 +452,11 @@ var (
 	FeedSortOptions = []string{"recent", "popular", "trending"}
 	// FeedScopeOptions: local (this instance) or all (adds federated content).
 	FeedScopeOptions = []string{"local", "all"}
+	// BrowseScrollModeOptions: "button" advances a list with an explicit
+	// control, "auto" loads the next page on scroll. Default "button" — it is
+	// the shipped behaviour, and it is the accessible one (infinite scroll
+	// strands keyboard users and anything below the list).
+	BrowseScrollModeOptions = []string{"button", "auto"}
 	// LandingPageOptions: what "/" shows anonymous visitors. "home" is the
 	// admin-authored homepage document and only takes effect once one is set
 	// (W6); the frontend falls back to home-recent until then.
@@ -469,8 +479,11 @@ const (
 	DefaultFeaturedLabel  = "featured"
 	DefaultFeedSort       = "recent"
 	DefaultFeedScope      = "local"
-	DefaultLandingPage    = "home-recent"
-	DefaultTheme          = "system"
+	// DefaultBrowseScrollMode reproduces today's behaviour exactly: lists page
+	// with a control, nothing loads on scroll.
+	DefaultBrowseScrollMode = "button"
+	DefaultLandingPage      = "home-recent"
+	DefaultTheme            = "system"
 	// DefaultVideoPrivacy keeps the pre-W9 shipped behaviour (an omitted
 	// privacy on create means private) — silently loosening third-party API
 	// clients' drafts to public is not acceptable as a side effect of adding
@@ -706,6 +719,9 @@ var specs = []spec{
 		page: PageGeneral, section: "browse"},
 	{key: KeyDefaultFeedScope, kind: KindEnum, defString: hardcoded(DefaultFeedScope),
 		options: FeedScopeOptions, validate: enumOf(FeedScopeOptions),
+		page: PageGeneral, section: "browse"},
+	{key: KeyBrowseScrollMode, kind: KindEnum, defString: hardcoded(DefaultBrowseScrollMode),
+		options: BrowseScrollModeOptions, validate: enumOf(BrowseScrollModeOptions),
 		page: PageGeneral, section: "browse"},
 	{key: KeyDefaultLandingPage, kind: KindEnum, defString: hardcoded(DefaultLandingPage),
 		options: LandingPageOptions, validate: enumOf(LandingPageOptions),
