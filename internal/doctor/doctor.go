@@ -186,6 +186,7 @@ var checks = []check{
 	{"storage migration", SectionState, checkStorageMigration},
 
 	{"object storage", SectionReach, checkObjectStorage},
+	{"object write", SectionReach, checkObjectWrite},
 	{"object retention", SectionReach, checkObjectRetention},
 	{"bucket ownership", SectionReach, checkBucketOwnership},
 	{"smtp", SectionReach, checkSMTP},

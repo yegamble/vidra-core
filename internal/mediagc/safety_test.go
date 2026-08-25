@@ -365,6 +365,35 @@ func TestOwnerMarkerIsOutsideEverySweptPrefix(t *testing.T) {
 	}
 }
 
+// A write probe's scratch object is unattributable by construction — no database
+// row will ever reference it — so if it were swept it would be counted as an
+// orphan and inflate the percentage that trips the circuit breaker. It lives
+// outside every swept prefix for that reason, and a probe killed between its PUT
+// and its DELETE must stay invisible to the sweep.
+func TestWriteProbeObjectsAreOutsideEverySweptPrefix(t *testing.T) {
+	for _, prefix := range sweptPrefixes {
+		if strings.HasPrefix(storage.WriteProbePrefix, prefix) {
+			t.Errorf("write probes write under swept prefix %q — a leaked probe object would be counted as an orphan", prefix)
+		}
+	}
+	ctx := context.Background()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A probe that was interrupted after the PUT: the object is still there.
+	if _, err := blobs.Put(ctx, storage.WriteProbePrefix+"LEAKEDPROBEOBJECT", strings.NewReader("x")); err != nil {
+		t.Fatal(err)
+	}
+	res, err := NewService(&fakeRepo{}, blobs, WithBucketOwnership(OwnershipOwned)).Sweep(ctx, false)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(res.Orphans) != 0 {
+		t.Errorf("the sweep saw %v; a write probe's scratch object is not media and must not be enumerated", res.Orphans)
+	}
+}
+
 // TestActiveMigrationForcesADryRun is the storage-migration interlock. During a
 // move the two stores are deliberately out of step — objects are being written
 // into a store this instance is not serving from, and after cutover the OLD

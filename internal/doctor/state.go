@@ -34,6 +34,12 @@ type Options struct {
 	EnvFile string
 	// Timeout bounds EACH check; zero means DefaultTimeout.
 	Timeout time.Duration
+	// WriteProbe opts this run into the one check that WRITES: a tiny object
+	// stored in the media bucket and deleted again, which is the only way to
+	// learn whether the credentials can actually upload (see checkObjectWrite).
+	// It is off by default because everything else here reads, and a diagnostic
+	// documented as safe to run anytime must stay that way.
+	WriteProbe bool
 	// Host and Prober are the injected outside world; nil means the real one.
 	Host   Host
 	Prober Prober

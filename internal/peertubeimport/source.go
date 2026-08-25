@@ -57,7 +57,11 @@ func OpenSource(ctx context.Context, dsn string) (*Source, error) {
 	defer cancel()
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("peertubeimport: source unreachable: %w", err)
+		// The same advice Preflight appends, because this is the dial that
+		// actually fails first: the CLI opens the source before it preflights, so a
+		// wrong --source-dsn never reaches the preflight that would have explained
+		// it.
+		return nil, fmt.Errorf("peertubeimport: source unreachable: %w%s", err, sourceDialAdvice(err))
 	}
 	return &Source{pool: pool}, nil
 }

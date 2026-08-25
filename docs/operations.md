@@ -105,6 +105,36 @@ credit it — that is configuration which is not running.
 `STORAGE_BACKEND=ipfs` is **not** a valid backend — IPFS is a mirror sidecar, never
 authoritative (it is rejected at config load). See the next section.
 
+### Proving the credentials can write — `vidra doctor --write-probe`
+
+Every other object-store check reads. A credential scoped to reads passes all of
+them — the bucket answers a `HeadBucket`, the ownership marker reads back, the
+lifecycle configuration is legible — and then **fails every upload**. A real
+migration was configured with such a key, ran for three minutes, and failed 1,321
+avatar uploads with `s3: put "avatars/users/…": not entitled`, one warning per
+image, mid-run.
+
+```bash
+vidra doctor --write-probe
+```
+
+stores a small object under `.vidra/write-probe/<random>` and deletes it again.
+The key is outside every swept prefix (so media GC can never see it), is unique
+per run (so two probes cannot collide), and is **not** the ownership marker —
+writing that is an adoption decision and no diagnostic ever makes one.
+
+It is opt-in because plain `vidra doctor` changes nothing and is meant to stay
+that way; the default run says the write path is unproven and names this flag.
+Run it after changing storage credentials, and before a migration.
+
+Three outcomes:
+
+| Outcome | Means |
+|---|---|
+| ✗ *could not be reached* | The store never answered — endpoint, region, egress. Nothing was learned about the credentials |
+| ✗ *refused to store an object* | Grant write: `writeFiles` on Backblaze B2 (a `readFiles`-only key does not imply it), `s3:PutObject` elsewhere |
+| ⚠ *accepted it, could not delete it* | Grant `deleteFiles` / `s3:DeleteObject`. Uploads work; media GC frees nothing, upload chunks and superseded HLS trees accumulate. The line names the object doctor left behind — remove it by hand |
+
 ## Media garbage collection — the job that deletes
 
 Once a day, one instance lists everything stored under the six media prefixes

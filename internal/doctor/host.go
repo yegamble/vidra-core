@@ -85,6 +85,12 @@ type Prober interface {
 	// adoption decision and that belongs to an admin at the API, not to a
 	// diagnostic that an operator may have run just to look around.
 	CheckBucketMarker(ctx context.Context, cfg storage.S3Config) (found bool, content string, err error)
+	// CheckBucketWrite is the ONE call in this interface that writes: it stores a
+	// tiny scratch object and removes it again, proving the credentials can
+	// PutObject. It never touches the ownership marker — a probe object claims
+	// nothing, where the marker IS the adoption decision — and it is only ever
+	// called when the operator opted in (Options.WriteProbe).
+	CheckBucketWrite(ctx context.Context, cfg storage.S3Config) (storage.WriteProbe, error)
 	// CheckSMTP dials the relay and reads its greeting. It never sends.
 	CheckSMTP(ctx context.Context, addr string) (banner string, err error)
 	// MigrationStatus reads a golang-migrate ledger. table is "" for the default
@@ -180,6 +186,18 @@ func (RealProber) CheckBucketMarker(ctx context.Context, cfg storage.S3Config) (
 	}
 	content, found, err := storage.ReadOwnerMarker(ctx, s3)
 	return found, content, err
+}
+
+// CheckBucketWrite delegates to storage.ProbeWrite so the probe exists exactly
+// once: `vidra doctor --write-probe` and a migration preflight must prove the
+// destination the same way, at a key with the same guarantees, or the two would
+// disagree about whether a destination is usable.
+func (RealProber) CheckBucketWrite(ctx context.Context, cfg storage.S3Config) (storage.WriteProbe, error) {
+	s3, err := storage.NewS3(cfg)
+	if err != nil {
+		return storage.WriteProbe{}, err
+	}
+	return storage.ProbeWrite(ctx, s3)
 }
 
 // CheckSMTP delegates to preflight so the dial exists exactly once: `vidra

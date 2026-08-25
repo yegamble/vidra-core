@@ -214,6 +214,30 @@ See the full entity mapping table in `.ralph/specs/peertube-import.md`.
    `--force` overrides the refusal, but is for a **human who has verified
    compatibility** — automated agents must never pass it.
 
+5. **Destination storage credentials that can WRITE.** Preflight proves it: it
+   stores a tiny object under `.vidra/write-probe/` and deletes it again, before
+   the run touches anything. A read-only key passes every other check there is —
+   the bucket answers a `HeadBucket`, the ownership marker reads back — and then
+   fails **every** upload. One real migration ran three minutes and failed 1,321
+   avatar uploads with `s3: put "avatars/users/…": not entitled`, which is
+   Backblaze B2 for *this key does not have the `writeFiles` capability*. On
+   AWS/MinIO/Spaces the action is `s3:PutObject`. `--media-mode=none` skips the
+   probe; `--media-mode=reference` does **not**, because actor images are stored
+   in the destination whatever the media mode says.
+
+   Delete access (`deleteFiles` / `s3:DeleteObject`) is not required for an
+   import, and preflight will not stop for its absence — but without it media
+   garbage collection frees nothing later. `vidra doctor --write-probe` reports
+   the same two facts about a running deployment.
+
+> A source DSN that will not connect is diagnosed rather than passed through:
+> `dial unix /tmp/.s.PGSQL.15432` means the connection string carried no usable
+> host and the driver fell back to a **local** socket, and a plain
+> `connection refused` from another machine is usually a PeerTube PostgreSQL
+> still bound to `127.0.0.1` — for which an SSH tunnel
+> (`ssh -L 15432:127.0.0.1:5432 <source host>`) is the answer that changes
+> nothing on the source.
+
 > Password hashes: PeerTube and Vidra both use bcrypt, and a bcrypt hash encodes
 > its own cost, so carried hashes verify directly — users keep their passwords.
 > If you ever import from a system with an incompatible scheme, import with
@@ -224,7 +248,10 @@ See the full entity mapping table in `.ralph/specs/peertube-import.md`.
 ## 3. Dry run first (writes nothing)
 
 Always dry-run first. It reports the counts, the mapping plan, conflicts, and the
-deferred families, and writes **nothing**.
+deferred families, and writes **nothing**: no ledger rows, no entities, no media.
+(Preflight still runs its write probe first, and a rehearsal is exactly where you
+want to find out the destination credentials are read-only — the probe object is
+removed again, so the dry run still leaves no trace.)
 
 ```bash
 DATABASE_URL=postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable \

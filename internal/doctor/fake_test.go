@@ -117,6 +117,12 @@ type fakeProber struct {
 	markerContent string
 	markerErr     error
 
+	writeProbe    storage.WriteProbe
+	writeProbeErr error
+	// writeProbes counts the times the store was actually written to, which is
+	// the assertion the opt-in turns on: a default run must not touch it once.
+	writeProbes int
+
 	sawBucket storage.S3Config
 	sawSMTP   string
 	sawDomain preflight.DomainRequest
@@ -140,6 +146,12 @@ func (p *fakeProber) CheckBucketRetention(_ context.Context, cfg storage.S3Confi
 func (p *fakeProber) CheckBucketMarker(_ context.Context, cfg storage.S3Config) (bool, string, error) {
 	p.sawBucket = cfg
 	return p.markerFound, p.markerContent, p.markerErr
+}
+
+func (p *fakeProber) CheckBucketWrite(_ context.Context, cfg storage.S3Config) (storage.WriteProbe, error) {
+	p.sawBucket = cfg
+	p.writeProbes++
+	return p.writeProbe, p.writeProbeErr
 }
 
 func (p *fakeProber) CheckSMTP(_ context.Context, addr string) (string, error) {
@@ -315,6 +327,9 @@ func newFakeProber() *fakeProber {
 		// switch it.
 		markerFound:   true,
 		markerContent: "8f2b6c1e-0f4a-4f1c-9f3e-2a7d5b8c4e10",
+		// A healthy destination is one whose credentials can store an object and
+		// remove it again.
+		writeProbe: storage.WriteProbe{Key: storage.WriteProbePrefix + "PROBEKEY", Wrote: true},
 		ledgers: map[string]dbmigrate.Status{
 			"":                {Version: 42, Applied: true},
 			searchLedgerTable: {Version: 7, Applied: true},
@@ -340,10 +355,22 @@ func run(t *testing.T, h *fakeHost, p *fakeProber) Report {
 // only runs ONE check, which is how the table tests below stay attributable.
 func only(t *testing.T, name string, h *fakeHost, p *fakeProber) []Finding {
 	t.Helper()
+	return onlyWith(t, name, h, p, nil)
+}
+
+// onlyWith is only() for a check whose behaviour depends on a doctor Option —
+// today the opt-in write probe, whose whole point is that it does something
+// different when it was not asked for.
+func onlyWith(t *testing.T, name string, h *fakeHost, p *fakeProber, tune func(*Options)) []Finding {
+	t.Helper()
 	if p == nil {
 		p = newFakeProber()
 	}
-	st, err := newState(Options{Root: testRoot, Host: h, Prober: p})
+	opt := Options{Root: testRoot, Host: h, Prober: p}
+	if tune != nil {
+		tune(&opt)
+	}
+	st, err := newState(opt)
 	if err != nil {
 		t.Fatalf("newState: %v", err)
 	}
