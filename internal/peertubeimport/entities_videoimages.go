@@ -753,9 +753,13 @@ func (im *Importer) videoImageSlotState(ctx context.Context, t videoImageTarget)
 
 	// The object probe is the expensive half of this decision — one HEAD per
 	// video against a remote store, ~15k of them on a real catalogue — so it is
-	// only paid where it can change the answer. A slot the ledger already
-	// accounts for was written by a run that verified its own write, and is
-	// settled from the database alone.
+	// paid ONLY where it can change the answer, which is the bridge: a filled slot
+	// the ledger says nothing about. Anywhere the ledger HAS an opinion the
+	// decision is settled from the database, and the probe is skipped by claiming
+	// the bytes are there. That is deliberate in both directions: a slot this
+	// import wrote was verified by the run that wrote it, and a slot it did not
+	// write is not its to repair — a missing object there is somebody else's
+	// asset to fix, not an excuse to overwrite the row describing it.
 	if !s.present || s.carried != "" || s.wroteBefore {
 		s.bytesPresent = s.present
 		return s, nil
