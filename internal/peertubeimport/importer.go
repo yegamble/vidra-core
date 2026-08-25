@@ -35,6 +35,11 @@ type Importer struct {
 	mediaMode MediaMode
 	policy    ConflictPolicy
 	force     bool
+	// ackVersion is the per-run operator acknowledgement of an unverified source
+	// schema: the version the launching administrator was shown and accepted. 0
+	// (the zero value, and the only value the server can produce on its own) means
+	// no acknowledgement was made.
+	ackVersion int
 	// sourceAuthoritative says the SOURCE wins where the two sides diverge, rather
 	// than the import only filling gaps. See Options.SourceAuthoritative.
 	sourceAuthoritative bool
@@ -82,12 +87,21 @@ type Importer struct {
 
 // Options customise an Importer.
 type Options struct {
-	Policy    ConflictPolicy
-	Force     bool
-	MediaMode MediaMode
-	SrcMedia  storage.Backend
-	DestMedia storage.Backend
-	SealKey   func(pem string) (string, error)
+	Policy ConflictPolicy
+	// Force is the CLI's --force: a HUMAN operator's blanket override of the
+	// version gate, including for a source whose version cannot be read at all.
+	// Nothing but cmd/peertube-import may set it, and no agent may pass it.
+	Force bool
+	// AcknowledgedSchemaVersion is the API's narrower equivalent: the exact schema
+	// version an administrator was shown and explicitly accepted on THIS launch
+	// request. It opens the version gate only for that number (AcknowledgesVersion)
+	// and widens nothing else. The server never sets it; it arrives from the
+	// request or it is zero.
+	AcknowledgedSchemaVersion int
+	MediaMode                 MediaMode
+	SrcMedia                  storage.Backend
+	DestMedia                 storage.Backend
+	SealKey                   func(pem string) (string, error)
 	// SourceAuthoritative says the SOURCE is the truth where the two sides
 	// diverge, instead of the import only filling gaps on this instance.
 	//
@@ -140,6 +154,7 @@ func NewImporter(dest *pgxpool.Pool, src *Source, opts Options) *Importer {
 		mediaMode:           mediaMode,
 		policy:              policy,
 		force:               opts.Force,
+		ackVersion:          opts.AcknowledgedSchemaVersion,
 		sourceAuthoritative: opts.SourceAuthoritative,
 		sealKey:             opts.SealKey,
 		reloadSettings:      opts.ReloadSettings,
@@ -148,11 +163,16 @@ func NewImporter(dest *pgxpool.Pool, src *Source, opts Options) *Importer {
 }
 
 // Preflight verifies the source is reachable and its schema version is supported
-// (or --force is set), pings the destination, proves the destination media store
-// will accept a write, and — for a local destination media store — checks there
-// is plausibly enough free disk. It returns the detected source schema version.
-// An unsupported version without force is a hard stop (VersionError); callers
-// MUST NOT set force autonomously.
+// (or a human has signed off on it), pings the destination, proves the
+// destination media store will accept a write, and — for a local destination
+// media store — checks there is plausibly enough free disk. It returns the
+// detected source schema version EVEN when it refuses on that version, so the
+// caller can tell the operator which version it saw.
+//
+// An unsupported version is a hard stop (*UnverifiedSchemaError) unless the
+// operator overrode it: --force from a human on the CLI, or a per-run
+// acknowledgement naming this exact version from an administrator through the
+// API. Callers MUST NOT set either autonomously.
 //
 // Everything here is a question whose answer would otherwise arrive minutes into
 // a run, in the middle of an operation that is half done. That is the standard
@@ -175,7 +195,7 @@ func (im *Importer) Preflight(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if !IsSupported(version) && !im.force {
+	if !IsSupported(version) && !im.force && !AcknowledgesVersion(im.ackVersion, version) {
 		return version, VersionError(version)
 	}
 	// Storage reachability + free-disk (best effort; only meaningful for a local
@@ -632,6 +652,18 @@ func optUUID(id uuid.UUID) pgtype.UUID {
 		return pgtype.UUID{}
 	}
 	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+// optSchemaVersion wraps an acknowledged schema version for storage. Anything
+// that is not a positive version is NULL: "no acknowledgement" and "acknowledged
+// version zero" must not be two spellings of the same row, and the column's CHECK
+// refuses the latter anyway.
+func optSchemaVersion(v int) *int32 {
+	if v <= 0 {
+		return nil
+	}
+	v32 := int32(v)
+	return &v32
 }
 
 // sealPrivateKey seals an actor private-key PEM for at-rest storage. With no

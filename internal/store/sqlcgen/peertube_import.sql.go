@@ -27,15 +27,16 @@ WHERE id IN (
     LIMIT $1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, mode, conflict_policy, source_authoritative, started_by
+RETURNING id, mode, conflict_policy, source_authoritative, started_by, acknowledged_schema_version
 `
 
 type ClaimDueImportRunsRow struct {
-	ID                  uuid.UUID   `json:"id"`
-	Mode                string      `json:"mode"`
-	ConflictPolicy      string      `json:"conflict_policy"`
-	SourceAuthoritative bool        `json:"source_authoritative"`
-	StartedBy           pgtype.UUID `json:"started_by"`
+	ID                        uuid.UUID   `json:"id"`
+	Mode                      string      `json:"mode"`
+	ConflictPolicy            string      `json:"conflict_policy"`
+	SourceAuthoritative       bool        `json:"source_authoritative"`
+	StartedBy                 pgtype.UUID `json:"started_by"`
+	AcknowledgedSchemaVersion *int32      `json:"acknowledged_schema_version"`
 }
 
 // The worker claims due, still-pending runs (oldest first), flipping them to
@@ -61,6 +62,7 @@ func (q *Queries) ClaimDueImportRuns(ctx context.Context, limit int32) ([]ClaimD
 			&i.ConflictPolicy,
 			&i.SourceAuthoritative,
 			&i.StartedBy,
+			&i.AcknowledgedSchemaVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -74,7 +76,7 @@ func (q *Queries) ClaimDueImportRuns(ctx context.Context, limit int32) ([]ClaimD
 
 const completeImportRun = `-- name: CompleteImportRun :exec
 UPDATE peertube_import_runs
-SET state = 'done', progress = $2, error = '', finished_at = now(), updated_at = now()
+SET state = 'done', progress = $2, error = '', error_code = '', finished_at = now(), updated_at = now()
 WHERE id = $1
 `
 
@@ -124,16 +126,17 @@ func (q *Queries) CountImportLedgerByKindStatus(ctx context.Context) ([]CountImp
 
 const createImportRun = `-- name: CreateImportRun :one
 
-INSERT INTO peertube_import_runs (mode, conflict_policy, started_by, source_authoritative)
-VALUES ($1, $2, $3, $4)
-RETURNING id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, source_authoritative
+INSERT INTO peertube_import_runs (mode, conflict_policy, started_by, source_authoritative, acknowledged_schema_version)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, acknowledged_schema_version, error_code, source_authoritative
 `
 
 type CreateImportRunParams struct {
-	Mode                string      `json:"mode"`
-	ConflictPolicy      string      `json:"conflict_policy"`
-	StartedBy           pgtype.UUID `json:"started_by"`
-	SourceAuthoritative bool        `json:"source_authoritative"`
+	Mode                      string      `json:"mode"`
+	ConflictPolicy            string      `json:"conflict_policy"`
+	StartedBy                 pgtype.UUID `json:"started_by"`
+	SourceAuthoritative       bool        `json:"source_authoritative"`
+	AcknowledgedSchemaVersion *int32      `json:"acknowledged_schema_version"`
 }
 
 // ─────────────────────────── runs ───────────────────────────
@@ -141,15 +144,23 @@ type CreateImportRunParams struct {
 // unique violation when a run is already pending/running — the caller maps that
 // to a 409 "an import is already in progress".
 //
-// source_authoritative (0115) is the second, orthogonal axis: conflict_policy
+// source_authoritative (0116) is a second, orthogonal axis: conflict_policy
 // says what to do about a NAME that already exists, this says whether a re-run
 // may update rows the import already owns when the two sides have diverged.
+//
+// acknowledged_schema_version (0115) is a third and is independent of both: it is
+// the launching admin's explicit, per-run sign-off on an unverified source schema,
+// and it is written ONLY from the launch request. NULL is the norm. Both live here
+// rather than in the handler because the worker that runs the preflight is a
+// different process from the one that took the request, and because started_by is
+// on this same row: the pair is the audit record of who accepted which version.
 func (q *Queries) CreateImportRun(ctx context.Context, arg CreateImportRunParams) (PeertubeImportRun, error) {
 	row := q.db.QueryRow(ctx, createImportRun,
 		arg.Mode,
 		arg.ConflictPolicy,
 		arg.StartedBy,
 		arg.SourceAuthoritative,
+		arg.AcknowledgedSchemaVersion,
 	)
 	var i PeertubeImportRun
 	err := row.Scan(
@@ -167,6 +178,8 @@ func (q *Queries) CreateImportRun(ctx context.Context, arg CreateImportRunParams
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.AcknowledgedSchemaVersion,
+		&i.ErrorCode,
 		&i.SourceAuthoritative,
 	)
 	return i, err
@@ -174,17 +187,23 @@ func (q *Queries) CreateImportRun(ctx context.Context, arg CreateImportRunParams
 
 const failImportRun = `-- name: FailImportRun :exec
 UPDATE peertube_import_runs
-SET state = 'failed', error = $2, finished_at = now(), updated_at = now()
+SET state = 'failed', error = $2, error_code = $3, finished_at = now(), updated_at = now()
 WHERE id = $1
 `
 
 type FailImportRunParams struct {
-	ID    uuid.UUID `json:"id"`
-	Error string    `json:"error"`
+	ID        uuid.UUID `json:"id"`
+	Error     string    `json:"error"`
+	ErrorCode string    `json:"error_code"`
 }
 
+// error is the SAFE prose an operator reads; error_code is the stable snake_case
+// class a CLIENT branches on (empty when the failure has no class of its own). The
+// admin UI needs the second one to tell an unverified source schema — which an
+// administrator can sign off on — apart from every other way a run can fail,
+// which they cannot.
 func (q *Queries) FailImportRun(ctx context.Context, arg FailImportRunParams) error {
-	_, err := q.db.Exec(ctx, failImportRun, arg.ID, arg.Error)
+	_, err := q.db.Exec(ctx, failImportRun, arg.ID, arg.Error, arg.ErrorCode)
 	return err
 }
 
@@ -264,7 +283,7 @@ func (q *Queries) GetImportLedgerLastWriteForTarget(ctx context.Context, arg Get
 }
 
 const getImportRun = `-- name: GetImportRun :one
-SELECT id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, source_authoritative FROM peertube_import_runs WHERE id = $1
+SELECT id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, acknowledged_schema_version, error_code, source_authoritative FROM peertube_import_runs WHERE id = $1
 `
 
 func (q *Queries) GetImportRun(ctx context.Context, id uuid.UUID) (PeertubeImportRun, error) {
@@ -285,13 +304,15 @@ func (q *Queries) GetImportRun(ctx context.Context, id uuid.UUID) (PeertubeImpor
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.AcknowledgedSchemaVersion,
+		&i.ErrorCode,
 		&i.SourceAuthoritative,
 	)
 	return i, err
 }
 
 const getLatestImportRun = `-- name: GetLatestImportRun :one
-SELECT id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, source_authoritative FROM peertube_import_runs ORDER BY created_at DESC, id DESC LIMIT 1
+SELECT id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, acknowledged_schema_version, error_code, source_authoritative FROM peertube_import_runs ORDER BY created_at DESC, id DESC LIMIT 1
 `
 
 func (q *Queries) GetLatestImportRun(ctx context.Context) (PeertubeImportRun, error) {
@@ -312,6 +333,8 @@ func (q *Queries) GetLatestImportRun(ctx context.Context) (PeertubeImportRun, er
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.AcknowledgedSchemaVersion,
+		&i.ErrorCode,
 		&i.SourceAuthoritative,
 	)
 	return i, err
@@ -1523,7 +1546,7 @@ type ListImportLedgerDoneByKindRow struct {
 	AppliedValue string      `json:"applied_value"`
 }
 
-// ═══════════ source-authoritative resync (0115) ═══════════
+// ═══════════ source-authoritative resync (0116) ═══════════
 //
 // Everything below is read or written ONLY by a run the operator launched with
 // source_authoritative. The default import is unchanged: it fills gaps, and the
@@ -1572,7 +1595,7 @@ func (q *Queries) ListImportLedgerDoneByKind(ctx context.Context, entityKind str
 }
 
 const listImportRuns = `-- name: ListImportRuns :many
-SELECT id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, source_authoritative FROM peertube_import_runs
+SELECT id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, acknowledged_schema_version, error_code, source_authoritative FROM peertube_import_runs
 ORDER BY created_at DESC, id DESC
 LIMIT $1 OFFSET $2
 `
@@ -1606,6 +1629,8 @@ func (q *Queries) ListImportRuns(ctx context.Context, arg ListImportRunsParams) 
 			&i.UpdatedAt,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.AcknowledgedSchemaVersion,
+			&i.ErrorCode,
 			&i.SourceAuthoritative,
 		); err != nil {
 			return nil, err

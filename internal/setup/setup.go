@@ -173,6 +173,13 @@ type Answers struct {
 
 	// Registration nil keeps the template's registration policy.
 	Registration *RegistrationAnswers
+
+	// PeerTube nil keeps the file's PeerTube-source configuration exactly as it
+	// is — a re-run about the domain must not reconfigure a migration in flight.
+	// A non-nil value is an ANSWER, including PeerTube.Enabled=false, which is
+	// how the import surface gets turned off again after a cutover. See
+	// peertube.go for what this engine can and cannot do about it.
+	PeerTube *PeerTubeAnswers
 }
 
 // S3Answers are the STORAGE_S3_* values. Endpoint is a HOST, no scheme — the
@@ -357,15 +364,20 @@ const searchRedisDefaultDB = 1
 // predates the key.
 var managedKeys = []string{profilesKey, externalPostgresKey, externalRedisKey, databaseURLKey, redisURLKey, searchRedisURLKey, tlsModeKey, acmeEmailKey, allowPlainHTTPKey}
 
-// ManagedKeys is that list, for a caller comparing a generated env file against
-// the template. These keys are the engine's OWN output and several of them
-// appear in the template only as commented-out examples (DATABASE_URL,
-// REDIS_URL, SEARCH_REDIS_URL are documented there, not assigned), so a naive
-// "the file assigns keys the template does not define" diff reports every
-// external-service deployment as drifted, for ever, by name — a permanent ⚠
-// about the engine having done its job. `vidra doctor` excludes them for exactly
-// that reason.
-func ManagedKeys() []string { return append([]string(nil), managedKeys...) }
+// ManagedKeys is that list plus the PeerTube-source block, for a caller
+// comparing a generated env file against the template. These keys are the
+// engine's OWN output and several of them appear in the template only as
+// commented-out examples (DATABASE_URL, REDIS_URL, SEARCH_REDIS_URL are
+// documented there, not assigned), so a naive "the file assigns keys the
+// template does not define" diff reports every external-service deployment as
+// drifted, for ever, by name — a permanent ⚠ about the engine having done its
+// job. `vidra doctor` excludes them for exactly that reason, and the
+// PeerTube-source keys are here for the same one: a deployment configured for a
+// migration against a tree whose template predates the block would otherwise be
+// reported as drifted for answering questions this engine asked it.
+func ManagedKeys() []string {
+	return append(append([]string(nil), managedKeys...), peerTubeKeys...)
+}
 
 // externalOverlays pairs each external-service switch with the compose overlay
 // the deploy adds for it and the connection strings it cannot work without. The
@@ -577,6 +589,7 @@ func Generate(req Request) (*Result, error) {
 	applyStorageRule(req, res)
 	applyMailRule(res)
 	added := applyComponentRule(req, answers, res)
+	added = append(added, applyPeerTubeRule(req, answers, res)...)
 	res.Warnings = append(res.Warnings, droppedProfileWarnings(req, res.Values)...)
 
 	// Line-shape before rendering: a value carrying a newline would not be a bad
@@ -1003,6 +1016,7 @@ func answerValues(req Request) (map[string]string, error) {
 		out["REGISTRATION_ENABLED"] = strconv.FormatBool(a.Registration.Enabled)
 		out["REGISTRATION_REQUIRE_APPROVAL"] = strconv.FormatBool(a.Registration.RequireApproval)
 	}
+	peerTubeAnswerValues(a.PeerTube, out)
 	return out, nil
 }
 
@@ -1436,9 +1450,11 @@ func featureProfileNames() []string {
 }
 
 func isManagedKey(key string) bool {
-	for _, k := range managedKeys {
-		if k == key {
-			return true
+	for _, list := range [][]string{managedKeys, peerTubeKeys} {
+		for _, k := range list {
+			if k == key {
+				return true
+			}
 		}
 	}
 	return false

@@ -67,11 +67,18 @@ LIMIT $1;
 -- unique violation when a run is already pending/running — the caller maps that
 -- to a 409 "an import is already in progress".
 --
--- source_authoritative (0115) is the second, orthogonal axis: conflict_policy
+-- source_authoritative (0116) is a second, orthogonal axis: conflict_policy
 -- says what to do about a NAME that already exists, this says whether a re-run
 -- may update rows the import already owns when the two sides have diverged.
-INSERT INTO peertube_import_runs (mode, conflict_policy, started_by, source_authoritative)
-VALUES ($1, $2, $3, $4)
+--
+-- acknowledged_schema_version (0115) is a third and is independent of both: it is
+-- the launching admin's explicit, per-run sign-off on an unverified source schema,
+-- and it is written ONLY from the launch request. NULL is the norm. Both live here
+-- rather than in the handler because the worker that runs the preflight is a
+-- different process from the one that took the request, and because started_by is
+-- on this same row: the pair is the audit record of who accepted which version.
+INSERT INTO peertube_import_runs (mode, conflict_policy, started_by, source_authoritative, acknowledged_schema_version)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: GetImportRun :one
@@ -107,7 +114,7 @@ WHERE id IN (
     LIMIT $1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, mode, conflict_policy, source_authoritative, started_by;
+RETURNING id, mode, conflict_policy, source_authoritative, started_by, acknowledged_schema_version;
 
 -- name: SetImportRunVersion :exec
 UPDATE peertube_import_runs
@@ -121,12 +128,17 @@ WHERE id = $1;
 
 -- name: CompleteImportRun :exec
 UPDATE peertube_import_runs
-SET state = 'done', progress = $2, error = '', finished_at = now(), updated_at = now()
+SET state = 'done', progress = $2, error = '', error_code = '', finished_at = now(), updated_at = now()
 WHERE id = $1;
 
 -- name: FailImportRun :exec
+-- error is the SAFE prose an operator reads; error_code is the stable snake_case
+-- class a CLIENT branches on (empty when the failure has no class of its own). The
+-- admin UI needs the second one to tell an unverified source schema — which an
+-- administrator can sign off on — apart from every other way a run can fail,
+-- which they cannot.
 UPDATE peertube_import_runs
-SET state = 'failed', error = $2, finished_at = now(), updated_at = now()
+SET state = 'failed', error = $2, error_code = $3, finished_at = now(), updated_at = now()
 WHERE id = $1;
 
 -- ─────────────────── idempotent entity inserts ───────────────────
@@ -380,7 +392,7 @@ DO UPDATE SET vidra_id      = EXCLUDED.vidra_id,
               applied_value = EXCLUDED.applied_value,
               updated_at    = now();
 
--- ═══════════ source-authoritative resync (0115) ═══════════
+-- ═══════════ source-authoritative resync (0116) ═══════════
 --
 -- Everything below is read or written ONLY by a run the operator launched with
 -- source_authoritative. The default import is unchanged: it fills gaps, and the

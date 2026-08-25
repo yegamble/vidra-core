@@ -16,6 +16,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1968,13 +1969,76 @@ func TestPeerTubeImportPreflightVersionGate(t *testing.T) {
 	mustExec(t, ctx, src, `INSERT INTO "application" ("migrationVersion") VALUES (500)`)
 
 	imp := NewImporter(dest, NewSourceFromPool(src), Options{})
-	if _, err := imp.Preflight(ctx); err == nil {
+	version, err := imp.Preflight(ctx)
+	if err == nil {
 		t.Error("preflight must REFUSE an unverified (too-old) version without --force")
+	}
+	// The refused version comes back anyway: it is the number an operator has to
+	// be shown before they can be asked to accept it.
+	if version != 500 {
+		t.Errorf("refused preflight returned version %d, want 500", version)
+	}
+	var refusal *UnverifiedSchemaError
+	if !errors.As(err, &refusal) || refusal.Code() != CodeUnverifiedSchema {
+		t.Errorf("refusal = %v, want an *UnverifiedSchemaError coded %q", err, CodeUnverifiedSchema)
 	}
 
 	// A human passing --force overrides the refusal (agents must never do this).
 	impForce := NewImporter(dest, NewSourceFromPool(src), Options{Force: true})
 	if _, err := impForce.Preflight(ctx); err != nil {
+		t.Errorf("preflight with force should proceed: %v", err)
+	}
+
+	// An acknowledgement NAMING the detected version is the admin path's sign-off
+	// and opens the same gate — nothing more.
+	impAck := NewImporter(dest, NewSourceFromPool(src), Options{AcknowledgedSchemaVersion: 500})
+	if _, err := impAck.Preflight(ctx); err != nil {
+		t.Errorf("preflight with an acknowledgement of the detected version should proceed: %v", err)
+	}
+
+	// An acknowledgement of some OTHER version is no acknowledgement of this one.
+	// This is what stops a stale sign-off from outliving the source it was made
+	// against, and what stops a caller that never looked from guessing one.
+	for _, ack := range []int{499, 501, 800, -500} {
+		impWrong := NewImporter(dest, NewSourceFromPool(src), Options{AcknowledgedSchemaVersion: ack})
+		if _, err := impWrong.Preflight(ctx); err == nil {
+			t.Errorf("preflight accepted an acknowledgement of %d against a detected version of 500", ack)
+		}
+	}
+}
+
+// A source whose version cannot be READ at all is refused with a DIFFERENT class,
+// and no acknowledgement can lift it: an acknowledgement is a statement about a
+// specific version, and there is no version here to make it about. Only a human
+// on the CLI, who can go and look at the source, gets past this one.
+func TestPeerTubeImportPreflightUndetectableVersion(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	// An application table with no row at all — version undetectable.
+	mustExec(t, ctx, src, `CREATE TABLE "application" (id serial PRIMARY KEY, "migrationVersion" integer NOT NULL)`)
+
+	_, err := NewImporter(dest, NewSourceFromPool(src), Options{}).Preflight(ctx)
+	var refusal *UnverifiedSchemaError
+	if !errors.As(err, &refusal) || refusal.Code() != CodeUndetectableSchema {
+		t.Fatalf("refusal = %v, want an *UnverifiedSchemaError coded %q", err, CodeUndetectableSchema)
+	}
+	if refusal.Acknowledgeable() {
+		t.Error("an undetectable version must not be presented as acknowledgeable")
+	}
+	for _, ack := range []int{0, 1, 1040} {
+		if _, err := NewImporter(dest, NewSourceFromPool(src), Options{AcknowledgedSchemaVersion: ack}).Preflight(ctx); err == nil {
+			t.Errorf("acknowledgement of %d lifted the undetectable-version stop", ack)
+		}
+	}
+	// --force still does, because a human ran it.
+	if _, err := NewImporter(dest, NewSourceFromPool(src), Options{Force: true}).Preflight(ctx); err != nil {
 		t.Errorf("preflight with force should proceed: %v", err)
 	}
 }

@@ -45,6 +45,25 @@ type Form struct {
 	Features     *FeatureForm      `json:"features"`
 	Mail         *MailForm         `json:"mail"`
 	Registration *RegistrationForm `json:"registration"`
+	PeerTube     *PeerTubeForm     `json:"peertube"`
+}
+
+// PeerTubeForm is the migration-source block, and it is the FOURTH pointer for
+// the third pointer's reason: a page that omitted it must mean "leave the source
+// exactly as it is", not "turn the import off". A re-run about the domain sends
+// nothing here and a migration in flight survives it.
+//
+// SourceURL and S3.SecretKey are write-only, like every other secret on this
+// wire: posted when the operator types one, empty when they leave the field
+// alone, which the engine already reads as "keep what the file has".
+type PeerTubeForm struct {
+	Enabled     bool   `json:"enabled"`
+	SourceURL   string `json:"source_url"`
+	Storage     string `json:"storage"`
+	LocalRoot   string `json:"local_root"`
+	S3          S3Form `json:"s3"`
+	MediaMode   string `json:"media_mode"`
+	ConflictPol string `json:"conflict_policy"`
 }
 
 // S3Form is the object-store block. SecretKey is WRITE-ONLY: it is posted when
@@ -143,6 +162,29 @@ type Seed struct {
 	Mail           MailSeed `json:"mail"`
 
 	Registration RegistrationForm `json:"registration"`
+
+	PeerTube PeerTubeSeed `json:"peertube"`
+}
+
+// PeerTubeSeed is the migration block as it stands today, with both secrets
+// reduced to presence — the source DSN and the source object store's secret key
+// are never sent back to the page. The three enumerated answers carry the
+// CODE's defaults when the file says nothing, so the wizard's dropdowns and the
+// interview's brackets open on the same value.
+type PeerTubeSeed struct {
+	Enabled      bool   `json:"enabled"`
+	SourceURLSet bool   `json:"source_url_set"`
+	Storage      string `json:"storage"`
+	LocalRoot    string `json:"local_root"`
+
+	S3Endpoint     string `json:"s3_endpoint"`
+	S3Region       string `json:"s3_region"`
+	S3Bucket       string `json:"s3_bucket"`
+	S3AccessKey    string `json:"s3_access_key"`
+	S3SecretKeySet bool   `json:"s3_secret_key_set"`
+
+	MediaMode   string `json:"media_mode"`
+	ConflictPol string `json:"conflict_policy"`
 }
 
 // S3Seed echoes the endpoint, region, bucket and access key — the same four the
@@ -337,4 +379,11 @@ type StatusResponse struct {
 	// token, so the newest line in the log is the one that works.
 	ClaimURL    string `json:"claim_url"`
 	LogsCommand string `json:"logs_command"`
+
+	// ImportURL is the migration handoff, and it is EMPTY unless the file that
+	// was just written says this deployment has a PeerTube source. `vidra setup`
+	// can only write that configuration down — the importer runs inside the api
+	// container, which does not exist while the wizard is open — so the last
+	// thing the wizard owes a migrating operator is the address it is run from.
+	ImportURL string `json:"import_url,omitempty"`
 }
