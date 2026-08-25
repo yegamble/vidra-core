@@ -90,6 +90,10 @@ type Repository interface {
 	ListChannelsForMember(ctx context.Context, userID uuid.UUID) ([]sqlcgen.ListChannelsForMemberRow, error)
 	ListManagedChannels(ctx context.Context, arg sqlcgen.ListManagedChannelsParams) ([]sqlcgen.ListManagedChannelsRow, error)
 	CountManagedChannels(ctx context.Context, userID uuid.UUID) (int64, error)
+
+	// Public channel search (GET /api/v1/search/channels).
+	SearchPublicChannels(ctx context.Context, arg sqlcgen.SearchPublicChannelsParams) ([]sqlcgen.SearchPublicChannelsRow, error)
+	CountSearchPublicChannels(ctx context.Context, arg sqlcgen.CountSearchPublicChannelsParams) (int64, error)
 }
 
 // Service holds the channel application logic.
@@ -537,6 +541,64 @@ func (s *Service) ListManaged(ctx context.Context, userID uuid.UUID, limit, offs
 				UpdatedAt:          r.UpdatedAt,
 			},
 			Role:          r.Role,
+			FollowerCount: r.FollowerCount,
+		})
+	}
+	return out, total, nil
+}
+
+// Found is a channel matched by a public search, with its follower count. The
+// count rides the row rather than being fetched per result: the same N+1 that
+// ListManaged had to remove would otherwise reappear here, once per page of
+// search results.
+type Found struct {
+	Channel       sqlcgen.Channel
+	FollowerCount int64
+}
+
+// SearchPublic returns one page of channels whose handle or display name
+// contains query, plus the total under the SAME predicate. It is deliberately a
+// LOCAL Postgres search: vidra-search indexes videos, and a channel appears
+// there only as denormalised columns on video rows, so a channel with nothing
+// published is invisible to it — which is the case a channel search most needs
+// to answer.
+//
+// Visibility (enforced in SQL, see SearchPublicChannels): the owner must be
+// active and not unlisted. viewerAuthed=false means an anonymous caller, for
+// whom the per-viewer mute/block predicates are no-ops. The caller
+// validates/clamps query, limit, and offset.
+func (s *Service) SearchPublic(ctx context.Context, query string, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]Found, int64, error) {
+	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
+	rows, err := s.repo.SearchPublicChannels(ctx, sqlcgen.SearchPublicChannelsParams{
+		Query:        query,
+		ViewerID:     viewer,
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.CountSearchPublicChannels(ctx, sqlcgen.CountSearchPublicChannelsParams{
+		Query:    query,
+		ViewerID: viewer,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]Found, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Found{
+			Channel: sqlcgen.Channel{
+				ID:                 r.ID,
+				OwnerID:            r.OwnerID,
+				Handle:             r.Handle,
+				DisplayName:        r.DisplayName,
+				Description:        r.Description,
+				ActivitypubEnabled: r.ActivitypubEnabled,
+				AtprotoEnabled:     r.AtprotoEnabled,
+				CreatedAt:          r.CreatedAt,
+				UpdatedAt:          r.UpdatedAt,
+			},
 			FollowerCount: r.FollowerCount,
 		})
 	}

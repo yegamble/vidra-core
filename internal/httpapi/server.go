@@ -1353,8 +1353,17 @@ func (s *Server) routes() {
 		api.GET("/channels/:handle/members", s.handleListChannelMembers, s.requireAuth)
 		api.POST("/channels/:handle/members", s.handleAddChannelMember, s.requireAuth)
 		api.DELETE("/channels/:handle/members/:userId", s.handleRemoveChannelMember, s.requireAuth)
+		// Channel search: a LOCAL trigram search, not a vidra-search surface —
+		// the index knows a channel only through the videos it published, so a
+		// channel with none is invisible there. Rides the channel block because
+		// that is the service it needs.
+		api.GET("/search/channels", s.handleSearchChannels, s.optionalAuth)
 		if s.authsvc != nil {
 			api.GET("/users/:username/profile", s.handleGetUserProfile, s.optionalAuth)
+			// Account search. Mounted with the profile endpoint on purpose: they
+			// share one visibility rule, and the list must never outlive the
+			// single lookup's gate.
+			api.GET("/search/accounts", s.handleSearchAccounts, s.optionalAuth)
 		}
 	}
 

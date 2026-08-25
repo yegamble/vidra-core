@@ -58,6 +58,63 @@ type authFakeRepo struct {
 	// ownerClaim mirrors the single-row owner_claim_tokens table (0104). Nil =
 	// never minted, so most tests register freely.
 	ownerClaim *sqlcgen.OwnerClaimToken
+	// mutes/userBlocks mirror the per-viewer predicates the account-search query
+	// applies. Nil (pure-auth harnesses) means nobody has muted or blocked
+	// anyone; videoServerFullWith wires the shared fakes.
+	mutes      *muteFakeRepo
+	userBlocks *blockFakeRepo
+}
+
+// SearchPublicAccounts mirrors the real query's visibility gate EXACTLY —
+// active AND profile_public AND NOT unlisted — because that gate is the
+// property the tests exist to prove. Getting it wrong here would make a
+// negative test pass for the wrong reason.
+func (f *authFakeRepo) SearchPublicAccounts(_ context.Context, a sqlcgen.SearchPublicAccountsParams) ([]sqlcgen.SearchPublicAccountsRow, error) {
+	q := strings.ToLower(a.Query)
+	var out []sqlcgen.SearchPublicAccountsRow
+	for _, u := range f.users {
+		if !u.IsActive || !u.ProfilePublic || u.Unlisted {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(u.Username), q) && !strings.Contains(strings.ToLower(u.DisplayName), q) {
+			continue
+		}
+		if a.ViewerID.Valid {
+			viewer := uuid.UUID(a.ViewerID.Bytes)
+			if f.mutes != nil && f.mutes.isMuted(viewer, u.ID) {
+				continue
+			}
+			if f.userBlocks != nil && f.userBlocks.isBlocked(viewer, u.ID) {
+				continue
+			}
+		}
+		out = append(out, sqlcgen.SearchPublicAccountsRow{
+			ID: u.ID, Username: u.Username, DisplayName: u.DisplayName,
+			Bio: u.Bio, CreatedAt: u.CreatedAt,
+		})
+	}
+	// Stable order: the SQL ranks by trigram similarity, which an in-memory fake
+	// cannot reproduce; newest-first matches its secondary key and keeps pages
+	// deterministic.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID.String() > out[j].ID.String()
+	})
+	lo := min(int(a.ResultOffset), len(out))
+	out = out[lo:]
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(out) {
+		out = out[:a.ResultLimit]
+	}
+	return out, nil
+}
+
+func (f *authFakeRepo) CountSearchPublicAccounts(ctx context.Context, a sqlcgen.CountSearchPublicAccountsParams) (int64, error) {
+	rows, err := f.SearchPublicAccounts(ctx, sqlcgen.SearchPublicAccountsParams{
+		Query: a.Query, ViewerID: a.ViewerID, ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
 }
 
 func newAuthFakeRepo() *authFakeRepo {

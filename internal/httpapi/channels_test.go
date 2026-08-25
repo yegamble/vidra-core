@@ -30,8 +30,80 @@ type channelFakeRepo struct {
 	followSeq  []string                         // follow keys in follow order (for stable "newest first")
 	members    map[string]sqlcgen.ChannelMember // "channelID|userID" (migration 0097)
 	// users, when wired, resolves usernames for member invites against the auth
-	// fake (nil-safe: unset → GetUserByUsername always 404s).
+	// fake (nil-safe: unset → GetUserByUsername always 404s). Channel search
+	// also reads it for the owner-visibility gate.
 	users *authFakeRepo
+	// mutes/userBlocks mirror the per-viewer predicates channel search applies
+	// to a channel's OWNER. Nil means nobody has muted or blocked anyone.
+	mutes      *muteFakeRepo
+	userBlocks *blockFakeRepo
+}
+
+// channelOwnerVisible mirrors SearchPublicChannels' owner gate: the owning
+// account must be active and must not have opted out of discovery. With no user
+// fake wired every owner is visible, which keeps the channel-only harnesses
+// behaving as they did.
+func (f *channelFakeRepo) channelOwnerVisible(ownerID uuid.UUID) bool {
+	if f.users == nil {
+		return true
+	}
+	for _, u := range f.users.users {
+		if u.ID == ownerID {
+			return u.IsActive && !u.Unlisted
+		}
+	}
+	return true
+}
+
+func (f *channelFakeRepo) SearchPublicChannels(ctx context.Context, a sqlcgen.SearchPublicChannelsParams) ([]sqlcgen.SearchPublicChannelsRow, error) {
+	q := strings.ToLower(a.Query)
+	var out []sqlcgen.SearchPublicChannelsRow
+	for _, ch := range f.byHandle {
+		if !strings.Contains(strings.ToLower(ch.Handle), q) && !strings.Contains(strings.ToLower(ch.DisplayName), q) {
+			continue
+		}
+		if !f.channelOwnerVisible(ch.OwnerID) {
+			continue
+		}
+		if a.ViewerID.Valid {
+			viewer := uuid.UUID(a.ViewerID.Bytes)
+			if f.mutes != nil && f.mutes.isMuted(viewer, ch.OwnerID) {
+				continue
+			}
+			if f.userBlocks != nil && f.userBlocks.isBlocked(viewer, ch.OwnerID) {
+				continue
+			}
+		}
+		n, _ := f.CountChannelFollowers(ctx, ch.ID)
+		out = append(out, sqlcgen.SearchPublicChannelsRow{
+			ID: ch.ID, OwnerID: ch.OwnerID, Handle: ch.Handle, DisplayName: ch.DisplayName,
+			Description: ch.Description, CreatedAt: ch.CreatedAt, UpdatedAt: ch.UpdatedAt,
+			ActivitypubEnabled: ch.ActivitypubEnabled, AtprotoEnabled: ch.AtprotoEnabled,
+			FollowerCount: n,
+		})
+	}
+	// The SQL ranks by trigram similarity then follower count; the fake cannot
+	// reproduce similarity, so it uses the follower-count key and a handle
+	// tiebreak to stay deterministic (map iteration order otherwise leaks in).
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].FollowerCount != out[j].FollowerCount {
+			return out[i].FollowerCount > out[j].FollowerCount
+		}
+		return out[i].Handle < out[j].Handle
+	})
+	lo := min(int(a.ResultOffset), len(out))
+	out = out[lo:]
+	if a.ResultLimit > 0 && int(a.ResultLimit) < len(out) {
+		out = out[:a.ResultLimit]
+	}
+	return out, nil
+}
+
+func (f *channelFakeRepo) CountSearchPublicChannels(ctx context.Context, a sqlcgen.CountSearchPublicChannelsParams) (int64, error) {
+	rows, err := f.SearchPublicChannels(ctx, sqlcgen.SearchPublicChannelsParams{
+		Query: a.Query, ViewerID: a.ViewerID, ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
 }
 
 func newChannelFakeRepo() *channelFakeRepo {

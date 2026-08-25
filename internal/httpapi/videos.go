@@ -670,14 +670,45 @@ type videoSearchResponse struct {
 	Videos []videoView              `json:"videos"`
 	Remote []remoteSearchResultView `json:"remote,omitempty"`
 	pageMeta
+	// SearchTotal / TotalIsLowerBound / HasMore are vidra-search's own view of
+	// the result set, passed through when it served the request. All three are
+	// POINTERS and omitted when absent, because absent has to mean "unknown":
+	// they are omitted on the local SQL path, and they are omitted by a deployed
+	// search service released before it grew the fields. A bare `false` for
+	// has_more would tell a client it had reached the end of a list it had
+	// barely started.
+	//
+	// SearchTotal is NOT the top-level `total`. `total` stays core's own
+	// per-viewer count — the number of matches this caller could actually be
+	// shown, which is what a "N results" label means. SearchTotal is the size of
+	// the set the RANKER worked over, and TotalIsLowerBound says whether the
+	// ranker saw all of it: true means the service stopped looking, so paging
+	// will run out before `total` is reached and the count should be rendered
+	// "top N" rather than "N". HasMore is the direct answer to "is there another
+	// page" and is exact whenever present.
+	SearchTotal       *int64 `json:"search_total,omitempty"`
+	TotalIsLowerBound *bool  `json:"total_is_lower_bound,omitempty"`
+	HasMore           *bool  `json:"has_more,omitempty"`
 }
 
 // handleSearchVideos searches public video titles. No auth required. Requires a
 // non-empty ?q (<=100 chars); paginated via ?limit (1–100, default 20)/?offset.
+//
+// Ordering: ?sort is one of video.SearchSorts() — relevance (the default and the
+// endpoint's behaviour before it took a sort at all), -published_at/published_at,
+// -views/views. An unrecognised value is a 400, never a silent fallback.
+//
 // Optional facet filters mirror the feed: ?tag (free-form, matched
 // case-insensitively), ?category and ?language (taxonomy ids from GET
-// /videos/config; unknown values are 422). Any active filter excludes remote
-// results.
+// /videos/config; unknown values are 422). Any active taxonomy filter excludes
+// remote results. On top of those, the search panel's own narrowing filters:
+// ?duration_min/?duration_max (seconds, inclusive), ?published_after/
+// ?published_before (RFC3339, inclusive), and ?tags_all_of/?tags_one_of (CSV).
+//
+// ROUTING (see searchServiceCanRank): the vidra-search path is taken only for
+// the default relevance sort with none of the new filters active. Everything
+// else runs on local SQL — on BOTH sides of the healthy/unhealthy line, so the
+// result set does not change with the search service's mood.
 func (s *Server) handleSearchVideos(c echo.Context) error {
 	q := strings.TrimSpace(c.QueryParam("q"))
 	if q == "" {
@@ -687,7 +718,11 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "query parameter q is too long")
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
-	filter := video.FeedFilter{
+	sortKey, err := parseSortParam(c, video.SearchSorts(), video.SearchSortDefault)
+	if err != nil {
+		return err
+	}
+	filter := video.SearchFilter{FeedFilter: video.FeedFilter{
 		Tag:      strings.TrimSpace(c.QueryParam("tag")),
 		Category: strings.TrimSpace(c.QueryParam("category")),
 		Language: strings.TrimSpace(c.QueryParam("language")),
@@ -695,10 +730,31 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 		// discovery surfaces only (instance-platform-info), now per-viewer (0100):
 		// a signed-in caller's override wins, else the instance policy.
 		HideSensitive: s.effectiveHideSensitive(c),
+	}}
+	if filter.DurationMin, filter.DurationMax, err = parseInt32RangeParams(c, "duration_min", "duration_max"); err != nil {
+		return err
 	}
+	if filter.PublishedAfter, filter.PublishedBefore, err = parseTimeRangeParams(c, "published_after", "published_before"); err != nil {
+		return err
+	}
+	filter.TagsAllOf = parseCSVParam(c, "tags_all_of")
+	filter.TagsOneOf = parseCSVParam(c, "tags_one_of")
 	var fes []FieldError
 	if len(filter.Tag) > video.MaxTagLen {
 		fes = append(fes, FieldError{Field: "tag", Message: "must be at most 50 characters"})
+	}
+	// A slice, not a map: the field errors go out in request order, and ranging
+	// a map would shuffle them between identical requests.
+	for _, set := range []struct {
+		field string
+		tags  []string
+	}{{"tags_all_of", filter.TagsAllOf}, {"tags_one_of", filter.TagsOneOf}} {
+		for _, t := range set.tags {
+			if len(t) > video.MaxTagLen {
+				fes = append(fes, FieldError{Field: set.field, Message: "each tag must be at most 50 characters"})
+				break
+			}
+		}
 	}
 	if filter.Category != "" && !video.IsCategory(filter.Category) {
 		fes = append(fes, FieldError{Field: "category", Message: "unknown category"})
@@ -727,22 +783,23 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	// response contract is identical on every path.
 	var views []videoView
 	var total int64
+	var svcPaging searchServicePaging
 	source := "local"
-	if s.useSearchService() {
-		if svcViews, ok := s.searchViaService(c, q, filter, page.Limit, page.Offset, viewerID, authed); ok {
-			views = svcViews
+	if s.useSearchService() && searchServiceCanRank(filter, sortKey) {
+		if svcViews, paging, ok := s.searchViaService(c, q, filter, page.Limit, page.Offset, viewerID, authed); ok {
+			views, svcPaging = svcViews, paging
 			source = "search"
-			// vidra-search ranks and returns ids, never a corpus size, so the
-			// total is core's own count of matching visible videos. It labels the
-			// same corpus under the same per-viewer visibility; only the ORDER
-			// comes from the service.
+			// The total stays core's own count of matching visible videos even
+			// now that the service reports one: the service's number is not
+			// per-viewer (see CountSearchPublic). The service's view of the set
+			// rides along separately, in search_total/total_is_lower_bound.
 			if n, cerr := s.videosvc.CountSearchPublic(c.Request().Context(), q, filter, viewerID, authed); cerr == nil {
 				total = n
 			}
 		}
 	}
 	if source == "local" {
-		items, n, err := s.videosvc.SearchPublic(c.Request().Context(), q, filter, viewerID, authed, page.Limit32(), page.Offset32())
+		items, n, err := s.videosvc.SearchPublic(c.Request().Context(), q, filter, sortKey, viewerID, authed, page.Limit32(), page.Offset32())
 		if err != nil {
 			return err
 		}
@@ -755,11 +812,44 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	s.attachIPFSPinned(c.Request().Context(), views)
 	// Additive: record the search as a behavioural event (async via the outbox).
 	s.emitSearchSubmitted(c, q, len(views), source)
-	resp := videoSearchResponse{Query: q, Videos: views, pageMeta: page.meta(total)}
+	resp := videoSearchResponse{
+		Query: q, Videos: views, pageMeta: page.meta(total),
+		SearchTotal:       svcPaging.Total,
+		TotalIsLowerBound: svcPaging.TotalIsLowerBound,
+		HasMore:           svcPaging.HasMore,
+	}
 	if remoteCh != nil {
 		resp.Remote = <-remoteCh // always delivers within the resolve deadline
 	}
 	return c.JSON(http.StatusOK, resp)
+}
+
+// searchServiceCanRank reports whether vidra-search can HONESTLY serve this
+// request. It is the mechanism that keeps the two backends consistent.
+//
+// The service's contract is a ranked, already-paged id list over a corpus IT
+// filtered — it accepts tag/category/language and nothing else, and core's job
+// is to hydrate the window it returns. That shape supports exactly one
+// ordering, its own relevance, and exactly the filters it knows.
+//
+// So a request that asks for anything else must not go there:
+//
+//   - A non-relevance sort is a total order over the whole matching set. The
+//     service returns the top-N by RELEVANCE; re-sorting that truncated slice by
+//     date or views produces "the newest of the 200 most relevant", which is a
+//     different and wrong answer, and one that would silently change the day the
+//     corpus grew past the over-fetch.
+//   - A duration, publish-window, or tag-set filter is unknown to the service.
+//     Core could re-apply it after hydration, but the service would still have
+//     ranked and paged over the UNFILTERED corpus, so a narrow filter would
+//     return a near-empty page next to a total saying there were hundreds.
+//
+// Both cases therefore run on local SQL, where the sort and every predicate are
+// real — and they do so whether or not the service is healthy, so the answer
+// does not depend on its state. The default relevance search with no new filter
+// keeps its existing routing exactly.
+func searchServiceCanRank(filter video.SearchFilter, sort string) bool {
+	return sort == video.SearchSortRelevance && !filter.Narrows()
 }
 
 // handleListChannelVideos lists a channel's videos. Behind optionalAuth: the

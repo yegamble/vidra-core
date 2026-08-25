@@ -60,11 +60,31 @@ type ScoredID struct {
 }
 
 // SearchResponse is the GET /internal/v1/search body.
+//
+// Total/TotalIsLowerBound/HasMore are the service's paging facts. All three are
+// POINTERS, and that is load-bearing: they were added to vidra-search after this
+// client shipped, so a deployed search service WILL omit them until both sides
+// are released together. A nil field means "the service did not say", which is
+// not the same claim as zero or false — a decoded `HasMore=false` on a service
+// that never sent the field would stop a client paging through a list it had
+// only just started. Every consumer must treat nil as unknown.
+//
+// See the Response doc comment in vidra-search's internal/search for what the
+// three mean when they ARE present: Total counts documents matching the query
+// and the request's filters; TotalIsLowerBound marks it "at least this many"
+// (advanced mode recalls a capped window, so a hit ceiling makes the count a
+// floor); HasMore is exact and is the field to drive "fetch another page".
 type SearchResponse struct {
 	Query        string     `json:"query"`
 	IDs          []ScoredID `json:"ids"`
 	ModelVersion string     `json:"model_version"`
 	Experiment   string     `json:"experiment,omitempty"`
+	// Total is the service's hit count; nil when it was not reported.
+	Total *int64 `json:"total,omitempty"`
+	// TotalIsLowerBound qualifies Total as a floor rather than an exact count.
+	TotalIsLowerBound *bool `json:"total_is_lower_bound,omitempty"`
+	// HasMore reports whether a further page would return results.
+	HasMore *bool `json:"has_more,omitempty"`
 }
 
 // RecsParams are the recommendation-endpoint inputs (home + related share it).

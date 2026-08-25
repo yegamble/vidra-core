@@ -3228,6 +3228,17 @@ paths:
         timeout, exhausted budget) silently yields local-only results. The
         100-char q cap applies to shaped queries too — longer URLs are 400,
         as before.
+
+        Backends. This endpoint has two: the search service, and a local SQL
+        fallback that must return the same result SET. The service accepts only
+        the tag/category/language facets and ranks by its own relevance, so a
+        request using `sort` other than `relevance`, or any of duration_min /
+        duration_max / published_after / published_before / tags_all_of /
+        tags_one_of, is served by local SQL — where the ordering and every
+        predicate are real — regardless of whether the search service is
+        healthy. Re-sorting or post-filtering a relevance-ranked, truncated id
+        list would answer a different question ("the newest of the N most
+        relevant") and would drift as the corpus grew, so it is not done.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -3241,6 +3252,22 @@ paths:
             maxLength: 100
         - $ref: "#/components/parameters/PageLimit"
         - $ref: "#/components/parameters/PageOffset"
+        - name: sort
+          in: query
+          required: false
+          description: >-
+            Result ordering, using the same `-field`/`field` convention as the
+            admin video list. `relevance` (the default) is trigram similarity
+            then recency — the behaviour this endpoint had before it accepted a
+            sort at all, so existing callers are unaffected. `published_at` is
+            an alias of created_at: local videos carry no separate published_at
+            column, and remote rows project COALESCE(published_at, fetched_at)
+            into the same column. An unrecognised value is a 400, never a silent
+            fallback to a different order. Anything other than `relevance` is
+            served by the local SQL backend (see the description above).
+          schema:
+            type: string
+            enum: [relevance, -published_at, published_at, -views, views]
         - name: tag
           in: query
           required: false
@@ -3260,6 +3287,74 @@ paths:
           description: Narrow to a taxonomy language id (from GET /videos/config); unknown values are 422. Excludes remote results.
           schema:
             type: string
+        - name: duration_min
+          in: query
+          required: false
+          description: >-
+            Minimum video length in SECONDS, inclusive. A RANGE rather than the
+            short/medium/long buckets the UI renders on top of it, because
+            ranges compose and buckets do not — "4 to 10 minutes" is
+            duration_min=240&duration_max=600, and a caller wanting something
+            else is not stuck. Videos whose duration is unknown (no probe has
+            run, or a federated actor never advertised one) do NOT match either
+            bound: the filter answers "provably within the range". Applies to
+            local and remote results alike. duration_min greater than
+            duration_max is a 400.
+          schema:
+            type: integer
+            minimum: 0
+        - name: duration_max
+          in: query
+          required: false
+          description: Maximum video length in SECONDS, inclusive. See duration_min.
+          schema:
+            type: integer
+            minimum: 0
+        - name: published_after
+          in: query
+          required: false
+          description: >-
+            Only videos published at or after this RFC3339 timestamp
+            (inclusive). Applies to local and remote results alike.
+            published_after later than published_before is a 400 rather than an
+            empty page that looks like "no data".
+          schema:
+            type: string
+            format: date-time
+        - name: published_before
+          in: query
+          required: false
+          description: Only videos published at or before this RFC3339 timestamp (inclusive). See published_after.
+          schema:
+            type: string
+            format: date-time
+        - name: tags_all_of
+          in: query
+          required: false
+          description: >-
+            Narrow to videos carrying EVERY listed free-form tag. Repeatable
+            and/or comma-separated (`?tags_all_of=a&tags_all_of=b` and
+            `?tags_all_of=a,b` are equivalent). Matched case-insensitively.
+            Excludes remote results, which carry no local tags. The single `tag`
+            parameter still works and is unchanged.
+          schema:
+            type: array
+            items:
+              type: string
+              maxLength: 50
+          style: form
+          explode: true
+        - name: tags_one_of
+          in: query
+          required: false
+          description: Narrow to videos carrying AT LEAST ONE of the listed free-form tags. Same encoding and rules as tags_all_of.
+          schema:
+            type: array
+            items:
+              type: string
+              maxLength: 50
+          style: form
+          explode: true
       responses:
         "200":
           description: A page of matching public videos.
@@ -3268,13 +3363,125 @@ paths:
               schema:
                 $ref: "#/components/schemas/VideoSearchResponse"
         "400":
-          description: Missing or too-long q.
+          description: >-
+            Missing or too-long q, an unrecognised sort, a malformed or negative
+            duration bound, a non-RFC3339 timestamp, or an inverted
+            duration/publish range.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: An unknown category or language filter value.
+          description: An unknown category or language filter value, or an over-long tag in tags_all_of / tags_one_of.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/search/channels:
+    get:
+      operationId: searchChannels
+      summary: Search channels by handle or display name
+      description: >-
+        Fuzzy (trigram) search over channel handles and display names, ranked by
+        similarity then follower count. Optional auth.
+
+        Backed by core's own Postgres, NOT the search service. The search index
+        holds videos; a channel appears there only as denormalised columns on
+        the video rows it published, so a channel that has published nothing is
+        invisible to it — and "find the channel that was just created" is
+        exactly what a channel search is asked. A local trigram query has no
+        such blind spot.
+
+        Visibility. A channel is a public publishing identity and has no privacy
+        flag of its own, so the gate is on its OWNER: the account must be active
+        (a deactivated, suspended, or deleted account takes its channels out of
+        discovery with it) and must not have opted out of discovery
+        (User.unlisted, §16 — direct /channels/{handle} URLs keep serving, which
+        is the point of the flag). The owner's profile_public setting is NOT
+        consulted: it governs whether the ACCOUNT page exists, not the channels.
+
+        An authenticated caller's muted and blocked accounts have their channels
+        hidden, per-viewer, and the reported total is counted under the same
+        predicate — so it never promises pages the caller cannot reach.
+
+        Requires a non-empty q (<= 100 chars); paginated with limit (1–100,
+        default 20) and offset (>= 0).
+      tags: [search]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 100
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of matching channels.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelSearchResponse"
+        "400":
+          description: Missing or too-long q.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/search/accounts:
+    get:
+      operationId: searchAccounts
+      summary: Search public accounts by username or display name
+      description: >-
+        Fuzzy (trigram) search over account usernames and display names, ranked
+        by similarity then recency. Optional auth. Backed by core's own
+        Postgres: the search service does not index accounts at all.
+
+        ONLY PUBLICLY VISIBLE ACCOUNTS ARE RETURNED, under exactly the rule
+        GET /users/{username}/profile already enforces — the account must be
+        active AND have opted its profile in (User.profile_public). Deactivated,
+        suspended, hard-deleted, and private accounts all collapse into that
+        gate and none of them appear here, just as none of them resolve there.
+
+        One predicate applies here that does NOT apply to the profile lookup:
+        accounts that opted out of discovery (User.unlisted) are excluded. That
+        flag means "keep serving my direct URLs, keep me out of discovery" — a
+        profile fetched by username is a direct URL, a search result list is
+        discovery.
+
+        An authenticated caller's muted and blocked accounts are removed on top
+        of that, and the reported total is counted under the identical
+        predicate: a total computed over a wider set would leak the existence of
+        the accounts the list refuses to return.
+
+        Requires a non-empty q (<= 100 chars); paginated with limit (1–100,
+        default 20) and offset (>= 0).
+      tags: [search]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 100
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of matching public accounts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountSearchResponse"
+        "400":
+          description: Missing or too-long q.
           content:
             application/json:
               schema:
@@ -14395,6 +14602,66 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/Channel"
+    ChannelSearchResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [query, channels]
+          description: >-
+            A page of channel search results. The rows are ordinary Channel
+            objects — same shape and keys as every other channel surface,
+            including follower_count and the avatar/banner flags a result card
+            renders — rather than a search-only projection clients would have to
+            model twice. As in every bulk channel listing, atproto_active is
+            omitted (it costs a query per row) and so are the caller-relative
+            is_following / notification_setting.
+          properties:
+            query:
+              type: string
+              example: cooking
+            channels:
+              type: array
+              items:
+                $ref: "#/components/schemas/Channel"
+    AccountSearchResult:
+      type: object
+      description: >-
+        A public account as a search result card. Its fields are a strict SUBSET
+        of PublicUserProfile, with the same keys and types, so a client can
+        render a card with the profile type it already has. The two omitted
+        parts are the ones that cannot be answered per row without a query each:
+        the account's channel list, and the Bluesky handle behind its own
+        opt-in.
+      required: [id, username, display_name, bio]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+        bio:
+          type: string
+        has_avatar:
+          type: boolean
+          description: >-
+            Whether the account has an avatar, served at
+            GET /users/{username}/avatar. Present only when the profile-image
+            service is wired; omitted otherwise, exactly as on PublicUserProfile.
+    AccountSearchResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [query, accounts]
+          properties:
+            query:
+              type: string
+              example: alice
+            accounts:
+              type: array
+              items:
+                $ref: "#/components/schemas/AccountSearchResult"
     ChannelMember:
       type: object
       description: A channel collaborator (migration 0097).
@@ -16021,6 +16288,41 @@ components:
                 local-only results.
               items:
                 $ref: "#/components/schemas/RemoteSearchResult"
+            search_total:
+              type: integer
+              format: int64
+              minimum: 0
+              description: >-
+                The search service's own hit count — the size of the set its
+                ranker worked over. NOT the same number as `total`: `total`
+                stays core's per-viewer count of matches this caller could
+                actually be shown (the index holds static eligibility and knows
+                nothing about this viewer's mutes, blocks, or unlisted owners),
+                and it is the number to render as "N results".
+
+                ABSENT MEANS UNKNOWN, never zero. It is omitted whenever the
+                local SQL backend served the request, and omitted by a deployed
+                search service released before it reported the field.
+            total_is_lower_bound:
+              type: boolean
+              description: >-
+                True when the search service stopped looking rather than
+                reaching the end: its ranker recalls a capped window, so on a
+                large corpus search_total is a FLOOR and paging will run out
+                before `total` is reached. Render the count as "top N" rather
+                than "N" when this is true. Omitted — meaning unknown, not false
+                — on the local SQL path and from a search service that predates
+                the field.
+            has_more:
+              type: boolean
+              description: >-
+                Whether a further page from the search service would return at
+                least one result. Exact whenever present, and computed
+                independently of the totals, so this is the field to drive
+                "fetch another page". Omitted — meaning unknown, not false — on
+                the local SQL path and from a search service that predates the
+                field; a client seeing it absent should fall back to comparing
+                offset + page length against `total`.
     RecommendationsResponse:
       type: object
       required: [items, personalized, source]

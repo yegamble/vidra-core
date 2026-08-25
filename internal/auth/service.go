@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -51,6 +52,10 @@ type Repository interface {
 	GetUserByEmail(ctx context.Context, lowerEmail string) (sqlcgen.User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
 	GetPublicUserProfileByUsername(ctx context.Context, lowerUsername string) (sqlcgen.GetPublicUserProfileByUsernameRow, error)
+	// Public account search (GET /api/v1/search/accounts) — the list form of
+	// GetPublicUserProfileByUsername's visibility rule.
+	SearchPublicAccounts(ctx context.Context, arg sqlcgen.SearchPublicAccountsParams) ([]sqlcgen.SearchPublicAccountsRow, error)
+	CountSearchPublicAccounts(ctx context.Context, arg sqlcgen.CountSearchPublicAccountsParams) (int64, error)
 	CountUsers(ctx context.Context) (int64, error)
 	UpdateUserProfile(ctx context.Context, arg sqlcgen.UpdateUserProfileParams) (sqlcgen.User, error)
 	DeactivateUser(ctx context.Context, id uuid.UUID) error
@@ -467,6 +472,42 @@ func (s *Service) PublicProfileByUsername(ctx context.Context, username string) 
 		return sqlcgen.GetPublicUserProfileByUsernameRow{}, ErrAccountNotFound
 	}
 	return profile, nil
+}
+
+// SearchPublicAccounts returns one page of PUBLICLY VISIBLE accounts whose
+// username or display name contains query, plus the total under the same
+// predicate.
+//
+// "Publicly visible" is not re-decided here. It is the rule
+// GetPublicUserProfileByUsername already enforces — active AND profile_public —
+// expressed once in SQL so the list and the profile lookup cannot disagree,
+// plus the account-level discovery opt-out (unlisted) that a search result
+// list, unlike a direct profile URL, has to honour. See SearchPublicAccounts in
+// queries/users.sql for the full reasoning; the important property is that an
+// account absent from GET /users/{username}/profile is absent from here too.
+//
+// viewerAuthed=false means an anonymous caller, for whom the per-viewer
+// mute/block predicates are no-ops. The caller validates/clamps query, limit,
+// and offset.
+func (s *Service) SearchPublicAccounts(ctx context.Context, query string, viewerID uuid.UUID, viewerAuthed bool, limit, offset int32) ([]sqlcgen.SearchPublicAccountsRow, int64, error) {
+	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
+	rows, err := s.repo.SearchPublicAccounts(ctx, sqlcgen.SearchPublicAccountsParams{
+		Query:        strings.TrimSpace(query),
+		ViewerID:     viewer,
+		ResultLimit:  limit,
+		ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.CountSearchPublicAccounts(ctx, sqlcgen.CountSearchPublicAccountsParams{
+		Query:    strings.TrimSpace(query),
+		ViewerID: viewer,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
 }
 
 // ProfileInput is a partial account-profile update: nil fields are unchanged.

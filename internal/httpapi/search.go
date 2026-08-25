@@ -552,12 +552,29 @@ func (s *Server) handleDeleteSearchHistoryQuery(c echo.Context) error {
 
 // --- handleSearchVideos service routing (search-service W4) ---
 
+// searchServicePaging is vidra-search's own view of the result set, carried out
+// of searchViaService so the handler can pass it through. Every field is a
+// pointer and the zero value is "nothing known", which is exactly what the
+// local SQL path and a search service too old to report them both mean.
+type searchServicePaging struct {
+	Total             *int64
+	TotalIsLowerBound *bool
+	HasMore           *bool
+}
+
 // searchViaService routes a public video search through vidra-search when it is
 // wired: it computes the effective flags + mode, over-fetches a ranked id list,
 // hydrates under the canonical predicate, and slices the [offset,offset+limit)
 // window. ok is false on ANY error (the caller falls back to local SQL). The
-// public response contract is unchanged — this is a ranking swap only.
-func (s *Server) searchViaService(c echo.Context, q string, filter video.FeedFilter, limit, offset int, viewerID uuid.UUID, authed bool) ([]videoView, bool) {
+// public response contract is additive — this is still a ranking swap, now with
+// the service's paging facts passed through when it reports them.
+//
+// The caller has already established (searchServiceCanRank) that this request is
+// one the service can answer: relevance order, and only the tag/category/language
+// facets it accepts. Nothing here re-checks that, and nothing here post-filters —
+// a filter the service did not apply would produce a page that disagreed with the
+// total, so such requests never reach this function.
+func (s *Server) searchViaService(c echo.Context, q string, filter video.SearchFilter, limit, offset int, viewerID uuid.UUID, authed bool) ([]videoView, searchServicePaging, bool) {
 	ctx := c.Request().Context()
 	userID, prefs, _ := s.searchUserPrefs(c)
 	personalized := s.searchAdvanced() && s.instancePersonalizedSearch() && authed && prefs.Personalized
@@ -579,7 +596,14 @@ func (s *Server) searchViaService(c echo.Context, q string, filter video.FeedFil
 		Mode:          s.searchMode(),
 	})
 	if err != nil {
-		return nil, false
+		return nil, searchServicePaging{}, false
+	}
+	// Passed through as received: a field the service omitted stays nil, so
+	// "unknown" survives the hop instead of collapsing into 0/false.
+	paging := searchServicePaging{
+		Total:             out.Total,
+		TotalIsLowerBound: out.TotalIsLowerBound,
+		HasMore:           out.HasMore,
 	}
 	ids := make([]uuid.UUID, 0, len(out.IDs))
 	for _, x := range out.IDs {
@@ -587,10 +611,10 @@ func (s *Server) searchViaService(c echo.Context, q string, filter video.FeedFil
 	}
 	feed, err := s.videosvc.HydrateByIDs(ctx, ids, viewerID, authed, filter.HideSensitive)
 	if err != nil {
-		return nil, false
+		return nil, searchServicePaging{}, false
 	}
 	if offset >= len(feed) {
-		return []videoView{}, true
+		return []videoView{}, paging, true
 	}
 	end := offset + limit
 	if end > len(feed) {
@@ -600,7 +624,7 @@ func (s *Server) searchViaService(c echo.Context, q string, filter video.FeedFil
 	for _, it := range feed[offset:end] {
 		views = append(views, feedItemView(it))
 	}
-	return views, true
+	return views, paging, true
 }
 
 // searchConfigSnapshot builds the effective search-settings subset pushed to the

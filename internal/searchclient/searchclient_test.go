@@ -82,6 +82,59 @@ func TestSearchReturnsIDs(t *testing.T) {
 	}
 }
 
+// TestSearchDecodesPagingFields proves the three paging facts survive the hop
+// with their values intact. The JSON is written by hand, not re-encoded from
+// SearchResponse, so the test pins the wire NAMES vidra-search actually emits
+// rather than agreeing with itself.
+func TestSearchDecodesPagingFields(t *testing.T) {
+	id := uuid.New()
+	body := `{"query":"q","ids":[{"video_id":"` + id.String() + `","score":1}],` +
+		`"model_version":"simple-v1","total":2000,"total_is_lower_bound":true,"has_more":false}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	out, err := New(srv.URL, testSecret).Search(context.Background(), SearchParams{Query: "q", Limit: 20})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if out.Total == nil || *out.Total != 2000 {
+		t.Errorf("total = %v, want 2000", out.Total)
+	}
+	if out.TotalIsLowerBound == nil || !*out.TotalIsLowerBound {
+		t.Errorf("total_is_lower_bound = %v, want true", out.TotalIsLowerBound)
+	}
+	// has_more:false is a REAL false here, distinguishable from absent below.
+	if out.HasMore == nil || *out.HasMore {
+		t.Errorf("has_more = %v, want an explicit false", out.HasMore)
+	}
+}
+
+// TestSearchPagingFieldsAbsentDecodeAsUnknown is the compatibility case that
+// decides whether this can ship before vidra-search does: the DEPLOYED service
+// omits all three fields. They must decode to nil — "the service did not say" —
+// and never to 0/false, which a caller would act on. A non-pointer HasMore
+// would silently turn a missing field into "stop paging".
+func TestSearchPagingFieldsAbsentDecodeAsUnknown(t *testing.T) {
+	id := uuid.New()
+	body := `{"query":"q","ids":[{"video_id":"` + id.String() + `","score":1}],"model_version":"simple-v1"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	out, err := New(srv.URL, testSecret).Search(context.Background(), SearchParams{Query: "q", Limit: 20})
+	if err != nil {
+		t.Fatalf("search against a service that predates the fields: %v", err)
+	}
+	if len(out.IDs) != 1 || out.IDs[0].VideoID != id {
+		t.Fatalf("ids = %+v; the response must still decode normally", out.IDs)
+	}
+	if out.Total != nil || out.TotalIsLowerBound != nil || out.HasMore != nil {
+		t.Errorf("absent fields decoded as total=%v lower_bound=%v has_more=%v; all must be nil",
+			out.Total, out.TotalIsLowerBound, out.HasMore)
+	}
+}
+
 func TestServerErrorReturnsError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

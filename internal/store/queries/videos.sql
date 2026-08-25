@@ -482,6 +482,23 @@ FROM (
 -- Ingested remote videos are UNIONed in by title match (remote-content §4),
 -- flagged remote with origin domain + watch/stream URLs; blocked instances
 -- hide them for everyone and a signed-in viewer's instance mutes hide them too.
+--
+-- Sorting follows ListAdminVideos: sqlc cannot parameterise ORDER BY, so each
+-- accepted ordering is a CASE branch over the bound `sort` argument and a branch
+-- that does not match evaluates to NULL for every row, which is a no-op.
+-- 'relevance' is the default and reproduces the previous fixed
+-- `search_rank DESC, created_at DESC, id DESC` exactly. As in the admin list,
+-- 'published_at' is created_at: local videos carry no separate published_at
+-- column and the remote arm already projects COALESCE(published_at, fetched_at)
+-- INTO created_at, so they are the same column by construction.
+--
+-- The duration and publish-window filters are applied at the OUTER level, over
+-- the union, so they narrow local and remote rows by the same predicate. A row
+-- whose duration is unknown (NULL — no probe has run, or a remote actor that
+-- never advertised one) fails a duration bound rather than passing it: the
+-- filter answers "provably within the range", and an unknown length cannot be
+-- proven to be. The tag-set filters are local-only, like the single ?tag: remote
+-- rows carry no local taxonomy, so any active tag set excludes them outright.
 SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.privacy, feed.state, feed.created_at, feed.updated_at, feed.views,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
@@ -536,6 +553,23 @@ FROM (
       ))
       AND (sqlc.narg('category')::text IS NULL OR v.category = sqlc.narg('category'))
       AND (sqlc.narg('language')::text IS NULL OR v.language = sqlc.narg('language'))
+      -- Tag SETS (NULL = off). one_of is a disjunction; all_of demands every
+      -- listed tag, counted DISTINCT so a caller repeating a tag cannot make the
+      -- comparison unsatisfiable. Both arrive lowercased, like ?tag.
+      AND (sqlc.narg('tags_one_of')::text[] IS NULL OR EXISTS (
+          SELECT 1 FROM video_tags t
+          WHERE t.video_id = v.id AND t.tag = ANY (sqlc.narg('tags_one_of')::text[])
+      ))
+      AND (sqlc.narg('tags_all_of')::text[] IS NULL OR (
+          SELECT count(DISTINCT t.tag) FROM video_tags t
+          WHERE t.video_id = v.id AND t.tag = ANY (sqlc.narg('tags_all_of')::text[])
+      ) = (
+          -- The DISTINCT count of the REQUESTED tags, not cardinality(): a
+          -- caller sending ?tags_all_of=go,go would otherwise be asking for two
+          -- matches of one tag, which the left side (also DISTINCT) can never
+          -- reach, and the filter would silently match nothing.
+          SELECT count(DISTINCT want) FROM unnest(sqlc.narg('tags_all_of')::text[]) AS want
+      ))
       -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
@@ -562,10 +596,14 @@ FROM (
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     -- Remote videos carry no local taxonomy/tags, so any active facet filter
-    -- excludes them (matching the main feed's behavior).
+    -- excludes them (matching the main feed's behavior). The tag SETS are part
+    -- of that rule for the same reason; duration and the publish window are not,
+    -- because a remote row does carry both and is filtered on them below.
     WHERE sqlc.narg('tag')::text IS NULL
       AND sqlc.narg('category')::text IS NULL
       AND sqlc.narg('language')::text IS NULL
+      AND sqlc.narg('tags_one_of')::text[] IS NULL
+      AND sqlc.narg('tags_all_of')::text[] IS NULL
       AND rv.title ILIKE '%' || sqlc.arg('query') || '%'
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
@@ -574,7 +612,17 @@ FROM (
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
       )
 ) AS feed
-ORDER BY feed.search_rank DESC, feed.created_at DESC, feed.id DESC
+WHERE (sqlc.narg('duration_min')::int IS NULL OR feed.duration_seconds >= sqlc.narg('duration_min')::int)
+  AND (sqlc.narg('duration_max')::int IS NULL OR feed.duration_seconds <= sqlc.narg('duration_max')::int)
+  AND (sqlc.narg('published_after')::timestamptz IS NULL OR feed.created_at >= sqlc.narg('published_after')::timestamptz)
+  AND (sqlc.narg('published_before')::timestamptz IS NULL OR feed.created_at <= sqlc.narg('published_before')::timestamptz)
+ORDER BY
+    CASE WHEN sqlc.arg('sort')::text = 'relevance' THEN feed.search_rank END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'published_at' THEN feed.created_at END ASC,
+    CASE WHEN sqlc.arg('sort')::text = '-published_at' THEN feed.created_at END DESC,
+    CASE WHEN sqlc.arg('sort')::text = 'views' THEN feed.views END ASC,
+    CASE WHEN sqlc.arg('sort')::text = '-views' THEN feed.views END DESC,
+    feed.created_at DESC, feed.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: CountSearchPublicVideos :one
@@ -631,6 +679,23 @@ FROM (
       ))
       AND (sqlc.narg('category')::text IS NULL OR v.category = sqlc.narg('category'))
       AND (sqlc.narg('language')::text IS NULL OR v.language = sqlc.narg('language'))
+      -- Tag SETS (NULL = off). one_of is a disjunction; all_of demands every
+      -- listed tag, counted DISTINCT so a caller repeating a tag cannot make the
+      -- comparison unsatisfiable. Both arrive lowercased, like ?tag.
+      AND (sqlc.narg('tags_one_of')::text[] IS NULL OR EXISTS (
+          SELECT 1 FROM video_tags t
+          WHERE t.video_id = v.id AND t.tag = ANY (sqlc.narg('tags_one_of')::text[])
+      ))
+      AND (sqlc.narg('tags_all_of')::text[] IS NULL OR (
+          SELECT count(DISTINCT t.tag) FROM video_tags t
+          WHERE t.video_id = v.id AND t.tag = ANY (sqlc.narg('tags_all_of')::text[])
+      ) = (
+          -- The DISTINCT count of the REQUESTED tags, not cardinality(): a
+          -- caller sending ?tags_all_of=go,go would otherwise be asking for two
+          -- matches of one tag, which the left side (also DISTINCT) can never
+          -- reach, and the filter would silently match nothing.
+          SELECT count(DISTINCT want) FROM unnest(sqlc.narg('tags_all_of')::text[]) AS want
+      ))
       -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
@@ -657,10 +722,14 @@ FROM (
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     -- Remote videos carry no local taxonomy/tags, so any active facet filter
-    -- excludes them (matching the main feed's behavior).
+    -- excludes them (matching the main feed's behavior). The tag SETS are part
+    -- of that rule for the same reason; duration and the publish window are not,
+    -- because a remote row does carry both and is filtered on them below.
     WHERE sqlc.narg('tag')::text IS NULL
       AND sqlc.narg('category')::text IS NULL
       AND sqlc.narg('language')::text IS NULL
+      AND sqlc.narg('tags_one_of')::text[] IS NULL
+      AND sqlc.narg('tags_all_of')::text[] IS NULL
       AND rv.title ILIKE '%' || sqlc.arg('query') || '%'
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
@@ -668,7 +737,11 @@ FROM (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
       )
-) AS feed;
+) AS feed
+WHERE (sqlc.narg('duration_min')::int IS NULL OR feed.duration_seconds >= sqlc.narg('duration_min')::int)
+  AND (sqlc.narg('duration_max')::int IS NULL OR feed.duration_seconds <= sqlc.narg('duration_max')::int)
+  AND (sqlc.narg('published_after')::timestamptz IS NULL OR feed.created_at >= sqlc.narg('published_after')::timestamptz)
+  AND (sqlc.narg('published_before')::timestamptz IS NULL OR feed.created_at <= sqlc.narg('published_before')::timestamptz);
 
 -- name: ListPublicVideosByIDs :many
 -- Hydrate a set of ranked video ids to discovery cards under the FULL canonical
