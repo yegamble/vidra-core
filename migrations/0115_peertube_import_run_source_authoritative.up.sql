@@ -1,0 +1,23 @@
+-- 0115: record, on the import run itself, WHICH SIDE WINS when the source and
+-- this instance disagree.
+--
+-- The run row is the whole of a launched run's memory. An admin launches it
+-- through the API and a WORKER — possibly in another process, on another
+-- instance — claims it later and builds the importer from it, so anything the
+-- browser said that the run needs must survive that hop. conflict_policy already
+-- does. This is the second axis, and it is orthogonal to that one:
+-- conflict_policy resolves NATURAL-KEY collisions (username, handle, email) at
+-- insert time and never reaches an ON CONFLICT, the ledger gate, or the taxonomy
+-- decision; source_authoritative decides whether a re-run may UPDATE the rows
+-- the import already owns when the source has moved (or when this instance has).
+-- Neither can be expressed in terms of the other, which is why this is a new
+-- column and not a fifth conflict_policy value — that column's CHECK (0067) does
+-- not admit one, and widening it would give 'skip' two meanings.
+--
+-- FALSE is the default and it is the default everywhere else too: an import that
+-- overwrites is an import that can quietly undo somebody's work, so gap-filling
+-- stays what an operator gets unless they ask for the other thing.
+--
+-- Additive: one column with a default, on a table with at most one active row.
+ALTER TABLE peertube_import_runs
+    ADD COLUMN source_authoritative BOOLEAN NOT NULL DEFAULT FALSE;

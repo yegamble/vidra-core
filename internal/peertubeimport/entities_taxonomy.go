@@ -81,16 +81,28 @@ type taxonomyTarget struct {
 // undo an operator's edit every night. The ledger's memory of the exact value
 // the import applied is what makes the third answer possible: the import updates
 // a value it recognises as its own, and touches nothing else.
-func decideTaxonomy(desired string, t taxonomyTarget) taxonomyAction {
+//
+// sourceAuthoritative is the operator saying which side wins, and it collapses
+// exactly the two outcomes that refuse to write — a taxonomy configured here,
+// and one the import wrote that somebody cleared — into the write. Nothing else
+// changes, and in particular "what is stored already says what the source says"
+// still writes NOTHING, so a run against an unchanged source costs the same as
+// it always did.
+func decideTaxonomy(desired string, t taxonomyTarget, sourceAuthoritative bool) taxonomyAction {
 	switch {
 	case !t.hasOverride && t.applied == "":
 		return taxonomyWrite // first import; the instance is still on the built-ins
 	case !t.hasOverride:
+		if sourceAuthoritative {
+			return taxonomyWrite
+		}
 		return taxonomyCleared // the import wrote one and somebody removed it
 	case t.current == desired:
 		return taxonomyUpToDate
 	case t.applied != "" && t.current == t.applied:
 		return taxonomyWrite // the import's own earlier write; the source has moved
+	case sourceAuthoritative:
+		return taxonomyWrite
 	default:
 		return taxonomyOperatorOwned
 	}
@@ -144,7 +156,7 @@ func (im *Importer) categoryTaxonomyPlan(ctx context.Context) (*taxonomyPlan, er
 	if err != nil {
 		return nil, err
 	}
-	p.action = decideTaxonomy(p.value, taxonomyTarget{current: current, hasOverride: hasOverride, applied: applied})
+	p.action = decideTaxonomy(p.value, taxonomyTarget{current: current, hasOverride: hasOverride, applied: applied}, im.sourceAuthoritative)
 	return p, nil
 }
 

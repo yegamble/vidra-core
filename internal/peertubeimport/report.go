@@ -46,10 +46,18 @@ var orderedKinds = []string{
 }
 
 // Counts tallies one entity kind's outcome. Planned is what a dry-run found;
-// Imported/Skipped/Failed/Unsupported are the run's per-row results.
+// Imported/Updated/Skipped/Failed/Unsupported are the run's per-row results.
 type Counts struct {
-	Planned     int `json:"planned"`
-	Imported    int `json:"imported"`
+	Planned  int `json:"planned"`
+	Imported int `json:"imported"`
+	// Updated counts rows that ALREADY EXISTED and were changed to match the
+	// source — only ever non-zero under --source-authoritative, and the number an
+	// operator running that mode actually needs: "imported" answers what came
+	// across, this answers what this run altered on an instance that was already
+	// live. It is deliberately a separate counter and not folded into Imported,
+	// because "0 imported, 4,113 updated" and "4,113 imported" describe very
+	// different runs.
+	Updated     int `json:"updated"`
 	Skipped     int `json:"skipped"`
 	Failed      int `json:"failed"`
 	Unsupported int `json:"unsupported"`
@@ -60,10 +68,14 @@ type Counts struct {
 // It carries NO secrets — only counts, the detected version, and safe conflict
 // notes.
 type Report struct {
-	SourceVersion  int                `json:"source_version"`
-	DryRun         bool               `json:"dry_run"`
-	ConflictPolicy string             `json:"conflict_policy"`
-	Entities       map[string]*Counts `json:"entities"`
+	SourceVersion  int    `json:"source_version"`
+	DryRun         bool   `json:"dry_run"`
+	ConflictPolicy string `json:"conflict_policy"`
+	// SourceAuthoritative records which side won on this run. It is on the report
+	// rather than only on the run row because the report is what gets read months
+	// later when somebody asks why a title changed.
+	SourceAuthoritative bool               `json:"source_authoritative"`
+	Entities            map[string]*Counts `json:"entities"`
 	// Deferred lists entity families the importer intentionally does not migrate
 	// in this version (e.g. HLS renditions, moderation state), so the operator
 	// knows what to reconcile by hand.
@@ -75,11 +87,12 @@ type Report struct {
 
 // NewReport builds an empty report with every entity kind initialised (so the
 // JSON shape is stable for the frontend contract).
-func NewReport(dryRun bool, policy ConflictPolicy) *Report {
+func NewReport(dryRun bool, policy ConflictPolicy, sourceAuthoritative bool) *Report {
 	r := &Report{
-		DryRun:         dryRun,
-		ConflictPolicy: policy.String(),
-		Entities:       make(map[string]*Counts, len(orderedKinds)),
+		DryRun:              dryRun,
+		ConflictPolicy:      policy.String(),
+		SourceAuthoritative: sourceAuthoritative,
+		Entities:            make(map[string]*Counts, len(orderedKinds)),
 	}
 	for _, k := range orderedKinds {
 		r.Entities[k] = &Counts{}
@@ -103,6 +116,7 @@ func (r *Report) totals() Counts {
 	for _, c := range r.Entities {
 		t.Planned += c.Planned
 		t.Imported += c.Imported
+		t.Updated += c.Updated
 		t.Skipped += c.Skipped
 		t.Failed += c.Failed
 		t.Unsupported += c.Unsupported
@@ -118,8 +132,11 @@ func (r *Report) Summary() string {
 	if r.DryRun {
 		kind = "dry-run"
 	}
-	return fmt.Sprintf("%s v%d policy=%s planned=%d imported=%d skipped=%d failed=%d",
-		kind, r.SourceVersion, r.ConflictPolicy, t.Planned, t.Imported, t.Skipped, t.Failed)
+	if r.SourceAuthoritative {
+		kind += " source-authoritative"
+	}
+	return fmt.Sprintf("%s v%d policy=%s planned=%d imported=%d updated=%d skipped=%d failed=%d",
+		kind, r.SourceVersion, r.ConflictPolicy, t.Planned, t.Imported, t.Updated, t.Skipped, t.Failed)
 }
 
 // addConflict records a safe conflict note (capped to keep the JSON bounded).

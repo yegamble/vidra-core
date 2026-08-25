@@ -50,6 +50,13 @@ import (
 // The write is a DELTA, never an assignment: see ImportApplyVideoViewDelta and
 // migration 0112 for why, and TestImportViewCountsAreDeltaNotDouble for the
 // proof that a second run adds nothing.
+//
+// That is also why this family is EXCLUDED from --source-authoritative and takes
+// no branch for it. Vidra's counter holds the source's lifetime total PLUS every
+// view this instance has served since, with no stored decomposition — so
+// "the source wins" cannot be expressed as an assignment without destroying
+// Vidra-native data. The delta already tracks the source exactly; there is
+// nothing for the mode to improve and everything for it to break.
 func (im *Importer) importViewCounts(ctx context.Context, r *Report) error {
 	videos, err := im.src.Videos(ctx)
 	if err != nil {
@@ -140,18 +147,40 @@ func (im *Importer) importChapters(ctx context.Context, r *Report) error {
 	if !present {
 		return nil
 	}
-	for _, ch := range chapters {
-		sid := strconv.FormatInt(ch.ID, 10)
-		if _, _, done, err := im.alreadyProcessed(ctx, KindChapter, sid); err != nil {
-			return err
-		} else if done {
-			c.Skipped++
-			continue
+	// Chapters are walked per VIDEO rather than per chapter, because a chapter set
+	// is the only unit a resync can compare or replace: video_chapters is keyed
+	// (video_id, start_seconds), so a mark somebody MOVED is a different row, and
+	// an upsert would leave the old one standing. The grouping is a walk — the
+	// source read is already ordered by (videoId, timecode) — and in the default
+	// gap-filling mode the per-chapter body below is exactly what it always was.
+	for _, g := range groupChapters(chapters) {
+		if im.resync != nil {
+			handled, err := im.resyncVideoChapters(ctx, g, c)
+			if err != nil {
+				for _, ch := range g.chapters {
+					im.markFailed(ctx, KindChapter, strconv.FormatInt(ch.ID, 10), safeErr(err))
+				}
+				c.Failed += len(g.chapters)
+				im.logger.WarnContext(ctx, "peertube import: chapter resync failed", "source_video_id", g.videoID, "error", err)
+				continue
+			}
+			if handled {
+				continue
+			}
 		}
-		if err := im.importOneChapter(ctx, ch, sid, c); err != nil {
-			im.markFailed(ctx, KindChapter, sid, safeErr(err))
-			c.Failed++
-			im.logger.WarnContext(ctx, "peertube import: chapter failed", "source_id", sid, "error", err)
+		for _, ch := range g.chapters {
+			sid := strconv.FormatInt(ch.ID, 10)
+			if _, _, done, err := im.alreadyProcessed(ctx, KindChapter, sid); err != nil {
+				return err
+			} else if done {
+				c.Skipped++
+				continue
+			}
+			if err := im.importOneChapter(ctx, ch, sid, c); err != nil {
+				im.markFailed(ctx, KindChapter, sid, safeErr(err))
+				c.Failed++
+				im.logger.WarnContext(ctx, "peertube import: chapter failed", "source_id", sid, "error", err)
+			}
 		}
 	}
 	return nil
@@ -209,6 +238,18 @@ func (im *Importer) importRatings(ctx context.Context, r *Report) error {
 	}
 	for _, rate := range ratings {
 		sid := strconv.FormatInt(rate.ID, 10)
+		if im.resync != nil {
+			handled, err := im.resyncOneRating(ctx, rate, sid, r, c)
+			if err != nil {
+				im.markFailed(ctx, KindRating, sid, safeErr(err))
+				c.Failed++
+				im.logger.WarnContext(ctx, "peertube import: rating resync failed", "source_id", sid, "error", err)
+				continue
+			}
+			if handled {
+				continue
+			}
+		}
 		if _, _, done, err := im.alreadyProcessed(ctx, KindRating, sid); err != nil {
 			return err
 		} else if done {
@@ -219,6 +260,14 @@ func (im *Importer) importRatings(ctx context.Context, r *Report) error {
 			im.markFailed(ctx, KindRating, sid, safeErr(err))
 			c.Failed++
 			im.logger.WarnContext(ctx, "peertube import: rating failed", "source_id", sid, "error", err)
+		}
+	}
+	// The second shape of an unrate: PeerTube deleted the row rather than leaving
+	// it behind as 'none'. Only ratings the ledger's provenance says the import
+	// wrote — and that still hold exactly what it wrote — are removed.
+	if im.resync != nil {
+		if err := im.resyncRemovedRatings(ctx, ratings, r, c); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -258,7 +307,21 @@ func (im *Importer) importOneRating(ctx context.Context, rate SourceRating, sid 
 		}); err != nil {
 			return err
 		}
-		return recordLedger(ctx, q, KindRating, sid, videoID, "done", "")
+		// The applied_value records WHICH PAIR this row was carried for and what
+		// value was written. The gap-filling import has no use for it — but an
+		// UNRATE is the absence of a source row, so a later source-authoritative
+		// run has nothing else to identify the rating it would be removing. Writing
+		// it here means an instance migrated by a default run can still have
+		// unsubscribes and unrates carried later, instead of the memory only
+		// starting on the first resync.
+		return q.UpsertImportLedgerApplied(ctx, sqlcgen.UpsertImportLedgerAppliedParams{
+			EntityKind:   KindRating,
+			SourceID:     sid,
+			VidraID:      optUUID(videoID),
+			Status:       "done",
+			Note:         "",
+			AppliedValue: ratingProvenance(userID, videoID, value),
+		})
 	}); err != nil {
 		return err
 	}
@@ -278,6 +341,16 @@ func (im *Importer) importOneRating(ctx context.Context, rate SourceRating, sid 
 // writes its own rendition rows against its own key prefixes; advertising the
 // source's ladder for a tree Vidra is about to replace would be a claim about
 // files that are not there.
+//
+// This family is EXCLUDED from --source-authoritative, deliberately. A rendition
+// row describes files, and the ledger cannot prove the import wrote any given
+// one of them: ImportInsertVideoRendition is ON CONFLICT DO NOTHING, so a 'done'
+// ledger row means "this rung was considered", not "this row is mine". Under a
+// mode that overwrites, that ambiguity would let a source key_prefix land on the
+// rendition a Vidra re-transcode wrote — and the per-rung download that
+// transcode DOES have would then point at a source tree with no such asset in
+// it. A ladder changes when the media changes, and this mode does not move
+// media.
 func (im *Importer) importRenditions(ctx context.Context, r *Report) error {
 	rungs, err := im.src.Renditions(ctx)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -16,7 +17,7 @@ import (
 // on. *peertubeimport.Service satisfies it; faked in tests.
 type peerTubeImportProvider interface {
 	Configured() bool
-	CreateRun(ctx context.Context, mode string, policy peertubeimport.ConflictPolicy, adminID uuid.UUID) (peertubeimport.Run, error)
+	CreateRun(ctx context.Context, mode string, policy peertubeimport.ConflictPolicy, sourceAuthoritative bool, adminID uuid.UUID) (peertubeimport.Run, error)
 	GetRun(ctx context.Context, id uuid.UUID) (peertubeimport.Run, error)
 	ListRuns(ctx context.Context, limit, offset int32) ([]peertubeimport.Run, error)
 }
@@ -28,6 +29,12 @@ type peerTubeImportProvider interface {
 type peertubeImportLaunchRequest struct {
 	Mode           string `json:"mode"`
 	ConflictPolicy string `json:"conflict_policy"`
+	// SourceAuthoritative is a SECOND, orthogonal axis, not another
+	// conflict_policy value: the policy resolves natural-key collisions at insert
+	// time, this says whether a re-run may update rows the import already owns
+	// when the two sides have diverged. Absent = false = gap-fill, which is what
+	// every import has always done.
+	SourceAuthoritative bool `json:"source_authoritative"`
 }
 
 // peertubeImportListResponse wraps the recent-runs list for the admin UI.
@@ -52,7 +59,7 @@ func (s *Server) handleLaunchPeerTubeImport(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid conflict_policy (want skip|rename|merge|fail)")
 	}
-	run, err := s.peertubeimportsvc.CreateRun(c.Request().Context(), in.Mode, policy, userID)
+	run, err := s.peertubeimportsvc.CreateRun(c.Request().Context(), in.Mode, policy, in.SourceAuthoritative, userID)
 	switch {
 	case errors.Is(err, peertubeimport.ErrNotConfigured):
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "PeerTube import is not configured on this instance")
@@ -64,7 +71,8 @@ func (s *Server) handleLaunchPeerTubeImport(c echo.Context) error {
 		return err
 	}
 	s.audit(c, observability.ActionPeerTubeImportStart, observability.ResultSuccess, userID.String(),
-		"mode="+in.Mode+" policy="+policy.String())
+		"mode="+in.Mode+" policy="+policy.String()+
+			" source_authoritative="+strconv.FormatBool(in.SourceAuthoritative))
 	return c.JSON(http.StatusAccepted, run)
 }
 

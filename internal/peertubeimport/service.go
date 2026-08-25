@@ -26,9 +26,9 @@ type Service struct {
 	defaultPolicy ConflictPolicy
 	logger        *slog.Logger
 	// buildImporter opens the configured source + storages and returns a ready
-	// Importer for a given conflict policy, plus a cleanup func. Nil = not
-	// configured (the admin API answers 503).
-	buildImporter func(ctx context.Context, policy ConflictPolicy) (*Importer, func(), error)
+	// Importer for a given conflict policy and resync mode, plus a cleanup func.
+	// Nil = not configured (the admin API answers 503).
+	buildImporter func(ctx context.Context, policy ConflictPolicy, sourceAuthoritative bool) (*Importer, func(), error)
 	// recordAudit persists/emits a security-audit event. Nil = slog-only via the
 	// service logger.
 	recordAudit func(ctx context.Context, ev observability.AuditEvent)
@@ -66,7 +66,7 @@ type Option func(*Service)
 
 // WithImporterFactory wires the source-connection factory (built from server
 // config in cmd/api). Only when set is the import considered configured.
-func WithImporterFactory(f func(ctx context.Context, policy ConflictPolicy) (*Importer, func(), error)) Option {
+func WithImporterFactory(f func(ctx context.Context, policy ConflictPolicy, sourceAuthoritative bool) (*Importer, func(), error)) Option {
 	return func(s *Service) { s.buildImporter = f }
 }
 
@@ -111,23 +111,28 @@ func (s *Service) Configured() bool { return s.buildImporter != nil }
 
 // Run is the status view of one import run.
 type Run struct {
-	ID             uuid.UUID  `json:"id"`
-	Mode           string     `json:"mode"`
-	State          string     `json:"state"`
-	ConflictPolicy string     `json:"conflict_policy"`
-	SourceVersion  *int       `json:"source_version"`
-	Report         *Report    `json:"report,omitempty"`
-	Error          string     `json:"error,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-	StartedAt      *time.Time `json:"started_at,omitempty"`
-	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	ID             uuid.UUID `json:"id"`
+	Mode           string    `json:"mode"`
+	State          string    `json:"state"`
+	ConflictPolicy string    `json:"conflict_policy"`
+	// SourceAuthoritative is the second, orthogonal axis: whether this run was
+	// allowed to update rows the import already owns. Surfaced on the status view
+	// because "why did that title change?" is asked long after the run.
+	SourceAuthoritative bool       `json:"source_authoritative"`
+	SourceVersion       *int       `json:"source_version"`
+	Report              *Report    `json:"report,omitempty"`
+	Error               string     `json:"error,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	StartedAt           *time.Time `json:"started_at,omitempty"`
+	FinishedAt          *time.Time `json:"finished_at,omitempty"`
 }
 
-// CreateRun launches a new run (dry_run or run) under the given policy. It
-// returns ErrBusy when one is already active, ErrNotConfigured when no source is
-// wired, and ErrInvalidMode for a bad mode. It emits a start audit event.
-func (s *Service) CreateRun(ctx context.Context, mode string, policy ConflictPolicy, adminID uuid.UUID) (Run, error) {
+// CreateRun launches a new run (dry_run or run) under the given policy and
+// resync mode. It returns ErrBusy when one is already active, ErrNotConfigured
+// when no source is wired, and ErrInvalidMode for a bad mode. It emits a start
+// audit event.
+func (s *Service) CreateRun(ctx context.Context, mode string, policy ConflictPolicy, sourceAuthoritative bool, adminID uuid.UUID) (Run, error) {
 	if !s.Configured() {
 		return Run{}, ErrNotConfigured
 	}
@@ -138,9 +143,10 @@ func (s *Service) CreateRun(ctx context.Context, mode string, policy ConflictPol
 		policy = s.defaultPolicy
 	}
 	row, err := s.repo.CreateImportRun(ctx, sqlcgen.CreateImportRunParams{
-		Mode:           mode,
-		ConflictPolicy: policy.String(),
-		StartedBy:      optUUID(adminID),
+		Mode:                mode,
+		ConflictPolicy:      policy.String(),
+		SourceAuthoritative: sourceAuthoritative,
+		StartedBy:           optUUID(adminID),
 	})
 	if isUniqueViolation(err) {
 		return Run{}, ErrBusy
@@ -220,7 +226,7 @@ func (s *Service) executeRun(ctx context.Context, claim sqlcgen.ClaimDueImportRu
 		policy = s.defaultPolicy
 	}
 
-	importer, cleanup, err := s.buildImporter(ctx, policy)
+	importer, cleanup, err := s.buildImporter(ctx, policy, claim.SourceAuthoritative)
 	if err != nil {
 		s.logger.WarnContext(ctx, "peertube import: could not open source", "run_id", claim.ID.String(), "error", err)
 		s.failRun(ctx, claim.ID, "could not connect to the configured source")
@@ -290,13 +296,14 @@ func (s *Service) emitAudit(ctx context.Context, action, result, actorID, reason
 // into a Report.
 func runFromRow(row sqlcgen.PeertubeImportRun) Run {
 	r := Run{
-		ID:             row.ID,
-		Mode:           row.Mode,
-		State:          row.State,
-		ConflictPolicy: row.ConflictPolicy,
-		Error:          row.Error,
-		CreatedAt:      row.CreatedAt,
-		UpdatedAt:      row.UpdatedAt,
+		ID:                  row.ID,
+		Mode:                row.Mode,
+		State:               row.State,
+		ConflictPolicy:      row.ConflictPolicy,
+		SourceAuthoritative: row.SourceAuthoritative,
+		Error:               row.Error,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
 	}
 	if row.SourceVersion != nil {
 		v := int(*row.SourceVersion)

@@ -276,6 +276,68 @@ row, `--conflict-policy` decides:
 - `merge` — attach the source entity's children to the existing Vidra row.
 - `fail` — abort the whole import on the first collision.
 
+### Tracking a still-live source: `--source-authoritative`
+
+The conflict policy is about NAMES at insert time. It has nothing to say about
+the case that actually bites during a real migration: the source keeps running
+while you rehearse. Titles get edited, passwords get changed, videos get made
+public, chapters get moved, playlists get re-ordered, people unsubscribe. A
+default import carries none of that — every entity is frozen behind its ledger
+row after the first run — so the instance you cut over to is the source as it
+stood the day you first imported it.
+
+`--source-authoritative` (off by default) says **the source wins where the two
+sides have diverged**:
+
+```bash
+peertube-import --source-dsn '...' --source-authoritative
+```
+
+It is a second, orthogonal axis; it can be combined with any `--conflict-policy`.
+
+**What it updates.** Only rows the import created — the ledger is the record of
+which those are, so anything created on Vidra (an uploaded video, an account
+someone registered here, a channel made here) is invisible to it:
+
+| Family | What a re-run carries |
+| --- | --- |
+| video metadata | title, description, privacy, state, category, language, license, channel, duration |
+| video tags | the whole SET — a tag dropped upstream is removed here |
+| user | password hash, role, display name, email-verified |
+| channel | display name, description, owner |
+| chapters | the whole SET, replaced (a moved mark cannot duplicate) |
+| ratings | changed votes, and unrates — both shapes PeerTube uses |
+| playlists | title, description, visibility, and the ordered item set incl. removals |
+| subscriptions | unsubscribes (removals only; the follow itself is already carried) |
+| category taxonomy | overwrites a taxonomy configured here |
+| avatars / banners | replaces an image the import did not write |
+
+**What it never touches, in any mode.**
+
+- **Natural keys** — username, email, channel handle. They are uniquely indexed
+  and are what `--conflict-policy` exists to resolve; a source-side rename is
+  REPORTED under `conflicts` and left alone.
+- **Actor keypairs.** Rewriting a live federation key invalidates every
+  outstanding HTTP signature.
+- **View counts.** Vidra's counter is the source's lifetime total plus every view
+  this instance has served, with no stored decomposition. It is already tracked
+  correctly, as a delta.
+- **Renditions.** The ledger cannot prove which rendition rows the import wrote,
+  and overwriting one a Vidra re-transcode wrote breaks its per-rung download.
+- **Media.** No object is re-copied and no avatar is re-fetched for a metadata
+  change.
+- **`is_active`.** The importer never reads the source's blocked flag, so an
+  account suspended here stays suspended.
+
+**Cost.** An unchanged entity costs one map lookup and no write: the run takes a
+bulk snapshot of the destination up front and compares field digests, so a no-op
+re-run stays a no-op re-run. Changed rows are counted per family under
+`entities[*].updated` in the report, and every refusal is under `conflicts`.
+
+**Note on `--dry-run`.** A dry run reports the plan and the taxonomy decision
+under this mode, but does not enumerate which individual rows would be updated.
+Rehearse on a copy of the destination if you want that.
+
 ---
 
 ## 4. Run it
@@ -374,7 +436,9 @@ Then (admin bearer token):
 
 - `POST /api/v1/admin/peertube-import` `{"mode":"dry_run"}` or `{"mode":"run"}` →
   `202` with the run; only one run may be active at a time (`409` otherwise);
-  `503` if not configured.
+  `503` if not configured. Add `"source_authoritative": true` for the same
+  behaviour as the CLI flag above — it is recorded on the run row, so the worker
+  that executes the run later honours it.
 - `GET /api/v1/admin/peertube-import` → recent runs + live progress.
 - `GET /api/v1/admin/peertube-import/{id}` → poll one run's progress report.
 

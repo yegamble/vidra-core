@@ -578,6 +578,75 @@ func (s *Source) Tags(ctx context.Context, videoID int64) ([]string, error) {
 	return out, rows.Err()
 }
 
+// AllTags returns every LOCAL video's tags, keyed by the video's numeric source
+// id. It is the bulk form of Tags, and it exists for the same reason Chapters
+// and Ratings are read in bulk: a source-authoritative re-run has to know every
+// video's tag set to notice one that changed, and asking per video is 14,766
+// round trips over an SSH tunnel — enough on its own to turn a 21-second no-op
+// re-run into minutes. Tags stay per-video in the INSERT path, where they are
+// only read for the handful of videos a run actually imports.
+func (s *Source) AllTags(ctx context.Context) (map[int64][]string, error) {
+	onActor, err := s.actorLinksLiveOnActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	actorJoin := `act.id = vc."actorId"`
+	if onActor {
+		actorJoin = `act."videoChannelId" = vc.id`
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT vt."videoId", t.name
+		FROM "videoTag" vt
+		JOIN tag t ON t.id = vt."tagId"
+		JOIN video v ON v.id = vt."videoId"
+		JOIN "videoChannel" vc ON vc.id = v."channelId"
+		JOIN actor act ON `+actorJoin+`
+		WHERE act."serverId" IS NULL
+		ORDER BY vt."videoId", t.name`)
+	if err != nil {
+		return nil, fmt.Errorf("peertubeimport: read all tags: %w", err)
+	}
+	defer rows.Close()
+	out := map[int64][]string{}
+	for rows.Next() {
+		var videoID int64
+		var name string
+		if err := rows.Scan(&videoID, &name); err != nil {
+			return nil, fmt.Errorf("peertubeimport: scan tag: %w", err)
+		}
+		out[videoID] = append(out[videoID], name)
+	}
+	return out, rows.Err()
+}
+
+// AllPlaylistElements returns every LOCAL regular playlist's slots, keyed by the
+// playlist's numeric source id and in playback order. Bulk for the same reason
+// AllTags is: a resync compares every playlist's whole item list, and the
+// per-playlist read would be one round trip each.
+func (s *Source) AllPlaylistElements(ctx context.Context) (map[int64][]SourcePlaylistElement, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT e."videoPlaylistId", e.position, e."videoId"
+		FROM "videoPlaylistElement" e
+		JOIN "videoPlaylist" vp ON vp.id = e."videoPlaylistId"
+		JOIN account acc ON acc.id = vp."ownerAccountId"
+		WHERE e."videoId" IS NOT NULL AND acc."userId" IS NOT NULL AND vp.type = 1
+		ORDER BY e."videoPlaylistId", e.position`)
+	if err != nil {
+		return nil, fmt.Errorf("peertubeimport: read all playlist elements: %w", err)
+	}
+	defer rows.Close()
+	out := map[int64][]SourcePlaylistElement{}
+	for rows.Next() {
+		var playlistID int64
+		var e SourcePlaylistElement
+		if err := rows.Scan(&playlistID, &e.Position, &e.VideoID); err != nil {
+			return nil, fmt.Errorf("peertubeimport: scan playlist element: %w", err)
+		}
+		out[playlistID] = append(out[playlistID], e)
+	}
+	return out, rows.Err()
+}
+
 // Comments returns every local (locally-authored, non-deleted) comment, parents
 // before replies (ORDER BY id), so the importer can resolve parent_id from the
 // ledger as it goes.

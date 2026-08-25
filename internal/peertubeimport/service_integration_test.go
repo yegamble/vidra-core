@@ -44,8 +44,17 @@ func TestServiceRunLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	factory := func(context.Context, ConflictPolicy) (*Importer, func(), error) {
-		imp := NewImporter(dest, NewSourceFromPool(src), Options{SrcMedia: srcMedia, DestMedia: destMedia})
+	// The factory records the source-authoritative bit the worker hands it. That
+	// bit travels admin request → run row → claim → importer, and the hop that has
+	// no test anywhere else is the DURABLE one: a run launched by an admin is
+	// executed later, possibly by another process, so a column that did not carry
+	// it would silently downgrade every source-authoritative run to a gap-fill.
+	var factoryAuth []bool
+	factory := func(_ context.Context, _ ConflictPolicy, sourceAuthoritative bool) (*Importer, func(), error) {
+		factoryAuth = append(factoryAuth, sourceAuthoritative)
+		imp := NewImporter(dest, NewSourceFromPool(src), Options{
+			SrcMedia: srcMedia, DestMedia: destMedia, SourceAuthoritative: sourceAuthoritative,
+		})
 		return imp, func() {}, nil
 	}
 	svc := NewService(sqlcgen.New(dest), WithImporterFactory(factory))
@@ -55,16 +64,19 @@ func TestServiceRunLifecycle(t *testing.T) {
 	}
 
 	// Launch a dry-run (started_by NULL — no admin user exists in this scratch DB).
-	run, err := svc.CreateRun(ctx, "dry_run", PolicySkip, uuid.Nil)
+	run, err := svc.CreateRun(ctx, "dry_run", PolicySkip, false, uuid.Nil)
 	if err != nil {
 		t.Fatalf("create run: %v", err)
 	}
 	if run.State != "pending" {
 		t.Fatalf("new run state = %q, want pending", run.State)
 	}
+	if run.SourceAuthoritative {
+		t.Fatal("a run launched without asking for it must not be source-authoritative")
+	}
 
 	// A second launch while one is active must be rejected (single-active guard).
-	if _, err := svc.CreateRun(ctx, "run", PolicySkip, uuid.Nil); err != ErrBusy {
+	if _, err := svc.CreateRun(ctx, "run", PolicySkip, false, uuid.Nil); err != ErrBusy {
 		t.Fatalf("second launch err = %v, want ErrBusy", err)
 	}
 
@@ -101,8 +113,33 @@ func TestServiceRunLifecycle(t *testing.T) {
 		t.Errorf("dry-run wrote %d users, want 0", uc)
 	}
 
-	// With no active run, a fresh launch is accepted again.
-	if _, err := svc.CreateRun(ctx, "dry_run", PolicySkip, uuid.Nil); err != nil {
+	if got.Report.SourceAuthoritative {
+		t.Error("the report must record the mode the run actually used")
+	}
+	if len(factoryAuth) != 1 || factoryAuth[0] {
+		t.Errorf("factory saw source_authoritative=%v, want exactly one false", factoryAuth)
+	}
+
+	// With no active run, a fresh launch is accepted again — this time asking for
+	// the source to win, which has to survive the round trip through the run row.
+	auth, err := svc.CreateRun(ctx, "dry_run", PolicySkip, true, uuid.Nil)
+	if err != nil {
 		t.Fatalf("relaunch after completion: %v", err)
+	}
+	if !auth.SourceAuthoritative {
+		t.Fatal("the launched run did not record that the source is authoritative")
+	}
+	if _, err := svc.DrainDueRuns(ctx, 5); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if len(factoryAuth) != 2 || !factoryAuth[1] {
+		t.Fatalf("factory saw source_authoritative=%v, want the second run to be true — the claim did not carry the column", factoryAuth)
+	}
+	done, err := svc.GetRun(ctx, auth.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if done.Report == nil || !done.Report.SourceAuthoritative {
+		t.Fatal("the persisted report must say the run was source-authoritative")
 	}
 }

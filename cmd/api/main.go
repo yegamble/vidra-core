@@ -1984,7 +1984,7 @@ func run() error {
 			S3ForcePathStyle: cfg.PeerTubeSourceS3ForcePathStyle,
 		}
 		ptImportOpts = append(ptImportOpts, peertubeimport.WithImporterFactory(
-			func(ctx context.Context, policy peertubeimport.ConflictPolicy) (*peertubeimport.Importer, func(), error) {
+			func(ctx context.Context, policy peertubeimport.ConflictPolicy, sourceAuthoritative bool) (*peertubeimport.Importer, func(), error) {
 				src, err := peertubeimport.OpenSource(ctx, cfg.PeerTubeSourceDatabaseURL)
 				if err != nil {
 					return nil, nil, err
@@ -2003,6 +2003,11 @@ func run() error {
 					SrcMedia:  srcMedia,
 					DestMedia: blobs,
 					SealKey:   ptSeal,
+					// Which side wins where the two have diverged. It travels on the
+					// run row (0115) rather than being a server setting, because it is
+					// a decision about ONE run: an operator rehearses with the default
+					// and turns it on for the sync runs before cutover.
+					SourceAuthoritative: sourceAuthoritative,
 					// The import can write an instance setting (the source's category
 					// taxonomy). This server holds that overlay in memory and only
 					// reloads it after its OWN writes, so without this the carried
