@@ -2006,10 +2006,16 @@ func run() error {
 					// which arrived on the launch body and rode the run row to this
 					// worker. It opens the version gate for that number and nothing else.
 					AcknowledgedSchemaVersion: params.AcknowledgedSchemaVersion,
-					MediaMode:                 defaultImportMediaMode,
-					SrcMedia:                  srcMedia,
-					DestMedia:                 blobs,
-					SealKey:                   ptSeal,
+					// Which side wins where the two have diverged. Like the
+					// acknowledgement it travels on the run row (0116) rather than being
+					// a server setting, because it is a decision about ONE run: an
+					// operator rehearses with the default and turns it on for the sync
+					// runs before cutover.
+					SourceAuthoritative: params.SourceAuthoritative,
+					MediaMode:           defaultImportMediaMode,
+					SrcMedia:            srcMedia,
+					DestMedia:           blobs,
+					SealKey:             ptSeal,
 					// The import can write an instance setting (the source's category
 					// taxonomy). This server holds that overlay in memory and only
 					// reloads it after its OWN writes, so without this the carried

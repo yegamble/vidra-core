@@ -560,6 +560,7 @@ type PeertubeImportRun struct {
 	FinishedAt                pgtype.Timestamptz `json:"finished_at"`
 	AcknowledgedSchemaVersion *int32             `json:"acknowledged_schema_version"`
 	ErrorCode                 string             `json:"error_code"`
+	SourceAuthoritative       bool               `json:"source_authoritative"`
 }
 
 type PipelineRun struct {

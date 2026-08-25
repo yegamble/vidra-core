@@ -29,9 +29,18 @@ type peerTubeImportProvider interface {
 type peertubeImportLaunchRequest struct {
 	Mode           string `json:"mode"`
 	ConflictPolicy string `json:"conflict_policy"`
+	// SourceAuthoritative is a SECOND, orthogonal axis, not another
+	// conflict_policy value: the policy resolves natural-key collisions at insert
+	// time, this says whether a re-run may update rows the import already owns
+	// when the two sides have diverged. Absent = false = gap-fill, which is what
+	// every import has always done.
+	SourceAuthoritative bool `json:"source_authoritative"`
 	// AcknowledgedSchemaVersion is the administrator's explicit, per-request
 	// sign-off on a source schema version outside the importer's verified range:
-	// the exact migrationVersion a previous run reported and they accepted.
+	// the exact migrationVersion a previous run reported and they accepted. It is
+	// a THIRD axis and independent of the other two — a version gate, not a write
+	// policy: acknowledging a version grants no permission to overwrite anything,
+	// and a source-authoritative run on a verified source needs no acknowledgement.
 	//
 	// Omitted is the normal case. It is deliberately NOT a boolean — a "yes" can
 	// be sent by a caller that never looked at the source, but a version number
@@ -77,6 +86,7 @@ func (s *Server) handleLaunchPeerTubeImport(c echo.Context) error {
 	run, err := s.peertubeimportsvc.CreateRun(c.Request().Context(), peertubeimport.Launch{
 		Mode:                      in.Mode,
 		Policy:                    policy,
+		SourceAuthoritative:       in.SourceAuthoritative,
 		AcknowledgedSchemaVersion: in.AcknowledgedSchemaVersion,
 	}, userID)
 	switch {
@@ -91,8 +101,12 @@ func (s *Server) handleLaunchPeerTubeImport(c echo.Context) error {
 	}
 	// The acknowledgement is named in the audit reason, not merely flagged: the
 	// question a later reader asks is "which version did they accept?", and the
-	// run row it is also stored on is prunable while the audit log is not.
-	reason := "mode=" + in.Mode + " policy=" + policy.String()
+	// run row it is also stored on is prunable while the audit log is not. The
+	// write policy is always stated, present or absent, because "was that run
+	// allowed to overwrite?" has to be answerable for every run, not only the ones
+	// that were.
+	reason := "mode=" + in.Mode + " policy=" + policy.String() +
+		" source_authoritative=" + strconv.FormatBool(in.SourceAuthoritative)
 	if in.AcknowledgedSchemaVersion > 0 {
 		reason += " acknowledged_unverified_schema_version=" + strconv.Itoa(in.AcknowledgedSchemaVersion)
 	}

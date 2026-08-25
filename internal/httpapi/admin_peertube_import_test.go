@@ -15,7 +15,10 @@ import (
 
 // fakePTImport is a static peerTubeImportProvider for handler tests. It records
 // the Launch it was handed so a test can assert exactly what crossed the seam —
-// the whole point of the acknowledgement is that the server cannot invent it.
+// the whole point of the acknowledgement is that the server cannot invent it,
+// and the whole of the source-authoritative wiring is the handler carrying that
+// bit through (a request that asks for the source to win and gets a gap-filling
+// run is a silent no-op).
 type fakePTImport struct {
 	configured bool
 	run        peertubeimport.Run
@@ -75,6 +78,40 @@ func TestPeerTubeImportLaunch(t *testing.T) {
 	// bad conflict policy → 400 (rejected before the service is called)
 	if rec := postJSONWithAuth(srv, "/api/v1/admin/peertube-import", admin, `{"mode":"run","conflict_policy":"bogus"}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("bad policy = %d, want 400", rec.Code)
+	}
+}
+
+// The source-authoritative axis is a request field that decides whether a run may
+// OVERWRITE this instance's rows, so both of its values have to reach the
+// service. A handler that dropped it would answer 202 and quietly run the wrong
+// kind of import — the failure would only be visible in the catalogue afterwards.
+func TestPeerTubeImportLaunchCarriesSourceAuthoritative(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"absent means gap-fill", `{"mode":"run"}`, false},
+		{"explicitly off", `{"mode":"run","source_authoritative":false}`, false},
+		{"asked for", `{"mode":"run","source_authoritative":true}`, true},
+		{"orthogonal to the conflict policy", `{"mode":"run","conflict_policy":"rename","source_authoritative":true}`, true},
+		// Orthogonal to the OTHER per-run axis too: an acknowledgement is a
+		// version gate and grants no write permission, so it must neither turn
+		// this on nor mask a request that asked for it.
+		{"an acknowledgement does not turn it on", `{"mode":"run","acknowledged_schema_version":1040}`, false},
+		{"orthogonal to an acknowledgement", `{"mode":"run","acknowledged_schema_version":1040,"source_authoritative":true}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var saw peertubeimport.Launch
+			srv := ptImportServer(t, fakePTImport{configured: true, launched: &saw})
+			admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+			if rec := postJSONWithAuth(srv, "/api/v1/admin/peertube-import", admin, tc.body); rec.Code != http.StatusAccepted {
+				t.Fatalf("launch = %d, want 202; body=%s", rec.Code, rec.Body.String())
+			}
+			if saw.SourceAuthoritative != tc.want {
+				t.Fatalf("service saw source_authoritative=%v, want %v", saw.SourceAuthoritative, tc.want)
+			}
+		})
 	}
 }
 

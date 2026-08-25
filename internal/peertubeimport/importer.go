@@ -63,6 +63,17 @@ type Importer struct {
 	// dropped at the start of every Run/Plan: a reused importer must never answer
 	// from the source as it stood on a previous run.
 	videoVidraByID map[int64]uuid.UUID
+	// tagsByVideo / elementsByPlaylist are the bulk source reads the RESYNC needs
+	// and the insert path does not: per-entity reads of these two families would
+	// cost one round trip per video and per playlist on a run whose whole point is
+	// that an unchanged entity costs nothing. Dropped between runs with the rest.
+	tagsByVideo        map[int64][]string
+	elementsByPlaylist map[int64][]SourcePlaylistElement
+	// resync is the destination's side of a source-authoritative run: what this
+	// instance currently holds for every row the import owns, read in bulk before
+	// the passes start. Nil in the default gap-filling mode, and every resync
+	// branch keys off that — see resync.go.
+	resync *resyncState
 
 	// The source instance's public HTTP origin, derived once from its own actors'
 	// canonical URLs (see sourceOrigin). Unlike the video maps this is NOT reset
@@ -101,14 +112,15 @@ type Options struct {
 	// schedule up to cutover, editing the new instance in between — and for that
 	// operator "the source wins" is the correct answer, not a hazard.
 	//
-	// TODAY ONLY THE ACTOR-IMAGE PASS READS IT. Every family the import can
-	// re-assert (chapters, ratings, renditions, the instance taxonomy) needs to
-	// answer to the same switch before it means "the source is authoritative" as a
-	// whole, and that is a separate piece of work; wiring a flag to it before then
-	// would promise more than it does. This field is the seam that work plugs into
-	// — the per-family decision is a pure function of (source, instance, what the
-	// import last wrote, mode), so honouring it elsewhere is a branch, not a
-	// redesign. There is deliberately no CLI or API flag for it yet.
+	// It is ORTHOGONAL to Policy. A ConflictPolicy resolves a NATURAL-KEY
+	// collision (username, handle, email, slug) at insert time and never reaches
+	// an ON CONFLICT, the ledger gate, or the taxonomy decision; this says whether
+	// a re-run may UPDATE the rows the import already owns. Neither can be
+	// expressed in terms of the other.
+	//
+	// What it reaches, and what it deliberately does not, is in resync.go —
+	// including the four hard exclusions (no re-INSERT, no actor-key rotation, no
+	// view-count assignment, no rendition overwrite).
 	SourceAuthoritative bool
 	// ReloadSettings reloads the instance-settings overlay after the import
 	// writes one (today: the instance category taxonomy). The server caches that
@@ -309,8 +321,8 @@ func (im *Importer) estimateBytes(ctx context.Context) (int64, error) {
 // (no ledger rows, no entities, no media). The returned Report is the mapping
 // plan the operator reviews before running for real.
 func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
-	im.videosByID, im.videoVidraByID = nil, nil // the source moves between runs; never plan off a stale list
-	r := NewReport(true, im.policy)
+	im.resetRunCaches() // the source moves between runs; never plan off a stale list
+	r := NewReport(true, im.policy, im.sourceAuthoritative)
 	r.SourceVersion = version
 	r.Deferred = deferredFamilies()
 
@@ -437,10 +449,23 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 	// scheduled-import workflow is exactly that) would otherwise resolve children
 	// against the video set as it stood the FIRST time, so every video added to
 	// the source since would silently lose its comments, chapters and ratings.
-	im.videosByID, im.videoVidraByID = nil, nil
-	r := NewReport(false, im.policy)
+	im.resetRunCaches()
+	r := NewReport(false, im.policy, im.sourceAuthoritative)
 	r.SourceVersion = version
 	r.Deferred = deferredFamilies()
+
+	// The destination snapshot is taken ONCE, here, before any pass runs: nine
+	// bulk statements that answer "what does this instance currently hold for the
+	// rows the import owns?". Every resync branch then compares in memory, so an
+	// unchanged entity costs one map lookup and no query at all — which is what
+	// keeps a no-op re-run at the ~21 seconds the cutover budget assumes.
+	if im.sourceAuthoritative {
+		st, err := im.loadResyncState(ctx)
+		if err != nil {
+			return r, err
+		}
+		im.resync = st
+	}
 
 	steps := []struct {
 		name string
@@ -480,6 +505,46 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 }
 
 // ── shared helpers ──
+
+// resetRunCaches drops everything an importer memoised about a PREVIOUS run.
+// The scheduled-import workflow reuses one importer, and every one of these
+// answers a question whose answer moves between runs.
+func (im *Importer) resetRunCaches() {
+	im.videosByID, im.videoVidraByID = nil, nil
+	im.tagsByVideo, im.elementsByPlaylist = nil, nil
+	im.resync = nil
+}
+
+// sourceTags returns every local video's tags, read from the source once per run.
+func (im *Importer) sourceTags(ctx context.Context) (map[int64][]string, error) {
+	if im.tagsByVideo != nil {
+		return im.tagsByVideo, nil
+	}
+	tags, err := im.src.AllTags(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if tags == nil {
+		tags = map[int64][]string{}
+	}
+	im.tagsByVideo = tags
+	return tags, nil
+}
+
+// sourcePlaylistElements returns one playlist's slots from the bulk read.
+func (im *Importer) sourcePlaylistElements(ctx context.Context, playlistID int64) ([]SourcePlaylistElement, error) {
+	if im.elementsByPlaylist == nil {
+		els, err := im.src.AllPlaylistElements(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if els == nil {
+			els = map[int64][]SourcePlaylistElement{}
+		}
+		im.elementsByPlaylist = els
+	}
+	return im.elementsByPlaylist[playlistID], nil
+}
 
 // withTx runs fn inside a destination transaction, committing on success. The
 // entity insert(s) and the ledger upsert share one transaction so a crash cannot

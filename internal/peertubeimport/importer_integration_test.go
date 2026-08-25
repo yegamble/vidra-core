@@ -660,6 +660,426 @@ func TestImportViewCountsAreDeltaNotDouble(t *testing.T) {
 	}
 }
 
+// ── source-authoritative resync ──
+//
+// The mode this exercises can corrupt a production catalogue if it is wrong, so
+// the test is written as the migration it is for: import a source, let both
+// sides move the way they really do over the days before a cutover, and then
+// assert BOTH halves — that the default import still refuses to touch any of it,
+// and that the source-authoritative one changes exactly what it should and
+// nothing else.
+
+// queryTracer records every statement a pool issues, so a test can assert on the
+// SHAPE of a run's database traffic rather than on a stopwatch.
+type queryTracer struct {
+	mu   sync.Mutex
+	sqls []string
+}
+
+func (q *queryTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	q.mu.Lock()
+	q.sqls = append(q.sqls, data.SQL)
+	q.mu.Unlock()
+	return ctx
+}
+
+func (q *queryTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func (q *queryTracer) reset() {
+	q.mu.Lock()
+	q.sqls = nil
+	q.mu.Unlock()
+}
+
+// countMatching returns how many recorded statements contain needle.
+func (q *queryTracer) countMatching(needle string) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	n := 0
+	for _, s := range q.sqls {
+		if strings.Contains(s, needle) {
+			n++
+		}
+	}
+	return n
+}
+
+// tracedPool opens a second pool onto an existing scratch database, with a
+// tracer attached.
+func tracedPool(t *testing.T, ctx context.Context, base, name string) (*pgxpool.Pool, *queryTracer) {
+	t.Helper()
+	u, err := url.Parse(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Path = "/" + name
+	cfg, err := pgxpool.ParseConfig(u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracer := &queryTracer{}
+	cfg.ConnConfig.Tracer = tracer
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("open traced pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool, tracer
+}
+
+func TestPeerTubeImportSourceAuthoritativeResync(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+
+	firstHash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, srcName := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	srcPool, srcTrace := tracedPool(t, ctx, base, srcName)
+	seedPeerTube(t, ctx, srcPool, string(firstHash), secretPrivKeyAlice)
+
+	// Metadata only: this mode must never re-download media, and the surest way
+	// to prove a run did not open the object store is not to give it one.
+	gapFill := NewImporter(dest, NewSourceFromPool(srcPool), Options{Policy: PolicySkip, MediaMode: MediaModeNone})
+	version, err := gapFill.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if _, err := gapFill.Run(ctx, version, nil); err != nil {
+		t.Fatalf("first (gap-filling) run: %v", err)
+	}
+
+	// ── what the instance looked like after the migration ──
+	var aliceID, vidID, chanID, playlistID uuid.UUID
+	if err := dest.QueryRow(ctx, `SELECT id FROM users WHERE username='alice'`).Scan(&aliceID); err != nil {
+		t.Fatalf("read alice: %v", err)
+	}
+	if err := dest.QueryRow(ctx, `SELECT id FROM videos WHERE title='First Video'`).Scan(&vidID); err != nil {
+		t.Fatalf("read video: %v", err)
+	}
+	if err := dest.QueryRow(ctx, `SELECT id FROM channels WHERE handle='alice_channel'`).Scan(&chanID); err != nil {
+		t.Fatalf("read channel: %v", err)
+	}
+	if err := dest.QueryRow(ctx, `SELECT id FROM playlists WHERE title='My Playlist'`).Scan(&playlistID); err != nil {
+		t.Fatalf("read playlist: %v", err)
+	}
+	videosBefore := countRows(t, ctx, dest, "videos")
+	usersBefore := countRows(t, ctx, dest, "users")
+	var alicePub, alicePriv string
+	if err := dest.QueryRow(ctx, `SELECT public_key_pem, private_key_pem FROM account_actor_keys WHERE user_id=$1`, aliceID).Scan(&alicePub, &alicePriv); err != nil {
+		t.Fatalf("read actor key: %v", err)
+	}
+
+	// ── things that happen on THIS instance between runs ──
+	//
+	// A video uploaded straight to Vidra, on an imported channel. It has no ledger
+	// row, so nothing in this mode can see it — that is the whole safety property,
+	// and it is asserted rather than assumed.
+	var nativeID uuid.UUID
+	if err := dest.QueryRow(ctx, `
+		INSERT INTO videos (channel_id, title, description, privacy, state)
+		VALUES ($1, 'Uploaded Here', 'native', 'public', 'published') RETURNING id`, chanID).Scan(&nativeID); err != nil {
+		t.Fatalf("insert native video: %v", err)
+	}
+	mustExec(t, ctx, dest, `INSERT INTO video_tags (video_id, tag) VALUES ($1,'native')`, nativeID)
+	mustExec(t, ctx, dest, `INSERT INTO video_chapters (video_id, start_seconds, title) VALUES ($1, 5, 'Native chapter')`, nativeID)
+	// A rendition row of the kind a Vidra re-transcode writes, on an IMPORTED
+	// video. The comment on ImportInsertVideoRendition explains what overwriting
+	// one of these breaks; this is the assertion behind it.
+	mustExec(t, ctx, dest, `INSERT INTO video_renditions (video_id, height, width, key_prefix) VALUES ($1, 720, 1280, 'hls/vidra-transcode/')`, vidID)
+	// Vidra serves 7 views of its own, so the view counter carries Vidra-native
+	// data that an assignment would destroy.
+	mustExec(t, ctx, dest, `UPDATE video_view_counts SET views = views + 7 WHERE video_id = $1`, vidID)
+	// An operator replaces the carried taxonomy by hand.
+	mustExec(t, ctx, dest, `UPDATE instance_settings SET value = '["90:Handmade"]' WHERE key = 'instance_custom_categories'`)
+
+	// ── things that happen on the still-live SOURCE between runs ──
+	secondHash, err := bcrypt.GenerateFromPassword([]byte("a-new-password-entirely"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, ctx, srcPool, `UPDATE "video" SET name='First Video (edited)', description='rewritten', privacy=2, views=120 WHERE id=1`)
+	mustExec(t, ctx, srcPool, `UPDATE "user" SET password=$1, role=1, "emailVerified"=false WHERE id=1`, string(secondHash))
+	mustExec(t, ctx, srcPool, `UPDATE "account" SET name='Alice Renamed' WHERE id=1`)
+	// The source's ActivityPub keypair is regenerated. It must NOT follow: this
+	// instance is already federating as that actor, and replacing a live signing
+	// key invalidates every HTTP signature outstanding against it.
+	mustExec(t, ctx, srcPool, `UPDATE "actor" SET "publicKey"='PUBKEY-ALICE-ROTATED', "privateKey"='PRIVKEY-ALICE-ROTATED' WHERE id=1`)
+	mustExec(t, ctx, srcPool, `UPDATE "videoChannel" SET name='Alice Channel (renamed)', description='new blurb' WHERE id=1`)
+	// The chapter at 90s MOVES to 95s. This is the case a DO UPDATE cannot
+	// express: (video_id, start_seconds) is the primary key, so an upsert leaves
+	// the 90s mark standing and the video shows both.
+	mustExec(t, ctx, srcPool, `UPDATE "videoChapter" SET timecode=95 WHERE id=2`)
+	// Tags: 'music' is dropped, 'jazz' is added.
+	mustExec(t, ctx, srcPool, `DELETE FROM "videoTag" WHERE "videoId"=1 AND "tagId"=1`)
+	mustExec(t, ctx, srcPool, `INSERT INTO "tag" (id,name) VALUES (3,'jazz')`)
+	mustExec(t, ctx, srcPool, `INSERT INTO "videoTag" ("videoId","tagId") VALUES (1,3)`)
+	// Alice changes her mind about the video; bob unrates his dislike outright
+	// (PeerTube deletes the row).
+	mustExec(t, ctx, srcPool, `UPDATE "accountVideoRate" SET type='dislike' WHERE id=1`)
+	mustExec(t, ctx, srcPool, `DELETE FROM "accountVideoRate" WHERE id=2`)
+	// The playlist loses its second slot and gains a title.
+	mustExec(t, ctx, srcPool, `DELETE FROM "videoPlaylistElement" WHERE id=2`)
+	mustExec(t, ctx, srcPool, `UPDATE "videoPlaylist" SET name='My Playlist (renamed)' WHERE id=1`)
+	// Bob unsubscribes from alice_channel.
+	mustExec(t, ctx, srcPool, `DELETE FROM "actorFollow" WHERE id=1`)
+
+	// ── half one: the DEFAULT import still refuses to touch any of it ──
+	report, err := gapFill.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("gap-filling re-run: %v", err)
+	}
+	if total := report.Entities[KindVideo].Updated + report.Entities[KindUser].Updated +
+		report.Entities[KindChapter].Updated + report.Entities[KindChannel].Updated; total != 0 {
+		t.Fatalf("the DEFAULT import reported %d updates; gap-filling must never update anything", total)
+	}
+	if got := scanStrings(t, ctx, dest, `SELECT title FROM videos WHERE id=$1`, vidID); got[0] != "First Video" {
+		t.Errorf("the gap-filling run changed the title to %q; the default must leave divergence alone", got[0])
+	}
+	if got := readInstanceSetting(t, ctx, dest, "instance_custom_categories"); got != `["90:Handmade"]` {
+		t.Errorf("the gap-filling run overwrote the operator's taxonomy: %s", got)
+	}
+
+	// ── half two: the source wins ──
+	srcTrace.reset()
+	resync := NewImporter(dest, NewSourceFromPool(srcPool), Options{
+		Policy: PolicySkip, MediaMode: MediaModeNone, SourceAuthoritative: true,
+	})
+	report, err = resync.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("source-authoritative run: %v", err)
+	}
+	if !report.SourceAuthoritative {
+		t.Error("the report must record which side won")
+	}
+
+	// RULE 1 — nothing is ever re-INSERTed. ImportInsertVideo has no ON CONFLICT,
+	// so a resync that reached it would create a DUPLICATE video and the ledger
+	// upsert would then repoint at the duplicate, orphaning the original row and
+	// its blobs. Both halves are asserted: the count, and the mapping.
+	if n := countRows(t, ctx, dest, "videos"); n != videosBefore+1 {
+		t.Errorf("videos = %d, want %d (the one uploaded here, and NO duplicate of an imported one)", n, videosBefore+1)
+	}
+	if n := countRows(t, ctx, dest, "users"); n != usersBefore {
+		t.Errorf("users = %d, want %d — the resync inserted an account", n, usersBefore)
+	}
+	var ledgerVideo uuid.UUID
+	if err := dest.QueryRow(ctx, `SELECT vidra_id FROM peertube_import_ledger WHERE entity_kind='video' AND source_id='11111111-1111-1111-1111-111111111111'`).Scan(&ledgerVideo); err != nil {
+		t.Fatalf("read video ledger row: %v", err)
+	}
+	if ledgerVideo != vidID {
+		t.Fatalf("the ledger now points at %s, want the original %s — the original row has been orphaned", ledgerVideo, vidID)
+	}
+
+	// Video metadata followed the source.
+	var title, description, privacy string
+	if err := dest.QueryRow(ctx, `SELECT title, description, privacy FROM videos WHERE id=$1`, vidID).Scan(&title, &description, &privacy); err != nil {
+		t.Fatalf("read video: %v", err)
+	}
+	if title != "First Video (edited)" || description != "rewritten" || privacy != "unlisted" {
+		t.Errorf("video = %q/%q/%q, want the source's edited metadata", title, description, privacy)
+	}
+	if report.Entities[KindVideo].Updated != 1 {
+		t.Errorf("videos updated = %d, want 1", report.Entities[KindVideo].Updated)
+	}
+
+	// The MOVED chapter did not duplicate: two marks, at 0 and 95.
+	starts := scanStrings(t, ctx, dest, `SELECT start_seconds::text FROM video_chapters WHERE video_id=$1 ORDER BY start_seconds`, vidID)
+	if len(starts) != 2 || starts[0] != "0" || starts[1] != "95" {
+		t.Errorf("chapter starts = %v, want [0 95] — a moved mark was duplicated rather than replaced", starts)
+	}
+
+	// Tags are a SET: what the source dropped is gone, what it added is here.
+	tags := scanStrings(t, ctx, dest, `SELECT tag FROM video_tags WHERE video_id=$1 ORDER BY tag`, vidID)
+	if len(tags) != 2 || tags[0] != "jazz" || tags[1] != "test" {
+		t.Errorf("tags = %v, want [jazz test]", tags)
+	}
+
+	// The user's mapped fields, INCLUDING the password hash — a source-side change
+	// in the days before cutover is otherwise never carried and the account cannot
+	// log in afterwards.
+	var gotHash, role, displayName, username, email string
+	var verified bool
+	if err := dest.QueryRow(ctx, `SELECT password_hash, role, display_name, username, email, email_verified FROM users WHERE id=$1`, aliceID).
+		Scan(&gotHash, &role, &displayName, &username, &email, &verified); err != nil {
+		t.Fatalf("read alice: %v", err)
+	}
+	if gotHash != string(secondHash) {
+		t.Error("the source's new password hash was not carried")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(gotHash), []byte("a-new-password-entirely")); err != nil {
+		t.Errorf("the carried hash does not verify the source's new password: %v", err)
+	}
+	if role != "moderator" || displayName != "Alice Renamed" || verified {
+		t.Errorf("alice = role %q / %q / verified %v, want moderator / Alice Renamed / false", role, displayName, verified)
+	}
+	if username != "alice" || email != "alice@example.test" {
+		t.Errorf("alice's natural keys changed to %q/%q; they are the conflict policy's, not this mode's", username, email)
+	}
+
+	// Channel metadata, but never the handle.
+	var chanName, chanDesc, chanHandle string
+	if err := dest.QueryRow(ctx, `SELECT display_name, description, handle FROM channels WHERE id=$1`, chanID).Scan(&chanName, &chanDesc, &chanHandle); err != nil {
+		t.Fatalf("read channel: %v", err)
+	}
+	if chanName != "Alice Channel (renamed)" || chanDesc != "new blurb" {
+		t.Errorf("channel = %q/%q, want the source's renamed channel", chanName, chanDesc)
+	}
+	if chanHandle != "alice_channel" {
+		t.Errorf("channel handle changed to %q; the handle is this instance's public URL and the natural key", chanHandle)
+	}
+
+	// Ratings: alice's like became a dislike, and bob's deleted row took his
+	// rating with it.
+	ratings := scanStrings(t, ctx, dest, `SELECT rating FROM video_ratings WHERE video_id=$1 ORDER BY rating`, vidID)
+	if len(ratings) != 1 || ratings[0] != "dislike" {
+		t.Errorf("ratings = %v, want [dislike] (alice changed her vote; bob's was deleted on the source)", ratings)
+	}
+
+	// Playlist: renamed, and the removed slot is gone.
+	var playlistTitle string
+	if err := dest.QueryRow(ctx, `SELECT title FROM playlists WHERE id=$1`, playlistID).Scan(&playlistTitle); err != nil {
+		t.Fatalf("read playlist: %v", err)
+	}
+	if playlistTitle != "My Playlist (renamed)" {
+		t.Errorf("playlist title = %q, want the source's", playlistTitle)
+	}
+	var items int
+	if err := dest.QueryRow(ctx, `SELECT count(*) FROM playlist_items WHERE playlist_id=$1`, playlistID).Scan(&items); err != nil {
+		t.Fatalf("read playlist items: %v", err)
+	}
+	if items != 1 {
+		t.Errorf("playlist items = %d, want 1 (the source removed one)", items)
+	}
+
+	// The unsubscribe followed.
+	if n := countRows(t, ctx, dest, "channel_follows"); n != 0 {
+		t.Errorf("channel_follows = %d, want 0 — the source no longer has that subscription", n)
+	}
+
+	// The taxonomy the operator replaced by hand is overwritten, because that is
+	// what asking for the source to win means.
+	if got := readInstanceSetting(t, ctx, dest, "instance_custom_categories"); got != `["51:Giantess","52:Shrunken"]` {
+		t.Errorf("instance_custom_categories = %s, want the source's taxonomy", got)
+	}
+
+	// RULE 2 — the actor keypair is byte-identical. Rotating a live federation key
+	// invalidates every HTTP signature already in flight.
+	var pubAfter, privAfter string
+	if err := dest.QueryRow(ctx, `SELECT public_key_pem, private_key_pem FROM account_actor_keys WHERE user_id=$1`, aliceID).Scan(&pubAfter, &privAfter); err != nil {
+		t.Fatalf("read actor key: %v", err)
+	}
+	if pubAfter != alicePub || privAfter != alicePriv {
+		t.Fatal("the resync rewrote an actor keypair — every outstanding HTTP signature is now invalid")
+	}
+
+	// RULE 3 — the view counter is still a delta. 100 carried + 7 Vidra served + 20
+	// the source gained = 127. Assigning the source's 120 would erase Vidra's 7.
+	var views int64
+	if err := dest.QueryRow(ctx, `SELECT views FROM video_view_counts WHERE video_id=$1`, vidID).Scan(&views); err != nil {
+		t.Fatalf("read views: %v", err)
+	}
+	if views != 127 {
+		t.Errorf("views = %d, want 127 (100 carried + 7 served here + 20 gained on the source); assignment would give 120", views)
+	}
+
+	// RULE 4 — the rendition a Vidra re-transcode wrote is untouched.
+	var prefix string
+	if err := dest.QueryRow(ctx, `SELECT key_prefix FROM video_renditions WHERE video_id=$1 AND height=720`, vidID).Scan(&prefix); err != nil {
+		t.Fatalf("read rendition: %v", err)
+	}
+	if prefix != "hls/vidra-transcode/" {
+		t.Errorf("rendition key_prefix = %q, want Vidra's own — the per-rung download now points at a source tree with no such asset", prefix)
+	}
+
+	// THE OWNERSHIP RULE — the natively-created video is exactly as it was.
+	var nativeTitle string
+	if err := dest.QueryRow(ctx, `SELECT title FROM videos WHERE id=$1`, nativeID).Scan(&nativeTitle); err != nil {
+		t.Fatalf("read native video: %v", err)
+	}
+	if nativeTitle != "Uploaded Here" {
+		t.Errorf("the natively-uploaded video's title is now %q", nativeTitle)
+	}
+	if got := scanStrings(t, ctx, dest, `SELECT tag FROM video_tags WHERE video_id=$1`, nativeID); len(got) != 1 || got[0] != "native" {
+		t.Errorf("the natively-uploaded video's tags = %v, want [native]", got)
+	}
+	if got := scanStrings(t, ctx, dest, `SELECT title FROM video_chapters WHERE video_id=$1`, nativeID); len(got) != 1 {
+		t.Errorf("the natively-uploaded video's chapters = %v, want the one it was given here", got)
+	}
+
+	// RULE 6 — the fast re-run. A source-authoritative run against an UNCHANGED
+	// source must change nothing and must not read the source per entity: the
+	// families the older passes read one video (or one playlist) at a time get
+	// bulk reads under this mode, and losing that turns a 21-second no-op re-run
+	// into minutes over an SSH tunnel.
+	before := readTimestamps(t, ctx, dest, vidID, aliceID, chanID, playlistID)
+	srcTrace.reset()
+	report, err = resync.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("unchanged source-authoritative re-run: %v", err)
+	}
+	for kind, counts := range report.Entities {
+		if counts.Updated != 0 || counts.Imported != 0 {
+			t.Errorf("an unchanged re-run reported %s imported=%d updated=%d, want 0/0",
+				kind, counts.Imported, counts.Updated)
+		}
+	}
+	if after := readTimestamps(t, ctx, dest, vidID, aliceID, chanID, playlistID); after != before {
+		t.Errorf("an unchanged re-run bumped updated_at (%v -> %v); it issued writes it did not need to", before, after)
+	}
+	// The needles are the PER-ENTITY forms of the two reads (they are the only
+	// statements that bind an entity id), so they count round trips that scale
+	// with the catalogue — the thing that would break the re-run — rather than the
+	// bulk statements that replaced them.
+	if n := srcTrace.countMatching(`WHERE vt."videoId" = $1`); n != 0 {
+		t.Errorf("the re-run issued %d per-video tag reads against the source; tags must come from the single bulk read", n)
+	}
+	if n := srcTrace.countMatching(`WHERE "videoPlaylistId" = $1`); n != 0 {
+		t.Errorf("the re-run issued %d per-playlist element reads against the source; they must come from the single bulk read", n)
+	}
+	if n := srcTrace.countMatching(`FROM "videoTag" vt`); n != 1 {
+		t.Errorf("the source's tags were read %d times, want exactly one bulk statement", n)
+	}
+	if n := srcTrace.countMatching(`FROM "videoPlaylistElement" e`); n != 1 {
+		t.Errorf("the source's playlist elements were read %d times, want exactly one bulk statement", n)
+	}
+	// The chapter set is still two marks — a re-run that "replaced" an unchanged
+	// set would be both a write and a risk.
+	if n := countRows(t, ctx, dest, "video_chapters"); n != 3 {
+		t.Errorf("chapters = %d, want 3 (two imported + the one created here)", n)
+	}
+}
+
+// readTimestamps returns the updated_at of the four rows the resync can write.
+// They are set by the UPDATE statements themselves, so an unchanged pair proves
+// no UPDATE ran — a stronger claim than a row count, which a rewrite of the same
+// values would satisfy.
+func readTimestamps(t *testing.T, ctx context.Context, pool *pgxpool.Pool, video, user, channel, playlist uuid.UUID) [4]time.Time {
+	t.Helper()
+	var out [4]time.Time
+	for i, q := range []struct {
+		sql string
+		id  uuid.UUID
+	}{
+		{`SELECT updated_at FROM videos WHERE id=$1`, video},
+		{`SELECT updated_at FROM users WHERE id=$1`, user},
+		{`SELECT updated_at FROM channels WHERE id=$1`, channel},
+		{`SELECT updated_at FROM playlists WHERE id=$1`, playlist},
+	} {
+		if err := pool.QueryRow(ctx, q.sql, q.id).Scan(&out[i]); err != nil {
+			t.Fatalf("read updated_at: %v", err)
+		}
+	}
+	return out
+}
+
 // readInstanceSetting returns the stored override for a key, or "" when the key
 // is not overridden at all (which is what "the built-in taxonomy stands" looks
 // like in the database).

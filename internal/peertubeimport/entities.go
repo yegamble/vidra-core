@@ -155,6 +155,23 @@ func (im *Importer) importUsers(ctx context.Context, r *Report) error {
 	c := r.count(KindUser)
 	for _, u := range users {
 		sid := strconv.FormatInt(u.ID, 10)
+		// A source-authoritative run answers from the destination snapshot FIRST:
+		// it owns an account for this source user, so the question is not "have I
+		// imported this?" but "have the two sides diverged?" — and that is a map
+		// lookup, not a query. handled=false falls through to the gap-filling path
+		// below, which is untouched and is still what every default run does.
+		if im.resync != nil {
+			handled, err := im.resyncOneUser(ctx, u, sid, r, c)
+			if err != nil {
+				im.markFailed(ctx, KindUser, sid, safeErr(err))
+				c.Failed++
+				im.logger.WarnContext(ctx, "peertube import: user resync failed", "source_id", sid, "error", err)
+				continue
+			}
+			if handled {
+				continue
+			}
+		}
 		if _, _, done, err := im.alreadyProcessed(ctx, KindUser, sid); err != nil {
 			return err
 		} else if done {
@@ -236,6 +253,18 @@ func (im *Importer) importChannels(ctx context.Context, r *Report) error {
 	c := r.count(KindChannel)
 	for _, ch := range channels {
 		sid := strconv.FormatInt(ch.ID, 10)
+		if im.resync != nil {
+			handled, err := im.resyncOneChannel(ctx, ch, sid, r, c)
+			if err != nil {
+				im.markFailed(ctx, KindChannel, sid, safeErr(err))
+				c.Failed++
+				im.logger.WarnContext(ctx, "peertube import: channel resync failed", "source_id", sid, "error", err)
+				continue
+			}
+			if handled {
+				continue
+			}
+		}
 		if _, _, done, err := im.alreadyProcessed(ctx, KindChannel, sid); err != nil {
 			return err
 		} else if done {
@@ -362,6 +391,18 @@ func (im *Importer) importVideos(ctx context.Context, r *Report) error {
 	c := r.count(KindVideo)
 	for _, v := range videos {
 		sid := v.UUID
+		if im.resync != nil {
+			handled, err := im.resyncOneVideo(ctx, v, r, c)
+			if err != nil {
+				im.markFailed(ctx, KindVideo, sid, safeErr(err))
+				c.Failed++
+				im.logger.WarnContext(ctx, "peertube import: video resync failed", "source_uuid", sid, "error", err)
+				continue
+			}
+			if handled {
+				continue
+			}
+		}
 		if _, _, done, err := im.alreadyProcessed(ctx, KindVideo, sid); err != nil {
 			return err
 		} else if done {
@@ -760,6 +801,18 @@ func (im *Importer) importPlaylists(ctx context.Context, r *Report) error {
 	c := r.count(KindPlaylist)
 	for _, p := range playlists {
 		sid := strconv.FormatInt(p.ID, 10)
+		if im.resync != nil {
+			handled, err := im.resyncOnePlaylist(ctx, p, sid, r, c)
+			if err != nil {
+				im.markFailed(ctx, KindPlaylist, sid, safeErr(err))
+				c.Failed++
+				im.logger.WarnContext(ctx, "peertube import: playlist resync failed", "source_id", sid, "error", err)
+				continue
+			}
+			if handled {
+				continue
+			}
+		}
 		if _, _, done, err := im.alreadyProcessed(ctx, KindPlaylist, sid); err != nil {
 			return err
 		} else if done {
@@ -851,6 +904,16 @@ func (im *Importer) importFollows(ctx context.Context, r *Report) error {
 			im.markFailed(ctx, KindFollow, sid, safeErr(err))
 			c.Failed++
 			im.logger.WarnContext(ctx, "peertube import: follow failed", "source_id", sid, "error", err)
+		}
+	}
+	// An UNSUBSCRIBE is not visible in the loop above — it is the absence of a row
+	// — so it is carried by diffing what the source offers against what the ledger
+	// records the import having created. Only those pairs are removed: a
+	// subscription somebody made on this instance has no ledger row and is
+	// untouched.
+	if im.resync != nil {
+		if err := im.resyncRemovedFollows(ctx, follows, c); err != nil {
+			return err
 		}
 	}
 	return nil

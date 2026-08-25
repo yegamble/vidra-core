@@ -141,57 +141,72 @@ func TestDecideTaxonomyRerunMatrix(t *testing.T) {
 	const source = `["51:Giantess"]`
 	const moved = `["51:Giantess","52:Shrunken"]`
 	cases := []struct {
-		name    string
-		desired string
-		target  taxonomyTarget
-		want    taxonomyAction
+		name            string
+		desired         string
+		target          taxonomyTarget
+		gapFill         taxonomyAction
+		sourceAuthority taxonomyAction
+		why             string
 	}{
 		{
-			name:    "first import writes",
-			desired: source,
-			target:  taxonomyTarget{},
-			want:    taxonomyWrite,
+			name:            "first import writes",
+			desired:         source,
+			target:          taxonomyTarget{},
+			gapFill:         taxonomyWrite,
+			sourceAuthority: taxonomyWrite,
 		},
 		{
-			name:    "second run writes nothing",
-			desired: source,
-			target:  taxonomyTarget{current: source, hasOverride: true, applied: source},
-			want:    taxonomyUpToDate,
+			name:            "second run writes nothing",
+			desired:         source,
+			target:          taxonomyTarget{current: source, hasOverride: true, applied: source},
+			gapFill:         taxonomyUpToDate,
+			sourceAuthority: taxonomyUpToDate,
+			why:             "an unchanged source must cost nothing in EITHER mode",
 		},
 		{
-			name:    "the source gained a category, and the value is still the import's own",
-			desired: moved,
-			target:  taxonomyTarget{current: source, hasOverride: true, applied: source},
-			want:    taxonomyWrite,
+			name:            "the source gained a category, and the value is still the import's own",
+			desired:         moved,
+			target:          taxonomyTarget{current: source, hasOverride: true, applied: source},
+			gapFill:         taxonomyWrite,
+			sourceAuthority: taxonomyWrite,
 		},
 		{
-			name:    "an operator edited the taxonomy: never clobbered",
-			desired: moved,
-			target:  taxonomyTarget{current: `["51:Giantesses (edited)"]`, hasOverride: true, applied: source},
-			want:    taxonomyOperatorOwned,
+			name:            "an operator edited the taxonomy",
+			desired:         moved,
+			target:          taxonomyTarget{current: `["51:Giantesses (edited)"]`, hasOverride: true, applied: source},
+			gapFill:         taxonomyOperatorOwned,
+			sourceAuthority: taxonomyWrite,
+			why:             "the default never clobbers; the operator asking for the source to win is the only thing that changes it",
 		},
 		{
-			name:    "a taxonomy configured by hand before any import ran",
-			desired: source,
-			target:  taxonomyTarget{current: `["90:Handmade"]`, hasOverride: true},
-			want:    taxonomyOperatorOwned,
+			name:            "a taxonomy configured by hand before any import ran",
+			desired:         source,
+			target:          taxonomyTarget{current: `["90:Handmade"]`, hasOverride: true},
+			gapFill:         taxonomyOperatorOwned,
+			sourceAuthority: taxonomyWrite,
 		},
 		{
-			name:    "an operator cleared the key back to the built-ins",
-			desired: source,
-			target:  taxonomyTarget{applied: source},
-			want:    taxonomyCleared,
+			name:            "an operator cleared the key back to the built-ins",
+			desired:         source,
+			target:          taxonomyTarget{applied: source},
+			gapFill:         taxonomyCleared,
+			sourceAuthority: taxonomyWrite,
+			why:             "clearing is a decision the default respects and the source-wins mode overrules",
 		},
 		{
-			name:    "an operator typed exactly what the source says",
-			desired: source,
-			target:  taxonomyTarget{current: source, hasOverride: true},
-			want:    taxonomyUpToDate,
+			name:            "an operator typed exactly what the source says",
+			desired:         source,
+			target:          taxonomyTarget{current: source, hasOverride: true},
+			gapFill:         taxonomyUpToDate,
+			sourceAuthority: taxonomyUpToDate,
 		},
 	}
 	for _, tc := range cases {
-		if got := decideTaxonomy(tc.desired, tc.target); got != tc.want {
-			t.Errorf("%s: decided %v, want %v", tc.name, got, tc.want)
+		if got := decideTaxonomy(tc.desired, tc.target, false); got != tc.gapFill {
+			t.Errorf("%s: gap-fill decided %v, want %v (%s)", tc.name, got, tc.gapFill, tc.why)
+		}
+		if got := decideTaxonomy(tc.desired, tc.target, true); got != tc.sourceAuthority {
+			t.Errorf("%s: source-authoritative decided %v, want %v (%s)", tc.name, got, tc.sourceAuthority, tc.why)
 		}
 	}
 }

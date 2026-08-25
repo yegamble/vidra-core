@@ -18836,6 +18836,31 @@ components:
           description: >-
             How username/handle/email/slug collisions with existing Vidra rows
             are resolved. Defaults to skip (safest, non-destructive).
+        source_authoritative:
+          type: boolean
+          default: false
+          description: >-
+            Whether the SOURCE wins where it and this instance have diverged. It
+            is a SECOND, ORTHOGONAL axis, not another conflict_policy value: the
+            policy resolves natural-key collisions at insert time, this decides
+            whether a re-run may UPDATE the rows the import already owns. It
+            exists for the migration workflow this tool is actually used for — a
+            repeated sync against a still-live PeerTube, on a schedule, up to
+            cutover — where a title edited, a password changed or a chapter moved
+            on the source must follow. It updates video/channel/user metadata
+            (including the password hash), chapters, video tags, ratings,
+            playlist items, subscriptions, the instance category taxonomy and
+            actor images. It NEVER touches a row created on Vidra (they have no
+            import ledger entry), never re-inserts an entity, never rotates an
+            actor keypair, never assigns a view count, never overwrites a
+            rendition row, and never re-downloads media. Defaults to false —
+            gap-filling, which is what an import has always done.
+
+            It is independent of `acknowledged_schema_version`, which is a
+            version gate rather than a write policy: acknowledging a schema
+            version grants no permission to overwrite anything, and a
+            source-authoritative run against a verified source needs no
+            acknowledgement.
         acknowledged_schema_version:
           type: integer
           minimum: 1
@@ -18871,6 +18896,12 @@ components:
           type: integer
         imported:
           type: integer
+        updated:
+          type: integer
+          description: >-
+            Rows that already existed and were CHANGED to match the source. Only
+            ever non-zero for a source_authoritative run. Not required: reports
+            persisted by earlier releases have no such field.
         skipped:
           type: integer
         failed:
@@ -18891,6 +18922,12 @@ components:
           type: boolean
         conflict_policy:
           type: string
+        source_authoritative:
+          type: boolean
+          description: >-
+            Whether this run was allowed to update rows the import already owns
+            where the source and this instance had diverged. Recorded on the
+            report because "why did that title change?" is asked long afterwards.
         entities:
           type: object
           description: >-
@@ -18939,6 +18976,11 @@ components:
         conflict_policy:
           type: string
           enum: [skip, rename, merge, fail]
+        source_authoritative:
+          type: boolean
+          description: >-
+            Whether this run was launched with the source as the authority where
+            the two sides have diverged.
         source_version:
           type: [integer, "null"]
           description: >-

@@ -16,6 +16,12 @@
 //   - --dry-run reports the plan and writes nothing.
 //   - --force overrides the supported-version refusal. It exists for a HUMAN who
 //     has verified compatibility by hand; automated agents MUST NOT pass it.
+//   - --source-authoritative makes a re-run TRACK a still-live source instead of
+//     only filling gaps: rows the import already owns are updated when the two
+//     sides have diverged. It is orthogonal to --conflict-policy (which resolves
+//     name collisions at insert time), it never touches a row created on Vidra,
+//     and it never assigns a view count, rotates an actor keypair, overwrites a
+//     rendition, or re-downloads media. OFF by default.
 //
 // Example:
 //
@@ -60,11 +66,13 @@ func main() {
 		s3UseSSL         = flag.Bool("source-s3-use-ssl", true, "source S3 uses https")
 		s3ForcePathStyle = flag.Bool("source-s3-force-path-style", false, "source S3 path-style addressing (MinIO)")
 		conflictPolicy   = flag.String("conflict-policy", "skip", "collision policy: skip | rename | merge | fail")
-		dryRun           = flag.Bool("dry-run", false, "report the plan + conflicts and write NOTHING")
-		resume           = flag.Bool("resume", false, "continue a prior import (default behaviour: already-imported rows are skipped)")
-		force            = flag.Bool("force", false, "override the supported-version refusal (HUMAN operators only; agents MUST NOT set this)")
-		mediaMode        = flag.String("media-mode", "copy", "media handling: copy | reference | none")
-		noMedia          = flag.Bool("no-media", false, "deprecated alias for --media-mode=none")
+		sourceAuth       = flag.Bool("source-authoritative", false,
+			"the SOURCE wins where it and this instance have diverged: re-run to track a still-live PeerTube, updating the rows this import already owns (metadata, chapters, tags, ratings, playlist items, subscriptions, the category taxonomy, avatars). Rows created on Vidra are never touched. OFF by default; view counts, actor keypairs, renditions and media are never overwritten in any mode")
+		dryRun    = flag.Bool("dry-run", false, "report the plan + conflicts and write NOTHING")
+		resume    = flag.Bool("resume", false, "continue a prior import (default behaviour: already-imported rows are skipped)")
+		force     = flag.Bool("force", false, "override the supported-version refusal (HUMAN operators only; agents MUST NOT set this)")
+		mediaMode = flag.String("media-mode", "copy", "media handling: copy | reference | none")
+		noMedia   = flag.Bool("no-media", false, "deprecated alias for --media-mode=none")
 	)
 	flag.Parse()
 
@@ -148,19 +156,21 @@ func main() {
 	}
 
 	importer := peertubeimport.NewImporter(db.Pool, src, peertubeimport.Options{
-		Policy:    policy,
-		Force:     *force,
-		MediaMode: mode,
-		SrcMedia:  srcMedia,
-		DestMedia: destMedia,
-		SealKey:   sealKey,
+		Policy:              policy,
+		Force:               *force,
+		MediaMode:           mode,
+		SrcMedia:            srcMedia,
+		DestMedia:           destMedia,
+		SealKey:             sealKey,
+		SourceAuthoritative: *sourceAuth,
 	})
 
 	version, err := importer.Preflight(ctx)
 	if err != nil {
 		fatal(err.Error())
 	}
-	log.Printf("preflight OK: source PeerTube schema version %d (policy=%s, media-mode=%s, dry-run=%v, resume=%v)", version, policy, mode, *dryRun, *resume)
+	log.Printf("preflight OK: source PeerTube schema version %d (policy=%s, media-mode=%s, source-authoritative=%v, dry-run=%v, resume=%v)",
+		version, policy, mode, *sourceAuth, *dryRun, *resume)
 
 	var report *peertubeimport.Report
 	if *dryRun {

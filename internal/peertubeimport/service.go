@@ -122,7 +122,11 @@ type Run struct {
 	Mode           string    `json:"mode"`
 	State          string    `json:"state"`
 	ConflictPolicy string    `json:"conflict_policy"`
-	SourceVersion  *int      `json:"source_version"`
+	// SourceAuthoritative is the second, orthogonal axis: whether this run was
+	// allowed to update rows the import already owns. Surfaced on the status view
+	// because "why did that title change?" is asked long after the run.
+	SourceAuthoritative bool `json:"source_authoritative"`
+	SourceVersion       *int `json:"source_version"`
 	// AcknowledgedSchemaVersion is the unverified schema version the launching
 	// admin explicitly accepted for this run, or nil (the norm). It is reported
 	// back so the admin history shows what was signed off on, not only that
@@ -147,6 +151,12 @@ type Launch struct {
 	Mode string
 	// Policy resolves naming collisions; empty takes the server default.
 	Policy ConflictPolicy
+	// SourceAuthoritative is the write policy for THIS run: whether a re-run may
+	// update the rows the import already owns when the source has moved. It is
+	// orthogonal to Policy (which resolves natural-key collisions at insert time)
+	// and to AcknowledgedSchemaVersion (which is a version gate, not a write
+	// policy). False — gap-filling only — is the default everywhere.
+	SourceAuthoritative bool
 	// AcknowledgedSchemaVersion is the unverified source schema version the
 	// administrator making THIS request explicitly accepted, or 0 for the normal
 	// case of no acknowledgement.
@@ -159,10 +169,11 @@ type Launch struct {
 }
 
 // RunParams is what the importer factory needs to build the Importer for one
-// claimed run: the policy the run was launched under, and the acknowledgement it
-// carries (0 = none).
+// claimed run: the policy the run was launched under, the write policy it was
+// launched under, and the acknowledgement it carries (0 = none).
 type RunParams struct {
 	Policy                    ConflictPolicy
+	SourceAuthoritative       bool
 	AcknowledgedSchemaVersion int
 }
 
@@ -183,6 +194,7 @@ func (s *Service) CreateRun(ctx context.Context, in Launch, adminID uuid.UUID) (
 	row, err := s.repo.CreateImportRun(ctx, sqlcgen.CreateImportRunParams{
 		Mode:                      in.Mode,
 		ConflictPolicy:            policy.String(),
+		SourceAuthoritative:       in.SourceAuthoritative,
 		StartedBy:                 optUUID(adminID),
 		AcknowledgedSchemaVersion: optSchemaVersion(in.AcknowledgedSchemaVersion),
 	})
@@ -271,7 +283,15 @@ func (s *Service) executeRun(ctx context.Context, claim sqlcgen.ClaimDueImportRu
 		ack = int(*claim.AcknowledgedSchemaVersion)
 	}
 
-	importer, cleanup, err := s.buildImporter(ctx, RunParams{Policy: policy, AcknowledgedSchemaVersion: ack})
+	// The write policy comes off the RUN ROW for the same reason the
+	// acknowledgement does: an admin launches through the API and a worker in
+	// another process claims the run, so the run row is the whole of what survives
+	// the hop.
+	importer, cleanup, err := s.buildImporter(ctx, RunParams{
+		Policy:                    policy,
+		SourceAuthoritative:       claim.SourceAuthoritative,
+		AcknowledgedSchemaVersion: ack,
+	})
 	if err != nil {
 		s.logger.WarnContext(ctx, "peertube import: could not open source", "run_id", claim.ID.String(), "error", err)
 		s.failRun(ctx, claim.ID, "could not connect to the configured source", "")
@@ -376,14 +396,15 @@ func (s *Service) emitAudit(ctx context.Context, action, result, actorID, reason
 // into a Report.
 func runFromRow(row sqlcgen.PeertubeImportRun) Run {
 	r := Run{
-		ID:             row.ID,
-		Mode:           row.Mode,
-		State:          row.State,
-		ConflictPolicy: row.ConflictPolicy,
-		Error:          row.Error,
-		ErrorCode:      row.ErrorCode,
-		CreatedAt:      row.CreatedAt,
-		UpdatedAt:      row.UpdatedAt,
+		ID:                  row.ID,
+		Mode:                row.Mode,
+		State:               row.State,
+		ConflictPolicy:      row.ConflictPolicy,
+		SourceAuthoritative: row.SourceAuthoritative,
+		Error:               row.Error,
+		ErrorCode:           row.ErrorCode,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
 	}
 	if row.SourceVersion != nil {
 		v := int(*row.SourceVersion)

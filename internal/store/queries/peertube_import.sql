@@ -67,14 +67,18 @@ LIMIT $1;
 -- unique violation when a run is already pending/running — the caller maps that
 -- to a 409 "an import is already in progress".
 --
--- acknowledged_schema_version is the launching admin's explicit, per-run sign-off
--- on an unverified source schema, and it is written ONLY from the launch request.
--- NULL is the norm. It is stored here rather than held in the handler because the
--- worker that runs the preflight is a different process from the one that took
--- the request, and because started_by is on this same row: the pair is the audit
--- record of who accepted which version.
-INSERT INTO peertube_import_runs (mode, conflict_policy, started_by, acknowledged_schema_version)
-VALUES ($1, $2, $3, $4)
+-- source_authoritative (0116) is a second, orthogonal axis: conflict_policy
+-- says what to do about a NAME that already exists, this says whether a re-run
+-- may update rows the import already owns when the two sides have diverged.
+--
+-- acknowledged_schema_version (0115) is a third and is independent of both: it is
+-- the launching admin's explicit, per-run sign-off on an unverified source schema,
+-- and it is written ONLY from the launch request. NULL is the norm. Both live here
+-- rather than in the handler because the worker that runs the preflight is a
+-- different process from the one that took the request, and because started_by is
+-- on this same row: the pair is the audit record of who accepted which version.
+INSERT INTO peertube_import_runs (mode, conflict_policy, started_by, source_authoritative, acknowledged_schema_version)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: GetImportRun :one
@@ -110,7 +114,7 @@ WHERE id IN (
     LIMIT $1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, mode, conflict_policy, started_by, acknowledged_schema_version;
+RETURNING id, mode, conflict_policy, source_authoritative, started_by, acknowledged_schema_version;
 
 -- name: SetImportRunVersion :exec
 UPDATE peertube_import_runs
@@ -387,3 +391,235 @@ DO UPDATE SET vidra_id      = EXCLUDED.vidra_id,
               note          = EXCLUDED.note,
               applied_value = EXCLUDED.applied_value,
               updated_at    = now();
+
+-- ═══════════ source-authoritative resync (0116) ═══════════
+--
+-- Everything below is read or written ONLY by a run the operator launched with
+-- source_authoritative. The default import is unchanged: it fills gaps, and the
+-- ON CONFLICT DO NOTHING guards above are still what it uses.
+--
+-- The organising rule, and the reason no new provenance column was needed: THE
+-- LEDGER IS THE PROVENANCE RECORD. It already maps every source entity to the
+-- Vidra row the import created for it, so "did the import write this row?" is
+-- answerable for every family by joining peertube_import_ledger to the row. A
+-- resync therefore updates exactly the rows the import owns and cannot reach a
+-- video somebody uploaded here, a channel created here, or an account that never
+-- came from the source — those have no ledger row and are invisible to every
+-- query in this section.
+--
+-- The reads are DELIBERATELY BULK, one statement per family for the whole
+-- instance. A no-op re-run of this importer takes ~21 seconds on a 155k-entity
+-- catalogue because every entity costs one indexed ledger lookup and no source
+-- round trip; a resync that asked the destination a question per entity would
+-- turn that into minutes over an SSH tunnel, and this is a tool the operator
+-- runs on a SCHEDULE until cutover. Each read is keyed by source_id so the
+-- caller can answer "has anything changed?" from memory, in the loop it already
+-- runs, with no extra query at all.
+--
+-- The `status = 'done'` predicate everywhere is the 0114 partial index.
+
+-- name: ListImportLedgerDoneByKind :many
+-- Every completed mapping for one entity kind. It is how a resync notices a
+-- source row that is GONE: the ledger still holds it, the source no longer
+-- offers it, and the difference is what has to be removed here.
+SELECT source_id, vidra_id, applied_value
+FROM peertube_import_ledger
+WHERE entity_kind = $1 AND status = 'done';
+
+-- name: ImportResyncUsers :many
+-- Every user the import created, with the fields the import maps. username and
+-- email are read but never rewritten — they are the NATURAL KEYS the conflict
+-- policy owns, they are uniquely indexed, and a rename carried blindly could
+-- collide with an unrelated account. They come back so the caller can REPORT the
+-- divergence instead of silently ignoring it.
+SELECT l.source_id, u.id, u.username, u.email, u.password_hash, u.role,
+       u.email_verified, u.display_name
+FROM peertube_import_ledger l
+JOIN users u ON u.id = l.vidra_id
+WHERE l.entity_kind = 'user' AND l.status = 'done';
+
+-- name: ImportResyncChannels :many
+-- Every channel the import created. handle is the natural key: read, reported,
+-- never rewritten.
+SELECT l.source_id, c.id, c.owner_id, c.handle, c.display_name, c.description
+FROM peertube_import_ledger l
+JOIN channels c ON c.id = l.vidra_id
+WHERE l.entity_kind = 'channel' AND l.status = 'done';
+
+-- name: ImportResyncVideos :many
+-- Every video the import created, with the mapped metadata AND the duration,
+-- which lives on video_metadata. The LEFT JOIN matters: a video whose source
+-- carried no duration has no metadata row at all, and an inner join would hide
+-- it from the resync entirely.
+SELECT l.source_id, v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
+       COALESCE(v.category, '') AS category,
+       COALESCE(v.language, '') AS language,
+       COALESCE(v.license, '')  AS license,
+       COALESCE(m.duration_seconds, 0)::int AS duration_seconds
+FROM peertube_import_ledger l
+JOIN videos v ON v.id = l.vidra_id
+LEFT JOIN video_metadata m ON m.video_id = v.id
+WHERE l.entity_kind = 'video' AND l.status = 'done';
+
+-- name: ImportResyncVideoTags :many
+-- The tag set standing on every video the import created, ordered so the caller
+-- folds it into a set digest deterministically. Rows rather than a string_agg on
+-- purpose: the desired set is folded in Go, and both sides have to be folded by
+-- the SAME code or a difference in escaping reads as a change that is not there.
+SELECT l.source_id, t.tag
+FROM peertube_import_ledger l
+JOIN video_tags t ON t.video_id = l.vidra_id
+WHERE l.entity_kind = 'video' AND l.status = 'done'
+ORDER BY l.source_id, t.tag;
+
+-- name: ImportResyncChapters :many
+-- The chapter set standing on every video the import created. Keyed by the
+-- VIDEO's source id, not by chapter ids, because a chapter is not an entity the
+-- source keeps a stable identity for as far as Vidra is concerned: the primary
+-- key here is (video_id, start_seconds), so a chapter somebody MOVED is a
+-- different row, and the only correct unit of comparison is the whole set.
+SELECT l.source_id, c.start_seconds, c.title
+FROM peertube_import_ledger l
+JOIN video_chapters c ON c.video_id = l.vidra_id
+WHERE l.entity_kind = 'video' AND l.status = 'done'
+ORDER BY l.source_id, c.start_seconds;
+
+-- name: ImportResyncRatings :many
+-- Every rating standing on a video the import created, keyed by the pair
+-- video_ratings itself is keyed by. Whether the IMPORT wrote a given one of
+-- these is a separate question, answered from the rating ledger's applied_value;
+-- this read only says what is there now.
+SELECT r.user_id, r.video_id, r.rating
+FROM video_ratings r
+JOIN peertube_import_ledger l
+  ON l.entity_kind = 'video' AND l.status = 'done' AND l.vidra_id = r.video_id;
+
+-- name: ImportResyncPlaylists :many
+SELECT l.source_id, p.id, p.owner_id, p.title, p.description, p.visibility
+FROM peertube_import_ledger l
+JOIN playlists p ON p.id = l.vidra_id
+WHERE l.entity_kind = 'playlist' AND l.status = 'done';
+
+-- name: ImportResyncPlaylistItems :many
+-- The slots standing in every playlist the import created, in playback order —
+-- position is part of the comparison, so a re-ordered playlist is a changed one.
+SELECT l.source_id, i.video_id, i.position
+FROM peertube_import_ledger l
+JOIN playlist_items i ON i.playlist_id = l.vidra_id
+WHERE l.entity_kind = 'playlist' AND l.status = 'done'
+ORDER BY l.source_id, i.position, i.video_id;
+
+-- ── the resync writes ──
+--
+-- Every one of them is keyed on an id that came out of the ledger. NONE of them
+-- inserts a parent entity: ImportInsertVideo above is a plain INSERT with no
+-- ON CONFLICT and no pre-check, so a resync that re-ran it would create a
+-- DUPLICATE video and the ledger upsert would then repoint vidra_id at the
+-- duplicate — orphaning the original row, its children and its blobs. The same
+-- hazard applies to comments and playlists. Updating by id is what makes that
+-- structurally impossible.
+
+-- name: ImportUpdateUser :exec
+-- The password hash is here on purpose and it is the field this exists for: an
+-- operator syncs a live PeerTube for days, somebody changes their password on
+-- the source in that window, and without this they cannot log in after cutover.
+--
+-- is_active is NOT written. The importer never reads the source's blocked flag,
+-- so it has no opinion to carry — and an operator who suspended an account on
+-- this instance would find it unsuspended every night if it did.
+UPDATE users
+SET password_hash  = $2,
+    role           = $3,
+    email_verified = $4,
+    display_name   = $5,
+    updated_at     = now()
+WHERE id = $1;
+
+-- name: ImportUpdateChannel :exec
+UPDATE channels
+SET owner_id     = $2,
+    display_name = $3,
+    description  = $4,
+    updated_at   = now()
+WHERE id = $1;
+
+-- name: ImportUpdateVideo :exec
+UPDATE videos
+SET channel_id  = $2,
+    title       = $3,
+    description = $4,
+    privacy     = $5,
+    state       = $6,
+    category    = $7,
+    language    = $8,
+    license     = $9,
+    updated_at  = now()
+WHERE id = $1;
+
+-- name: ImportUpdateVideoDuration :exec
+-- Duration ONLY. ImportUpsertVideoMetadata above also writes width and height,
+-- and the import passes neither — so re-using it on a resync would set both to
+-- NULL and erase the dimensions a Vidra transcode recorded.
+INSERT INTO video_metadata (video_id, duration_seconds)
+VALUES ($1, $2)
+ON CONFLICT (video_id) DO UPDATE SET
+    duration_seconds = EXCLUDED.duration_seconds,
+    updated_at = now();
+
+-- name: ImportDeleteVideoTagsNotIn :exec
+-- The delete half of a SET. An empty array deletes every tag, which is right: a
+-- source that now carries no tags for this video is a source that says it has
+-- none. (`tag = ANY('{}')` is false for every row, so NOT ... is true.)
+DELETE FROM video_tags
+WHERE video_id = $1 AND NOT (tag = ANY(@tags::text[]));
+
+-- name: ImportDeleteVideoChapters :exec
+-- Chapters are replaced as a SET, never updated in place, and this is why: the
+-- primary key is (video_id, start_seconds), so a chapter the source MOVED from
+-- 90s to 95s is a different row — an upsert would leave the old mark standing
+-- and the video would show both. Delete-then-reinsert inside one transaction is
+-- the only shape that cannot duplicate.
+DELETE FROM video_chapters WHERE video_id = $1;
+
+-- name: ImportUpsertVideoRating :exec
+-- The source-authoritative form of ImportInsertVideoRating: a person who changed
+-- their like to a dislike on the source has their vote carried, instead of the
+-- first vote standing forever.
+INSERT INTO video_ratings (video_id, user_id, rating, created_at, updated_at)
+VALUES ($1, $2, $3, $4, now())
+ON CONFLICT (user_id, video_id) DO UPDATE SET
+    rating = EXCLUDED.rating,
+    updated_at = now();
+
+-- name: ImportDeleteVideoRating :exec
+-- Unrating. PeerTube expresses it two ways depending on its version — the row's
+-- type becomes 'none', or the row is deleted outright — and the caller handles
+-- both, but only ever removes a rating the ledger says the import wrote and that
+-- still holds the value the import last wrote for it.
+DELETE FROM video_ratings WHERE user_id = $1 AND video_id = $2;
+
+-- name: ImportUpdatePlaylist :exec
+UPDATE playlists
+SET owner_id    = $2,
+    title       = $3,
+    description = $4,
+    visibility  = $5,
+    updated_at  = now()
+WHERE id = $1;
+
+-- name: ImportUpsertPlaylistItem :exec
+-- Position is part of what a playlist IS, so unlike ImportInsertPlaylistItem
+-- this carries a re-ordering rather than treating an existing slot as done.
+INSERT INTO playlist_items (playlist_id, video_id, position)
+VALUES ($1, $2, $3)
+ON CONFLICT (playlist_id, video_id) DO UPDATE SET position = EXCLUDED.position;
+
+-- name: ImportDeletePlaylistItemsNotIn :exec
+-- A video removed from a playlist on the source leaves the playlist here.
+DELETE FROM playlist_items
+WHERE playlist_id = $1 AND NOT (video_id = ANY(@video_ids::uuid[]));
+
+-- name: ImportUnfollowChannel :exec
+-- Only ever called for a (follower, channel) pair the ledger records the import
+-- having created, and only when the source no longer has that subscription.
+DELETE FROM channel_follows WHERE follower_id = $1 AND channel_id = $2;
