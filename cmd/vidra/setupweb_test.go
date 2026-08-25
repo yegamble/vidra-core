@@ -110,6 +110,14 @@ func TestWebAnswersMatchTheTerminalInterview(t *testing.T) {
 		smtpUser     = "postmaster"
 		smtpPassword = "smtp-secret-value"
 		smtpFrom     = "noreply@example.org"
+		// The migration block: a source in the s3 shape, because that is the branch
+		// with the most fields in it and the one a parity slip would hide in.
+		ptSourceURL   = "postgres://readonly:pw@10.0.0.5:5432/peertube_prod?sslmode=require"
+		ptS3Endpoint  = "s3.eu-central-003.backblazeb2.com"
+		ptS3Region    = "eu-central-003"
+		ptS3Bucket    = "peertube-source-media"
+		ptS3AccessKey = "003SOURCEACCESSKEY"
+		ptS3Secret    = "peertube-source-secret-value"
 	)
 
 	terminal := runInterview(t, tmpl, nil, []promptAnswer{
@@ -119,11 +127,16 @@ func TestWebAnswersMatchTheTerminalInterview(t *testing.T) {
 		{match: "Name of this instance", answer: instanceName},
 		{match: "Release tag to deploy", answer: releaseTag},
 		{match: "Media storage backend", answer: "s3"},
-		{match: "S3 endpoint host", answer: s3Endpoint},
-		{match: "S3 region", answer: s3Region},
-		{match: "S3 bucket", answer: s3Bucket},
-		{match: "S3 access key", answer: s3AccessKey},
-		{match: "S3 secret key", answer: s3SecretKey},
+		// `once` on all five, because the SOURCE instance's block below asks the
+		// same five questions with "Source " on the front — and these entries are a
+		// substring of those prompts. Dropping each after it has answered is what
+		// keeps this script keyed by question rather than quietly answering the
+		// migration's endpoint with the instance's own.
+		{match: "S3 endpoint host", answer: s3Endpoint, once: true},
+		{match: "S3 region", answer: s3Region, once: true},
+		{match: "S3 bucket", answer: s3Bucket, once: true},
+		{match: "S3 access key", answer: s3AccessKey, once: true},
+		{match: "S3 secret key", answer: s3SecretKey, once: true},
 		{match: "Use an external/managed PostgreSQL", answer: "y"},
 		{match: "Managed PostgreSQL connection string", answer: databaseURL},
 		{match: "Use an external/managed Redis", answer: "n"},
@@ -141,6 +154,16 @@ func TestWebAnswersMatchTheTerminalInterview(t *testing.T) {
 		{match: "From address", answer: smtpFrom},
 		{match: "Open registration to the public now", answer: "y"},
 		{match: "Require an admin to approve each signup", answer: "y"},
+		{match: "Migrate from an existing PeerTube instance", answer: "y"},
+		{match: "Source PeerTube database DSN", answer: ptSourceURL},
+		{match: "Where the source instance's media lives", answer: "s3"},
+		{match: "Source S3 endpoint host", answer: ptS3Endpoint},
+		{match: "Source S3 region", answer: ptS3Region},
+		{match: "Source S3 bucket", answer: ptS3Bucket},
+		{match: "Source S3 access key", answer: ptS3AccessKey},
+		{match: "Source S3 secret key", answer: ptS3Secret},
+		{match: "Media handling for an import", answer: "reference"},
+		{match: "Collision handling for an import", answer: "rename"},
 	})
 
 	web := setupweb.BuildAnswers(setupweb.Form{
@@ -162,6 +185,20 @@ func TestWebAnswersMatchTheTerminalInterview(t *testing.T) {
 		Features:     &setupweb.FeatureForm{Scan: true, Media: true, IPFS: true},
 		Mail:         &setupweb.MailForm{Host: smtpHost, Port: smtpPort, Username: smtpUser, Password: smtpPassword, From: smtpFrom},
 		Registration: &setupweb.RegistrationForm{Enabled: true, RequireApproval: true},
+		PeerTube: &setupweb.PeerTubeForm{
+			Enabled:   true,
+			SourceURL: ptSourceURL,
+			Storage:   "s3",
+			S3: setupweb.S3Form{
+				Endpoint:  ptS3Endpoint,
+				Region:    ptS3Region,
+				Bucket:    ptS3Bucket,
+				AccessKey: ptS3AccessKey,
+				SecretKey: ptS3Secret,
+			},
+			MediaMode:   "reference",
+			ConflictPol: "rename",
+		},
 	}, tmpl, nil)
 
 	if !reflect.DeepEqual(terminal, web) {
@@ -243,6 +280,18 @@ func TestWebSeedsMatchTheInterviewDefaults(t *testing.T) {
 		// being left closed — the interview keeps it the same way, so a re-run that
 		// re-opens signups finds the policy the operator last chose.
 		Registration: &setupweb.RegistrationForm{Enabled: seed.Registration.Enabled, RequireApproval: seed.Registration.RequireApproval},
+		// Also always sent, and also with both secrets left blank: the page renders
+		// a source DSN already on file as "kept — leave blank to keep it", exactly
+		// like the S3 secret above. The gate is the seed, so pressing Next through a
+		// deployment that is not migrating leaves it not migrating.
+		PeerTube: &setupweb.PeerTubeForm{
+			Enabled:     seed.PeerTube.Enabled,
+			Storage:     seed.PeerTube.Storage,
+			LocalRoot:   seed.PeerTube.LocalRoot,
+			S3:          setupweb.S3Form{Endpoint: seed.PeerTube.S3Endpoint, Region: seed.PeerTube.S3Region, Bucket: seed.PeerTube.S3Bucket, AccessKey: seed.PeerTube.S3AccessKey},
+			MediaMode:   seed.PeerTube.MediaMode,
+			ConflictPol: seed.PeerTube.ConflictPol,
+		},
 	}, tmpl, existing)
 
 	terminalRes, err := setup.Generate(setup.Request{Template: tmpl, Existing: existing, Answers: terminal, Rand: &seqReader{}})

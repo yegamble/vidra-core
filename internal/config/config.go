@@ -2004,29 +2004,128 @@ func isHTTPURL(raw string) bool {
 	return err == nil && u.Host != "" && (u.Scheme == "http" || u.Scheme == "https")
 }
 
+// The five per-value rules of the PeerTube-source block, each one exported and
+// each one the ONLY implementation of itself.
+//
+// They exist as functions rather than as inline switches because `vidra setup`
+// asks for these values one at a time and has to be able to reject an answer AT
+// THE PROMPT. A friendlier second opinion in the front end is the exact way a
+// wizard starts accepting values that boot validation then refuses — see
+// internal/setup's NormalizeOrigin for the same rule stated from the other side.
+// validatePeerTubeImport below calls them, so the interview, the web wizard and
+// the api's boot cannot disagree about what a usable answer is.
+//
+// Each takes the RAW env value and normalises nothing: Load already lowercases
+// the three enumerated ones, and a validator that quietly accepted "Copy" here
+// while config compared against "copy" would be a rule with two answers.
+
+// CheckPeerTubeConflictPolicy validates PEERTUBE_IMPORT_CONFLICT_POLICY. Empty
+// is the default (skip), so it passes.
+func CheckPeerTubeConflictPolicy(v string) error {
+	switch v {
+	case "", "skip", "rename", "merge", "fail": // "" = default skip (Load defaults it)
+		return nil
+	default:
+		return varErrorf("PEERTUBE_IMPORT_CONFLICT_POLICY", "config: PEERTUBE_IMPORT_CONFLICT_POLICY %q must be one of skip, rename, merge, fail", v)
+	}
+}
+
+// CheckPeerTubeMediaMode validates PEERTUBE_IMPORT_MEDIA_MODE. Empty is the
+// default (copy), so it passes.
+func CheckPeerTubeMediaMode(v string) error {
+	switch v {
+	case "", "copy", "reference", "none": // "" = default copy (Load defaults it)
+		return nil
+	default:
+		return varErrorf("PEERTUBE_IMPORT_MEDIA_MODE", "config: PEERTUBE_IMPORT_MEDIA_MODE %q must be one of copy, reference, none", v)
+	}
+}
+
+// CheckPeerTubeSourceStorageBackend validates PEERTUBE_SOURCE_STORAGE_BACKEND.
+// Empty is the default (local), so it passes.
+func CheckPeerTubeSourceStorageBackend(v string) error {
+	switch v {
+	case "", "local", "s3": // "" = default local (Load defaults it)
+		return nil
+	default:
+		return varErrorf("PEERTUBE_SOURCE_STORAGE_BACKEND", "config: PEERTUBE_SOURCE_STORAGE_BACKEND %q must be local or s3", v)
+	}
+}
+
+// CheckPeerTubeSourceS3Endpoint validates PEERTUBE_SOURCE_S3_ENDPOINT: a host,
+// never a URL, exactly like the primary STORAGE_S3_ENDPOINT it mirrors.
+func CheckPeerTubeSourceS3Endpoint(v string) error {
+	if strings.Contains(v, "://") {
+		return varErrorf("PEERTUBE_SOURCE_S3_ENDPOINT", "config: PEERTUBE_SOURCE_S3_ENDPOINT must be host[:port] without a scheme (got %q)", v)
+	}
+	return nil
+}
+
+// CheckPeerTubeSourceDatabaseURL validates the SHAPE of the source DSN, and only
+// the shape: nothing here dials anything. `vidra setup` runs before the stack
+// exists at all, so the earliest a connection can be attempted is the import
+// itself — which is the api container's job. What can be caught for free is a
+// value that is not a connection string in either dialect libpq accepts, which
+// is what a pasted hostname, a psql command line or a truncated copy looks like.
+//
+// BOTH DIALECTS PASS, and that is not laxity. pgx accepts the URL form
+// (postgres://user:pw@host/db) and the keyword/value form (host=… user=… dbname=…);
+// an operator whose read-only replica is addressed the second way has a working
+// DSN, and a rule that only knew about URLs would refuse the deployment it was
+// written to help. Empty passes too — whether a DSN is REQUIRED is
+// validatePeerTubeImport's question, asked once, below.
+//
+// NO MESSAGE HERE QUOTES THE VALUE, and that is a rule and not a style choice.
+// This one carries the source database's password, and its findings are printed
+// by an interactive prompt whose whole point is that the answer is not echoed,
+// by `vidra setup --check`, and by the web wizard's Review step. A %q of the
+// input would put the credential in a terminal scrollback, a CI log and a
+// browser. Only the SCHEME is ever repeated back — it cannot be secret, and it
+// is the half an operator needs to see the typo in.
+func CheckPeerTubeSourceDatabaseURL(v string) error {
+	raw := strings.TrimSpace(v)
+	if raw == "" {
+		return nil
+	}
+	bad := func(why string) error {
+		return varErrorf("PEERTUBE_SOURCE_DATABASE_URL", "config: PEERTUBE_SOURCE_DATABASE_URL %s — write the URL form (postgres://readonly:PASSWORD@HOST:5432/peertube_prod?sslmode=require) or the keyword form (host=HOST user=readonly dbname=peertube_prod)", why)
+	}
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		switch {
+		case err != nil:
+			return bad("is not a parseable connection string")
+		case u.Scheme != "postgres" && u.Scheme != "postgresql":
+			return bad(fmt.Sprintf("names the scheme %q, which is not postgres:// or postgresql://", u.Scheme))
+		case u.Host == "":
+			return bad("names no host, so it addresses no database")
+		}
+		return nil
+	}
+	// The keyword/value form. One `key=value` pair is the whole requirement: it is
+	// what separates a real DSN from a bare hostname somebody pasted out of an
+	// inventory.
+	if !strings.Contains(raw, "=") {
+		return bad("is neither a URL nor a keyword/value connection string")
+	}
+	return nil
+}
+
 // validatePeerTubeImport checks the PeerTube import (P18) configuration. The
 // conflict policy and source storage backend are always validated (they have
 // defaults); the source DSN + S3 credentials are only required when the admin
 // import API is enabled — the CLI supplies its own source flags.
 func (c *Config) validatePeerTubeImport() error {
 	var errs []error
-	switch c.PeerTubeImportConflictPolicy {
-	case "", "skip", "rename", "merge", "fail": // "" = default skip (Load defaults it)
-	default:
-		errs = append(errs, varErrorf("PEERTUBE_IMPORT_CONFLICT_POLICY", "config: PEERTUBE_IMPORT_CONFLICT_POLICY %q must be one of skip, rename, merge, fail", c.PeerTubeImportConflictPolicy))
-	}
-	switch c.PeerTubeImportMediaMode {
-	case "", "copy", "reference", "none": // "" = default copy (Load defaults it)
-	default:
-		errs = append(errs, varErrorf("PEERTUBE_IMPORT_MEDIA_MODE", "config: PEERTUBE_IMPORT_MEDIA_MODE %q must be one of copy, reference, none", c.PeerTubeImportMediaMode))
-	}
-	switch c.PeerTubeSourceStorageBackend {
-	case "", "local", "s3": // "" = default local (Load defaults it)
-	default:
-		errs = append(errs, varErrorf("PEERTUBE_SOURCE_STORAGE_BACKEND", "config: PEERTUBE_SOURCE_STORAGE_BACKEND %q must be local or s3", c.PeerTubeSourceStorageBackend))
-	}
-	if strings.Contains(c.PeerTubeSourceS3Endpoint, "://") {
-		errs = append(errs, varErrorf("PEERTUBE_SOURCE_S3_ENDPOINT", "config: PEERTUBE_SOURCE_S3_ENDPOINT must be host[:port] without a scheme (got %q)", c.PeerTubeSourceS3Endpoint))
+	for _, err := range []error{
+		CheckPeerTubeConflictPolicy(c.PeerTubeImportConflictPolicy),
+		CheckPeerTubeMediaMode(c.PeerTubeImportMediaMode),
+		CheckPeerTubeSourceStorageBackend(c.PeerTubeSourceStorageBackend),
+		CheckPeerTubeSourceS3Endpoint(c.PeerTubeSourceS3Endpoint),
+	} {
+		if err != nil {
+			errs = append(errs, err)
+		}
 	}
 	// The admin import surface being off is the GUARD for the source
 	// requirements: the CLI supplies its own source flags, so nothing below is a
@@ -2037,6 +2136,12 @@ func (c *Config) validatePeerTubeImport() error {
 	// The admin import path needs a source to read from.
 	if strings.TrimSpace(c.PeerTubeSourceDatabaseURL) == "" {
 		errs = append(errs, varErrorf("PEERTUBE_SOURCE_DATABASE_URL", "config: PEERTUBE_SOURCE_DATABASE_URL is required when PEERTUBE_IMPORT_ENABLED=true"))
+	} else if err := CheckPeerTubeSourceDatabaseURL(c.PeerTubeSourceDatabaseURL); err != nil {
+		// Shape-checked only INSIDE the enabled guard, deliberately. A deployment
+		// that never turns the admin import on has no source at all, and a
+		// half-written DSN left in an env file from a migration that finished last
+		// month must not become a boot failure a year later.
+		errs = append(errs, err)
 	}
 	if c.PeerTubeImportMediaMode != "reference" && c.PeerTubeImportMediaMode != "none" && c.PeerTubeSourceStorageBackend == "s3" {
 		if strings.TrimSpace(c.PeerTubeSourceS3Endpoint) == "" || strings.TrimSpace(c.PeerTubeSourceS3Bucket) == "" {

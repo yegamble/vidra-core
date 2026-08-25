@@ -130,16 +130,47 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 	case "acme_email":
 		normalized = strings.TrimSpace(req.Value)
 		err = setup.CheckAcmeEmail(req.Value)
+	// The PeerTube-source answers. They are here rather than left to the Review
+	// step because they are the answers an operator CANNOT sanity-check: the
+	// source belongs to another instance, half of them are enumerations, and the
+	// DSN is typed into a field that does not show what was typed. Each one goes
+	// through internal/config's own rule — the api's, not a second opinion — and
+	// NOTHING here connects to anything. The stack does not exist while this
+	// wizard is open; the import runs inside the api container later.
+	case "peertube_source_url":
+		// Normalized stays EMPTY for this one, deliberately. Every other field
+		// echoes what the engine would store so the page can show it; this value is
+		// a credential, and the wire rule at the top of wire.go is that no secret
+		// ever travels outwards.
+		err = setup.CheckPeerTubeSourceDatabaseURL(req.Value)
+	case "peertube_source_storage":
+		normalized = strings.ToLower(strings.TrimSpace(req.Value))
+		err = setup.CheckPeerTubeSourceStorageBackend(req.Value)
+	case "peertube_source_s3_endpoint":
+		normalized = strings.TrimSpace(req.Value)
+		err = setup.CheckPeerTubeSourceS3Endpoint(req.Value)
+	case "peertube_media_mode":
+		normalized = strings.ToLower(strings.TrimSpace(req.Value))
+		err = setup.CheckPeerTubeMediaMode(req.Value)
+	case "peertube_conflict_policy":
+		normalized = strings.ToLower(strings.TrimSpace(req.Value))
+		err = setup.CheckPeerTubeConflictPolicy(req.Value)
 	default:
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("%q is not a field this wizard validates one at a time. The engine exports a validator for the TLS mode, the domain and the ACME contact address; everything else is checked over the whole answer set at the Review step, which is where its problems belong", req.Field))
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("%q is not a field this wizard validates one at a time. The engine exports a validator for the TLS mode, the domain, the ACME contact address and the five PeerTube-source answers; everything else is checked over the whole answer set at the Review step, which is where its problems belong", req.Field))
 		return
 	}
 	if err != nil {
 		// The engine's own message, minus its package prefix — the same reduction
 		// the terminal's askValid prints. It is already addressed to an operator
 		// and says what to write instead, so replacing it with a friendlier
-		// sentence would be replacing the accurate one.
-		writeJSON(w, http.StatusOK, ValidateResponse{Error: strings.TrimPrefix(err.Error(), "setup: ")})
+		// sentence would be replacing the accurate one. BOTH prefixes are stripped:
+		// the domain and TLS rules are internal/setup's and the PeerTube ones are
+		// the api's own, straight out of internal/config.
+		msg := err.Error()
+		for _, prefix := range []string{"setup: ", "config: "} {
+			msg = strings.TrimPrefix(msg, prefix)
+		}
+		writeJSON(w, http.StatusOK, ValidateResponse{Error: msg})
 		return
 	}
 	writeJSON(w, http.StatusOK, ValidateResponse{OK: true, Normalized: normalized})

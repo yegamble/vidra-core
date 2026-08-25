@@ -198,10 +198,10 @@ const managedHeader = `
 # Keys this template does not define yet: which docker compose profiles the
 # deploy scripts enable, whether Postgres/Redis are external (each true makes the
 # deploy add docker-compose.external-*.yml so the bundled service never starts),
-# the connection strings those switches need, and the TLS mode and ACME contact
-# address the generated deploy/Caddyfile.local is rendered from. A newer template
-# defines them in place and setup fills them there instead, leaving this block
-# empty.`
+# the connection strings those switches need, the TLS mode and ACME contact
+# address the generated deploy/Caddyfile.local is rendered from, and the source
+# instance a PeerTube migration reads from. A newer template defines them in
+# place and setup fills them there instead, leaving this block empty.`
 
 // Render re-emits the file with values applied: comments, blank lines and
 // ordering untouched, each active assignment carrying values[key], then two

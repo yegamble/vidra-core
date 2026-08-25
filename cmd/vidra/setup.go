@@ -49,10 +49,20 @@ ever replaced when --rotate names it, and rotating a *_KEK additionally needs
 separate answer from --yes, which only confirms the in-place rewrite.
 
 Secrets do not have to appear on the command line: --s3-secret-key,
---smtp-password, --database-url and --redis-url accept @path (read the file), -
-(read stdin, with --non-interactive) or a VIDRA_SETUP_* environment variable, and
-the interactive prompts read them without echoing. A managed connection string
-counts as a secret: it carries the password inside it.
+--smtp-password, --database-url, --redis-url, --peertube-source-url and
+--peertube-source-s3-secret-key accept @path (read the file), - (read stdin, with
+--non-interactive) or a VIDRA_SETUP_* environment variable, and the interactive
+prompts read them without echoing. A connection string counts as a secret: it
+carries the password inside it, whether it addresses this deployment's database
+or the PeerTube instance it is migrating from.
+
+--peertube configures a MIGRATION SOURCE, and it only ever writes it down. At
+setup time the stack does not exist yet, so nothing here dials the source
+database: the answers are shape-checked with the api's own validators and the
+import itself is launched later from <domain>/admin/import-peertube, inside the
+running api. Not passing any of them leaves whatever the env file already says,
+so a re-run about something else cannot disturb a migration in flight;
+--peertube=false closes the import surface again.
 
 --web asks the same questions in a BROWSER instead of this terminal: it serves
 the nine-step wizard from this process and prints a one-time link. The wizard
@@ -222,6 +232,17 @@ flags:
 	if err != nil {
 		return err
 	}
+	// The SOURCE instance's DSN is a secret for the same reason the managed one
+	// is — the password is inside it — and its object store's secret key is one
+	// for the reason the instance's own is.
+	peerTubeConn, err := readSecretFlag(s, "peertube-source-url", opt.peertube.sourceURL, opt.nonInteractive, &stdinTaken)
+	if err != nil {
+		return err
+	}
+	peerTubeS3Secret, err := readSecretFlag(s, "peertube-source-s3-secret-key", opt.peertube.s3SecretKey, opt.nonInteractive, &stdinTaken)
+	if err != nil {
+		return err
+	}
 
 	answers := setup.Answers{
 		Domain:         opt.domain,
@@ -274,6 +295,9 @@ flags:
 			return rerr
 		}
 		answers.Registration = reg
+	}
+	if opt.peertube.answered(peerTubeConn, peerTubeS3Secret) {
+		answers.PeerTube = opt.peertube.answers(peerTubeConn, peerTubeS3Secret)
 	}
 	if !opt.nonInteractive {
 		if err := requireInteractiveStdin(s); err != nil {
@@ -379,6 +403,7 @@ type setupOptions struct {
 	registration   string
 	rotate         stringList
 	features       featureFlags
+	peertube       peerTubeFlags
 }
 
 // registerSetupFlags defines the command's whole interface on fs. It is the ONE
@@ -439,7 +464,79 @@ func registerSetupFlags(fs *flag.FlagSet) *setupOptions {
 	fs.StringVar(&o.registration, "registration", "", "signup policy: `closed|open|approval`")
 	fs.Var(&o.rotate, "rotate", "re-generate the secret in this `VAR` even though it already has a value (repeatable)")
 	o.features.register(fs)
+	o.peertube.register(fs)
 	return o
+}
+
+// peerTubeFlags is the migration block of the command line: the source instance
+// an import reads from. It is its own type for the reason featureFlags is —
+// eleven flags that belong to one answer — and its gate is an optionalBool
+// because "unanswered" and "off" are different: `vidra setup --domain …` on an
+// instance mid-migration must leave PEERTUBE_IMPORT_ENABLED exactly as it is,
+// while `--peertube=false` is how the import surface is closed after cutover.
+type peerTubeFlags struct {
+	on             optionalBool
+	sourceURL      string
+	storage        string
+	localRoot      string
+	s3Endpoint     string
+	s3Region       string
+	s3Bucket       string
+	s3AccessKey    string
+	s3SecretKey    string
+	mediaMode      string
+	conflictPolicy string
+}
+
+func (p *peerTubeFlags) register(fs *flag.FlagSet) {
+	fs.Var(&p.on, "peertube", "configure a PeerTube source to migrate from (--peertube=false closes the import surface again)")
+	fs.StringVar(&p.sourceURL, "peertube-source-url", "", "READ-ONLY DSN of the SOURCE PeerTube database: `@file`, - for stdin, or the value itself (also $VIDRA_SETUP_PEERTUBE_SOURCE_URL)")
+	fs.StringVar(&p.storage, "peertube-source-storage", "", "where the source instance's media lives: `local|s3`")
+	fs.StringVar(&p.localRoot, "peertube-source-local-root", "", "`path` the source instance's media tree is mounted at, read-only (--peertube-source-storage local)")
+	fs.StringVar(&p.s3Endpoint, "peertube-source-s3-endpoint", "", "source S3 endpoint `host` WITHOUT a scheme")
+	fs.StringVar(&p.s3Region, "peertube-source-s3-region", "", "source S3 `region`")
+	fs.StringVar(&p.s3Bucket, "peertube-source-s3-bucket", "", "source S3 `bucket`")
+	fs.StringVar(&p.s3AccessKey, "peertube-source-s3-access-key", "", "source S3 access `key`")
+	fs.StringVar(&p.s3SecretKey, "peertube-source-s3-secret-key", "", "source S3 secret key: `@file`, - for stdin, or the value itself (also $VIDRA_SETUP_PEERTUBE_SOURCE_S3_SECRET_KEY)")
+	fs.StringVar(&p.mediaMode, "peertube-media-mode", "", "default media handling for an import: `copy|reference|none`")
+	fs.StringVar(&p.conflictPolicy, "peertube-conflict-policy", "", "default collision resolution for an import: `skip|rename|merge|fail`")
+}
+
+// answered reports whether the command line said anything at all about a
+// PeerTube source. It is what turns the flags into a non-nil answer, the same
+// way any one SMTP flag turns the mail block on: nobody passes
+// --peertube-source-url without meaning to configure a migration.
+func (p *peerTubeFlags) answered(sourceURL, s3SecretKey string) bool {
+	return p.on.set || sourceURL != "" || s3SecretKey != "" ||
+		p.storage != "" || p.localRoot != "" || p.s3Endpoint != "" || p.s3Region != "" ||
+		p.s3Bucket != "" || p.s3AccessKey != "" || p.mediaMode != "" || p.conflictPolicy != ""
+}
+
+// answers builds the engine's struct from the flags. The two secrets arrive
+// already resolved (readSecretFlag), so neither has to be on the command line.
+func (p *peerTubeFlags) answers(sourceURL, s3SecretKey string) *setup.PeerTubeAnswers {
+	// A block that was answered with anything OTHER than --peertube=false is a
+	// deployment being pointed at a source, so the gate goes on. That is the same
+	// inference `--database-url` with no `--database external` beside it gets.
+	enabled := true
+	if p.on.set {
+		enabled = p.on.value
+	}
+	return &setup.PeerTubeAnswers{
+		Enabled:        enabled,
+		DatabaseURL:    sourceURL,
+		StorageBackend: p.storage,
+		LocalRoot:      p.localRoot,
+		S3: setup.S3Answers{
+			Endpoint:  p.s3Endpoint,
+			Region:    p.s3Region,
+			Bucket:    p.s3Bucket,
+			AccessKey: p.s3AccessKey,
+			SecretKey: s3SecretKey,
+		},
+		MediaMode:      p.mediaMode,
+		ConflictPolicy: p.conflictPolicy,
+	}
 }
 
 // renderCaddyfile renders the managed reverse-proxy config from the values the
@@ -507,10 +604,12 @@ func renderNginxExample(values map[string]string) ([]byte, error) {
 // stdin indirection for exactly these flags. Two lists would drift, and the drift
 // would show up as a secret that silently arrived from nowhere.
 var secretFlagEnv = map[string]string{
-	"s3-secret-key": "VIDRA_SETUP_S3_SECRET_KEY",
-	"smtp-password": "VIDRA_SETUP_SMTP_PASSWORD",
-	"database-url":  "VIDRA_SETUP_DATABASE_URL",
-	"redis-url":     "VIDRA_SETUP_REDIS_URL",
+	"s3-secret-key":                 "VIDRA_SETUP_S3_SECRET_KEY",
+	"smtp-password":                 "VIDRA_SETUP_SMTP_PASSWORD",
+	"database-url":                  "VIDRA_SETUP_DATABASE_URL",
+	"redis-url":                     "VIDRA_SETUP_REDIS_URL",
+	"peertube-source-url":           "VIDRA_SETUP_PEERTUBE_SOURCE_URL",
+	"peertube-source-s3-secret-key": "VIDRA_SETUP_PEERTUBE_SOURCE_S3_SECRET_KEY",
 }
 
 // applyAnswersFile fills in the flags an answers file names and the command line
@@ -1027,8 +1126,149 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 		}
 		a.Registration = reg
 	}
+	if err := peerTubeInterview(s, r, tmpl, existing, a); err != nil {
+		return err
+	}
 	fmt.Fprintln(s.out)
 	return nil
+}
+
+// peerTubeInterview is the migration block: ONE gate, and everything behind it.
+//
+// The gate is the whole design. Migrating from PeerTube is the minority install
+// — most operators are starting an instance, not moving one — and nine questions
+// about somebody else's database in the middle of a first install would be nine
+// questions almost everybody presses enter through. So it is one yes/no,
+// defaulted from PEERTUBE_IMPORT_ENABLED, and a "no" asks nothing else.
+//
+// EVERY ANSWER IS SHAPE-CHECKED AND NOTHING IS DIALLED. At this point in the
+// install the stack does not exist — install.sh's last act is to run this
+// command, and it deliberately never runs `docker compose up` — so the source
+// database cannot be reached from here even in principle, and the import runs
+// inside the api container later. askValid with the engine's own validators is
+// therefore the whole of what can be proven now, and it is worth proving: a DSN
+// with a typo in its scheme, an endpoint pasted with https:// on the front and a
+// misspelled media mode are the three answers that would otherwise be discovered
+// by a failed import an hour into a migration.
+func peerTubeInterview(s streams, r *bufio.Reader, tmpl, existing *setup.EnvFile, a *setup.Answers) error {
+	if a.PeerTube != nil {
+		return nil
+	}
+	on, err := askYesNo(s, r, "Migrate from an existing PeerTube instance (its database and media are read, never written)",
+		boolValue(effective(tmpl, existing, "PEERTUBE_IMPORT_ENABLED"), false))
+	if err != nil {
+		return err
+	}
+	p := &setup.PeerTubeAnswers{Enabled: on}
+	if !on {
+		// The source values are deliberately NOT cleared — see
+		// setup.peerTubeAnswerValues. Turning the surface off is the answer; losing
+		// a DSN that exists nowhere else is not.
+		a.PeerTube = p
+		return nil
+	}
+	// The DSN carries the source database's password: hidden input, and the
+	// current one offered masked so enter keeps it without printing it.
+	p.DatabaseURL, err = askValidSecret(s, r, "Source PeerTube database DSN (read-only role; postgres://…)",
+		effective(tmpl, existing, "PEERTUBE_SOURCE_DATABASE_URL"), setup.CheckPeerTubeSourceDatabaseURL)
+	if err != nil {
+		return err
+	}
+	p.StorageBackend, err = askValid(s, r, "Where the source instance's media lives (local|s3)",
+		firstAnswer(effective(tmpl, existing, "PEERTUBE_SOURCE_STORAGE_BACKEND"), "local"), setup.CheckPeerTubeSourceStorageBackend)
+	if err != nil {
+		return err
+	}
+	if p.StorageBackend == "s3" {
+		for _, q := range []struct {
+			label  string
+			key    string
+			field  *string
+			secret bool
+			valid  func(string) error
+		}{
+			{label: "Source S3 endpoint host (no scheme)", key: "PEERTUBE_SOURCE_S3_ENDPOINT", field: &p.S3.Endpoint, valid: setup.CheckPeerTubeSourceS3Endpoint},
+			{label: "Source S3 region", key: "PEERTUBE_SOURCE_S3_REGION", field: &p.S3.Region},
+			{label: "Source S3 bucket", key: "PEERTUBE_SOURCE_S3_BUCKET", field: &p.S3.Bucket},
+			{label: "Source S3 access key", key: "PEERTUBE_SOURCE_S3_ACCESS_KEY", field: &p.S3.AccessKey},
+			{label: "Source S3 secret key", key: "PEERTUBE_SOURCE_S3_SECRET_KEY", field: &p.S3.SecretKey, secret: true},
+		} {
+			def := effective(tmpl, existing, q.key)
+			ask := askValid
+			if q.secret {
+				ask = askValidSecret
+			}
+			v, aerr := ask(s, r, q.label, def, orAlwaysValid(q.valid))
+			if aerr != nil {
+				return aerr
+			}
+			*q.field = v
+		}
+	} else {
+		// Read-only, and mounted into the api container — the importer reads the
+		// source tree, it never writes to it.
+		p.LocalRoot, err = ask(s, r, "Path the source instance's media tree is mounted at (read-only)",
+			effective(tmpl, existing, "PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT"))
+		if err != nil {
+			return err
+		}
+	}
+	// Both of these are DEFAULTS for a run the operator launches later from the
+	// admin UI, which may override either per import. They are asked here because
+	// they are boot-baked config, not because this is the last chance to choose.
+	p.MediaMode, err = askValid(s, r, "Media handling for an import (copy = stream the files in, reference = point at the source bucket, none = metadata only)",
+		firstAnswer(effective(tmpl, existing, "PEERTUBE_IMPORT_MEDIA_MODE"), "copy"), setup.CheckPeerTubeMediaMode)
+	if err != nil {
+		return err
+	}
+	p.ConflictPolicy, err = askValid(s, r, "Collision handling for an import (skip|rename|merge|fail)",
+		firstAnswer(effective(tmpl, existing, "PEERTUBE_IMPORT_CONFLICT_POLICY"), "skip"), setup.CheckPeerTubeConflictPolicy)
+	if err != nil {
+		return err
+	}
+	a.PeerTube = p
+	return nil
+}
+
+// askValidSecret is askValid's hidden-input half: the answer is not echoed, the
+// current value is offered masked, and it is re-asked until the ENGINE accepts
+// it. A secret validated by a friendlier rule than the engine's would be a
+// secret an operator retypes at the Review step.
+func askValidSecret(s streams, r *bufio.Reader, label, def string, valid func(string) error) (string, error) {
+	for {
+		v, err := askMaybeSecret(s, r, label, def, true)
+		if err != nil {
+			return "", err
+		}
+		if valid == nil {
+			return v, nil
+		}
+		if verr := valid(v); verr != nil {
+			// The engine's message, minus its package prefix — askValid's rule.
+			fmt.Fprintf(s.out, "  ✗ %s\n", operatorMessage(verr))
+			continue
+		}
+		return v, nil
+	}
+}
+
+// orAlwaysValid lets one prompt table mix validated and unvalidated questions
+// without every entry declaring a no-op.
+func orAlwaysValid(valid func(string) error) func(string) error {
+	if valid != nil {
+		return valid
+	}
+	return func(string) error { return nil }
+}
+
+// firstAnswer is the prompt default when the file says nothing: the CODE's
+// default, spelled here so an operator sees the value they would get anyway
+// rather than an empty bracket.
+func firstAnswer(v, fallback string) string {
+	if strings.TrimSpace(v) == "" {
+		return fallback
+	}
+	return v
 }
 
 // askMaybeSecret asks for a value, hiding the typing when it is a secret AND the
@@ -1110,11 +1350,24 @@ func askValid(s streams, r *bufio.Reader, label, def string, valid func(string) 
 		if verr := valid(v); verr != nil {
 			// The engine's message, minus its package prefix: it is already
 			// addressed to an operator and says what to write instead.
-			fmt.Fprintf(s.out, "  ✗ %s\n", strings.TrimPrefix(verr.Error(), "setup: "))
+			fmt.Fprintf(s.out, "  ✗ %s\n", operatorMessage(verr))
 			continue
 		}
 		return v, nil
 	}
+}
+
+// operatorMessage strips the package prefix an engine error carries. BOTH
+// prefixes, because both engines are reached from a prompt: internal/setup owns
+// the domain and TLS answers, and internal/config owns the ones that are api
+// configuration (the PeerTube source block calls straight through to it, so
+// there is no second opinion to strip a different prefix off).
+func operatorMessage(err error) string {
+	msg := err.Error()
+	for _, prefix := range []string{"setup: ", "config: "} {
+		msg = strings.TrimPrefix(msg, prefix)
+	}
+	return msg
 }
 
 // domainCheckTimeout bounds the whole DNS feedback. Short on purpose: an
@@ -1295,6 +1548,24 @@ owner-claim token at boot and prints it in its own log:
 Every api restart mints a fresh token and invalidates the previous one, so take
 the newest line in the log.
 `, origin)
+
+	// The migration handoff, and the last thing an operator who said they were
+	// migrating needs told. `vidra setup` can only WRITE the source configuration:
+	// at this point the stack has not been started (install.sh stops here on
+	// purpose), and the import runs inside the api container. So the deliverable
+	// is a URL rather than a result, and it is printed after the claim block
+	// because it needs an admin account to reach.
+	if setup.IsTrue(res.Values["PEERTUBE_IMPORT_ENABLED"]) {
+		fmt.Fprintf(s.out, `
+The PeerTube source is configured but nothing has been imported: the importer
+runs inside the api container. Once the stack is up and you are signed in as
+admin, start and watch the migration at
+  %s/admin/import-peertube
+It reads the source and never writes to it, and it is safe to re-run — every
+entity it has already carried across is recorded, so a second run moves only
+what changed.
+`, origin)
+	}
 }
 
 // hardwareTranscodeOffer is the one line `vidra setup` prints when this host
