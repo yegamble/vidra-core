@@ -1984,7 +1984,7 @@ func run() error {
 			S3ForcePathStyle: cfg.PeerTubeSourceS3ForcePathStyle,
 		}
 		ptImportOpts = append(ptImportOpts, peertubeimport.WithImporterFactory(
-			func(ctx context.Context, policy peertubeimport.ConflictPolicy) (*peertubeimport.Importer, func(), error) {
+			func(ctx context.Context, params peertubeimport.RunParams) (*peertubeimport.Importer, func(), error) {
 				src, err := peertubeimport.OpenSource(ctx, cfg.PeerTubeSourceDatabaseURL)
 				if err != nil {
 					return nil, nil, err
@@ -1998,11 +1998,18 @@ func run() error {
 					}
 				}
 				imp := peertubeimport.NewImporter(db.Pool, src, peertubeimport.Options{
-					Policy:    policy,
-					MediaMode: defaultImportMediaMode,
-					SrcMedia:  srcMedia,
-					DestMedia: blobs,
-					SealKey:   ptSeal,
+					Policy: params.Policy,
+					// Force stays absent HERE and only here: it is the CLI's blanket
+					// human override and the server has never had a way to earn it.
+					// What the server may carry is the narrower thing the admin
+					// actually did — accept ONE named schema version on ONE request —
+					// which arrived on the launch body and rode the run row to this
+					// worker. It opens the version gate for that number and nothing else.
+					AcknowledgedSchemaVersion: params.AcknowledgedSchemaVersion,
+					MediaMode:                 defaultImportMediaMode,
+					SrcMedia:                  srcMedia,
+					DestMedia:                 blobs,
+					SealKey:                   ptSeal,
 					// The import can write an instance setting (the source's category
 					// taxonomy). This server holds that overlay in memory and only
 					// reloads it after its OWN writes, so without this the carried

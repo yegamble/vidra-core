@@ -211,8 +211,15 @@ See the full entity mapping table in `.ralph/specs/peertube-import.md`.
 4. **A supported PeerTube schema version.** Preflight reads
    `application.migrationVersion` and refuses versions outside the verified range
    (**700–1000**, ≈ PeerTube 5.x–8.x). See `.ralph/specs/peertube-reference.md`.
-   `--force` overrides the refusal, but is for a **human who has verified
-   compatibility** — automated agents must never pass it.
+   The refusal is a hard stop that only a **human who has verified
+   compatibility** may lift — automated agents must never lift it. Two ways to,
+   and no third:
+
+   - On the CLI, `--force`. It is blanket: it also covers a source whose version
+     cannot be read at all.
+   - Through the admin UI or API, by acknowledging the **exact version** the
+     refused run reported (§5). Narrower on purpose — it opens the gate for that
+     one number, expires by itself if the source moves, and is recorded.
 
 5. **Destination storage credentials that can WRITE.** Preflight proves it: it
    stores a tiny object under `.vidra/write-probe/` and deletes it again, before
@@ -379,8 +386,46 @@ Then (admin bearer token):
 - `GET /api/v1/admin/peertube-import/{id}` → poll one run's progress report.
 
 An in-process worker executes the run; start/finish are emitted as audit events
-(no secrets). The admin path never self-passes `--force`: an unverified version
-fails the run with a clear message for a human to act on.
+(no secrets). The admin path never self-passes `--force`.
+
+### Unverified source schema (the 8.x case)
+
+A source outside the verified range fails the run rather than importing from a
+schema nobody has checked. The failed run carries the machine-readable reason and
+the number:
+
+```json
+{ "state": "failed", "error_code": "unverified_schema", "source_version": 1040 }
+```
+
+A **dry run** reaches the version check before it touches anything, so the cheap
+way to find out is to preview first — it writes nothing either way.
+
+An administrator who accepts the risk re-launches naming that exact version:
+
+```json
+{ "mode": "run", "conflict_policy": "skip", "acknowledged_schema_version": 1040 }
+```
+
+- It is per-run. It is not remembered, not a setting, not a default, and every
+  launch has to state it again.
+- It must **equal** the version preflight detects, so it cannot be sent by
+  something that never read the refusal, and it stops applying if the source is
+  upgraded between the dry run and the import.
+- It widens the schema-version gate and nothing else.
+- It is recorded on the run (`acknowledged_schema_version`, beside `started_by`)
+  and in the audit log, which names the version accepted.
+- What is being accepted is real: an unverified schema may have renamed or
+  removed columns the importer reads, so the run can fail partway or carry
+  incorrect data. Dry-run, read the report, and check the counts afterwards (§6).
+
+`error_code: undetectable_schema` — no version could be read from the source at
+all — cannot be acknowledged this way. There is no version to name; that one
+needs the CLI and a human who has looked at the source.
+
+The admin page at `/admin/import-peertube` does all of this for you: after a
+refused run it shows the detected version and a confirmation naming it, which has
+to be ticked again before every launch.
 
 ---
 

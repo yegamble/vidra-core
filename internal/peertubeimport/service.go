@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -26,9 +27,15 @@ type Service struct {
 	defaultPolicy ConflictPolicy
 	logger        *slog.Logger
 	// buildImporter opens the configured source + storages and returns a ready
-	// Importer for a given conflict policy, plus a cleanup func. Nil = not
-	// configured (the admin API answers 503).
-	buildImporter func(ctx context.Context, policy ConflictPolicy) (*Importer, func(), error)
+	// Importer for one claimed run, plus a cleanup func. Nil = not configured (the
+	// admin API answers 503).
+	//
+	// The run's parameters are passed as a struct rather than assembled inside the
+	// factory precisely because assembling them there is how this broke: Options
+	// .Force was an OPTIONAL field, cmd/api's closure never mentioned it, and the
+	// omission was invisible at the call site for as long as the field existed.
+	// A parameter the factory is handed cannot be silently left out.
+	buildImporter func(ctx context.Context, params RunParams) (*Importer, func(), error)
 	// recordAudit persists/emits a security-audit event. Nil = slog-only via the
 	// service logger.
 	recordAudit func(ctx context.Context, ev observability.AuditEvent)
@@ -66,7 +73,7 @@ type Option func(*Service)
 
 // WithImporterFactory wires the source-connection factory (built from server
 // config in cmd/api). Only when set is the import considered configured.
-func WithImporterFactory(f func(ctx context.Context, policy ConflictPolicy) (*Importer, func(), error)) Option {
+func WithImporterFactory(f func(ctx context.Context, params RunParams) (*Importer, func(), error)) Option {
 	return func(s *Service) { s.buildImporter = f }
 }
 
@@ -111,36 +118,73 @@ func (s *Service) Configured() bool { return s.buildImporter != nil }
 
 // Run is the status view of one import run.
 type Run struct {
-	ID             uuid.UUID  `json:"id"`
-	Mode           string     `json:"mode"`
-	State          string     `json:"state"`
-	ConflictPolicy string     `json:"conflict_policy"`
-	SourceVersion  *int       `json:"source_version"`
-	Report         *Report    `json:"report,omitempty"`
-	Error          string     `json:"error,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-	StartedAt      *time.Time `json:"started_at,omitempty"`
-	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	ID             uuid.UUID `json:"id"`
+	Mode           string    `json:"mode"`
+	State          string    `json:"state"`
+	ConflictPolicy string    `json:"conflict_policy"`
+	SourceVersion  *int      `json:"source_version"`
+	// AcknowledgedSchemaVersion is the unverified schema version the launching
+	// admin explicitly accepted for this run, or nil (the norm). It is reported
+	// back so the admin history shows what was signed off on, not only that
+	// something was.
+	AcknowledgedSchemaVersion *int    `json:"acknowledged_schema_version"`
+	Report                    *Report `json:"report,omitempty"`
+	Error                     string  `json:"error,omitempty"`
+	// ErrorCode is the stable snake_case class of a failure, empty when the run
+	// has not failed or the failure has no class of its own. Clients branch on
+	// this; Error is for a person to read.
+	ErrorCode  string     `json:"error_code,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
-// CreateRun launches a new run (dry_run or run) under the given policy. It
-// returns ErrBusy when one is already active, ErrNotConfigured when no source is
-// wired, and ErrInvalidMode for a bad mode. It emits a start audit event.
-func (s *Service) CreateRun(ctx context.Context, mode string, policy ConflictPolicy, adminID uuid.UUID) (Run, error) {
+// Launch is one admin launch request. It is a struct so that adding a per-run
+// decision cannot quietly default: every caller names every field.
+type Launch struct {
+	// Mode is "dry_run" or "run".
+	Mode string
+	// Policy resolves naming collisions; empty takes the server default.
+	Policy ConflictPolicy
+	// AcknowledgedSchemaVersion is the unverified source schema version the
+	// administrator making THIS request explicitly accepted, or 0 for the normal
+	// case of no acknowledgement.
+	//
+	// It is never inferred, never defaulted, never read from configuration and
+	// never carried over from an earlier run: it exists on one request, is stored
+	// against one run row, and has to be stated again the next time. The server
+	// has no code path that can produce a non-zero value for it.
+	AcknowledgedSchemaVersion int
+}
+
+// RunParams is what the importer factory needs to build the Importer for one
+// claimed run: the policy the run was launched under, and the acknowledgement it
+// carries (0 = none).
+type RunParams struct {
+	Policy                    ConflictPolicy
+	AcknowledgedSchemaVersion int
+}
+
+// CreateRun launches a new run from an admin request. It returns ErrBusy when one
+// is already active, ErrNotConfigured when no source is wired, and ErrInvalidMode
+// for a bad mode. It emits a start audit event.
+func (s *Service) CreateRun(ctx context.Context, in Launch, adminID uuid.UUID) (Run, error) {
 	if !s.Configured() {
 		return Run{}, ErrNotConfigured
 	}
-	if mode != "dry_run" && mode != "run" {
+	if in.Mode != "dry_run" && in.Mode != "run" {
 		return Run{}, ErrInvalidMode
 	}
+	policy := in.Policy
 	if policy == "" {
 		policy = s.defaultPolicy
 	}
 	row, err := s.repo.CreateImportRun(ctx, sqlcgen.CreateImportRunParams{
-		Mode:           mode,
-		ConflictPolicy: policy.String(),
-		StartedBy:      optUUID(adminID),
+		Mode:                      in.Mode,
+		ConflictPolicy:            policy.String(),
+		StartedBy:                 optUUID(adminID),
+		AcknowledgedSchemaVersion: optSchemaVersion(in.AcknowledgedSchemaVersion),
 	})
 	if isUniqueViolation(err) {
 		return Run{}, ErrBusy
@@ -219,26 +263,54 @@ func (s *Service) executeRun(ctx context.Context, claim sqlcgen.ClaimDueImportRu
 	if perr != nil {
 		policy = s.defaultPolicy
 	}
+	// The acknowledgement comes off the RUN ROW, which is the only place it has
+	// ever existed: it was written from the launch request and nothing since has
+	// been able to add one. A run launched without it stays at 0 here.
+	ack := 0
+	if claim.AcknowledgedSchemaVersion != nil {
+		ack = int(*claim.AcknowledgedSchemaVersion)
+	}
 
-	importer, cleanup, err := s.buildImporter(ctx, policy)
+	importer, cleanup, err := s.buildImporter(ctx, RunParams{Policy: policy, AcknowledgedSchemaVersion: ack})
 	if err != nil {
 		s.logger.WarnContext(ctx, "peertube import: could not open source", "run_id", claim.ID.String(), "error", err)
-		s.failRun(ctx, claim.ID, "could not connect to the configured source")
+		s.failRun(ctx, claim.ID, "could not connect to the configured source", "")
 		s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, observability.ResultFailure, actor, "source connection failed")
 		return
 	}
 	defer cleanup()
 
-	// The admin path NEVER self-passes --force: an unverified version is refused
-	// here and the run fails with the safe version message for a human to act on.
+	// The admin path NEVER self-passes --force. An unverified version is refused
+	// here unless the launching administrator acknowledged THIS version on the
+	// request; without that the run fails with the safe version message and the
+	// machine-readable class, so the UI can offer the acknowledgement instead of
+	// leaving the operator to reach for the CLI.
 	version, err := importer.Preflight(ctx)
+	// Preflight reports the version it detected even when it refuses. Record it
+	// first: the number the operator is being asked to accept is the whole of what
+	// makes the refusal actionable, and a failed run used to carry no version at all.
+	s.recordSourceVersion(ctx, claim.ID, version)
 	if err != nil {
-		s.failRun(ctx, claim.ID, err.Error())
-		s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, observability.ResultFailure, actor, "preflight refused")
+		var refusal *UnverifiedSchemaError
+		code := ""
+		reason := "preflight failed"
+		if errors.As(err, &refusal) {
+			code, reason = refusal.Code(), "preflight refused: "+refusal.Code()
+		}
+		s.failRun(ctx, claim.ID, err.Error(), code)
+		s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, observability.ResultFailure, actor, reason)
 		return
 	}
-	v32 := int32(version)
-	_ = s.repo.SetImportRunVersion(ctx, sqlcgen.SetImportRunVersionParams{ID: claim.ID, SourceVersion: &v32})
+	// The launch audit recorded what the admin ASKED for; this records whether the
+	// gate was actually opened on it, which is a different fact — an acknowledgement
+	// of a version the source turns out not to be running overrules nothing. It
+	// rides the run's own finish event rather than a second start, so a run is still
+	// exactly one start and one finish in the log, and it is on the record
+	// independently of the run row, which is prunable.
+	overruled := ""
+	if !IsSupported(version) {
+		overruled = fmt.Sprintf("ran on acknowledged unverified schema version %d; ", version)
+	}
 
 	var report *Report
 	if claim.Mode == "dry_run" {
@@ -247,8 +319,8 @@ func (s *Service) executeRun(ctx context.Context, claim sqlcgen.ClaimDueImportRu
 		report, err = importer.Run(ctx, version, func(r *Report) { s.persistProgress(ctx, claim.ID, r) })
 	}
 	if err != nil {
-		s.failRun(ctx, claim.ID, safeRunError(err))
-		s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, observability.ResultFailure, actor, "import failed")
+		s.failRun(ctx, claim.ID, safeRunError(err), "")
+		s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, observability.ResultFailure, actor, overruled+"import failed")
 		return
 	}
 	data, merr := json.Marshal(report)
@@ -258,7 +330,7 @@ func (s *Service) executeRun(ctx context.Context, claim sqlcgen.ClaimDueImportRu
 	if err := s.repo.CompleteImportRun(ctx, sqlcgen.CompleteImportRunParams{ID: claim.ID, Progress: data}); err != nil {
 		s.logger.WarnContext(ctx, "peertube import: complete run failed", "run_id", claim.ID.String(), "error", err)
 	}
-	s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, observability.ResultSuccess, actor, report.Summary())
+	s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, observability.ResultSuccess, actor, overruled+report.Summary())
 }
 
 func (s *Service) persistProgress(ctx context.Context, id uuid.UUID, r *Report) {
@@ -269,8 +341,22 @@ func (s *Service) persistProgress(ctx context.Context, id uuid.UUID, r *Report) 
 	_ = s.repo.UpdateImportRunProgress(ctx, sqlcgen.UpdateImportRunProgressParams{ID: id, Progress: data})
 }
 
-func (s *Service) failRun(ctx context.Context, id uuid.UUID, msg string) {
-	if err := s.repo.FailImportRun(ctx, sqlcgen.FailImportRunParams{ID: id, Error: msg}); err != nil {
+// recordSourceVersion stamps the detected schema version on the run. It is called
+// whether or not preflight went on to accept that version: a run refused for an
+// unverified schema is exactly the run whose version the operator most needs to
+// see, since acknowledging it means naming it.
+func (s *Service) recordSourceVersion(ctx context.Context, id uuid.UUID, version int) {
+	if version <= 0 {
+		return
+	}
+	v32 := int32(version)
+	_ = s.repo.SetImportRunVersion(ctx, sqlcgen.SetImportRunVersionParams{ID: id, SourceVersion: &v32})
+}
+
+// failRun marks a run failed with SAFE operator prose and a stable snake_case
+// class (empty when the failure has none).
+func (s *Service) failRun(ctx context.Context, id uuid.UUID, msg, code string) {
+	if err := s.repo.FailImportRun(ctx, sqlcgen.FailImportRunParams{ID: id, Error: msg, ErrorCode: code}); err != nil {
 		s.logger.WarnContext(ctx, "peertube import: mark run failed", "run_id", id.String(), "error", err)
 	}
 }
@@ -295,12 +381,17 @@ func runFromRow(row sqlcgen.PeertubeImportRun) Run {
 		State:          row.State,
 		ConflictPolicy: row.ConflictPolicy,
 		Error:          row.Error,
+		ErrorCode:      row.ErrorCode,
 		CreatedAt:      row.CreatedAt,
 		UpdatedAt:      row.UpdatedAt,
 	}
 	if row.SourceVersion != nil {
 		v := int(*row.SourceVersion)
 		r.SourceVersion = &v
+	}
+	if row.AcknowledgedSchemaVersion != nil {
+		v := int(*row.AcknowledgedSchemaVersion)
+		r.AcknowledgedSchemaVersion = &v
 	}
 	if len(row.Progress) > 0 && string(row.Progress) != "{}" {
 		var rep Report
