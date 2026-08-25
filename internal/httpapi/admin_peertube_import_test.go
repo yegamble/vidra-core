@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -12,16 +13,22 @@ import (
 	"github.com/vidra/vidra-core/internal/peertubeimport"
 )
 
-// fakePTImport is a static peerTubeImportProvider for handler tests.
+// fakePTImport is a static peerTubeImportProvider for handler tests. It records
+// the Launch it was handed so a test can assert exactly what crossed the seam —
+// the whole point of the acknowledgement is that the server cannot invent it.
 type fakePTImport struct {
 	configured bool
 	run        peertubeimport.Run
 	createErr  error
 	getErr     error
+	launched   *peertubeimport.Launch
 }
 
 func (f fakePTImport) Configured() bool { return f.configured }
-func (f fakePTImport) CreateRun(context.Context, string, peertubeimport.ConflictPolicy, uuid.UUID) (peertubeimport.Run, error) {
+func (f fakePTImport) CreateRun(_ context.Context, in peertubeimport.Launch, _ uuid.UUID) (peertubeimport.Run, error) {
+	if f.launched != nil {
+		*f.launched = in
+	}
 	if f.createErr != nil {
 		return peertubeimport.Run{}, f.createErr
 	}
@@ -68,6 +75,99 @@ func TestPeerTubeImportLaunch(t *testing.T) {
 	// bad conflict policy → 400 (rejected before the service is called)
 	if rec := postJSONWithAuth(srv, "/api/v1/admin/peertube-import", admin, `{"mode":"run","conflict_policy":"bogus"}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("bad policy = %d, want 400", rec.Code)
+	}
+}
+
+// The launch body is the ONLY way an unverified-schema acknowledgement can enter
+// the system. This pins both halves of that: a body that carries one passes it
+// through verbatim, and a body that does not leaves it at zero — the server has
+// no default, no config key and no inference to fall back on.
+func TestPeerTubeImportLaunchCarriesAcknowledgement(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want peertubeimport.Launch
+	}{
+		{
+			name: "no acknowledgement is the default",
+			body: `{"mode":"dry_run"}`,
+			want: peertubeimport.Launch{Mode: "dry_run", Policy: peertubeimport.PolicySkip, AcknowledgedSchemaVersion: 0},
+		},
+		{
+			// The version the live migration that forced this actually reported.
+			name: "an acknowledgement is carried through verbatim",
+			body: `{"mode":"run","conflict_policy":"skip","acknowledged_schema_version":1040}`,
+			want: peertubeimport.Launch{Mode: "run", Policy: peertubeimport.PolicySkip, AcknowledgedSchemaVersion: 1040},
+		},
+		{
+			name: "an explicit zero is no acknowledgement",
+			body: `{"mode":"run","acknowledged_schema_version":0}`,
+			want: peertubeimport.Launch{Mode: "run", Policy: peertubeimport.PolicySkip, AcknowledgedSchemaVersion: 0},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var got peertubeimport.Launch
+			run := peertubeimport.Run{ID: uuid.New(), Mode: "dry_run", State: "pending", ConflictPolicy: "skip"}
+			srv := ptImportServer(t, fakePTImport{configured: true, run: run, launched: &got})
+			admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+			if rec := postJSONWithAuth(srv, "/api/v1/admin/peertube-import", admin, c.body); rec.Code != http.StatusAccepted {
+				t.Fatalf("launch = %d, want 202; body=%s", rec.Code, rec.Body.String())
+			}
+			if got != c.want {
+				t.Errorf("service saw %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}
+
+// A negative version is not an acknowledgement of anything; it is a malformed
+// request and is refused before the service is reached, so no run row can ever
+// hold one.
+func TestPeerTubeImportLaunchRejectsNegativeAcknowledgement(t *testing.T) {
+	var got peertubeimport.Launch
+	srv := ptImportServer(t, fakePTImport{configured: true, launched: &got})
+	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	rec := postJSONWithAuth(srv, "/api/v1/admin/peertube-import", admin, `{"mode":"run","acknowledged_schema_version":-1}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("negative acknowledgement = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if got.Mode != "" {
+		t.Error("a malformed acknowledgement must not reach the import service at all")
+	}
+}
+
+// The refusal a client has to be able to act on: a run that failed because the
+// source schema is unverified reports a STABLE CODE and the detected version, so
+// the UI can offer the acknowledgement instead of printing prose and stopping.
+func TestPeerTubeImportRunReportsUnverifiedSchema(t *testing.T) {
+	detected := peertubeimport.MaxSupportedSchemaVersion + 40
+	run := peertubeimport.Run{
+		ID: uuid.New(), Mode: "dry_run", State: "failed", ConflictPolicy: "skip",
+		SourceVersion: &detected,
+		ErrorCode:     peertubeimport.CodeUnverifiedSchema,
+		Error:         peertubeimport.VersionError(detected).Error(),
+	}
+	srv := ptImportServer(t, fakePTImport{configured: true, run: run})
+	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	rec := getWithAuth(srv, "/api/v1/admin/peertube-import/"+run.ID.String(), admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get = %d, want 200", rec.Code)
+	}
+	var got struct {
+		State         string `json:"state"`
+		ErrorCode     string `json:"error_code"`
+		SourceVersion *int   `json:"source_version"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ErrorCode != peertubeimport.CodeUnverifiedSchema {
+		t.Errorf("error_code = %q, want %q", got.ErrorCode, peertubeimport.CodeUnverifiedSchema)
+	}
+	if got.SourceVersion == nil || *got.SourceVersion != detected {
+		t.Errorf("source_version = %v, want %d — a refusal the operator cannot see the version of cannot be acknowledged", got.SourceVersion, detected)
 	}
 }
 

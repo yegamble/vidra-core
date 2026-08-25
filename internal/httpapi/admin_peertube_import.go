@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -16,7 +17,7 @@ import (
 // on. *peertubeimport.Service satisfies it; faked in tests.
 type peerTubeImportProvider interface {
 	Configured() bool
-	CreateRun(ctx context.Context, mode string, policy peertubeimport.ConflictPolicy, adminID uuid.UUID) (peertubeimport.Run, error)
+	CreateRun(ctx context.Context, in peertubeimport.Launch, adminID uuid.UUID) (peertubeimport.Run, error)
 	GetRun(ctx context.Context, id uuid.UUID) (peertubeimport.Run, error)
 	ListRuns(ctx context.Context, limit, offset int32) ([]peertubeimport.Run, error)
 }
@@ -28,6 +29,17 @@ type peerTubeImportProvider interface {
 type peertubeImportLaunchRequest struct {
 	Mode           string `json:"mode"`
 	ConflictPolicy string `json:"conflict_policy"`
+	// AcknowledgedSchemaVersion is the administrator's explicit, per-request
+	// sign-off on a source schema version outside the importer's verified range:
+	// the exact migrationVersion a previous run reported and they accepted.
+	//
+	// Omitted is the normal case. It is deliberately NOT a boolean — a "yes" can
+	// be sent by a caller that never looked at the source, but a version number
+	// cannot be produced without having been shown the refusal that named it, and
+	// it stops applying by itself the moment the source moves. There is no server
+	// default and no configuration key for this: it is here on one request, or it
+	// is nowhere.
+	AcknowledgedSchemaVersion int `json:"acknowledged_schema_version"`
 }
 
 // peertubeImportListResponse wraps the recent-runs list for the admin UI.
@@ -37,8 +49,15 @@ type peertubeImportListResponse struct {
 
 // handleLaunchPeerTubeImport launches an import run (admin-only). Returns 202 +
 // the run so the UI can poll it. 503 when import is not configured on the server,
-// 409 when a run is already active, 400 for a bad mode/policy. The source
-// connection is server-config-only; nothing about it is accepted from the request.
+// 409 when a run is already active, 400 for a bad mode/policy/acknowledgement. The
+// source connection is server-config-only; nothing about it is accepted from the
+// request.
+//
+// acknowledged_schema_version is the one thing here the server cannot supply for
+// itself, and that is the point: preflight's refusal on an unverified source
+// schema is a HARD STOP that only a human may lift, and this endpoint has no code
+// path that sets it. It is read from the body, range-checked, and stored on the
+// run beside started_by — who signed off, and on what.
 func (s *Server) handleLaunchPeerTubeImport(c echo.Context) error {
 	userID, _, ok := principalFromContext(c)
 	if !ok {
@@ -52,7 +71,14 @@ func (s *Server) handleLaunchPeerTubeImport(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid conflict_policy (want skip|rename|merge|fail)")
 	}
-	run, err := s.peertubeimportsvc.CreateRun(c.Request().Context(), in.Mode, policy, userID)
+	if in.AcknowledgedSchemaVersion < 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "acknowledged_schema_version must be a positive PeerTube migrationVersion")
+	}
+	run, err := s.peertubeimportsvc.CreateRun(c.Request().Context(), peertubeimport.Launch{
+		Mode:                      in.Mode,
+		Policy:                    policy,
+		AcknowledgedSchemaVersion: in.AcknowledgedSchemaVersion,
+	}, userID)
 	switch {
 	case errors.Is(err, peertubeimport.ErrNotConfigured):
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "PeerTube import is not configured on this instance")
@@ -63,8 +89,14 @@ func (s *Server) handleLaunchPeerTubeImport(c echo.Context) error {
 	case err != nil:
 		return err
 	}
-	s.audit(c, observability.ActionPeerTubeImportStart, observability.ResultSuccess, userID.String(),
-		"mode="+in.Mode+" policy="+policy.String())
+	// The acknowledgement is named in the audit reason, not merely flagged: the
+	// question a later reader asks is "which version did they accept?", and the
+	// run row it is also stored on is prunable while the audit log is not.
+	reason := "mode=" + in.Mode + " policy=" + policy.String()
+	if in.AcknowledgedSchemaVersion > 0 {
+		reason += " acknowledged_unverified_schema_version=" + strconv.Itoa(in.AcknowledgedSchemaVersion)
+	}
+	s.audit(c, observability.ActionPeerTubeImportStart, observability.ResultSuccess, userID.String(), reason)
 	return c.JSON(http.StatusAccepted, run)
 }
 

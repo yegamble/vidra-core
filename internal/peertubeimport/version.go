@@ -13,7 +13,8 @@ import "fmt"
 // PeerTube records its schema version as an integer in the `application` table's
 // `migrationVersion` column (bumped once per Sequelize migration). Preflight
 // reads it and refuses to run against a version outside the verified range
-// unless a human passes --force.
+// unless a human signs off — on the CLI with --force, through the admin API by
+// acknowledging the DETECTED version on the launch request (AcknowledgesVersion).
 //
 // The verified range below is pinned in .ralph/specs/peertube-reference.md. It
 // covers PeerTube's 5.x–8.x schema line (approximate — operators should confirm
@@ -62,17 +63,82 @@ func ClassifyVersion(v int) VersionSupport {
 // verified range.
 func IsSupported(v int) bool { return ClassifyVersion(v) == VersionSupported }
 
+// Stable snake_case classes for a version refusal, in the same vocabulary as the
+// error envelope's `code` and operational_job_runs.error_code. They exist so a
+// CLIENT can tell the one refusal an administrator is allowed to overrule from
+// every other reason a run can stop. Prose cannot carry that distinction: the
+// admin UI was left string-matching English or, in practice, doing nothing.
+const (
+	// CodeUnverifiedSchema — a version WAS detected and sits outside the verified
+	// range. An administrator may acknowledge it (see AcknowledgesVersion).
+	CodeUnverifiedSchema = "unverified_schema"
+	// CodeUndetectableSchema — no version could be read at all (empty or missing
+	// application table). There is no number to put in front of an administrator,
+	// so this one is NOT acknowledgeable through the API; it needs the CLI and a
+	// human who has inspected the source by hand.
+	CodeUndetectableSchema = "undetectable_schema"
+)
+
+// UnverifiedSchemaError is the version gate's refusal. It carries the detected
+// version and a stable code alongside the operator-facing prose, and nothing
+// about the source but that integer — the same safety property the message
+// always had, now in a shape a client can branch on.
+type UnverifiedSchemaError struct {
+	// Version is the detected migrationVersion; <= 0 when none could be read.
+	Version int
+	// Support is how Version was classified against the verified range.
+	Support VersionSupport
+	msg     string
+}
+
+// Error renders the safe, operator-facing message.
+func (e *UnverifiedSchemaError) Error() string { return e.msg }
+
+// Code returns the stable snake_case class of this refusal.
+func (e *UnverifiedSchemaError) Code() string {
+	if e.Support == VersionUnknown {
+		return CodeUndetectableSchema
+	}
+	return CodeUnverifiedSchema
+}
+
+// Acknowledgeable reports whether an administrator can sign this refusal off
+// through the API. Only a refusal that names a version can be: an acknowledgement
+// is a statement ABOUT a specific number, and there is no number here otherwise.
+func (e *UnverifiedSchemaError) Acknowledgeable() bool { return e.Support != VersionUnknown }
+
 // VersionError describes why a detected version was refused. It is a safe,
-// operator-facing message (carries only the integer version, no source detail).
+// operator-facing message (carries only the integer version, no source detail),
+// and always an *UnverifiedSchemaError when non-nil.
 func VersionError(v int) error {
-	switch ClassifyVersion(v) {
+	support := ClassifyVersion(v)
+	var msg string
+	switch support {
 	case VersionSupported:
 		return nil
 	case VersionUnknown:
-		return fmt.Errorf("peertubeimport: could not detect the source PeerTube schema version (empty or missing application table) — pass --force only if you have verified compatibility by hand")
+		msg = "peertubeimport: could not detect the source PeerTube schema version (empty or missing application table) — verify compatibility by hand and re-run the CLI with --force"
 	case VersionTooOld:
-		return fmt.Errorf("peertubeimport: source schema version %d is older than the verified range [%d, %d] — pass --force only after verifying compatibility", v, MinSupportedSchemaVersion, MaxSupportedSchemaVersion)
+		msg = fmt.Sprintf("peertubeimport: source schema version %d is older than the verified range [%d, %d] — the importer has not been verified against it and may read columns that no longer exist", v, MinSupportedSchemaVersion, MaxSupportedSchemaVersion)
 	default: // VersionTooNew
-		return fmt.Errorf("peertubeimport: source schema version %d is newer than the verified range [%d, %d] — pass --force only after verifying compatibility", v, MinSupportedSchemaVersion, MaxSupportedSchemaVersion)
+		msg = fmt.Sprintf("peertubeimport: source schema version %d is newer than the verified range [%d, %d] — the importer has not been verified against it and may read columns that were renamed or removed", v, MinSupportedSchemaVersion, MaxSupportedSchemaVersion)
 	}
+	return &UnverifiedSchemaError{Version: v, Support: support, msg: msg}
+}
+
+// AcknowledgesVersion reports whether a per-run operator acknowledgement covers
+// the version preflight actually detected.
+//
+// The acknowledgement is a VERSION, not a boolean, and this equality is the
+// entire reason. A boolean can be set by a caller that never looked at the
+// source, carried forward from a previous run, or defaulted on by a config key;
+// a number cannot be produced without having seen the refusal that named it. It
+// also expires by itself: an operator who signs off on 1040 and then upgrades the
+// source to 1055 mid-migration gets the gate back, rather than a sign-off
+// silently applying to a schema nobody looked at.
+//
+// detected <= 0 never matches, so a source whose version could not be read at all
+// can never be acknowledged this way — see CodeUndetectableSchema.
+func AcknowledgesVersion(acknowledged, detected int) bool {
+	return detected > 0 && acknowledged == detected
 }

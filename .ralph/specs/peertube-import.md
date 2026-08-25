@@ -37,6 +37,11 @@ resumable, and auditable.
   and the `peertube-reference.md` ledger. A `--force` override may exist for a
   human operator, but **Ralph must never self-pass `--force`** — an unverified
   version is a `BLOCKED` safety rail requiring user sign-off, not an autonomous decision.
+  The admin API expresses that sign-off as `acknowledged_schema_version` on the
+  launch request: a HUMAN administrator naming the version a refused run reported,
+  per run, never remembered, matched against the version preflight detects, and
+  recorded on the run beside `started_by`. It is the sign-off, not a bypass of it
+  — the server has no code path that can produce one.
 - **Dry-run first.** A `--dry-run` mode reports counts, the mapping plan,
   conflicts, and unsupported/partial entities, and writes nothing.
 - **Idempotent + resumable.** Maintain a durable **import ledger** mapping each

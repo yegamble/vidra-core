@@ -66,8 +66,15 @@ LIMIT $1;
 -- Launch a run. The single-active partial unique index makes this fail with a
 -- unique violation when a run is already pending/running — the caller maps that
 -- to a 409 "an import is already in progress".
-INSERT INTO peertube_import_runs (mode, conflict_policy, started_by)
-VALUES ($1, $2, $3)
+--
+-- acknowledged_schema_version is the launching admin's explicit, per-run sign-off
+-- on an unverified source schema, and it is written ONLY from the launch request.
+-- NULL is the norm. It is stored here rather than held in the handler because the
+-- worker that runs the preflight is a different process from the one that took
+-- the request, and because started_by is on this same row: the pair is the audit
+-- record of who accepted which version.
+INSERT INTO peertube_import_runs (mode, conflict_policy, started_by, acknowledged_schema_version)
+VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: GetImportRun :one
@@ -103,7 +110,7 @@ WHERE id IN (
     LIMIT $1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, mode, conflict_policy, started_by;
+RETURNING id, mode, conflict_policy, started_by, acknowledged_schema_version;
 
 -- name: SetImportRunVersion :exec
 UPDATE peertube_import_runs
@@ -117,12 +124,17 @@ WHERE id = $1;
 
 -- name: CompleteImportRun :exec
 UPDATE peertube_import_runs
-SET state = 'done', progress = $2, error = '', finished_at = now(), updated_at = now()
+SET state = 'done', progress = $2, error = '', error_code = '', finished_at = now(), updated_at = now()
 WHERE id = $1;
 
 -- name: FailImportRun :exec
+-- error is the SAFE prose an operator reads; error_code is the stable snake_case
+-- class a CLIENT branches on (empty when the failure has no class of its own). The
+-- admin UI needs the second one to tell an unverified source schema — which an
+-- administrator can sign off on — apart from every other way a run can fail,
+-- which they cannot.
 UPDATE peertube_import_runs
-SET state = 'failed', error = $2, finished_at = now(), updated_at = now()
+SET state = 'failed', error = $2, error_code = $3, finished_at = now(), updated_at = now()
 WHERE id = $1;
 
 -- ─────────────────── idempotent entity inserts ───────────────────
