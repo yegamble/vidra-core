@@ -1008,6 +1008,16 @@ type VideoRendition struct {
 	SizeBytes int64     `json:"size_bytes"`
 }
 
+type VideoStoryboardAttempt struct {
+	VideoID       uuid.UUID `json:"video_id"`
+	Attempts      int32     `json:"attempts"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	GivenUp       bool      `json:"given_up"`
+	LastError     string    `json:"last_error"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type VideoTag struct {
 	VideoID   uuid.UUID `json:"video_id"`
 	Tag       string    `json:"tag"`
