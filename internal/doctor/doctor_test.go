@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"errors"
+	"net"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1595,6 +1596,119 @@ func TestBucketOwnership(t *testing.T) {
 		delete(broken.files, filepath.Join(testRoot, "env/production.env"))
 		wantFinding(t, one(t, only(t, "bucket ownership", broken, nil)), StatusWarn, "skipped:", "")
 	})
+}
+
+// TestObjectWriteProbe covers the one question no other object-store check in
+// this report asks: can these credentials WRITE?
+//
+// The measured failure it exists for: a destination B2 key with readFiles and
+// not writeFiles passed every read-only probe there is, and a migration then ran
+// for three minutes before failing 1,321 avatar uploads with `not entitled`, one
+// warning per image.
+func TestObjectWriteProbe(t *testing.T) {
+	withProbe := func(o *Options) { o.WriteProbe = true }
+
+	t.Run("local storage has no credential to test", func(t *testing.T) {
+		f := one(t, onlyWith(t, "object write", newFakeHost(), nil, withProbe))
+		wantFinding(t, f, StatusOK, "no object-store credential that could turn out to be read-only", "")
+	})
+
+	h := newFakeHost()
+	h.files[filepath.Join(testRoot, "env/production.env")] = s3EnvFile()
+
+	// The judgement this check turns on: `vidra doctor` is documented as safe to
+	// run anytime and to change nothing, so a default run must not spend a PUT
+	// and a DELETE against production storage — and it must still say the write
+	// path is unproven, because not knowing that is the whole bug.
+	t.Run("a default run never writes to the store", func(t *testing.T) {
+		p := newFakeProber()
+		f := one(t, only(t, "object write", h, p))
+		wantFinding(t, f, StatusOK, "not attempted", "")
+		if p.writeProbes != 0 {
+			t.Errorf("a default run wrote to the store %d times", p.writeProbes)
+		}
+		if !strings.Contains(f.Detail, "--write-probe") {
+			t.Errorf("the line does not say how to run it: %q", f.Detail)
+		}
+	})
+
+	t.Run("the opt-in proves the credential can store an object", func(t *testing.T) {
+		p := newFakeProber()
+		f := one(t, onlyWith(t, "object write", h, p, withProbe))
+		wantFinding(t, f, StatusOK, "stored a test object and removed it again", "")
+		if p.writeProbes != 1 {
+			t.Errorf("the store was probed %d times, want exactly 1", p.writeProbes)
+		}
+	})
+
+	t.Run("a read-only credential fails and names the capability it lacks", func(t *testing.T) {
+		p := newFakeProber()
+		p.writeProbeErr = errors.New(`storage: s3: put ".vidra/write-probe/X": not entitled`)
+		f := one(t, onlyWith(t, "object write", h, p, withProbe))
+		wantFinding(t, f, StatusFail, "not entitled", "writeFiles")
+		if !strings.Contains(f.Fix, "s3:PutObject") {
+			t.Errorf("the fix does not name the S3 action to grant: %q", f.Fix)
+		}
+		// An operator has to be told what breaks, not merely that a bit is off.
+		if !strings.Contains(f.Detail, "upload") {
+			t.Errorf("the failure does not say what stops working: %q", f.Detail)
+		}
+	})
+
+	t.Run("an unreachable store is not reported as a permissions problem", func(t *testing.T) {
+		p := newFakeProber()
+		p.writeProbeErr = &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: connection refused")}
+		f := one(t, onlyWith(t, "object write", h, p, withProbe))
+		wantFinding(t, f, StatusFail, "could not be reached", "STORAGE_S3_ENDPOINT")
+		for _, wrong := range []string{"writeFiles", "s3:PutObject"} {
+			if strings.Contains(f.Fix, wrong) {
+				t.Errorf("a store that never answered was blamed on permissions (%q): %q", wrong, f.Fix)
+			}
+		}
+	})
+
+	// A credential that writes and cannot delete is its own condition — B2 grants
+	// deleteFiles separately — and it is a ⚠, not a ✗: the write succeeded, which
+	// is what was asked, and the consequence is bytes accumulating rather than
+	// anything a viewer sees.
+	t.Run("a credential that cannot delete warns and names the object it left", func(t *testing.T) {
+		p := newFakeProber()
+		p.writeProbe = storage.WriteProbe{
+			Key:        storage.WriteProbePrefix + "LEFTBEHIND",
+			Wrote:      true,
+			CleanupErr: errors.New(`storage: s3: delete ".vidra/write-probe/LEFTBEHIND": not entitled`),
+		}
+		f := one(t, onlyWith(t, "object write", h, p, withProbe))
+		wantFinding(t, f, StatusWarn, "could not delete", "deleteFiles")
+		if !strings.Contains(f.Detail, storage.WriteProbePrefix+"LEFTBEHIND") {
+			t.Errorf("the warning does not name the object doctor left behind: %q", f.Detail)
+		}
+		if !strings.Contains(f.Fix, "garbage collection") {
+			t.Errorf("the fix does not say what a store it cannot delete from costs: %q", f.Fix)
+		}
+	})
+
+	t.Run("an unreadable env file skips", func(t *testing.T) {
+		broken := newFakeHost()
+		delete(broken.files, filepath.Join(testRoot, "env/production.env"))
+		wantFinding(t, one(t, onlyWith(t, "object write", broken, nil, withProbe)), StatusWarn, "skipped:", "")
+	})
+}
+
+// The probe reads the SAME credentials the api writes uploads with. A check that
+// probed a bucket assembled differently from the one checkObjectStorage heads
+// would answer about a store nothing deploys.
+func TestObjectWriteProbeUsesTheDeploymentsOwnCredentials(t *testing.T) {
+	h := newFakeHost()
+	h.files[filepath.Join(testRoot, "env/production.env")] = s3EnvFile()
+	p := newFakeProber()
+	onlyWith(t, "object write", h, p, func(o *Options) { o.WriteProbe = true })
+	if p.sawBucket.Bucket != "vidra-media" || p.sawBucket.Endpoint != "s3.us-west-004.backblazeb2.com" {
+		t.Errorf("the probe used %+v, want the env file's own bucket and endpoint", p.sawBucket)
+	}
+	if p.sawBucket.AccessKey != "AKIAEXAMPLE" {
+		t.Errorf("the probe used a different access key from the one the api uploads with")
+	}
 }
 
 // TestMediaGCPosture pins the env-only check that tells an operator what the
