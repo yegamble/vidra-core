@@ -639,23 +639,28 @@ func (q *Queries) ImportInsertUser(ctx context.Context, arg ImportInsertUserPara
 }
 
 const importInsertVideo = `-- name: ImportInsertVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at, originally_published_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id
 `
 
 type ImportInsertVideoParams struct {
-	ChannelID   uuid.UUID `json:"channel_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Privacy     string    `json:"privacy"`
-	State       string    `json:"state"`
-	Category    *string   `json:"category"`
-	Language    *string   `json:"language"`
-	License     *string   `json:"license"`
-	CreatedAt   time.Time `json:"created_at"`
+	ChannelID             uuid.UUID          `json:"channel_id"`
+	Title                 string             `json:"title"`
+	Description           string             `json:"description"`
+	Privacy               string             `json:"privacy"`
+	State                 string             `json:"state"`
+	Category              *string            `json:"category"`
+	Language              *string            `json:"language"`
+	License               *string            `json:"license"`
+	CreatedAt             time.Time          `json:"created_at"`
+	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
 }
 
+// originally_published_at is the source's own originallyPublishedAt and is NULL
+// for the videos that were first published on the source itself — the absence is
+// the answer, so it is carried through as NULL rather than defaulted to
+// created_at.
 func (q *Queries) ImportInsertVideo(ctx context.Context, arg ImportInsertVideoParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, importInsertVideo,
 		arg.ChannelID,
@@ -667,6 +672,7 @@ func (q *Queries) ImportInsertVideo(ctx context.Context, arg ImportInsertVideoPa
 		arg.Language,
 		arg.License,
 		arg.CreatedAt,
+		arg.OriginallyPublishedAt,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -1099,7 +1105,12 @@ SELECT l.source_id, v.id, v.channel_id, v.title, v.description, v.privacy, v.sta
        COALESCE(v.category, '') AS category,
        COALESCE(v.language, '') AS language,
        COALESCE(v.license, '')  AS license,
-       COALESCE(m.duration_seconds, 0)::int AS duration_seconds
+       COALESCE(m.duration_seconds, 0)::int AS duration_seconds,
+       -- Deliberately NOT coalesced: NULL is a value this field carries (the
+       -- video was first published here), and folding it into a zero time would
+       -- make "never published elsewhere" and "published at the epoch"
+       -- indistinguishable to the digest.
+       v.originally_published_at
 FROM peertube_import_ledger l
 JOIN videos v ON v.id = l.vidra_id
 LEFT JOIN video_metadata m ON m.video_id = v.id
@@ -1107,17 +1118,18 @@ WHERE l.entity_kind = 'video' AND l.status = 'done'
 `
 
 type ImportResyncVideosRow struct {
-	SourceID        string    `json:"source_id"`
-	ID              uuid.UUID `json:"id"`
-	ChannelID       uuid.UUID `json:"channel_id"`
-	Title           string    `json:"title"`
-	Description     string    `json:"description"`
-	Privacy         string    `json:"privacy"`
-	State           string    `json:"state"`
-	Category        string    `json:"category"`
-	Language        string    `json:"language"`
-	License         string    `json:"license"`
-	DurationSeconds int32     `json:"duration_seconds"`
+	SourceID              string             `json:"source_id"`
+	ID                    uuid.UUID          `json:"id"`
+	ChannelID             uuid.UUID          `json:"channel_id"`
+	Title                 string             `json:"title"`
+	Description           string             `json:"description"`
+	Privacy               string             `json:"privacy"`
+	State                 string             `json:"state"`
+	Category              string             `json:"category"`
+	Language              string             `json:"language"`
+	License               string             `json:"license"`
+	DurationSeconds       int32              `json:"duration_seconds"`
+	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
 }
 
 // Every video the import created, with the mapped metadata AND the duration,
@@ -1145,6 +1157,7 @@ func (q *Queries) ImportResyncVideos(ctx context.Context) ([]ImportResyncVideosR
 			&i.Language,
 			&i.License,
 			&i.DurationSeconds,
+			&i.OriginallyPublishedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1154,6 +1167,35 @@ func (q *Queries) ImportResyncVideos(ctx context.Context) ([]ImportResyncVideosR
 		return nil, err
 	}
 	return items, nil
+}
+
+const importSetVideoOriginallyPublishedAt = `-- name: ImportSetVideoOriginallyPublishedAt :exec
+UPDATE videos SET originally_published_at = $2 WHERE id = $1
+`
+
+type ImportSetVideoOriginallyPublishedAtParams struct {
+	ID                    uuid.UUID          `json:"id"`
+	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
+}
+
+// Carry the source's originallyPublishedAt onto an ALREADY-IMPORTED video.
+//
+// ImportInsertVideo writes the same value for videos this release imports, so
+// this exists for the ones it did not: a catalogue migrated before the column
+// existed has the date only on the source, and importOneVideo will never run
+// again for a video with a terminal ledger row. Hence a pass of its own, with
+// its own ledger kind, exactly like the view/chapter/rating families above.
+//
+// A plain assignment rather than the DO NOTHING the rest of this section uses.
+// The ledger makes this pass write at most once per video, so a date corrected
+// here AFTER that write is safe from every later scheduled run; a date somebody
+// set on Vidra BEFORE the pass first reaches the video is overwritten by the
+// source's, which is the same direction the insert already takes. (Under
+// --source-authoritative the field travels on ImportUpdateVideo instead, where
+// the source is meant to win on every run.)
+func (q *Queries) ImportSetVideoOriginallyPublishedAt(ctx context.Context, arg ImportSetVideoOriginallyPublishedAtParams) error {
+	_, err := q.db.Exec(ctx, importSetVideoOriginallyPublishedAt, arg.ID, arg.OriginallyPublishedAt)
+	return err
 }
 
 const importUnfollowChannel = `-- name: ImportUnfollowChannel :exec
@@ -1283,20 +1325,22 @@ SET channel_id  = $2,
     category    = $7,
     language    = $8,
     license     = $9,
+    originally_published_at = $10,
     updated_at  = now()
 WHERE id = $1
 `
 
 type ImportUpdateVideoParams struct {
-	ID          uuid.UUID `json:"id"`
-	ChannelID   uuid.UUID `json:"channel_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Privacy     string    `json:"privacy"`
-	State       string    `json:"state"`
-	Category    *string   `json:"category"`
-	Language    *string   `json:"language"`
-	License     *string   `json:"license"`
+	ID                    uuid.UUID          `json:"id"`
+	ChannelID             uuid.UUID          `json:"channel_id"`
+	Title                 string             `json:"title"`
+	Description           string             `json:"description"`
+	Privacy               string             `json:"privacy"`
+	State                 string             `json:"state"`
+	Category              *string            `json:"category"`
+	Language              *string            `json:"language"`
+	License               *string            `json:"license"`
+	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
 }
 
 func (q *Queries) ImportUpdateVideo(ctx context.Context, arg ImportUpdateVideoParams) error {
@@ -1310,6 +1354,7 @@ func (q *Queries) ImportUpdateVideo(ctx context.Context, arg ImportUpdateVideoPa
 		arg.Category,
 		arg.Language,
 		arg.License,
+		arg.OriginallyPublishedAt,
 	)
 	return err
 }

@@ -1729,6 +1729,14 @@ type UpdateInput struct {
 	// HTTP layer validates) time sets it. Only accepted while the video is not
 	// yet published (ErrPublished otherwise).
 	PublishAt *time.Time
+	// OriginallyPublishedAt: when this video was FIRST published elsewhere
+	// (migration 0119). nil leaves it unchanged; a non-nil value sets it. Unlike
+	// PublishAt it is pure metadata — it schedules nothing and is accepted at any
+	// state, including on a long-published video, because it describes the past.
+	// Clearing it back to NULL is not supported, for the same reason the taxonomy
+	// fields above cannot be cleared (the COALESCE update cannot tell keep from
+	// clear).
+	OriginallyPublishedAt *time.Time
 	// IsSensitive: nil leaves the sensitive-content flag unchanged; a non-nil
 	// value sets it.
 	IsSensitive *bool
@@ -1798,6 +1806,7 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
 
+		OriginallyPublishedAt: timestamptz(in.OriginallyPublishedAt),
 		PublishAfterTranscode: in.PublishAfterTranscode,
 	})
 	if err != nil {
@@ -2569,9 +2578,12 @@ type AdminVideo struct {
 //
 // AdminSortPublishedAt is an ALIAS of AdminSortCreatedAt, not a second column:
 // videos carry no published_at, and the federated arm of the inventory already
-// projects COALESCE(published_at, fetched_at) into created_at. Vidra also has no
-// originally_published_at column, so PeerTube's key of that name has no
-// equivalent here and is deliberately absent rather than faked.
+// projects COALESCE(published_at, fetched_at) into created_at. PeerTube's
+// originally_published_at key still has no equivalent here: Vidra has the column
+// (0119), but it is import-derived and NULL for everything first published on
+// this instance, so ordering an inventory by it would sort most of the catalogue
+// on an absent value. It is deliberately absent rather than offered as a sort
+// that silently degrades on the majority of rows.
 const (
 	AdminSortCreatedAt   = "-created_at"
 	AdminSortPublishedAt = "-published_at"

@@ -18,14 +18,23 @@ tool *moves content in*, once.
   their ActivityPub actor keypairs (for federation continuity).
 - Channels.
 - Videos + their metadata (title, description, privacy, category/licence/
-  language, duration), the primary web video file, captions, and existing
-  PeerTube HLS playlists when `--media-mode=reference` is used.
+  language, duration, original publication date), the primary web video file,
+  captions, and existing PeerTube HLS playlists when `--media-mode=reference` is
+  used.
 - Threaded comments (locally authored).
 - Regular playlists + their items.
 - Tags.
 - Subscriptions (local user → local channel follows).
 - **View totals** — each video's lifetime count (see §1.1 for what that does and
   does not mean).
+- **Original publication dates** — PeerTube's `originallyPublishedAt`, the day a
+  video was first published *somewhere else*. Without it a 2016 talk migrated
+  today reads as a 2026 video, because `created_at` only ever records when the
+  row appeared here. It is carried on the video insert **and** by a backfill pass
+  of its own, so a catalogue imported by an earlier release gets its dates on the
+  next run rather than needing a re-import. A source too old to have the column
+  loses the dates and nothing else, and a video first published on the source
+  itself stays unset — the absence is the answer, not a gap.
 - **Chapters** — seek-bar marks. `has_chapters` on the video detail is derived
   from the rows, so it flips on by itself.
 - **Ratings** — likes/dislikes cast by local accounts on local videos.
@@ -367,7 +376,7 @@ someone registered here, a channel made here) is invisible to it:
 
 | Family | What a re-run carries |
 | --- | --- |
-| video metadata | title, description, privacy, state, category, language, license, channel, duration |
+| video metadata | title, description, privacy, state, category, language, license, channel, duration, original publication date |
 | video tags | the whole SET — a tag dropped upstream is removed here |
 | user | password hash, role, display name, email-verified |
 | channel | display name, description, owner |
@@ -395,6 +404,12 @@ someone registered here, a channel made here) is invisible to it:
   re-fetched for a metadata change.
 - **`is_active`.** The importer never reads the source's blocked flag, so an
   account suspended here stays suspended.
+- **A stored value the source has no opinion about.** Duration and original
+  publication date fall back to what already stands here when the source records
+  none. This is not politeness, it is a safety floor: a source too old to have
+  the `originallyPublishedAt` column reports *no* date for *every* video, and
+  letting that win would erase the whole catalogue's dates on the first
+  source-authoritative run.
 
 **Cost.** An unchanged entity costs one map lookup and no write: the run takes a
 bulk snapshot of the destination up front and compares field digests, so a no-op

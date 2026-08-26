@@ -2259,6 +2259,7 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 			id serial PRIMARY KEY, uuid uuid NOT NULL, "channelId" integer NOT NULL, name text NOT NULL,
 			description text, privacy integer NOT NULL, state integer NOT NULL, category integer, licence integer,
 			language text, duration integer NOT NULL DEFAULT 0, views integer NOT NULL DEFAULT 0,
+			"originallyPublishedAt" timestamptz,
 			"createdAt" timestamptz NOT NULL DEFAULT now())`,
 		`CREATE TABLE "videoFile" (
 			id serial PRIMARY KEY, "videoId" integer, "videoStreamingPlaylistId" integer,
@@ -2332,9 +2333,12 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 			(1,'Alice',1,1),(2,'Bob',2,3),(5,'Remote',NULL,5)`,
 		`INSERT INTO "videoChannel" (id,name,description,"accountId","actorId") VALUES
 			(1,'Alice Channel','a desc',1,2),(2,'Bob Channel','',2,4)`,
-		`INSERT INTO "video" (id,uuid,"channelId",name,description,privacy,state,category,licence,language,duration,views) VALUES
-			(1,'11111111-1111-1111-1111-111111111111',1,'First Video','hello',1,1,1,1,'en',120,100),
-			(2,'22222222-2222-2222-2222-222222222222',1,'Second Video','',3,1,NULL,NULL,NULL,60,0)`,
+		// Video 1 carries an originallyPublishedAt (it was first published
+		// elsewhere and imported INTO this PeerTube); video 2 does not, which is
+		// the ordinary case for something first published on the source itself.
+		`INSERT INTO "video" (id,uuid,"channelId",name,description,privacy,state,category,licence,language,duration,views,"originallyPublishedAt") VALUES
+			(1,'11111111-1111-1111-1111-111111111111',1,'First Video','hello',1,1,1,1,'en',120,100,'2016-04-01T12:30:00Z'),
+			(2,'22222222-2222-2222-2222-222222222222',1,'Second Video','',3,1,NULL,NULL,NULL,60,0,NULL)`,
 		`INSERT INTO "videoFile" (id,"videoId",resolution,size,extname,filename) VALUES
 			(1,1,720,` + strconv.Itoa(len(sourceVideoBytes)) + `,'.mp4','v1-720.mp4'),
 			(2,1,480,10,'.mp4','v1-480.mp4')`,
@@ -2744,5 +2748,261 @@ func TestPeerTubeImportThumbnailRepairsWhatAnOlderReleaseWrote(t *testing.T) {
 	}
 	if _, size := poster(); size != int64(len(jpegBytes)) {
 		t.Errorf("source-authoritative run left %d bytes, want the source's poster (%d)", size, len(jpegBytes))
+	}
+}
+
+// ── originally_published_at (migration 0119) ──
+//
+// PeerTube records when a video was first published SOMEWHERE ELSE, and until
+// now Vidra had nowhere to put it, so a 2016 talk migrated in 2026 read as a
+// 2026 video. These three tests pin the whole path: the insert carries it, a
+// pass of its own backfills the catalogue an earlier release already imported,
+// and a source too old to have the column loses the dates and nothing else.
+
+// The straight path: a source video that carries the date gets it, and one that
+// does not stays NULL rather than being defaulted to anything.
+func TestPeerTubeImportCarriesOriginallyPublishedAt(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	want := time.Date(2016, 4, 1, 12, 30, 0, 0, time.UTC)
+	if got := readOriginalDate(t, ctx, dest, "First Video"); got == nil || !got.Equal(want) {
+		t.Errorf("First Video originally_published_at = %v, want %v", got, want)
+	}
+	// The source says nothing about this one, and NULL is the answer: it was
+	// first published on the source itself.
+	if got := readOriginalDate(t, ctx, dest, "Second Video"); got != nil {
+		t.Errorf("Second Video originally_published_at = %v, want NULL", got)
+	}
+
+	c := report.Entities[KindVideoOriginalDate]
+	if c == nil {
+		t.Fatalf("the report carries no %q counter", KindVideoOriginalDate)
+	}
+	if c.Imported != 1 || c.Failed != 0 {
+		t.Errorf("original dates = %+v, want 1 imported / 0 failed", c)
+	}
+	// The video with no date to carry is not counted at all — "there is no data
+	// here" is not a skip, the same convention importViewCounts follows.
+	if c.Skipped != 0 {
+		t.Errorf("original dates skipped = %d, want 0 (a video with no date is not a skip)", c.Skipped)
+	}
+
+	// A re-run against an unchanged source writes nothing new — the ledger is
+	// what makes the pass free the second time.
+	report, err = imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("re-run: %v", err)
+	}
+	if got := report.Entities[KindVideoOriginalDate].Imported; got != 0 {
+		t.Errorf("unchanged re-run imported %d original dates, want 0", got)
+	}
+	if got := readOriginalDate(t, ctx, dest, "First Video"); got == nil || !got.Equal(want) {
+		t.Errorf("originally_published_at after re-run = %v, want %v unchanged", got, want)
+	}
+}
+
+// The reason the pass exists at all: a catalogue imported BEFORE the column
+// existed. importOneVideo never runs again for a video with a terminal ledger
+// row, so nothing folded into the video insert could ever reach those videos —
+// only a pass with a ledger kind of its own does.
+func TestPeerTubeImportBackfillsOriginallyPublishedAtOntoAnOlderImport(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	// Rewind the destination to what an EARLIER release left behind: the videos
+	// and their 'video' ledger rows are all there and terminal, but no date was
+	// ever written and no date-pass ledger row exists.
+	mustExec(t, ctx, dest, `UPDATE videos SET originally_published_at = NULL`)
+	mustExec(t, ctx, dest, `DELETE FROM peertube_import_ledger WHERE entity_kind = $1`, KindVideoOriginalDate)
+	if got := readOriginalDate(t, ctx, dest, "First Video"); got != nil {
+		t.Fatalf("staging failed: originally_published_at = %v, want NULL", got)
+	}
+
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("backfill run: %v", err)
+	}
+	want := time.Date(2016, 4, 1, 12, 30, 0, 0, time.UTC)
+	if got := readOriginalDate(t, ctx, dest, "First Video"); got == nil || !got.Equal(want) {
+		t.Errorf("originally_published_at after the backfill run = %v, want %v", got, want)
+	}
+	if got := report.Entities[KindVideoOriginalDate].Imported; got != 1 {
+		t.Errorf("backfill imported %d original dates, want 1", got)
+	}
+	// The video pass itself did nothing — proving the date arrived through the
+	// backfill and not through a re-import.
+	if got := report.Entities[KindVideo].Imported; got != 0 {
+		t.Errorf("videos imported on the backfill run = %d, want 0", got)
+	}
+	if n := countRows(t, ctx, dest, "videos"); n != 2 {
+		t.Errorf("videos = %d, want the same 2 — the backfill must not have re-inserted anything", n)
+	}
+}
+
+// A source older than PeerTube's originallyPublishedAt column. Its absence is
+// probed, never assumed, and it must cost the original dates and nothing else.
+func TestPeerTubeImportOriginallyPublishedAtColumnAbsent(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+	mustExec(t, ctx, src, `ALTER TABLE "video" DROP COLUMN "originallyPublishedAt"`)
+
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("run: %v — a source without the column has no dates to give, which is not a failure", err)
+	}
+	for _, title := range []string{"First Video", "Second Video"} {
+		if got := readOriginalDate(t, ctx, dest, title); got != nil {
+			t.Errorf("%s originally_published_at = %v, want NULL (the source has no such column)", title, got)
+		}
+	}
+	c := report.Entities[KindVideoOriginalDate]
+	if c.Failed != 0 || c.Imported != 0 {
+		t.Errorf("original dates = %+v, want 0 imported / 0 failed", c)
+	}
+	// One family's absence must not cost another: the videos themselves and
+	// their view totals still come across.
+	if got := report.Entities[KindVideo].Imported; got != 2 {
+		t.Errorf("videos imported = %d, want 2", got)
+	}
+	if got := report.Entities[KindViewCount].Imported; got != 1 {
+		t.Errorf("view counts imported = %d, want 1", got)
+	}
+}
+
+// readOriginalDate reads one video's originally_published_at, keeping NULL
+// distinguishable from any instant.
+func readOriginalDate(t *testing.T, ctx context.Context, pool *pgxpool.Pool, title string) *time.Time {
+	t.Helper()
+	var got *time.Time
+	if err := pool.QueryRow(ctx, `SELECT originally_published_at FROM videos WHERE title=$1`, title).Scan(&got); err != nil {
+		t.Fatalf("read originally_published_at for %q: %v", title, err)
+	}
+	if got != nil {
+		utc := got.UTC()
+		return &utc
+	}
+	return nil
+}
+
+// The catastrophic combination, and the reason resyncOneVideo carries the stored
+// value forward instead of letting a nil source value win: --source-authoritative
+// against a source too old to HAVE originallyPublishedAt.
+//
+// Under that mode the source is the truth, so the naive reading is that a source
+// reporting no date for every video should clear every date here. It must not.
+// "No opinion" is not "clear it" — a source without the column has no opinion
+// about ANY video, so the naive version silently erases the whole catalogue's
+// original dates on the first run of the mode, and the dates only ever existed
+// on the source that no longer reports them. There is nothing to restore from.
+func TestPeerTubeImportSourceAuthoritativeKeepsDatesWhenSourceColumnAbsent(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	// A first, ordinary import off a source that still HAS the column: this is
+	// the catalogue that will be at stake.
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip, MediaMode: MediaModeNone})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	want := time.Date(2016, 4, 1, 12, 30, 0, 0, time.UTC)
+	if got := readOriginalDate(t, ctx, dest, "First Video"); got == nil || !got.Equal(want) {
+		t.Fatalf("staging failed: originally_published_at = %v, want %v", got, want)
+	}
+
+	// The source loses the column — an operator pointing the tool at an older
+	// instance, or a source downgraded between runs. Something else about the
+	// video changes too, so the resync definitely REACHES this row and writes it:
+	// a guard that only held because nothing was written would prove nothing.
+	mustExec(t, ctx, src, `ALTER TABLE "video" DROP COLUMN "originallyPublishedAt"`)
+	mustExec(t, ctx, src, `UPDATE "video" SET name='First Video (edited)' WHERE id=1`)
+
+	resync := NewImporter(dest, NewSourceFromPool(src), Options{
+		Policy: PolicySkip, MediaMode: MediaModeNone, SourceAuthoritative: true,
+	})
+	if _, err := resync.Run(ctx, version, nil); err != nil {
+		t.Fatalf("source-authoritative run: %v", err)
+	}
+
+	// The edit the source DID make is carried...
+	if got := scanStrings(t, ctx, dest, `SELECT title FROM videos WHERE title LIKE 'First Video%'`); len(got) != 1 || got[0] != "First Video (edited)" {
+		t.Fatalf("title after the resync = %v, want [First Video (edited)] — the row was not reached, so this test proves nothing", got)
+	}
+	// ...and the date the source can no longer speak about SURVIVES.
+	if got := readOriginalDate(t, ctx, dest, "First Video (edited)"); got == nil || !got.Equal(want) {
+		t.Errorf("originally_published_at after a source-authoritative run against a column-less source = %v, want %v kept — a source with no opinion must not erase the catalogue", got, want)
+	}
+	// The video that never had one still has none: the guard preserves, it does
+	// not invent.
+	if got := readOriginalDate(t, ctx, dest, "Second Video"); got != nil {
+		t.Errorf("Second Video originally_published_at = %v, want NULL", got)
 	}
 }

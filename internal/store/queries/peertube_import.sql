@@ -170,8 +170,12 @@ RETURNING id;
 SELECT id FROM channels WHERE lower(handle) = lower($1) LIMIT 1;
 
 -- name: ImportInsertVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+-- originally_published_at is the source's own originallyPublishedAt and is NULL
+-- for the videos that were first published on the source itself — the absence is
+-- the answer, so it is carried through as NULL rather than defaulted to
+-- created_at.
+INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at, originally_published_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id;
 
 -- name: ImportUpsertVideoMetadata :exec
@@ -325,6 +329,24 @@ DO UPDATE SET vidra_id     = EXCLUDED.vidra_id,
               source_value = EXCLUDED.source_value,
               updated_at   = now();
 
+-- name: ImportSetVideoOriginallyPublishedAt :exec
+-- Carry the source's originallyPublishedAt onto an ALREADY-IMPORTED video.
+--
+-- ImportInsertVideo writes the same value for videos this release imports, so
+-- this exists for the ones it did not: a catalogue migrated before the column
+-- existed has the date only on the source, and importOneVideo will never run
+-- again for a video with a terminal ledger row. Hence a pass of its own, with
+-- its own ledger kind, exactly like the view/chapter/rating families above.
+--
+-- A plain assignment rather than the DO NOTHING the rest of this section uses.
+-- The ledger makes this pass write at most once per video, so a date corrected
+-- here AFTER that write is safe from every later scheduled run; a date somebody
+-- set on Vidra BEFORE the pass first reaches the video is overwritten by the
+-- source's, which is the same direction the insert already takes. (Under
+-- --source-authoritative the field travels on ImportUpdateVideo instead, where
+-- the source is meant to win on every run.)
+UPDATE videos SET originally_published_at = $2 WHERE id = $1;
+
 -- name: ImportInsertVideoChapter :exec
 -- One seek-bar chapter mark. (video_id, start_seconds) is the table's primary
 -- key, so DO NOTHING is what makes a repeated import a no-op — and it is also
@@ -455,7 +477,12 @@ SELECT l.source_id, v.id, v.channel_id, v.title, v.description, v.privacy, v.sta
        COALESCE(v.category, '') AS category,
        COALESCE(v.language, '') AS language,
        COALESCE(v.license, '')  AS license,
-       COALESCE(m.duration_seconds, 0)::int AS duration_seconds
+       COALESCE(m.duration_seconds, 0)::int AS duration_seconds,
+       -- Deliberately NOT coalesced: NULL is a value this field carries (the
+       -- video was first published here), and folding it into a zero time would
+       -- make "never published elsewhere" and "published at the epoch"
+       -- indistinguishable to the digest.
+       v.originally_published_at
 FROM peertube_import_ledger l
 JOIN videos v ON v.id = l.vidra_id
 LEFT JOIN video_metadata m ON m.video_id = v.id
@@ -553,6 +580,7 @@ SET channel_id  = $2,
     category    = $7,
     language    = $8,
     license     = $9,
+    originally_published_at = $10,
     updated_at  = now()
 WHERE id = $1;
 

@@ -550,7 +550,7 @@ func (q *Queries) CountVideosByChannel(ctx context.Context, channelID uuid.UUID)
 const createVideo = `-- name: CreateVideo :one
 INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at
 `
 
 type CreateVideoParams struct {
@@ -607,6 +607,7 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		&i.PublishAfterTranscode,
 		&i.PinnedCommentID,
 		&i.SensitiveReason,
+		&i.OriginallyPublishedAt,
 	)
 	return i, err
 }
@@ -622,7 +623,8 @@ func (q *Queries) DeleteVideo(ctx context.Context, id uuid.UUID) error {
 
 const getVideoByID = `-- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
-       v.category, v.language, v.license, v.publish_at, v.is_sensitive, v.sensitive_reason,
+       v.category, v.language, v.license, v.publish_at, v.originally_published_at,
+       v.is_sensitive, v.sensitive_reason,
        v.comments_policy, v.download_enabled, v.publish_after_transcode,
        c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name
@@ -645,6 +647,7 @@ type GetVideoByIDRow struct {
 	Language              *string            `json:"language"`
 	License               *string            `json:"license"`
 	PublishAt             pgtype.Timestamptz `json:"publish_at"`
+	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
 	IsSensitive           bool               `json:"is_sensitive"`
 	SensitiveReason       string             `json:"sensitive_reason"`
 	CommentsPolicy        string             `json:"comments_policy"`
@@ -672,6 +675,7 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 		&i.Language,
 		&i.License,
 		&i.PublishAt,
+		&i.OriginallyPublishedAt,
 		&i.IsSensitive,
 		&i.SensitiveReason,
 		&i.CommentsPolicy,
@@ -2192,7 +2196,7 @@ UPDATE videos
 SET state      = $1,
     updated_at = now()
 WHERE id = $2
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at
 `
 
 type SetVideoStateParams struct {
@@ -2224,6 +2228,7 @@ func (q *Queries) SetVideoState(ctx context.Context, arg SetVideoStateParams) (V
 		&i.PublishAfterTranscode,
 		&i.PinnedCommentID,
 		&i.SensitiveReason,
+		&i.OriginallyPublishedAt,
 	)
 	return i, err
 }
@@ -2242,9 +2247,10 @@ SET title       = COALESCE($1, title),
     comments_policy  = COALESCE($10, comments_policy),
     download_enabled = COALESCE($11, download_enabled),
     publish_after_transcode = COALESCE($12, publish_after_transcode),
+    originally_published_at = COALESCE($13, originally_published_at),
     updated_at  = now()
-WHERE id = $13
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason
+WHERE id = $14
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at
 `
 
 type UpdateVideoParams struct {
@@ -2260,6 +2266,7 @@ type UpdateVideoParams struct {
 	CommentsPolicy        *string            `json:"comments_policy"`
 	DownloadEnabled       *bool              `json:"download_enabled"`
 	PublishAfterTranscode *bool              `json:"publish_after_transcode"`
+	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
 	ID                    uuid.UUID          `json:"id"`
 }
 
@@ -2277,6 +2284,7 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		arg.CommentsPolicy,
 		arg.DownloadEnabled,
 		arg.PublishAfterTranscode,
+		arg.OriginallyPublishedAt,
 		arg.ID,
 	)
 	var i Video
@@ -2301,6 +2309,7 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		&i.PublishAfterTranscode,
 		&i.PinnedCommentID,
 		&i.SensitiveReason,
+		&i.OriginallyPublishedAt,
 	)
 	return i, err
 }

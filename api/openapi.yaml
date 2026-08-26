@@ -14950,6 +14950,15 @@ components:
             and owner (studio) channel-list views once a schedule was set;
             omitted otherwise. The server publishes the video (running the
             same side effects as a direct publish) when this time arrives.
+        originally_published_at:
+          type: string
+          format: date-time
+          description: >-
+            When the video was FIRST published elsewhere (a PeerTube import's
+            originallyPublishedAt, or a date the creator set). Present on the
+            detail and create/update views when known; omitted for anything
+            first published on this instance, where created_at is the only
+            date.
         duration_seconds:
           type:
             - integer
@@ -15804,6 +15813,14 @@ components:
             Set (or move) the scheduled publish time. Only accepted while the
             video is not yet published, and must lie in the future -> 422
             otherwise.
+        originally_published_at:
+          type: string
+          format: date-time
+          description: >-
+            Set when the video was first published elsewhere (omit to leave
+            unchanged; it cannot be cleared back to unset). Unlike publish_at
+            it schedules nothing, is accepted at any state, and is normally in
+            the past.
         is_sensitive:
           type: boolean
           description: Set or clear the sensitive-content flag (omit to leave unchanged).

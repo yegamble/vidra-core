@@ -549,6 +549,10 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 			Language:    v.Language,
 			License:     intPtrToText(v.Licence),
 			CreatedAt:   v.CreatedAt,
+			// The date the video was first published ELSEWHERE, when the source
+			// records one. It is carried on the insert as well as by the backfill
+			// pass so a freshly imported video has it immediately.
+			OriginallyPublishedAt: optTimestamptz(v.OriginallyPublishedAt),
 		})
 		if err != nil {
 			return err
