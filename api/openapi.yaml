@@ -3287,6 +3287,12 @@ paths:
           description: Narrow to a taxonomy language id (from GET /videos/config); unknown values are 422. Excludes remote results.
           schema:
             type: string
+        - name: license
+          in: query
+          required: false
+          description: Narrow to a taxonomy license id (from GET /videos/config); unknown values are 422. Excludes remote results.
+          schema:
+            type: string
         - name: duration_min
           in: query
           required: false

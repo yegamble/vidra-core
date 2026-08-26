@@ -31,7 +31,7 @@ func TestVideoDetailCarriesChannelIdentity(t *testing.T) {
 }
 
 // TestSearchVideosRejectsUnknownFilters verifies the search facet filters mirror
-// the feed's validation: unknown category/language values are 422.
+// the feed's validation: unknown category/language/license values are 422.
 func TestSearchVideosRejectsUnknownFilters(t *testing.T) {
 	srv := videoServer(t)
 	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/search?q=x&category=bogus", "", ""); rec.Code != http.StatusUnprocessableEntity {
@@ -39,6 +39,13 @@ func TestSearchVideosRejectsUnknownFilters(t *testing.T) {
 	}
 	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/search?q=x&language=zz-nope", "", ""); rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("bad language = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/search?q=x&license=99", "", ""); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("bad license = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	// A known license id passes validation and searches normally.
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/search?q=x&license=1", "", ""); rec.Code != http.StatusOK {
+		t.Fatalf("good license = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	// A valid search with no filters still works.
 	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/search?q=nothing", "", ""); rec.Code != http.StatusOK {

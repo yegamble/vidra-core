@@ -547,12 +547,13 @@ FROM (
                WHERE t.video_id = v.id AND t.tag ILIKE '%' || sqlc.arg('query') || '%'
            ))
       -- Optional facet filters (NULL = off), mirroring the feed: an exact
-      -- free-form tag and the category/language taxonomy ids.
+      -- free-form tag and the category/language/license taxonomy ids.
       AND (sqlc.narg('tag')::text IS NULL OR EXISTS (
           SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = sqlc.narg('tag')
       ))
       AND (sqlc.narg('category')::text IS NULL OR v.category = sqlc.narg('category'))
       AND (sqlc.narg('language')::text IS NULL OR v.language = sqlc.narg('language'))
+      AND (sqlc.narg('license')::text IS NULL OR v.license = sqlc.narg('license'))
       -- Tag SETS (NULL = off). one_of is a disjunction; all_of demands every
       -- listed tag, counted DISTINCT so a caller repeating a tag cannot make the
       -- comparison unsatisfiable. Both arrive lowercased, like ?tag.
@@ -602,6 +603,7 @@ FROM (
     WHERE sqlc.narg('tag')::text IS NULL
       AND sqlc.narg('category')::text IS NULL
       AND sqlc.narg('language')::text IS NULL
+      AND sqlc.narg('license')::text IS NULL
       AND sqlc.narg('tags_one_of')::text[] IS NULL
       AND sqlc.narg('tags_all_of')::text[] IS NULL
       AND rv.title ILIKE '%' || sqlc.arg('query') || '%'
@@ -673,12 +675,13 @@ FROM (
                WHERE t.video_id = v.id AND t.tag ILIKE '%' || sqlc.arg('query') || '%'
            ))
       -- Optional facet filters (NULL = off), mirroring the feed: an exact
-      -- free-form tag and the category/language taxonomy ids.
+      -- free-form tag and the category/language/license taxonomy ids.
       AND (sqlc.narg('tag')::text IS NULL OR EXISTS (
           SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = sqlc.narg('tag')
       ))
       AND (sqlc.narg('category')::text IS NULL OR v.category = sqlc.narg('category'))
       AND (sqlc.narg('language')::text IS NULL OR v.language = sqlc.narg('language'))
+      AND (sqlc.narg('license')::text IS NULL OR v.license = sqlc.narg('license'))
       -- Tag SETS (NULL = off). one_of is a disjunction; all_of demands every
       -- listed tag, counted DISTINCT so a caller repeating a tag cannot make the
       -- comparison unsatisfiable. Both arrive lowercased, like ?tag.
@@ -728,6 +731,7 @@ FROM (
     WHERE sqlc.narg('tag')::text IS NULL
       AND sqlc.narg('category')::text IS NULL
       AND sqlc.narg('language')::text IS NULL
+      AND sqlc.narg('license')::text IS NULL
       AND sqlc.narg('tags_one_of')::text[] IS NULL
       AND sqlc.narg('tags_all_of')::text[] IS NULL
       AND rv.title ILIKE '%' || sqlc.arg('query') || '%'

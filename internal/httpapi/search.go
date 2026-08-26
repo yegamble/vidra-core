@@ -570,8 +570,8 @@ type searchServicePaging struct {
 // the service's paging facts passed through when it reports them.
 //
 // The caller has already established (searchServiceCanRank) that this request is
-// one the service can answer: relevance order, and only the tag/category/language
-// facets it accepts. Nothing here re-checks that, and nothing here post-filters —
+// one the service can answer: relevance order, and only the
+// tag/category/language/license facets it accepts. Nothing here re-checks that, and nothing here post-filters —
 // a filter the service did not apply would produce a page that disagreed with the
 // total, so such requests never reach this function.
 func (s *Server) searchViaService(c echo.Context, q string, filter video.SearchFilter, limit, offset int, viewerID uuid.UUID, authed bool) ([]videoView, searchServicePaging, bool) {
@@ -589,6 +589,7 @@ func (s *Server) searchViaService(c echo.Context, q string, filter video.SearchF
 		Tag:           filter.Tag,
 		Category:      filter.Category,
 		Language:      filter.Language,
+		License:       filter.License,
 		UserID:        uid,
 		SessionID:     sessionIDFromRequest(c),
 		Personalized:  personalized,

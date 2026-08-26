@@ -337,34 +337,35 @@ FROM (
                WHERE t.video_id = v.id AND t.tag ILIKE '%' || $1 || '%'
            ))
       -- Optional facet filters (NULL = off), mirroring the feed: an exact
-      -- free-form tag and the category/language taxonomy ids.
+      -- free-form tag and the category/language/license taxonomy ids.
       AND ($3::text IS NULL OR EXISTS (
           SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = $3
       ))
       AND ($4::text IS NULL OR v.category = $4)
       AND ($5::text IS NULL OR v.language = $5)
+      AND ($6::text IS NULL OR v.license = $6)
       -- Tag SETS (NULL = off). one_of is a disjunction; all_of demands every
       -- listed tag, counted DISTINCT so a caller repeating a tag cannot make the
       -- comparison unsatisfiable. Both arrive lowercased, like ?tag.
-      AND ($6::text[] IS NULL OR EXISTS (
+      AND ($7::text[] IS NULL OR EXISTS (
           SELECT 1 FROM video_tags t
-          WHERE t.video_id = v.id AND t.tag = ANY ($6::text[])
-      ))
-      AND ($7::text[] IS NULL OR (
-          SELECT count(DISTINCT t.tag) FROM video_tags t
           WHERE t.video_id = v.id AND t.tag = ANY ($7::text[])
+      ))
+      AND ($8::text[] IS NULL OR (
+          SELECT count(DISTINCT t.tag) FROM video_tags t
+          WHERE t.video_id = v.id AND t.tag = ANY ($8::text[])
       ) = (
           -- The DISTINCT count of the REQUESTED tags, not cardinality(): a
           -- caller sending ?tags_all_of=go,go would otherwise be asking for two
           -- matches of one tag, which the left side (also DISTINCT) can never
           -- reach, and the filter would silently match nothing.
-          SELECT count(DISTINCT want) FROM unnest($7::text[]) AS want
+          SELECT count(DISTINCT want) FROM unnest($8::text[]) AS want
       ))
       -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND (NOT $8::bool OR NOT v.is_sensitive)
+      AND (NOT $9::bool OR NOT v.is_sensitive)
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -392,8 +393,9 @@ FROM (
     WHERE $3::text IS NULL
       AND $4::text IS NULL
       AND $5::text IS NULL
-      AND $6::text[] IS NULL
+      AND $6::text IS NULL
       AND $7::text[] IS NULL
+      AND $8::text[] IS NULL
       AND rv.title ILIKE '%' || $1 || '%'
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
@@ -402,10 +404,10 @@ FROM (
           WHERE mi.muter_id = $2 AND mi.domain = ra.domain
       )
 ) AS feed
-WHERE ($9::int IS NULL OR feed.duration_seconds >= $9::int)
-  AND ($10::int IS NULL OR feed.duration_seconds <= $10::int)
-  AND ($11::timestamptz IS NULL OR feed.created_at >= $11::timestamptz)
-  AND ($12::timestamptz IS NULL OR feed.created_at <= $12::timestamptz)
+WHERE ($10::int IS NULL OR feed.duration_seconds >= $10::int)
+  AND ($11::int IS NULL OR feed.duration_seconds <= $11::int)
+  AND ($12::timestamptz IS NULL OR feed.created_at >= $12::timestamptz)
+  AND ($13::timestamptz IS NULL OR feed.created_at <= $13::timestamptz)
 `
 
 type CountSearchPublicVideosParams struct {
@@ -414,6 +416,7 @@ type CountSearchPublicVideosParams struct {
 	Tag             *string            `json:"tag"`
 	Category        *string            `json:"category"`
 	Language        *string            `json:"language"`
+	License         *string            `json:"license"`
 	TagsOneOf       []string           `json:"tags_one_of"`
 	TagsAllOf       []string           `json:"tags_all_of"`
 	HideSensitive   bool               `json:"hide_sensitive"`
@@ -434,6 +437,7 @@ func (q *Queries) CountSearchPublicVideos(ctx context.Context, arg CountSearchPu
 		arg.Tag,
 		arg.Category,
 		arg.Language,
+		arg.License,
 		arg.TagsOneOf,
 		arg.TagsAllOf,
 		arg.HideSensitive,
@@ -1958,34 +1962,35 @@ FROM (
                WHERE t.video_id = v.id AND t.tag ILIKE '%' || $1 || '%'
            ))
       -- Optional facet filters (NULL = off), mirroring the feed: an exact
-      -- free-form tag and the category/language taxonomy ids.
+      -- free-form tag and the category/language/license taxonomy ids.
       AND ($3::text IS NULL OR EXISTS (
           SELECT 1 FROM video_tags t WHERE t.video_id = v.id AND t.tag = $3
       ))
       AND ($4::text IS NULL OR v.category = $4)
       AND ($5::text IS NULL OR v.language = $5)
+      AND ($6::text IS NULL OR v.license = $6)
       -- Tag SETS (NULL = off). one_of is a disjunction; all_of demands every
       -- listed tag, counted DISTINCT so a caller repeating a tag cannot make the
       -- comparison unsatisfiable. Both arrive lowercased, like ?tag.
-      AND ($6::text[] IS NULL OR EXISTS (
+      AND ($7::text[] IS NULL OR EXISTS (
           SELECT 1 FROM video_tags t
-          WHERE t.video_id = v.id AND t.tag = ANY ($6::text[])
-      ))
-      AND ($7::text[] IS NULL OR (
-          SELECT count(DISTINCT t.tag) FROM video_tags t
           WHERE t.video_id = v.id AND t.tag = ANY ($7::text[])
+      ))
+      AND ($8::text[] IS NULL OR (
+          SELECT count(DISTINCT t.tag) FROM video_tags t
+          WHERE t.video_id = v.id AND t.tag = ANY ($8::text[])
       ) = (
           -- The DISTINCT count of the REQUESTED tags, not cardinality(): a
           -- caller sending ?tags_all_of=go,go would otherwise be asking for two
           -- matches of one tag, which the left side (also DISTINCT) can never
           -- reach, and the filter would silently match nothing.
-          SELECT count(DISTINCT want) FROM unnest($7::text[]) AS want
+          SELECT count(DISTINCT want) FROM unnest($8::text[]) AS want
       ))
       -- Unlisted owners (§16) are excluded from discovery; direct URLs still serve.
       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted)
       -- Sensitive-content policy "hide" (instance-platform-info): flagged videos
       -- drop out of PUBLIC discovery only (owner/admin/direct reads unfiltered).
-      AND (NOT $8::bool OR NOT v.is_sensitive)
+      AND (NOT $9::bool OR NOT v.is_sensitive)
     UNION ALL
     SELECT rv.id,
            true AS remote,
@@ -2013,8 +2018,9 @@ FROM (
     WHERE $3::text IS NULL
       AND $4::text IS NULL
       AND $5::text IS NULL
-      AND $6::text[] IS NULL
+      AND $6::text IS NULL
       AND $7::text[] IS NULL
+      AND $8::text[] IS NULL
       AND rv.title ILIKE '%' || $1 || '%'
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
@@ -2023,18 +2029,18 @@ FROM (
           WHERE mi.muter_id = $2 AND mi.domain = ra.domain
       )
 ) AS feed
-WHERE ($9::int IS NULL OR feed.duration_seconds >= $9::int)
-  AND ($10::int IS NULL OR feed.duration_seconds <= $10::int)
-  AND ($11::timestamptz IS NULL OR feed.created_at >= $11::timestamptz)
-  AND ($12::timestamptz IS NULL OR feed.created_at <= $12::timestamptz)
+WHERE ($10::int IS NULL OR feed.duration_seconds >= $10::int)
+  AND ($11::int IS NULL OR feed.duration_seconds <= $11::int)
+  AND ($12::timestamptz IS NULL OR feed.created_at >= $12::timestamptz)
+  AND ($13::timestamptz IS NULL OR feed.created_at <= $13::timestamptz)
 ORDER BY
-    CASE WHEN $13::text = 'relevance' THEN feed.search_rank END DESC,
-    CASE WHEN $13::text = 'published_at' THEN feed.created_at END ASC,
-    CASE WHEN $13::text = '-published_at' THEN feed.created_at END DESC,
-    CASE WHEN $13::text = 'views' THEN feed.views END ASC,
-    CASE WHEN $13::text = '-views' THEN feed.views END DESC,
+    CASE WHEN $14::text = 'relevance' THEN feed.search_rank END DESC,
+    CASE WHEN $14::text = 'published_at' THEN feed.created_at END ASC,
+    CASE WHEN $14::text = '-published_at' THEN feed.created_at END DESC,
+    CASE WHEN $14::text = 'views' THEN feed.views END ASC,
+    CASE WHEN $14::text = '-views' THEN feed.views END DESC,
     feed.created_at DESC, feed.id DESC
-LIMIT $15 OFFSET $14
+LIMIT $16 OFFSET $15
 `
 
 type SearchPublicVideosParams struct {
@@ -2043,6 +2049,7 @@ type SearchPublicVideosParams struct {
 	Tag             *string            `json:"tag"`
 	Category        *string            `json:"category"`
 	Language        *string            `json:"language"`
+	License         *string            `json:"license"`
 	TagsOneOf       []string           `json:"tags_one_of"`
 	TagsAllOf       []string           `json:"tags_all_of"`
 	HideSensitive   bool               `json:"hide_sensitive"`
@@ -2108,6 +2115,7 @@ func (q *Queries) SearchPublicVideos(ctx context.Context, arg SearchPublicVideos
 		arg.Tag,
 		arg.Category,
 		arg.Language,
+		arg.License,
 		arg.TagsOneOf,
 		arg.TagsAllOf,
 		arg.HideSensitive,

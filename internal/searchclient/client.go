@@ -286,6 +286,9 @@ func (c *Client) Search(ctx context.Context, p SearchParams) (SearchResponse, er
 	if p.Language != "" {
 		q.Set("language", p.Language)
 	}
+	if p.License != "" {
+		q.Set("license", p.License)
+	}
 	if p.UserID != nil {
 		q.Set("user_id", p.UserID.String())
 	}

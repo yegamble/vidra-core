@@ -699,7 +699,7 @@ type videoSearchResponse struct {
 // -views/views. An unrecognised value is a 400, never a silent fallback.
 //
 // Optional facet filters mirror the feed: ?tag (free-form, matched
-// case-insensitively), ?category and ?language (taxonomy ids from GET
+// case-insensitively), ?category, ?language and ?license (taxonomy ids from GET
 // /videos/config; unknown values are 422). Any active taxonomy filter excludes
 // remote results. On top of those, the search panel's own narrowing filters:
 // ?duration_min/?duration_max (seconds, inclusive), ?published_after/
@@ -726,6 +726,7 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 		Tag:      strings.TrimSpace(c.QueryParam("tag")),
 		Category: strings.TrimSpace(c.QueryParam("category")),
 		Language: strings.TrimSpace(c.QueryParam("language")),
+		License:  strings.TrimSpace(c.QueryParam("license")),
 		// Sensitive-content policy "hide" is enforced server-side on the public
 		// discovery surfaces only (instance-platform-info), now per-viewer (0100):
 		// a signed-in caller's override wins, else the instance policy.
@@ -761,6 +762,9 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	}
 	if filter.Language != "" && !video.IsLanguage(filter.Language) {
 		fes = append(fes, FieldError{Field: "language", Message: "unknown language"})
+	}
+	if filter.License != "" && !video.IsLicense(filter.License) {
+		fes = append(fes, FieldError{Field: "license", Message: "unknown license"})
 	}
 	if len(fes) > 0 {
 		return &ValidationError{Fields: fes}
@@ -828,8 +832,8 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 // request. It is the mechanism that keeps the two backends consistent.
 //
 // The service's contract is a ranked, already-paged id list over a corpus IT
-// filtered — it accepts tag/category/language and nothing else, and core's job
-// is to hydrate the window it returns. That shape supports exactly one
+// filtered — it accepts tag/category/language/license and nothing else, and
+// core's job is to hydrate the window it returns. That shape supports exactly one
 // ordering, its own relevance, and exactly the filters it knows.
 //
 // So a request that asks for anything else must not go there:

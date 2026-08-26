@@ -69,7 +69,7 @@ GROUP BY state;
 -- the video.upsert event payload. Eligibility is DERIVED in the search service
 -- from privacy+state+owner_unlisted, so those raw fields ride along.
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
-       v.category, v.language, v.is_sensitive,
+       v.category, v.language, v.license, v.is_sensitive,
        v.created_at, v.updated_at, v.publish_at,
        c.handle AS channel_handle, c.display_name AS channel_name,
        c.owner_id,
@@ -95,7 +95,7 @@ WHERE v.id = $1;
 -- stable paging (id > after; pass the nil UUID for the first page). Same column
 -- projection as GetVideoSearchDoc so both build the identical doc payload.
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
-       v.category, v.language, v.is_sensitive,
+       v.category, v.language, v.license, v.is_sensitive,
        v.created_at, v.updated_at, v.publish_at,
        c.handle AS channel_handle, c.display_name AS channel_name,
        c.owner_id,

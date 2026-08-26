@@ -265,7 +265,7 @@ func longTag() string {
 }
 
 // TestFilteredSearchNeverRoutesToTheService is the consistency guarantee. The
-// search service accepts only tag/category/language and ranks by its own
+// search service accepts only tag/category/language/license and ranks by its own
 // relevance, so a request using a new filter or a different sort must run on
 // local SQL — and must do so whether the service is healthy or not, or the
 // result set would change with the service's mood.
@@ -322,7 +322,14 @@ func TestUnfilteredRelevanceSearchStillUsesTheService(t *testing.T) {
 		IDs: []searchclient.ScoredID{{VideoID: uuid.MustParse(f.ids["alpha long"]), Score: 1}},
 	}
 
-	for _, query := range []string{"q=alpha", "q=alpha&sort=relevance", "q=alpha&tag=go", "q=alpha&limit=2"} {
+	// license is in this list, not the one above: vidra-search KNOWS this facet,
+	// so a license-filtered relevance search must still be ranked by the service.
+	// Making License "narrowing" would silently move it to local SQL, which is a
+	// different ranking — this table is what catches that.
+	for _, query := range []string{
+		"q=alpha", "q=alpha&sort=relevance", "q=alpha&tag=go", "q=alpha&limit=2",
+		"q=alpha&license=1",
+	} {
 		before := fake.searchCalls
 		resp := f.search(t, query)
 		if fake.searchCalls != before+1 {
@@ -330,6 +337,37 @@ func TestUnfilteredRelevanceSearchStillUsesTheService(t *testing.T) {
 		}
 		if got, want := f.titles(resp), []string{"alpha long"}; !equalStrings(got, want) {
 			t.Errorf("%s = %v, want the service-ranked %v", query, got, want)
+		}
+	}
+}
+
+// TestTaxonomyFiltersReachTheSearchService proves the facets the service DOES
+// accept are actually handed to it. Routing a filtered request to the service is
+// only correct if the service was told about the filter: forwarding it is what
+// makes the page and the total describe the same, narrowed corpus. Without this,
+// dropping a field from the SearchParams build would leave every routing test
+// green while the service silently ranked the UNFILTERED corpus.
+func TestTaxonomyFiltersReachTheSearchService(t *testing.T) {
+	fake := &fakeSearchGateway{healthy: true}
+	f := seedSearchCorpus(t, WithSearchClient(fake))
+	fake.searchResp = searchclient.SearchResponse{
+		IDs: []searchclient.ScoredID{{VideoID: uuid.MustParse(f.ids["alpha long"]), Score: 1}},
+	}
+
+	f.search(t, "q=alpha&tag=go&category=1&language=en&license=1")
+	if len(fake.searchParams) != 1 {
+		t.Fatalf("search service called %d times, want 1", len(fake.searchParams))
+	}
+	got := fake.searchParams[0]
+	for _, tc := range []struct{ field, value, want string }{
+		{"tag", got.Tag, "go"},
+		{"category", got.Category, "1"},
+		{"language", got.Language, "en"},
+		{"license", got.License, "1"},
+	} {
+		if tc.value != tc.want {
+			t.Errorf("SearchParams.%s = %q, want %q — the filter never reached the service",
+				tc.field, tc.value, tc.want)
 		}
 	}
 }
