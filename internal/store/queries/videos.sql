@@ -1,7 +1,7 @@
 -- name: CreateVideo :one
 INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at;
 
 -- name: CountPublicVideos :one
 -- Public, published videos — the "local posts" count NodeInfo advertises. Only
@@ -23,7 +23,8 @@ LIMIT $2 OFFSET $3;
 
 -- name: GetVideoByID :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
-       v.category, v.language, v.license, v.publish_at, v.is_sensitive, v.sensitive_reason,
+       v.category, v.language, v.license, v.publish_at, v.originally_published_at,
+       v.is_sensitive, v.sensitive_reason,
        v.comments_policy, v.download_enabled, v.publish_after_transcode,
        c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name
@@ -836,16 +837,17 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     comments_policy  = COALESCE(sqlc.narg('comments_policy'), comments_policy),
     download_enabled = COALESCE(sqlc.narg('download_enabled'), download_enabled),
     publish_after_transcode = COALESCE(sqlc.narg('publish_after_transcode'), publish_after_transcode),
+    originally_published_at = COALESCE(sqlc.narg('originally_published_at'), originally_published_at),
     updated_at  = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at;
 
 -- name: SetVideoState :one
 UPDATE videos
 SET state      = sqlc.arg('state'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at;
 
 -- name: SetVideoPinnedComment :exec
 -- Set (or clear, when NULL) a video's pinned comment (YouTube-style creator pin,

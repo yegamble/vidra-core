@@ -3,6 +3,7 @@ package peertubeimport
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMapRole(t *testing.T) {
@@ -51,6 +52,20 @@ func TestIntPtrToText(t *testing.T) {
 	got := intPtrToText(&v)
 	if got == nil || *got != "5" {
 		t.Errorf("intPtrToText(&5) = %v, want \"5\"", got)
+	}
+}
+
+// nil must stay NULL rather than becoming a zero time: for
+// originally_published_at, NULL says "first published here", and a year-1
+// timestamp would say "first published elsewhere, in the year 1".
+func TestOptTimestamptz(t *testing.T) {
+	if got := optTimestamptz(nil); got.Valid {
+		t.Errorf("optTimestamptz(nil) = %+v, want NULL", got)
+	}
+	when := time.Date(2016, 4, 1, 12, 30, 0, 0, time.UTC)
+	got := optTimestamptz(&when)
+	if !got.Valid || !got.Time.Equal(when) {
+		t.Errorf("optTimestamptz(&2016-04-01) = %+v, want that instant", got)
 	}
 }
 
@@ -166,7 +181,7 @@ func TestReportCarriesPerVideoKinds(t *testing.T) {
 	// The JSON shape is a frontend contract: every kind is present from the start,
 	// so a dry-run that plans nothing still reports zeroes rather than gaps.
 	for _, kind := range []string{
-		KindViewCount, KindChapter, KindRating, KindRendition,
+		KindViewCount, KindVideoOriginalDate, KindChapter, KindRating, KindRendition,
 		KindActorAvatar, KindActorBanner, KindThumbnail, KindStoryboard,
 	} {
 		if r.Entities[kind] == nil {

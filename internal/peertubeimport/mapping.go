@@ -7,6 +7,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/video"
@@ -75,6 +78,18 @@ func intPtrToText(v *int) *string {
 	}
 	s := strconv.Itoa(*v)
 	return &s
+}
+
+// optTimestamptz wraps an optional source timestamp as the nullable column value
+// Vidra stores. nil stays NULL, which is the ANSWER and not a missing one: for
+// originally_published_at (migration 0119) it says the video was first published
+// on the source itself, and coercing it to created_at or a zero time would claim
+// an elsewhere that never existed.
+func optTimestamptz(t *time.Time) pgtype.Timestamptz {
+	if t == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: *t, Valid: true}
 }
 
 // mapRating maps a PeerTube accountVideoRate.type to Vidra's video_ratings.rating

@@ -3,9 +3,14 @@ package peertubeimport
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+// ptrTime is the one-liner these digest cases need to pass an OPTIONAL timestamp
+// by value.
+func ptrTime(t time.Time) *time.Time { return &t }
 
 // ── change detection ──
 //
@@ -17,22 +22,29 @@ import (
 
 func TestDigestIsStableAndFieldSensitive(t *testing.T) {
 	channel := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	origPub := ptrTime(time.Date(2016, 4, 1, 12, 0, 0, 0, time.UTC))
 	base := func() string {
-		return videoDigest(channel, "First Video", "hello", "public", "published", "1", "en", "1", 120)
+		return videoDigest(channel, "First Video", "hello", "public", "published", "1", "en", "1", 120, origPub)
 	}
 	if base() != base() {
 		t.Fatal("the same fields hashed twice gave different answers")
 	}
 	changed := map[string]string{
-		"channel":     videoDigest(uuid.MustParse("22222222-2222-2222-2222-222222222222"), "First Video", "hello", "public", "published", "1", "en", "1", 120),
-		"title":       videoDigest(channel, "First Video (edited)", "hello", "public", "published", "1", "en", "1", 120),
-		"description": videoDigest(channel, "First Video", "goodbye", "public", "published", "1", "en", "1", 120),
-		"privacy":     videoDigest(channel, "First Video", "hello", "unlisted", "published", "1", "en", "1", 120),
-		"state":       videoDigest(channel, "First Video", "hello", "public", "draft", "1", "en", "1", 120),
-		"category":    videoDigest(channel, "First Video", "hello", "public", "published", "2", "en", "1", 120),
-		"language":    videoDigest(channel, "First Video", "hello", "public", "published", "1", "fr", "1", 120),
-		"license":     videoDigest(channel, "First Video", "hello", "public", "published", "1", "en", "2", 120),
-		"duration":    videoDigest(channel, "First Video", "hello", "public", "published", "1", "en", "1", 121),
+		"channel":     videoDigest(uuid.MustParse("22222222-2222-2222-2222-222222222222"), "First Video", "hello", "public", "published", "1", "en", "1", 120, origPub),
+		"title":       videoDigest(channel, "First Video (edited)", "hello", "public", "published", "1", "en", "1", 120, origPub),
+		"description": videoDigest(channel, "First Video", "goodbye", "public", "published", "1", "en", "1", 120, origPub),
+		"privacy":     videoDigest(channel, "First Video", "hello", "unlisted", "published", "1", "en", "1", 120, origPub),
+		"state":       videoDigest(channel, "First Video", "hello", "public", "draft", "1", "en", "1", 120, origPub),
+		"category":    videoDigest(channel, "First Video", "hello", "public", "published", "2", "en", "1", 120, origPub),
+		"language":    videoDigest(channel, "First Video", "hello", "public", "published", "1", "fr", "1", 120, origPub),
+		"license":     videoDigest(channel, "First Video", "hello", "public", "published", "1", "en", "2", 120, origPub),
+		"duration":    videoDigest(channel, "First Video", "hello", "public", "published", "1", "en", "1", 121, origPub),
+		// The original-publication date is part of the fingerprint, so a source
+		// that corrects it gets it carried — and so does a source that has one
+		// where this instance has none, which is the whole point of the field.
+		"originally_published_at": videoDigest(channel, "First Video", "hello", "public", "published", "1", "en", "1", 120,
+			ptrTime(time.Date(2016, 4, 2, 12, 0, 0, 0, time.UTC))),
+		"originally_published_at_unset": videoDigest(channel, "First Video", "hello", "public", "published", "1", "en", "1", 120, nil),
 	}
 	for field, d := range changed {
 		if d == base() {
@@ -46,8 +58,9 @@ func TestDigestIsStableAndFieldSensitive(t *testing.T) {
 // description is exactly the pair an editor moves text between.
 func TestDigestSeparatesAdjacentFields(t *testing.T) {
 	id := uuid.Nil
-	a := videoDigest(id, "ab", "c", "public", "published", "", "", "", 0)
-	b := videoDigest(id, "a", "bc", "public", "published", "", "", "", 0)
+	var origPub *time.Time
+	a := videoDigest(id, "ab", "c", "public", "published", "", "", "", 0, origPub)
+	b := videoDigest(id, "a", "bc", "public", "published", "", "", "", 0, origPub)
 	if a == b {
 		t.Fatal("(\"ab\",\"c\") and (\"a\",\"bc\") share a digest; a field boundary is not being hashed")
 	}

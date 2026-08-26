@@ -262,6 +262,12 @@ type SourceVideo struct {
 	// does not record one). It is the only real evidence available for an HLS
 	// rung's width when the stored file carries no dimensions.
 	AspectRatio float64
+	// OriginallyPublishedAt is when the video was first published somewhere
+	// OTHER than the source — PeerTube's own originallyPublishedAt, filled by
+	// its YouTube/instance importers or set by hand. nil for a video first
+	// published on the source itself, and for every source whose schema predates
+	// the column.
+	OriginallyPublishedAt *time.Time
 }
 
 // SourceVideoFile is one stored media file for a video (web/webseed download).
@@ -416,10 +422,21 @@ func (s *Source) Videos(ctx context.Context) ([]SourceVideo, error) {
 	} else if hasAspect {
 		aspectExpr = `COALESCE(v."aspectRatio", 0)::double precision`
 	}
+	// Same probe, same reason: originallyPublishedAt is not on every schema in
+	// the accepted range, and a source that predates it should lose the original
+	// dates and nothing else. NULL is also what the column itself holds for a
+	// video first published on the source, so the absent-column case needs no
+	// separate handling downstream.
+	origPubExpr := `NULL::timestamptz`
+	if hasOrigPub, err := s.columnExists(ctx, "video", "originallyPublishedAt"); err != nil {
+		return nil, err
+	} else if hasOrigPub {
+		origPubExpr = `v."originallyPublishedAt"`
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT v.id, v.uuid::text, v."channelId", v.name, COALESCE(v.description, ''),
 		       v.privacy, v.state, v.category, v.licence, v.language, v.duration, v."createdAt",
-		       `+viewsExpr+`, `+aspectExpr+`
+		       `+viewsExpr+`, `+aspectExpr+`, `+origPubExpr+`
 		FROM video v
 		JOIN "videoChannel" vc ON vc.id = v."channelId"
 		JOIN actor act ON `+actorJoin+`
@@ -435,7 +452,7 @@ func (s *Source) Videos(ctx context.Context) ([]SourceVideo, error) {
 		var uuidStr string
 		if err := rows.Scan(&v.ID, &uuidStr, &v.ChannelID, &v.Title, &v.Description,
 			&v.Privacy, &v.State, &v.Category, &v.Licence, &v.Language, &v.Duration, &v.CreatedAt,
-			&v.Views, &v.AspectRatio); err != nil {
+			&v.Views, &v.AspectRatio, &v.OriginallyPublishedAt); err != nil {
 			return nil, fmt.Errorf("peertubeimport: scan video: %w", err)
 		}
 		v.UUID = uuidStr

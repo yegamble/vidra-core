@@ -232,6 +232,13 @@ type videoView struct {
 	// exists; omitted when never scheduled. State stays 'scheduled' (public
 	// surfaces filter on state=published) until the sweeper publishes it.
 	PublishAt *time.Time `json:"publish_at,omitempty"`
+	// OriginallyPublishedAt is when the video was first published ELSEWHERE
+	// (migration 0119) — a PeerTube import's originallyPublishedAt, or a date the
+	// creator set by hand. Omitted when unset, which is the case for everything
+	// first published on this instance; created_at remains the only date for
+	// those. Set on the detail and create/update views; the list/feed cards do
+	// not carry it.
+	OriginallyPublishedAt *time.Time `json:"originally_published_at,omitempty"`
 	// HLSURL is the master-playlist path for HLS playback, set on the detail
 	// endpoint only once the transcoded playlist is ready (omitted otherwise).
 	// Renditions lists the available ladder rungs alongside it.
@@ -282,6 +289,7 @@ func newVideoView(v sqlcgen.Video) videoView {
 		Language:              v.Language,
 		License:               v.License,
 		PublishAt:             video.TimePtr(v.PublishAt),
+		OriginallyPublishedAt: video.TimePtr(v.OriginallyPublishedAt),
 		CommentsPolicy:        v.CommentsPolicy,
 		DownloadEnabled:       &downloadEnabled,
 		PublishAfterTranscode: &publishAfterTranscode,
@@ -310,6 +318,7 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 		// and label without a second request (Wave A contract gap).
 		ChannelHandle:         &handle,
 		ChannelDisplayName:    &name,
+		OriginallyPublishedAt: video.TimePtr(v.OriginallyPublishedAt),
 		CommentsPolicy:        v.CommentsPolicy,
 		DownloadEnabled:       &downloadEnabled,
 		PublishAfterTranscode: &publishAfterTranscode,
@@ -901,7 +910,12 @@ type updateVideoRequest struct {
 	License     *string    `json:"license"`
 	Tags        *[]string  `json:"tags"`
 	PublishAt   *time.Time `json:"publish_at"`
-	IsSensitive *bool      `json:"is_sensitive"`
+	// OriginallyPublishedAt: when the video was first published elsewhere; nil
+	// leaves it unchanged. Unlike PublishAt it carries no schedule and is not
+	// range-checked — a date in the past is the normal case, and a source that
+	// records a wrong one is not something this endpoint can adjudicate.
+	OriginallyPublishedAt *time.Time `json:"originally_published_at"`
+	IsSensitive           *bool      `json:"is_sensitive"`
 	// SensitiveReason: nil leaves the content-warning text unchanged; a non-nil
 	// value sets it (an empty string clears it). Trimmed, capped at
 	// maxSensitiveReasonLen.
@@ -919,7 +933,8 @@ type updateVideoRequest struct {
 func (r updateVideoRequest) Validate() []FieldError {
 	if r.Title == nil && r.Description == nil && r.Privacy == nil &&
 		r.Category == nil && r.Language == nil && r.License == nil && r.Tags == nil &&
-		r.PublishAt == nil && r.IsSensitive == nil && r.SensitiveReason == nil &&
+		r.PublishAt == nil && r.OriginallyPublishedAt == nil &&
+		r.IsSensitive == nil && r.SensitiveReason == nil &&
 		r.CommentsPolicy == nil && r.DownloadEnabled == nil && r.PublishAfterTranscode == nil {
 		return []FieldError{{Field: "title", Message: "at least one updatable field is required"}}
 	}
@@ -1015,6 +1030,7 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
 
+		OriginallyPublishedAt: in.OriginallyPublishedAt,
 		PublishAfterTranscode: in.PublishAfterTranscode,
 	}, canManage)
 	if err != nil {

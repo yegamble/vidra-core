@@ -8,10 +8,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 // ── source-authoritative resync ──
@@ -119,6 +121,18 @@ func (d *digest) flag(b bool) *digest { return d.text(strconv.FormatBool(b)) }
 
 func (d *digest) id(u uuid.UUID) *digest { return d.text(u.String()) }
 
+// nullTime folds an OPTIONAL timestamp. The empty string stands for NULL and
+// cannot collide with a formatted instant, so "never published elsewhere" and
+// any real date stay distinguishable. The value is normalised to UTC before it
+// is formatted: both sides come out of a timestamptz, and a difference in the
+// session time zone the two were read under is not a change.
+func (d *digest) nullTime(t *time.Time) *digest {
+	if t == nil {
+		return d.text("")
+	}
+	return d.text(t.UTC().Format(time.RFC3339Nano))
+}
+
 func (d *digest) sum() string { return fmt.Sprintf("%x", d.h.Sum(nil)) }
 
 // ── the per-family field lists ──
@@ -146,9 +160,10 @@ func channelDigest(owner uuid.UUID, displayName, description string) string {
 	return newDigest("channel").id(owner).text(displayName).text(description).sum()
 }
 
-func videoDigest(channel uuid.UUID, title, description, privacy, state, category, language, license string, duration int32) string {
+func videoDigest(channel uuid.UUID, title, description, privacy, state, category, language, license string, duration int32, originallyPublishedAt *time.Time) string {
 	return newDigest("video").id(channel).text(title).text(description).
-		text(privacy).text(state).text(category).text(language).text(license).num(int64(duration)).sum()
+		text(privacy).text(state).text(category).text(language).text(license).num(int64(duration)).
+		nullTime(originallyPublishedAt).sum()
 }
 
 // tagSetDigest folds a video's tags. The caller passes them normalised, sorted
@@ -213,12 +228,18 @@ type resyncChannel struct {
 
 type resyncVideo struct {
 	id uuid.UUID
-	// channel and duration are carried alongside the digest because they are the
-	// two fields the source may have NO OPINION about — a channel it never
-	// imported, a duration it does not record — and a comparison has to be made
-	// against the value already standing here or every run would rewrite it.
+	// channel, duration and origPub are carried alongside the digest because they
+	// are the fields the source may have NO OPINION about — a channel it never
+	// imported, a duration it does not record, an original-publication date it
+	// has no column for at all — and a comparison has to be made against the
+	// value already standing here or every run would rewrite it. For origPub the
+	// stake is higher than a rewrite: a source older than PeerTube's
+	// originallyPublishedAt reports nil for every video, and letting that win
+	// would erase the whole catalogue's dates on the first source-authoritative
+	// run.
 	channel  uuid.UUID
 	duration int32
+	origPub  *time.Time
 	dgst     string
 }
 
@@ -295,10 +316,11 @@ func (im *Importer) loadResyncState(ctx context.Context) (*resyncState, error) {
 		return nil, err
 	}
 	for _, v := range videos {
+		origPub := video.TimePtr(v.OriginallyPublishedAt)
 		st.videos[v.SourceID] = resyncVideo{
-			id: v.ID, channel: v.ChannelID, duration: v.DurationSeconds,
+			id: v.ID, channel: v.ChannelID, duration: v.DurationSeconds, origPub: origPub,
 			dgst: videoDigest(v.ChannelID, v.Title, v.Description, v.Privacy, v.State,
-				v.Category, v.Language, v.License, v.DurationSeconds),
+				v.Category, v.Language, v.License, v.DurationSeconds, origPub),
 		}
 	}
 
@@ -507,8 +529,15 @@ func (im *Importer) resyncOneVideo(ctx context.Context, v SourceVideo, r *Report
 	if !haveDuration {
 		duration = cur.duration
 	}
+	// Same rule for the original-publication date: a source that records none
+	// (or has no column for it at all) is not saying "clear it", so the value
+	// standing here is what the comparison and the write both use.
+	origPub := v.OriginallyPublishedAt
+	if origPub == nil {
+		origPub = cur.origPub
+	}
 	desired := videoDigest(channel, v.Title, v.Description, mapPrivacy(v.Privacy), mapVideoState(v.State),
-		derefText(intPtrToText(v.Category)), derefText(v.Language), derefText(intPtrToText(v.Licence)), duration)
+		derefText(intPtrToText(v.Category)), derefText(v.Language), derefText(intPtrToText(v.Licence)), duration, origPub)
 
 	tags, err := im.desiredTags(ctx, v.ID)
 	if err != nil {
@@ -532,6 +561,8 @@ func (im *Importer) resyncOneVideo(ctx context.Context, v SourceVideo, r *Report
 				Category:    intPtrToText(v.Category),
 				Language:    v.Language,
 				License:     intPtrToText(v.Licence),
+
+				OriginallyPublishedAt: optTimestamptz(origPub),
 			}); err != nil {
 				return err
 			}

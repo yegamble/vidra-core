@@ -503,6 +503,7 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 		// backfills it onto videos an earlier release already imported. See
 		// entities_pervideo.go.
 		{"view counts", im.importViewCounts},
+		{"original publication dates", im.importVideoOriginalDates},
 		{"chapters", im.importChapters},
 		{"ratings", im.importRatings},
 		{"renditions", im.importRenditions},

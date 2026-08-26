@@ -937,6 +937,7 @@ type Video struct {
 	PublishAfterTranscode bool               `json:"publish_after_transcode"`
 	PinnedCommentID       pgtype.UUID        `json:"pinned_comment_id"`
 	SensitiveReason       string             `json:"sensitive_reason"`
+	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
 }
 
 type VideoBlock struct {

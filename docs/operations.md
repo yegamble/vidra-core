@@ -1752,12 +1752,15 @@ written over. See `docs/peertube-migration.md` §1.3.
 
 Run `--dry-run` first: it reports the plan and the conflicts and writes nothing
 (and, for the image families, sends not one HTTP request to the source). Its
-`entities` map now carries `category_taxonomy`, `view_count`, `chapter`,
-`rating`, `rendition`, `actor_avatar`, `actor_banner`, `thumbnail` and
-`storyboard` alongside the older kinds. `view_count` counts **videos** whose
-total would be carried, never views; `category_taxonomy` is one setting, so it is
-0 or 1; and `storyboard` is legitimately lower than the video count, because
-PeerTube generates none for a video shorter than three seconds.
+`entities` map now carries `category_taxonomy`, `view_count`,
+`video_original_date`, `chapter`, `rating`, `rendition`, `actor_avatar`,
+`actor_banner`, `thumbnail` and `storyboard` alongside the older kinds.
+`view_count` counts **videos** whose total would be carried, never views;
+`video_original_date` likewise counts **videos** carrying an
+`originallyPublishedAt`, and is 0 for a source too old to have that column at
+all; `category_taxonomy` is one setting, so it is 0 or 1; and `storyboard` is
+legitimately lower than the video count, because PeerTube generates none for a
+video shorter than three seconds.
 
 ### The category taxonomy comes across with the categories
 

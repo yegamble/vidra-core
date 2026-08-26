@@ -1,0 +1,19 @@
+-- 0119: when a video was first published SOMEWHERE ELSE.
+--
+-- created_at answers "when did this row appear on this instance", and for an
+-- imported catalogue that is the day of the migration, not the day the video
+-- came out. PeerTube keeps the distinction in its own originallyPublishedAt,
+-- which its importers fill from the origin (a YouTube upload date, a prior
+-- instance) and which a creator can also set by hand — so a 2016 talk carried
+-- across in 2026 still reads as a 2016 talk. Vidra had nowhere to put that, so
+-- the date was being dropped on the floor at the import boundary.
+--
+-- Nullable with no default, because the absence IS the answer for every video
+-- that was first published here: a zero or a copy of created_at would claim an
+-- elsewhere that never existed, and nothing downstream could tell the two apart.
+--
+-- No index: nothing sorts or filters on it yet. Ordering feeds by it is a
+-- product decision that has not been made (it would reorder an entire migrated
+-- catalogue), and the column is currently read one video at a time on the detail
+-- endpoint.
+ALTER TABLE videos ADD COLUMN originally_published_at TIMESTAMPTZ;

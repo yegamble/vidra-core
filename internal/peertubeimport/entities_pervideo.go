@@ -133,6 +133,81 @@ func (im *Importer) ledgerCounter(ctx context.Context, kind, sourceID string) (i
 	return row.SourceValue, true, nil
 }
 
+// ── original publication dates ──
+
+// importVideoOriginalDates carries each source video's originallyPublishedAt —
+// the day the video was FIRST published, somewhere other than the source — onto
+// the imported video's originally_published_at (migration 0119).
+//
+// ImportInsertVideo writes the same value for every video THIS release imports,
+// so on a fresh migration this pass has nothing left to do. It exists for the
+// catalogue that is already here: importOneVideo never runs again for a video
+// with a terminal ledger row, so the 155k-entity instance migrated before the
+// column existed would keep its real dates on the source forever and read as if
+// every one of its videos came out on the day of the migration. A pass of its
+// own, with a ledger kind of its own, is what reaches them.
+func (im *Importer) importVideoOriginalDates(ctx context.Context, r *Report) error {
+	videos, err := im.src.Videos(ctx)
+	if err != nil {
+		return err
+	}
+	c := r.count(KindVideoOriginalDate)
+	for _, v := range videos {
+		if v.OriginallyPublishedAt == nil {
+			// Nothing to carry — either the video was first published on the source
+			// itself, or the source's schema predates the column entirely. Not a
+			// skip, there is no data here: the same call importViewCounts makes for
+			// a video with no views, and for the same reason. On a real catalogue
+			// most videos were first published on the source, so counting these
+			// would report ~13,4xx skipped against a handful imported and read as
+			// an alarm rather than as "this instance is mostly original work".
+			//
+			// No ledger row either, which is what lets a date filled in on the
+			// still-live source between two scheduled runs still arrive.
+			continue
+		}
+		if err := im.importOneVideoOriginalDate(ctx, v, c); err != nil {
+			im.markFailed(ctx, KindVideoOriginalDate, v.UUID, safeErr(err))
+			c.Failed++
+			im.logger.WarnContext(ctx, "peertube import: video original date failed", "source_uuid", v.UUID, "error", err)
+		}
+	}
+	return nil
+}
+
+func (im *Importer) importOneVideoOriginalDate(ctx context.Context, v SourceVideo, c *Counts) error {
+	if _, _, done, err := im.alreadyProcessed(ctx, KindVideoOriginalDate, v.UUID); err != nil {
+		return err
+	} else if done {
+		c.Skipped++
+		return nil
+	}
+	videoID, ok, err := im.resolveParent(ctx, KindVideo, v.UUID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// The video is not (or not yet) imported. No terminal row, for the reason
+		// stated at the top of this file: if the operator resolves what blocked it
+		// and re-runs, its date should follow it in.
+		c.Skipped++
+		return nil
+	}
+	if err := im.withTx(ctx, func(q *sqlcgen.Queries) error {
+		if err := q.ImportSetVideoOriginallyPublishedAt(ctx, sqlcgen.ImportSetVideoOriginallyPublishedAtParams{
+			ID:                    videoID,
+			OriginallyPublishedAt: optTimestamptz(v.OriginallyPublishedAt),
+		}); err != nil {
+			return err
+		}
+		return recordLedger(ctx, q, KindVideoOriginalDate, v.UUID, videoID, "done", "")
+	}); err != nil {
+		return err
+	}
+	c.Imported++
+	return nil
+}
+
 // ── chapters ──
 
 // importChapters carries the seek-bar chapter marks. videos.has_chapters needs
@@ -449,13 +524,16 @@ func (im *Importer) importOneRendition(
 	return nil
 }
 
-// planPerVideo adds the four per-video families to a dry-run plan. The counts are
+// planPerVideo adds the five per-video families to a dry-run plan. The counts are
 // ROWS THE IMPORT WOULD TOUCH, and for view counts that means videos carrying a
 // total — one per video, never a number of views.
 func (im *Importer) planPerVideo(ctx context.Context, r *Report, videos []SourceVideo) error {
 	for _, v := range videos {
 		if v.Views > 0 {
 			r.count(KindViewCount).Planned++
+		}
+		if v.OriginallyPublishedAt != nil {
+			r.count(KindVideoOriginalDate).Planned++
 		}
 	}
 	chapters, present, err := im.src.Chapters(ctx)

@@ -32,9 +32,17 @@ const (
 	// source video contributes at most one to it per run, and contributes nothing
 	// on a run where its total has not moved.
 	KindViewCount = "view_count"
-	KindChapter   = "chapter"
-	KindRating    = "rating"
-	KindRendition = "rendition"
+	// KindVideoOriginalDate counts VIDEOS whose originally_published_at was
+	// carried. It is a kind of its own rather than part of KindVideo because it
+	// is a BACKFILL: the videos it exists for are the ones an earlier release
+	// already imported, which are 'done' under KindVideo and will never be
+	// visited by the video pass again. Like KindViewCount it counts only the
+	// videos that HAD something to carry — a source video with no original date
+	// contributes nothing to any column, because there is no data there.
+	KindVideoOriginalDate = "video_original_date"
+	KindChapter           = "chapter"
+	KindRating            = "rating"
+	KindRendition         = "rendition"
 	// KindActorAvatar / KindActorBanner count the source's actorImage rows,
 	// split by which slot they fill. They are two kinds rather than one so the
 	// report answers the question an operator actually asks after a migration —
@@ -49,8 +57,8 @@ var orderedKinds = []string{
 	KindCategoryTaxonomy,
 	KindUser, KindChannel, KindActorAvatar, KindActorBanner, KindVideo, KindVideoFile,
 	KindHLSPlaylist, KindThumbnail, KindStoryboard, KindCaption, KindTag, KindViewCount,
-	KindChapter, KindRating, KindRendition, KindComment, KindPlaylist, KindPlaylistItem,
-	KindFollow,
+	KindVideoOriginalDate, KindChapter, KindRating, KindRendition, KindComment,
+	KindPlaylist, KindPlaylistItem, KindFollow,
 }
 
 // Counts tallies one entity kind's outcome. Planned is what a dry-run found;

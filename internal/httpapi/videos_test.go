@@ -482,7 +482,8 @@ func vidRowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		Category: r.Category, Language: r.Language, License: r.License, PublishAt: r.PublishAt,
-		IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
+		OriginallyPublishedAt: r.OriginallyPublishedAt,
+		IsSensitive:           r.IsSensitive, SensitiveReason: r.SensitiveReason,
 		CommentsPolicy: r.CommentsPolicy, DownloadEnabled: r.DownloadEnabled,
 		PublishAfterTranscode: r.PublishAfterTranscode,
 	}
@@ -618,6 +619,11 @@ func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoPara
 	}
 	if a.PublishAt.Valid {
 		r.PublishAt = a.PublishAt
+	}
+	// COALESCE(narg, column): an absent value keeps what is there. Clearing back
+	// to NULL is not expressible, exactly as in the real query.
+	if a.OriginallyPublishedAt.Valid {
+		r.OriginallyPublishedAt = a.OriginallyPublishedAt
 	}
 	if a.IsSensitive != nil {
 		r.IsSensitive = *a.IsSensitive
