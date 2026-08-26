@@ -82,6 +82,30 @@ func TestSearchReturnsIDs(t *testing.T) {
 	}
 }
 
+// TestSearchForwardsTaxonomyFilters proves the facet filters core validated are
+// the ones vidra-search is asked to apply — license included, since core routes
+// a license-filtered search to the service rather than to local SQL.
+func TestSearchForwardsTaxonomyFilters(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Encode()
+		_ = json.NewEncoder(w).Encode(SearchResponse{Query: "q"})
+	}))
+	defer srv.Close()
+	c := New(srv.URL, testSecret)
+	if _, err := c.Search(context.Background(), SearchParams{
+		Query: "q", Limit: 20, Mode: "simple",
+		Category: "15", Language: "en", License: "7",
+	}); err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	for _, want := range []string{"category=15", "language=en", "license=7"} {
+		if !strings.Contains(gotQuery, want) {
+			t.Errorf("query %q missing %q", gotQuery, want)
+		}
+	}
+}
+
 // TestSearchDecodesPagingFields proves the three paging facts survive the hop
 // with their values intact. The JSON is written by hand, not re-encoded from
 // SearchResponse, so the test pins the wire NAMES vidra-search actually emits

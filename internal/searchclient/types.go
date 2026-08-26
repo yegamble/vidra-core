@@ -46,6 +46,7 @@ type SearchParams struct {
 	Tag           string
 	Category      string
 	Language      string
+	License       string
 	UserID        *uuid.UUID
 	SessionID     string
 	Personalized  bool

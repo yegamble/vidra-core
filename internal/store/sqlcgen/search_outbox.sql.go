@@ -130,7 +130,7 @@ func (q *Queries) EnqueueSearchEvent(ctx context.Context, arg EnqueueSearchEvent
 
 const getVideoSearchDoc = `-- name: GetVideoSearchDoc :one
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
-       v.category, v.language, v.is_sensitive,
+       v.category, v.language, v.license, v.is_sensitive,
        v.created_at, v.updated_at, v.publish_at,
        c.handle AS channel_handle, c.display_name AS channel_name,
        c.owner_id,
@@ -160,6 +160,7 @@ type GetVideoSearchDocRow struct {
 	State            string             `json:"state"`
 	Category         *string            `json:"category"`
 	Language         *string            `json:"language"`
+	License          *string            `json:"license"`
 	IsSensitive      bool               `json:"is_sensitive"`
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
@@ -191,6 +192,7 @@ func (q *Queries) GetVideoSearchDoc(ctx context.Context, id uuid.UUID) (GetVideo
 		&i.State,
 		&i.Category,
 		&i.Language,
+		&i.License,
 		&i.IsSensitive,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -210,7 +212,7 @@ func (q *Queries) GetVideoSearchDoc(ctx context.Context, id uuid.UUID) (GetVideo
 
 const listVideoSearchDocsPage = `-- name: ListVideoSearchDocsPage :many
 SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
-       v.category, v.language, v.is_sensitive,
+       v.category, v.language, v.license, v.is_sensitive,
        v.created_at, v.updated_at, v.publish_at,
        c.handle AS channel_handle, c.display_name AS channel_name,
        c.owner_id,
@@ -250,6 +252,7 @@ type ListVideoSearchDocsPageRow struct {
 	State            string             `json:"state"`
 	Category         *string            `json:"category"`
 	Language         *string            `json:"language"`
+	License          *string            `json:"license"`
 	IsSensitive      bool               `json:"is_sensitive"`
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
@@ -287,6 +290,7 @@ func (q *Queries) ListVideoSearchDocsPage(ctx context.Context, arg ListVideoSear
 			&i.State,
 			&i.Category,
 			&i.Language,
+			&i.License,
 			&i.IsSensitive,
 			&i.CreatedAt,
 			&i.UpdatedAt,

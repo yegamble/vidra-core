@@ -27,6 +27,7 @@ type videoDocFields struct {
 	Tags            []string
 	Category        *string
 	Language        *string
+	License         *string
 	DurationSeconds *int32
 	IsSensitive     bool
 	Privacy         string
@@ -60,6 +61,7 @@ func buildVideoDoc(f videoDocFields) VideoDoc {
 		Tags:            tags,
 		Category:        f.Category,
 		Language:        f.Language,
+		License:         f.License,
 		DurationSeconds: f.DurationSeconds,
 		IsSensitive:     f.IsSensitive,
 		Privacy:         f.Privacy,
@@ -85,7 +87,7 @@ func videoDocFromRow(r sqlcgen.GetVideoSearchDocRow) VideoDoc {
 	return buildVideoDoc(videoDocFields{
 		ID: r.ID, ChannelID: r.ChannelID, ChannelHandle: r.ChannelHandle, ChannelName: r.ChannelName,
 		OwnerID: r.OwnerID, Title: r.Title, Description: r.Description, Tags: r.Tags,
-		Category: r.Category, Language: r.Language, DurationSeconds: r.DurationSeconds,
+		Category: r.Category, Language: r.Language, License: r.License, DurationSeconds: r.DurationSeconds,
 		IsSensitive: r.IsSensitive, Privacy: r.Privacy, State: r.State, PublishAt: r.PublishAt,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Views: r.Views, Likes: r.Likes,
 	})
@@ -96,7 +98,7 @@ func videoDocFromPageRow(r sqlcgen.ListVideoSearchDocsPageRow) VideoDoc {
 	return buildVideoDoc(videoDocFields{
 		ID: r.ID, ChannelID: r.ChannelID, ChannelHandle: r.ChannelHandle, ChannelName: r.ChannelName,
 		OwnerID: r.OwnerID, Title: r.Title, Description: r.Description, Tags: r.Tags,
-		Category: r.Category, Language: r.Language, DurationSeconds: r.DurationSeconds,
+		Category: r.Category, Language: r.Language, License: r.License, DurationSeconds: r.DurationSeconds,
 		IsSensitive: r.IsSensitive, Privacy: r.Privacy, State: r.State, PublishAt: r.PublishAt,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Views: r.Views, Likes: r.Likes,
 	})

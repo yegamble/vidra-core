@@ -138,10 +138,11 @@ func TestEnqueueVideoUpsertBuildsFullDoc(t *testing.T) {
 	repo := newFakeOutbox()
 	id := uuid.New()
 	cat := "15"
+	lic := "7"
 	dur := int32(120)
 	repo.docs[id] = sqlcgen.GetVideoSearchDocRow{
 		ID: id, ChannelID: uuid.New(), Title: "Hello", Description: "desc",
-		Privacy: "public", State: "published", Category: &cat, DurationSeconds: &dur,
+		Privacy: "public", State: "published", Category: &cat, License: &lic, DurationSeconds: &dur,
 		ChannelHandle: "ada", ChannelName: "Ada", OwnerID: uuid.New(),
 		Views: 42, Likes: 7, Tags: []string{"go", "concurrency"},
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -168,6 +169,11 @@ func TestEnqueueVideoUpsertBuildsFullDoc(t *testing.T) {
 	}
 	if p.Video.PublishedAt == nil {
 		t.Errorf("published_at should be set for a published video")
+	}
+	// license rides the doc: the search service filters on it, and it is only
+	// ever populated from this projection.
+	if p.Video.License == nil || *p.Video.License != "7" {
+		t.Errorf("license = %v, want 7", p.Video.License)
 	}
 }
 

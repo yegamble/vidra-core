@@ -116,6 +116,7 @@ type VideoDoc struct {
 	Tags            []string   `json:"tags"`
 	Category        *string    `json:"category,omitempty"`
 	Language        *string    `json:"language,omitempty"`
+	License         *string    `json:"license,omitempty"`
 	DurationSeconds *int32     `json:"duration_seconds,omitempty"`
 	IsSensitive     bool       `json:"is_sensitive"`
 	Privacy         string     `json:"privacy"`

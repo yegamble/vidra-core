@@ -2067,6 +2067,9 @@ type FeedFilter struct {
 	Tag      string
 	Category string
 	Language string
+	// License is a taxonomy id honoured by the SEARCH path only — the feed
+	// queries have no predicate for it, so it is ignored by ListPublic.
+	License string
 	// HideSensitive excludes is_sensitive videos (the server-side enforcement of
 	// the "hide" sensitive-content policy on the public browse/search surfaces).
 	HideSensitive bool
@@ -2361,6 +2364,7 @@ func (f SearchFilter) searchParams(query string, viewer pgtype.UUID) sqlcgen.Cou
 		Tag:             nilIfEmpty(strings.ToLower(f.Tag)),
 		Category:        nilIfEmpty(f.Category),
 		Language:        nilIfEmpty(f.Language),
+		License:         nilIfEmpty(f.License),
 		TagsAllOf:       lowerTags(f.TagsAllOf),
 		TagsOneOf:       lowerTags(f.TagsOneOf),
 		HideSensitive:   f.HideSensitive,

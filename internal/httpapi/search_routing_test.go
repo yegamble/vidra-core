@@ -39,6 +39,11 @@ type fakeSearchGateway struct {
 	delQueryCalls   int
 	delUserCalls    int
 
+	// searchParams records what each Search call was ASKED for, not just that it
+	// happened: a filter core forgot to forward would otherwise be invisible
+	// here, since the fake's canned response does not depend on its input.
+	searchParams []searchclient.SearchParams
+
 	searchResp  searchclient.SearchResponse
 	suggestResp searchclient.SuggestionsResponse
 	homeResp    searchclient.RecommendationsResponse
@@ -70,8 +75,9 @@ func (f *fakeSearchGateway) Suggestions(_ context.Context, _ searchclient.Sugges
 	return f.suggestResp, f.suggestErr
 }
 
-func (f *fakeSearchGateway) Search(_ context.Context, _ searchclient.SearchParams) (searchclient.SearchResponse, error) {
+func (f *fakeSearchGateway) Search(_ context.Context, p searchclient.SearchParams) (searchclient.SearchResponse, error) {
 	f.searchCalls++
+	f.searchParams = append(f.searchParams, p)
 	return f.searchResp, f.searchErr
 }
 
