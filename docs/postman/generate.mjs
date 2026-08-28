@@ -141,6 +141,20 @@ const requests = [
   },
   {
     folder: "Auth",
+    name: "Login (username)",
+    method: "POST",
+    path: "/api/v1/auth/login",
+    // `identifier` accepts an email OR a username. Email always wins the
+    // ambiguity, so this exercises the username branch specifically.
+    body: { identifier: "{{authUsername}}", password: "{{authPassword}}" },
+    tests: [
+      `pm.test("200 OK", () => pm.response.to.have.status(200));`,
+      `const j = pm.response.json();`,
+      `pm.test("issued a session (token or mfa challenge)", () => pm.expect(j.token || j.mfa_required).to.be.ok);`,
+    ],
+  },
+  {
+    folder: "Auth",
     name: "Login (wrong password)",
     method: "POST",
     path: "/api/v1/auth/login",
