@@ -1,6 +1,7 @@
 package media
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -54,8 +55,10 @@ func (t *Thumbnailer) Thumbnail(ctx context.Context, key string, durationSeconds
 	defer func() { _ = os.Remove(outPath) }()
 
 	cmd := exec.CommandContext(ctx, t.bin, thumbnailArgs(src, outPath, thumbnailSeekSeconds(durationSeconds))...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("media: ffmpeg thumbnail %q: %w", key, err)
+		return nil, fmt.Errorf("media: ffmpeg thumbnail %q: %w: %s", key, err, tailOf(stderr.String()))
 	}
 	b, err := os.ReadFile(outPath)
 	if err != nil {
@@ -89,8 +92,10 @@ func (t *Thumbnailer) ThumbnailAt(ctx context.Context, key string, atSeconds flo
 	defer func() { _ = os.Remove(outPath) }()
 
 	cmd := exec.CommandContext(ctx, t.bin, thumbnailAtArgs(src, outPath, atSeconds)...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("media: ffmpeg frame %q: %w", key, err)
+		return nil, fmt.Errorf("media: ffmpeg frame %q: %w: %s", key, err, tailOf(stderr.String()))
 	}
 	b, err := os.ReadFile(outPath)
 	if err != nil {
