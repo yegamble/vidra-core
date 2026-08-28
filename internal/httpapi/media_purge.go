@@ -248,6 +248,23 @@ func (s *Server) channelImageEdgeKey(ctx context.Context, channelID uuid.UUID, k
 	return img.StorageKey
 }
 
+// playlistCoverEdgeKey records the one key a CDN edge could be holding for a
+// playlist's cover, BEFORE a mutation replaces, removes or de-lists it. Unlike
+// the identity images this one HAS an eligibility fence to re-derive: a cover
+// may only leave the origin for a PUBLIC playlist (playlists.go), so a private
+// or unlisted playlist's cover was structurally never handed to the CDN and
+// returns empty here — the same self-fencing discipline as the video snapshot.
+func (s *Server) playlistCoverEdgeKey(ctx context.Context, playlistID uuid.UUID) string {
+	if !s.cdnConfigured() || s.playlistsvc == nil {
+		return ""
+	}
+	p, err := s.playlistsvc.GetByID(ctx, playlistID)
+	if err != nil || p.Visibility != "public" || p.ThumbnailExt == nil || *p.ThumbnailExt == "" {
+		return ""
+	}
+	return media.PlaylistThumbnailKey(playlistID, *p.ThumbnailExt)
+}
+
 // expandEdgePurgeKeys turns a snapshot into the deduplicated key list to purge,
 // enumerating each prefix through the storage backend.
 //

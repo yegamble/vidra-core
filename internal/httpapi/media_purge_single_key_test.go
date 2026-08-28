@@ -113,6 +113,109 @@ func TestChannelBannerReplaceAndDeletePurge(t *testing.T) {
 	})
 }
 
+// playlistPurgeServer is the full video harness (it wires the playlist
+// service with storage) with the CDN purge recorder mounted.
+func playlistPurgeServer(t *testing.T) (*Server, *purgeRecorder) {
+	t.Helper()
+	opt, rec := testCDNPurge(t)
+	srv, _, _, _, _ := videoServerFullWith(t, testConfig(), []Option{opt})
+	return srv, rec
+}
+
+// TestReplacePublicPlaylistCoverPurgesTheKeyTheEdgeCached. A public playlist's
+// cover is Eligible and Redirectable at the stable key playlist-thumbnails/
+// <id>.<ext>; SetThumbnail replaces it in place. Like the avatar tests, the
+// PRE-mutation key is the one that must go — on an extension change it is the
+// superseded key the edge cached.
+func TestReplacePublicPlaylistCoverPurgesTheKeyTheEdgeCached(t *testing.T) {
+	srv, rec := playlistPurgeServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	pl := createPlaylist(t, srv, tok, `{"title":"Faves","visibility":"public"}`)
+	// First cover: never cached, nothing to invalidate.
+	if r := uploadPlaylistThumbnail(srv, pl.ID, "cover.jpg", "\xff\xd8\xff\xe0jpegbytes", tok); r.Code != http.StatusCreated {
+		t.Fatalf("set cover = %d; body=%s", r.Code, r.Body.String())
+	}
+	assertNoPurge(t, rec)
+	if r := uploadPlaylistThumbnail(srv, pl.ID, "cover2.png", "\x89PNG-fake", tok); r.Code != http.StatusCreated {
+		t.Fatalf("replace cover = %d; body=%s", r.Code, r.Body.String())
+	}
+	waitForPurge(t, rec, []string{"playlist-thumbnails/" + pl.ID + ".jpg"})
+}
+
+// TestDeletePublicPlaylistCoverPurgesItsEdgeKey. ClearThumbnail removes blob
+// and column; the edge copy must go with them.
+func TestDeletePublicPlaylistCoverPurgesItsEdgeKey(t *testing.T) {
+	srv, rec := playlistPurgeServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	pl := createPlaylist(t, srv, tok, `{"title":"Faves","visibility":"public"}`)
+	if r := uploadPlaylistThumbnail(srv, pl.ID, "cover.jpg", "\xff\xd8\xff\xe0jpegbytes", tok); r.Code != http.StatusCreated {
+		t.Fatalf("set cover = %d; body=%s", r.Code, r.Body.String())
+	}
+	if r := sendJSONAuth(srv, http.MethodDelete, "/api/v1/playlists/"+pl.ID+"/thumbnail", "", tok); r.Code != http.StatusNoContent {
+		t.Fatalf("delete cover = %d; body=%s", r.Code, r.Body.String())
+	}
+	waitForPurge(t, rec, []string{"playlist-thumbnails/" + pl.ID + ".jpg"})
+}
+
+// TestDeletePublicPlaylistPurgesItsCover. Deleting the playlist deletes the
+// row that names the cover without visiting the cover handler — the same
+// cascade trap as channels, at single-key scale.
+func TestDeletePublicPlaylistPurgesItsCover(t *testing.T) {
+	srv, rec := playlistPurgeServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	pl := createPlaylist(t, srv, tok, `{"title":"Faves","visibility":"public"}`)
+	if r := uploadPlaylistThumbnail(srv, pl.ID, "cover.jpg", "\xff\xd8\xff\xe0jpegbytes", tok); r.Code != http.StatusCreated {
+		t.Fatalf("set cover = %d; body=%s", r.Code, r.Body.String())
+	}
+	if r := sendJSONAuth(srv, http.MethodDelete, "/api/v1/playlists/"+pl.ID, "", tok); r.Code != http.StatusNoContent {
+		t.Fatalf("delete playlist = %d; body=%s", r.Code, r.Body.String())
+	}
+	waitForPurge(t, rec, []string{"playlist-thumbnails/" + pl.ID + ".jpg"})
+}
+
+// TestPlaylistVisibilityFlipAwayFromPublicPurgesCover. The same privacy-leak
+// class the video privacy-flip purge closed: cover eligibility is
+// `visibility == "public"`, so leaving public is the moment the edge copy
+// becomes unauthorized — while an ordinary title edit purges nothing.
+func TestPlaylistVisibilityFlipAwayFromPublicPurgesCover(t *testing.T) {
+	srv, rec := playlistPurgeServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	pl := createPlaylist(t, srv, tok, `{"title":"Faves","visibility":"public"}`)
+	if r := uploadPlaylistThumbnail(srv, pl.ID, "cover.jpg", "\xff\xd8\xff\xe0jpegbytes", tok); r.Code != http.StatusCreated {
+		t.Fatalf("set cover = %d; body=%s", r.Code, r.Body.String())
+	}
+	if r := sendJSONAuth(srv, http.MethodPatch, "/api/v1/playlists/"+pl.ID, `{"title":"Renamed"}`, tok); r.Code != http.StatusOK {
+		t.Fatalf("title edit = %d; body=%s", r.Code, r.Body.String())
+	}
+	assertNoPurge(t, rec)
+	if r := sendJSONAuth(srv, http.MethodPatch, "/api/v1/playlists/"+pl.ID, `{"visibility":"private"}`, tok); r.Code != http.StatusOK {
+		t.Fatalf("visibility flip = %d; body=%s", r.Code, r.Body.String())
+	}
+	waitForPurge(t, rec, []string{"playlist-thumbnails/" + pl.ID + ".jpg"})
+}
+
+// TestPrivatePlaylistCoverNeverPurged. A non-public cover fails the resolver's
+// eligibility fence, so it structurally never reached the edge — replacing or
+// deleting it must not spend purge-API calls.
+func TestPrivatePlaylistCoverNeverPurged(t *testing.T) {
+	srv, rec := playlistPurgeServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	pl := createPlaylist(t, srv, tok, `{"title":"Secret","visibility":"private"}`)
+	if r := uploadPlaylistThumbnail(srv, pl.ID, "cover.jpg", "\xff\xd8\xff\xe0jpegbytes", tok); r.Code != http.StatusCreated {
+		t.Fatalf("set cover = %d; body=%s", r.Code, r.Body.String())
+	}
+	if r := uploadPlaylistThumbnail(srv, pl.ID, "cover2.png", "\x89PNG-fake", tok); r.Code != http.StatusCreated {
+		t.Fatalf("replace cover = %d; body=%s", r.Code, r.Body.String())
+	}
+	if r := sendJSONAuth(srv, http.MethodDelete, "/api/v1/playlists/"+pl.ID+"/thumbnail", "", tok); r.Code != http.StatusNoContent {
+		t.Fatalf("delete cover = %d; body=%s", r.Code, r.Body.String())
+	}
+	if r := sendJSONAuth(srv, http.MethodDelete, "/api/v1/playlists/"+pl.ID, "", tok); r.Code != http.StatusNoContent {
+		t.Fatalf("delete playlist = %d; body=%s", r.Code, r.Body.String())
+	}
+	assertNoPurge(t, rec)
+}
+
 // TestDeleteChannelPurgesItsImages. Deleting a channel cascades its
 // avatar/banner rows away at the database (0040 ON DELETE CASCADE) without
 // visiting the image delete handlers — the same trap as the video cascade, at
