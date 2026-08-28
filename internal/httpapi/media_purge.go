@@ -11,11 +11,37 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 )
 
-// This file wires the delivery resolver's Purge hook to the moments a video's
-// edge-cached bytes become wrong: deletion — direct (handleDeleteVideo) or via
-// the channel cascade (handleDeleteChannel: the DATABASE deletes the videos,
-// 0006 ON DELETE CASCADE, so the channel handler snapshots them first) — a
-// privacy flip away from public, and an admin block.
+// This file wires the delivery resolver's Purge hook to the moments an
+// edge-cached object becomes wrong.
+//
+// Fan-out purges — a video's whole key set (purgeVideoEdgeCopies):
+//   - deletion, direct (handleDeleteVideo) or via the channel cascade
+//     (handleDeleteChannel: the DATABASE deletes the videos, 0006 ON DELETE
+//     CASCADE, so the channel handler snapshots them first);
+//   - a privacy flip away from public (handleUpdateVideo);
+//   - an admin block (handleBlockVideo).
+//
+// Single-key purges — assets at ONE stable identity key (purgeEdgeKey):
+//   - user/channel avatar and banner replacement and deletion
+//     (profile_images.go), including the channel-delete cascade;
+//   - public playlist cover replacement/deletion, playlist deletion, and a
+//     visibility flip away from public (playlists.go).
+//
+// STILL UNPURGED — the ledger that gates header promotion; nothing may become
+// shared-cacheable while any of these can leave wrong bytes at the edge:
+//   - video thumbnail and storyboard replacement: both overwrite their stable
+//     key in place with no invalidation;
+//   - the same-generation admin re-transcode (admin_videos.go): a rerun from
+//     an unchanged source overwrites the same output prefix; purging at
+//     enqueue would be wrong (the edge would re-cache the old bytes from
+//     origin until the job completes), so it only warns — the fix is
+//     generation-addressed keys (phase-5 item 1a) or a purge at the worker's
+//     promote step;
+//   - account deletion (internal/account): cascades channels, videos and
+//     images away without visiting any of the handlers above.
+// (Instance branding images need no entry: they are served through
+// serveStoredObjectNamed, never through the resolver, so they cannot be at
+// the edge at all.)
 //
 // WHY IT EXISTS. The purge seam shipped in phase 4 with ZERO call sites, and
 // docs/productionization/phase-5-enterprise.md carries that forward as work
