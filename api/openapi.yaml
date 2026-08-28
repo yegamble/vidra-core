@@ -11402,11 +11402,15 @@ paths:
       summary: Operational system status (admin)
       description: >-
         Returns an operational snapshot for the admin dashboard: build info, the
-        runtime environment, process uptime, an overall health flag, and
+        runtime environment, process uptime, an overall health flag,
         per-dependency component status (postgres, redis, s3, smtp, search,
-        ffmpeg). Restricted to admins.
+        ffmpeg), and live PostgreSQL connection-pool counts. Restricted to
+        admins.
         Always 200 (even when degraded) so the admin can see the degraded state,
         unlike /readyz which 503s. Reports only operational metadata.
+        The `database` block is sampled at request time and is ABSENT — not
+        zeroed — on a process with no pool wired: a pool reported as 0 of 0 is
+        indistinguishable from one that is fully checked out.
       tags: [admin]
       security:
         - bearerAuth: []
@@ -11510,10 +11514,11 @@ paths:
       description: >-
         Returns what this instance IS, as opposed to whether it is up (that is
         GET /api/v1/admin/system): the server's environment, request deadlines
-        and size caps, the media storage backend and its bucket coordinates, the
-        public origin and proxy/CORS trust, the backup contract, and a discovery
-        list of every optional subsystem with whether it is enabled and whether
-        the deployment supplies what it needs. Read-only, always 200, no probes.
+        and size caps, its connection-pool sizing and shutdown drain delay, the
+        media storage backend and its bucket coordinates, the public origin and
+        proxy/CORS trust, the backup contract, and a discovery list of every
+        optional subsystem with whether it is enabled and whether the deployment
+        supplies what it needs. Read-only, always 200, no probes.
         Every field is hand-picked and NO secret is included: no database or
         Redis DSN, no S3 access/secret key, no SMTP username or password, no JWT
         secret, no key-encryption key, no live ingest or search internal secret,
@@ -18686,6 +18691,45 @@ components:
               type: integer
               format: int64
               description: The shared fixed-window length in seconds.
+        database:
+          type: object
+          description: >-
+            This process's PostgreSQL connection pool, sampled when the page was
+            read. Four counts and nothing else, because the invariant between
+            them is what makes them readable: acquired + idle + constructing ==
+            total, and total can never exceed max — so "acquired pinned at max"
+            is the whole diagnosis of a pool that has become the bottleneck.
+            ABSENT when no pool is wired, rather than zeroed: 0 of 0 connections
+            is indistinguishable from a pool with nothing left. Connection
+            COUNTS only — never a DSN, a credential or a server address.
+            The Prometheus gauges (vidra_db_pool_*) are the instrument for trend
+            and for the acquire-wait counters; this block exists because
+            METRICS_ENABLED is off by default and an admin looking at a slow
+            instance should not have to stand up a metrics stack to find out
+            whether its pool is full.
+          required: [pool_total_conns, pool_idle_conns, pool_acquired_conns,
+                     pool_max_conns]
+          properties:
+            pool_total_conns:
+              type: integer
+              format: int32
+              description: Connections held right now (idle + acquired + constructing).
+            pool_idle_conns:
+              type: integer
+              format: int32
+            pool_acquired_conns:
+              type: integer
+              format: int32
+              description: >-
+                Checked out right now. Includes the one connection the
+                singleton-cron leader elector pins for as long as this instance
+                is the leader.
+            pool_max_conns:
+              type: integer
+              format: int32
+              description: >-
+                DB_MAX_CONNS — this PROCESS's ceiling. Server-wide demand is
+                this times the number of api and worker processes.
     MailTestResult:
       type: object
       description: >-
@@ -18710,10 +18754,27 @@ components:
         and absent when the feature is on and complete.
         The key vocabulary is fixed and the list is returned in a stable order:
         object_storage, mail, search, federation, atproto, atproto_login,
-        malware_scan, captions, live, ipfs, tracing, metrics, vp9_alternates.
-        DASH and CDN are deliberately absent — neither exists in vidra (playback
-        is HLS plus the progressive original, and there is no CDN integration),
-        so listing them would invent switches an operator cannot find.
+        malware_scan, captions, live, ipfs, cdn, drm, tracing, metrics,
+        vp9_alternates. A client that does not recognise a key must render it
+        rather than drop it — this list is how an operator discovers a feature
+        the server shipped before the client learned its name.
+        Every row is computed from boot config with ONE exception: cdn's enabled
+        half is the runtime delivery_cdn_enabled setting, because a CDN has no
+        env spelling of "on" (DELIVERY_CDN_BASE_URL is the wiring, the setting
+        is the posture) and a boot-only reading could report nothing but "off"
+        on an instance actively serving through an edge. Its configured half is
+        still boot config, which is what lets the row contradict a switch turned
+        on with nothing behind it.
+        DRM reports the provider's state and the PRESENCE of DRM_KEY_KEK, never
+        the key. The only provider this build ships is clearkey-test, which
+        protects nothing (it hands the content key to any authorised viewer over
+        TLS) and encrypts nothing yet — the note says so, because a green pill
+        next to the word DRM is a sentence an operator repeats to somebody else.
+        DASH is deliberately absent even though vidra produces it (the default
+        cmaf packager writes an MPEG-DASH manifest beside the HLS playlists):
+        packaging format is a per-VIDEO property recorded when that video's tree
+        was written, with no switch and nothing to half-configure, so no
+        (enabled, configured) pair could describe an instance serving both.
       required: [key, enabled, configured]
       properties:
         key:
@@ -18741,7 +18802,9 @@ components:
           type: object
           required: [environment, request_timeout_seconds, stream_request_timeout_seconds,
                      body_limit, upload_max_bytes, metrics_enabled, tracing_enabled,
-                     tracing_protocol]
+                     tracing_protocol, db_max_conns, db_min_conns,
+                     db_conn_max_lifetime_seconds, db_conn_max_idle_time_seconds,
+                     drain_delay_seconds]
           properties:
             environment:
               type: string
@@ -18776,6 +18839,40 @@ components:
               description: >-
                 grpc | http/protobuf. The exporter ENDPOINT is deliberately not
                 reported — it is an internal address.
+            db_max_conns:
+              type: integer
+              description: >-
+                DB_MAX_CONNS — this PROCESS's slice of PostgreSQL's server-wide
+                max_connections budget. Read-only (pool sizing is a deploy-time
+                capacity decision, like the rate limits on /admin/system), and
+                reported here because the arithmetic that decides whether
+                another replica fits is invisible from either end otherwise: the
+                database sees connections but not which process owns them, and a
+                replica sees its own pool but not how many replicas exist.
+            db_min_conns:
+              type: integer
+              description: DB_MIN_CONNS — the warm floor this process keeps open.
+            db_conn_max_lifetime_seconds:
+              type: integer
+              format: int64
+              description: >-
+                DB_CONN_MAX_LIFETIME in seconds. A pool that retires connections
+                faster than the workload reuses them pays a fresh handshake per
+                burst.
+            db_conn_max_idle_time_seconds:
+              type: integer
+              format: int64
+              description: DB_CONN_MAX_IDLE_TIME in seconds.
+            drain_delay_seconds:
+              type: integer
+              format: int64
+              description: >-
+                HTTP_DRAIN_DELAY — how long this process keeps serving after
+                SIGTERM, once /readyz has started answering 503, before the
+                listener closes. 0 (the default) is correct on a single node and
+                is a source of user-visible connection resets on every deploy
+                behind a load balancer, which is why zero is reported rather
+                than omitted.
         storage:
           type: object
           description: >-

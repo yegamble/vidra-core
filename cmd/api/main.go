@@ -239,6 +239,30 @@ func run() error {
 	// probe costs a pooled query rather than a connection.
 	opts = append(opts, httpapi.WithSchemaLedger(db.Pool))
 
+	// The pool sampler (phase-5 multi-node floor). THE ONLY place pgx's Stat
+	// type is translated, so neither internal/observability nor internal/httpapi
+	// grows a driver import — and both read the same numbers, so the admin page
+	// and the Prometheus gauges cannot drift into disagreeing about saturation.
+	dbPoolStats := func() observability.DBPoolStats {
+		st := db.Pool.Stat()
+		return observability.DBPoolStats{
+			TotalConns:              st.TotalConns(),
+			IdleConns:               st.IdleConns(),
+			AcquiredConns:           st.AcquiredConns(),
+			MaxConns:                st.MaxConns(),
+			AcquireCount:            st.AcquireCount(),
+			EmptyAcquireCount:       st.EmptyAcquireCount(),
+			CanceledAcquireCount:    st.CanceledAcquireCount(),
+			AcquireDuration:         st.AcquireDuration(),
+			NewConnsCount:           st.NewConnsCount(),
+			MaxLifetimeDestroyCount: st.MaxLifetimeDestroyCount(),
+		}
+	}
+	// Wired unconditionally, unlike the gauges below: METRICS_ENABLED is off by
+	// default, and the operator who most needs to see a saturated pool is the
+	// one with no metrics stack to see it in.
+	opts = append(opts, httpapi.WithDBPoolStats(dbPoolStats))
+
 	rdb, err := cache.New(startCtx, cfg.RedisURL, cacheOpts...)
 	if err != nil {
 		return err
@@ -2144,23 +2168,8 @@ func run() error {
 			return out, nil
 		})
 		// The pool gauges (phase-5 multi-node floor). Sampled at scrape time from
-		// the live pool; this is the only place the driver's Stat type is
-		// translated, so internal/observability stays free of a pgx dependency.
-		metrics.RegisterDBPoolSource(func() observability.DBPoolStats {
-			st := db.Pool.Stat()
-			return observability.DBPoolStats{
-				TotalConns:              st.TotalConns(),
-				IdleConns:               st.IdleConns(),
-				AcquiredConns:           st.AcquiredConns(),
-				MaxConns:                st.MaxConns(),
-				AcquireCount:            st.AcquireCount(),
-				EmptyAcquireCount:       st.EmptyAcquireCount(),
-				CanceledAcquireCount:    st.CanceledAcquireCount(),
-				AcquireDuration:         st.AcquireDuration(),
-				NewConnsCount:           st.NewConnsCount(),
-				MaxLifetimeDestroyCount: st.MaxLifetimeDestroyCount(),
-			}
-		})
+		// the live pool, through the same sampler the admin status page reads.
+		metrics.RegisterDBPoolSource(dbPoolStats)
 		opts = append(opts, httpapi.WithMetrics(metrics))
 		logger.Info("prometheus metrics enabled", "route", "/metrics")
 	}

@@ -1,14 +1,18 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/instancesettings"
 )
 
 // infrastructure reads the admin infrastructure document as the instance's
@@ -139,6 +143,14 @@ func TestInfrastructureLeaksNoSecret(t *testing.T) {
 	cfg.PeerTubeSourceS3SecretKey = "SECRET-PEERTUBE-S3-SECRET-KEY"
 	cfg.OwnerClaimToken = "SECRET-OWNER-CLAIM-TOKEN"
 	cfg.OTelExporterEndpoint = "otel-collector.internal:4317"
+	// The two phase-4/5 secrets the CDN and DRM rows sit next to. Both rows
+	// report PRESENCE only, and a page that grew a "your KEK is ..." field would
+	// hand a content key to anyone who reaches an admin session.
+	cfg.DRMProvider = "clearkey-test"
+	cfg.DRMKeyKEK = "SECRET-DRM-KEY-KEK"
+	cfg.DeliveryCDNBaseURL = "https://cdn.example.test/media"
+	cfg.DeliveryCDNPurgeURL = "https://api.SENTINEL-cdn-control.internal/purge"
+	cfg.DeliveryCDNPurgeToken = "SECRET-CDN-PURGE-TOKEN"
 
 	srv := authServerWithConfig(t, cfg)
 	body, rawJSON := infrastructure(t, srv)
@@ -152,9 +164,9 @@ func TestInfrastructureLeaksNoSecret(t *testing.T) {
 		"SECRET-FEDERATION-KEK", "SECRET-ATPROTO-KEK", "SECRET-MFA-KEK",
 		"SECRET-LIVE-INGEST", "SECRET-SEARCH-INTERNAL", "SECRET-IPFS-CLUSTER-TOKEN",
 		"SECRET-PEERTUBE-PASSWORD", "SECRET-PEERTUBE-S3-ACCESS-KEY", "SECRET-PEERTUBE-S3-SECRET-KEY",
-		"SECRET-OWNER-CLAIM-TOKEN",
+		"SECRET-OWNER-CLAIM-TOKEN", "SECRET-DRM-KEY-KEK", "SECRET-CDN-PURGE-TOKEN",
 		"db.internal", "redis.internal", "pt.internal", "search.internal",
-		"otel-collector.internal",
+		"otel-collector.internal", "SENTINEL-cdn-control.internal",
 		// The internal endpoints. Not credentials, but the struct's doc comment
 		// keeps them out and this is what holds it to that.
 		"SENTINEL-smtp-relay.internal", "SENTINEL-noreply@example.test",
@@ -186,7 +198,8 @@ func TestInfrastructureFeatureDiscovery(t *testing.T) {
 
 	wantKeys := []string{
 		"object_storage", "mail", "search", "federation", "atproto", "atproto_login",
-		"malware_scan", "captions", "live", "ipfs", "tracing", "metrics", "vp9_alternates",
+		"malware_scan", "captions", "live", "ipfs", "cdn", "drm", "tracing", "metrics",
+		"vp9_alternates",
 	}
 	if len(body.Features) != len(wantKeys) {
 		t.Fatalf("features = %d entries, want %d", len(body.Features), len(wantKeys))
@@ -196,11 +209,13 @@ func TestInfrastructureFeatureDiscovery(t *testing.T) {
 			t.Errorf("feature %d = %q, want %q (the order is part of the contract)", i, body.Features[i].Key, key)
 		}
 	}
-	// DASH and CDN do not exist in vidra. Listing them would send an operator
-	// hunting for switches that were never built.
+	// DASH is produced (the default cmaf packager writes an MPD beside the HLS
+	// playlists) and is still not a row: packaging format is a per-VIDEO
+	// property with no switch to turn on, so no (enabled, configured) pair could
+	// describe an instance serving both formats at once.
 	for _, f := range body.Features {
-		if f.Key == "dash" || f.Key == "cdn" {
-			t.Errorf("feature %q is reported but does not exist in this codebase", f.Key)
+		if f.Key == "dash" {
+			t.Errorf("feature %q is reported; packaging format is per-video, not an optional subsystem", f.Key)
 		}
 	}
 
@@ -269,6 +284,146 @@ func TestInfrastructureFeatureDiscovery(t *testing.T) {
 	on, _ := infrastructure(t, authServerWithConfig(t, cfg))
 	if m := featureNamed(t, on, "metrics"); !m.Enabled || !m.Configured || m.Note != "" {
 		t.Errorf("metrics fully on = %+v, want enabled+configured with no note", m)
+	}
+}
+
+// The multi-node floor an operator cannot see from inside the product
+// (phase-5): how big this process's slice of the database's connection budget
+// is, and whether a deploy will reset live connections behind a load balancer.
+func TestInfrastructureReportsPoolAndDrainConfig(t *testing.T) {
+	cfg := testConfig()
+	cfg.DBMaxConns = 24
+	cfg.DBMinConns = 4
+	cfg.DBConnMaxLifetime = 90 * time.Minute
+	cfg.DBConnMaxIdleTime = 5 * time.Minute
+	cfg.HTTPDrainDelay = 12 * time.Second
+
+	body, _ := infrastructure(t, authServerWithConfig(t, cfg))
+
+	srvBlock := body.Server
+	if srvBlock.DBMaxConns != 24 || srvBlock.DBMinConns != 4 {
+		t.Errorf("pool sizing = %+v, want max 24 / min 4", srvBlock)
+	}
+	if srvBlock.DBConnMaxLifetimeSeconds != 5400 || srvBlock.DBConnMaxIdleTimeSeconds != 300 {
+		t.Errorf("conn lifetimes = %+v, want 5400s lifetime and 300s idle", srvBlock)
+	}
+	if srvBlock.DrainDelaySeconds != 12 {
+		t.Errorf("drain_delay_seconds = %d, want 12", srvBlock.DrainDelaySeconds)
+	}
+
+	// The single-node default is zero, and zero is a REPORTED value rather than
+	// a missing one: behind a load balancer it is the difference between a
+	// clean deploy and connection resets on live requests.
+	def, _ := infrastructure(t, authServer(t))
+	if def.Server.DrainDelaySeconds != 0 {
+		t.Errorf("default drain_delay_seconds = %d, want 0", def.Server.DrainDelaySeconds)
+	}
+}
+
+// infraServerWithSettings is authServerWithConfig plus a loaded instance-settings
+// overlay, so a test can flip the runtime half of the CDN pair the way an admin
+// would. It is the only feature row that reads the overlay at all.
+func infraServerWithSettings(t *testing.T, cfg *config.Config, cdnOn bool) *Server {
+	t.Helper()
+	svc := instancesettings.NewService(newInstanceSettingsFakeRepo(), settingsDefaultsFromConfig(cfg))
+	if err := svc.Load(context.Background()); err != nil {
+		t.Fatalf("settings load: %v", err)
+	}
+	if cdnOn {
+		if err := svc.Apply(context.Background(), map[string]instancesettings.Update{
+			instancesettings.KeyDeliveryCDNEnabled: {Value: "true"},
+		}, uuid.Nil); err != nil {
+			t.Fatalf("enable delivery_cdn_enabled: %v", err)
+		}
+	}
+	srv := authServerWithConfig(t, cfg)
+	WithSettingsService(svc)(srv)
+	return srv
+}
+
+// The CDN row is the one whose two halves live in different places — the base
+// URL is boot config, the switch is a runtime setting — so all four quadrants
+// are real states an operator can be in, and each needs its own true sentence.
+func TestInfrastructureCDNFeature(t *testing.T) {
+	const base = "https://cdn.example.test/media"
+
+	t.Run("nothing configured", func(t *testing.T) {
+		body, _ := infrastructure(t, authServer(t))
+		f := featureNamed(t, body, "cdn")
+		if f.Enabled || f.Configured {
+			t.Fatalf("cdn on a default install = %+v, want off", f)
+		}
+		if !strings.Contains(f.Note, "DELIVERY_CDN_BASE_URL") {
+			t.Errorf("cdn note = %q, want it to name the variable to set", f.Note)
+		}
+	})
+
+	// Wired and not switched on is the SHIPPED sequence, not a mistake: the
+	// generic discovery note would tell this operator to set a variable they
+	// have already set.
+	t.Run("wired but switched off", func(t *testing.T) {
+		cfg := testConfig()
+		cfg.DeliveryCDNBaseURL = base
+		body, _ := infrastructure(t, infraServerWithSettings(t, cfg, false))
+		f := featureNamed(t, body, "cdn")
+		if f.Enabled || !f.Configured {
+			t.Fatalf("cdn wired with the toggle off = %+v, want configured and not enabled", f)
+		}
+		if strings.Contains(f.Note, "Point DELIVERY_CDN_BASE_URL") {
+			t.Errorf("cdn note tells an operator to set a variable they already set: %q", f.Note)
+		}
+		if !strings.Contains(f.Note, "delivery_cdn_enabled") {
+			t.Errorf("cdn note = %q, want it to name the switch that is still off", f.Note)
+		}
+	})
+
+	// The dangerous half: the switch is on and no edge exists, so nothing is
+	// being offloaded and the page must say so rather than show a success pill.
+	t.Run("switched on with no edge", func(t *testing.T) {
+		body, _ := infrastructure(t, infraServerWithSettings(t, testConfig(), true))
+		f := featureNamed(t, body, "cdn")
+		if !f.Enabled || f.Configured {
+			t.Fatalf("cdn toggled on with no base URL = %+v, want enabled and not configured", f)
+		}
+		if !strings.Contains(f.Note, "DELIVERY_CDN_BASE_URL") {
+			t.Errorf("cdn note = %q, want it to name the missing half", f.Note)
+		}
+	})
+
+	t.Run("fully on", func(t *testing.T) {
+		cfg := testConfig()
+		cfg.DeliveryCDNBaseURL = base
+		body, _ := infrastructure(t, infraServerWithSettings(t, cfg, true))
+		f := featureNamed(t, body, "cdn")
+		if !f.Enabled || !f.Configured || f.Note != "" {
+			t.Fatalf("cdn fully on = %+v, want enabled+configured with no note", f)
+		}
+	})
+}
+
+// DRM reports the provider's state and the PRESENCE of its sealing key, never
+// the key. The row's honesty problem is the opposite of the others': the only
+// provider this build ships protects nothing, and a green pill next to the word
+// DRM is a sentence an operator will repeat to somebody else.
+func TestInfrastructureDRMFeature(t *testing.T) {
+	off, _ := infrastructure(t, authServer(t))
+	f := featureNamed(t, off, "drm")
+	if f.Enabled || f.Configured {
+		t.Fatalf("drm with no provider = %+v, want off", f)
+	}
+	for _, want := range []string{"DRM_PROVIDER=clearkey-test", "TEST"} {
+		if !strings.Contains(f.Note, want) {
+			t.Errorf("drm note = %q, want it to contain %q — the only provider is test-grade", f.Note, want)
+		}
+	}
+
+	cfg := testConfig()
+	cfg.DRMProvider = "clearkey-test"
+	cfg.DRMKeyKEK = "c2VjcmV0LXRlc3Qta2V5LXRoaXJ0eS10d28tYnl0ZQ=="
+	on, _ := infrastructure(t, authServerWithConfig(t, cfg))
+	f = featureNamed(t, on, "drm")
+	if !f.Enabled || !f.Configured {
+		t.Fatalf("drm with a provider and a KEK = %+v, want enabled+configured", f)
 	}
 }
 

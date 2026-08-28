@@ -14,6 +14,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/observability"
 )
 
 // ffmpegFound / ffmpegMissing pin the ffmpeg component so the suite asserts the
@@ -96,6 +97,62 @@ func TestSystemStatus(t *testing.T) {
 	}
 	if rec := getWithAuth(srv, "/api/v1/admin/system", ""); rec.Code != http.StatusUnauthorized {
 		t.Errorf("anon system status = %d, want 401", rec.Code)
+	}
+}
+
+// Pool saturation was invisible outside Prometheus before this (phase-5
+// multi-node floor), and METRICS_ENABLED is off by default — so the admin page
+// reports the live counts, and reports NOTHING rather than zeroes when there is
+// no pool to sample.
+func TestSystemStatusDatabasePoolStats(t *testing.T) {
+	srv := authServer(t)
+	srv.lookPath = ffmpegFound
+	// One account for both reads: the page is read twice, before and after the
+	// pool is wired, and registering "ada" twice is a 409.
+	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	read := func() systemStatusResponse {
+		t.Helper()
+		rec := getWithAuth(srv, "/api/v1/admin/system", admin)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("system status = %d; body=%s", rec.Code, rec.Body.String())
+		}
+		var body systemStatusResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return body
+	}
+
+	// No pool wired: the block is absent. A zeroed one would render as "0 of 0
+	// connections", which reads as a pool with nothing left — the exact alarm
+	// this block exists to raise honestly.
+	if body := read(); body.Database != nil {
+		t.Errorf("database = %+v with no pool wired, want the block omitted", body.Database)
+	}
+
+	WithDBPoolStats(func() observability.DBPoolStats {
+		return observability.DBPoolStats{
+			TotalConns: 7, IdleConns: 2, AcquiredConns: 5, MaxConns: 10,
+			// The counters exist on the shared sampler (the Prometheus gauges
+			// read them) and are deliberately NOT on the page: a cumulative
+			// counter with no rate beside it tells an admin nothing.
+			EmptyAcquireCount: 42,
+		}
+	})(srv)
+
+	body := read()
+	if body.Database == nil {
+		t.Fatal("database block missing with a pool wired")
+	}
+	got := *body.Database
+	want := systemDatabase{PoolTotalConns: 7, PoolIdleConns: 2, PoolAcquiredConns: 5, PoolMaxConns: 10}
+	if got != want {
+		t.Errorf("database = %+v, want %+v", got, want)
+	}
+	// Sampled per request, not captured once at boot: an operator refreshing a
+	// page during an incident is asking about now.
+	if body.Status != "ok" {
+		t.Errorf("status = %q; reporting the pool must not degrade the instance", body.Status)
 	}
 }
 
