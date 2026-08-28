@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/vidra/vidra-core/internal/setup"
 )
@@ -400,11 +401,20 @@ func firstLine(s string) string {
 	return "no output"
 }
 
+// truncate bounds a diagnostic line to roughly n bytes, marking the cut with an
+// ellipsis. It cuts on a rune boundary: the text is subprocess output — image
+// tags, container names, an operator's own paths — so slicing at s[:n-1] can
+// land mid-codepoint and render the ⚠ line as mojibake exactly when someone is
+// trying to read it.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	cut := n - 1
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
 // addDSNParams adds query parameters to a postgres DSN without disturbing the
