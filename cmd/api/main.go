@@ -45,6 +45,7 @@ import (
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/ipfs"
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
+	"github.com/vidra/vidra-core/internal/jobloop"
 	"github.com/vidra/vidra-core/internal/jobrecovery"
 	"github.com/vidra/vidra-core/internal/jobstatus"
 	"github.com/vidra/vidra-core/internal/leaderlock"
@@ -2253,21 +2254,16 @@ func runFederationDeliveryWorker(ctx context.Context, logger *slog.Logger, fedsv
 		interval = 10 * time.Second
 		batch    = 20
 	)
-	if !jitterStart(ctx, interval) {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if _, err := fedsvc.DrainDeliveries(ctx, batch); err != nil {
-				logger.Warn("federation delivery drain failed", "error", err)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Jitter:   true,
+		Passes: []jobloop.Pass{{
+			FailMsg: "federation delivery drain failed",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return fedsvc.DrainDeliveries(ctx, batch)
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runSearchOutboxWorker drains the search event outbox on a 5s ticker until ctx
@@ -2279,21 +2275,16 @@ func runSearchOutboxWorker(ctx context.Context, logger *slog.Logger, drainer *se
 		interval = 5 * time.Second
 		batch    = 200
 	)
-	if !jitterStart(ctx, interval) {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if _, err := drainer.Drain(ctx, batch); err != nil {
-				logger.Warn("search outbox drain failed", "error", err)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Jitter:   true,
+		Passes: []jobloop.Pass{{
+			FailMsg: "search outbox drain failed",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return drainer.Drain(ctx, batch)
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runSearchReconcileWorker performs a full index-reconciliation sweep at startup
@@ -2352,21 +2343,16 @@ func runATProtoPostWorker(ctx context.Context, logger *slog.Logger, svc *atproto
 		interval = 15 * time.Second
 		batch    = 10
 	)
-	if !jitterStart(ctx, interval) {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if _, err := svc.DrainPosts(ctx, batch); err != nil {
-				logger.Warn("atproto auto-post drain failed", "error", err)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Jitter:   true,
+		Passes: []jobloop.Pass{{
+			FailMsg: "atproto auto-post drain failed",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return svc.DrainPosts(ctx, batch)
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runTranscodeWorker drains the durable transcode job queue on a ticker until
@@ -2661,26 +2647,17 @@ func runChannelSyncWorker(ctx context.Context, logger *slog.Logger, svc *channel
 		// 15 per tick).
 		perTick = 15
 	)
-	if !jitterStart(ctx, interval) {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			n, err := svc.DrainDue(ctx, perTick)
-			if err != nil {
-				logger.Warn("channel sync drain failed", "error", err)
-				continue
-			}
-			if n > 0 {
-				logger.Info("channel sync completed passes", "count", n)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Jitter:   true,
+		Passes: []jobloop.Pass{{
+			FailMsg: "channel sync drain failed",
+			DoneMsg: "channel sync completed passes",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return svc.DrainDue(ctx, perTick)
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runCaptionJobWorker drains the durable auto-caption (Whisper) queue on a ticker
@@ -3112,21 +3089,16 @@ func runStoryboardBackfillWorker(ctx context.Context, logger *slog.Logger, svc *
 // drains at most one per tick; per-run outcomes are persisted to the run row.
 func runPeerTubeImportWorker(ctx context.Context, logger *slog.Logger, svc *peertubeimport.Service) {
 	const interval = 15 * time.Second
-	if !jitterStart(ctx, interval) {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if _, err := svc.DrainDueRuns(ctx, 1); err != nil {
-				logger.Warn("peertube import drain failed", "error", err)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Jitter:   true,
+		Passes: []jobloop.Pass{{
+			FailMsg: "peertube import drain failed",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return svc.DrainDueRuns(ctx, 1)
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runOperationalJobRetentionWorker prunes only bounded batches. Events are
