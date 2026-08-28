@@ -53,9 +53,9 @@ import (
 // because progressive playback still works; a live stream that is not live has
 // nothing to play by any route, and a 200 would advertise an hls_url that 404s.
 func (s *Server) handleCreateLivePlaybackSession(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "live stream not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
+		return err
 	}
 	stream, err := s.liveStreamForHLS(c, id)
 	if err != nil {

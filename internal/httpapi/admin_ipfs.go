@@ -179,9 +179,9 @@ func (s *Server) handleIPFSReconcile(c echo.Context) error {
 	if s.ipfsmirrorsvc == nil {
 		return echo.NewHTTPError(http.StatusNotImplemented, "ipfs mirror subsystem is not wired on this build")
 	}
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	ctx := c.Request().Context()
 

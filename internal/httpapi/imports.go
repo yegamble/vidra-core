@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -81,16 +80,16 @@ func newImportJobResponse(row sqlcgen.ImportJob) importJobResponse {
 // size/quota enforcement, and AttachOriginal → Process pipeline run in the
 // background worker; watch progress via GET /videos/:id/import.
 func (s *Server) handleImportVideoFile(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if !s.importsEnabled() {
 		return &FeatureDisabledError{Feature: "imports"}
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	var in importVideoRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -132,13 +131,13 @@ func (s *Server) handleImportVideoFile(c echo.Context) error {
 // (owner only). Non-owner/unknown video → 404; a video that was never imported
 // → 404.
 func (s *Server) handleGetVideoImport(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	ctx := c.Request().Context()
 	if _, canManage := s.canManageVideo(ctx, userID, id); !canManage {

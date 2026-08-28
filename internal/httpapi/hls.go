@@ -116,9 +116,9 @@ func (s *Server) hlsPlaylistForView(c echo.Context, id uuid.UUID) (sqlcgen.Strea
 // video whose playlist is not ready is 404 — the detail response's hls_url
 // tells clients when one exists.
 func (s *Server) handleGetHLSMaster(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	sp, _, err := s.hlsPlaylistForView(c, id)
 	if err != nil {
@@ -142,9 +142,9 @@ func (s *Server) handleGetHLSMaster(c echo.Context) error {
 // parts that do not match the transcoder's fixed naming are 404 (nothing else
 // under the prefix is reachable).
 func (s *Server) handleGetHLSFile(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	rendition, file := c.Param("rendition"), c.Param("file")
 	canonical := hlsRenditionName.MatchString(rendition) && hlsFileName.MatchString(file)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -181,7 +182,7 @@ func (s *Service) ClaimOwner(ctx context.Context, in ClaimOwnerInput, userAgent 
 			// A concurrent claim won the row between the fetch and the redeem.
 			return sqlcgen.User{}, Tokens{}, ErrOwnerClaimInvalid
 		}
-		if isUniqueViolation(err) {
+		if pgconv.IsUniqueViolation(err) {
 			return sqlcgen.User{}, Tokens{}, ErrConflict
 		}
 		return sqlcgen.User{}, Tokens{}, err

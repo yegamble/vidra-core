@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -276,7 +276,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput, userAgent stri
 		HistoryEnabled: s.newUserHistoryEnabled(),
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
+		if pgconv.IsUniqueViolation(err) {
 			return sqlcgen.User{}, Tokens{}, ErrConflict
 		}
 		return sqlcgen.User{}, Tokens{}, err
@@ -314,7 +314,7 @@ func (s *Service) RegisterPendingVerification(ctx context.Context, in RegisterIn
 		HistoryEnabled:           s.newUserHistoryEnabled(),
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
+		if pgconv.IsUniqueViolation(err) {
 			return sqlcgen.User{}, ErrConflict
 		}
 		return sqlcgen.User{}, err
@@ -548,13 +548,13 @@ func (s *Service) UpdateProfile(ctx context.Context, id uuid.UUID, in ProfileInp
 	// pointer after trimming means "clear to NULL".
 	setSensitive := in.SensitiveContentPolicy != nil
 	var sensitiveVal *string
-	if trimmed := trimPtr(in.SensitiveContentPolicy); trimmed != nil && *trimmed != "" {
+	if trimmed := pgconv.TrimPtr(in.SensitiveContentPolicy); trimmed != nil && *trimmed != "" {
 		sensitiveVal = trimmed
 	}
 	user, err := s.repo.UpdateUserProfile(ctx, sqlcgen.UpdateUserProfileParams{
 		ID:                                 id,
-		DisplayName:                        trimPtr(in.DisplayName),
-		Bio:                                trimPtr(in.Bio),
+		DisplayName:                        pgconv.TrimPtr(in.DisplayName),
+		Bio:                                pgconv.TrimPtr(in.Bio),
 		Unlisted:                           in.Unlisted,
 		HistoryEnabled:                     in.HistoryEnabled,
 		ProfilePublic:                      in.ProfilePublic,
@@ -569,21 +569,4 @@ func (s *Service) UpdateProfile(ctx context.Context, id uuid.UUID, in ProfileInp
 		return sqlcgen.User{}, ErrAccountNotFound
 	}
 	return user, nil
-}
-
-// trimPtr trims a non-nil string pointer's value, leaving nil untouched so a
-// COALESCE update skips the column.
-func trimPtr(p *string) *string {
-	if p == nil {
-		return nil
-	}
-	t := strings.TrimSpace(*p)
-	return &t
-}
-
-// isUniqueViolation reports whether err is a PostgreSQL unique-constraint
-// violation (SQLSTATE 23505).
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

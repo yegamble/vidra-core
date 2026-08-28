@@ -54,16 +54,16 @@ type uploadAttachmentResponse struct {
 // encrypted conversation → 422 (attachments are ciphertext-external); an
 // unsupported type → 415; oversize → 413; a failed malware scan → 422.
 func (s *Server) handleUploadAttachment(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if !s.messagingsvc.AttachmentsEnabled() {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "attachments are not available")
 	}
-	convID, err := uuid.Parse(c.Param("id"))
+	convID, err := pathUUID(c, "id", "conversation not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "conversation not found")
+		return err
 	}
 	// Attachments are plaintext-only.
 	if enc, eerr := s.conversationEncrypted(c, userID, convID); eerr != nil {
@@ -118,16 +118,16 @@ func (s *Server) handleUploadAttachment(c echo.Context) error {
 // Behind requireAuth. Unknown attachment or a caller who is not a participant of
 // its conversation → 404.
 func (s *Server) handleDownloadAttachment(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if !s.messagingsvc.AttachmentsEnabled() {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "attachments are not available")
 	}
-	attID, err := uuid.Parse(c.Param("id"))
+	attID, err := pathUUID(c, "id", "attachment not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "attachment not found")
+		return err
 	}
 	att, err := s.messagingsvc.AttachmentForDownload(c.Request().Context(), userID, attID)
 	if err != nil {
@@ -154,13 +154,13 @@ type markConversationReadResponse struct {
 // conversation (idempotent, advance-only). Behind requireAuth. Non-participant/
 // unknown conversation → 404; a message_id not in the conversation → 404.
 func (s *Server) handleMarkConversationRead(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	convID, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "conversation not found")
+		return err
+	}
+	convID, err := pathUUID(c, "id", "conversation not found")
+	if err != nil {
+		return err
 	}
 	var in markConversationReadRequest
 	// The body is optional; ignore a bind error on an empty body.
@@ -188,13 +188,13 @@ func (s *Server) handleMarkConversationRead(c echo.Context) error {
 // handleDeleteMessage tombstones the caller's own message. Behind requireAuth.
 // A non-sender or unknown message → 404; already-deleted is idempotent 204.
 func (s *Server) handleDeleteMessage(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	msgID, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "message not found")
+		return err
+	}
+	msgID, err := pathUUID(c, "id", "message not found")
+	if err != nil {
+		return err
 	}
 	if err := s.messagingsvc.DeleteMessage(c.Request().Context(), userID, msgID); err != nil {
 		switch {
@@ -210,16 +210,16 @@ func (s *Server) handleDeleteMessage(c echo.Context) error {
 // Either participant may report; a non-participant or unknown message → 404.
 // Idempotent per (reporter, message).
 func (s *Server) handleReportMessage(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if s.moderationsvc == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "moderation is not available")
 	}
-	msgID, err := uuid.Parse(c.Param("id"))
+	msgID, err := pathUUID(c, "id", "message not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "message not found")
+		return err
 	}
 	var in createReportRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -258,9 +258,9 @@ type updateMessagingPrefsRequest struct {
 // handleGetMessagingPrefs returns the caller's DM privacy toggles. Behind
 // requireAuth. Currently just the read-receipts toggle (default enabled).
 func (s *Server) handleGetMessagingPrefs(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	enabled, err := s.messagingsvc.ReadReceiptsEnabled(c.Request().Context(), userID)
 	if err != nil {
@@ -272,9 +272,9 @@ func (s *Server) handleGetMessagingPrefs(c echo.Context) error {
 // handleUpdateMessagingPrefs updates the caller's DM privacy toggles. Behind
 // requireAuth.
 func (s *Server) handleUpdateMessagingPrefs(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in updateMessagingPrefsRequest
 	if err := c.Bind(&in); err != nil {

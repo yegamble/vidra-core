@@ -53,9 +53,9 @@ func playerSettingsView(s playersettings.Settings) playerSettingsResponse {
 // requireAuth. Always 200 with the full object — a user who never saved gets the
 // effective defaults (no 404).
 func (s *Server) handleGetPlayerSettings(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	settings, err := s.playersettingssvc.Get(c.Request().Context(), userID)
 	if err != nil {
@@ -69,9 +69,9 @@ func (s *Server) handleGetPlayerSettings(c echo.Context) error {
 // value; an invalid supplied value (default_speed not on the ladder, malformed
 // default_quality) is 400 and nothing is written.
 func (s *Server) handleUpdatePlayerSettings(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in updatePlayerSettingsRequest
 	if err := bindAndValidate(c, &in); err != nil {

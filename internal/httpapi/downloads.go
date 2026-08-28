@@ -55,7 +55,7 @@ type videoDownloadResponse struct {
 // owner only for that storage lookup.
 func (s *Server) videoForDownload(c echo.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, uuid.UUID, bool, error) {
 	viewerID, role, authed := principalFromContext(c)
-	privileged := authed && (role == "admin" || role == "moderator")
+	privileged := authed && isStaff(role)
 	if !privileged && !s.downloadsEnabled() {
 		return sqlcgen.GetVideoByIDRow{}, uuid.Nil, false, &FeatureDisabledError{Feature: "downloads"}
 	}
@@ -86,9 +86,9 @@ func (s *Server) videoForDownload(c echo.Context, id uuid.UUID) (sqlcgen.GetVide
 // playback manifests are intentionally absent: every HLS row is a progressive
 // MP4 remux at that rung, with a companion video-only URL when available.
 func (s *Server) handleGetVideoDownloads(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	ctx := c.Request().Context()
 	v, fileViewerID, fileViewerAuthed, err := s.videoForDownload(c, id)
@@ -201,9 +201,9 @@ func (s *Server) handleDownloadVideoWebM(c echo.Context) error {
 }
 
 func (s *Server) downloadStoredVideoFile(c echo.Context, kind, fallbackName string) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	v, viewerID, authed, err := s.videoForDownload(c, id)
 	if err != nil {
@@ -241,9 +241,9 @@ func (s *Server) publicDownload(v sqlcgen.GetVideoByIDRow) bool {
 }
 
 func (s *Server) handleDownloadHLSRendition(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	height, err := strconv.Atoi(c.Param("height"))
 	if err != nil || height <= 0 {
@@ -273,9 +273,9 @@ func (s *Server) handleDownloadHLSRendition(c echo.Context) error {
 }
 
 func (s *Server) handleDownloadHLSAudio(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	v, _, _, err := s.videoForDownload(c, id)
 	if err != nil {
@@ -332,9 +332,9 @@ func (s *Server) resolveHLSDownload(ctx context.Context, id uuid.UUID, height in
 }
 
 func (s *Server) handleDownloadVideoSubtitle(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	if _, _, _, err := s.videoForDownload(c, id); err != nil {
 		return err
@@ -362,9 +362,9 @@ func (s *Server) handleDownloadVideoSubtitle(c echo.Context) error {
 // download routes, the downloads_enabled toggle and moderator bypass do not
 // apply to playback).
 func (s *Server) handleStreamVideoWebM(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	v, err := s.videoVisibleForMedia(c, id)
 	if err != nil {

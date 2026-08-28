@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/watchword"
@@ -67,9 +66,9 @@ func (s *Server) handleListWatchedWords(c echo.Context) error {
 // handleAddWatchedWord adds a term to the watched-words list. Behind
 // requireRole(admin, moderator). A duplicate (case-insensitive) → 409.
 func (s *Server) handleAddWatchedWord(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in createWatchedWordRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -90,9 +89,9 @@ func (s *Server) handleAddWatchedWord(c echo.Context) error {
 // handleDeleteWatchedWord removes a term from the watched-words list. Behind
 // requireRole(admin, moderator). Idempotent (an unknown id still succeeds).
 func (s *Server) handleDeleteWatchedWord(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "watched word not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "watched word not found")
+		return err
 	}
 	if err := s.watchwordsvc.Delete(c.Request().Context(), id); err != nil {
 		return err

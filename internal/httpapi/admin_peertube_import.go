@@ -68,9 +68,9 @@ type peertubeImportListResponse struct {
 // path that sets it. It is read from the body, range-checked, and stored on the
 // run beside started_by — who signed off, and on what.
 func (s *Server) handleLaunchPeerTubeImport(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in peertubeImportLaunchRequest
 	if err := c.Bind(&in); err != nil {

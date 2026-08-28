@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/captionjob"
@@ -65,13 +64,13 @@ func newCaptionJobResponse(row sqlcgen.CaptionJob) captionJobResponse {
 // video it is 409. The audio-extraction, transcription, and caption upsert run
 // in the background worker; watch progress via GET /videos/:id/captions/auto.
 func (s *Server) handleRequestAutoCaption(c echo.Context) error {
-	userID, role, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, role, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	// Feature gates first, without disclosing whether the video exists: the
 	// runtime admin setting answers 403 feature_disabled; a deployment whose
@@ -91,7 +90,7 @@ func (s *Server) handleRequestAutoCaption(c echo.Context) error {
 	// Owners and privileged moderators may request recovery work. Ordinary
 	// non-owners still receive 404 so private-video existence is not disclosed.
 	v, gerr := s.videosvc.GetByID(ctx, id)
-	privileged := role == "admin" || role == "moderator"
+	privileged := isStaff(role)
 	if gerr != nil || (v.OwnerID != userID && !privileged) {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
@@ -119,17 +118,17 @@ func (s *Server) handleRequestAutoCaption(c echo.Context) error {
 // job to its owner or a moderator/admin. Ordinary non-owner/unknown video → 404;
 // a video that never requested auto-captioning → 404.
 func (s *Server) handleGetAutoCaption(c echo.Context) error {
-	userID, role, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, role, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	ctx := c.Request().Context()
 	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil ||
-		(v.OwnerID != userID && role != "admin" && role != "moderator") {
+		(v.OwnerID != userID && !isStaff(role)) {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	job, err := s.captionjobsvc.LatestForVideo(ctx, id)

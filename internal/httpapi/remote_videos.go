@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/remotevideo"
@@ -51,9 +50,9 @@ func newRemoteVideoView(rv remotevideo.RemoteVideo) remoteVideoView {
 // Public. Unknown id — or a video hidden because its origin instance is
 // admin-blocked — is 404.
 func (s *Server) handleGetRemoteVideo(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "remote video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "remote video not found")
+		return err
 	}
 	rv, err := s.remotevideosvc.Get(c.Request().Context(), id)
 	if err != nil {
@@ -69,9 +68,9 @@ func (s *Server) handleGetRemoteVideo(c echo.Context) error {
 // video (cached best-effort at ingestion, §5). Public. A video without a
 // cached thumbnail is 404.
 func (s *Server) handleGetRemoteVideoThumbnail(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "remote video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "remote video not found")
+		return err
 	}
 	rc, err := s.remotevideosvc.OpenThumbnail(c.Request().Context(), id)
 	if err != nil {

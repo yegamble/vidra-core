@@ -28,6 +28,7 @@ import (
 	_ "golang.org/x/image/webp" // register the WebP decoder for image.DecodeConfig
 
 	"github.com/vidra/vidra-core/internal/linkpreview"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -536,7 +537,7 @@ func (s *Service) SendMessage(ctx context.Context, meID, conversationID uuid.UUI
 	}
 	if len(attachmentIDs) > 0 {
 		if lerr := s.repo.LinkAttachmentsToMessage(ctx, sqlcgen.LinkAttachmentsToMessageParams{
-			MessageID:      pgUUID(m.ID),
+			MessageID:      pgconv.UUID(m.ID),
 			Ids:            attachmentIDs,
 			UploaderID:     meID,
 			ConversationID: conversationID,
@@ -680,8 +681,8 @@ func (s *Service) assembleMessages(ctx context.Context, cores []messageCore) []M
 		if !c.Deleted {
 			if c.PreviewURL != nil {
 				m.Preview = &LinkPreview{
-					URL: deref(c.PreviewURL), Title: deref(c.PreviewTitle),
-					Description: deref(c.PreviewDescription), Image: deref(c.PreviewImage),
+					URL: pgconv.Deref(c.PreviewURL), Title: pgconv.Deref(c.PreviewTitle),
+					Description: pgconv.Deref(c.PreviewDescription), Image: pgconv.Deref(c.PreviewImage),
 				}
 			}
 		} else {
@@ -714,15 +715,6 @@ func (s *Service) attachmentsForMessages(ctx context.Context, ids []uuid.UUID) m
 	}
 	return out
 }
-
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
-}
-
-func pgUUID(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
 
 func uuidFromPG(p pgtype.UUID) uuid.UUID {
 	if !p.Valid {
@@ -928,7 +920,7 @@ func (s *Service) MarkRead(ctx context.Context, meID, conversationID uuid.UUID, 
 		target = latest
 	}
 	return s.repo.SetLastReadMessage(ctx, sqlcgen.SetLastReadMessageParams{
-		MessageID: pgUUID(target), ConversationID: conversationID, UserID: meID,
+		MessageID: pgconv.UUID(target), ConversationID: conversationID, UserID: meID,
 	})
 }
 
@@ -1005,7 +997,7 @@ func (s *Service) DeleteMessage(ctx context.Context, meID, messageID uuid.UUID) 
 	}
 	// Remove attachment bytes then rows (best-effort on the blobs).
 	if s.blobs != nil {
-		if keys, kerr := s.repo.ListAttachmentKeysByMessage(ctx, pgUUID(messageID)); kerr == nil {
+		if keys, kerr := s.repo.ListAttachmentKeysByMessage(ctx, pgconv.UUID(messageID)); kerr == nil {
 			for _, k := range keys {
 				if derr := s.blobs.Delete(ctx, k.StorageKey); derr != nil {
 					s.logger.WarnContext(ctx, "delete attachment blob failed", "error", derr, "attachment_id", k.ID)
@@ -1013,7 +1005,7 @@ func (s *Service) DeleteMessage(ctx context.Context, meID, messageID uuid.UUID) 
 			}
 		}
 	}
-	if derr := s.repo.DeleteAttachmentsByMessage(ctx, pgUUID(messageID)); derr != nil {
+	if derr := s.repo.DeleteAttachmentsByMessage(ctx, pgconv.UUID(messageID)); derr != nil {
 		s.logger.WarnContext(ctx, "delete attachment rows failed", "error", derr, "message_id", messageID)
 	}
 	if _, terr := s.repo.TombstoneMessage(ctx, sqlcgen.TombstoneMessageParams{ID: messageID, SenderID: meID}); terr != nil {

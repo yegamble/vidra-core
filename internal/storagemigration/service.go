@@ -72,6 +72,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/lease"
 	"github.com/vidra/vidra-core/internal/mediahash"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -282,7 +283,7 @@ func (s *Service) Start(ctx context.Context) (Campaign, error) {
 	if err != nil {
 		// The single-active partial unique index is the real guard; the check
 		// above is only there to give a clean 409 in the common case.
-		if isUniqueViolation(err) {
+		if pgconv.IsUniqueViolation(err) {
 			return Campaign{}, ErrAlreadyActive
 		}
 		return Campaign{}, err
@@ -957,12 +958,4 @@ func (s *Service) note(ctx context.Context, id uuid.UUID, msg string) error {
 func backoff(attempt int) time.Duration {
 	d := time.Minute << min(attempt-1, 6)
 	return min(d, time.Hour)
-}
-
-// isUniqueViolation reports whether err is Postgres 23505. The single-active
-// index is the authority on "one campaign at a time", so the create path has to
-// be able to recognise losing that race.
-func isUniqueViolation(err error) bool {
-	var pgErr interface{ SQLState() string }
-	return errors.As(err, &pgErr) && pgErr.SQLState() == "23505"
 }

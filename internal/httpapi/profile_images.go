@@ -40,9 +40,9 @@ func newProfileImageView(img profileimage.Image) profileImageView {
 // cap as the custom video thumbnail).
 func (s *Server) handleSetMyImage(kind string) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		userID, _, ok := principalFromContext(c)
-		if !ok {
-			return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+		userID, _, err := mustPrincipal(c)
+		if err != nil {
+			return err
 		}
 		in, cleanup, err := imageUploadInput(c)
 		if err != nil {
@@ -61,9 +61,9 @@ func (s *Server) handleSetMyImage(kind string) echo.HandlerFunc {
 // object). Behind requireAuth; 404 when none is set.
 func (s *Server) handleDeleteMyImage(kind string) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		userID, _, ok := principalFromContext(c)
-		if !ok {
-			return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+		userID, _, err := mustPrincipal(c)
+		if err != nil {
+			return err
 		}
 		if err := s.imagesvc.DeleteUserImage(c.Request().Context(), userID, kind); err != nil {
 			return profileImageError(err, kind)
@@ -76,9 +76,9 @@ func (s *Server) handleDeleteMyImage(kind string) echo.HandlerFunc {
 // type derived at upload time. 404 when the user is unknown or has none set.
 func (s *Server) handleGetUserImage(kind string) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		id, err := uuid.Parse(c.Param("id"))
+		id, err := pathUUID(c, "id", kind+" not found")
 		if err != nil {
-			return echo.NewHTTPError(http.StatusNotFound, kind+" not found")
+			return err
 		}
 		img, err := s.imagesvc.UserImage(c.Request().Context(), id, kind)
 		if err != nil {
@@ -173,9 +173,9 @@ func identityImageClass(kind string) delivery.Class {
 // Unknown handle AND non-owner both yield 404 (mirroring the videos convention:
 // a mutating route does not reveal whether the caller could act on the target).
 func (s *Server) ownedChannel(c echo.Context) (sqlcgen.Channel, error) {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return sqlcgen.Channel{}, echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return sqlcgen.Channel{}, err
 	}
 	ch, err := s.channelsvc.GetByHandle(c.Request().Context(), c.Param("handle"))
 	if err != nil || ch.OwnerID != userID {

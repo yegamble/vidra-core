@@ -18,6 +18,7 @@ import (
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/searchevents"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -331,9 +332,9 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 
 // handleCreateVideo creates a draft video under a channel owned by the caller.
 func (s *Server) handleCreateVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in createVideoRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -473,9 +474,9 @@ func (s *Server) attachIPFSPinned(ctx context.Context, views []videoView) {
 // leaked. This exception is metadata-detail only: media/playback routes keep
 // their own narrower authorization.
 func (s *Server) handleGetVideo(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	v, err := s.videoVisibleForDetail(c, id)
 	if err != nil {
@@ -525,7 +526,7 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 // the underlying files.
 func (s *Server) videoVisibleForDetail(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
 	_, role, ok := principalFromContext(c)
-	if !ok || (role != "admin" && role != "moderator") {
+	if !ok || !isStaff(role) {
 		return s.videoVisibleForRead(c, videoID)
 	}
 	v, err := s.videosvc.GetByID(c.Request().Context(), videoID)
@@ -649,9 +650,9 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 // feed: public, published videos from the channels they follow, newest first,
 // with discovery-card data. Pagination via ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListSubscriptionVideos(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.videosvc.ListSubscriptions(c.Request().Context(), userID, page.Limit32(), page.Offset32())
@@ -965,7 +966,7 @@ func (r updateVideoRequest) Validate() []FieldError {
 	}
 	// A provided taxonomy field must be a known, non-empty id (clearing to unset
 	// is not supported via update).
-	fes = append(fes, validateTaxonomy(derefOr(r.Category), derefOr(r.Language), derefOr(r.License))...)
+	fes = append(fes, validateTaxonomy(pgconv.Deref(r.Category), pgconv.Deref(r.Language), pgconv.Deref(r.License))...)
 	if r.Category != nil && *r.Category == "" {
 		fes = append(fes, FieldError{Field: "category", Message: "unknown category"})
 	}
@@ -982,25 +983,16 @@ func (r updateVideoRequest) Validate() []FieldError {
 	return fes
 }
 
-// derefOr returns the pointee or "" when nil (so validateTaxonomy skips absent
-// fields while still validating present ones).
-func derefOr(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
-}
-
 // handleUpdateVideo updates a video owned by the authenticated user. A
 // moderator/admin may manage any local video.
 func (s *Server) handleUpdateVideo(c echo.Context) error {
-	userID, role, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, role, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	var in updateVideoRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -1010,11 +1002,11 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	// an editor collaborator (migration 0097) manages their channel's videos.
 	// managedOther gates the moderation audit — it stays staff-only, so an
 	// editor's ordinary edit is not logged as a moderation action.
-	isStaff := role == "admin" || role == "moderator"
-	canManage := isStaff
+	staff := isStaff(role)
+	canManage := staff
 	managedOther := false
 	if existing, lookupErr := s.videosvc.GetByID(c.Request().Context(), id); lookupErr == nil {
-		if isStaff {
+		if staff {
 			managedOther = existing.OwnerID != userID
 		} else if existing.OwnerID != userID {
 			canManage = s.canManageChannelContent(c.Request().Context(), userID, existing.ChannelID)
@@ -1105,20 +1097,20 @@ func updateVideoFieldNames(in updateVideoRequest) []string {
 // moderator/admin may delete any local video; the audit actor remains the
 // authenticated caller, never the video's owner.
 func (s *Server) handleDeleteVideo(c echo.Context) error {
-	userID, role, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, role, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	// Staff delete any local video (moderation escape); an editor collaborator
 	// (migration 0097) deletes their channel's videos.
 	ctx := c.Request().Context()
-	isStaff := role == "admin" || role == "moderator"
-	canManage := isStaff
-	if !isStaff {
+	staff := isStaff(role)
+	canManage := staff
+	if !staff {
 		if v, lookupErr := s.videosvc.GetByID(ctx, id); lookupErr == nil && v.OwnerID != userID {
 			canManage = s.canManageChannelContent(ctx, userID, v.ChannelID)
 		}
@@ -1170,16 +1162,16 @@ type uploadVideoFileResponse struct {
 // up front with 422 quota_exceeded — the multipart part is already buffered by
 // the form parse, so its size is authoritative (not a client-declared header).
 func (s *Server) handleUploadVideoFile(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if !s.uploadsEnabled() {
 		return &FeatureDisabledError{Feature: "uploads"}
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	fh, err := c.FormFile("file")
 	if err != nil {
@@ -1239,13 +1231,13 @@ type thumbnailFrameRequest struct {
 // creator-supplied image, replacing any previous or auto-generated thumbnail (a
 // non-image extension → 415). The 8M global body limit bounds the upload.
 func (s *Server) handleSetVideoThumbnail(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	// Owner OR editor collaborator (migration 0097). Once authorized, the write
 	// executes as the channel owner (v.OwnerID) — the id the owner-gated thumbnail
@@ -1306,9 +1298,9 @@ func (s *Server) setThumbnailFromFrame(c echo.Context, userID, id uuid.UUID) err
 // 404. Range requests are honoured for seeking when the backend exposes a
 // filesystem path.
 func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	v, err := s.videoVisibleForMedia(c, id)
 	if err != nil {
@@ -1331,9 +1323,9 @@ func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
 // handleGetVideoThumbnail serves a video's generated poster image under the
 // ordinary media visibility policy; a video without a stored thumbnail is 404.
 func (s *Server) handleGetVideoThumbnail(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	v, err := s.videoVisibleForMedia(c, id)
 	if err != nil {
@@ -1417,9 +1409,9 @@ func (s *Server) serveStoredObjectNamed(c echo.Context, key, contentType, notFou
 // when Redis is wired). Behind optionalAuth, it retains ordinary playback
 // visibility. Always 204 on success — whether or not the view was newly counted.
 func (s *Server) handleRecordVideoView(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	viewerID, _, authed := principalFromContext(c)
 	if err := s.videosvc.RecordView(c.Request().Context(), id, viewerID, authed, viewerKey(c, viewerID, authed)); err != nil {
@@ -1455,7 +1447,7 @@ func (s *Server) videoHiddenByBlock(c echo.Context, videoID uuid.UUID) (bool, er
 		return false, err
 	}
 	_, role, _ := principalFromContext(c)
-	if role == "admin" || role == "moderator" {
+	if isStaff(role) {
 		return false, nil
 	}
 	return true, nil
@@ -1468,7 +1460,7 @@ func quarantineHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool 
 		return false
 	}
 	userID, role, ok := principalFromContext(c)
-	return !ok || (userID != ownerID && role != "admin" && role != "moderator")
+	return !ok || (userID != ownerID && !isStaff(role))
 }
 
 // scheduledHidesVideo keeps a scheduled video private until the publish
@@ -1490,7 +1482,7 @@ func transcodingHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool
 		return false
 	}
 	userID, role, ok := principalFromContext(c)
-	return !ok || (userID != ownerID && role != "admin" && role != "moderator")
+	return !ok || (userID != ownerID && !isStaff(role))
 }
 
 // videoHiddenFromViewer combines the moderation visibility rules the media/
@@ -1547,7 +1539,7 @@ func (s *Server) videoVisibleForMedia(c echo.Context, videoID uuid.UUID) (sqlcge
 		return v, nil
 	}
 	userID, role, ok := principalFromContext(c)
-	if ok && (userID == v.OwnerID || role == "admin" || role == "moderator") {
+	if ok && (userID == v.OwnerID || isStaff(role)) {
 		return v, nil
 	}
 	return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
@@ -1606,13 +1598,13 @@ func (r blockVideoRequest) Validate() []FieldError {
 // requireRole(admin, moderator). An unknown video is 404. Idempotent. Emits an
 // audit event.
 func (s *Server) handleBlockVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	var in blockVideoRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -1635,13 +1627,13 @@ func (s *Server) handleBlockVideo(c echo.Context) error {
 // Idempotent (unblocking a video that is not blocked still succeeds). Emits an
 // audit event.
 func (s *Server) handleUnblockVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	if err := s.moderationsvc.UnblockVideo(c.Request().Context(), id); err != nil {
 		return err

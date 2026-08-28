@@ -28,9 +28,9 @@ type mutedInstanceListResponse struct {
 // content from that domain becomes hidden from their surfaces. Behind
 // requireAuth. Idempotent; an invalid domain → 422.
 func (s *Server) handleMuteInstance(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if err := s.instancemodsvc.MuteInstance(c.Request().Context(), userID, c.Param("domain")); err != nil {
 		if errors.Is(err, instancemod.ErrInvalidDomain) {
@@ -44,9 +44,9 @@ func (s *Server) handleMuteInstance(c echo.Context) error {
 // handleUnmuteInstance lifts the caller's mute of a remote instance. Behind
 // requireAuth. Idempotent; an invalid domain → 422.
 func (s *Server) handleUnmuteInstance(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if err := s.instancemodsvc.UnmuteInstance(c.Request().Context(), userID, c.Param("domain")); err != nil {
 		if errors.Is(err, instancemod.ErrInvalidDomain) {
@@ -60,9 +60,9 @@ func (s *Server) handleUnmuteInstance(c echo.Context) error {
 // handleListMutedInstances returns the instances the caller has muted, newest
 // first. Behind requireAuth. Pagination via ?limit (1–100, default 20)/?offset.
 func (s *Server) handleListMutedInstances(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.instancemodsvc.ListMutedInstances(c.Request().Context(), userID, page.Limit32(), page.Offset32())
@@ -114,9 +114,9 @@ func (r blockInstanceRequest) Validate() []FieldError {
 // requireRole(admin, moderator). Idempotent; an invalid domain → 422. Emits an
 // audit event.
 func (s *Server) handleBlockInstance(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in blockInstanceRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -136,9 +136,9 @@ func (s *Server) handleBlockInstance(c echo.Context) error {
 // handleUnblockInstance lifts an instance block. Behind requireRole(admin,
 // moderator). Idempotent; an invalid domain → 422. Emits an audit event.
 func (s *Server) handleUnblockInstance(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	domain := c.Param("domain")
 	if err := s.instancemodsvc.UnblockInstance(c.Request().Context(), domain); err != nil {

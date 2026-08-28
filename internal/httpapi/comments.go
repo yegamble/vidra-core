@@ -93,9 +93,9 @@ func uuidPtrString(u pgtype.UUID) *string {
 // those are a later slice. Returns the full row so callers can consult
 // per-video policy (comments_policy, config-parity W9) without a second fetch.
 func (s *Server) publicVideo(c echo.Context) (sqlcgen.GetVideoByIDRow, error) {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return sqlcgen.GetVideoByIDRow{}, err
 	}
 	v, err := s.videosvc.GetByID(c.Request().Context(), id)
 	if err != nil || v.State != "published" || v.Privacy != "public" {
@@ -154,9 +154,9 @@ func (r createCommentRequest) parentID() *uuid.UUID {
 
 // handleCreateComment posts a comment on a public, published video. Behind requireAuth.
 func (s *Server) handleCreateComment(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	// Feature toggle (P10): the instance can turn off new comments. Reading
 	// existing comments stays open; only posting is gated.
@@ -244,15 +244,15 @@ func (s *Server) handleListComments(c echo.Context) error {
 // handleDeleteComment removes a comment. Behind requireAuth. The comment's author
 // may always delete it; a moderator/admin may delete anyone's.
 func (s *Server) handleDeleteComment(c echo.Context) error {
-	userID, role, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, role, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+		return err
 	}
-	isModerator := role == "admin" || role == "moderator"
+	id, err := pathUUID(c, "id", "comment not found")
+	if err != nil {
+		return err
+	}
+	isModerator := isStaff(role)
 	if err := s.commentsvc.Delete(c.Request().Context(), id, userID, isModerator); err != nil {
 		switch {
 		case errors.Is(err, comment.ErrNotFound):
@@ -284,13 +284,13 @@ func (r updateCommentRequest) Validate() []FieldError {
 // the author may edit (moderators delete, not edit): another user's comment is
 // 403, an unknown id is 404, a blank/too-long body is 422.
 func (s *Server) handleUpdateComment(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "comment not found")
+	if err != nil {
+		return err
 	}
 	var in updateCommentRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -332,7 +332,7 @@ func (s *Server) handleUpdateComment(c echo.Context) error {
 // (pin/heart) on a comment: staff (admin/moderator) via the moderation escape,
 // otherwise the manager of the comment's video (channel owner or editor).
 func (s *Server) canManageCommentVideo(ctx context.Context, userID uuid.UUID, role string, videoID uuid.UUID) bool {
-	if role == "admin" || role == "moderator" {
+	if isStaff(role) {
 		return true
 	}
 	_, ok := s.canManageVideo(ctx, userID, videoID)
@@ -346,13 +346,13 @@ func (s *Server) canManageCommentVideo(ctx context.Context, userID uuid.UUID, ro
 // comment view (200). None of the actions touch the comment body or fire a
 // federation hook — they are local metadata only.
 func (s *Server) commentCreatorAction(c echo.Context, action func(context.Context, uuid.UUID) (comment.WithAuthor, error)) error {
-	userID, role, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, role, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "comment not found")
+	if err != nil {
+		return err
 	}
 	ctx := c.Request().Context()
 	cmt, err := s.commentsvc.Get(ctx, id)

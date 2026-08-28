@@ -306,9 +306,9 @@ func (s *Server) handleGetInstanceSettings(c echo.Context) error {
 // audit event carrying the changed KEY NAMES only (never values — the contact
 // email is operator PII).
 func (s *Server) handleUpdateInstanceSettings(c echo.Context) error {
-	callerID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	callerID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var raw map[string]json.RawMessage
 	if err := json.NewDecoder(c.Request().Body).Decode(&raw); err != nil {

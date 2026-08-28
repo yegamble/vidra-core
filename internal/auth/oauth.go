@@ -44,6 +44,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -360,7 +361,7 @@ func (s *OAuthService) resolveIdentity(ctx context.Context, provider, subject st
 			if _, err := s.repo.CreateOAuthIdentity(ctx, sqlcgen.CreateOAuthIdentityParams{
 				Provider: provider, Subject: subject, UserID: user.ID, Email: email,
 			}); err != nil {
-				if isUniqueViolation(err) {
+				if pgconv.IsUniqueViolation(err) {
 					// The account already has a different subject linked for this
 					// provider, or a concurrent attempt won. Refuse cleanly.
 					return sqlcgen.User{}, Tokens{}, "", ErrConflict
@@ -404,7 +405,7 @@ func (s *OAuthService) resolveIdentity(ctx context.Context, provider, subject st
 		HistoryEnabled: s.auth.newUserHistoryEnabled(),
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
+		if pgconv.IsUniqueViolation(err) {
 			return sqlcgen.User{}, Tokens{}, "", ErrConflict
 		}
 		return sqlcgen.User{}, Tokens{}, "", err

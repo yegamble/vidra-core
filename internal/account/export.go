@@ -13,15 +13,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 
 	"github.com/vidra/vidra-core/internal/lease"
 )
-
-// pgTimestamptz wraps a time as a valid pgtype.Timestamptz.
-func pgTimestamptz(t time.Time) pgtype.Timestamptz {
-	return pgtype.Timestamptz{Time: t, Valid: true}
-}
 
 // Export queue tuning. Mirrors the transcode queue.
 const (
@@ -182,7 +178,7 @@ func (s *Service) runExport(ctx context.Context, row sqlcgen.ClaimDueAccountExpo
 	// stamps no expiry — the archive stays downloadable until replaced.
 	var expiresAt pgtype.Timestamptz
 	if ttl := s.effectiveExportTTL(); ttl > 0 {
-		expiresAt = pgTimestamptz(s.now().UTC().Add(ttl))
+		expiresAt = pgconv.Time(s.now().UTC().Add(ttl))
 	}
 	return s.repo.CompleteAccountExport(ctx, sqlcgen.CompleteAccountExportParams{
 		ID:         row.ID,

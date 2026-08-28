@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -32,12 +33,6 @@ var (
 	// ErrStorageUnavailable means no blob backend is configured for cover uploads.
 	ErrStorageUnavailable = errors.New("playlist: storage backend not configured")
 )
-
-// acceptedImageExts maps an accepted playlist-cover upload extension to the
-// content type served for it (authoritative — not the client-declared type).
-var acceptedImageExts = map[string]string{
-	".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
-}
 
 // Repository is the data access the playlist service needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
@@ -177,8 +172,8 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 	}
 	updated, err := s.repo.UpdatePlaylist(ctx, sqlcgen.UpdatePlaylistParams{
 		ID:          id,
-		Title:       trimPtr(in.Title),
-		Description: trimPtr(in.Description),
+		Title:       pgconv.TrimPtr(in.Title),
+		Description: pgconv.TrimPtr(in.Description),
 		Visibility:  in.Visibility,
 	})
 	if err != nil {
@@ -333,7 +328,7 @@ func (s *Service) SetThumbnail(ctx context.Context, ownerID, playlistID uuid.UUI
 		return "", ErrForbidden
 	}
 	dotExt := strings.ToLower(filepath.Ext(in.Filename))
-	if _, ok := acceptedImageExts[dotExt]; !ok {
+	if _, ok := media.AcceptedImageExts[dotExt]; !ok {
 		return "", ErrUnsupportedMedia
 	}
 	ext := strings.TrimPrefix(dotExt, ".")
@@ -384,16 +379,6 @@ func (s *Service) ClearThumbnail(ctx context.Context, ownerID, playlistID uuid.U
 // ThumbnailContentType returns the served content type for a stored cover
 // extension, and ok=false when the extension is not an accepted image type.
 func ThumbnailContentType(ext string) (string, bool) {
-	ct, ok := acceptedImageExts["."+strings.TrimPrefix(strings.ToLower(ext), ".")]
+	ct, ok := media.AcceptedImageExts["."+strings.TrimPrefix(strings.ToLower(ext), ".")]
 	return ct, ok
-}
-
-// trimPtr trims a non-nil string pointer's value, leaving nil untouched so a
-// COALESCE update skips the column.
-func trimPtr(p *string) *string {
-	if p == nil {
-		return nil
-	}
-	t := strings.TrimSpace(*p)
-	return &t
 }

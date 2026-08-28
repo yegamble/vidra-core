@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/notification"
@@ -80,9 +79,9 @@ type unreadCountResponse struct {
 // Behind requireAuth. ?unread=true returns only unread ones. Pagination via
 // ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListNotifications(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	unreadOnly := c.QueryParam("unread") == "true"
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
@@ -107,9 +106,9 @@ func (s *Server) handleListNotifications(c echo.Context) error {
 // handleUnreadNotificationCount returns just the caller's unread count (cheap,
 // for a header badge). Behind requireAuth.
 func (s *Server) handleUnreadNotificationCount(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	n, err := s.notifsvc.UnreadCount(c.Request().Context(), userID)
 	if err != nil {
@@ -122,13 +121,13 @@ func (s *Server) handleUnreadNotificationCount(c echo.Context) error {
 // (idempotent). Behind requireAuth. An unknown id, or one belonging to another
 // user, is 404.
 func (s *Server) handleMarkNotificationRead(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "notification not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "notification not found")
+	if err != nil {
+		return err
 	}
 	if err := s.notifsvc.MarkRead(c.Request().Context(), userID, id); err != nil {
 		if errors.Is(err, notification.ErrNotFound) {
@@ -142,9 +141,9 @@ func (s *Server) handleMarkNotificationRead(c echo.Context) error {
 // handleMarkAllNotificationsRead marks all of the caller's notifications read
 // (idempotent). Behind requireAuth.
 func (s *Server) handleMarkAllNotificationsRead(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if err := s.notifsvc.MarkAllRead(c.Request().Context(), userID); err != nil {
 		return err

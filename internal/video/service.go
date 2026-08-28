@@ -21,6 +21,7 @@ import (
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -124,13 +125,6 @@ var baseVideoExts = map[string]bool{
 var additionalVideoExts = map[string]bool{
 	".m4v": true, ".mov": true, ".mkv": true, ".avi": true, ".mpg": true,
 	".mpeg": true, ".ts": true, ".flv": true, ".wmv": true, ".3gp": true,
-}
-
-// acceptedImageExts maps a custom-thumbnail upload extension to the content type
-// served for it. The served Content-Type is derived here (authoritative), not
-// from the client-declared type, so a mislabelled upload can't set a bogus type.
-var acceptedImageExts = map[string]string{
-	".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
 }
 
 // Repository is the data access the video service needs. *sqlcgen.Queries
@@ -1442,14 +1436,6 @@ func (s *Service) GenerateStoryboard(ctx context.Context, videoID uuid.UUID, ori
 	return nil
 }
 
-// acceptedImageExt returns the served content type for filename when it is an
-// accepted thumbnail image, and ok=false otherwise. It is the thumbnail-upload
-// type gate (mirrors acceptedExt for originals).
-func acceptedImageExt(filename string) (contentType string, ok bool) {
-	ct, ok := acceptedImageExts[strings.ToLower(filepath.Ext(filename))]
-	return ct, ok
-}
-
 // SetThumbnail stores a creator-supplied poster image for a video, replacing any
 // previous (uploaded or auto-generated) thumbnail. Owner-only (non-owner →
 // ErrForbidden, unknown id → ErrNotFound); a non-image extension → ErrUnsupportedMedia.
@@ -1467,7 +1453,7 @@ func (s *Service) SetThumbnail(ctx context.Context, ownerID, videoID uuid.UUID, 
 	if v.OwnerID != ownerID {
 		return sqlcgen.VideoFile{}, ErrForbidden
 	}
-	contentType, ok := acceptedImageExt(in.Filename)
+	contentType, ok := media.ContentTypeForImageExt(in.Filename)
 	if !ok {
 		return sqlcgen.VideoFile{}, ErrUnsupportedMedia
 	}
@@ -1794,15 +1780,15 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 	}
 	updated, err := s.repo.UpdateVideo(ctx, sqlcgen.UpdateVideoParams{
 		ID:              id,
-		Title:           trimPtr(in.Title),
-		Description:     trimPtr(in.Description),
+		Title:           pgconv.TrimPtr(in.Title),
+		Description:     pgconv.TrimPtr(in.Description),
 		Privacy:         in.Privacy,
 		Category:        in.Category,
 		Language:        in.Language,
 		License:         in.License,
 		PublishAt:       timestamptz(in.PublishAt),
 		IsSensitive:     in.IsSensitive,
-		SensitiveReason: trimPtr(in.SensitiveReason),
+		SensitiveReason: pgconv.TrimPtr(in.SensitiveReason),
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
 
@@ -2505,7 +2491,7 @@ func (s *Service) RelatedFallback(ctx context.Context, videoID, channelID uuid.U
 		ExcludeID:     videoID,
 		ViewerID:      pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed},
 		HideSensitive: hideSensitive,
-		Category:      nilIfEmpty(derefString(category)),
+		Category:      nilIfEmpty(pgconv.Deref(category)),
 		ResultLimit:   limit,
 	})
 	if err != nil {
@@ -2518,14 +2504,6 @@ func (s *Service) RelatedFallback(ctx context.Context, videoID, channelID uuid.U
 		items = append(items, it)
 	}
 	return items, nil
-}
-
-// derefString returns the pointee or "" when nil.
-func derefString(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
 }
 
 // ChannelSortOldest is the only non-default ordering a channel video list
@@ -2727,16 +2705,6 @@ func (s *Service) ListAdmin(ctx context.Context, filter AdminFilter, limit, offs
 		})
 	}
 	return items, total, nil
-}
-
-// trimPtr trims a non-nil string pointer's value, leaving nil untouched so a
-// COALESCE update skips the column.
-func trimPtr(p *string) *string {
-	if p == nil {
-		return nil
-	}
-	t := strings.TrimSpace(*p)
-	return &t
 }
 
 // nilIfEmpty maps an optional string to a nullable column value: a blank string

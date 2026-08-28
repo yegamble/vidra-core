@@ -64,9 +64,9 @@ func (s *Server) handleDeleteInstanceLogo(c echo.Context) error {
 }
 
 func (s *Server) setInstanceImage(c echo.Context, kind string) error {
-	callerID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	callerID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	in, cleanup, err := imageUploadInput(c)
 	if err != nil {
@@ -82,9 +82,9 @@ func (s *Server) setInstanceImage(c echo.Context, kind string) error {
 }
 
 func (s *Server) deleteInstanceImage(c echo.Context, kind string) error {
-	callerID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	callerID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if err := s.imagesvc.DeleteInstanceImage(c.Request().Context(), kind); err != nil {
 		return profileImageError(err, kind)

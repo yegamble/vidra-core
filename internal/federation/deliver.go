@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/httpsig"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
@@ -133,7 +133,7 @@ func (s *Service) enqueueChannelDelivery(ctx context.Context, channelID uuid.UUI
 	return s.repo.EnqueueDelivery(ctx, sqlcgen.EnqueueDeliveryParams{
 		InboxUrl:             inboxURL,
 		Payload:              payload,
-		SigningChannelID:     pgtype.UUID{Bytes: channelID, Valid: true},
+		SigningChannelID:     pgconv.UUID(channelID),
 		SigningChannelHandle: channelHandle,
 	})
 }
@@ -145,7 +145,7 @@ func (s *Service) enqueueAccountDelivery(ctx context.Context, userID uuid.UUID, 
 	return s.repo.EnqueueDelivery(ctx, sqlcgen.EnqueueDeliveryParams{
 		InboxUrl:        inboxURL,
 		Payload:         payload,
-		SigningUserID:   pgtype.UUID{Bytes: userID, Valid: true},
+		SigningUserID:   pgconv.UUID(userID),
 		SigningUsername: username,
 	})
 }

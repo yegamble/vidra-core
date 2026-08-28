@@ -10,9 +10,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -198,7 +198,7 @@ func (s *Service) CreateRun(ctx context.Context, in Launch, adminID uuid.UUID) (
 		StartedBy:                 optUUID(adminID),
 		AcknowledgedSchemaVersion: optSchemaVersion(in.AcknowledgedSchemaVersion),
 	})
-	if isUniqueViolation(err) {
+	if pgconv.IsUniqueViolation(err) {
 		return Run{}, ErrBusy
 	}
 	if err != nil {
@@ -439,11 +439,4 @@ func safeRunError(err error) string {
 		return "aborted: a naming conflict was hit and the conflict policy is 'fail'"
 	}
 	return safeErr(err)
-}
-
-// isUniqueViolation reports whether err is a PostgreSQL unique-constraint
-// violation (SQLSTATE 23505) — the single-active-run guard.
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

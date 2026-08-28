@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/mute"
@@ -28,13 +27,13 @@ type mutedAccountListResponse struct {
 // handleMuteAccount mutes another account for the caller. Behind requireAuth.
 // Muting yourself → 422; an unknown target → 404. Idempotent.
 func (s *Server) handleMuteAccount(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	targetID, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		return err
+	}
+	targetID, err := pathUUID(c, "id", "user not found")
+	if err != nil {
+		return err
 	}
 	if err := s.mutesvc.Mute(c.Request().Context(), userID, targetID); err != nil {
 		switch {
@@ -51,13 +50,13 @@ func (s *Server) handleMuteAccount(c echo.Context) error {
 // handleUnmuteAccount lifts the caller's mute of another account. Behind
 // requireAuth. Idempotent (unmuting a not-muted account still succeeds).
 func (s *Server) handleUnmuteAccount(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	targetID, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		return err
+	}
+	targetID, err := pathUUID(c, "id", "user not found")
+	if err != nil {
+		return err
 	}
 	if err := s.mutesvc.Unmute(c.Request().Context(), userID, targetID); err != nil {
 		return err
@@ -68,9 +67,9 @@ func (s *Server) handleUnmuteAccount(c echo.Context) error {
 // handleListMutedAccounts returns the accounts the caller has muted, newest mute
 // first. Behind requireAuth. Pagination via ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListMutedAccounts(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.mutesvc.List(c.Request().Context(), userID, page.Limit32(), page.Offset32())

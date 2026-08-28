@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -66,14 +67,6 @@ var (
 	// only mounted when one is, so this is a guard, not a normal path).
 	ErrStorageUnavailable = errors.New("profileimage: storage backend not configured")
 )
-
-// acceptedImageExts maps an upload extension to the content type served for it
-// (mirrors the custom-thumbnail gate in internal/video). The served
-// Content-Type is derived here (authoritative), not from the client-declared
-// type, so a mislabelled upload can't set a bogus type.
-var acceptedImageExts = map[string]string{
-	".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
-}
 
 // Repository is the data access the service needs. *sqlcgen.Queries satisfies
 // it directly; tests substitute an in-memory fake.
@@ -329,7 +322,7 @@ func (s *Service) SetInstanceImage(ctx context.Context, kind string, in UploadIn
 	if s.blobs == nil {
 		return Image{}, ErrStorageUnavailable
 	}
-	contentType, ok := acceptedImageExt(in.Filename)
+	contentType, ok := media.ContentTypeForImageExt(in.Filename)
 	if !ok {
 		return Image{}, ErrUnsupportedMedia
 	}
@@ -418,7 +411,7 @@ func (s *Service) putImage(ctx context.Context, kind, ownerDir string, id uuid.U
 	if s.blobs == nil {
 		return "", "", 0, ErrStorageUnavailable
 	}
-	contentType, ok := acceptedImageExt(in.Filename)
+	contentType, ok := media.ContentTypeForImageExt(in.Filename)
 	if !ok {
 		return "", "", 0, ErrUnsupportedMedia
 	}
@@ -448,13 +441,6 @@ func (s *Service) deleteBlob(ctx context.Context, key string) error {
 		_ = s.mirror.EnqueueUnpin(ctx, key) // best-effort
 	}
 	return s.blobs.Delete(ctx, key)
-}
-
-// acceptedImageExt returns the served content type for filename when it is an
-// accepted image, and ok=false otherwise (the upload type gate).
-func acceptedImageExt(filename string) (contentType string, ok bool) {
-	ct, ok := acceptedImageExts[strings.ToLower(filepath.Ext(filename))]
-	return ct, ok
 }
 
 // imageKey is the deterministic storage key for an owner's image:

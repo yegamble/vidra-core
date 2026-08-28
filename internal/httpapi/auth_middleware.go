@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+
+	"github.com/vidra/vidra-core/internal/admin"
 )
 
 // Echo context keys for the authenticated principal. Unexported so only this
@@ -55,9 +57,9 @@ func (s *Server) requireRole(allowed ...string) echo.MiddlewareFunc {
 	}
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			_, role, ok := principalFromContext(c)
-			if !ok {
-				return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+			_, role, err := mustPrincipal(c)
+			if err != nil {
+				return err
 			}
 			if !allow[role] {
 				return echo.NewHTTPError(http.StatusForbidden, "insufficient permissions")
@@ -108,6 +110,27 @@ func principalFromContext(c echo.Context) (id uuid.UUID, role string, ok bool) {
 	id, idOK := c.Get(ctxKeyUserID).(uuid.UUID)
 	role, roleOK := c.Get(ctxKeyRole).(string)
 	return id, role, idOK && roleOK
+}
+
+// mustPrincipal returns the authenticated user's ID and role, or the 401
+// unauthorized error handlers behind requireAuth return when no principal is
+// present. Handlers that must vary behaviour for anonymous callers (optionalAuth
+// routes) or that deliberately answer 404 to avoid leaking existence use
+// principalFromContext directly.
+func mustPrincipal(c echo.Context) (uuid.UUID, string, error) {
+	id, role, ok := principalFromContext(c)
+	if !ok {
+		return uuid.Nil, "", echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+	return id, role, nil
+}
+
+// isStaff reports whether role is one of the two moderation roles. The pair is
+// the "moderation escape" every content route consults — staff read and manage
+// any local video, comment or live stream regardless of ownership — and it was
+// spelled out inline under six different local names before this helper.
+func isStaff(role string) bool {
+	return role == admin.RoleAdmin || role == admin.RoleModerator
 }
 
 // tokenExpiryFromContext returns the authenticated access-token expiry. Long

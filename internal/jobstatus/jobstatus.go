@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -520,7 +521,7 @@ func listParams(f Filter, limit, offset int32) sqlcgen.ListOperationalJobRunsPar
 		State: optional(f.State), Type: optional(f.Type), Queue: optional(f.Queue),
 		ResourceType: optional(f.ResourceType), ResourceID: optional(f.ResourceID),
 		WorkerID: optional(f.WorkerID), Failure: f.Failure,
-		CreatedAfter: pgTime(f.CreatedAfter), CreatedBefore: pgTime(f.CreatedBefore),
+		CreatedAfter: pgconv.TimePtr(f.CreatedAfter), CreatedBefore: pgconv.TimePtr(f.CreatedBefore),
 		ResultLimit: limit, ResultOffset: offset,
 	}
 }
@@ -535,15 +536,12 @@ func countParams(f Filter) sqlcgen.CountOperationalJobRunsParams {
 }
 
 func eventParams(f Filter, cursor int64, limit int32) sqlcgen.ListOperationalJobEventsAfterParams {
-	var jobID pgtype.UUID
-	if f.JobID != nil {
-		jobID = pgtype.UUID{Bytes: *f.JobID, Valid: true}
-	}
+	jobID := pgconv.UUIDPtr(f.JobID)
 	return sqlcgen.ListOperationalJobEventsAfterParams{
 		AfterCursor: cursor, JobID: jobID, State: optional(f.State), Type: optional(f.Type),
 		Queue: optional(f.Queue), ResourceType: optional(f.ResourceType),
 		ResourceID: optional(f.ResourceID), WorkerID: optional(f.WorkerID), Failure: f.Failure,
-		CreatedAfter: pgTime(f.CreatedAfter), CreatedBefore: pgTime(f.CreatedBefore),
+		CreatedAfter: pgconv.TimePtr(f.CreatedAfter), CreatedBefore: pgconv.TimePtr(f.CreatedBefore),
 		ResultLimit: limit,
 	}
 }
@@ -556,13 +554,6 @@ func optional(v string) *string {
 	return &v
 }
 
-func pgTime(v *time.Time) pgtype.Timestamptz {
-	if v == nil {
-		return pgtype.Timestamptz{}
-	}
-	return pgtype.Timestamptz{Time: *v, Valid: true}
-}
-
 func runFromRow(row sqlcgen.JobRun) Run {
 	return Run{
 		ID: row.ID, PipelineRunID: pgUUIDString(row.PipelineRunID), ParentJobID: pgUUIDString(row.ParentJobID),
@@ -571,9 +562,9 @@ func runFromRow(row sqlcgen.JobRun) Run {
 		MaxAttempts: row.MaxAttempts, ActorID: pgUUIDString(row.ActorID),
 		ResourceType: row.ResourceType, ResourceID: row.ResourceID, RequestID: row.RequestID,
 		CorrelationID: row.CorrelationID, TraceID: row.TraceID, WorkerID: row.WorkerID,
-		LeaseExpiresAt: pgTimePtr(row.LeaseExpiresAt), HeartbeatAt: pgTimePtr(row.HeartbeatAt),
-		CreatedAt: row.CreatedAt, ClaimedAt: pgTimePtr(row.ClaimedAt), StartedAt: pgTimePtr(row.StartedAt),
-		UpdatedAt: row.UpdatedAt, FinishedAt: pgTimePtr(row.FinishedAt),
+		LeaseExpiresAt: pgconv.TimeOrNil(row.LeaseExpiresAt), HeartbeatAt: pgconv.TimeOrNil(row.HeartbeatAt),
+		CreatedAt: row.CreatedAt, ClaimedAt: pgconv.TimeOrNil(row.ClaimedAt), StartedAt: pgconv.TimeOrNil(row.StartedAt),
+		UpdatedAt: row.UpdatedAt, FinishedAt: pgconv.TimeOrNil(row.FinishedAt),
 		InputMetadata: safeMetadata(row.InputMetadata), OutputMetadata: safeMetadata(row.OutputMetadata),
 		ErrorClass: row.ErrorClass, ErrorCode: row.ErrorCode,
 		ErrorDetail: redactDetail(row.ErrorDetail), ErrorRetryable: row.ErrorRetryable,
@@ -596,14 +587,6 @@ func pgUUIDString(v pgtype.UUID) string {
 		return ""
 	}
 	return uuid.UUID(v.Bytes).String()
-}
-
-func pgTimePtr(v pgtype.Timestamptz) *time.Time {
-	if !v.Valid {
-		return nil
-	}
-	t := v.Time
-	return &t
 }
 
 func formatCursor(v int64) string { return fmt.Sprintf("%d", v) }

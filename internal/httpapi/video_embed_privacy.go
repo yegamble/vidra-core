@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/video"
@@ -43,9 +42,9 @@ func embedPrivacyResponse(p video.EmbedPrivacy) embedPrivacyView {
 // page needs the policy pre-unlock for a password video to decide whether to even
 // show the unlock prompt. It exposes only the status + allow-list, nothing else.
 func (s *Server) handleGetVideoEmbedPrivacy(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	if _, err := s.videoReadBase(c, id); err != nil {
 		return err
@@ -62,13 +61,13 @@ func (s *Server) handleGetVideoEmbedPrivacy(c echo.Context) error {
 // "whitelist" with an empty/invalid domain list (hostnames only, ≤50), or
 // allowed_domains supplied with a non-whitelist status.
 func (s *Server) handleSetVideoEmbedPrivacy(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	var in setEmbedPrivacyRequest
 	if err := c.Bind(&in); err != nil {

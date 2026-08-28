@@ -11,9 +11,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -155,7 +155,7 @@ func (s *Service) Create(ctx context.Context, ownerID uuid.UUID, in CreateInput)
 		Description: strings.TrimSpace(in.Description),
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
+		if pgconv.IsUniqueViolation(err) {
 			return sqlcgen.Channel{}, ErrConflict
 		}
 		return sqlcgen.Channel{}, err
@@ -200,8 +200,8 @@ func (s *Service) Update(ctx context.Context, ownerID uuid.UUID, handle string, 
 	}
 	return s.repo.UpdateChannel(ctx, sqlcgen.UpdateChannelParams{
 		ID:                 ch.ID,
-		DisplayName:        trimPtr(in.DisplayName),
-		Description:        trimPtr(in.Description),
+		DisplayName:        pgconv.TrimPtr(in.DisplayName),
+		Description:        pgconv.TrimPtr(in.Description),
 		ActivitypubEnabled: in.ActivitypubEnabled,
 		AtprotoEnabled:     in.AtprotoEnabled,
 	})
@@ -465,9 +465,9 @@ func (s *Service) AddMember(ctx context.Context, ownerID uuid.UUID, handle, targ
 		ChannelID: ch.ID,
 		UserID:    target.ID,
 		Role:      role,
-		InvitedBy: pgtype.UUID{Bytes: ownerID, Valid: true},
+		InvitedBy: pgconv.UUID(ownerID),
 	}); err != nil {
-		if isUniqueViolation(err) {
+		if pgconv.IsUniqueViolation(err) {
 			return Member{}, ErrAlreadyMember
 		}
 		return Member{}, err
@@ -603,21 +603,4 @@ func (s *Service) SearchPublic(ctx context.Context, query string, viewerID uuid.
 		})
 	}
 	return out, total, nil
-}
-
-// trimPtr trims a non-nil string pointer's value, leaving nil untouched so a
-// COALESCE update skips the column.
-func trimPtr(p *string) *string {
-	if p == nil {
-		return nil
-	}
-	t := strings.TrimSpace(*p)
-	return &t
-}
-
-// isUniqueViolation reports whether err is a PostgreSQL unique-constraint
-// violation (SQLSTATE 23505).
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

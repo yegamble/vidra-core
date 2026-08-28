@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -62,7 +62,7 @@ func (s *Service) Block(ctx context.Context, blockerID, blockedID uuid.UUID) err
 		return ErrCannotBlockSelf
 	}
 	_, err := s.repo.BlockUser(ctx, sqlcgen.BlockUserParams{BlockerID: blockerID, BlockedID: blockedID})
-	if sqlState(err) == "23503" { // foreign-key violation: no such user
+	if pgconv.SQLState(err) == pgconv.SQLStateForeignKeyViolation { // foreign-key violation: no such user
 		return ErrUserNotFound
 	}
 	return err
@@ -107,13 +107,4 @@ func (s *Service) List(ctx context.Context, blockerID uuid.UUID, limit, offset i
 // messaging.Blocker interface.
 func (s *Service) IsBlockedBetween(ctx context.Context, a, b uuid.UUID) (bool, error) {
 	return s.repo.IsBlockedBetween(ctx, sqlcgen.IsBlockedBetweenParams{BlockerID: a, BlockedID: b})
-}
-
-// sqlState returns the SQLSTATE code of a PostgreSQL error, "" otherwise.
-func sqlState(err error) string {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return pgErr.Code
-	}
-	return ""
 }

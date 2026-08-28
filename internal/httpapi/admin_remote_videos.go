@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/moderation"
@@ -22,13 +21,13 @@ import (
 // handleReportRemoteVideo files a report against an ingested remote video.
 // Behind requireAuth. An unknown remote video is 404. Idempotent.
 func (s *Server) handleReportRemoteVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	remoteVideoID, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "remote video not found")
+		return err
+	}
+	remoteVideoID, err := pathUUID(c, "id", "remote video not found")
+	if err != nil {
+		return err
 	}
 	var in createReportRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -49,13 +48,13 @@ func (s *Server) handleReportRemoteVideo(c echo.Context) error {
 // requireRole(admin, moderator). An unknown remote video is 404. Idempotent.
 // Emits an audit event.
 func (s *Server) handleBlockRemoteVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "remote video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "remote video not found")
+	if err != nil {
+		return err
 	}
 	var in blockVideoRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -75,13 +74,13 @@ func (s *Server) handleBlockRemoteVideo(c echo.Context) error {
 // handleUnblockRemoteVideo lifts a remote video's block. Behind
 // requireRole(admin, moderator). Idempotent. Emits an audit event.
 func (s *Server) handleUnblockRemoteVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "remote video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "remote video not found")
+	if err != nil {
+		return err
 	}
 	if err := s.moderationsvc.UnblockRemoteVideo(c.Request().Context(), id); err != nil {
 		return err

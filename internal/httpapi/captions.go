@@ -30,13 +30,13 @@ type captionListResponse struct {
 // authenticated user (multipart: "file" + "language" [+ "label"]). Owner-only; a
 // non-owner/unknown video is 404, a bad language or non-WebVTT file is 422.
 func (s *Server) handleUploadCaption(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	fh, err := c.FormFile("file")
 	if err != nil {
@@ -75,9 +75,9 @@ func (s *Server) handleUploadCaption(c echo.Context) error {
 // still requires the video to be published and not blocked, so the token holder
 // can load caption tracks for the video they unlocked.
 func (s *Server) captionVideoID(c echo.Context) (uuid.UUID, error) {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return uuid.UUID{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return uuid.UUID{}, err
 	}
 	v, err := s.videosvc.GetByID(c.Request().Context(), id)
 	if err != nil {
@@ -144,13 +144,13 @@ func (s *Server) handleDownloadCaption(c echo.Context) error {
 // handleDeleteCaption removes a caption track from a video owned by the caller.
 // Behind requireAuth. Non-owner/unknown video → 404. Idempotent.
 func (s *Server) handleDeleteCaption(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	// Owner OR editor collaborator (migration 0097).
 	v, canManage := s.canManageVideo(c.Request().Context(), userID, id)

@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/block"
@@ -28,13 +27,13 @@ type blockedUserListResponse struct {
 // handleBlockUser blocks another account for the caller. Behind requireAuth.
 // Blocking yourself → 422; an unknown target → 404. Idempotent.
 func (s *Server) handleBlockUser(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	targetID, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		return err
+	}
+	targetID, err := pathUUID(c, "id", "user not found")
+	if err != nil {
+		return err
 	}
 	if err := s.blocksvc.Block(c.Request().Context(), userID, targetID); err != nil {
 		switch {
@@ -51,13 +50,13 @@ func (s *Server) handleBlockUser(c echo.Context) error {
 // handleUnblockUser lifts the caller's block of another account. Behind
 // requireAuth. Idempotent (unblocking a not-blocked account still succeeds).
 func (s *Server) handleUnblockUser(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	targetID, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		return err
+	}
+	targetID, err := pathUUID(c, "id", "user not found")
+	if err != nil {
+		return err
 	}
 	if err := s.blocksvc.Unblock(c.Request().Context(), userID, targetID); err != nil {
 		return err
@@ -68,9 +67,9 @@ func (s *Server) handleUnblockUser(c echo.Context) error {
 // handleListBlockedUsers returns the accounts the caller has blocked, newest
 // block first. Behind requireAuth. Pagination via ?limit (1–100, default 20)/?offset.
 func (s *Server) handleListBlockedUsers(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.blocksvc.List(c.Request().Context(), userID, page.Limit32(), page.Offset32())

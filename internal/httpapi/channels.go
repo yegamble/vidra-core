@@ -130,9 +130,9 @@ type followedChannelsResponse struct {
 // when the caller is at the operator's per-user channel limit
 // (max_channels_per_user, W8; 0 = unlimited).
 func (s *Server) handleCreateChannel(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in createChannelRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -165,9 +165,9 @@ func (s *Server) handleCreateChannel(c echo.Context) error {
 // a true total — it previously returned every channel unbounded and issued one
 // follower-count query per row.
 func (s *Server) handleListMyChannels(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	ctx := c.Request().Context()
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
@@ -190,9 +190,9 @@ func (s *Server) handleListMyChannels(c echo.Context) error {
 // follows (the "FOLLOWING" list), most recently followed first. Paginated via
 // ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListFollowedChannels(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	ctx := c.Request().Context()
@@ -247,9 +247,9 @@ func (r updateChannelRequest) Validate() []FieldError {
 
 // handleUpdateChannel updates a channel owned by the authenticated user.
 func (s *Server) handleUpdateChannel(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in updateChannelRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -279,9 +279,9 @@ func (s *Server) handleUpdateChannel(c echo.Context) error {
 
 // handleDeleteChannel deletes a channel owned by the authenticated user.
 func (s *Server) handleDeleteChannel(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	ctx := c.Request().Context()
 	// Resolve the id before deletion so the search suppression targets it.
@@ -379,9 +379,9 @@ func (s *Server) atprotoActiveForOwner(ctx context.Context, ownerID uuid.UUID) *
 
 // handleFollowChannel makes the authenticated user follow a channel. Idempotent.
 func (s *Server) handleFollowChannel(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	ctx := c.Request().Context()
 	ch, created, err := s.channelsvc.Follow(ctx, userID, c.Param("handle"))
@@ -405,15 +405,15 @@ func (s *Server) handleFollowChannel(c echo.Context) error {
 // nothing to set otherwise, and the two cases are deliberately indistinguishable.
 // 422 for an unsupported mode.
 func (s *Server) handleSetFollowNotifications(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in setFollowNotificationsRequest
 	if err := c.Bind(&in); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	err := s.channelsvc.SetFollowNotification(c.Request().Context(), userID, c.Param("handle"), in.NotificationSetting)
+	err = s.channelsvc.SetFollowNotification(c.Request().Context(), userID, c.Param("handle"), in.NotificationSetting)
 	if err != nil {
 		if errors.Is(err, channel.ErrInvalidNotificationSetting) {
 			return echo.NewHTTPError(http.StatusUnprocessableEntity,
@@ -426,9 +426,9 @@ func (s *Server) handleSetFollowNotifications(c echo.Context) error {
 
 // handleUnfollowChannel removes the authenticated user's follow. Idempotent.
 func (s *Server) handleUnfollowChannel(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if err := s.channelsvc.Unfollow(c.Request().Context(), userID, c.Param("handle")); err != nil {
 		return channelError(err)

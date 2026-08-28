@@ -7,9 +7,9 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -103,7 +103,7 @@ func (s *Service) Delete(ctx context.Context, userID uuid.UUID) error {
 	}
 
 	// 3. Comment tombstones (threads preserved; views render "[deleted]").
-	if err := s.repo.TombstoneUserComments(ctx, pgtype.UUID{Bytes: userID, Valid: true}); err != nil {
+	if err := s.repo.TombstoneUserComments(ctx, pgconv.UUID(userID)); err != nil {
 		return fmt.Errorf("account: tombstone comments: %w", err)
 	}
 

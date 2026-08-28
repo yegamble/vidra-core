@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -202,7 +203,7 @@ func (s *Service) resolveNoteTarget(ctx context.Context, inReplyTo string) (uuid
 		parent = p
 	}
 	ok, err := s.videoIsPubliclyVisible(ctx, parent.VideoID)
-	return parent.VideoID, pgtype.UUID{Bytes: parent.ID, Valid: true}, ok, err
+	return parent.VideoID, pgconv.UUID(parent.ID), ok, err
 }
 
 // videoIsPubliclyVisible reports whether a local video exists and is public +

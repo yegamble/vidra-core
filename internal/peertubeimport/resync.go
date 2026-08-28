@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -537,7 +538,7 @@ func (im *Importer) resyncOneVideo(ctx context.Context, v SourceVideo, r *Report
 		origPub = cur.origPub
 	}
 	desired := videoDigest(channel, v.Title, v.Description, mapPrivacy(v.Privacy), mapVideoState(v.State),
-		derefText(intPtrToText(v.Category)), derefText(v.Language), derefText(intPtrToText(v.Licence)), duration, origPub)
+		pgconv.Deref(intPtrToText(v.Category)), pgconv.Deref(v.Language), pgconv.Deref(intPtrToText(v.Licence)), duration, origPub)
 
 	tags, err := im.desiredTags(ctx, v.ID)
 	if err != nil {
@@ -1055,15 +1056,4 @@ func (im *Importer) resyncRemovedFollows(ctx context.Context, follows []SourceFo
 		c.Updated++
 	}
 	return nil
-}
-
-// derefText renders an optional mapped text field for the digest. nil and "" are
-// deliberately the same value here: the destination read COALESCEs an unset
-// column to "", and a distinction the destination cannot represent must not be
-// one the comparison depends on.
-func derefText(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
 }

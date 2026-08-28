@@ -157,13 +157,13 @@ func (r updateUserRequest) Validate() []FieldError {
 // Behind requireRole(admin). Self-demotion/self-deactivation is rejected; an
 // unknown id is 404. Emits an audit event.
 func (s *Server) handleUpdateUser(c echo.Context) error {
-	callerID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	targetID, err := uuid.Parse(c.Param("id"))
+	callerID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		return err
+	}
+	targetID, err := pathUUID(c, "id", "user not found")
+	if err != nil {
+		return err
 	}
 	var in updateUserRequest
 	if err := bindAndValidate(c, &in); err != nil {

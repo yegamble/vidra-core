@@ -32,6 +32,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/vidra/vidra-core/internal/atproto"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -365,7 +366,7 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 		HistoryEnabled: s.auth.newUserHistoryEnabled(),
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
+		if pgconv.IsUniqueViolation(err) {
 			return sqlcgen.User{}, Tokens{}, "", ErrConflict
 		}
 		return sqlcgen.User{}, Tokens{}, "", err
@@ -375,7 +376,7 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 	if _, err := s.repo.CreateOAuthIdentity(ctx, sqlcgen.CreateOAuthIdentityParams{
 		Provider: atprotoProvider, Subject: did, UserID: user.ID, Email: "", Handle: handle,
 	}); err != nil {
-		if isUniqueViolation(err) {
+		if pgconv.IsUniqueViolation(err) {
 			return sqlcgen.User{}, Tokens{}, "", ErrConflict
 		}
 		return sqlcgen.User{}, Tokens{}, "", err

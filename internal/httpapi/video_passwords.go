@@ -71,7 +71,7 @@ func (s *Server) passwordGate(c echo.Context, videoID uuid.UUID, privacy string,
 	if privacy != video.PrivacyPassword {
 		return nil
 	}
-	if userID, role, ok := principalFromContext(c); ok && (userID == ownerID || role == "admin" || role == "moderator") {
+	if userID, role, ok := principalFromContext(c); ok && (userID == ownerID || isStaff(role)) {
 		return nil
 	}
 	if s.hasPlaybackToken(c, videoID, playback.ScopePlayback) {
@@ -103,9 +103,9 @@ type unlockResponse struct {
 // endpoint reveals nothing about non-password videos). Never logs the password or
 // the token.
 func (s *Server) handleUnlockVideo(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	var in unlockRequest
 	if err := c.Bind(&in); err != nil {
@@ -174,13 +174,13 @@ type replaceVideoPasswordsRequest struct {
 // handleListVideoPasswords lists a video's passwords (owner only; id + created_at
 // only). A non-owner or unknown id is 404.
 func (s *Server) handleListVideoPasswords(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	ps, err := s.videosvc.ListPasswords(c.Request().Context(), userID, id)
 	if err != nil {
@@ -193,13 +193,13 @@ func (s *Server) handleListVideoPasswords(c echo.Context) error {
 // chars → else 400). Returns the new row (id + created_at) with 201. Never logs
 // or echoes the plaintext.
 func (s *Server) handleAddVideoPassword(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	var in setVideoPasswordRequest
 	if err := c.Bind(&in); err != nil {
@@ -215,13 +215,13 @@ func (s *Server) handleAddVideoPassword(c echo.Context) error {
 // handleReplaceVideoPasswords replaces a video's whole password set (owner only;
 // 1–20 entries, each 6–100 chars → else 400). Returns the stored set (GET shape).
 func (s *Server) handleReplaceVideoPasswords(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	var in replaceVideoPasswordsRequest
 	if err := c.Bind(&in); err != nil {
@@ -238,17 +238,17 @@ func (s *Server) handleReplaceVideoPasswords(c echo.Context) error {
 // 404 for an unknown passwordId; 409 when it is the last password of a
 // privacy=password video.
 func (s *Server) handleDeleteVideoPassword(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
-	pwID, err := uuid.Parse(c.Param("passwordId"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "password not found")
+		return err
+	}
+	pwID, err := pathUUID(c, "passwordId", "password not found")
+	if err != nil {
+		return err
 	}
 	if err := s.videosvc.DeletePassword(c.Request().Context(), userID, id, pwID); err != nil {
 		return videoPasswordError(err)

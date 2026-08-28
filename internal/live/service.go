@@ -27,6 +27,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -249,15 +250,6 @@ type LiveCard struct {
 	StartedAt          *time.Time
 }
 
-// timePtr converts a nullable timestamptz to *time.Time (nil when NULL).
-func timePtr(ts pgtype.Timestamptz) *time.Time {
-	if !ts.Valid {
-		return nil
-	}
-	t := ts.Time
-	return &t
-}
-
 // CreateInput is the metadata for a new live stream.
 type CreateInput struct {
 	Title         string
@@ -303,7 +295,7 @@ func (s *Service) Create(ctx context.Context, channelID uuid.UUID, in CreateInpu
 	return Stream{
 		ID: row.ID, ChannelID: row.ChannelID, Title: row.Title, Description: row.Description,
 		Privacy: row.Privacy, State: row.State, Permanent: row.Permanent, ReplayEnabled: row.ReplayEnabled,
-		StartedAt: timePtr(row.StartedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		StartedAt: pgconv.TimeOrNil(row.StartedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}, rawKey, nil
 }
 
@@ -330,7 +322,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (Str
 	return Stream{
 		ID: row.ID, ChannelID: row.ChannelID, Title: row.Title, Description: row.Description,
 		Privacy: row.Privacy, State: row.State, Permanent: row.Permanent, ReplayEnabled: row.ReplayEnabled,
-		StartedAt: timePtr(row.StartedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		StartedAt: pgconv.TimeOrNil(row.StartedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}, nil
 }
 
@@ -344,7 +336,7 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Stream, error) {
 	return Stream{
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
-		StartedAt: timePtr(r.StartedAt), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		StartedAt: pgconv.TimeOrNil(r.StartedAt), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		OwnerID: r.OwnerID, ChannelHandle: r.ChannelHandle, ChannelDisplayName: r.ChannelDisplayName,
 	}, nil
 }
@@ -370,7 +362,7 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID, limit,
 		out = append(out, Stream{
 			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
-			StartedAt: timePtr(r.StartedAt), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			StartedAt: pgconv.TimeOrNil(r.StartedAt), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		})
 	}
 	return out, total, nil
@@ -398,7 +390,7 @@ func (s *Service) ListLivePublic(ctx context.Context, limit, offset int) ([]Live
 		out = append(out, LiveCard{
 			ID: r.ID, Title: r.Title, Description: r.Description,
 			ChannelHandle: r.ChannelHandle, ChannelDisplayName: r.ChannelDisplayName,
-			StartedAt: timePtr(r.StartedAt),
+			StartedAt: pgconv.TimeOrNil(r.StartedAt),
 		})
 	}
 	return out, total, nil

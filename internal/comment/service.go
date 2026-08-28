@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -152,11 +153,11 @@ func (s *Service) Create(ctx context.Context, videoID, userID uuid.UUID, body st
 		if err != nil || p.VideoID != videoID {
 			return sqlcgen.Comment{}, ErrParentNotFound
 		}
-		parent = pgtype.UUID{Bytes: *parentID, Valid: true}
+		parent = pgconv.UUID(*parentID)
 	}
 	created, err := s.repo.CreateComment(ctx, sqlcgen.CreateCommentParams{
 		VideoID:  videoID,
-		UserID:   pgtype.UUID{Bytes: userID, Valid: true},
+		UserID:   pgconv.UUID(userID),
 		Body:     body,
 		ParentID: parent,
 	})
@@ -304,7 +305,7 @@ func (s *Service) Pin(ctx context.Context, commentID uuid.UUID) (WithAuthor, err
 	}
 	if err := s.repo.SetVideoPinnedComment(ctx, sqlcgen.SetVideoPinnedCommentParams{
 		VideoID:         row.VideoID,
-		PinnedCommentID: pgtype.UUID{Bytes: commentID, Valid: true},
+		PinnedCommentID: pgconv.UUID(commentID),
 	}); err != nil {
 		return WithAuthor{}, err
 	}

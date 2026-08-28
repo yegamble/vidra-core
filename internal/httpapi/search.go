@@ -306,9 +306,9 @@ func (s *Server) homeRecommendationsFallback(c echo.Context, limit int, viewerID
 // optionalAuth. Tries vidra-search; on disable/error/empty falls back to the
 // server-side same-channel + same-category heuristic.
 func (s *Server) handleVideoRecommendations(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	limit := parseLimit(c, 12, 50)
 	ctx := c.Request().Context()
@@ -486,9 +486,9 @@ func (s *Server) searchHistoryGate() error {
 // vidra-search. requireAuth. Admin-off → 403 feature_disabled; unwired/unreachable
 // → 503 search_unavailable (an honest failure, not a fake empty history).
 func (s *Server) handleGetSearchHistory(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if err := s.searchHistoryGate(); err != nil {
 		return err
@@ -516,9 +516,9 @@ func (s *Server) handleGetSearchHistory(c echo.Context) error {
 // vidra-search. requireAuth. Admin-off → 403 feature_disabled; service down → 503
 // search_unavailable (must not silently fail).
 func (s *Server) handleClearSearchHistory(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if err := s.searchHistoryGate(); err != nil {
 		return err
@@ -533,9 +533,9 @@ func (s *Server) handleClearSearchHistory(c echo.Context) error {
 // caller's history. requireAuth. Admin-off → 403 feature_disabled; service down
 // → 503 search_unavailable.
 func (s *Server) handleDeleteSearchHistoryQuery(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if err := s.searchHistoryGate(); err != nil {
 		return err

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/audit"
@@ -33,13 +32,13 @@ func (r runVideoTranscodingRequest) Validate() []FieldError {
 // clients cannot submit a derivative key, so repeated runs never transcode an
 // already-transcoded file and therefore cannot accumulate generation loss.
 func (s *Server) handleRunVideoTranscoding(c echo.Context) error {
-	actorID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	actorID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	var in runVideoTranscodingRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -266,13 +265,13 @@ func (s *Server) handleListQuarantinedVideos(c echo.Context) error {
 // moderator). Unknown id → 404; a video not in quarantine → 409. Emits an
 // audit event.
 func (s *Server) handleApproveQuarantinedVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	if _, err := s.videosvc.ApproveQuarantined(c.Request().Context(), id); err != nil {
 		switch {
@@ -308,13 +307,13 @@ func (r rejectQuarantinedVideoRequest) Validate() []FieldError {
 // in quarantine → 409. Emits an audit event with a stable rejection
 // classification; moderator prose remains outside the security ledger.
 func (s *Server) handleRejectQuarantinedVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "video not found")
+	if err != nil {
+		return err
 	}
 	var in rejectQuarantinedVideoRequest
 	if err := bindAndValidate(c, &in); err != nil {

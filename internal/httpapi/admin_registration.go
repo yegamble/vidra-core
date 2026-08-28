@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/auth"
@@ -79,13 +78,13 @@ func (s *Server) handleListRegistrationRequests(c echo.Context) error {
 // Behind requireRole(admin). Unknown/already-resolved id → 404; a username/email
 // taken since the request was filed → 409. Emits an audit event.
 func (s *Server) handleApproveRegistration(c echo.Context) error {
-	adminID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	adminID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "registration request not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "registration request not found")
+	if err != nil {
+		return err
 	}
 	user, err := s.authsvc.ApproveRegistration(c.Request().Context(), adminID, id)
 	if err != nil {
@@ -117,13 +116,13 @@ func (r rejectRegistrationRequestBody) Validate() []FieldError {
 // note. Behind requireRole(admin). Unknown/already-resolved id → 404. Emits an
 // audit event.
 func (s *Server) handleRejectRegistration(c echo.Context) error {
-	adminID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	adminID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "registration request not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "registration request not found")
+	if err != nil {
+		return err
 	}
 	var in rejectRegistrationRequestBody
 	if err := bindAndValidate(c, &in); err != nil {

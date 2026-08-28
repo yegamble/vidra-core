@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/live"
@@ -184,9 +183,9 @@ type liveStreamListResponse struct {
 // returns it plus the stream key (once) and the RTMP ingest URL. Behind
 // requireAuth; non-owner channel → 403, unknown channel → 404.
 func (s *Server) handleCreateLiveStream(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if !s.liveEnabled() {
 		return &FeatureDisabledError{Feature: "live"}
@@ -235,13 +234,13 @@ func (s *Server) handleCreateLiveStream(c echo.Context) error {
 // id is 404 (existence is not leaked). It never rotates the key or changes the
 // live state.
 func (s *Server) handleUpdateLiveStream(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "live stream not found")
+	if err != nil {
+		return err
 	}
 	var in updateLiveStreamRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -268,9 +267,9 @@ func (s *Server) handleUpdateLiveStream(c echo.Context) error {
 // handleListLiveStreams lists the caller's live streams for a channel they own.
 // Behind requireAuth; non-owner → 403, unknown channel → 404. No stream keys.
 func (s *Server) handleListLiveStreams(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	ctx := c.Request().Context()
 	ch, err := s.channelsvc.GetByHandle(ctx, c.Param("handle"))
@@ -297,9 +296,9 @@ func (s *Server) handleListLiveStreams(c echo.Context) error {
 // optionalAuth: a private stream is visible only to its channel owner (else 404,
 // so its existence is not leaked). Never returns the stream key.
 func (s *Server) handleGetLiveStream(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "live stream not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
+		return err
 	}
 	stream, err := s.livesvc.Get(c.Request().Context(), id)
 	if err != nil {
@@ -317,13 +316,13 @@ func (s *Server) handleGetLiveStream(c echo.Context) error {
 // handleRegenerateLiveStreamKey rotates a live stream's key and returns the new
 // one (once). Behind requireAuth; non-owner/unknown → 404 (existence not leaked).
 func (s *Server) handleRegenerateLiveStreamKey(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "live stream not found")
+	if err != nil {
+		return err
 	}
 	ctx := c.Request().Context()
 	stream, err := s.livesvc.Get(ctx, id)
@@ -453,13 +452,13 @@ func (s *Server) handleLiveIngestStop(c echo.Context) error {
 // handleDeleteLiveStream deletes a live stream. Behind requireAuth;
 // non-owner/unknown → 404. Idempotent for the owner.
 func (s *Server) handleDeleteLiveStream(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	id, err := uuid.Parse(c.Param("id"))
+	userID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
+		return err
+	}
+	id, err := pathUUID(c, "id", "live stream not found")
+	if err != nil {
+		return err
 	}
 	ctx := c.Request().Context()
 	stream, err := s.livesvc.Get(ctx, id)

@@ -52,9 +52,9 @@ type mailTestResponse struct {
 //	      server log, never to the response).
 //	202 — handed to the relay.
 func (s *Server) handleMailTest(c echo.Context) error {
-	callerID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	callerID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 
 	sender, configured := s.testMailSender()

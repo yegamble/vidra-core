@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/account"
@@ -36,9 +35,9 @@ func (r deleteAccountRequest) Validate() []FieldError {
 // sessions are revoked, and the users row is anonymised. Irreversible. 204 on
 // success; a wrong (or absent — OAuth-only accounts) password is 403.
 func (s *Server) handleDeleteAccount(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in deleteAccountRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -69,13 +68,13 @@ func (s *Server) handleDeleteAccount(c echo.Context) error {
 // semantics, no password confirmation, self-guarded (an admin cannot delete
 // their own account this way — 422). Behind requireRole(admin).
 func (s *Server) handleAdminDeleteUser(c echo.Context) error {
-	adminID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
-	}
-	targetID, err := uuid.Parse(c.Param("id"))
+	adminID, _, err := mustPrincipal(c)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		return err
+	}
+	targetID, err := pathUUID(c, "id", "user not found")
+	if err != nil {
+		return err
 	}
 	if targetID == adminID {
 		s.audit(c, observability.ActionAdminUserDelete, observability.ResultFailure, adminID.String(), "self_delete_refused")
@@ -129,9 +128,9 @@ func (s *Server) accountExportView(row sqlcgen.AccountExport) accountExportView 
 // active export per user: 409 while one is pending/running; a finished/failed
 // export is replaced. 202 with the queued job's status.
 func (s *Server) handleRequestAccountExport(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if !s.userExportEnabled() {
 		return &FeatureDisabledError{Feature: "user_export"}
@@ -162,9 +161,9 @@ func (s *Server) handleRequestAccountExport(c echo.Context) error {
 // handleGetAccountExport reports the caller's latest export status. 404 when
 // none was ever requested (or the expired archive was already swept).
 func (s *Server) handleGetAccountExport(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	row, err := s.accountsvc.LatestExport(c.Request().Context(), userID)
 	if err != nil {
@@ -180,9 +179,9 @@ func (s *Server) handleGetAccountExport(c echo.Context) error {
 // attachment. 409 while the export is still pending/running or after it
 // failed; 404 when none exists; 410 past its 7-day expiry.
 func (s *Server) handleDownloadAccountExport(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	rc, row, err := s.accountsvc.OpenExport(c.Request().Context(), userID)
 	if err != nil {
@@ -208,9 +207,9 @@ func (s *Server) handleDownloadAccountExport(c echo.Context) error {
 // as skipped in the returned summary. The request body is bounded by the
 // global HTTP body limit.
 func (s *Server) handleImportAccount(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	// Operator toggle (user_import_enabled, W8): 403 feature_disabled when off.
 	if !s.userImportEnabled() {
