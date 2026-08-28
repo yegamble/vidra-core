@@ -10,11 +10,83 @@ import (
 	"github.com/vidra/vidra-core/internal/ratelimit"
 )
 
-// rateLimit returns middleware that enforces the limiter per client IP and sets
-// standard X-RateLimit-* headers. On the limiter's backing store failing (e.g.
-// Redis unreachable) it FAILS OPEN — the request is allowed and the error is
+// limitRule is one budget's policy: everything the five rate-limit middlewares
+// below actually differ by. The mechanics they share — fail open, the
+// X-RateLimit-* headers, the Retry-After floor, the 429 envelope — live once, in
+// limitBy.
+type limitRule struct {
+	// resolve picks the limiter and the key to charge for this request.
+	// Returning ok=false passes the request through UNLIMITED: either no limiter
+	// was wired (an embedder that never configured this budget) or the request
+	// carries no principal for a per-user budget. Both are deliberate
+	// passthroughs, not denials.
+	resolve func(c echo.Context) (limiter *ratelimit.Limiter, key string, ok bool)
+	// unavailable is the warning logged when the backing store errors and the
+	// request is let through. One line per budget so the log says which one.
+	unavailable string
+	// denied is the client-visible message on the 429.
+	denied string
+	// auditReason, when non-empty, records an ActionRateLimited audit event on
+	// denial carrying it. Only the budgets guarding credentials, mail and
+	// the public contact form audit; the general and attachment budgets are
+	// ordinary throttles and would only add noise.
+	auditReason string
+	// auditActor supplies the actor id for that event ("" for IP-keyed budgets,
+	// where there is no authenticated principal to name).
+	auditActor func(c echo.Context) string
+}
+
+// limitBy enforces one budget. It FAILS OPEN on the limiter's backing store
+// failing (e.g. Redis unreachable) — the request is allowed and the error is
 // logged — so a Redis blip degrades protection rather than availability. Denied
 // requests get a 429 rate_limited envelope with Retry-After.
+//
+// Retry-After is floored at 1: a sub-second window would otherwise emit
+// "Retry-After: 0", which clients read as "retry immediately".
+func (s *Server) limitBy(rule limitRule) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			limiter, key, ok := rule.resolve(c)
+			if !ok {
+				return next(c)
+			}
+			res, err := limiter.Allow(c.Request().Context(), key)
+			if err != nil {
+				s.logger.Warn(rule.unavailable,
+					"error", err,
+					"path", c.Path(),
+					"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
+				)
+				return next(c)
+			}
+
+			h := c.Response().Header()
+			h.Set("X-RateLimit-Limit", strconv.Itoa(res.Limit))
+			h.Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
+			h.Set("X-RateLimit-Reset", strconv.Itoa(int(res.Reset.Seconds())))
+
+			if !res.Allowed {
+				retry := int(res.RetryAfter.Seconds())
+				if retry < 1 {
+					retry = 1
+				}
+				h.Set("Retry-After", strconv.Itoa(retry))
+				if rule.auditReason != "" {
+					actor := ""
+					if rule.auditActor != nil {
+						actor = rule.auditActor(c)
+					}
+					s.audit(c, observability.ActionRateLimited, observability.ResultFailure, actor, rule.auditReason)
+				}
+				return echo.NewHTTPError(http.StatusTooManyRequests, rule.denied)
+			}
+			return next(c)
+		}
+	}
+}
+
+// rateLimit returns middleware that enforces the limiter per client IP and sets
+// standard X-RateLimit-* headers.
 //
 // It carries TWO budgets on one mount. Media GETs (mediaRouteTemplates) are
 // cheap, cacheable blob reads that a single page view fans out ~20 of — plus
@@ -31,8 +103,8 @@ import (
 // only honours X-Forwarded-For from loopback/private hops — see the comment
 // there. Without that, this and every other per-IP budget is header-spoofable.
 func (s *Server) rateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+	return s.limitBy(limitRule{
+		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
 			// Locals, never the captured parameter: reassigning `limiter` here
 			// would permanently swap the general limiter for the media one on the
 			// first media request.
@@ -40,32 +112,11 @@ func (s *Server) rateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
 			if isMediaRoute(c) && s.mediaLimit != nil {
 				active, key = s.mediaLimit, "media:"+c.RealIP()
 			}
-			res, err := active.Allow(c.Request().Context(), key)
-			if err != nil {
-				s.logger.Warn("rate limiter unavailable, failing open",
-					"error", err,
-					"path", c.Path(),
-					"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
-				)
-				return next(c)
-			}
-
-			h := c.Response().Header()
-			h.Set("X-RateLimit-Limit", strconv.Itoa(res.Limit))
-			h.Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
-			h.Set("X-RateLimit-Reset", strconv.Itoa(int(res.Reset.Seconds())))
-
-			if !res.Allowed {
-				retry := int(res.RetryAfter.Seconds())
-				if retry < 1 {
-					retry = 1
-				}
-				h.Set("Retry-After", strconv.Itoa(retry))
-				return echo.NewHTTPError(http.StatusTooManyRequests, "rate limit exceeded")
-			}
-			return next(c)
-		}
-	}
+			return active, key, true
+		},
+		unavailable: "rate limiter unavailable, failing open",
+		denied:      "rate limit exceeded",
+	})
 }
 
 // attachmentUploadRateLimit throttles DM attachment uploads PER USER (not per
@@ -73,44 +124,22 @@ func (s *Server) rateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
 // D6), so this is the compensating anti-abuse control. It is a no-op passthrough
 // when no attachment limiter is configured (e.g. unit tests) or the request did
 // not carry an authenticated principal (requireAuth runs first, so that is only a
-// defensive fallback). Like the other limiters it FAILS OPEN if the store is down
-// and denies with a 429 rate_limited envelope plus Retry-After.
+// defensive fallback).
 func (s *Server) attachmentUploadRateLimit() echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+	return s.limitBy(limitRule{
+		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
 			if s.attachmentLimit == nil {
-				return next(c)
+				return nil, "", false
 			}
 			userID, _, ok := principalFromContext(c)
 			if !ok {
-				return next(c)
+				return nil, "", false
 			}
-			res, err := s.attachmentLimit.Allow(c.Request().Context(), "dm-attach:"+userID.String())
-			if err != nil {
-				s.logger.Warn("attachment rate limiter unavailable, failing open",
-					"error", err,
-					"path", c.Path(),
-					"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
-				)
-				return next(c)
-			}
-
-			h := c.Response().Header()
-			h.Set("X-RateLimit-Limit", strconv.Itoa(res.Limit))
-			h.Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
-			h.Set("X-RateLimit-Reset", strconv.Itoa(int(res.Reset.Seconds())))
-
-			if !res.Allowed {
-				retry := int(res.RetryAfter.Seconds())
-				if retry < 1 {
-					retry = 1
-				}
-				h.Set("Retry-After", strconv.Itoa(retry))
-				return echo.NewHTTPError(http.StatusTooManyRequests, "attachment upload rate limit exceeded")
-			}
-			return next(c)
-		}
-	}
+			return s.attachmentLimit, "dm-attach:" + userID.String(), true
+		},
+		unavailable: "attachment rate limiter unavailable, failing open",
+		denied:      "attachment upload rate limit exceeded",
+	})
 }
 
 // contactRateLimit throttles the public contact form (POST /instance/contact)
@@ -120,36 +149,14 @@ func (s *Server) attachmentUploadRateLimit() echo.MiddlewareFunc {
 // audit event on denial (never the message or any address), 429 + Retry-After,
 // and FAIL OPEN when the backing store is down.
 func (s *Server) contactRateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			key := "contact:" + c.RealIP()
-			res, err := limiter.Allow(c.Request().Context(), key)
-			if err != nil {
-				s.logger.Warn("contact rate limiter unavailable, failing open",
-					"error", err,
-					"path", c.Path(),
-					"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
-				)
-				return next(c)
-			}
-
-			h := c.Response().Header()
-			h.Set("X-RateLimit-Limit", strconv.Itoa(res.Limit))
-			h.Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
-			h.Set("X-RateLimit-Reset", strconv.Itoa(int(res.Reset.Seconds())))
-
-			if !res.Allowed {
-				retry := int(res.RetryAfter.Seconds())
-				if retry < 1 {
-					retry = 1
-				}
-				h.Set("Retry-After", strconv.Itoa(retry))
-				s.audit(c, observability.ActionRateLimited, observability.ResultFailure, "", "contact_rate_limited")
-				return echo.NewHTTPError(http.StatusTooManyRequests, "rate limit exceeded")
-			}
-			return next(c)
-		}
-	}
+	return s.limitBy(limitRule{
+		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+			return limiter, "contact:" + c.RealIP(), true
+		},
+		unavailable: "contact rate limiter unavailable, failing open",
+		denied:      "rate limit exceeded",
+		auditReason: "contact_rate_limited",
+	})
 }
 
 // mailTestRateLimit throttles the admin mail probe (POST /admin/mail/test) PER
@@ -164,43 +171,26 @@ func (s *Server) contactRateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFun
 // FAIL OPEN when the backing store is down. Keyed by user id, not IP: two
 // admins behind one office address should not fight over one budget.
 func (s *Server) mailTestRateLimit() echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+	return s.limitBy(limitRule{
+		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
 			if s.mailTestLimit == nil {
-				return next(c)
+				return nil, "", false
 			}
 			userID, _, ok := principalFromContext(c)
 			if !ok {
 				// requireAuth runs first, so this is only a defensive fallback.
-				return next(c)
+				return nil, "", false
 			}
-			res, err := s.mailTestLimit.Allow(c.Request().Context(), "mail-test:"+userID.String())
-			if err != nil {
-				s.logger.Warn("mail test rate limiter unavailable, failing open",
-					"error", err,
-					"path", c.Path(),
-					"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
-				)
-				return next(c)
-			}
-
-			h := c.Response().Header()
-			h.Set("X-RateLimit-Limit", strconv.Itoa(res.Limit))
-			h.Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
-			h.Set("X-RateLimit-Reset", strconv.Itoa(int(res.Reset.Seconds())))
-
-			if !res.Allowed {
-				retry := int(res.RetryAfter.Seconds())
-				if retry < 1 {
-					retry = 1
-				}
-				h.Set("Retry-After", strconv.Itoa(retry))
-				s.audit(c, observability.ActionRateLimited, observability.ResultFailure, userID.String(), "mail_test_rate_limited")
-				return echo.NewHTTPError(http.StatusTooManyRequests, "you have sent several test messages recently; wait before sending another")
-			}
-			return next(c)
-		}
-	}
+			return s.mailTestLimit, "mail-test:" + userID.String(), true
+		},
+		unavailable: "mail test rate limiter unavailable, failing open",
+		denied:      "you have sent several test messages recently; wait before sending another",
+		auditReason: "mail_test_rate_limited",
+		auditActor: func(c echo.Context) string {
+			userID, _, _ := principalFromContext(c)
+			return userID.String()
+		},
+	})
 }
 
 // authRateLimit is a stricter limiter for the sensitive auth endpoints. It keys
@@ -209,34 +199,12 @@ func (s *Server) mailTestRateLimit() echo.MiddlewareFunc {
 // general API budget. On denial it records an audit event (never the credentials)
 // and returns 429. Like the general limiter it FAILS OPEN if the store is down.
 func (s *Server) authRateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			key := "auth:" + c.RealIP()
-			res, err := limiter.Allow(c.Request().Context(), key)
-			if err != nil {
-				s.logger.Warn("auth rate limiter unavailable, failing open",
-					"error", err,
-					"path", c.Path(),
-					"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
-				)
-				return next(c)
-			}
-
-			h := c.Response().Header()
-			h.Set("X-RateLimit-Limit", strconv.Itoa(res.Limit))
-			h.Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
-			h.Set("X-RateLimit-Reset", strconv.Itoa(int(res.Reset.Seconds())))
-
-			if !res.Allowed {
-				retry := int(res.RetryAfter.Seconds())
-				if retry < 1 {
-					retry = 1
-				}
-				h.Set("Retry-After", strconv.Itoa(retry))
-				s.audit(c, observability.ActionRateLimited, observability.ResultFailure, "", "auth_rate_limited")
-				return echo.NewHTTPError(http.StatusTooManyRequests, "rate limit exceeded")
-			}
-			return next(c)
-		}
-	}
+	return s.limitBy(limitRule{
+		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+			return limiter, "auth:" + c.RealIP(), true
+		},
+		unavailable: "auth rate limiter unavailable, failing open",
+		denied:      "rate limit exceeded",
+		auditReason: "auth_rate_limited",
+	})
 }
