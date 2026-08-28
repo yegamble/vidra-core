@@ -51,6 +51,13 @@ func TestInfrastructureReportsTheDeployShape(t *testing.T) {
 	if body.Server.Environment != "test" {
 		t.Errorf("environment = %q, want test", body.Server.Environment)
 	}
+	// The process role is deploy-time shape in the purest sense: it decides
+	// whether this process runs workers at all, and a fleet accidentally
+	// deployed all-api (zero workers — no transcodes, no GC, no outbox) is
+	// indistinguishable from a healthy all-in-one install without it.
+	if body.Server.Role != "all" {
+		t.Errorf("role = %q, want all (testConfig mirrors the production default)", body.Server.Role)
+	}
 	if body.Server.BodyLimit != "8M" || body.Server.UploadMaxBytes != 64000 {
 		t.Errorf("server caps = %+v, want body_limit 8M and a 64K upload cap in bytes", body.Server)
 	}

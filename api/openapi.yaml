@@ -18805,7 +18805,8 @@ components:
       properties:
         server:
           type: object
-          required: [environment, request_timeout_seconds, stream_request_timeout_seconds,
+          required: [environment, role, request_timeout_seconds,
+                     stream_request_timeout_seconds,
                      body_limit, upload_max_bytes, metrics_enabled, tracing_enabled,
                      tracing_protocol, db_max_conns, db_min_conns,
                      db_conn_max_lifetime_seconds, db_conn_max_idle_time_seconds,
@@ -18814,6 +18815,17 @@ components:
             environment:
               type: string
               enum: [development, test, production]
+            role:
+              type: string
+              enum: [all, api, worker]
+              description: >-
+                VIDRA_ROLE — whether this process runs the background workers
+                and/or serves HTTP. Boot-baked topology, not a credential. A
+                fleet accidentally deployed all-api runs zero workers (no
+                transcodes, no media GC, no search outbox) and is otherwise
+                indistinguishable from a healthy all-in-one install. Reports
+                the role of the process ANSWERING this request — a worker-only
+                process never serves this page.
             request_timeout_seconds:
               type: integer
               format: int64

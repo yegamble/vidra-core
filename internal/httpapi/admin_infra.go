@@ -51,6 +51,19 @@ type infraServer struct {
 	// dozen fail-secure defaults, so an operator who thinks they deployed
 	// production and did not needs to see it in one place.
 	Environment string `json:"environment"`
+	// Role is VIDRA_ROLE (all|api|worker): boot-baked, and it decides whether
+	// this process runs the background workers and whether it serves HTTP. Not
+	// a credential — it is topology the operator chose. It is here because a
+	// fleet accidentally deployed all-role=api runs ZERO workers (no
+	// transcodes, no media GC, no search outbox) and looks identical to a
+	// healthy all-in-one install from inside the product; this page's whole job
+	// is to be the place that difference shows.
+	//
+	// It reports the role of the process ANSWERING this request — which is the
+	// honest limit of the page: a worker-only process never serves it, so a
+	// fleet's worker roles are confirmed by their absence of a listener, not
+	// here.
+	Role string `json:"role"`
 	// RequestTimeoutSeconds / StreamRequestTimeoutSeconds are the per-request
 	// deadlines. The stream one applies to uploads and media reads, which are
 	// bounded by the client's link speed rather than server work — a slow
@@ -242,6 +255,7 @@ func (s *Server) handleInfrastructure(c echo.Context) error {
 	return c.JSON(http.StatusOK, infrastructureResponse{
 		Server: infraServer{
 			Environment:                 cfg.Environment,
+			Role:                        cfg.Role.String(),
 			RequestTimeoutSeconds:       int64(cfg.HTTPRequestTimeout.Seconds()),
 			StreamRequestTimeoutSeconds: int64(cfg.HTTPStreamRequestTimeout.Seconds()),
 			BodyLimit:                   cfg.HTTPBodyLimit,

@@ -20,7 +20,10 @@ func (f fakePinger) Ping(context.Context) error { return f.err }
 
 func testConfig() *config.Config {
 	return &config.Config{
-		Environment:         "test",
+		Environment: "test",
+		// The production default: boot normalises an unset VIDRA_ROLE to "all",
+		// so a hand-built test config carries the same shape the server ships.
+		Role:                config.RoleAll,
 		HTTPHost:            "127.0.0.1",
 		HTTPPort:            8080,
 		CORSAllowedOrigins:  []string{"http://localhost:3000"},
