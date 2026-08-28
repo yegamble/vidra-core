@@ -1012,6 +1012,20 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 			canManage = s.canManageChannelContent(c.Request().Context(), userID, existing.ChannelID)
 		}
 	}
+	// Snapshot before the write: a video that has already left the Eligible
+	// fence can no longer answer "what could an anonymous visitor have
+	// fetched?", which is the question the edge's contents answer
+	// (media_purge.go).
+	//
+	// Only for a PATCH that could move it out of public+published, because the
+	// snapshot costs a handful of reads and the overwhelmingly common edit is a
+	// title or a description. THE INVARIANT: any future field that can change
+	// privacy or state belongs in this list. Missing one is a missed purge, not
+	// a wrong one — the post-update check below is what decides.
+	var purge edgePurgeSnapshot
+	if in.Privacy != nil || in.PublishAt != nil || in.PublishAfterTranscode != nil {
+		purge = s.videoEdgePurgeSnapshot(c.Request().Context(), id)
+	}
 	v, err := s.videosvc.UpdateForActor(c.Request().Context(), userID, id, video.UpdateInput{
 		Title:           in.Title,
 		Description:     in.Description,
@@ -1041,6 +1055,13 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	if managedOther {
 		s.audit(c, observability.ActionVideoUpdate, observability.ResultSuccess, userID.String(),
 			"video="+id.String()+" fields="+strings.Join(updateVideoFieldNames(in), ","))
+	}
+	// The trigger is the LOSS of eligibility, not the PATCH. An ordinary title
+	// edit must not cold-start the edge for the whole ladder; a flip to
+	// private/unlisted — or out of `published` — is the moment every shared copy
+	// became unauthorized.
+	if !publicVideoForIPFS(v.Privacy, v.State) {
+		s.purgeVideoEdgeCopies(c.Request().Context(), id, purge)
 	}
 	view := newVideoView(v)
 	s.attachVideoTags(c.Request().Context(), &view, v.ID)
@@ -1115,10 +1136,15 @@ func (s *Server) handleDeleteVideo(c echo.Context) error {
 			canManage = s.canManageChannelContent(ctx, userID, v.ChannelID)
 		}
 	}
+	// The edge may still be holding this video's bytes, and deleting the video
+	// deletes the rows that NAME them — so the key set is snapshotted here and
+	// invalidated after the delete commits (media_purge.go).
+	purge := s.videoEdgePurgeSnapshot(ctx, id)
 	if err := s.videosvc.DeleteForActor(ctx, userID, id, canManage); err != nil {
 		return videoError(err)
 	}
 	s.audit(c, observability.ActionVideoDelete, observability.ResultSuccess, userID.String(), id.String())
+	s.purgeVideoEdgeCopies(ctx, id, purge)
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -1610,6 +1636,10 @@ func (s *Server) handleBlockVideo(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
+	// A block changes neither privacy nor state, so nothing about the row says
+	// the edge must be evicted — but a blocked video that keeps streaming from a
+	// CDN is not blocked. Snapshot before, invalidate after (media_purge.go).
+	purge := s.videoEdgePurgeSnapshot(c.Request().Context(), id)
 	if err := s.moderationsvc.BlockVideo(c.Request().Context(), userID, id, strings.TrimSpace(in.Reason)); err != nil {
 		if errors.Is(err, moderation.ErrVideoNotFound) {
 			s.audit(c, observability.ActionVideoBlock, observability.ResultFailure, userID.String(), "not_found")
@@ -1620,6 +1650,7 @@ func (s *Server) handleBlockVideo(c echo.Context) error {
 	s.audit(c, observability.ActionVideoBlock, observability.ResultSuccess, userID.String(), "")
 	// Search: suppress the doc (search-service W4). Best-effort.
 	s.searchEvents.EnqueueVideoSuppress(c.Request().Context(), id, searchevents.SuppressBlocked)
+	s.purgeVideoEdgeCopies(c.Request().Context(), id, purge)
 	return c.NoContent(http.StatusNoContent)
 }
 
