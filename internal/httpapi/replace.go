@@ -55,7 +55,7 @@ func (s *Server) replaceTarget(ctx context.Context, c echo.Context, id uuid.UUID
 	// Staff (admin/moderator) replace any local video; an editor collaborator
 	// (migration 0097) replaces their channel's videos. Both flow through the
 	// ReplaceSource canManage escape.
-	canManage := role == "admin" || role == "moderator"
+	canManage := isStaff(role)
 	v, err := s.videosvc.GetByID(ctx, id)
 	if err != nil {
 		return sqlcgen.GetVideoByIDRow{}, false, echo.NewHTTPError(http.StatusNotFound, "video not found")

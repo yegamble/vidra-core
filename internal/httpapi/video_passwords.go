@@ -71,7 +71,7 @@ func (s *Server) passwordGate(c echo.Context, videoID uuid.UUID, privacy string,
 	if privacy != video.PrivacyPassword {
 		return nil
 	}
-	if userID, role, ok := principalFromContext(c); ok && (userID == ownerID || role == "admin" || role == "moderator") {
+	if userID, role, ok := principalFromContext(c); ok && (userID == ownerID || isStaff(role)) {
 		return nil
 	}
 	if s.hasPlaybackToken(c, videoID, playback.ScopePlayback) {

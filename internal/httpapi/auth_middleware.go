@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+
+	"github.com/vidra/vidra-core/internal/admin"
 )
 
 // Echo context keys for the authenticated principal. Unexported so only this
@@ -121,6 +123,14 @@ func mustPrincipal(c echo.Context) (uuid.UUID, string, error) {
 		return uuid.Nil, "", echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
 	return id, role, nil
+}
+
+// isStaff reports whether role is one of the two moderation roles. The pair is
+// the "moderation escape" every content route consults — staff read and manage
+// any local video, comment or live stream regardless of ownership — and it was
+// spelled out inline under six different local names before this helper.
+func isStaff(role string) bool {
+	return role == admin.RoleAdmin || role == admin.RoleModerator
 }
 
 // tokenExpiryFromContext returns the authenticated access-token expiry. Long

@@ -525,7 +525,7 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 // the underlying files.
 func (s *Server) videoVisibleForDetail(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
 	_, role, ok := principalFromContext(c)
-	if !ok || (role != "admin" && role != "moderator") {
+	if !ok || !isStaff(role) {
 		return s.videoVisibleForRead(c, videoID)
 	}
 	v, err := s.videosvc.GetByID(c.Request().Context(), videoID)
@@ -1010,11 +1010,11 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	// an editor collaborator (migration 0097) manages their channel's videos.
 	// managedOther gates the moderation audit — it stays staff-only, so an
 	// editor's ordinary edit is not logged as a moderation action.
-	isStaff := role == "admin" || role == "moderator"
-	canManage := isStaff
+	staff := isStaff(role)
+	canManage := staff
 	managedOther := false
 	if existing, lookupErr := s.videosvc.GetByID(c.Request().Context(), id); lookupErr == nil {
-		if isStaff {
+		if staff {
 			managedOther = existing.OwnerID != userID
 		} else if existing.OwnerID != userID {
 			canManage = s.canManageChannelContent(c.Request().Context(), userID, existing.ChannelID)
@@ -1116,9 +1116,9 @@ func (s *Server) handleDeleteVideo(c echo.Context) error {
 	// Staff delete any local video (moderation escape); an editor collaborator
 	// (migration 0097) deletes their channel's videos.
 	ctx := c.Request().Context()
-	isStaff := role == "admin" || role == "moderator"
-	canManage := isStaff
-	if !isStaff {
+	staff := isStaff(role)
+	canManage := staff
+	if !staff {
 		if v, lookupErr := s.videosvc.GetByID(ctx, id); lookupErr == nil && v.OwnerID != userID {
 			canManage = s.canManageChannelContent(ctx, userID, v.ChannelID)
 		}
@@ -1455,7 +1455,7 @@ func (s *Server) videoHiddenByBlock(c echo.Context, videoID uuid.UUID) (bool, er
 		return false, err
 	}
 	_, role, _ := principalFromContext(c)
-	if role == "admin" || role == "moderator" {
+	if isStaff(role) {
 		return false, nil
 	}
 	return true, nil
@@ -1468,7 +1468,7 @@ func quarantineHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool 
 		return false
 	}
 	userID, role, ok := principalFromContext(c)
-	return !ok || (userID != ownerID && role != "admin" && role != "moderator")
+	return !ok || (userID != ownerID && !isStaff(role))
 }
 
 // scheduledHidesVideo keeps a scheduled video private until the publish
@@ -1490,7 +1490,7 @@ func transcodingHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool
 		return false
 	}
 	userID, role, ok := principalFromContext(c)
-	return !ok || (userID != ownerID && role != "admin" && role != "moderator")
+	return !ok || (userID != ownerID && !isStaff(role))
 }
 
 // videoHiddenFromViewer combines the moderation visibility rules the media/
@@ -1547,7 +1547,7 @@ func (s *Server) videoVisibleForMedia(c echo.Context, videoID uuid.UUID) (sqlcge
 		return v, nil
 	}
 	userID, role, ok := principalFromContext(c)
-	if ok && (userID == v.OwnerID || role == "admin" || role == "moderator") {
+	if ok && (userID == v.OwnerID || isStaff(role)) {
 		return v, nil
 	}
 	return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")

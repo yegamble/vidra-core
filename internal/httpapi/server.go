@@ -1231,8 +1231,8 @@ func (s *Server) routes() {
 		api.GET("/instance/homepage", s.handleGetInstanceHomepage)
 		api.GET("/instance/custom.css", s.handleGetInstanceCustomCSS)
 		api.GET("/instance/custom.js", s.handleGetInstanceCustomJS)
-		api.GET("/admin/instance-documents/:name", s.handleGetInstanceDocumentAdmin, s.requireAuth, s.requireRole("admin"))
-		api.PUT("/admin/instance-documents/:name", s.handlePutInstanceDocument, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/instance-documents/:name", s.handleGetInstanceDocumentAdmin, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.PUT("/admin/instance-documents/:name", s.handlePutInstanceDocument, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	if s.authsvc != nil {
@@ -1303,9 +1303,9 @@ func (s *Server) routes() {
 
 		// Registration approval queue (admin-only). Present whenever auth is wired;
 		// only meaningful when REGISTRATION_REQUIRE_APPROVAL is on.
-		api.GET("/admin/registration-requests", s.handleListRegistrationRequests, s.requireAuth, s.requireRole("admin"))
-		api.POST("/admin/registration-requests/:id/approve", s.handleApproveRegistration, s.requireAuth, s.requireRole("admin"))
-		api.POST("/admin/registration-requests/:id/reject", s.handleRejectRegistration, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/registration-requests", s.handleListRegistrationRequests, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/registration-requests/:id/approve", s.handleApproveRegistration, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/registration-requests/:id/reject", s.handleRejectRegistration, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// Account lifecycle (P4 export/import + §1 hard delete). The self-delete
@@ -1314,7 +1314,7 @@ func (s *Server) routes() {
 	// download (archives expire after 7 days).
 	if s.accountsvc != nil && s.authsvc != nil {
 		api.DELETE("/auth/me", s.handleDeleteAccount, s.requireAuth)
-		api.DELETE("/admin/users/:id", s.handleAdminDeleteUser, s.requireAuth, s.requireRole("admin"))
+		api.DELETE("/admin/users/:id", s.handleAdminDeleteUser, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/me/export", s.handleRequestAccountExport, s.requireAuth)
 		api.GET("/me/export", s.handleGetAccountExport, s.requireAuth)
 		api.GET("/me/export/download", s.handleDownloadAccountExport, s.requireAuth)
@@ -1404,12 +1404,12 @@ func (s *Server) routes() {
 		// instance avatar/banner + the four typed logo slots (mirroring PeerTube's
 		// dedicated asset API — these are not registry keys), plus public serving.
 		// URLs are referenced from the GET /instance branding block.
-		api.POST("/admin/instance-avatar", s.handleSetInstanceImage(profileimage.KindAvatar), s.requireAuth, s.requireRole("admin"))
-		api.DELETE("/admin/instance-avatar", s.handleDeleteInstanceImage(profileimage.KindAvatar), s.requireAuth, s.requireRole("admin"))
-		api.POST("/admin/instance-banner", s.handleSetInstanceImage(profileimage.KindBanner), s.requireAuth, s.requireRole("admin"))
-		api.DELETE("/admin/instance-banner", s.handleDeleteInstanceImage(profileimage.KindBanner), s.requireAuth, s.requireRole("admin"))
-		api.POST("/admin/instance-logo/:type", s.handleSetInstanceLogo, s.requireAuth, s.requireRole("admin"))
-		api.DELETE("/admin/instance-logo/:type", s.handleDeleteInstanceLogo, s.requireAuth, s.requireRole("admin"))
+		api.POST("/admin/instance-avatar", s.handleSetInstanceImage(profileimage.KindAvatar), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/instance-avatar", s.handleDeleteInstanceImage(profileimage.KindAvatar), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/instance-banner", s.handleSetInstanceImage(profileimage.KindBanner), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/instance-banner", s.handleDeleteInstanceImage(profileimage.KindBanner), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/instance-logo/:type", s.handleSetInstanceLogo, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/instance-logo/:type", s.handleDeleteInstanceLogo, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.GET("/instance/avatar", s.handleGetInstanceImage(profileimage.KindAvatar))
 		api.GET("/instance/banner", s.handleGetInstanceImage(profileimage.KindBanner))
 		api.GET("/instance/logo/:type", s.handleGetInstanceLogo)
@@ -1566,7 +1566,7 @@ func (s *Server) routes() {
 			api.DELETE("/comments/:id/pin", s.handleUnpinComment, s.requireAuth)
 			api.PUT("/comments/:id/heart", s.handleHeartComment, s.requireAuth)
 			api.DELETE("/comments/:id/heart", s.handleUnheartComment, s.requireAuth)
-			api.GET("/admin/comments", s.handleListAdminComments, s.requireAuth, s.requireRole("admin", "moderator"))
+			api.GET("/admin/comments", s.handleListAdminComments, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		}
 
 		// Ratings (like/dislike) are scoped to a (public, published) video.
@@ -1636,19 +1636,19 @@ func (s *Server) routes() {
 	// plus the explicit adoption that re-enables destructive sweeps against a
 	// bucket this install has not been shown to own.
 	if s.mediagcsvc != nil {
-		api.POST("/admin/media/gc", s.handleAdminMediaGC, s.requireAuth, s.requireRole("admin"))
-		api.POST("/admin/media/gc/adopt-bucket", s.handleAdminAdoptBucket, s.requireAuth, s.requireRole("admin"))
+		api.POST("/admin/media/gc", s.handleAdminMediaGC, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/media/gc/adopt-bucket", s.handleAdminAdoptBucket, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 	if s.storagemigrationsvc != nil {
-		api.POST("/admin/storage/migrations", s.handleAdminStartStorageMigration, s.requireAuth, s.requireRole("admin"))
-		api.GET("/admin/storage/migrations", s.handleAdminListStorageMigrations, s.requireAuth, s.requireRole("admin"))
-		api.GET("/admin/storage/migrations/:id", s.handleAdminGetStorageMigration, s.requireAuth, s.requireRole("admin"))
-		api.POST("/admin/storage/migrations/:id/cancel", s.handleAdminCancelStorageMigration, s.requireAuth, s.requireRole("admin"))
+		api.POST("/admin/storage/migrations", s.handleAdminStartStorageMigration, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.GET("/admin/storage/migrations", s.handleAdminListStorageMigrations, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.GET("/admin/storage/migrations/:id", s.handleAdminGetStorageMigration, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/storage/migrations/:id/cancel", s.handleAdminCancelStorageMigration, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	if s.videosvc != nil && s.transcodesvc != nil {
 		api.POST("/admin/videos/:id/transcoding", s.handleRunVideoTranscoding,
-			s.requireAuth, s.requireRole("admin", "moderator"))
+			s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
 
 	// Abuse reports: any authed user can file one; the queue + resolution are
@@ -1657,19 +1657,19 @@ func (s *Server) routes() {
 		api.POST("/videos/:id/report", s.handleReportVideo, s.requireAuth)
 		api.POST("/comments/:id/report", s.handleReportComment, s.requireAuth)
 		api.POST("/users/:id/report", s.handleReportAccount, s.requireAuth)
-		api.GET("/admin/reports", s.handleListReports, s.requireAuth, s.requireRole("admin", "moderator"))
-		api.POST("/admin/reports/:id/resolve", s.handleResolveReport, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.GET("/admin/reports", s.handleListReports, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/reports/:id/resolve", s.handleResolveReport, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		// Hard-delete is admin-only: moderators resolve, admins can purge.
-		api.DELETE("/admin/reports/:id", s.handleDeleteReport, s.requireAuth, s.requireRole("admin"))
-		api.GET("/admin/videos", s.handleListAdminVideos, s.requireAuth, s.requireRole("admin", "moderator"))
-		api.GET("/admin/videos/blocked", s.handleListBlockedVideos, s.requireAuth, s.requireRole("admin", "moderator"))
-		api.POST("/admin/videos/:id/block", s.handleBlockVideo, s.requireAuth, s.requireRole("admin", "moderator"))
-		api.DELETE("/admin/videos/:id/block", s.handleUnblockVideo, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.DELETE("/admin/reports/:id", s.handleDeleteReport, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.GET("/admin/videos", s.handleListAdminVideos, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.GET("/admin/videos/blocked", s.handleListBlockedVideos, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/videos/:id/block", s.handleBlockVideo, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.DELETE("/admin/videos/:id/block", s.handleUnblockVideo, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		// Upload quarantine review (§11): the queue plus approve (→ published,
 		// hooks fire) / reject (→ failed, owner notified).
-		api.GET("/admin/videos/quarantined", s.handleListQuarantinedVideos, s.requireAuth, s.requireRole("admin", "moderator"))
-		api.POST("/admin/videos/:id/approve", s.handleApproveQuarantinedVideo, s.requireAuth, s.requireRole("admin", "moderator"))
-		api.POST("/admin/videos/:id/reject", s.handleRejectQuarantinedVideo, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.GET("/admin/videos/quarantined", s.handleListQuarantinedVideos, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/videos/:id/approve", s.handleApproveQuarantinedVideo, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/videos/:id/reject", s.handleRejectQuarantinedVideo, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
 
 	// Account mutes: a signed-in user mutes/unmutes another account and lists
@@ -1687,9 +1687,9 @@ func (s *Server) routes() {
 		api.GET("/me/mutes/instances", s.handleListMutedInstances, s.requireAuth)
 		api.POST("/me/mutes/instances/:domain", s.handleMuteInstance, s.requireAuth)
 		api.DELETE("/me/mutes/instances/:domain", s.handleUnmuteInstance, s.requireAuth)
-		api.GET("/admin/instances/blocked", s.handleListBlockedInstances, s.requireAuth, s.requireRole("admin", "moderator"))
-		api.POST("/admin/instances/blocked", s.handleBlockInstance, s.requireAuth, s.requireRole("admin", "moderator"))
-		api.DELETE("/admin/instances/blocked/:domain", s.handleUnblockInstance, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.GET("/admin/instances/blocked", s.handleListBlockedInstances, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/instances/blocked", s.handleBlockInstance, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.DELETE("/admin/instances/blocked/:domain", s.handleUnblockInstance, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
 
 	// Remote videos (federated, metadata-only): the remote-watch surface + the
@@ -1705,9 +1705,9 @@ func (s *Server) routes() {
 	// endpoints. Audited.
 	if s.moderationsvc != nil {
 		api.POST("/remote-videos/:id/report", s.handleReportRemoteVideo, s.requireAuth)
-		api.GET("/admin/remote-videos/blocked", s.handleListBlockedRemoteVideos, s.requireAuth, s.requireRole("admin", "moderator"))
-		api.POST("/admin/remote-videos/:id/block", s.handleBlockRemoteVideo, s.requireAuth, s.requireRole("admin", "moderator"))
-		api.DELETE("/admin/remote-videos/:id/block", s.handleUnblockRemoteVideo, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.GET("/admin/remote-videos/blocked", s.handleListBlockedRemoteVideos, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/remote-videos/:id/block", s.handleBlockRemoteVideo, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.DELETE("/admin/remote-videos/:id/block", s.handleUnblockRemoteVideo, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
 
 	// Outbound remote-channel follows (remote-content §3). REST contract
@@ -1723,9 +1723,9 @@ func (s *Server) routes() {
 		// federation_follower_approval): pending inbound channel Follows await
 		// an admin decision; approve delivers the Accept, reject a Reject.
 		// Modeled on /admin/registration-requests. ActivityPub inbox only.
-		api.GET("/admin/federation/follower-requests", s.handleListFederationFollowerRequests, s.requireAuth, s.requireRole("admin"))
-		api.POST("/admin/federation/follower-requests/:id/approve", s.handleApproveFederationFollowerRequest, s.requireAuth, s.requireRole("admin"))
-		api.POST("/admin/federation/follower-requests/:id/reject", s.handleRejectFederationFollowerRequest, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/federation/follower-requests", s.handleListFederationFollowerRequests, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/federation/follower-requests/:id/approve", s.handleApproveFederationFollowerRequest, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/federation/follower-requests/:id/reject", s.handleRejectFederationFollowerRequest, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// ATProto / Bluesky link (P10.2 extension): the caller links/inspects/unlinks
@@ -1748,24 +1748,24 @@ func (s *Server) routes() {
 
 	// Watched words: moderators/admins maintain the instance-wide watched-terms list.
 	if s.watchwordsvc != nil {
-		api.GET("/admin/watched-words", s.handleListWatchedWords, s.requireAuth, s.requireRole("admin", "moderator"))
-		api.POST("/admin/watched-words", s.handleAddWatchedWord, s.requireAuth, s.requireRole("admin", "moderator"))
-		api.DELETE("/admin/watched-words/:id", s.handleDeleteWatchedWord, s.requireAuth, s.requireRole("admin", "moderator"))
-		api.GET("/admin/watched-word-matches", s.handleListWatchedWordMatches, s.requireAuth, s.requireRole("admin", "moderator"))
+		api.GET("/admin/watched-words", s.handleListWatchedWords, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/watched-words", s.handleAddWatchedWord, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.DELETE("/admin/watched-words/:id", s.handleDeleteWatchedWord, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.GET("/admin/watched-word-matches", s.handleListWatchedWordMatches, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
 
 	// Admin user management is admin-only (not moderators).
 	if s.adminsvc != nil {
-		api.GET("/admin/users", s.handleListUsers, s.requireAuth, s.requireRole("admin"))
-		api.PATCH("/admin/users/:id", s.handleUpdateUser, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/users", s.handleListUsers, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.PATCH("/admin/users/:id", s.handleUpdateUser, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		// Instance-wide overview counts for the admin dashboard cards. Read-only
 		// aggregate; admin-only (this is the vidra-user admin-overview binding).
-		api.GET("/admin/stats", s.handleAdminStats, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/stats", s.handleAdminStats, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// Durable audit trail (admin-only), when the audit-log service is wired.
 	if s.auditLog != nil {
-		api.GET("/admin/audit-log", s.handleListAuditLog, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/audit-log", s.handleListAuditLog, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// Playback quality telemetry (phase-4 delivery item 4). The beacon is
@@ -1775,44 +1775,44 @@ func (s *Server) routes() {
 		api.POST("/qoe/events", s.handleQoEEvents, s.optionalAuth)
 	}
 	if s.qoeHealthSvc != nil {
-		api.GET("/admin/qoe/playback-health", s.handleQoEPlaybackHealth, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/qoe/playback-health", s.handleQoEPlaybackHealth, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// Admin operational status. Depends only on core wiring; auth guards it.
 	if s.authsvc != nil {
-		api.GET("/admin/system", s.handleSystemStatus, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/system", s.handleSystemStatus, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		// The deploy-time shape beside the runtime health: what this instance
 		// IS (storage backend, public origin, wired subsystems, backup story),
 		// which otherwise takes an SSH session and an env file to find out.
-		api.GET("/admin/infrastructure", s.handleInfrastructure, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/infrastructure", s.handleInfrastructure, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		// Outbound mail probe. Always mounted (stable contract) and 503 inside
 		// when the deployment has no mail path — an admin needs to be told that
 		// is why, not find the button missing. The recipient is the instance's
 		// own contact address and cannot be chosen, so this can never become a
 		// relay; the extra budget is about the instance's sending reputation.
 		api.POST("/admin/mail/test", s.handleMailTest,
-			s.requireAuth, s.requireRole("admin"), s.mailTestRateLimit())
+			s.requireAuth, s.requireRole(admin.RoleAdmin), s.mailTestRateLimit())
 	}
 
 	// Admin operations: durable-queue depth snapshot + recent failures (P17.4).
 	if s.jobStatusSvc != nil {
-		api.GET("/admin/jobs", s.handleListJobs, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/jobs", s.handleListJobs, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 	if s.jobOperationsSvc != nil {
-		api.GET("/admin/jobs/runs", s.handleListJobRuns, s.requireAuth, s.requireRole("admin"))
-		api.GET("/admin/jobs/runs/:id", s.handleGetJobRun, s.requireAuth, s.requireRole("admin"))
-		api.GET("/admin/jobs/events", s.handleJobEvents, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/jobs/runs", s.handleListJobRuns, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.GET("/admin/jobs/runs/:id", s.handleGetJobRun, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.GET("/admin/jobs/events", s.handleJobEvents, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// DB-backed instance settings overlay (fix_plan P10): admins read the
 	// effective values + overrides and PATCH the mutable subset. Admin-only.
 	if s.settingssvc != nil {
-		api.GET("/admin/instance-settings", s.handleGetInstanceSettings, s.requireAuth, s.requireRole("admin"))
-		api.PATCH("/admin/instance-settings", s.handleUpdateInstanceSettings, s.requireAuth, s.requireRole("admin"))
+		api.GET("/admin/instance-settings", s.handleGetInstanceSettings, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.PATCH("/admin/instance-settings", s.handleUpdateInstanceSettings, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		// Dry run: the same body, validated and thrown away. It is what lets the
 		// admin config form check a field on blur against the SERVER's rules
 		// instead of a hand-copied TypeScript duplicate of them.
-		api.POST("/admin/instance-settings/validate", s.handleValidateInstanceSettings, s.requireAuth, s.requireRole("admin"))
+		api.POST("/admin/instance-settings/validate", s.handleValidateInstanceSettings, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// PeerTube import / migration (fix_plan P18). Admin-only: launch a
@@ -1821,17 +1821,17 @@ func (s *Server) routes() {
 	// mounted when the service is wired (stable contract); the launch answers 503
 	// when no source is configured. This is the vidra-user admin import UI contract.
 	if s.peertubeimportsvc != nil {
-		api.POST("/admin/peertube-import", s.handleLaunchPeerTubeImport, s.requireAuth, s.requireRole("admin"))
-		api.GET("/admin/peertube-import", s.handleListPeerTubeImports, s.requireAuth, s.requireRole("admin"))
-		api.GET("/admin/peertube-import/:id", s.handleGetPeerTubeImport, s.requireAuth, s.requireRole("admin"))
+		api.POST("/admin/peertube-import", s.handleLaunchPeerTubeImport, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.GET("/admin/peertube-import", s.handleListPeerTubeImports, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.GET("/admin/peertube-import/:id", s.handleGetPeerTubeImport, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// Hybrid IPFS media mirroring (fix_plan P19). Admin-only, always mounted
 	// (stable contract): status + kick a reconcile. Both answer 503 ipfs_disabled
 	// when neither the public nor private tier is enabled. Config-gated inside the
 	// handler, so no service wiring is needed when both tiers are off.
-	api.GET("/ipfs/status", s.handleIPFSStatus, s.requireAuth, s.requireRole("admin"))
-	api.POST("/admin/ipfs/reconcile", s.handleIPFSReconcile, s.requireAuth, s.requireRole("admin"))
+	api.GET("/ipfs/status", s.handleIPFSStatus, s.requireAuth, s.requireRole(admin.RoleAdmin))
+	api.POST("/admin/ipfs/reconcile", s.handleIPFSReconcile, s.requireAuth, s.requireRole(admin.RoleAdmin))
 
 	// Direct messaging (1:1 conversations + messages). All behind requireAuth;
 	// non-participants get 404 so a conversation's existence is not leaked.

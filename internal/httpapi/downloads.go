@@ -55,7 +55,7 @@ type videoDownloadResponse struct {
 // owner only for that storage lookup.
 func (s *Server) videoForDownload(c echo.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, uuid.UUID, bool, error) {
 	viewerID, role, authed := principalFromContext(c)
-	privileged := authed && (role == "admin" || role == "moderator")
+	privileged := authed && isStaff(role)
 	if !privileged && !s.downloadsEnabled() {
 		return sqlcgen.GetVideoByIDRow{}, uuid.Nil, false, &FeatureDisabledError{Feature: "downloads"}
 	}

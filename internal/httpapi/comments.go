@@ -252,7 +252,7 @@ func (s *Server) handleDeleteComment(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	isModerator := role == "admin" || role == "moderator"
+	isModerator := isStaff(role)
 	if err := s.commentsvc.Delete(c.Request().Context(), id, userID, isModerator); err != nil {
 		switch {
 		case errors.Is(err, comment.ErrNotFound):
@@ -332,7 +332,7 @@ func (s *Server) handleUpdateComment(c echo.Context) error {
 // (pin/heart) on a comment: staff (admin/moderator) via the moderation escape,
 // otherwise the manager of the comment's video (channel owner or editor).
 func (s *Server) canManageCommentVideo(ctx context.Context, userID uuid.UUID, role string, videoID uuid.UUID) bool {
-	if role == "admin" || role == "moderator" {
+	if isStaff(role) {
 		return true
 	}
 	_, ok := s.canManageVideo(ctx, userID, videoID)

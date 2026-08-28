@@ -90,7 +90,7 @@ func (s *Server) handleRequestAutoCaption(c echo.Context) error {
 	// Owners and privileged moderators may request recovery work. Ordinary
 	// non-owners still receive 404 so private-video existence is not disclosed.
 	v, gerr := s.videosvc.GetByID(ctx, id)
-	privileged := role == "admin" || role == "moderator"
+	privileged := isStaff(role)
 	if gerr != nil || (v.OwnerID != userID && !privileged) {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
@@ -128,7 +128,7 @@ func (s *Server) handleGetAutoCaption(c echo.Context) error {
 	}
 	ctx := c.Request().Context()
 	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil ||
-		(v.OwnerID != userID && role != "admin" && role != "moderator") {
+		(v.OwnerID != userID && !isStaff(role)) {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	job, err := s.captionjobsvc.LatestForVideo(ctx, id)
