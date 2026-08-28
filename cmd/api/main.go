@@ -2434,26 +2434,17 @@ func runE2EESweepWorker(ctx context.Context, logger *slog.Logger, svc *e2ee.Serv
 		interval   = 10 * time.Second
 		sweepBatch = 200
 	)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Singleton sweep: exactly one instance runs it. A follower skips the
-			// tick rather than shutting down, because leadership can move here at
-			// any time (see internal/leaderlock).
-			if !leader.IsLeader() {
-				continue
-			}
-			if n, err := svc.SweepExpired(ctx, sweepBatch); err != nil {
-				logger.Warn("e2ee expiry sweep failed", "error", err)
-			} else if n > 0 {
-				logger.Info("e2ee expiry sweep removed expired messages", "count", n)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Leader:   leader,
+		Passes: []jobloop.Pass{{
+			FailMsg: "e2ee expiry sweep failed",
+			DoneMsg: "e2ee expiry sweep removed expired messages",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return svc.SweepExpired(ctx, sweepBatch)
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runLiveDurationWatchdog force-closes live sessions that exceed the effective
@@ -2467,26 +2458,17 @@ func runE2EESweepWorker(ctx context.Context, logger *slog.Logger, svc *e2ee.Serv
 // which then drives the normal stop/replay path.
 func runLiveDurationWatchdog(ctx context.Context, logger *slog.Logger, svc *live.Service, leader *leaderlock.Elector) {
 	const interval = 30 * time.Second
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Singleton sweep: exactly one instance runs it. A follower skips the
-			// tick rather than shutting down, because leadership can move here at
-			// any time (see internal/leaderlock).
-			if !leader.IsLeader() {
-				continue
-			}
-			if n, err := svc.SweepOverdueLive(ctx); err != nil {
-				logger.Warn("live duration watchdog sweep failed", "error", err)
-			} else if n > 0 {
-				logger.Info("live duration watchdog force-closed over-limit sessions", "count", n)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Leader:   leader,
+		Passes: []jobloop.Pass{{
+			FailMsg: "live duration watchdog sweep failed",
+			DoneMsg: "live duration watchdog force-closed over-limit sessions",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return svc.SweepOverdueLive(ctx)
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runScheduledPublishWorker transitions scheduled videos to published as their
@@ -2500,29 +2482,17 @@ func runScheduledPublishWorker(ctx context.Context, logger *slog.Logger, svc *vi
 		interval = 10 * time.Second
 		batch    = 20
 	)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Singleton sweep: exactly one instance runs it. A follower skips the
-			// tick rather than shutting down, because leadership can move here at
-			// any time (see internal/leaderlock).
-			if !leader.IsLeader() {
-				continue
-			}
-			n, err := svc.PublishDue(ctx, batch)
-			if err != nil {
-				logger.Warn("scheduled publish sweep failed", "error", err)
-				continue
-			}
-			if n > 0 {
-				logger.Info("scheduled publish sweep published videos", "count", n)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Leader:   leader,
+		Passes: []jobloop.Pass{{
+			FailMsg: "scheduled publish sweep failed",
+			DoneMsg: "scheduled publish sweep published videos",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return svc.PublishDue(ctx, batch)
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // composeTranscodeCompletion builds the transcode completion hook: the
@@ -2555,29 +2525,20 @@ func runTranscodeHoldSweepWorker(ctx context.Context, logger *slog.Logger, svc *
 		interval = 5 * time.Minute
 		batch    = 20
 	)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Singleton sweep: exactly one instance runs it. A follower skips the
-			// tick rather than shutting down, because leadership can move here at
-			// any time (see internal/leaderlock).
-			if !leader.IsLeader() {
-				continue
-			}
-			n, err := svc.ReleaseStuckTranscodeHolds(ctx, timeout, batch)
-			if err != nil {
-				logger.Warn("transcode hold sweep failed", "error", err)
-				continue
-			}
-			if n > 0 {
-				logger.Warn("transcode hold sweep released stuck videos", "count", n)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Leader:   leader,
+		Passes: []jobloop.Pass{{
+			FailMsg: "transcode hold sweep failed",
+			DoneMsg: "transcode hold sweep released stuck videos",
+			// Warn, not info: this is a backstop, so anything it releases is a
+			// video a crashed worker left hidden.
+			DoneLevel: slog.LevelWarn,
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return svc.ReleaseStuckTranscodeHolds(ctx, timeout, batch)
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runVideoImportWorker drains the durable URL-import queue on a ticker until
@@ -2660,26 +2621,17 @@ func runUploadSweepWorker(ctx context.Context, logger *slog.Logger, svc *upload.
 		interval   = time.Minute
 		sweepBatch = 50
 	)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Singleton sweep: exactly one instance runs it. A follower skips the
-			// tick rather than shutting down, because leadership can move here at
-			// any time (see internal/leaderlock).
-			if !leader.IsLeader() {
-				continue
-			}
-			if n, err := svc.Sweep(ctx, sweepBatch); err != nil {
-				logger.Warn("upload session sweep failed", "error", err)
-			} else if n > 0 {
-				logger.Info("upload session sweep removed sessions", "count", n)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Leader:   leader,
+		Passes: []jobloop.Pass{{
+			FailMsg: "upload session sweep failed",
+			DoneMsg: "upload session sweep removed sessions",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return svc.Sweep(ctx, sweepBatch)
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runIPFSMirrorWorker drains the IPFS mirror pin/unpin queue on a short ticker
@@ -2795,24 +2747,16 @@ func runStorageMigrationCopyWorker(ctx context.Context, logger *slog.Logger, svc
 // store, and the last one is irreversible.
 func runStorageMigrationSweepWorker(ctx context.Context, logger *slog.Logger, svc *storagemigration.Service, leader *leaderlock.Elector) {
 	const interval = time.Minute
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Singleton sweep: exactly one instance runs it. A follower skips the
-			// tick rather than shutting down, because leadership can move here at
-			// any time (see internal/leaderlock).
-			if !leader.IsLeader() {
-				continue
-			}
-			if err := svc.SweepOnce(ctx); err != nil {
-				logger.Warn("storage migration sweep failed", "error", err)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Leader:   leader,
+		Passes: []jobloop.Pass{{
+			FailMsg: "storage migration sweep failed",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return 0, svc.SweepOnce(ctx)
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runMediaGCWorker runs the media garbage collector once a day (deleting
