@@ -34,12 +34,6 @@ var (
 	ErrStorageUnavailable = errors.New("playlist: storage backend not configured")
 )
 
-// acceptedImageExts maps an accepted playlist-cover upload extension to the
-// content type served for it (authoritative — not the client-declared type).
-var acceptedImageExts = map[string]string{
-	".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
-}
-
 // Repository is the data access the playlist service needs. *sqlcgen.Queries
 // satisfies it directly; tests substitute an in-memory fake.
 type Repository interface {
@@ -334,7 +328,7 @@ func (s *Service) SetThumbnail(ctx context.Context, ownerID, playlistID uuid.UUI
 		return "", ErrForbidden
 	}
 	dotExt := strings.ToLower(filepath.Ext(in.Filename))
-	if _, ok := acceptedImageExts[dotExt]; !ok {
+	if _, ok := media.AcceptedImageExts[dotExt]; !ok {
 		return "", ErrUnsupportedMedia
 	}
 	ext := strings.TrimPrefix(dotExt, ".")
@@ -385,6 +379,6 @@ func (s *Service) ClearThumbnail(ctx context.Context, ownerID, playlistID uuid.U
 // ThumbnailContentType returns the served content type for a stored cover
 // extension, and ok=false when the extension is not an accepted image type.
 func ThumbnailContentType(ext string) (string, bool) {
-	ct, ok := acceptedImageExts["."+strings.TrimPrefix(strings.ToLower(ext), ".")]
+	ct, ok := media.AcceptedImageExts["."+strings.TrimPrefix(strings.ToLower(ext), ".")]
 	return ct, ok
 }
