@@ -77,6 +77,7 @@ import (
 	"github.com/vidra/vidra-core/internal/storyboardbackfill"
 	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/upload"
+	"github.com/vidra/vidra-core/internal/uploadfinalize"
 	"github.com/vidra/vidra-core/internal/urlsafety"
 	"github.com/vidra/vidra-core/internal/version"
 	"github.com/vidra/vidra-core/internal/video"
@@ -1384,6 +1385,36 @@ func run() error {
 		}))
 	opts = append(opts, httpapi.WithUploadService(uploadsvc))
 
+	// Asynchronous completion (migration 0120). POST /uploads/:id/complete used
+	// to assemble every chunk back out of object storage, re-upload the assembled
+	// file while hashing it, and probe + decode it for the thumbnail and
+	// storyboard — inside a request carrying the general 30s deadline, behind a
+	// CDN that caps origin response time. On a remote bucket that is minutes of
+	// work, so every real upload failed the moment the progress bar reached 100%.
+	// The request now validates and enqueues; this queue does the work.
+	uploadfinalizesvc := uploadfinalize.NewService(db.Queries(), uploadsvc, videosvc,
+		uploadfinalize.WithLogger(logger),
+		// A replace-purpose session has no Process to fire its transcode enqueue,
+		// so the same enqueue-or-invalidate decision the HTTP layer makes for the
+		// direct multipart shape (orchestrateReplaceTranscode) is wired here.
+		uploadfinalize.WithReplaceHook(func(ctx context.Context, videoID uuid.UUID, sourceKey string) {
+			if transcodesvc == nil {
+				return
+			}
+			if transcodesvc.Capable() && transcodesvc.Enabled() {
+				if err := transcodesvc.Enqueue(ctx, videoID, sourceKey); err != nil {
+					logger.Error("replace: transcode enqueue failed", "video_id", videoID.String(), "error", err)
+				}
+				return
+			}
+			// Transcoding is unavailable: the stale HLS generation must stop
+			// serving content the new source superseded.
+			if err := transcodesvc.Invalidate(ctx, videoID); err != nil {
+				logger.Error("replace: playlist invalidation failed", "video_id", videoID.String(), "error", err)
+			}
+		}))
+	opts = append(opts, httpapi.WithUploadFinalizeService(uploadfinalizesvc))
+
 	// Asynchronous URL import (P2.2). POST /videos/:id/import now enqueues a job
 	// and returns 202; a background worker performs the SSRF-guarded fetch and
 	// runs it through the same pipeline, with the same UPLOAD_MAX_SIZE cap and
@@ -1809,6 +1840,17 @@ func run() error {
 		defer workerCancel()
 		go runLiveDurationWatchdog(workerCtx, logger, livesvc, cronLeader)
 		logger.Info("live duration watchdog started")
+	}
+
+	// Drain the upload-finalize queue in the background: assemble an accepted
+	// completion's chunks, store the original, and run the shared publish
+	// pipeline. Always on — without it every resumable upload stops at 'queued'
+	// and no video ever publishes.
+	if runWorkers {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runUploadFinalizeWorker(workerCtx, logger, uploadfinalizesvc)
+		logger.Info("upload finalize worker started")
 	}
 
 	// Sweep expired/cancelled resumable-upload sessions (the failed-upload
@@ -2562,6 +2604,37 @@ func runCaptionJobWorker(ctx context.Context, logger *slog.Logger, svc *captionj
 			DoneMsg: "auto-caption drain completed jobs",
 			Run: func(ctx context.Context, _ time.Time) (int, error) {
 				return svc.DrainJobs(ctx, batch)
+			},
+		}},
+	}.Run(ctx, logger)
+}
+
+// runUploadFinalizeWorker drains the asynchronous upload-completion queue on a
+// ticker until ctx is canceled (mirrors runTranscodeWorker). Not leader-gated:
+// every instance that runs workers should finalize, because a creator's upload
+// must not wait on which node happens to hold the cron lock — the queue's
+// SKIP LOCKED claim already keeps two instances off the same job. Per-job
+// failures are recorded in the queue (retry/backoff/dead-letter) and mirrored
+// onto the session as a client-visible reason; only claim-query errors are
+// logged here.
+//
+// The tick is short (5s): the creator is watching a "Processing…" spinner, so
+// the queue latency is user-visible in a way a transcode's is not.
+func runUploadFinalizeWorker(ctx context.Context, logger *slog.Logger, svc *uploadfinalize.Service) {
+	const interval = 5 * time.Second
+	jobloop.Loop{
+		Interval: interval,
+		Jitter:   true,
+		Passes: []jobloop.Pass{{
+			// Drain the whole due backlog so a burst of completions does not
+			// wait a tick per batch. DrainJobs only counts completions, so a
+			// persistently failing job ends the inner loop and backoff retries
+			// it on a later tick.
+			Drain:   true,
+			FailMsg: "upload finalize drain failed",
+			DoneMsg: "upload finalize drain completed jobs",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return svc.DrainJobs(ctx, drainBatch(svc.Concurrency()))
 			},
 		}},
 	}.Run(ctx, logger)

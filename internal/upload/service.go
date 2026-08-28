@@ -4,11 +4,22 @@
 // fixed-size chunks (ChunkSize bytes each, the last shorter), whose bytes land
 // in the blob backend at uploads/<session>/<n> — so the S3 backend works
 // unchanged — and whose arrival is recorded in upload_chunks (the resume /
-// progress contract, no Redis needed). Completion assembles the chunks in order
-// into a single reader the caller feeds through the existing
-// video.AttachOriginal → Process pipeline, identical to a direct upload. A
-// sweeper deletes expired (24h) and cancelled sessions' chunk blobs — the
-// failed-upload cleanup — leaving orphan draft videos alone.
+// progress contract, no Redis needed).
+//
+// Completion is ASYNCHRONOUS (migration 0120). The request runs only
+// ValidateComplete — ownership, session state, every chunk present at its
+// required size — and enqueues a finalize job; internal/uploadfinalize's worker
+// then calls Assemble and feeds the ordered stream through the same
+// video.AttachOriginal → Process pipeline a direct upload uses. It is split that
+// way because the assembly is a full re-read AND re-write of the file against
+// object storage plus an ffprobe and two decodes, which on a remote bucket takes
+// minutes: doing it in the request meant the general 30s deadline (and, behind a
+// CDN, the origin-response cap) truncated every real upload the moment the
+// progress bar reached 100%.
+//
+// A sweeper deletes expired (24h) and cancelled sessions' chunk blobs — the
+// failed-upload cleanup — leaving orphan draft videos alone, and never touching
+// a session whose finalize job is still live.
 //
 // It is HTTP-agnostic and testable with a fake repository + storage backend.
 package upload
@@ -35,11 +46,39 @@ const ChunkSize int32 = 8 * 1024 * 1024
 const SessionTTL = 24 * time.Hour
 
 // Session states persisted on upload_sessions.
+//
+// The middle two arrived with migration 0120, when completion stopped being
+// synchronous: POST .../complete validates, enqueues a finalize job and answers
+// 202, so a session now has states that mean "the client is done sending, the
+// server is not done working". A client polls GET /uploads/:id through them.
+//
+//	active → queued → processing → completed | failed
+//	active → cancelled
 const (
-	StateActive    = "active"
+	// StateActive means chunks are still arriving.
+	StateActive = "active"
+	// StateQueued means every chunk landed and a finalize job is enqueued.
+	StateQueued = "queued"
+	// StateProcessing means a worker claimed the finalize job and is assembling
+	// / storing / probing.
+	StateProcessing = "processing"
+	// StateCompleted means the pipeline finished. It says nothing about whether
+	// the VIDEO published — a probe or scan may have failed it; the video row
+	// carries that outcome, exactly as it did when completion was synchronous.
 	StateCompleted = "completed"
+	// StateFailed means the finalize job dead-lettered; FailureReason on the
+	// session says why, in words safe to show a client.
+	StateFailed = "failed"
+	// StateCancelled means the client cancelled before completing.
 	StateCancelled = "cancelled"
 )
+
+// Finalizing reports whether a session is between an accepted completion and a
+// terminal outcome — the window in which its chunk blobs are a running job's
+// input and must not be swept.
+func Finalizing(state string) bool {
+	return state == StateQueued || state == StateProcessing
+}
 
 // Session purposes persisted on upload_sessions (migration 0090, config-parity
 // W14): what completing the session does with the assembled bytes. 'upload' is
@@ -89,6 +128,8 @@ type Repository interface {
 	ListUploadChunks(ctx context.Context, uploadID uuid.UUID) ([]sqlcgen.ListUploadChunksRow, error)
 	ListActiveUploadSessionsForUser(ctx context.Context, arg sqlcgen.ListActiveUploadSessionsForUserParams) ([]sqlcgen.ListActiveUploadSessionsForUserRow, error)
 	SetUploadSessionState(ctx context.Context, arg sqlcgen.SetUploadSessionStateParams) error
+	MarkUploadSessionQueued(ctx context.Context, id uuid.UUID) (int64, error)
+	FailUploadSession(ctx context.Context, arg sqlcgen.FailUploadSessionParams) error
 	ListSweepableUploadSessions(ctx context.Context, limit int32) ([]uuid.UUID, error)
 	DeleteUploadSession(ctx context.Context, id uuid.UUID) error
 }
@@ -346,25 +387,70 @@ func (s *Service) buildStatus(ctx context.Context, sess sqlcgen.UploadSession) (
 	}, nil
 }
 
-// PrepareComplete validates that every chunk has landed at its required size
-// and returns the session plus a reader that streams the chunks in order (the
-// caller feeds it to video.AttachOriginal). The caller MUST Close the reader,
-// then call MarkCompleted once the pipeline has consumed it. ErrIncomplete when
-// a chunk is missing or the wrong size; ErrNotActive when already finished.
-func (s *Service) PrepareComplete(ctx context.Context, uploadID, userID uuid.UUID) (sqlcgen.UploadSession, io.ReadCloser, error) {
+// ValidateComplete is the CHEAP half of completion, and the only half that runs
+// inside the request: it enforces ownership, that the session is still active,
+// and that every chunk has landed at its required size — three indexed reads, no
+// object-storage traffic at all. The caller then enqueues a finalize job and
+// answers 202.
+//
+// The expensive half (assembling the chunks back out of storage, re-uploading
+// the assembled file while hashing it, probing and decoding it) is Assemble +
+// the pipeline, and it belongs to a worker: on a deployment whose object store
+// is across the internet it takes minutes, which no HTTP deadline — and no CDN
+// origin-response cap — will tolerate.
+//
+// ErrIncomplete when a chunk is missing or the wrong size; ErrNotActive when the
+// session has already moved on; ErrNotFound for an unknown or non-owned id.
+func (s *Service) ValidateComplete(ctx context.Context, uploadID, userID uuid.UUID) (sqlcgen.UploadSession, error) {
 	if s.blobs == nil {
-		return sqlcgen.UploadSession{}, nil, ErrStorageUnavailable
+		return sqlcgen.UploadSession{}, ErrStorageUnavailable
 	}
 	sess, err := s.session(ctx, uploadID, userID)
 	if err != nil {
-		return sqlcgen.UploadSession{}, nil, err
+		return sqlcgen.UploadSession{}, err
 	}
 	if sess.State != StateActive {
+		return sqlcgen.UploadSession{}, ErrNotActive
+	}
+	if err := s.checkChunksComplete(ctx, sess); err != nil {
+		return sqlcgen.UploadSession{}, err
+	}
+	return sess, nil
+}
+
+// Assemble opens the session's chunks as one ordered stream for the finalize
+// worker (the caller feeds it to video.AttachOriginal / ReplaceSource and MUST
+// Close it). It re-checks the chunk ledger — cheap, and the job may be a retry
+// of one that ran while the ledger was being written — but NOT ownership: the
+// request already decided that, and a worker has no principal.
+//
+// It accepts only a session mid-finalize (queued/processing). Anything else is
+// ErrNotActive: a cancelled or already-completed session must never have its
+// bytes re-run through the pipeline.
+func (s *Service) Assemble(ctx context.Context, uploadID uuid.UUID) (sqlcgen.UploadSession, io.ReadCloser, error) {
+	if s.blobs == nil {
+		return sqlcgen.UploadSession{}, nil, ErrStorageUnavailable
+	}
+	sess, err := s.repo.GetUploadSession(ctx, uploadID)
+	if err != nil {
+		return sqlcgen.UploadSession{}, nil, ErrNotFound
+	}
+	if !Finalizing(sess.State) {
 		return sqlcgen.UploadSession{}, nil, ErrNotActive
 	}
-	rows, err := s.repo.ListUploadChunks(ctx, uploadID)
-	if err != nil {
+	if err := s.checkChunksComplete(ctx, sess); err != nil {
 		return sqlcgen.UploadSession{}, nil, err
+	}
+	total := int(totalChunks(sess.TotalSize, sess.ChunkSize))
+	return sess, &chunkAssembler{ctx: ctx, blobs: s.blobs, uploadID: uploadID, total: total}, nil
+}
+
+// checkChunksComplete reports ErrIncomplete unless every chunk index the session
+// expects has landed at exactly its required size.
+func (s *Service) checkChunksComplete(ctx context.Context, sess sqlcgen.UploadSession) error {
+	rows, err := s.repo.ListUploadChunks(ctx, sess.ID)
+	if err != nil {
+		return err
 	}
 	sizes := make(map[int]int64, len(rows))
 	for _, r := range rows {
@@ -374,10 +460,41 @@ func (s *Service) PrepareComplete(ctx context.Context, uploadID, userID uuid.UUI
 	for n := 0; n < total; n++ {
 		expected, _ := chunkExpectedSize(sess.TotalSize, sess.ChunkSize, n)
 		if got, ok := sizes[n]; !ok || got != expected {
-			return sqlcgen.UploadSession{}, nil, ErrIncomplete
+			return ErrIncomplete
 		}
 	}
-	return sess, &chunkAssembler{ctx: ctx, blobs: s.blobs, uploadID: uploadID, total: total}, nil
+	return nil
+}
+
+// MarkQueued flips an ACTIVE session to queued — completion has been accepted
+// and a finalize job enqueued. The chunk blobs stay: they are the job's input.
+//
+// It is a compare-and-set, and the bool it returns is load-bearing: false means
+// the session stopped being active between the caller's ValidateComplete and
+// this write. In practice that is a DELETE /uploads/{id} landing in the window —
+// Cancel flips the row to 'cancelled' and deletes the chunk BLOBS while leaving
+// the chunk LEDGER intact, so an unguarded write here would resurrect the
+// session into 'queued' and hand the worker a job whose bytes no longer exist.
+// The user's cancel would be silently undone and the job would spend five
+// attempts (~15 minutes of backoff) failing on missing blobs.
+//
+// On false the caller must undo its enqueue and answer 409.
+func (s *Service) MarkQueued(ctx context.Context, uploadID uuid.UUID) (bool, error) {
+	n, err := s.repo.MarkUploadSessionQueued(ctx, uploadID)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// MarkProcessing flips a queued session to processing — a worker has claimed its
+// finalize job. Best-effort progress reporting for the client's poll; a failure
+// here must not fail the job.
+func (s *Service) MarkProcessing(ctx context.Context, uploadID uuid.UUID) error {
+	return s.repo.SetUploadSessionState(ctx, sqlcgen.SetUploadSessionStateParams{
+		ID:    uploadID,
+		State: StateProcessing,
+	})
 }
 
 // MarkCompleted flips a session to completed and best-effort removes its now
@@ -393,14 +510,38 @@ func (s *Service) MarkCompleted(ctx context.Context, uploadID uuid.UUID) error {
 	return nil
 }
 
+// MarkFailed records the TERMINAL failure of an asynchronous completion (the
+// finalize job dead-lettered) and drops the chunk blobs — the session can never
+// be completed again, so keeping them is pure cost. reason is shown to the
+// client verbatim on GET /uploads/:id, so it must be a safe sentence and never a
+// raw internal error.
+func (s *Service) MarkFailed(ctx context.Context, uploadID uuid.UUID, reason string) error {
+	if err := s.repo.FailUploadSession(ctx, sqlcgen.FailUploadSessionParams{
+		ID:            uploadID,
+		FailureReason: reason,
+	}); err != nil {
+		return err
+	}
+	s.deleteChunks(ctx, uploadID)
+	return nil
+}
+
 // Cancel marks an active session cancelled and best-effort removes its chunk
 // blobs (the sweeper is the backstop). Ownership-guarded; idempotent — a
-// cancelled or completed session is a no-op success so a client can always
-// clean up.
+// cancelled, completed or failed session is a no-op success so a client can
+// always clean up.
+//
+// A session mid-finalize (queued/processing) is ErrNotActive rather than a
+// no-op success: its pipeline has already been accepted and will publish the
+// video, so answering "cancelled" would be a lie, and dropping the chunk blobs
+// under a running assembly would corrupt it.
 func (s *Service) Cancel(ctx context.Context, uploadID, userID uuid.UUID) error {
 	sess, err := s.session(ctx, uploadID, userID)
 	if err != nil {
 		return err
+	}
+	if Finalizing(sess.State) {
+		return ErrNotActive
 	}
 	if sess.State != StateActive {
 		return nil // already finished/cancelled — nothing to do

@@ -36,7 +36,7 @@ const createUploadSession = `-- name: CreateUploadSession :one
 
 INSERT INTO upload_sessions (video_id, user_id, filename, total_size, chunk_size, expires_at, file_fingerprint, purpose)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, video_id, user_id, filename, total_size, chunk_size, state, expires_at, created_at, updated_at, file_fingerprint, purpose
+RETURNING id, video_id, user_id, filename, total_size, chunk_size, state, expires_at, created_at, updated_at, file_fingerprint, purpose, failure_reason
 `
 
 type CreateUploadSessionParams struct {
@@ -78,6 +78,7 @@ func (q *Queries) CreateUploadSession(ctx context.Context, arg CreateUploadSessi
 		&i.UpdatedAt,
 		&i.FileFingerprint,
 		&i.Purpose,
+		&i.FailureReason,
 	)
 	return i, err
 }
@@ -92,8 +93,28 @@ func (q *Queries) DeleteUploadSession(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const failUploadSession = `-- name: FailUploadSession :exec
+UPDATE upload_sessions
+SET state = 'failed', failure_reason = $2, updated_at = now()
+WHERE id = $1
+`
+
+type FailUploadSessionParams struct {
+	ID            uuid.UUID `json:"id"`
+	FailureReason string    `json:"failure_reason"`
+}
+
+// Terminal failure of the asynchronous completion (migration 0120): the finalize
+// job dead-lettered. reason is a SAFE, client-visible sentence — the poller on
+// GET /api/v1/uploads/{upload_id} reads it verbatim, so it must never carry an
+// internal error, a storage key, or process output.
+func (q *Queries) FailUploadSession(ctx context.Context, arg FailUploadSessionParams) error {
+	_, err := q.db.Exec(ctx, failUploadSession, arg.ID, arg.FailureReason)
+	return err
+}
+
 const getUploadSession = `-- name: GetUploadSession :one
-SELECT id, video_id, user_id, filename, total_size, chunk_size, state, expires_at, created_at, updated_at, file_fingerprint, purpose FROM upload_sessions WHERE id = $1
+SELECT id, video_id, user_id, filename, total_size, chunk_size, state, expires_at, created_at, updated_at, file_fingerprint, purpose, failure_reason FROM upload_sessions WHERE id = $1
 `
 
 func (q *Queries) GetUploadSession(ctx context.Context, id uuid.UUID) (UploadSession, error) {
@@ -112,6 +133,7 @@ func (q *Queries) GetUploadSession(ctx context.Context, id uuid.UUID) (UploadSes
 		&i.UpdatedAt,
 		&i.FileFingerprint,
 		&i.Purpose,
+		&i.FailureReason,
 	)
 	return i, err
 }
@@ -121,7 +143,7 @@ SELECT EXISTS (
     SELECT 1 FROM upload_sessions
     WHERE video_id = $1
       AND purpose = 'replace'
-      AND state = 'active'
+      AND state IN ('active', 'queued', 'processing')
       AND expires_at > now()
 )
 `
@@ -129,6 +151,12 @@ SELECT EXISTS (
 // Whether a replace-purpose session is already open for the video (config-
 // parity W14): at most one replacement may be in flight per video, so the
 // replace-session create answers 409 replace_conflict while one exists.
+//
+// 'queued'/'processing' count as in flight (migration 0120): completion is now
+// asynchronous, so between the accepted POST and the worker's swap there is a
+// window in which the session is no longer 'active' but the replacement has
+// very much not finished. Admitting a second one there would race two
+// ReplaceSource runs onto the same video.
 func (q *Queries) HasActiveReplaceSessionForVideo(ctx context.Context, videoID uuid.UUID) (bool, error) {
 	row := q.db.QueryRow(ctx, hasActiveReplaceSessionForVideo, videoID)
 	var exists bool
@@ -201,14 +229,25 @@ func (q *Queries) ListActiveUploadSessionsForUser(ctx context.Context, arg ListA
 }
 
 const listSweepableUploadSessions = `-- name: ListSweepableUploadSessions :many
-SELECT id FROM upload_sessions
-WHERE state = 'cancelled' OR expires_at <= now()
-ORDER BY expires_at
+SELECT s.id FROM upload_sessions s
+WHERE (s.state = 'cancelled' OR s.expires_at <= now())
+  AND NOT EXISTS (
+      SELECT 1 FROM upload_finalize_jobs j
+      WHERE j.upload_id = s.id AND j.state IN ('pending', 'running')
+  )
+ORDER BY s.expires_at
 LIMIT $1
 `
 
 // Cancelled sessions and any session past its 24h expiry, for the cleanup
 // sweeper (which deletes the chunk blobs then the row).
+//
+// A session with a LIVE finalize job (migration 0120) is never swept, however
+// long it has been open: its chunk blobs are the worker's input, and deleting
+// them mid-assembly would fail a completion the client has already been told was
+// accepted. Once the job reaches done/failed the ordinary rules apply again —
+// and the lease sweep guarantees a job stranded by a dead worker reaches one of
+// those states rather than pinning the row forever.
 func (q *Queries) ListSweepableUploadSessions(ctx context.Context, limit int32) ([]uuid.UUID, error) {
 	rows, err := q.db.Query(ctx, listSweepableUploadSessions, limit)
 	if err != nil {
@@ -260,9 +299,35 @@ func (q *Queries) ListUploadChunks(ctx context.Context, uploadID uuid.UUID) ([]L
 	return items, nil
 }
 
+const markUploadSessionQueued = `-- name: MarkUploadSessionQueued :execrows
+UPDATE upload_sessions
+SET state = 'queued', failure_reason = '', updated_at = now()
+WHERE id = $1 AND state = 'active'
+`
+
+// Accept a completion: active → queued (migration 0120).
+//
+// The state guard is the whole point, and it is a CAS rather than a plain
+// UPDATE. Completion validates the session, then enqueues a finalize job, and a
+// DELETE /uploads/{id} can land in between: Cancel flips the row to 'cancelled'
+// and deletes the chunk BLOBS, but leaves the upload_chunks ledger intact — so
+// an unguarded write would flip the row back to 'queued', silently undoing the
+// user's cancel and handing the worker a job whose bytes are gone (five attempts
+// and ~15 minutes of backoff before it dead-letters).
+//
+// Zero rows therefore means "the session stopped being active underneath us",
+// and the caller drops the job it just enqueued and answers 409.
+func (q *Queries) MarkUploadSessionQueued(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markUploadSessionQueued, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setUploadSessionState = `-- name: SetUploadSessionState :exec
 UPDATE upload_sessions
-SET state = $2, updated_at = now()
+SET state = $2, failure_reason = '', updated_at = now()
 WHERE id = $1
 `
 
@@ -271,6 +336,9 @@ type SetUploadSessionStateParams struct {
 	State string    `json:"state"`
 }
 
+// Advances the session's lifecycle state, clearing any stale failure reason: a
+// session that moves on from 'failed' (only via a re-queued finalize job) must
+// not keep answering the poll with the reason it failed last time.
 func (q *Queries) SetUploadSessionState(ctx context.Context, arg SetUploadSessionStateParams) error {
 	_, err := q.db.Exec(ctx, setUploadSessionState, arg.ID, arg.State)
 	return err

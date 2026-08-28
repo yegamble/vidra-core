@@ -208,10 +208,9 @@ func TestEditorResumableUploadMatrix(t *testing.T) {
 	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/uploads/"+sess.UploadID, "", strangerTok); rec.Code != http.StatusNotFound {
 		t.Errorf("stranger session status = %d, want 404", rec.Code)
 	}
-	compRec := sendJSONAuth(srv, http.MethodPost, "/api/v1/uploads/"+sess.UploadID+"/complete", "", editorTok)
-	if compRec.Code != http.StatusCreated {
-		t.Fatalf("editor complete = %d; body=%s", compRec.Code, compRec.Body.String())
-	}
+	// Completion is asynchronous (202 + a finalize job); the owner-attribution
+	// this test is about happens when the worker stores the bytes.
+	finishUploadSession(t, srv, sess.UploadID, editorTok)
 
 	// Owner-attribution: the assembled bytes land against the channel OWNER's
 	// quota, and the editor's own usage stays zero.

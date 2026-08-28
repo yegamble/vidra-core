@@ -53,8 +53,20 @@ type uploadSessionResponse struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 }
 
-// uploadStatusResponse is the resume/progress contract (GET /uploads/:id and the
-// PUT-chunk ack): which chunk indices have landed and the byte total so far.
+// uploadStatusResponse is the resume/progress contract (GET /uploads/:id, the
+// PUT-chunk ack, and the 202 a completion answers with): which chunk indices
+// have landed, the byte total so far, and — since completion became
+// asynchronous — where the session is in its lifecycle.
+//
+// State is the whole client contract for the post-100% phase:
+//
+//	active     → the client is still sending chunks
+//	queued     → completion accepted, a finalize job is enqueued
+//	processing → a worker is assembling/storing/probing the file
+//	completed  → the pipeline finished; read the VIDEO for its outcome (a probe
+//	             or scan may still have failed it, exactly as before)
+//	failed     → the finalize dead-lettered; failure_reason says why
+//	cancelled  → the client cancelled before completing
 type uploadStatusResponse struct {
 	UploadID       string    `json:"upload_id"`
 	VideoID        string    `json:"video_id"`
@@ -65,6 +77,10 @@ type uploadStatusResponse struct {
 	ReceivedChunks []int     `json:"received_chunks"`
 	BytesReceived  int64     `json:"bytes_received"`
 	ExpiresAt      time.Time `json:"expires_at"`
+	// FailureReason is a safe, human-readable sentence explaining a 'failed'
+	// session, and empty for every other state. It is what a polling client
+	// shows instead of a generic error.
+	FailureReason string `json:"failure_reason"`
 }
 
 func uploadStatusView(st upload.Status) uploadStatusResponse {
@@ -82,6 +98,7 @@ func uploadStatusView(st upload.Status) uploadStatusResponse {
 		ReceivedChunks: received,
 		BytesReceived:  st.BytesReceived,
 		ExpiresAt:      st.Session.ExpiresAt,
+		FailureReason:  st.Session.FailureReason,
 	}
 }
 
@@ -248,12 +265,26 @@ func (s *Server) handleGetUploadSession(c echo.Context) error {
 	return c.JSON(http.StatusOK, uploadStatusView(st))
 }
 
-// handleCompleteUploadSession assembles a session's chunks in order and runs
-// them through the same AttachOriginal → Process pipeline a direct upload uses
-// (probe/scan/quarantine/transcode), then marks the session completed and drops
-// its now-consumed chunk blobs. Owner only; non-owner/unknown → 404; already
-// finished → 409; missing/mismatched chunks → 422. Returns the finalised video
-// exactly like the direct upload.
+// handleCompleteUploadSession ACCEPTS a completion: it validates cheaply,
+// enqueues the finalize job, and answers 202 with the session's state. The
+// client then polls GET /api/v1/uploads/{upload_id} until the session is
+// completed (read the video for its outcome) or failed (failure_reason says
+// why).
+//
+// It used to do the work inline — assemble every chunk back out of object
+// storage, re-upload the assembled file while hashing it, ffprobe it, and decode
+// it twice more for the thumbnail and storyboard — all under the general 30s
+// request deadline, and (in the shipped deployment) behind a CDN that caps
+// origin response time at around 100s. On a remote bucket that is minutes of
+// work, so every real upload 5xx'd the moment the progress bar hit 100%, and no
+// deadline change could have made a synchronous version reliable behind that
+// CDN. See internal/uploadfinalize.
+//
+// Owner only; non-owner/unknown → 404; cancelled → 409; missing/mismatched
+// chunks → 422; over quota → 422. Re-POSTing is idempotent: while the finalize
+// is queued/processing it answers 202 with the current state without queueing a
+// second run, and on a session that already finished it answers 200 with the
+// terminal state.
 func (s *Server) handleCompleteUploadSession(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
@@ -263,56 +294,87 @@ func (s *Server) handleCompleteUploadSession(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	if s.uploadfinalizesvc == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "upload completion is unavailable")
+	}
 	ctx := c.Request().Context()
-	sess, reader, err := s.uploadsvc.PrepareComplete(ctx, uploadID, userID)
+
+	// Idempotency first: a session that already left 'active' is answered from
+	// its current state rather than re-validated and re-enqueued. A client
+	// retrying a completion whose response it never saw must not queue the
+	// pipeline twice, and must never be told "409" for work it did successfully.
+	st, err := s.uploadsvc.StatusFor(ctx, uploadID, userID)
 	if err != nil {
 		return uploadError(err)
 	}
-	defer func() { _ = reader.Close() }()
+	switch st.Session.State {
+	case upload.StateQueued, upload.StateProcessing:
+		return c.JSON(http.StatusAccepted, uploadStatusView(st))
+	case upload.StateCompleted, upload.StateFailed:
+		return c.JSON(http.StatusOK, uploadStatusView(st))
+	case upload.StateCancelled:
+		return uploadError(upload.ErrNotActive)
+	}
+
+	sess, err := s.uploadsvc.ValidateComplete(ctx, uploadID, userID)
+	if err != nil {
+		return uploadError(err)
+	}
 
 	// A replace-purpose session (config-parity W14) finalises through the
-	// source-replacement flow instead of the attach-and-publish pipeline.
+	// source-replacement flow. Its gates — the video_replace feature, the
+	// published/no-replacement-in-flight state — are decided HERE, by the
+	// authenticated request, and the resulting authorisation travels on the job:
+	// a worker has no principal to re-derive it from.
+	canManage := false
 	if sess.Purpose == upload.PurposeReplace {
-		return s.completeReplaceSession(c, sess, reader)
+		if canManage, err = s.authorizeReplaceCompletion(c, sess); err != nil {
+			return err
+		}
+	} else {
+		// The session belongs to the caller (ValidateComplete enforced that);
+		// confirm they still manage the target video's channel and resolve the
+		// channel owner so an editor collaborator's upload (migration 0097)
+		// lands under, and counts against, the owner.
+		mv, ok := s.canManageVideo(ctx, userID, sess.VideoID)
+		if !ok {
+			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		// Re-check the quotas (total + rolling daily) against the assembled size
+		// before accepting (the session may have sat while other uploads
+		// consumed headroom).
+		if qerr := s.checkUploadQuotas(ctx, mv.OwnerID, sess.TotalSize); qerr != nil {
+			return qerr
+		}
 	}
 
-	// The session belongs to the caller (PrepareComplete enforced that); confirm
-	// they still manage the target video's channel and resolve the channel owner
-	// so an editor collaborator's upload (migration 0097) lands under, and counts
-	// against, the owner.
-	mv, canManage := s.canManageVideo(ctx, userID, sess.VideoID)
-	if !canManage {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	// A DELETE can land between the validation above and the enqueue. The
+	// service's state CAS catches it and reports ErrNotActive rather than
+	// resurrecting the cancelled session, which maps to the same 409 a cancelled
+	// session gets on the fast path.
+	if _, err := s.uploadfinalizesvc.Enqueue(ctx, uploadID, sess.VideoID, sess.Purpose, canManage); err != nil {
+		return uploadError(err)
 	}
-	// Re-check the quotas (total + rolling daily) against the assembled size
-	// before storing (the session may have sat while other uploads consumed
-	// headroom).
-	if qerr := s.checkUploadQuotas(ctx, mv.OwnerID, sess.TotalSize); qerr != nil {
-		return qerr
-	}
-	_, file, err := s.videosvc.AttachOriginal(ctx, mv.OwnerID, sess.VideoID, video.UploadInput{
-		Filename: sess.Filename,
-		Reader:   reader,
-	})
+	// Re-read so the 202 carries the session's NEW state ('queued') rather than
+	// the 'active' snapshot taken above.
+	queued, err := s.uploadsvc.StatusFor(ctx, uploadID, userID)
 	if err != nil {
-		return videoError(err)
+		return uploadError(err)
 	}
-	v, err := s.videosvc.Process(ctx, sess.VideoID, file.StorageKey)
-	if err != nil {
-		return err
-	}
-	if err := s.uploadsvc.MarkCompleted(ctx, uploadID); err != nil {
-		return err
-	}
-	return c.JSON(http.StatusCreated, uploadVideoFileResponse{
-		Video: newVideoView(v),
-		File:  newVideoFileView(file),
-	})
+	return c.JSON(http.StatusAccepted, uploadStatusView(queued))
 }
 
 // handleCancelUploadSession cancels an in-progress upload and drops its chunk
-// blobs. Owner only; non-owner/unknown → 404. Idempotent (cancelling an
-// already-finished session still 204s).
+// blobs. Owner only; non-owner/unknown → 404.
+//
+// Idempotent for a session that is over: cancelling one already cancelled,
+// completed or failed still 204s, so a client can always clean up.
+//
+// A session mid-finalize (queued/processing) is the exception and answers 409:
+// its completion has been accepted and the pipeline will publish the video, so
+// reporting "cancelled" would be a lie — and dropping the chunk blobs under a
+// running assembly would corrupt it. Cancel before completing, or delete the
+// video afterwards.
 func (s *Server) handleCancelUploadSession(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {

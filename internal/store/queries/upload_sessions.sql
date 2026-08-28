@@ -44,11 +44,17 @@ WHERE user_id = sqlc.arg('user_id')
 -- Whether a replace-purpose session is already open for the video (config-
 -- parity W14): at most one replacement may be in flight per video, so the
 -- replace-session create answers 409 replace_conflict while one exists.
+--
+-- 'queued'/'processing' count as in flight (migration 0120): completion is now
+-- asynchronous, so between the accepted POST and the worker's swap there is a
+-- window in which the session is no longer 'active' but the replacement has
+-- very much not finished. Admitting a second one there would race two
+-- ReplaceSource runs onto the same video.
 SELECT EXISTS (
     SELECT 1 FROM upload_sessions
     WHERE video_id = sqlc.arg('video_id')
       AND purpose = 'replace'
-      AND state = 'active'
+      AND state IN ('active', 'queued', 'processing')
       AND expires_at > now()
 );
 
@@ -66,16 +72,56 @@ SET size_bytes = EXCLUDED.size_bytes, updated_at = now();
 SELECT n, size_bytes FROM upload_chunks WHERE upload_id = $1 ORDER BY n;
 
 -- name: SetUploadSessionState :exec
+-- Advances the session's lifecycle state, clearing any stale failure reason: a
+-- session that moves on from 'failed' (only via a re-queued finalize job) must
+-- not keep answering the poll with the reason it failed last time.
 UPDATE upload_sessions
-SET state = $2, updated_at = now()
+SET state = $2, failure_reason = '', updated_at = now()
+WHERE id = $1;
+
+-- name: MarkUploadSessionQueued :execrows
+-- Accept a completion: active → queued (migration 0120).
+--
+-- The state guard is the whole point, and it is a CAS rather than a plain
+-- UPDATE. Completion validates the session, then enqueues a finalize job, and a
+-- DELETE /uploads/{id} can land in between: Cancel flips the row to 'cancelled'
+-- and deletes the chunk BLOBS, but leaves the upload_chunks ledger intact — so
+-- an unguarded write would flip the row back to 'queued', silently undoing the
+-- user's cancel and handing the worker a job whose bytes are gone (five attempts
+-- and ~15 minutes of backoff before it dead-letters).
+--
+-- Zero rows therefore means "the session stopped being active underneath us",
+-- and the caller drops the job it just enqueued and answers 409.
+UPDATE upload_sessions
+SET state = 'queued', failure_reason = '', updated_at = now()
+WHERE id = $1 AND state = 'active';
+
+-- name: FailUploadSession :exec
+-- Terminal failure of the asynchronous completion (migration 0120): the finalize
+-- job dead-lettered. reason is a SAFE, client-visible sentence — the poller on
+-- GET /api/v1/uploads/{upload_id} reads it verbatim, so it must never carry an
+-- internal error, a storage key, or process output.
+UPDATE upload_sessions
+SET state = 'failed', failure_reason = $2, updated_at = now()
 WHERE id = $1;
 
 -- name: ListSweepableUploadSessions :many
 -- Cancelled sessions and any session past its 24h expiry, for the cleanup
 -- sweeper (which deletes the chunk blobs then the row).
-SELECT id FROM upload_sessions
-WHERE state = 'cancelled' OR expires_at <= now()
-ORDER BY expires_at
+--
+-- A session with a LIVE finalize job (migration 0120) is never swept, however
+-- long it has been open: its chunk blobs are the worker's input, and deleting
+-- them mid-assembly would fail a completion the client has already been told was
+-- accepted. Once the job reaches done/failed the ordinary rules apply again —
+-- and the lease sweep guarantees a job stranded by a dead worker reaches one of
+-- those states rather than pinning the row forever.
+SELECT s.id FROM upload_sessions s
+WHERE (s.state = 'cancelled' OR s.expires_at <= now())
+  AND NOT EXISTS (
+      SELECT 1 FROM upload_finalize_jobs j
+      WHERE j.upload_id = s.id AND j.state IN ('pending', 'running')
+  )
+ORDER BY s.expires_at
 LIMIT $1;
 
 -- name: DeleteUploadSession :exec

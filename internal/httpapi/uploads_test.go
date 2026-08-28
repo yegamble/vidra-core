@@ -17,6 +17,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+	"github.com/vidra/vidra-core/internal/uploadfinalize"
 )
 
 // ---------------------------------------------------------------------------
@@ -146,6 +147,136 @@ func (r *uploadFakeRepo) DeleteUploadSession(_ context.Context, id uuid.UUID) er
 	return nil
 }
 
+// MarkUploadSessionQueued mirrors the SQL's CAS on state = 'active'.
+func (r *uploadFakeRepo) MarkUploadSessionQueued(_ context.Context, id uuid.UUID) (int64, error) {
+	s, ok := r.sessions[id]
+	if !ok || s.State != "active" {
+		return 0, nil
+	}
+	s.State, s.FailureReason = "queued", ""
+	r.sessions[id] = s
+	return 1, nil
+}
+
+func (r *uploadFakeRepo) FailUploadSession(_ context.Context, arg sqlcgen.FailUploadSessionParams) error {
+	if s, ok := r.sessions[arg.ID]; ok {
+		s.State = "failed"
+		s.FailureReason = arg.FailureReason
+		r.sessions[arg.ID] = s
+	}
+	return nil
+}
+
+// finalizeFakeRepo is the in-memory upload_finalize_jobs queue (migration
+// 0120), mirroring importFakeRepo: one active job per session, claim flips to
+// running, and the terminal writes are the same three the SQL does.
+type finalizeFakeRepo struct {
+	jobs  map[uuid.UUID]sqlcgen.UploadFinalizeJob
+	order []uuid.UUID
+}
+
+func newFinalizeFakeRepo() *finalizeFakeRepo {
+	return &finalizeFakeRepo{jobs: map[uuid.UUID]sqlcgen.UploadFinalizeJob{}}
+}
+
+func (r *finalizeFakeRepo) jobCount() int { return len(r.order) }
+
+func (r *finalizeFakeRepo) latest(uploadID uuid.UUID) (sqlcgen.UploadFinalizeJob, bool) {
+	for i := len(r.order) - 1; i >= 0; i-- {
+		if j := r.jobs[r.order[i]]; j.UploadID == uploadID {
+			return j, true
+		}
+	}
+	return sqlcgen.UploadFinalizeJob{}, false
+}
+
+func (r *finalizeFakeRepo) EnqueueUploadFinalizeJob(_ context.Context, arg sqlcgen.EnqueueUploadFinalizeJobParams) (sqlcgen.UploadFinalizeJob, error) {
+	for _, id := range r.order {
+		j := r.jobs[id]
+		if j.UploadID == arg.UploadID && (j.State == "pending" || j.State == "running") {
+			return sqlcgen.UploadFinalizeJob{}, pgx.ErrNoRows // single active per session
+		}
+	}
+	j := sqlcgen.UploadFinalizeJob{
+		ID:            uuid.New(),
+		UploadID:      arg.UploadID,
+		VideoID:       arg.VideoID,
+		Purpose:       arg.Purpose,
+		CanManage:     arg.CanManage,
+		State:         "pending",
+		NextAttemptAt: time.Now(),
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+	r.jobs[j.ID] = j
+	r.order = append(r.order, j.ID)
+	return j, nil
+}
+
+func (r *finalizeFakeRepo) GetLatestUploadFinalizeJob(_ context.Context, uploadID uuid.UUID) (sqlcgen.UploadFinalizeJob, error) {
+	if j, ok := r.latest(uploadID); ok {
+		return j, nil
+	}
+	return sqlcgen.UploadFinalizeJob{}, pgx.ErrNoRows
+}
+
+func (r *finalizeFakeRepo) ClaimDueUploadFinalizeJobs(_ context.Context, limit int32) ([]sqlcgen.ClaimDueUploadFinalizeJobsRow, error) {
+	var rows []sqlcgen.ClaimDueUploadFinalizeJobsRow
+	for _, id := range r.order {
+		j := r.jobs[id]
+		if j.State != "pending" || j.NextAttemptAt.After(time.Now()) {
+			continue
+		}
+		j.State = "running"
+		r.jobs[id] = j
+		rows = append(rows, sqlcgen.ClaimDueUploadFinalizeJobsRow{
+			ID: j.ID, UploadID: j.UploadID, VideoID: j.VideoID,
+			Purpose: j.Purpose, CanManage: j.CanManage, Attempts: j.Attempts,
+		})
+		if int32(len(rows)) >= limit {
+			break
+		}
+	}
+	return rows, nil
+}
+
+func (r *finalizeFakeRepo) DeleteUploadFinalizeJob(_ context.Context, id uuid.UUID) error {
+	delete(r.jobs, id)
+	for i, x := range r.order {
+		if x == id {
+			r.order = append(r.order[:i], r.order[i+1:]...)
+			break
+		}
+	}
+	return nil
+}
+
+func (r *finalizeFakeRepo) RenewUploadFinalizeJobLease(context.Context, uuid.UUID) error { return nil }
+
+func (r *finalizeFakeRepo) CompleteUploadFinalizeJob(_ context.Context, id uuid.UUID) error {
+	if j, ok := r.jobs[id]; ok {
+		j.State, j.Error, j.UpdatedAt = "done", "", time.Now()
+		r.jobs[id] = j
+	}
+	return nil
+}
+
+func (r *finalizeFakeRepo) RescheduleUploadFinalizeJob(_ context.Context, arg sqlcgen.RescheduleUploadFinalizeJobParams) error {
+	if j, ok := r.jobs[arg.ID]; ok {
+		j.State, j.Attempts, j.NextAttemptAt, j.Error, j.UpdatedAt = "pending", j.Attempts+1, arg.NextAttemptAt, arg.Error, time.Now()
+		r.jobs[arg.ID] = j
+	}
+	return nil
+}
+
+func (r *finalizeFakeRepo) FailUploadFinalizeJob(_ context.Context, arg sqlcgen.FailUploadFinalizeJobParams) error {
+	if j, ok := r.jobs[arg.ID]; ok {
+		j.State, j.Attempts, j.Error, j.UpdatedAt = "failed", j.Attempts+1, arg.Error, time.Now()
+		r.jobs[arg.ID] = j
+	}
+	return nil
+}
+
 type importFakeRepo struct {
 	jobs  map[uuid.UUID]sqlcgen.ImportJob
 	order []uuid.UUID
@@ -265,6 +396,56 @@ func (r *importFakeRepo) FailImportJob(_ context.Context, arg sqlcgen.FailImport
 // HTTP round-trip tests
 // ---------------------------------------------------------------------------
 
+// finalizeSvcBySrv / finalizeRepoBySrv let a test drive the asynchronous
+// completion queue behind a harness server: completion now only enqueues, so a
+// handler test that wants the pipeline to have RUN has to drain it, exactly as
+// the background worker does in production.
+var (
+	finalizeSvcBySrv  = map[*Server]*uploadfinalize.Service{}
+	finalizeRepoBySrv = map[*Server]*finalizeFakeRepo{}
+)
+
+// drainFinalize runs the finalize queue to completion and returns how many jobs
+// succeeded.
+func drainFinalize(t *testing.T, srv *Server) int {
+	t.Helper()
+	done, err := finalizeSvcBySrv[srv].DrainJobs(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("drain finalize jobs: %v", err)
+	}
+	return done
+}
+
+// getVideoState reads a video's current state through the API.
+func getVideoState(t *testing.T, srv *Server, id, token string) string {
+	t.Helper()
+	rec := getVideo(srv, id, token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get video %s = %d; body=%s", id, rec.Code, rec.Body.String())
+	}
+	var v videoView
+	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+		t.Fatalf("get video body: %v (%s)", err, rec.Body.String())
+	}
+	return v.State
+}
+
+// completeUploadSession POSTs the completion and returns the recorder.
+func completeUploadSession(srv *Server, uploadID, token string) *httptest.ResponseRecorder {
+	return sendJSONAuth(srv, http.MethodPost, "/api/v1/uploads/"+uploadID+"/complete", "", token)
+}
+
+// finishUploadSession completes a session and drains the finalize queue — the
+// asynchronous equivalent of what a single POST used to do, for the tests whose
+// subject is something other than the completion contract itself.
+func finishUploadSession(t *testing.T, srv *Server, uploadID, token string) {
+	t.Helper()
+	if rec := completeUploadSession(srv, uploadID, token); rec.Code != http.StatusAccepted {
+		t.Fatalf("complete = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	drainFinalize(t, srv)
+}
+
 // putChunkAuth PUTs raw bytes to a chunk endpoint with a bearer token.
 func putChunkAuth(srv *Server, uploadID string, n int, body []byte, token string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
@@ -337,18 +518,10 @@ func TestResumableUploadRoundTrip(t *testing.T) {
 		t.Fatalf("status bytes=%d state=%q, want %d/active", st.BytesReceived, st.State, len(want))
 	}
 
-	// Complete → published.
-	compRec := sendJSONAuth(srv, http.MethodPost, "/api/v1/uploads/"+sess.UploadID+"/complete", "", tok)
-	if compRec.Code != http.StatusCreated {
-		t.Fatalf("complete = %d; body=%s", compRec.Code, compRec.Body.String())
-	}
-	var comp uploadVideoFileResponse
-	_ = json.Unmarshal(compRec.Body.Bytes(), &comp)
-	if comp.Video.State != "published" {
-		t.Errorf("state after complete = %q, want published", comp.Video.State)
-	}
-	if comp.File.SizeBytes != int64(len(want)) {
-		t.Errorf("stored size = %d, want %d", comp.File.SizeBytes, len(want))
+	// Complete (202, enqueued) then drain the finalize queue → published.
+	finishUploadSession(t, srv, sess.UploadID, tok)
+	if got := getVideoState(t, srv, id, tok); got != "published" {
+		t.Errorf("state after finalize = %q, want published", got)
 	}
 
 	// The assembled original is served byte-for-byte.
@@ -361,9 +534,18 @@ func TestResumableUploadRoundTrip(t *testing.T) {
 		t.Errorf("assembled original = %q, want %q", got, want)
 	}
 
-	// A second complete on the finished session is 409 (no longer active).
-	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/uploads/"+sess.UploadID+"/complete", "", tok); rec.Code != http.StatusConflict {
-		t.Errorf("re-complete = %d, want 409", rec.Code)
+	// A second complete on the finished session reports the terminal state
+	// rather than re-running the pipeline.
+	rec := completeUploadSession(srv, sess.UploadID, tok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("re-complete = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &st)
+	if st.State != "completed" {
+		t.Errorf("re-complete state = %q, want completed", st.State)
+	}
+	if n := finalizeRepoBySrv[srv].jobCount(); n != 1 {
+		t.Errorf("finalize jobs = %d, want 1 (a re-complete must not queue a second run)", n)
 	}
 }
 
@@ -640,6 +822,76 @@ func TestUploadSessionBatchGuardDisabled(t *testing.T) {
 	}
 }
 
+// TestResumableUploadCompleteIsAsync is the completion contract after the
+// synchronous-finalisation bug: POST .../complete only VALIDATES and ENQUEUES.
+//
+// It used to assemble every chunk back out of object storage, re-upload the
+// assembled file while hashing it, and probe/decode it for the thumbnail and
+// storyboard — all inside a route carrying the general 30s request deadline, and
+// (in the shipped deployment) behind a CDN that caps origin response time. Real
+// videos blew through both, so the bar reached 100% and completion 5xx'd.
+//
+// So: 202 with the session's state, the video untouched until a worker runs, and
+// a re-POST while the job is queued answers 202 again rather than queueing the
+// pipeline twice.
+func TestResumableUploadCompleteIsAsync(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"Chunked","privacy":"public"}`)
+
+	sess := openUploadSession(t, srv, id, "clip.mp4", 40, tok)
+	for n, chunk := range [][]byte{[]byte("0123456789ABCDEF"), []byte("GHIJKLMNOPQRSTUV"), []byte("WXYZ0123")} {
+		if rec := putChunkAuth(srv, sess.UploadID, n, chunk, tok); rec.Code != http.StatusOK {
+			t.Fatalf("put chunk %d = %d; body=%s", n, rec.Code, rec.Body.String())
+		}
+	}
+
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/uploads/"+sess.UploadID+"/complete", "", tok)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("complete = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var st uploadStatusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatalf("complete body: %v (%s)", err, rec.Body.String())
+	}
+	if st.State != "queued" || st.VideoID != id {
+		t.Fatalf("complete state=%q video=%q, want queued/%s", st.State, st.VideoID, id)
+	}
+
+	// Nothing has run yet: the video is still the untouched draft.
+	if v := getVideoState(t, srv, id, tok); v != "draft" {
+		t.Errorf("video state right after complete = %q, want draft (the pipeline is the worker's job)", v)
+	}
+
+	// Re-POST while queued: 202 again, same state, still exactly one job.
+	again := sendJSONAuth(srv, http.MethodPost, "/api/v1/uploads/"+sess.UploadID+"/complete", "", tok)
+	if again.Code != http.StatusAccepted {
+		t.Fatalf("re-complete while queued = %d, want 202; body=%s", again.Code, again.Body.String())
+	}
+	if n := finalizeRepoBySrv[srv].jobCount(); n != 1 {
+		t.Errorf("finalize jobs after a re-POST = %d, want 1 (completion must be idempotent)", n)
+	}
+
+	// The worker does the work: assembly → AttachOriginal → Process.
+	if done, err := finalizeSvcBySrv[srv].DrainJobs(context.Background(), 5); err != nil || done != 1 {
+		t.Fatalf("drain = %d, %v; want 1, nil", done, err)
+	}
+	statusRec := sendJSONAuth(srv, http.MethodGet, "/api/v1/uploads/"+sess.UploadID, "", tok)
+	_ = json.Unmarshal(statusRec.Body.Bytes(), &st)
+	if st.State != "completed" || st.FailureReason != "" {
+		t.Fatalf("state after drain = %q (reason %q), want completed", st.State, st.FailureReason)
+	}
+	if v := getVideoState(t, srv, id, tok); v != "published" {
+		t.Errorf("video state after drain = %q, want published", v)
+	}
+
+	// A completed session answers the terminal state rather than re-queueing.
+	final := sendJSONAuth(srv, http.MethodPost, "/api/v1/uploads/"+sess.UploadID+"/complete", "", tok)
+	if final.Code != http.StatusOK {
+		t.Errorf("complete on a finished session = %d, want 200", final.Code)
+	}
+}
+
 // TestUploadSessionFingerprintTooLong: a fingerprint over 128 chars is rejected
 // 422 at create time (the opaque string is bounded).
 func TestUploadSessionFingerprintTooLong(t *testing.T) {
@@ -652,5 +904,96 @@ func TestUploadSessionFingerprintTooLong(t *testing.T) {
 		`{"size":40,"filename":"clip.mp4","file_fingerprint":"`+long+`"}`, tok)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("129-char fingerprint = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCompleteCancelledSessionIsConflict: a cancelled session can never be
+// completed — its chunk blobs are gone, so accepting the completion would queue
+// a job that can only fail. Documented as 409; this is the test the spec was
+// missing.
+func TestCompleteCancelledSessionIsConflict(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"x"}`)
+
+	sess := openUploadSession(t, srv, id, "clip.mp4", 16, tok)
+	if rec := putChunkAuth(srv, sess.UploadID, 0, []byte("0123456789ABCDEF"), tok); rec.Code != http.StatusOK {
+		t.Fatalf("put chunk = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/uploads/"+sess.UploadID, "", tok); rec.Code != http.StatusNoContent {
+		t.Fatalf("cancel = %d, want 204", rec.Code)
+	}
+
+	rec := completeUploadSession(srv, sess.UploadID, tok)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("complete on a cancelled session = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	if n := finalizeRepoBySrv[srv].jobCount(); n != 0 {
+		t.Errorf("finalize jobs = %d, want 0 — a cancelled session must never queue work", n)
+	}
+	// The video is untouched: nothing was ever attached.
+	if v := getVideoState(t, srv, id, tok); v != "draft" {
+		t.Errorf("video state = %q, want draft", v)
+	}
+}
+
+// TestCancelIsRefusedOnceCompletionIsAccepted: cancelling is idempotent right up
+// until the completion is accepted, and refused after. Reporting "cancelled" for
+// a pipeline that will publish the video would be untrue, and dropping the chunk
+// blobs under a running assembly would corrupt it.
+func TestCancelIsRefusedOnceCompletionIsAccepted(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"x"}`)
+
+	sess := openUploadSession(t, srv, id, "clip.mp4", 16, tok)
+	if rec := putChunkAuth(srv, sess.UploadID, 0, []byte("0123456789ABCDEF"), tok); rec.Code != http.StatusOK {
+		t.Fatalf("put chunk = %d", rec.Code)
+	}
+	if rec := completeUploadSession(srv, sess.UploadID, tok); rec.Code != http.StatusAccepted {
+		t.Fatalf("complete = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Queued: the work is accepted, so the cancel is refused rather than lying.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/uploads/"+sess.UploadID, "", tok); rec.Code != http.StatusConflict {
+		t.Fatalf("cancel while queued = %d, want 409", rec.Code)
+	}
+
+	drainFinalize(t, srv)
+
+	// Once it is over, cancelling is an idempotent no-op success again so a
+	// client can always clean up.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/uploads/"+sess.UploadID, "", tok); rec.Code != http.StatusNoContent {
+		t.Errorf("cancel after completion = %d, want 204", rec.Code)
+	}
+}
+
+// TestCompleteWithoutFinalizeQueueIsUnavailable: with no completion queue wired
+// there is nothing that can finalise an upload, and the old behaviour — doing it
+// inside the request — is precisely the bug. Refusing with 503 is the only
+// honest answer, and it must not silently accept work nothing will run.
+func TestCompleteWithoutFinalizeQueueIsUnavailable(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"x"}`)
+
+	sess := openUploadSession(t, srv, id, "clip.mp4", 16, tok)
+	if rec := putChunkAuth(srv, sess.UploadID, 0, []byte("0123456789ABCDEF"), tok); rec.Code != http.StatusOK {
+		t.Fatalf("put chunk = %d", rec.Code)
+	}
+	// Unwire the queue (same package): the deployment shape where WithUpload-
+	// FinalizeService was never applied.
+	srv.uploadfinalizesvc = nil
+
+	rec := completeUploadSession(srv, sess.UploadID, tok)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("complete without a finalize queue = %d, want 503; body=%s", rec.Code, rec.Body.String())
+	}
+	// The session is untouched — still active, still resumable/cancellable.
+	statusRec := sendJSONAuth(srv, http.MethodGet, "/api/v1/uploads/"+sess.UploadID, "", tok)
+	var st uploadStatusResponse
+	_ = json.Unmarshal(statusRec.Body.Bytes(), &st)
+	if st.State != "active" {
+		t.Errorf("session state = %q, want active (a refused completion changes nothing)", st.State)
 	}
 }

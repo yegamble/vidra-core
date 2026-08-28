@@ -180,14 +180,24 @@ func TestReplaceSessionRoundTrip(t *testing.T) {
 	if rec := putChunkAuth(srv, sess.UploadID, 1, c1, adminTok); rec.Code != http.StatusOK {
 		t.Fatalf("put chunk 1 = %d; body=%s", rec.Code, rec.Body.String())
 	}
-	rec = sendJSONAuth(srv, http.MethodPost, "/api/v1/uploads/"+sess.UploadID+"/complete", "", adminTok)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("complete replace session = %d; body=%s", rec.Code, rec.Body.String())
+	// Completion is asynchronous for a replace session too — the swap re-reads,
+	// re-uploads, hashes and probes the whole file, the same work that made the
+	// upload path time out. The request only authorises and enqueues.
+	rec = completeUploadSession(srv, sess.UploadID, adminTok)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("complete replace session = %d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
-	var resp uploadVideoFileResponse
-	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
-	if resp.Video.State != "published" {
-		t.Errorf("state after replace = %q, want published", resp.Video.State)
+	// Until the worker runs, the video still serves its PREVIOUS source: that is
+	// the whole point of the source-version model, and it must survive the move
+	// to a queue.
+	if got := replacedOriginal(t, srv, id, adminTok); got != "v0 bytes" {
+		t.Errorf("original before the finalize ran = %q, want the previous source", got)
+	}
+	if done := drainFinalize(t, srv); done != 1 {
+		t.Fatalf("finalize drain completed %d jobs, want 1", done)
+	}
+	if got := getVideoState(t, srv, id, adminTok); got != "published" {
+		t.Errorf("state after replace = %q, want published", got)
 	}
 	if got := replacedOriginal(t, srv, id, adminTok); got != want {
 		t.Errorf("streamed original = %q, want assembled replacement", got)

@@ -44,6 +44,7 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/upload"
+	"github.com/vidra/vidra-core/internal/uploadfinalize"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/videoimport"
 	"github.com/vidra/vidra-core/internal/watchword"
@@ -1192,6 +1193,10 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 // IPFS mirror), so a test can exercise the additive IPFS serving fields end to end.
 func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, opts ...video.Option) (*Server, storage.Backend, *transcodeFakeRepo, *notifFakeRepo, *videoFakeRepo) {
 	t.Helper()
+	// The replace-completion hook reaches back into the Server that is built at
+	// the bottom of this function (cmd/api wires the same hook against its own
+	// transcode service). A late-bound ref is the same trick settingsRef uses.
+	var srvRef *Server
 	chRepo := newChannelFakeRepo()
 	authRepo := newAuthFakeRepo()
 	chRepo.users = authRepo // resolve member-invite usernames against the auth fake
@@ -1253,6 +1258,7 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	blocksvc := block.NewService(userBlockRepo)
 	tcRepo := newTranscodeFakeRepo()
 	uploadRepo := newUploadFakeRepo()
+	finalizeRepo := newFinalizeFakeRepo()
 	importRepo := newImportFakeRepo()
 	// Wire storage-usage aggregation over the video fake's files (mirrors the
 	// SumUserStorageUsage SQL: every file of every video owned via the user's
@@ -1361,6 +1367,13 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	uploadsvc := upload.NewService(uploadRepo, blobs, upload.WithChunkSize(16),
 		upload.WithMaxActiveSessions(cfg.UploadMaxActiveSessionsPerUser),
 		upload.WithMaxActiveSessionsFunc(func() int { return int(settingssvc.Int(instancesettings.KeyUploadMaxActiveSessionsPerUser)) }))
+	// Asynchronous upload completion (migration 0120): POST .../complete only
+	// validates + enqueues, so handler tests that need the pipeline to have run
+	// drain this queue themselves (drainFinalize) instead of the worker doing it.
+	uploadfinalizesvc := uploadfinalize.NewService(finalizeRepo, uploadsvc, videosvc,
+		uploadfinalize.WithReplaceHook(func(ctx context.Context, videoID uuid.UUID, sourceKey string) {
+			srvRef.orchestrateReplaceTranscode(ctx, videoID, sourceKey)
+		}))
 	// Auto-caption (Whisper) service: enabled follows cfg.WhisperEnabled so the
 	// request endpoint returns 202 (enabled) or 503 (disabled). The transcriber is
 	// nil — handler tests exercise only enqueue/status, never the worker; the
@@ -1403,6 +1416,7 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		WithQuotaService(quotasvc),
 		WithTranscodeService(transcode.NewService(tcRepo, nil)),
 		WithUploadService(uploadsvc),
+		WithUploadFinalizeService(uploadfinalizesvc),
 		WithVideoImportService(importsvc),
 		WithCaptionJobService(captionjobsvc),
 		WithInstanceModerationService(instancemod.NewService(newInstanceModFakeRepo())),
@@ -1412,7 +1426,10 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	// affect route middleware (e.g. WithAuthRateLimiter) take effect.
 	serverOpts = append(serverOpts, httpOpts...)
 	srv := New(cfg, nil, nil, serverOpts...)
+	srvRef = srv
 	liveFakeRepoBySrv[srv] = liveRepo
+	finalizeSvcBySrv[srv] = uploadfinalizesvc
+	finalizeRepoBySrv[srv] = finalizeRepo
 	captureMailerBySrv[srv] = captureMailer
 	return srv, blobs, tcRepo, notifRepo, repo
 }

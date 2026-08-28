@@ -5502,8 +5502,10 @@ paths:
         send (every chunk but the last must be exactly this many bytes), the total
         number of chunks, and the 24h session expiry. Upload each chunk with PUT
         /api/v1/uploads/{upload_id}/chunks/{n}, then POST
-        /api/v1/uploads/{upload_id}/complete to assemble and finalise the video
-        through the same pipeline as a direct upload. Non-owner/unknown video → 404.
+        /api/v1/uploads/{upload_id}/complete, which ACCEPTS the completion (202)
+        and queues the assembly + the same pipeline a direct upload runs; poll
+        GET /api/v1/uploads/{upload_id} until its state is completed or failed.
+        Non-owner/unknown video → 404.
 
 
         BATCH GUARD (UPLOAD-10): a caller may hold at most
@@ -5588,10 +5590,11 @@ paths:
         source of an ALREADY PUBLISHED video (config-parity W14; owner, or a
         moderator/admin). Identical protocol to the plain upload session —
         upload chunks with PUT /api/v1/uploads/{upload_id}/chunks/{n}, then
-        POST /api/v1/uploads/{upload_id}/complete (which finalises through the
-        replacement flow instead of the publish pipeline and answers 200 with
-        the still-published video + new source file); GET/DELETE on the
-        session work unchanged. The declared size, filename extension, and the
+        POST /api/v1/uploads/{upload_id}/complete, which answers 202 and queues
+        the replacement flow instead of the publish pipeline; poll GET
+        /api/v1/uploads/{upload_id} for the outcome. The video keeps serving its
+        PREVIOUS source until the swap lands. GET/DELETE on the session work
+        unchanged. The declared size, filename extension, and the
         video OWNER's storage + rolling-daily quotas are validated up front,
         and re-checked at completion. Gated by the video_replace_enabled admin
         setting (403 feature_disabled while off, default off); a video that is
@@ -5680,11 +5683,15 @@ paths:
   /api/v1/uploads/{upload_id}:
     get:
       operationId: getUploadSession
-      summary: Get a resumable upload's progress (the resume contract)
+      summary: Get a resumable upload's progress and state
       description: >-
         Returns which chunk indices have landed and the byte total so far — the
         contract a client reads to know which chunks to (re)send after an
-        interruption. Owner only; non-owner/unknown session → 404.
+        interruption — plus the session's lifecycle `state`. After POST
+        .../complete answers 202 this is the POLLING endpoint: the client reads
+        it (every couple of seconds) until `state` is `completed` — then fetches
+        the video for its outcome — or `failed`, where `failure_reason` carries a
+        safe explanation. Owner only; non-owner/unknown session → 404.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -5719,8 +5726,16 @@ paths:
       summary: Cancel a resumable upload
       description: >-
         Cancels an in-progress upload and drops its chunk blobs. Owner only;
-        non-owner/unknown → 404. Idempotent (cancelling an already-finished
-        session still 204s).
+        non-owner/unknown → 404. Idempotent for a session that is already over:
+        cancelling one that is `cancelled`, `completed` or `failed` still 204s, so
+        a client can always clean up.
+
+
+        A session mid-finalize (`queued` or `processing`) is refused with 409:
+        its completion has already been accepted and the pipeline will publish the
+        video, so reporting it cancelled would be untrue — and dropping the chunk
+        blobs under a running assembly would corrupt it. Cancel before completing,
+        or delete the resulting video afterwards.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -5742,6 +5757,14 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such session, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The session is being finalised (state `queued` or `processing`) and
+            can no longer be cancelled.
           content:
             application/json:
               schema:
@@ -5828,15 +5851,35 @@ paths:
   /api/v1/uploads/{upload_id}/complete:
     post:
       operationId: completeUploadSession
-      summary: Complete a resumable upload
+      summary: Complete a resumable upload (asynchronous)
       description: >-
-        Assembles the session's chunks in order and runs them through the same
-        AttachOriginal → Process pipeline as a direct upload (probe/scan/
-        quarantine/transcode), then marks the session completed and drops its
-        chunk blobs. Returns the finalised video exactly like the direct upload
-        (video.state is "published", or "failed" if a configured probe rejected
-        it). Owner only; non-owner/unknown → 404; already finished → 409;
-        missing/mismatched chunks → 422.
+        ACCEPTS the completion and returns 202 — it does not wait for the file to
+        be assembled. The request validates cheaply (ownership, session state,
+        every chunk present at its required size, and the caller's storage +
+        rolling-daily quotas) and enqueues a finalize job; a background worker
+        then assembles the chunks in order and runs them through the same
+        AttachOriginal → Process pipeline as a direct upload
+        (probe/scan/quarantine/transcode), or — for a replace-purpose session —
+        through the source-replacement flow.
+
+
+        Poll `GET /api/v1/uploads/{upload_id}` until `state` is `completed` (then
+        read `GET /api/v1/videos/{video_id}` for the outcome: "published", or
+        "failed" if a configured probe rejected it) or `failed` (`failure_reason`
+        carries a safe explanation).
+
+
+        It used to do the work inline and return the finalised video. That could
+        not be made reliable: assembling, re-uploading, hashing and probing a real
+        video against a remote object store takes minutes, the route carries the
+        general 30s request deadline, and a CDN in front of the origin caps how
+        long a response may take.
+
+
+        Idempotent: re-POSTing while the finalize is queued or processing answers
+        202 with the current state without queueing a second run, and a session
+        that already finished answers 200 with its terminal state. Owner only;
+        non-owner/unknown → 404; cancelled → 409; missing/mismatched chunks → 422.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -5848,14 +5891,32 @@ paths:
             type: string
             format: uuid
       responses:
-        "201":
-          description: The upload was assembled and the video finalised.
+        "200":
+          description: >-
+            The session had already reached a terminal state (completed or
+            failed); nothing was re-queued.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UploadVideoFileResponse"
+                $ref: "#/components/schemas/UploadStatusResponse"
+        "202":
+          description: >-
+            The completion was accepted and queued. Poll
+            GET /api/v1/uploads/{upload_id} for the outcome.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadStatusResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            A replace-purpose session while video replacement is disabled on this
+            instance (code feature_disabled).
           content:
             application/json:
               schema:
@@ -5867,7 +5928,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: The session already completed or was cancelled.
+          description: >-
+            The session was cancelled, or (replace-purpose) the video can no
+            longer have its file replaced (code replace_conflict).
           content:
             application/json:
               schema:
@@ -5877,6 +5940,12 @@ paths:
             One or more chunks are missing or the wrong size, or completing would
             exceed the caller's storage quota (code quota_exceeded) or the
             rolling-24h daily upload quota (code daily_quota_exceeded).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The completion queue is not wired on this instance.
           content:
             application/json:
               schema:
@@ -19829,7 +19898,10 @@ components:
           description: When the session (and its uploaded chunks) expire (24h).
     UploadStatusResponse:
       type: object
-      description: A resumable upload's received-chunk status (the resume contract).
+      description: >-
+        A resumable upload's received-chunk status (the resume contract) and its
+        lifecycle state — which, since completion became asynchronous, is also
+        the contract a client polls after the last chunk lands.
       required:
         - upload_id
         - video_id
@@ -19840,6 +19912,7 @@ components:
         - received_chunks
         - bytes_received
         - expires_at
+        - failure_reason
       properties:
         upload_id:
           type: string
@@ -19849,7 +19922,20 @@ components:
           format: uuid
         state:
           type: string
-          enum: [active, completed, cancelled]
+          description: >-
+            `active` — the client is still sending chunks.
+            `queued` — completion was accepted and a finalize job is enqueued.
+            `processing` — a worker is assembling, storing and probing the file.
+            `completed` — the pipeline finished; read the VIDEO for its outcome
+            (a probe or scan may still have failed it).
+            `failed` — finalisation failed permanently; `failure_reason` says why.
+            `cancelled` — the client cancelled before completing.
+          enum: [active, queued, processing, completed, failed, cancelled]
+        failure_reason:
+          type: string
+          description: >-
+            A safe, human-readable reason for a `failed` session; empty for every
+            other state.
         size:
           type: integer
           format: int64

@@ -53,6 +53,7 @@ import (
 type Queries interface {
 	SweepExpiredTranscodeJobs(ctx context.Context) (int64, error)
 	SweepExpiredImportJobs(ctx context.Context) (int64, error)
+	SweepExpiredUploadFinalizeJobs(ctx context.Context) (int64, error)
 	SweepExpiredCaptionJobs(ctx context.Context) (int64, error)
 	SweepExpiredAccountExports(ctx context.Context) (int64, error)
 	SweepExpiredImportRuns(ctx context.Context) (int64, error)
@@ -89,6 +90,10 @@ func Sweep(ctx context.Context, q Queries) []Result {
 		// reaching 'synced', which is the gate on cutting over at all.
 		{"transcode_jobs", q.SweepExpiredTranscodeJobs},
 		{"import_jobs", q.SweepExpiredImportJobs},
+		// A stranded upload finalize is the worst kind of invisible: the client
+		// was told 202, the session sits in 'processing' forever, and the video
+		// never leaves 'draft'.
+		{"upload_finalize_jobs", q.SweepExpiredUploadFinalizeJobs},
 		{"caption_jobs", q.SweepExpiredCaptionJobs},
 		{"account_exports", q.SweepExpiredAccountExports},
 		{"peertube_import_runs", q.SweepExpiredImportRuns},
