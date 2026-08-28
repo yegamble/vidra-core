@@ -26,6 +26,18 @@ WHERE upload_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT 1;
 
+-- name: DeleteUploadFinalizeJob :exec
+-- Drop a job that was enqueued but never admitted: the session stopped being
+-- active between the completion's validation and its state transition (a DELETE
+-- raced it), so the pipeline must not run.
+--
+-- Deliberately a DELETE rather than FailUploadFinalizeJob. Dead-lettering would
+-- publish a 'failed' upload_finalize run into the operational projection for work
+-- that never started and never could have, putting a phantom failure in front of
+-- the operator; the row is also what the session sweeper's NOT EXISTS looks at,
+-- so removing it lets the cancelled session be collected normally.
+DELETE FROM upload_finalize_jobs WHERE id = $1;
+
 -- name: ClaimDueUploadFinalizeJobs :many
 -- Atomically claims due pending jobs (oldest first) by flipping them to
 -- 'running', exactly like ClaimDueImportJobs.

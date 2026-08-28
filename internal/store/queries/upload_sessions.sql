@@ -79,6 +79,23 @@ UPDATE upload_sessions
 SET state = $2, failure_reason = '', updated_at = now()
 WHERE id = $1;
 
+-- name: MarkUploadSessionQueued :execrows
+-- Accept a completion: active → queued (migration 0120).
+--
+-- The state guard is the whole point, and it is a CAS rather than a plain
+-- UPDATE. Completion validates the session, then enqueues a finalize job, and a
+-- DELETE /uploads/{id} can land in between: Cancel flips the row to 'cancelled'
+-- and deletes the chunk BLOBS, but leaves the upload_chunks ledger intact — so
+-- an unguarded write would flip the row back to 'queued', silently undoing the
+-- user's cancel and handing the worker a job whose bytes are gone (five attempts
+-- and ~15 minutes of backoff before it dead-letters).
+--
+-- Zero rows therefore means "the session stopped being active underneath us",
+-- and the caller drops the job it just enqueued and answers 409.
+UPDATE upload_sessions
+SET state = 'queued', failure_reason = '', updated_at = now()
+WHERE id = $1 AND state = 'active';
+
 -- name: FailUploadSession :exec
 -- Terminal failure of the asynchronous completion (migration 0120): the finalize
 -- job dead-lettered. reason is a SAFE, client-visible sentence — the poller on

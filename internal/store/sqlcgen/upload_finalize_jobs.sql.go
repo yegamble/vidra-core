@@ -81,6 +81,24 @@ func (q *Queries) CompleteUploadFinalizeJob(ctx context.Context, id uuid.UUID) e
 	return err
 }
 
+const deleteUploadFinalizeJob = `-- name: DeleteUploadFinalizeJob :exec
+DELETE FROM upload_finalize_jobs WHERE id = $1
+`
+
+// Drop a job that was enqueued but never admitted: the session stopped being
+// active between the completion's validation and its state transition (a DELETE
+// raced it), so the pipeline must not run.
+//
+// Deliberately a DELETE rather than FailUploadFinalizeJob. Dead-lettering would
+// publish a 'failed' upload_finalize run into the operational projection for work
+// that never started and never could have, putting a phantom failure in front of
+// the operator; the row is also what the session sweeper's NOT EXISTS looks at,
+// so removing it lets the cancelled session be collected normally.
+func (q *Queries) DeleteUploadFinalizeJob(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUploadFinalizeJob, id)
+	return err
+}
+
 const enqueueUploadFinalizeJob = `-- name: EnqueueUploadFinalizeJob :one
 
 INSERT INTO upload_finalize_jobs (upload_id, video_id, purpose, can_manage)

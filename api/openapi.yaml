@@ -5726,8 +5726,16 @@ paths:
       summary: Cancel a resumable upload
       description: >-
         Cancels an in-progress upload and drops its chunk blobs. Owner only;
-        non-owner/unknown → 404. Idempotent (cancelling an already-finished
-        session still 204s).
+        non-owner/unknown → 404. Idempotent for a session that is already over:
+        cancelling one that is `cancelled`, `completed` or `failed` still 204s, so
+        a client can always clean up.
+
+
+        A session mid-finalize (`queued` or `processing`) is refused with 409:
+        its completion has already been accepted and the pipeline will publish the
+        video, so reporting it cancelled would be untrue — and dropping the chunk
+        blobs under a running assembly would corrupt it. Cancel before completing,
+        or delete the resulting video afterwards.
       tags: [videos]
       security:
         - bearerAuth: []
@@ -5749,6 +5757,14 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such session, or not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The session is being finalised (state `queued` or `processing`) and
+            can no longer be cancelled.
           content:
             application/json:
               schema:

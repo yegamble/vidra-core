@@ -86,6 +86,19 @@ func (r *fakeJobRepo) ClaimDueUploadFinalizeJobs(_ context.Context, limit int32)
 	return rows, nil
 }
 
+func (r *fakeJobRepo) DeleteUploadFinalizeJob(_ context.Context, id uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.jobs, id)
+	for i, x := range r.order {
+		if x == id {
+			r.order = append(r.order[:i], r.order[i+1:]...)
+			break
+		}
+	}
+	return nil
+}
+
 func (r *fakeJobRepo) RenewUploadFinalizeJobLease(_ context.Context, _ uuid.UUID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -209,6 +222,19 @@ func (r *fakeSessionRepo) SetUploadSessionState(_ context.Context, arg sqlcgen.S
 	s.State, s.FailureReason = arg.State, ""
 	r.sessions[arg.ID] = s
 	return nil
+}
+
+// MarkUploadSessionQueued mirrors the SQL's CAS on state = 'active'.
+func (r *fakeSessionRepo) MarkUploadSessionQueued(_ context.Context, id uuid.UUID) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.sessions[id]
+	if !ok || s.State != upload.StateActive {
+		return 0, nil
+	}
+	s.State, s.FailureReason = upload.StateQueued, ""
+	r.sessions[id] = s
+	return 1, nil
 }
 
 func (r *fakeSessionRepo) FailUploadSession(_ context.Context, arg sqlcgen.FailUploadSessionParams) error {
@@ -535,5 +561,69 @@ func TestFinalizeRejectedReplaceSurfacesItsReason(t *testing.T) {
 	}
 	if got := h.sessions.state(sess.ID).FailureReason; got != "the file is not a playable video" {
 		t.Errorf("failure_reason = %q, want the rejection's own reason", got)
+	}
+}
+
+// TestCancelLandingMidEnqueueDoesNotResurrectTheSession drives the window the
+// state CAS exists for.
+//
+// A DELETE /uploads/{id} can land between the completion's ValidateComplete and
+// its Enqueue. Cancel flips the session to 'cancelled' and deletes the chunk
+// BLOBS — but the chunk LEDGER survives, so every "are all the chunks here?"
+// check still passes. Writing 'queued' unconditionally would therefore undo the
+// user's cancel AND hand the worker a job whose bytes are gone, which it would
+// only discover after burning all five attempts (~15 minutes of backoff).
+//
+// So: the session stays cancelled, the job is dropped rather than dead-lettered,
+// Enqueue reports ErrNotActive (the handler's 409), and a drain finds nothing.
+func TestCancelLandingMidEnqueueDoesNotResurrectTheSession(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	sess := h.openAndFill(t, "ABCD", upload.PurposeUpload)
+
+	// The request validates while the session is still active...
+	if _, err := h.uploads.ValidateComplete(ctx, sess.ID, sess.UserID); err != nil {
+		t.Fatalf("validate complete: %v", err)
+	}
+	// ...and the DELETE lands before the enqueue.
+	if err := h.uploads.Cancel(ctx, sess.ID, sess.UserID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+
+	_, err := h.svc.Enqueue(ctx, sess.ID, h.video, upload.PurposeUpload, false)
+	if !errors.Is(err, upload.ErrNotActive) {
+		t.Fatalf("enqueue after a racing cancel = %v, want ErrNotActive (the 409 path)", err)
+	}
+	if got := h.sessions.state(sess.ID).State; got != upload.StateCancelled {
+		t.Errorf("session state = %q, want cancelled — the user's cancel must stand", got)
+	}
+	if n := h.jobs.count(); n != 0 {
+		t.Errorf("finalize jobs = %d, want 0 (the job must be dropped, not dead-lettered)", n)
+	}
+	if done, err := h.svc.DrainJobs(ctx, 5); err != nil || done != 0 {
+		t.Fatalf("drain = %d, %v; want 0, nil — there is nothing to run", done, err)
+	}
+	// And the chunk blobs Cancel removed stay removed.
+	if ex, _ := h.blobs.Exists(ctx, "uploads/"+sess.ID.String()+"/0"); ex {
+		t.Error("a chunk blob came back after the cancel")
+	}
+}
+
+// TestEnqueueRefusesASessionThatIsNoLongerActive is the same guard from the
+// other side: a session already cancelled (or completed) never queues work, even
+// if a caller reaches Enqueue directly.
+func TestEnqueueRefusesASessionThatIsNoLongerActive(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	sess := h.openAndFill(t, "ABCD", upload.PurposeUpload)
+	if err := h.uploads.Cancel(ctx, sess.ID, sess.UserID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+
+	if _, err := h.svc.Enqueue(ctx, sess.ID, h.video, upload.PurposeUpload, false); !errors.Is(err, upload.ErrNotActive) {
+		t.Fatalf("enqueue on a cancelled session = %v, want ErrNotActive", err)
+	}
+	if n := h.jobs.count(); n != 0 {
+		t.Errorf("finalize jobs = %d, want 0", n)
 	}
 }

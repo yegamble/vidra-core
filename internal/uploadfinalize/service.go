@@ -83,6 +83,7 @@ var ErrNotFound = errors.New("uploadfinalize: no finalize job")
 type Repository interface {
 	EnqueueUploadFinalizeJob(ctx context.Context, arg sqlcgen.EnqueueUploadFinalizeJobParams) (sqlcgen.UploadFinalizeJob, error)
 	GetLatestUploadFinalizeJob(ctx context.Context, uploadID uuid.UUID) (sqlcgen.UploadFinalizeJob, error)
+	DeleteUploadFinalizeJob(ctx context.Context, id uuid.UUID) error
 	ClaimDueUploadFinalizeJobs(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueUploadFinalizeJobsRow, error)
 	RenewUploadFinalizeJobLease(ctx context.Context, id uuid.UUID) error
 	CompleteUploadFinalizeJob(ctx context.Context, id uuid.UUID) error
@@ -194,8 +195,28 @@ func (s *Service) Enqueue(ctx context.Context, uploadID, videoID uuid.UUID, purp
 	// The session moves to 'queued' only once a job actually landed: a session
 	// advertising 'queued' with nothing queued is the one state a poller can
 	// never escape.
-	if err := s.uploads.MarkQueued(ctx, uploadID); err != nil {
+	//
+	// The transition is a CAS on state = 'active', and it can legitimately lose:
+	// a DELETE /uploads/{id} may have landed between the caller's
+	// ValidateComplete and here, cancelling the session and deleting its chunk
+	// blobs. Writing 'queued' regardless would undo the user's cancel and leave
+	// this job to spend its whole retry budget failing on bytes that are gone —
+	// so instead the job is removed and the caller answers 409.
+	queued, err := s.uploads.MarkQueued(ctx, uploadID)
+	if err != nil {
 		return sqlcgen.UploadFinalizeJob{}, err
+	}
+	if !queued {
+		if derr := s.repo.DeleteUploadFinalizeJob(ctx, job.ID); derr != nil {
+			// The job survives as 'pending' against a non-active session. It is
+			// bounded — Assemble refuses anything but queued/processing, so the
+			// worker dead-letters it — but it holds the partial unique index and
+			// keeps the sweeper off the session until it does, which is worth a
+			// line in the log.
+			s.logger.Error("upload finalize: could not drop the job for a session cancelled mid-enqueue",
+				"job_id", job.ID.String(), "upload_id", uploadID.String(), "error", derr.Error())
+		}
+		return sqlcgen.UploadFinalizeJob{}, upload.ErrNotActive
 	}
 	return job, nil
 }

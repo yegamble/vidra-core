@@ -147,6 +147,17 @@ func (r *uploadFakeRepo) DeleteUploadSession(_ context.Context, id uuid.UUID) er
 	return nil
 }
 
+// MarkUploadSessionQueued mirrors the SQL's CAS on state = 'active'.
+func (r *uploadFakeRepo) MarkUploadSessionQueued(_ context.Context, id uuid.UUID) (int64, error) {
+	s, ok := r.sessions[id]
+	if !ok || s.State != "active" {
+		return 0, nil
+	}
+	s.State, s.FailureReason = "queued", ""
+	r.sessions[id] = s
+	return 1, nil
+}
+
 func (r *uploadFakeRepo) FailUploadSession(_ context.Context, arg sqlcgen.FailUploadSessionParams) error {
 	if s, ok := r.sessions[arg.ID]; ok {
 		s.State = "failed"
@@ -227,6 +238,17 @@ func (r *finalizeFakeRepo) ClaimDueUploadFinalizeJobs(_ context.Context, limit i
 		}
 	}
 	return rows, nil
+}
+
+func (r *finalizeFakeRepo) DeleteUploadFinalizeJob(_ context.Context, id uuid.UUID) error {
+	delete(r.jobs, id)
+	for i, x := range r.order {
+		if x == id {
+			r.order = append(r.order[:i], r.order[i+1:]...)
+			break
+		}
+	}
+	return nil
 }
 
 func (r *finalizeFakeRepo) RenewUploadFinalizeJobLease(context.Context, uuid.UUID) error { return nil }
@@ -882,5 +904,96 @@ func TestUploadSessionFingerprintTooLong(t *testing.T) {
 		`{"size":40,"filename":"clip.mp4","file_fingerprint":"`+long+`"}`, tok)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("129-char fingerprint = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCompleteCancelledSessionIsConflict: a cancelled session can never be
+// completed — its chunk blobs are gone, so accepting the completion would queue
+// a job that can only fail. Documented as 409; this is the test the spec was
+// missing.
+func TestCompleteCancelledSessionIsConflict(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"x"}`)
+
+	sess := openUploadSession(t, srv, id, "clip.mp4", 16, tok)
+	if rec := putChunkAuth(srv, sess.UploadID, 0, []byte("0123456789ABCDEF"), tok); rec.Code != http.StatusOK {
+		t.Fatalf("put chunk = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/uploads/"+sess.UploadID, "", tok); rec.Code != http.StatusNoContent {
+		t.Fatalf("cancel = %d, want 204", rec.Code)
+	}
+
+	rec := completeUploadSession(srv, sess.UploadID, tok)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("complete on a cancelled session = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	if n := finalizeRepoBySrv[srv].jobCount(); n != 0 {
+		t.Errorf("finalize jobs = %d, want 0 — a cancelled session must never queue work", n)
+	}
+	// The video is untouched: nothing was ever attached.
+	if v := getVideoState(t, srv, id, tok); v != "draft" {
+		t.Errorf("video state = %q, want draft", v)
+	}
+}
+
+// TestCancelIsRefusedOnceCompletionIsAccepted: cancelling is idempotent right up
+// until the completion is accepted, and refused after. Reporting "cancelled" for
+// a pipeline that will publish the video would be untrue, and dropping the chunk
+// blobs under a running assembly would corrupt it.
+func TestCancelIsRefusedOnceCompletionIsAccepted(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"x"}`)
+
+	sess := openUploadSession(t, srv, id, "clip.mp4", 16, tok)
+	if rec := putChunkAuth(srv, sess.UploadID, 0, []byte("0123456789ABCDEF"), tok); rec.Code != http.StatusOK {
+		t.Fatalf("put chunk = %d", rec.Code)
+	}
+	if rec := completeUploadSession(srv, sess.UploadID, tok); rec.Code != http.StatusAccepted {
+		t.Fatalf("complete = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Queued: the work is accepted, so the cancel is refused rather than lying.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/uploads/"+sess.UploadID, "", tok); rec.Code != http.StatusConflict {
+		t.Fatalf("cancel while queued = %d, want 409", rec.Code)
+	}
+
+	drainFinalize(t, srv)
+
+	// Once it is over, cancelling is an idempotent no-op success again so a
+	// client can always clean up.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/uploads/"+sess.UploadID, "", tok); rec.Code != http.StatusNoContent {
+		t.Errorf("cancel after completion = %d, want 204", rec.Code)
+	}
+}
+
+// TestCompleteWithoutFinalizeQueueIsUnavailable: with no completion queue wired
+// there is nothing that can finalise an upload, and the old behaviour — doing it
+// inside the request — is precisely the bug. Refusing with 503 is the only
+// honest answer, and it must not silently accept work nothing will run.
+func TestCompleteWithoutFinalizeQueueIsUnavailable(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"x"}`)
+
+	sess := openUploadSession(t, srv, id, "clip.mp4", 16, tok)
+	if rec := putChunkAuth(srv, sess.UploadID, 0, []byte("0123456789ABCDEF"), tok); rec.Code != http.StatusOK {
+		t.Fatalf("put chunk = %d", rec.Code)
+	}
+	// Unwire the queue (same package): the deployment shape where WithUpload-
+	// FinalizeService was never applied.
+	srv.uploadfinalizesvc = nil
+
+	rec := completeUploadSession(srv, sess.UploadID, tok)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("complete without a finalize queue = %d, want 503; body=%s", rec.Code, rec.Body.String())
+	}
+	// The session is untouched — still active, still resumable/cancellable.
+	statusRec := sendJSONAuth(srv, http.MethodGet, "/api/v1/uploads/"+sess.UploadID, "", tok)
+	var st uploadStatusResponse
+	_ = json.Unmarshal(statusRec.Body.Bytes(), &st)
+	if st.State != "active" {
+		t.Errorf("session state = %q, want active (a refused completion changes nothing)", st.State)
 	}
 }

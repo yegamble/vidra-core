@@ -128,6 +128,7 @@ type Repository interface {
 	ListUploadChunks(ctx context.Context, uploadID uuid.UUID) ([]sqlcgen.ListUploadChunksRow, error)
 	ListActiveUploadSessionsForUser(ctx context.Context, arg sqlcgen.ListActiveUploadSessionsForUserParams) ([]sqlcgen.ListActiveUploadSessionsForUserRow, error)
 	SetUploadSessionState(ctx context.Context, arg sqlcgen.SetUploadSessionStateParams) error
+	MarkUploadSessionQueued(ctx context.Context, id uuid.UUID) (int64, error)
 	FailUploadSession(ctx context.Context, arg sqlcgen.FailUploadSessionParams) error
 	ListSweepableUploadSessions(ctx context.Context, limit int32) ([]uuid.UUID, error)
 	DeleteUploadSession(ctx context.Context, id uuid.UUID) error
@@ -465,13 +466,25 @@ func (s *Service) checkChunksComplete(ctx context.Context, sess sqlcgen.UploadSe
 	return nil
 }
 
-// MarkQueued flips an active session to queued — completion has been accepted
+// MarkQueued flips an ACTIVE session to queued — completion has been accepted
 // and a finalize job enqueued. The chunk blobs stay: they are the job's input.
-func (s *Service) MarkQueued(ctx context.Context, uploadID uuid.UUID) error {
-	return s.repo.SetUploadSessionState(ctx, sqlcgen.SetUploadSessionStateParams{
-		ID:    uploadID,
-		State: StateQueued,
-	})
+//
+// It is a compare-and-set, and the bool it returns is load-bearing: false means
+// the session stopped being active between the caller's ValidateComplete and
+// this write. In practice that is a DELETE /uploads/{id} landing in the window —
+// Cancel flips the row to 'cancelled' and deletes the chunk BLOBS while leaving
+// the chunk LEDGER intact, so an unguarded write here would resurrect the
+// session into 'queued' and hand the worker a job whose bytes no longer exist.
+// The user's cancel would be silently undone and the job would spend five
+// attempts (~15 minutes of backoff) failing on missing blobs.
+//
+// On false the caller must undo its enqueue and answer 409.
+func (s *Service) MarkQueued(ctx context.Context, uploadID uuid.UUID) (bool, error) {
+	n, err := s.repo.MarkUploadSessionQueued(ctx, uploadID)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // MarkProcessing flips a queued session to processing — a worker has claimed its

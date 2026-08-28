@@ -348,8 +348,12 @@ func (s *Server) handleCompleteUploadSession(c echo.Context) error {
 		}
 	}
 
+	// A DELETE can land between the validation above and the enqueue. The
+	// service's state CAS catches it and reports ErrNotActive rather than
+	// resurrecting the cancelled session, which maps to the same 409 a cancelled
+	// session gets on the fast path.
 	if _, err := s.uploadfinalizesvc.Enqueue(ctx, uploadID, sess.VideoID, sess.Purpose, canManage); err != nil {
-		return err
+		return uploadError(err)
 	}
 	// Re-read so the 202 carries the session's NEW state ('queued') rather than
 	// the 'active' snapshot taken above.
@@ -361,8 +365,16 @@ func (s *Server) handleCompleteUploadSession(c echo.Context) error {
 }
 
 // handleCancelUploadSession cancels an in-progress upload and drops its chunk
-// blobs. Owner only; non-owner/unknown → 404. Idempotent (cancelling an
-// already-finished session still 204s).
+// blobs. Owner only; non-owner/unknown → 404.
+//
+// Idempotent for a session that is over: cancelling one already cancelled,
+// completed or failed still 204s, so a client can always clean up.
+//
+// A session mid-finalize (queued/processing) is the exception and answers 409:
+// its completion has been accepted and the pipeline will publish the video, so
+// reporting "cancelled" would be a lie — and dropping the chunk blobs under a
+// running assembly would corrupt it. Cancel before completing, or delete the
+// video afterwards.
 func (s *Server) handleCancelUploadSession(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {

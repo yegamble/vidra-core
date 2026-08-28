@@ -114,6 +114,18 @@ func (r *fakeRepo) SetUploadSessionState(_ context.Context, arg sqlcgen.SetUploa
 	}
 	return nil
 }
+
+// MarkUploadSessionQueued mirrors the SQL's CAS: it only applies to a session
+// that is still 'active', and reports how many rows it touched.
+func (r *fakeRepo) MarkUploadSessionQueued(_ context.Context, id uuid.UUID) (int64, error) {
+	s, ok := r.sessions[id]
+	if !ok || s.State != StateActive {
+		return 0, nil
+	}
+	s.State, s.FailureReason = StateQueued, ""
+	r.sessions[id] = s
+	return 1, nil
+}
 func (r *fakeRepo) FailUploadSession(_ context.Context, arg sqlcgen.FailUploadSessionParams) error {
 	if s, ok := r.sessions[arg.ID]; ok {
 		s.State, s.FailureReason = StateFailed, arg.FailureReason
@@ -194,8 +206,8 @@ func TestChunkRoundTripOutOfOrderAndResume(t *testing.T) {
 	}
 	// The request's half ends here; the worker's half starts with the session
 	// already flipped to 'queued'.
-	if err := svc2.MarkQueued(ctx, sess.ID); err != nil {
-		t.Fatalf("mark queued: %v", err)
+	if queued, err := svc2.MarkQueued(ctx, sess.ID); err != nil || !queued {
+		t.Fatalf("mark queued = %v, %v; want true, nil", queued, err)
 	}
 	if repo.sessions[sess.ID].State != StateQueued {
 		t.Fatalf("state after enqueue = %q, want queued", repo.sessions[sess.ID].State)
@@ -514,8 +526,8 @@ func TestAsyncCompletionStateMachine(t *testing.T) {
 	if _, err := svc.ValidateComplete(ctx, sess.ID, user); err != nil {
 		t.Fatalf("validate complete: %v", err)
 	}
-	if err := svc.MarkQueued(ctx, sess.ID); err != nil {
-		t.Fatalf("mark queued: %v", err)
+	if queued, err := svc.MarkQueued(ctx, sess.ID); err != nil || !queued {
+		t.Fatalf("mark queued = %v, %v; want true, nil", queued, err)
 	}
 	// A second completion attempt is refused — the handler answers from the
 	// session's state instead of re-validating.
