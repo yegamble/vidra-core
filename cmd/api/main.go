@@ -1433,6 +1433,10 @@ func run() error {
 		defer pollCancel()
 		go settingsPoller.Run(pollCtx, logger)
 		logger.Info("settings version poller started", "interval", settingsversion.DefaultInterval.String())
+		// The poller's health record feeds the admin status page's
+		// settings_sync component: a replica whose every poll fails is silently
+		// stale, and a log line is not an admin surface.
+		opts = append(opts, httpapi.WithSettingsPoller(settingsPoller))
 	}
 
 	// Resumable/chunked upload sessions (P6.1). Chunk bytes go to the same blob

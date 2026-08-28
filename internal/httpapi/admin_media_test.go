@@ -128,6 +128,60 @@ func TestAdminMediaGCReportsTheSafetyFields(t *testing.T) {
 	}
 }
 
+// MEDIA_GC_ENABLED and MEDIA_GC_MAX_ORPHAN_PERCENT are deliberately boot-baked
+// (a runtime override would let a settings mistake become an irreversible one),
+// but boot-baked must not mean invisible: before this GET, an admin could not
+// see whether the daily DESTRUCTIVE sweep is on, its breaker limit, or who owns
+// the bucket, without running a manual dry run to find out.
+func TestAdminMediaGCBootFacts(t *testing.T) {
+	cfg := testConfig()
+	cfg.MediaGCEnabled = true
+	cfg.MediaGCMaxOrphanPercent = 25
+	srv, blobs, _, _ := videoServerEnv(t, cfg)
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	bobTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	const path = "/api/v1/admin/media/gc"
+	if rec := getWithAuth(srv, path, bobTok); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin gc facts = %d, want 403", rec.Code)
+	}
+	if rec := getWithAuth(srv, path, ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anon gc facts = %d, want 401", rec.Code)
+	}
+
+	read := func() mediaGCConfigResponse {
+		t.Helper()
+		rec := getWithAuth(srv, path, adminTok)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("gc facts = %d; body=%s", rec.Code, rec.Body.String())
+		}
+		var res mediaGCConfigResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	res := read()
+	if !res.Enabled || res.MaxOrphanPercent != 25 {
+		t.Errorf("gc facts = %+v, want enabled with the 25%% breaker reported", res)
+	}
+	// Local storage: ownership does not apply, and the page says so with the
+	// same vocabulary the sweep result uses.
+	if res.BucketOwnership != string(mediagc.OwnershipNotApplicable) {
+		t.Errorf("bucket_ownership = %q, want %q", res.BucketOwnership, mediagc.OwnershipNotApplicable)
+	}
+
+	// Ownership is the service's CURRENT in-memory state, not a boot snapshot:
+	// an adoption (or a conflicting marker found by a sweep) must show on the
+	// next read.
+	srv.mediagcsvc = mediagc.NewService(&mediagcFakeRepo{}, blobs,
+		mediagc.WithBucketOwnership(mediagc.OwnershipUnowned))
+	if res := read(); res.BucketOwnership != string(mediagc.OwnershipUnowned) {
+		t.Errorf("bucket_ownership = %q after re-wiring, want %q", res.BucketOwnership, mediagc.OwnershipUnowned)
+	}
+}
+
 // The adoption endpoint is the deliberate way out of an unowned bucket: admin
 // only, audited, and it must actually re-enable deletion.
 func TestAdminAdoptBucket(t *testing.T) {

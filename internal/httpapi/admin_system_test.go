@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -231,6 +232,100 @@ func TestSystemStatusSearchProbe(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Once Drain() fires, /readyz answers 503 "draining" — but an admin watching
+// the DASHBOARD during a deploy saw ok|degraded right up to the listener
+// closing, because handleSystemStatus never read the flag. The page must agree
+// with the balancer about a process that is leaving.
+func TestSystemStatusReportsDraining(t *testing.T) {
+	srv := authServer(t)
+	srv.lookPath = ffmpegFound
+	// Register the admin BEFORE draining: the page keeps serving while the
+	// drain delay runs — that is the whole point of the delay — so the read
+	// below exercises exactly the mid-deploy window.
+	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	srv.Drain()
+
+	rec := getWithAuth(srv, "/api/v1/admin/system", admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("system status while draining = %d, want 200 (the admin page never 503s)", rec.Code)
+	}
+	var body systemStatusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.Status != "draining" {
+		t.Errorf("status = %q, want draining — the dashboard must agree with /readyz about a leaving process", body.Status)
+	}
+}
+
+// fakeSettingsSync stands in for the settings-version poller's health record.
+type fakeSettingsSync struct {
+	last time.Time
+	err  error
+}
+
+func (f fakeSettingsSync) Health() (time.Time, error) { return f.last, f.err }
+
+// The core#115 poller is the mechanism keeping N replicas' in-memory instance
+// settings fresh, and its only failure signal was a log line — a replica whose
+// every tick fails is silently stale, which is the exact class of invisible
+// wrongness the poller itself was built to close, one level up. The status
+// page is where that failure has to surface.
+func TestSystemStatusSettingsSyncComponent(t *testing.T) {
+	t.Run("not wired", func(t *testing.T) {
+		srv := authServer(t)
+		srv.lookPath = ffmpegFound
+		body := systemStatus(t, srv)
+		// Single-process installs and unit servers wire no poller; that is a
+		// supported deployment, not a fault.
+		if c := body.Components["settings_sync"]; c.Status != "not_configured" {
+			t.Errorf("settings_sync = %+v, want not_configured", c)
+		}
+		if body.Status != "ok" {
+			t.Errorf("status = %q; an unwired poller must never degrade the instance", body.Status)
+		}
+	})
+
+	t.Run("healthy", func(t *testing.T) {
+		srv := authServer(t)
+		srv.lookPath = ffmpegFound
+		WithSettingsPoller(fakeSettingsSync{last: time.Now()})(srv)
+		body := systemStatus(t, srv)
+		if c := body.Components["settings_sync"]; c.Status != "ok" || c.Error != "" {
+			t.Errorf("settings_sync = %+v, want ok", c)
+		}
+		if body.Status != "ok" {
+			t.Errorf("status = %q, want ok", body.Status)
+		}
+	})
+
+	t.Run("failing", func(t *testing.T) {
+		srv := authServer(t)
+		srv.lookPath = ffmpegFound
+		WithSettingsPoller(fakeSettingsSync{
+			last: time.Now().Add(-3 * time.Minute),
+			err:  errors.New("read settings_version: connection refused"),
+		})(srv)
+		body := systemStatus(t, srv)
+		c := body.Components["settings_sync"]
+		if c.Status != "down" {
+			t.Fatalf("settings_sync = %+v, want down", c)
+		}
+		// The sentence must carry both what is wrong and what it means: an
+		// operator reading "connection refused" alone would fix the database
+		// and never re-check the settings this replica kept serving meanwhile.
+		for _, want := range []string{"stale", "connection refused"} {
+			if !strings.Contains(c.Error, want) {
+				t.Errorf("settings_sync error = %q, want it to contain %q", c.Error, want)
+			}
+		}
+		if body.Status != "degraded" {
+			t.Errorf("status = %q, want degraded", body.Status)
+		}
+	})
 }
 
 // fakeBucket is a media backend that can be asked about its bucket — the S3

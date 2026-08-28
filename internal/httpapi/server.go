@@ -153,6 +153,12 @@ type Server struct {
 	remotevideosvc    *remotevideo.Service
 	instancemodsvc    *instancemod.Service
 	settingssvc       *instancesettings.Service
+	// settingsSync is the settings-version poller's health record (core#115),
+	// read by the admin status page's settings_sync component. An interface so
+	// the page depends on the one question it asks, and nil — unit tests,
+	// single-process embedders, worker-role processes — reports not_configured
+	// rather than inventing a poller that does not exist.
+	settingsSync settingsSyncHealth
 	// searchClient talks to the vidra-search internal API (search-service W4/W9).
 	// Nil when SEARCH_SERVICE_URL is unset — every search surface then degrades
 	// to local behaviour. searchEnabled() gates on it; useSearchService() folds in
@@ -798,6 +804,16 @@ func WithSettingsService(svc *instancesettings.Service) Option {
 		// categories came from a PeerTube import would reject every one of them.
 		video.SetCategoryProvider(svc.Categories)
 	}
+}
+
+// WithSettingsPoller wires the settings-version poller's health record into
+// the admin status page (GET /api/v1/admin/system, component settings_sync).
+// The poller keeps this replica's in-memory instance settings in agreement
+// with the fleet's; without this its only failure signal is a log line, and a
+// replica whose every tick fails serves the settings it booted with, silently,
+// until restart — the same invisible-staleness class the poller itself closes.
+func WithSettingsPoller(p settingsSyncHealth) Option {
+	return func(s *Server) { s.settingsSync = p }
 }
 
 // WithSearchClient wires the vidra-search internal-API gateway (search-service
@@ -1671,6 +1687,7 @@ func (s *Server) routes() {
 	// plus the explicit adoption that re-enables destructive sweeps against a
 	// bucket this install has not been shown to own.
 	if s.mediagcsvc != nil {
+		api.GET("/admin/media/gc", s.handleAdminMediaGCConfig, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/admin/media/gc", s.handleAdminMediaGC, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/admin/media/gc/adopt-bucket", s.handleAdminAdoptBucket, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}

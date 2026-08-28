@@ -51,6 +51,13 @@ func TestInfrastructureReportsTheDeployShape(t *testing.T) {
 	if body.Server.Environment != "test" {
 		t.Errorf("environment = %q, want test", body.Server.Environment)
 	}
+	// The process role is deploy-time shape in the purest sense: it decides
+	// whether this process runs workers at all, and a fleet accidentally
+	// deployed all-api (zero workers — no transcodes, no GC, no outbox) is
+	// indistinguishable from a healthy all-in-one install without it.
+	if body.Server.Role != "all" {
+		t.Errorf("role = %q, want all (testConfig mirrors the production default)", body.Server.Role)
+	}
 	if body.Server.BodyLimit != "8M" || body.Server.UploadMaxBytes != 64000 {
 		t.Errorf("server caps = %+v, want body_limit 8M and a 64K upload cap in bytes", body.Server)
 	}
@@ -171,7 +178,6 @@ func TestInfrastructureLeaksNoSecret(t *testing.T) {
 		// keeps them out and this is what holds it to that.
 		"SENTINEL-smtp-relay.internal", "SENTINEL-noreply@example.test",
 		"SENTINEL-clamav.internal", "SENTINEL-whisper.internal",
-		"SENTINEL-ingest.internal", "SENTINEL-live-hls",
 		"SENTINEL-kubo.internal", "SENTINEL-gateway.internal",
 		"SENTINEL-kubo-private.internal", "SENTINEL-cluster.internal",
 	} {
@@ -185,6 +191,16 @@ func TestInfrastructureLeaksNoSecret(t *testing.T) {
 	if body.Storage.Backend != "s3" || body.Storage.S3Bucket != "vidra-media" ||
 		body.Storage.S3Endpoint != "objects.example:443" || body.Storage.S3Region != "us-east-1" {
 		t.Errorf("storage = %+v, want the s3 coordinates reported", body.Storage)
+	}
+	// The live ingest coordinates are reported too — an earlier round of this
+	// test kept them out with the internal endpoints above, and that
+	// classification did not survive scrutiny: LIVE_RTMP_URL is handed verbatim
+	// to every streamer the moment they create a stream, and LIVE_HLS_ROOT is a
+	// container path in the same sensitivity class as storage.local_root, which
+	// this page has always shown. LIVE_INGEST_SECRET stays forbidden above.
+	if body.Live == nil || body.Live.RTMPURL != "rtmp://SENTINEL-ingest.internal/live" ||
+		body.Live.HLSRoot != "/srv/SENTINEL-live-hls" {
+		t.Errorf("live = %+v, want the ingest coordinates reported", body.Live)
 	}
 }
 
@@ -261,7 +277,7 @@ func TestInfrastructureFeatureDiscovery(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := testConfig()
-			cfg.LiveEnabled = false // the default-on toggle, so each case starts from off
+			cfg.LiveEnabled = false // testConfig pins live on; start each case from off
 			tc.mutate(cfg)
 			got, _ := infrastructure(t, authServerWithConfig(t, cfg))
 			f := featureNamed(t, got, tc.key)
@@ -321,24 +337,29 @@ func TestInfrastructureReportsPoolAndDrainConfig(t *testing.T) {
 }
 
 // infraServerWithSettings is authServerWithConfig plus a loaded instance-settings
-// overlay, so a test can flip the runtime half of the CDN pair the way an admin
-// would. It is the only feature row that reads the overlay at all.
-func infraServerWithSettings(t *testing.T, cfg *config.Config, cdnOn bool) *Server {
+// overlay with the given updates applied, so a test can flip a runtime setting
+// (the CDN toggle, the presign toggle) the way an admin would.
+func infraServerWithSettings(t *testing.T, cfg *config.Config, updates map[string]instancesettings.Update) *Server {
 	t.Helper()
 	svc := instancesettings.NewService(newInstanceSettingsFakeRepo(), settingsDefaultsFromConfig(cfg))
 	if err := svc.Load(context.Background()); err != nil {
 		t.Fatalf("settings load: %v", err)
 	}
-	if cdnOn {
-		if err := svc.Apply(context.Background(), map[string]instancesettings.Update{
-			instancesettings.KeyDeliveryCDNEnabled: {Value: "true"},
-		}, uuid.Nil); err != nil {
-			t.Fatalf("enable delivery_cdn_enabled: %v", err)
+	if len(updates) > 0 {
+		if err := svc.Apply(context.Background(), updates, uuid.Nil); err != nil {
+			t.Fatalf("apply settings %v: %v", updates, err)
 		}
 	}
 	srv := authServerWithConfig(t, cfg)
 	WithSettingsService(svc)(srv)
 	return srv
+}
+
+// cdnToggledOn is the one update TestInfrastructureCDNFeature flips.
+func cdnToggledOn() map[string]instancesettings.Update {
+	return map[string]instancesettings.Update{
+		instancesettings.KeyDeliveryCDNEnabled: {Value: "true"},
+	}
 }
 
 // The CDN row is the one whose two halves live in different places — the base
@@ -364,7 +385,7 @@ func TestInfrastructureCDNFeature(t *testing.T) {
 	t.Run("wired but switched off", func(t *testing.T) {
 		cfg := testConfig()
 		cfg.DeliveryCDNBaseURL = base
-		body, _ := infrastructure(t, infraServerWithSettings(t, cfg, false))
+		body, _ := infrastructure(t, infraServerWithSettings(t, cfg, nil))
 		f := featureNamed(t, body, "cdn")
 		if f.Enabled || !f.Configured {
 			t.Fatalf("cdn wired with the toggle off = %+v, want configured and not enabled", f)
@@ -380,7 +401,7 @@ func TestInfrastructureCDNFeature(t *testing.T) {
 	// The dangerous half: the switch is on and no edge exists, so nothing is
 	// being offloaded and the page must say so rather than show a success pill.
 	t.Run("switched on with no edge", func(t *testing.T) {
-		body, _ := infrastructure(t, infraServerWithSettings(t, testConfig(), true))
+		body, _ := infrastructure(t, infraServerWithSettings(t, testConfig(), cdnToggledOn()))
 		f := featureNamed(t, body, "cdn")
 		if !f.Enabled || f.Configured {
 			t.Fatalf("cdn toggled on with no base URL = %+v, want enabled and not configured", f)
@@ -393,10 +414,62 @@ func TestInfrastructureCDNFeature(t *testing.T) {
 	t.Run("fully on", func(t *testing.T) {
 		cfg := testConfig()
 		cfg.DeliveryCDNBaseURL = base
-		body, _ := infrastructure(t, infraServerWithSettings(t, cfg, true))
+		body, _ := infrastructure(t, infraServerWithSettings(t, cfg, cdnToggledOn()))
 		f := featureNamed(t, body, "cdn")
 		if !f.Enabled || !f.Configured || f.Note != "" {
 			t.Fatalf("cdn fully on = %+v, want enabled+configured with no note", f)
+		}
+	})
+}
+
+// The feature vocabulary has no presign row (direct object delivery is a
+// delivery posture of the storage feature, not a subsystem of its own), so the
+// object_storage row's Active state is where a scaling operator learns that the
+// API is proxying every media byte and that the Advanced-page switch exists.
+func TestInfrastructureObjectStoragePresignDiscovery(t *testing.T) {
+	s3cfg := func() *config.Config {
+		cfg := testConfig()
+		cfg.StorageBackend = "s3"
+		cfg.StorageS3Endpoint = "objects.example:443"
+		cfg.StorageS3Bucket = "vidra-media"
+		return cfg
+	}
+
+	t.Run("s3 with presign off", func(t *testing.T) {
+		body, _ := infrastructure(t, infraServerWithSettings(t, s3cfg(), nil))
+		f := featureNamed(t, body, "object_storage")
+		if !f.Enabled || !f.Configured {
+			t.Fatalf("object_storage on s3 = %+v, want enabled+configured", f)
+		}
+		// The note must name the switch AND the precondition: pointing an
+		// operator at delivery_presign_enabled without the CORS warning trades a
+		// bandwidth problem for an every-request failure.
+		for _, want := range []string{"proxied", "delivery_presign_enabled", "CORS"} {
+			if !strings.Contains(f.Note, want) {
+				t.Errorf("object_storage note = %q, want it to contain %q", f.Note, want)
+			}
+		}
+	})
+
+	// Presign on: the deployment is doing the thing the note suggests, so the
+	// note would be advice already taken — the same reader-losing failure
+	// cdnWiredButOffNote documents.
+	t.Run("s3 with presign on", func(t *testing.T) {
+		body, _ := infrastructure(t, infraServerWithSettings(t, s3cfg(), map[string]instancesettings.Update{
+			instancesettings.KeyDeliveryPresignEnabled: {Value: "true"},
+		}))
+		if f := featureNamed(t, body, "object_storage"); f.Note != "" {
+			t.Errorf("object_storage with presign on = %+v, want no note", f)
+		}
+	})
+
+	// Local storage cannot presign, so the proxy note would be a dead pointer;
+	// the off-state discovery note stays in charge.
+	t.Run("local keeps the discovery note", func(t *testing.T) {
+		body, _ := infrastructure(t, authServer(t))
+		f := featureNamed(t, body, "object_storage")
+		if !strings.Contains(f.Note, "STORAGE_BACKEND=s3") {
+			t.Errorf("object_storage note on local = %q, want the discovery copy", f.Note)
 		}
 	})
 }
@@ -424,6 +497,75 @@ func TestInfrastructureDRMFeature(t *testing.T) {
 	f = featureNamed(t, on, "drm")
 	if !f.Enabled || !f.Configured {
 		t.Fatalf("drm with a provider and a KEK = %+v, want enabled+configured", f)
+	}
+	// The ACTIVE state must carry the warning too. enabled+configured is the one
+	// quadrant the generic notes stay silent for — the success pill is normally
+	// the whole message — and for the test provider that silence is the lie: the
+	// pill would read "Active — DRM content protection" while no media byte is
+	// encrypted and the content key travels to every viewer in the clear.
+	for _, want := range []string{"TEST", "encrypt"} {
+		if !strings.Contains(f.Note, want) {
+			t.Errorf("active clearkey-test drm note = %q, want it to contain %q — the green pill needs the caveat next to it", f.Note, want)
+		}
+	}
+}
+
+// The CDN base URL is definitionally public — every viewer's player fetches
+// segments from it — so confirming WHICH edge is wired must not need an SSH
+// session. The purge endpoint stays out (its template can carry a credential in
+// the query string; see TestInfrastructureLeaksNoSecret).
+func TestInfrastructureDeliveryBlock(t *testing.T) {
+	// No CDN wired: the block is ABSENT, not an empty string — the same
+	// omitted-not-zeroed doctrine as the /admin/system database block.
+	off, _ := infrastructure(t, authServer(t))
+	if off.Delivery != nil {
+		t.Errorf("delivery = %+v with no CDN wired, want the block omitted", off.Delivery)
+	}
+
+	cfg := testConfig()
+	cfg.DeliveryCDNBaseURL = "https://cdn.example.test/media"
+	on, _ := infrastructure(t, authServerWithConfig(t, cfg))
+	if on.Delivery == nil || on.Delivery.CDNBaseURL != "https://cdn.example.test/media" {
+		t.Errorf("delivery = %+v, want the wired edge base URL reported verbatim", on.Delivery)
+	}
+}
+
+// Live's ingest coordinates get the same verbatim treatment as the storage
+// coordinates: LIVE_RTMP_URL is already handed to every streamer on stream
+// creation, and LIVE_HLS_ROOT is the same sensitivity class as
+// storage.local_root, which is shown. LIVE_INGEST_SECRET stays on the
+// never-list.
+func TestInfrastructureLiveCoordinates(t *testing.T) {
+	// Live off: the block is absent, not zeroed.
+	cfg := testConfig()
+	cfg.LiveEnabled = false
+	cfg.LiveRTMPURL = "rtmp://ingest.example.test/live"
+	cfg.LiveHLSRoot = "/srv/live-hls"
+	off, _ := infrastructure(t, authServerWithConfig(t, cfg))
+	if off.Live != nil {
+		t.Errorf("live = %+v with the feature off, want the block omitted", off.Live)
+	}
+
+	on := testConfig()
+	on.LiveEnabled = true
+	on.LiveRTMPURL = "rtmp://ingest.example.test/live"
+	on.LiveHLSRoot = "/srv/live-hls"
+	body, _ := infrastructure(t, authServerWithConfig(t, on))
+	if body.Live == nil {
+		t.Fatal("live block missing with the feature on")
+	}
+	if body.Live.RTMPURL != "rtmp://ingest.example.test/live" || body.Live.HLSRoot != "/srv/live-hls" {
+		t.Errorf("live = %+v, want the ingest coordinates reported verbatim", body.Live)
+	}
+
+	// Enabled with nothing behind it still reports the block — empty strings
+	// ARE the finding here (the feature row's misconfigured note names them),
+	// and hiding the block would hide it.
+	bare := testConfig()
+	bare.LiveEnabled = true
+	bareBody, _ := infrastructure(t, authServerWithConfig(t, bare))
+	if bareBody.Live == nil || bareBody.Live.RTMPURL != "" || bareBody.Live.HLSRoot != "" {
+		t.Errorf("live = %+v on an enabled-but-unconfigured install, want the block present with empty coordinates", bareBody.Live)
 	}
 }
 

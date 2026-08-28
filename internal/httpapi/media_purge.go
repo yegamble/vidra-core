@@ -205,6 +205,9 @@ func (s *Server) runVideoEdgePurge(ctx context.Context, videoID uuid.UUID, snap 
 			failed++
 		}
 	}
+	// The counters (media_purge_metrics.go) are the observable record of this
+	// run — the admin page's answer to "has purge been exercised".
+	recordVideoEdgePurgeRun(len(keys)-failed, failed, complete)
 	if failed == 0 && complete {
 		return
 	}
@@ -237,11 +240,17 @@ func (s *Server) purgeEdgeKey(ctx context.Context, asset string, resourceID uuid
 	}
 	ctx = context.WithoutCancel(ctx)
 	go func() {
+		// A one-key run is always a complete key set; it shares the fan-out's
+		// counters because the cdn_purge exercise record must cover every purge
+		// shape — an install that only ever replaces images still purges.
 		if err := s.deliverysvc.Purge(ctx, key); err != nil {
+			recordVideoEdgePurgeRun(0, 1, true)
 			s.logger.WarnContext(ctx, "cdn purge failed; the edge may still be serving this object",
 				"asset", asset,
 				"resource_id", resourceID.String())
+			return
 		}
+		recordVideoEdgePurgeRun(1, 0, true)
 	}()
 }
 

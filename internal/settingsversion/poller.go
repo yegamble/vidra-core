@@ -38,6 +38,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -97,6 +98,15 @@ type Poller struct {
 	// known is the counter value this replica has already acted on. It is the
 	// whole state of the poller: reload-on-change, never on every tick.
 	known atomic.Int64
+
+	// The health record (Health), guarded by mu. It exists because the loop's
+	// only other failure signal is a log line, which reproduces the exact bug
+	// this package closes one level up: a replica whose every Tick fails keeps
+	// serving the settings it booted with, silently, until restart. The admin
+	// status page reads this instead of the logs.
+	mu          sync.Mutex
+	lastSuccess time.Time
+	lastErr     error
 }
 
 // New builds a poller. A non-positive interval takes DefaultInterval.
@@ -118,6 +128,12 @@ func New(repo Repository, interval time.Duration, caches ...Cache) *Poller {
 // redundant reload is harmless.
 func (p *Poller) Prime(ctx context.Context) error {
 	v, err := p.repo.GetSettingsVersion(ctx)
+	// A successful Prime counts as a successful poll: the replica has just
+	// agreed with the database, and without this the first ~interval of its
+	// life would read as "never synced" on the status page. A failed Prime is
+	// recorded too — main carries on (the first tick heals it), and the page
+	// must say so in the meantime rather than show a blank ok.
+	p.record(err)
 	if err != nil {
 		return err
 	}
@@ -127,6 +143,30 @@ func (p *Poller) Prime(ctx context.Context) error {
 
 // Known reports the counter value this replica has acted on (tests, logging).
 func (p *Poller) Known() int64 { return p.known.Load() }
+
+// Health reports when this replica last successfully agreed with the counter
+// (zero before the first attempt) and the error that has it stale now, nil
+// when the last attempt succeeded. This is the read side of the record calls
+// in Prime and Tick — see the struct comment for why it exists.
+func (p *Poller) Health() (lastSuccess time.Time, lastErr error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lastSuccess, p.lastErr
+}
+
+// record files one attempt's outcome. Success advances the clock and clears
+// the error; failure keeps the clock (the last TRUE success is the fact an
+// operator needs to bound the staleness) and replaces the error.
+func (p *Poller) record(err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err != nil {
+		p.lastErr = err
+		return
+	}
+	p.lastErr = nil
+	p.lastSuccess = time.Now()
+}
 
 // Tick performs one poll. It reports whether the caches were reloaded.
 //
@@ -145,9 +185,14 @@ func (p *Poller) Tick(ctx context.Context) (bool, error) {
 		// Bounded staleness, never a crash: keep the last known value so a
 		// change written during the outage is still detected once the database
 		// answers again.
+		p.record(err)
 		return false, err
 	}
 	if v == p.known.Load() {
+		// An unchanged counter is a SUCCESSFUL poll — this replica has just
+		// re-confirmed it agrees with the database, which is exactly the fact
+		// the health record's clock reports.
+		p.record(nil)
 		return false, nil
 	}
 	var failures []error
@@ -160,10 +205,14 @@ func (p *Poller) Tick(ctx context.Context) (bool, error) {
 		// Do NOT advance the token. A half-reloaded replica is a stale replica,
 		// and recording the new value here would mean the next tick sees no
 		// change and the write is lost until restart — the very bug this
-		// package exists to remove.
-		return false, errors.Join(failures...)
+		// package exists to remove. Stale is also what the health record says:
+		// the counter READ worked, but the replica did not reach agreement.
+		err := errors.Join(failures...)
+		p.record(err)
+		return false, err
 	}
 	p.known.Store(v)
+	p.record(nil)
 	return true, nil
 }
 

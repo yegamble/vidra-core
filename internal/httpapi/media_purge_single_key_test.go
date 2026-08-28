@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 )
 
 // Single-key purge coverage: avatars, banners and playlist covers live at ONE
@@ -238,4 +239,36 @@ func TestDeleteChannelPurgesItsImages(t *testing.T) {
 		"avatars/channels/" + ch.ID + ".png",
 		"banners/channels/" + ch.ID + ".jpg",
 	})
+}
+
+// TestSingleKeyPurgeCountsInTheExerciseRecord. The cdn_purge counters are the
+// operator's only answer to "has purge been exercised" — if single-key
+// invalidations (avatars, banners, covers) bypassed them, an install that
+// only ever replaced images would read "0 runs" while purging daily. Deltas
+// with >=, not ==: the counters are package-global and other purge tests run
+// in parallel.
+func TestSingleKeyPurgeCountsInTheExerciseRecord(t *testing.T) {
+	srv, rec := avatarPurgeServer(t)
+	runsBefore, purgedBefore, _, _ := videoEdgePurgeCounters()
+	tok, userID := registerUser(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	if r := uploadImage(srv, "/api/v1/me/avatar", "me.png", "\x89PNG-fake", tok); r.Code != http.StatusCreated {
+		t.Fatalf("set avatar = %d; body=%s", r.Code, r.Body.String())
+	}
+	if r := uploadImage(srv, "/api/v1/me/avatar", "me2.jpg", "jpeg-bytes", tok); r.Code != http.StatusCreated {
+		t.Fatalf("replace avatar = %d; body=%s", r.Code, r.Body.String())
+	}
+	waitForPurge(t, rec, []string{"avatars/users/" + userID + ".png"})
+	// The record lands after the purge call returns on the detached goroutine —
+	// poll briefly rather than racing it.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		runs, purged, _, _ := videoEdgePurgeCounters()
+		if runs >= runsBefore+1 && purged >= purgedBefore+1 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	runs, purged, _, _ := videoEdgePurgeCounters()
+	t.Fatalf("single-key purge not recorded: runs %d->%d, purged %d->%d",
+		runsBefore, runs, purgedBefore, purged)
 }

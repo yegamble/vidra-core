@@ -33,14 +33,22 @@ import (
 // while no RTMP ingest exists is the sentence this page has to be able to
 // contradict. The runtime toggles live on /admin/config and GET /instance.
 //
-// EXACTLY ONE ROW BREAKS THAT RULE, AND ONLY FOR ITS ENABLED HALF: cdn. A CDN
-// has no env spelling of "on" — DELIVERY_CDN_BASE_URL is the wiring and
-// delivery_cdn_enabled is the posture (config.go, phase-4 item 2) — so a
-// boot-config-only reading could report nothing but "off" forever, on an
-// instance actively serving through an edge. That is the lie this page exists
-// to prevent, so the toggle is read. The rule survives where it earns its keep:
-// the CONFIGURED half still comes from boot config, which is what lets the row
-// contradict a toggle switched on with nothing behind it.
+// EXACTLY TWO ROWS BREAK THAT RULE, both for the same underlying reason: a
+// delivery posture whose only spelling is a runtime setting.
+//
+//   - cdn, for its ENABLED half. A CDN has no env spelling of "on" —
+//     DELIVERY_CDN_BASE_URL is the wiring and delivery_cdn_enabled is the
+//     posture (config.go, phase-4 item 2) — so a boot-config-only reading could
+//     report nothing but "off" forever, on an instance actively serving through
+//     an edge. That is the lie this page exists to prevent, so the toggle is
+//     read. The rule survives where it earns its keep: the CONFIGURED half
+//     still comes from boot config, which is what lets the row contradict a
+//     toggle switched on with nothing behind it.
+//   - object_storage, for its NOTE only. On an s3 install with
+//     delivery_presign_enabled off, the API proxies every media byte, and the
+//     note's whole message is "this runtime switch exists and is off" — a
+//     sentence boot config cannot write about a switch whose state lives in the
+//     overlay. Both of the row's COLUMNS stay boot config.
 
 // infraServer is the process's own shape: the environment it believes it is in,
 // the request deadlines and size caps it enforces, and whether the two
@@ -51,6 +59,19 @@ type infraServer struct {
 	// dozen fail-secure defaults, so an operator who thinks they deployed
 	// production and did not needs to see it in one place.
 	Environment string `json:"environment"`
+	// Role is VIDRA_ROLE (all|api|worker): boot-baked, and it decides whether
+	// this process runs the background workers and whether it serves HTTP. Not
+	// a credential — it is topology the operator chose. It is here because a
+	// fleet accidentally deployed all-role=api runs ZERO workers (no
+	// transcodes, no media GC, no search outbox) and looks identical to a
+	// healthy all-in-one install from inside the product; this page's whole job
+	// is to be the place that difference shows.
+	//
+	// It reports the role of the process ANSWERING this request — which is the
+	// honest limit of the page: a worker-only process never serves it, so a
+	// fleet's worker roles are confirmed by their absence of a listener, not
+	// here.
+	Role string `json:"role"`
 	// RequestTimeoutSeconds / StreamRequestTimeoutSeconds are the per-request
 	// deadlines. The stream one applies to uploads and media reads, which are
 	// bounded by the client's link speed rather than server work — a slow
@@ -202,10 +223,40 @@ type infraFeature struct {
 	Note       string `json:"note,omitempty"`
 }
 
-// infrastructureResponse is the admin infrastructure document.
+// infraDelivery is how media bytes leave the deployment when this process is
+// not the one serving them. One field today, and the block earns its existence
+// by what it is NOT allowed to grow: the purge endpoint template and its token
+// (an invalidation API routinely carries the credential in the URL) are never
+// reported, which is why the CDN pair cannot ride on the storage block's
+// "coordinates, not credentials" rows unexamined.
+type infraDelivery struct {
+	// CDNBaseURL is DELIVERY_CDN_BASE_URL verbatim. Definitionally public —
+	// every viewer's player fetches segments from it — so the only thing
+	// hiding it protected was the operator's ability to confirm WHICH edge is
+	// wired without an SSH session.
+	CDNBaseURL string `json:"cdn_base_url"`
+}
+
+// infraLive is the live ingest plane's coordinates, shown for the same reason
+// the storage block shows the bucket's: an operator debugging "streams never
+// start" needs to see what the deployment actually points at. RTMPURL is
+// already handed verbatim to every streamer on stream creation; HLSRoot is a
+// container path in the same sensitivity class as storage.local_root. The
+// ingest SECRET is on the file-header never-list and stays absent.
+type infraLive struct {
+	RTMPURL string `json:"rtmp_url"`
+	HLSRoot string `json:"hls_root"`
+}
+
+// infrastructureResponse is the admin infrastructure document. Delivery and
+// Live are ABSENT rather than zeroed when unwired/off — the same doctrine as
+// the /admin/system database block: an empty-string coordinate renders as a
+// value, and "no CDN" must not look like "a CDN at the empty URL".
 type infrastructureResponse struct {
 	Server     infraServer     `json:"server"`
 	Storage    infraStorage    `json:"storage"`
+	Delivery   *infraDelivery  `json:"delivery,omitempty"`
+	Live       *infraLive      `json:"live,omitempty"`
 	Networking infraNetworking `json:"networking"`
 	Backups    infraBackups    `json:"backups"`
 	Features   []infraFeature  `json:"features"`
@@ -239,9 +290,22 @@ func (s *Server) handleInfrastructure(c echo.Context) error {
 		backups.ScheduleNote = backupExternalNote
 	}
 
+	// Present only when wired: see the response struct's absent-not-zeroed note.
+	var deliveryBlock *infraDelivery
+	if strings.TrimSpace(cfg.DeliveryCDNBaseURL) != "" {
+		deliveryBlock = &infraDelivery{CDNBaseURL: cfg.DeliveryCDNBaseURL}
+	}
+	// Keyed on the TOGGLE, not the coordinates: enabled with empty coordinates
+	// is the dead-stream trap, and the empty strings are the finding.
+	var liveBlock *infraLive
+	if cfg.LiveEnabled {
+		liveBlock = &infraLive{RTMPURL: cfg.LiveRTMPURL, HLSRoot: cfg.LiveHLSRoot}
+	}
+
 	return c.JSON(http.StatusOK, infrastructureResponse{
 		Server: infraServer{
 			Environment:                 cfg.Environment,
+			Role:                        cfg.Role.String(),
 			RequestTimeoutSeconds:       int64(cfg.HTTPRequestTimeout.Seconds()),
 			StreamRequestTimeoutSeconds: int64(cfg.HTTPStreamRequestTimeout.Seconds()),
 			BodyLimit:                   cfg.HTTPBodyLimit,
@@ -264,6 +328,8 @@ func (s *Server) handleInfrastructure(c echo.Context) error {
 			S3UseSSL:         cfg.StorageS3UseSSL,
 			S3ForcePathStyle: cfg.StorageS3ForcePathStyle,
 		},
+		Delivery: deliveryBlock,
+		Live:     liveBlock,
 		Networking: infraNetworking{
 			PublicBaseURL:       cfg.PublicBaseURL,
 			HTTPSEffective:      cfg.PublicOriginIsHTTPS(),
@@ -310,6 +376,14 @@ func (s *Server) infraFeatures() []infraFeature {
 	// because a toggle flipped between two reads would be worse than either.
 	cdnEnabled := s.cdnDeliveryEnabled()
 	cdnWired := strings.TrimSpace(cfg.DeliveryCDNBaseURL) != ""
+	// The other overlay read this page makes (see the file header): the presign
+	// toggle, consulted only to decide the object_storage row's note.
+	onS3 := cfg.StorageBackend == "s3"
+	presignOn := s.presignedDeliveryEnabled()
+	// Hoisted for the same reason as the CDN pair: the drm row's columns and its
+	// note read the same two facts, and they must be one read.
+	drmEnabled := cfg.DRMProvider != "" && cfg.DRMProvider != drm.ProviderNone
+	drmConfigured := strings.TrimSpace(cfg.DRMKeyKEK) != ""
 
 	features := []infraFeature{
 		{
@@ -317,9 +391,11 @@ func (s *Server) infraFeatures() []infraFeature {
 			// An s3 backend cannot boot without endpoint, bucket and both keys
 			// (config validates it), so "in force" and "configured" are the
 			// same question here.
-			Enabled:    cfg.StorageBackend == "s3",
-			Configured: cfg.StorageBackend == "s3",
-			Note:       "",
+			Enabled:    onS3,
+			Configured: onS3,
+			// The Active state has its own discovery to do — see
+			// objectStorageProxyNote.
+			Note: objectStorageProxyNote(onS3, presignOn),
 		},
 		{
 			Key: "mail",
@@ -383,8 +459,8 @@ func (s *Server) infraFeatures() []infraFeature {
 		},
 		{
 			Key: "cdn",
-			// The one row that reads the runtime overlay, and only here — see
-			// the file header. delivery_cdn_enabled is the operator's switch
+			// One of the two overlay-reading rows — see the file header.
+			// delivery_cdn_enabled is the operator's switch
 			// (default off, read per request so an incident can turn the edge
 			// off without a restart); DELIVERY_CDN_BASE_URL is the wiring that
 			// makes a CDN source exist at all. Neither alone serves a byte from
@@ -402,8 +478,12 @@ func (s *Server) infraFeatures() []infraFeature {
 			// the PRESENCE of DRM_KEY_KEK and never its value: it seals content
 			// keys at rest and has no fallback to any other KEK, so it is a
 			// secret of its own trust domain (config.go, validateDRM).
-			Enabled:    cfg.DRMProvider != "" && cfg.DRMProvider != drm.ProviderNone,
-			Configured: strings.TrimSpace(cfg.DRMKeyKEK) != "",
+			Enabled:    drmEnabled,
+			Configured: drmConfigured,
+			// The ACTIVE quadrant is the one the generic notes leave silent, and
+			// for the test provider that silence is the dishonest case — see
+			// drmTestProviderNote.
+			Note: drmTestProviderNote(drmEnabled, drmConfigured, cfg.DRMProvider),
 		},
 		{
 			Key:        "tracing",
@@ -471,6 +551,52 @@ func cdnWiredButOffNote(enabled, configured bool) string {
 		return ""
 	}
 	return "A CDN is WIRED BUT NOT IN USE: DELIVERY_CDN_BASE_URL points at an edge and the delivery_cdn_enabled setting is off, so every byte is still served by this instance. That is the deliberate shipped sequence — configuring an edge never starts using it, because nothing here can verify that the base URL actually fronts these object keys. Turn on delivery_cdn_enabled (Advanced → delivery) when you are ready; only public, published, uncredentialed media is ever handed to an edge, and switching it back off takes effect on the next request without a restart."
+}
+
+// objectStorageProxyNote covers object storage's quiet quadrant: on and
+// complete, which for every other feature means there is nothing left to say.
+// Here the success pill hides a scaling fact: with delivery_presign_enabled off
+// (the shipped default), every media byte an s3 install serves streams THROUGH
+// the api process, so viewer bandwidth is api bandwidth — and nothing in the
+// product tells a scaling operator the switch exists. The feature vocabulary
+// has no presign row (direct delivery is a posture of this feature, not a
+// subsystem), so the discovery half of the page's job lands on this note.
+//
+// The CORS sentence is not decoration: flipping the switch without the
+// bucket's CORS allowing this site's origin turns a bandwidth problem into an
+// every-request playback failure, which is a strictly worse Tuesday.
+//
+// Returns "" off s3 (nothing is proxied that could be redirected — local
+// storage cannot presign) and with presign on (the advice is already taken —
+// the reader-losing failure cdnWiredButOffNote documents).
+func objectStorageProxyNote(onS3, presignOn bool) string {
+	if !onS3 || presignOn {
+		return ""
+	}
+	return "Media bytes are proxied through the API: the bucket stores them, but every viewer's request streams through this process, so viewer bandwidth is this instance's bandwidth. Direct object delivery (the delivery_presign_enabled setting, Advanced page) can redirect public media requests straight to the bucket — the bucket's CORS policy must allow this site's origin first."
+}
+
+// drmTestProviderNote covers DRM's wrong quadrant: enabled AND configured.
+//
+// For every other feature that quadrant is the success case and rightly says
+// nothing. For DRM it is the one state the page must not stay quiet about,
+// because the only shipping provider is test-grade: a green "Active — DRM
+// content protection" pill with no caveat is a sentence an operator repeats to
+// somebody else (a rights holder, usually), and it would be false twice over —
+// the key is handed to every authorised viewer in the clear, and no media byte
+// is encrypted anyway.
+//
+// The gate is the PROVIDER CONSTANT, not "any provider": a future real provider
+// must never inherit the test warning, and matching on drm.ProviderClearKeyTest
+// is what guarantees the note dies with the provider it describes. Keep the
+// sentence in step with the boot-log warning in cmd/api (the "drm provider
+// enabled" warn) — they are the same message in two places an operator reads at
+// different times.
+func drmTestProviderNote(enabled, configured bool, provider string) string {
+	if !enabled || !configured || provider != drm.ProviderClearKeyTest {
+		return ""
+	}
+	return "DRM is running the ClearKey TEST provider: the license path is live end to end, but it hands the content key to any authorised viewer in the clear over TLS, and no media is encrypted yet (the packaging step that would mint content keys has not landed). Treat this as a license-path proving rig, not content protection."
 }
 
 // infraFeatureNote is the operator-facing sentence for one feature: what the
