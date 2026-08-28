@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/exec"
@@ -2212,37 +2211,6 @@ func run() error {
 	return nil
 }
 
-// jitterStart holds the caller for a uniformly random slice of interval, so the
-// ticker it is about to create lands on a random phase. It returns false if ctx
-// ended while waiting, which is the caller's signal to return instead of
-// starting its loop.
-//
-// Every worker in a deployment boots within seconds of its siblings — that is
-// what a rolling deploy IS — and a ticker created at boot fires on its creation
-// phase for the entire life of the process. Un-jittered, a fleet of N workers
-// therefore hits the database with N simultaneous claim queries every interval
-// and then sits idle for the rest of it, forever: the load is N× peaky for the
-// same throughput, and the peak is exactly when every instance is also
-// contending for the same queue rows. Randomising the phase once, at start,
-// spreads the same work into a trickle and costs one bounded sleep.
-//
-// Deliberately not configurable: a knob here would be a knob whose only correct
-// setting is "on", and an operator who set it wrong would get the phase-locked
-// behaviour back with no symptom to trace it by.
-func jitterStart(ctx context.Context, interval time.Duration) bool {
-	if interval <= 0 {
-		return true
-	}
-	t := time.NewTimer(time.Duration(rand.Int64N(int64(interval))))
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
-}
-
 // runFederationDeliveryWorker drains the outbound federation delivery queue on a
 // ticker until ctx is canceled. One worker goroutine per instance is enough:
 // ClaimDueDeliveries takes its batch with FOR UPDATE SKIP LOCKED, so concurrent
@@ -2295,27 +2263,22 @@ func runSearchReconcileWorker(ctx context.Context, logger *slog.Logger, enq *sea
 	if interval <= 0 {
 		interval = 24 * time.Hour
 	}
+	// The startup sweep is deliberately UNGATED and runs before the ticker: a
+	// freshly booted instance reconciles once whether or not it holds the
+	// singleton lock. Only the recurring sweep below is a singleton.
 	if err := enq.RunReconcile(ctx, searchevents.DefaultReconcilePageSize); err != nil {
 		logger.Warn("search reconcile sweep failed", "error", err)
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Singleton sweep: exactly one instance runs it. A follower skips the
-			// tick rather than shutting down, because leadership can move here at
-			// any time (see internal/leaderlock).
-			if !leader.IsLeader() {
-				continue
-			}
-			if err := enq.RunReconcile(ctx, searchevents.DefaultReconcilePageSize); err != nil {
-				logger.Warn("search reconcile sweep failed", "error", err)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Leader:   leader,
+		Passes: []jobloop.Pass{{
+			FailMsg: "search reconcile sweep failed",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return 0, enq.RunReconcile(ctx, searchevents.DefaultReconcilePageSize)
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // searchConfigFromSettings builds the effective search-config subset pushed to
@@ -2647,7 +2610,7 @@ func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirr
 	// Jitter on the drain interval: the drain is the un-leadered, fleet-wide half
 	// of this worker. The reconcile ticker below is leader-gated, so exactly one
 	// instance ever acts on it and there is no phase to spread.
-	if !jitterStart(ctx, drainInterval) {
+	if !jobloop.JitterStart(ctx, drainInterval) {
 		return
 	}
 	drain := time.NewTicker(drainInterval)
@@ -2846,39 +2809,36 @@ func runMediaHashBackfillWorker(ctx context.Context, logger *slog.Logger, svc *m
 		interval = time.Minute
 		batch    = 25
 	)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 	// Completion is logged on the edge, not every tick: a drained backfill
-	// otherwise writes one line a minute forever.
+	// otherwise writes one line a minute forever. The flag is only ever touched
+	// from the loop's own goroutine.
 	drained := false
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Singleton sweep: exactly one instance runs it. A follower skips the
-			// tick rather than shutting down, because leadership can move here at
-			// any time (see internal/leaderlock).
-			if !leader.IsLeader() {
-				continue
-			}
-			res, err := svc.BackfillOnce(ctx, batch)
-			if err != nil {
-				logger.Warn("media hash backfill failed", "error", err)
-				continue
-			}
-			if res.Scanned == 0 {
-				if !drained {
-					drained = true
-					logger.Info("media hash backfill complete: every stored media file carries a content hash or the missing sentinel")
+	jobloop.Loop{
+		Interval: interval,
+		Leader:   leader,
+		Passes: []jobloop.Pass{{
+			FailMsg: "media hash backfill failed",
+			// Progress carries five fields rather than a count, so the pass logs
+			// its own success and reports nothing for jobloop to count.
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				res, err := svc.BackfillOnce(ctx, batch)
+				if err != nil {
+					return 0, err
 				}
-				continue
-			}
-			drained = false
-			logger.Info("media hash backfill progressed",
-				"scanned", res.Scanned, "hashed", res.Hashed, "missing", res.Missing, "failed", res.Failed)
-		}
-	}
+				if res.Scanned == 0 {
+					if !drained {
+						drained = true
+						logger.Info("media hash backfill complete: every stored media file carries a content hash or the missing sentinel")
+					}
+					return 0, nil
+				}
+				drained = false
+				logger.Info("media hash backfill progressed",
+					"scanned", res.Scanned, "hashed", res.Hashed, "missing", res.Missing, "failed", res.Failed)
+				return 0, nil
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runStoryboardBackfillWorker generates the seek-preview storyboards that the
@@ -2921,49 +2881,44 @@ func runStoryboardBackfillWorker(ctx context.Context, logger *slog.Logger, svc *
 		interval = 5 * time.Minute
 		batch    = 4
 	)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 	// Logged on the edge, not every tick: an idle backfill would otherwise write
-	// a line every five minutes forever.
+	// a line every five minutes forever. The flag is only ever touched from the
+	// loop's own goroutine.
 	idle := false
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Singleton sweep: exactly one instance runs it. A follower skips the
-			// tick rather than shutting down, because leadership can move here at
-			// any time (see internal/leaderlock).
-			if !leader.IsLeader() {
-				continue
-			}
-			// The runtime storyboards_enabled overlay, the same closure the publish
-			// path consults. Read per tick so an admin turning generation off stops
-			// this worker within one interval, with no restart — and so turning it
-			// back on resumes without one either.
-			if !enabled() {
-				continue
-			}
-			res, err := svc.BackfillOnce(ctx, batch)
-			if err != nil {
-				logger.Warn("storyboard backfill failed", "error", err)
-				continue
-			}
-			if res.Scanned == 0 {
-				if !idle {
-					idle = true
-					// Deliberately "nothing due" and not "complete": a video parked
-					// behind a retry backoff is not scanned either, so an empty pass
-					// is not proof the catalogue is finished.
-					logger.Info("storyboard backfill has nothing due: every published video either has a seek preview, has no original to build one from, has been given up on, or is waiting out a retry")
+	jobloop.Loop{
+		Interval: interval,
+		Leader:   leader,
+		Passes: []jobloop.Pass{{
+			FailMsg: "storyboard backfill failed",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				// The runtime storyboards_enabled overlay, the same closure the publish
+				// path consults. Read per tick so an admin turning generation off stops
+				// this worker within one interval, with no restart — and so turning it
+				// back on resumes without one either.
+				if !enabled() {
+					return 0, nil
 				}
-				continue
-			}
-			idle = false
-			logger.Info("storyboard backfill progressed",
-				"scanned", res.Scanned, "generated", res.Generated, "retrying", res.Retrying, "gave_up", res.GaveUp)
-		}
-	}
+				res, err := svc.BackfillOnce(ctx, batch)
+				if err != nil {
+					return 0, err
+				}
+				if res.Scanned == 0 {
+					if !idle {
+						idle = true
+						// Deliberately "nothing due" and not "complete": a video parked
+						// behind a retry backoff is not scanned either, so an empty pass
+						// is not proof the catalogue is finished.
+						logger.Info("storyboard backfill has nothing due: every published video either has a seek preview, has no original to build one from, has been given up on, or is waiting out a retry")
+					}
+					return 0, nil
+				}
+				idle = false
+				logger.Info("storyboard backfill progressed",
+					"scanned", res.Scanned, "generated", res.Generated, "retrying", res.Retrying, "gave_up", res.GaveUp)
+				return 0, nil
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runPeerTubeImportWorker claims and executes due PeerTube import runs (fix_plan
@@ -2988,30 +2943,24 @@ func runPeerTubeImportWorker(ctx context.Context, logger *slog.Logger, svc *peer
 // pipelines are retained for 90 days. Active execution history is never pruned.
 func runOperationalJobRetentionWorker(ctx context.Context, logger *slog.Logger, svc *jobstatus.Service, leader *leaderlock.Elector) {
 	const interval = 24 * time.Hour
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now := <-ticker.C:
-			// Singleton sweep: exactly one instance runs it. A follower skips the
-			// tick rather than shutting down, because leadership can move here at
-			// any time (see internal/leaderlock).
-			if !leader.IsLeader() {
-				continue
-			}
-			events, runs, pipelines, err := svc.Prune(ctx, now.UTC())
-			if err != nil {
-				logger.Warn("operational job retention failed", "error", err)
-				continue
-			}
-			if events+runs+pipelines > 0 {
-				logger.Info("operational job retention pruned rows",
-					"events", events, "runs", runs, "pipelines", pipelines)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Leader:   leader,
+		Passes: []jobloop.Pass{{
+			FailMsg: "operational job retention failed",
+			Run: func(ctx context.Context, tick time.Time) (int, error) {
+				events, runs, pipelines, err := svc.Prune(ctx, tick.UTC())
+				if err != nil {
+					return 0, err
+				}
+				if events+runs+pipelines > 0 {
+					logger.Info("operational job retention pruned rows",
+						"events", events, "runs", runs, "pipelines", pipelines)
+				}
+				return 0, nil
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runQoERollupWorker turns raw playback measurements into hourly rollups
@@ -3023,29 +2972,23 @@ func runOperationalJobRetentionWorker(ctx context.Context, logger *slog.Logger, 
 // tick that finds nothing complete is free.
 func runQoERollupWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Service, leader *leaderlock.Elector) {
 	const interval = 10 * time.Minute
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now := <-ticker.C:
-			// Singleton sweep: exactly one instance runs it. A follower skips the
-			// tick rather than shutting down, because leadership can move here at
-			// any time (see internal/leaderlock).
-			if !leader.IsLeader() {
-				continue
-			}
-			hours, err := svc.RollUp(ctx, now.UTC())
-			if err != nil {
-				logger.Warn("qoe rollup failed", "error", err)
-				continue
-			}
-			if hours > 0 {
-				logger.Info("qoe rollup wrote hourly buckets", "hours", hours)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Leader:   leader,
+		Passes: []jobloop.Pass{{
+			FailMsg: "qoe rollup failed",
+			Run: func(ctx context.Context, tick time.Time) (int, error) {
+				hours, err := svc.RollUp(ctx, tick.UTC())
+				if err != nil {
+					return 0, err
+				}
+				if hours > 0 {
+					logger.Info("qoe rollup wrote hourly buckets", "hours", hours)
+				}
+				return 0, nil
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runQoERetentionWorker enforces the QoE retention windows (7 days of raw
@@ -3057,26 +3000,23 @@ func runQoERollupWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Servi
 // of expired rows sitting in the table for most of every day.
 func runQoERetentionWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Service, leader *leaderlock.Elector) {
 	const interval = time.Hour
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now := <-ticker.C:
-			if !leader.IsLeader() {
-				continue
-			}
-			events, rollups, err := svc.Prune(ctx, now.UTC())
-			if err != nil {
-				logger.Warn("qoe retention failed", "error", err)
-				continue
-			}
-			if events+rollups > 0 {
-				logger.Info("qoe retention pruned rows", "events", events, "rollups", rollups)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Leader:   leader,
+		Passes: []jobloop.Pass{{
+			FailMsg: "qoe retention failed",
+			Run: func(ctx context.Context, tick time.Time) (int, error) {
+				events, rollups, err := svc.Prune(ctx, tick.UTC())
+				if err != nil {
+					return 0, err
+				}
+				if events+rollups > 0 {
+					logger.Info("qoe retention pruned rows", "events", events, "rollups", rollups)
+				}
+				return 0, nil
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // objectStorePublicBase is the origin a presigned URL points at, or "" when this
