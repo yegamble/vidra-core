@@ -18915,6 +18915,41 @@ components:
               type: boolean
             s3_force_path_style:
               type: boolean
+        delivery:
+          type: object
+          description: >-
+            How media bytes leave the deployment when this process is not the
+            one serving them. ABSENT — not empty — when no CDN is wired
+            (DELIVERY_CDN_BASE_URL unset). The purge endpoint template and its
+            token are never reported: an invalidation API routinely carries the
+            credential in the URL.
+          required: [cdn_base_url]
+          properties:
+            cdn_base_url:
+              type: string
+              description: >-
+                DELIVERY_CDN_BASE_URL verbatim. Definitionally public — every
+                viewer's player fetches segments from it — reported so
+                confirming WHICH edge is wired does not need an SSH session.
+        live:
+          type: object
+          description: >-
+            The live ingest plane's coordinates. ABSENT when FEATURE_LIVE is
+            off; PRESENT (with empty strings) when live is enabled with nothing
+            behind it — the empty coordinates ARE the finding the live feature
+            row's note describes. LIVE_INGEST_SECRET is never included.
+          required: [rtmp_url, hls_root]
+          properties:
+            rtmp_url:
+              type: string
+              description: >-
+                LIVE_RTMP_URL — already handed verbatim to every streamer on
+                stream creation.
+            hls_root:
+              type: string
+              description: >-
+                LIVE_HLS_ROOT — a container path in the same sensitivity class
+                as storage.local_root.
         networking:
           type: object
           required: [public_base_url, https_effective, allow_plain_http,

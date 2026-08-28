@@ -215,10 +215,40 @@ type infraFeature struct {
 	Note       string `json:"note,omitempty"`
 }
 
-// infrastructureResponse is the admin infrastructure document.
+// infraDelivery is how media bytes leave the deployment when this process is
+// not the one serving them. One field today, and the block earns its existence
+// by what it is NOT allowed to grow: the purge endpoint template and its token
+// (an invalidation API routinely carries the credential in the URL) are never
+// reported, which is why the CDN pair cannot ride on the storage block's
+// "coordinates, not credentials" rows unexamined.
+type infraDelivery struct {
+	// CDNBaseURL is DELIVERY_CDN_BASE_URL verbatim. Definitionally public —
+	// every viewer's player fetches segments from it — so the only thing
+	// hiding it protected was the operator's ability to confirm WHICH edge is
+	// wired without an SSH session.
+	CDNBaseURL string `json:"cdn_base_url"`
+}
+
+// infraLive is the live ingest plane's coordinates, shown for the same reason
+// the storage block shows the bucket's: an operator debugging "streams never
+// start" needs to see what the deployment actually points at. RTMPURL is
+// already handed verbatim to every streamer on stream creation; HLSRoot is a
+// container path in the same sensitivity class as storage.local_root. The
+// ingest SECRET is on the file-header never-list and stays absent.
+type infraLive struct {
+	RTMPURL string `json:"rtmp_url"`
+	HLSRoot string `json:"hls_root"`
+}
+
+// infrastructureResponse is the admin infrastructure document. Delivery and
+// Live are ABSENT rather than zeroed when unwired/off — the same doctrine as
+// the /admin/system database block: an empty-string coordinate renders as a
+// value, and "no CDN" must not look like "a CDN at the empty URL".
 type infrastructureResponse struct {
 	Server     infraServer     `json:"server"`
 	Storage    infraStorage    `json:"storage"`
+	Delivery   *infraDelivery  `json:"delivery,omitempty"`
+	Live       *infraLive      `json:"live,omitempty"`
 	Networking infraNetworking `json:"networking"`
 	Backups    infraBackups    `json:"backups"`
 	Features   []infraFeature  `json:"features"`
@@ -252,6 +282,18 @@ func (s *Server) handleInfrastructure(c echo.Context) error {
 		backups.ScheduleNote = backupExternalNote
 	}
 
+	// Present only when wired: see the response struct's absent-not-zeroed note.
+	var deliveryBlock *infraDelivery
+	if strings.TrimSpace(cfg.DeliveryCDNBaseURL) != "" {
+		deliveryBlock = &infraDelivery{CDNBaseURL: cfg.DeliveryCDNBaseURL}
+	}
+	// Keyed on the TOGGLE, not the coordinates: enabled with empty coordinates
+	// is the dead-stream trap, and the empty strings are the finding.
+	var liveBlock *infraLive
+	if cfg.LiveEnabled {
+		liveBlock = &infraLive{RTMPURL: cfg.LiveRTMPURL, HLSRoot: cfg.LiveHLSRoot}
+	}
+
 	return c.JSON(http.StatusOK, infrastructureResponse{
 		Server: infraServer{
 			Environment:                 cfg.Environment,
@@ -278,6 +320,8 @@ func (s *Server) handleInfrastructure(c echo.Context) error {
 			S3UseSSL:         cfg.StorageS3UseSSL,
 			S3ForcePathStyle: cfg.StorageS3ForcePathStyle,
 		},
+		Delivery: deliveryBlock,
+		Live:     liveBlock,
 		Networking: infraNetworking{
 			PublicBaseURL:       cfg.PublicBaseURL,
 			HTTPSEffective:      cfg.PublicOriginIsHTTPS(),

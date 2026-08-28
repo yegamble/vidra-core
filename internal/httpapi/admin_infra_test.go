@@ -178,7 +178,6 @@ func TestInfrastructureLeaksNoSecret(t *testing.T) {
 		// keeps them out and this is what holds it to that.
 		"SENTINEL-smtp-relay.internal", "SENTINEL-noreply@example.test",
 		"SENTINEL-clamav.internal", "SENTINEL-whisper.internal",
-		"SENTINEL-ingest.internal", "SENTINEL-live-hls",
 		"SENTINEL-kubo.internal", "SENTINEL-gateway.internal",
 		"SENTINEL-kubo-private.internal", "SENTINEL-cluster.internal",
 	} {
@@ -192,6 +191,16 @@ func TestInfrastructureLeaksNoSecret(t *testing.T) {
 	if body.Storage.Backend != "s3" || body.Storage.S3Bucket != "vidra-media" ||
 		body.Storage.S3Endpoint != "objects.example:443" || body.Storage.S3Region != "us-east-1" {
 		t.Errorf("storage = %+v, want the s3 coordinates reported", body.Storage)
+	}
+	// The live ingest coordinates are reported too — an earlier round of this
+	// test kept them out with the internal endpoints above, and that
+	// classification did not survive scrutiny: LIVE_RTMP_URL is handed verbatim
+	// to every streamer the moment they create a stream, and LIVE_HLS_ROOT is a
+	// container path in the same sensitivity class as storage.local_root, which
+	// this page has always shown. LIVE_INGEST_SECRET stays forbidden above.
+	if body.Live == nil || body.Live.RTMPURL != "rtmp://SENTINEL-ingest.internal/live" ||
+		body.Live.HLSRoot != "/srv/SENTINEL-live-hls" {
+		t.Errorf("live = %+v, want the ingest coordinates reported", body.Live)
 	}
 }
 
@@ -441,6 +450,65 @@ func TestInfrastructureDRMFeature(t *testing.T) {
 		if !strings.Contains(f.Note, want) {
 			t.Errorf("active clearkey-test drm note = %q, want it to contain %q — the green pill needs the caveat next to it", f.Note, want)
 		}
+	}
+}
+
+// The CDN base URL is definitionally public — every viewer's player fetches
+// segments from it — so confirming WHICH edge is wired must not need an SSH
+// session. The purge endpoint stays out (its template can carry a credential in
+// the query string; see TestInfrastructureLeaksNoSecret).
+func TestInfrastructureDeliveryBlock(t *testing.T) {
+	// No CDN wired: the block is ABSENT, not an empty string — the same
+	// omitted-not-zeroed doctrine as the /admin/system database block.
+	off, _ := infrastructure(t, authServer(t))
+	if off.Delivery != nil {
+		t.Errorf("delivery = %+v with no CDN wired, want the block omitted", off.Delivery)
+	}
+
+	cfg := testConfig()
+	cfg.DeliveryCDNBaseURL = "https://cdn.example.test/media"
+	on, _ := infrastructure(t, authServerWithConfig(t, cfg))
+	if on.Delivery == nil || on.Delivery.CDNBaseURL != "https://cdn.example.test/media" {
+		t.Errorf("delivery = %+v, want the wired edge base URL reported verbatim", on.Delivery)
+	}
+}
+
+// Live's ingest coordinates get the same verbatim treatment as the storage
+// coordinates: LIVE_RTMP_URL is already handed to every streamer on stream
+// creation, and LIVE_HLS_ROOT is the same sensitivity class as
+// storage.local_root, which is shown. LIVE_INGEST_SECRET stays on the
+// never-list.
+func TestInfrastructureLiveCoordinates(t *testing.T) {
+	// Live off: the block is absent, not zeroed.
+	cfg := testConfig()
+	cfg.LiveEnabled = false
+	cfg.LiveRTMPURL = "rtmp://ingest.example.test/live"
+	cfg.LiveHLSRoot = "/srv/live-hls"
+	off, _ := infrastructure(t, authServerWithConfig(t, cfg))
+	if off.Live != nil {
+		t.Errorf("live = %+v with the feature off, want the block omitted", off.Live)
+	}
+
+	on := testConfig()
+	on.LiveEnabled = true
+	on.LiveRTMPURL = "rtmp://ingest.example.test/live"
+	on.LiveHLSRoot = "/srv/live-hls"
+	body, _ := infrastructure(t, authServerWithConfig(t, on))
+	if body.Live == nil {
+		t.Fatal("live block missing with the feature on")
+	}
+	if body.Live.RTMPURL != "rtmp://ingest.example.test/live" || body.Live.HLSRoot != "/srv/live-hls" {
+		t.Errorf("live = %+v, want the ingest coordinates reported verbatim", body.Live)
+	}
+
+	// Enabled with nothing behind it still reports the block — empty strings
+	// ARE the finding here (the feature row's misconfigured note names them),
+	// and hiding the block would hide it.
+	bare := testConfig()
+	bare.LiveEnabled = true
+	bareBody, _ := infrastructure(t, authServerWithConfig(t, bare))
+	if bareBody.Live == nil || bareBody.Live.RTMPURL != "" || bareBody.Live.HLSRoot != "" {
+		t.Errorf("live = %+v on an enabled-but-unconfigured install, want the block present with empty coordinates", bareBody.Live)
 	}
 }
 
