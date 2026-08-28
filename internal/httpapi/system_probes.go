@@ -25,6 +25,15 @@ type bucketChecker interface {
 	BucketExists(ctx context.Context) (bool, error)
 }
 
+// settingsSyncHealth is the read side of the settings-version poller
+// (internal/settingsversion): when this replica last agreed with the shared
+// counter, and the error keeping it stale now (nil when the last attempt
+// succeeded). An interface here so httpapi depends on the one question the
+// page asks, not on the poller type.
+type settingsSyncHealth interface {
+	Health() (lastSuccess time.Time, lastErr error)
+}
+
 // systemComponents is componentHealth (postgres, redis) plus the dependencies
 // that are too expensive to ask on every orchestrator tick: the object store,
 // the mail relay, the search service and the ffmpeg binary. /readyz keeps the
@@ -63,7 +72,43 @@ func (s *Server) systemComponents(ctx context.Context) (map[string]componentStat
 		}()
 	}
 	wg.Wait()
+
+	// The settings poller is a fifth component but NOT a fifth probe: its
+	// health is an in-memory read of the record the poll loop already keeps, so
+	// there is no round trip to bound and no goroutine to spend on it.
+	syncStatus := s.settingsSyncStatus()
+	components["settings_sync"] = syncStatus
+	if syncStatus.Status == "down" {
+		healthy = false
+	}
 	return components, healthy
+}
+
+// settingsSyncStatus reports the settings-version poller's health (core#115).
+// Its failure mode is the one this page exists for: a replica whose every poll
+// fails keeps serving the instance settings it booted with — nothing errors,
+// nothing user-visible breaks, and an admin's own change "took" on whichever
+// replica served the write. Not wired (single-process installs, worker-role
+// processes, unit servers) is a supported shape and never degrades, per the
+// convention above.
+func (s *Server) settingsSyncStatus() componentStatus {
+	if s.settingsSync == nil {
+		return componentStatus{Status: "not_configured"}
+	}
+	lastSuccess, err := s.settingsSync.Health()
+	if err == nil {
+		return componentStatus{Status: "ok"}
+	}
+	// The sentence names the CONSEQUENCE as well as the cause: "connection
+	// refused" alone sends an operator to fix the database and never re-check
+	// the settings this replica kept serving in the meantime.
+	msg := "the settings-version poll is failing, so this replica may be serving stale instance settings/documents/branding: " + err.Error()
+	if !lastSuccess.IsZero() {
+		msg = "the settings-version poll has been failing (last success " +
+			time.Since(lastSuccess).Round(time.Second).String() +
+			" ago), so this replica may be serving stale instance settings/documents/branding: " + err.Error()
+	}
+	return componentStatus{Status: "down", Error: msg}
 }
 
 // probeObjectStore asks the configured bucket whether it is there.

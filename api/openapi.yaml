@@ -11404,8 +11404,13 @@ paths:
         Returns an operational snapshot for the admin dashboard: build info, the
         runtime environment, process uptime, an overall health flag,
         per-dependency component status (postgres, redis, s3, smtp, search,
-        ffmpeg), and live PostgreSQL connection-pool counts. Restricted to
-        admins.
+        ffmpeg, settings_sync), and live PostgreSQL connection-pool counts.
+        Restricted to admins.
+        settings_sync is the settings-version poller that keeps this replica's
+        in-memory instance settings/documents/branding in agreement with the
+        fleet: down means the poll is failing and THIS replica may be serving
+        stale admin-edited state; not_configured (no poller wired — a
+        single-process or worker-role process) never degrades the instance.
         Always 200 (even when degraded) so the admin can see the degraded state,
         unlike /readyz which 503s. Reports only operational metadata.
         The `database` block is sampled at request time and is ABSENT — not
