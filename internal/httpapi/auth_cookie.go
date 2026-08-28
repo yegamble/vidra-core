@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"net/http"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -36,29 +35,13 @@ const refreshCookiePath = "/api/v1/auth"
 // setRefreshCookie stores the (freshly rotated) refresh token in the httpOnly
 // session cookie.
 func (s *Server) setRefreshCookie(c echo.Context, token string) {
-	c.SetCookie(&http.Cookie{
-		Name:     refreshCookieName,
-		Value:    token,
-		Path:     refreshCookiePath,
-		MaxAge:   int(s.cfg.JWTRefreshTTL.Seconds()),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   s.cfg.CookieSecure(),
-	})
+	s.writeStateCookie(c, refreshCookieName, refreshCookiePath, token, s.cfg.JWTRefreshTTL)
 }
 
 // clearRefreshCookie expires the refresh cookie (written as Max-Age=0), used on
 // logout/logout-all and when a cookie-presented token turns out to be invalid.
 func (s *Server) clearRefreshCookie(c echo.Context) {
-	c.SetCookie(&http.Cookie{
-		Name:     refreshCookieName,
-		Value:    "",
-		Path:     refreshCookiePath,
-		MaxAge:   -1,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   s.cfg.CookieSecure(),
-	})
+	s.clearStateCookie(c, refreshCookieName, refreshCookiePath)
 }
 
 // refreshCookieToken returns the refresh token carried by the request's

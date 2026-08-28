@@ -24,11 +24,7 @@ package httpapi
 // travels inside the signed state cookie.
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -65,70 +61,29 @@ type atprotoStatePayload struct {
 	IssuedAt int64 `json:"iat"`
 }
 
+func (p atprotoStatePayload) stateToken() string { return p.State }
+func (p atprotoStatePayload) issuedAt() int64    { return p.IssuedAt }
+
 // sealATProtoState encodes and HMAC-signs the payload (key: the JWT secret — the
-// same trust domain as the sessions the flow mints).
+// same trust domain as the sessions the flow mints). See statecookie.go.
 func (s *Server) sealATProtoState(p atprotoStatePayload) (string, error) {
-	body, err := json.Marshal(p)
-	if err != nil {
-		return "", err
-	}
-	mac := hmac.New(sha256.New, []byte(s.cfg.JWTSecret))
-	mac.Write(body)
-	return base64.RawURLEncoding.EncodeToString(body) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+	return sealState(s.cfg.JWTSecret, p)
 }
 
 // openATProtoState verifies and decodes a sealed state cookie value, rejecting
 // bad signatures, malformed payloads, and expired attempts.
 func (s *Server) openATProtoState(sealed string) (atprotoStatePayload, bool) {
-	bodyB64, sigB64, ok := strings.Cut(sealed, ".")
-	if !ok {
-		return atprotoStatePayload{}, false
-	}
-	body, err := base64.RawURLEncoding.DecodeString(bodyB64)
-	if err != nil {
-		return atprotoStatePayload{}, false
-	}
-	sig, err := base64.RawURLEncoding.DecodeString(sigB64)
-	if err != nil {
-		return atprotoStatePayload{}, false
-	}
-	mac := hmac.New(sha256.New, []byte(s.cfg.JWTSecret))
-	mac.Write(body)
-	if !hmac.Equal(sig, mac.Sum(nil)) {
-		return atprotoStatePayload{}, false
-	}
-	var p atprotoStatePayload
-	if err := json.Unmarshal(body, &p); err != nil {
-		return atprotoStatePayload{}, false
-	}
-	if p.State == "" || time.Since(time.Unix(p.IssuedAt, 0)) > atprotoStateTTL {
-		return atprotoStatePayload{}, false
-	}
-	return p, true
+	return openState[atprotoStatePayload](s.cfg.JWTSecret, sealed, atprotoStateTTL)
 }
 
+// setATProtoStateCookie parks the sealed attempt for the round trip to the auth
+// server. Lax: it must still ride the top-level GET back from it.
 func (s *Server) setATProtoStateCookie(c echo.Context, sealed string) {
-	c.SetCookie(&http.Cookie{
-		Name:     atprotoStateCookieName,
-		Value:    sealed,
-		Path:     atprotoStateCookiePath,
-		MaxAge:   int(atprotoStateTTL.Seconds()),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, // Lax: sent on the top-level GET back from the auth server
-		Secure:   s.cfg.CookieSecure(),
-	})
+	s.writeStateCookie(c, atprotoStateCookieName, atprotoStateCookiePath, sealed, atprotoStateTTL)
 }
 
 func (s *Server) clearATProtoStateCookie(c echo.Context) {
-	c.SetCookie(&http.Cookie{
-		Name:     atprotoStateCookieName,
-		Value:    "",
-		Path:     atprotoStateCookiePath,
-		MaxAge:   -1,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   s.cfg.CookieSecure(),
-	})
+	s.clearStateCookie(c, atprotoStateCookieName, atprotoStateCookiePath)
 }
 
 // atprotoLoginStartRequest is the POST /auth/atproto/start body.
