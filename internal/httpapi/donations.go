@@ -141,9 +141,9 @@ func (s *Server) handleDeleteDonationAddress(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "donation address not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "donation address not found")
+		return err
 	}
 	if err := s.donationsvc.Delete(c.Request().Context(), userID, id); err != nil {
 		return donationError(err)
@@ -165,9 +165,9 @@ func (s *Server) handleChallengeDonationAddress(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "donation address not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "donation address not found")
+		return err
 	}
 	message, expiresAt, err := s.donationsvc.Challenge(c.Request().Context(), userID, id)
 	if err != nil {
@@ -195,9 +195,9 @@ func (s *Server) handleVerifyDonationAddress(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "donation address not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "donation address not found")
+		return err
 	}
 	var in verifyDonationAddressRequest
 	if err := bindAndValidate(c, &in); err != nil {

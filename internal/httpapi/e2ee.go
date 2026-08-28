@@ -205,9 +205,9 @@ func (s *Server) handleDeleteE2EEDevice(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	deviceID, err := uuid.Parse(c.Param("id"))
+	deviceID, err := pathUUID(c, "id", "device not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "device not found")
+		return err
 	}
 	if err := s.e2eesvc.DeleteDevice(c.Request().Context(), userID, deviceID); err != nil {
 		if herr := e2eeError(err); herr != nil {
@@ -227,9 +227,9 @@ func (s *Server) handleListUserE2EEDevices(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	targetID, err := uuid.Parse(c.Param("id"))
+	targetID, err := pathUUID(c, "id", "user not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		return err
 	}
 	devices, err := s.e2eesvc.ListUserDevices(c.Request().Context(), callerID, targetID)
 	if err != nil {
@@ -253,9 +253,9 @@ func (s *Server) handleUploadOneTimeKeys(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	deviceID, err := uuid.Parse(c.Param("id"))
+	deviceID, err := pathUUID(c, "id", "device not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "device not found")
+		return err
 	}
 	var in uploadOneTimeKeysRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -282,9 +282,9 @@ func (s *Server) handleCountOneTimeKeys(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	deviceID, err := uuid.Parse(c.Param("id"))
+	deviceID, err := pathUUID(c, "id", "device not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "device not found")
+		return err
 	}
 	count, err := s.e2eesvc.CountOneTimeKeys(c.Request().Context(), userID, deviceID)
 	if err != nil {
@@ -305,9 +305,9 @@ func (s *Server) handleClaimOneTimeKeys(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	targetID, err := uuid.Parse(c.Param("id"))
+	targetID, err := pathUUID(c, "id", "user not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		return err
 	}
 	claims, err := s.e2eesvc.ClaimKeys(c.Request().Context(), callerID, targetID)
 	if err != nil {

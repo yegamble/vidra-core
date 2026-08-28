@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/live"
@@ -239,9 +238,9 @@ func (s *Server) handleUpdateLiveStream(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "live stream not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
+		return err
 	}
 	var in updateLiveStreamRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -297,9 +296,9 @@ func (s *Server) handleListLiveStreams(c echo.Context) error {
 // optionalAuth: a private stream is visible only to its channel owner (else 404,
 // so its existence is not leaked). Never returns the stream key.
 func (s *Server) handleGetLiveStream(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "live stream not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
+		return err
 	}
 	stream, err := s.livesvc.Get(c.Request().Context(), id)
 	if err != nil {
@@ -321,9 +320,9 @@ func (s *Server) handleRegenerateLiveStreamKey(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "live stream not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
+		return err
 	}
 	ctx := c.Request().Context()
 	stream, err := s.livesvc.Get(ctx, id)
@@ -457,9 +456,9 @@ func (s *Server) handleDeleteLiveStream(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "live stream not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
+		return err
 	}
 	ctx := c.Request().Context()
 	stream, err := s.livesvc.Get(ctx, id)

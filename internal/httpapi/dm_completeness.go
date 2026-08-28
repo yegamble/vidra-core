@@ -61,9 +61,9 @@ func (s *Server) handleUploadAttachment(c echo.Context) error {
 	if !s.messagingsvc.AttachmentsEnabled() {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "attachments are not available")
 	}
-	convID, err := uuid.Parse(c.Param("id"))
+	convID, err := pathUUID(c, "id", "conversation not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "conversation not found")
+		return err
 	}
 	// Attachments are plaintext-only.
 	if enc, eerr := s.conversationEncrypted(c, userID, convID); eerr != nil {
@@ -125,9 +125,9 @@ func (s *Server) handleDownloadAttachment(c echo.Context) error {
 	if !s.messagingsvc.AttachmentsEnabled() {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "attachments are not available")
 	}
-	attID, err := uuid.Parse(c.Param("id"))
+	attID, err := pathUUID(c, "id", "attachment not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "attachment not found")
+		return err
 	}
 	att, err := s.messagingsvc.AttachmentForDownload(c.Request().Context(), userID, attID)
 	if err != nil {
@@ -158,9 +158,9 @@ func (s *Server) handleMarkConversationRead(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	convID, err := uuid.Parse(c.Param("id"))
+	convID, err := pathUUID(c, "id", "conversation not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "conversation not found")
+		return err
 	}
 	var in markConversationReadRequest
 	// The body is optional; ignore a bind error on an empty body.
@@ -192,9 +192,9 @@ func (s *Server) handleDeleteMessage(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	msgID, err := uuid.Parse(c.Param("id"))
+	msgID, err := pathUUID(c, "id", "message not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "message not found")
+		return err
 	}
 	if err := s.messagingsvc.DeleteMessage(c.Request().Context(), userID, msgID); err != nil {
 		switch {
@@ -217,9 +217,9 @@ func (s *Server) handleReportMessage(c echo.Context) error {
 	if s.moderationsvc == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "moderation is not available")
 	}
-	msgID, err := uuid.Parse(c.Param("id"))
+	msgID, err := pathUUID(c, "id", "message not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "message not found")
+		return err
 	}
 	var in createReportRequest
 	if err := bindAndValidate(c, &in); err != nil {

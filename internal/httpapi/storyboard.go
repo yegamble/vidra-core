@@ -1,10 +1,8 @@
 package httpapi
 
 import (
-	"net/http"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/delivery"
@@ -26,9 +24,9 @@ func (s *Server) handleGetVideoStoryboardVTT(c echo.Context) error {
 
 // serveVideoStoryboard is the shared visibility-gated storyboard file server.
 func (s *Server) serveVideoStoryboard(c echo.Context, kind, contentType string) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	v, err := s.videoVisibleForMedia(c, id)
 	if err != nil {

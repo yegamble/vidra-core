@@ -129,9 +129,9 @@ func (s *Server) handleDeleteChannelSync(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "channel sync not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "channel sync not found")
+		return err
 	}
 	if derr := s.channelsyncsvc.Delete(c.Request().Context(), userID, id); derr != nil {
 		return channelSyncError(derr)
@@ -152,9 +152,9 @@ func (s *Server) handleSyncChannelNow(c echo.Context) error {
 	if !s.channelSyncEnabled() {
 		return &FeatureDisabledError{Feature: "channel_sync"}
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "channel sync not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "channel sync not found")
+		return err
 	}
 	if serr := s.channelsyncsvc.SyncNow(c.Request().Context(), userID, id); serr != nil {
 		if errors.Is(serr, channelsync.ErrCooldown) {

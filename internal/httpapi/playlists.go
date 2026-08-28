@@ -177,9 +177,9 @@ type playlistDetailResponse struct {
 // public/unlisted playlists are visible to anyone; a private playlist is visible
 // only to its owner and is reported as 404 to everyone else.
 func (s *Server) handleGetPlaylist(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "playlist not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+		return err
 	}
 	ctx := c.Request().Context()
 	p, err := s.playlistsvc.GetByID(ctx, id)
@@ -242,9 +242,9 @@ func (s *Server) handleUpdatePlaylist(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "playlist not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+		return err
 	}
 	var in updatePlaylistRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -272,9 +272,9 @@ func (s *Server) handleDeletePlaylist(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "playlist not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+		return err
 	}
 	if err := s.playlistsvc.Delete(c.Request().Context(), userID, id); err != nil {
 		return playlistError(err)
@@ -301,9 +301,9 @@ func (s *Server) handleAddPlaylistItem(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "playlist not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+		return err
 	}
 	var in addPlaylistItemRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -334,13 +334,13 @@ func (s *Server) handleRemovePlaylistItem(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "playlist not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+		return err
 	}
-	videoID, err := uuid.Parse(c.Param("videoId"))
+	videoID, err := pathUUID(c, "videoId", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	if err := s.playlistsvc.RemoveItem(c.Request().Context(), userID, id, videoID); err != nil {
 		return playlistError(err)
@@ -375,9 +375,9 @@ func (s *Server) handleReorderPlaylistItems(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "playlist not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+		return err
 	}
 	var in reorderPlaylistItemsRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -406,9 +406,9 @@ func (s *Server) handleSetPlaylistThumbnail(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "playlist not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+		return err
 	}
 	fh, err := c.FormFile("file")
 	if err != nil {
@@ -444,9 +444,9 @@ func (s *Server) handleDeletePlaylistThumbnail(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "playlist not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+		return err
 	}
 	if err := s.playlistsvc.ClearThumbnail(c.Request().Context(), userID, id); err != nil {
 		return playlistError(err)
@@ -459,9 +459,9 @@ func (s *Server) handleDeletePlaylistThumbnail(c echo.Context) error {
 // private playlist's cover is visible only to its owner (else 404). A playlist
 // without a cover is 404.
 func (s *Server) handleGetPlaylistThumbnail(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "playlist not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "playlist not found")
+		return err
 	}
 	ctx := c.Request().Context()
 	p, err := s.playlistsvc.GetByID(ctx, id)

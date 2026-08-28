@@ -152,9 +152,9 @@ func (s *Server) handleDeleteHistoryEntry(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	videoID, err := uuid.Parse(c.Param("id"))
+	videoID, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	if err := s.videosvc.RemoveHistoryEntry(c.Request().Context(), videoID, userID); err != nil {
 		return err

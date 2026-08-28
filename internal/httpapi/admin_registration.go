@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/auth"
@@ -83,9 +82,9 @@ func (s *Server) handleApproveRegistration(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "registration request not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "registration request not found")
+		return err
 	}
 	user, err := s.authsvc.ApproveRegistration(c.Request().Context(), adminID, id)
 	if err != nil {
@@ -121,9 +120,9 @@ func (s *Server) handleRejectRegistration(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "registration request not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "registration request not found")
+		return err
 	}
 	var in rejectRegistrationRequestBody
 	if err := bindAndValidate(c, &in); err != nil {

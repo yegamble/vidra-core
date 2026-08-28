@@ -150,9 +150,9 @@ func (s *Server) handleRemoveChannelMember(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	targetID, err := uuid.Parse(c.Param("userId"))
+	targetID, err := pathUUID(c, "userId", "member not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "member not found")
+		return err
 	}
 	if err := s.channelsvc.RemoveMember(c.Request().Context(), userID, c.Param("handle"), targetID); err != nil {
 		return memberError(err)

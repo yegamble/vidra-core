@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -88,9 +87,9 @@ func (s *Server) handleImportVideoFile(c echo.Context) error {
 	if !s.importsEnabled() {
 		return &FeatureDisabledError{Feature: "imports"}
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	var in importVideoRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -136,9 +135,9 @@ func (s *Server) handleGetVideoImport(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	ctx := c.Request().Context()
 	if _, canManage := s.canManageVideo(ctx, userID, id); !canManage {

@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/federation"
@@ -141,9 +140,9 @@ func (s *Server) handleDeleteRemoteFollow(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "remote follow not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "remote follow not found")
+		return err
 	}
 	if err := s.fedsvc.UnfollowRemoteChannel(c.Request().Context(), userID, id); err != nil {
 		if errors.Is(err, federation.ErrFollowNotFound) {

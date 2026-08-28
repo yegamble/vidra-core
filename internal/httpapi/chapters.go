@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/video"
@@ -47,9 +46,9 @@ func chapterViews(chapters []video.Chapter) []chapterView {
 // moderators, scheduled/quarantined gated, else 404). 200 with a sorted list
 // ({"chapters": []} when none); 404 when the video is not visible.
 func (s *Server) handleGetVideoChapters(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	if _, err := s.videoVisibleForRead(c, id); err != nil {
 		return err
@@ -73,9 +72,9 @@ func (s *Server) handleSetVideoChapters(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	var in chaptersRequest
 	if err := bindAndValidate(c, &in); err != nil {

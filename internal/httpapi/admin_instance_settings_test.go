@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	gommonbytes "github.com/labstack/gommon/bytes"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	gommonbytes "github.com/labstack/gommon/bytes"
 
 	"github.com/google/uuid"
 

@@ -110,9 +110,9 @@ type playbackSessionResponse struct {
 // works. A 404 here would be indistinguishable from "no such video" and would
 // break the progressive path.
 func (s *Server) handleCreatePlaybackSession(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	v, err := s.videoVisibleForMedia(c, id)
 	if err != nil {

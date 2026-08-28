@@ -168,9 +168,9 @@ func (r clearKeyLicenseRequest) Validate() []FieldError {
 // whether a given video is DRM-protected, which is not their business, and
 // would tell an attacker which instances to bother probing.
 func (s *Server) handleClearKeyLicense(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	if _, err := s.videoVisibleForMedia(c, id); err != nil {
 		return err

@@ -98,9 +98,9 @@ func (s *Server) handleCreateReplaceSession(c echo.Context) error {
 	if !s.videoReplaceAvailable() {
 		return &FeatureDisabledError{Feature: "video_replace"}
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	var in createUploadSessionRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -186,9 +186,9 @@ func (s *Server) handleReplaceVideoFile(c echo.Context) error {
 	if !s.videoReplaceAvailable() {
 		return &FeatureDisabledError{Feature: "video_replace"}
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	fh, err := c.FormFile("file")
 	if err != nil {

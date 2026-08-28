@@ -306,9 +306,9 @@ func (s *Server) homeRecommendationsFallback(c echo.Context, limit int, viewerID
 // optionalAuth. Tries vidra-search; on disable/error/empty falls back to the
 // server-side same-channel + same-category heuristic.
 func (s *Server) handleVideoRecommendations(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	limit := parseLimit(c, 12, 50)
 	ctx := c.Request().Context()

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/audit"
@@ -37,9 +36,9 @@ func (s *Server) handleRunVideoTranscoding(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	var in runVideoTranscodingRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -270,9 +269,9 @@ func (s *Server) handleApproveQuarantinedVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	if _, err := s.videosvc.ApproveQuarantined(c.Request().Context(), id); err != nil {
 		switch {
@@ -312,9 +311,9 @@ func (s *Server) handleRejectQuarantinedVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	var in rejectQuarantinedVideoRequest
 	if err := bindAndValidate(c, &in); err != nil {

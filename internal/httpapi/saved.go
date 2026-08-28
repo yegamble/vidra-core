@@ -3,7 +3,6 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 )
 
@@ -31,9 +30,9 @@ func (s *Server) handleUnsaveVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	videoID, err := uuid.Parse(c.Param("id"))
+	videoID, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	if err := s.videosvc.Unsave(c.Request().Context(), videoID, userID); err != nil {
 		return err

@@ -34,9 +34,9 @@ func (s *Server) handleUploadCaption(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	fh, err := c.FormFile("file")
 	if err != nil {
@@ -75,9 +75,9 @@ func (s *Server) handleUploadCaption(c echo.Context) error {
 // still requires the video to be published and not blocked, so the token holder
 // can load caption tracks for the video they unlocked.
 func (s *Server) captionVideoID(c echo.Context) (uuid.UUID, error) {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return uuid.UUID{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return uuid.UUID{}, err
 	}
 	v, err := s.videosvc.GetByID(c.Request().Context(), id)
 	if err != nil {
@@ -148,9 +148,9 @@ func (s *Server) handleDeleteCaption(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	// Owner OR editor collaborator (migration 0097).
 	v, canManage := s.canManageVideo(c.Request().Context(), userID, id)

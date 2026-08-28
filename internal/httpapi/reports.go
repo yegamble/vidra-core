@@ -99,9 +99,9 @@ func (s *Server) handleReportComment(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	commentID, err := uuid.Parse(c.Param("id"))
+	commentID, err := pathUUID(c, "id", "comment not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+		return err
 	}
 	var in createReportRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -125,9 +125,9 @@ func (s *Server) handleReportAccount(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	targetID, err := uuid.Parse(c.Param("id"))
+	targetID, err := pathUUID(c, "id", "account not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "account not found")
+		return err
 	}
 	var in createReportRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -254,9 +254,9 @@ func (s *Server) handleResolveReport(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "report not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "report not found")
+		return err
 	}
 	var in resolveReportRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -291,9 +291,9 @@ func (s *Server) handleDeleteReport(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "report not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "report not found")
+		return err
 	}
 	if err := s.moderationsvc.Delete(c.Request().Context(), id); err != nil {
 		return err

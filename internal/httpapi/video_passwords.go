@@ -103,9 +103,9 @@ type unlockResponse struct {
 // endpoint reveals nothing about non-password videos). Never logs the password or
 // the token.
 func (s *Server) handleUnlockVideo(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	var in unlockRequest
 	if err := c.Bind(&in); err != nil {
@@ -178,9 +178,9 @@ func (s *Server) handleListVideoPasswords(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	ps, err := s.videosvc.ListPasswords(c.Request().Context(), userID, id)
 	if err != nil {
@@ -197,9 +197,9 @@ func (s *Server) handleAddVideoPassword(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	var in setVideoPasswordRequest
 	if err := c.Bind(&in); err != nil {
@@ -219,9 +219,9 @@ func (s *Server) handleReplaceVideoPasswords(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	var in replaceVideoPasswordsRequest
 	if err := c.Bind(&in); err != nil {
@@ -242,13 +242,13 @@ func (s *Server) handleDeleteVideoPassword(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
-	pwID, err := uuid.Parse(c.Param("passwordId"))
+	pwID, err := pathUUID(c, "passwordId", "password not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "password not found")
+		return err
 	}
 	if err := s.videosvc.DeletePassword(c.Request().Context(), userID, id, pwID); err != nil {
 		return videoPasswordError(err)

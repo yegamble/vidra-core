@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/moderation"
@@ -26,9 +25,9 @@ func (s *Server) handleReportRemoteVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	remoteVideoID, err := uuid.Parse(c.Param("id"))
+	remoteVideoID, err := pathUUID(c, "id", "remote video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "remote video not found")
+		return err
 	}
 	var in createReportRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -53,9 +52,9 @@ func (s *Server) handleBlockRemoteVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "remote video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "remote video not found")
+		return err
 	}
 	var in blockVideoRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -79,9 +78,9 @@ func (s *Server) handleUnblockRemoteVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "remote video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "remote video not found")
+		return err
 	}
 	if err := s.moderationsvc.UnblockRemoteVideo(c.Request().Context(), id); err != nil {
 		return err

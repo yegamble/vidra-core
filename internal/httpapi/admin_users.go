@@ -161,9 +161,9 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	targetID, err := uuid.Parse(c.Param("id"))
+	targetID, err := pathUUID(c, "id", "user not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		return err
 	}
 	var in updateUserRequest
 	if err := bindAndValidate(c, &in); err != nil {

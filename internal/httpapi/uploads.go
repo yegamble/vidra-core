@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/upload"
@@ -154,9 +153,9 @@ func (s *Server) handleCreateUploadSession(c echo.Context) error {
 	if !s.uploadsEnabled() {
 		return &FeatureDisabledError{Feature: "uploads"}
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	var in createUploadSessionRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -215,9 +214,9 @@ func (s *Server) handlePutUploadChunk(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	uploadID, err := uuid.Parse(c.Param("upload_id"))
+	uploadID, err := pathUUID(c, "upload_id", "upload session not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "upload session not found")
+		return err
 	}
 	n, err := strconv.Atoi(c.Param("n"))
 	if err != nil {
@@ -238,9 +237,9 @@ func (s *Server) handleGetUploadSession(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	uploadID, err := uuid.Parse(c.Param("upload_id"))
+	uploadID, err := pathUUID(c, "upload_id", "upload session not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "upload session not found")
+		return err
 	}
 	st, err := s.uploadsvc.StatusFor(c.Request().Context(), uploadID, userID)
 	if err != nil {
@@ -260,9 +259,9 @@ func (s *Server) handleCompleteUploadSession(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	uploadID, err := uuid.Parse(c.Param("upload_id"))
+	uploadID, err := pathUUID(c, "upload_id", "upload session not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "upload session not found")
+		return err
 	}
 	ctx := c.Request().Context()
 	sess, reader, err := s.uploadsvc.PrepareComplete(ctx, uploadID, userID)
@@ -319,9 +318,9 @@ func (s *Server) handleCancelUploadSession(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	uploadID, err := uuid.Parse(c.Param("upload_id"))
+	uploadID, err := pathUUID(c, "upload_id", "upload session not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "upload session not found")
+		return err
 	}
 	if err := s.uploadsvc.Cancel(c.Request().Context(), uploadID, userID); err != nil {
 		return uploadError(err)

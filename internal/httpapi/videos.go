@@ -473,9 +473,9 @@ func (s *Server) attachIPFSPinned(ctx context.Context, views []videoView) {
 // leaked. This exception is metadata-detail only: media/playback routes keep
 // their own narrower authorization.
 func (s *Server) handleGetVideo(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	v, err := s.videoVisibleForDetail(c, id)
 	if err != nil {
@@ -998,9 +998,9 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	var in updateVideoRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -1109,9 +1109,9 @@ func (s *Server) handleDeleteVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	// Staff delete any local video (moderation escape); an editor collaborator
 	// (migration 0097) deletes their channel's videos.
@@ -1177,9 +1177,9 @@ func (s *Server) handleUploadVideoFile(c echo.Context) error {
 	if !s.uploadsEnabled() {
 		return &FeatureDisabledError{Feature: "uploads"}
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	fh, err := c.FormFile("file")
 	if err != nil {
@@ -1243,9 +1243,9 @@ func (s *Server) handleSetVideoThumbnail(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	// Owner OR editor collaborator (migration 0097). Once authorized, the write
 	// executes as the channel owner (v.OwnerID) — the id the owner-gated thumbnail
@@ -1306,9 +1306,9 @@ func (s *Server) setThumbnailFromFrame(c echo.Context, userID, id uuid.UUID) err
 // 404. Range requests are honoured for seeking when the backend exposes a
 // filesystem path.
 func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	v, err := s.videoVisibleForMedia(c, id)
 	if err != nil {
@@ -1331,9 +1331,9 @@ func (s *Server) handleStreamVideoOriginal(c echo.Context) error {
 // handleGetVideoThumbnail serves a video's generated poster image under the
 // ordinary media visibility policy; a video without a stored thumbnail is 404.
 func (s *Server) handleGetVideoThumbnail(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	v, err := s.videoVisibleForMedia(c, id)
 	if err != nil {
@@ -1417,9 +1417,9 @@ func (s *Server) serveStoredObjectNamed(c echo.Context, key, contentType, notFou
 // when Redis is wired). Behind optionalAuth, it retains ordinary playback
 // visibility. Always 204 on success — whether or not the view was newly counted.
 func (s *Server) handleRecordVideoView(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	viewerID, _, authed := principalFromContext(c)
 	if err := s.videosvc.RecordView(c.Request().Context(), id, viewerID, authed, viewerKey(c, viewerID, authed)); err != nil {
@@ -1610,9 +1610,9 @@ func (s *Server) handleBlockVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	var in blockVideoRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -1639,9 +1639,9 @@ func (s *Server) handleUnblockVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	if err := s.moderationsvc.UnblockVideo(c.Request().Context(), id); err != nil {
 		return err

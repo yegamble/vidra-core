@@ -312,9 +312,9 @@ func (s *Server) handleListMessages(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	convID, err := uuid.Parse(c.Param("id"))
+	convID, err := pathUUID(c, "id", "conversation not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "conversation not found")
+		return err
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	// Optional keyset cursor: return only messages strictly older than before_id
@@ -391,9 +391,9 @@ func (s *Server) handleSendMessage(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	convID, err := uuid.Parse(c.Param("id"))
+	convID, err := pathUUID(c, "id", "conversation not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "conversation not found")
+		return err
 	}
 	var in sendMessageRequest
 	if err := bindAndValidate(c, &in); err != nil {

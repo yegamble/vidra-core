@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/account"
@@ -73,9 +72,9 @@ func (s *Server) handleAdminDeleteUser(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	targetID, err := uuid.Parse(c.Param("id"))
+	targetID, err := pathUUID(c, "id", "user not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		return err
 	}
 	if targetID == adminID {
 		s.audit(c, observability.ActionAdminUserDelete, observability.ResultFailure, adminID.String(), "self_delete_refused")

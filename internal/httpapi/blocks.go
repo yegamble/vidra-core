@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/block"
@@ -32,9 +31,9 @@ func (s *Server) handleBlockUser(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	targetID, err := uuid.Parse(c.Param("id"))
+	targetID, err := pathUUID(c, "id", "user not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		return err
 	}
 	if err := s.blocksvc.Block(c.Request().Context(), userID, targetID); err != nil {
 		switch {
@@ -55,9 +54,9 @@ func (s *Server) handleUnblockUser(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	targetID, err := uuid.Parse(c.Param("id"))
+	targetID, err := pathUUID(c, "id", "user not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		return err
 	}
 	if err := s.blocksvc.Unblock(c.Request().Context(), userID, targetID); err != nil {
 		return err

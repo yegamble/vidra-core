@@ -76,9 +76,9 @@ func (s *Server) handleDeleteMyImage(kind string) echo.HandlerFunc {
 // type derived at upload time. 404 when the user is unknown or has none set.
 func (s *Server) handleGetUserImage(kind string) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		id, err := uuid.Parse(c.Param("id"))
+		id, err := pathUUID(c, "id", kind+" not found")
 		if err != nil {
-			return echo.NewHTTPError(http.StatusNotFound, kind+" not found")
+			return err
 		}
 		img, err := s.imagesvc.UserImage(c.Request().Context(), id, kind)
 		if err != nil {

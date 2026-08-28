@@ -93,9 +93,9 @@ func uuidPtrString(u pgtype.UUID) *string {
 // those are a later slice. Returns the full row so callers can consult
 // per-video policy (comments_policy, config-parity W9) without a second fetch.
 func (s *Server) publicVideo(c echo.Context) (sqlcgen.GetVideoByIDRow, error) {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return sqlcgen.GetVideoByIDRow{}, err
 	}
 	v, err := s.videosvc.GetByID(c.Request().Context(), id)
 	if err != nil || v.State != "published" || v.Privacy != "public" {
@@ -248,9 +248,9 @@ func (s *Server) handleDeleteComment(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "comment not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+		return err
 	}
 	isModerator := role == "admin" || role == "moderator"
 	if err := s.commentsvc.Delete(c.Request().Context(), id, userID, isModerator); err != nil {
@@ -288,9 +288,9 @@ func (s *Server) handleUpdateComment(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "comment not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+		return err
 	}
 	var in updateCommentRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -350,9 +350,9 @@ func (s *Server) commentCreatorAction(c echo.Context, action func(context.Contex
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "comment not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "comment not found")
+		return err
 	}
 	ctx := c.Request().Context()
 	cmt, err := s.commentsvc.Get(ctx, id)

@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/captionjob"
@@ -69,9 +68,9 @@ func (s *Server) handleRequestAutoCaption(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	// Feature gates first, without disclosing whether the video exists: the
 	// runtime admin setting answers 403 feature_disabled; a deployment whose
@@ -123,9 +122,9 @@ func (s *Server) handleGetAutoCaption(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		return err
 	}
 	ctx := c.Request().Context()
 	if v, gerr := s.videosvc.GetByID(ctx, id); gerr != nil ||

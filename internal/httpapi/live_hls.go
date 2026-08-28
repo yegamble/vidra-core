@@ -125,9 +125,9 @@ func (s *Server) liveViewerAuthorized(c echo.Context, stream live.Stream) bool {
 // served directly). Behind optionalAuth; gated by privacy + live state; 404 when
 // LIVE_HLS_ROOT is unset.
 func (s *Server) handleGetLiveHLSMaster(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "live stream not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
+		return err
 	}
 	if _, err := s.liveStreamForHLS(c, id); err != nil {
 		return err
@@ -139,9 +139,9 @@ func (s *Server) handleGetLiveHLSMaster(c echo.Context) error {
 // "<id>.m3u8" or a numbered segment "<id>-<n>.ts". Names outside that fixed shape
 // are 404. Same visibility/state gate as the master.
 func (s *Server) handleGetLiveHLSFile(c echo.Context) error {
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "live stream not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
+		return err
 	}
 	name := c.Param("file")
 	if !liveHLSFileAllowed(id, name) {

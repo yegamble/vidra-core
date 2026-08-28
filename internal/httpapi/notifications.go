@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/notification"
@@ -126,9 +125,9 @@ func (s *Server) handleMarkNotificationRead(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	id, err := uuid.Parse(c.Param("id"))
+	id, err := pathUUID(c, "id", "notification not found")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "notification not found")
+		return err
 	}
 	if err := s.notifsvc.MarkRead(c.Request().Context(), userID, id); err != nil {
 		if errors.Is(err, notification.ErrNotFound) {
