@@ -35,6 +35,34 @@ SELECT id, username, email, password_hash, role, email_verified, is_active, crea
 FROM users
 WHERE lower(email) = lower($1);
 
+-- name: GetUserByLoginIdentifier :one
+-- Sign-in lookup for "email OR username" in ONE round trip, with deterministic
+-- precedence: EMAIL ALWAYS WINS. Usernames carry no charset restriction
+-- historically, so a username may look like — and may literally equal — another
+-- account's email address (the unique indexes are per-column, never across
+-- them). Ordering the email branch first makes the owner of the email address
+-- the only account reachable by that string, so nobody can shadow another
+-- account's sign-in by choosing a lookalike username.
+--
+-- Deliberately NO is_active filter (unlike GetUserByUsername): the disabled
+-- check must stay AFTER the password compare in Go, otherwise a disabled
+-- account answers differently before any credential is proven and becomes an
+-- enumeration oracle.
+--
+-- Both branches are index-served (users_email_lower_idx / users_username_lower_idx).
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
+FROM (
+    SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, 1 AS match_priority
+    FROM users
+    WHERE lower(email) = lower($1)
+    UNION ALL
+    SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, 2 AS match_priority
+    FROM users
+    WHERE lower(username) = lower($1)
+) AS matches
+ORDER BY match_priority
+LIMIT 1;
+
 -- name: GetUserByUsername :one
 -- Resolve a username to a full user row, case-insensitive and active-only
 -- (deactivated accounts are treated as not found → the caller 404s, so an
