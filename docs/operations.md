@@ -1429,6 +1429,67 @@ Zero is the right value for a single-node install: nothing is making routing
 decisions about it, so the wait would only slow the restart down. Nothing changes
 for an install that does not set it.
 
+### Behind a load balancer
+
+Putting a balancer in front of several replicas adds three concerns the sections
+above do not finish: what the balancer should poll, whose address a request
+appears to come from, and where rate-limit state lives.
+
+**Poll `/readyz`, and give the drain delay time to work.** `/readyz` answers the
+balancer's question — "should I send this instance traffic?" — and only
+PostgreSQL takes an instance out of rotation. A Redis error does not: every rate
+limiter fails open on one (the request is served, with `rate limiter
+unavailable, failing open` in the logs), and all replicas share the same Redis,
+so a readiness probe that 503ed on Redis would take **every** replica out of
+rotation at once — turning a partial loss of rate limiting into a total outage.
+Redis trouble shows up as a degraded component in the response body, under a
+200. On SIGTERM `/readyz` flips to 503 (body `"status": "draining"`) while the
+listener stays open; size `HTTP_DRAIN_DELAY` to at least twice the balancer's
+polling interval — more if it wants several consecutive failures — so every
+balancer observes the 503 before the socket closes. The mechanics are in
+[Rolling restarts](#rolling-restarts--readyz-and-the-drain-delay). Probe results
+are cached for 2 seconds server-side, so several balancers polling aggressively
+share one probe rather than each spending a database round trip.
+
+**Name the balancer in `TRUSTED_PROXY_CIDRS`, or every visitor becomes one IP.**
+The api takes the client address from `X-Forwarded-For` by walking the chain
+from the *right* and stopping at the nearest untrusted hop; trusted is loopback
++ RFC1918/ULA + link-local (the compose network and anything on the host) plus
+whatever `TRUSTED_PROXY_CIDRS` names — comma-separated CIDR blocks, and a bare
+IP without a prefix length is refused at boot (write `/32`). The walk is what
+keeps the header from being attacker input: a public client that invents an
+`X-Forwarded-For` is itself the nearest untrusted hop, so it is keyed on its
+real socket address. Without that, one header would let any caller pick its own
+identity for every per-IP budget on the instance — login, the contact form, the
+video-password unlock — and for anonymous view counting, which keys on the
+(hashed) client IP too.
+
+A balancer on a public address is untrusted by default. That fails safe — nobody
+behind it can forge an address — but the walk then stops *at the balancer*, so
+every request appears to come from the balancer's own IP: all visitors collapse
+into one shared rate-limit bucket (one visitor's failed logins spend everyone's
+auth budget — the symptom is spurious 429s under any real traffic) and every
+anonymous view shares one viewer key. Listing the balancer's network is the
+deliberate act that fixes it. Never list a network the operator does not
+control: a whole cloud range trusts every other tenant in it to write truthful
+headers, which is exactly the spoofing hole the walk exists to close.
+
+**Rate limits are shared through Redis — or silently multiplied by N.** With
+`RATE_LIMIT_ENABLED=true` (the default) every limiter counts in the shared
+Redis, so N replicas enforce one global budget and it does not matter which
+replica the balancer picks. Two departures from that:
+
+- A Redis error makes the limiters fail *open* on every replica at once (see
+  above). The failure mode is "no rate limiting", never "each replica counts
+  locally".
+- With `RATE_LIMIT_ENABLED=false` the general, auth and media budgets do not
+  exist at all, and the handful of endpoints that refuse to run unthrottled —
+  the video-password unlock, the contact form, the admin mail probe, remote
+  search resolution — fall back to per-process in-memory counters. Each replica
+  keeps its own count, so those budgets silently multiply by replica count: the
+  contact form's 1 request per IP per hour becomes N, spent from whichever
+  counter the balancer happens to route to.
+
 ### What was actually tested
 
 Two api replicas against one PostgreSQL, verified end to end rather than by
@@ -1456,8 +1517,10 @@ docker compose -f docker-compose.yml -f deploy/docker-compose.soak.yml \
 ### Caveats, stated plainly
 
 - **This is not a scaling recommendation.** It is evidence that the concurrency
-  primitives hold under a real two-process topology. Capacity planning, session
-  affinity, rolling deploys and load balancing are not covered here.
+  primitives hold under a real two-process topology. Rolling deploys and load
+  balancing are covered above as *correctness* concerns — drain, client IP,
+  rate-limit state — but capacity planning and session affinity are not
+  covered here.
 - **A partitioned leader still holds its lock** until PostgreSQL notices the TCP
   session is gone (`tcp_keepalives_*`, minutes by default). During that window the
   singleton sweeps do not run anywhere. That is the correct failure to have —
