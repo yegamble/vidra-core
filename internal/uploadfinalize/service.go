@@ -83,6 +83,7 @@ var ErrNotFound = errors.New("uploadfinalize: no finalize job")
 type Repository interface {
 	EnqueueUploadFinalizeJob(ctx context.Context, arg sqlcgen.EnqueueUploadFinalizeJobParams) (sqlcgen.UploadFinalizeJob, error)
 	GetLatestUploadFinalizeJob(ctx context.Context, uploadID uuid.UUID) (sqlcgen.UploadFinalizeJob, error)
+	HasLiveUploadFinalizeJob(ctx context.Context, uploadID uuid.UUID) (bool, error)
 	DeleteUploadFinalizeJob(ctx context.Context, id uuid.UUID) error
 	ClaimDueUploadFinalizeJobs(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueUploadFinalizeJobsRow, error)
 	RenewUploadFinalizeJobLease(ctx context.Context, id uuid.UUID) error
@@ -219,6 +220,30 @@ func (s *Service) Enqueue(ctx context.Context, uploadID, videoID uuid.UUID, purp
 		return sqlcgen.UploadFinalizeJob{}, upload.ErrNotActive
 	}
 	return job, nil
+}
+
+// HasLiveJob reports whether a pending/running finalize job exists for the
+// session — that is, whether its completion has been accepted and not yet
+// settled.
+//
+// It is a REPORTING input, not a control decision, and its failure posture is
+// chosen accordingly. Accepting a completion is an insert followed by a separate
+// state transition, so between them the session row still reads 'active' while a
+// job plainly exists; the status a client sees coalesces that to 'queued' (see
+// the HTTP layer), because a client that reads 'active' right after completing
+// concludes the upload is gone. A lookup error therefore reports FALSE: leaving
+// the raw state alone re-exposes a narrow, pre-existing race, whereas answering
+// true would rewrite the state of a genuinely active session with no job at all
+// — telling a client its upload is queued when nothing is queued, which no later
+// poll could ever correct.
+func (s *Service) HasLiveJob(ctx context.Context, uploadID uuid.UUID) bool {
+	live, err := s.repo.HasLiveUploadFinalizeJob(ctx, uploadID)
+	if err != nil {
+		s.logger.Warn("upload finalize: live-job lookup failed; reporting the session's raw state",
+			"upload_id", uploadID.String(), "error", err)
+		return false
+	}
+	return live
 }
 
 // LatestForSession returns a session's most recent finalize job. ErrNotFound

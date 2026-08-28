@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/audit"
@@ -403,11 +404,15 @@ func WithViewDeduper(d ViewDeduper) Option {
 
 // WithUploadUsageRecorder wires the rolling daily-upload-quota ledger
 // (config-parity W7, default_user_daily_quota_bytes): fn is called after
-// AttachOriginal stores an original, with the owner and the stored byte size.
-// AttachOriginal is the single choke point every original passes through
-// (direct upload, chunked upload, URL import, live replay), so the rolling
-// window sees them all. Best-effort — a recording failure never fails the
-// upload (the daily gate is race-tolerant by spec).
+// AttachOriginal (or ReplaceSource) stores an original, with the owner and the
+// stored byte size. Those are the single choke point every original passes
+// through — direct upload, chunked upload, URL import, live replay, source
+// replacement — so the rolling window sees them all. Best-effort: a recording
+// failure never fails the upload (the daily gate is race-tolerant by spec).
+//
+// It fires once per STORED ORIGINAL, not once per call: the import and
+// upload-finalize workers retry the attach → process pipeline, and re-storing
+// the same bytes must not bill the owner again. See billStoredOriginal.
 func WithUploadUsageRecorder(fn func(ctx context.Context, ownerID uuid.UUID, bytes int64) error) Option {
 	return func(s *Service) { s.uploadUsageRecorder = fn }
 }
@@ -714,6 +719,27 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 	}
 
 	key := originalKey(videoID, ext)
+	// The digest of whatever original is currently recorded, read BEFORE the row
+	// is dropped: it is what tells a retry apart from a new upload when the
+	// daily-quota ledger is appended below.
+	//
+	// The two failure modes are NOT interchangeable. No row means there is
+	// genuinely no prior original, so the upload below is new and bills. Any
+	// other error means we could not find out — and treating "don't know" as
+	// "no prior" is exactly the double-bill this guard exists to prevent, since
+	// a transient database blip on a retry attempt would silently bill the owner
+	// a second time. So it fails the attempt instead: the caller retries, the
+	// read happens again, and nothing has been charged in the meantime.
+	priorSum := ""
+	switch cur, cerr := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{
+		VideoID: videoID,
+		Kind:    "original",
+	}); {
+	case cerr == nil:
+		priorSum = cur.Sha256
+	case !errors.Is(cerr, pgx.ErrNoRows):
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, cerr
+	}
 	if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
 		VideoID: videoID,
 		Kind:    "original",
@@ -741,11 +767,41 @@ func (s *Service) AttachOriginal(ctx context.Context, ownerID, videoID uuid.UUID
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
 	}
 	// Daily-quota ledger (config-parity W7): record the stored bytes against
-	// the owner's rolling 24h window. Best-effort by design.
-	if s.uploadUsageRecorder != nil {
-		_ = s.uploadUsageRecorder(ctx, ownerID, size)
-	}
+	// the owner's rolling 24h window. Best-effort by design, and billed once per
+	// stored original — see billStoredOriginal.
+	s.billStoredOriginal(ctx, ownerID, priorSum, sum, size)
 	return updated, file, nil
+}
+
+// billStoredOriginal appends the daily-quota ledger event for a stored original,
+// unless the bytes just written are the ones already recorded there.
+//
+// The ledger follows the STORED ORIGINAL, not the call that stored it, and that
+// distinction became load-bearing when upload completion moved onto a queue. Two
+// callers now RETRY the attach → process pipeline — the URL-import worker and
+// the upload-finalize worker, five attempts each — so a failure in a LATER stage
+// re-runs AttachOriginal over the same bytes. Billing per call charged the owner
+// again on every attempt, up to five times for one upload, and silently ate
+// their daily allowance. The synchronous paths never retried, which is why the
+// per-call form survived this long.
+//
+// priorSum is the digest of the original this write replaced (empty when there
+// was none, or when it predates digest recording). An identical digest means the
+// same content is at the same key: the same original, already billed.
+//
+// The trade-off, stated plainly: re-uploading byte-identical content to a video
+// on purpose does not bill a second time. That is the correct answer for what
+// the ledger measures — one object, one key, the same bytes, no growth in what
+// the account stores — and it is the same condition a retry produces, which is
+// why one rule covers both. Genuinely different content bills, always.
+func (s *Service) billStoredOriginal(ctx context.Context, ownerID uuid.UUID, priorSum, sum string, size int64) {
+	if s.uploadUsageRecorder == nil {
+		return
+	}
+	if priorSum != "" && sum != "" && priorSum == sum {
+		return
+	}
+	_ = s.uploadUsageRecorder(ctx, ownerID, size)
 }
 
 // ReplaceSource stores a NEW source version for an already-published video —
@@ -804,8 +860,20 @@ func (s *Service) ReplaceSource(ctx context.Context, actorID, videoID uuid.UUID,
 	// original's key (a published video always has one; a missing row — e.g. a
 	// GC'd source — starts the versioned scheme at 1).
 	version := 1
-	if cur, cerr := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: "original"}); cerr == nil {
+	// priorSum is the digest of the source being replaced, kept for the ledger
+	// below: the finalize worker retries a replace-purpose session, so a failure
+	// after the swap would otherwise bill the owner again on the next attempt.
+	//
+	// Same posture as AttachOriginal, and here it protects the KEY as well as the
+	// ledger: falling back to version 1 on an error we cannot interpret would
+	// write over the generation this video is currently serving.
+	priorSum := ""
+	switch cur, cerr := s.repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{VideoID: videoID, Kind: "original"}); {
+	case cerr == nil:
 		version = media.OriginalKeyVersion(cur.StorageKey) + 1
+		priorSum = cur.Sha256
+	case !errors.Is(cerr, pgx.ErrNoRows):
+		return sqlcgen.Video{}, sqlcgen.VideoFile{}, cerr
 	}
 	key := media.OriginalVideoKey(videoID, version, ext)
 	size, sum, err := storage.PutSizedHashed(ctx, s.blobs, key, in.Reader, storage.SizeUnknown)
@@ -878,10 +946,10 @@ func (s *Service) ReplaceSource(ctx context.Context, actorID, videoID uuid.UUID,
 		}
 	}
 	// Daily-quota ledger (W7 convention): replacement bytes count against the
-	// OWNER's rolling window like any other stored original. Best-effort.
-	if s.uploadUsageRecorder != nil {
-		_ = s.uploadUsageRecorder(ctx, v.OwnerID, size)
-	}
+	// OWNER's rolling window like any other stored original. Best-effort, and
+	// once per stored original — a retry of a replace-purpose finalize job that
+	// already swapped in these exact bytes must not bill them twice.
+	s.billStoredOriginal(ctx, v.OwnerID, priorSum, sum, size)
 	// Storyboard regeneration is best-effort and honors the runtime
 	// storyboards_enabled gate; the (possibly creator-picked) thumbnail is
 	// deliberately kept.

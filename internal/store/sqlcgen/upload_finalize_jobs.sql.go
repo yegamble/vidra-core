@@ -197,6 +197,29 @@ func (q *Queries) GetLatestUploadFinalizeJob(ctx context.Context, uploadID uuid.
 	return i, err
 }
 
+const hasLiveUploadFinalizeJob = `-- name: HasLiveUploadFinalizeJob :one
+SELECT EXISTS (
+    SELECT 1 FROM upload_finalize_jobs
+    WHERE upload_id = $1 AND state IN ('pending', 'running')
+)
+`
+
+// Whether a pending/running finalize job exists for the session (served by the
+// partial unique index that makes the enqueue idempotent).
+//
+// It exists for the REPORTED state, not for any control decision. Accepting a
+// completion is two statements — insert the job, then flip the session to
+// 'queued' — and a concurrent second POST is released by the index the moment
+// the insert commits, which is before that flip lands. Reporting the raw row
+// then says 'active' for an upload that is queued and about to publish, and a
+// client reads 'active' after a completion as "this upload is gone".
+func (q *Queries) HasLiveUploadFinalizeJob(ctx context.Context, uploadID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, hasLiveUploadFinalizeJob, uploadID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const renewUploadFinalizeJobLease = `-- name: RenewUploadFinalizeJobLease :exec
 UPDATE upload_finalize_jobs
 SET next_attempt_at = now() + interval '30 minutes', updated_at = now()
