@@ -41,6 +41,12 @@ type fakeRepo struct {
 	// never minted, so most tests register freely, exactly like a database
 	// that predates the owner-claim flow.
 	ownerClaim *sqlcgen.OwnerClaimToken
+	// Lookup counters let tests prove Login performs EXACTLY ONE account
+	// lookup (and therefore exactly one password compare) per attempt — a
+	// second lookup after a failed compare would be a fallthrough that lets
+	// one identifier reach two accounts.
+	loginLookups int
+	emailLookups int
 }
 
 func newFakeRepo() *fakeRepo {
@@ -51,6 +57,12 @@ func newFakeRepo() *fakeRepo {
 		resets:   map[string]*sqlcgen.PasswordResetToken{},
 		verifs:   map[string]*sqlcgen.EmailVerificationToken{},
 	}
+}
+
+// reset zeroes the lookup counters so a test can measure one specific call.
+func (f *fakeRepo) reset() {
+	f.loginLookups = 0
+	f.emailLookups = 0
 }
 
 func (f *fakeRepo) CreateRegistrationRequest(_ context.Context, a sqlcgen.CreateRegistrationRequestParams) (sqlcgen.CreateRegistrationRequestRow, error) {
@@ -346,11 +358,28 @@ func (f *fakeRepo) CreateUser(_ context.Context, arg sqlcgen.CreateUserParams) (
 }
 
 func (f *fakeRepo) GetUserByEmail(_ context.Context, lowerEmail string) (sqlcgen.User, error) {
+	f.emailLookups++
 	u, ok := f.byEmail[lower(lowerEmail)]
 	if !ok {
 		return sqlcgen.User{}, errors.New("not found")
 	}
 	return u, nil
+}
+
+// GetUserByLoginIdentifier mirrors the real query exactly: the email branch is
+// tried first (email always wins over a lookalike username), the username
+// branch second, and NEITHER filters on is_active.
+func (f *fakeRepo) GetUserByLoginIdentifier(_ context.Context, identifier string) (sqlcgen.User, error) {
+	f.loginLookups++
+	if u, ok := f.byEmail[lower(identifier)]; ok {
+		return u, nil
+	}
+	for _, u := range f.byEmail {
+		if lower(u.Username) == lower(identifier) {
+			return u, nil
+		}
+	}
+	return sqlcgen.User{}, errors.New("not found")
 }
 
 func (f *fakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (sqlcgen.User, error) {

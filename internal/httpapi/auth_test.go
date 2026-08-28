@@ -345,6 +345,20 @@ func (f *authFakeRepo) GetUserByEmail(_ context.Context, lowerEmail string) (sql
 	return u, nil
 }
 
+// GetUserByLoginIdentifier mirrors the real sign-in query: email branch first
+// (email always wins), then the username branch, neither filtering is_active.
+func (f *authFakeRepo) GetUserByLoginIdentifier(_ context.Context, identifier string) (sqlcgen.User, error) {
+	if u, ok := f.users[strings.ToLower(identifier)]; ok {
+		return u, nil
+	}
+	for _, u := range f.users {
+		if strings.EqualFold(u.Username, identifier) {
+			return u, nil
+		}
+	}
+	return sqlcgen.User{}, errors.New("not found")
+}
+
 func (f *authFakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (sqlcgen.User, error) {
 	for _, u := range f.users {
 		if u.ID == id {
