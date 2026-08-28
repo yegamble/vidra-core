@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -224,12 +225,5 @@ func (d *Drainer) recordFailure(ctx context.Context, row sqlcgen.ClaimDueSearchE
 
 // drainBackoff is drainBaseBackoff * 2^(attempts-1), capped at maxDrainBackoff.
 func drainBackoff(attempts int) time.Duration {
-	d := drainBaseBackoff
-	for i := 1; i < attempts; i++ {
-		d *= 2
-		if d >= maxDrainBackoff {
-			return maxDrainBackoff
-		}
-	}
-	return d
+	return retry.Backoff(attempts, drainBaseBackoff, maxDrainBackoff)
 }

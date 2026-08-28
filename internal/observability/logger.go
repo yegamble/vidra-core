@@ -17,6 +17,10 @@ import (
 // (developer-friendly local runs). An unrecognised level or format is returned
 // as an error so misconfiguration fails fast at startup rather than silently
 // degrading observability.
+//
+// TWIN: vidra-search internal/telemetry/logger.go — NewLogger + ParseLevel are
+// verbatim copies; both services' log lines have to parse the same way in one
+// aggregator.
 func NewLogger(w io.Writer, level, format string) (*slog.Logger, error) {
 	lvl, err := ParseLevel(level)
 	if err != nil {

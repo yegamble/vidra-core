@@ -24,6 +24,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/vidra/vidra-core/internal/retry"
+	"github.com/vidra/vidra-core/internal/safeerr"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
 
@@ -263,11 +265,11 @@ func (s *Service) runJob(ctx context.Context, row sqlcgen.ClaimDueCaptionJobsRow
 	v, err := s.videos.GetByID(ctx, row.VideoID)
 	if err != nil {
 		// The video was deleted out from under the job — permanent.
-		return failf("the video no longer exists")
+		return safeerr.New("the video no longer exists")
 	}
 	sourceKey, err := s.videos.OriginalFileKey(ctx, row.VideoID)
 	if err != nil {
-		return failf("the video has no processed media to caption")
+		return safeerr.New("the video has no processed media to caption")
 	}
 	s.setProgress(ctx, row.ID, "transcribing", 20)
 
@@ -286,9 +288,9 @@ func (s *Service) runJob(ctx context.Context, row sqlcgen.ClaimDueCaptionJobsRow
 	}); err != nil {
 		switch {
 		case errors.Is(err, video.ErrInvalidCaption):
-			return failf("the transcription did not produce a valid caption")
+			return safeerr.New("the transcription did not produce a valid caption")
 		case errors.Is(err, video.ErrNotFound), errors.Is(err, video.ErrForbidden):
-			return failf("the video no longer exists")
+			return safeerr.New("the video no longer exists")
 		default:
 			return s.internalf("caption upsert", err)
 		}
@@ -336,29 +338,15 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueCaption
 // error.
 func (s *Service) internalf(where string, err error) error {
 	s.logger.Warn("auto-caption failed", "stage", where, "error", err)
-	return failf("auto-captioning failed")
+	return safeerr.New("auto-captioning failed")
 }
 
 // backoff is baseBackoff * 2^(attempts-1), capped at maxBackoff.
 func backoff(attempts int) time.Duration {
-	d := baseBackoff
-	for i := 1; i < attempts; i++ {
-		d *= 2
-		if d >= maxBackoff {
-			return maxBackoff
-		}
-	}
-	return d
+	return retry.Backoff(attempts, baseBackoff, maxBackoff)
 }
 
 // normalizeLanguage trims the language tag (validated by the caller).
 func normalizeLanguage(lang string) string {
 	return strings.TrimSpace(lang)
 }
-
-// failure carries a safe, client-visible failure reason.
-type failure struct{ msg string }
-
-func (f *failure) Error() string { return f.msg }
-
-func failf(msg string) error { return &failure{msg: msg} }

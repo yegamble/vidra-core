@@ -19,6 +19,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/ipfs"
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -1364,16 +1365,10 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueIPFSPin
 	})
 }
 
-// backoff is baseBackoff * 2^(attempts-1), capped at maxBackoff.
+// backoff is baseBackoff * 2^(attempts-1), capped at maxBackoff. The base is
+// per-service (operator-configurable), the cap is not.
 func (s *Service) backoff(attempts int) time.Duration {
-	d := s.baseBackoff
-	for i := 1; i < attempts; i++ {
-		d *= 2
-		if d >= maxBackoff {
-			return maxBackoff
-		}
-	}
-	return d
+	return retry.Backoff(attempts, s.baseBackoff, maxBackoff)
 }
 
 // ---- reconciliation -------------------------------------------------------

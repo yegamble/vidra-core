@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -172,12 +173,5 @@ func (s *Service) recordPostFailure(ctx context.Context, row sqlcgen.ClaimDueATP
 
 // postBackoff is postBaseBackoff * 2^(attempts-1), capped at maxPostBackoff.
 func postBackoff(attempts int) time.Duration {
-	d := postBaseBackoff
-	for i := 1; i < attempts; i++ {
-		d *= 2
-		if d >= maxPostBackoff {
-			return maxPostBackoff
-		}
-	}
-	return d
+	return retry.Backoff(attempts, postBaseBackoff, maxPostBackoff)
 }

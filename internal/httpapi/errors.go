@@ -339,6 +339,10 @@ func (e *IPFSDisabledError) Error() string { return "ipfs mirroring is not enabl
 
 // codeForStatus maps an HTTP status to a stable, snake_case error code. Unknown
 // statuses fall back to a generic code derived from the class.
+//
+// TWIN: vidra-search internal/api/errors.go codeForStatus — keep in sync. A
+// client that handles "rate_limited" from one service must get the same string
+// from the other.
 func codeForStatus(status int) string {
 	switch status {
 	case http.StatusBadRequest:

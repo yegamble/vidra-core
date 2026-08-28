@@ -73,6 +73,7 @@ import (
 	"github.com/vidra/vidra-core/internal/lease"
 	"github.com/vidra/vidra-core/internal/mediahash"
 	"github.com/vidra/vidra-core/internal/pgconv"
+	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -956,6 +957,5 @@ func (s *Service) note(ctx context.Context, id uuid.UUID, msg string) error {
 // at an hour. Long enough that a restarting object store is back; short enough
 // that a whole library is not held up by one flaky object.
 func backoff(attempt int) time.Duration {
-	d := time.Minute << min(attempt-1, 6)
-	return min(d, time.Hour)
+	return retry.Backoff(attempt, time.Minute, time.Hour)
 }

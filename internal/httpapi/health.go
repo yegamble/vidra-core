@@ -1,5 +1,9 @@
 package httpapi
 
+// TWIN: vidra-search internal/api/health.go — keep readiness semantics in sync.
+// Both services answer the same orchestrator, so "ready" has to mean the same
+// thing in both or a rollout gates on a different bar per service.
+
 import (
 	"context"
 	"net/http"

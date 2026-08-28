@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -188,10 +189,16 @@ func (s *Service) ImportArchive(ctx context.Context, userID uuid.UUID, archive A
 	return sum, nil
 }
 
-// truncate bounds a string to max bytes (import payloads are untrusted).
+// truncate bounds a string to max bytes (import payloads are untrusted),
+// cutting on a rune boundary. Slicing at s[:max] would land mid-codepoint
+// whenever the cap falls inside a multi-byte character, and the archive owner
+// would find a replacement character sitting in their restored display name.
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
 	}
 	return s[:max]
 }

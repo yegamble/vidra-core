@@ -27,6 +27,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/vidra/vidra-core/internal/retry"
+	"github.com/vidra/vidra-core/internal/safeerr"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
 	"github.com/vidra/vidra-core/internal/video"
@@ -350,13 +352,13 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 	v, err := s.pipeline.GetByID(ctx, row.VideoID)
 	if err != nil {
 		// The video was deleted out from under the job — permanent.
-		return failf("the video no longer exists")
+		return safeerr.New("the video no longer exists")
 	}
 
 	guard := s.guard()
 	target, err := guard.ValidateURL(strings.TrimSpace(row.Url))
 	if err != nil {
-		return failf("the import URL is not a public http(s) URL")
+		return safeerr.New("the import URL is not a public http(s) URL")
 	}
 
 	// Resolve the owner's storage headroom before fetching (< 0 = unlimited).
@@ -389,10 +391,10 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 	// cap is resolved once per job so a runtime overlay change is honoured.
 	maxBytes := s.effectiveMaxBytes()
 	if maxBytes > 0 && media.knownSize > maxBytes {
-		return failf("the file is too large")
+		return safeerr.New("the file is too large")
 	}
 	if quotaRemaining >= 0 && media.knownSize > quotaRemaining {
-		return failf("storing the file would exceed your storage quota")
+		return safeerr.New("storing the file would exceed your storage quota")
 	}
 
 	body := io.Reader(media.body)
@@ -412,13 +414,13 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 	if err != nil {
 		switch {
 		case errors.Is(err, errImportTooLarge):
-			return failf("the file is too large")
+			return safeerr.New("the file is too large")
 		case errors.Is(err, errImportOverQuota):
-			return failf("storing the file would exceed your storage quota")
+			return safeerr.New("storing the file would exceed your storage quota")
 		case errors.Is(err, video.ErrUnsupportedMedia):
-			return failf("the URL is not an accepted video container")
+			return safeerr.New("the URL is not an accepted video container")
 		case errors.Is(err, video.ErrNotFound), errors.Is(err, video.ErrForbidden):
-			return failf("the video no longer exists")
+			return safeerr.New("the video no longer exists")
 		default:
 			return s.internalf("import attach original", err)
 		}
@@ -449,21 +451,21 @@ func (s *Service) selectResolver(ctx context.Context, guard urlsafety.Guard, row
 		concrete = ResolverDirect
 	case ResolverYtdlp:
 		if !s.YtdlpEnabled() {
-			return nil, failf("platform import is not enabled")
+			return nil, safeerr.New("platform import is not enabled")
 		}
 		concrete = ResolverYtdlp
 	case ResolverAuto:
 		s.setStage(ctx, row.ID, StageResolving)
 		concrete = s.probeAuto(ctx, guard, target)
 		if concrete == "" {
-			return nil, failf("could not import from this URL")
+			return nil, safeerr.New("could not import from this URL")
 		}
 		// Rewrite the stored resolver to what actually runs (honest view).
 		_ = s.repo.SetImportJobResolver(ctx, sqlcgen.SetImportJobResolverParams{
 			ID: row.ID, Resolver: concrete, Stage: StageResolving,
 		})
 	default:
-		return nil, failf("could not import from this URL")
+		return nil, safeerr.New("could not import from this URL")
 	}
 	return s.buildResolver(guard, concrete)
 }
@@ -472,7 +474,7 @@ func (s *Service) selectResolver(ctx context.Context, guard urlsafety.Guard, row
 func (s *Service) buildResolver(guard urlsafety.Guard, concrete string) (resolver, error) {
 	if concrete == ResolverYtdlp {
 		if !s.YtdlpEnabled() {
-			return nil, failf("platform import is not enabled")
+			return nil, safeerr.New("platform import is not enabled")
 		}
 		return &ytdlpResolver{ext: s.ytdlp, workRoot: s.ytdlpWork}, nil
 	}
@@ -552,27 +554,13 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueImportJ
 // generic safe failure so nothing sensitive reaches the client-visible error.
 func (s *Service) internalf(where string, err error) error {
 	s.logger.Warn("video import failed", "stage", where, "error", err)
-	return failf("import failed")
+	return safeerr.New("import failed")
 }
 
 // backoff is baseBackoff * 2^(attempts-1), capped at maxBackoff.
 func backoff(attempts int) time.Duration {
-	d := baseBackoff
-	for i := 1; i < attempts; i++ {
-		d *= 2
-		if d >= maxBackoff {
-			return maxBackoff
-		}
-	}
-	return d
+	return retry.Backoff(attempts, baseBackoff, maxBackoff)
 }
-
-// failure carries a safe, client-visible import-failure reason.
-type failure struct{ msg string }
-
-func (f *failure) Error() string { return f.msg }
-
-func failf(msg string) error { return &failure{msg: msg} }
 
 // maxBytesReader caps how many bytes are read from the remote fetch, failing
 // with limitErr once the cap is crossed (reads one past the cap to tell

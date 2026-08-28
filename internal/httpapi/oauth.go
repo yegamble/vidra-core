@@ -21,11 +21,7 @@ package httpapi
 // signed state cookie, so the callback redirects only within the instance.
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -60,70 +56,29 @@ type oauthStatePayload struct {
 	IssuedAt int64  `json:"iat"`
 }
 
+func (p oauthStatePayload) stateToken() string { return p.State }
+func (p oauthStatePayload) issuedAt() int64    { return p.IssuedAt }
+
 // sealOAuthState encodes and HMAC-signs the payload (key: the JWT secret —
-// same trust domain as the sessions the flow mints).
+// same trust domain as the sessions the flow mints). See statecookie.go.
 func (s *Server) sealOAuthState(p oauthStatePayload) (string, error) {
-	body, err := json.Marshal(p)
-	if err != nil {
-		return "", err
-	}
-	mac := hmac.New(sha256.New, []byte(s.cfg.JWTSecret))
-	mac.Write(body)
-	return base64.RawURLEncoding.EncodeToString(body) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+	return sealState(s.cfg.JWTSecret, p)
 }
 
 // openOAuthState verifies and decodes a sealed state cookie value. It rejects
 // bad signatures, malformed payloads, and expired attempts.
 func (s *Server) openOAuthState(sealed string) (oauthStatePayload, bool) {
-	bodyB64, sigB64, ok := strings.Cut(sealed, ".")
-	if !ok {
-		return oauthStatePayload{}, false
-	}
-	body, err := base64.RawURLEncoding.DecodeString(bodyB64)
-	if err != nil {
-		return oauthStatePayload{}, false
-	}
-	sig, err := base64.RawURLEncoding.DecodeString(sigB64)
-	if err != nil {
-		return oauthStatePayload{}, false
-	}
-	mac := hmac.New(sha256.New, []byte(s.cfg.JWTSecret))
-	mac.Write(body)
-	if !hmac.Equal(sig, mac.Sum(nil)) {
-		return oauthStatePayload{}, false
-	}
-	var p oauthStatePayload
-	if err := json.Unmarshal(body, &p); err != nil {
-		return oauthStatePayload{}, false
-	}
-	if p.State == "" || time.Since(time.Unix(p.IssuedAt, 0)) > oauthStateTTL {
-		return oauthStatePayload{}, false
-	}
-	return p, true
+	return openState[oauthStatePayload](s.cfg.JWTSecret, sealed, oauthStateTTL)
 }
 
+// setOAuthStateCookie parks the sealed attempt for the round trip to the
+// provider. Lax: it must still ride the top-level GET back from the provider.
 func (s *Server) setOAuthStateCookie(c echo.Context, sealed string) {
-	c.SetCookie(&http.Cookie{
-		Name:     oauthStateCookieName,
-		Value:    sealed,
-		Path:     oauthStateCookiePath,
-		MaxAge:   int(oauthStateTTL.Seconds()),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, // Lax: sent on the top-level GET back from the provider
-		Secure:   s.cfg.CookieSecure(),
-	})
+	s.writeStateCookie(c, oauthStateCookieName, oauthStateCookiePath, sealed, oauthStateTTL)
 }
 
 func (s *Server) clearOAuthStateCookie(c echo.Context) {
-	c.SetCookie(&http.Cookie{
-		Name:     oauthStateCookieName,
-		Value:    "",
-		Path:     oauthStateCookiePath,
-		MaxAge:   -1,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   s.cfg.CookieSecure(),
-	})
+	s.clearStateCookie(c, oauthStateCookieName, oauthStateCookiePath)
 }
 
 // oauthRedirectURI derives the callback redirect URI from PUBLIC_BASE_URL —

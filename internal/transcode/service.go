@@ -20,6 +20,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/lease"
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/workerpool"
 )
@@ -822,14 +823,7 @@ func (s *Service) scratchFits(ctx context.Context, sourceKey string, free uint64
 
 // backoff is baseBackoff * 2^(attempts-1), capped at maxBackoff.
 func backoff(attempts int) time.Duration {
-	d := baseBackoff
-	for i := 1; i < attempts; i++ {
-		d *= 2
-		if d >= maxBackoff {
-			return maxBackoff
-		}
-	}
-	return d
+	return retry.Backoff(attempts, baseBackoff, maxBackoff)
 }
 
 // Playlist returns a video's streaming playlist row. The bool is false when no

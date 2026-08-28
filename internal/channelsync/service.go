@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/pgconv"
+	"github.com/vidra/vidra-core/internal/safeerr"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
 	"github.com/vidra/vidra-core/internal/video"
@@ -379,15 +380,15 @@ func (s *Service) DrainDue(ctx context.Context, limit int) (int, error) {
 // config) fails the pass. A returned error is always a SAFE reason.
 func (s *Service) runSync(ctx context.Context, row sqlcgen.ClaimDueChannelSyncsRow) error {
 	if s.lister == nil {
-		return failf("channel sync is not available")
+		return safeerr.New("channel sync is not available")
 	}
 	target, err := s.guard().ValidateURL(strings.TrimSpace(row.ExternalChannelUrl))
 	if err != nil {
-		return failf("the channel URL is not a public http(s) URL")
+		return safeerr.New("the channel URL is not a public http(s) URL")
 	}
 	entries, err := s.lister.Playlist(ctx, target.String(), s.batch)
 	if err != nil {
-		return failf("could not list the external channel")
+		return safeerr.New("could not list the external channel")
 	}
 	// Defense in depth: --playlist-end already bounds the listing, but do NOT
 	// trust the extractor to have honored it. Clamp to s.batch so a misbehaving or
@@ -449,10 +450,3 @@ func (s *Service) recordFailure(ctx context.Context, id uuid.UUID, cause error) 
 
 // nextRun is the wall-clock time of the next scheduled sync pass.
 func (s *Service) nextRun() time.Time { return time.Now().UTC().Add(s.interval) }
-
-// failure carries a safe, client-visible sync-failure reason.
-type failure struct{ msg string }
-
-func (f *failure) Error() string { return f.msg }
-
-func failf(msg string) error { return &failure{msg: msg} }
