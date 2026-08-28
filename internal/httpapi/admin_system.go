@@ -70,6 +70,9 @@ type systemStatusResponse struct {
 	// zeroed pool block would render as "0 of 0 connections", which an operator
 	// reads as a pool with nothing left.
 	Database *systemDatabase `json:"database,omitempty"`
+	// CDNPurge is omitted when no CDN is wired, on the same doctrine — see
+	// media_purge_metrics.go.
+	CDNPurge *systemCDNPurge `json:"cdn_purge,omitempty"`
 }
 
 // handleSystemStatus returns an operational snapshot for the admin dashboard.
@@ -93,6 +96,7 @@ func (s *Server) handleSystemStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, systemStatusResponse{
 		Status:   status,
 		Database: s.databasePoolSnapshot(),
+		CDNPurge: s.cdnPurgeSnapshot(),
 		Software: systemSoftware{
 			Name:      "vidra",
 			Version:   version.Version,

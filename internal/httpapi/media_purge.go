@@ -205,6 +205,9 @@ func (s *Server) runVideoEdgePurge(ctx context.Context, videoID uuid.UUID, snap 
 			failed++
 		}
 	}
+	// The counters (media_purge_metrics.go) are the observable record of this
+	// run — the admin page's answer to "has purge been exercised".
+	recordVideoEdgePurgeRun(len(keys)-failed, failed, complete)
 	if failed == 0 && complete {
 		return
 	}

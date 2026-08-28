@@ -18740,6 +18740,41 @@ components:
               description: >-
                 DB_MAX_CONNS — this PROCESS's ceiling. Server-wide demand is
                 this times the number of api and worker processes.
+        cdn_purge:
+          type: object
+          description: >-
+            This process's CDN purge record: how many invalidation fan-outs
+            have run since boot, the per-key outcomes, and when a run last
+            ended with the edge possibly still serving something. It exists
+            because purge success is otherwise silent and failure one aggregate
+            log line, while promoting media headers to shared-cacheable is
+            gated on purge being demonstrably exercised. ABSENT — not zeroed —
+            when no CDN is wired: zero runs on an edgeless install would read
+            as a purge system that never works. In-process counters, reset by a
+            restart. Never includes keys or URLs.
+          required: [runs, keys_purged, keys_failed]
+          properties:
+            runs:
+              type: integer
+              format: int64
+              description: Attempted purge fan-outs (one per invalidated video).
+            keys_purged:
+              type: integer
+              format: int64
+              description: >-
+                Keys the provider accepted invalidation for, across all runs
+                (404 — never cached — counts as accepted).
+            keys_failed:
+              type: integer
+              format: int64
+            last_incomplete_run_at:
+              type: string
+              format: date-time
+              description: >-
+                When a run last ended incomplete — per-key failures, or a key
+                list known to be short (listing failed / fan-out cap hit).
+                Omitted while every run since boot purged its full key set, so
+                absence is the good news it reads as.
     MailTestResult:
       type: object
       description: >-
