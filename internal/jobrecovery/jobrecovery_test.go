@@ -29,6 +29,9 @@ func (f *fakeQueries) SweepExpiredTranscodeJobs(context.Context) (int64, error) 
 func (f *fakeQueries) SweepExpiredImportJobs(context.Context) (int64, error) {
 	return f.run("import_jobs")
 }
+func (f *fakeQueries) SweepExpiredUploadFinalizeJobs(context.Context) (int64, error) {
+	return f.run("upload_finalize_jobs")
+}
 func (f *fakeQueries) SweepExpiredCaptionJobs(context.Context) (int64, error) {
 	return f.run("caption_jobs")
 }
@@ -57,7 +60,7 @@ func TestSweepVisitsEveryQueue(t *testing.T) {
 	results := Sweep(context.Background(), f)
 
 	want := []string{
-		"transcode_jobs", "import_jobs", "caption_jobs",
+		"transcode_jobs", "import_jobs", "upload_finalize_jobs", "caption_jobs",
 		"account_exports", "peertube_import_runs", "channel_syncs",
 		"storage_migration_objects",
 	}
@@ -75,9 +78,9 @@ func TestSweepVisitsEveryQueue(t *testing.T) {
 			t.Errorf("%s: unexpected error %v", queue, results[i].Err)
 		}
 	}
-	if results[0].Requeued != 2 || results[5].Requeued != 1 {
+	if results[0].Requeued != 2 || results[6].Requeued != 1 {
 		t.Errorf("requeued counts = %d/%d, want 2/1 — the counts are what the boot log reports",
-			results[0].Requeued, results[5].Requeued)
+			results[0].Requeued, results[6].Requeued)
 	}
 }
 

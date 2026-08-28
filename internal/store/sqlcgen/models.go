@@ -834,6 +834,20 @@ type UploadChunk struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type UploadFinalizeJob struct {
+	ID            uuid.UUID `json:"id"`
+	UploadID      uuid.UUID `json:"upload_id"`
+	VideoID       uuid.UUID `json:"video_id"`
+	Purpose       string    `json:"purpose"`
+	CanManage     bool      `json:"can_manage"`
+	State         string    `json:"state"`
+	Error         string    `json:"error"`
+	Attempts      int32     `json:"attempts"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type UploadSession struct {
 	ID              uuid.UUID `json:"id"`
 	VideoID         uuid.UUID `json:"video_id"`
@@ -847,6 +861,7 @@ type UploadSession struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 	FileFingerprint string    `json:"file_fingerprint"`
 	Purpose         string    `json:"purpose"`
+	FailureReason   string    `json:"failure_reason"`
 }
 
 type UploadUsageEvent struct {

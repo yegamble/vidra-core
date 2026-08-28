@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 
@@ -137,41 +136,33 @@ func (s *Server) handleCreateReplaceSession(c echo.Context) error {
 	})
 }
 
-// completeReplaceSession finalises a replace-purpose upload session (the
-// shared POST /uploads/{id}/complete dispatches here on the session's
-// purpose): the gates and quotas are re-checked against the video's CURRENT
-// state (the feature may have been turned off, quota headroom consumed, or
-// another replacement promoted while the chunks uploaded), then the assembled
-// bytes run through video.ReplaceSource and the re-transcode is orchestrated.
-// Responds 200 with the (unchanged, still published) video + the new source
-// file — a replacement is an update, not a creation.
-func (s *Server) completeReplaceSession(c echo.Context, sess sqlcgen.UploadSession, reader io.Reader) error {
+// authorizeReplaceCompletion decides, at request time, whether a replace-purpose
+// upload session may be finalised — and returns the canManage bit the finalize
+// worker carries into video.ReplaceSource.
+//
+// Everything here is a CURRENT-state re-check: the feature may have been turned
+// off, quota headroom consumed, the video unpublished, or another replacement
+// promoted while the chunks uploaded. It runs synchronously because
+// authorisation belongs to the authenticated request; the worker has no
+// principal and no role to re-derive it from, so the decision travels on the job
+// row (upload_finalize_jobs.can_manage, migration 0120).
+//
+// The bytes themselves — assembly, scan, probe, the swap — are the worker's:
+// video.ReplaceSource is exactly as expensive as the upload path's
+// AttachOriginal → Process, and shares its route and therefore its deadline.
+func (s *Server) authorizeReplaceCompletion(c echo.Context, sess sqlcgen.UploadSession) (bool, error) {
 	ctx := c.Request().Context()
 	if !s.videoReplaceAvailable() {
-		return &FeatureDisabledError{Feature: "video_replace"}
+		return false, &FeatureDisabledError{Feature: "video_replace"}
 	}
 	v, canManage, terr := s.replaceTarget(ctx, c, sess.VideoID, true)
 	if terr != nil {
-		return terr
+		return false, terr
 	}
 	if qerr := s.checkUploadQuotas(ctx, v.OwnerID, sess.TotalSize); qerr != nil {
-		return qerr
+		return false, qerr
 	}
-	updated, file, err := s.videosvc.ReplaceSource(ctx, sess.UserID, sess.VideoID, video.UploadInput{
-		Filename: sess.Filename,
-		Reader:   reader,
-	}, canManage)
-	if err != nil {
-		return videoError(err)
-	}
-	s.orchestrateReplaceTranscode(ctx, sess.VideoID, file.StorageKey)
-	if err := s.uploadsvc.MarkCompleted(ctx, sess.ID); err != nil {
-		return err
-	}
-	return c.JSON(http.StatusOK, uploadVideoFileResponse{
-		Video: newVideoView(updated),
-		File:  newVideoFileView(file),
-	})
+	return canManage, nil
 }
 
 // handleReplaceVideoFile is the direct (multipart form field "file") shape of

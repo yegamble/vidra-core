@@ -57,6 +57,7 @@ import (
 	"github.com/vidra/vidra-core/internal/storagemigration"
 	"github.com/vidra/vidra-core/internal/transcode"
 	"github.com/vidra/vidra-core/internal/upload"
+	"github.com/vidra/vidra-core/internal/uploadfinalize"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/videoimport"
 	"github.com/vidra/vidra-core/internal/watchword"
@@ -143,6 +144,7 @@ type Server struct {
 	quotasvc          *quota.Service
 	transcodesvc      *transcode.Service
 	uploadsvc         *upload.Service
+	uploadfinalizesvc *uploadfinalize.Service
 	importsvc         *videoimport.Service
 	channelsyncsvc    *channelsync.Service
 	captionjobsvc     *captionjob.Service
@@ -684,6 +686,17 @@ func WithMetrics(m *observability.Metrics) Option {
 // (direct multipart upload still works).
 func WithUploadService(svc *upload.Service) Option {
 	return func(s *Server) { s.uploadsvc = svc }
+}
+
+// WithUploadFinalizeService wires the queue that carries an accepted completion
+// (migration 0120). It is what makes POST /uploads/{id}/complete a 202 rather
+// than a request that assembles, re-uploads, hashes and probes the whole file
+// inline — work that cannot fit a 30s deadline, or a CDN's origin-response cap,
+// on any real video. Without it the complete route answers 503: refusing is the
+// only honest response, since the synchronous path it replaced is exactly the
+// bug being fixed.
+func WithUploadFinalizeService(svc *uploadfinalize.Service) Option {
+	return func(s *Server) { s.uploadfinalizesvc = svc }
 }
 
 // WithVideoImportService mounts the asynchronous URL-import endpoints (enqueue +

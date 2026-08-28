@@ -114,6 +114,13 @@ func (r *fakeRepo) SetUploadSessionState(_ context.Context, arg sqlcgen.SetUploa
 	}
 	return nil
 }
+func (r *fakeRepo) FailUploadSession(_ context.Context, arg sqlcgen.FailUploadSessionParams) error {
+	if s, ok := r.sessions[arg.ID]; ok {
+		s.State, s.FailureReason = StateFailed, arg.FailureReason
+		r.sessions[arg.ID] = s
+	}
+	return nil
+}
 func (r *fakeRepo) ListSweepableUploadSessions(_ context.Context, limit int32) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	for id, s := range r.sessions {
@@ -182,9 +189,20 @@ func TestChunkRoundTripOutOfOrderAndResume(t *testing.T) {
 	// "Restart": a brand-new Service over the same repo + blobs resumes the same
 	// session and completes it.
 	svc2 := NewService(repo, blobs, WithChunkSize(4))
-	sess2, reader, err := svc2.PrepareComplete(ctx, sess.ID, user)
+	if _, err := svc2.ValidateComplete(ctx, sess.ID, user); err != nil {
+		t.Fatalf("validate complete: %v", err)
+	}
+	// The request's half ends here; the worker's half starts with the session
+	// already flipped to 'queued'.
+	if err := svc2.MarkQueued(ctx, sess.ID); err != nil {
+		t.Fatalf("mark queued: %v", err)
+	}
+	if repo.sessions[sess.ID].State != StateQueued {
+		t.Fatalf("state after enqueue = %q, want queued", repo.sessions[sess.ID].State)
+	}
+	sess2, reader, err := svc2.Assemble(ctx, sess.ID)
 	if err != nil {
-		t.Fatalf("prepare complete: %v", err)
+		t.Fatalf("assemble: %v", err)
 	}
 	got, _ := io.ReadAll(reader)
 	_ = reader.Close()
@@ -228,8 +246,8 @@ func TestChunkSizeValidation(t *testing.T) {
 	if _, err := svc.PutChunk(ctx, sess.ID, user, 0, bytes.NewReader([]byte("AAAA"))); err != nil {
 		t.Fatalf("put chunk 0: %v", err)
 	}
-	if _, _, err := svc.PrepareComplete(ctx, sess.ID, user); !errors.Is(err, ErrIncomplete) {
-		t.Errorf("prepare complete err = %v, want ErrIncomplete", err)
+	if _, err := svc.ValidateComplete(ctx, sess.ID, user); !errors.Is(err, ErrIncomplete) {
+		t.Errorf("validate complete err = %v, want ErrIncomplete", err)
 	}
 }
 
@@ -246,7 +264,7 @@ func TestOwnershipIsolation(t *testing.T) {
 	if _, err := svc.PutChunk(ctx, sess.ID, other, 0, bytes.NewReader([]byte("AAAA"))); !errors.Is(err, ErrNotFound) {
 		t.Errorf("non-owner put err = %v, want ErrNotFound", err)
 	}
-	if _, _, err := svc.PrepareComplete(ctx, sess.ID, other); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.ValidateComplete(ctx, sess.ID, other); !errors.Is(err, ErrNotFound) {
 		t.Errorf("non-owner complete err = %v, want ErrNotFound", err)
 	}
 }
@@ -382,10 +400,8 @@ func TestMaxActiveSessionsGuard(t *testing.T) {
 
 	// Completing one also frees a slot.
 	putAll(t, svc, s2.ID, user, map[int][]byte{0: []byte("AAAA")}, []int{0})
-	if _, reader, err := svc.PrepareComplete(ctx, s2.ID, user); err != nil {
-		t.Fatalf("prepare complete: %v", err)
-	} else {
-		_ = reader.Close()
+	if _, err := svc.ValidateComplete(ctx, s2.ID, user); err != nil {
+		t.Fatalf("validate complete: %v", err)
 	}
 	if err := svc.MarkCompleted(ctx, s2.ID); err != nil {
 		t.Fatalf("mark completed: %v", err)
@@ -474,5 +490,75 @@ func TestActiveSessionsForUser(t *testing.T) {
 	}
 	if len(none) != 0 {
 		t.Errorf("unmatched fingerprint returned %d sessions, want 0", len(none))
+	}
+}
+
+// TestAsyncCompletionStateMachine covers the states completion grew when it
+// stopped happening inside the request (migration 0120): only a session
+// mid-finalize may be assembled, a terminal failure records a client-visible
+// reason and frees the chunk blobs, and a session whose pipeline has already
+// been accepted cannot be "cancelled" out from under the worker.
+func TestAsyncCompletionStateMachine(t *testing.T) {
+	ctx := context.Background()
+	svc, repo, blobs := newTestService(t, 4)
+	user, video := uuid.New(), uuid.New()
+	sess, _ := svc.CreateSession(ctx, video, user, "clip.mp4", 4, "", PurposeUpload)
+	putAll(t, svc, sess.ID, user, map[int][]byte{0: []byte("AAAA")}, []int{0})
+
+	// An 'active' session is not assemblable: the worker only ever runs against
+	// a completion the request already accepted.
+	if _, _, err := svc.Assemble(ctx, sess.ID); !errors.Is(err, ErrNotActive) {
+		t.Errorf("assemble while active err = %v, want ErrNotActive", err)
+	}
+
+	if _, err := svc.ValidateComplete(ctx, sess.ID, user); err != nil {
+		t.Fatalf("validate complete: %v", err)
+	}
+	if err := svc.MarkQueued(ctx, sess.ID); err != nil {
+		t.Fatalf("mark queued: %v", err)
+	}
+	// A second completion attempt is refused — the handler answers from the
+	// session's state instead of re-validating.
+	if _, err := svc.ValidateComplete(ctx, sess.ID, user); !errors.Is(err, ErrNotActive) {
+		t.Errorf("second validate err = %v, want ErrNotActive", err)
+	}
+	// Cancelling accepted work would be a lie (the pipeline still runs) and
+	// would delete the chunks the worker is reading.
+	if err := svc.Cancel(ctx, sess.ID, user); !errors.Is(err, ErrNotActive) {
+		t.Errorf("cancel while queued err = %v, want ErrNotActive", err)
+	}
+
+	if err := svc.MarkProcessing(ctx, sess.ID); err != nil {
+		t.Fatalf("mark processing: %v", err)
+	}
+	got, reader, err := svc.Assemble(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("assemble while processing: %v", err)
+	}
+	body, _ := io.ReadAll(reader)
+	_ = reader.Close()
+	if string(body) != "AAAA" || got.Filename != "clip.mp4" {
+		t.Errorf("assembled = %q from %q, want AAAA/clip.mp4", body, got.Filename)
+	}
+
+	// Terminal failure: the reason is what the poller reads, and the chunk blobs
+	// go (the session can never be completed again).
+	if err := svc.MarkFailed(ctx, sess.ID, "the upload could not be processed"); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+	if s := repo.sessions[sess.ID]; s.State != StateFailed || s.FailureReason != "the upload could not be processed" {
+		t.Errorf("session after failure = %q/%q, want failed + a reason", s.State, s.FailureReason)
+	}
+	if ex, _ := blobs.Exists(ctx, chunkKey(sess.ID, 0)); ex {
+		t.Errorf("chunk blob still present after a terminal failure")
+	}
+	// A failed session is not assemblable either.
+	if _, _, err := svc.Assemble(ctx, sess.ID); !errors.Is(err, ErrNotActive) {
+		t.Errorf("assemble after failure err = %v, want ErrNotActive", err)
+	}
+	// Cancel on a terminal session stays an idempotent no-op success so a client
+	// can always clean up.
+	if err := svc.Cancel(ctx, sess.ID, user); err != nil {
+		t.Errorf("cancel after failure = %v, want nil", err)
 	}
 }
