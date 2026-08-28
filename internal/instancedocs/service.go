@@ -82,9 +82,22 @@ type Document struct {
 	UpdatedAt time.Time
 }
 
+// Option customises the Service.
+type Option func(*Service)
+
+// WithVersionBump wires the cross-replica invalidation seam (see
+// internal/settingsversion). Without it, an edited ToS link or custom stylesheet
+// takes effect only on the api replica that served the write, and the other N-1
+// keep serving the previous document until they restart. A nil bump
+// (single-process wiring, unit fakes) disables the announcement.
+func WithVersionBump(bump func(ctx context.Context) error) Option {
+	return func(s *Service) { s.bump = bump }
+}
+
 // Service holds the instance-document store. It is safe for concurrent use.
 type Service struct {
 	repo Repository
+	bump func(ctx context.Context) error
 
 	mu    sync.RWMutex
 	cache map[string]Document
@@ -92,8 +105,12 @@ type Service struct {
 
 // NewService builds the document service. Call Load once at boot (it reloads
 // itself after each write) to populate the cache.
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo, cache: map[string]Document{}}
+func NewService(repo Repository, opts ...Option) *Service {
+	s := &Service{repo: repo, cache: map[string]Document{}}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Load (re)reads every document row into the in-memory cache. A nil repository
@@ -161,7 +178,7 @@ func (s *Service) Set(ctx context.Context, name, body string, updatedBy uuid.UUI
 		s.mu.Lock()
 		delete(s.cache, name)
 		s.mu.Unlock()
-		return Document{Name: name}, nil
+		return Document{Name: name}, s.announce(ctx)
 	}
 	sum := sha256.Sum256([]byte(body))
 	row, err := s.repo.UpsertInstanceDocument(ctx, sqlcgen.UpsertInstanceDocumentParams{
@@ -177,5 +194,19 @@ func (s *Service) Set(ctx context.Context, name, body string, updatedBy uuid.UUI
 	s.mu.Lock()
 	s.cache[name] = doc
 	s.mu.Unlock()
-	return doc, nil
+	return doc, s.announce(ctx)
+}
+
+// announce advances the shared settings-version counter so the other api
+// replicas reload the document cache they filled at boot.
+//
+// The error is returned rather than swallowed: the row is written either way,
+// but a failed announcement means the rest of the fleet keeps serving the
+// previous document with nothing logged anywhere — exactly the silent staleness
+// this seam closes. Re-submitting the same PUT is idempotent.
+func (s *Service) announce(ctx context.Context) error {
+	if s.bump == nil {
+		return nil
+	}
+	return s.bump(ctx)
 }

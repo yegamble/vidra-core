@@ -117,6 +117,17 @@ func WithInstanceImages(r InstanceRepository) Option {
 	return func(s *Service) { s.instRepo = r }
 }
 
+// WithVersionBump wires the cross-replica invalidation seam (see
+// internal/settingsversion) for the INSTANCE branding cache only. Per-user and
+// per-channel images are read from the database per request and need nothing
+// here; the instance slots are the ones held in memory, so without this hook a
+// new logo appears on the single api replica that served the upload and the
+// header flickers between old and new depending on which replica answered. A
+// nil bump (single-process wiring, unit fakes) disables the announcement.
+func WithVersionBump(bump func(ctx context.Context) error) Option {
+	return func(s *Service) { s.bump = bump }
+}
+
 // Service holds the profile-image application logic.
 type Service struct {
 	repo   Repository
@@ -127,6 +138,8 @@ type Service struct {
 	instRepo InstanceRepository
 	instMu   sync.RWMutex
 	instance map[string]Image // kind -> stored image metadata
+	// bump announces an instance-branding write to the other api replicas.
+	bump func(ctx context.Context) error
 }
 
 // NewService builds the profile-image service. blobs should be the same
@@ -344,7 +357,20 @@ func (s *Service) SetInstanceImage(ctx context.Context, kind string, in UploadIn
 	s.instMu.Lock()
 	s.instance[kind] = img
 	s.instMu.Unlock()
-	return img, nil
+	return img, s.announce(ctx)
+}
+
+// announce advances the shared settings-version counter so the other api
+// replicas reload the branding cache they filled at boot. The error is returned
+// rather than swallowed: the row and the object are written either way, but a
+// failed announcement leaves the rest of the fleet serving the old branding
+// with nothing logged. Re-submitting the upload is idempotent (the storage key
+// is deterministic per slot).
+func (s *Service) announce(ctx context.Context) error {
+	if s.bump == nil {
+		return nil
+	}
+	return s.bump(ctx)
 }
 
 // InstanceImage returns the stored instance image for kind from the in-memory
@@ -383,7 +409,10 @@ func (s *Service) DeleteInstanceImage(ctx context.Context, kind string) error {
 	if s.blobs == nil {
 		return ErrStorageUnavailable
 	}
-	return s.blobs.Delete(ctx, img.StorageKey)
+	if err := s.blobs.Delete(ctx, img.StorageKey); err != nil {
+		return err
+	}
+	return s.announce(ctx)
 }
 
 // instanceImageKey is the deterministic storage key for an instance image:
