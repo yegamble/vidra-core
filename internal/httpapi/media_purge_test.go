@@ -195,6 +195,29 @@ func TestBlockVideoPurgesEdgeCopies(t *testing.T) {
 	waitForPurge(t, rec, wantVideoPurgeKeys(id))
 }
 
+// TestDeleteChannelPurgesItsVideosEdgeCopies. A channel delete never visits the
+// per-video delete handler — the videos vanish at the database (0006 ON DELETE
+// CASCADE) — so without a fan-out at the channel handler, "delete the channel"
+// would be the one deletion path that leaves every byte of every video at the
+// edge, with the rows that name those bytes gone.
+func TestDeleteChannelPurgesItsVideosEdgeCopies(t *testing.T) {
+	srv, blobs, tcRepo, rec := purgeServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := publishedPublicVideo(t, srv, blobs, tcRepo, tok)
+	// A private sibling in the same channel was never edge-eligible; the exact
+	// key-set assertion below proves the cascade purge skips it rather than
+	// spending purge-API calls on objects the edge cannot hold.
+	priv := createVideo(t, srv, tok, "ada", `{"title":"Secret","privacy":"private"}`)
+	if r := uploadVideoFile(srv, priv, "clip.mp4", "video/mp4", "video-bytes", tok); r.Code != http.StatusCreated {
+		t.Fatalf("upload = %d; body=%s", r.Code, r.Body.String())
+	}
+
+	if r := doJSON(srv, http.MethodDelete, "/api/v1/channels/ada", tok, ""); r.Code != http.StatusNoContent {
+		t.Fatalf("delete channel = %d; body=%s", r.Code, r.Body.String())
+	}
+	waitForPurge(t, rec, wantVideoPurgeKeys(id))
+}
+
 // TestPurgeFailureDoesNotFailTheRequest. Every media response is still
 // `private`, so a failed purge invalidates nothing that was ever shared — it
 // must not turn a successful deletion into a 5xx the caller retries.

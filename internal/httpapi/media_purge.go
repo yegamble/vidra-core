@@ -11,9 +11,11 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 )
 
-// This file wires the delivery resolver's Purge hook to the three moments a
-// video's edge-cached bytes become wrong: deletion, a privacy flip away from
-// public, and an admin block.
+// This file wires the delivery resolver's Purge hook to the moments a video's
+// edge-cached bytes become wrong: deletion — direct (handleDeleteVideo) or via
+// the channel cascade (handleDeleteChannel: the DATABASE deletes the videos,
+// 0006 ON DELETE CASCADE, so the channel handler snapshots them first) — a
+// privacy flip away from public, and an admin block.
 //
 // WHY IT EXISTS. The purge seam shipped in phase 4 with ZERO call sites, and
 // docs/productionization/phase-5-enterprise.md carries that forward as work

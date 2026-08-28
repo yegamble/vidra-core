@@ -289,6 +289,33 @@ func (s *Server) handleDeleteChannel(c echo.Context) error {
 	if ch, gerr := s.channelsvc.GetByHandle(ctx, c.Param("handle")); gerr == nil {
 		chID = ch.ID
 	}
+	// A channel delete cascades every one of its videos away at the DATABASE
+	// (0006 ON DELETE CASCADE) without ever visiting the per-video delete
+	// handler — so their edge copies must be snapshotted here, before the rows
+	// that name them disappear (media_purge.go). Gated on the CDN being
+	// configured: a default install pays zero extra reads for this. The
+	// snapshot self-fences to public+published per video, so a channel of
+	// drafts and private videos enumerates ids and collects nothing.
+	type videoPurge struct {
+		id   uuid.UUID
+		snap edgePurgeSnapshot
+	}
+	var purges []videoPurge
+	if chID != uuid.Nil && s.cdnConfigured() && s.videosvc != nil {
+		if ids, verr := s.videosvc.VideoIDsByChannel(ctx, chID); verr != nil {
+			// Best-effort like every purge: the delete must not fail, but a
+			// listing failure means edge copies knowingly survive — say so.
+			// (No keys or URLs in the log, as everywhere in the purge seam.)
+			s.logger.WarnContext(ctx, "cdn purge skipped: could not enumerate the channel's videos before deletion",
+				"channel_id", chID.String())
+		} else {
+			for _, vid := range ids {
+				if snap := s.videoEdgePurgeSnapshot(ctx, vid); !snap.empty() {
+					purges = append(purges, videoPurge{id: vid, snap: snap})
+				}
+			}
+		}
+	}
 	if err := s.channelsvc.Delete(ctx, userID, c.Param("handle")); err != nil {
 		return channelError(err)
 	}
@@ -296,6 +323,11 @@ func (s *Server) handleDeleteChannel(c echo.Context) error {
 	// Search: suppress the channel's docs (search-service W4). Best-effort.
 	if chID != uuid.Nil {
 		s.searchEvents.EnqueueChannelDelete(ctx, chID)
+	}
+	// After the delete commits, exactly like the per-video handler: detached,
+	// best-effort, capped per video (media_purge.go).
+	for _, p := range purges {
+		s.purgeVideoEdgeCopies(ctx, p.id, p.snap)
 	}
 	return c.NoContent(http.StatusNoContent)
 }

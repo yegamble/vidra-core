@@ -292,6 +292,18 @@ func rowToVideo(r sqlcgen.GetVideoByIDRow) sqlcgen.Video {
 	}
 }
 
+// ListVideoIDsByChannel mirrors the unpaginated id sweep (ORDER BY id).
+func (f *fakeRepo) ListVideoIDsByChannel(_ context.Context, channelID uuid.UUID) ([]uuid.UUID, error) {
+	var out []uuid.UUID
+	for _, r := range f.videos {
+		if r.ChannelID == channelID {
+			out = append(out, r.ID)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out, nil
+}
+
 func (f *fakeRepo) ListVideosByChannel(_ context.Context, a sqlcgen.ListVideosByChannelParams) ([]sqlcgen.ListVideosByChannelRow, error) {
 	channelID := a.ChannelID
 	var out []sqlcgen.ListVideosByChannelRow
