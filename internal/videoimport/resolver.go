@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/vidra/vidra-core/internal/safeerr"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/ytdlp"
 )
@@ -75,17 +76,17 @@ type directResolver struct {
 func (d *directResolver) resolve(ctx context.Context, target *url.URL) (*resolvedMedia, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
-		return nil, failf("could not fetch the URL")
+		return nil, safeerr.New("could not fetch the URL")
 	}
 	resp, err := d.client.Do(req)
 	if err != nil {
 		// Blocked address (SSRF guard), DNS failure, timeout, TLS error, etc. The
 		// URL is never echoed back.
-		return nil, failf("could not fetch the URL")
+		return nil, safeerr.New("could not fetch the URL")
 	}
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
-		return nil, failf("the URL did not return a downloadable file")
+		return nil, safeerr.New("the URL did not return a downloadable file")
 	}
 	return &resolvedMedia{
 		filename:    path.Base(target.Path),
@@ -114,7 +115,7 @@ func (y *ytdlpResolver) resolve(ctx context.Context, target *url.URL) (*resolved
 	// A private 0700 per-job workdir that is always removed (MkdirTemp is 0700).
 	workdir, err := os.MkdirTemp(root, "vidra-ytdlp-*")
 	if err != nil {
-		return nil, failf("import failed")
+		return nil, safeerr.New("import failed")
 	}
 
 	rawURL := target.String()
@@ -128,12 +129,12 @@ func (y *ytdlpResolver) resolve(ctx context.Context, target *url.URL) (*resolved
 	mediaPath, err := y.ext.Download(ctx, rawURL, workdir)
 	if err != nil {
 		_ = os.RemoveAll(workdir)
-		return nil, failf("the URL could not be imported from this platform")
+		return nil, safeerr.New("the URL could not be imported from this platform")
 	}
 	f, err := os.Open(mediaPath) //nolint:gosec // path is inside our private workdir
 	if err != nil {
 		_ = os.RemoveAll(workdir)
-		return nil, failf("import failed")
+		return nil, safeerr.New("import failed")
 	}
 	size := int64(-1)
 	if st, sErr := f.Stat(); sErr == nil {
