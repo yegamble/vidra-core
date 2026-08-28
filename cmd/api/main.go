@@ -1689,24 +1689,15 @@ func run() error {
 			}
 		}
 		sweep()
-		go func() {
-			t := time.NewTicker(jobRecoverySweepInterval)
-			defer t.Stop()
-			for {
-				select {
-				case <-sweepCtx.Done():
-					return
-				case <-t.C:
-					// Singleton sweep: exactly one instance runs it. A follower skips
-					// the tick rather than shutting down, because leadership can move
-					// here at any time (see internal/leaderlock).
-					if !cronLeader.IsLeader() {
-						continue
-					}
-					sweep()
-				}
-			}
-		}()
+		// The recurring sweep IS gated, unlike the boot one above. It logs per
+		// queue inside sweep(), so the pass reports nothing for jobloop to count.
+		go jobloop.Loop{
+			Interval: jobRecoverySweepInterval,
+			Leader:   cronLeader,
+			Passes: []jobloop.Pass{{
+				Run: func(context.Context, time.Time) (int, error) { sweep(); return 0, nil },
+			}},
+		}.Run(sweepCtx, logger)
 	}
 
 	// Drain the outbound federation delivery queue in the background (signed
@@ -2602,6 +2593,13 @@ func runUploadSweepWorker(ctx context.Context, logger *slog.Logger, svc *upload.
 // dead-lettered rows on the reconcile interval, until ctx is canceled. Per-row
 // failures are persisted in the ledger (rescheduled/dead-lettered), never
 // surfaced — the mirror is non-authoritative, so an outage never blocks anything.
+//
+// DELIBERATELY NOT a jobloop.Loop, unlike its twenty-odd siblings. It runs TWO
+// tickers of different periods with different gating — an ungated drain and a
+// leader-gated reconcile — serialised through one select, so a long drain
+// delays a reconcile and vice versa. Expressing it as two Loops would put them
+// on two goroutines and let Reconcile run concurrently with DrainDue on the
+// same instance, which is a behaviour change disguised as a refactor.
 func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirror.Service, reconcileInterval time.Duration, leader *leaderlock.Elector) {
 	const (
 		drainInterval = 10 * time.Second
@@ -2733,6 +2731,12 @@ func runStorageMigrationSweepWorker(ctx context.Context, logger *slog.Logger, sv
 // is visible in the log and the audit trail within minutes of the deploy that
 // introduced it, instead of overnight and after the fact. Whichever timer fires
 // first spends that dry run; deletion starts from the sweep after it.
+//
+// DELIBERATELY NOT a jobloop.Loop: the boot timer racing the ticker, the
+// once-per-process dry-run flag that a skipped follower tick must not spend,
+// and the permanent stop on a backend that cannot list are three axes no other
+// worker has. Bending them into the shared skeleton would cost more than this
+// copy does.
 func runMediaGCWorker(ctx context.Context, logger *slog.Logger, svc *mediagc.Service, auditsvc *audit.Service, leader *leaderlock.Elector) {
 	const interval = 24 * time.Hour
 	// Long enough that the boot storm (migrations, the first transcodes, a cold
