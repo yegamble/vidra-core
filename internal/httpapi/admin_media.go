@@ -41,6 +41,27 @@ type adoptBucketResponse struct {
 	MarkerKey       string `json:"marker_key"`
 }
 
+// mediaGCConfigResponse is GET /admin/media/gc: the sweep's boot facts plus
+// the live ownership state. MEDIA_GC_ENABLED and MEDIA_GC_MAX_ORPHAN_PERCENT
+// are deliberately boot-baked (config.go: a runtime override would let a
+// settings mistake become an irreversible one) — but boot-baked must not mean
+// invisible, and until this endpoint the only way an admin could learn whether
+// the daily DESTRUCTIVE sweep is armed was to run a manual dry run and read
+// the side effects. It mirrors api/openapi.yaml; the two move together.
+type mediaGCConfigResponse struct {
+	// Enabled is MEDIA_GC_ENABLED: whether the daily automatic sweep runs at
+	// all. The manual POST stays mounted either way — an operator asking for a
+	// sweep by hand is not the hazard the flag exists for.
+	Enabled bool `json:"enabled"`
+	// MaxOrphanPercent is the circuit breaker: a destructive sweep finding more
+	// than this share of scanned objects to be orphans deletes nothing.
+	MaxOrphanPercent int `json:"max_orphan_percent"`
+	// BucketOwnership is the mediagc service's CURRENT in-memory state (owned |
+	// unowned | conflict | not_applicable), not a boot snapshot — an adoption
+	// shows on the next read. Same vocabulary as the sweep result.
+	BucketOwnership string `json:"bucket_ownership"`
+}
+
 // handleAdminMediaGC runs the media garbage collector: it lists stored objects
 // under the known prefixes and deletes those with no database reference. Behind
 // requireRole(admin). Defaults to a dry run (dry_run=false actually deletes).
@@ -88,6 +109,24 @@ func (s *Server) handleAdminMediaGC(c echo.Context) error {
 		BucketOwnership:    res.BucketOwnership,
 		ForcedDryRun:       res.ForcedDryRun,
 		ForcedDryRunReason: res.ForcedDryRunReason,
+	})
+}
+
+// handleAdminMediaGCConfig reports the media-GC boot facts and ownership state.
+// Behind requireRole(admin), like the POSTs beside it. Read-only, no audit (the
+// same treatment as the other admin read pages — auditing reads records the
+// admin's curiosity, not a state change).
+func (s *Server) handleAdminMediaGCConfig(c echo.Context) error {
+	if s.mediagcsvc == nil {
+		// Unreachable in cmd/api (the service is wired unconditionally), but a
+		// read-only facts page must degrade to an honest 503 for an embedder,
+		// not a panic.
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "media garbage collection is not wired on this process")
+	}
+	return c.JSON(http.StatusOK, mediaGCConfigResponse{
+		Enabled:          s.cfg.MediaGCEnabled,
+		MaxOrphanPercent: s.cfg.MediaGCMaxOrphanPercent,
+		BucketOwnership:  string(s.mediagcsvc.Ownership()),
 	})
 }
 

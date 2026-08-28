@@ -12777,6 +12777,48 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/media/gc:
+    get:
+      operationId: adminMediaGCConfig
+      summary: Media garbage collection boot facts (admin)
+      description: >-
+        Reports whether the daily automatic destructive sweep is enabled
+        (MEDIA_GC_ENABLED), its orphan-ratio circuit breaker
+        (MEDIA_GC_MAX_ORPHAN_PERCENT), and the current bucket-ownership state.
+        Both knobs are deliberately boot-baked — a runtime override would let a
+        settings mistake become an irreversible one — but boot-baked must not
+        mean invisible: without this, learning whether the sweep is armed meant
+        running a manual dry run and reading the side effects.
+        bucket_ownership is the service's CURRENT in-memory state (an adoption
+        shows on the next read), in the same vocabulary the sweep result uses.
+        Read-only; restricted to admins.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The sweep configuration in force.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaGCConfig"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Media garbage collection is not wired on this process.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     post:
       operationId: adminMediaGC
       summary: Run media garbage collection (admin)
@@ -18403,6 +18445,36 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/AuditLogEntry"
+    MediaGCConfig:
+      type: object
+      description: >-
+        The media garbage collector's boot facts plus its live ownership state
+        (GET /api/v1/admin/media/gc). enabled and max_orphan_percent are
+        boot-baked configuration reported read-only; bucket_ownership is the
+        service's current in-memory state, so an adoption shows on the next
+        read.
+      required: [enabled, max_orphan_percent, bucket_ownership]
+      properties:
+        enabled:
+          type: boolean
+          description: >-
+            MEDIA_GC_ENABLED — whether the daily automatic DESTRUCTIVE sweep
+            runs at all. The manual POST stays available either way: an
+            operator asking for a sweep by hand is not the hazard the flag
+            exists for.
+        max_orphan_percent:
+          type: integer
+          description: >-
+            MEDIA_GC_MAX_ORPHAN_PERCENT — the circuit breaker. A destructive
+            sweep finding more than this share of scanned objects to be
+            orphans deletes nothing and reports why. 0 disables deletion
+            entirely; 100 lets any ratio through.
+        bucket_ownership:
+          type: string
+          enum: [owned, unowned, conflict, not-applicable, unknown]
+          description: >-
+            Same vocabulary and meaning as MediaGCResponse.bucket_ownership.
+            Only `owned` and `not-applicable` permit deletion.
     MediaGCRequest:
       type: object
       description: Media garbage-collection request. dry_run defaults to true.

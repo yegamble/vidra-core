@@ -1687,6 +1687,7 @@ func (s *Server) routes() {
 	// plus the explicit adoption that re-enables destructive sweeps against a
 	// bucket this install has not been shown to own.
 	if s.mediagcsvc != nil {
+		api.GET("/admin/media/gc", s.handleAdminMediaGCConfig, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/admin/media/gc", s.handleAdminMediaGC, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/admin/media/gc/adopt-bucket", s.handleAdminAdoptBucket, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
