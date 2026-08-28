@@ -18,6 +18,7 @@ import (
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/searchevents"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -965,7 +966,7 @@ func (r updateVideoRequest) Validate() []FieldError {
 	}
 	// A provided taxonomy field must be a known, non-empty id (clearing to unset
 	// is not supported via update).
-	fes = append(fes, validateTaxonomy(derefOr(r.Category), derefOr(r.Language), derefOr(r.License))...)
+	fes = append(fes, validateTaxonomy(pgconv.Deref(r.Category), pgconv.Deref(r.Language), pgconv.Deref(r.License))...)
 	if r.Category != nil && *r.Category == "" {
 		fes = append(fes, FieldError{Field: "category", Message: "unknown category"})
 	}
@@ -980,15 +981,6 @@ func (r updateVideoRequest) Validate() []FieldError {
 	}
 	fes = append(fes, validatePublishAt(r.PublishAt)...)
 	return fes
-}
-
-// derefOr returns the pointee or "" when nil (so validateTaxonomy skips absent
-// fields while still validating present ones).
-func derefOr(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
 }
 
 // handleUpdateVideo updates a video owned by the authenticated user. A

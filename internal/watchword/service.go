@@ -13,9 +13,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -59,9 +58,9 @@ type WatchedWord struct {
 func (s *Service) Add(ctx context.Context, word string, createdBy uuid.UUID) (WatchedWord, error) {
 	row, err := s.repo.CreateWatchedWord(ctx, sqlcgen.CreateWatchedWordParams{
 		Word:      word,
-		CreatedBy: pgtype.UUID{Bytes: createdBy, Valid: true},
+		CreatedBy: pgconv.UUID(createdBy),
 	})
-	if sqlState(err) == "23505" { // unique violation: term already on the list
+	if pgconv.SQLState(err) == pgconv.SQLStateUniqueViolation { // unique violation: term already on the list
 		return WatchedWord{}, ErrAlreadyExists
 	}
 	if err != nil {
@@ -114,7 +113,7 @@ func (s *Service) FlagComment(ctx context.Context, commentID uuid.UUID, body str
 	for _, m := range matches {
 		if err := s.repo.RecordWatchedWordMatch(ctx, sqlcgen.RecordWatchedWordMatchParams{
 			WatchedWordID: m.ID,
-			CommentID:     pgtype.UUID{Bytes: commentID, Valid: true},
+			CommentID:     pgconv.UUID(commentID),
 		}); err != nil {
 			return 0, err
 		}
@@ -135,7 +134,7 @@ func (s *Service) FlagVideo(ctx context.Context, videoID uuid.UUID, text string)
 	for _, m := range matches {
 		if err := s.repo.RecordWatchedWordVideoMatch(ctx, sqlcgen.RecordWatchedWordVideoMatchParams{
 			WatchedWordID: m.ID,
-			VideoID:       pgtype.UUID{Bytes: videoID, Valid: true},
+			VideoID:       pgconv.UUID(videoID),
 		}); err != nil {
 			return 0, err
 		}
@@ -199,13 +198,4 @@ func (s *Service) ListMatches(ctx context.Context, limit, offset int32) ([]Match
 		out = append(out, m)
 	}
 	return out, total, nil
-}
-
-// sqlState returns the SQLSTATE code of a PostgreSQL error, "" otherwise.
-func sqlState(err error) string {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return pgErr.Code
-	}
-	return ""
 }

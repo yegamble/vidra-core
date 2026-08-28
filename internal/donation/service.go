@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -140,7 +140,7 @@ func (s *Service) Add(ctx context.Context, ownerID uuid.UUID, in AddInput) (sqlc
 		if ch.OwnerID != ownerID {
 			return sqlcgen.DonationAddress{}, ErrForbidden
 		}
-		channelID = pgtype.UUID{Bytes: *in.ChannelID, Valid: true}
+		channelID = pgconv.UUID(*in.ChannelID)
 	}
 
 	row, err := s.repo.CreateDonationAddress(ctx, sqlcgen.CreateDonationAddressParams{
@@ -151,7 +151,7 @@ func (s *Service) Add(ctx context.Context, ownerID uuid.UUID, in AddInput) (sqlc
 		Label:     strings.TrimSpace(in.Label),
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
+		if pgconv.IsUniqueViolation(err) {
 			return sqlcgen.DonationAddress{}, ErrConflict
 		}
 		return sqlcgen.DonationAddress{}, err
@@ -175,7 +175,7 @@ func (s *Service) ListForUser(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen
 // ListForChannel returns a channel's donation addresses — the public projection
 // for a channel page.
 func (s *Service) ListForChannel(ctx context.Context, channelID uuid.UUID) ([]sqlcgen.DonationAddress, error) {
-	return s.repo.ListChannelDonationAddresses(ctx, pgtype.UUID{Bytes: channelID, Valid: true})
+	return s.repo.ListChannelDonationAddresses(ctx, pgconv.UUID(channelID))
 }
 
 // Delete removes a donation address. Only the owner may delete; a non-owner
@@ -276,11 +276,4 @@ func randomNonce() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
-}
-
-// isUniqueViolation reports whether err is a PostgreSQL unique-constraint
-// violation (SQLSTATE 23505).
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -132,7 +133,7 @@ func newReportID(id uuid.UUID, err error) (uuid.UUID, error) {
 func (s *Service) ReportVideo(ctx context.Context, reporterID, videoID uuid.UUID, reason string) (uuid.UUID, error) {
 	return newReportID(s.repo.CreateVideoReport(ctx, sqlcgen.CreateVideoReportParams{
 		ReporterID: reporterID,
-		VideoID:    pgUUID(videoID),
+		VideoID:    pgconv.UUID(videoID),
 		Reason:     reason,
 	}))
 }
@@ -143,7 +144,7 @@ func (s *Service) ReportVideo(ctx context.Context, reporterID, videoID uuid.UUID
 func (s *Service) ReportComment(ctx context.Context, reporterID, commentID uuid.UUID, reason string) (uuid.UUID, error) {
 	id, err := newReportID(s.repo.CreateCommentReport(ctx, sqlcgen.CreateCommentReportParams{
 		ReporterID: reporterID,
-		CommentID:  pgUUID(commentID),
+		CommentID:  pgconv.UUID(commentID),
 		Reason:     reason,
 	}))
 	if isForeignKeyViolation(err) {
@@ -161,7 +162,7 @@ func (s *Service) ReportAccount(ctx context.Context, reporterID, targetUserID uu
 	}
 	id, err := newReportID(s.repo.CreateAccountReport(ctx, sqlcgen.CreateAccountReportParams{
 		ReporterID:     reporterID,
-		ReportedUserID: pgUUID(targetUserID),
+		ReportedUserID: pgconv.UUID(targetUserID),
 		Reason:         reason,
 	}))
 	if isForeignKeyViolation(err) {
@@ -176,7 +177,7 @@ func (s *Service) ReportAccount(ctx context.Context, reporterID, targetUserID uu
 func (s *Service) ReportRemoteVideo(ctx context.Context, reporterID, remoteVideoID uuid.UUID, reason string) (uuid.UUID, error) {
 	id, err := newReportID(s.repo.CreateRemoteVideoReport(ctx, sqlcgen.CreateRemoteVideoReportParams{
 		ReporterID:    reporterID,
-		RemoteVideoID: pgUUID(remoteVideoID),
+		RemoteVideoID: pgconv.UUID(remoteVideoID),
 		Reason:        reason,
 	}))
 	if isForeignKeyViolation(err) {
@@ -193,7 +194,7 @@ func (s *Service) ReportRemoteVideo(ctx context.Context, reporterID, remoteVideo
 func (s *Service) ReportMessage(ctx context.Context, reporterID, messageID uuid.UUID, bodySnapshot, reason string) (uuid.UUID, error) {
 	id, err := newReportID(s.repo.CreateMessageReport(ctx, sqlcgen.CreateMessageReportParams{
 		ReporterID:          reporterID,
-		MessageID:           pgUUID(messageID),
+		MessageID:           pgconv.UUID(messageID),
 		MessageBodySnapshot: bodySnapshot,
 		Reason:              reason,
 	}))
@@ -231,17 +232,17 @@ func (s *Service) List(ctx context.Context, status string, limit, offset int32) 
 			Status:            r.Status,
 			ModeratorNote:     r.ModeratorNote,
 			CreatedAt:         r.CreatedAt,
-			ResolvedAt:        timePtr(r.ResolvedAt),
+			ResolvedAt:        pgconv.TimeOrNil(r.ResolvedAt),
 			ReporterUsername:  r.ReporterUsername,
 			VideoID:           uuidString(r.VideoID),
-			VideoTitle:        deref(r.VideoTitle),
+			VideoTitle:        pgconv.Deref(r.VideoTitle),
 			CommentID:         uuidString(r.CommentID),
-			CommentBody:       deref(r.CommentBody),
+			CommentBody:       pgconv.Deref(r.CommentBody),
 			ReportedUserID:    uuidString(r.ReportedUserID),
-			ReportedUsername:  deref(r.ReportedUsername),
+			ReportedUsername:  pgconv.Deref(r.ReportedUsername),
 			RemoteVideoID:     uuidString(r.RemoteVideoID),
-			RemoteVideoTitle:  deref(r.RemoteVideoTitle),
-			RemoteVideoDomain: deref(r.RemoteVideoDomain),
+			RemoteVideoTitle:  pgconv.Deref(r.RemoteVideoTitle),
+			RemoteVideoDomain: pgconv.Deref(r.RemoteVideoDomain),
 			MessageID:         uuidString(r.MessageID),
 			MessageBody:       r.MessageBodySnapshot,
 		})
@@ -258,7 +259,7 @@ func (s *Service) Resolve(ctx context.Context, moderatorID, reportID uuid.UUID, 
 		ID:            reportID,
 		Status:        status,
 		ModeratorNote: note,
-		ResolvedBy:    pgUUID(moderatorID),
+		ResolvedBy:    pgconv.UUID(moderatorID),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -285,7 +286,7 @@ func (s *Service) BlockVideo(ctx context.Context, moderatorID, videoID uuid.UUID
 	_, err := s.repo.BlockVideo(ctx, sqlcgen.BlockVideoParams{
 		VideoID:   videoID,
 		Reason:    reason,
-		BlockedBy: pgUUID(moderatorID),
+		BlockedBy: pgconv.UUID(moderatorID),
 	})
 	if isForeignKeyViolation(err) {
 		return ErrVideoNotFound
@@ -345,7 +346,7 @@ func (s *Service) ListBlocked(ctx context.Context, limit, offset int32) ([]Block
 			ChannelHandle:      r.ChannelHandle,
 			ChannelDisplayName: r.ChannelDisplayName,
 			Reason:             r.Reason,
-			BlockedByUsername:  deref(r.BlockedByUsername),
+			BlockedByUsername:  pgconv.Deref(r.BlockedByUsername),
 			BlockedAt:          r.BlockedAt,
 		})
 	}
@@ -361,7 +362,7 @@ func (s *Service) BlockRemoteVideo(ctx context.Context, moderatorID, remoteVideo
 	_, err := s.repo.BlockRemoteVideo(ctx, sqlcgen.BlockRemoteVideoParams{
 		RemoteVideoID: remoteVideoID,
 		Reason:        reason,
-		BlockedBy:     pgUUID(moderatorID),
+		BlockedBy:     pgconv.UUID(moderatorID),
 	})
 	if isForeignKeyViolation(err) {
 		return ErrRemoteVideoNotFound
@@ -415,16 +416,11 @@ func (s *Service) ListBlockedRemote(ctx context.Context, limit, offset int32) ([
 			ChannelHandle:     r.ChannelHandle,
 			Domain:            r.Domain,
 			Reason:            r.Reason,
-			BlockedByUsername: deref(r.BlockedByUsername),
+			BlockedByUsername: pgconv.Deref(r.BlockedByUsername),
 			BlockedAt:         r.BlockedAt,
 		})
 	}
 	return items, total, nil
-}
-
-// pgUUID wraps a uuid.UUID as a non-null pgtype.UUID for a query parameter.
-func pgUUID(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
 }
 
 // uuidString renders a (possibly null) pgtype.UUID, "" when null.
@@ -433,23 +429,6 @@ func uuidString(u pgtype.UUID) string {
 		return ""
 	}
 	return uuid.UUID(u.Bytes).String()
-}
-
-// timePtr returns a pointer to a (possibly null) timestamp, nil when null.
-func timePtr(t pgtype.Timestamptz) *time.Time {
-	if !t.Valid {
-		return nil
-	}
-	v := t.Time
-	return &v
-}
-
-// deref returns the value of a (possibly nil) string pointer, "" when nil.
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
 }
 
 // isForeignKeyViolation reports whether err is a PostgreSQL foreign-key

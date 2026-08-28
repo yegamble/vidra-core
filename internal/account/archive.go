@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
-
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -203,7 +202,7 @@ func (s *Service) buildArchive(ctx context.Context, user sqlcgen.User) (Archive,
 			Language:      v.Language,
 			License:       v.License,
 			Tags:          tags,
-			PublishAt:     timePtr(v.PublishAt),
+			PublishAt:     pgconv.TimeOrNil(v.PublishAt),
 			CreatedAt:     v.CreatedAt,
 			UpdatedAt:     v.UpdatedAt,
 			// Media is not bundled in v1 — the original stays fetchable at its
@@ -235,7 +234,7 @@ func (s *Service) buildArchive(ctx context.Context, user sqlcgen.User) (Archive,
 		})
 	}
 
-	comments, err := s.repo.ListCommentsByUserForExport(ctx, pgtype.UUID{Bytes: user.ID, Valid: true})
+	comments, err := s.repo.ListCommentsByUserForExport(ctx, pgconv.UUID(user.ID))
 	if err != nil {
 		return Archive{}, fmt.Errorf("account: export comments: %w", err)
 	}
@@ -282,13 +281,4 @@ func (s *Service) buildArchive(ctx context.Context, user sqlcgen.User) (Archive,
 	}
 
 	return a, nil
-}
-
-// timePtr renders a nullable pgtype.Timestamptz as *time.Time.
-func timePtr(t pgtype.Timestamptz) *time.Time {
-	if !t.Valid {
-		return nil
-	}
-	v := t.Time
-	return &v
 }

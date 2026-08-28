@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/vidra/vidra-core/internal/pgconv"
 )
 
 // ptrTime is the one-liner these digest cases need to pass an OPTIONAL timestamp
@@ -297,16 +298,16 @@ func TestForEachRunSplitsOnKeyChange(t *testing.T) {
 	})
 }
 
-// derefText makes nil and "" the same value on purpose: the destination read
-// COALESCEs an unset column to "", so a distinction this side can make and the
-// other cannot would rewrite every such video on every run, forever.
+// The digest folds nil and "" to the same value on purpose: the destination
+// read COALESCEs an unset column to "", so a distinction this side can make and
+// the other cannot would rewrite every such video on every run, forever.
 func TestDerefTextTreatsUnsetAsEmpty(t *testing.T) {
 	empty := ""
-	if derefText(nil) != derefText(&empty) {
+	if pgconv.Deref[string](nil) != pgconv.Deref(&empty) {
 		t.Fatal("nil and \"\" must fold to the same digest input")
 	}
 	value := "42"
-	if derefText(&value) != "42" {
+	if pgconv.Deref(&value) != "42" {
 		t.Fatal("a set value must survive")
 	}
 }

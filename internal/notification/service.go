@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -130,8 +131,8 @@ func (s *Service) NotifyFollow(ctx context.Context, recipientID, actorID, channe
 	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
 		UserID:    recipientID,
 		Type:      TypeFollow,
-		ActorID:   pgUUID(actorID),
-		ChannelID: pgUUID(channelID),
+		ActorID:   pgconv.UUID(actorID),
+		ChannelID: pgconv.UUID(channelID),
 	})
 	return err
 }
@@ -146,9 +147,9 @@ func (s *Service) NotifyComment(ctx context.Context, recipientID, actorID, video
 	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
 		UserID:    recipientID,
 		Type:      TypeComment,
-		ActorID:   pgUUID(actorID),
-		VideoID:   pgUUID(videoID),
-		CommentID: pgUUID(commentID),
+		ActorID:   pgconv.UUID(actorID),
+		VideoID:   pgconv.UUID(videoID),
+		CommentID: pgconv.UUID(commentID),
 	})
 	return err
 }
@@ -165,8 +166,8 @@ func (s *Service) NotifyMessage(ctx context.Context, recipientID, actorID, conve
 	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
 		UserID:         recipientID,
 		Type:           TypeMessage,
-		ActorID:        pgUUID(actorID),
-		ConversationID: pgUUID(conversationID),
+		ActorID:        pgconv.UUID(actorID),
+		ConversationID: pgconv.UUID(conversationID),
 	})
 	return err
 }
@@ -230,7 +231,7 @@ func (s *Service) NotifyReportResolved(ctx context.Context, recipientID, actorID
 	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
 		UserID:   recipientID,
 		Type:     TypeReportResolved,
-		ReportID: pgUUID(reportID),
+		ReportID: pgconv.UUID(reportID),
 	})
 	return err
 }
@@ -248,7 +249,7 @@ func (s *Service) NotifyVideoRejected(ctx context.Context, recipientID, actorID,
 	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
 		UserID:  recipientID,
 		Type:    TypeVideoRejected,
-		VideoID: pgUUID(videoID),
+		VideoID: pgconv.UUID(videoID),
 	})
 	return err
 }
@@ -267,7 +268,7 @@ func (s *Service) NotifyCaptionReady(ctx context.Context, recipientID, videoID u
 	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
 		UserID:  recipientID,
 		Type:    TypeCaptionReady,
-		VideoID: pgUUID(videoID),
+		VideoID: pgconv.UUID(videoID),
 	})
 	return err
 }
@@ -299,17 +300,17 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, unreadOnly bool, l
 			Type:               r.Type,
 			Read:               r.ReadAt.Valid,
 			CreatedAt:          r.CreatedAt,
-			ActorUsername:      deref(r.ActorUsername),
-			ActorDisplayName:   deref(r.ActorDisplayName),
-			ChannelHandle:      deref(r.ChannelHandle),
-			ChannelDisplayName: deref(r.ChannelDisplayName),
+			ActorUsername:      pgconv.Deref(r.ActorUsername),
+			ActorDisplayName:   pgconv.Deref(r.ActorDisplayName),
+			ChannelHandle:      pgconv.Deref(r.ChannelHandle),
+			ChannelDisplayName: pgconv.Deref(r.ChannelDisplayName),
 			VideoID:            uuidString(r.VideoID),
-			VideoTitle:         deref(r.VideoTitle),
+			VideoTitle:         pgconv.Deref(r.VideoTitle),
 			CommentID:          uuidString(r.CommentID),
 			ConversationID:     uuidString(r.ConversationID),
 			ReportID:           uuidString(r.ReportID),
-			ReportStatus:       deref(r.ReportStatus),
-			ReportTargetType:   deref(r.ReportTargetType),
+			ReportStatus:       pgconv.Deref(r.ReportStatus),
+			ReportTargetType:   pgconv.Deref(r.ReportTargetType),
 		})
 	}
 	return items, total, nil
@@ -384,23 +385,10 @@ func (s *Service) SetPrefs(ctx context.Context, userID uuid.UUID, changes map[st
 	return nil
 }
 
-// pgUUID wraps a uuid.UUID as a non-null pgtype.UUID for a query parameter.
-func pgUUID(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
-}
-
 // uuidString renders a (possibly null) pgtype.UUID, returning "" when null.
 func uuidString(u pgtype.UUID) string {
 	if !u.Valid {
 		return ""
 	}
 	return uuid.UUID(u.Bytes).String()
-}
-
-// deref returns the value of a (possibly nil) string pointer, "" when nil.
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
 }

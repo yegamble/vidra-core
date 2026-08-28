@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -65,7 +65,7 @@ func (s *Service) RequestRegistration(ctx context.Context, in RegisterInput, not
 		Note:         strings.TrimSpace(note),
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
+		if pgconv.IsUniqueViolation(err) {
 			return RegistrationRequest{}, ErrConflict
 		}
 		return RegistrationRequest{}, err
@@ -73,7 +73,7 @@ func (s *Service) RequestRegistration(ctx context.Context, in RegisterInput, not
 	return RegistrationRequest{
 		ID: row.ID, Username: row.Username, Email: row.Email, Note: row.Note,
 		Status: row.Status, ModeratorNote: row.ModeratorNote,
-		ReviewedAt: tsPtr(row.ReviewedAt), CreatedAt: row.CreatedAt,
+		ReviewedAt: pgconv.TimeOrNil(row.ReviewedAt), CreatedAt: row.CreatedAt,
 	}, nil
 }
 
@@ -105,7 +105,7 @@ func (s *Service) ListRegistrationRequests(ctx context.Context, status string, l
 		out = append(out, RegistrationRequest{
 			ID: r.ID, Username: r.Username, Email: r.Email, Note: r.Note,
 			Status: r.Status, ModeratorNote: r.ModeratorNote,
-			ReviewedAt: tsPtr(r.ReviewedAt), CreatedAt: r.CreatedAt, ReviewerUsername: reviewer,
+			ReviewedAt: pgconv.TimeOrNil(r.ReviewedAt), CreatedAt: r.CreatedAt, ReviewerUsername: reviewer,
 		})
 	}
 	return out, total, nil
@@ -136,7 +136,7 @@ func (s *Service) ApproveRegistration(ctx context.Context, adminID, requestID uu
 	gateActive := s.EmailVerificationGateActive()
 	row, err := s.repo.ApproveRegistrationRequest(ctx, sqlcgen.ApproveRegistrationRequestParams{
 		ID:                       requestID,
-		ReviewedBy:               pgtype.UUID{Bytes: adminID, Valid: true},
+		ReviewedBy:               pgconv.UUID(adminID),
 		PendingEmailVerification: gateActive,
 		HistoryEnabled:           s.newUserHistoryEnabled(),
 	})
@@ -144,7 +144,7 @@ func (s *Service) ApproveRegistration(ctx context.Context, adminID, requestID uu
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sqlcgen.User{}, ErrRegistrationRequestNotFound
 		}
-		if isUniqueViolation(err) {
+		if pgconv.IsUniqueViolation(err) {
 			return sqlcgen.User{}, ErrConflict
 		}
 		return sqlcgen.User{}, err
@@ -168,7 +168,7 @@ func (s *Service) RejectRegistration(ctx context.Context, adminID, requestID uui
 	n, err := s.repo.RejectRegistrationRequest(ctx, sqlcgen.RejectRegistrationRequestParams{
 		ID:            requestID,
 		ModeratorNote: strings.TrimSpace(note),
-		ReviewedBy:    pgtype.UUID{Bytes: adminID, Valid: true},
+		ReviewedBy:    pgconv.UUID(adminID),
 	})
 	if err != nil {
 		return err
@@ -177,13 +177,4 @@ func (s *Service) RejectRegistration(ctx context.Context, adminID, requestID uui
 		return ErrRegistrationRequestNotFound
 	}
 	return nil
-}
-
-// tsPtr converts a possibly-null timestamp to a *time.Time (nil when null).
-func tsPtr(t pgtype.Timestamptz) *time.Time {
-	if !t.Valid {
-		return nil
-	}
-	v := t.Time
-	return &v
 }

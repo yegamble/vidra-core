@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -140,7 +140,7 @@ func (s *Service) BlockInstance(ctx context.Context, blockedBy uuid.UUID, domain
 	_, err = s.repo.BlockInstance(ctx, sqlcgen.BlockInstanceParams{
 		Domain:    d,
 		Reason:    reason,
-		BlockedBy: pgtype.UUID{Bytes: blockedBy, Valid: true},
+		BlockedBy: pgconv.UUID(blockedBy),
 	})
 	return err
 }

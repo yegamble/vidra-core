@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -177,8 +178,8 @@ func (s *Service) Update(ctx context.Context, ownerID, id uuid.UUID, in UpdateIn
 	}
 	updated, err := s.repo.UpdatePlaylist(ctx, sqlcgen.UpdatePlaylistParams{
 		ID:          id,
-		Title:       trimPtr(in.Title),
-		Description: trimPtr(in.Description),
+		Title:       pgconv.TrimPtr(in.Title),
+		Description: pgconv.TrimPtr(in.Description),
 		Visibility:  in.Visibility,
 	})
 	if err != nil {
@@ -386,14 +387,4 @@ func (s *Service) ClearThumbnail(ctx context.Context, ownerID, playlistID uuid.U
 func ThumbnailContentType(ext string) (string, bool) {
 	ct, ok := acceptedImageExts["."+strings.TrimPrefix(strings.ToLower(ext), ".")]
 	return ct, ok
-}
-
-// trimPtr trims a non-nil string pointer's value, leaving nil untouched so a
-// COALESCE update skips the column.
-func trimPtr(p *string) *string {
-	if p == nil {
-		return nil
-	}
-	t := strings.TrimSpace(*p)
-	return &t
 }
