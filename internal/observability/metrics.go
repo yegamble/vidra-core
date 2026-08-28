@@ -88,6 +88,10 @@ func NewMetrics() *Metrics {
 // template (c.Path()) so cardinality stays bounded; an empty route (no matching
 // route, e.g. a 404) is folded to "unmatched" so a scan of random paths cannot
 // blow up the label space.
+//
+// TWIN: vidra-search internal/telemetry/metrics.go — ObserveRequest and
+// statusClass are verbatim copies, so one dashboard can query both services'
+// RED metrics with the same label set.
 func (m *Metrics) ObserveRequest(method, route string, status int, d time.Duration) {
 	if route == "" {
 		route = "unmatched"
