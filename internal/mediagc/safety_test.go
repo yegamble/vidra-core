@@ -303,6 +303,120 @@ func TestAdoptBucket(t *testing.T) {
 	}
 }
 
+// Adoption happens in whichever api replica served the admin's request; every
+// OTHER process — the leader worker running the daily sweep, a second api
+// replica serving a manual sweep — still holds the ownership it resolved at
+// boot. A blocked delete must therefore re-read the marker before giving up:
+// the marker is the shared truth, the in-memory state is only a cache of it.
+func TestSweepSeesAnAdoptionMadeOnAnotherReplica(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphan := "web-videos/orphan.mp4"
+	put(t, blobs, orphan)
+
+	// Two Service instances over the SAME store, as two processes would be.
+	// Both booted unowned; the admin's adopt request landed on A.
+	const identity = "33333333-3333-4333-8333-333333333333"
+	replicaA := NewService(&fakeRepo{}, blobs,
+		WithBucketOwnership(OwnershipUnowned), WithInstanceIdentity(identity))
+	replicaB := NewService(&fakeRepo{}, blobs,
+		WithBucketOwnership(OwnershipUnowned), WithInstanceIdentity(identity))
+	if err := replicaA.AdoptBucket(ctx); err != nil {
+		t.Fatalf("AdoptBucket on replica A: %v", err)
+	}
+
+	// A destructive sweep on B must see A's marker, not B's stale boot state.
+	res, err := replicaB.Sweep(ctx, false)
+	if err != nil {
+		t.Fatalf("sweep on replica B: %v", err)
+	}
+	if res.ForcedDryRun || res.Mode != ModeDelete {
+		t.Fatalf("replica B forced a dry run despite the store being adopted: %+v", res)
+	}
+	if res.BucketOwnership != string(OwnershipOwned) {
+		t.Errorf("res.BucketOwnership = %q, want %q", res.BucketOwnership, OwnershipOwned)
+	}
+	if res.Deleted != 1 || exists(t, blobs, orphan) {
+		t.Errorf("replica B did not delete the orphan: %+v", res)
+	}
+	if got := replicaB.Ownership(); got != OwnershipOwned {
+		t.Errorf("replica B ownership after the sweep = %q, want %q", got, OwnershipOwned)
+	}
+}
+
+// The re-read is a READ. When there is no marker at all the sweep must stay
+// forced-dry-run AND must not write one: claiming a bucket is boot's decision
+// (empty store) or an operator's (adopt endpoint), never a side effect of a
+// sweep that wanted to delete.
+func TestSweepNeverClaimsAnUnmarkedBucket(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphan := "web-videos/orphan.mp4"
+	put(t, blobs, orphan)
+	svc := NewService(&fakeRepo{}, blobs,
+		WithBucketOwnership(OwnershipUnowned),
+		WithInstanceIdentity("44444444-4444-4444-8444-444444444444"))
+
+	res, err := svc.Sweep(ctx, false)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if !res.ForcedDryRun || res.ForcedDryRunReason != ReasonBucketOwnership {
+		t.Fatalf("a sweep of an unmarked bucket was not forced dry-run for %s: %+v", ReasonBucketOwnership, res)
+	}
+	if res.Deleted != 0 || !exists(t, blobs, orphan) {
+		t.Errorf("a sweep of an unmarked bucket deleted %q", orphan)
+	}
+	if got := svc.Ownership(); got != OwnershipUnowned {
+		t.Errorf("ownership after the sweep = %q, want it left %q", got, OwnershipUnowned)
+	}
+	if _, found, _ := storage.ReadOwnerMarker(ctx, blobs); found {
+		t.Error("the sweep wrote an ownership marker — a sweep must never claim a bucket")
+	}
+}
+
+// A marker stamped by a DIFFERENT install is the loudest state there is, and
+// the re-read must surface it: the sweep stays dry-run and the reported state
+// says conflict, not the stale boot-time unowned.
+func TestSweepReportsAForeignMarkerAsConflict(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphan := "web-videos/orphan.mp4"
+	put(t, blobs, orphan)
+	if err := storage.WriteOwnerMarker(ctx, blobs, "55555555-5555-4555-8555-555555555555"); err != nil {
+		t.Fatalf("WriteOwnerMarker: %v", err)
+	}
+	svc := NewService(&fakeRepo{}, blobs,
+		WithBucketOwnership(OwnershipUnowned),
+		WithInstanceIdentity("66666666-6666-4666-8666-666666666666"))
+
+	res, err := svc.Sweep(ctx, false)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if !res.ForcedDryRun || res.ForcedDryRunReason != ReasonBucketOwnership {
+		t.Fatalf("a sweep of somebody else's bucket was not forced dry-run: %+v", res)
+	}
+	if res.Deleted != 0 || !exists(t, blobs, orphan) {
+		t.Errorf("a sweep of somebody else's bucket deleted %q", orphan)
+	}
+	if res.BucketOwnership != string(OwnershipConflict) {
+		t.Errorf("res.BucketOwnership = %q, want %q", res.BucketOwnership, OwnershipConflict)
+	}
+	if got := svc.Ownership(); got != OwnershipConflict {
+		t.Errorf("ownership after the sweep = %q, want %q", got, OwnershipConflict)
+	}
+}
+
 // Without an identity there is nothing to stamp, and a marker holding an empty
 // string would be worse than none at all: the next boot would read it, fail to
 // match, and call it a conflict.
