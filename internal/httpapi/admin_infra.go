@@ -33,14 +33,22 @@ import (
 // while no RTMP ingest exists is the sentence this page has to be able to
 // contradict. The runtime toggles live on /admin/config and GET /instance.
 //
-// EXACTLY ONE ROW BREAKS THAT RULE, AND ONLY FOR ITS ENABLED HALF: cdn. A CDN
-// has no env spelling of "on" — DELIVERY_CDN_BASE_URL is the wiring and
-// delivery_cdn_enabled is the posture (config.go, phase-4 item 2) — so a
-// boot-config-only reading could report nothing but "off" forever, on an
-// instance actively serving through an edge. That is the lie this page exists
-// to prevent, so the toggle is read. The rule survives where it earns its keep:
-// the CONFIGURED half still comes from boot config, which is what lets the row
-// contradict a toggle switched on with nothing behind it.
+// EXACTLY TWO ROWS BREAK THAT RULE, both for the same underlying reason: a
+// delivery posture whose only spelling is a runtime setting.
+//
+//   - cdn, for its ENABLED half. A CDN has no env spelling of "on" —
+//     DELIVERY_CDN_BASE_URL is the wiring and delivery_cdn_enabled is the
+//     posture (config.go, phase-4 item 2) — so a boot-config-only reading could
+//     report nothing but "off" forever, on an instance actively serving through
+//     an edge. That is the lie this page exists to prevent, so the toggle is
+//     read. The rule survives where it earns its keep: the CONFIGURED half
+//     still comes from boot config, which is what lets the row contradict a
+//     toggle switched on with nothing behind it.
+//   - object_storage, for its NOTE only. On an s3 install with
+//     delivery_presign_enabled off, the API proxies every media byte, and the
+//     note's whole message is "this runtime switch exists and is off" — a
+//     sentence boot config cannot write about a switch whose state lives in the
+//     overlay. Both of the row's COLUMNS stay boot config.
 
 // infraServer is the process's own shape: the environment it believes it is in,
 // the request deadlines and size caps it enforces, and whether the two
@@ -368,6 +376,10 @@ func (s *Server) infraFeatures() []infraFeature {
 	// because a toggle flipped between two reads would be worse than either.
 	cdnEnabled := s.cdnDeliveryEnabled()
 	cdnWired := strings.TrimSpace(cfg.DeliveryCDNBaseURL) != ""
+	// The other overlay read this page makes (see the file header): the presign
+	// toggle, consulted only to decide the object_storage row's note.
+	onS3 := cfg.StorageBackend == "s3"
+	presignOn := s.presignedDeliveryEnabled()
 	// Hoisted for the same reason as the CDN pair: the drm row's columns and its
 	// note read the same two facts, and they must be one read.
 	drmEnabled := cfg.DRMProvider != "" && cfg.DRMProvider != drm.ProviderNone
@@ -379,9 +391,11 @@ func (s *Server) infraFeatures() []infraFeature {
 			// An s3 backend cannot boot without endpoint, bucket and both keys
 			// (config validates it), so "in force" and "configured" are the
 			// same question here.
-			Enabled:    cfg.StorageBackend == "s3",
-			Configured: cfg.StorageBackend == "s3",
-			Note:       "",
+			Enabled:    onS3,
+			Configured: onS3,
+			// The Active state has its own discovery to do — see
+			// objectStorageProxyNote.
+			Note: objectStorageProxyNote(onS3, presignOn),
 		},
 		{
 			Key: "mail",
@@ -445,8 +459,8 @@ func (s *Server) infraFeatures() []infraFeature {
 		},
 		{
 			Key: "cdn",
-			// The one row that reads the runtime overlay, and only here — see
-			// the file header. delivery_cdn_enabled is the operator's switch
+			// One of the two overlay-reading rows — see the file header.
+			// delivery_cdn_enabled is the operator's switch
 			// (default off, read per request so an incident can turn the edge
 			// off without a restart); DELIVERY_CDN_BASE_URL is the wiring that
 			// makes a CDN source exist at all. Neither alone serves a byte from
@@ -537,6 +551,29 @@ func cdnWiredButOffNote(enabled, configured bool) string {
 		return ""
 	}
 	return "A CDN is WIRED BUT NOT IN USE: DELIVERY_CDN_BASE_URL points at an edge and the delivery_cdn_enabled setting is off, so every byte is still served by this instance. That is the deliberate shipped sequence — configuring an edge never starts using it, because nothing here can verify that the base URL actually fronts these object keys. Turn on delivery_cdn_enabled (Advanced → delivery) when you are ready; only public, published, uncredentialed media is ever handed to an edge, and switching it back off takes effect on the next request without a restart."
+}
+
+// objectStorageProxyNote covers object storage's quiet quadrant: on and
+// complete, which for every other feature means there is nothing left to say.
+// Here the success pill hides a scaling fact: with delivery_presign_enabled off
+// (the shipped default), every media byte an s3 install serves streams THROUGH
+// the api process, so viewer bandwidth is api bandwidth — and nothing in the
+// product tells a scaling operator the switch exists. The feature vocabulary
+// has no presign row (direct delivery is a posture of this feature, not a
+// subsystem), so the discovery half of the page's job lands on this note.
+//
+// The CORS sentence is not decoration: flipping the switch without the
+// bucket's CORS allowing this site's origin turns a bandwidth problem into an
+// every-request playback failure, which is a strictly worse Tuesday.
+//
+// Returns "" off s3 (nothing is proxied that could be redirected — local
+// storage cannot presign) and with presign on (the advice is already taken —
+// the reader-losing failure cdnWiredButOffNote documents).
+func objectStorageProxyNote(onS3, presignOn bool) string {
+	if !onS3 || presignOn {
+		return ""
+	}
+	return "Media bytes are proxied through the API: the bucket stores them, but every viewer's request streams through this process, so viewer bandwidth is this instance's bandwidth. Direct object delivery (the delivery_presign_enabled setting, Advanced page) can redirect public media requests straight to the bucket — the bucket's CORS policy must allow this site's origin first."
 }
 
 // drmTestProviderNote covers DRM's wrong quadrant: enabled AND configured.

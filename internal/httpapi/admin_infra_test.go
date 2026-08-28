@@ -337,24 +337,29 @@ func TestInfrastructureReportsPoolAndDrainConfig(t *testing.T) {
 }
 
 // infraServerWithSettings is authServerWithConfig plus a loaded instance-settings
-// overlay, so a test can flip the runtime half of the CDN pair the way an admin
-// would. It is the only feature row that reads the overlay at all.
-func infraServerWithSettings(t *testing.T, cfg *config.Config, cdnOn bool) *Server {
+// overlay with the given updates applied, so a test can flip a runtime setting
+// (the CDN toggle, the presign toggle) the way an admin would.
+func infraServerWithSettings(t *testing.T, cfg *config.Config, updates map[string]instancesettings.Update) *Server {
 	t.Helper()
 	svc := instancesettings.NewService(newInstanceSettingsFakeRepo(), settingsDefaultsFromConfig(cfg))
 	if err := svc.Load(context.Background()); err != nil {
 		t.Fatalf("settings load: %v", err)
 	}
-	if cdnOn {
-		if err := svc.Apply(context.Background(), map[string]instancesettings.Update{
-			instancesettings.KeyDeliveryCDNEnabled: {Value: "true"},
-		}, uuid.Nil); err != nil {
-			t.Fatalf("enable delivery_cdn_enabled: %v", err)
+	if len(updates) > 0 {
+		if err := svc.Apply(context.Background(), updates, uuid.Nil); err != nil {
+			t.Fatalf("apply settings %v: %v", updates, err)
 		}
 	}
 	srv := authServerWithConfig(t, cfg)
 	WithSettingsService(svc)(srv)
 	return srv
+}
+
+// cdnToggledOn is the one update TestInfrastructureCDNFeature flips.
+func cdnToggledOn() map[string]instancesettings.Update {
+	return map[string]instancesettings.Update{
+		instancesettings.KeyDeliveryCDNEnabled: {Value: "true"},
+	}
 }
 
 // The CDN row is the one whose two halves live in different places — the base
@@ -380,7 +385,7 @@ func TestInfrastructureCDNFeature(t *testing.T) {
 	t.Run("wired but switched off", func(t *testing.T) {
 		cfg := testConfig()
 		cfg.DeliveryCDNBaseURL = base
-		body, _ := infrastructure(t, infraServerWithSettings(t, cfg, false))
+		body, _ := infrastructure(t, infraServerWithSettings(t, cfg, nil))
 		f := featureNamed(t, body, "cdn")
 		if f.Enabled || !f.Configured {
 			t.Fatalf("cdn wired with the toggle off = %+v, want configured and not enabled", f)
@@ -396,7 +401,7 @@ func TestInfrastructureCDNFeature(t *testing.T) {
 	// The dangerous half: the switch is on and no edge exists, so nothing is
 	// being offloaded and the page must say so rather than show a success pill.
 	t.Run("switched on with no edge", func(t *testing.T) {
-		body, _ := infrastructure(t, infraServerWithSettings(t, testConfig(), true))
+		body, _ := infrastructure(t, infraServerWithSettings(t, testConfig(), cdnToggledOn()))
 		f := featureNamed(t, body, "cdn")
 		if !f.Enabled || f.Configured {
 			t.Fatalf("cdn toggled on with no base URL = %+v, want enabled and not configured", f)
@@ -409,10 +414,62 @@ func TestInfrastructureCDNFeature(t *testing.T) {
 	t.Run("fully on", func(t *testing.T) {
 		cfg := testConfig()
 		cfg.DeliveryCDNBaseURL = base
-		body, _ := infrastructure(t, infraServerWithSettings(t, cfg, true))
+		body, _ := infrastructure(t, infraServerWithSettings(t, cfg, cdnToggledOn()))
 		f := featureNamed(t, body, "cdn")
 		if !f.Enabled || !f.Configured || f.Note != "" {
 			t.Fatalf("cdn fully on = %+v, want enabled+configured with no note", f)
+		}
+	})
+}
+
+// The feature vocabulary has no presign row (direct object delivery is a
+// delivery posture of the storage feature, not a subsystem of its own), so the
+// object_storage row's Active state is where a scaling operator learns that the
+// API is proxying every media byte and that the Advanced-page switch exists.
+func TestInfrastructureObjectStoragePresignDiscovery(t *testing.T) {
+	s3cfg := func() *config.Config {
+		cfg := testConfig()
+		cfg.StorageBackend = "s3"
+		cfg.StorageS3Endpoint = "objects.example:443"
+		cfg.StorageS3Bucket = "vidra-media"
+		return cfg
+	}
+
+	t.Run("s3 with presign off", func(t *testing.T) {
+		body, _ := infrastructure(t, infraServerWithSettings(t, s3cfg(), nil))
+		f := featureNamed(t, body, "object_storage")
+		if !f.Enabled || !f.Configured {
+			t.Fatalf("object_storage on s3 = %+v, want enabled+configured", f)
+		}
+		// The note must name the switch AND the precondition: pointing an
+		// operator at delivery_presign_enabled without the CORS warning trades a
+		// bandwidth problem for an every-request failure.
+		for _, want := range []string{"proxied", "delivery_presign_enabled", "CORS"} {
+			if !strings.Contains(f.Note, want) {
+				t.Errorf("object_storage note = %q, want it to contain %q", f.Note, want)
+			}
+		}
+	})
+
+	// Presign on: the deployment is doing the thing the note suggests, so the
+	// note would be advice already taken — the same reader-losing failure
+	// cdnWiredButOffNote documents.
+	t.Run("s3 with presign on", func(t *testing.T) {
+		body, _ := infrastructure(t, infraServerWithSettings(t, s3cfg(), map[string]instancesettings.Update{
+			instancesettings.KeyDeliveryPresignEnabled: {Value: "true"},
+		}))
+		if f := featureNamed(t, body, "object_storage"); f.Note != "" {
+			t.Errorf("object_storage with presign on = %+v, want no note", f)
+		}
+	})
+
+	// Local storage cannot presign, so the proxy note would be a dead pointer;
+	// the off-state discovery note stays in charge.
+	t.Run("local keeps the discovery note", func(t *testing.T) {
+		body, _ := infrastructure(t, authServer(t))
+		f := featureNamed(t, body, "object_storage")
+		if !strings.Contains(f.Note, "STORAGE_BACKEND=s3") {
+			t.Errorf("object_storage note on local = %q, want the discovery copy", f.Note)
 		}
 	})
 }

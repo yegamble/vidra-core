@@ -18758,13 +18758,18 @@ components:
         vp9_alternates. A client that does not recognise a key must render it
         rather than drop it — this list is how an operator discovers a feature
         the server shipped before the client learned its name.
-        Every row is computed from boot config with ONE exception: cdn's enabled
-        half is the runtime delivery_cdn_enabled setting, because a CDN has no
-        env spelling of "on" (DELIVERY_CDN_BASE_URL is the wiring, the setting
-        is the posture) and a boot-only reading could report nothing but "off"
-        on an instance actively serving through an edge. Its configured half is
-        still boot config, which is what lets the row contradict a switch turned
-        on with nothing behind it.
+        Every row is computed from boot config with TWO exceptions, both a
+        delivery posture whose only spelling is a runtime setting: cdn's
+        enabled half is the runtime delivery_cdn_enabled setting, because a CDN
+        has no env spelling of "on" (DELIVERY_CDN_BASE_URL is the wiring, the
+        setting is the posture) and a boot-only reading could report nothing
+        but "off" on an instance actively serving through an edge — its
+        configured half is still boot config, which is what lets the row
+        contradict a switch turned on with nothing behind it. And
+        object_storage's NOTE (never its columns) reads the runtime
+        delivery_presign_enabled setting: on an s3 install with the switch off
+        the API proxies every media byte, and the active row's note is where an
+        operator discovers the Advanced-page switch and its CORS precondition.
         DRM reports the provider's state and the PRESENCE of DRM_KEY_KEK, never
         the key. The only provider this build ships is clearkey-test, which
         protects nothing (it hands the content key to any authorised viewer over
@@ -18794,8 +18799,10 @@ components:
           type: string
           description: >-
             What to do about it. Absent when the feature is enabled and fully
-            configured — except drm on the test provider, whose active state is
-            exactly the one that needs the caveat.
+            configured — except drm on the test provider (whose active state is
+            exactly the one that needs the caveat) and object_storage with
+            direct delivery off (whose active state is where the proxying fact
+            and the delivery_presign_enabled switch are discovered).
     InfrastructureStatus:
       type: object
       description: >-
