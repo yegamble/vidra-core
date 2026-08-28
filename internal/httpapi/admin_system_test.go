@@ -234,6 +234,33 @@ func TestSystemStatusSearchProbe(t *testing.T) {
 	}
 }
 
+// Once Drain() fires, /readyz answers 503 "draining" — but an admin watching
+// the DASHBOARD during a deploy saw ok|degraded right up to the listener
+// closing, because handleSystemStatus never read the flag. The page must agree
+// with the balancer about a process that is leaving.
+func TestSystemStatusReportsDraining(t *testing.T) {
+	srv := authServer(t)
+	srv.lookPath = ffmpegFound
+	// Register the admin BEFORE draining: the page keeps serving while the
+	// drain delay runs — that is the whole point of the delay — so the read
+	// below exercises exactly the mid-deploy window.
+	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	srv.Drain()
+
+	rec := getWithAuth(srv, "/api/v1/admin/system", admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("system status while draining = %d, want 200 (the admin page never 503s)", rec.Code)
+	}
+	var body systemStatusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.Status != "draining" {
+		t.Errorf("status = %q, want draining — the dashboard must agree with /readyz about a leaving process", body.Status)
+	}
+}
+
 // fakeSettingsSync stands in for the settings-version poller's health record.
 type fakeSettingsSync struct {
 	last time.Time

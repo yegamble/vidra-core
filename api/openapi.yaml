@@ -18640,7 +18640,12 @@ components:
       properties:
         status:
           type: string
-          enum: [ok, degraded]
+          enum: [ok, degraded, draining]
+          description: >-
+            draining wins over the other two, exactly as on /readyz: the
+            process has received SIGTERM and is leaving; the page keeps
+            answering 200 through the drain delay so the admin watching a
+            deploy sees the same fact the load balancer acts on.
         software:
           type: object
           required: [name, version, commit, build_date, go_version]

@@ -59,7 +59,7 @@ type systemDatabase struct {
 // connection-pool counts. It reports only operational metadata — never
 // secrets/PII.
 type systemStatusResponse struct {
-	Status        string                     `json:"status"` // "ok" | "degraded"
+	Status        string                     `json:"status"` // "ok" | "degraded" | "draining"
 	Software      systemSoftware             `json:"software"`
 	Environment   string                     `json:"environment"`
 	UptimeSeconds int64                      `json:"uptime_seconds"`
@@ -73,13 +73,22 @@ type systemStatusResponse struct {
 }
 
 // handleSystemStatus returns an operational snapshot for the admin dashboard.
-// Behind requireRole(admin). Always 200 (even when degraded) so the admin can see
-// the degraded state, unlike the /readyz probe which 503s.
+// Behind requireRole(admin). Always 200 (even when degraded, even when
+// draining) so the admin can see the state, unlike the /readyz probe which
+// 503s.
 func (s *Server) handleSystemStatus(c echo.Context) error {
 	components, healthy := s.systemComponents(c.Request().Context())
 	status := "ok"
 	if !healthy {
 		status = "degraded"
+	}
+	// Draining wins over both, exactly as it does on /readyz: once Drain() has
+	// fired this process is leaving, and a dashboard reading "ok" while the
+	// balancer reads 503 is two operators arguing about the same instance. The
+	// page itself keeps serving through the drain delay — that window is
+	// precisely when an admin is watching it.
+	if s.draining.Load() {
+		status = "draining"
 	}
 	return c.JSON(http.StatusOK, systemStatusResponse{
 		Status:   status,
