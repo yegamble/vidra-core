@@ -761,6 +761,12 @@ type Session struct {
 	CreatedAt   time.Time          `json:"created_at"`
 }
 
+type SettingsVersion struct {
+	ID        int16     `json:"id"`
+	Version   int64     `json:"version"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type StorageMigration struct {
 	ID                uuid.UUID          `json:"id"`
 	SourceDesc        string             `json:"source_desc"`

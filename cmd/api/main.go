@@ -71,6 +71,7 @@ import (
 	"github.com/vidra/vidra-core/internal/searchclient"
 	"github.com/vidra/vidra-core/internal/searchevents"
 	"github.com/vidra/vidra-core/internal/secretbox"
+	"github.com/vidra/vidra-core/internal/settingsversion"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/storagemigration"
 	"github.com/vidra/vidra-core/internal/store"
@@ -254,6 +255,14 @@ func run() error {
 	// Parse the boot-validated UPLOAD_MAX_SIZE once (config.go already rejected an
 	// invalid value) — it seeds both the settings default and the import cap below.
 	uploadMaxBytesDefault, _ := bytes.Parse(cfg.UploadMaxSize)
+	// Cross-replica invalidation for the three boot-loaded admin caches
+	// (settings, documents, branding). Each of them refreshes itself after its
+	// OWN writes, which is correct for one process and silently wrong for N: the
+	// admin change lands on the replica that served it and the rest keep their
+	// boot-time values until restart. Every write advances this counter; the
+	// poller started below re-reads it and reloads all three. See
+	// internal/settingsversion.
+	bumpSettingsVersion := settingsversion.BumpFunc(db.Queries())
 	settingssvc := instancesettings.NewService(db.Queries(), instancesettings.Defaults{
 		InstanceName:                cfg.InstanceName,
 		InstanceDescription:         cfg.InstanceDescription,
@@ -284,7 +293,7 @@ func run() error {
 		// setting defaults to the boot env; the ffmpeg/ffprobe boot capability
 		// is ANDed in at the enqueue/pickup seams.
 		TranscodingEnabled: cfg.TranscodingEnabled,
-	})
+	}, instancesettings.WithVersionBump(bumpSettingsVersion))
 	if err := settingssvc.Load(startCtx); err != nil {
 		return err
 	}
@@ -294,7 +303,8 @@ func run() error {
 	// custom CSS/JS store. Loaded at boot into an in-memory cache (same posture
 	// as the settings overlay) so the public delivery routes and the GET
 	// /instance customization/homepage hashes never round-trip to the database.
-	instancedocssvc := instancedocs.NewService(db.Queries())
+	instancedocssvc := instancedocs.NewService(db.Queries(),
+		instancedocs.WithVersionBump(bumpSettingsVersion))
 	if err := instancedocssvc.Load(startCtx); err != nil {
 		return err
 	}
@@ -1368,11 +1378,38 @@ func run() error {
 		// Instance branding assets (config-parity W1): the singleton instance
 		// avatar/banner/logo slots ride the same pipeline over their own thin
 		// table; metadata is cached at boot for the GET /instance branding block.
-		profileimage.WithInstanceImages(db.Queries()))
+		profileimage.WithInstanceImages(db.Queries()),
+		// Only the INSTANCE slots live in memory; per-user/channel images are
+		// read per request and need no announcement.
+		profileimage.WithVersionBump(bumpSettingsVersion))
 	if err := imagesvc.LoadInstanceImages(startCtx); err != nil {
 		return err
 	}
 	opts = append(opts, httpapi.WithProfileImageService(imagesvc))
+
+	// Cross-replica cache invalidation (phase-5 item 8a). Every api replica
+	// polls one counter row and reloads the three caches above when another
+	// replica has written. Started here, where the last of the three services
+	// exists; it is deliberately NOT leader-gated and NOT worker-gated — every
+	// process that SERVES traffic holds its own copies, so every one of them
+	// must poll, and a worker-only process holds none of them.
+	if cfg.Role.ServesHTTP() {
+		settingsPoller := settingsversion.New(db.Queries(), settingsversion.DefaultInterval,
+			settingsversion.Cache{Name: "instance settings", Reload: settingssvc.Load},
+			settingsversion.Cache{Name: "instance documents", Reload: instancedocssvc.Load},
+			settingsversion.Cache{Name: "instance branding", Reload: imagesvc.LoadInstanceImages},
+		)
+		// Prime AFTER the three boot loads above so this replica starts in
+		// agreement with the database. A failure is not fatal: the token stays
+		// at zero and the first successful tick reloads once, harmlessly.
+		if err := settingsPoller.Prime(startCtx); err != nil {
+			logger.Warn("could not read the settings version at boot; the first poll will reload once", "error", err)
+		}
+		pollCtx, pollCancel := context.WithCancel(context.Background())
+		defer pollCancel()
+		go settingsPoller.Run(pollCtx, logger)
+		logger.Info("settings version poller started", "interval", settingsversion.DefaultInterval.String())
+	}
 
 	// Resumable/chunked upload sessions (P6.1). Chunk bytes go to the same blob
 	// backend at uploads/<session>/<n>; completion assembles them through the

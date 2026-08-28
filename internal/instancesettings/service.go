@@ -1008,11 +1008,26 @@ type Repository interface {
 	DeleteInstanceSetting(ctx context.Context, key string) (int64, error)
 }
 
+// Option customises the Service.
+type Option func(*Service)
+
+// WithVersionBump wires the cross-replica invalidation seam (see
+// internal/settingsversion). This service's cache is reloaded after its own
+// writes, which is correct for one process and WRONG for N: without this hook
+// an admin change takes effect on the single replica that served the PATCH and
+// the rest keep serving their boot-time values until restart. bump advances a
+// shared counter every other replica polls. A nil bump (single-process wiring,
+// unit fakes) disables the announcement.
+func WithVersionBump(bump func(ctx context.Context) error) Option {
+	return func(s *Service) { s.bump = bump }
+}
+
 // Service resolves effective instance settings from the config defaults + the
 // DB overlay. It is safe for concurrent use.
 type Service struct {
 	repo     Repository
 	defaults Defaults
+	bump     func(ctx context.Context) error
 
 	mu    sync.RWMutex
 	cache map[string]string // key -> raw override value; absent = use default
@@ -1021,8 +1036,12 @@ type Service struct {
 // NewService builds the settings service with its config-derived defaults. Call
 // Load once at boot (and it reloads itself after each write) to populate the
 // override cache.
-func NewService(repo Repository, defaults Defaults) *Service {
-	return &Service{repo: repo, defaults: defaults, cache: map[string]string{}}
+func NewService(repo Repository, defaults Defaults, opts ...Option) *Service {
+	s := &Service{repo: repo, defaults: defaults, cache: map[string]string{}}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Load (re)reads every override row into the in-memory cache. It is called once
@@ -1232,6 +1251,22 @@ func (s *Service) Apply(ctx context.Context, updates map[string]Update, updatedB
 			Value:     u.Value,
 			UpdatedBy: by,
 		}); err != nil {
+			return err
+		}
+	}
+	// Tell the other replicas. This is deliberately NOT best-effort: the rows
+	// have landed, but a bump that failed means every other api process keeps
+	// serving the previous values with nothing to notice — the silent 1-of-N
+	// staleness the counter exists to remove. Surfacing it lets the admin
+	// retry, and re-submitting the same batch is idempotent.
+	//
+	// Not folded into a transaction with the writes above because there is no
+	// transaction to fold it into: Apply persists key by key. A bump that
+	// lands without its writes is harmless (one redundant reload everywhere);
+	// the ordering here — writes first — is what matters, so a poller that
+	// sees the new number always finds the new rows.
+	if s.bump != nil {
+		if err := s.bump(ctx); err != nil {
 			return err
 		}
 	}
