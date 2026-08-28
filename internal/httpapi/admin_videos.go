@@ -64,6 +64,23 @@ func (s *Server) handleRunVideoTranscoding(c echo.Context) error {
 	if err := s.transcodesvc.EnqueueTarget(ctx, id, sourceKey, in.Type); err != nil {
 		return err
 	}
+	// DELIBERATELY NOT PURGED (media_purge.go's still-unpurged ledger). A rerun
+	// from an UNCHANGED source writes into the SAME output prefix
+	// (HLSPrefixForSource/WebVideoPrefixForSource keep the prefix for the same
+	// source version), overwriting the exact edge-cacheable keys a CDN is
+	// holding. Purging here, at enqueue, would be wrong: the job has produced
+	// no new bytes yet, so the edge would immediately re-cache the OLD objects
+	// from origin and keep serving them after the job completes — one
+	// purge-API call per object for nothing. The correct purge moment is the
+	// worker's promote step (out of scope here), and the tracked fix that
+	// removes the need entirely is generation-addressed output keys (phase-5
+	// item 1a). Until one of those lands, tell the operator whose CDN makes
+	// the overwrite observable — without leaking any object key into the log.
+	if s.cdnConfigured() {
+		s.logger.WarnContext(ctx, "same-generation re-transcode overwrites edge-cached objects without purge; the CDN may serve stale media until its TTLs expire",
+			"video_id", id.String(),
+			"type", in.Type)
+	}
 	s.audit(c, observability.ActionVideoTranscode, observability.ResultSuccess,
 		actorID.String(), "video="+id.String()+" type="+in.Type)
 	return c.JSON(http.StatusAccepted, map[string]string{"status": "queued", "type": in.Type})

@@ -50,8 +50,21 @@ func (p *purgeRecorder) snapshot() []string {
 	return out
 }
 
-// purgeServer wires a real internal/cdn provider for the edge lookup and the
-// recorder for purge, exactly as cmd/api wires the provider's two methods.
+// testCDNPurge wires a real internal/cdn provider for the edge lookup and the
+// recorder for purge, exactly as cmd/api wires the provider's two methods —
+// as an Option, so every harness (video, profile-image, …) can mount the same
+// pair.
+func testCDNPurge(t *testing.T) (Option, *purgeRecorder) {
+	t.Helper()
+	provider, err := cdn.New(cdn.Config{BaseURL: testCDNBase}, nil)
+	if err != nil {
+		t.Fatalf("cdn.New: %v", err)
+	}
+	rec := &purgeRecorder{}
+	return WithDeliveryCDN(provider.EdgeURL, rec.purge), rec
+}
+
+// purgeServer is the full video harness with the CDN purge recorder mounted.
 //
 // The delivery_cdn_enabled toggle is left OFF deliberately: purge is NOT gated
 // by it (see delivery.WithCDN), because switching delivery off evicts nothing
@@ -59,13 +72,8 @@ func (p *purgeRecorder) snapshot() []string {
 // be asserting the wrong contract.
 func purgeServer(t *testing.T) (*Server, storage.Backend, *transcodeFakeRepo, *purgeRecorder) {
 	t.Helper()
-	provider, err := cdn.New(cdn.Config{BaseURL: testCDNBase}, nil)
-	if err != nil {
-		t.Fatalf("cdn.New: %v", err)
-	}
-	rec := &purgeRecorder{}
-	srv, blobs, tcRepo, _, _ := videoServerFullWith(t, testConfig(),
-		[]Option{WithDeliveryCDN(provider.EdgeURL, rec.purge)})
+	opt, rec := testCDNPurge(t)
+	srv, blobs, tcRepo, _, _ := videoServerFullWith(t, testConfig(), []Option{opt})
 	return srv, blobs, tcRepo, rec
 }
 
@@ -191,6 +199,29 @@ func TestBlockVideoPurgesEdgeCopies(t *testing.T) {
 
 	if r := doJSON(srv, http.MethodPost, "/api/v1/admin/videos/"+id+"/block", admin, `{"reason":"tos"}`); r.Code != http.StatusNoContent {
 		t.Fatalf("block = %d; body=%s", r.Code, r.Body.String())
+	}
+	waitForPurge(t, rec, wantVideoPurgeKeys(id))
+}
+
+// TestDeleteChannelPurgesItsVideosEdgeCopies. A channel delete never visits the
+// per-video delete handler — the videos vanish at the database (0006 ON DELETE
+// CASCADE) — so without a fan-out at the channel handler, "delete the channel"
+// would be the one deletion path that leaves every byte of every video at the
+// edge, with the rows that name those bytes gone.
+func TestDeleteChannelPurgesItsVideosEdgeCopies(t *testing.T) {
+	srv, blobs, tcRepo, rec := purgeServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := publishedPublicVideo(t, srv, blobs, tcRepo, tok)
+	// A private sibling in the same channel was never edge-eligible; the exact
+	// key-set assertion below proves the cascade purge skips it rather than
+	// spending purge-API calls on objects the edge cannot hold.
+	priv := createVideo(t, srv, tok, "ada", `{"title":"Secret","privacy":"private"}`)
+	if r := uploadVideoFile(srv, priv, "clip.mp4", "video/mp4", "video-bytes", tok); r.Code != http.StatusCreated {
+		t.Fatalf("upload = %d; body=%s", r.Code, r.Body.String())
+	}
+
+	if r := doJSON(srv, http.MethodDelete, "/api/v1/channels/ada", tok, ""); r.Code != http.StatusNoContent {
+		t.Fatalf("delete channel = %d; body=%s", r.Code, r.Body.String())
 	}
 	waitForPurge(t, rec, wantVideoPurgeKeys(id))
 }

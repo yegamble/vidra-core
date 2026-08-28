@@ -1,12 +1,15 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -145,6 +148,54 @@ func TestAdminRunTranscodingQueuesRetainedOriginal(t *testing.T) {
 	regular := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
 	if rec := postJSONAuth(srv, "/api/v1/admin/videos/"+videoID+"/transcoding", `{"type":"hls"}`, regular); rec.Code != http.StatusForbidden {
 		t.Errorf("regular user = %d, want 403", rec.Code)
+	}
+}
+
+// TestAdminRunTranscodingWarnsAboutUnpurgedOverwrite. A same-generation rerun
+// writes into the SAME output prefix (HLSPrefixForSource/WebVideoPrefixForSource
+// keep the prefix for an unchanged source version), overwriting the exact keys
+// a CDN edge is holding — and nothing purges them, deliberately: at enqueue
+// there are no new bytes yet, so a purge would just re-cache the old ones. The
+// tracked fix is generation-addressed keys (phase-5 item 1a); until then the
+// enqueue must at least tell the operator whose CDN makes the overwrite
+// observable. Asserted: a WARN naming the video — and never a storage key.
+func TestAdminRunTranscodingWarnsAboutUnpurgedOverwrite(t *testing.T) {
+	opt, _ := testCDNPurge(t)
+	srv, _, jobs, _, _ := videoServerFullWith(t, testConfig(), []Option{opt})
+	srv.transcodesvc = transcode.NewService(jobs, capableAdminTranscoder{})
+	var buf bytes.Buffer
+	srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	videoID := createPublishedVideo(t, srv, admin, "ada", `{"title":"Source quality","privacy":"public"}`)
+
+	if rec := postJSONAuth(srv, "/api/v1/admin/videos/"+videoID+"/transcoding", `{"type":"hls"}`, admin); rec.Code != http.StatusAccepted {
+		t.Fatalf("run HLS = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "re-transcode") || !strings.Contains(logged, videoID) {
+		t.Fatalf("want a WARN naming the unpurged re-transcode overwrite and the video; logs=%s", logged)
+	}
+	// The purge-seam log discipline: object keys never reach the log.
+	if strings.Contains(logged, "streaming-playlists/") || strings.Contains(logged, "web-videos/") {
+		t.Fatalf("log leaked a storage key; logs=%s", logged)
+	}
+}
+
+// TestAdminRunTranscodingWithoutACDNStaysQuiet. With no CDN there is no edge
+// copy to go stale, so the warning would be noise on every default install.
+func TestAdminRunTranscodingWithoutACDNStaysQuiet(t *testing.T) {
+	srv, _, jobs, _, _ := videoServerFull(t, testConfig())
+	srv.transcodesvc = transcode.NewService(jobs, capableAdminTranscoder{})
+	var buf bytes.Buffer
+	srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	videoID := createPublishedVideo(t, srv, admin, "ada", `{"title":"Source quality","privacy":"public"}`)
+
+	if rec := postJSONAuth(srv, "/api/v1/admin/videos/"+videoID+"/transcoding", `{"type":"hls"}`, admin); rec.Code != http.StatusAccepted {
+		t.Fatalf("run HLS = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if logged := buf.String(); strings.Contains(logged, "re-transcode") {
+		t.Fatalf("re-transcode warning fired with no CDN configured; logs=%s", logged)
 	}
 }
 

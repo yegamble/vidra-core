@@ -135,6 +135,7 @@ type Repository interface {
 	GetVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
 	ListVideosByChannel(ctx context.Context, arg sqlcgen.ListVideosByChannelParams) ([]sqlcgen.ListVideosByChannelRow, error)
 	CountVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error)
+	ListVideoIDsByChannel(ctx context.Context, channelID uuid.UUID) ([]uuid.UUID, error)
 	ListPublicVideosByChannel(ctx context.Context, arg sqlcgen.ListPublicVideosByChannelParams) ([]sqlcgen.ListPublicVideosByChannelRow, error)
 	CountPublicVideosByChannelVisible(ctx context.Context, arg sqlcgen.CountPublicVideosByChannelVisibleParams) (int64, error)
 	ListPublicVideosSorted(ctx context.Context, arg sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error)
@@ -1975,6 +1976,15 @@ func (s *Service) DeleteForActor(ctx context.Context, actorID, id uuid.UUID, can
 		hook(ctx, id, v.ChannelID, v.Privacy == "public")
 	}
 	return nil
+}
+
+// VideoIDsByChannel returns every video id in a channel, UNPAGINATED — for the
+// sweeps that must visit all of them (the channel-deletion edge purge, exactly
+// like the account-deletion blob sweep this query was written for). Deliberately
+// id-only: the callers re-derive per-video state themselves, and hydrating
+// discovery-card rows for a sweep would be N pointless JOINs.
+func (s *Service) VideoIDsByChannel(ctx context.Context, channelID uuid.UUID) ([]uuid.UUID, error) {
+	return s.repo.ListVideoIDsByChannel(ctx, channelID)
 }
 
 // ListByChannel returns one page of a channel's videos (the owner's view) with

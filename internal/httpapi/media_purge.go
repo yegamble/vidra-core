@@ -11,9 +11,37 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 )
 
-// This file wires the delivery resolver's Purge hook to the three moments a
-// video's edge-cached bytes become wrong: deletion, a privacy flip away from
-// public, and an admin block.
+// This file wires the delivery resolver's Purge hook to the moments an
+// edge-cached object becomes wrong.
+//
+// Fan-out purges — a video's whole key set (purgeVideoEdgeCopies):
+//   - deletion, direct (handleDeleteVideo) or via the channel cascade
+//     (handleDeleteChannel: the DATABASE deletes the videos, 0006 ON DELETE
+//     CASCADE, so the channel handler snapshots them first);
+//   - a privacy flip away from public (handleUpdateVideo);
+//   - an admin block (handleBlockVideo).
+//
+// Single-key purges — assets at ONE stable identity key (purgeEdgeKey):
+//   - user/channel avatar and banner replacement and deletion
+//     (profile_images.go), including the channel-delete cascade;
+//   - public playlist cover replacement/deletion, playlist deletion, and a
+//     visibility flip away from public (playlists.go).
+//
+// STILL UNPURGED — the ledger that gates header promotion; nothing may become
+// shared-cacheable while any of these can leave wrong bytes at the edge:
+//   - video thumbnail and storyboard replacement: both overwrite their stable
+//     key in place with no invalidation;
+//   - the same-generation admin re-transcode (admin_videos.go): a rerun from
+//     an unchanged source overwrites the same output prefix; purging at
+//     enqueue would be wrong (the edge would re-cache the old bytes from
+//     origin until the job completes), so it only warns — the fix is
+//     generation-addressed keys (phase-5 item 1a) or a purge at the worker's
+//     promote step;
+//   - account deletion (internal/account): cascades channels, videos and
+//     images away without visiting any of the handlers above.
+// (Instance branding images need no entry: they are served through
+// serveStoredObjectNamed, never through the resolver, so they cannot be at
+// the edge at all.)
 //
 // WHY IT EXISTS. The purge seam shipped in phase 4 with ZERO call sites, and
 // docs/productionization/phase-5-enterprise.md carries that forward as work
@@ -185,6 +213,82 @@ func (s *Server) runVideoEdgePurge(ctx context.Context, videoID uuid.UUID, snap 
 		"purged", len(keys)-failed,
 		"failed", failed,
 		"key_set_complete", complete)
+}
+
+// purgeEdgeKey invalidates ONE object at the edge — the single-key sibling of
+// purgeVideoEdgeCopies, for the assets that occupy exactly one stable identity
+// key (avatars, banners, playlist covers). The stable key is what makes these
+// purges matter at all: replacement overwrites IN PLACE, so without an
+// invalidation the edge serves the old bytes until its TTL expires, and after
+// a deletion it serves them with nothing at the origin left to name them.
+//
+// Same contract as the fan-out: detached (the work outlives the response by
+// design), best-effort (a purge failure never fails the mutation), and fired
+// AFTER the mutation commits with a key snapshotted BEFORE it — the
+// pre-mutation key is the one the edge cached; on an extension-changing
+// replacement the new key holds nothing yet.
+//
+// asset/resourceID label the failure log; the KEY is never logged (the purge
+// URL template is operator-supplied and may carry the credential, and log
+// lines must not become the place object keys leak from either).
+func (s *Server) purgeEdgeKey(ctx context.Context, asset string, resourceID uuid.UUID, key string) {
+	if !s.cdnConfigured() || key == "" {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	go func() {
+		if err := s.deliverysvc.Purge(ctx, key); err != nil {
+			s.logger.WarnContext(ctx, "cdn purge failed; the edge may still be serving this object",
+				"asset", asset,
+				"resource_id", resourceID.String())
+		}
+	}()
+}
+
+// userImageEdgeKey and channelImageEdgeKey record the one key a CDN edge could
+// be holding for a profile image, BEFORE a mutation replaces or removes it.
+// Empty when there is nothing to invalidate: no CDN configured (the same free-
+// by-default gate as the video snapshot), no image service wired, or no image
+// set. There is no privacy fence to re-derive here — identity images are
+// served with unconditional eligibility (profile_images.go), so "an image
+// exists" IS "the edge could hold it".
+func (s *Server) userImageEdgeKey(ctx context.Context, userID uuid.UUID, kind string) string {
+	if !s.cdnConfigured() || s.imagesvc == nil {
+		return ""
+	}
+	img, err := s.imagesvc.UserImage(ctx, userID, kind)
+	if err != nil {
+		return ""
+	}
+	return img.StorageKey
+}
+
+func (s *Server) channelImageEdgeKey(ctx context.Context, channelID uuid.UUID, kind string) string {
+	if !s.cdnConfigured() || s.imagesvc == nil {
+		return ""
+	}
+	img, err := s.imagesvc.ChannelImage(ctx, channelID, kind)
+	if err != nil {
+		return ""
+	}
+	return img.StorageKey
+}
+
+// playlistCoverEdgeKey records the one key a CDN edge could be holding for a
+// playlist's cover, BEFORE a mutation replaces, removes or de-lists it. Unlike
+// the identity images this one HAS an eligibility fence to re-derive: a cover
+// may only leave the origin for a PUBLIC playlist (playlists.go), so a private
+// or unlisted playlist's cover was structurally never handed to the CDN and
+// returns empty here — the same self-fencing discipline as the video snapshot.
+func (s *Server) playlistCoverEdgeKey(ctx context.Context, playlistID uuid.UUID) string {
+	if !s.cdnConfigured() || s.playlistsvc == nil {
+		return ""
+	}
+	p, err := s.playlistsvc.GetByID(ctx, playlistID)
+	if err != nil || p.Visibility != "public" || p.ThumbnailExt == nil || *p.ThumbnailExt == "" {
+		return ""
+	}
+	return media.PlaylistThumbnailKey(playlistID, *p.ThumbnailExt)
 }
 
 // expandEdgePurgeKeys turns a snapshot into the deduplicated key list to purge,
