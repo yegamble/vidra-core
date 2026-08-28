@@ -2365,37 +2365,22 @@ func runATProtoPostWorker(ctx context.Context, logger *slog.Logger, svc *atproto
 // rather than logged.
 func runTranscodeWorker(ctx context.Context, logger *slog.Logger, svc *transcode.Service) {
 	const interval = 10 * time.Second
-	if !jitterStart(ctx, interval) {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
+	jobloop.Loop{
+		Interval: interval,
+		Jitter:   true,
+		Passes: []jobloop.Pass{{
 			// Drain the whole due backlog, batch by batch, so a burst of
 			// uploads doesn't wait a tick per batch of jobs. DrainJobs only
 			// counts completions, so a persistently failing job ends the
 			// inner loop and backoff retries it on a later tick.
-			total := 0
-			for {
-				n, err := svc.DrainJobs(ctx, drainBatch(svc.Concurrency()))
-				if err != nil {
-					logger.Warn("transcode drain failed", "error", err)
-					break
-				}
-				total += n
-				if n == 0 {
-					break
-				}
-			}
-			if total > 0 {
-				logger.Info("transcode drain completed jobs", "count", total)
-			}
-		}
-	}
+			Drain:   true,
+			FailMsg: "transcode drain failed",
+			DoneMsg: "transcode drain completed jobs",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return svc.DrainJobs(ctx, drainBatch(svc.Concurrency()))
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // drainBatch sizes a queue worker's per-pass claim from its effective
@@ -2419,28 +2404,26 @@ func runAccountExportWorker(ctx context.Context, logger *slog.Logger, svc *accou
 		batch      = 2
 		sweepBatch = 50
 	)
-	if !jitterStart(ctx, interval) {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if n, err := svc.DrainExports(ctx, batch); err != nil {
-				logger.Warn("account export drain failed", "error", err)
-			} else if n > 0 {
-				logger.Info("account export drain completed jobs", "count", n)
-			}
-			if n, err := svc.SweepExpiredExports(ctx, sweepBatch); err != nil {
-				logger.Warn("account export sweep failed", "error", err)
-			} else if n > 0 {
-				logger.Info("account export sweep removed expired archives", "count", n)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Jitter:   true,
+		Passes: []jobloop.Pass{
+			{
+				FailMsg: "account export drain failed",
+				DoneMsg: "account export drain completed jobs",
+				Run: func(ctx context.Context, _ time.Time) (int, error) {
+					return svc.DrainExports(ctx, batch)
+				},
+			},
+			{
+				FailMsg: "account export sweep failed",
+				DoneMsg: "account export sweep removed expired archives",
+				Run: func(ctx context.Context, _ time.Time) (int, error) {
+					return svc.SweepExpiredExports(ctx, sweepBatch)
+				},
+			},
+		},
+	}.Run(ctx, logger)
 }
 
 // runE2EESweepWorker hard-deletes expired disappearing E2EE messages on a
@@ -2605,33 +2588,18 @@ func runTranscodeHoldSweepWorker(ctx context.Context, logger *slog.Logger, svc *
 // error is logged.
 func runVideoImportWorker(ctx context.Context, logger *slog.Logger, svc *videoimport.Service) {
 	const interval = 10 * time.Second
-	if !jitterStart(ctx, interval) {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			total := 0
-			for {
-				n, err := svc.DrainJobs(ctx, drainBatch(svc.Concurrency()))
-				if err != nil {
-					logger.Warn("video import drain failed", "error", err)
-					break
-				}
-				total += n
-				if n == 0 {
-					break
-				}
-			}
-			if total > 0 {
-				logger.Info("video import drain completed jobs", "count", total)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Jitter:   true,
+		Passes: []jobloop.Pass{{
+			Drain:   true,
+			FailMsg: "video import drain failed",
+			DoneMsg: "video import drain completed jobs",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return svc.DrainJobs(ctx, drainBatch(svc.Concurrency()))
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runChannelSyncWorker lists due channel syncs on a cadence and enqueues `ytdlp`
@@ -2670,33 +2638,18 @@ func runCaptionJobWorker(ctx context.Context, logger *slog.Logger, svc *captionj
 		interval = 10 * time.Second
 		batch    = 2
 	)
-	if !jitterStart(ctx, interval) {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			total := 0
-			for {
-				n, err := svc.DrainJobs(ctx, batch)
-				if err != nil {
-					logger.Warn("auto-caption drain failed", "error", err)
-					break
-				}
-				total += n
-				if n == 0 {
-					break
-				}
-			}
-			if total > 0 {
-				logger.Info("auto-caption drain completed jobs", "count", total)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Jitter:   true,
+		Passes: []jobloop.Pass{{
+			Drain:   true,
+			FailMsg: "auto-caption drain failed",
+			DoneMsg: "auto-caption drain completed jobs",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return svc.DrainJobs(ctx, batch)
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runUploadSweepWorker deletes expired/cancelled resumable-upload sessions and
@@ -2820,33 +2773,18 @@ func runStorageMigrationCopyWorker(ctx context.Context, logger *slog.Logger, svc
 		interval = 10 * time.Second
 		batch    = 4
 	)
-	if !jitterStart(ctx, interval) {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			total := 0
-			for {
-				n, err := svc.CopyOnce(ctx, batch)
-				if err != nil {
-					logger.Warn("storage migration copy pass failed", "error", err)
-					break
-				}
-				total += n
-				if n == 0 {
-					break
-				}
-			}
-			if total > 0 {
-				logger.Info("storage migration copied objects", "count", total)
-			}
-		}
-	}
+	jobloop.Loop{
+		Interval: interval,
+		Jitter:   true,
+		Passes: []jobloop.Pass{{
+			Drain:   true,
+			FailMsg: "storage migration copy pass failed",
+			DoneMsg: "storage migration copied objects",
+			Run: func(ctx context.Context, _ time.Time) (int, error) {
+				return svc.CopyOnce(ctx, batch)
+			},
+		}},
+	}.Run(ctx, logger)
 }
 
 // runStorageMigrationSweepWorker advances the campaign state machine on a ticker
