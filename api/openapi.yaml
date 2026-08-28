@@ -18829,7 +18829,9 @@ components:
             runs:
               type: integer
               format: int64
-              description: Attempted purge fan-outs (one per invalidated video).
+              description: >-
+                Attempted purge runs — one per invalidated video fan-out or
+                single-key asset (avatar, banner, playlist cover).
             keys_purged:
               type: integer
               format: int64

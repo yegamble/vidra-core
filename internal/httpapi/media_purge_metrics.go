@@ -29,8 +29,9 @@ import (
 )
 
 var (
-	// videoEdgePurgeRuns counts attempted purge fan-outs (one per video whose
-	// edge-reachable objects were invalidated), not individual HTTP calls.
+	// videoEdgePurgeRuns counts attempted purge runs — one per video fan-out
+	// (purgeVideoEdgeCopies) or single-key asset invalidation (purgeEdgeKey) —
+	// not individual HTTP calls.
 	videoEdgePurgeRuns atomic.Int64
 	// videoEdgePurgeKeysPurged / videoEdgePurgeKeysFailed count the per-key
 	// outcomes across all runs. "Purged" means the provider accepted the
@@ -46,8 +47,8 @@ var (
 )
 
 // recordVideoEdgePurgeRun files one purge run's outcome. Called from
-// runVideoEdgePurge — the counters live here so that file's only touch is the
-// single call.
+// runVideoEdgePurge and purgeEdgeKey — the counters live here so that file's
+// touches stay single calls.
 func recordVideoEdgePurgeRun(purged, failed int, complete bool) {
 	videoEdgePurgeRuns.Add(1)
 	videoEdgePurgeKeysPurged.Add(int64(purged))
