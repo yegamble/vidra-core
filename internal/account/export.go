@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/pgconv"
+	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 
 	"github.com/vidra/vidra-core/internal/lease"
@@ -207,14 +208,7 @@ func (s *Service) recordExportFailure(ctx context.Context, row sqlcgen.ClaimDueA
 
 // exportBackoff is exportBaseBackoff * 2^(attempts-1), capped.
 func exportBackoff(attempts int) time.Duration {
-	d := exportBaseBackoff
-	for i := 1; i < attempts; i++ {
-		d *= 2
-		if d >= exportMaxBackoff {
-			return exportMaxBackoff
-		}
-	}
-	return d
+	return retry.Backoff(attempts, exportBaseBackoff, exportMaxBackoff)
 }
 
 // SweepExpiredExports deletes up to limit finished archives past their stamped

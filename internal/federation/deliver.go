@@ -16,6 +16,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/httpsig"
 	"github.com/vidra/vidra-core/internal/pgconv"
+	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
@@ -117,14 +118,7 @@ func (s *Service) recordDeliveryFailure(ctx context.Context, row sqlcgen.ClaimDu
 
 // deliveryBackoff is deliveryBaseBackoff * 2^(attempts-1), capped.
 func deliveryBackoff(attempts int) time.Duration {
-	d := deliveryBaseBackoff
-	for i := 1; i < attempts; i++ {
-		d *= 2
-		if d >= maxDeliveryBackoff {
-			return maxDeliveryBackoff
-		}
-	}
-	return d
+	return retry.Backoff(attempts, deliveryBaseBackoff, maxDeliveryBackoff)
 }
 
 // enqueueChannelDelivery queues an activity payload to inboxURL, to be signed as

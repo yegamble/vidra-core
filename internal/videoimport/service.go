@@ -27,6 +27,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
 	"github.com/vidra/vidra-core/internal/video"
@@ -557,14 +558,7 @@ func (s *Service) internalf(where string, err error) error {
 
 // backoff is baseBackoff * 2^(attempts-1), capped at maxBackoff.
 func backoff(attempts int) time.Duration {
-	d := baseBackoff
-	for i := 1; i < attempts; i++ {
-		d *= 2
-		if d >= maxBackoff {
-			return maxBackoff
-		}
-	}
-	return d
+	return retry.Backoff(attempts, baseBackoff, maxBackoff)
 }
 
 // failure carries a safe, client-visible import-failure reason.
