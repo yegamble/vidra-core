@@ -50,8 +50,21 @@ func (p *purgeRecorder) snapshot() []string {
 	return out
 }
 
-// purgeServer wires a real internal/cdn provider for the edge lookup and the
-// recorder for purge, exactly as cmd/api wires the provider's two methods.
+// testCDNPurge wires a real internal/cdn provider for the edge lookup and the
+// recorder for purge, exactly as cmd/api wires the provider's two methods —
+// as an Option, so every harness (video, profile-image, …) can mount the same
+// pair.
+func testCDNPurge(t *testing.T) (Option, *purgeRecorder) {
+	t.Helper()
+	provider, err := cdn.New(cdn.Config{BaseURL: testCDNBase}, nil)
+	if err != nil {
+		t.Fatalf("cdn.New: %v", err)
+	}
+	rec := &purgeRecorder{}
+	return WithDeliveryCDN(provider.EdgeURL, rec.purge), rec
+}
+
+// purgeServer is the full video harness with the CDN purge recorder mounted.
 //
 // The delivery_cdn_enabled toggle is left OFF deliberately: purge is NOT gated
 // by it (see delivery.WithCDN), because switching delivery off evicts nothing
@@ -59,13 +72,8 @@ func (p *purgeRecorder) snapshot() []string {
 // be asserting the wrong contract.
 func purgeServer(t *testing.T) (*Server, storage.Backend, *transcodeFakeRepo, *purgeRecorder) {
 	t.Helper()
-	provider, err := cdn.New(cdn.Config{BaseURL: testCDNBase}, nil)
-	if err != nil {
-		t.Fatalf("cdn.New: %v", err)
-	}
-	rec := &purgeRecorder{}
-	srv, blobs, tcRepo, _, _ := videoServerFullWith(t, testConfig(),
-		[]Option{WithDeliveryCDN(provider.EdgeURL, rec.purge)})
+	opt, rec := testCDNPurge(t)
+	srv, blobs, tcRepo, _, _ := videoServerFullWith(t, testConfig(), []Option{opt})
 	return srv, blobs, tcRepo, rec
 }
 

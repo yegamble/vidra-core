@@ -189,6 +189,65 @@ func (s *Server) runVideoEdgePurge(ctx context.Context, videoID uuid.UUID, snap 
 		"key_set_complete", complete)
 }
 
+// purgeEdgeKey invalidates ONE object at the edge — the single-key sibling of
+// purgeVideoEdgeCopies, for the assets that occupy exactly one stable identity
+// key (avatars, banners, playlist covers). The stable key is what makes these
+// purges matter at all: replacement overwrites IN PLACE, so without an
+// invalidation the edge serves the old bytes until its TTL expires, and after
+// a deletion it serves them with nothing at the origin left to name them.
+//
+// Same contract as the fan-out: detached (the work outlives the response by
+// design), best-effort (a purge failure never fails the mutation), and fired
+// AFTER the mutation commits with a key snapshotted BEFORE it — the
+// pre-mutation key is the one the edge cached; on an extension-changing
+// replacement the new key holds nothing yet.
+//
+// asset/resourceID label the failure log; the KEY is never logged (the purge
+// URL template is operator-supplied and may carry the credential, and log
+// lines must not become the place object keys leak from either).
+func (s *Server) purgeEdgeKey(ctx context.Context, asset string, resourceID uuid.UUID, key string) {
+	if !s.cdnConfigured() || key == "" {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	go func() {
+		if err := s.deliverysvc.Purge(ctx, key); err != nil {
+			s.logger.WarnContext(ctx, "cdn purge failed; the edge may still be serving this object",
+				"asset", asset,
+				"resource_id", resourceID.String())
+		}
+	}()
+}
+
+// userImageEdgeKey and channelImageEdgeKey record the one key a CDN edge could
+// be holding for a profile image, BEFORE a mutation replaces or removes it.
+// Empty when there is nothing to invalidate: no CDN configured (the same free-
+// by-default gate as the video snapshot), no image service wired, or no image
+// set. There is no privacy fence to re-derive here — identity images are
+// served with unconditional eligibility (profile_images.go), so "an image
+// exists" IS "the edge could hold it".
+func (s *Server) userImageEdgeKey(ctx context.Context, userID uuid.UUID, kind string) string {
+	if !s.cdnConfigured() || s.imagesvc == nil {
+		return ""
+	}
+	img, err := s.imagesvc.UserImage(ctx, userID, kind)
+	if err != nil {
+		return ""
+	}
+	return img.StorageKey
+}
+
+func (s *Server) channelImageEdgeKey(ctx context.Context, channelID uuid.UUID, kind string) string {
+	if !s.cdnConfigured() || s.imagesvc == nil {
+		return ""
+	}
+	img, err := s.imagesvc.ChannelImage(ctx, channelID, kind)
+	if err != nil {
+		return ""
+	}
+	return img.StorageKey
+}
+
 // expandEdgePurgeKeys turns a snapshot into the deduplicated key list to purge,
 // enumerating each prefix through the storage backend.
 //

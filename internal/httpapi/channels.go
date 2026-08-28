@@ -13,6 +13,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -316,6 +317,16 @@ func (s *Server) handleDeleteChannel(c echo.Context) error {
 			}
 		}
 	}
+	// The channel's avatar/banner cascade with it too (0040 ON DELETE CASCADE),
+	// at stable identity keys the edge may hold — snapshot them alongside the
+	// videos (the helpers self-gate on the CDN and the image service).
+	imageKinds := [...]string{profileimage.KindAvatar, profileimage.KindBanner}
+	var imageKeys [len(imageKinds)]string
+	if chID != uuid.Nil {
+		for i, kind := range imageKinds {
+			imageKeys[i] = s.channelImageEdgeKey(ctx, chID, kind)
+		}
+	}
 	if err := s.channelsvc.Delete(ctx, userID, c.Param("handle")); err != nil {
 		return channelError(err)
 	}
@@ -328,6 +339,9 @@ func (s *Server) handleDeleteChannel(c echo.Context) error {
 	// best-effort, capped per video (media_purge.go).
 	for _, p := range purges {
 		s.purgeVideoEdgeCopies(ctx, p.id, p.snap)
+	}
+	for i, kind := range imageKinds {
+		s.purgeEdgeKey(ctx, kind, chID, imageKeys[i])
 	}
 	return c.NoContent(http.StatusNoContent)
 }
