@@ -530,12 +530,19 @@ type Config struct {
 	// Default false. See product-decisions.md §11.
 	QuarantineNewUploads bool
 
-	// Feature toggles (all default true). These are the boot-time defaults for
-	// the runtime-mutable instance feature switches: an admin can override each
-	// live via PATCH /api/v1/admin/instance-settings (the DB overlay), and the
+	// Feature toggles. These are the boot-time defaults for the runtime-mutable
+	// instance feature switches: an admin can override each live via PATCH
+	// /api/v1/admin/instance-settings (the DB overlay), and the
 	// upload/import/live-create/comment-create gates consult the effective
 	// value. When a toggle is off, the corresponding endpoint returns 403
 	// feature_disabled. See fix_plan P10 (admin instance configuration).
+	//
+	// Uploads/imports/comments default true — they need nothing the stack does
+	// not ship. Live's default is DERIVED (LIVE_RTMP_URL set ⇒ on): it is the
+	// one toggle whose "on" needs an external media server, and a constant
+	// default-true booted every bare install into the dead-stream trap —
+	// enabled-but-unconfigured, streams creatable and never startable. See the
+	// derivation note in LoadFrom.
 	UploadsEnabled  bool
 	ImportsEnabled  bool
 	LiveEnabled     bool
@@ -1014,6 +1021,16 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 	// validate() rejects it.
 	role := Role(strings.ToLower(strings.TrimSpace(getEnv("VIDRA_ROLE", string(RoleAll)))))
 
+	// Read out here because FEATURE_LIVE_ENABLED's default is DERIVED from it
+	// below. Live is the one feature toggle whose "on" needs hardware the stack
+	// does not ship (an RTMP media server), so a constant default-true boots a
+	// bare install enabled-but-unconfigured: a permanent "Needs setup" finding
+	// on the infrastructure page, and creators offered a "Go live" that mints
+	// streams nobody can ever publish to — the dead-stream trap. Deriving the
+	// default from the wiring keeps both installs honest; an explicitly set
+	// FEATURE_LIVE_ENABLED always wins.
+	liveRTMPURL := getEnv("LIVE_RTMP_URL", "")
+
 	cfg := &Config{
 		Environment:                            env,
 		Role:                                   role,
@@ -1057,7 +1074,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		SearchInternalSecret:                   getEnv("SEARCH_INTERNAL_SECRET", ""),
 		SearchReconcileInterval:                p.Duration("SEARCH_RECONCILE_INTERVAL", 24*time.Hour),
 		SearchHealthInterval:                   p.Duration("SEARCH_HEALTH_INTERVAL", 15*time.Second),
-		LiveRTMPURL:                            getEnv("LIVE_RTMP_URL", ""),
+		LiveRTMPURL:                            liveRTMPURL,
 		LiveIngestSecret:                       getEnv("LIVE_INGEST_SECRET", ""),
 		LiveHLSRoot:                            strings.TrimRight(getEnv("LIVE_HLS_ROOT", ""), "/"),
 		InstanceDescription:                    getEnv("INSTANCE_DESCRIPTION", ""),
@@ -1069,7 +1086,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		QuarantineNewUploads:                   p.Bool("QUARANTINE_NEW_UPLOADS", false),
 		UploadsEnabled:                         p.Bool("FEATURE_UPLOADS_ENABLED", true),
 		ImportsEnabled:                         p.Bool("FEATURE_IMPORTS_ENABLED", true),
-		LiveEnabled:                            p.Bool("FEATURE_LIVE_ENABLED", true),
+		LiveEnabled:                            p.Bool("FEATURE_LIVE_ENABLED", liveRTMPURL != ""), // derived default — see liveRTMPURL above
 		CommentsEnabled:                        p.Bool("FEATURE_COMMENTS_ENABLED", true),
 		MailEnabled:                            p.Bool("MAIL_ENABLED", false),
 		SMTPHost:                               getEnv("SMTP_HOST", ""),

@@ -277,7 +277,7 @@ func TestInfrastructureFeatureDiscovery(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := testConfig()
-			cfg.LiveEnabled = false // the default-on toggle, so each case starts from off
+			cfg.LiveEnabled = false // testConfig pins live on; start each case from off
 			tc.mutate(cfg)
 			got, _ := infrastructure(t, authServerWithConfig(t, cfg))
 			f := featureNamed(t, got, tc.key)

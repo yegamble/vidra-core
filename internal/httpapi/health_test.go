@@ -48,8 +48,11 @@ func testConfig() *config.Config {
 		RateLimitRequests:     120,
 		AuthRateLimitRequests: 10,
 		RateLimitWindow:       time.Minute,
-		// Feature toggles default true (production config default), so the
-		// upload/import/live/comment gates are open unless a test flips them.
+		// Feature gates open, so upload/import/live/comment tests work unless a
+		// test flips them. Uploads/imports/comments mirror the production
+		// default; live's production default is DERIVED (on only when
+		// LIVE_RTMP_URL is set) and is pinned on here because the live
+		// handler tests predate that and exercise the enabled path.
 		UploadsEnabled:  true,
 		ImportsEnabled:  true,
 		LiveEnabled:     true,
