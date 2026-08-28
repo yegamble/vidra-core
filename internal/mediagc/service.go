@@ -229,6 +229,37 @@ func (s *Service) SetOwnership(o BucketOwnership) {
 	s.ownership = o
 }
 
+// refreshOwnership re-derives the ownership state from the marker itself,
+// because the marker is the shared truth and the field is one process's cache
+// of it: AdoptBucket in another replica moves the marker without moving this
+// process's state. Called ONLY from the blocked-delete path in Sweep — see the
+// comment there for why not per-sweep — and it returns the state to gate on.
+//
+//	read failed → state kept as-is (an unanswerable question must not delete)
+//	marker == this identity → owned   (some replica adopted; honour it)
+//	marker == another       → conflict (the reported state stays honest)
+//	no marker               → state kept as-is
+//
+// The no-marker case is deliberate: claiming a bucket is boot's decision (an
+// empty store) or an operator's (AdoptBucket), NEVER a sweep's. This is a read,
+// not the write half of an adoption. Without an identity there is nothing to
+// match a marker against, so there is nothing to refresh either.
+func (s *Service) refreshOwnership(ctx context.Context) BucketOwnership {
+	if s.identity == "" {
+		return s.Ownership()
+	}
+	marker, found, err := storage.ReadOwnerMarker(ctx, s.blobs)
+	switch {
+	case err != nil:
+		// Fail safe: the caller stays dry-run on the state it already had.
+	case found && marker == s.identity:
+		s.SetOwnership(OwnershipOwned)
+	case found:
+		s.SetOwnership(OwnershipConflict)
+	}
+	return s.Ownership()
+}
+
 // AdoptBucket claims the object store for this install: it stamps the instance
 // identity into the ownership marker and flips this process's state to owned, so
 // destructive sweeps are allowed from the next one onward. It is the deliberate,
@@ -342,7 +373,21 @@ func (s *Service) Sweep(ctx context.Context, dryRun bool) (Result, error) {
 	ownership := s.Ownership()
 	forced, forcedReason := false, ""
 	if !dryRun && !ownership.AllowsDelete() {
-		dryRun, forced, forcedReason = true, true, ReasonBucketOwnership
+		// The in-memory state is a boot-time cache of the marker, and adoption
+		// only flips it in the ONE process that served the admin's request. In a
+		// role-split or multi-replica deployment every other process — the leader
+		// worker running the daily sweep, a second api replica serving a manual
+		// sweep — would otherwise stay forced-dry-run until restart, while the
+		// admin holds an "owned" response in their hand. So re-read the marker —
+		// but ONLY here, on the already-blocked path. Boot deliberately refused a
+		// per-sweep round trip on the ordinary path (an owned store re-answering
+		// the same question daily); a sweep that is about to refuse to delete is
+		// not the ordinary path, and one small object read is what it costs to
+		// make "re-enables deletion from the next sweep" true across processes.
+		ownership = s.refreshOwnership(ctx)
+		if !ownership.AllowsDelete() {
+			dryRun, forced, forcedReason = true, true, ReasonBucketOwnership
+		}
 	}
 	if !dryRun && s.migrationActive != nil {
 		active, merr := s.migrationActive(ctx)
