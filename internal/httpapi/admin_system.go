@@ -32,10 +32,32 @@ type systemRateLimits struct {
 	WindowSeconds int64 `json:"window_seconds"` // the shared fixed window
 }
 
+// systemDatabase is this process's PostgreSQL pool, sampled when the page is
+// read (phase-5 multi-node floor). Four counts and nothing else: they are the
+// ones an operator can act on, and the invariant between them is what makes
+// them readable — acquired + idle + constructing == total, and total can never
+// exceed max, so "acquired pinned at max" is the whole diagnosis of a pool that
+// has become the bottleneck.
+//
+// It is a SAMPLE, not history. The Prometheus gauges (vidra_db_pool_*) are the
+// instrument for trend and for the wait counters; this block exists because the
+// default install has no metrics stack, and an admin staring at a slow instance
+// should not have to stand one up to find out whether its pool is full.
+//
+// Nothing here is a secret: connection COUNTS, never a DSN, a credential or a
+// server address. The block is absent, not zeroed, when no pool is wired.
+type systemDatabase struct {
+	PoolTotalConns    int32 `json:"pool_total_conns"`
+	PoolIdleConns     int32 `json:"pool_idle_conns"`
+	PoolAcquiredConns int32 `json:"pool_acquired_conns"`
+	PoolMaxConns      int32 `json:"pool_max_conns"` // DB_MAX_CONNS, per process
+}
+
 // systemStatusResponse is the admin-facing operational snapshot: build info, the
 // runtime environment, process uptime, an overall health flag, per-dependency
-// component status, and the effective (non-secret) rate-limit config. It reports
-// only operational metadata — never secrets/PII.
+// component status, the effective (non-secret) rate-limit config, and live
+// connection-pool counts. It reports only operational metadata — never
+// secrets/PII.
 type systemStatusResponse struct {
 	Status        string                     `json:"status"` // "ok" | "degraded"
 	Software      systemSoftware             `json:"software"`
@@ -43,6 +65,11 @@ type systemStatusResponse struct {
 	UptimeSeconds int64                      `json:"uptime_seconds"`
 	Components    map[string]componentStatus `json:"components"`
 	RateLimits    systemRateLimits           `json:"rate_limits"`
+	// Database is omitted entirely when no pool is wired (unit tests, embedders,
+	// any process without a database). Omitting is the honest degradation: a
+	// zeroed pool block would render as "0 of 0 connections", which an operator
+	// reads as a pool with nothing left.
+	Database *systemDatabase `json:"database,omitempty"`
 }
 
 // handleSystemStatus returns an operational snapshot for the admin dashboard.
@@ -55,7 +82,8 @@ func (s *Server) handleSystemStatus(c echo.Context) error {
 		status = "degraded"
 	}
 	return c.JSON(http.StatusOK, systemStatusResponse{
-		Status: status,
+		Status:   status,
+		Database: s.databasePoolSnapshot(),
 		Software: systemSoftware{
 			Name:      "vidra",
 			Version:   version.Version,
@@ -73,4 +101,21 @@ func (s *Server) handleSystemStatus(c echo.Context) error {
 			WindowSeconds: int64(s.cfg.RateLimitWindow.Seconds()),
 		},
 	})
+}
+
+// databasePoolSnapshot samples the pool, or returns nil when none is wired.
+// Nil is the whole nil-safety story for this block: the caller marshals it
+// through an omitempty pointer, so an unwired process simply has no database
+// section rather than a section full of zeroes.
+func (s *Server) databasePoolSnapshot() *systemDatabase {
+	if s.dbPoolStats == nil {
+		return nil
+	}
+	st := s.dbPoolStats()
+	return &systemDatabase{
+		PoolTotalConns:    st.TotalConns,
+		PoolIdleConns:     st.IdleConns,
+		PoolAcquiredConns: st.AcquiredConns,
+		PoolMaxConns:      st.MaxConns,
+	}
 }

@@ -6,6 +6,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/gommon/bytes"
+
+	"github.com/vidra/vidra-core/internal/drm"
 )
 
 // --- GET /api/v1/admin/infrastructure ---
@@ -30,6 +32,15 @@ import (
 // what the deployment is, and an admin toggle that says "live streaming on"
 // while no RTMP ingest exists is the sentence this page has to be able to
 // contradict. The runtime toggles live on /admin/config and GET /instance.
+//
+// EXACTLY ONE ROW BREAKS THAT RULE, AND ONLY FOR ITS ENABLED HALF: cdn. A CDN
+// has no env spelling of "on" — DELIVERY_CDN_BASE_URL is the wiring and
+// delivery_cdn_enabled is the posture (config.go, phase-4 item 2) — so a
+// boot-config-only reading could report nothing but "off" forever, on an
+// instance actively serving through an edge. That is the lie this page exists
+// to prevent, so the toggle is read. The rule survives where it earns its keep:
+// the CONFIGURED half still comes from boot config, which is what lets the row
+// contradict a toggle switched on with nothing behind it.
 
 // infraServer is the process's own shape: the environment it believes it is in,
 // the request deadlines and size caps it enforces, and whether the two
@@ -63,6 +74,31 @@ type infraServer struct {
 	// naming internal hosts in an admin page is free reconnaissance.
 	TracingEnabled  bool   `json:"tracing_enabled"`
 	TracingProtocol string `json:"tracing_protocol"`
+	// DBMaxConns / DBMinConns are this PROCESS's slice of PostgreSQL's
+	// server-wide max_connections budget (phase-5 multi-node floor). Read-only
+	// here for the same reason the rate limits are read-only on /admin/system:
+	// pool sizing is a deploy-time capacity decision, not a runtime knob.
+	//
+	// They are on this page because the arithmetic that decides whether a second
+	// replica fits is not visible from either end otherwise — the database sees
+	// connections but not which process owns them, and a replica sees its own
+	// pool but not how many replicas exist. DB_MAX_CONNS is the multiplicand an
+	// operator needs before scaling, and this is where they read it.
+	DBMaxConns int `json:"db_max_conns"`
+	DBMinConns int `json:"db_min_conns"`
+	// The two churn knobs, in seconds. A pool that retires connections faster
+	// than the workload reuses them pays a fresh handshake per burst, which
+	// shows up as latency nobody can attribute — so the numbers behind it are
+	// worth being able to read without an SSH session.
+	DBConnMaxLifetimeSeconds int64 `json:"db_conn_max_lifetime_seconds"`
+	DBConnMaxIdleTimeSeconds int64 `json:"db_conn_max_idle_time_seconds"`
+	// DrainDelaySeconds is HTTP_DRAIN_DELAY: how long this process keeps serving
+	// after SIGTERM, once /readyz has started answering 503, before the listener
+	// closes. 0 — the single-node default — is correct when nothing is routing
+	// to this process, and is a source of user-visible connection resets on
+	// every deploy when a load balancer is. Whether it is set is invisible from
+	// inside the product until the resets show up in somebody else's graph.
+	DrainDelaySeconds int64 `json:"drain_delay_seconds"`
 }
 
 // infraStorage is where media bytes actually live. The bucket's LOCATION is
@@ -213,6 +249,11 @@ func (s *Server) handleInfrastructure(c echo.Context) error {
 			MetricsEnabled:              cfg.MetricsEnabled,
 			TracingEnabled:              cfg.OTelEnabled,
 			TracingProtocol:             cfg.OTelExporterProtocol,
+			DBMaxConns:                  cfg.DBMaxConns,
+			DBMinConns:                  cfg.DBMinConns,
+			DBConnMaxLifetimeSeconds:    int64(cfg.DBConnMaxLifetime.Seconds()),
+			DBConnMaxIdleTimeSeconds:    int64(cfg.DBConnMaxIdleTime.Seconds()),
+			DrainDelaySeconds:           int64(cfg.HTTPDrainDelay.Seconds()),
 		},
 		Storage: infraStorage{
 			Backend:          cfg.StorageBackend,
@@ -247,13 +288,28 @@ func (s *Server) handleInfrastructure(c echo.Context) error {
 // at them would be confidently wrong. The list is fixed and ordered, so the
 // admin UI renders a stable page rather than one that reshuffles per request.
 //
-// DASH and CDN are deliberately ABSENT. Neither exists in vidra: playback is
-// HLS (plus the progressive original), and there is no CDN integration to
-// enable or report. Listing them as "available, not configured" would invent
-// two features and send an operator looking for switches that do not exist.
+// DASH is deliberately ABSENT, and it is the one entry whose absence needs
+// defending, because vidra DOES produce DASH: the default cmaf packager writes
+// one set of CMAF/fMP4 segments addressed by both an MPEG-DASH manifest and HLS
+// playlists (config.TranscodingPackager). It is not a row because it is not an
+// optional subsystem — there is no switch, nothing to configure and nothing
+// that can be half-wired. Packaging format is a property of each VIDEO, boot-
+// baked at the moment its tree was written and recorded on the row, so an
+// instance is routinely serving both formats at once and no single (enabled,
+// configured) pair could describe it without lying. The honest report of the
+// ladder belongs beside the videos, not in a feature list.
+//
+// (An earlier version of this comment claimed there was no DASH and no CDN at
+// all. Both shipped — phase 3 and phase 4 — and the claim outlived them by two
+// phases, which is the whole argument for pinning the vocabulary in a test.)
 func (s *Server) infraFeatures() []infraFeature {
 	cfg := s.cfg
 	transcodeCapable := s.transcodesvc != nil && s.transcodesvc.Capable()
+	// Read once: the CDN row consults both halves three times between its
+	// columns and its note, and a page whose pill and whose sentence disagreed
+	// because a toggle flipped between two reads would be worse than either.
+	cdnEnabled := s.cdnDeliveryEnabled()
+	cdnWired := strings.TrimSpace(cfg.DeliveryCDNBaseURL) != ""
 
 	features := []infraFeature{
 		{
@@ -326,6 +382,30 @@ func (s *Server) infraFeatures() []infraFeature {
 			Configured: s.ipfsConfigured(),
 		},
 		{
+			Key: "cdn",
+			// The one row that reads the runtime overlay, and only here — see
+			// the file header. delivery_cdn_enabled is the operator's switch
+			// (default off, read per request so an incident can turn the edge
+			// off without a restart); DELIVERY_CDN_BASE_URL is the wiring that
+			// makes a CDN source exist at all. Neither alone serves a byte from
+			// an edge, which is exactly the pair this column shape is for.
+			Enabled:    cdnEnabled,
+			Configured: cdnWired,
+			// The wired-but-off quadrant is the SHIPPED posture immediately
+			// after configuring a CDN, not a mistake — see cdnWiredButOffNote.
+			Note: cdnWiredButOffNote(cdnEnabled, cdnWired),
+		},
+		{
+			Key: "drm",
+			// DRM_PROVIDER is a CLOSED set validated at boot, so anything that
+			// is not the default is a provider this build knows. Configured is
+			// the PRESENCE of DRM_KEY_KEK and never its value: it seals content
+			// keys at rest and has no fallback to any other KEK, so it is a
+			// secret of its own trust domain (config.go, validateDRM).
+			Enabled:    cfg.DRMProvider != "" && cfg.DRMProvider != drm.ProviderNone,
+			Configured: strings.TrimSpace(cfg.DRMKeyKEK) != "",
+		},
+		{
 			Key:        "tracing",
 			Enabled:    cfg.OTelEnabled,
 			Configured: strings.TrimSpace(cfg.OTelExporterEndpoint) != "",
@@ -374,6 +454,25 @@ func mailDevCaptureNote(hasMailer, mailEnabled bool) string {
 	return "Mail is CAPTURED, not delivered: this deployment runs the development mail seam with MAIL_ENABLED unset, so password resets and verification links are held in memory for the local test harness and never leave the process. That is correct for a developer machine and wrong everywhere else — set MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and SMTP_FROM before anybody outside it relies on email."
 }
 
+// cdnWiredButOffNote covers the CDN's own wrong quadrant: configured, not
+// enabled.
+//
+// For every other feature "off" means "you have not set it up", and the generic
+// discovery note names the variable to set. For a CDN that variable is already
+// set — the operator did the deploy-time half and stopped at the runtime
+// switch, which is the SHIPPED sequence, not a mistake: wiring a CDN
+// deliberately does not turn it on, and the boot log says so in as many words.
+// Telling that operator to set DELIVERY_CDN_BASE_URL is advice they already
+// took, which is how a page loses the reader it needs on the row below.
+//
+// Returns "" in the other three quadrants, where the generic notes are right.
+func cdnWiredButOffNote(enabled, configured bool) string {
+	if enabled || !configured {
+		return ""
+	}
+	return "A CDN is WIRED BUT NOT IN USE: DELIVERY_CDN_BASE_URL points at an edge and the delivery_cdn_enabled setting is off, so every byte is still served by this instance. That is the deliberate shipped sequence — configuring an edge never starts using it, because nothing here can verify that the base URL actually fronts these object keys. Turn on delivery_cdn_enabled (Advanced → delivery) when you are ready; only public, published, uncredentialed media is ever handed to an edge, and switching it back off takes effect on the next request without a restart."
+}
+
 // infraFeatureNote is the operator-facing sentence for one feature: what the
 // gap is and what closing it would buy. A fully-configured, switched-on feature
 // gets no note — the success pill already says everything.
@@ -407,6 +506,8 @@ var infraFeatureOffNotes = map[string]string{
 	"tracing":        "There are no distributed traces, so a slow request can only be investigated from logs. Set OTEL_ENABLED=true with OTEL_EXPORTER_OTLP_ENDPOINT to export spans to a collector.",
 	"metrics":        "No Prometheus metrics are exposed. METRICS_ENABLED=true mounts GET /metrics — note that endpoint has NO authentication of its own, so the reverse proxy must block it before you expose this instance publicly.",
 	"vp9_alternates": "Only H.264 is produced. TRANSCODING_VP9_ENABLED=true additionally emits a VP9/WebM download alternate, which is smaller at the same quality but costs a second encode of every upload.",
+	"cdn":            "Every media byte is served by this instance, so viewer bandwidth is your bandwidth and a distant viewer's segments cross the whole network on each request. Point DELIVERY_CDN_BASE_URL at a CDN whose origin is the media bucket — the edge URL is that base plus the object key, so the origin must be KEY-addressed (the bucket, or a server rooted at the media directory) and NOT this API, which addresses media by route and would 404 every request. Then turn on the delivery_cdn_enabled setting to start using it.",
+	"drm":            "Media is served unencrypted, which is the right default: encryption costs a packaging pass and locks playback to browsers with a working CDM. The only provider this build ships is DRM_PROVIDER=clearkey-test, a TEST key system that hands the content key to any authorised viewer in the clear over TLS — it exists to prove the license path end to end, not to protect anything, and it encrypts nothing yet (the packaging step that would mint content keys has not landed). Do not read it as content protection.",
 }
 
 // infraFeatureMisconfiguredNotes is the other half: the switch is on and the
@@ -419,6 +520,11 @@ var infraFeatureOffNotes = map[string]string{
 // mail via the dev capture seam — which mailDevCaptureNote owns. A note here
 // for a state that cannot exist would be copy nobody ever reads and nobody ever
 // checks, which is how it becomes wrong.
+//
+// There is no "drm" entry for the same reason: validateDRM refuses to boot with
+// a provider and no DRM_KEY_KEK, because a content key that was never sealed is
+// a content key stored in plaintext. The quadrant is unreachable on a running
+// instance, so the row's two columns can only agree.
 var infraFeatureMisconfiguredNotes = map[string]string{
 	"search":         "A search client is wired but SEARCH_SERVICE_URL is empty, so every query is falling back to the local database.",
 	"atproto":        "ATPROTO_ENABLED is set with no ATPROTO_KEY_KEK or FEDERATION_KEY_KEK, so linked Bluesky app passwords would be stored unsealed. Production refuses to boot in this state; fix it before promoting this instance.",
@@ -426,6 +532,7 @@ var infraFeatureMisconfiguredNotes = map[string]string{
 	"captions":       "WHISPER_ENABLED is set with no WHISPER_ENDPOINT, so caption requests answer 503.",
 	"live":           "Live streaming is on but the ingest plane is incomplete: LIVE_RTMP_URL tells streamers where to publish and LIVE_HLS_ROOT is where the media server writes segments. Without both, streams can be created and never started.",
 	"tracing":        "OTEL_ENABLED is set with no OTEL_EXPORTER_OTLP_ENDPOINT, so spans are produced and discarded.",
+	"cdn":            "The delivery_cdn_enabled setting is on and DELIVERY_CDN_BASE_URL is empty, so no CDN source exists and every byte is still served by this instance. The toggle is the runtime half of the pair; the base URL is the deploy-time half and needs a restart to take effect.",
 	"vp9_alternates": "VP9 alternates are enabled but the transcoding pipeline is not available (ffmpeg/ffprobe missing, or TRANSCODING_ENABLED is off), so no alternate is ever produced.",
 }
 

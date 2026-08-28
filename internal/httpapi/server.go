@@ -204,6 +204,13 @@ type Server struct {
 	// embedder that does not wire it — reports the ledger as unread; it never
 	// reports "fresh install", which would be a different and much worse lie.
 	schemaLedger schemaLedgerReader
+	// dbPoolStats samples this process's PostgreSQL pool for the admin status
+	// page. A FUNC rather than the pool itself, and the same one the Prometheus
+	// gauges pull: cmd/api owns the single translation of pgx's Stat type, so
+	// neither this package nor internal/observability grows a driver import.
+	// Nil — unit tests, and any embedder that wires nothing — omits the block
+	// rather than reporting a pool of zeroes, which reads as a saturated pool.
+	dbPoolStats func() observability.DBPoolStats
 	// playbackSigner mints/verifies the short-lived, video-scoped playback tokens
 	// that unlock password-protected videos (CORE-17 / W1.C2). Derived in New()
 	// from the JWT secret via domain separation, so it is always present.
@@ -668,6 +675,21 @@ func WithDeliveryCDN(edge delivery.CDNLookup, purge delivery.CDNPurge) Option {
 // seam has not landed.
 func WithDRM(p drm.Provider) Option {
 	return func(s *Server) { s.drmProvider = p }
+}
+
+// WithDBPoolStats wires a sampler for this process's PostgreSQL pool, so the
+// admin status page can report live saturation (phase-5 multi-node floor).
+//
+// It takes the SAME func cmd/api hands observability.RegisterDBPoolSource, and
+// that sharing is the point: pool saturation was invisible before phase 5, and
+// the fix that landed was Prometheus-only — so an operator with no metrics
+// stack, which is the default, still could not answer "is my pool the
+// bottleneck". The admin page is where they already are when they ask.
+//
+// Unset means the block is ABSENT from the response, not zero: a pool reported
+// as 0 of 0 is indistinguishable from a pool that is fully checked out.
+func WithDBPoolStats(sample func() observability.DBPoolStats) Option {
+	return func(s *Server) { s.dbPoolStats = sample }
 }
 
 // WithMetrics attaches the Prometheus RED-metrics registry. When set AND
