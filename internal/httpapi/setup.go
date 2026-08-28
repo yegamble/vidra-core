@@ -39,6 +39,11 @@ func (r claimOwnerRequest) Validate() []FieldError {
 		fes = append(fes, FieldError{Field: "username", Message: "is required"})
 	case len(name) < 3 || len(name) > 30:
 		fes = append(fes, FieldError{Field: "username", Message: "must be 3–30 characters"})
+	case usernameHasReservedChars(name):
+		// Same ban as registration: sign-in accepts an email OR a username, so
+		// a NEW username holding '@' or spaces could only ever shadow — never
+		// reach — an address. See usernameHasReservedChars in auth.go.
+		fes = append(fes, FieldError{Field: "username", Message: usernameReservedCharsMessage})
 	}
 	if !looksLikeEmail(r.Email) {
 		fes = append(fes, FieldError{Field: "email", Message: "must be a valid email"})

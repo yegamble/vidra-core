@@ -16,7 +16,12 @@ every signup path answers `403 owner_claim_required` until the operator redeems 
 the claim is outstanding re-mints the token and invalidates the previous one — even
 once users exist — and `GET /api/v1/instance` reports the first-run state as
 `owner_claim_pending`. `OWNER_CLAIM_TOKEN` pins the token to a fixed value for dev/test
-harnesses (refused in production). Login reports unknown-account and wrong-password
+harnesses (refused in production). Login accepts an email OR a username in the
+`identifier` field (the legacy `email` field still works; sending both is a `422`).
+When an identifier is one account's email and another's username the **email always
+wins**, so nobody can shadow a victim's sign-in by choosing a lookalike username; for
+the same reason new usernames may not contain `@` or whitespace (existing ones are
+unaffected). Login reports unknown-account and wrong-password
 identically (`401`) to prevent enumeration. Configure signing via `JWT_SECRET`
 (required in production), `JWT_ISSUER`, `JWT_AUDIENCE`, `JWT_ACCESS_TTL`,
 `JWT_REFRESH_TTL`.

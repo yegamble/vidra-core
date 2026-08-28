@@ -492,9 +492,14 @@ paths:
       operationId: login
       summary: Log in
       description: >-
-        Verifies credentials and returns an access token. Unknown account and
-        wrong password are reported identically (401) to prevent account
-        enumeration. With `cookie_mode: true` (or an existing `vidra_refresh`
+        Verifies credentials and returns an access token. The account is
+        identified by EXACTLY ONE of `identifier` (an email address or a
+        username) or the legacy `email` field. When an `identifier` matches both
+        one account's email and another account's username, the EMAIL always
+        wins — the owner of an address is the only account that string can reach,
+        so a lookalike username can never shadow someone else's sign-in.
+        Unknown account and wrong password are reported identically (401) to
+        prevent account enumeration. With `cookie_mode: true` (or an existing `vidra_refresh`
         cookie) the refresh token is delivered as an httpOnly `vidra_refresh`
         cookie (Path=/api/v1/auth, SameSite=Lax, Secure on https instances)
         instead of in the response body. When the account has two-factor
@@ -520,7 +525,9 @@ paths:
                   - $ref: "#/components/schemas/AuthResponse"
                   - $ref: "#/components/schemas/MFARequiredResponse"
         "401":
-          description: Invalid email or password.
+          description: >-
+            Invalid credentials — the identifier is unknown or the password is
+            wrong. The two are deliberately indistinguishable.
           content:
             application/json:
               schema:
@@ -20018,6 +20025,12 @@ components:
           minLength: 3
           maxLength: 30
           example: ada
+          description: >-
+            Must not contain `@` or whitespace. Sign-in accepts an email OR a
+            username and resolves the email first, so a username holding `@`
+            could only ever be an unreachable sign-in identifier or a lookalike
+            of another account's address. Usernames created before this rule are
+            unaffected and still sign in normally.
         email:
           type: string
           example: ada@example.test
@@ -20064,6 +20077,9 @@ components:
           minLength: 3
           maxLength: 30
           example: ada
+          description: >-
+            Must not contain `@` or whitespace — the same rule registration
+            applies, for the same reason (see RegisterRequest.username).
         email:
           type: string
           example: ada@example.test
@@ -20183,11 +20199,30 @@ components:
                 $ref: "#/components/schemas/FederationFollowerRequest"
     LoginRequest:
       type: object
-      required: [email, password]
+      required: [password]
+      description: >-
+        Send EXACTLY ONE identifier: `identifier` (an email address or a
+        username) or the legacy `email`. Supplying both is a 422 field error on
+        `identifier` — the request would otherwise be ambiguous. Supplying
+        neither is a 422 on `email`.
       properties:
         email:
           type: string
           example: ada@example.test
+          description: >-
+            Legacy email-only sign-in field, still fully supported. Must be a
+            syntactically valid address. Prefer `identifier`.
+        identifier:
+          type: string
+          minLength: 3
+          maxLength: 254
+          example: ada
+          description: >-
+            An email address OR a username. No format is imposed beyond length,
+            because usernames created before the '@'/whitespace ban may contain
+            anything. When the value matches an account's email address it
+            ALWAYS resolves to that account, never to a different account that
+            holds the same string as its username.
         password:
           type: string
           format: password

@@ -50,6 +50,12 @@ var (
 type Repository interface {
 	CreateUser(ctx context.Context, arg sqlcgen.CreateUserParams) (sqlcgen.User, error)
 	GetUserByEmail(ctx context.Context, lowerEmail string) (sqlcgen.User, error)
+	// GetUserByLoginIdentifier resolves a sign-in identifier that may be an
+	// email OR a username, in one round trip, email taking precedence. It is
+	// the ONLY lookup Login may use: unlike GetUserByUsername it does not
+	// filter on is_active, so the disabled check stays after the password
+	// compare and cannot become an enumeration oracle.
+	GetUserByLoginIdentifier(ctx context.Context, lowerIdentifier string) (sqlcgen.User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
 	GetPublicUserProfileByUsername(ctx context.Context, lowerUsername string) (sqlcgen.GetPublicUserProfileByUsernameRow, error)
 	// Public account search (GET /api/v1/search/accounts) — the list form of
@@ -247,10 +253,26 @@ type RegisterInput struct {
 	Password string
 }
 
-// LoginInput is validated login data.
+// LoginInput is validated login data. Sign-in accepts an email OR a username;
+// Email is kept as the legacy field so existing callers compile unchanged.
 type LoginInput struct {
-	Email    string
-	Password string
+	// Email is the email-only sign-in field. Used when Identifier is empty.
+	Email string
+	// Identifier is the email-or-username sign-in string. When non-empty it
+	// takes precedence over Email — the HTTP layer 422s a body that sets both,
+	// so exactly one is ever meaningful.
+	Identifier string
+	Password   string
+}
+
+// loginIdentifier collapses Email/Identifier to the single, trimmed string the
+// account lookup is keyed by. Exactly one lookup per attempt is a security
+// invariant, so the service never sees two candidate identifiers.
+func (in LoginInput) loginIdentifier() string {
+	if s := strings.TrimSpace(in.Identifier); s != "" {
+		return s
+	}
+	return strings.TrimSpace(in.Email)
 }
 
 // Register creates an account and returns it with a fresh access + refresh token
@@ -346,12 +368,21 @@ type LoginResult struct {
 	MFAToken    string
 }
 
-// Login verifies credentials. Without MFA it returns the account with an
-// access + refresh token pair; with TOTP enabled it withholds the session and
-// returns an mfa_token instead (see LoginResult). Unknown account and wrong
-// password are indistinguishable (ErrInvalidCredentials).
+// Login verifies credentials presented as an email OR a username. Without MFA
+// it returns the account with an access + refresh token pair; with TOTP enabled
+// it withholds the session and returns an mfa_token instead (see LoginResult).
+// Unknown account and wrong password are indistinguishable
+// (ErrInvalidCredentials).
+//
+// SECURITY INVARIANTS — the lookup resolves at most ONE account (email column
+// first, so the owner of an address is the only account that string can reach)
+// and its password is the only one compared. A match with a wrong password is a
+// flat ErrInvalidCredentials; there is deliberately no retry against the other
+// column, which would let one identifier reach two accounts. A total miss still
+// runs the dummy compare, and the disabled/verification/MFA gates all stay
+// behind the compare so none of them answers before a credential is proven.
 func (s *Service) Login(ctx context.Context, in LoginInput, userAgent string) (LoginResult, error) {
-	user, err := s.repo.GetUserByEmail(ctx, strings.TrimSpace(in.Email))
+	user, err := s.repo.GetUserByLoginIdentifier(ctx, in.loginIdentifier())
 	if err != nil {
 		// Run a dummy compare to keep timing roughly constant whether or not the
 		// account exists, reducing user-enumeration via response time.

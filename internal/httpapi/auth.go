@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -103,6 +104,24 @@ const maxRegistrationNoteLen = 2000
 // avoid a surprising security cliff.
 const maxPasswordLen = 72
 
+// usernameReservedCharsMessage is the shared 422 text for the '@'/whitespace
+// ban applied to NEW usernames (register + owner claim).
+const usernameReservedCharsMessage = "must not contain '@' or spaces"
+
+// usernameHasReservedChars reports whether a NEW username collides with the
+// sign-in identifier namespace. Sign-in accepts an email OR a username and
+// resolves the email column first, so a username containing '@' can only ever
+// be an unreachable sign-in identifier — or a deliberate lookalike of somebody
+// else's address. Whitespace is banned alongside it because a username with
+// leading/inner spaces is indistinguishable from a typo at the prompt.
+//
+// Existing usernames are deliberately NOT migrated: they keep working, they
+// simply can never shadow an email (precedence already guarantees that). Only
+// newly chosen names are constrained.
+func usernameHasReservedChars(name string) bool {
+	return strings.ContainsRune(name, '@') || strings.ContainsFunc(name, unicode.IsSpace)
+}
+
 func (r registerRequest) Validate() []FieldError {
 	var fes []FieldError
 	name := strings.TrimSpace(r.Username)
@@ -111,6 +130,8 @@ func (r registerRequest) Validate() []FieldError {
 		fes = append(fes, FieldError{Field: "username", Message: "is required"})
 	case len(name) < 3 || len(name) > 30:
 		fes = append(fes, FieldError{Field: "username", Message: "must be 3–30 characters"})
+	case usernameHasReservedChars(name):
+		fes = append(fes, FieldError{Field: "username", Message: usernameReservedCharsMessage})
 	}
 	if !looksLikeEmail(r.Email) {
 		fes = append(fes, FieldError{Field: "email", Message: "must be a valid email"})
@@ -127,19 +148,50 @@ func (r registerRequest) Validate() []FieldError {
 	return fes
 }
 
-// loginRequest is the POST /api/v1/auth/login body.
+// loginRequest is the POST /api/v1/auth/login body. Exactly one identifier
+// field is sent: `identifier` (email OR username — the current shape) or the
+// legacy `email` (kept so older clients keep signing in unchanged).
 type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email string `json:"email"`
+	// Identifier is an email address or a username. It carries no shape rule
+	// beyond length on purpose: usernames predating the '@'/whitespace ban can
+	// contain anything, and refusing them here would lock those accounts out.
+	// Ambiguity is resolved in the query, not the validator — the email column
+	// is matched first, so an identifier that is someone's address always
+	// reaches that someone.
+	Identifier string `json:"identifier,omitempty"`
+	Password   string `json:"password"`
 	// CookieMode opts the new session into cookie mode: the refresh token is
 	// set as an httpOnly vidra_refresh cookie and omitted from the body.
 	CookieMode bool `json:"cookie_mode,omitempty"`
 }
 
+// Sign-in identifiers are bounded well above the practical maximum (RFC 5321
+// caps a mail path at 254 octets; usernames at 30) purely to stop an unbounded
+// string reaching the database.
+const maxLoginIdentifierLen = 254
+
 func (r loginRequest) Validate() []FieldError {
 	var fes []FieldError
-	if !looksLikeEmail(r.Email) {
-		fes = append(fes, FieldError{Field: "email", Message: "must be a valid email"})
+	email := strings.TrimSpace(r.Email)
+	identifier := strings.TrimSpace(r.Identifier)
+	switch {
+	case email != "" && identifier != "":
+		// Two identifiers in one body is ambiguous, and silently preferring one
+		// would make the caller's intent unknowable — including to an audit
+		// reader. Refuse rather than guess.
+		fes = append(fes, FieldError{Field: "identifier", Message: "must not be combined with email — send exactly one"})
+	case identifier != "":
+		if n := len(identifier); n < 3 || n > maxLoginIdentifierLen {
+			fes = append(fes, FieldError{Field: "identifier", Message: "must be 3–254 characters"})
+		}
+	default:
+		// Legacy email-only shape. This is also the empty-body case, which keeps
+		// reporting the `email` field exactly as it did before `identifier`
+		// existed.
+		if !looksLikeEmail(r.Email) {
+			fes = append(fes, FieldError{Field: "email", Message: "must be a valid email"})
+		}
 	}
 	if r.Password == "" {
 		fes = append(fes, FieldError{Field: "password", Message: "is required"})
@@ -471,16 +523,19 @@ func (s *Server) handleLogin(c echo.Context) error {
 		return err
 	}
 	res, err := s.authsvc.Login(c.Request().Context(), auth.LoginInput{
-		Email:    in.Email,
-		Password: in.Password,
+		Email:      in.Email,
+		Identifier: in.Identifier,
+		Password:   in.Password,
 	}, c.Request().UserAgent())
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrInvalidCredentials):
 			// No actor_id: the account is unknown or the password was wrong, and
-			// we must not leak which (or the attempted email — it is PII).
+			// we must not leak which (or the attempted identifier — it is PII
+			// when it is an email). Identifier-neutral wording, because the
+			// caller may have signed in with a username.
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "invalid_credentials")
-			return echo.NewHTTPError(http.StatusUnauthorized, "invalid email or password")
+			return echo.NewHTTPError(http.StatusUnauthorized, "invalid credentials")
 		case errors.Is(err, auth.ErrAccountDisabled):
 			// Login returns an empty user on this path, so no actor_id is available.
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "account_disabled")
