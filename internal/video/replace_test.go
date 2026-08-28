@@ -219,3 +219,49 @@ func TestReplaceSourceRejectionsKeepCurrentSource(t *testing.T) {
 		})
 	}
 }
+
+// TestReplaceSourceBillsOncePerStoredSource: the upload-finalize worker retries a
+// replace-purpose session, so a failure after the swap re-runs ReplaceSource over
+// the same bytes. The ledger must see one event, not one per attempt.
+func TestReplaceSourceBillsOncePerStoredSource(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	blobs, _ := storage.NewLocal(t.TempDir())
+
+	var billed []int64
+	svc := NewService(repo, blobs,
+		WithUploadUsageRecorder(func(_ context.Context, _ uuid.UUID, bytes int64) error {
+			billed = append(billed, bytes)
+			return nil
+		}),
+	)
+	ctx := context.Background()
+	id := publishWithOriginal(t, svc, owner, "old source bytes")
+	billed = nil // the initial upload's event is not what this is about
+
+	const newContent = "brand new source!"
+	replace := func(body string) {
+		t.Helper()
+		if _, _, err := svc.ReplaceSource(ctx, owner, id, UploadInput{
+			Filename: "v2.mp4", ContentType: "video/mp4", Reader: strings.NewReader(body),
+		}, false); err != nil {
+			t.Fatalf("ReplaceSource(%q): %v", body, err)
+		}
+	}
+
+	replace(newContent)
+	if len(billed) != 1 || billed[0] != int64(len(newContent)) {
+		t.Fatalf("first replace billed %v, want one event of %d bytes", billed, len(newContent))
+	}
+	// The retry: same session, same bytes.
+	replace(newContent)
+	if len(billed) != 1 {
+		t.Errorf("a retried replace billed again (%v) — one replacement must not bill twice", billed)
+	}
+	// A genuinely different source is a new original and bills.
+	const third = "a third, different source"
+	replace(third)
+	if len(billed) != 2 || billed[1] != int64(len(third)) {
+		t.Errorf("a different source billed %v, want a second event of %d bytes", billed, len(third))
+	}
+}

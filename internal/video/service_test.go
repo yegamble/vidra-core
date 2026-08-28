@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -38,6 +39,9 @@ type fakeRepo struct {
 	dislikes  map[uuid.UUID]int64
 	comments  map[uuid.UUID]int64
 	owner     uuid.UUID
+	// fileByKindErr, when set, makes GetVideoFileByKind fail with a transient
+	// error instead of answering. Distinct from a miss (pgx.ErrNoRows).
+	fileByKindErr error
 	// requiresQuarantine mirrors the UploadRequiresQuarantine gate result for
 	// the test subject's uploads (true = role 'user' without bypass).
 	requiresQuarantine bool
@@ -407,6 +411,12 @@ func (f *fakeRepo) CreateVideoFile(_ context.Context, a sqlcgen.CreateVideoFileP
 }
 
 func (f *fakeRepo) GetVideoFileByKind(_ context.Context, a sqlcgen.GetVideoFileByKindParams) (sqlcgen.VideoFile, error) {
+	// fileByKindErr injects a TRANSIENT failure (never a miss): callers now have
+	// to tell "there is no such row" apart from "I could not find out", so the
+	// fake has to be able to produce both.
+	if f.fileByKindErr != nil {
+		return sqlcgen.VideoFile{}, f.fileByKindErr
+	}
 	var newest sqlcgen.VideoFile
 	found := false
 	for _, vf := range f.files[a.VideoID] {
@@ -415,7 +425,9 @@ func (f *fakeRepo) GetVideoFileByKind(_ context.Context, a sqlcgen.GetVideoFileB
 		}
 	}
 	if !found {
-		return sqlcgen.VideoFile{}, errors.New("not found")
+		// The production sentinel, not a generic error: a miss is a legitimate
+		// "no prior original" and must not read as a database fault.
+		return sqlcgen.VideoFile{}, pgx.ErrNoRows
 	}
 	return newest, nil
 }
@@ -1897,4 +1909,150 @@ func (f *fakeRepo) CountSearchPublicVideos(ctx context.Context, a sqlcgen.CountS
 		Language: a.Language, HideSensitive: a.HideSensitive, ResultLimit: 1 << 30,
 	})
 	return int64(len(rows)), err
+}
+
+// TestAttachOriginalBillsOncePerStoredOriginal is the daily-quota ledger's
+// retry contract.
+//
+// AttachOriginal is the choke point every stored original passes through, and it
+// appends a rolling-24h ledger event. Two of its callers RETRY it — the URL-import
+// worker and the upload-finalize worker both re-run AttachOriginal → Process up
+// to five times when a later stage fails — so a Process failure after the bytes
+// had already landed billed the owner again on every attempt, up to 5x for one
+// upload. The synchronous paths never retried, which is why this went unnoticed.
+//
+// Billing therefore follows the STORED ORIGINAL, not the call: re-storing the
+// same bytes at the same key is the same original and bills once. Genuinely new
+// content at that key is a new original and bills again.
+func TestAttachOriginalBillsOncePerStoredOriginal(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	blobs, _ := storage.NewLocal(t.TempDir())
+
+	var billed []int64
+	svc := NewService(repo, blobs, WithUploadUsageRecorder(func(_ context.Context, _ uuid.UUID, bytes int64) error {
+		billed = append(billed, bytes)
+		return nil
+	}))
+	ctx := context.Background()
+	v, err := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "Clip"})
+	if err != nil {
+		t.Fatalf("CreateDraft: %v", err)
+	}
+
+	const content = "the original bytes"
+	attach := func(body string) {
+		t.Helper()
+		if _, _, err := svc.AttachOriginal(ctx, owner, v.ID, UploadInput{
+			Filename: "clip.mp4", Reader: strings.NewReader(body),
+		}); err != nil {
+			t.Fatalf("AttachOriginal(%q): %v", body, err)
+		}
+	}
+
+	attach(content)
+	if len(billed) != 1 || billed[0] != int64(len(content)) {
+		t.Fatalf("first attach billed %v, want one event of %d bytes", billed, len(content))
+	}
+
+	// The retry: the worker re-runs AttachOriginal with the same bytes after a
+	// later stage failed. Same key, same digest — the same original.
+	attach(content)
+	if len(billed) != 1 {
+		t.Errorf("a retry billed again (%v) — one upload must not bill the owner twice", billed)
+	}
+
+	// A genuinely different file at the same key is a new original.
+	const replacement = "completely different content here"
+	attach(replacement)
+	if len(billed) != 2 || billed[1] != int64(len(replacement)) {
+		t.Fatalf("re-upload of new content billed %v, want a second event of %d bytes", billed, len(replacement))
+	}
+}
+
+// TestAttachOriginalFailsWhenThePriorDigestCannotBeRead pins the error posture
+// of the read the billing guard depends on.
+//
+// The guard skips the ledger event when the bytes just stored match the original
+// they replaced. That decision is only as good as the read behind it, and the
+// two ways it can fail are not interchangeable: a MISS means there is genuinely
+// no prior original (so this upload is new and bills), while any other error
+// means we could not find out. Treating "don't know" as "no prior" would bill a
+// second time on exactly the retry attempt the guard exists to protect — a
+// transient database blip would quietly restore the bug. So the attempt fails
+// instead, and the retry re-reads with nothing charged in the meantime.
+func TestAttachOriginalFailsWhenThePriorDigestCannotBeRead(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	blobs, _ := storage.NewLocal(t.TempDir())
+
+	var billed []int64
+	svc := NewService(repo, blobs, WithUploadUsageRecorder(func(_ context.Context, _ uuid.UUID, bytes int64) error {
+		billed = append(billed, bytes)
+		return nil
+	}))
+	ctx := context.Background()
+	v, err := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "Clip"})
+	if err != nil {
+		t.Fatalf("CreateDraft: %v", err)
+	}
+
+	boom := errors.New("connection reset by peer")
+	repo.fileByKindErr = boom
+	_, _, err = svc.AttachOriginal(ctx, owner, v.ID, UploadInput{
+		Filename: "clip.mp4", Reader: strings.NewReader("the original bytes"),
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("AttachOriginal with an unreadable prior digest = %v, want the underlying error", err)
+	}
+	if len(billed) != 0 {
+		t.Errorf("a failed attempt billed %v — nothing was stored, so nothing may be charged", billed)
+	}
+
+	// With the read working again the upload proceeds and bills exactly once.
+	repo.fileByKindErr = nil
+	if _, _, err := svc.AttachOriginal(ctx, owner, v.ID, UploadInput{
+		Filename: "clip.mp4", Reader: strings.NewReader("the original bytes"),
+	}); err != nil {
+		t.Fatalf("AttachOriginal after recovery: %v", err)
+	}
+	if len(billed) != 1 {
+		t.Errorf("billed %v after recovery, want exactly one event", billed)
+	}
+}
+
+// TestReplaceSourceFailsWhenThePriorDigestCannotBeRead: the same posture on the
+// replace path, where the read also decides the source VERSION — falling back to
+// version 1 on an error we cannot interpret would write over the generation the
+// video is currently serving.
+func TestReplaceSourceFailsWhenThePriorDigestCannotBeRead(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	blobs, _ := storage.NewLocal(t.TempDir())
+
+	var billed []int64
+	svc := NewService(repo, blobs, WithUploadUsageRecorder(func(_ context.Context, _ uuid.UUID, bytes int64) error {
+		billed = append(billed, bytes)
+		return nil
+	}))
+	ctx := context.Background()
+	id := publishWithOriginal(t, svc, owner, "old source bytes")
+	billed = nil
+
+	boom := errors.New("connection reset by peer")
+	repo.fileByKindErr = boom
+	_, _, err := svc.ReplaceSource(ctx, owner, id, UploadInput{
+		Filename: "v2.mp4", Reader: strings.NewReader("brand new source!"),
+	}, false)
+	if !errors.Is(err, boom) {
+		t.Fatalf("ReplaceSource with an unreadable prior digest = %v, want the underlying error", err)
+	}
+	if len(billed) != 0 {
+		t.Errorf("a failed replacement billed %v", billed)
+	}
+	// The video keeps serving the source it had.
+	repo.fileByKindErr = nil
+	if cur, cerr := svc.OriginalFileKey(ctx, id); cerr != nil || cur != "web-videos/"+id.String()+".mp4" {
+		t.Errorf("original after a failed replacement = %q, %v; want the untouched source", cur, cerr)
+	}
 }

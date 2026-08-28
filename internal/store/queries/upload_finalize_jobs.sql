@@ -26,6 +26,21 @@ WHERE upload_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT 1;
 
+-- name: HasLiveUploadFinalizeJob :one
+-- Whether a pending/running finalize job exists for the session (served by the
+-- partial unique index that makes the enqueue idempotent).
+--
+-- It exists for the REPORTED state, not for any control decision. Accepting a
+-- completion is two statements — insert the job, then flip the session to
+-- 'queued' — and a concurrent second POST is released by the index the moment
+-- the insert commits, which is before that flip lands. Reporting the raw row
+-- then says 'active' for an upload that is queued and about to publish, and a
+-- client reads 'active' after a completion as "this upload is gone".
+SELECT EXISTS (
+    SELECT 1 FROM upload_finalize_jobs
+    WHERE upload_id = $1 AND state IN ('pending', 'running')
+);
+
 -- name: DeleteUploadFinalizeJob :exec
 -- Drop a job that was enqueued but never admitted: the session stopped being
 -- active between the completion's validation and its state transition (a DELETE

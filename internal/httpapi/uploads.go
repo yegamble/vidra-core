@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -100,6 +101,38 @@ func uploadStatusView(st upload.Status) uploadStatusResponse {
 		ExpiresAt:      st.Session.ExpiresAt,
 		FailureReason:  st.Session.FailureReason,
 	}
+}
+
+// settledUploadStatusView is uploadStatusView with one correction applied: a
+// session that still reads 'active' while a live finalize job exists for it is
+// reported as 'queued'.
+//
+// Accepting a completion is two statements — insert the finalize job, then flip
+// the session to 'queued' — and the partial unique index releases a concurrent
+// second POST the moment the insert commits, which is before that flip lands. In
+// that window the row honestly says 'active' while the upload is, just as
+// honestly, queued. Reporting the raw value there is the lie: a client that sees
+// 'active' after completing concludes the upload is no longer available and
+// fails an upload that is about to publish.
+//
+// The correction is strictly narrower than the window it closes — it applies
+// only when a job actually exists, so a genuinely active session with nothing
+// queued is still reported as active — and it is presentation-only. Every
+// control decision (Cancel's refusal, Assemble's gate, the enqueue CAS) reads
+// the stored state, which stays the single source of truth.
+//
+// Deliberately NOT used on the chunk-PUT ack: a session receiving chunks has no
+// finalize job by construction, so the lookup could only ever cost a query per
+// 8 MiB chunk to answer false.
+func (s *Server) settledUploadStatusView(ctx context.Context, st upload.Status) uploadStatusResponse {
+	view := uploadStatusView(st)
+	if view.State != upload.StateActive || s.uploadfinalizesvc == nil {
+		return view
+	}
+	if s.uploadfinalizesvc.HasLiveJob(ctx, st.Session.ID) {
+		view.State = upload.StateQueued
+	}
+	return view
 }
 
 // activeUploadResponse is one entry in GET /api/v1/me/uploads — a resumable
@@ -246,8 +279,9 @@ func (s *Server) handlePutUploadChunk(c echo.Context) error {
 	return c.JSON(http.StatusOK, uploadStatusView(st))
 }
 
-// handleGetUploadSession returns a session's received-chunk status — the resume
-// contract a client reads to know which chunks to (re)send. Owner only;
+// handleGetUploadSession returns a session's received-chunk status and lifecycle
+// state — the resume contract a client reads to know which chunks to (re)send
+// before completing, and the poll it reads after. Owner only;
 // non-owner/unknown → 404.
 func (s *Server) handleGetUploadSession(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
@@ -258,11 +292,12 @@ func (s *Server) handleGetUploadSession(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	st, err := s.uploadsvc.StatusFor(c.Request().Context(), uploadID, userID)
+	ctx := c.Request().Context()
+	st, err := s.uploadsvc.StatusFor(ctx, uploadID, userID)
 	if err != nil {
 		return uploadError(err)
 	}
-	return c.JSON(http.StatusOK, uploadStatusView(st))
+	return c.JSON(http.StatusOK, s.settledUploadStatusView(ctx, st))
 }
 
 // handleCompleteUploadSession ACCEPTS a completion: it validates cheaply,
@@ -312,6 +347,7 @@ func (s *Server) handleCompleteUploadSession(c echo.Context) error {
 		return c.JSON(http.StatusAccepted, uploadStatusView(st))
 	case upload.StateCompleted, upload.StateFailed:
 		return c.JSON(http.StatusOK, uploadStatusView(st))
+	// 'active' falls through to the validate-and-enqueue path below.
 	case upload.StateCancelled:
 		return uploadError(upload.ErrNotActive)
 	}
@@ -356,12 +392,16 @@ func (s *Server) handleCompleteUploadSession(c echo.Context) error {
 		return uploadError(err)
 	}
 	// Re-read so the 202 carries the session's NEW state ('queued') rather than
-	// the 'active' snapshot taken above.
+	// the 'active' snapshot taken above. The re-read can still land on 'active'
+	// when a CONCURRENT completion won the enqueue and has not yet committed its
+	// transition, so the view coalesces on the live job rather than trusting the
+	// row — otherwise the loser of that race answers 202 with a state its client
+	// reads as a lost upload.
 	queued, err := s.uploadsvc.StatusFor(ctx, uploadID, userID)
 	if err != nil {
 		return uploadError(err)
 	}
-	return c.JSON(http.StatusAccepted, uploadStatusView(queued))
+	return c.JSON(http.StatusAccepted, s.settledUploadStatusView(ctx, queued))
 }
 
 // handleCancelUploadSession cancels an in-progress upload and drops its chunk

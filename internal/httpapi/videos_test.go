@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	gommonbytes "github.com/labstack/gommon/bytes"
 
@@ -672,7 +673,12 @@ func (f *videoFakeRepo) GetVideoFileByKind(_ context.Context, a sqlcgen.GetVideo
 		}
 	}
 	if !found {
-		return sqlcgen.VideoFile{}, errors.New("not found")
+		// The production sentinel, not a generic error: video.AttachOriginal now
+		// distinguishes "there is no prior original" (bill this upload) from
+		// "the lookup failed" (fail the attempt so a retry re-reads), so a fake
+		// that answers a miss with a database-fault-shaped error would make
+		// every first upload look like an internal error.
+		return sqlcgen.VideoFile{}, pgx.ErrNoRows
 	}
 	return newest, nil
 }

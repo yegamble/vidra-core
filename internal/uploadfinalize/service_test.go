@@ -25,10 +25,11 @@ import (
 // decoration: DrainJobs runs its claimed batch on a bounded pool, so -race
 // exercises concurrent access.
 type fakeJobRepo struct {
-	mu     sync.Mutex
-	jobs   map[uuid.UUID]sqlcgen.UploadFinalizeJob
-	order  []uuid.UUID
-	leases int
+	mu      sync.Mutex
+	jobs    map[uuid.UUID]sqlcgen.UploadFinalizeJob
+	order   []uuid.UUID
+	leases  int
+	liveErr error
 }
 
 func newFakeJobRepo() *fakeJobRepo {
@@ -84,6 +85,20 @@ func (r *fakeJobRepo) ClaimDueUploadFinalizeJobs(_ context.Context, limit int32)
 		}
 	}
 	return rows, nil
+}
+
+func (r *fakeJobRepo) HasLiveUploadFinalizeJob(_ context.Context, uploadID uuid.UUID) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.liveErr != nil {
+		return false, r.liveErr
+	}
+	for _, id := range r.order {
+		if j := r.jobs[id]; j.UploadID == uploadID && (j.State == StatePending || j.State == StateRunning) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *fakeJobRepo) DeleteUploadFinalizeJob(_ context.Context, id uuid.UUID) error {
@@ -625,5 +640,54 @@ func TestEnqueueRefusesASessionThatIsNoLongerActive(t *testing.T) {
 	}
 	if n := h.jobs.count(); n != 0 {
 		t.Errorf("finalize jobs = %d, want 0", n)
+	}
+}
+
+// TestHasLiveJobReportsFalseOnLookupError pins the failure posture of the
+// reporting seam. It is the opposite of transcode.HasLiveJob's fail-busy default,
+// and deliberately so: this answer only rewrites a REPORTED state, so answering
+// true on an error would tell a client its upload is queued when nothing is
+// queued — a claim no later poll could correct. Answering false merely leaves
+// the raw state alone.
+func TestHasLiveJobReportsFalseOnLookupError(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	sess := h.openAndFill(t, "ABCD", upload.PurposeUpload)
+	if _, err := h.svc.Enqueue(ctx, sess.ID, h.video, upload.PurposeUpload, false); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if !h.svc.HasLiveJob(ctx, sess.ID) {
+		t.Fatal("a freshly enqueued job should read as live")
+	}
+
+	h.jobs.mu.Lock()
+	h.jobs.liveErr = errors.New("connection reset")
+	h.jobs.mu.Unlock()
+	if h.svc.HasLiveJob(ctx, sess.ID) {
+		t.Error("a failed lookup reported a live job — it must not invent one")
+	}
+}
+
+// TestHasLiveJobFollowsTheJobLifecycle: only a pending/running job counts, so a
+// settled session stops being coalesced and reports its real terminal state.
+func TestHasLiveJobFollowsTheJobLifecycle(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	sess := h.openAndFill(t, "ABCD", upload.PurposeUpload)
+
+	if h.svc.HasLiveJob(ctx, sess.ID) {
+		t.Error("no completion requested yet, so there is no live job")
+	}
+	if _, err := h.svc.Enqueue(ctx, sess.ID, h.video, upload.PurposeUpload, false); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if !h.svc.HasLiveJob(ctx, sess.ID) {
+		t.Error("a queued job is live")
+	}
+	if done, err := h.svc.DrainJobs(ctx, 5); err != nil || done != 1 {
+		t.Fatalf("drain = %d, %v; want 1, nil", done, err)
+	}
+	if h.svc.HasLiveJob(ctx, sess.ID) {
+		t.Error("a finished job is not live — the session reports its own terminal state")
 	}
 }

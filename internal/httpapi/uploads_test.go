@@ -240,6 +240,15 @@ func (r *finalizeFakeRepo) ClaimDueUploadFinalizeJobs(_ context.Context, limit i
 	return rows, nil
 }
 
+func (r *finalizeFakeRepo) HasLiveUploadFinalizeJob(_ context.Context, uploadID uuid.UUID) (bool, error) {
+	for _, id := range r.order {
+		if j := r.jobs[id]; j.UploadID == uploadID && (j.State == "pending" || j.State == "running") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (r *finalizeFakeRepo) DeleteUploadFinalizeJob(_ context.Context, id uuid.UUID) error {
 	delete(r.jobs, id)
 	for i, x := range r.order {
@@ -995,5 +1004,87 @@ func TestCompleteWithoutFinalizeQueueIsUnavailable(t *testing.T) {
 	_ = json.Unmarshal(statusRec.Body.Bytes(), &st)
 	if st.State != "active" {
 		t.Errorf("session state = %q, want active (a refused completion changes nothing)", st.State)
+	}
+}
+
+// TestCompleteConcurrentPostNeverReportsActive drives the double-POST race.
+//
+// Two concurrent completions both see an 'active' session and both pass
+// validation. The winner INSERTs the finalize job and then flips the session to
+// 'queued' — two separate statements. The loser's insert blocks on the partial
+// unique index and is released the moment the winner's INSERT commits, which is
+// BEFORE the winner's state transition lands. The loser then re-read the session
+// and answered 202 with state "active", which the client reads as "this upload
+// is no longer available" and reports as a hard failure — for an upload that is
+// in fact queued and about to publish.
+//
+// The window is reproduced exactly by inserting the job directly (the winner's
+// committed INSERT) while leaving the session 'active' (its transition still in
+// flight), then driving a completion through the handler.
+func TestCompleteConcurrentPostNeverReportsActive(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"x"}`)
+
+	sess := openUploadSession(t, srv, id, "clip.mp4", 16, tok)
+	if rec := putChunkAuth(srv, sess.UploadID, 0, []byte("0123456789ABCDEF"), tok); rec.Code != http.StatusOK {
+		t.Fatalf("put chunk = %d", rec.Code)
+	}
+
+	// The winner's INSERT has committed; its MarkQueued has not.
+	uploadID := uuid.MustParse(sess.UploadID)
+	if _, err := finalizeRepoBySrv[srv].EnqueueUploadFinalizeJob(context.Background(), sqlcgen.EnqueueUploadFinalizeJobParams{
+		UploadID: uploadID,
+		VideoID:  uuid.MustParse(id),
+		Purpose:  "upload",
+	}); err != nil {
+		t.Fatalf("seed the winner's job: %v", err)
+	}
+
+	rec := completeUploadSession(srv, sess.UploadID, tok)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("losing completion = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var st uploadStatusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatalf("body: %v (%s)", err, rec.Body.String())
+	}
+	if st.State != "queued" {
+		t.Errorf("202 body state = %q, want queued — a client reads %q as a lost upload", st.State, st.State)
+	}
+	// Still exactly one job: the loser must not queue a second run.
+	if n := finalizeRepoBySrv[srv].jobCount(); n != 1 {
+		t.Errorf("finalize jobs = %d, want 1", n)
+	}
+
+	// The poll has the same window, and must answer the same way.
+	getRec := sendJSONAuth(srv, http.MethodGet, "/api/v1/uploads/"+sess.UploadID, "", tok)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get session = %d", getRec.Code)
+	}
+	_ = json.Unmarshal(getRec.Body.Bytes(), &st)
+	if st.State != "queued" {
+		t.Errorf("polled state = %q, want queued", st.State)
+	}
+}
+
+// TestUploadStatusReportsActiveWithoutALiveJob is the other half of the guard:
+// coalescing 'active' to 'queued' must depend on a live finalize job actually
+// existing, never on the mere fact that chunks have all landed. A session nobody
+// has completed is still active and still resumable.
+func TestUploadStatusReportsActiveWithoutALiveJob(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"x"}`)
+
+	sess := openUploadSession(t, srv, id, "clip.mp4", 16, tok)
+	if rec := putChunkAuth(srv, sess.UploadID, 0, []byte("0123456789ABCDEF"), tok); rec.Code != http.StatusOK {
+		t.Fatalf("put chunk = %d", rec.Code)
+	}
+	rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/uploads/"+sess.UploadID, "", tok)
+	var st uploadStatusResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &st)
+	if st.State != "active" {
+		t.Errorf("state with every chunk landed but no completion = %q, want active", st.State)
 	}
 }
