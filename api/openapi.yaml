@@ -18768,8 +18768,12 @@ components:
         DRM reports the provider's state and the PRESENCE of DRM_KEY_KEK, never
         the key. The only provider this build ships is clearkey-test, which
         protects nothing (it hands the content key to any authorised viewer over
-        TLS) and encrypts nothing yet — the note says so, because a green pill
-        next to the word DRM is a sentence an operator repeats to somebody else.
+        TLS) and encrypts nothing yet — the note says so IN EVERY STATE,
+        including active: drm is the one row that carries a note while enabled
+        and configured, because a green pill next to the word DRM is a sentence
+        an operator repeats to somebody else. The warning is pinned to the
+        clearkey-test provider value, so a future real provider will not
+        inherit it.
         DASH is deliberately absent even though vidra produces it (the default
         cmaf packager writes an MPEG-DASH manifest beside the HLS playlists):
         packaging format is a per-VIDEO property recorded when that video's tree
@@ -18790,7 +18794,8 @@ components:
           type: string
           description: >-
             What to do about it. Absent when the feature is enabled and fully
-            configured.
+            configured — except drm on the test provider, whose active state is
+            exactly the one that needs the caveat.
     InfrastructureStatus:
       type: object
       description: >-

@@ -310,6 +310,10 @@ func (s *Server) infraFeatures() []infraFeature {
 	// because a toggle flipped between two reads would be worse than either.
 	cdnEnabled := s.cdnDeliveryEnabled()
 	cdnWired := strings.TrimSpace(cfg.DeliveryCDNBaseURL) != ""
+	// Hoisted for the same reason as the CDN pair: the drm row's columns and its
+	// note read the same two facts, and they must be one read.
+	drmEnabled := cfg.DRMProvider != "" && cfg.DRMProvider != drm.ProviderNone
+	drmConfigured := strings.TrimSpace(cfg.DRMKeyKEK) != ""
 
 	features := []infraFeature{
 		{
@@ -402,8 +406,12 @@ func (s *Server) infraFeatures() []infraFeature {
 			// the PRESENCE of DRM_KEY_KEK and never its value: it seals content
 			// keys at rest and has no fallback to any other KEK, so it is a
 			// secret of its own trust domain (config.go, validateDRM).
-			Enabled:    cfg.DRMProvider != "" && cfg.DRMProvider != drm.ProviderNone,
-			Configured: strings.TrimSpace(cfg.DRMKeyKEK) != "",
+			Enabled:    drmEnabled,
+			Configured: drmConfigured,
+			// The ACTIVE quadrant is the one the generic notes leave silent, and
+			// for the test provider that silence is the dishonest case — see
+			// drmTestProviderNote.
+			Note: drmTestProviderNote(drmEnabled, drmConfigured, cfg.DRMProvider),
 		},
 		{
 			Key:        "tracing",
@@ -471,6 +479,29 @@ func cdnWiredButOffNote(enabled, configured bool) string {
 		return ""
 	}
 	return "A CDN is WIRED BUT NOT IN USE: DELIVERY_CDN_BASE_URL points at an edge and the delivery_cdn_enabled setting is off, so every byte is still served by this instance. That is the deliberate shipped sequence — configuring an edge never starts using it, because nothing here can verify that the base URL actually fronts these object keys. Turn on delivery_cdn_enabled (Advanced → delivery) when you are ready; only public, published, uncredentialed media is ever handed to an edge, and switching it back off takes effect on the next request without a restart."
+}
+
+// drmTestProviderNote covers DRM's wrong quadrant: enabled AND configured.
+//
+// For every other feature that quadrant is the success case and rightly says
+// nothing. For DRM it is the one state the page must not stay quiet about,
+// because the only shipping provider is test-grade: a green "Active — DRM
+// content protection" pill with no caveat is a sentence an operator repeats to
+// somebody else (a rights holder, usually), and it would be false twice over —
+// the key is handed to every authorised viewer in the clear, and no media byte
+// is encrypted anyway.
+//
+// The gate is the PROVIDER CONSTANT, not "any provider": a future real provider
+// must never inherit the test warning, and matching on drm.ProviderClearKeyTest
+// is what guarantees the note dies with the provider it describes. Keep the
+// sentence in step with the boot-log warning in cmd/api (the "drm provider
+// enabled" warn) — they are the same message in two places an operator reads at
+// different times.
+func drmTestProviderNote(enabled, configured bool, provider string) string {
+	if !enabled || !configured || provider != drm.ProviderClearKeyTest {
+		return ""
+	}
+	return "DRM is running the ClearKey TEST provider: the license path is live end to end, but it hands the content key to any authorised viewer in the clear over TLS, and no media is encrypted yet (the packaging step that would mint content keys has not landed). Treat this as a license-path proving rig, not content protection."
 }
 
 // infraFeatureNote is the operator-facing sentence for one feature: what the

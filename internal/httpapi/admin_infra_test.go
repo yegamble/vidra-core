@@ -425,6 +425,16 @@ func TestInfrastructureDRMFeature(t *testing.T) {
 	if !f.Enabled || !f.Configured {
 		t.Fatalf("drm with a provider and a KEK = %+v, want enabled+configured", f)
 	}
+	// The ACTIVE state must carry the warning too. enabled+configured is the one
+	// quadrant the generic notes stay silent for — the success pill is normally
+	// the whole message — and for the test provider that silence is the lie: the
+	// pill would read "Active — DRM content protection" while no media byte is
+	// encrypted and the content key travels to every viewer in the clear.
+	for _, want := range []string{"TEST", "encrypt"} {
+		if !strings.Contains(f.Note, want) {
+			t.Errorf("active clearkey-test drm note = %q, want it to contain %q — the green pill needs the caveat next to it", f.Note, want)
+		}
+	}
 }
 
 // The backups block flips to the managed-database story on the operator's
