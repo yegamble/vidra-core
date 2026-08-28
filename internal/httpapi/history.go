@@ -33,9 +33,9 @@ type watchProgressView struct {
 // public, published video and bumps it to the top of their history. Behind
 // requireAuth. A non-public/unpublished or unknown video is 404.
 func (s *Server) handleRecordWatchProgress(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	videoID, err := s.publicVideoID(c)
 	if err != nil {
@@ -87,9 +87,9 @@ func (s *Server) emitWatchProgress(c echo.Context, videoID, userID uuid.UUID, po
 // handleGetWatchProgress returns the caller's saved resume position for a public,
 // published video (0 when none recorded). Behind requireAuth.
 func (s *Server) handleGetWatchProgress(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	videoID, err := s.publicVideoID(c)
 	if err != nil {
@@ -123,9 +123,9 @@ type historyListResponse struct {
 // the "Continue watching" subset (started, not effectively finished); any other
 // value (or absent) returns the full history.
 func (s *Server) handleListHistory(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	inProgress := c.QueryParam("progress") == "in_progress"
@@ -148,9 +148,9 @@ func (s *Server) handleListHistory(c echo.Context) error {
 // (idempotent). Behind requireAuth. No public-video check, so a user can always
 // clean up an entry.
 func (s *Server) handleDeleteHistoryEntry(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	videoID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -165,9 +165,9 @@ func (s *Server) handleDeleteHistoryEntry(c echo.Context) error {
 // handleClearHistory removes the caller's entire watch history (idempotent).
 // Behind requireAuth.
 func (s *Server) handleClearHistory(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if err := s.videosvc.ClearHistory(c.Request().Context(), userID); err != nil {
 		return err

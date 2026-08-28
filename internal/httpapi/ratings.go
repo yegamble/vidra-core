@@ -55,9 +55,9 @@ func (r setRatingRequest) Validate() []FieldError {
 
 // handlePutVideoRating sets or changes the caller's rating for a video. Behind requireAuth.
 func (s *Server) handlePutVideoRating(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	videoID, err := s.publicVideoID(c)
 	if err != nil {
@@ -80,9 +80,9 @@ func (s *Server) handlePutVideoRating(c echo.Context) error {
 // handleDeleteVideoRating clears the caller's rating for a video (idempotent).
 // Behind requireAuth.
 func (s *Server) handleDeleteVideoRating(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	videoID, err := s.publicVideoID(c)
 	if err != nil {

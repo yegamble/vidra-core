@@ -65,9 +65,9 @@ func newCaptionJobResponse(row sqlcgen.CaptionJob) captionJobResponse {
 // video it is 409. The audio-extraction, transcription, and caption upsert run
 // in the background worker; watch progress via GET /videos/:id/captions/auto.
 func (s *Server) handleRequestAutoCaption(c echo.Context) error {
-	userID, role, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, role, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -119,9 +119,9 @@ func (s *Server) handleRequestAutoCaption(c echo.Context) error {
 // job to its owner or a moderator/admin. Ordinary non-owner/unknown video → 404;
 // a video that never requested auto-captioning → 404.
 func (s *Server) handleGetAutoCaption(c echo.Context) error {
-	userID, role, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, role, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

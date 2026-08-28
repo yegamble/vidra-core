@@ -161,9 +161,9 @@ func e2eeError(err error) error {
 // handleRegisterE2EEDevice registers an E2EE device (public keys + label) for
 // the caller. Behind requireAuth.
 func (s *Server) handleRegisterE2EEDevice(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in registerE2EEDeviceRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -183,9 +183,9 @@ func (s *Server) handleRegisterE2EEDevice(c echo.Context) error {
 // handleListMyE2EEDevices returns the caller's registered devices, oldest
 // first. Behind requireAuth. Also the frontend's E2EE availability probe.
 func (s *Server) handleListMyE2EEDevices(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	devices, err := s.e2eesvc.ListOwnDevices(c.Request().Context(), userID)
 	if err != nil {
@@ -201,9 +201,9 @@ func (s *Server) handleListMyE2EEDevices(c echo.Context) error {
 // handleDeleteE2EEDevice removes one of the caller's devices (cascading its
 // one-time keys and envelopes). Behind requireAuth. Unknown-or-not-owned → 404.
 func (s *Server) handleDeleteE2EEDevice(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	deviceID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -223,9 +223,9 @@ func (s *Server) handleDeleteE2EEDevice(c echo.Context) error {
 // they must share a conversation — otherwise 404, so accounts and device
 // counts cannot be enumerated. A block either direction → 403.
 func (s *Server) handleListUserE2EEDevices(c echo.Context) error {
-	callerID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	callerID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	targetID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -249,9 +249,9 @@ func (s *Server) handleListUserE2EEDevices(c echo.Context) error {
 // the caller's devices (idempotent per key_id). Behind requireAuth. Not-owned
 // device → 404.
 func (s *Server) handleUploadOneTimeKeys(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	deviceID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -278,9 +278,9 @@ func (s *Server) handleUploadOneTimeKeys(c echo.Context) error {
 // handleCountOneTimeKeys returns the unclaimed one-time-key count of one of
 // the caller's devices. Behind requireAuth. Not-owned device → 404.
 func (s *Server) handleCountOneTimeKeys(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	deviceID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -301,9 +301,9 @@ func (s *Server) handleCountOneTimeKeys(c echo.Context) error {
 // listing. Audited with COUNTS ONLY — key material never reaches the audit
 // trail or logs.
 func (s *Server) handleClaimOneTimeKeys(c echo.Context) error {
-	callerID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	callerID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	targetID, err := uuid.Parse(c.Param("id"))
 	if err != nil {

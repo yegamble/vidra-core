@@ -48,9 +48,9 @@ func (s *Server) videoReplaceAvailable() bool {
 // itself the one holding that slot. Returns the video row and whether the
 // actor manages a video they do not own.
 func (s *Server) replaceTarget(ctx context.Context, c echo.Context, id uuid.UUID, viaSession bool) (sqlcgen.GetVideoByIDRow, bool, error) {
-	userID, role, ok := principalFromContext(c)
-	if !ok {
-		return sqlcgen.GetVideoByIDRow{}, false, echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, role, err := mustPrincipal(c)
+	if err != nil {
+		return sqlcgen.GetVideoByIDRow{}, false, err
 	}
 	// Staff (admin/moderator) replace any local video; an editor collaborator
 	// (migration 0097) replaces their channel's videos. Both flow through the
@@ -91,9 +91,9 @@ func (s *Server) replaceTarget(ctx context.Context, c echo.Context, id uuid.UUID
 // against the video's OWNER (storage usage aggregates against the owning
 // account) even when a moderator/admin performs the replacement.
 func (s *Server) handleCreateReplaceSession(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if !s.videoReplaceAvailable() {
 		return &FeatureDisabledError{Feature: "video_replace"}

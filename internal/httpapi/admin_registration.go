@@ -79,9 +79,9 @@ func (s *Server) handleListRegistrationRequests(c echo.Context) error {
 // Behind requireRole(admin). Unknown/already-resolved id → 404; a username/email
 // taken since the request was filed → 409. Emits an audit event.
 func (s *Server) handleApproveRegistration(c echo.Context) error {
-	adminID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	adminID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -117,9 +117,9 @@ func (r rejectRegistrationRequestBody) Validate() []FieldError {
 // note. Behind requireRole(admin). Unknown/already-resolved id → 404. Emits an
 // audit event.
 func (s *Server) handleRejectRegistration(c echo.Context) error {
-	adminID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	adminID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

@@ -78,9 +78,9 @@ func dailyViews(days []video.DayViews) []dailyViewsView {
 // views series to its owner only (product-decisions §8). Behind requireAuth;
 // a non-owner or unknown id is 404 so existence is not leaked.
 func (s *Server) handleGetVideoStats(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -103,9 +103,9 @@ func (s *Server) handleGetVideoStats(c echo.Context) error {
 // (plus follower and video counts) and 30-day daily views series to its owner
 // only. Behind requireAuth; a non-owner or unknown handle is 404.
 func (s *Server) handleGetChannelStats(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	ctx := c.Request().Context()
 	ch, err := s.channelsvc.GetByHandle(ctx, c.Param("handle"))
@@ -144,9 +144,9 @@ func (s *Server) handleGetChannelStats(c echo.Context) error {
 // totals, the merged 30-day daily series, and a per-channel breakdown. Behind
 // requireAuth; owner-scoped by construction (only the caller's own channels).
 func (s *Server) handleGetAccountStats(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	ctx := c.Request().Context()
 	stats, err := s.videosvc.AccountStats(ctx, userID)

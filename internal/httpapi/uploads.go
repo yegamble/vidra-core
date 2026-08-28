@@ -114,9 +114,9 @@ type activeUploadsResponse struct {
 // can ask "am I already uploading this exact file?". Auth required; only the
 // caller's own sessions are ever returned.
 func (s *Server) handleListMyUploads(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	fingerprint := strings.TrimSpace(c.QueryParam("fingerprint"))
 	ups, err := s.uploadsvc.ActiveSessionsForUser(c.Request().Context(), userID, fingerprint)
@@ -147,9 +147,9 @@ func (s *Server) handleListMyUploads(c echo.Context) error {
 // caller's storage quota is 422 quota_exceeded. Returns the upload id, the fixed
 // chunk size to send, and the 24h expiry.
 func (s *Server) handleCreateUploadSession(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if !s.uploadsEnabled() {
 		return &FeatureDisabledError{Feature: "uploads"}
@@ -211,9 +211,9 @@ func (s *Server) handleCreateUploadSession(c echo.Context) error {
 // completed/cancelled → 409; an out-of-range index or wrong-sized chunk → 422; a
 // chunk larger than its slot → 413.
 func (s *Server) handlePutUploadChunk(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	uploadID, err := uuid.Parse(c.Param("upload_id"))
 	if err != nil {
@@ -234,9 +234,9 @@ func (s *Server) handlePutUploadChunk(c echo.Context) error {
 // contract a client reads to know which chunks to (re)send. Owner only;
 // non-owner/unknown → 404.
 func (s *Server) handleGetUploadSession(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	uploadID, err := uuid.Parse(c.Param("upload_id"))
 	if err != nil {
@@ -256,9 +256,9 @@ func (s *Server) handleGetUploadSession(c echo.Context) error {
 // finished → 409; missing/mismatched chunks → 422. Returns the finalised video
 // exactly like the direct upload.
 func (s *Server) handleCompleteUploadSession(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	uploadID, err := uuid.Parse(c.Param("upload_id"))
 	if err != nil {
@@ -315,9 +315,9 @@ func (s *Server) handleCompleteUploadSession(c echo.Context) error {
 // blobs. Owner only; non-owner/unknown → 404. Idempotent (cancelling an
 // already-finished session still 204s).
 func (s *Server) handleCancelUploadSession(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	uploadID, err := uuid.Parse(c.Param("upload_id"))
 	if err != nil {

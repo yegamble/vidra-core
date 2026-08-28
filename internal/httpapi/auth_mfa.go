@@ -28,9 +28,9 @@ type totpEnrollmentResponse struct {
 // account (pending — login is unaffected until verified). 409 when MFA is
 // already enabled.
 func (s *Server) handleBeginTOTPEnrollment(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	enr, err := s.authsvc.BeginTOTPEnrollment(c.Request().Context(), userID)
 	if err != nil {
@@ -70,9 +70,9 @@ type recoveryCodesResponse struct {
 // returned ONCE. 400 on a wrong code or no pending enrollment; 409 when
 // already enabled.
 func (s *Server) handleVerifyTOTPEnrollment(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in totpVerifyRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -116,9 +116,9 @@ func (r disableTOTPRequest) Validate() []FieldError {
 // code) after password re-authentication. Wrong password → 403; nothing to
 // disable → 404.
 func (s *Server) handleDisableTOTP(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in disableTOTPRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -151,9 +151,9 @@ type mfaStatusResponse struct {
 // handleGetMFAStatus reports the authenticated account's two-factor state. A
 // pending (unverified) enrollment reports as disabled.
 func (s *Server) handleGetMFAStatus(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	st, err := s.authsvc.GetMFAStatus(c.Request().Context(), userID)
 	if err != nil {

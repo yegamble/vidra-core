@@ -83,9 +83,9 @@ func (r createRemoteFollowRequest) target() string {
 // WebFinger/actor, a local target) are 422; when federation is disabled on
 // this instance the endpoint is 503 (no outbound fetches are made).
 func (s *Server) handleCreateRemoteFollow(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if !s.cfg.FederationEnabled {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "federation is disabled on this instance")
@@ -116,9 +116,9 @@ func (s *Server) handleCreateRemoteFollow(c echo.Context) error {
 // first, with the followed actor's identity and follow state. Behind
 // requireAuth. Pagination via ?limit (1–100, default 20)/?offset.
 func (s *Server) handleListRemoteFollows(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.fedsvc.ListRemoteFollows(c.Request().Context(), userID, page.Limit32(), page.Offset32())
@@ -137,9 +137,9 @@ func (s *Server) handleListRemoteFollows(c echo.Context) error {
 // queued to the remote inbox. Behind requireAuth. Unknown — or another user's —
 // id is 404.
 func (s *Server) handleDeleteRemoteFollow(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

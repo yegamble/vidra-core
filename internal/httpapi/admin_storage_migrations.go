@@ -55,9 +55,9 @@ func storageMigrationView(c storagemigration.Campaign, objects map[string]int64)
 // cannot be undone by cancelling a job — see docs/operations.md, "Moving the
 // media store".
 func (s *Server) handleAdminStartStorageMigration(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	camp, err := s.storagemigrationsvc.Start(c.Request().Context())
 	switch {
@@ -87,9 +87,9 @@ func (s *Server) handleAdminStartStorageMigration(c echo.Context) error {
 // deleting them would be a destructive action taken on the way OUT of a
 // destructive operation.
 func (s *Server) handleAdminCancelStorageMigration(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

@@ -105,9 +105,9 @@ func (r createPlaylistRequest) Validate() []FieldError {
 
 // handleCreatePlaylist creates a playlist owned by the authenticated user.
 func (s *Server) handleCreatePlaylist(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in createPlaylistRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -138,9 +138,9 @@ type playlistListResponse struct {
 // paginated via ?limit (1–100, default 20)/?offset with a true total. It
 // previously returned every playlist unbounded.
 func (s *Server) handleListMyPlaylists(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	rows, total, err := s.playlistsvc.ListOwn(c.Request().Context(), userID, page.Limit32(), page.Offset32())
@@ -238,9 +238,9 @@ func (r updatePlaylistRequest) Validate() []FieldError {
 
 // handleUpdatePlaylist updates a playlist owned by the authenticated user.
 func (s *Server) handleUpdatePlaylist(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -268,9 +268,9 @@ func (s *Server) handleUpdatePlaylist(c echo.Context) error {
 
 // handleDeletePlaylist deletes a playlist owned by the authenticated user.
 func (s *Server) handleDeletePlaylist(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -297,9 +297,9 @@ func (r addPlaylistItemRequest) Validate() []FieldError {
 // handleAddPlaylistItem appends a public, published video to a playlist owned by
 // the caller (idempotent). A non-public/unpublished or unknown video is 404.
 func (s *Server) handleAddPlaylistItem(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -330,9 +330,9 @@ func (s *Server) handleAddPlaylistItem(c echo.Context) error {
 // handleRemovePlaylistItem removes a video from a playlist owned by the caller
 // (idempotent).
 func (s *Server) handleRemovePlaylistItem(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -371,9 +371,9 @@ func (r reorderPlaylistItemsRequest) Validate() []FieldError {
 // (a non-owner or unknown playlist is 404, hiding existence); the body must be
 // exactly the playlist's current items in the new order, else 422.
 func (s *Server) handleReorderPlaylistItems(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -402,9 +402,9 @@ func (s *Server) handleReorderPlaylistItems(c echo.Context) error {
 // requireAuth; non-owner/unknown → 404; a non-image extension → 415. The 8M
 // global body limit bounds the upload.
 func (s *Server) handleSetPlaylistThumbnail(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -440,9 +440,9 @@ func (s *Server) handleSetPlaylistThumbnail(c echo.Context) error {
 // handleDeletePlaylistThumbnail removes a playlist's cover (owner-only,
 // idempotent).
 func (s *Server) handleDeletePlaylistThumbnail(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

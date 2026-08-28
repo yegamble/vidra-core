@@ -81,9 +81,9 @@ func newImportJobResponse(row sqlcgen.ImportJob) importJobResponse {
 // size/quota enforcement, and AttachOriginal → Process pipeline run in the
 // background worker; watch progress via GET /videos/:id/import.
 func (s *Server) handleImportVideoFile(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if !s.importsEnabled() {
 		return &FeatureDisabledError{Feature: "imports"}
@@ -132,9 +132,9 @@ func (s *Server) handleImportVideoFile(c echo.Context) error {
 // (owner only). Non-owner/unknown video → 404; a video that was never imported
 // → 404.
 func (s *Server) handleGetVideoImport(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

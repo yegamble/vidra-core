@@ -108,9 +108,9 @@ func memberError(err error) error {
 // handleListChannelMembers lists a channel's collaborators. Visible to the owner
 // and to existing members; anyone else gets 403 (unknown handle → 404).
 func (s *Server) handleListChannelMembers(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	members, total, err := s.channelsvc.ListMembers(c.Request().Context(), userID, c.Param("handle"), page.Limit32(), page.Offset32())
@@ -128,9 +128,9 @@ func (s *Server) handleListChannelMembers(c echo.Context) error {
 // only. 404 unknown channel or unknown target user; 409 when the target already
 // manages the channel (owner or existing member).
 func (s *Server) handleAddChannelMember(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in addChannelMemberRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -146,9 +146,9 @@ func (s *Server) handleAddChannelMember(c echo.Context) error {
 // handleRemoveChannelMember removes a collaborator. Owner only; idempotent
 // (removing a non-member is a 204). Unknown handle → 404.
 func (s *Server) handleRemoveChannelMember(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	targetID, err := uuid.Parse(c.Param("userId"))
 	if err != nil {

@@ -33,9 +33,9 @@ func (r runVideoTranscodingRequest) Validate() []FieldError {
 // clients cannot submit a derivative key, so repeated runs never transcode an
 // already-transcoded file and therefore cannot accumulate generation loss.
 func (s *Server) handleRunVideoTranscoding(c echo.Context) error {
-	actorID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	actorID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -266,9 +266,9 @@ func (s *Server) handleListQuarantinedVideos(c echo.Context) error {
 // moderator). Unknown id → 404; a video not in quarantine → 409. Emits an
 // audit event.
 func (s *Server) handleApproveQuarantinedVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -308,9 +308,9 @@ func (r rejectQuarantinedVideoRequest) Validate() []FieldError {
 // in quarantine → 409. Emits an audit event with a stable rejection
 // classification; moderator prose remains outside the security ledger.
 func (s *Server) handleRejectQuarantinedVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

@@ -72,9 +72,9 @@ func (s *Server) notifyStaffOfReport(c echo.Context, reportID uuid.UUID, targetT
 // handleReportVideo files a report against a public, published video. Behind
 // requireAuth. A non-public/unpublished or unknown video is 404. Idempotent.
 func (s *Server) handleReportVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	videoID, err := s.publicVideoID(c)
 	if err != nil {
@@ -95,9 +95,9 @@ func (s *Server) handleReportVideo(c echo.Context) error {
 // handleReportComment files a report against a comment. Behind requireAuth. An
 // unknown comment is 404. Idempotent.
 func (s *Server) handleReportComment(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	commentID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -121,9 +121,9 @@ func (s *Server) handleReportComment(c echo.Context) error {
 // handleReportAccount files a report against another user account. Behind
 // requireAuth. Reporting yourself is 422; an unknown account is 404. Idempotent.
 func (s *Server) handleReportAccount(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	targetID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -250,9 +250,9 @@ func (r resolveReportRequest) Validate() []FieldError {
 // handleResolveReport accepts/rejects a report with an internal note. Behind
 // requireRole(admin, moderator). An unknown id is 404. Emits an audit event.
 func (s *Server) handleResolveReport(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -287,9 +287,9 @@ func (s *Server) handleResolveReport(c echo.Context) error {
 // admin deletes (deleting an unknown id still succeeds); a malformed id is 404.
 // Any notification referencing the report cascades away. Emits an audit event.
 func (s *Server) handleDeleteReport(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

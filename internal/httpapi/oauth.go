@@ -320,9 +320,9 @@ type oauthIdentitiesResponse struct {
 
 // handleListOAuthIdentities returns the caller's linked OAuth identities.
 func (s *Server) handleListOAuthIdentities(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	idents, err := s.oauthsvc.Identities(c.Request().Context(), userID)
 	if err != nil {
@@ -339,9 +339,9 @@ func (s *Server) handleListOAuthIdentities(c echo.Context) error {
 // 404 when that provider is not linked; 422 when it is the account's last
 // sign-in method (no password set) — set a password first.
 func (s *Server) handleUnlinkOAuthIdentity(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	provider := c.Param("provider")
 	if err := s.oauthsvc.Unlink(c.Request().Context(), userID, provider); err != nil {

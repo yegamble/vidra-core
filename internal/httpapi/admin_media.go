@@ -51,9 +51,9 @@ type adoptBucketResponse struct {
 // failing it, because the orphan list is the answer the operator needs in order
 // to decide what to do about it.
 func (s *Server) handleAdminMediaGC(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in mediaGCRequest
 	// The body is optional; a malformed body still defaults to a safe dry run.
@@ -100,9 +100,9 @@ func (s *Server) handleAdminMediaGC(c echo.Context) error {
 // whose owner boot could not establish — an operator saying "yes, that media is
 // mine" is the missing piece of evidence, and nothing else can supply it.
 func (s *Server) handleAdminAdoptBucket(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if err := s.mediagcsvc.AdoptBucket(c.Request().Context()); err != nil {
 		switch {

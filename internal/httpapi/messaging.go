@@ -212,9 +212,9 @@ type messageListResponse struct {
 // the recipient. Behind requireAuth. Messaging yourself → 422; unknown recipient
 // → 404. Idempotent (returns the existing conversation).
 func (s *Server) handleStartConversation(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in startConversationRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -282,9 +282,9 @@ func (s *Server) handleStartConversation(c echo.Context) error {
 // handleListConversations returns the caller's inbox, most-recently-active first.
 // Behind requireAuth. Pagination via ?limit (1–100, default 20)/?offset.
 func (s *Server) handleListConversations(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.messagingsvc.ListConversations(c.Request().Context(), userID, page.Limit32(), page.Offset32())
@@ -308,9 +308,9 @@ func (s *Server) handleListConversations(c echo.Context) error {
 // requireAuth. A non-participant (or unknown conversation) is 404 so a
 // conversation's existence is not leaked. Pagination via ?limit/?offset.
 func (s *Server) handleListMessages(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	convID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -387,9 +387,9 @@ func (s *Server) handleListMessages(c echo.Context) error {
 // non-participant (or unknown conversation) is 404. The response carries the
 // sender's identity (the authenticated user).
 func (s *Server) handleSendMessage(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	convID, err := uuid.Parse(c.Param("id"))
 	if err != nil {

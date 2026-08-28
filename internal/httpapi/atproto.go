@@ -66,9 +66,9 @@ func (r linkATProtoRequest) Validate() []FieldError {
 // the credentials against the PDS (com.atproto.server.createSession) before
 // storing the sealed app password, then returns the status view.
 func (s *Server) handleLinkATProto(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in linkATProtoRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -89,9 +89,9 @@ func (s *Server) handleLinkATProto(c echo.Context) error {
 // handleGetATProto returns the caller's linked-account status (never the
 // password). 404 when nothing is linked.
 func (s *Server) handleGetATProto(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	acct, err := s.atprotosvc.Status(c.Request().Context(), userID)
 	if err != nil {
@@ -102,9 +102,9 @@ func (s *Server) handleGetATProto(c echo.Context) error {
 
 // handleUnlinkATProto removes the caller's linked Bluesky account. Idempotent.
 func (s *Server) handleUnlinkATProto(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if err := s.atprotosvc.Unlink(c.Request().Context(), userID); err != nil {
 		return atprotoError(err)

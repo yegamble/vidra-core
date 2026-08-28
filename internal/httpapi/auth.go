@@ -338,9 +338,9 @@ func (s *Server) handleRegister(c echo.Context) error {
 // principal is always present; it reloads the user so the response reflects the
 // current database state (role, email_verified, …) rather than stale token claims.
 func (s *Server) handleMe(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	user, err := s.authsvc.UserByID(c.Request().Context(), userID)
 	if err != nil {
@@ -404,9 +404,9 @@ func (r updateProfileRequest) Validate() []FieldError {
 
 // handleUpdateMe updates the authenticated account's profile (display name, bio).
 func (s *Server) handleUpdateMe(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in updateProfileRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -556,9 +556,9 @@ func (s *Server) handleRefresh(c echo.Context) error {
 // ("sign out everywhere"). It runs behind requireAuth, so the principal is
 // always present, and returns 204.
 func (s *Server) handleLogoutAll(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if err := s.authsvc.LogoutAll(c.Request().Context(), userID); err != nil {
 		return err
@@ -665,9 +665,9 @@ func (s *Server) handleConfirmPasswordReset(c echo.Context) error {
 // authenticated account. It runs behind requireAuth, so the principal is always
 // present. It always returns 202, and is a no-op for an already-verified account.
 func (s *Server) handleRequestEmailVerification(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if err := s.authsvc.RequestEmailVerification(c.Request().Context(), userID); err != nil {
 		if errors.Is(err, auth.ErrAccountNotFound) {
@@ -729,9 +729,9 @@ func (r deactivateAccountRequest) Validate() []FieldError {
 // a wrong password is 403. Deactivation is reversible by an administrator; hard
 // deletion is a separate, policy-gated flow.
 func (s *Server) handleDeactivateAccount(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in deactivateAccountRequest
 	if err := bindAndValidate(c, &in); err != nil {

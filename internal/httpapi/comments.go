@@ -154,9 +154,9 @@ func (r createCommentRequest) parentID() *uuid.UUID {
 
 // handleCreateComment posts a comment on a public, published video. Behind requireAuth.
 func (s *Server) handleCreateComment(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	// Feature toggle (P10): the instance can turn off new comments. Reading
 	// existing comments stays open; only posting is gated.
@@ -244,9 +244,9 @@ func (s *Server) handleListComments(c echo.Context) error {
 // handleDeleteComment removes a comment. Behind requireAuth. The comment's author
 // may always delete it; a moderator/admin may delete anyone's.
 func (s *Server) handleDeleteComment(c echo.Context) error {
-	userID, role, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, role, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -284,9 +284,9 @@ func (r updateCommentRequest) Validate() []FieldError {
 // the author may edit (moderators delete, not edit): another user's comment is
 // 403, an unknown id is 404, a blank/too-long body is 422.
 func (s *Server) handleUpdateComment(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -346,9 +346,9 @@ func (s *Server) canManageCommentVideo(ctx context.Context, userID uuid.UUID, ro
 // comment view (200). None of the actions touch the comment body or fire a
 // federation hook — they are local metadata only.
 func (s *Server) commentCreatorAction(c echo.Context, action func(context.Context, uuid.UUID) (comment.WithAuthor, error)) error {
-	userID, role, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, role, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

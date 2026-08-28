@@ -69,9 +69,9 @@ func (s *Server) handleGetVideoChapters(c echo.Context) error {
 //     duration, a title not 1..120 chars after trim, or more than 100 chapters;
 //   - 200 with the stored set (GET shape) on success.
 func (s *Server) handleSetVideoChapters(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

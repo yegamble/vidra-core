@@ -22,9 +22,9 @@ import (
 // handleReportRemoteVideo files a report against an ingested remote video.
 // Behind requireAuth. An unknown remote video is 404. Idempotent.
 func (s *Server) handleReportRemoteVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	remoteVideoID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -49,9 +49,9 @@ func (s *Server) handleReportRemoteVideo(c echo.Context) error {
 // requireRole(admin, moderator). An unknown remote video is 404. Idempotent.
 // Emits an audit event.
 func (s *Server) handleBlockRemoteVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -75,9 +75,9 @@ func (s *Server) handleBlockRemoteVideo(c echo.Context) error {
 // handleUnblockRemoteVideo lifts a remote video's block. Behind
 // requireRole(admin, moderator). Idempotent. Emits an audit event.
 func (s *Server) handleUnblockRemoteVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

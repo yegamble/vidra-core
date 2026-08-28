@@ -75,9 +75,9 @@ func (s *Server) handleListFederationFollowerRequests(c echo.Context) error {
 // Behind requireRole(admin). Unknown/already-resolved id → 404. Emits an audit
 // event (safe row id only).
 func (s *Server) handleApproveFederationFollowerRequest(c echo.Context) error {
-	adminID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	adminID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -98,9 +98,9 @@ func (s *Server) handleApproveFederationFollowerRequest(c echo.Context) error {
 // follower. Behind requireRole(admin). Unknown/already-resolved id → 404.
 // Emits an audit event (safe row id only).
 func (s *Server) handleRejectFederationFollowerRequest(c echo.Context) error {
-	adminID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	adminID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

@@ -62,9 +62,9 @@ func (s *Server) handleGetVideoEmbedPrivacy(c echo.Context) error {
 // "whitelist" with an empty/invalid domain list (hostnames only, ≤50), or
 // allowed_domains supplied with a non-whitelist status.
 func (s *Server) handleSetVideoEmbedPrivacy(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

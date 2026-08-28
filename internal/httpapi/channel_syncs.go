@@ -84,9 +84,9 @@ type channelSyncListResponse struct {
 // cap; 404 when the channel is unknown or not owned; 409 when an identical
 // sync already exists.
 func (s *Server) handleCreateChannelSync(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if !s.channelSyncEnabled() {
 		return &FeatureDisabledError{Feature: "channel_sync"}
@@ -107,9 +107,9 @@ func (s *Server) handleCreateChannelSync(c echo.Context) error {
 // paginated via ?limit (1–100, default 20)/?offset with a true total. It
 // previously returned every sync unbounded.
 func (s *Server) handleListChannelSyncs(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	syncs, total, err := s.channelsyncsvc.ListForUser(c.Request().Context(), userID, page.Limit32(), page.Offset32())
@@ -125,9 +125,9 @@ func (s *Server) handleListChannelSyncs(c echo.Context) error {
 
 // handleDeleteChannelSync removes a channel sync the caller owns.
 func (s *Server) handleDeleteChannelSync(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -145,9 +145,9 @@ func (s *Server) handleDeleteChannelSync(c echo.Context) error {
 // 429 (with Retry-After) when the server-side cooldown since the last completed
 // run has not yet elapsed.
 func (s *Server) handleSyncChannelNow(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if !s.channelSyncEnabled() {
 		return &FeatureDisabledError{Feature: "channel_sync"}

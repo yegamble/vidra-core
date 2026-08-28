@@ -331,9 +331,9 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 
 // handleCreateVideo creates a draft video under a channel owned by the caller.
 func (s *Server) handleCreateVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in createVideoRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -649,9 +649,9 @@ func (s *Server) handleListPublicVideos(c echo.Context) error {
 // feed: public, published videos from the channels they follow, newest first,
 // with discovery-card data. Pagination via ?limit (1–100, default 20) and ?offset.
 func (s *Server) handleListSubscriptionVideos(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	page := parsePage(c, defaultVideoFeedLimit, maxVideoFeedLimit)
 	items, total, err := s.videosvc.ListSubscriptions(c.Request().Context(), userID, page.Limit32(), page.Offset32())
@@ -994,9 +994,9 @@ func derefOr(p *string) string {
 // handleUpdateVideo updates a video owned by the authenticated user. A
 // moderator/admin may manage any local video.
 func (s *Server) handleUpdateVideo(c echo.Context) error {
-	userID, role, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, role, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -1105,9 +1105,9 @@ func updateVideoFieldNames(in updateVideoRequest) []string {
 // moderator/admin may delete any local video; the audit actor remains the
 // authenticated caller, never the video's owner.
 func (s *Server) handleDeleteVideo(c echo.Context) error {
-	userID, role, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, role, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -1170,9 +1170,9 @@ type uploadVideoFileResponse struct {
 // up front with 422 quota_exceeded — the multipart part is already buffered by
 // the form parse, so its size is authoritative (not a client-declared header).
 func (s *Server) handleUploadVideoFile(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	if !s.uploadsEnabled() {
 		return &FeatureDisabledError{Feature: "uploads"}
@@ -1239,9 +1239,9 @@ type thumbnailFrameRequest struct {
 // creator-supplied image, replacing any previous or auto-generated thumbnail (a
 // non-image extension → 415). The 8M global body limit bounds the upload.
 func (s *Server) handleSetVideoThumbnail(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -1606,9 +1606,9 @@ func (r blockVideoRequest) Validate() []FieldError {
 // requireRole(admin, moderator). An unknown video is 404. Idempotent. Emits an
 // audit event.
 func (s *Server) handleBlockVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -1635,9 +1635,9 @@ func (s *Server) handleBlockVideo(c echo.Context) error {
 // Idempotent (unblocking a video that is not blocked still succeeds). Emits an
 // audit event.
 func (s *Server) handleUnblockVideo(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

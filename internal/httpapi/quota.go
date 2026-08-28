@@ -51,9 +51,9 @@ type quotaStatusResponse struct {
 // effective quota (per-user override, else the instance default; null =
 // unlimited), plus the rolling-24h daily upload window. Behind requireAuth.
 func (s *Server) handleGetMyQuota(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	st, err := s.quotasvc.Status(c.Request().Context(), userID)
 	if err != nil {

@@ -44,9 +44,9 @@ func (r updateNotificationPrefsRequest) Validate() []FieldError {
 // handleGetNotificationPrefs returns the caller's notification preferences (all
 // known types; absent rows default to enabled). Behind requireAuth.
 func (s *Server) handleGetNotificationPrefs(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	prefs, err := s.notifsvc.Prefs(c.Request().Context(), userID)
 	if err != nil {
@@ -59,9 +59,9 @@ func (s *Server) handleGetNotificationPrefs(c echo.Context) error {
 // the full updated map. Behind requireAuth. An unknown type is 422 and nothing
 // is written.
 func (s *Server) handleUpdateNotificationPrefs(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in updateNotificationPrefsRequest
 	if err := bindAndValidate(c, &in); err != nil {

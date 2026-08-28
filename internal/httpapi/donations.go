@@ -93,9 +93,9 @@ func (r addDonationAddressRequest) Validate() []FieldError {
 
 // handleAddDonationAddress adds a donation address for the authenticated user.
 func (s *Server) handleAddDonationAddress(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in addDonationAddressRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -124,9 +124,9 @@ func (s *Server) handleAddDonationAddress(c echo.Context) error {
 // handleListMyDonationAddresses lists all of the caller's donation addresses
 // (account-level and channel-scoped).
 func (s *Server) handleListMyDonationAddresses(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	rows, err := s.donationsvc.ListOwn(c.Request().Context(), userID)
 	if err != nil {
@@ -137,9 +137,9 @@ func (s *Server) handleListMyDonationAddresses(c echo.Context) error {
 
 // handleDeleteDonationAddress removes one of the caller's donation addresses.
 func (s *Server) handleDeleteDonationAddress(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -161,9 +161,9 @@ type donationChallengeResponse struct {
 // handleChallengeDonationAddress issues a proof-of-control challenge for one of
 // the caller's addresses. Networks without a signing path answer 501.
 func (s *Server) handleChallengeDonationAddress(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -191,9 +191,9 @@ func (r verifyDonationAddressRequest) Validate() []FieldError {
 // handleVerifyDonationAddress verifies a signed challenge and, on success, marks
 // the address verified. Networks without a signing path answer 501.
 func (s *Server) handleVerifyDonationAddress(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

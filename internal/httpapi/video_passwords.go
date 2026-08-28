@@ -174,9 +174,9 @@ type replaceVideoPasswordsRequest struct {
 // handleListVideoPasswords lists a video's passwords (owner only; id + created_at
 // only). A non-owner or unknown id is 404.
 func (s *Server) handleListVideoPasswords(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -193,9 +193,9 @@ func (s *Server) handleListVideoPasswords(c echo.Context) error {
 // chars → else 400). Returns the new row (id + created_at) with 201. Never logs
 // or echoes the plaintext.
 func (s *Server) handleAddVideoPassword(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -215,9 +215,9 @@ func (s *Server) handleAddVideoPassword(c echo.Context) error {
 // handleReplaceVideoPasswords replaces a video's whole password set (owner only;
 // 1–20 entries, each 6–100 chars → else 400). Returns the stored set (GET shape).
 func (s *Server) handleReplaceVideoPasswords(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -238,9 +238,9 @@ func (s *Server) handleReplaceVideoPasswords(c echo.Context) error {
 // 404 for an unknown passwordId; 409 when it is the last password of a
 // privacy=password video.
 func (s *Server) handleDeleteVideoPassword(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

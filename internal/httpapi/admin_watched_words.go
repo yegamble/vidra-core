@@ -67,9 +67,9 @@ func (s *Server) handleListWatchedWords(c echo.Context) error {
 // handleAddWatchedWord adds a term to the watched-words list. Behind
 // requireRole(admin, moderator). A duplicate (case-insensitive) → 409.
 func (s *Server) handleAddWatchedWord(c echo.Context) error {
-	userID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	var in createWatchedWordRequest
 	if err := bindAndValidate(c, &in); err != nil {

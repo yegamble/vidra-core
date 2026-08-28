@@ -45,9 +45,9 @@ func (s *Server) handleGetInstanceDocumentAdmin(c echo.Context) error {
 // new content hash (never the body — custom JS/CSS is operator code that runs
 // in every visitor's browser, so changes must be traceable).
 func (s *Server) handlePutInstanceDocument(c echo.Context) error {
-	callerID, _, ok := principalFromContext(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	callerID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
 	}
 	name := c.Param("name")
 	if !instancedocs.IsName(name) {
