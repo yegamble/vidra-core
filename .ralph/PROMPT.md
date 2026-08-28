@@ -179,6 +179,16 @@ At the start of every loop:
    complete until its work is committed and pushed (or the push failure is recorded).
    Only ONE Ralph loop may run against this repo at a time (both projects share one
    `main`; the pull-rebase-retry is not concurrency-safe).
+   Prefer several small, scoped commits over one loop-end mega-commit. **Done
+   means merged to `main`:** work on any other branch is not complete — and its
+   fix_plan item may not be ticked — until that branch is merged into `main`
+   (gate + branch CI green) and the merge is pushed; if the merge is blocked,
+   record the item as awaiting merge / `BLOCKED`, never as done. **Clean up
+   merged branches every loop:** delete local and remote branches already merged
+   into `origin/main` (`git branch --merged origin/main` → `git branch -d`;
+   `git branch -r --merged origin/main` → `git push origin --delete <branch>`;
+   then `git fetch --prune`). Never delete `main`, the current branch, or an
+   unmerged branch — report unmerged strays instead.
 
 Do not wander. Do not perform cosmetic refactors unless required for the current task. Do not create busywork after all specs are complete.
 

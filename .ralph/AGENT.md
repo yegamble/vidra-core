@@ -484,6 +484,10 @@ migration; add a new one.
    `docker compose --profile core --profile otel up` (Jaeger UI :16686).
 7. branch CI is green (same `make ci`); `ci-guard.yml` passes — a local green alone
    is not done
+8. the slice is merged into `main` and pushed — a green side branch is not done
+   until merged — and branches already merged into `origin/main` are deleted
+   (local + remote, then `git fetch --prune`); never delete `main`, the current
+   branch, or an unmerged branch
 
 Run `make help` for the full target list.
 
