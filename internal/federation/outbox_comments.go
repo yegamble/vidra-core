@@ -136,7 +136,7 @@ func (s *Service) commentReplyTarget(ctx context.Context, c sqlcgen.Comment) (st
 		}
 		// Parent vanished under us → thread onto the video.
 	}
-	return s.baseURL + "/videos/watch/" + c.VideoID.String(), nil
+	return s.baseURL + "/videos/" + c.VideoID.String(), nil
 }
 
 // buildNoteActivity renders a Create or Update activity wrapping the comment as

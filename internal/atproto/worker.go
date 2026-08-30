@@ -111,7 +111,7 @@ func (s *Service) runPost(ctx context.Context, row sqlcgen.ClaimDueATProtoPostsR
 		return err // transient (network / 5xx / 429) — retried with backoff
 	}
 
-	watchURL := s.baseURL + "/videos/watch/" + info.ID.String()
+	watchURL := s.baseURL + "/videos/" + info.ID.String()
 	thumb := s.uploadThumbnail(ctx, sess, acct.PdsUrl, row.VideoID)
 	record := buildPostRecord(info.Title, watchURL, s.now(), thumb)
 

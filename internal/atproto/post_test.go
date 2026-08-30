@@ -9,7 +9,7 @@ import (
 
 func TestBuildPostRecordShape(t *testing.T) {
 	created := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
-	rec := buildPostRecord("My Great Video", "https://videos.example/videos/watch/abc", created, nil)
+	rec := buildPostRecord("My Great Video", "https://videos.example/videos/abc", created, nil)
 
 	if rec["$type"] != feedPostCollection {
 		t.Errorf("$type = %v, want %s", rec["$type"], feedPostCollection)
@@ -31,7 +31,7 @@ func TestBuildPostRecordShape(t *testing.T) {
 	if !ok {
 		t.Fatalf("external missing")
 	}
-	if external["uri"] != "https://videos.example/videos/watch/abc" {
+	if external["uri"] != "https://videos.example/videos/abc" {
 		t.Errorf("external uri = %v", external["uri"])
 	}
 	if external["title"] != "My Great Video" {
@@ -49,7 +49,7 @@ func TestBuildPostRecordShape(t *testing.T) {
 
 func TestBuildPostRecordWithThumb(t *testing.T) {
 	blob := Blob(`{"$type":"blob","ref":{"$link":"bafyabc"},"mimeType":"image/jpeg","size":42}`)
-	rec := buildPostRecord("Title", "https://x/videos/watch/1", time.Now(), blob)
+	rec := buildPostRecord("Title", "https://x/videos/1", time.Now(), blob)
 	embed := rec["embed"].(map[string]any)
 	external := embed["external"].(map[string]any)
 	thumb, ok := external["thumb"]
@@ -68,7 +68,7 @@ func TestBuildPostRecordWithThumb(t *testing.T) {
 
 func TestBuildPostRecordTruncatesLongTitle(t *testing.T) {
 	long := strings.Repeat("x", maxPostText+50)
-	rec := buildPostRecord(long, "https://x/videos/watch/1", time.Now(), nil)
+	rec := buildPostRecord(long, "https://x/videos/1", time.Now(), nil)
 	if got := len([]rune(rec["text"].(string))); got != maxPostText {
 		t.Errorf("text length = %d, want capped at %d", got, maxPostText)
 	}

@@ -31,8 +31,11 @@ Both go in `internal/config`, `.env.example`, `docker-compose.yml` passthrough, 
 Object/actor id scheme (stable, never reused):
 - Account actor:   `${PUBLIC_BASE_URL}/accounts/{username}`
 - Channel actor:   `${PUBLIC_BASE_URL}/video-channels/{handle}`
-- Video object:    `${PUBLIC_BASE_URL}/videos/watch/{uuid}` (AP id; the REST/watch URL may differ)
-- Comment (Note):  `${PUBLIC_BASE_URL}/videos/watch/{uuid}/comments/{id}`
+- Video object:    `${PUBLIC_BASE_URL}/videos/{uuid}` (AP id and `url`; the same URL RSS,
+  the sitemap and oEmbed advertise and the frontend routes. The legacy
+  `/videos/watch/{uuid}` form we used to mint is still ACCEPTED inbound so replies
+  federated under it keep resolving — it is never emitted again.)
+- Comment (Note):  `${PUBLIC_BASE_URL}/comments/{uuid}`
 - Activities:      `${actor}/activities/{uuid}` (Create/Announce/Follow/…)
 - Per-actor collections: `${actor}/{inbox,outbox,followers,following}`
 - Shared inbox:    `${PUBLIC_BASE_URL}/inbox`

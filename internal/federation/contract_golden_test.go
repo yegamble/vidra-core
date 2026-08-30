@@ -349,8 +349,17 @@ func TestContractGoldenOutboxCollections(t *testing.T) {
 // Keep the deterministic seed honest: the golden world must never drift from
 // the fixture corpus identities.
 func TestContractGoldenSeedMatchesCorpus(t *testing.T) {
+	// Canonical form: what we MINT today (AP id/url, outbox items, inReplyTo) —
+	// the same shape RSS/sitemap/oEmbed emit and the frontend actually routes.
+	// Pinned to the literal the outbound golden fixtures carry.
+	if got := contractBase + "/videos/" + ctVideoID.String(); got != "https://videos.example/videos/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d" {
+		t.Errorf("canonical local video URL %q no longer matches the outbound golden fixtures", got)
+	}
+	// Legacy form: what we USED to mint and still accept inbound. Pinned to the
+	// literal the inbound Mastodon Note fixtures use as inReplyTo, so a reply
+	// federated under the old format keeps resolving to the same video.
 	if got := contractBase + "/videos/watch/" + ctVideoID.String(); got != "https://videos.example/videos/watch/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d" {
-		t.Errorf("local video URL %q no longer matches the inReplyTo used by the Note fixtures", got)
+		t.Errorf("legacy local video URL %q no longer matches the inReplyTo used by the Note fixtures", got)
 	}
 	if _, err := time.Parse(time.RFC3339, "2026-05-12T08:30:00.000Z"); err != nil {
 		t.Errorf("fixture publish timestamp is not RFC3339: %v", err)

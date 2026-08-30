@@ -229,18 +229,27 @@ func (s *Service) flagRemoteComment(ctx context.Context, commentID uuid.UUID, bo
 	_, _ = s.flagger.FlagComment(ctx, commentID, body)
 }
 
-// localVideoID parses actorURL-shaped video object URLs we mint
-// (baseURL + /videos/watch/<uuid>) back to the video id.
+// localVideoID parses video object URLs we mint back to the video id.
+//
+// Two forms are accepted. The legacy prefix (/videos/watch/<uuid>) is tried
+// first and kept forever so replies to videos federated under the old format
+// still resolve — those AP ids live in remote servers' databases, out of our
+// reach. New emissions use the canonical form (/videos/<uuid>): the same URL
+// RSS, the sitemap and oEmbed already advertise and the only one the frontend
+// actually routes (the legacy path was never routed — every such link 404s).
+// Order matters only conceptually: under the shorter prefix the legacy form
+// leaves "watch/<uuid>", which fails uuid.Parse anyway.
 func (s *Service) localVideoID(objectURL string) (uuid.UUID, bool) {
-	rest, ok := strings.CutPrefix(objectURL, s.baseURL+"/videos/watch/")
-	if !ok {
-		return uuid.UUID{}, false
+	for _, prefix := range []string{s.baseURL + "/videos/watch/", s.baseURL + "/videos/"} {
+		rest, ok := strings.CutPrefix(objectURL, prefix)
+		if !ok {
+			continue
+		}
+		if id, err := uuid.Parse(rest); err == nil {
+			return id, true
+		}
 	}
-	id, err := uuid.Parse(rest)
-	if err != nil {
-		return uuid.UUID{}, false
-	}
-	return id, true
+	return uuid.UUID{}, false
 }
 
 // localCommentID parses the comment object URLs we mint
