@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/shortid"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -260,6 +261,18 @@ func TestOEmbedGatingAndValidation(t *testing.T) {
 		{"path traversal is 404", base + "/videos/../secret/" + pub.String(), http.StatusNotFound},
 		{"non-uuid id is 404", base + "/videos/not-a-uuid", http.StatusNotFound},
 		{"javascript scheme is 404", "javascript:alert(1)//videos.example/videos/" + pub.String(), http.StatusNotFound},
+		// Short share links: the frontend hands these out and 301s them to
+		// /videos/{uuid}, but a CMS resolving an oEmbed url never follows that
+		// redirect — it asks us about the /v/ form verbatim.
+		{"public short url", base + "/v/" + shortid.FromUUID(pub), http.StatusOK},
+		{"unlisted short url", base + "/v/" + shortid.FromUUID(unlisted), http.StatusOK},
+		{"private short url is 401", base + "/v/" + shortid.FromUUID(private), http.StatusUnauthorized},
+		{"unknown video short url is 404", base + "/v/" + shortid.FromUUID(missing), http.StatusNotFound},
+		{"foreign host short url is 404", "https://evil.example/v/" + shortid.FromUUID(pub), http.StatusNotFound},
+		// '0' is not in the base58 alphabet, so this can never name a video.
+		{"off-alphabet short id is 404", base + "/v/EjArDZ8v19uX6BigXbAx0p", http.StatusNotFound},
+		{"raw uuid under /v/ is 404", base + "/v/" + pub.String(), http.StatusNotFound},
+		{"short id with extra segment is 404", base + "/v/" + shortid.FromUUID(pub) + "/x", http.StatusNotFound},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -340,6 +353,26 @@ func TestOEmbedResponseShape(t *testing.T) {
 	// The iframe must not contain a raw unescaped title (built with %q on the URL only).
 	if strings.Contains(resp.HTML, "<script") {
 		t.Errorf("html contains a script tag: %s", resp.HTML)
+	}
+}
+
+// A short link is the same video by another spelling: the oEmbed payload must
+// be byte-identical to the long form, or a CMS that resolved the /v/ URL would
+// render a different card than one that resolved /videos/{uuid}.
+func TestOEmbedShortURLMatchesLongURL(t *testing.T) {
+	srv, repo, ada := distributionServer(t)
+	ada.DisplayName = "Ada's Channel"
+	repo.channels.byHandle["ada"] = ada
+	pub := seedVideo(repo, ada, "Great Clip", "d", "public", "published", 5)
+	seedThumbnail(repo, pub)
+
+	long := get(t, srv, "/services/oembed?url="+url.QueryEscape("https://videos.example/videos/"+pub.String()))
+	short := get(t, srv, "/services/oembed?url="+url.QueryEscape("https://videos.example/v/"+shortid.FromUUID(pub)))
+	if long.Code != http.StatusOK || short.Code != http.StatusOK {
+		t.Fatalf("codes = %d (long) / %d (short), want 200/200; short body=%s", long.Code, short.Code, short.Body.String())
+	}
+	if long.Body.String() != short.Body.String() {
+		t.Fatalf("payloads differ:\n long  = %s\n short = %s", long.Body.String(), short.Body.String())
 	}
 }
 

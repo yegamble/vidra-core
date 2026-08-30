@@ -15,6 +15,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/instancesettings"
+	"github.com/vidra/vidra-core/internal/shortid"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -280,8 +281,15 @@ func (s *Server) handleOEmbed(c echo.Context) error {
 }
 
 // parseLocalVideoURL accepts an absolute URL and returns the video id when it is
-// a watch (/videos/{id}) or embed (/embed/{id}) URL on THIS instance's host. Any
-// foreign host, unexpected scheme, extra path segments, or non-UUID id → false.
+// a watch (/videos/{id}), embed (/embed/{id}) or short share (/v/{sid}) URL on
+// THIS instance's host. Any foreign host, unexpected scheme, extra path
+// segments, or an id that does not parse in the form its prefix implies → false.
+//
+// The short form has to be accepted here even though the frontend 301s /v/{sid}
+// to /videos/{id}: short links are what people actually paste, and a CMS or
+// chat app unfurling one calls oEmbed with the URL verbatim — it never follows
+// the redirect first. Without this branch every shared short link unfurls as a
+// dead card while the same video's long URL unfurls fine.
 func (s *Server) parseLocalVideoURL(raw string) (uuid.UUID, bool) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -295,14 +303,21 @@ func (s *Server) parseLocalVideoURL(raw string) (uuid.UUID, bool) {
 		return uuid.Nil, false
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) != 2 || (parts[0] != "videos" && parts[0] != "embed") {
+	if len(parts) != 2 {
 		return uuid.Nil, false
 	}
-	id, err := uuid.Parse(parts[1])
-	if err != nil {
+	switch parts[0] {
+	case "videos", "embed":
+		id, err := uuid.Parse(parts[1])
+		if err != nil {
+			return uuid.Nil, false
+		}
+		return id, true
+	case "v":
+		return shortid.ToUUID(parts[1])
+	default:
 		return uuid.Nil, false
 	}
-	return id, true
 }
 
 // oembedDimensions clamps the default 16:9 box to the supplied maxwidth/maxheight
