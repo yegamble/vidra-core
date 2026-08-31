@@ -3593,10 +3593,12 @@ paths:
       description: >-
         Accepts a batch (<= 20) of behavioural events (suggestions shown /
         selected, search submitted, result clicked, impression, play started,
-        completed), enriches each with the caller's user id, session, and an
-        allow_history flag, and enqueues them for the search service
-        (search-service W4). Optional auth, rate-limited. Never blocks on the
-        search service.
+        completed), enriches each with the caller's user id, session, an
+        anonymous aggregation subject and an allow_history flag, and enqueues
+        them for the search service (search-service W4). Every one of those
+        identity fields is SERVER-derived: a client-supplied value for any of
+        them is stripped from the event body and never stored. Optional auth,
+        rate-limited. Never blocks on the search service.
       tags: [search]
       security:
         - bearerAuth: []

@@ -110,7 +110,7 @@ func TestAuditContainsNoSensitiveKeys(t *testing.T) {
 }
 
 func TestIsSensitiveKey(t *testing.T) {
-	for _, k := range []string{"password", "Token", "REFRESH_TOKEN", "authorization", "secret", "private_key", "smtp_password", "ipfs_cluster_token", "ipfs_private_cluster_token"} {
+	for _, k := range []string{"password", "Token", "REFRESH_TOKEN", "authorization", "secret", "private_key", "smtp_password", "ipfs_cluster_token", "ipfs_private_cluster_token", "subject_id"} {
 		if !IsSensitiveKey(k) {
 			t.Errorf("%q should be flagged sensitive", k)
 		}
