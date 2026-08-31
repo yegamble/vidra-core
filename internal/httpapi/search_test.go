@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/searchclient"
 	"github.com/vidra/vidra-core/internal/searchevents"
@@ -317,5 +319,179 @@ func TestSearchEventsAuthedIdentityIsServerDerived(t *testing.T) {
 	_ = json.Unmarshal(payload["allow_history"], &allowHistory)
 	if !allowHistory {
 		t.Errorf("allow_history = false, want the server-derived true (instance default + user pref + signed in)")
+	}
+}
+
+// --- anonymous aggregation subject (subject_id) ---
+
+// searchSubjectTestSecret gives the test server a JWT secret so the subject
+// digester is derived. testConfig() leaves JWTSecret empty, which is the
+// degrade-to-no-subject path — a real deployment always has one (config.go
+// defaults it in dev and validate() requires >= 32 bytes in production).
+const searchSubjectTestSecret = "search-subject-secret-search-subject-secret"
+
+// subjectServer builds a search-events server whose subject digester is keyed.
+func subjectServer(t *testing.T, outbox *fakeSearchOutbox) *Server {
+	t.Helper()
+	cfg := testConfig()
+	cfg.JWTSecret = searchSubjectTestSecret
+	srv, _, _, _, _ := videoServerFullWith(t, cfg,
+		[]Option{WithSearchEvents(searchevents.NewEnqueuer(outbox, nil))})
+	return srv
+}
+
+// postEventsFrom posts a search-event batch from a specific socket address with
+// an optional X-Vidra-Session header and bearer token.
+func postEventsFrom(srv *Server, body, remoteAddr, session, token string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/search/events", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.RemoteAddr = remoteAddr
+	if session != "" {
+		req.Header.Set("X-Vidra-Session", session)
+	}
+	if token != "" {
+		req.Header.Set(echo.HeaderAuthorization, "Bearer "+token)
+	}
+	srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+// eventPayload decodes the nth enqueued outbox payload.
+func eventPayload(t *testing.T, outbox *fakeSearchOutbox, n int) map[string]json.RawMessage {
+	t.Helper()
+	if len(outbox.events) <= n {
+		t.Fatalf("enqueued = %d, want > %d", len(outbox.events), n)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(outbox.events[n].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload %d: %v", n, err)
+	}
+	return payload
+}
+
+// payloadString reads a string field, reporting absence as "".
+func payloadString(payload map[string]json.RawMessage, key string) string {
+	raw, ok := payload[key]
+	if !ok {
+		return ""
+	}
+	var s string
+	_ = json.Unmarshal(raw, &s)
+	return s
+}
+
+const submittedEvent = `{"events":[{"type":"search.submitted","query":"go","results_count":7}]}`
+
+// TestSearchEventsAnonSubjectIsSessionIndependent is THE security property.
+// vidra-search's k-anonymity floor counts distinct session_ids for anonymous
+// rows, and X-Vidra-Session is client-supplied — validated for UUID SHAPE only,
+// so anyone can mint unlimited well-formed ids and clear the floor by rotating
+// the header. The server-derived subject_id must be the same for both requests
+// because it depends on the client address, not on anything the client says.
+func TestSearchEventsAnonSubjectIsSessionIndependent(t *testing.T) {
+	outbox := &fakeSearchOutbox{}
+	srv := subjectServer(t, outbox)
+
+	for _, session := range []string{uuid.NewString(), uuid.NewString()} {
+		if rec := postEventsFrom(srv, submittedEvent, "203.0.113.7:44100", session, ""); rec.Code != http.StatusAccepted {
+			t.Fatalf("code = %d, want 202; body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	first := payloadString(eventPayload(t, outbox, 0), "subject_id")
+	second := payloadString(eventPayload(t, outbox, 1), "subject_id")
+	if first == "" || second == "" {
+		t.Fatalf("subject_id missing (%q / %q); an anonymous event must carry a server-derived aggregation subject", first, second)
+	}
+	if first != second {
+		t.Errorf("subject_id differs across two X-Vidra-Session values from one address (%q vs %q) — rotating the header must not mint new subjects", first, second)
+	}
+}
+
+// TestSearchEventsAnonSubjectDiffersByClientAddress: two genuinely different
+// clients must remain two subjects, or the field would count everyone as one.
+func TestSearchEventsAnonSubjectDiffersByClientAddress(t *testing.T) {
+	outbox := &fakeSearchOutbox{}
+	srv := subjectServer(t, outbox)
+	session := uuid.NewString()
+
+	for _, addr := range []string{"203.0.113.7:44100", "198.51.100.9:44100"} {
+		if rec := postEventsFrom(srv, submittedEvent, addr, session, ""); rec.Code != http.StatusAccepted {
+			t.Fatalf("code = %d, want 202; body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	if a, b := payloadString(eventPayload(t, outbox, 0), "subject_id"), payloadString(eventPayload(t, outbox, 1), "subject_id"); a == b {
+		t.Errorf("two different client addresses produced the same subject_id %q", a)
+	}
+}
+
+// TestSearchEventsSubjectIDIsNeverClientSupplied: subject_id joins the
+// server-derived field set, so a body-supplied value must never survive — the
+// same forgery #128 closed for user_id.
+func TestSearchEventsSubjectIDIsNeverClientSupplied(t *testing.T) {
+	outbox := &fakeSearchOutbox{}
+	srv := subjectServer(t, outbox)
+
+	forged := "forged-subject-0000"
+	body := `{"events":[{"type":"search.submitted","query":"go","subject_id":"` + forged + `"}]}`
+	if rec := postEventsFrom(srv, body, "203.0.113.7:44100", "", ""); rec.Code != http.StatusAccepted {
+		t.Fatalf("code = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := payloadString(eventPayload(t, outbox, 0), "subject_id"); got == forged {
+		t.Errorf("client-supplied subject_id %q survived into the outbox", got)
+	}
+}
+
+// TestSearchEventsSessionIDSurvivesAlongsideSubject pins the co-visitation
+// constraint: subject_id is an ADDITIONAL field, never a replacement for
+// session_id. session_id drives within-session correlation in vidra-search
+// (co-visitation edges, query reformulation); collapsing every visitor behind
+// one NAT into a single shared session would splice unrelated people's browsing
+// into one correlation chain.
+func TestSearchEventsSessionIDSurvivesAlongsideSubject(t *testing.T) {
+	outbox := &fakeSearchOutbox{}
+	srv := subjectServer(t, outbox)
+
+	session := uuid.NewString()
+	if rec := postEventsFrom(srv, submittedEvent, "203.0.113.7:44100", session, ""); rec.Code != http.StatusAccepted {
+		t.Fatalf("code = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	payload := eventPayload(t, outbox, 0)
+	if got := payloadString(payload, "session_id"); got != session {
+		t.Errorf("session_id = %q, want the validated header value %q unchanged", got, session)
+	}
+	subject := payloadString(payload, "subject_id")
+	if subject == "" {
+		t.Fatal("subject_id missing on an anonymous event")
+	}
+	if subject == session {
+		t.Errorf("subject_id equals session_id (%q) — they are different identifiers with different lifetimes", subject)
+	}
+}
+
+// TestSearchEventsAuthedCarriesNoSubject: for a signed-in caller user_id is
+// already the trustworthy subject. Emitting an IP-derived pseudonym next to a
+// known account id would be redundant AND would leak an address-derived value
+// for an identified user.
+func TestSearchEventsAuthedCarriesNoSubject(t *testing.T) {
+	outbox := &fakeSearchOutbox{}
+	srv := subjectServer(t, outbox)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	me := sendJSONAuth(srv, http.MethodGet, "/api/v1/auth/me", "", tok)
+	var self userView
+	_ = json.Unmarshal(me.Body.Bytes(), &self)
+	if self.ID == "" {
+		t.Fatalf("could not resolve principal id; body=%s", me.Body.String())
+	}
+	if rec := postEventsFrom(srv, submittedEvent, "203.0.113.7:44100", "", tok); rec.Code != http.StatusAccepted {
+		t.Fatalf("code = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	payload := eventPayload(t, outbox, 0)
+	if got := payloadString(payload, "user_id"); got != self.ID {
+		t.Errorf("user_id = %q, want the principal %q", got, self.ID)
+	}
+	if raw, ok := payload["subject_id"]; ok {
+		t.Errorf("authenticated payload carries subject_id = %s, want absent (user_id is already the trustworthy subject)", raw)
 	}
 }

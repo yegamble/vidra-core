@@ -394,8 +394,14 @@ const maxSearchEventsPerRequest = 20
 // count(DISTINCT ql.user_id) — 20 fabricated ids in one unauthenticated batch
 // cleared the default floor of 3. sessionIDFromRequest also validates the UUID
 // shape of the HEADER only, so a body-supplied session_id was never validated at
-// all. Do not "simplify" this back into three conditional assignments.
-var serverDerivedSearchEventFields = []string{"user_id", "session_id", "allow_history"}
+// all. Do not "simplify" this back into four conditional assignments.
+//
+// subject_id is the anonymous half of the same problem: rotating X-Vidra-Session
+// mints unlimited well-formed session ids, which the floor counts for rows with
+// no user_id. It is derived from the connecting address instead — see
+// anonSearchSubject in search_subject.go for the derivation and for the NAT
+// limitation it does not close.
+var serverDerivedSearchEventFields = []string{"user_id", "session_id", "subject_id", "allow_history"}
 
 // searchEventsRequest is the POST /search/events body: a batch of raw event
 // objects, each carrying a "type" plus its behavioural fields.
@@ -405,9 +411,9 @@ type searchEventsRequest struct {
 
 // handleSearchEvents accepts a batch of behavioural search events, validates the
 // type allowlist + batch cap, replaces the server-derived identity fields with
-// the caller's own user_id / session / allow_history, and enqueues them to the
-// outbox. Always 202 on success;
-// never blocks on the search service. optionalAuth, rate-limited.
+// the caller's own user_id / session / subject / allow_history, and enqueues them
+// to the outbox. Always 202 on success; never blocks on the search service.
+// optionalAuth, rate-limited.
 func (s *Server) handleSearchEvents(c echo.Context) error {
 	var in searchEventsRequest
 	if err := c.Bind(&in); err != nil {
@@ -439,6 +445,10 @@ func (s *Server) handleSearchEvents(c echo.Context) error {
 
 	id, _, authed := principalFromContext(c)
 	session := sessionIDFromRequest(c)
+	// Anonymous callers only: an authenticated caller's user_id is already the
+	// trustworthy subject, so a second, address-derived one would be redundant
+	// AND would leak that derivation for a known account.
+	subject := s.anonSearchSubject(c)
 	_, prefs, _ := s.searchUserPrefs(c)
 	allowHistory := s.instanceSearchHistoryEnabled() && authed && prefs.History
 
@@ -459,6 +469,13 @@ func (s *Server) handleSearchEvents(c echo.Context) error {
 		}
 		if session != "" {
 			payload["session_id"], _ = json.Marshal(session)
+		}
+		// subject_id sits ALONGSIDE session_id, never replacing it: session_id
+		// carries within-session correlation (co-visitation, reformulation), and
+		// collapsing every visitor behind one NAT into one shared session would
+		// splice unrelated people's browsing into a single chain.
+		if subject != "" {
+			payload["subject_id"], _ = json.Marshal(subject)
 		}
 		payload["allow_history"], _ = json.Marshal(allowHistory)
 		raw, err := json.Marshal(payload)

@@ -192,6 +192,12 @@ var sensitiveKeys = map[string]bool{
 	// transport errors — some purge APIs want the credential in the query
 	// string, so the URL is as sensitive as the header here.
 	"cdn_purge_token": true,
+	// Anonymous search-aggregation subject (httpapi/search_subject.go): a keyed,
+	// day-scoped pseudonym of the client address. It is not a credential, but it
+	// is address-derived, so logging it next to any other request field would
+	// re-link a visitor to their behaviour — exactly what the day scoping exists
+	// to prevent. It is a payload field for vidra-search only, never a log key.
+	"subject_id": true,
 }
 
 // IsSensitiveKey reports whether a structured-log key is on the denylist

@@ -47,6 +47,7 @@ import (
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/profileimage"
+	"github.com/vidra/vidra-core/internal/pseudonym"
 	"github.com/vidra/vidra-core/internal/qoe"
 	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/ratelimit"
@@ -237,6 +238,10 @@ type Server struct {
 	// unkeyed hash — see internal/qoe/digest.go for why that is the safe
 	// degradation.
 	qoeDigester *qoe.Digester
+	// searchSubjects derives the anonymous aggregation subject (subject_id) put
+	// on behavioural search events. Nil (no JWT secret) yields no subject rather
+	// than an unkeyed hash — see search_subject.go for why the field exists.
+	searchSubjects *pseudonym.Digester
 	// qoeClassifier maps the origin a client reports having fetched from onto
 	// the closed delivery-source vocabulary. Nil classifies everything as
 	// 'other', which is honest for an instance that configured no origins.
@@ -970,6 +975,13 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// derived from the JWT secret via domain separation, so a playback token is
 	// cryptographically independent of an account access token.
 	s.playbackSigner = playback.NewSigner([]byte(cfg.JWTSecret))
+	// Anonymous aggregation subject for behavioural search events. Keyed from the
+	// same JWT secret under its OWN domain-separation label (no new env var: the
+	// secret always has a value, and production validate() already requires >= 32
+	// bytes), so nothing to configure and no deployment to break. An install with
+	// no secret yields a nil digester and simply no subject_id — see
+	// search_subject.go.
+	s.searchSubjects = pseudonym.New([]byte(cfg.JWTSecret), searchSubjectDomainSeparation)
 	for _, opt := range opts {
 		opt(s)
 	}
