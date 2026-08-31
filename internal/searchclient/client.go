@@ -44,6 +44,14 @@ const (
 	groupRecs
 	groupHistory
 	groupEvents
+	// groupModeration is the operator-initiated suggestion-ban surface. It is a
+	// group of its own for two reasons. (1) Deadline: nothing falls back when a
+	// ban fails, so abandoning the write at a viewer-facing 250ms and leaving the
+	// moderator unsure whether it landed is worse than waiting. (2) Blast radius:
+	// its breaker is deliberately EXCLUDED from Healthy() (see anyBreakerOpen) —
+	// a moderator retrying a ban against a sick service must never be the reason
+	// every viewer's search gets routed to the local fallback.
+	groupModeration
 )
 
 // Default per-group deadlines (MASTER-PLAN §2.4).
@@ -53,6 +61,10 @@ const (
 	defaultRecsTimeout    = 800 * time.Millisecond
 	defaultHistoryTimeout = 2 * time.Second
 	defaultEventsTimeout  = 5 * time.Second
+	// A moderation write is a rare, human-initiated action off every render
+	// path; it gets the same budget as the outbox write rather than a
+	// hot-path read's.
+	defaultModerationTimeout = 5 * time.Second
 )
 
 // ErrCircuitOpen is returned when a group's breaker is open (fail-fast). The
@@ -152,6 +164,8 @@ func New(baseURL, secret string, opts ...Option) *Client {
 			groupRecs:    defaultRecsTimeout,
 			groupHistory: defaultHistoryTimeout,
 			groupEvents:  defaultEventsTimeout,
+
+			groupModeration: defaultModerationTimeout,
 		},
 		prober: newProber(baseURL),
 	}
@@ -164,6 +178,8 @@ func New(baseURL, secret string, opts ...Option) *Client {
 		groupRecs:    newBreaker(c.now),
 		groupHistory: newBreaker(c.now),
 		groupEvents:  newBreaker(c.now),
+
+		groupModeration: newBreaker(c.now),
 	}
 	return c
 }
@@ -374,6 +390,46 @@ func (c *Client) DeleteUser(ctx context.Context, userID uuid.UUID) error {
 	return c.do(ctx, groupHistory, http.MethodDelete, path, nil, nil, nil)
 }
 
+// --- suggestion moderation (vidra-search PR #30) ---
+//
+// suggestionBansPath is the collection; a single ban hangs off it by key.
+const suggestionBansPath = "/internal/v1/suggestions/bans"
+
+// BanSuggestion suppresses a query from instance-wide autosuggest (PUT, so
+// banning twice is the same end state rather than a second ban — a timed-out
+// retry is safe). The service normalizes the key and echoes back the aggregate
+// row it actually moved, which is what the caller must remember for a later
+// unban. The path segment is percent-escaped on the wire but the HMAC covers the
+// DECODED path, so the two forms are passed separately.
+func (c *Client) BanSuggestion(ctx context.Context, query string) (SuggestionBan, error) {
+	base := suggestionBansPath + "/"
+	var out SuggestionBan
+	err := c.doPaths(ctx, groupModeration, http.MethodPut,
+		base+url.PathEscape(query), base+query, nil, nil, &out)
+	return out, err
+}
+
+// UnbanSuggestion lifts a ban (idempotent; unbanning an unbanned query is still
+// a 204). It deliberately does NOT re-suggest the query: vidra-search re-earns
+// suggestibility from real distinct-user counts, so an unban can never promote a
+// string that never cleared the aggregation threshold.
+func (c *Client) UnbanSuggestion(ctx context.Context, query string) error {
+	base := suggestionBansPath + "/"
+	return c.doPaths(ctx, groupModeration, http.MethodDelete,
+		base+url.PathEscape(query), base+query, nil, nil, nil)
+}
+
+// ListSuggestionBans reads a page of currently-banned queries — the surface that
+// lets a ban be reviewed and reversed by someone who did not place it.
+func (c *Client) ListSuggestionBans(ctx context.Context, limit, offset int) (SuggestionBanList, error) {
+	q := url.Values{}
+	q.Set("limit", strconv.Itoa(limit))
+	q.Set("offset", strconv.Itoa(offset))
+	var out SuggestionBanList
+	err := c.do(ctx, groupModeration, http.MethodGet, suggestionBansPath, q, nil, &out)
+	return out, err
+}
+
 // SendEvents delivers a batch of events to /internal/v1/events (satisfies
 // searchevents.Sender for the outbox worker).
 func (c *Client) SendEvents(ctx context.Context, batch searchevents.EventBatch) (searchevents.EventBatchResult, error) {
@@ -433,7 +489,14 @@ func (c *Client) ServiceProbeHealthy() bool { return c.prober.healthy.Load() }
 // anyBreakerOpen reports whether any endpoint-group breaker is currently refusing
 // calls (a service-wide 5xx/transport symptom; 4xx never trips a breaker).
 func (c *Client) anyBreakerOpen() bool {
-	for _, b := range c.breakers {
+	for g, b := range c.breakers {
+		// The moderation breaker is excluded on purpose. It is tripped only by an
+		// operator's own ban/unban/list calls, and letting those mark search
+		// unhealthy would hand any moderator a switch that routes every viewer's
+		// query to the local fallback. A real outage trips the read groups anyway.
+		if g == groupModeration {
+			continue
+		}
 		if b.isOpen() {
 			return true
 		}

@@ -133,3 +133,33 @@ type HistoryResponse struct {
 	Limit   int            `json:"limit"`
 	Offset  int            `json:"offset"`
 }
+
+// --- suggestion moderation (vidra-search PR #30) ---
+
+// SuggestionBan is the PUT /internal/v1/suggestions/bans/{q} body. NormalizedQuery
+// is the aggregate key the SERVICE actually moved, not the string core sent: the
+// service normalizes the path segment, so echoing its answer back is what lets a
+// later unban target the same row.
+type SuggestionBan struct {
+	NormalizedQuery string `json:"normalized_query"`
+	Banned          bool   `json:"banned"`
+}
+
+// SuggestionBanEntry is one row of the reviewable ban list. The counts and the
+// first/last-seen window are the evidence a second operator judges a ban on —
+// they are aggregate facts about the query string, never per-viewer state.
+type SuggestionBanEntry struct {
+	NormalizedQuery string    `json:"normalized_query"`
+	Query           string    `json:"query"`
+	TotalCount      int64     `json:"total_count"`
+	DistinctUsers   int       `json:"distinct_users"`
+	FirstSeen       time.Time `json:"first_seen"`
+	LastSeen        time.Time `json:"last_seen"`
+}
+
+// SuggestionBanList is the GET /internal/v1/suggestions/bans body.
+type SuggestionBanList struct {
+	Entries []SuggestionBanEntry `json:"entries"`
+	Limit   int                  `json:"limit"`
+	Offset  int                  `json:"offset"`
+}

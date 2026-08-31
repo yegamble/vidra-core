@@ -8399,6 +8399,163 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/search/suggestion-bans:
+    get:
+      operationId: listSuggestionBans
+      summary: List queries suppressed from instance-wide autosuggest
+      description: >-
+        The suggestion ban list: query strings currently suppressed from
+        instance-wide autosuggest, with the aggregate counts and first/last-seen
+        window a second operator needs to judge a ban somebody else placed. This
+        is the reversal surface — bans are global and carry no per-viewer state.
+        Restricted to moderators/admins, because banning a query is a moderation
+        action of the same class as blocking a video, not an instance setting.
+        Paginated via limit (1–100, default 20) and offset.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of banned queries (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuggestionBanListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            The caller is not a moderator or admin, or smart search is switched
+            off on this instance (code feature_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            The search service is not configured on this instance, or is
+            currently unreachable (code search_unavailable).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/search/suggestion-bans/{query}:
+    put:
+      operationId: banSuggestion
+      summary: Suppress a query from instance-wide autosuggest
+      description: >-
+        Bans a query string from instance-wide autosuggest. Restricted to
+        moderators/admins. Idempotent — banning the same query twice is one end
+        state, so a retried request cannot double-apply. The search service
+        normalizes the key server-side, so the response echoes the aggregate key
+        that actually moved; that is the key a later unban must target. The
+        action is recorded in the audit log against a fingerprint of the key (the
+        query text itself is user-authored content and never enters audit_log).
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: query
+          in: path
+          required: true
+          description: The query to ban, path-escaped. Normalized by the search service.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The query is banned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuggestionBanResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            The caller is not a moderator or admin, or smart search is switched
+            off on this instance (code feature_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The query is blank, or empty after normalization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            The search service is not configured on this instance, or is
+            currently unreachable (code search_unavailable). The ban did NOT
+            take effect — this is never reported as a success.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unbanSuggestion
+      summary: Lift a suggestion ban
+      description: >-
+        Lifts a suggestion ban. Restricted to moderators/admins. Idempotent
+        (unbanning a query that is not banned still succeeds). It deliberately
+        does NOT put the query back into autosuggest: the search service re-earns
+        suggestibility from real distinct-user counts, so an unban can never
+        promote a string that never cleared the aggregation threshold, and a
+        query with no further traffic never returns. Audited like the ban.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: query
+          in: path
+          required: true
+          description: The query to unban, path-escaped. Use the normalized_query from the list.
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The ban is lifted (or was not in place).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            The caller is not a moderator or admin, or smart search is switched
+            off on this instance (code feature_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The query is blank, or empty after normalization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            The search service is not configured on this instance, or is
+            currently unreachable (code search_unavailable). The ban was NOT
+            lifted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/watched-words:
     get:
       operationId: listWatchedWords
@@ -17250,6 +17407,55 @@ components:
         created_at:
           type: string
           format: date-time
+    SuggestionBanResponse:
+      type: object
+      description: >-
+        Confirmation that a query is banned. normalized_query is the aggregate
+        key the search service actually moved (it normalizes the path segment),
+        so it — not the string that was sent — is what a later unban must target.
+      required: [normalized_query, banned]
+      properties:
+        normalized_query:
+          type: string
+        banned:
+          type: boolean
+    SuggestionBanEntry:
+      type: object
+      description: >-
+        One banned query, with the aggregate evidence a reviewer judges the ban
+        on. Bans are instance-wide; nothing here is per-viewer.
+      required:
+        [normalized_query, query, total_count, distinct_users, first_seen, last_seen]
+      properties:
+        normalized_query:
+          type: string
+          description: The aggregate key. Use this value to lift the ban.
+        query:
+          type: string
+          description: The most recent display form of the query, for review.
+        total_count:
+          type: integer
+          format: int64
+        distinct_users:
+          type: integer
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+    SuggestionBanListResponse:
+      type: object
+      required: [entries, limit, offset]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/SuggestionBanEntry"
+        limit:
+          type: integer
+        offset:
+          type: integer
     WatchedWordListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
