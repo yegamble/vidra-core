@@ -324,6 +324,51 @@ func (q *Queries) MarkSearchEventDelivered(ctx context.Context, id int64) error 
 	return err
 }
 
+const pruneSearchOutbox = `-- name: PruneSearchOutbox :execrows
+DELETE FROM search_outbox
+WHERE id IN (
+    SELECT o.id FROM search_outbox o
+    WHERE o.state = $1
+      AND o.state <> 'pending'
+      AND o.created_at < $2
+    ORDER BY o.created_at, o.id
+    LIMIT $3
+)
+`
+
+type PruneSearchOutboxParams struct {
+	State     string    `json:"state"`
+	Cutoff    time.Time `json:"cutoff"`
+	BatchSize int32     `json:"batch_size"`
+}
+
+// One batch of expired TERMINAL outbox rows, oldest first (migration 0122).
+//
+// Called once per prunable state so 'delivered' and 'dead' can carry different
+// windows: a delivered row is finished work the search service already holds,
+// while a dead row is the only surviving evidence of WHY a delivery failed.
+//
+// `state <> 'pending'` is a structural guard, not a redundancy. It is what makes
+// an undelivered row undeletable by this query no matter what a caller passes:
+// a pending row is an index mutation, or a privacy-critical user.history_deleted
+// purge, that has NOT happened yet, and deleting one loses it silently -- there
+// is no second copy and nothing would ever notice. The Go worker never asks for
+// 'pending'; this is what happens if some future caller does.
+//
+// Batched like PruneQoEEvents, and ordered by (created_at, id) for the same
+// reason the due claim restates its order: an unbounded DELETE would hold locks
+// across the whole backlog while the drainer is trying to claim from the same
+// table. Unlike qoe_events the id here is a BIGSERIAL, so it agrees with
+// created_at rather than being random -- it is the tiebreaker, and the ordering
+// rides search_outbox_prune_idx either way.
+func (q *Queries) PruneSearchOutbox(ctx context.Context, arg PruneSearchOutboxParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneSearchOutbox, arg.State, arg.Cutoff, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const rescheduleSearchEvent = `-- name: RescheduleSearchEvent :exec
 UPDATE search_outbox
 SET attempts = attempts + 1, next_attempt_at = $2, last_error = $3

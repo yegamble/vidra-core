@@ -9,10 +9,19 @@
 //
 // # Shape: raw -> rollup -> prune
 //
-// §9 originally pointed at the searchevents outbox. It does not fit unmodified:
-// search_outbox is an egress queue to an external service and prunes NOTHING —
-// there is no DELETE against it anywhere in the tree. That is survivable at
-// search volume and is not at playback volume. So:
+// §9 originally pointed at the searchevents outbox. It did not fit unmodified:
+// search_outbox is an egress queue to an external service, and at the time this
+// was written it pruned NOTHING — there was no DELETE against it anywhere in the
+// tree. That was survivable at search volume and is not at playback volume, which
+// is why QoE built its own raw→rollup→prune shape instead of reusing the outbox's.
+//
+// The outbox has since grown a retention prune of its own (migration 0122,
+// searchevents.Pruner): state-aware, leader-gated, batched the same way this one
+// is, and driven by the search_event_retention_days instance setting. That fixed
+// a privacy defect rather than a capacity one — its payloads carry raw search
+// queries and user ids — and it does NOT make the two shapes interchangeable:
+// the outbox prunes only TERMINAL rows on a window an operator sets, while what
+// follows prunes raw rows on a fixed window after they have been rolled up. So:
 //
 //   - qoe_events holds individual measurements for 7 days. It is the incident
 //     table: when a rollup shows a rebuffer spike, this still has the detail.

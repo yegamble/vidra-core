@@ -1354,10 +1354,10 @@ import, caption and delivery throughput.
 **Singleton sweeps are leader-elected.** The workers that sweep rather than claim
 (media garbage collection, the content-hash backfill, scheduled publish, the
 transcode-hold sweep, the upload sweeper, the live watchdog, the search and IPFS
-reconcilers, operational-job retention, the E2EE sweep) each walk a table or a
-bucket and act on what they find, so running them everywhere duplicates work —
-and media GC deletes. They are
-gated on a PostgreSQL advisory lock held on a dedicated connection: exactly one
+reconcilers, operational-job retention, search-outbox retention, the E2EE
+sweep) each walk a table or a bucket and act on what they find, so running them
+everywhere duplicates work — and media GC deletes. They are gated on a
+PostgreSQL advisory lock held on a dedicated connection: exactly one
 instance runs them, and the lock is released by the server itself when that
 instance dies. Leadership moves within ~15 seconds.
 
