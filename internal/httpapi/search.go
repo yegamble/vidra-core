@@ -550,18 +550,50 @@ func (s *Server) handleGetSearchHistory(c echo.Context) error {
 	return c.JSON(http.StatusOK, searchHistoryResponse{Entries: entries, Limit: out.Limit, Offset: out.Offset})
 }
 
-// handleClearSearchHistory clears the caller's entire search history in
-// vidra-search. requireAuth. Admin-off → 403 feature_disabled; service down → 503
-// search_unavailable (must not silently fail).
+// handleClearSearchHistory clears the caller's entire search history — in
+// core's OWN database and in vidra-search. requireAuth.
+//
+// The UI behind this endpoint promises "This permanently removes every search
+// you have made on this instance. This cannot be undone." Honouring that takes
+// three steps, in this order, and the order is the interesting part:
+//
+//  1. Enqueue the durable user.history_deleted. This is the belt-and-braces
+//     pattern purgeUserFromSearch already uses: the event guarantees the
+//     privacy-critical outcome even if the direct call below is lost. Doing it
+//     FIRST is what turns an honest 503 into a QUEUED erasure instead of a
+//     dropped one — before this, a clear issued while vidra-search was down
+//     returned 503 having queued nothing, so the request to be forgotten was
+//     silently discarded.
+//  2. Erase core's own rows. search_outbox holds the caller's RAW query text
+//     next to their user_id (emitSearchSubmitted, and the whole POST
+//     /search/events pass-through), and nothing ever deleted it: the promise
+//     was false in the PRIMARY database, not in the search index. The event
+//     enqueued in step 1 is not eaten by this — PurgeUserSearchOutbox excludes
+//     the purge event types structurally, which also protects an event a
+//     previous clear left pending.
+//  3. Only then the gate + the proxy call, which decide the STATUS CODE.
+//
+// Steps 1 and 2 run whatever the gate would say, because core's copy of the
+// caller's searches is core's responsibility and does not become someone else's
+// when the search service is off or down. Admin-off is still 403
+// feature_disabled and unwired/unhealthy is still 503 search_unavailable — the
+// codes are unchanged; what changed is that the erasure is no longer contingent
+// on them. A failure of core's OWN delete is neither of those: it is a 500,
+// because answering 204 would leave the data AND tell the user it was gone.
 func (s *Server) handleClearSearchHistory(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
 	}
+	ctx := c.Request().Context()
+	s.searchEvents.EnqueueUserHistoryDeleted(ctx, userID, searchevents.HistoryScopeSearch)
+	if err := s.purgeUserSearchEvents(ctx, userID); err != nil {
+		return err
+	}
 	if err := s.searchHistoryGate(); err != nil {
 		return err
 	}
-	if err := s.searchClient.DeleteUserHistory(c.Request().Context(), userID); err != nil {
+	if err := s.searchClient.DeleteUserHistory(ctx, userID); err != nil {
 		return &SearchUnavailableError{}
 	}
 	return c.NoContent(http.StatusNoContent)
@@ -570,6 +602,25 @@ func (s *Server) handleClearSearchHistory(c echo.Context) error {
 // handleDeleteSearchHistoryQuery removes a single normalized query from the
 // caller's history. requireAuth. Admin-off → 403 feature_disabled; service down
 // → 503 search_unavailable.
+//
+// Deliberately NOT given the durable + local treatment handleClearSearchHistory
+// got, for two reasons that are about correctness rather than effort:
+//
+//   - user.history_deleted has no query field (userHistoryDeletedPayload is
+//     {user_id, scope}), so the narrowest event that could be queued here
+//     erases the caller's ENTIRE search history downstream. Removing one row
+//     from a list must not silently delete the other twenty, minutes later, in
+//     another service.
+//   - core cannot identify the local rows either. The path parameter is
+//     vidra-search's NORMALIZED form; core stores the raw text the user typed
+//     and owns no normalizer anywhere in this repo. Matching one against the
+//     other would be a guess, and a guess here either misses rows or deletes a
+//     different query than the one asked for.
+//
+// Closing this properly is a cross-repo change — a query-scoped
+// user.history_deleted that vidra-search honours — not a core-only one. Until
+// then this stays an honest proxy: it succeeds only when the service does, and
+// "Clear all" is the control that is now exact.
 func (s *Server) handleDeleteSearchHistoryQuery(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
@@ -692,12 +743,45 @@ func (s *Server) emitSearchConfigChangedIfNeeded(ctx context.Context, changed []
 	}
 }
 
-// purgeUserFromSearch removes an account's search-side data on hard delete
-// (search-service W4): it enqueues the durable user.suppress + user.history_deleted
-// events AND issues a best-effort DIRECT DELETE /internal/v1/users/{id}. The
-// events guarantee the privacy-critical outcome even if the direct call is lost.
+// purgeUserSearchEvents erases core's OWN copy of a user's search data: every
+// data-bearing search_outbox row naming them, which is where the raw query text
+// lives. It returns the repository error, so a caller on a request path can
+// refuse to claim an erasure that did not happen.
+//
+// Only the row COUNT is logged. Those rows carry query text, which is as
+// sensitive as a message body — the denylist discipline applies to it even
+// though it travels under no dedicated key name.
+func (s *Server) purgeUserSearchEvents(ctx context.Context, userID uuid.UUID) error {
+	n, err := s.searchEvents.PurgeUserEvents(ctx, userID)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "search outbox erasure failed; the user's search data remains in core",
+			"user_id", userID, "error", err)
+		return err
+	}
+	s.logger.InfoContext(ctx, "search outbox erasure", "user_id", userID, "rows_deleted", n)
+	return nil
+}
+
+// purgeUserFromSearch removes an account's search data on hard delete
+// (search-service W4): it enqueues the durable user.suppress +
+// user.history_deleted events, erases core's OWN outbox rows for the user, AND
+// issues a best-effort DIRECT DELETE /internal/v1/users/{id}. The events
+// guarantee the privacy-critical outcome even if the direct call is lost.
+//
+// The local erasure is the limb that was missing: an account deletion purged
+// the user from every table except search_outbox, which kept their raw query
+// text under a user_id whose account no longer existed.
+//
+// Everything here is best-effort by necessity — the caller has already
+// committed the account deletion and audited it, so a side effect must not fail
+// it. A failed local erasure is therefore logged, not returned; the rows it did
+// not take are still bounded by the search_event_retention_days prune
+// (migration 0122), which is a backstop measured in weeks, not a second
+// attempt. Ordering matches handleClearSearchHistory: the events go in first
+// and the purge's event-type exclusion is what keeps them.
 func (s *Server) purgeUserFromSearch(ctx context.Context, userID uuid.UUID) {
 	s.searchEvents.EnqueueUserPurge(ctx, userID)
+	_ = s.purgeUserSearchEvents(ctx, userID)
 	if s.searchEnabled() {
 		if err := s.searchClient.DeleteUser(ctx, userID); err != nil {
 			s.logger.WarnContext(ctx, "search user purge direct delete failed", "user_id", userID, "error", err)

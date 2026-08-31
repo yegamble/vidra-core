@@ -33,6 +33,9 @@ type fakeOutbox struct {
 	delivered       []int64
 	rescheduled     map[int64]sqlcgen.RescheduleSearchEventParams
 	deadLettered    map[int64]string
+
+	purgeCalls []string
+	purgeErr   error
 }
 
 func newFakeOutbox() *fakeOutbox {
@@ -60,6 +63,50 @@ func (f *fakeOutbox) GetVideoSearchDoc(_ context.Context, id uuid.UUID) (sqlcgen
 		return sqlcgen.GetVideoSearchDocRow{}, errors.New("not found")
 	}
 	return row, nil
+}
+
+// PurgeUserSearchOutbox mirrors the SQL semantics of the real query exactly:
+// equality on the TOP-LEVEL payload user_id (so a nested owner_id never
+// matches), and the user.suppress / user.history_deleted exclusion that keeps
+// the erasure instructions themselves alive. A fake that skipped either rule
+// would let a handler test pass while the real erasure over- or under-deleted.
+func (f *fakeOutbox) PurgeUserSearchOutbox(_ context.Context, userID string) (int64, error) {
+	if f.purgeErr != nil {
+		return 0, f.purgeErr
+	}
+	f.purgeCalls = append(f.purgeCalls, userID)
+	kept := make([]sqlcgen.EnqueueSearchEventParams, 0, len(f.enqueued))
+	var n int64
+	for _, e := range f.enqueued {
+		if outboxRowIsPurgeable(e, userID) {
+			n++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	f.enqueued = kept
+	return n, nil
+}
+
+// outboxRowIsPurgeable is the fake's copy of the WHERE clause in
+// PurgeUserSearchOutbox.
+func outboxRowIsPurgeable(e sqlcgen.EnqueueSearchEventParams, userID string) bool {
+	if e.EventType == TypeUserSuppress || e.EventType == TypeUserHistoryDel {
+		return false
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(e.Payload, &payload); err != nil {
+		return false
+	}
+	raw, ok := payload["user_id"]
+	if !ok {
+		return false
+	}
+	var got string
+	if err := json.Unmarshal(raw, &got); err != nil {
+		return false
+	}
+	return got == userID
 }
 
 func (f *fakeOutbox) ListVideoSearchDocsPage(_ context.Context, a sqlcgen.ListVideoSearchDocsPageParams) ([]sqlcgen.ListVideoSearchDocsPageRow, error) {
@@ -417,5 +464,48 @@ func TestDrainBackoffDoublesAndCaps(t *testing.T) {
 	}
 	if got := drainBackoff(20); got != maxDrainBackoff {
 		t.Errorf("attempt 20 = %v, want cap %v", got, maxDrainBackoff)
+	}
+}
+
+// TestPurgeUserEventsPassesSubjectAndSurfacesFailure: the erasure hands the SQL
+// the caller's id verbatim, and — unlike every other method on this type — it
+// does NOT swallow a repository failure. There is no reconcile sweep that
+// re-erases, so a silently dropped erasure would leave the data and report
+// success.
+func TestPurgeUserEventsPassesSubjectAndSurfacesFailure(t *testing.T) {
+	repo := newFakeOutbox()
+	enq := NewEnqueuer(repo, testLogger())
+	uid := uuid.New()
+
+	enq.EnqueueBehavioral(context.Background(), TypeSearchSubmitted,
+		json.RawMessage(`{"query":"secret","user_id":"`+uid.String()+`"}`))
+	enq.EnqueueUserHistoryDeleted(context.Background(), uid, HistoryScopeSearch)
+
+	n, err := enq.PurgeUserEvents(context.Background(), uid)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("purged %d rows, want 1 (the data row only)", n)
+	}
+	if len(repo.purgeCalls) != 1 || repo.purgeCalls[0] != uid.String() {
+		t.Errorf("purge calls = %v, want [%s]", repo.purgeCalls, uid)
+	}
+	if len(repo.enqueued) != 1 || repo.enqueued[0].EventType != TypeUserHistoryDel {
+		t.Errorf("remaining rows = %+v, want only the user.history_deleted instruction", repo.enqueued)
+	}
+
+	repo.purgeErr = errors.New("boom")
+	if _, err := enq.PurgeUserEvents(context.Background(), uid); err == nil {
+		t.Error("a failed erasure returned nil: the caller would report success having deleted nothing")
+	}
+}
+
+// TestNilEnqueuerPurgeIsNoop: call sites are wired unconditionally, so a nil
+// enqueuer must not panic on the erasure path either.
+func TestNilEnqueuerPurgeIsNoop(t *testing.T) {
+	var enq *Enqueuer
+	if n, err := enq.PurgeUserEvents(context.Background(), uuid.New()); n != 0 || err != nil {
+		t.Errorf("nil purge = (%d, %v), want (0, nil)", n, err)
 	}
 }

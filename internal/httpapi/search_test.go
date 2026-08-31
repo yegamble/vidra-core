@@ -19,9 +19,58 @@ import (
 
 const searchTestSecret = "httpapi-search-secret-httpapi-search-secret"
 
-// fakeSearchOutbox records enqueued events for the httpapi search tests.
+// fakeSearchOutbox records enqueued events for the httpapi search tests, and
+// applies the per-user erasure to its own slice with the SAME semantics the SQL
+// has (see purgeSearchOutboxRow) so a handler test cannot pass against a fake
+// that erases more or less than the real query.
 type fakeSearchOutbox struct {
 	events []sqlcgen.EnqueueSearchEventParams
+	// purgeErr makes the local erasure fail, so a handler can be held to what
+	// it reports when core's own database refuses the delete.
+	purgeErr error
+	// purgeCalls records each user id the handler asked to erase.
+	purgeCalls []string
+}
+
+// purgeSearchOutboxRow mirrors the WHERE clause of PurgeUserSearchOutbox:
+// equality on the TOP-LEVEL payload user_id, and the user.suppress /
+// user.history_deleted exclusion that keeps the erasure instructions themselves
+// alive.
+func purgeSearchOutboxRow(e sqlcgen.EnqueueSearchEventParams, userID string) bool {
+	if e.EventType == searchevents.TypeUserSuppress || e.EventType == searchevents.TypeUserHistoryDel {
+		return false
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(e.Payload, &payload); err != nil {
+		return false
+	}
+	raw, ok := payload["user_id"]
+	if !ok {
+		return false
+	}
+	var got string
+	if err := json.Unmarshal(raw, &got); err != nil {
+		return false
+	}
+	return got == userID
+}
+
+func (f *fakeSearchOutbox) PurgeUserSearchOutbox(_ context.Context, userID string) (int64, error) {
+	if f.purgeErr != nil {
+		return 0, f.purgeErr
+	}
+	f.purgeCalls = append(f.purgeCalls, userID)
+	kept := make([]sqlcgen.EnqueueSearchEventParams, 0, len(f.events))
+	var n int64
+	for _, e := range f.events {
+		if purgeSearchOutboxRow(e, userID) {
+			n++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	f.events = kept
+	return n, nil
 }
 
 func (f *fakeSearchOutbox) EnqueueSearchEvent(_ context.Context, a sqlcgen.EnqueueSearchEventParams) error {

@@ -1,0 +1,44 @@
+-- 0123: index the per-user search-outbox erasure (PurgeUserSearchOutbox).
+--
+-- The erasure is a synchronous request-path DELETE -- "Clear search history"
+-- (DELETE /api/v1/me/search-history) and account deletion both run it inline --
+-- and it selects on payload->>'user_id', which neither existing index covers:
+-- 0092's search_outbox_due_idx is partial on state = 'pending' and keyed by
+-- next_attempt_at, and 0122's search_outbox_prune_idx is keyed by
+-- (state, created_at, id). Without this index the erasure is a sequential scan.
+--
+-- Why that scan is not affordable, in terms of the rows this table actually
+-- holds. Every behavioural event is one INSERT: a search.submitted per search,
+-- plus the POST /api/v1/search/events batch (up to 20 per request) carrying
+-- video.impression per card shown, play_started and completed. Impressions alone
+-- scale with cards rendered, not with searches. Those rows now live for the
+-- search_event_retention_days window (default 90, ceiling 365) before 0122's
+-- prune reaches them, and pending rows are never pruned at any age, so the
+-- steady-state table is ninety days of behavioural traffic. On a modest instance
+-- that is millions of JSONB rows; the scan cost grows with instance traffic and
+-- age while the erasure's own result set stays tiny, so the unindexed version
+-- gets slower forever and is slowest exactly on the instances where a privacy
+-- request matters most.
+--
+-- The index is deliberately PARTIAL on `payload->>'user_id' IS NOT NULL`, which
+-- keeps out every anonymous behavioural event (no user_id is set for a signed-
+-- out caller), every reconcile.page (up to 200 whole documents, on a 24h loop),
+-- every video.upsert/channel.upsert and every search.config_updated -- those
+-- name an owner_id nested under "video", or no user at all. On a public instance
+-- the anonymous rows are the bulk of the table, so the index tracks a small
+-- fraction of it.
+--
+-- The predicate needs no help from the query: PostgreSQL proves
+-- `payload->>'user_id' = $1` implies `payload->>'user_id' IS NOT NULL` from the
+-- strictness of `=`, so the plain equality predicate matches this index.
+-- internal/store/search_outbox_user_purge_integration_test.go asserts that with
+-- EXPLAIN rather than trusting the claim.
+--
+-- Unlike 0122 this index IS on the insert path: a signed-in caller's behavioural
+-- event adds one entry (~50 bytes, a UUID string). That is a fourth index write
+-- alongside the primary key, the event_id UNIQUE and the due index, on an insert
+-- that is already best-effort and off the request's critical path. Paid on every
+-- authenticated event so that an erasure is bounded rather than unbounded.
+CREATE INDEX search_outbox_user_purge_idx
+    ON search_outbox ((payload->>'user_id'))
+    WHERE payload->>'user_id' IS NOT NULL;

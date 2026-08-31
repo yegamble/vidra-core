@@ -322,7 +322,9 @@ type accountEnv struct {
 	settingssvc *instancesettings.Service
 }
 
-func newAccountEnv(t *testing.T) *accountEnv {
+// extra options are appended last, so a caller can wire a service this env
+// does not build itself (the search-event enqueuer, for the erasure tests).
+func newAccountEnv(t *testing.T, extra ...Option) *accountEnv {
 	t.Helper()
 	authRepo := newAuthFakeRepo()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
@@ -339,7 +341,7 @@ func newAccountEnv(t *testing.T) *accountEnv {
 	}
 
 	logs := &bytes.Buffer{}
-	srv := New(cfg, nil, nil,
+	srv := New(cfg, nil, nil, append([]Option{
 		WithAuthService(authsvc, 15*time.Minute),
 		WithAccountService(accountsvc),
 		WithSettingsService(settingssvc),
@@ -347,7 +349,7 @@ func newAccountEnv(t *testing.T) *accountEnv {
 		// auth fake's usage hook reports each user's stored bytes.
 		WithQuotaService(quota.NewService(authRepo, 0)),
 		WithLogger(slog.New(slog.NewJSONHandler(logs, nil))),
-	)
+	}, extra...)...)
 	return &accountEnv{srv: srv, accountsvc: accountsvc, repo: repo, blobs: blobs, logs: logs,
 		authRepo: authRepo, settingssvc: settingssvc}
 }

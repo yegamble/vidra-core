@@ -369,6 +369,59 @@ func (q *Queries) PruneSearchOutbox(ctx context.Context, arg PruneSearchOutboxPa
 	return result.RowsAffected(), nil
 }
 
+const purgeUserSearchOutbox = `-- name: PurgeUserSearchOutbox :execrows
+DELETE FROM search_outbox
+WHERE payload->>'user_id' = $1::text
+  AND event_type <> 'user.suppress'
+  AND event_type <> 'user.history_deleted'
+`
+
+// Erase one user's own search data from core's PRIMARY database (migration 0123).
+//
+// This is the local half of "Clear search history" and of an account deletion.
+// Both used to proxy to vidra-search and touch NOTHING here, while a server-side
+// search.submitted payload carries the raw query text next to the user_id -- so
+// the searches the modal called permanently removed survived in core.
+//
+// Two rules make this correct, and both are structural (in the SQL, not in the
+// caller) for the same reason `state <> 'pending'` is structural in
+// PruneSearchOutbox: a caller cannot vary them, at any call site, ever.
+//
+//  1. `payload->>'user_id' = $1` is the WHOLE subject predicate. It matches only
+//     rows whose payload names this user at the TOP LEVEL: the behavioural
+//     events (search.submitted, the POST /search/events pass-through) and
+//     video.watch_progress. It deliberately does NOT match video.upsert or
+//     reconcile.page, which name an owner_id NESTED under "video" -- those are
+//     the public catalogue, not the user's behaviour, and erasing a creator's
+//     documents on "clear my search history" would silently deindex their
+//     videos. It is an equality on the extracted text, never a substring match
+//     on the serialized payload, for exactly that reason.
+//
+//  2. The user.suppress / user.history_deleted exclusion is the subtle one, and
+//     it is not an optimisation. Those two rows are not data ABOUT the user;
+//     they are the durable INSTRUCTION that performs the erasure downstream in
+//     vidra-search, and they carry a top-level user_id exactly like the rows
+//     being deleted. Purging them alongside would cancel the erasure it was
+//     meant to complete -- and it would do so silently, because a pending
+//     outbox row has no second copy and nothing downstream ever notices one
+//     that vanished. This has to hold for an event queued moments ago by THIS
+//     request AND for one an earlier clear left pending, so ordering the two
+//     statements is not sufficient on its own; the exclusion is what makes it
+//     safe.
+//
+// Not batched, unlike PruneSearchOutbox. That query walks the whole table and
+// must bound its lock footprint; this one is bounded to a single user's own rows
+// via search_outbox_user_purge_idx and runs a handful of times a day. One
+// statement also makes an erasure atomic: a partially applied erasure that
+// reported success is worse than one that failed and can be retried.
+func (q *Queries) PurgeUserSearchOutbox(ctx context.Context, userID string) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeUserSearchOutbox, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const rescheduleSearchEvent = `-- name: RescheduleSearchEvent :exec
 UPDATE search_outbox
 SET attempts = attempts + 1, next_attempt_at = $2, last_error = $3
