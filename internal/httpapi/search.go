@@ -381,6 +381,22 @@ var searchEventAllowlist = map[string]bool{
 // maxSearchEventsPerRequest caps a single behavioural-event batch (§2.7).
 const maxSearchEventsPerRequest = 20
 
+// serverDerivedSearchEventFields are the outbox-payload keys POST /search/events
+// derives from the request context and NEVER from the body. They are stripped
+// from every client event BEFORE the server sets its own values.
+//
+// Strip-then-set, not conditional-overwrite: an overwrite only fires when the
+// server has a value to write, so a forged field survived whenever it did not
+// (anonymous caller → no user_id to overwrite; no X-Vidra-Session header → no
+// session_id to overwrite). That mattered because vidra-search writes
+// payload.user_id into search.query_log ungated, and the k-anonymity floor that
+// decides whether a query becomes instance-wide autosuggest counts
+// count(DISTINCT ql.user_id) — 20 fabricated ids in one unauthenticated batch
+// cleared the default floor of 3. sessionIDFromRequest also validates the UUID
+// shape of the HEADER only, so a body-supplied session_id was never validated at
+// all. Do not "simplify" this back into three conditional assignments.
+var serverDerivedSearchEventFields = []string{"user_id", "session_id", "allow_history"}
+
 // searchEventsRequest is the POST /search/events body: a batch of raw event
 // objects, each carrying a "type" plus its behavioural fields.
 type searchEventsRequest struct {
@@ -388,8 +404,9 @@ type searchEventsRequest struct {
 }
 
 // handleSearchEvents accepts a batch of behavioural search events, validates the
-// type allowlist + batch cap, enriches each with the caller's user_id / session /
-// allow_history flag, and enqueues them to the outbox. Always 202 on success;
+// type allowlist + batch cap, replaces the server-derived identity fields with
+// the caller's own user_id / session / allow_history, and enqueues them to the
+// outbox. Always 202 on success;
 // never blocks on the search service. optionalAuth, rate-limited.
 func (s *Server) handleSearchEvents(c echo.Context) error {
 	var in searchEventsRequest
@@ -432,6 +449,10 @@ func (s *Server) handleSearchEvents(c echo.Context) error {
 				continue
 			}
 			payload[k] = v
+		}
+		// Identity is the server's to decide; drop any client-supplied copy first.
+		for _, k := range serverDerivedSearchEventFields {
+			delete(payload, k)
 		}
 		if authed {
 			payload["user_id"], _ = json.Marshal(id.String())
