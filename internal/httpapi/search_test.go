@@ -229,3 +229,93 @@ func TestMeSearchPrefsRoundTrip(t *testing.T) {
 		t.Errorf("personalized_search should remain true, got false")
 	}
 }
+
+// TestSearchEventsStripsClientIdentityFields: POST /search/events is a public,
+// optionalAuth endpoint whose body is copied into the search outbox. The
+// identity fields (user_id, session_id, allow_history) are SERVER-derived and a
+// client-supplied value for any of them must never survive. Anonymous caller,
+// no X-Vidra-Session header, body forging all three.
+func TestSearchEventsStripsClientIdentityFields(t *testing.T) {
+	outbox := &fakeSearchOutbox{}
+	srv := searchServerWith(t, WithSearchEvents(searchevents.NewEnqueuer(outbox, nil)))
+
+	victim := uuid.New().String()
+	body := `{"events":[{"type":"search.submitted","query":"go","results_count":7,` +
+		`"user_id":"` + victim + `","session_id":"forged-not-a-uuid","allow_history":true}]}`
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/search/events", body, "")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("code = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(outbox.events) != 1 {
+		t.Fatalf("enqueued = %d, want 1", len(outbox.events))
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(outbox.events[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if raw, ok := payload["user_id"]; ok {
+		t.Errorf("anonymous payload carries user_id = %s, want absent (a forged id inflates search's k-anonymity distinct-user floor)", raw)
+	}
+	if raw, ok := payload["session_id"]; ok {
+		t.Errorf("payload carries session_id = %s, want absent (only the validated X-Vidra-Session header may set it)", raw)
+	}
+	var allowHistory bool
+	if err := json.Unmarshal(payload["allow_history"], &allowHistory); err != nil {
+		t.Fatalf("allow_history missing/invalid: %v", err)
+	}
+	if allowHistory {
+		t.Errorf("allow_history = true for an anonymous caller, want false")
+	}
+	// Legitimate behavioural fields must still reach the outbox.
+	var query string
+	_ = json.Unmarshal(payload["query"], &query)
+	var results int
+	_ = json.Unmarshal(payload["results_count"], &results)
+	if query != "go" || results != 7 {
+		t.Errorf("non-identity fields lost: query=%q results_count=%d, want \"go\"/7", query, results)
+	}
+}
+
+// TestSearchEventsAuthedIdentityIsServerDerived: a signed-in caller cannot
+// attribute an event to someone else, cannot mint a session id through the body
+// (only the validated header may), and cannot suppress the server's
+// allow_history decision.
+func TestSearchEventsAuthedIdentityIsServerDerived(t *testing.T) {
+	outbox := &fakeSearchOutbox{}
+	srv := searchServerWith(t, WithSearchEvents(searchevents.NewEnqueuer(outbox, nil)))
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	me := sendJSONAuth(srv, http.MethodGet, "/api/v1/auth/me", "", tok)
+	var self userView
+	_ = json.Unmarshal(me.Body.Bytes(), &self)
+	if self.ID == "" {
+		t.Fatalf("could not resolve principal id; body=%s", me.Body.String())
+	}
+
+	victim := uuid.New().String()
+	body := `{"events":[{"type":"search.submitted","query":"go",` +
+		`"user_id":"` + victim + `","session_id":"forged-not-a-uuid","allow_history":false}]}`
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/search/events", body, tok); rec.Code != http.StatusAccepted {
+		t.Fatalf("code = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(outbox.events) != 1 {
+		t.Fatalf("enqueued = %d, want 1", len(outbox.events))
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(outbox.events[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	var userID string
+	_ = json.Unmarshal(payload["user_id"], &userID)
+	if userID != self.ID {
+		t.Errorf("user_id = %q, want the principal %q (forged was %q)", userID, self.ID, victim)
+	}
+	if raw, ok := payload["session_id"]; ok {
+		t.Errorf("payload carries session_id = %s, want absent (no X-Vidra-Session header was sent)", raw)
+	}
+	var allowHistory bool
+	_ = json.Unmarshal(payload["allow_history"], &allowHistory)
+	if !allowHistory {
+		t.Errorf("allow_history = false, want the server-derived true (instance default + user pref + signed in)")
+	}
+}
