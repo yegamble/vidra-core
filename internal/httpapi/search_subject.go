@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -47,5 +48,12 @@ func (s *Server) anonSearchSubject(c echo.Context) string {
 	if _, _, authed := principalFromContext(c); authed {
 		return ""
 	}
-	return s.searchSubjects.Of(time.Now(), "ip:"+c.RealIP())
+	// No address to derive from (an unusual transport, a malformed RemoteAddr) is
+	// no subject, not a digest of the empty string — otherwise every such request
+	// would silently share one subject, which is the wrong kind of collapse.
+	ip := strings.TrimSpace(c.RealIP())
+	if ip == "" {
+		return ""
+	}
+	return s.searchSubjects.Of(time.Now(), "ip:"+ip)
 }
