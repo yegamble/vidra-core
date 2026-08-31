@@ -2034,6 +2034,22 @@ func run() error {
 		}
 	}
 
+	// search_outbox retention. Deliberately OUTSIDE the searchDrainer gate above:
+	// retention is a property of the rows, not of whether egress happens to be
+	// configured right now. An operator who unsets SEARCH_SERVICE_URL builds no
+	// enqueuer, no drainer and no client — and if the pruner lived in that block,
+	// every search event enqueued while search WAS wired would sit in the primary
+	// database forever, which is exactly the case this worker exists to close.
+	if runWorkers {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		outboxPruner := searchevents.NewPruner(db.Queries(), func() int64 {
+			return settingssvc.Int(instancesettings.KeySearchEventRetentionDays)
+		}, logger)
+		go runSearchOutboxRetentionWorker(workerCtx, logger, outboxPruner, cronLeader)
+		logger.Info("search outbox retention worker started")
+	}
+
 	// Drain the IPFS mirror pin/unpin queue and periodically re-arm dead-letters
 	// (fix_plan P19). Only when IPFS_ENABLED — the mirror is a sidecar, so this
 	// never affects the authoritative write/serve paths.
@@ -3083,6 +3099,43 @@ func runOperationalJobRetentionWorker(ctx context.Context, logger *slog.Logger, 
 				if events+runs+pipelines > 0 {
 					logger.Info("operational job retention pruned rows",
 						"events", events, "runs", runs, "pipelines", pipelines)
+				}
+				return 0, nil
+			},
+		}},
+	}.Run(ctx, logger)
+}
+
+// runSearchOutboxRetentionWorker enforces retention on the search event outbox.
+//
+// Until this existed the table was append-only in practice: migration 0092 built
+// enqueue/claim/deliver and no DELETE against search_outbox existed anywhere in
+// the tree. The rows are not inert queue exhaust — a server-side search.submitted
+// payload carries the raw query text alongside user_id and session_id — so a
+// user's searches outlived both "Clear search history" and account deletion in
+// core's primary database. Bounding that is the point; the table size is the
+// second reason, not the first.
+//
+// Daily and leader-gated, like the operational-job retention worker it is
+// modelled on: the window is measured in months, so tick granularity is
+// irrelevant to the policy, and one instance doing the deletes is enough. The
+// sweep is idempotent — a second run finds nothing past the cutoff and costs one
+// query per prunable state — and pending rows are never touched at any age.
+func runSearchOutboxRetentionWorker(ctx context.Context, logger *slog.Logger, pruner *searchevents.Pruner, leader *leaderlock.Elector) {
+	const interval = 24 * time.Hour
+	jobloop.Loop{
+		Interval: interval,
+		Leader:   leader,
+		Passes: []jobloop.Pass{{
+			FailMsg: "search outbox retention failed",
+			Run: func(ctx context.Context, tick time.Time) (int, error) {
+				delivered, dead, err := pruner.Prune(ctx, tick.UTC())
+				if err != nil {
+					return 0, err
+				}
+				if delivered+dead > 0 {
+					logger.Info("search outbox retention pruned rows",
+						"delivered", delivered, "dead", dead)
 				}
 				return 0, nil
 			},
