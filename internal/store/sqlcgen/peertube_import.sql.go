@@ -600,8 +600,8 @@ func (q *Queries) ImportInsertPlaylistItem(ctx context.Context, arg ImportInsert
 
 const importInsertUser = `-- name: ImportInsertUser :one
 
-INSERT INTO users (username, email, password_hash, role, email_verified, is_active, display_name, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO users (username, email, password_hash, role, email_verified, is_active, display_name, created_at, storage_quota_bytes)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0)
 RETURNING id
 `
 
@@ -626,6 +626,18 @@ type ImportInsertUserParams struct {
 // is_active carries the INVERSE of the source's user.blocked (its account
 // suspension). It used to be a hardcoded true, which stood every suspended
 // account up on the new instance with the source's working bcrypt hash.
+//
+// storage_quota_bytes is a LITERAL 0 (unlimited for this account). A migrated
+// creator arrives with their whole back-catalogue already stored, and usage is
+// recomputed live as SUM(video_files.size_bytes) over the very rows this import
+// writes with the source's real byte counts — so a NULL here inherits
+// INSTANCE_DEFAULT_QUOTA_BYTES (5 GiB in the shipped template) and every creator
+// with a bigger catalogue is over quota the instant the import commits: their
+// first upload after being told "we have moved" is a 422 quota_exceeded.
+// Measured-usage-rounded-up only moves the trap to the NEXT upload, and under
+// --media-mode=reference it charges bytes that were never copied here. A
+// migration is not the moment to impose a cap the operator never chose, so this
+// is stated ONCE, at creation, and ImportUpdateUser never re-asserts it.
 func (q *Queries) ImportInsertUser(ctx context.Context, arg ImportInsertUserParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, importInsertUser,
 		arg.Username,
