@@ -650,6 +650,90 @@ func TestRenewCannotReviveAFinishedJob(t *testing.T) {
 	}
 }
 
+// TestImportRunLeaseRenewAndSweepCycle is TestLeaseRenewAndSweepCycle for the
+// PeerTube import queue, which had the SQL for a lease it never renewed. The
+// property it pins is the first half of that pair: a run whose lease is live
+// survives the sweep, so a migration that runs for hours is not handed back to
+// the queue — and, on a second instance, to a second executor — while it is
+// still writing.
+func TestImportRunLeaseRenewAndSweepCycle(t *testing.T) {
+	st := leaseStore(t)
+	q := st.Queries()
+	ctx := context.Background()
+
+	var runID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO peertube_import_runs (mode, conflict_policy) VALUES ('run', 'skip') RETURNING id`,
+	).Scan(&runID); err != nil {
+		t.Fatalf("seed import run: %v", err)
+	}
+	// The single-active partial index allows one pending/running row at a time,
+	// so this row must not outlive the test.
+	t.Cleanup(func() {
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM peertube_import_runs WHERE id = $1`, runID)
+	})
+
+	claimed, err := q.ClaimDueImportRuns(ctx, 10)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	var found bool
+	for _, r := range claimed {
+		if r.ID == runID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("our run was not claimed")
+	}
+
+	state := func() (string, time.Time) {
+		t.Helper()
+		var s string
+		var next time.Time
+		if err := st.Pool.QueryRow(ctx,
+			`SELECT state, next_attempt_at FROM peertube_import_runs WHERE id = $1`, runID).Scan(&s, &next); err != nil {
+			t.Fatalf("read run: %v", err)
+		}
+		return s, next
+	}
+
+	gotState, leaseUntil := state()
+	if gotState != "running" {
+		t.Fatalf("state after claim = %q, want running", gotState)
+	}
+
+	// A live worker's run survives the sweep jobrecovery runs every 2 minutes.
+	if _, err := q.SweepExpiredImportRuns(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if gotState, _ = state(); gotState != "running" {
+		t.Fatalf("the sweep requeued a run whose lease is still live (state=%q); a second "+
+			"instance could then claim it and execute the same import concurrently", gotState)
+	}
+
+	// Renewal — the call the service now makes on a ticker — pushes the lease out.
+	if err := q.RenewImportRunLease(ctx, runID); err != nil {
+		t.Fatalf("renew: %v", err)
+	}
+	if _, renewed := state(); !renewed.After(leaseUntil) {
+		t.Errorf("renew did not extend the lease (%v -> %v)", leaseUntil, renewed)
+	}
+
+	// And a lease that really has elapsed still comes back, so a crashed worker
+	// does not strand the run forever.
+	if _, err := st.Pool.Exec(ctx,
+		`UPDATE peertube_import_runs SET next_attempt_at = now() - interval '1 second' WHERE id = $1`, runID); err != nil {
+		t.Fatalf("expire lease: %v", err)
+	}
+	if _, err := q.SweepExpiredImportRuns(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if gotState, _ = state(); gotState != "pending" {
+		t.Errorf("state after sweeping an expired lease = %q, want pending", gotState)
+	}
+}
+
 // seedExpiredRunningTranscodeJob leaves one transcode job in the state a dead
 // worker leaves behind: 'running' with a lease that has already elapsed. Each
 // call seeds its own video, because transcode_jobs_active_video_idx allows only
