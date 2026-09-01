@@ -12795,7 +12795,7 @@ paths:
                 $ref: "#/components/schemas/PeerTubeImportRun"
         "400":
           description: >-
-            Invalid mode, conflict policy, or a negative
+            Invalid mode, conflict policy, media mode, or a negative
             acknowledged_schema_version.
           content:
             application/json:
@@ -19784,6 +19784,34 @@ components:
             partway or carry incorrect data. A run refused with
             `error_code: undetectable_schema` cannot be acknowledged at all —
             there is no version to name.
+        media_mode:
+          type: string
+          enum: [copy, reference, none]
+          description: >-
+            What THIS run does with the source's media objects. Omit it to take
+            the instance's configured default (PEERTUBE_IMPORT_MEDIA_MODE); the
+            resolved value is recorded on the run.
+
+            copy streams the source's progressive originals into Vidra's own
+            storage layout. reference records the source's EXISTING object keys
+            in Vidra's database instead of moving bytes, and requires the Vidra
+            server to be pointed at the same object store. none imports metadata
+            only and writes no media rows at all.
+
+            It is a FOURTH, ORTHOGONAL axis: the conflict policy resolves
+            natural-key collisions, `source_authoritative` decides whether rows
+            the import already owns may be updated, `acknowledged_schema_version`
+            is a version gate, and none of them says anything about bytes. It is
+            per-run because the answer changes during a migration, when restarting
+            the API to change it is exactly what an operator cannot afford.
+
+            Only reference mode carries the source's HLS tree. In copy mode a
+            video's HLS renditions are NOT copied and nothing re-transcodes them
+            automatically, so a video whose source held only HLS (an ordinary
+            PeerTube configuration: progressive downloads disabled) arrives with
+            nothing to play. A dry run counts those under the report's
+            `video_no_media` entity kind — check it before approving a copy-mode
+            plan.
     PeerTubeImportCounts:
       type: object
       description: Per-entity outcome tally.
@@ -19831,9 +19859,20 @@ components:
             Per-entity-kind counts, keyed by entity kind (category_taxonomy,
             user, user_suspension, user_quota_unlimited, channel, actor_avatar,
             actor_banner, video,
-            video_sensitive, video_block, video_file, hls_playlist, thumbnail,
+            video_sensitive, video_block, video_file, hls_playlist,
+            video_no_media, thumbnail,
             storyboard, caption, tag, view_count, video_original_date, chapter,
             rating, rendition, comment, playlist, playlist_item, follow).
+            video_no_media counts VIDEOS that land with NOTHING to play — no
+            web-video file and no streaming playlist. It is the only count here
+            that reports an absence, and it exists because the absence is
+            otherwise invisible: such a video is inserted, counted as an imported
+            video, and discovered when somebody presses play. It is common rather
+            than exotic — on an HLS-only source (progressive downloads disabled,
+            an ordinary PeerTube configuration) copy mode carries no media for any
+            video, because only reference mode carries the HLS tree. It stays 0
+            for a metadata-only run (media_mode none, or no destination store),
+            where nothing to play is what was asked for.
             user_suspension counts USERS whose source suspension (user.blocked)
             was carried onto is_active, video_sensitive counts VIDEOS the
             source flagged nsfw, and video_block counts VIDEOS the source had
@@ -19903,6 +19942,18 @@ components:
           description: >-
             Whether this run was launched with the source as the authority where
             the two sides have diverged.
+        media_mode:
+          type: string
+          enum: ["", copy, reference, none]
+          description: >-
+            The media handling this run EXECUTED under, resolved at launch (so a
+            worker restarted with different configuration cannot change what a run
+            meant after the fact). Empty on runs launched before this was
+            recorded — those took the server default of the day, which was not
+            stored anywhere, and reporting "copy" for them would be a fabricated
+            record. Surfaced because the questions it answers ("why is my object
+            store this large?", "why does nothing play?") are asked long after
+            the run has scrolled out of the history.
         source_version:
           type: [integer, "null"]
           description: >-

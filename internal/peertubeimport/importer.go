@@ -393,10 +393,23 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 		if len(files) > 0 {
 			r.count(KindVideoFile).Planned++
 		}
-		if _, ok, err := im.src.HLSPlaylist(ctx, v.ID); err != nil {
+		_, hasHLS, err := im.src.HLSPlaylist(ctx, v.ID)
+		if err != nil {
 			return nil, err
-		} else if ok {
+		}
+		// Only REFERENCE mode carries a playlist — importOneVideo writes a
+		// streaming_playlists row nowhere else. Counting one in copy mode made the
+		// plan advertise media the run was structurally unable to deliver, and the
+		// plan an operator approves has to be the plan that runs.
+		carriesHLS := hasHLS && im.mediaMode == MediaModeReference
+		if carriesHLS {
 			r.count(KindHLSPlaylist).Planned++
+		}
+		// ...which leaves the case the plan then has to state out loud: a video
+		// that will land with neither a file nor a playlist. On an HLS-only source
+		// in copy mode that is every video.
+		if im.carriesMedia() && !playableFile(files) && !carriesHLS {
+			r.count(KindVideoNoMedia).Planned++
 		}
 		caps, err := im.src.Captions(ctx, v.ID)
 		if err != nil {
@@ -452,11 +465,32 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 	return r, nil
 }
 
+// carriesMedia reports whether this run is trying to bring media across at all.
+// A metadata-only run — media mode none, or no destination store wired — lands
+// every video with nothing to play BY REQUEST, so the no-media count stays silent
+// for it rather than restating the mode as an alarming number.
+func (im *Importer) carriesMedia() bool {
+	return im.mediaMode != MediaModeNone && im.destMedia != nil
+}
+
+// playableFile reports whether the source's web-video set holds a file this
+// importer would actually write. It applies importOneVideo's extension gate to
+// the one file importOneVideo looks at — the highest-resolution row — so the plan
+// and the run agree about which videos arrive empty.
+func playableFile(files []SourceVideoFile) bool {
+	return len(files) > 0 && allowedVideoExt[strings.ToLower(files[0].Extname)]
+}
+
 // deferredFamilies lists entity families intentionally NOT migrated in this
 // version, surfaced in every report + the docs so operators reconcile them.
 func deferredFamilies() []string {
 	return []string{
-		"HLS copying in copy mode (reference mode reuses existing PeerTube HLS objects; copy mode regenerates via Vidra transcoding)",
+		// This used to say copy mode "regenerates via Vidra transcoding". Nothing
+		// in this package enqueues a transcode: the only trigger is an operator
+		// posting to /admin/videos/{id}/transcoding, one video at a time. An
+		// operator who read the old note had no reason to check, which is the worst
+		// case on an HLS-only source, where copy mode carries no media at all.
+		"HLS in copy mode: reference mode records the source's existing HLS objects, copy mode carries only the progressive original and no HLS tree. Nothing re-transcodes those videos automatically — an operator has to ask per video (POST /admin/videos/{id}/transcoding) — so until they do, an imported video plays from its original file, and a video whose source had ONLY HLS (see the video_no_media count) has nothing to play at all",
 		"moderation state (account/server blocklists, abuse reports; the video blacklist IS carried, into video_blocks)",
 		"user notification settings and watch history",
 		"live sessions, plugins, themes, runners, redundancy config",

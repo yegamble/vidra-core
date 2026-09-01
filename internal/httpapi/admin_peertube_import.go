@@ -49,6 +49,19 @@ type peertubeImportLaunchRequest struct {
 	// default and no configuration key for this: it is here on one request, or it
 	// is nowhere.
 	AcknowledgedSchemaVersion int `json:"acknowledged_schema_version"`
+	// MediaMode (copy|reference|none) is a FOURTH axis, orthogonal to all three
+	// above: it decides what happens to the source's MEDIA OBJECTS, and nothing
+	// else here says anything about bytes. It is on the request because the answer
+	// changes DURING a migration — a rehearsal is cheapest as 'none', a cutover
+	// onto a bucket the Vidra server already reads wants 'reference' — and it used
+	// to come from PEERTUBE_IMPORT_MEDIA_MODE at process start, so changing it
+	// meant editing the env file and restarting the API mid-migration.
+	//
+	// Omitted takes the server default, and stays EMPTY through this handler so
+	// the service can apply it: ParseMediaMode maps "" to copy, which on an
+	// instance configured for reference would silently downgrade every launch that
+	// did not spell the mode out.
+	MediaMode string `json:"media_mode"`
 }
 
 // peertubeImportListResponse wraps the recent-runs list for the admin UI.
@@ -83,11 +96,22 @@ func (s *Server) handleLaunchPeerTubeImport(c echo.Context) error {
 	if in.AcknowledgedSchemaVersion < 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "acknowledged_schema_version must be a positive PeerTube migrationVersion")
 	}
+	// An absent media_mode is left absent so the service can apply the server
+	// default; only a stated one is parsed, and an unknown one is refused here
+	// rather than becoming a run row the worker cannot interpret.
+	var mediaMode peertubeimport.MediaMode
+	if in.MediaMode != "" {
+		mediaMode, err = peertubeimport.ParseMediaMode(in.MediaMode)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid media_mode (want copy|reference|none)")
+		}
+	}
 	run, err := s.peertubeimportsvc.CreateRun(c.Request().Context(), peertubeimport.Launch{
 		Mode:                      in.Mode,
 		Policy:                    policy,
 		SourceAuthoritative:       in.SourceAuthoritative,
 		AcknowledgedSchemaVersion: in.AcknowledgedSchemaVersion,
+		MediaMode:                 mediaMode,
 	}, userID)
 	switch {
 	case errors.Is(err, peertubeimport.ErrNotConfigured):
@@ -109,6 +133,12 @@ func (s *Server) handleLaunchPeerTubeImport(c echo.Context) error {
 		" source_authoritative=" + strconv.FormatBool(in.SourceAuthoritative)
 	if in.AcknowledgedSchemaVersion > 0 {
 		reason += " acknowledged_unverified_schema_version=" + strconv.Itoa(in.AcknowledgedSchemaVersion)
+	}
+	// Only when the request named one. The resolved mode — including the server
+	// default this launch fell back to — is on the returned run and on the run
+	// row; what the audit adds is that a HUMAN chose to override it.
+	if mediaMode != "" {
+		reason += " media_mode=" + mediaMode.String()
 	}
 	s.audit(c, observability.ActionPeerTubeImportStart, observability.ResultSuccess, userID.String(), reason)
 	return c.JSON(http.StatusAccepted, run)

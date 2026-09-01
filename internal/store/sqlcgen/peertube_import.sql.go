@@ -27,7 +27,7 @@ WHERE id IN (
     LIMIT $1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, mode, conflict_policy, source_authoritative, started_by, acknowledged_schema_version
+RETURNING id, mode, conflict_policy, source_authoritative, started_by, acknowledged_schema_version, media_mode
 `
 
 type ClaimDueImportRunsRow struct {
@@ -37,6 +37,7 @@ type ClaimDueImportRunsRow struct {
 	SourceAuthoritative       bool        `json:"source_authoritative"`
 	StartedBy                 pgtype.UUID `json:"started_by"`
 	AcknowledgedSchemaVersion *int32      `json:"acknowledged_schema_version"`
+	MediaMode                 string      `json:"media_mode"`
 }
 
 // The worker claims due, still-pending runs (oldest first), flipping them to
@@ -63,6 +64,7 @@ func (q *Queries) ClaimDueImportRuns(ctx context.Context, limit int32) ([]ClaimD
 			&i.SourceAuthoritative,
 			&i.StartedBy,
 			&i.AcknowledgedSchemaVersion,
+			&i.MediaMode,
 		); err != nil {
 			return nil, err
 		}
@@ -126,9 +128,9 @@ func (q *Queries) CountImportLedgerByKindStatus(ctx context.Context) ([]CountImp
 
 const createImportRun = `-- name: CreateImportRun :one
 
-INSERT INTO peertube_import_runs (mode, conflict_policy, started_by, source_authoritative, acknowledged_schema_version)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, acknowledged_schema_version, error_code, source_authoritative
+INSERT INTO peertube_import_runs (mode, conflict_policy, started_by, source_authoritative, acknowledged_schema_version, media_mode)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, acknowledged_schema_version, error_code, source_authoritative, media_mode
 `
 
 type CreateImportRunParams struct {
@@ -137,6 +139,7 @@ type CreateImportRunParams struct {
 	StartedBy                 pgtype.UUID `json:"started_by"`
 	SourceAuthoritative       bool        `json:"source_authoritative"`
 	AcknowledgedSchemaVersion *int32      `json:"acknowledged_schema_version"`
+	MediaMode                 string      `json:"media_mode"`
 }
 
 // ─────────────────────────── runs ───────────────────────────
@@ -154,6 +157,12 @@ type CreateImportRunParams struct {
 // rather than in the handler because the worker that runs the preflight is a
 // different process from the one that took the request, and because started_by is
 // on this same row: the pair is the audit record of who accepted which version.
+//
+// media_mode (0125) is a fourth and is independent of all three: it says what
+// this run does with the source's media objects (copy the bytes, reference the
+// existing keys, or carry no media at all). The service resolves it to a concrete
+// value at launch, so the row records the decision rather than deferring it to
+// whatever the executing process happens to be configured with.
 func (q *Queries) CreateImportRun(ctx context.Context, arg CreateImportRunParams) (PeertubeImportRun, error) {
 	row := q.db.QueryRow(ctx, createImportRun,
 		arg.Mode,
@@ -161,6 +170,7 @@ func (q *Queries) CreateImportRun(ctx context.Context, arg CreateImportRunParams
 		arg.StartedBy,
 		arg.SourceAuthoritative,
 		arg.AcknowledgedSchemaVersion,
+		arg.MediaMode,
 	)
 	var i PeertubeImportRun
 	err := row.Scan(
@@ -181,6 +191,7 @@ func (q *Queries) CreateImportRun(ctx context.Context, arg CreateImportRunParams
 		&i.AcknowledgedSchemaVersion,
 		&i.ErrorCode,
 		&i.SourceAuthoritative,
+		&i.MediaMode,
 	)
 	return i, err
 }
@@ -284,7 +295,7 @@ func (q *Queries) GetImportLedgerLastWriteForTarget(ctx context.Context, arg Get
 }
 
 const getImportRun = `-- name: GetImportRun :one
-SELECT id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, acknowledged_schema_version, error_code, source_authoritative FROM peertube_import_runs WHERE id = $1
+SELECT id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, acknowledged_schema_version, error_code, source_authoritative, media_mode FROM peertube_import_runs WHERE id = $1
 `
 
 func (q *Queries) GetImportRun(ctx context.Context, id uuid.UUID) (PeertubeImportRun, error) {
@@ -308,12 +319,13 @@ func (q *Queries) GetImportRun(ctx context.Context, id uuid.UUID) (PeertubeImpor
 		&i.AcknowledgedSchemaVersion,
 		&i.ErrorCode,
 		&i.SourceAuthoritative,
+		&i.MediaMode,
 	)
 	return i, err
 }
 
 const getLatestImportRun = `-- name: GetLatestImportRun :one
-SELECT id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, acknowledged_schema_version, error_code, source_authoritative FROM peertube_import_runs ORDER BY created_at DESC, id DESC LIMIT 1
+SELECT id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, acknowledged_schema_version, error_code, source_authoritative, media_mode FROM peertube_import_runs ORDER BY created_at DESC, id DESC LIMIT 1
 `
 
 func (q *Queries) GetLatestImportRun(ctx context.Context) (PeertubeImportRun, error) {
@@ -337,6 +349,7 @@ func (q *Queries) GetLatestImportRun(ctx context.Context) (PeertubeImportRun, er
 		&i.AcknowledgedSchemaVersion,
 		&i.ErrorCode,
 		&i.SourceAuthoritative,
+		&i.MediaMode,
 	)
 	return i, err
 }
@@ -1673,7 +1686,7 @@ func (q *Queries) ListImportLedgerDoneByKind(ctx context.Context, entityKind str
 }
 
 const listImportRuns = `-- name: ListImportRuns :many
-SELECT id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, acknowledged_schema_version, error_code, source_authoritative FROM peertube_import_runs
+SELECT id, mode, state, conflict_policy, source_version, progress, error, started_by, attempts, next_attempt_at, created_at, updated_at, started_at, finished_at, acknowledged_schema_version, error_code, source_authoritative, media_mode FROM peertube_import_runs
 ORDER BY created_at DESC, id DESC
 LIMIT $1 OFFSET $2
 `
@@ -1710,6 +1723,7 @@ func (q *Queries) ListImportRuns(ctx context.Context, arg ListImportRunsParams) 
 			&i.AcknowledgedSchemaVersion,
 			&i.ErrorCode,
 			&i.SourceAuthoritative,
+			&i.MediaMode,
 		); err != nil {
 			return nil, err
 		}

@@ -1,0 +1,31 @@
+-- 0125: record, on the import run itself, WHAT THE RUN DID WITH THE SOURCE'S
+-- MEDIA — and make it choosable per run instead of per process.
+--
+-- The run row is the whole of a launched run's memory: an admin launches through
+-- the API and a WORKER, possibly in another process, claims the run later and
+-- builds the importer from it. mode, conflict_policy, source_authoritative and
+-- acknowledged_schema_version already survive that hop. The media mode did not:
+-- it came from PEERTUBE_IMPORT_MEDIA_MODE at process start, so an operator who
+-- wanted a different one had to edit the env file and restart the API in the
+-- middle of a migration. It is a FOURTH orthogonal axis — the conflict policy
+-- resolves natural-key collisions at insert time, source_authoritative decides
+-- whether rows the import owns may be updated, the acknowledgement is a version
+-- gate, and none of them says whether bytes are copied, referenced in place, or
+-- left behind entirely.
+--
+-- It is also the question asked LONG afterwards, which is the other half of why
+-- it belongs on the row: "why is my object store 8 TB?" and "why does nothing
+-- play?" both have this column as their answer, and neither is asked while the
+-- run is still on screen.
+--
+-- '' is the default rather than 'copy' because '' is the truth for every row that
+-- already exists: those runs took whatever PEERTUBE_IMPORT_MEDIA_MODE said at the
+-- time, which is not recorded anywhere and is not necessarily 'copy'. A
+-- backfilled 'copy' would be a fabricated record of a decision nobody made. The
+-- worker reads '' as "the server default", which is exactly the behaviour those
+-- rows already had.
+--
+-- Additive: one column with a default, on a table with at most one active row.
+ALTER TABLE peertube_import_runs
+    ADD COLUMN media_mode TEXT NOT NULL DEFAULT ''
+        CHECK (media_mode IN ('', 'copy', 'reference', 'none'));

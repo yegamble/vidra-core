@@ -72,6 +72,20 @@ const (
 	// "did the avatars come across?" — without the banners diluting the count.
 	KindActorAvatar = "actor_avatar"
 	KindActorBanner = "actor_banner"
+	// KindVideoNoMedia counts VIDEOS a media-carrying run lands with NOTHING to
+	// play: no web-video file and no streaming playlist. It is the only counter
+	// here that reports an ABSENCE, and it exists because the absence is otherwise
+	// invisible — such a video is inserted, counted under KindVideo as imported,
+	// and discovered when somebody presses play.
+	//
+	// It is common rather than exotic. On an HLS-only PeerTube — a normal
+	// configuration — no "videoFile" row is bound to the video at all (the
+	// renditions hang off the streaming playlist), and copy mode carries no
+	// playlist, so EVERY video on such a source arrives empty under the shipped
+	// default. A metadata-only run (media mode none, or no destination store) is
+	// not counted: nothing to play is what was asked for there, and restating the
+	// mode as a scare number would train operators to ignore this.
+	KindVideoNoMedia = "video_no_media"
 )
 
 // orderedKinds is the stable order entities are imported and reported in
@@ -80,7 +94,7 @@ var orderedKinds = []string{
 	KindCategoryTaxonomy,
 	KindUser, KindUserSuspension, KindUserQuotaUnlimited, KindChannel, KindActorAvatar, KindActorBanner,
 	KindVideo, KindVideoSensitive, KindVideoBlock, KindVideoFile,
-	KindHLSPlaylist, KindThumbnail, KindStoryboard, KindCaption, KindTag, KindViewCount,
+	KindHLSPlaylist, KindVideoNoMedia, KindThumbnail, KindStoryboard, KindCaption, KindTag, KindViewCount,
 	KindVideoOriginalDate, KindChapter, KindRating, KindRendition, KindComment,
 	KindPlaylist, KindPlaylistItem, KindFollow,
 }
