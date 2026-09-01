@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
 )
 
@@ -63,12 +64,16 @@ func newS3(t *testing.T) *storage.S3 {
 func TestSweepAgainstMinIO(t *testing.T) {
 	blobs := newS3(t)
 	ctx := context.Background()
-	tag := fmt.Sprintf("%d", time.Now().UnixNano())
 
+	// Referenced original + an orphan, both under the swept web-videos/ prefix
+	// and both in the shape this install mints (media.OriginalVideoKey). A fresh
+	// video id per object is what keeps them unique in a bucket shared with the
+	// rest of the integration suite — and the shape is load-bearing, not
+	// cosmetic: a key whose id position is not one of our ids is kept as
+	// unattributable and would never be reported as an orphan at all.
 	liveVid := uuid.New()
-	// Referenced original + an orphan, both under the swept web-videos/ prefix.
-	refKey := "web-videos/" + liveVid.String() + "-" + tag + ".mp4"
-	orphanKey := "web-videos/orphan-" + tag + ".mp4"
+	refKey := media.OriginalVideoKey(liveVid, 0, ".mp4")
+	orphanKey := media.OriginalVideoKey(uuid.New(), 0, ".mp4")
 	for _, k := range []string{refKey, orphanKey} {
 		k := k
 		if _, err := blobs.Put(ctx, k, strings.NewReader("x")); err != nil {
@@ -120,13 +125,14 @@ func TestSweepAgainstMinIO(t *testing.T) {
 func TestBreakerAndOwnershipAgainstMinIO(t *testing.T) {
 	blobs := newS3(t)
 	ctx := context.Background()
-	tag := fmt.Sprintf("%d", time.Now().UnixNano())
 
 	// More orphans than the absolute floor, under a swept prefix, all this
-	// test's own. Nothing here is referenced, so the orphan share is 100%.
+	// test's own and all in the shape this install mints
+	// (media.VideoThumbnailKey) so the sweep counts them as orphans at all.
+	// Nothing here is referenced, so the orphan share is 100%.
 	orphans := make([]string, 0, breakerFloor+5)
 	for i := 0; i <= breakerFloor+4; i++ {
-		key := fmt.Sprintf("thumbnails/breaker-%s-%04d.jpg", tag, i)
+		key := media.VideoThumbnailKey(uuid.New())
 		if _, err := blobs.Put(ctx, key, strings.NewReader("x")); err != nil {
 			t.Fatalf("Put %q: %v", key, err)
 		}

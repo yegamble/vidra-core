@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/mediagc"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -36,7 +37,10 @@ func TestAdminMediaGC(t *testing.T) {
 	bobTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
 
 	// Seed an orphan blob under a swept prefix (empty reference set → orphan).
-	orphan := "web-videos/orphan.mp4"
+	// The key has to be one this install would MINT: the sweep keeps anything
+	// whose id position is not one of our entity ids, because that is media
+	// another system laid out (mediagc.isMintedKey).
+	orphan := media.OriginalVideoKey(uuid.New(), 0, ".mp4")
 	if _, err := blobs.Put(context.Background(), orphan, strings.NewReader("bytes")); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +91,7 @@ func TestAdminMediaGCReportsTheSafetyFields(t *testing.T) {
 	srv, blobs, _, _ := videoServerEnv(t, testConfig())
 	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 
-	orphan := "web-videos/orphan.mp4"
+	orphan := media.OriginalVideoKey(uuid.New(), 0, ".mp4")
 	if _, err := blobs.Put(context.Background(), orphan, strings.NewReader("bytes")); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +220,7 @@ func TestAdminAdoptBucket(t *testing.T) {
 	srv.mediagcsvc = mediagc.NewService(&mediagcFakeRepo{}, blobs,
 		mediagc.WithBucketOwnership(mediagc.OwnershipUnowned),
 		mediagc.WithInstanceIdentity(identity))
-	orphan := "web-videos/orphan.mp4"
+	orphan := media.OriginalVideoKey(uuid.New(), 0, ".mp4")
 	if _, err := blobs.Put(context.Background(), orphan, strings.NewReader("bytes")); err != nil {
 		t.Fatal(err)
 	}

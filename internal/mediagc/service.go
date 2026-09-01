@@ -540,11 +540,34 @@ type refSet struct {
 	targetGen map[string]string
 }
 
-// isReferenced reports whether a listed object key is live. For the HLS tree
-// the unit is the video id (second path segment) with generation-level
+// isReferenced reports whether a listed object key is live. One rule applies to
+// every swept prefix first — a key this install cannot have minted is
+// unattributable and kept — and only then the per-prefix question: for the HLS
+// tree the unit is the video id (second path segment) with generation-level
 // collection for replacement trees (W14); every other prefix is an exact-key
 // match against the referenced set.
 func (s *Service) isReferenced(key, prefix string, refs refSet) bool {
+	if !isMintedKey(key, prefix) {
+		// The id position holds something this install could not have written,
+		// so the key belongs to media THIS INSTALL DID NOT LAY OUT. A
+		// reference-mode PeerTube import points STORAGE_* at the SOURCE
+		// instance's own bucket and records that instance's keys verbatim
+		// (docs/peertube-migration.md §4) — web-videos/<source-filename>,
+		// captions/<source-filename>, streaming-playlists/hls/<source-uuid>/… —
+		// and every one of those sits under a prefix we sweep.
+		//
+		// Unattributable means KEPT, and the test has to come FIRST, before
+		// every per-prefix question below, each of which answers "orphan" for
+		// foreign media: no row records the source instance's key, and "hls" is
+		// never a live video id. Delete the imported video in Vidra — an
+		// ordinary admin action — and the rows that did reference those objects
+		// go with it, so the next destructive sweep would delete a running
+		// PeerTube's own originals and captions out of a bucket we neither own
+		// nor can restore from our backups. Keeping them costs storage on a
+		// store the operator deliberately shared; the other way costs somebody
+		// else's video library.
+		return true
+	}
 	if prefix == hlsPrefix {
 		// key = streaming-playlists/<video_id>/[rN/]...
 		parts := strings.Split(key, "/")
@@ -552,16 +575,13 @@ func (s *Service) isReferenced(key, prefix string, refs refSet) bool {
 		if len(parts) > 1 {
 			vid = parts[1]
 		}
-		if !isVideoID(vid) {
-			// The id position holds something that is not a video id, so this
-			// key belongs to a tree THIS INSTALL DID NOT LAY OUT — a
-			// reference-mode PeerTube import records
-			// streaming-playlists/hls/<source-uuid>/… against the source
-			// instance's own bucket (docs/peertube-migration.md §4).
-			// Unattributable means KEPT, and the test has to come BEFORE the
-			// live-video one: "hls" is never a live video id, so asking that
-			// question first answers "orphan" for every segment of every
-			// imported video, on media a third party is still serving.
+		if !isEntityID(vid) {
+			// The branch's own, narrower precondition on parts[1]: it is about
+			// to be used as a map key, so it must be a video id outright, not
+			// merely id-SHAPED. isMintedKey above accepts <id>.<ext> in the id
+			// position because the flat prefixes mint exactly that; an HLS tree
+			// never does (media.HLSKeyPrefix), so a dot there is another
+			// layout's, and unattributable means kept.
 			return true
 		}
 		if !refs.liveVideoIDs[vid] {
@@ -755,13 +775,55 @@ func ListReferences(ctx context.Context, repo Repository) (References, error) {
 	return out, nil
 }
 
-// isVideoID reports whether a path segment can be a Vidra video id. A "no" is
-// the interesting answer: the id position of an HLS key holding anything but a
-// UUID is the signature of a tree laid out by another system, for which the
-// sweep's unit of collection — the video id — does not exist at all.
-func isVideoID(seg string) bool {
+// isEntityID reports whether a path segment can be a Vidra entity id — the
+// video id under every swept prefix but playlist-thumbnails, the playlist id
+// under that one. A "no" is the interesting answer: an id position holding
+// anything but a UUID is the signature of a layout another system laid out, for
+// which the sweep's unit of collection does not exist at all.
+func isEntityID(seg string) bool {
 	_, err := uuid.Parse(seg)
 	return err == nil
+}
+
+// isMintedKey reports whether key has a shape THIS INSTALL writes under prefix:
+// the path segment directly below the prefix — with any extension cut off — is
+// an entity id. That single test covers every swept prefix, because Vidra names
+// each object after the entity it belongs to instead of randomising the
+// filename the way PeerTube does (.ralph/specs/storage-layout.md states the
+// rule and why our keys may be guessable):
+//
+//	web-videos/<video_id>.mp4, web-videos/<video_id>.r2.mp4  media.OriginalVideoKey
+//	web-videos/<video_id>[/rN]/<rung>.mp4                    media.WebVideoPrefixForSource
+//	thumbnails/<video_id>.jpg                                media.VideoThumbnailKey
+//	storyboards/<video_id>.jpg, storyboards/<video_id>.vtt   media.StoryboardKeyJPG/VTT
+//	captions/<video_id>/<lang>.vtt                           video.captionKey
+//	streaming-playlists/<video_id>/…                         media.HLSKeyPrefix
+//	playlist-thumbnails/<playlist_id>.<ext>                  media.PlaylistThumbnailKey
+//
+// It is deliberately a SHAPE test and not "does the id name a live entity". A
+// web-videos/<video_id>.mp4 whose video row is gone is genuine garbage and must
+// still be collected: an over-broad keep would turn media GC into a no-op and
+// quietly stop reclaiming storage — a worse failure than the one this guards
+// against only because it is so much harder to notice.
+func isMintedKey(key, prefix string) bool {
+	rest, ok := strings.CutPrefix(key, prefix+"/")
+	if !ok {
+		// Both listers scope strictly to "<prefix>/", so this is unreachable
+		// today; if one ever widened, an object the sweep cannot even place is
+		// the last thing it should delete.
+		return false
+	}
+	seg, _, _ := strings.Cut(rest, "/")
+	if isEntityID(seg) {
+		// A directory named for the entity: the HLS tree, the caption dir, the
+		// progressive rung dir.
+		return true
+	}
+	// The flat prefixes hang the extension off the id itself, and a source
+	// replacement inserts a generation tag before it (".r2.mp4"), so cut at the
+	// FIRST dot rather than the last.
+	stem, _, found := strings.Cut(seg, ".")
+	return found && isEntityID(stem)
 }
 
 // videoIDOfOriginalKey extracts the video id from an original-file storage key
