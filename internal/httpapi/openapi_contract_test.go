@@ -32,6 +32,7 @@ import (
 	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/mute"
 	"github.com/vidra/vidra-core/internal/notification"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/peertubeimport"
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
@@ -157,7 +158,15 @@ func registeredOperations(t *testing.T) map[string]bool {
 	// Construct the server with every optional feature mounted so the test sees
 	// the full route surface (auth routes are conditional on an auth service).
 	// The dependencies are never invoked — only the routing table is read.
-	srv := New(testConfig(), nil, nil, fullRouteOptions()...)
+	// testConfig() leaves the four ROUTE-GATING config predicates off, so the
+	// routes behind them are absent here on purpose — see
+	// TestNonContractRoutesAreEnumerated for the inventory of what that hides.
+	return routeOperations(New(testConfig(), nil, nil, fullRouteOptions()...))
+}
+
+// routeOperations reads one server's routing table into the "METHOD /path" set
+// the contract guards compare against.
+func routeOperations(srv *Server) map[string]bool {
 	httpMethods := map[string]bool{
 		"GET": true, "POST": true, "PUT": true, "PATCH": true,
 		"DELETE": true, "HEAD": true, "OPTIONS": true,
@@ -220,4 +229,121 @@ func sortedKeys(m map[string]bool) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// knownNonContractRoutes is the explicit inventory of routes a fully configured
+// server registers that api/openapi.yaml deliberately does NOT document. Every
+// entry carries the reason it sits outside the REST contract.
+//
+// It exists because the exclusions used to be IMPLICIT. registeredOperations
+// builds the server with testConfig(), which sets no FederationEnabled, no
+// PublicBaseURL, no metrics registry and no dev mail capture, so every route
+// behind one of those four predicates never registers and TestOpenAPIContract
+// has never seen one. That is a blind zone, not a decision: nothing failed when
+// a route entered or left it, and two different canonical watch-URL shapes once
+// coexisted inside it unnoticed. Writing the set down turns "invisible" into
+// "reviewed" — add one more gated route and the build stays red until someone
+// states, here, why it is not in the product contract.
+//
+// Adding an entry is not a rubber stamp. The bar is that the surface is not a
+// REST product API a generated client should ever call: a fediverse/ActivityPub
+// contract, an operations scrape, a syndication format, or a development seam.
+var knownNonContractRoutes = map[string]string{
+	// METRICS_ENABLED. A Prometheus scrape for operators, root-mounted and
+	// unthrottled like the health probes. Not a product API; network-scope it.
+	"GET /metrics": "operations scrape",
+
+	// FEDERATION_ENABLED (+ a wired federation service). The ActivityPub /
+	// NodeInfo / WebFinger contract: its shapes are fixed by the fediverse
+	// specs, its callers are other servers, and its media type is AP JSON-LD.
+	// Documenting it here would push routes no browser client may call into
+	// the frontend's generated client. See .ralph/specs/federation.md §4-5.
+	"GET /.well-known/nodeinfo":              "fediverse discovery",
+	"GET /.well-known/webfinger":             "fediverse discovery",
+	"GET /nodeinfo/2.1":                      "fediverse discovery",
+	"GET /accounts/{handle}":                 "ActivityPub actor",
+	"GET /video-channels/{handle}":           "ActivityPub actor",
+	"POST /inbox":                            "ActivityPub shared inbox",
+	"POST /accounts/{handle}/inbox":          "ActivityPub inbox",
+	"POST /video-channels/{handle}/inbox":    "ActivityPub inbox",
+	"GET /accounts/{handle}/followers":       "ActivityPub collection",
+	"GET /accounts/{handle}/following":       "ActivityPub collection",
+	"GET /accounts/{handle}/outbox":          "ActivityPub collection",
+	"GET /video-channels/{handle}/followers": "ActivityPub collection",
+	"GET /video-channels/{handle}/following": "ActivityPub collection",
+	"GET /video-channels/{handle}/outbox":    "ActivityPub collection",
+
+	// PUBLIC_BASE_URL (+ wired video/channel services). Syndication formats
+	// answering XML/oEmbed JSON to feed readers, crawlers and embed resolvers,
+	// built from absolute public URLs. See internal/httpapi/distribution.go.
+	"GET /feeds/videos.xml": "syndication feed",
+	"GET /services/oembed":  "oEmbed provider",
+	"GET /sitemap.xml":      "crawler sitemap",
+
+	// DEV_MAIL_CAPTURE_ENABLED, and refused outright when Environment is
+	// "production". A development seam for reading account-security tokens
+	// without a mail relay. It is deliberately absent from the contract: a
+	// public spec entry would advertise it to every generated client and every
+	// reader of the spec, which is strictly worse than the /api/v1 namespace
+	// inconsistency that documenting it would tidy up.
+	"GET /api/v1/dev/email-token": "development-only seam",
+}
+
+// TestNonContractRoutesAreEnumerated closes the flag-gated blind spot in
+// TestOpenAPIContract. It builds the server twice — once as the contract guard
+// does, once with every route-gating config predicate satisfied — and asserts
+// the difference is exactly knownNonContractRoutes.
+//
+// It also asserts every excluded route stays UNdocumented, so the list can
+// never become a way to smuggle a documented-but-unregistered path past the
+// guard above (which only ever sees the default server's routes).
+func TestNonContractRoutesAreEnumerated(t *testing.T) {
+	contract := registeredOperations(t)
+	gated := allGatesOpenOperations(t)
+	declared := declaredOperations(t, filepath.Join("..", "..", "api", "openapi.yaml"))
+
+	excluded := map[string]bool{}
+	for op := range gated {
+		if !contract[op] {
+			excluded[op] = true
+		}
+	}
+
+	for op := range excluded {
+		if _, known := knownNonContractRoutes[op]; !known {
+			t.Errorf("route %q registers only behind a config gate, so TestOpenAPIContract cannot see it, and it is not in knownNonContractRoutes — either document it in api/openapi.yaml and mount it unconditionally, or add it to the list with the reason it is outside the REST contract", op)
+		}
+	}
+	for op := range knownNonContractRoutes {
+		if !excluded[op] {
+			t.Errorf("knownNonContractRoutes lists %q but no such config-gated route exists — it was renamed, deleted, or is now mounted unconditionally; drop it from the list in the same change", op)
+		}
+		if declared[op] {
+			t.Errorf("knownNonContractRoutes lists %q as outside the REST contract, but api/openapi.yaml documents it — an operation is either in the contract and mounted unconditionally, or excluded and undocumented", op)
+		}
+	}
+
+	if t.Failed() {
+		t.Logf("routes registered only behind a config gate:\n  %s", strings.Join(sortedKeys(excluded), "\n  "))
+	}
+}
+
+// allGatesOpenOperations returns the route set of a server built with the four
+// predicates that make a route come and go all satisfied: FederationEnabled
+// (the ActivityPub/NodeInfo root routes), PublicBaseURL (the feeds/oEmbed/
+// sitemap distribution routes), a wired metrics registry (the /metrics scrape),
+// and the development-only mail capture (/api/v1/dev/email-token). Everything
+// else is fullRouteOptions, so the difference against registeredOperations is
+// precisely the config-gated surface.
+func allGatesOpenOperations(t *testing.T) map[string]bool {
+	t.Helper()
+	cfg := testConfig()
+	cfg.FederationEnabled = true
+	cfg.MetricsEnabled = true
+	cfg.PublicBaseURL = "https://vidra.test"
+	opts := append(fullRouteOptions(),
+		WithMetrics(observability.NewMetrics()),
+		WithDevMailCapture(auth.NewCaptureMailer()),
+	)
+	return routeOperations(New(cfg, nil, nil, opts...))
 }
