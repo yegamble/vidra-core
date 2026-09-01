@@ -337,8 +337,14 @@ func (s *Source) Users(ctx context.Context) ([]SourceUser, error) {
 	if onActor {
 		actorJoin = `act."accountId" = acc.id`
 	}
+	// u.password is NULLABLE on the source (PeerTube declares it
+	// @AllowNull(true)): an LDAP/OIDC/SAML plugin-auth user has no locally
+	// stored password. COALESCE it to '' — an empty string is not a valid
+	// bcrypt hash and can never verify, so such a user imports safely locked
+	// out of password login (the same property the OAuth and ATProto login
+	// paths already rely on) instead of failing the scan and aborting the run.
 	rows, err := s.pool.Query(ctx, `
-		SELECT u.id, u.username, u.email, u.password,
+		SELECT u.id, u.username, u.email, COALESCE(u.password, ''),
 		       u.role, COALESCE(u."emailVerified", false),
 		       COALESCE(acc.name, u.username), u."createdAt",
 		       COALESCE(act."publicKey", ''), COALESCE(act."privateKey", '')

@@ -2249,8 +2249,12 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		`CREATE TABLE "account" (
 			id serial PRIMARY KEY, name text NOT NULL, "userId" integer, "actorId" integer NOT NULL,
 			description text, "createdAt" timestamptz NOT NULL DEFAULT now())`,
+		// password is NULLABLE, exactly as PeerTube declares it (@AllowNull(true)):
+		// an LDAP/OIDC/SAML plugin-auth user has no locally stored password. The
+		// old fixture said NOT NULL, which is why no test here could express the
+		// case that aborts a whole run.
 		`CREATE TABLE "user" (
-			id serial PRIMARY KEY, username text NOT NULL, email text NOT NULL, password text NOT NULL,
+			id serial PRIMARY KEY, username text NOT NULL, email text NOT NULL, password text,
 			role integer NOT NULL, "emailVerified" boolean, "createdAt" timestamptz NOT NULL DEFAULT now())`,
 		`CREATE TABLE "videoChannel" (
 			id serial PRIMARY KEY, name text NOT NULL, description text, "accountId" integer NOT NULL,
@@ -3004,5 +3008,79 @@ func TestPeerTubeImportSourceAuthoritativeKeepsDatesWhenSourceColumnAbsent(t *te
 	// not invent.
 	if got := readOriginalDate(t, ctx, dest, "Second Video"); got != nil {
 		t.Errorf("Second Video originally_published_at = %v, want NULL", got)
+	}
+}
+
+// ── plugin-auth users (no locally stored password) ──
+
+// PeerTube declares user.password @AllowNull(true): a user authenticated by an
+// LDAP/OIDC/SAML plugin has no locally stored password, so the column is NULL.
+// The source read scanned that NULL straight into a Go string, which pgx v5
+// rejects — and users is the FIRST family in parent-first order, so ONE such
+// user on the source aborted the entire import before anything was written.
+func TestPeerTubeImportCarriesAPluginAuthUserWithNoPassword(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	// carol signs in through an auth plugin: a local actor and account like any
+	// other user, and a NULL password because the instance never stored one.
+	mustExec(t, ctx, src, `INSERT INTO "actor" (id,type,"preferredUsername","publicKey","privateKey","serverId")
+		VALUES (6,'Person','carol','PUBKEY-CAROL','PRIVKEY-CAROL-SECRET',NULL)`)
+	mustExec(t, ctx, src, `INSERT INTO "user" (id,username,email,password,role,"emailVerified")
+		VALUES (3,'carol','carol@example.test',NULL,2,true)`)
+	mustExec(t, ctx, src, `INSERT INTO "account" (id,name,"userId","actorId") VALUES (6,'Carol',3,6)`)
+
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip, MediaMode: MediaModeNone})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	// (a) the run completes. Before the fix this failed here, on the scan.
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("run: %v — one plugin-auth user must not abort the import", err)
+	}
+	// (b) every user imports, the password-less one included.
+	if got := report.Entities[KindUser].Imported; got != 3 {
+		t.Errorf("users imported = %d, want 3 (alice, bob, carol)", got)
+	}
+	if n := countRows(t, ctx, dest, "users"); n != 3 {
+		t.Fatalf("users = %d, want 3 (remote excluded, carol included)", n)
+	}
+	// (c) carol lands with an EMPTY hash: not a valid bcrypt hash, so password
+	// login can never verify — she is locked out of it, not crashing the run.
+	var carolHash string
+	if err := dest.QueryRow(ctx, `SELECT password_hash FROM users WHERE username='carol'`).Scan(&carolHash); err != nil {
+		t.Fatalf("read carol: %v", err)
+	}
+	if carolHash != "" {
+		t.Errorf("carol password_hash = %q, want empty", carolHash)
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(carolHash), []byte(testPassword)); err == nil {
+		t.Error("an empty password hash verified a password — password login must be impossible for a plugin-auth user")
+	}
+	// The user who DID have a password is untouched by any of this.
+	var aliceHash string
+	if err := dest.QueryRow(ctx, `SELECT password_hash FROM users WHERE username='alice'`).Scan(&aliceHash); err != nil {
+		t.Fatalf("read alice: %v", err)
+	}
+	if aliceHash != string(hash) {
+		t.Error("alice password hash was not carried verbatim")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(aliceHash), []byte(testPassword)); err != nil {
+		t.Errorf("carried bcrypt hash does not verify the original password: %v", err)
 	}
 }
