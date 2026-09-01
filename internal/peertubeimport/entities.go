@@ -389,9 +389,26 @@ func (im *Importer) findChannelByHandle(ctx context.Context, handle string) (uui
 
 // ── videos (+ metadata, file, thumbnail, captions, tags) ──
 
+// noteBlacklistUnavailable records that this source cannot be asked about
+// moderator removals, so a zero in the video_block column is never read as
+// "nothing was taken down on the source". Both the plan and the run call it.
+func (im *Importer) noteBlacklistUnavailable(ctx context.Context, r *Report) error {
+	has, err := im.src.HasVideoBlacklist(ctx)
+	if err != nil {
+		return err
+	}
+	if !has {
+		r.Deferred = append(r.Deferred, "moderator removals (this source has no videoBlacklist table, so nothing arrives blocked)")
+	}
+	return nil
+}
+
 func (im *Importer) importVideos(ctx context.Context, r *Report) error {
 	videos, err := im.src.Videos(ctx)
 	if err != nil {
+		return err
+	}
+	if err := im.noteBlacklistUnavailable(ctx, r); err != nil {
 		return err
 	}
 	c := r.count(KindVideo)
@@ -615,6 +632,28 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 				return err
 			}
 		}
+		if v.Blacklisted {
+			// The source's moderators removed this video, so it arrives removed.
+			// Written in the SAME transaction as the video: a crash between the two
+			// would otherwise commit a moderator-removed video as public, and the
+			// ledger row beside it would call that import done.
+			//
+			// video_blocks rather than privacy='private' deliberately. A forced
+			// privacy is UNDONE by the source-authoritative resync, which recomputes
+			// the desired privacy from the source row (mapPrivacy) and writes it
+			// back — so the video would go public again at the cutover run, the one
+			// nobody watches. A block sits outside every family the resync
+			// reconciles, so it survives.
+			if _, err := q.BlockVideo(ctx, sqlcgen.BlockVideoParams{
+				VideoID: id,
+				Reason:  "carried from the source instance's video blacklist",
+				// blocked_by is NULL: the acting moderator was somebody on the source,
+				// and attributing their decision to a local account would be a lie in
+				// the destination's audit trail.
+			}); err != nil {
+				return err
+			}
+		}
 		return recordLedger(ctx, q, KindVideo, v.UUID, id, "done", "")
 	})
 	if err != nil {
@@ -623,6 +662,9 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 	c.Imported++
 	if v.NSFW {
 		r.count(KindVideoSensitive).Imported++
+	}
+	if v.Blacklisted {
+		r.count(KindVideoBlock).Imported++
 	}
 	if haveFile {
 		r.count(KindVideoFile).Imported++
