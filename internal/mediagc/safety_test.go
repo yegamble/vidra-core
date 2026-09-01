@@ -3,13 +3,13 @@ package mediagc
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -18,14 +18,19 @@ import (
 // returning a repo whose reference set covers exactly the referenced keys. The
 // sweep therefore sees n orphans out of n+m scanned, which is the only input the
 // circuit breaker looks at.
+//
+// Every key is one this install would mint (media.VideoThumbnailKey). A
+// freehand name would be kept as unattributable (isMintedKey), never counted as
+// an orphan, and every breaker case below would then pass on a sweep that found
+// nothing at all.
 func seedOrphans(t *testing.T, blobs storage.Backend, orphans, referenced int) *fakeRepo {
 	t.Helper()
 	repo := &fakeRepo{}
 	for i := 0; i < orphans; i++ {
-		put(t, blobs, fmt.Sprintf("thumbnails/orphan-%04d.jpg", i))
+		put(t, blobs, media.VideoThumbnailKey(uuid.New()))
 	}
 	for i := 0; i < referenced; i++ {
-		k := fmt.Sprintf("thumbnails/live-%04d.jpg", i)
+		k := media.VideoThumbnailKey(uuid.New())
 		put(t, blobs, k)
 		repo.fileKeys = append(repo.fileKeys, k)
 	}
@@ -185,7 +190,7 @@ func TestOwnershipGatesDestructiveSweeps(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			orphan := "web-videos/orphan.mp4"
+			orphan := mintedOrphan()
 			put(t, blobs, orphan)
 			svc := NewService(&fakeRepo{}, blobs, WithBucketOwnership(tc.ownership))
 
@@ -224,7 +229,7 @@ func TestDryRunIsAllowedOnAnUnownedBucket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	put(t, blobs, "web-videos/orphan.mp4")
+	put(t, blobs, mintedOrphan())
 	res, err := NewService(&fakeRepo{}, blobs, WithBucketOwnership(OwnershipConflict)).Sweep(ctx, true)
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
@@ -271,7 +276,7 @@ func TestAdoptBucket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	orphan := "web-videos/orphan.mp4"
+	orphan := mintedOrphan()
 	put(t, blobs, orphan)
 
 	// Local: refused, and the state is untouched.
@@ -318,7 +323,7 @@ func TestSweepSeesAnAdoptionMadeOnAnotherReplica(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	orphan := "web-videos/orphan.mp4"
+	orphan := mintedOrphan()
 	put(t, blobs, orphan)
 
 	// Two Service instances over the SAME store, as two processes would be.
@@ -361,7 +366,7 @@ func TestSweepNeverClaimsAnUnmarkedBucket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	orphan := "web-videos/orphan.mp4"
+	orphan := mintedOrphan()
 	put(t, blobs, orphan)
 	svc := NewService(&fakeRepo{}, blobs,
 		WithBucketOwnership(OwnershipUnowned),
@@ -394,7 +399,7 @@ func TestSweepReportsAForeignMarkerAsConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	orphan := "web-videos/orphan.mp4"
+	orphan := mintedOrphan()
 	put(t, blobs, orphan)
 	if err := storage.WriteOwnerMarker(ctx, blobs, "55555555-5555-4555-8555-555555555555"); err != nil {
 		t.Fatalf("WriteOwnerMarker: %v", err)
@@ -786,5 +791,169 @@ func TestUnattributableStreamingPlaylistKeysAreKept(t *testing.T) {
 				t.Errorf("object %q exists=%v after the sweep", key, !tc.wantCollect)
 			}
 		})
+	}
+}
+
+// mintedKeyShapes names, for every swept prefix, the key shape THIS INSTALL
+// writes — taken from the code that mints it wherever that is exported — and a
+// shape another system lays out under the same prefix. The test below is driven
+// off sweptPrefixes on purpose: a new swept prefix with no entry here fails,
+// which forces "what shape do we mint under it?" when the prefix is added
+// rather than after a sweep has deleted somebody's media.
+var mintedKeyShapes = map[string]struct {
+	// minted is a key this install would write for id.
+	minted func(id uuid.UUID) string
+	// foreign is a key another system laid out under the same prefix. PeerTube
+	// randomises asset filenames and tags them with a resolution or language
+	// (.ralph/specs/storage-layout.md contrasts that with our
+	// name-the-file-after-the-entity rule), so the id position never holds one
+	// of our entity ids. Only web-videos, captions and streaming-playlists are
+	// pointed at foreign objects today (peertubeimport.sourceWebVideoKey /
+	// sourceCaptionKey / sourceHLSKey); the other three are here so the rule is
+	// proven uniform across every prefix the sweep lists, not only across the
+	// three that have already bitten.
+	foreign string
+}{
+	"web-videos": {
+		minted:  func(id uuid.UUID) string { return media.OriginalVideoKey(id, 0, ".mp4") },
+		foreign: "web-videos/8f14e45f-ceea-467a-9a34-1b2c3d4e5f60-720.mp4",
+	},
+	"thumbnails": {
+		minted:  media.VideoThumbnailKey,
+		foreign: "thumbnails/6f4922f4-5d1a-4b3c-8e7f-0a1b2c3d4e5f-360.jpg",
+	},
+	"storyboards": {
+		minted:  media.StoryboardKeyJPG,
+		foreign: "storyboards/1f0e3dad-9990-4d29-9b4c-5a6b7c8d9e0f-storyboard.jpg",
+	},
+	"captions": {
+		// video.captionKey (unexported): captions/<video_id>/<lang>.vtt.
+		minted:  func(id uuid.UUID) string { return "captions/" + id.String() + "/en.vtt" },
+		foreign: "captions/98f13708-2104-4d1e-9b2a-3c4d5e6f7a8b-en.vtt",
+	},
+	"streaming-playlists": {
+		minted:  func(id uuid.UUID) string { return media.HLSKeyPrefix(id) + "/master.m3u8" },
+		foreign: "streaming-playlists/hls/3c59dc04-8e88-4950-9b0a-1c2d3e4f5a6b/master.m3u8",
+	},
+	"playlist-thumbnails": {
+		minted:  func(id uuid.UUID) string { return media.PlaylistThumbnailKey(id, "jpg") },
+		foreign: "playlist-thumbnails/b6d767d2-f8ed-45b0-8f1c-2d3e4f5a6b7c-cover.jpg",
+	},
+}
+
+// TestSweepNeverCollectsAReferenceModeSourceObject is the incident this guard
+// exists for, end to end. A reference-mode import records the SOURCE instance's
+// own keys verbatim — web-videos/<source-filename>, captions/<source-filename>,
+// both flat, both under a swept prefix. Delete the imported video in Vidra and
+// its rows go with it; the next destructive sweep then sees two objects no row
+// references and, before this guard, deleted a running PeerTube's original and
+// caption track out of a bucket we do not own and cannot restore.
+func TestSweepNeverCollectsAReferenceModeSourceObject(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The source instance's objects, exactly as the importer recorded them
+	// (peertubeimport.sourceWebVideoKey / sourceCaptionKey).
+	sourceOriginal := "web-videos/2f8a9b1c-4d5e-6f70-8192-a3b4c5d6e7f8-1080.mp4"
+	sourceCaption := "captions/2f8a9b1c-4d5e-6f70-8192-a3b4c5d6e7f8-en.vtt"
+	put(t, blobs, sourceOriginal)
+	put(t, blobs, sourceCaption)
+
+	// The admin deleted the imported video: no video_files row, no captions row,
+	// no video id. Nothing in OUR database attributes either object any more.
+	res, err := NewService(&fakeRepo{}, blobs, WithBucketOwnership(OwnershipOwned)).Sweep(ctx, false)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(res.Orphans) != 0 {
+		t.Errorf("the sweep called %v garbage; those objects belong to the source instance", res.Orphans)
+	}
+	for _, k := range []string{sourceOriginal, sourceCaption} {
+		if !exists(t, blobs, k) {
+			t.Errorf("the sweep deleted %q — a live PeerTube's own media", k)
+		}
+	}
+}
+
+// The counter-test, and the reason the guard is a SHAPE test rather than "keep
+// anything unreferenced": an object this install minted whose owning row is
+// gone is real garbage, and a sweep that stops collecting it is a media GC that
+// silently stopped reclaiming storage — a quieter failure than the one above,
+// and a harder one to notice. Every shape written under web-videos/: the
+// original, a replacement's generation-tagged original, and the progressive
+// rung derivatives (media.WebVideoPrefixForSource).
+func TestOrphanedVidraMintedKeysAreStillCollected(t *testing.T) {
+	dead := uuid.New()
+	minted := []string{
+		media.OriginalVideoKey(dead, 0, ".mp4"),
+		media.OriginalVideoKey(dead, 2, ".mp4"),
+		"web-videos/" + dead.String() + "/720p.mp4",
+		"web-videos/" + dead.String() + "/r2/720p.mp4",
+	}
+	ctx := context.Background()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range minted {
+		put(t, blobs, k)
+	}
+	res, err := NewService(&fakeRepo{}, blobs, WithBucketOwnership(OwnershipOwned)).Sweep(ctx, false)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(res.Orphans) != len(minted) {
+		t.Errorf("collected %v, want all %d of %v", res.Orphans, len(minted), minted)
+	}
+	for _, k := range minted {
+		if exists(t, blobs, k) {
+			t.Errorf("orphan %q survived: media GC has stopped reclaiming storage", k)
+		}
+	}
+}
+
+// The general rule over every prefix the sweep lists: a key whose id position
+// holds none of our entity ids is unattributable and kept, while the same
+// prefix's own minted shape, unreferenced, is still collected. Both directions,
+// because either alone is satisfiable by a broken sweep — one by never deleting
+// anything, the other by deleting everything.
+func TestForeignShapedKeysAreKeptUnderEverySweptPrefix(t *testing.T) {
+	for _, prefix := range sweptPrefixes {
+		shapes, ok := mintedKeyShapes[prefix]
+		if !ok {
+			t.Errorf("swept prefix %q has no entry in mintedKeyShapes: decide what shape this install mints under it before a sweep decides for you", prefix)
+			continue
+		}
+		for _, tc := range []struct {
+			name        string
+			key         string
+			wantCollect bool
+		}{
+			{"a reference-mode import's key is kept", shapes.foreign, false},
+			{"our own unreferenced key is still collected", shapes.minted(uuid.New()), true},
+		} {
+			t.Run(prefix+"/"+tc.name, func(t *testing.T) {
+				ctx := context.Background()
+				blobs, err := storage.NewLocal(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				put(t, blobs, tc.key)
+				// An empty database: nothing attributes either key.
+				res, err := NewService(&fakeRepo{}, blobs, WithBucketOwnership(OwnershipOwned)).Sweep(ctx, false)
+				if err != nil {
+					t.Fatalf("sweep: %v", err)
+				}
+				collected := len(res.Orphans) == 1 && res.Orphans[0] == tc.key
+				if collected != tc.wantCollect {
+					t.Fatalf("collected %q = %v, want %v (orphans %v)", tc.key, collected, tc.wantCollect, res.Orphans)
+				}
+				if exists(t, blobs, tc.key) == tc.wantCollect {
+					t.Errorf("object %q exists=%v after the sweep", tc.key, !tc.wantCollect)
+				}
+			})
+		}
 	}
 }

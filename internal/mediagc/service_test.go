@@ -39,6 +39,13 @@ func put(t *testing.T, b storage.Backend, key string) {
 	}
 }
 
+// mintedOrphan is a key of a shape THIS INSTALL writes, for an entity that does
+// not exist — the only kind of object a sweep may ever collect. Fixtures that
+// just want "an orphan" call it rather than naming a file freehand: a key whose
+// id position is not one of our ids is now KEPT as unattributable (isMintedKey),
+// so "web-videos/orphan.mp4" would make a rail's test pass for the wrong reason.
+func mintedOrphan() string { return media.OriginalVideoKey(uuid.New(), 0, ".mp4") }
+
 func exists(t *testing.T, b storage.Backend, key string) bool {
 	t.Helper()
 	ok, err := b.Exists(context.Background(), key)
@@ -71,8 +78,11 @@ func TestSweepFindsAndDeletesOrphans(t *testing.T) {
 	}
 
 	// Orphans (no DB reference).
-	orphanOrig := "web-videos/orphan.mp4"
-	orphanThumb := "thumbnails/gone.jpg"
+	// Orphans are keys THIS INSTALL minted for videos that are gone — the only
+	// objects the sweep may collect. A freehand name (the old fixture said
+	// "web-videos/orphan.mp4") is unattributable and is kept instead.
+	orphanOrig := media.OriginalVideoKey(deadVid, 0, ".mp4")
+	orphanThumb := media.VideoThumbnailKey(deadVid)
 	orphanCap := "captions/" + uuid.New().String() + "/fr.vtt"
 	orphanPl := media.PlaylistThumbnailKey(uuid.New(), "png")
 	deadHLS := "streaming-playlists/" + deadVid.String() + "/master.m3u8"
