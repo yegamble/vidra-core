@@ -2115,6 +2115,9 @@ func run() error {
 	ptImportOpts := []peertubeimport.Option{
 		peertubeimport.WithLogger(logger),
 		peertubeimport.WithDefaultPolicy(defaultImportPolicy),
+		// The configured media mode is now a DEFAULT, not the mode: a launch may
+		// name its own, and the service resolves this one only when it does not.
+		peertubeimport.WithDefaultMediaMode(defaultImportMediaMode),
 		peertubeimport.WithAudit(func(ctx context.Context, ev observability.AuditEvent) {
 			_ = auditsvc.Record(ctx, audit.Event{Action: ev.Action, Result: ev.Result, ActorID: ev.ActorID, Reason: ev.Reason, RequestID: ev.RequestID})
 		}),
@@ -2147,8 +2150,17 @@ func run() error {
 				if err != nil {
 					return nil, nil, err
 				}
+				// The media mode comes off the RUN, not the process: an operator
+				// rehearses with 'none' and cuts over with 'reference' without editing
+				// the env file and restarting the API mid-migration. Empty means a run
+				// row written before 0125 recorded the column, which took the server
+				// default — so that is what it still gets.
+				mediaMode := params.MediaMode
+				if mediaMode == "" {
+					mediaMode = defaultImportMediaMode
+				}
 				var srcMedia storage.Backend
-				if defaultImportMediaMode == peertubeimport.MediaModeCopy {
+				if mediaMode == peertubeimport.MediaModeCopy {
 					srcMedia, err = peertubeimport.OpenSourceStorage(srcStorageCfg)
 					if err != nil {
 						src.Close()
@@ -2170,7 +2182,7 @@ func run() error {
 					// operator rehearses with the default and turns it on for the sync
 					// runs before cutover.
 					SourceAuthoritative: params.SourceAuthoritative,
-					MediaMode:           defaultImportMediaMode,
+					MediaMode:           mediaMode,
 					SrcMedia:            srcMedia,
 					DestMedia:           blobs,
 					SealKey:             ptSeal,
@@ -2184,7 +2196,7 @@ func run() error {
 				})
 				return imp, func() { src.Close() }, nil
 			}))
-		logger.Info("peertube import configured", "source_storage", cfg.PeerTubeSourceStorageBackend, "media_mode", defaultImportMediaMode.String())
+		logger.Info("peertube import configured", "source_storage", cfg.PeerTubeSourceStorageBackend, "default_media_mode", defaultImportMediaMode.String())
 	}
 	ptImportSvc := peertubeimport.NewService(db.Queries(), ptImportOpts...)
 	opts = append(opts, httpapi.WithPeerTubeImportService(ptImportSvc))

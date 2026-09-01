@@ -261,3 +261,64 @@ func TestPeerTubeImportListAndGet(t *testing.T) {
 		t.Errorf("anon list = %d, want 401", rec.Code)
 	}
 }
+
+// media_mode is the FOURTH per-run axis, and the one whose absence was a real
+// operational trap: it used to come from PEERTUBE_IMPORT_MEDIA_MODE at process
+// start, so an operator who wanted a different mode had to edit the env file and
+// restart the API in the middle of a migration. Both halves are pinned here — a
+// named mode reaches the service verbatim, and an omitted one stays EMPTY so the
+// service (which knows the server default) fills it in. A handler that mapped
+// omission to "copy" itself would silently downgrade every launch on an instance
+// configured for reference.
+func TestPeerTubeImportLaunchCarriesMediaMode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want peertubeimport.MediaMode
+	}{
+		{"absent defers to the server default", `{"mode":"run"}`, ""},
+		{"copy asked for explicitly", `{"mode":"run","media_mode":"copy"}`, peertubeimport.MediaModeCopy},
+		{"reference", `{"mode":"run","media_mode":"reference"}`, peertubeimport.MediaModeReference},
+		{"none", `{"mode":"dry_run","media_mode":"none"}`, peertubeimport.MediaModeNone},
+		// Orthogonal to the other three axes: none of them says anything about
+		// what happens to the source's bytes.
+		{
+			"orthogonal to the other axes",
+			`{"mode":"run","conflict_policy":"rename","source_authoritative":true,"acknowledged_schema_version":1040,"media_mode":"reference"}`,
+			peertubeimport.MediaModeReference,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var saw peertubeimport.Launch
+			srv := ptImportServer(t, fakePTImport{configured: true, launched: &saw})
+			admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+			if rec := postJSONWithAuth(srv, "/api/v1/admin/peertube-import", admin, tc.body); rec.Code != http.StatusAccepted {
+				t.Fatalf("launch = %d, want 202; body=%s", rec.Code, rec.Body.String())
+			}
+			if saw.MediaMode != tc.want {
+				t.Fatalf("service saw media_mode=%q, want %q", saw.MediaMode, tc.want)
+			}
+		})
+	}
+}
+
+// A media mode that does not exist is a malformed request, refused with the same
+// shape as a bad conflict policy and before the service is reached — no run row
+// may ever hold one, because the worker that resolves it later has nobody to ask.
+func TestPeerTubeImportLaunchRejectsUnknownMediaMode(t *testing.T) {
+	for _, body := range []string{
+		`{"mode":"run","media_mode":"move"}`,
+		`{"mode":"run","media_mode":"Copy"}`,
+	} {
+		var saw peertubeimport.Launch
+		srv := ptImportServer(t, fakePTImport{configured: true, launched: &saw})
+		admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+		rec := postJSONWithAuth(srv, "/api/v1/admin/peertube-import", admin, body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s = %d, want 400; body=%s", body, rec.Code, rec.Body.String())
+		}
+		if saw.Mode != "" {
+			t.Errorf("%s reached the import service", body)
+		}
+	}
+}

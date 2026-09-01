@@ -94,8 +94,14 @@ LIMIT $1;
 -- rather than in the handler because the worker that runs the preflight is a
 -- different process from the one that took the request, and because started_by is
 -- on this same row: the pair is the audit record of who accepted which version.
-INSERT INTO peertube_import_runs (mode, conflict_policy, started_by, source_authoritative, acknowledged_schema_version)
-VALUES ($1, $2, $3, $4, $5)
+--
+-- media_mode (0125) is a fourth and is independent of all three: it says what
+-- this run does with the source's media objects (copy the bytes, reference the
+-- existing keys, or carry no media at all). The service resolves it to a concrete
+-- value at launch, so the row records the decision rather than deferring it to
+-- whatever the executing process happens to be configured with.
+INSERT INTO peertube_import_runs (mode, conflict_policy, started_by, source_authoritative, acknowledged_schema_version, media_mode)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: GetImportRun :one
@@ -131,7 +137,7 @@ WHERE id IN (
     LIMIT $1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, mode, conflict_policy, source_authoritative, started_by, acknowledged_schema_version;
+RETURNING id, mode, conflict_policy, source_authoritative, started_by, acknowledged_schema_version, media_mode;
 
 -- name: SetImportRunVersion :exec
 UPDATE peertube_import_runs

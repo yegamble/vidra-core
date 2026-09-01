@@ -562,6 +562,7 @@ type PeertubeImportRun struct {
 	AcknowledgedSchemaVersion *int32             `json:"acknowledged_schema_version"`
 	ErrorCode                 string             `json:"error_code"`
 	SourceAuthoritative       bool               `json:"source_authoritative"`
+	MediaMode                 string             `json:"media_mode"`
 }
 
 type PipelineRun struct {

@@ -287,3 +287,97 @@ func TestServiceUnverifiedSchemaAcknowledgement(t *testing.T) {
 			after.State, after.ErrorCode)
 	}
 }
+
+// TestServiceRunCarriesMediaMode is the durable hop for the fourth axis. An admin
+// launches through the API and a WORKER — possibly another process — claims the
+// run and builds the importer, so a media mode that does not survive the run row
+// is a media mode the operator cannot choose at all. Before this it came from
+// PEERTUBE_IMPORT_MEDIA_MODE at process start, which meant changing it mid
+// migration required editing the env file and restarting the API.
+//
+// Three things have to hold together: an omitted mode resolves to the SERVER
+// default (not to the package default), a named mode overrides it for that run
+// only, and the mode the run executed under is readable off the run afterwards —
+// which is how "why is my bucket 8 TB?" and "why does nothing play?" stay
+// answerable once the run is history.
+func TestServiceRunCarriesMediaMode(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	srcMediaDir := t.TempDir()
+	seedSourceMedia(t, srcMediaDir)
+	srcMedia, err := storage.NewLocal(srcMediaDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destMedia, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var sawModes []MediaMode
+	factory := func(_ context.Context, params RunParams) (*Importer, func(), error) {
+		sawModes = append(sawModes, params.MediaMode)
+		imp := NewImporter(dest, NewSourceFromPool(src), Options{
+			Policy:    params.Policy,
+			MediaMode: params.MediaMode,
+			SrcMedia:  srcMedia, DestMedia: destMedia,
+		})
+		return imp, func() {}, nil
+	}
+	// The server default here is 'none', deliberately different from the package
+	// default 'copy': an assertion that cannot tell the two apart proves nothing.
+	svc := NewService(sqlcgen.New(dest), WithImporterFactory(factory), WithDefaultMediaMode(MediaModeNone))
+
+	drain := func(in Launch) Run {
+		t.Helper()
+		launched, err := svc.CreateRun(ctx, in, uuid.Nil)
+		if err != nil {
+			t.Fatalf("create run %+v: %v", in, err)
+		}
+		if _, err := svc.DrainDueRuns(ctx, 5); err != nil {
+			t.Fatalf("drain: %v", err)
+		}
+		out, err := svc.GetRun(ctx, launched.ID)
+		if err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		if out.State != "done" {
+			t.Fatalf("run state = %q (error=%q), want done", out.State, out.Error)
+		}
+		return out
+	}
+
+	// 1. Omitted → the server default, resolved at LAUNCH so the row is the record.
+	deflt := drain(Launch{Mode: "dry_run", Policy: PolicySkip})
+	if deflt.MediaMode != string(MediaModeNone) {
+		t.Errorf("run launched without a media mode recorded %q, want the server default %q", deflt.MediaMode, MediaModeNone)
+	}
+
+	// 2. Named → that mode, for this run only.
+	named := drain(Launch{Mode: "dry_run", Policy: PolicySkip, MediaMode: MediaModeReference})
+	if named.MediaMode != string(MediaModeReference) {
+		t.Errorf("run launched with media_mode=reference recorded %q", named.MediaMode)
+	}
+
+	// 3. Both reached the worker across the claim — the hop nothing else covers.
+	want := []MediaMode{MediaModeNone, MediaModeReference}
+	if len(sawModes) != len(want) {
+		t.Fatalf("factory saw %v, want %v", sawModes, want)
+	}
+	for i := range want {
+		if sawModes[i] != want[i] {
+			t.Fatalf("factory saw %v, want %v — the claim did not carry the column", sawModes, want)
+		}
+	}
+}

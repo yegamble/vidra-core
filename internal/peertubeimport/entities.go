@@ -694,6 +694,13 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 	if haveHLS {
 		r.count(KindHLSPlaylist).Imported++
 	}
+	if im.carriesMedia() && !haveFile && !haveHLS {
+		// The video just committed with no file and no playlist: it is in the
+		// catalogue, it is counted imported above, and pressing play does nothing.
+		// On an HLS-only source in copy mode that is EVERY video, so it has to be a
+		// number on the report rather than something an operator discovers.
+		r.count(KindVideoNoMedia).Imported++
+	}
 	r.count(KindCaption).Imported += len(copiedCaps)
 	for _, tag := range tags {
 		if normalizeTag(tag) != "" {

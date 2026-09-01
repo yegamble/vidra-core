@@ -25,7 +25,13 @@ import (
 type Service struct {
 	repo          Repository
 	defaultPolicy ConflictPolicy
-	logger        *slog.Logger
+	// defaultMediaMode is the SERVER's configured media mode
+	// (PEERTUBE_IMPORT_MEDIA_MODE), used only when a launch names none. It is a
+	// fallback and not a policy: a launch that names a mode overrides it for that
+	// run, and the resolved value is written to the run row so the executing
+	// worker never has to consult this again.
+	defaultMediaMode MediaMode
+	logger           *slog.Logger
 	// buildImporter opens the configured source + storages and returns a ready
 	// Importer for one claimed run, plus a cleanup func. Nil = not configured (the
 	// admin API answers 503).
@@ -101,10 +107,20 @@ func WithDefaultPolicy(p ConflictPolicy) Option {
 	}
 }
 
+// WithDefaultMediaMode sets the fallback media mode for launches that do not
+// name one (the server's PEERTUBE_IMPORT_MEDIA_MODE).
+func WithDefaultMediaMode(m MediaMode) Option {
+	return func(s *Service) {
+		if m != "" {
+			s.defaultMediaMode = m
+		}
+	}
+}
+
 // NewService builds the service. repo may be nil in wiring-only contexts (the
 // OpenAPI contract test constructs the server without a database).
 func NewService(repo Repository, opts ...Option) *Service {
-	s := &Service{repo: repo, defaultPolicy: PolicySkip, logger: slog.Default()}
+	s := &Service{repo: repo, defaultPolicy: PolicySkip, defaultMediaMode: MediaModeCopy, logger: slog.Default()}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -126,7 +142,15 @@ type Run struct {
 	// allowed to update rows the import already owns. Surfaced on the status view
 	// because "why did that title change?" is asked long after the run.
 	SourceAuthoritative bool `json:"source_authoritative"`
-	SourceVersion       *int `json:"source_version"`
+	// MediaMode is the media handling the run EXECUTED under, resolved at launch
+	// so the row records a decision rather than deferring to whatever the
+	// executing process was configured with. Empty on runs launched before it was
+	// recorded (those took the server default of the day; inventing "copy" for
+	// them would be a fabricated record). It is surfaced because the questions it
+	// answers — "why is my object store 8 TB?", "why does nothing play?" — are
+	// asked long after the run is off the screen.
+	MediaMode     string `json:"media_mode"`
+	SourceVersion *int   `json:"source_version"`
 	// AcknowledgedSchemaVersion is the unverified schema version the launching
 	// admin explicitly accepted for this run, or nil (the norm). It is reported
 	// back so the admin history shows what was signed off on, not only that
@@ -166,6 +190,15 @@ type Launch struct {
 	// against one run row, and has to be stated again the next time. The server
 	// has no code path that can produce a non-zero value for it.
 	AcknowledgedSchemaVersion int
+	// MediaMode is what THIS run does with the source's media objects: copy the
+	// bytes into Vidra's layout, reference the source's existing object keys in
+	// place, or carry no media at all. Empty takes the server default.
+	//
+	// It is a FOURTH axis, orthogonal to the other three — none of which says
+	// anything about bytes — and it is per-run rather than server configuration
+	// because the answer changes DURING a migration, when restarting the API to
+	// change it is exactly what an operator cannot afford.
+	MediaMode MediaMode
 }
 
 // RunParams is what the importer factory needs to build the Importer for one
@@ -175,6 +208,10 @@ type RunParams struct {
 	Policy                    ConflictPolicy
 	SourceAuthoritative       bool
 	AcknowledgedSchemaVersion int
+	// MediaMode is the media handling the run was launched under. Empty only for
+	// a run row written before 0125 recorded it; the factory falls back to the
+	// server default there, which is what such a run already did.
+	MediaMode MediaMode
 }
 
 // CreateRun launches a new run from an admin request. It returns ErrBusy when one
@@ -191,12 +228,20 @@ func (s *Service) CreateRun(ctx context.Context, in Launch, adminID uuid.UUID) (
 	if policy == "" {
 		policy = s.defaultPolicy
 	}
+	// The media mode is resolved HERE, at launch, and not at execution: the row is
+	// then the record of what was decided, and a worker restarted with a different
+	// PEERTUBE_IMPORT_MEDIA_MODE cannot change a run's meaning after the fact.
+	mediaMode := in.MediaMode
+	if mediaMode == "" {
+		mediaMode = s.defaultMediaMode
+	}
 	row, err := s.repo.CreateImportRun(ctx, sqlcgen.CreateImportRunParams{
 		Mode:                      in.Mode,
 		ConflictPolicy:            policy.String(),
 		SourceAuthoritative:       in.SourceAuthoritative,
 		StartedBy:                 optUUID(adminID),
 		AcknowledgedSchemaVersion: optSchemaVersion(in.AcknowledgedSchemaVersion),
+		MediaMode:                 mediaMode.String(),
 	})
 	if pgconv.IsUniqueViolation(err) {
 		return Run{}, ErrBusy
@@ -287,10 +332,19 @@ func (s *Service) executeRun(ctx context.Context, claim sqlcgen.ClaimDueImportRu
 	// acknowledgement does: an admin launches through the API and a worker in
 	// another process claims the run, so the run row is the whole of what survives
 	// the hop.
+	//
+	// The media mode rides the same row. An unparseable value (only reachable if
+	// something wrote the column behind the CHECK) falls back to the server
+	// default rather than aborting: the same treatment the policy above gets.
+	mediaMode, mmerr := ParseMediaMode(claim.MediaMode)
+	if mmerr != nil || claim.MediaMode == "" {
+		mediaMode = s.defaultMediaMode
+	}
 	importer, cleanup, err := s.buildImporter(ctx, RunParams{
 		Policy:                    policy,
 		SourceAuthoritative:       claim.SourceAuthoritative,
 		AcknowledgedSchemaVersion: ack,
+		MediaMode:                 mediaMode,
 	})
 	if err != nil {
 		s.logger.WarnContext(ctx, "peertube import: could not open source", "run_id", claim.ID.String(), "error", err)
@@ -401,6 +455,7 @@ func runFromRow(row sqlcgen.PeertubeImportRun) Run {
 		State:               row.State,
 		ConflictPolicy:      row.ConflictPolicy,
 		SourceAuthoritative: row.SourceAuthoritative,
+		MediaMode:           row.MediaMode,
 		Error:               row.Error,
 		ErrorCode:           row.ErrorCode,
 		CreatedAt:           row.CreatedAt,
