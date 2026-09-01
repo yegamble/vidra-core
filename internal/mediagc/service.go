@@ -501,10 +501,24 @@ func (s *Service) isReferenced(key, prefix string, refs refSet) bool {
 	if prefix == hlsPrefix {
 		// key = streaming-playlists/<video_id>/[rN/]...
 		parts := strings.Split(key, "/")
-		if len(parts) < 2 {
-			return false
+		vid := ""
+		if len(parts) > 1 {
+			vid = parts[1]
 		}
-		vid := parts[1]
+		if !isVideoID(vid) {
+			// The id position holds something that is not a video id, so this
+			// key belongs to a tree THIS INSTALL DID NOT LAY OUT — a
+			// reference-mode PeerTube import records
+			// streaming-playlists/hls/<source-uuid>/… and points STORAGE_* at
+			// the source instance's own bucket (docs/peertube-migration.md §4).
+			// Unattributable means KEPT: the sweep deletes only what it can
+			// positively account for, and the object here may be a live third
+			// party's. It is also why this check comes BEFORE the live-video
+			// test — "hls" is never a live video id, so asking that question
+			// first would answer "orphan" for every segment of every imported
+			// video.
+			return true
+		}
 		if !refs.liveVideoIDs[vid] {
 			return false
 		}
@@ -585,9 +599,18 @@ func referenceSet(ctx context.Context, repo Repository) (refSet, error) {
 		own := media.HLSKeyPrefix(r.VideoID) + "/"
 		rest, isOwn := strings.CutPrefix(r.MasterKey, own)
 		if !isOwn || rest == "" {
-			// No master ('' after a dead-lettered transcode) or a foreign
-			// layout (e.g. a PeerTube-import tree): no attributable
-			// generation — the whole tree is kept via !hasPlaylist above.
+			// No master ('' after a dead-lettered transcode), or a master that
+			// is not under this video's own prefix (a reference-mode import
+			// records streaming-playlists/hls/<source-uuid>/…). Either way
+			// there is no attributable generation, so hasPlaylist is left
+			// unset and isReferenced keeps the whole tree.
+			//
+			// For the FOREIGN layout that fallback is not what saves it, and
+			// this comment used to claim otherwise: those keys never reach the
+			// generation logic at all, because their id position holds no video
+			// id and isReferenced keeps them as unattributable first. The two
+			// rules have to agree, since either one alone would be a way to
+			// delete another instance's live media.
 			continue
 		}
 		refs.hasPlaylist[vid] = true
@@ -687,6 +710,15 @@ func ListReferences(ctx context.Context, repo Repository) (References, error) {
 		return out.Playlists[i].MasterKey < out.Playlists[j].MasterKey
 	})
 	return out, nil
+}
+
+// isVideoID reports whether a path segment can be a Vidra video id. A "no" is
+// the interesting answer: the id position of an HLS key holding anything but a
+// UUID is the signature of a tree laid out by another system, for which the
+// sweep's unit of collection — the video id — does not exist at all.
+func isVideoID(seg string) bool {
+	_, err := uuid.Parse(seg)
+	return err == nil
 }
 
 // videoIDOfOriginalKey extracts the video id from an original-file storage key

@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/vidra/vidra-core/internal/storage"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 // seedOrphans stores n objects under a swept prefix and m referenced ones,
@@ -609,5 +613,118 @@ func TestOwnershipReasonWinsOverTheMigrationCheck(t *testing.T) {
 	}
 	if !strings.Contains(res.Summary(), "forced_reason="+ReasonBucketOwnership) {
 		t.Errorf("Summary() = %q, want it to carry the forced reason", res.Summary())
+	}
+}
+
+// A reference-mode PeerTube import (docs/peertube-migration.md §4) points this
+// instance's STORAGE_* at the source instance's own bucket and records the
+// source's keys verbatim. Its HLS trees live at
+// streaming-playlists/hls/<source-uuid>/…, so the id position of every one of
+// those keys holds the literal "hls" rather than a Vidra video id — and a sweep
+// that attributes them by position computes every segment of every imported
+// video as an orphan, on a bucket a live PeerTube is still serving from. That
+// delete is the one outcome in this package a re-run cannot undo.
+//
+// The rule is positional and general: a streaming-playlists key whose id
+// segment is not a video id is UNATTRIBUTABLE and is kept. The second half of
+// this test is what that rule must not cost — a Vidra-native superseded
+// generation (W14) is still collected in the same sweep.
+func TestSweepNeverCollectsAPeerTubeImportHLSTree(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported := uuid.New() // the Vidra video row the import created
+	ptUUID := uuid.New()   // the SOURCE instance's own uuid, its tree's directory
+	native := uuid.New()   // an ordinary Vidra video, replaced and promoted to r1
+
+	ptMaster := "streaming-playlists/hls/" + ptUUID.String() + "/master.m3u8"
+	nativeSrc := "web-videos/" + native.String() + ".r1.mp4"
+	keep := []string{
+		ptMaster,
+		"streaming-playlists/hls/" + ptUUID.String() + "/" + ptUUID.String() + "-720.m3u8",
+		"streaming-playlists/hls/" + ptUUID.String() + "/" + ptUUID.String() + "-720-fragmented.mp4",
+		nativeSrc,
+		"streaming-playlists/" + native.String() + "/r1/master.m3u8",
+		"streaming-playlists/" + native.String() + "/r1/720p/seg_00000.ts",
+	}
+	// W14: the native video's superseded legacy generation is still garbage.
+	wantOrphans := []string{
+		"streaming-playlists/" + native.String() + "/master.m3u8",
+		"streaming-playlists/" + native.String() + "/720p/seg_00000.ts",
+	}
+	for _, k := range append(append([]string{}, keep...), wantOrphans...) {
+		put(t, blobs, k)
+	}
+
+	repo := &fakeRepo{
+		fileKeys: []string{nativeSrc},
+		videoIDs: []uuid.UUID{imported, native},
+		playlists: []sqlcgen.ListStreamingPlaylistRefsRow{
+			{VideoID: imported, MasterKey: ptMaster},
+			{VideoID: native, MasterKey: "streaming-playlists/" + native.String() + "/r1/master.m3u8"},
+		},
+	}
+	res, err := NewService(repo, blobs, WithBucketOwnership(OwnershipOwned)).Sweep(ctx, false)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	sort.Strings(wantOrphans)
+	if strings.Join(res.Orphans, "|") != strings.Join(wantOrphans, "|") {
+		t.Fatalf("orphans:\n got %v\nwant %v", res.Orphans, wantOrphans)
+	}
+	for _, k := range keep {
+		if !exists(t, blobs, k) {
+			t.Errorf("the sweep deleted %q — an imported tree is somebody else's live media", k)
+		}
+	}
+	for _, k := range wantOrphans {
+		if exists(t, blobs, k) {
+			t.Errorf("superseded native key %q survived — the keep rule must not weaken W14", k)
+		}
+	}
+}
+
+// The general guard behind the case above: the id position of a
+// streaming-playlists key either parses as a video id or the key belongs to a
+// layout this install did not create, and only the first kind may ever be
+// collected. A dead Vidra video id is the control — that one IS collected.
+func TestUnattributableStreamingPlaylistKeysAreKept(t *testing.T) {
+	dead := uuid.New()
+	tests := []struct {
+		name        string
+		idSegment   string
+		wantCollect bool
+	}{
+		{"a PeerTube import tree", "hls", false},
+		{"some other foreign layout", "videos", false},
+		{"a uuid-shaped-but-invalid segment", "not-a-uuid-at-all", false},
+		{"a numeric source id", "12345", false},
+		{"a dead Vidra video id is still collected", dead.String(), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			blobs, err := storage.NewLocal(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := "streaming-playlists/" + tc.idSegment + "/master.m3u8"
+			put(t, blobs, key)
+			// No videos, no playlists: nothing in the database attributes any
+			// of these keys.
+			res, err := NewService(&fakeRepo{}, blobs, WithBucketOwnership(OwnershipOwned)).Sweep(ctx, false)
+			if err != nil {
+				t.Fatalf("sweep: %v", err)
+			}
+			collected := len(res.Orphans) == 1 && res.Orphans[0] == key
+			if collected != tc.wantCollect {
+				t.Fatalf("collected %q = %v, want %v (orphans %v)", key, collected, tc.wantCollect, res.Orphans)
+			}
+			if exists(t, blobs, key) == tc.wantCollect {
+				t.Errorf("object %q exists=%v after the sweep", key, !tc.wantCollect)
+			}
+		})
 	}
 }
