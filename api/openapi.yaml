@@ -10838,6 +10838,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/conversations/{id}/messages:
     get:
       operationId: listMessages
@@ -10897,6 +10907,16 @@ paths:
                   - $ref: "#/components/schemas/EncryptedMessageListResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
           content:
             application/json:
               schema:
@@ -11031,6 +11051,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such conversation for this caller.
           content:
@@ -11099,6 +11129,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such attachment for this caller.
           content:
@@ -11141,6 +11181,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such conversation for this caller, or the message is not in it.
           content:
@@ -11170,6 +11220,16 @@ paths:
           description: The message was tombstoned (or already was).
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
           content:
             application/json:
               schema:
@@ -11215,6 +11275,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such message for this caller.
           content:
@@ -11251,6 +11321,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     patch:
       operationId: updateMessagingPrefs
       summary: Update my messaging privacy preferences
@@ -11275,6 +11355,16 @@ paths:
                 $ref: "#/components/schemas/MessagingPrefs"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
           content:
             application/json:
               schema:
@@ -11317,6 +11407,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            End-to-end-encrypted messaging is disabled on this instance
+            (`messaging_e2ee_enabled`, or the `messaging_enabled` master
+            switch above it, is off; stable code `feature_disabled`). Read
+            `features.messaging_e2ee` on GET /api/v1/instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Validation failed, or the device limit is reached.
           content:
@@ -11341,6 +11441,16 @@ paths:
                 $ref: "#/components/schemas/E2EEDeviceListResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            End-to-end-encrypted messaging is disabled on this instance
+            (`messaging_e2ee_enabled`, or the `messaging_enabled` master
+            switch above it, is off; stable code `feature_disabled`). Read
+            `features.messaging_e2ee` on GET /api/v1/instance.
           content:
             application/json:
               schema:
@@ -11370,6 +11480,16 @@ paths:
           description: The device was deleted.
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            End-to-end-encrypted messaging is disabled on this instance
+            (`messaging_e2ee_enabled`, or the `messaging_enabled` master
+            switch above it, is off; stable code `feature_disabled`). Read
+            `features.messaging_e2ee` on GET /api/v1/instance.
           content:
             application/json:
               schema:
@@ -11417,6 +11537,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            End-to-end-encrypted messaging is disabled on this instance
+            (`messaging_e2ee_enabled`, or the `messaging_enabled` master
+            switch above it, is off; stable code `feature_disabled`). Read
+            `features.messaging_e2ee` on GET /api/v1/instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such device for this caller.
           content:
@@ -11455,6 +11585,16 @@ paths:
                 $ref: "#/components/schemas/OneTimeKeyCountResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            End-to-end-encrypted messaging is disabled on this instance
+            (`messaging_e2ee_enabled`, or the `messaging_enabled` master
+            switch above it, is off; stable code `feature_disabled`). Read
+            `features.messaging_e2ee` on GET /api/v1/instance.
           content:
             application/json:
               schema:

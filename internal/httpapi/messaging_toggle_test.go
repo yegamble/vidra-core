@@ -5,10 +5,62 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"testing"
 
 	"github.com/vidra/vidra-core/internal/instancesettings"
 )
+
+// gatedMessagingOperations is every operation that can now answer 403
+// feature_disabled because of the two messaging toggles: the routes carrying
+// requireMessaging/requireE2EE, plus POST /conversations and POST
+// /conversations/{id}/messages, whose encrypted branches gate inside the
+// handler.
+var gatedMessagingOperations = []string{
+	"POST /api/v1/conversations",
+	"GET /api/v1/me/conversations",
+	"GET /api/v1/conversations/{id}/messages",
+	"POST /api/v1/conversations/{id}/messages",
+	"POST /api/v1/conversations/{id}/read",
+	"DELETE /api/v1/messages/{id}",
+	"POST /api/v1/messages/{id}/report",
+	"GET /api/v1/me/messaging-prefs",
+	"PATCH /api/v1/me/messaging-prefs",
+	"POST /api/v1/conversations/{id}/attachments",
+	"GET /api/v1/attachments/{id}",
+	"POST /api/v1/e2ee/devices",
+	"GET /api/v1/e2ee/devices",
+	"DELETE /api/v1/e2ee/devices/{id}",
+	"POST /api/v1/e2ee/devices/{id}/one-time-keys",
+	"GET /api/v1/e2ee/devices/{id}/one-time-keys/count",
+	"GET /api/v1/users/{id}/e2ee/devices",
+	"POST /api/v1/users/{id}/e2ee/claim",
+}
+
+// TestMessagingContractDocumentsFeatureDisabled is the anti-rot guard for those
+// 403s. TestOpenAPIContractDocumentsGateStatuses probes with a plain user
+// token, but BOTH toggles default ON in the registry, so that probe can never
+// observe these answers — exactly the blind spot search_service_enabled has,
+// and the reason TestSearchHistoryContractDocumentsEveryStatus exists. Pin them
+// explicitly: an undocumented 403 reaches the generated frontend client as an
+// unexpected error rather than "the operator turned this off".
+func TestMessagingContractDocumentsFeatureDisabled(t *testing.T) {
+	declared := declaredStatuses(t, filepath.Join("..", "..", "api", "openapi.yaml"))
+	registered := registeredOperations(t)
+	for _, op := range gatedMessagingOperations {
+		if !registered[op] {
+			t.Errorf("%s is listed as feature-gated but no such route is registered", op)
+			continue
+		}
+		if declared[op] == nil {
+			t.Errorf("%s is not documented at all", op)
+			continue
+		}
+		if !declared[op]["403"] {
+			t.Errorf("%s answers 403 feature_disabled while the operator has messaging off, but does not document 403", op)
+		}
+	}
+}
 
 // Instance-owner control over direct messaging. Before this change every Vidra
 // instance shipped always-on 1:1 DMs — with attachments, link previews and
