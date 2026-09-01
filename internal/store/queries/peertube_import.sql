@@ -11,6 +11,39 @@
 SELECT * FROM peertube_import_ledger
 WHERE entity_kind = $1 AND source_id = $2;
 
+-- name: ImportParentStillExists :one
+-- Does the Vidra row a ledger pointer names still exist here?
+--
+-- vidra_id deliberately carries NO foreign key (0067 declares it a bare column,
+-- and no migration since has added one, while started_by in the same file does
+-- have `REFERENCES users (id) ON DELETE SET NULL` — the omission is a decision,
+-- not an oversight). A cascade would delete the LEDGER ROW, and the next run
+-- would then read the source entity as never-imported and RESURRECT what somebody
+-- deleted, which is worse than a dangling pointer. The price is that nothing
+-- keeps the pointer honest, so it has to be asked before it is trusted.
+--
+-- One statement over the four kinds a parent can be, so resolving a parent still
+-- costs one round trip. CASE evaluates only the arm the kind selects; an
+-- unrecognised kind answers TRUE, because "this package does not know a table for
+-- that kind" must never be read as "the row is gone".
+--
+-- users is the one kind with a second predicate. The §1 account delete
+-- ANONYMISES the row rather than removing it (0057: audit rows, DM sender
+-- identity and comment tombstones all keep resolving), so the foreign key holds
+-- and the import would quietly re-populate a deleted person's account.
+-- deleted_at is what says the account is gone. is_active is deliberately NOT
+-- consulted: an account that was SUSPENDED on the source is written inactive on
+-- purpose and is still a perfectly good parent. And a comment TOMBSTONE is still
+-- a valid parent for a reply — 0057 keeps that row precisely so the thread under
+-- it goes on resolving.
+SELECT COALESCE(CASE sqlc.arg(entity_kind)::text
+    WHEN 'user'    THEN EXISTS (SELECT 1 FROM users    u WHERE u.id = sqlc.arg(vidra_id) AND u.deleted_at IS NULL)
+    WHEN 'channel' THEN EXISTS (SELECT 1 FROM channels c WHERE c.id = sqlc.arg(vidra_id))
+    WHEN 'video'   THEN EXISTS (SELECT 1 FROM videos   v WHERE v.id = sqlc.arg(vidra_id))
+    WHEN 'comment' THEN EXISTS (SELECT 1 FROM comments m WHERE m.id = sqlc.arg(vidra_id))
+    ELSE TRUE
+END, TRUE)::boolean AS still_exists;
+
 -- name: UpsertImportLedgerEntry :one
 -- Record (or update) the outcome of importing one source entity. Called in the
 -- SAME transaction as the entity insert so the map and the row commit atomically

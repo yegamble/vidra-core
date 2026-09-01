@@ -69,6 +69,12 @@ type Importer struct {
 	// that an unchanged entity costs nothing. Dropped between runs with the rest.
 	tagsByVideo        map[int64][]string
 	elementsByPlaylist map[int64][]SourcePlaylistElement
+	// liveParents memoises the ledger pointers this run has already confirmed
+	// still name a live row (see parentStillLive). Dropped between runs with the
+	// rest: a row deleted since the last run is precisely the case this exists
+	// for. Written only from the sequential passes — the video-image fan-out
+	// resolves every parent before its workers start.
+	liveParents map[uuid.UUID]struct{}
 	// resync is the destination's side of a source-authoritative run: what this
 	// instance currently holds for every row the import owns, read in bulk before
 	// the passes start. Nil in the default gap-filling mode, and every resync
@@ -579,6 +585,7 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 func (im *Importer) resetRunCaches() {
 	im.videosByID, im.videoVidraByID = nil, nil
 	im.tagsByVideo, im.elementsByPlaylist = nil, nil
+	im.liveParents = nil
 	im.resync = nil
 }
 
@@ -628,10 +635,31 @@ func (im *Importer) withTx(ctx context.Context, fn func(q *sqlcgen.Queries) erro
 	return tx.Commit(ctx)
 }
 
+// deletedParentNote is the ledger note left on a mapping whose target is gone.
+// It is read by an operator through the conflict report
+// (ListImportLedgerConflicts), so it says what happened and what will not happen.
+const deletedParentNote = "the row this mapping named was deleted on this instance; the mapping is retired and the entity is not re-imported"
+
+// parentKinds are the entity kinds resolveParent is asked about, and so the ones
+// ImportParentStillExists knows a table for. A kind that is not here is one whose
+// liveness this package cannot judge; it resolves exactly as it always did rather
+// than being guessed at.
+var parentKinds = map[string]bool{KindUser: true, KindChannel: true, KindVideo: true, KindComment: true}
+
 // resolveParent returns the mapped Vidra id of an already-imported parent
 // entity (status done/skipped with a usable vidra_id). ok=false means the parent
-// was not imported (e.g. skipped-without-target, failed, or absent), so the child
-// must be skipped too.
+// is not available (never imported, skipped-without-target, failed, absent — or
+// deleted here since), so the child must be skipped too.
+//
+// The ledger pointer is VERIFIED, not trusted. It carries no foreign key on
+// purpose (see ImportParentStillExists), and the documented workflow is repeated
+// runs against a still-live source up to a cutover with the new instance in USE
+// in between — so between two runs a moderator deletes an imported channel, or an
+// account is deleted and takes its channels and videos with it. Handing that dead
+// UUID back inserted children against it: a foreign-key violation per child,
+// caught per entity (markFailed + continue), so the run did not abort — it ended
+// state=done with a pile of unexplained `failed` counts, on the cutover run,
+// which is the one nobody is watching.
 func (im *Importer) resolveParent(ctx context.Context, kind, sourceID string) (uuid.UUID, bool, error) {
 	row, err := im.q.GetImportLedgerEntry(ctx, sqlcgen.GetImportLedgerEntryParams{EntityKind: kind, SourceID: sourceID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -640,10 +668,61 @@ func (im *Importer) resolveParent(ctx context.Context, kind, sourceID string) (u
 	if err != nil {
 		return uuid.Nil, false, err
 	}
-	if (row.Status == "done" || row.Status == "skipped") && row.VidraID.Valid {
-		return uuid.UUID(row.VidraID.Bytes), true, nil
+	if !((row.Status == "done" || row.Status == "skipped") && row.VidraID.Valid) {
+		return uuid.Nil, false, nil
 	}
+	id := uuid.UUID(row.VidraID.Bytes)
+	live, err := im.parentStillLive(ctx, kind, id)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	if live {
+		return id, true, nil
+	}
+	// The pointer is stale. RETIRE the mapping rather than merely declining it:
+	// 'skipped' with a NULL vidra_id is the one repair that is both TERMINAL — so
+	// alreadyProcessed keeps the next run from reading "never imported" and
+	// standing back up what somebody deleted — and unresolvable, so children are
+	// skipped with a note instead of failing on a constraint. 'failed' is not
+	// terminal and would be exactly that resurrection.
+	//
+	// It is idempotent: a later run re-reads a terminal, unresolvable row and
+	// never reaches this branch again.
+	if err := im.recordStandalone(ctx, kind, sourceID, uuid.Nil, "skipped", deletedParentNote); err != nil {
+		return uuid.Nil, false, err
+	}
+	im.logger.WarnContext(ctx, "peertube import: a ledger mapping named a row that has been deleted here; "+
+		"retiring the mapping — its children are skipped and it is not re-imported",
+		"entity_kind", kind, "source_id", sourceID, "vidra_id", id.String())
 	return uuid.Nil, false, nil
+}
+
+// parentStillLive reports whether the Vidra row a ledger pointer names is still
+// there, memoising the yeses for the run.
+//
+// Only the yeses: once a stale pointer is retired above, the ledger row itself
+// answers every later ask, so there is nothing for a negative cache to save. The
+// positive one is what keeps the cost off the cutover budget — ~100k children
+// resolve ~16k distinct parents on a real instance, and re-asking per child
+// would double the round trips of every pass. A parent deleted mid-run is
+// therefore still answered from the memo, which lands exactly where this started:
+// one per-entity failure, recorded and skipped past.
+func (im *Importer) parentStillLive(ctx context.Context, kind string, id uuid.UUID) (bool, error) {
+	if !parentKinds[kind] {
+		return true, nil
+	}
+	if _, ok := im.liveParents[id]; ok {
+		return true, nil
+	}
+	live, err := im.q.ImportParentStillExists(ctx, sqlcgen.ImportParentStillExistsParams{EntityKind: kind, VidraID: id})
+	if err != nil || !live {
+		return false, err
+	}
+	if im.liveParents == nil {
+		im.liveParents = map[uuid.UUID]struct{}{}
+	}
+	im.liveParents[id] = struct{}{}
+	return true, nil
 }
 
 // alreadyProcessed reports whether a source entity has a terminal ledger row

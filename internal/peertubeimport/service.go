@@ -448,11 +448,30 @@ func (s *Service) executeRun(ctx context.Context, claim sqlcgen.ClaimDueImportRu
 		report, err = importer.Run(ctx, version, func(r *Report) { s.persistProgress(ctx, claim.ID, r) })
 	}
 	if err != nil {
-		s.failRun(ctx, claim.ID, safeRunError(err), "")
-		s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, observability.ResultFailure, actor, overruled+"import failed")
+		s.abandonRun(ctx, claim, actor, overruled, report, err)
 		return
 	}
 	s.finishRun(ctx, claim, actor, overruled, report)
+}
+
+// abandonRun records the terminal outcome of a run whose passes did NOT all run:
+// the run row is failed with a safe message and the finish audit says so.
+//
+// It sweeps the search index for the same reason finishRun does. A run that died
+// partway — a dropped source connection, a context deadline, an abort on
+// --conflict-policy fail — has already WRITTEN everything it imported before it
+// failed, and the report it returns alongside the error is a real tally of those
+// real rows. Leaving that partial catalogue out of the index because the run
+// ended badly puts the operator back on the 24h ticker or a container restart,
+// which is exactly what the post-import sweep exists to remove.
+//
+// The report is NOT persisted here: FailImportRun owns the run row's terminal
+// write and carries the operator-facing error, and the last progress snapshot
+// persistProgress wrote is already on the row.
+func (s *Service) abandonRun(ctx context.Context, claim sqlcgen.ClaimDueImportRunsRow, actor, overruled string, report *Report, err error) {
+	s.failRun(ctx, claim.ID, safeRunError(err), "")
+	s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, observability.ResultFailure, actor, overruled+"import failed")
+	s.reconcileSearchIndex(ctx, claim, report)
 }
 
 // finishRun records the terminal outcome of a run whose passes all ran: the
@@ -493,28 +512,41 @@ func (s *Service) finishRun(ctx context.Context, claim sqlcgen.ClaimDueImportRun
 		note = fmt.Sprintf("finished with %d failed rows; ", failed)
 	}
 	s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, result, actor, overruled+note+report.Summary())
-	if claim.Mode != modeDryRun {
-		s.reconcileSearchIndex(ctx, id)
-	}
+	s.reconcileSearchIndex(ctx, claim, report)
 }
 
-// reconcileSearchIndex sweeps the catalogue into the search index after a real
-// import. It is safe to run twice: RunReconcile stamps every begin/page/end with
-// a fresh run id, so a second sweep simply restates the same documents under a
-// newer stamp and the receiver suppresses whatever the newest stamp did not
-// name. Re-running is therefore a no-op for the index, not a duplicate.
+// reconcileSearchIndex sweeps the catalogue into the search index after a run
+// that WROTE something. The importer writes videos with direct SQL inside its own
+// transactions and emits no index event, so this sweep is the only path into
+// vidra-search short of the 24h ticker or a process restart.
 //
-// Best-effort, like every other emission here: the run really did finish, and a
-// failed index refresh must not rewrite that record. The 24h sweep worker is
-// still the backstop if this drops.
-func (s *Service) reconcileSearchIndex(ctx context.Context, id uuid.UUID) {
-	if s.reconcileSearch == nil {
+// The condition is what this run wrote, not how it ended. A dry run planned and
+// wrote nothing, so it sweeps nothing; a run that imported or updated nothing has
+// nothing new to state and paging the whole catalogue through the outbox to
+// restate it is pure cost. Updated counts alongside Imported because a
+// source-authoritative re-run can change every title in the catalogue while
+// importing zero rows, and a stale index is a stale index either way.
+//
+// It is safe to run twice: RunReconcile stamps every begin/page/end with a fresh
+// run id, so a second sweep simply restates the same documents under a newer
+// stamp and the receiver suppresses whatever the newest stamp did not name.
+// Re-running is therefore a no-op for the index, not a duplicate — which is what
+// makes it safe to fire from both terminal paths.
+//
+// Best-effort, like every other emission here: the run's terminal record is
+// already written, and a failed index refresh must not rewrite it. The 24h sweep
+// worker is still the backstop if this drops.
+func (s *Service) reconcileSearchIndex(ctx context.Context, claim sqlcgen.ClaimDueImportRunsRow, report *Report) {
+	if s.reconcileSearch == nil || claim.Mode == modeDryRun || report == nil {
+		return
+	}
+	if t := report.totals(); t.Imported+t.Updated == 0 {
 		return
 	}
 	if err := s.reconcileSearch(ctx); err != nil {
 		s.logger.WarnContext(ctx, "peertube import: search reconcile after import failed; "+
 			"the imported catalogue stays unsearchable until the next sweep",
-			"run_id", id.String(), "error", err)
+			"run_id", claim.ID.String(), "error", err)
 	}
 }
 
