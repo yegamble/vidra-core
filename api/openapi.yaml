@@ -5318,6 +5318,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Uploads are switched off on this instance (uploads_enabled).
+            Stable code feature_disabled — a deliberate operator state, not a
+            transient failure, so a client must not offer a retry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such video, or not owned by the caller.
           content:
@@ -5550,6 +5559,15 @@ paths:
                 $ref: "#/components/schemas/UploadSessionResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Uploads are switched off on this instance (uploads_enabled).
+            Stable code feature_disabled — a deliberate operator state, not a
+            transient failure, so a client must not offer a retry.
           content:
             application/json:
               schema:
@@ -7194,9 +7212,10 @@ paths:
       summary: Get my search history
       description: >-
         Returns the caller's stored search history from the search service
-        (search-service W4). Requires auth. Answers 503 search_unavailable when
-        the search service is disabled or unreachable — never a fake empty
-        history.
+        (search-service W4). Requires auth. Answers 403 feature_disabled when an
+        admin has switched smart search off (search_service_enabled) — a
+        deliberate, permanent state — and 503 search_unavailable when the
+        service is unwired or unreachable, never a fake empty history.
       tags: [search]
       security:
         - bearerAuth: []
@@ -7230,6 +7249,23 @@ paths:
                     type: integer
                   offset:
                     type: integer
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Smart search is switched off on this instance
+            (search_service_enabled). Stable code feature_disabled — a
+            deliberate operator state, distinct from the 503 outage below, so
+            a client must render it as unavailable rather than offering a
+            retry that can never succeed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: The search service is unavailable.
           content:
@@ -7241,14 +7277,33 @@ paths:
       summary: Clear my entire search history
       description: >-
         Clears the caller's entire search history in the search service
-        (search-service W4). Requires auth. Answers 503 search_unavailable when
-        the service is down — the delete must not silently fail.
+        (search-service W4). Requires auth. Answers 403 feature_disabled when an
+        admin has switched smart search off (search_service_enabled), and 503
+        search_unavailable when the service is down — the delete must not
+        silently fail.
       tags: [search]
       security:
         - bearerAuth: []
       responses:
         "204":
           description: History cleared.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Smart search is switched off on this instance
+            (search_service_enabled). Stable code feature_disabled — a
+            deliberate operator state, distinct from the 503 outage below, so
+            a client must render it as unavailable rather than offering a
+            retry that can never succeed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: The search service is unavailable.
           content:
@@ -7261,8 +7316,9 @@ paths:
       summary: Delete a single search-history entry
       description: >-
         Removes one normalized query from the caller's search history
-        (search-service W4). Requires auth. Answers 503 search_unavailable when
-        the service is down.
+        (search-service W4). Requires auth. Answers 403 feature_disabled when an
+        admin has switched smart search off (search_service_enabled), and 503
+        search_unavailable when the service is down.
       tags: [search]
       security:
         - bearerAuth: []
@@ -7276,6 +7332,23 @@ paths:
       responses:
         "204":
           description: Entry removed.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Smart search is switched off on this instance
+            (search_service_enabled). Stable code feature_disabled — a
+            deliberate operator state, distinct from the 503 outage below, so
+            a client must render it as unavailable rather than offering a
+            retry that can never succeed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: The search service is unavailable.
           content:
