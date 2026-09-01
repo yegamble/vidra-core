@@ -38,6 +38,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -3587,4 +3588,165 @@ func TestPeerTubeImportMergeLinkedRowsAreNotResynced(t *testing.T) {
 	if gotName != "Bob Channel (renamed)" {
 		t.Errorf("imported channel display_name = %q, want the source's new name", gotName)
 	}
+}
+
+// A migrated creator arrives with a back-catalogue already stored and a quota
+// nobody chose for them. Usage is not a counter — it is SUM(video_files.size_bytes)
+// over the rows this importer just wrote with the source's real byte counts — so
+// on the shipped INSTANCE_DEFAULT_QUOTA_BYTES=5 GiB every creator whose catalogue
+// is bigger than that is over quota the instant the import commits, and their
+// first upload after being told "we've moved" is a 422 quota_exceeded. Reference
+// mode makes it sharper: the bytes are the SOURCE's, never copied here, and they
+// still charge the creator's quota.
+//
+// The import therefore states storage_quota_bytes = 0 (unlimited for that
+// account) ONCE, at creation. It says it only about accounts it CREATED — a
+// pre-existing local account that --conflict-policy merge pointed the source's
+// children at is not an imported account — and it never re-asserts it, so a
+// quota an operator sets afterwards survives every cutover run.
+func TestPeerTubeImportGivesImportedCreatorsUnlimitedQuota(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+
+	sourceHash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srcPool, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, srcPool, string(sourceHash), secretPrivKeyAlice)
+
+	// ── what stands on this instance before the tool is ever run ──
+	//
+	// alice: the owner's own account, which happens to share a username with a
+	// source account, so merge links onto it. carol: a local creator the import
+	// never sees at all — the CONTROL row. Both are on the instance default.
+	var localAliceID, carolID uuid.UUID
+	if err := dest.QueryRow(ctx,
+		`INSERT INTO users (username,email,password_hash,role) VALUES ('alice','owner@example.test','x','admin') RETURNING id`).
+		Scan(&localAliceID); err != nil {
+		t.Fatalf("seed pre-existing owner: %v", err)
+	}
+	if err := dest.QueryRow(ctx,
+		`INSERT INTO users (username,email,password_hash,role) VALUES ('carol','carol@example.test','x','user') RETURNING id`).
+		Scan(&carolID); err != nil {
+		t.Fatalf("seed local control creator: %v", err)
+	}
+
+	runMerge := func(sourceAuthoritative bool) *Report {
+		t.Helper()
+		imp := NewImporter(dest, NewSourceFromPool(srcPool), Options{
+			Policy: PolicyMerge, MediaMode: MediaModeNone, SourceAuthoritative: sourceAuthoritative,
+		})
+		v, err := imp.Preflight(ctx)
+		if err != nil {
+			t.Fatalf("preflight: %v", err)
+		}
+		rep, err := imp.Run(ctx, v, nil)
+		if err != nil {
+			t.Fatalf("run (source_authoritative=%v): %v", sourceAuthoritative, err)
+		}
+		return rep
+	}
+	report := runMerge(false)
+
+	// Fixture integrity: bob's row has to EXIST and have come from this run,
+	// otherwise every "quota" assertion below could pass on an empty database.
+	bobID := readUserID(t, ctx, dest, "bob")
+	if got := report.Entities[KindUser].Imported; got != 1 {
+		t.Fatalf("users imported = %d, want 1 (bob; alice merged onto the local account)", got)
+	}
+
+	// The account the import CREATED is unlimited...
+	if q := readUserQuota(t, ctx, dest, "bob"); q == nil || *q != 0 {
+		t.Errorf("imported bob storage_quota_bytes = %v, want 0 (unlimited) — every migrated creator inherits the instance default and is over it", quotaStr(q))
+	}
+	// ...and the two accounts the import did not create are untouched. carol
+	// proves the write is targeted and not a global default change; the
+	// merged-onto alice proves "imported" means created here, not linked to.
+	if q := readUserQuota(t, ctx, dest, "alice"); q != nil {
+		t.Errorf("merge-linked pre-existing alice storage_quota_bytes = %s, want NULL — the import handed unlimited storage to an account it did not create", quotaStr(q))
+	}
+	if q := readUserQuota(t, ctx, dest, "carol"); q != nil {
+		t.Errorf("local control carol storage_quota_bytes = %s, want NULL — an account the import never saw was rewritten", quotaStr(q))
+	}
+
+	// It BITES on the gate an upload actually runs (checkUploadQuotas →
+	// quota.CheckFits → 422 quota_exceeded), against the SHIPPED default.
+	const shippedDefault = int64(5 * 1024 * 1024 * 1024) // INSTANCE_DEFAULT_QUOTA_BYTES in the meta template
+	const overTheDefault = shippedDefault + 1
+	qsvc := quota.NewService(sqlcgen.New(dest), shippedDefault)
+	if err := qsvc.CheckFits(ctx, bobID, overTheDefault); err != nil {
+		t.Errorf("upload of %d bytes by the imported creator = %v, want it to fit — this is the 422 on their first upload after cutover", overTheDefault, err)
+	}
+	for name, id := range map[string]uuid.UUID{"merge-linked alice": localAliceID, "local carol": carolID} {
+		if err := qsvc.CheckFits(ctx, id, overTheDefault); !errors.Is(err, quota.ErrExceeded) {
+			t.Errorf("upload of %d bytes by %s = %v, want quota.ErrExceeded — the instance default stopped applying to accounts the import did not create", overTheDefault, name, err)
+		}
+	}
+
+	// The report says it happened: an operator reading the run needs to see that
+	// the tool decided their quota policy for them.
+	if got := report.Entities[KindUserQuotaUnlimited].Imported; got != 1 {
+		t.Errorf("unlimited quotas granted = %d, want 1", got)
+	}
+
+	// ── the operator then makes a deliberate decision, and cuts over ──
+	const operatorQuota = int64(4096)
+	mustExec(t, ctx, dest, `UPDATE users SET storage_quota_bytes=$1 WHERE id=$2`, operatorQuota, bobID)
+	newHash, err := bcrypt.GenerateFromPassword([]byte("changed-on-the-source"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, ctx, srcPool, `UPDATE "user" SET password=$1 WHERE id=2`, string(newHash))
+	runMerge(true)
+
+	// Fixture integrity again: --source-authoritative has to have DONE something
+	// to bob's row, or "the quota survived" would be a statement about a no-op.
+	var gotHash string
+	if err := dest.QueryRow(ctx, `SELECT password_hash FROM users WHERE id=$1`, bobID).Scan(&gotHash); err != nil {
+		t.Fatalf("read the imported account after the resync: %v", err)
+	}
+	if gotHash != string(newHash) {
+		t.Fatalf("the resync did not update the imported account — the quota assertion below would prove nothing")
+	}
+	if q := readUserQuota(t, ctx, dest, "bob"); q == nil || *q != operatorQuota {
+		t.Errorf("bob storage_quota_bytes after the resync = %s, want %d — a resync wiped a quota the operator set on a migrated creator", quotaStr(q), operatorQuota)
+	}
+	if q := readUserQuota(t, ctx, dest, "alice"); q != nil {
+		t.Errorf("merge-linked alice storage_quota_bytes after the resync = %s, want NULL", quotaStr(q))
+	}
+	if q := readUserQuota(t, ctx, dest, "carol"); q != nil {
+		t.Errorf("local control carol storage_quota_bytes after the resync = %s, want NULL", quotaStr(q))
+	}
+}
+
+func readUserID(t *testing.T, ctx context.Context, pool *pgxpool.Pool, username string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM users WHERE username=$1`, username).Scan(&id); err != nil {
+		t.Fatalf("read user id for %s: %v", username, err)
+	}
+	return id
+}
+
+func readUserQuota(t *testing.T, ctx context.Context, pool *pgxpool.Pool, username string) *int64 {
+	t.Helper()
+	var q *int64
+	if err := pool.QueryRow(ctx, `SELECT storage_quota_bytes FROM users WHERE username=$1`, username).Scan(&q); err != nil {
+		t.Fatalf("read storage_quota_bytes for %s: %v", username, err)
+	}
+	return q
+}
+
+func quotaStr(q *int64) string {
+	if q == nil {
+		return "NULL"
+	}
+	return strconv.FormatInt(*q, 10)
 }

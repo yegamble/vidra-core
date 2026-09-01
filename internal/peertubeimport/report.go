@@ -47,6 +47,15 @@ const (
 	// is the question asked before anybody is told their account is ready.
 	KindUserSuspension = "user_suspension"
 	KindVideoSensitive = "video_sensitive"
+	// KindUserQuotaUnlimited counts USERS the import CREATED and therefore gave
+	// an unlimited storage quota (users.storage_quota_bytes = 0). It is a kind of
+	// its own because it is the one place the tool decides a policy on the
+	// operator's behalf: a migrated creator's back-catalogue is already stored,
+	// usage is recomputed live from video_files, and on the shipped
+	// INSTANCE_DEFAULT_QUOTA_BYTES anyone with a catalogue over it would be past
+	// their quota the instant the import commits. The operator has to be able to
+	// see how many accounts that was before deciding whether to set quotas.
+	KindUserQuotaUnlimited = "user_quota_unlimited"
 	// KindVideoBlock counts VIDEOS the source had BLACKLISTED — moderator-removed
 	// there, and carried into video_blocks so they are removed here too. Like the
 	// two above it counts only what was carried, and it is a kind of its own
@@ -69,7 +78,7 @@ const (
 // (parents before children).
 var orderedKinds = []string{
 	KindCategoryTaxonomy,
-	KindUser, KindUserSuspension, KindChannel, KindActorAvatar, KindActorBanner,
+	KindUser, KindUserSuspension, KindUserQuotaUnlimited, KindChannel, KindActorAvatar, KindActorBanner,
 	KindVideo, KindVideoSensitive, KindVideoBlock, KindVideoFile,
 	KindHLSPlaylist, KindThumbnail, KindStoryboard, KindCaption, KindTag, KindViewCount,
 	KindVideoOriginalDate, KindChapter, KindRating, KindRendition, KindComment,

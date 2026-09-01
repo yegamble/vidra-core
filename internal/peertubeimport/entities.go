@@ -260,6 +260,11 @@ func (im *Importer) importOneUser(ctx context.Context, u SourceUser, r *Report, 
 		r.addConflict("user " + u.Username + ": " + plan.note)
 	}
 	c.Imported++
+	// Every account the import CREATES is written unlimited (see
+	// ImportInsertUser), so this counts inserts and not a condition. It is
+	// reported because it is the tool deciding the operator's quota policy for
+	// them on accounts that arrive with a catalogue already stored.
+	r.count(KindUserQuotaUnlimited).Imported++
 	if u.Blocked {
 		r.count(KindUserSuspension).Imported++
 	}

@@ -318,6 +318,15 @@ See the full entity mapping table in `.ralph/specs/peertube-import.md`.
 > If you ever import from a system with an incompatible scheme, import with
 > credentials disabled and require a password reset instead.
 
+> Storage quotas: an account the import CREATES is written
+> `storage_quota_bytes = 0` — **unlimited** — because its back-catalogue is
+> already stored and Vidra recomputes usage live from `video_files`, so
+> inheriting `INSTANCE_DEFAULT_QUOTA_BYTES` (5 GiB in the shipped template) would
+> put every creator with a larger catalogue over quota the moment the import
+> commits. The count is reported under `entities.user_quota_unlimited`. If you
+> want quotas on migrated creators, set them afterwards with
+> `PATCH /api/v1/admin/users/{id}` — a later run will not undo you.
+
 ---
 
 ## 3. Dry run first (writes nothing)
@@ -408,6 +417,8 @@ merged-onto channel keeps its own owner, name and description.
   re-fetched for a metadata change.
 - **`is_active`.** The importer never reads the source's blocked flag, so an
   account suspended here stays suspended.
+- **`storage_quota_bytes`.** Stated once when the account is created and never
+  re-asserted, so a quota you set on a migrated creator survives every cutover.
 - **A stored value the source has no opinion about.** Duration and original
   publication date fall back to what already stands here when the source records
   none. This is not politeness, it is a safety floor: a source too old to have
@@ -582,7 +593,9 @@ to be ticked again before every launch.
 1. **Counts.** Compare the run's `report.entities[*].imported` against your
    source (`SELECT count(*) FROM "user"`, `video`, …). `skipped`/`failed` explain
    any difference; `conflicts` lists resolved collisions.
-2. **Sign-in.** A migrated user can log in with their existing password.
+2. **Sign-in.** A migrated user can log in with their existing password, and
+   `GET /api/v1/me/quota` reports `quota_bytes: null` for them — an imported
+   creator is unlimited, not over the instance default with their own catalogue.
 3. **Playback.** Open an imported public video. In reference mode, both the
    original and PeerTube's existing HLS playlist should play through Vidra's
    authenticated proxy. In copy mode, the original plays immediately; enable
