@@ -48,11 +48,16 @@ import (
 	"github.com/vidra/vidra-core/internal/watchword"
 )
 
+// contractTestJWTSecret signs the tokens the contract guards mint. It lives here
+// because fullRouteOptions builds the issuer that verifies them, and the status
+// guard in openapi_status_contract_test.go must sign with the same key.
+const contractTestJWTSecret = "contract-test-secret-contract-test-0"
+
 // fullRouteOptions mounts every optional feature so the contract test enumerates
 // the complete route surface. The wired dependencies are never invoked — only
 // the routing table is inspected — so nil/zero collaborators are fine.
 func fullRouteOptions() []Option {
-	issuer := auth.NewTokenIssuer("contract-test-secret-contract-test-0", "vidra", "vidra", time.Minute)
+	issuer := auth.NewTokenIssuer(contractTestJWTSecret, "vidra", "vidra", time.Minute)
 	return []Option{
 		WithAuthService(auth.NewService(nil, issuer, time.Hour), time.Minute),
 		WithAccountService(account.NewService(nil, nil, nil)),
