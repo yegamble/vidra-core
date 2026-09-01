@@ -276,7 +276,7 @@ func TestAdoptBucket(t *testing.T) {
 
 	// Local: refused, and the state is untouched.
 	local := NewService(&fakeRepo{}, blobs, WithInstanceIdentity("11111111-1111-4111-8111-111111111111"))
-	if err := local.AdoptBucket(ctx); err != ErrAdoptNotApplicable {
+	if err := local.AdoptBucket(ctx, false); err != ErrAdoptNotApplicable {
 		t.Fatalf("AdoptBucket on local = %v, want ErrAdoptNotApplicable", err)
 	}
 
@@ -284,7 +284,7 @@ func TestAdoptBucket(t *testing.T) {
 	const identity = "22222222-2222-4222-8222-222222222222"
 	svc := NewService(&fakeRepo{}, blobs,
 		WithBucketOwnership(OwnershipUnowned), WithInstanceIdentity(identity))
-	if err := svc.AdoptBucket(ctx); err != nil {
+	if err := svc.AdoptBucket(ctx, false); err != nil {
 		t.Fatalf("AdoptBucket: %v", err)
 	}
 	if got := svc.Ownership(); got != OwnershipOwned {
@@ -328,7 +328,7 @@ func TestSweepSeesAnAdoptionMadeOnAnotherReplica(t *testing.T) {
 		WithBucketOwnership(OwnershipUnowned), WithInstanceIdentity(identity))
 	replicaB := NewService(&fakeRepo{}, blobs,
 		WithBucketOwnership(OwnershipUnowned), WithInstanceIdentity(identity))
-	if err := replicaA.AdoptBucket(ctx); err != nil {
+	if err := replicaA.AdoptBucket(ctx, false); err != nil {
 		t.Fatalf("AdoptBucket on replica A: %v", err)
 	}
 
@@ -430,7 +430,7 @@ func TestAdoptBucketNeedsAnIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := NewService(&fakeRepo{}, blobs, WithBucketOwnership(OwnershipUnowned))
-	if err := svc.AdoptBucket(context.Background()); err != ErrNoInstanceIdentity {
+	if err := svc.AdoptBucket(context.Background(), false); err != ErrNoInstanceIdentity {
 		t.Fatalf("AdoptBucket without an identity = %v, want ErrNoInstanceIdentity", err)
 	}
 	if _, found, _ := storage.ReadOwnerMarker(context.Background(), blobs); found {
@@ -619,16 +619,13 @@ func TestOwnershipReasonWinsOverTheMigrationCheck(t *testing.T) {
 // A reference-mode PeerTube import (docs/peertube-migration.md §4) points this
 // instance's STORAGE_* at the source instance's own bucket and records the
 // source's keys verbatim. Its HLS trees live at
-// streaming-playlists/hls/<source-uuid>/…, so the id position of every one of
-// those keys holds the literal "hls" rather than a Vidra video id — and a sweep
-// that attributes them by position computes every segment of every imported
-// video as an orphan, on a bucket a live PeerTube is still serving from. That
-// delete is the one outcome in this package a re-run cannot undo.
-//
-// The rule is positional and general: a streaming-playlists key whose id
-// segment is not a video id is UNATTRIBUTABLE and is kept. The second half of
-// this test is what that rule must not cost — a Vidra-native superseded
-// generation (W14) is still collected in the same sweep.
+// streaming-playlists/hls/<source-uuid>/…, so the id position of those keys
+// holds the literal "hls" rather than a video id — and a sweep that attributes
+// by position computes every segment of every imported video as an orphan, on a
+// bucket a live PeerTube is still serving. That delete is the one outcome in
+// this package a re-run cannot undo. The second half of the test is what the
+// keep rule must not cost: a Vidra-native superseded generation (W14) is still
+// collected in the same sweep.
 func TestSweepNeverCollectsAPeerTubeImportHLSTree(t *testing.T) {
 	ctx := context.Background()
 	blobs, err := storage.NewLocal(t.TempDir())
@@ -683,6 +680,69 @@ func TestSweepNeverCollectsAPeerTubeImportHLSTree(t *testing.T) {
 		if exists(t, blobs, k) {
 			t.Errorf("superseded native key %q survived — the keep rule must not weaken W14", k)
 		}
+	}
+}
+
+// Adoption is the operator asserting "this store is mine", and the last human
+// checkpoint before destructive GC is armed. On an install that references media
+// under another system's key layout that assertion is very likely wrong — a
+// reference-mode import points STORAGE_* at a bucket a live instance is still
+// serving — so an unforced adoption is refused, an unanswerable check is treated
+// as a yes, and an operator who knows the source is retired overrides.
+func TestAdoptBucketRefusesAnInstallThatReferencesForeignMedia(t *testing.T) {
+	const identity = "77777777-7777-4777-8777-777777777777"
+	tests := []struct {
+		name      string
+		refs      int64
+		checkErr  error
+		force     bool
+		wantAdopt bool
+	}{
+		{name: "no foreign references: adoption proceeds", refs: 0, wantAdopt: true},
+		{name: "one foreign reference is enough to refuse", refs: 1},
+		{name: "an unanswerable check is treated as foreign media", checkErr: errors.New("database unreachable")},
+		{name: "the operator can override", refs: 4200, force: true, wantAdopt: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			blobs, err := storage.NewLocal(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			checked := false
+			svc := NewService(&fakeRepo{}, blobs,
+				WithBucketOwnership(OwnershipUnowned),
+				WithInstanceIdentity(identity),
+				WithForeignLayoutRefCheck(func(context.Context) (int64, error) {
+					checked = true
+					return tc.refs, tc.checkErr
+				}))
+
+			err = svc.AdoptBucket(ctx, tc.force)
+			if tc.force && checked {
+				t.Error("the override still paid for the check; it is a decision the operator already made")
+			}
+			_, marked, _ := storage.ReadOwnerMarker(ctx, blobs)
+			if tc.wantAdopt {
+				if err != nil {
+					t.Fatalf("AdoptBucket = %v, want nil", err)
+				}
+				if !marked || svc.Ownership() != OwnershipOwned {
+					t.Errorf("adoption did not take: marker=%v ownership=%q", marked, svc.Ownership())
+				}
+				return
+			}
+			if !errors.Is(err, ErrAdoptForeignLayoutMedia) {
+				t.Fatalf("AdoptBucket = %v, want ErrAdoptForeignLayoutMedia", err)
+			}
+			if marked {
+				t.Error("a refused adoption still stamped the marker")
+			}
+			if svc.Ownership() != OwnershipUnowned {
+				t.Errorf("ownership after a refused adoption = %q, want it left %q", svc.Ownership(), OwnershipUnowned)
+			}
+		})
 	}
 }
 

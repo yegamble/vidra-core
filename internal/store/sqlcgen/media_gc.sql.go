@@ -11,6 +11,38 @@ import (
 	"github.com/google/uuid"
 )
 
+const countForeignLayoutMediaRefs = `-- name: CountForeignLayoutMediaRefs :one
+SELECT (
+    (SELECT count(*) FROM video_files
+      WHERE storage_key LIKE 'web-videos/%'
+        AND storage_key NOT LIKE 'web-videos/' || video_id::text || '%')
+  + (SELECT count(*) FROM streaming_playlists
+      WHERE master_key <> ''
+        AND master_key NOT LIKE 'streaming-playlists/' || video_id::text || '/%')
+)::bigint AS foreign_refs
+`
+
+// How many media references this install holds that point at object keys IT DID
+// NOT LAY OUT — the evidence that the object store is SHARED with another system
+// rather than merely inherited from a previous install of this one. A
+// reference-mode PeerTube import (docs/peertube-migration.md §4) is the
+// documented way to get here: it points STORAGE_* at the SOURCE instance's own
+// bucket and records that instance's keys verbatim, so adopting the bucket would
+// arm destructive GC against media a live PeerTube is still serving.
+//
+// Both halves are shape tests on keys the database itself holds, which is what
+// makes the answer durable: Vidra stores an original at web-videos/<video_id>…
+// and an HLS master under streaming-playlists/<video_id>/, always. An empty
+// video_files.sha256 marks a reference-mode row too, but only until the
+// content-hash backfill fills it in — a signal that decays into a false negative
+// is the one thing a safety gate must not be built on.
+func (q *Queries) CountForeignLayoutMediaRefs(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countForeignLayoutMediaRefs)
+	var foreign_refs int64
+	err := row.Scan(&foreign_refs)
+	return foreign_refs, err
+}
+
 const listAllCaptionKeys = `-- name: ListAllCaptionKeys :many
 SELECT storage_key FROM captions
 `

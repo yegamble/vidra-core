@@ -186,7 +186,7 @@ func TestBreakerAndOwnershipAgainstMinIO(t *testing.T) {
 
 		identity := "66666666-6666-4666-8666-" + fmt.Sprintf("%012d", time.Now().UnixNano()%1_000_000_000_000)
 		svc := NewService(repo, blobs, WithBucketOwnership(OwnershipUnowned), WithInstanceIdentity(identity))
-		if err := svc.AdoptBucket(ctx); err != nil {
+		if err := svc.AdoptBucket(ctx, false); err != nil {
 			t.Fatalf("AdoptBucket: %v", err)
 		}
 		got, found, err := storage.ReadOwnerMarker(ctx, blobs)
