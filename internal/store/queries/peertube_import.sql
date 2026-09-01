@@ -150,6 +150,9 @@ WHERE id = $1;
 -- only protect the natural-key child tables against a resumed partial import.
 
 -- name: ImportInsertUser :one
+-- is_active carries the INVERSE of the source's user.blocked (its account
+-- suspension). It used to be a hardcoded true, which stood every suspended
+-- account up on the new instance with the source's working bcrypt hash.
 INSERT INTO users (username, email, password_hash, role, email_verified, is_active, display_name, created_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id;
@@ -174,8 +177,11 @@ SELECT id FROM channels WHERE lower(handle) = lower($1) LIMIT 1;
 -- for the videos that were first published on the source itself — the absence is
 -- the answer, so it is carried through as NULL rather than defaulted to
 -- created_at.
-INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at, originally_published_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+-- is_sensitive carries the source's video.nsfw, the flag its own hide/warn/blur
+-- policy acts on. Nothing was written for it before, so every sensitive video
+-- landed unflagged — including in the search index, which bakes the flag in.
+INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at, originally_published_at, is_sensitive)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING id;
 
 -- name: ImportUpsertVideoMetadata :exec
@@ -551,9 +557,11 @@ ORDER BY l.source_id, i.position, i.video_id;
 -- operator syncs a live PeerTube for days, somebody changes their password on
 -- the source in that window, and without this they cannot log in after cutover.
 --
--- is_active is NOT written. The importer never reads the source's blocked flag,
--- so it has no opinion to carry — and an operator who suspended an account on
--- this instance would find it unsuspended every night if it did.
+-- is_active is NOT written, even though the INSERT above now carries the
+-- source's blocked flag: a suspension is a decision either side can make, and an
+-- operator who suspended an account on THIS instance would find it unsuspended
+-- every night if a resync re-asserted the source's answer. The import states the
+-- suspension once, at the moment the account is created, and never again.
 UPDATE users
 SET password_hash  = $2,
     role           = $3,

@@ -37,7 +37,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/storage"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 const testPassword = "correct-horse-battery-staple"
@@ -119,6 +121,14 @@ func TestPeerTubeImportEndToEnd(t *testing.T) {
 	}
 	if got := plan.Entities[KindFollow].Planned; got != 1 {
 		t.Errorf("plan follows planned = %d, want 1", got)
+	}
+	// A dry run answers "how much of this is restricted?" before anything is
+	// written: bob is suspended on the source, video 2 is flagged nsfw.
+	if got := plan.Entities[KindUserSuspension].Planned; got != 1 {
+		t.Errorf("plan suspensions planned = %d, want 1 (bob is blocked on the source)", got)
+	}
+	if got := plan.Entities[KindVideoSensitive].Planned; got != 1 {
+		t.Errorf("plan sensitive videos planned = %d, want 1 (video 2 is nsfw)", got)
 	}
 	// The per-video families are in the plan too, so --dry-run shows what a run
 	// would carry. view_count counts VIDEOS carrying a total, never views.
@@ -2253,9 +2263,13 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		// an LDAP/OIDC/SAML plugin-auth user has no locally stored password. The
 		// old fixture said NOT NULL, which is why no test here could express the
 		// case that aborts a whole run.
+		// blocked is PeerTube's account SUSPENSION (@AllowNull(false) @Default(false)).
+		// The fixture omitted it, which is why no test here could catch an importer
+		// that stood every suspended account up with a working password.
 		`CREATE TABLE "user" (
 			id serial PRIMARY KEY, username text NOT NULL, email text NOT NULL, password text,
-			role integer NOT NULL, "emailVerified" boolean, "createdAt" timestamptz NOT NULL DEFAULT now())`,
+			role integer NOT NULL, "emailVerified" boolean, blocked boolean NOT NULL DEFAULT false,
+			"createdAt" timestamptz NOT NULL DEFAULT now())`,
 		`CREATE TABLE "videoChannel" (
 			id serial PRIMARY KEY, name text NOT NULL, description text, "accountId" integer NOT NULL,
 			"actorId" integer NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now())`,
@@ -2263,6 +2277,7 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 			id serial PRIMARY KEY, uuid uuid NOT NULL, "channelId" integer NOT NULL, name text NOT NULL,
 			description text, privacy integer NOT NULL, state integer NOT NULL, category integer, licence integer,
 			language text, duration integer NOT NULL DEFAULT 0, views integer NOT NULL DEFAULT 0,
+			nsfw boolean NOT NULL DEFAULT false,
 			"originallyPublishedAt" timestamptz,
 			"createdAt" timestamptz NOT NULL DEFAULT now())`,
 		`CREATE TABLE "videoFile" (
@@ -2302,6 +2317,15 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		`CREATE TABLE "actorFollow" (
 			id serial PRIMARY KEY, state text NOT NULL, "actorId" integer NOT NULL,
 			"targetActorId" integer NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now())`,
+		// videoBlacklist is a table of its own and touches NEITHER video.privacy nor
+		// video.state, so a blacklisted video is indistinguishable from a published
+		// one in every column the importer reads. Its mapping onto video_blocks
+		// lands in its own PR; the table is here now so that PR is a mapping change
+		// and not a fixture change.
+		`CREATE TABLE "videoBlacklist" (
+			id serial PRIMARY KEY, "videoId" integer NOT NULL UNIQUE, reason text,
+			unfederated boolean NOT NULL DEFAULT false, type integer NOT NULL DEFAULT 1,
+			"createdAt" timestamptz NOT NULL DEFAULT now())`,
 		`CREATE TABLE "videoChapter" (
 			id serial PRIMARY KEY, "videoId" integer NOT NULL, timecode integer NOT NULL,
 			title text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now())`,
@@ -2330,9 +2354,12 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 			(3,'Person','bob','PUBKEY-BOB','PRIVKEY-BOB-SECRET',NULL),
 			(4,'Group','bob_channel','PUBKEY-BCH','PRIVKEY-BCH-SECRET',NULL),
 			(5,'Person','remote','PUBKEY-R',NULL,1)`,
-		`INSERT INTO "user" (id,username,email,password,role,"emailVerified") VALUES
-			(1,'alice','alice@example.test','` + passwordHash + `',2,true),
-			(2,'bob','bob@example.test','` + passwordHash + `',0,false)`,
+		// bob is SUSPENDED on the source and alice is not: the fixture carries the
+		// case, so a regression that fails the flag open shows up in every test
+		// that imports this graph, not only in the one written for it.
+		`INSERT INTO "user" (id,username,email,password,role,"emailVerified",blocked) VALUES
+			(1,'alice','alice@example.test','` + passwordHash + `',2,true,false),
+			(2,'bob','bob@example.test','` + passwordHash + `',0,false,true)`,
 		`INSERT INTO "account" (id,name,"userId","actorId") VALUES
 			(1,'Alice',1,1),(2,'Bob',2,3),(5,'Remote',NULL,5)`,
 		`INSERT INTO "videoChannel" (id,name,description,"accountId","actorId") VALUES
@@ -2340,9 +2367,12 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		// Video 1 carries an originallyPublishedAt (it was first published
 		// elsewhere and imported INTO this PeerTube); video 2 does not, which is
 		// the ordinary case for something first published on the source itself.
-		`INSERT INTO "video" (id,uuid,"channelId",name,description,privacy,state,category,licence,language,duration,views,"originallyPublishedAt") VALUES
-			(1,'11111111-1111-1111-1111-111111111111',1,'First Video','hello',1,1,1,1,'en',120,100,'2016-04-01T12:30:00Z'),
-			(2,'22222222-2222-2222-2222-222222222222',1,'Second Video','',3,1,NULL,NULL,NULL,60,0,NULL)`,
+		// Video 2 is flagged nsfw on the source and video 1 is not, so the pass has
+		// to carry a flag rather than set one for everything.
+		`INSERT INTO "video" (id,uuid,"channelId",name,description,privacy,state,category,licence,language,duration,views,nsfw,"originallyPublishedAt") VALUES
+			(1,'11111111-1111-1111-1111-111111111111',1,'First Video','hello',1,1,1,1,'en',120,100,false,'2016-04-01T12:30:00Z'),
+			(2,'22222222-2222-2222-2222-222222222222',1,'Second Video','',3,1,NULL,NULL,NULL,60,0,true,NULL)`,
+		`INSERT INTO "videoBlacklist" (id,"videoId",reason) VALUES (1,2,'staged for the video_blocks mapping')`,
 		`INSERT INTO "videoFile" (id,"videoId",resolution,size,extname,filename) VALUES
 			(1,1,720,` + strconv.Itoa(len(sourceVideoBytes)) + `,'.mp4','v1-720.mp4'),
 			(2,1,480,10,'.mp4','v1-480.mp4')`,
@@ -3083,4 +3113,137 @@ func TestPeerTubeImportCarriesAPluginAuthUserWithNoPassword(t *testing.T) {
 	if err := bcrypt.CompareHashAndPassword([]byte(aliceHash), []byte(testPassword)); err != nil {
 		t.Errorf("carried bcrypt hash does not verify the original password: %v", err)
 	}
+}
+
+// ── restriction flags: user.blocked and video.nsfw ──
+//
+// Both are columns the source uses to say "this is not ordinary", and the
+// importer read NEITHER: a suspended account arrived able to sign in with the
+// bcrypt hash the import carried verbatim, and every sensitive video arrived
+// unflagged, leaving the instance and per-user hide/warn/blur policy nothing to
+// act on (and vidra-search indexing it as clean). Failing open is the wrong
+// default for both: a wrongly-carried suspension costs an operator one click,
+// a wrongly-dropped one costs an incident.
+func TestPeerTubeImportCarriesSuspensionAndSensitivity(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip, MediaMode: MediaModeNone})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// The flag reaches the column...
+	if readUserActive(t, ctx, dest, "bob") {
+		t.Error("bob is blocked on the source but imported is_active=true — a suspended account arrived able to sign in")
+	}
+	if !readUserActive(t, ctx, dest, "alice") {
+		t.Error("alice is not blocked on the source but imported is_active=false — the suspension leaked onto everyone")
+	}
+	// ...and BITES on the real login path, which is the only thing an operator
+	// actually cares about. The carried password still verifies, so this proves
+	// the gate and not a broken hash.
+	svc := auth.NewService(sqlcgen.New(dest),
+		auth.NewTokenIssuer("test-signing-secret-not-a-real-one", "vidra", "vidra", time.Hour), time.Hour)
+	if _, err := svc.Login(ctx, auth.LoginInput{Identifier: "bob@example.test", Password: testPassword}, "test"); !errors.Is(err, auth.ErrAccountDisabled) {
+		t.Errorf("login as the suspended account = %v, want ErrAccountDisabled", err)
+	}
+	if _, err := svc.Login(ctx, auth.LoginInput{Identifier: "alice@example.test", Password: testPassword}, "test"); err != nil {
+		t.Errorf("login as the account that was NOT suspended failed: %v", err)
+	}
+
+	// video.nsfw → videos.is_sensitive, carried and not invented.
+	if !readVideoSensitive(t, ctx, dest, "Second Video") {
+		t.Error("Second Video is nsfw on the source but imported is_sensitive=false — the content policy has nothing to act on")
+	}
+	if readVideoSensitive(t, ctx, dest, "First Video") {
+		t.Error("First Video is not nsfw on the source but imported is_sensitive=true")
+	}
+
+	// The report has to SAY so: an operator finishing a migration needs the
+	// number of accounts that arrived locked out before telling anyone their
+	// account is ready.
+	if got := report.Entities[KindUserSuspension].Imported; got != 1 {
+		t.Errorf("suspensions carried = %d, want 1", got)
+	}
+	if got := report.Entities[KindVideoSensitive].Imported; got != 1 {
+		t.Errorf("sensitive videos carried = %d, want 1", got)
+	}
+}
+
+// A source too old to carry either column must lose that ONE signal and nothing
+// else — the probe degrades, it never aborts the run.
+func TestPeerTubeImportRestrictionColumnsAbsent(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+	mustExec(t, ctx, src, `ALTER TABLE "user" DROP COLUMN blocked`)
+	mustExec(t, ctx, src, `ALTER TABLE "video" DROP COLUMN nsfw`)
+
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip, MediaMode: MediaModeNone})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("run: %v — a source that cannot speak about suspensions or sensitivity is not a failed run", err)
+	}
+	// Everything else still comes across.
+	if got := report.Entities[KindUser].Imported; got != 2 {
+		t.Errorf("users imported = %d, want 2", got)
+	}
+	if got := report.Entities[KindVideo].Imported; got != 2 {
+		t.Errorf("videos imported = %d, want 2", got)
+	}
+	// The absent column reads as PeerTube's own default for it, so nothing is
+	// carried and nothing is invented.
+	if !readUserActive(t, ctx, dest, "bob") || !readUserActive(t, ctx, dest, "alice") {
+		t.Error("a source with no blocked column suspended somebody anyway")
+	}
+	if readVideoSensitive(t, ctx, dest, "Second Video") || readVideoSensitive(t, ctx, dest, "First Video") {
+		t.Error("a source with no nsfw column flagged something anyway")
+	}
+}
+
+func readUserActive(t *testing.T, ctx context.Context, pool *pgxpool.Pool, username string) bool {
+	t.Helper()
+	var active bool
+	if err := pool.QueryRow(ctx, `SELECT is_active FROM users WHERE username=$1`, username).Scan(&active); err != nil {
+		t.Fatalf("read is_active for %s: %v", username, err)
+	}
+	return active
+}
+
+func readVideoSensitive(t *testing.T, ctx context.Context, pool *pgxpool.Pool, title string) bool {
+	t.Helper()
+	var sensitive bool
+	if err := pool.QueryRow(ctx, `SELECT is_sensitive FROM videos WHERE title=$1`, title).Scan(&sensitive); err != nil {
+		t.Fatalf("read is_sensitive for %s: %v", title, err)
+	}
+	return sensitive
 }

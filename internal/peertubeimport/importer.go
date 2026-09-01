@@ -341,6 +341,12 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 	}
 	r.count(KindUser).Planned = len(users)
 	for _, u := range users {
+		// A dry run is where "how many of the accounts I am about to import are
+		// suspended on the source?" is worth answering, so the plan counts them
+		// too rather than leaving the kind at zero until the real run.
+		if u.Blocked {
+			r.count(KindUserSuspension).Planned++
+		}
 		if note, collides, err := im.userConflict(ctx, u); err != nil {
 			return nil, err
 		} else if collides {
@@ -371,6 +377,9 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 	}
 	r.count(KindVideo).Planned = len(videos)
 	for _, v := range videos {
+		if v.NSFW {
+			r.count(KindVideoSensitive).Planned++
+		}
 		files, err := im.src.VideoFiles(ctx, v.ID)
 		if err != nil {
 			return nil, err

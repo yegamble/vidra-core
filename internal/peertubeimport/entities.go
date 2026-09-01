@@ -215,9 +215,12 @@ func (im *Importer) importOneUser(ctx context.Context, u SourceUser, r *Report, 
 			PasswordHash:  u.PasswordHash,
 			Role:          mapRole(u.Role),
 			EmailVerified: u.EmailVerified,
-			IsActive:      true,
-			DisplayName:   u.DisplayName,
-			CreatedAt:     u.CreatedAt,
+			// The source's SUSPENSION, carried (see ImportInsertUser). This was a
+			// hardcoded true, so a blocked account arrived active with the source's
+			// working bcrypt hash beside it.
+			IsActive:    !u.Blocked,
+			DisplayName: u.DisplayName,
+			CreatedAt:   u.CreatedAt,
 		})
 		if err != nil {
 			return err
@@ -240,6 +243,9 @@ func (im *Importer) importOneUser(ctx context.Context, u SourceUser, r *Report, 
 		r.addConflict("user " + u.Username + ": " + plan.note)
 	}
 	c.Imported++
+	if u.Blocked {
+		r.count(KindUserSuspension).Imported++
+	}
 	return nil
 }
 
@@ -553,6 +559,9 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 			// records one. It is carried on the insert as well as by the backfill
 			// pass so a freshly imported video has it immediately.
 			OriginallyPublishedAt: optTimestamptz(v.OriginallyPublishedAt),
+			// The source's nsfw flag (see ImportInsertVideo). Nothing was written
+			// here before, so every sensitive video imported clean.
+			IsSensitive: v.NSFW,
 		})
 		if err != nil {
 			return err
@@ -612,6 +621,9 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 		return err
 	}
 	c.Imported++
+	if v.NSFW {
+		r.count(KindVideoSensitive).Imported++
+	}
 	if haveFile {
 		r.count(KindVideoFile).Imported++
 	}

@@ -19829,10 +19829,14 @@ components:
           type: object
           description: >-
             Per-entity-kind counts, keyed by entity kind (category_taxonomy,
-            user, channel, actor_avatar, actor_banner, video, video_file,
-            hls_playlist, thumbnail, storyboard, caption, tag, view_count,
-            chapter, rating, rendition, comment, playlist, playlist_item,
-            follow). view_count
+            user, user_suspension, channel, actor_avatar, actor_banner, video,
+            video_sensitive, video_file, hls_playlist, thumbnail, storyboard,
+            caption, tag, view_count, video_original_date, chapter, rating,
+            rendition, comment, playlist, playlist_item, follow).
+            user_suspension counts USERS whose source suspension (user.blocked)
+            was carried onto is_active and video_sensitive counts VIDEOS the
+            source flagged nsfw; both count only what was CARRIED, never the
+            whole family. view_count
             counts VIDEOS whose view total was carried, never views: the source
             records one lifetime number per video and no daily breakdown, so the
             total is applied as a delta to the video's counter and no per-day

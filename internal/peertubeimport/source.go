@@ -225,6 +225,10 @@ type SourceUser struct {
 	CreatedAt     time.Time
 	PublicKeyPEM  string // account actor public key (may be empty)
 	PrivateKeyPEM string // account actor private key (SECRET; may be empty)
+	// Blocked is the source's user.blocked — its account SUSPENSION, and the one
+	// column that says this person must not be able to sign in. It is carried
+	// INVERTED into users.is_active; false when the source schema predates it.
+	Blocked bool
 }
 
 // SourceChannel is a LOCAL PeerTube video channel. OwnerUserID is the source
@@ -268,6 +272,11 @@ type SourceVideo struct {
 	// published on the source itself, and for every source whose schema predates
 	// the column.
 	OriginallyPublishedAt *time.Time
+	// NSFW is the source's video.nsfw — the flag PeerTube's own hide/warn/blur
+	// policy acts on, carried into videos.is_sensitive. PeerTube 7 added
+	// nsfwFlags/nsfwSummary ALONGSIDE it rather than in place of it, so this one
+	// boolean is still the whole answer. false when the source predates it.
+	NSFW bool
 }
 
 // SourceVideoFile is one stored media file for a video (web/webseed download).
@@ -343,11 +352,21 @@ func (s *Source) Users(ctx context.Context) ([]SourceUser, error) {
 	// bcrypt hash and can never verify, so such a user imports safely locked
 	// out of password login (the same property the OAuth and ATProto login
 	// paths already rely on) instead of failing the scan and aborting the run.
+	// blocked is probed, not assumed, like every other optional column here: a
+	// source too old to carry it loses the suspension signal and nothing else.
+	// false is the right absent value — it is PeerTube's own @Default(false).
+	blockedExpr := `false`
+	if has, err := s.columnExists(ctx, "user", "blocked"); err != nil {
+		return nil, err
+	} else if has {
+		blockedExpr = `COALESCE(u.blocked, false)`
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT u.id, u.username, u.email, COALESCE(u.password, ''),
 		       u.role, COALESCE(u."emailVerified", false),
 		       COALESCE(acc.name, u.username), u."createdAt",
-		       COALESCE(act."publicKey", ''), COALESCE(act."privateKey", '')
+		       COALESCE(act."publicKey", ''), COALESCE(act."privateKey", ''),
+		       `+blockedExpr+`
 		FROM "user" u
 		JOIN account acc ON acc."userId" = u.id
 		JOIN actor act ON `+actorJoin+`
@@ -361,7 +380,8 @@ func (s *Source) Users(ctx context.Context) ([]SourceUser, error) {
 	for rows.Next() {
 		var u SourceUser
 		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Role,
-			&u.EmailVerified, &u.DisplayName, &u.CreatedAt, &u.PublicKeyPEM, &u.PrivateKeyPEM); err != nil {
+			&u.EmailVerified, &u.DisplayName, &u.CreatedAt, &u.PublicKeyPEM, &u.PrivateKeyPEM,
+			&u.Blocked); err != nil {
 			return nil, fmt.Errorf("peertubeimport: scan user: %w", err)
 		}
 		out = append(out, u)
@@ -439,10 +459,18 @@ func (s *Source) Videos(ctx context.Context) ([]SourceVideo, error) {
 	} else if hasOrigPub {
 		origPubExpr = `v."originallyPublishedAt"`
 	}
+	// Same probe, same reason. false is PeerTube's own default for the column, so
+	// a source without it flags nothing rather than flagging everything.
+	nsfwExpr := `false`
+	if hasNSFW, err := s.columnExists(ctx, "video", "nsfw"); err != nil {
+		return nil, err
+	} else if hasNSFW {
+		nsfwExpr = `COALESCE(v.nsfw, false)`
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT v.id, v.uuid::text, v."channelId", v.name, COALESCE(v.description, ''),
 		       v.privacy, v.state, v.category, v.licence, v.language, v.duration, v."createdAt",
-		       `+viewsExpr+`, `+aspectExpr+`, `+origPubExpr+`
+		       `+viewsExpr+`, `+aspectExpr+`, `+origPubExpr+`, `+nsfwExpr+`
 		FROM video v
 		JOIN "videoChannel" vc ON vc.id = v."channelId"
 		JOIN actor act ON `+actorJoin+`
@@ -458,7 +486,7 @@ func (s *Source) Videos(ctx context.Context) ([]SourceVideo, error) {
 		var uuidStr string
 		if err := rows.Scan(&v.ID, &uuidStr, &v.ChannelID, &v.Title, &v.Description,
 			&v.Privacy, &v.State, &v.Category, &v.Licence, &v.Language, &v.Duration, &v.CreatedAt,
-			&v.Views, &v.AspectRatio, &v.OriginallyPublishedAt); err != nil {
+			&v.Views, &v.AspectRatio, &v.OriginallyPublishedAt, &v.NSFW); err != nil {
 			return nil, fmt.Errorf("peertubeimport: scan video: %w", err)
 		}
 		v.UUID = uuidStr
