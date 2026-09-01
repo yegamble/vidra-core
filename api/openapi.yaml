@@ -14319,6 +14319,8 @@ components:
             - live
             - comments
             - downloads
+            - messaging
+            - messaging_e2ee
             - import_http
             - channel_sync
             - storyboards
