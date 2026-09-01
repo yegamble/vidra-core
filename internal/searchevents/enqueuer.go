@@ -17,6 +17,9 @@ type OutboxRepository interface {
 	EnqueueSearchEvent(ctx context.Context, arg sqlcgen.EnqueueSearchEventParams) error
 	GetVideoSearchDoc(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoSearchDocRow, error)
 	ListVideoSearchDocsPage(ctx context.Context, arg sqlcgen.ListVideoSearchDocsPageParams) ([]sqlcgen.ListVideoSearchDocsPageRow, error)
+	// PurgeUserSearchOutbox is the ERASURE half of the same table: it deletes
+	// the rows the enqueue above wrote for one user. See purge.go.
+	PurgeUserSearchOutbox(ctx context.Context, userID string) (int64, error)
 }
 
 // Metrics receives best-effort enqueue-failure counts (nil is fine). Implemented
