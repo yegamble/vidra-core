@@ -183,7 +183,7 @@ func TestReportCarriesPerVideoKinds(t *testing.T) {
 	for _, kind := range []string{
 		KindViewCount, KindVideoOriginalDate, KindChapter, KindRating, KindRendition,
 		KindActorAvatar, KindActorBanner, KindThumbnail, KindStoryboard,
-		KindUserSuspension, KindVideoSensitive,
+		KindUserSuspension, KindVideoSensitive, KindVideoBlock,
 	} {
 		if r.Entities[kind] == nil {
 			t.Errorf("report must initialise %q", kind)

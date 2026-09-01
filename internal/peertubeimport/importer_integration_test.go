@@ -3247,3 +3247,193 @@ func readVideoSensitive(t *testing.T, ctx context.Context, pool *pgxpool.Pool, t
 	}
 	return sensitive
 }
+
+// A moderator-removed source video must arrive REMOVED. PeerTube keeps the
+// blacklist in a table of its own and touches neither video.privacy nor
+// video.state, so the video the source has taken down is byte-identical to a
+// live one in every column the importer used to read — it imported public and
+// published, i.e. back on the public feed, the channel page, the sitemap, RSS,
+// and pushed into vidra-search.
+func TestPeerTubeImportCarriesTheVideoBlacklist(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+	// The blacklisted fixture video is PRIVATE, which would hide it on the
+	// destination for a reason that has nothing to do with the block. Making it
+	// public is what puts the block itself on trial: video 1 is public and NOT
+	// blacklisted, so it is the control that proves the pass carries a flag
+	// rather than removing everything.
+	mustExec(t, ctx, src, `UPDATE "video" SET privacy = 1 WHERE id = 2`)
+
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip, MediaMode: MediaModeNone})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// The row exists, and it exists for the blacklisted video only.
+	blockedTitles := readBlockedVideoTitles(t, ctx, dest)
+	if len(blockedTitles) != 1 || blockedTitles[0] != "Second Video" {
+		t.Fatalf("video_blocks rows = %v, want exactly [Second Video] — the source's blacklist did not reach the destination", blockedTitles)
+	}
+	// The video is still THERE — carried and blocked, not skipped. Skipping it
+	// would take the operator's ability to review it away, and would let any
+	// later re-run resurrect it as a fresh public import.
+	var stillThere bool
+	if err := dest.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM videos WHERE title='Second Video')`).Scan(&stillThere); err != nil {
+		t.Fatalf("read the blacklisted video: %v", err)
+	}
+	if !stillThere {
+		t.Error("the blacklisted video was not imported at all; it must arrive blocked, not absent")
+	}
+
+	q := sqlcgen.New(dest)
+	// ...and the block BITES on all three surfaces the destination's ten
+	// eligibility predicates guard: the public feed, the channel page, and the
+	// search documents vidra-search indexes.
+	feed, err := q.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{Sort: "recent", ResultLimit: 50})
+	if err != nil {
+		t.Fatalf("list public videos: %v", err)
+	}
+	assertBlockedTitleAbsent(t, "public feed", mappedTitles(feed, func(r sqlcgen.ListPublicVideosSortedRow) string { return r.Title }))
+
+	channelID := readChannelIDByHandle(t, ctx, dest, "alice_channel")
+	page, err := q.ListPublicVideosByChannel(ctx, sqlcgen.ListPublicVideosByChannelParams{
+		ChannelID: channelID, Sort: "recent", ResultLimit: 50,
+	})
+	if err != nil {
+		t.Fatalf("list channel videos: %v", err)
+	}
+	assertBlockedTitleAbsent(t, "channel page", mappedTitles(page, func(r sqlcgen.ListPublicVideosByChannelRow) string { return r.Title }))
+
+	docs, err := q.ListVideoSearchDocsPage(ctx, sqlcgen.ListVideoSearchDocsPageParams{After: uuid.Nil, PageSize: 50})
+	if err != nil {
+		t.Fatalf("list search docs: %v", err)
+	}
+	assertBlockedTitleAbsent(t, "vidra-search documents", mappedTitles(docs, func(r sqlcgen.ListVideoSearchDocsPageRow) string { return r.Title }))
+
+	// The report has to SAY so: "2 videos imported" does not answer "how many
+	// of them arrived taken down?", which is the number an operator checks
+	// before announcing the new instance.
+	if got := report.Entities[KindVideoBlock].Imported; got != 1 {
+		t.Errorf("blocks carried = %d, want 1", got)
+	}
+
+	// A re-run is a no-op: exactly one block row, no duplicate, no error.
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("re-run: %v", err)
+	}
+	if n := countRows(t, ctx, dest, "video_blocks"); n != 1 {
+		t.Errorf("video_blocks rows after re-run = %d, want 1", n)
+	}
+}
+
+// A source too old to have the table at all must lose this ONE signal and
+// nothing else — the probe degrades, it never aborts the run.
+func TestPeerTubeImportVideoBlacklistTableAbsent(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+	mustExec(t, ctx, src, `DROP TABLE "videoBlacklist"`)
+
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip, MediaMode: MediaModeNone})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("run: %v — a source that cannot speak about its blacklist is not a failed run", err)
+	}
+	if got := report.Entities[KindVideo].Imported; got != 2 {
+		t.Errorf("videos imported = %d, want 2", got)
+	}
+	if n := countRows(t, ctx, dest, "video_blocks"); n != 0 {
+		t.Errorf("video_blocks rows = %d, want 0 — a source with no blacklist blocked something anyway", n)
+	}
+	// The operator has to be TOLD the signal is missing, or they will read the
+	// zero as "nothing was taken down on the source".
+	var noted bool
+	for _, d := range report.Deferred {
+		noted = noted || strings.Contains(d, "videoBlacklist")
+	}
+	if !noted {
+		t.Errorf("deferred families = %v, want one naming the absent videoBlacklist table", report.Deferred)
+	}
+}
+
+func readBlockedVideoTitles(t *testing.T, ctx context.Context, pool *pgxpool.Pool) []string {
+	t.Helper()
+	rows, err := pool.Query(ctx, `SELECT v.title FROM video_blocks b JOIN videos v ON v.id = b.video_id ORDER BY v.title`)
+	if err != nil {
+		t.Fatalf("read video_blocks: %v", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var title string
+		if err := rows.Scan(&title); err != nil {
+			t.Fatalf("scan video_blocks: %v", err)
+		}
+		out = append(out, title)
+	}
+	return out
+}
+
+func readChannelIDByHandle(t *testing.T, ctx context.Context, pool *pgxpool.Pool, handle string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM channels WHERE handle=$1`, handle).Scan(&id); err != nil {
+		t.Fatalf("read channel %s: %v", handle, err)
+	}
+	return id
+}
+
+func mappedTitles[T any](rows []T, title func(T) string) []string {
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, title(r))
+	}
+	return out
+}
+
+// assertBlockedTitleAbsent fails when the blocked video is on a surface, and
+// ALSO when the control video is missing from it — a surface that returned
+// nothing proves the predicate works no more than an empty table would.
+func assertBlockedTitleAbsent(t *testing.T, surface string, titles []string) {
+	t.Helper()
+	var sawControl bool
+	for _, got := range titles {
+		if got == "Second Video" {
+			t.Errorf("%s still lists the blacklisted video (titles=%v)", surface, titles)
+		}
+		if got == "First Video" {
+			sawControl = true
+		}
+	}
+	if !sawControl {
+		t.Errorf("%s does not list the video that is NOT blacklisted (titles=%v) — the surface is empty, so it proves nothing", surface, titles)
+	}
+}

@@ -376,9 +376,15 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 		return nil, err
 	}
 	r.count(KindVideo).Planned = len(videos)
+	if err := im.noteBlacklistUnavailable(ctx, r); err != nil {
+		return nil, err
+	}
 	for _, v := range videos {
 		if v.NSFW {
 			r.count(KindVideoSensitive).Planned++
+		}
+		if v.Blacklisted {
+			r.count(KindVideoBlock).Planned++
 		}
 		files, err := im.src.VideoFiles(ctx, v.ID)
 		if err != nil {
@@ -451,7 +457,7 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 func deferredFamilies() []string {
 	return []string{
 		"HLS copying in copy mode (reference mode reuses existing PeerTube HLS objects; copy mode regenerates via Vidra transcoding)",
-		"moderation state (video blacklist, account/server blocklists, abuse reports)",
+		"moderation state (account/server blocklists, abuse reports; the video blacklist IS carried, into video_blocks)",
 		"user notification settings and watch history",
 		"live sessions, plugins, themes, runners, redundancy config",
 		"original-file provenance records (videoSource)",

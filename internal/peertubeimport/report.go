@@ -47,9 +47,16 @@ const (
 	// is the question asked before anybody is told their account is ready.
 	KindUserSuspension = "user_suspension"
 	KindVideoSensitive = "video_sensitive"
-	KindChapter        = "chapter"
-	KindRating         = "rating"
-	KindRendition      = "rendition"
+	// KindVideoBlock counts VIDEOS the source had BLACKLISTED — moderator-removed
+	// there, and carried into video_blocks so they are removed here too. Like the
+	// two above it counts only what was carried, and it is a kind of its own
+	// because "how many of the videos I just imported arrived taken down?" is the
+	// question an operator answers before announcing the new instance, and it is
+	// unanswerable from the video count.
+	KindVideoBlock = "video_block"
+	KindChapter    = "chapter"
+	KindRating     = "rating"
+	KindRendition  = "rendition"
 	// KindActorAvatar / KindActorBanner count the source's actorImage rows,
 	// split by which slot they fill. They are two kinds rather than one so the
 	// report answers the question an operator actually asks after a migration —
@@ -63,7 +70,7 @@ const (
 var orderedKinds = []string{
 	KindCategoryTaxonomy,
 	KindUser, KindUserSuspension, KindChannel, KindActorAvatar, KindActorBanner,
-	KindVideo, KindVideoSensitive, KindVideoFile,
+	KindVideo, KindVideoSensitive, KindVideoBlock, KindVideoFile,
 	KindHLSPlaylist, KindThumbnail, KindStoryboard, KindCaption, KindTag, KindViewCount,
 	KindVideoOriginalDate, KindChapter, KindRating, KindRendition, KindComment,
 	KindPlaylist, KindPlaylistItem, KindFollow,

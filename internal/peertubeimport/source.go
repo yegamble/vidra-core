@@ -277,6 +277,13 @@ type SourceVideo struct {
 	// nsfwFlags/nsfwSummary ALONGSIDE it rather than in place of it, so this one
 	// boolean is still the whole answer. false when the source predates it.
 	NSFW bool
+	// Blacklisted says the source's MODERATORS took this video down. PeerTube
+	// records that in a table of its own ("videoBlacklist", unique on videoId)
+	// and changes neither video.privacy nor video.state, so a removed video is
+	// indistinguishable from a live one in every other column read here — which
+	// is exactly why it used to import public and published. Carried into
+	// video_blocks. false when the source has no such table.
+	Blacklisted bool
 }
 
 // SourceVideoFile is one stored media file for a video (web/webseed download).
@@ -467,10 +474,19 @@ func (s *Source) Videos(ctx context.Context) ([]SourceVideo, error) {
 	} else if hasNSFW {
 		nsfwExpr = `COALESCE(v.nsfw, false)`
 	}
+	// The blacklist is a whole TABLE rather than a column, so it is the
+	// tableExists probe rather than columnExists — but the same rule: a source
+	// without it loses this one signal and never fails the run.
+	blacklistExpr := `false`
+	if has, err := s.HasVideoBlacklist(ctx); err != nil {
+		return nil, err
+	} else if has {
+		blacklistExpr = `EXISTS (SELECT 1 FROM "videoBlacklist" bl WHERE bl."videoId" = v.id)`
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT v.id, v.uuid::text, v."channelId", v.name, COALESCE(v.description, ''),
 		       v.privacy, v.state, v.category, v.licence, v.language, v.duration, v."createdAt",
-		       `+viewsExpr+`, `+aspectExpr+`, `+origPubExpr+`, `+nsfwExpr+`
+		       `+viewsExpr+`, `+aspectExpr+`, `+origPubExpr+`, `+nsfwExpr+`, `+blacklistExpr+`
 		FROM video v
 		JOIN "videoChannel" vc ON vc.id = v."channelId"
 		JOIN actor act ON `+actorJoin+`
@@ -486,13 +502,23 @@ func (s *Source) Videos(ctx context.Context) ([]SourceVideo, error) {
 		var uuidStr string
 		if err := rows.Scan(&v.ID, &uuidStr, &v.ChannelID, &v.Title, &v.Description,
 			&v.Privacy, &v.State, &v.Category, &v.Licence, &v.Language, &v.Duration, &v.CreatedAt,
-			&v.Views, &v.AspectRatio, &v.OriginallyPublishedAt, &v.NSFW); err != nil {
+			&v.Views, &v.AspectRatio, &v.OriginallyPublishedAt, &v.NSFW, &v.Blacklisted); err != nil {
 			return nil, fmt.Errorf("peertubeimport: scan video: %w", err)
 		}
 		v.UUID = uuidStr
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// HasVideoBlacklist reports whether the source carries its moderation blacklist
+// at all. It is exported as a question of its own — rather than folded into the
+// Videos() read — because the ANSWER is what the report has to tell the
+// operator: an import that quietly returns "0 blocked" from a source it could
+// not ask reads as "nothing was taken down there", which is the one conclusion
+// that must not be drawn.
+func (s *Source) HasVideoBlacklist(ctx context.Context) (bool, error) {
+	return s.tableExists(ctx, "videoBlacklist")
 }
 
 // VideoFiles returns a video's web (non-HLS) media files, highest resolution
