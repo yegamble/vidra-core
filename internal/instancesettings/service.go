@@ -57,6 +57,20 @@ const (
 	KeyCommentsEnabled             = "comments_enabled"
 	KeyDownloadsEnabled            = "downloads_enabled"
 
+	// Direct messaging (1:1 DMs) and its end-to-end-encrypted variant. Both
+	// default ON — the shipped behaviour — so an instance upgrading past this
+	// change sees no difference. They exist because an operator running a small
+	// community, or one in a jurisdiction where hosting unmoderatable encrypted
+	// messaging is a liability, previously had no off switch short of forking:
+	// DMs carry file attachments and link previews, and the encrypted variant is
+	// ciphertext the operator cannot moderate by construction.
+	// messaging_enabled is the MASTER switch — the E2EE device directory and
+	// envelope store exist only to serve conversations, so turning messaging off
+	// turns E2EE off with it (the nesting is applied at the gates, not here, so
+	// the operator's own E2EE choice survives a messaging off/on cycle).
+	KeyMessagingEnabled     = "messaging_enabled"
+	KeyMessagingE2EEEnabled = "messaging_e2ee_enabled"
+
 	// Platform-information keys (spec instance-platform-info). All are pure
 	// key-value overlay rows with HARDCODED defaults (no config/env backing):
 	// zero values, except default_language ("en") and sensitive_content_policy
@@ -609,6 +623,15 @@ var specs = []spec{
 	// backing: the runtime admin setting is the single operator control.
 	{key: KeyDownloadsEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
 		page: PageVOD, section: "downloads"},
+
+	// Direct messaging. Like downloads these have no env/config backing — the
+	// runtime settings are the single operator control — and both default ON,
+	// which is the shipped behaviour: this change gives the operator a switch,
+	// it does not change what a new or upgraded instance does.
+	{key: KeyMessagingEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageGeneral, section: "messaging"},
+	{key: KeyMessagingE2EEEnabled, kind: KindBool, defBool: func(Defaults) bool { return true }, validate: validateBool,
+		page: PageGeneral, section: "messaging"},
 
 	// Platform information (spec instance-platform-info). Defaults are hardcoded
 	// (empty, except default_language and sensitive_content_policy) — these keys

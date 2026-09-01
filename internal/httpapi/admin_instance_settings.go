@@ -144,6 +144,23 @@ func (s *Server) downloadsEnabled() bool {
 	return s.settingBool(instancesettings.KeyDownloadsEnabled, true)
 }
 
+// messagingEnabled is the instance-wide direct-messaging switch
+// (messaging_enabled). No env/config backing and DEFAULT ON — the shipped
+// behaviour — so the fallback here must stay true: an instance whose settings
+// service is not wired keeps its DMs.
+func (s *Server) messagingEnabled() bool {
+	return s.settingBool(instancesettings.KeyMessagingEnabled, true)
+}
+
+// messagingE2EEEnabled is the EFFECTIVE end-to-end-encryption availability:
+// messaging_e2ee_enabled AND messaging_enabled. The nesting runs one way only.
+// E2EE off with messaging on is coherent (plaintext DMs still work), but
+// messaging off must take E2EE down too — a device directory and an envelope
+// store are meaningless with no conversations to carry.
+func (s *Server) messagingE2EEEnabled() bool {
+	return s.messagingEnabled() && s.settingBool(instancesettings.KeyMessagingE2EEEnabled, true)
+}
+
 // --- shipped-feature toggle batch (config-parity W8) ---
 //
 // Each helper is the RUNTIME admin setting for one already-shipped feature.

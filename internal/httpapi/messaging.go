@@ -246,6 +246,14 @@ func (s *Server) handleStartConversation(c echo.Context) error {
 	// Encrypted conversations live in the e2ee service (distinct dm_key
 	// namespace, ciphertext-only storage); everything else is unchanged.
 	if in.Encrypted {
+		// The operator's E2EE switch (messaging_e2ee_enabled, nested under
+		// messaging_enabled). 403 feature_disabled is a policy answer and
+		// distinct from the 503 below, which means the deployment never wired
+		// the service at all. Existing encrypted conversations stay READABLE
+		// when the switch goes off — only new encrypted traffic is refused.
+		if !s.messagingE2EEEnabled() {
+			return &FeatureDisabledError{Feature: "messaging_e2ee"}
+		}
 		if s.e2eesvc == nil {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "encrypted messaging is not available")
 		}
@@ -414,6 +422,12 @@ func (s *Server) handleSendMessage(c echo.Context) error {
 			return err
 		}
 		if encrypted {
+			// New envelopes into an existing encrypted conversation are the
+			// other half of the E2EE write path; the route-level gate cannot
+			// see this branch, so it is enforced here.
+			if !s.messagingE2EEEnabled() {
+				return &FeatureDisabledError{Feature: "messaging_e2ee"}
+			}
 			if len(in.Envelopes) == 0 {
 				return &ValidationError{Fields: []FieldError{{Field: "envelopes", Message: "this conversation is encrypted; send envelopes, not body"}}}
 			}

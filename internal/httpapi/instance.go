@@ -32,6 +32,17 @@ type instanceFeatures struct {
 	Comments  bool `json:"comments"`
 	Downloads bool `json:"downloads"`
 
+	// Messaging and MessagingE2EE report the EFFECTIVE direct-messaging
+	// availability: the runtime setting AND the wiring (a deployment that never
+	// mounts the messaging/e2ee services has no routes to offer). MessagingE2EE
+	// additionally folds in Messaging — the encrypted surface is nested under
+	// the master switch. The client MUST read these rather than probing
+	// /e2ee/devices for a non-404: a probe cannot distinguish "the operator
+	// turned this off" (403) from a transport error, and it could never see the
+	// plaintext-vs-encrypted distinction at all.
+	Messaging     bool `json:"messaging"`
+	MessagingE2EE bool `json:"messaging_e2ee"`
+
 	// Shipped-feature toggle batch (config-parity W8). Every flag is the
 	// EFFECTIVE availability: the runtime admin setting AND (where one exists)
 	// the boot capability — import_http and transcription report false when
@@ -377,6 +388,11 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 			Live:      s.liveEnabled(),
 			Comments:  s.commentsEnabled(),
 			Downloads: s.downloadsEnabled(),
+			// Setting AND wiring, so the UI hides the DM affordances in
+			// lock-step with the 403 feature_disabled route gates instead of
+			// offering controls that fail.
+			Messaging:     s.messagingEnabled() && s.messagingsvc != nil,
+			MessagingE2EE: s.messagingE2EEEnabled() && s.messagingsvc != nil && s.e2eesvc != nil,
 			// W8 flags: setting AND boot capability (service Enabled() folds
 			// the runtime provider in when cmd/api wires one).
 			ImportHTTP:                      s.importsEnabled() && s.importHTTPEnabled() && s.importsvc != nil && s.importsvc.YtdlpEnabled(),

@@ -1208,6 +1208,30 @@ func setSocketDeadlines(c echo.Context, t time.Time) {
 	_ = rc.SetWriteDeadline(t)
 }
 
+// requireMessaging and requireE2EE are the instance-owner feature gates on the
+// direct-messaging surface: 403 feature_disabled while the operator has the
+// matching instance setting off. Both are registered AFTER requireAuth on each
+// route so an anonymous caller still gets 401 — a disabled feature must not
+// become an authentication oracle — and both re-read the setting per request,
+// so flipping the toggle takes effect without a restart.
+func (s *Server) requireMessaging(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if !s.messagingEnabled() {
+			return &FeatureDisabledError{Feature: "messaging"}
+		}
+		return next(c)
+	}
+}
+
+func (s *Server) requireE2EE(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if !s.messagingE2EEEnabled() {
+			return &FeatureDisabledError{Feature: "messaging_e2ee"}
+		}
+		return next(c)
+	}
+}
+
 func (s *Server) routes() {
 	s.echo.GET("/healthz", s.handleLive)
 	s.echo.GET("/readyz", s.handleReady)
@@ -1918,40 +1942,49 @@ func (s *Server) routes() {
 
 	// Direct messaging (1:1 conversations + messages). All behind requireAuth;
 	// non-participants get 404 so a conversation's existence is not leaked.
+	// Every route additionally carries requireMessaging, the instance owner's
+	// off switch (403 feature_disabled): DMs ship attachments, link previews and
+	// an encrypted variant, so an operator who cannot moderate them needs a way
+	// to close the surface without forking. Default ON — nothing changes for an
+	// instance that leaves the setting alone.
 	if s.messagingsvc != nil {
-		api.POST("/conversations", s.handleStartConversation, s.requireAuth)
-		api.GET("/me/conversations", s.handleListConversations, s.requireAuth)
-		api.GET("/conversations/:id/messages", s.handleListMessages, s.requireAuth)
-		api.POST("/conversations/:id/messages", s.handleSendMessage, s.requireAuth)
+		api.POST("/conversations", s.handleStartConversation, s.requireAuth, s.requireMessaging)
+		api.GET("/me/conversations", s.handleListConversations, s.requireAuth, s.requireMessaging)
+		api.GET("/conversations/:id/messages", s.handleListMessages, s.requireAuth, s.requireMessaging)
+		api.POST("/conversations/:id/messages", s.handleSendMessage, s.requireAuth, s.requireMessaging)
 		// DM completeness (product-decisions.md §14): read receipts, per-message
 		// delete/report, and the read-receipts privacy toggle.
-		api.POST("/conversations/:id/read", s.handleMarkConversationRead, s.requireAuth)
-		api.DELETE("/messages/:id", s.handleDeleteMessage, s.requireAuth)
-		api.POST("/messages/:id/report", s.handleReportMessage, s.requireAuth)
-		api.GET("/me/messaging-prefs", s.handleGetMessagingPrefs, s.requireAuth)
-		api.PATCH("/me/messaging-prefs", s.handleUpdateMessagingPrefs, s.requireAuth)
+		api.POST("/conversations/:id/read", s.handleMarkConversationRead, s.requireAuth, s.requireMessaging)
+		api.DELETE("/messages/:id", s.handleDeleteMessage, s.requireAuth, s.requireMessaging)
+		api.POST("/messages/:id/report", s.handleReportMessage, s.requireAuth, s.requireMessaging)
+		api.GET("/me/messaging-prefs", s.handleGetMessagingPrefs, s.requireAuth, s.requireMessaging)
+		api.PATCH("/me/messaging-prefs", s.handleUpdateMessagingPrefs, s.requireAuth, s.requireMessaging)
 		// Attachments: the upload route carries a bounded (100 MiB) media body
 		// (exempted from the JSON body limit above) and is per-user rate limited
 		// (the no-quota compensating control, messaging-v2.md D6; a no-op when the
 		// attachment limiter is unset). Both endpoints return 503 when blob
 		// storage is not configured.
-		api.POST("/conversations/:id/attachments", s.handleUploadAttachment, s.requireAuth, s.attachmentUploadRateLimit())
-		api.GET("/attachments/:id", s.handleDownloadAttachment, s.requireAuth)
+		api.POST("/conversations/:id/attachments", s.handleUploadAttachment, s.requireAuth, s.requireMessaging, s.attachmentUploadRateLimit())
+		api.GET("/attachments/:id", s.handleDownloadAttachment, s.requireAuth, s.requireMessaging)
 	}
 
 	// E2EE key directory (ciphertext-only encrypted messaging, P11.2): own
 	// device registry + one-time prekey upload/count, and the participant-gated
 	// peer endpoints (device listing, atomic key claim). The encrypted
 	// conversation/envelope surface itself rides the /conversations routes
-	// above, branched by the conversation's immutable encrypted flag.
+	// above, branched by the conversation's immutable encrypted flag — so the
+	// encrypted-conversation and envelope WRITE paths carry the same gate inside
+	// handleStartConversation/handleSendMessage. requireE2EE is the nested
+	// switch: messaging_e2ee_enabled AND messaging_enabled, because a device
+	// directory with no conversations to serve is meaningless.
 	if s.e2eesvc != nil {
-		api.POST("/e2ee/devices", s.handleRegisterE2EEDevice, s.requireAuth)
-		api.GET("/e2ee/devices", s.handleListMyE2EEDevices, s.requireAuth)
-		api.DELETE("/e2ee/devices/:id", s.handleDeleteE2EEDevice, s.requireAuth)
-		api.POST("/e2ee/devices/:id/one-time-keys", s.handleUploadOneTimeKeys, s.requireAuth)
-		api.GET("/e2ee/devices/:id/one-time-keys/count", s.handleCountOneTimeKeys, s.requireAuth)
-		api.GET("/users/:id/e2ee/devices", s.handleListUserE2EEDevices, s.requireAuth)
-		api.POST("/users/:id/e2ee/claim", s.handleClaimOneTimeKeys, s.requireAuth)
+		api.POST("/e2ee/devices", s.handleRegisterE2EEDevice, s.requireAuth, s.requireE2EE)
+		api.GET("/e2ee/devices", s.handleListMyE2EEDevices, s.requireAuth, s.requireE2EE)
+		api.DELETE("/e2ee/devices/:id", s.handleDeleteE2EEDevice, s.requireAuth, s.requireE2EE)
+		api.POST("/e2ee/devices/:id/one-time-keys", s.handleUploadOneTimeKeys, s.requireAuth, s.requireE2EE)
+		api.GET("/e2ee/devices/:id/one-time-keys/count", s.handleCountOneTimeKeys, s.requireAuth, s.requireE2EE)
+		api.GET("/users/:id/e2ee/devices", s.handleListUserE2EEDevices, s.requireAuth, s.requireE2EE)
+		api.POST("/users/:id/e2ee/claim", s.handleClaimOneTimeKeys, s.requireAuth, s.requireE2EE)
 	}
 
 	// Live streams: a channel owner manages live streams + their stream keys.

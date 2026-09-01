@@ -187,9 +187,12 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// + browse_scroll_mode (button|auto: whether a browse list advances with an
 	// explicit control or on scroll; default "button" reproduces today's
 	// behaviour exactly).
+	// + messaging_enabled and messaging_e2ee_enabled (the instance owner's off
+	// switches for direct messaging and its end-to-end-encrypted variant; both
+	// default ON, so an upgraded instance behaves exactly as before).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 114 {
-		t.Fatalf("settings count = %d, want 114", len(got.Settings))
+	if len(got.Settings) != 116 {
+		t.Fatalf("settings count = %d, want 116", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

@@ -10754,6 +10754,12 @@ paths:
         conversation instead — a distinct thread whose type is immutable and
         which stores only opaque per-device ciphertext envelopes (see the E2EE
         endpoints; the server holds no keys and cannot decrypt).
+
+
+        Gated by the instance's messaging_enabled setting (403 feature_disabled
+        while off); {encrypted: true} is additionally gated by
+        messaging_e2ee_enabled. Read GET /api/v1/instance features.messaging and
+        features.messaging_e2ee to hide the affordances in lock-step.
       tags: [messaging]
       security:
         - bearerAuth: []
@@ -10832,6 +10838,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/conversations/{id}/messages:
     get:
       operationId: listMessages
@@ -10891,6 +10907,16 @@ paths:
                   - $ref: "#/components/schemas/EncryptedMessageListResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
           content:
             application/json:
               schema:
@@ -11025,6 +11051,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such conversation for this caller.
           content:
@@ -11093,6 +11129,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such attachment for this caller.
           content:
@@ -11135,6 +11181,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such conversation for this caller, or the message is not in it.
           content:
@@ -11164,6 +11220,16 @@ paths:
           description: The message was tombstoned (or already was).
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
           content:
             application/json:
               schema:
@@ -11209,6 +11275,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such message for this caller.
           content:
@@ -11245,6 +11321,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     patch:
       operationId: updateMessagingPrefs
       summary: Update my messaging privacy preferences
@@ -11273,6 +11359,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Direct messaging is disabled on this instance (the operator's
+            `messaging_enabled` setting is off; stable code
+            `feature_disabled`). Read `features.messaging` on GET
+            /api/v1/instance and hide the affordance instead of calling this.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/e2ee/devices:
     post:
       operationId: registerE2EEDevice
@@ -11283,6 +11379,12 @@ paths:
         (Ed25519) keys. All cryptography is client-side (Olm); the server never
         sees private keys and treats key material as opaque bounded strings.
         At most 20 devices per user (422 beyond).
+
+
+        Every /e2ee/** endpoint is gated by the instance's
+        messaging_e2ee_enabled setting AND messaging_enabled (403
+        feature_disabled while either is off). Decide availability from GET
+        /api/v1/instance features.messaging_e2ee, not by probing this route.
       tags: [e2ee]
       security:
         - bearerAuth: []
@@ -11301,6 +11403,16 @@ paths:
                 $ref: "#/components/schemas/E2EEDevice"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            End-to-end-encrypted messaging is disabled on this instance
+            (`messaging_e2ee_enabled`, or the `messaging_enabled` master
+            switch above it, is off; stable code `feature_disabled`). Read
+            `features.messaging_e2ee` on GET /api/v1/instance.
           content:
             application/json:
               schema:
@@ -11333,6 +11445,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            End-to-end-encrypted messaging is disabled on this instance
+            (`messaging_e2ee_enabled`, or the `messaging_enabled` master
+            switch above it, is off; stable code `feature_disabled`). Read
+            `features.messaging_e2ee` on GET /api/v1/instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/e2ee/devices/{id}:
     delete:
       operationId: deleteE2EEDevice
@@ -11358,6 +11480,16 @@ paths:
           description: The device was deleted.
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            End-to-end-encrypted messaging is disabled on this instance
+            (`messaging_e2ee_enabled`, or the `messaging_enabled` master
+            switch above it, is off; stable code `feature_disabled`). Read
+            `features.messaging_e2ee` on GET /api/v1/instance.
           content:
             application/json:
               schema:
@@ -11405,6 +11537,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            End-to-end-encrypted messaging is disabled on this instance
+            (`messaging_e2ee_enabled`, or the `messaging_enabled` master
+            switch above it, is off; stable code `feature_disabled`). Read
+            `features.messaging_e2ee` on GET /api/v1/instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such device for this caller.
           content:
@@ -11443,6 +11585,16 @@ paths:
                 $ref: "#/components/schemas/OneTimeKeyCountResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            End-to-end-encrypted messaging is disabled on this instance
+            (`messaging_e2ee_enabled`, or the `messaging_enabled` master
+            switch above it, is off; stable code `feature_disabled`). Read
+            `features.messaging_e2ee` on GET /api/v1/instance.
           content:
             application/json:
               schema:
@@ -14211,6 +14363,28 @@ components:
               description: >-
                 Whether regular users may download video media. Moderators and
                 admins retain download access when this operator toggle is off.
+            messaging:
+              type: boolean
+              description: >-
+                Whether 1:1 direct messaging is available (messaging_enabled,
+                default true, AND the messaging service wired at boot). While
+                false EVERY /conversations, /messages, /me/messaging-prefs and
+                /attachments route answers 403 feature_disabled, so a client
+                MUST hide the messaging affordances rather than offer controls
+                that fail.
+            messaging_e2ee:
+              type: boolean
+              description: >-
+                Whether the end-to-end-encrypted variant of direct messaging is
+                available (messaging_e2ee_enabled, default true, AND messaging
+                above — the E2EE device directory and envelope store exist only
+                to serve conversations, so turning messaging off turns this off
+                with it). While false the /e2ee/** routes answer 403
+                feature_disabled and no NEW encrypted conversation or envelope
+                is accepted; existing encrypted conversations stay readable.
+                This flag is the authoritative E2EE availability signal — do not
+                infer it by probing GET /e2ee/devices, which cannot tell an
+                operator policy decision from a transport failure.
             import_http:
               type: boolean
               description: >-
