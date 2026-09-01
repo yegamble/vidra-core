@@ -128,6 +128,16 @@ const (
 	// never the activity payload.
 	ActionFederationFollowerApprove = "admin.federation.follower_approve"
 	ActionFederationFollowerReject  = "admin.federation.follower_reject"
+	// Suggestion bans (search-service moderation): a moderator/admin suppressing
+	// a query string from instance-wide autosuggest, or lifting that ban. The
+	// domain is `moderation`, not `admin`, because that is what the action IS —
+	// the same lever class as blocking a video, held by whoever is on shift.
+	// ResourceID carries a FINGERPRINT of the aggregate key, never the query
+	// itself: a search query is user-authored free text and free-form content
+	// must never enter audit_log. The reviewable plaintext lives in the ban list
+	// (GET /admin/search/suggestion-bans), which is the reversal surface.
+	ActionSearchSuggestionBan   = "moderation.search.suggestion_ban"
+	ActionSearchSuggestionUnban = "moderation.search.suggestion_unban"
 )
 
 // sensitiveKeys is the canonical denylist of structured-log field names that

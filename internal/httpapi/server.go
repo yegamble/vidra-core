@@ -1827,6 +1827,25 @@ func (s *Server) routes() {
 		api.GET("/admin/stats", s.handleAdminStats, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
+	// Suggestion bans (search-service moderation): the write path for
+	// vidra-search's query_aggregates.banned, which three read paths honour and
+	// nothing in the product could set. Moderator/admin, NOT admin-only — this
+	// is the same lever class as blocking a video (see /admin/videos/:id/block
+	// above), and an abusive autosuggest string is exactly what the person on
+	// shift needs to remove at the time they notice it.
+	//
+	// Always mounted so the contract surface is stable; the handlers answer 403
+	// feature_disabled when smart search is switched off and 503
+	// search_unavailable when it is unwired or unreachable.
+	if s.authsvc != nil {
+		api.GET("/admin/search/suggestion-bans", s.handleListSuggestionBans,
+			s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.PUT("/admin/search/suggestion-bans/:query", s.handleBanSuggestion,
+			s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.DELETE("/admin/search/suggestion-bans/:query", s.handleUnbanSuggestion,
+			s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+	}
+
 	// Durable audit trail (admin-only), when the audit-log service is wired.
 	if s.auditLog != nil {
 		api.GET("/admin/audit-log", s.handleListAuditLog, s.requireAuth, s.requireRole(admin.RoleAdmin))
