@@ -57,6 +57,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var oci *OwnerClaimInvalidError
 	var fd *FeatureDisabledError
 	var id *IPFSDisabledError
+	var fml *ForeignMediaLayoutError
 	var pr *PasswordRequiredError
 	var tma *TooManyActiveUploadsError
 	var cfd *ContactFormDisabledError
@@ -134,6 +135,10 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusServiceUnavailable
 		message = "IPFS mirroring is not enabled on this instance"
 		code = "ipfs_disabled"
+	case errors.As(err, &fml):
+		status = http.StatusConflict
+		message = "this instance references media stored under another system's key layout, so the object store may still belong to a live instance (a reference-mode import points at the source's own bucket). Adopting it would let media garbage collection delete that instance's files. Re-send with force=true only once the source instance is retired or its media has been copied across"
+		code = "foreign_media_layout"
 	case errors.As(err, &he):
 		status = he.Code
 		if he.Message != nil {
@@ -328,6 +333,17 @@ type ATProtoLoginError struct {
 }
 
 func (e *ATProtoLoginError) Error() string { return e.Code }
+
+// ForeignMediaLayoutError renders as 409 with the stable code
+// "foreign_media_layout": the bucket adoption was refused because this install
+// references media stored under ANOTHER system's key layout (the signature of a
+// reference-mode import, which points STORAGE_* at a bucket a live instance may
+// still be serving from). It needs a code of its own precisely because the
+// product's "unowned" state invites an operator to adopt, and this is the one
+// case where doing so arms an irreversible sweep against somebody else's files.
+type ForeignMediaLayoutError struct{}
+
+func (e *ForeignMediaLayoutError) Error() string { return "foreign media layout" }
 
 // IPFSDisabledError renders as 503 with the stable code "ipfs_disabled": the
 // hybrid IPFS media mirror (fix_plan P19) is off (IPFS_ENABLED=false) on this

@@ -1293,7 +1293,14 @@ func run() error {
 		// outlive the configuration that started it, and the sweep that must not
 		// delete during one is exactly the sweep on the instance that has since
 		// been reconfigured.
-		mediagc.WithActiveMigrationCheck(db.Queries().HasActiveStorageMigration))
+		mediagc.WithActiveMigrationCheck(db.Queries().HasActiveStorageMigration),
+		// Reference-mode interlock on ADOPTION. A reference-mode PeerTube
+		// import points STORAGE_* at the source instance's own bucket, so
+		// adopting there would arm an irreversible sweep against a live third
+		// party's media. Wired unconditionally, for the same reason as the
+		// migration check: the import that put those rows there ran long before
+		// the admin who clicks adopt today.
+		mediagc.WithForeignLayoutRefCheck(db.Queries().CountForeignLayoutMediaRefs))
 	opts = append(opts, httpapi.WithMediaGCService(mediagcsvc))
 
 	// Content-hash backfill (phase-2 storage, work item 2): reads back the

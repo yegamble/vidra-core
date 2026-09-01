@@ -34,6 +34,14 @@ type mediaGCResponse struct {
 	ForcedDryRunReason string   `json:"forced_dry_run_reason,omitempty"`
 }
 
+// adoptBucketRequest is the POST /admin/media/gc/adopt-bucket body. force
+// overrides the reference-mode interlock — the refusal to adopt a store this
+// install references under ANOTHER system's key layout. It defaults to false so
+// the dangerous answer is never the one a client gets by omission.
+type adoptBucketRequest struct {
+	Force bool `json:"force"`
+}
+
 // adoptBucketResponse reports the ownership state after an adoption, and the key
 // the marker was written to so an operator can go and look at it.
 type adoptBucketResponse struct {
@@ -143,8 +151,15 @@ func (s *Server) handleAdminAdoptBucket(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := s.mediagcsvc.AdoptBucket(c.Request().Context()); err != nil {
+	var in adoptBucketRequest
+	// The body is optional; a malformed one leaves force false, which is the
+	// safe answer — an override has to be asked for in so many words.
+	_ = c.Bind(&in)
+	if err := s.mediagcsvc.AdoptBucket(c.Request().Context(), in.Force); err != nil {
 		switch {
+		case errors.Is(err, mediagc.ErrAdoptForeignLayoutMedia):
+			s.audit(c, observability.ActionMediaGCAdoptBucket, observability.ResultFailure, userID.String(), mediagc.ReasonForeignLayoutMedia)
+			return &ForeignMediaLayoutError{}
 		case errors.Is(err, mediagc.ErrAdoptNotApplicable):
 			s.audit(c, observability.ActionMediaGCAdoptBucket, observability.ResultFailure, userID.String(), "not_applicable")
 			return echo.NewHTTPError(http.StatusConflict, "this instance stores media on local disk, so there is no bucket to adopt")
@@ -159,7 +174,15 @@ func (s *Server) handleAdminAdoptBucket(c echo.Context) error {
 		}
 	}
 	ownership := string(s.mediagcsvc.Ownership())
-	s.audit(c, observability.ActionMediaGCAdoptBucket, observability.ResultSuccess, userID.String(), "ownership="+ownership)
+	// An override is the whole reason this reason string is not just the state:
+	// an operator who forced past the reference-mode interlock has claimed a
+	// bucket another instance may still be serving, and the audit log is the
+	// only place that decision is ever recorded.
+	reason := "ownership=" + ownership
+	if in.Force {
+		reason += " forced=" + mediagc.ReasonForeignLayoutMedia
+	}
+	s.audit(c, observability.ActionMediaGCAdoptBucket, observability.ResultSuccess, userID.String(), reason)
 	return c.JSON(http.StatusOK, adoptBucketResponse{
 		BucketOwnership: ownership,
 		MarkerKey:       storage.OwnerMarkerKey,

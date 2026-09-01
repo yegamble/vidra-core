@@ -13056,9 +13056,24 @@ paths:
         Idempotent, and it overwrites a marker belonging to a different install,
         so on a genuinely shared bucket it takes ownership away from the other
         one. Restricted to admins; audited (admin.media.gc.adopt_bucket).
+
+
+        REFUSED with `409 foreign_media_layout` when this instance references
+        media stored under another system's key layout — the signature of a
+        reference-mode PeerTube import, which points `STORAGE_*` at the SOURCE
+        instance's own bucket. Adopting there arms an irreversible sweep against
+        media that instance is still serving. `force: true` overrides it for an
+        operator whose source is retired, and the override is named in the audit
+        record.
       tags: [admin]
       security:
         - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MediaGCAdoptBucketRequest"
       responses:
         "200":
           description: The marker was written; the instance now owns the store.
@@ -13080,8 +13095,11 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: >-
-            This instance stores media on local disk, so there is no bucket to
-            adopt (local storage is exempt from the ownership marker by design).
+            Either this instance stores media on local disk, so there is no
+            bucket to adopt (`conflict`; local storage is exempt from the
+            ownership marker by design), or the instance references media under
+            another system's key layout and the adoption was refused
+            (`foreign_media_layout`) — re-send with `force: true` to override.
           content:
             application/json:
               schema:
@@ -18874,6 +18892,20 @@ components:
           description: Campaign history, newest first.
           items:
             $ref: "#/components/schemas/StorageMigration"
+    MediaGCAdoptBucketRequest:
+      type: object
+      description: >-
+        Optional body for the bucket adoption. Omit it entirely for the normal,
+        guarded adoption.
+      properties:
+        force:
+          type: boolean
+          default: false
+          description: >-
+            Adopt even though this instance references media stored under
+            another system's key layout (a reference-mode import). True only
+            once the source instance is retired or its media has been copied
+            across; the override is named in the audit event.
     MediaGCAdoptBucketResponse:
       type: object
       required: [bucket_ownership, marker_key]

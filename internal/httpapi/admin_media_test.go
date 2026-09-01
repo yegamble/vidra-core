@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -248,5 +250,67 @@ func TestAdminAdoptBucket(t *testing.T) {
 	}
 	if ok, _ := blobs.Exists(context.Background(), orphan); ok {
 		t.Error("the orphan survived a sweep of an adopted bucket")
+	}
+}
+
+// The unowned state the product reports sends an operator straight to this
+// endpoint, so the endpoint is where the one catastrophic case has to be caught:
+// an install whose database references media laid out by ANOTHER system is
+// pointed at a bucket that system may still be serving. It refuses with a code
+// of its own, writes no marker, and the override that gets past it is recorded
+// in the audit log — an override nobody can see afterwards is not a decision,
+// it is an accident waiting to be denied.
+func TestAdminAdoptBucketRefusesForeignMediaLayout(t *testing.T) {
+	var logs bytes.Buffer
+	srv, blobs, _, _, _ := videoServerFullWith(t, testConfig(),
+		[]Option{WithLogger(slog.New(slog.NewJSONHandler(&logs, nil)))})
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	const path = "/api/v1/admin/media/gc/adopt-bucket"
+	const identity = "88888888-8888-4888-8888-888888888888"
+	srv.mediagcsvc = mediagc.NewService(&mediagcFakeRepo{}, blobs,
+		mediagc.WithBucketOwnership(mediagc.OwnershipUnowned),
+		mediagc.WithInstanceIdentity(identity),
+		// Three video_files rows pointing outside this install's own layout —
+		// what a reference-mode PeerTube import leaves behind.
+		mediagc.WithForeignLayoutRefCheck(func(context.Context) (int64, error) { return 3, nil }))
+
+	rec := postJSONAuth(srv, path, `{}`, adminTok)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("adopt with foreign-layout media = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	var errBody ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
+		t.Fatal(err)
+	}
+	if errBody.Error.Code != "foreign_media_layout" {
+		t.Errorf("error code = %q, want %q — a client must be able to tell this refusal from every other one",
+			errBody.Error.Code, "foreign_media_layout")
+	}
+	if _, found, _ := storage.ReadOwnerMarker(context.Background(), blobs); found {
+		t.Fatal("a refused adoption stamped the marker anyway")
+	}
+	if ev := findAudit(auditEvents(t, &logs), "admin.media.gc.adopt_bucket", "failure"); ev == nil {
+		t.Error("the refusal emitted no audit event")
+	} else if ev["reason"] != mediagc.ReasonForeignLayoutMedia {
+		t.Errorf("refusal audit reason = %v, want %q", ev["reason"], mediagc.ReasonForeignLayoutMedia)
+	}
+
+	// The override: the operator asserting the source instance is retired.
+	logs.Reset()
+	if rec := postJSONAuth(srv, path, `{"force":true}`, adminTok); rec.Code != http.StatusOK {
+		t.Fatalf("forced adopt = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	marker, found, err := storage.ReadOwnerMarker(context.Background(), blobs)
+	if err != nil || !found || marker != identity {
+		t.Fatalf("marker after a forced adoption = (%q, %v, %v), want %q", marker, found, err, identity)
+	}
+	ev := findAudit(auditEvents(t, &logs), "admin.media.gc.adopt_bucket", "success")
+	if ev == nil {
+		t.Fatal("the forced adoption emitted no audit event")
+	}
+	reason, _ := ev["reason"].(string)
+	if !strings.Contains(reason, "forced="+mediagc.ReasonForeignLayoutMedia) {
+		t.Errorf("forced-adoption audit reason = %q, want it to record the override", reason)
 	}
 }

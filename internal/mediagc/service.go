@@ -49,6 +49,18 @@ var ErrAdoptNotApplicable = errors.New("mediagc: this deployment stores media on
 // never read its instance identity (the row the identity migration inserts).
 var ErrNoInstanceIdentity = errors.New("mediagc: this process has no instance identity to stamp on the bucket")
 
+// ErrAdoptForeignLayoutMedia means the database references object keys this
+// install did not lay out — the signature of a reference-mode import, which
+// points STORAGE_* at ANOTHER RUNNING INSTANCE's bucket. Adopting there arms
+// destructive GC against media that instance is still serving, and no re-run
+// undoes a delete. It is refusable rather than fatal: an operator who has since
+// copied the media across, or who is knowingly retiring the source, overrides it.
+var ErrAdoptForeignLayoutMedia = errors.New("mediagc: this instance references media stored under another system's key layout (a reference-mode import), so the object store may still belong to a live instance")
+
+// ReasonForeignLayoutMedia is the stable, machine-readable name of that refusal,
+// so a client can tell it apart from every other reason an adoption failed.
+const ReasonForeignLayoutMedia = "foreign_layout_media"
+
 // BucketOwnership is the answer to "does the object store I am about to delete
 // from belong to THIS install?", derived from the ownership marker
 // (storage.OwnerMarkerKey) at boot and re-derived by an explicit adoption.
@@ -145,6 +157,11 @@ type Service struct {
 	// treated as "yes" (see Sweep).
 	migrationActive func(context.Context) (bool, error)
 
+	// foreignLayoutRefs answers "how many object keys does this database
+	// reference that this install did not lay out?" — the reference-mode
+	// interlock on AdoptBucket. Nil means the question was never wired.
+	foreignLayoutRefs func(context.Context) (int64, error)
+
 	// mu guards ownership alone: it is read by every sweep and rewritten by the
 	// adopt endpoint, from different goroutines.
 	mu        sync.RWMutex
@@ -187,6 +204,19 @@ func WithBucketOwnership(o BucketOwnership) Option {
 // a database it cannot reach is least reassuring.
 func WithActiveMigrationCheck(fn func(context.Context) (bool, error)) Option {
 	return func(s *Service) { s.migrationActive = fn }
+}
+
+// WithForeignLayoutRefCheck supplies the reference-mode interlock on adoption:
+// a count of media references pointing at keys this install did not lay out
+// (sqlcgen.CountForeignLayoutMediaRefs). A non-zero count, or a check that
+// ERRORS, refuses an unforced AdoptBucket.
+//
+// It guards only ADOPTION, not the sweep. Adoption is the single irreversible
+// decision in this package — it is the operator asserting the store is theirs —
+// and it is the only moment at which the question "is somebody else still
+// serving from this bucket?" can be put to a human who can answer it.
+func WithForeignLayoutRefCheck(fn func(context.Context) (int64, error)) Option {
+	return func(s *Service) { s.foreignLayoutRefs = fn }
 }
 
 // WithInstanceIdentity supplies the UUID AdoptBucket writes into the marker.
@@ -266,12 +296,29 @@ func (s *Service) refreshOwnership(ctx context.Context) BucketOwnership {
 // audited answer to an unowned or conflicting bucket — deliberately an operator
 // action rather than something boot decides, because the store holds objects
 // whose owner boot cannot establish.
-func (s *Service) AdoptBucket(ctx context.Context) error {
+//
+// The unowned state the product reports invites exactly this call, which is why
+// it has to refuse the one case where accepting is catastrophic: an install that
+// references media under another system's key layout is pointed at a bucket that
+// other system may still be serving from, and adopting it arms an irreversible
+// sweep against a live third party's files. force is the operator's explicit
+// override for when they know the source is retired; it is audited by the
+// caller, because the whole value of an override is knowing it was used.
+func (s *Service) AdoptBucket(ctx context.Context, force bool) error {
 	if s.Ownership() == OwnershipNotApplicable {
 		return ErrAdoptNotApplicable
 	}
 	if s.identity == "" {
 		return ErrNoInstanceIdentity
+	}
+	if !force && s.foreignLayoutRefs != nil {
+		n, ferr := s.foreignLayoutRefs(ctx)
+		// Fail safe, like the migration interlock: an unanswerable "does this
+		// install reference somebody else's bucket?" has to mean yes. The
+		// override is right there for an operator who knows better.
+		if ferr != nil || n > 0 {
+			return ErrAdoptForeignLayoutMedia
+		}
 	}
 	if err := storage.WriteOwnerMarker(ctx, s.blobs, s.identity); err != nil {
 		return err
@@ -501,10 +548,22 @@ func (s *Service) isReferenced(key, prefix string, refs refSet) bool {
 	if prefix == hlsPrefix {
 		// key = streaming-playlists/<video_id>/[rN/]...
 		parts := strings.Split(key, "/")
-		if len(parts) < 2 {
-			return false
+		vid := ""
+		if len(parts) > 1 {
+			vid = parts[1]
 		}
-		vid := parts[1]
+		if !isVideoID(vid) {
+			// The id position holds something that is not a video id, so this
+			// key belongs to a tree THIS INSTALL DID NOT LAY OUT — a
+			// reference-mode PeerTube import records
+			// streaming-playlists/hls/<source-uuid>/… against the source
+			// instance's own bucket (docs/peertube-migration.md §4).
+			// Unattributable means KEPT, and the test has to come BEFORE the
+			// live-video one: "hls" is never a live video id, so asking that
+			// question first answers "orphan" for every segment of every
+			// imported video, on media a third party is still serving.
+			return true
+		}
 		if !refs.liveVideoIDs[vid] {
 			return false
 		}
@@ -585,9 +644,16 @@ func referenceSet(ctx context.Context, repo Repository) (refSet, error) {
 		own := media.HLSKeyPrefix(r.VideoID) + "/"
 		rest, isOwn := strings.CutPrefix(r.MasterKey, own)
 		if !isOwn || rest == "" {
-			// No master ('' after a dead-lettered transcode) or a foreign
-			// layout (e.g. a PeerTube-import tree): no attributable
-			// generation — the whole tree is kept via !hasPlaylist above.
+			// No master ('' after a dead-lettered transcode), or a master that
+			// is not under this video's own prefix (a reference-mode import
+			// records streaming-playlists/hls/<source-uuid>/…). Either way
+			// there is no attributable generation, so hasPlaylist is left
+			// unset and isReferenced keeps the whole tree.
+			//
+			// For the FOREIGN layout that fallback is not what saves it, and
+			// this comment used to claim otherwise: those keys never reach the
+			// generation logic, because their id position holds no video id and
+			// isReferenced keeps them as unattributable first.
 			continue
 		}
 		refs.hasPlaylist[vid] = true
@@ -687,6 +753,15 @@ func ListReferences(ctx context.Context, repo Repository) (References, error) {
 		return out.Playlists[i].MasterKey < out.Playlists[j].MasterKey
 	})
 	return out, nil
+}
+
+// isVideoID reports whether a path segment can be a Vidra video id. A "no" is
+// the interesting answer: the id position of an HLS key holding anything but a
+// UUID is the signature of a tree laid out by another system, for which the
+// sweep's unit of collection — the video id — does not exist at all.
+func isVideoID(seg string) bool {
+	_, err := uuid.Parse(seg)
+	return err == nil
 }
 
 // videoIDOfOriginalKey extracts the video id from an original-file storage key
