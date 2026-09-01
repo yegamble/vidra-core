@@ -528,6 +528,40 @@ func TestReloadPicksUpExternalRows(t *testing.T) {
 	}
 }
 
+// TestMessagingTogglesDefaultOnForAnUpgradedInstance proves the DEFAULT, not
+// merely that the keys exist. An instance upgrading past the change that added
+// them has NO override rows at all — exactly the empty store below — so both
+// keys must read true and direct messaging (with its E2EE variant) keeps
+// working precisely as it did before the operator gained the switch.
+func TestMessagingTogglesDefaultOnForAnUpgradedInstance(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := NewService(repo, testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !svc.Bool(KeyMessagingEnabled) {
+		t.Error("messaging_enabled = false on an instance with no override rows, want true")
+	}
+	if !svc.Bool(KeyMessagingE2EEEnabled) {
+		t.Error("messaging_e2ee_enabled = false on an instance with no override rows, want true")
+	}
+	// And the operator can actually turn the master switch off. The two keys
+	// stay independent AT THIS LAYER: the nesting (messaging off ⇒ E2EE off) is
+	// applied where the gates are, so the operator's own E2EE choice survives
+	// turning messaging off and back on.
+	_ = repo.UpsertInstanceSetting(ctx, sqlcgen.UpsertInstanceSettingParams{Key: KeyMessagingEnabled, Value: "false"})
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if svc.Bool(KeyMessagingEnabled) {
+		t.Error("messaging_enabled still true after an explicit false override")
+	}
+	if !svc.Bool(KeyMessagingE2EEEnabled) {
+		t.Error("messaging_e2ee_enabled must keep its own stored value regardless of the master switch")
+	}
+}
+
 func TestApplyValidation(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(newFakeRepo(), testDefaults())
