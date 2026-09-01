@@ -40,9 +40,16 @@ const (
 	// videos that HAD something to carry — a source video with no original date
 	// contributes nothing to any column, because there is no data there.
 	KindVideoOriginalDate = "video_original_date"
-	KindChapter           = "chapter"
-	KindRating            = "rating"
-	KindRendition         = "rendition"
+	// KindUserSuspension counts USERS whose source suspension (user.blocked) was
+	// carried onto users.is_active; KindVideoSensitive counts VIDEOS the source
+	// flagged nsfw. Both count only what was CARRIED, never the whole family:
+	// "412 users imported" does not answer "how many arrived locked out?", which
+	// is the question asked before anybody is told their account is ready.
+	KindUserSuspension = "user_suspension"
+	KindVideoSensitive = "video_sensitive"
+	KindChapter        = "chapter"
+	KindRating         = "rating"
+	KindRendition      = "rendition"
 	// KindActorAvatar / KindActorBanner count the source's actorImage rows,
 	// split by which slot they fill. They are two kinds rather than one so the
 	// report answers the question an operator actually asks after a migration —
@@ -55,7 +62,8 @@ const (
 // (parents before children).
 var orderedKinds = []string{
 	KindCategoryTaxonomy,
-	KindUser, KindChannel, KindActorAvatar, KindActorBanner, KindVideo, KindVideoFile,
+	KindUser, KindUserSuspension, KindChannel, KindActorAvatar, KindActorBanner,
+	KindVideo, KindVideoSensitive, KindVideoFile,
 	KindHLSPlaylist, KindThumbnail, KindStoryboard, KindCaption, KindTag, KindViewCount,
 	KindVideoOriginalDate, KindChapter, KindRating, KindRendition, KindComment,
 	KindPlaylist, KindPlaylistItem, KindFollow,
