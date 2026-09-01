@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/vidra/vidra-core/internal/lease"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -31,7 +32,11 @@ type Service struct {
 	// run, and the resolved value is written to the run row so the executing
 	// worker never has to consult this again.
 	defaultMediaMode MediaMode
-	logger           *slog.Logger
+	// leaseInterval is how often a running run's lease is renewed. It is a field
+	// rather than lease.DefaultInterval spelled inline only so a test can drive
+	// several renewals without waiting minutes; nothing configures it.
+	leaseInterval time.Duration
+	logger        *slog.Logger
 	// buildImporter opens the configured source + storages and returns a ready
 	// Importer for one claimed run, plus a cleanup func. Nil = not configured (the
 	// admin API answers 503).
@@ -120,7 +125,7 @@ func WithDefaultMediaMode(m MediaMode) Option {
 // NewService builds the service. repo may be nil in wiring-only contexts (the
 // OpenAPI contract test constructs the server without a database).
 func NewService(repo Repository, opts ...Option) *Service {
-	s := &Service{repo: repo, defaultPolicy: PolicySkip, defaultMediaMode: MediaModeCopy, logger: slog.Default()}
+	s := &Service{repo: repo, defaultPolicy: PolicySkip, defaultMediaMode: MediaModeCopy, leaseInterval: lease.DefaultInterval, logger: slog.Default()}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -312,6 +317,31 @@ func (s *Service) DrainDueRuns(ctx context.Context, limit int) (int, error) {
 // persisting progress + the terminal state. All persisted messages are SAFE
 // (no DSN/credential/PII).
 func (s *Service) executeRun(ctx context.Context, claim sqlcgen.ClaimDueImportRunsRow) {
+	// RENEW THE LEASE. The claim pushed next_attempt_at 30 minutes out and
+	// jobrecovery sweeps every 2; a real migration runs for hours. Every sibling
+	// durable queue renews while it works and this one — the longest-running of
+	// them — was the only one that never did, so from T+30min the row read
+	// 'pending' with started_at NULL and an inflated attempts count while the
+	// import was actively writing.
+	//
+	// On ONE instance that is cosmetic: the terminal writes are unguarded on
+	// state, and this goroutine is blocked here and cannot re-claim its own row.
+	// On TWO it is data corruption — the other instance claims the requeued row
+	// and executes concurrently. Entity kinds survive that (the ledger upsert
+	// shares the insert's transaction and UNIQUE (entity_kind, source_id)
+	// serialises them); counters do not, because importOneViewCount reads the
+	// applied total OUTSIDE its transaction and applies a delta, so both
+	// executors add the same delta and the view counts double.
+	//
+	// stop is deferred rather than called before the terminal write (the
+	// siblings' shape) because this function has six exits. A renewal racing a
+	// completion is harmless: RenewImportRunLease is guarded on state='running'
+	// and cannot revive a finished run.
+	stopLease := lease.Keep(ctx, s.leaseInterval, "peertube_import_run", func(c context.Context) error {
+		return s.repo.RenewImportRunLease(c, claim.ID)
+	})
+	defer stopLease()
+
 	actor := ""
 	if claim.StartedBy.Valid {
 		actor = uuid.UUID(claim.StartedBy.Bytes).String()
@@ -397,14 +427,41 @@ func (s *Service) executeRun(ctx context.Context, claim sqlcgen.ClaimDueImportRu
 		s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, observability.ResultFailure, actor, overruled+"import failed")
 		return
 	}
+	s.finishRun(ctx, claim.ID, actor, overruled, report)
+}
+
+// finishRun records the terminal outcome of a run whose passes all ran: the
+// report is persisted, the run row is completed, and the finish audit is emitted
+// with the result THE REPORT gives — not the one the absence of a run-level
+// error implies.
+//
+// Those are different facts. Importer.Run returns nil when every individual
+// entity failed, because failures are recorded per row and the loop continues;
+// branching on that error alone stamped ResultSuccess on
+// "imported=0 failed=13528". The run row is prunable and the audit log is not,
+// so months later the audit line is the only surviving record of the migration
+// and it has to be the honest one.
+//
+// The run STATE is deliberately untouched. The run did finish, 0067's CHECK
+// admits only pending/running/done/failed, and a fifth state is not what needs
+// to change.
+func (s *Service) finishRun(ctx context.Context, id uuid.UUID, actor, overruled string, report *Report) {
 	data, merr := json.Marshal(report)
 	if merr != nil {
 		data = []byte("{}")
 	}
-	if err := s.repo.CompleteImportRun(ctx, sqlcgen.CompleteImportRunParams{ID: claim.ID, Progress: data}); err != nil {
-		s.logger.WarnContext(ctx, "peertube import: complete run failed", "run_id", claim.ID.String(), "error", err)
+	if err := s.repo.CompleteImportRun(ctx, sqlcgen.CompleteImportRunParams{ID: id, Progress: data}); err != nil {
+		s.logger.WarnContext(ctx, "peertube import: complete run failed", "run_id", id.String(), "error", err)
 	}
-	s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, observability.ResultSuccess, actor, overruled+report.Summary())
+	// Only Failed counts. Skipped is an already-imported row and Unsupported is
+	// a family this version defers on purpose — a branch wide enough to catch
+	// those would mark every healthy run failed, which destroys the signal.
+	result, note := observability.ResultSuccess, ""
+	if failed := report.totals().Failed; failed > 0 {
+		result = observability.ResultFailure
+		note = fmt.Sprintf("finished with %d failed rows; ", failed)
+	}
+	s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, result, actor, overruled+note+report.Summary())
 }
 
 func (s *Service) persistProgress(ctx context.Context, id uuid.UUID, r *Report) {

@@ -102,6 +102,7 @@ POSTGRES_PASSWORD=0123456789abcdef0123456789abcdef
 REDIS_PASSWORD=fedcba9876543210fedcba9876543210
 PEERTUBE_IMPORT_ENABLED=true
 PEERTUBE_SOURCE_DATABASE_URL=postgres://readonly:pw@10.0.0.5:5432/peertube_prod?sslmode=require
+PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT=/mnt/peertube-media
 `))
 	a := baseAnswers()
 	a.PeerTube = nil

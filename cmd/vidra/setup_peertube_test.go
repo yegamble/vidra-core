@@ -96,7 +96,13 @@ func TestSetupWritesThePeerTubeSourceFromFlags(t *testing.T) {
 // migration is write the source down and say where the import is launched from.
 func TestSetupReportsThePeerTubeImportHandoff(t *testing.T) {
 	h := peerTubeHarness(t)
-	if err := h.run(h.setupArgs("--peertube-source-url", "postgres://readonly:pw@10.0.0.5:5432/peertube_prod?sslmode=require")...); err != nil {
+	// The local root rides along because the shipped defaults are local + copy,
+	// and a copy-mode run with nowhere to read the source media from no longer
+	// generates: it would fail every entity one at a time instead.
+	if err := h.run(h.setupArgs(
+		"--peertube-source-url", "postgres://readonly:pw@10.0.0.5:5432/peertube_prod?sslmode=require",
+		"--peertube-source-local-root", "/srv/peertube-source/storage",
+	)...); err != nil {
 		t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
 	}
 	if !strings.Contains(h.out.String(), "https://video.example.org/admin/import-peertube") {
@@ -234,7 +240,8 @@ func TestSetupPeerTubeInterviewRejectsABadAnswerAtThePrompt(t *testing.T) {
 func TestSetupPeerTubeSourceSurvivesAReRunThatDoesNotMentionIt(t *testing.T) {
 	h := peerTubeHarness(t)
 	const dsn = "postgres://readonly:pw@10.0.0.5:5432/peertube_prod?sslmode=require"
-	if err := h.run(h.setupArgs("--peertube-source-url", dsn)...); err != nil {
+	if err := h.run(h.setupArgs("--peertube-source-url", dsn,
+		"--peertube-source-local-root", "/srv/peertube-source/storage")...); err != nil {
 		t.Fatalf("first setup: %v (stderr: %s)", err, h.err.String())
 	}
 	if err := h.run(h.setupArgs("--yes")...); err != nil {

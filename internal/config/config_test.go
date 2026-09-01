@@ -1347,7 +1347,7 @@ func TestPeerTubeImportConfig(t *testing.T) {
 			"VIDRA_ENV", "DATABASE_URL", "REDIS_URL", "CORS_ALLOWED_ORIGINS",
 			"PEERTUBE_IMPORT_ENABLED", "PEERTUBE_SOURCE_DATABASE_URL",
 			"PEERTUBE_IMPORT_CONFLICT_POLICY", "PEERTUBE_IMPORT_MEDIA_MODE",
-			"PEERTUBE_SOURCE_STORAGE_BACKEND",
+			"PEERTUBE_SOURCE_STORAGE_BACKEND", "PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT",
 		} {
 			t.Setenv(k, "")
 		}
@@ -1401,6 +1401,9 @@ func TestPeerTubeImportConfig(t *testing.T) {
 		clean(t)
 		t.Setenv("PEERTUBE_IMPORT_ENABLED", "true")
 		t.Setenv("PEERTUBE_SOURCE_DATABASE_URL", "postgres://ro:pw@oldhost:5432/peertube?sslmode=disable")
+		// The media root is set because this subtest is about the DSN: on the
+		// shipped defaults (local + copy) a config without one no longer boots.
+		t.Setenv("PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT", "/mnt/peertube-media")
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load() = %v", err)
@@ -1432,12 +1435,54 @@ func TestPeerTubeImportConfig(t *testing.T) {
 		}
 	})
 
+	// The symmetric half of the s3 rule below it, and the one an operator is far
+	// likelier to hit: local + copy are BOTH the shipped defaults, nothing in the
+	// deployment mounts the source tree (the env template says so and leaves the
+	// bind mount to the operator), and storage.NewLocal does MkdirAll — so a
+	// missing mount yields a HEALTHY backend over an empty directory, every read
+	// misses, and every entity fails individually. Refusing at boot is the only
+	// place that mistake is visible before the run is over.
+	t.Run("enabled + local + copy requires a source media root", func(t *testing.T) {
+		clean(t)
+		t.Setenv("PEERTUBE_IMPORT_ENABLED", "true")
+		t.Setenv("PEERTUBE_SOURCE_DATABASE_URL", "postgres://ro:pw@oldhost:5432/peertube?sslmode=disable")
+		if _, err := Load(); err == nil {
+			t.Error("a copy-mode import with no source media root was accepted; every video would fail one by one")
+		}
+	})
+
+	t.Run("enabled + local + copy is accepted once the root is set", func(t *testing.T) {
+		clean(t)
+		t.Setenv("PEERTUBE_IMPORT_ENABLED", "true")
+		t.Setenv("PEERTUBE_SOURCE_DATABASE_URL", "postgres://ro:pw@oldhost:5432/peertube?sslmode=disable")
+		t.Setenv("PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT", "/mnt/peertube-media")
+		if _, err := Load(); err != nil {
+			t.Errorf("a fully answered local copy-mode import was refused: %v", err)
+		}
+	})
+
+	// …and the rule is about CARRYING BYTES, not about the backend. A run that
+	// references the source's keys or carries no media at all reads nothing from
+	// that tree, so requiring the mount there would refuse a working deployment.
+	t.Run("a media mode that reads no bytes needs no source media root", func(t *testing.T) {
+		clean(t)
+		t.Setenv("PEERTUBE_IMPORT_ENABLED", "true")
+		t.Setenv("PEERTUBE_SOURCE_DATABASE_URL", "postgres://ro:pw@oldhost:5432/peertube?sslmode=disable")
+		for _, mode := range []string{"reference", "none"} {
+			t.Setenv("PEERTUBE_IMPORT_MEDIA_MODE", mode)
+			if _, err := Load(); err != nil {
+				t.Errorf("media mode %q was refused for having no source media root: %v", mode, err)
+			}
+		}
+	})
+
 	// The keyword/value dialect pgx also accepts. An operator whose read-only
 	// replica is addressed that way has a working DSN.
 	t.Run("the keyword/value DSN dialect is accepted", func(t *testing.T) {
 		clean(t)
 		t.Setenv("PEERTUBE_IMPORT_ENABLED", "true")
 		t.Setenv("PEERTUBE_SOURCE_DATABASE_URL", "host=oldhost user=ro dbname=peertube sslmode=require")
+		t.Setenv("PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT", "/mnt/peertube-media")
 		if _, err := Load(); err != nil {
 			t.Errorf("a keyword/value DSN was refused: %v", err)
 		}

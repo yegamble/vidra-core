@@ -2203,7 +2203,7 @@ func run() error {
 	if runWorkers && ptImportSvc.Configured() {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
-		go runPeerTubeImportWorker(workerCtx, logger, ptImportSvc)
+		go runPeerTubeImportWorker(workerCtx, logger, ptImportSvc, cronLeader)
 		logger.Info("peertube import worker started")
 	}
 
@@ -3086,11 +3086,23 @@ func runStoryboardBackfillWorker(ctx context.Context, logger *slog.Logger, svc *
 // runPeerTubeImportWorker claims and executes due PeerTube import runs (fix_plan
 // P18). Only one run is ever active (the single-active DB constraint), so it
 // drains at most one per tick; per-run outcomes are persisted to the run row.
-func runPeerTubeImportWorker(ctx context.Context, logger *slog.Logger, svc *peertubeimport.Service) {
+//
+// LEADER-GATED, unlike the other queue drains. The rule those follow — drain on
+// every instance, because more instances mean more throughput — has nothing to
+// buy here: at most one import run exists at a time, so a second drainer adds no
+// throughput and only supplies a second executor for one row. That matters
+// because an import is the longest-running job in the process and its view-count
+// pass is not concurrency-safe (it reads the applied total outside the
+// transaction that applies the delta), so two executors double the counts. The
+// lease renewal in executeRun is what keeps the row from being requeued at all;
+// this is the second lock on the same door. Jitter is off for the same reason it
+// is off on every leader-gated loop: exactly one instance acts, so there is no
+// phase to spread.
+func runPeerTubeImportWorker(ctx context.Context, logger *slog.Logger, svc *peertubeimport.Service, leader *leaderlock.Elector) {
 	const interval = 15 * time.Second
 	jobloop.Loop{
 		Interval: interval,
-		Jitter:   true,
+		Leader:   leader,
 		Passes: []jobloop.Pass{{
 			FailMsg: "peertube import drain failed",
 			Run: func(ctx context.Context, _ time.Time) (int, error) {

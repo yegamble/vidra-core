@@ -2160,9 +2160,26 @@ func (c *Config) validatePeerTubeImport() error {
 		// month must not become a boot failure a year later.
 		errs = append(errs, err)
 	}
-	if c.PeerTubeImportMediaMode != "reference" && c.PeerTubeImportMediaMode != "none" && c.PeerTubeSourceStorageBackend == "s3" {
+	// The two source-media rules below are the same rule asked of each backend:
+	// a run that CARRIES BYTES needs somewhere to read them from. Neither applies
+	// to reference or none, which read nothing from the source's media at all.
+	carriesMedia := c.PeerTubeImportMediaMode != "reference" && c.PeerTubeImportMediaMode != "none"
+	if carriesMedia && c.PeerTubeSourceStorageBackend == "s3" {
 		if strings.TrimSpace(c.PeerTubeSourceS3Endpoint) == "" || strings.TrimSpace(c.PeerTubeSourceS3Bucket) == "" {
 			errs = append(errs, fmt.Errorf("config: PEERTUBE_SOURCE_S3_ENDPOINT and PEERTUBE_SOURCE_S3_BUCKET are required when the source storage backend is s3"))
+		}
+	}
+	// The local half — and the one an operator is far likelier to hit, because
+	// local and copy are BOTH the shipped defaults and nothing in the deployment
+	// mounts the source tree (the env template says so and leaves the bind mount
+	// to the operator). Missing, this fails as quietly as a misconfiguration can:
+	// storage.NewLocal does MkdirAll, so an unmounted path yields a HEALTHY
+	// backend over an empty directory, every media read misses, and every entity
+	// fails one at a time until the run reaches the end. Boot is the only place
+	// that mistake is visible before the migration is over.
+	if carriesMedia && (c.PeerTubeSourceStorageBackend == "local" || c.PeerTubeSourceStorageBackend == "") {
+		if strings.TrimSpace(c.PeerTubeSourceStorageLocalRoot) == "" {
+			errs = append(errs, fmt.Errorf("config: PEERTUBE_SOURCE_STORAGE_LOCAL_ROOT is required when the source storage backend is local and PEERTUBE_IMPORT_MEDIA_MODE carries media (copy) — mount the source instance's media tree read-only and name the path here, or set the media mode to reference or none"))
 		}
 	}
 	return errors.Join(errs...)
