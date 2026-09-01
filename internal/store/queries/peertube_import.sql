@@ -25,6 +25,23 @@ DO UPDATE SET vidra_id = EXCLUDED.vidra_id,
               updated_at = now()
 RETURNING *;
 
+-- name: UpsertImportLedgerLink :exec
+-- The ledger upsert for a LINK rather than a creation: --conflict-policy
+-- skip/merge did not insert a row for this source entity, it mapped the entity
+-- onto a row that was ALREADY on this instance so the source's children still
+-- resolve. Same idempotency key as UpsertImportLedgerEntry; created_by_import
+-- (0124) is FALSE because the row on the other end belongs to this instance, and
+-- the source-authoritative resync must not rewrite it. Stated once, here, at
+-- creation — nothing re-asserts it on a later run.
+INSERT INTO peertube_import_ledger (entity_kind, source_id, vidra_id, status, note, created_by_import)
+VALUES ($1, $2, $3, $4, $5, FALSE)
+ON CONFLICT (entity_kind, source_id)
+DO UPDATE SET vidra_id          = EXCLUDED.vidra_id,
+              status            = EXCLUDED.status,
+              note              = EXCLUDED.note,
+              created_by_import = FALSE,
+              updated_at        = now();
+
 -- name: GetImportLedgerLastWriteForTarget :one
 -- The import's most recent COMPLETED write onto one Vidra row, within one entity
 -- kind — "did I put the avatar that is in this slot there, and what was it?".
@@ -426,14 +443,20 @@ DO UPDATE SET vidra_id      = EXCLUDED.vidra_id,
 -- source_authoritative. The default import is unchanged: it fills gaps, and the
 -- ON CONFLICT DO NOTHING guards above are still what it uses.
 --
--- The organising rule, and the reason no new provenance column was needed: THE
--- LEDGER IS THE PROVENANCE RECORD. It already maps every source entity to the
--- Vidra row the import created for it, so "did the import write this row?" is
--- answerable for every family by joining peertube_import_ledger to the row. A
--- resync therefore updates exactly the rows the import owns and cannot reach a
--- video somebody uploaded here, a channel created here, or an account that never
--- came from the source — those have no ledger row and are invisible to every
--- query in this section.
+-- The organising rule: THE LEDGER IS THE PROVENANCE RECORD. It maps every source
+-- entity to the Vidra row that stands for it, so "did the import write this
+-- row?" is answerable for every family by joining peertube_import_ledger to the
+-- row. A resync therefore updates exactly the rows the import owns and cannot
+-- reach a video somebody uploaded here, a channel created here, or an account
+-- that never came from the source — those have no ledger row and are invisible
+-- to every query in this section.
+--
+-- A ledger row is NOT on its own proof that the import CREATED what it points
+-- at: --conflict-policy skip/merge maps a source entity onto a row that was
+-- already here, and merge records that mapping as 'done'. created_by_import
+-- (0124) is what separates the two, and every read below carries it — the join
+-- alone would let a merge + source-authoritative run rewrite rows this instance
+-- made. It is TRUE for every inserted row, so nothing else changes.
 --
 -- The reads are DELIBERATELY BULK, one statement per family for the whole
 -- instance. A no-op re-run of this importer takes ~21 seconds on a 155k-entity
@@ -455,7 +478,7 @@ FROM peertube_import_ledger
 WHERE entity_kind = $1 AND status = 'done';
 
 -- name: ImportResyncUsers :many
--- Every user the import created, with the fields the import maps. username and
+-- Every user the import CREATED, with the fields the import maps. username and
 -- email are read but never rewritten — they are the NATURAL KEYS the conflict
 -- policy owns, they are uniquely indexed, and a rename carried blindly could
 -- collide with an unrelated account. They come back so the caller can REPORT the
@@ -464,15 +487,18 @@ SELECT l.source_id, u.id, u.username, u.email, u.password_hash, u.role,
        u.email_verified, u.display_name
 FROM peertube_import_ledger l
 JOIN users u ON u.id = l.vidra_id
-WHERE l.entity_kind = 'user' AND l.status = 'done';
+WHERE l.entity_kind = 'user' AND l.status = 'done' AND l.created_by_import;
 
 -- name: ImportResyncChannels :many
--- Every channel the import created. handle is the natural key: read, reported,
+-- Every channel the import CREATED — created_by_import is what makes that
+-- sentence true. A channel this import only LINKED to under --conflict-policy
+-- skip/merge was made on this instance, is somebody's here, and is not the
+-- resync's to reassign or rename. handle is the natural key: read, reported,
 -- never rewritten.
 SELECT l.source_id, c.id, c.owner_id, c.handle, c.display_name, c.description
 FROM peertube_import_ledger l
 JOIN channels c ON c.id = l.vidra_id
-WHERE l.entity_kind = 'channel' AND l.status = 'done';
+WHERE l.entity_kind = 'channel' AND l.status = 'done' AND l.created_by_import;
 
 -- name: ImportResyncVideos :many
 -- Every video the import created, with the mapped metadata AND the duration,
@@ -492,7 +518,7 @@ SELECT l.source_id, v.id, v.channel_id, v.title, v.description, v.privacy, v.sta
 FROM peertube_import_ledger l
 JOIN videos v ON v.id = l.vidra_id
 LEFT JOIN video_metadata m ON m.video_id = v.id
-WHERE l.entity_kind = 'video' AND l.status = 'done';
+WHERE l.entity_kind = 'video' AND l.status = 'done' AND l.created_by_import;
 
 -- name: ImportResyncVideoTags :many
 -- The tag set standing on every video the import created, ordered so the caller
@@ -502,7 +528,7 @@ WHERE l.entity_kind = 'video' AND l.status = 'done';
 SELECT l.source_id, t.tag
 FROM peertube_import_ledger l
 JOIN video_tags t ON t.video_id = l.vidra_id
-WHERE l.entity_kind = 'video' AND l.status = 'done'
+WHERE l.entity_kind = 'video' AND l.status = 'done' AND l.created_by_import
 ORDER BY l.source_id, t.tag;
 
 -- name: ImportResyncChapters :many
@@ -514,7 +540,7 @@ ORDER BY l.source_id, t.tag;
 SELECT l.source_id, c.start_seconds, c.title
 FROM peertube_import_ledger l
 JOIN video_chapters c ON c.video_id = l.vidra_id
-WHERE l.entity_kind = 'video' AND l.status = 'done'
+WHERE l.entity_kind = 'video' AND l.status = 'done' AND l.created_by_import
 ORDER BY l.source_id, c.start_seconds;
 
 -- name: ImportResyncRatings :many
@@ -525,13 +551,13 @@ ORDER BY l.source_id, c.start_seconds;
 SELECT r.user_id, r.video_id, r.rating
 FROM video_ratings r
 JOIN peertube_import_ledger l
-  ON l.entity_kind = 'video' AND l.status = 'done' AND l.vidra_id = r.video_id;
+  ON l.entity_kind = 'video' AND l.status = 'done' AND l.created_by_import AND l.vidra_id = r.video_id;
 
 -- name: ImportResyncPlaylists :many
 SELECT l.source_id, p.id, p.owner_id, p.title, p.description, p.visibility
 FROM peertube_import_ledger l
 JOIN playlists p ON p.id = l.vidra_id
-WHERE l.entity_kind = 'playlist' AND l.status = 'done';
+WHERE l.entity_kind = 'playlist' AND l.status = 'done' AND l.created_by_import;
 
 -- name: ImportResyncPlaylistItems :many
 -- The slots standing in every playlist the import created, in playback order —
@@ -539,7 +565,7 @@ WHERE l.entity_kind = 'playlist' AND l.status = 'done';
 SELECT l.source_id, i.video_id, i.position
 FROM peertube_import_ledger l
 JOIN playlist_items i ON i.playlist_id = l.vidra_id
-WHERE l.entity_kind = 'playlist' AND l.status = 'done'
+WHERE l.entity_kind = 'playlist' AND l.status = 'done' AND l.created_by_import
 ORDER BY l.source_id, i.position, i.video_id;
 
 -- ── the resync writes ──

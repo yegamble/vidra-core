@@ -3437,3 +3437,154 @@ func assertBlockedTitleAbsent(t *testing.T, surface string, titles []string) {
 		t.Errorf("%s does not list the video that is NOT blacklisted (titles=%v) — the surface is empty, so it proves nothing", surface, titles)
 	}
 }
+
+// TestPeerTubeImportMergeLinkedRowsAreNotResynced pins the boundary between the
+// two orthogonal options a real cutover combines. --conflict-policy merge maps a
+// source entity onto a row that was ALREADY on this instance (that is what it is
+// for: the source's children need something to hang off). --source-authoritative
+// lets a re-run rewrite the rows the import OWNS. A row the import merely linked
+// to is not one it owns, so the resync must leave it exactly as this instance
+// made it — while still carrying the source onto the rows the import really did
+// create, which is the whole point of the mode and is the control here.
+func TestPeerTubeImportMergeLinkedRowsAreNotResynced(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+
+	sourceHash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srcPool, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, srcPool, string(sourceHash), secretPrivKeyAlice)
+
+	// ── what is on this instance before the operator ever runs the tool ──
+	//
+	// The owner's own account, which happens to share a username with a source
+	// account, and a channel made here by a different local creator whose handle
+	// happens to match a source channel's. Both are exactly what merge points the
+	// source's children at, and neither came from the source.
+	ownerHash, err := bcrypt.GenerateFromPassword([]byte("the-owners-own-password"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ownerID, carolID, localChanID uuid.UUID
+	if err := dest.QueryRow(ctx,
+		`INSERT INTO users (username,email,password_hash,role) VALUES ('alice','owner@example.test',$1,'admin') RETURNING id`,
+		string(ownerHash)).Scan(&ownerID); err != nil {
+		t.Fatalf("seed pre-existing owner: %v", err)
+	}
+	if err := dest.QueryRow(ctx,
+		`INSERT INTO users (username,email,password_hash,role) VALUES ('carol','carol@example.test','x','user') RETURNING id`).Scan(&carolID); err != nil {
+		t.Fatalf("seed local creator: %v", err)
+	}
+	if err := dest.QueryRow(ctx,
+		`INSERT INTO channels (owner_id,handle,display_name,description) VALUES ($1,'alice_channel','Carol Channel','made here') RETURNING id`,
+		carolID).Scan(&localChanID); err != nil {
+		t.Fatalf("seed local channel: %v", err)
+	}
+
+	runMerge := func(sourceAuthoritative bool) {
+		t.Helper()
+		imp := NewImporter(dest, NewSourceFromPool(srcPool), Options{
+			Policy: PolicyMerge, MediaMode: MediaModeNone, SourceAuthoritative: sourceAuthoritative,
+		})
+		v, err := imp.Preflight(ctx)
+		if err != nil {
+			t.Fatalf("preflight: %v", err)
+		}
+		if _, err := imp.Run(ctx, v, nil); err != nil {
+			t.Fatalf("run (source_authoritative=%v): %v", sourceAuthoritative, err)
+		}
+	}
+	runMerge(false)
+
+	// bob collided with nothing, so the import CREATED his account and his
+	// channel. Reading their ids here is also the fixture check: if the import
+	// had done nothing at all these lookups fail, so the "unchanged" assertions
+	// below cannot pass merely because no run happened.
+	var bobID, bobChanID uuid.UUID
+	if err := dest.QueryRow(ctx, `SELECT id FROM users WHERE username='bob'`).Scan(&bobID); err != nil {
+		t.Fatalf("read imported bob: %v", err)
+	}
+	if err := dest.QueryRow(ctx, `SELECT id FROM channels WHERE handle='bob_channel'`).Scan(&bobChanID); err != nil {
+		t.Fatalf("read imported bob_channel: %v", err)
+	}
+
+	// The ledger states the provenance ONCE, at creation.
+	for _, tc := range []struct {
+		kind, sourceID string
+		want           bool
+	}{
+		{KindUser, "1", false},    // merged onto the owner's pre-existing account
+		{KindUser, "2", true},     // bob: inserted by the import
+		{KindChannel, "1", false}, // merged onto the local creator's channel
+		{KindChannel, "2", true},  // bob_channel: inserted by the import
+	} {
+		var got bool
+		if err := dest.QueryRow(ctx,
+			`SELECT created_by_import FROM peertube_import_ledger WHERE entity_kind=$1 AND source_id=$2`,
+			tc.kind, tc.sourceID).Scan(&got); err != nil {
+			t.Fatalf("ledger %s/%s: %v", tc.kind, tc.sourceID, err)
+		}
+		if got != tc.want {
+			t.Errorf("ledger %s/%s created_by_import = %v, want %v", tc.kind, tc.sourceID, got, tc.want)
+		}
+	}
+
+	// ── the source moves on, and the operator runs the cutover sync ──
+	newHash, err := bcrypt.GenerateFromPassword([]byte("changed-on-the-source"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, ctx, srcPool, `UPDATE "user" SET password=$1 WHERE id IN (1,2)`, string(newHash))
+	mustExec(t, ctx, srcPool, `UPDATE "account" SET name='Alice Renamed' WHERE id=1`)
+	mustExec(t, ctx, srcPool, `UPDATE "videoChannel" SET name='Alice Channel (renamed)' WHERE id=1`)
+	mustExec(t, ctx, srcPool, `UPDATE "videoChannel" SET name='Bob Channel (renamed)' WHERE id=2`)
+	runMerge(true)
+
+	// The rows the import only LINKED to belong to this instance, and are left
+	// exactly as this instance made them.
+	var gotHash, gotRole string
+	if err := dest.QueryRow(ctx, `SELECT password_hash, role FROM users WHERE id=$1`, ownerID).Scan(&gotHash, &gotRole); err != nil {
+		t.Fatalf("read the pre-existing account after the resync: %v", err)
+	}
+	if gotHash != string(ownerHash) {
+		t.Errorf("the resync rewrote the password_hash of an account the import did not create")
+	}
+	if gotRole != "admin" {
+		t.Errorf("pre-existing account role = %q, want %q — the resync must not re-grade an account it did not create", gotRole, "admin")
+	}
+	var gotOwner uuid.UUID
+	var gotName string
+	if err := dest.QueryRow(ctx, `SELECT owner_id, display_name FROM channels WHERE id=$1`, localChanID).Scan(&gotOwner, &gotName); err != nil {
+		t.Fatalf("read the local channel after the resync: %v", err)
+	}
+	if gotOwner != carolID {
+		t.Errorf("the local channel was reassigned to %v, want its own owner %v", gotOwner, carolID)
+	}
+	if gotName != "Carol Channel" {
+		t.Errorf("local channel display_name = %q, want %q", gotName, "Carol Channel")
+	}
+
+	// …and the mode still does what it exists to do on the rows the import DID
+	// create. Without these two the guard could be "satisfied" by an over-broad
+	// predicate that turns --source-authoritative into a no-op.
+	if err := dest.QueryRow(ctx, `SELECT password_hash FROM users WHERE id=$1`, bobID).Scan(&gotHash); err != nil {
+		t.Fatalf("read the imported account after the resync: %v", err)
+	}
+	if gotHash != string(newHash) {
+		t.Errorf("the imported account's password_hash was NOT resynced — --source-authoritative has become a no-op")
+	}
+	if err := dest.QueryRow(ctx, `SELECT display_name FROM channels WHERE id=$1`, bobChanID).Scan(&gotName); err != nil {
+		t.Fatalf("read the imported channel after the resync: %v", err)
+	}
+	if gotName != "Bob Channel (renamed)" {
+		t.Errorf("imported channel display_name = %q, want the source's new name", gotName)
+	}
+}

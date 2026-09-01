@@ -37,13 +37,19 @@ import (
 //
 // ── the organising principle: the ledger IS the provenance record ──
 //
-// peertube_import_ledger already maps every source entity to the Vidra row the
-// import created for it. So "did the import write this row?" is answerable today
-// for every family, with no new provenance column, and that gives the mode a
-// safe definition: IT UPDATES EXACTLY THE ROWS THE IMPORT OWNS, AND NEVER
-// TOUCHES ANYTHING CREATED NATIVELY ON VIDRA. A video somebody uploaded here has
-// no ledger row and is invisible to every query below. An account created here
-// is invisible. A channel created here is invisible.
+// peertube_import_ledger maps every source entity to the Vidra row that stands
+// for it. So "did the import write this row?" is answerable for every family,
+// and that gives the mode a safe definition: IT UPDATES EXACTLY THE ROWS THE
+// IMPORT CREATED, AND NEVER TOUCHES ANYTHING THAT WAS ALREADY ON THIS INSTANCE.
+// A video somebody uploaded here has no ledger row and is invisible to every
+// query below. An account created here is invisible. A channel created here is
+// invisible.
+//
+// The presence of a ledger row is NOT on its own that answer, and reading it as
+// though it were is what 0124 closes: --conflict-policy skip/merge maps a source
+// entity onto a row that already existed here — merge records that mapping as
+// 'done' — so the reads below also require created_by_import, which the two link
+// paths in entities.go state FALSE at creation and nothing re-asserts later.
 //
 // ── what it will not do, ever ──
 //
