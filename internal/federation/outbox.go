@@ -125,7 +125,7 @@ func (s *Service) fanOutToFollowers(ctx context.Context, channelID uuid.UUID, ch
 // AS Video object, attributed to the channel actor and addressed to the public.
 func (s *Service) buildVideoActivity(activityType, channelHandle string, v sqlcgen.GetVideoByIDRow) ([]byte, error) {
 	channelActor := s.baseURL + "/video-channels/" + channelHandle
-	videoURL := s.baseURL + "/videos/watch/" + v.ID.String()
+	videoURL := s.baseURL + "/videos/" + v.ID.String()
 	activity := map[string]any{
 		"@context": "https://www.w3.org/ns/activitystreams",
 		"id":       channelActor + "/activities/" + strings.ToLower(activityType) + "/" + uuid.NewString(),
@@ -170,7 +170,7 @@ func (s *Service) buildDeleteVideo(channelHandle string, videoID uuid.UUID) ([]b
 		"type":     "Delete",
 		"actor":    channelActor,
 		"to":       []string{publicAudience},
-		"object":   s.baseURL + "/videos/watch/" + videoID.String(),
+		"object":   s.baseURL + "/videos/" + videoID.String(),
 	}
 	return json.Marshal(del)
 }

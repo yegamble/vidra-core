@@ -110,7 +110,7 @@ func (s *Service) ChannelOutboxPage(ctx context.Context, handle string, page int
 	}
 	items := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
-		videoURL := s.baseURL + "/videos/watch/" + r.ID.String()
+		videoURL := s.baseURL + "/videos/" + r.ID.String()
 		items = append(items, map[string]any{
 			"id":     channelActor + "/activities/create/" + r.ID.String(),
 			"type":   "Create",

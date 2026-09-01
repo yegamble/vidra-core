@@ -67,7 +67,7 @@ func TestHandleInboxCreateNoteStoresRemoteComment(t *testing.T) {
 	flagger := &fakeFlagger{}
 	svc := NewService(repo, WithBaseURL(noteBase), WithCommentFlagger(flagger))
 
-	videoURL := noteBase + "/videos/watch/" + videoID.String()
+	videoURL := noteBase + "/videos/" + videoID.String()
 	body := createNote("https://remote.example/act/n1", remoteBob,
 		"https://remote.example/comments/1", remoteBob, videoURL,
 		"<p>Hello &amp; welcome</p>")
@@ -105,6 +105,7 @@ func TestHandleInboxCreateNoteTruncatesBody(t *testing.T) {
 	svc := NewService(repo, WithBaseURL(noteBase))
 
 	long := strings.Repeat("x", maxRemoteCommentLen+500)
+	// Legacy inReplyTo form (/videos/watch/) — still accepted inbound.
 	body := createNote("https://remote.example/act/n2", remoteBob,
 		"https://remote.example/comments/2", remoteBob,
 		noteBase+"/videos/watch/"+videoID.String(), long)
@@ -160,7 +161,7 @@ func TestHandleInboxCreateNoteThreading(t *testing.T) {
 
 func TestHandleInboxCreateNoteRejections(t *testing.T) {
 	videoID := uuid.New()
-	videoURL := noteBase + "/videos/watch/" + videoID.String()
+	videoURL := noteBase + "/videos/" + videoID.String()
 	evil := "https://evil.example/accounts/mallory"
 
 	cases := []struct {
@@ -180,8 +181,11 @@ func TestHandleInboxCreateNoteRejections(t *testing.T) {
 		{"inReplyTo is not one of ours",
 			createNote("https://remote.example/act/r4", remoteBob, "https://remote.example/comments/r4", remoteBob, "https://elsewhere.example/videos/watch/9", "x"),
 			nil},
-		{"inReplyTo names an unknown local video",
+		{"inReplyTo names an unknown local video (legacy form)",
 			createNote("https://remote.example/act/r5", remoteBob, "https://remote.example/comments/r5", remoteBob, noteBase+"/videos/watch/"+uuid.NewString(), "x"),
+			nil},
+		{"inReplyTo names an unknown local video (canonical form)",
+			createNote("https://remote.example/act/r7", remoteBob, "https://remote.example/comments/r7", remoteBob, noteBase+"/videos/"+uuid.NewString(), "x"),
 			nil},
 		{"empty body after HTML strip",
 			createNote("https://remote.example/act/r6", remoteBob, "https://remote.example/comments/r6", remoteBob, videoURL, "<p>  </p>"),
@@ -210,6 +214,7 @@ func TestHandleInboxCreateNoteOnNonPublicVideoIgnored(t *testing.T) {
 	repo.videosByID[videoID] = v
 	svc := NewService(repo, WithBaseURL(noteBase))
 
+	// Legacy inReplyTo form (/videos/watch/) — still accepted inbound.
 	body := createNote("https://remote.example/act/p1", remoteBob,
 		"https://remote.example/comments/p1", remoteBob,
 		noteBase+"/videos/watch/"+videoID.String(), "x")
@@ -229,7 +234,7 @@ func TestHandleInboxUpdateNoteAuthority(t *testing.T) {
 
 	create := createNote("https://remote.example/act/u1", remoteBob,
 		"https://remote.example/comments/u1", remoteBob,
-		noteBase+"/videos/watch/"+videoID.String(), "original")
+		noteBase+"/videos/"+videoID.String(), "original")
 	if err := svc.HandleInbox(ctx, remoteBob, []byte(create)); err != nil {
 		t.Fatalf("HandleInbox Create: %v", err)
 	}
@@ -263,6 +268,7 @@ func TestHandleInboxDeleteComment(t *testing.T) {
 	svc := NewService(repo, WithBaseURL(noteBase))
 	ctx := context.Background()
 
+	// Legacy inReplyTo form (/videos/watch/) — still accepted inbound.
 	create := createNote("https://remote.example/act/d1", remoteBob,
 		"https://remote.example/comments/d1", remoteBob,
 		noteBase+"/videos/watch/"+videoID.String(), "doomed")
@@ -330,7 +336,7 @@ func TestHandleInboxDeleteActorCascades(t *testing.T) {
 	// bob has a comment here and (as a channel would) a remote video + an edge.
 	create := createNote("https://remote.example/act/a1", remoteBob,
 		"https://remote.example/comments/a1", remoteBob,
-		noteBase+"/videos/watch/"+videoID.String(), "from bob")
+		noteBase+"/videos/"+videoID.String(), "from bob")
 	if err := svc.HandleInbox(ctx, remoteBob, []byte(create)); err != nil {
 		t.Fatalf("HandleInbox Create: %v", err)
 	}
@@ -352,6 +358,62 @@ func TestHandleInboxDeleteActorCascades(t *testing.T) {
 	}
 	if len(repo.remoteVideos) != 0 {
 		t.Error("the actor's videos survived the actor Delete")
+	}
+}
+
+// TestLocalVideoIDAcceptsBothWatchURLForms pins the dual-accept contract for
+// inbound video object URLs. We now MINT the canonical /videos/<uuid> form (the
+// one RSS/sitemap/oEmbed emit and the frontend routes), but replies federated
+// while we minted /videos/watch/<uuid> must keep resolving to the same video —
+// so both prefixes are accepted, and nothing else is.
+func TestLocalVideoIDAcceptsBothWatchURLForms(t *testing.T) {
+	videoID := uuid.New()
+	svc := NewService(newNotesRepo(videoID), WithBaseURL(noteBase))
+
+	cases := []struct {
+		name      string
+		objectURL string
+		wantID    uuid.UUID
+		wantOK    bool
+	}{
+		{"canonical form", noteBase + "/videos/" + videoID.String(), videoID, true},
+		{"legacy watch form", noteBase + "/videos/watch/" + videoID.String(), videoID, true},
+		{"legacy prefix with a non-uuid remainder", noteBase + "/videos/watch/not-a-uuid", uuid.UUID{}, false},
+		{"canonical prefix with a non-uuid remainder", noteBase + "/videos/not-a-uuid", uuid.UUID{}, false},
+		{"canonical prefix with an empty remainder", noteBase + "/videos/", uuid.UUID{}, false},
+		{"legacy prefix with an empty remainder", noteBase + "/videos/watch/", uuid.UUID{}, false},
+		{"another host, canonical form", "https://remote.example/videos/" + videoID.String(), uuid.UUID{}, false},
+		{"another host, legacy form", "https://remote.example/videos/watch/" + videoID.String(), uuid.UUID{}, false},
+		{"one of our comment URLs", noteBase + "/comments/" + videoID.String(), uuid.UUID{}, false},
+		{"empty", "", uuid.UUID{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := svc.localVideoID(tc.objectURL)
+			if ok != tc.wantOK || got != tc.wantID {
+				t.Errorf("localVideoID(%q) = %v, %v; want %v, %v", tc.objectURL, got, ok, tc.wantID, tc.wantOK)
+			}
+		})
+	}
+}
+
+// TestResolveNoteTargetAcceptsBothWatchURLForms proves the dual-accept reaches
+// the threading seam: either form resolves to the same publicly visible video.
+func TestResolveNoteTargetAcceptsBothWatchURLForms(t *testing.T) {
+	videoID := uuid.New()
+	svc := NewService(newNotesRepo(videoID), WithBaseURL(noteBase))
+
+	for _, inReplyTo := range []string{
+		noteBase + "/videos/" + videoID.String(),
+		noteBase + "/videos/watch/" + videoID.String(),
+	} {
+		vid, parent, ok, err := svc.resolveNoteTarget(context.Background(), inReplyTo)
+		if err != nil {
+			t.Fatalf("resolveNoteTarget(%q): %v", inReplyTo, err)
+		}
+		if !ok || vid != videoID || parent.Valid {
+			t.Errorf("resolveNoteTarget(%q) = %v, %+v, %v; want top-level on %s", inReplyTo, vid, parent, ok, videoID)
+		}
 	}
 }
 

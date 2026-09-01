@@ -54,7 +54,7 @@ func TestDrainPostsSuccess(t *testing.T) {
 	rec := pds.recordCalls[0]
 	embed := rec["embed"].(map[string]any)
 	external := embed["external"].(map[string]any)
-	if external["uri"] != "https://videos.example/videos/watch/"+vid.String() {
+	if external["uri"] != "https://videos.example/videos/"+vid.String() {
 		t.Errorf("watch url = %v", external["uri"])
 	}
 	// last_posted_at is bumped for the owner.

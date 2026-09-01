@@ -54,7 +54,7 @@ func TestAnnounceVideoFansOutToFollowers(t *testing.T) {
 		if create.Object.Type != "Video" || create.Object.Name != "My Clip" {
 			t.Errorf("object = %+v", create.Object)
 		}
-		if create.Object.ID != "https://videos.example/videos/watch/"+videoID.String() {
+		if create.Object.ID != "https://videos.example/videos/"+videoID.String() {
 			t.Errorf("object id = %q", create.Object.ID)
 		}
 		break
@@ -150,7 +150,7 @@ func TestDeleteVideoSendsDelete(t *testing.T) {
 			Object string `json:"object"`
 		}
 		_ = json.Unmarshal(d.row.Payload, &a)
-		if a.Type != "Delete" || a.Object != "https://videos.example/videos/watch/"+videoID.String() {
+		if a.Type != "Delete" || a.Object != "https://videos.example/videos/"+videoID.String() {
 			t.Errorf("activity = %+v, want Delete of the video URL", a)
 		}
 	}

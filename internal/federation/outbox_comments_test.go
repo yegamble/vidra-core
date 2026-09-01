@@ -84,7 +84,7 @@ func TestAnnounceCommentFansOutSignedAsAccount(t *testing.T) {
 		if a.Object.ID != noteBase+"/comments/"+c.ID.String() {
 			t.Errorf("note id = %q", a.Object.ID)
 		}
-		if a.Object.InReplyTo != noteBase+"/videos/watch/"+c.VideoID.String() {
+		if a.Object.InReplyTo != noteBase+"/videos/"+c.VideoID.String() {
 			t.Errorf("inReplyTo = %q, want the video object URL", a.Object.InReplyTo)
 		}
 		if a.Object.AttributedTo != accountActor {

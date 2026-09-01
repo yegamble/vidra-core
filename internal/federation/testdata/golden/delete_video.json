@@ -2,7 +2,7 @@
   "@context": "https://www.w3.org/ns/activitystreams",
   "actor": "https://videos.example/video-channels/films",
   "id": "https://videos.example/video-channels/films/activities/delete/00000000-0000-0000-0000-000000000000",
-  "object": "https://videos.example/videos/watch/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d",
+  "object": "https://videos.example/videos/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d",
   "to": [
     "https://www.w3.org/ns/activitystreams#Public"
   ],

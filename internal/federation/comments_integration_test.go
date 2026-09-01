@@ -339,7 +339,7 @@ func TestFederatedCommentFullLoop(t *testing.T) {
 	}
 
 	// --- inbound: bob's Note on our video lands as a remote comment ----------
-	videoURL := "https://videos.example/videos/watch/" + v.ID.String()
+	videoURL := "https://videos.example/videos/" + v.ID.String()
 	noteID := srv.URL + "/comments/loop-1"
 	create := `{"id":"` + srv.URL + `/act/note-1","type":"Create","actor":"` + remoteActor + `","object":{` +
 		`"id":"` + noteID + `","type":"Note","attributedTo":"` + remoteActor + `",` +
