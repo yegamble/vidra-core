@@ -69,6 +69,23 @@ func (im *Importer) recordStandalone(ctx context.Context, kind, sourceID string,
 	return recordLedger(ctx, im.q, kind, sourceID, vidraID, status, note)
 }
 
+// recordLink upserts the ledger row for a source entity the import did NOT
+// create a row for: --conflict-policy skip/merge pointed it at an account or a
+// channel that was ALREADY on this instance, so the source's children resolve to
+// something that is somebody else's. The mapping has to exist; the claim of
+// ownership must not, or a later --source-authoritative run rewrites a row this
+// instance made. The distinction is recorded ONCE, here, at creation (0124) —
+// nothing re-asserts it, in the same way #137 declined to re-assert is_active.
+func (im *Importer) recordLink(ctx context.Context, kind, sourceID string, vidraID uuid.UUID, status, note string) error {
+	return im.q.UpsertImportLedgerLink(ctx, sqlcgen.UpsertImportLedgerLinkParams{
+		EntityKind: kind,
+		SourceID:   sourceID,
+		VidraID:    optUUID(vidraID),
+		Status:     status,
+		Note:       note,
+	})
+}
+
 // markFailed records a per-row failure in the ledger with a SAFE note.
 func (im *Importer) markFailed(ctx context.Context, kind, sourceID, note string) {
 	_ = recordLedger(ctx, im.q, kind, sourceID, uuid.Nil, "failed", note)
@@ -197,7 +214,7 @@ func (im *Importer) importOneUser(ctx context.Context, u SourceUser, r *Report, 
 		return err
 	}
 	if !plan.insert {
-		if err := im.recordStandalone(ctx, KindUser, sid, plan.linkTo, plan.status, plan.note); err != nil {
+		if err := im.recordLink(ctx, KindUser, sid, plan.linkTo, plan.status, plan.note); err != nil {
 			return err
 		}
 		r.addConflict("user " + u.Username + ": " + plan.note)
@@ -331,7 +348,7 @@ func (im *Importer) importOneChannel(ctx context.Context, ch SourceChannel, r *R
 				status = "done"
 				linkNote = "merged into existing channel"
 			}
-			if err := im.recordStandalone(ctx, KindChannel, sid, existingID, status, linkNote); err != nil {
+			if err := im.recordLink(ctx, KindChannel, sid, existingID, status, linkNote); err != nil {
 				return err
 			}
 			r.addConflict("channel " + ch.Handle + ": " + linkNote)

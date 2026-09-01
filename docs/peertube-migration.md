@@ -370,9 +370,13 @@ peertube-import --source-dsn '...' --source-authoritative
 
 It is a second, orthogonal axis; it can be combined with any `--conflict-policy`.
 
-**What it updates.** Only rows the import created — the ledger is the record of
-which those are, so anything created on Vidra (an uploaded video, an account
-someone registered here, a channel made here) is invisible to it:
+**What it updates.** Only rows the import CREATED. The ledger records both which
+rows those are and whether the import created them or merely linked to one that
+was already here, so anything this instance made is invisible to it — an
+uploaded video, an account someone registered here, a channel made here, and
+equally an account or channel that `--conflict-policy merge` pointed the
+source's children at. A merged-onto account keeps its own password and role; a
+merged-onto channel keeps its own owner, name and description.
 
 | Family | What a re-run carries |
 | --- | --- |
