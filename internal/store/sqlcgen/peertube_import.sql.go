@@ -844,6 +844,52 @@ func (q *Queries) ImportInsertVideoTag(ctx context.Context, arg ImportInsertVide
 	return err
 }
 
+const importParentStillExists = `-- name: ImportParentStillExists :one
+SELECT COALESCE(CASE $1::text
+    WHEN 'user'    THEN EXISTS (SELECT 1 FROM users    u WHERE u.id = $2 AND u.deleted_at IS NULL)
+    WHEN 'channel' THEN EXISTS (SELECT 1 FROM channels c WHERE c.id = $2)
+    WHEN 'video'   THEN EXISTS (SELECT 1 FROM videos   v WHERE v.id = $2)
+    WHEN 'comment' THEN EXISTS (SELECT 1 FROM comments m WHERE m.id = $2)
+    ELSE TRUE
+END, TRUE)::boolean AS still_exists
+`
+
+type ImportParentStillExistsParams struct {
+	EntityKind string    `json:"entity_kind"`
+	VidraID    uuid.UUID `json:"vidra_id"`
+}
+
+// Does the Vidra row a ledger pointer names still exist here?
+//
+// vidra_id deliberately carries NO foreign key (0067 declares it a bare column,
+// and no migration since has added one, while started_by in the same file does
+// have `REFERENCES users (id) ON DELETE SET NULL` — the omission is a decision,
+// not an oversight). A cascade would delete the LEDGER ROW, and the next run
+// would then read the source entity as never-imported and RESURRECT what somebody
+// deleted, which is worse than a dangling pointer. The price is that nothing
+// keeps the pointer honest, so it has to be asked before it is trusted.
+//
+// One statement over the four kinds a parent can be, so resolving a parent still
+// costs one round trip. CASE evaluates only the arm the kind selects; an
+// unrecognised kind answers TRUE, because "this package does not know a table for
+// that kind" must never be read as "the row is gone".
+//
+// users is the one kind with a second predicate. The §1 account delete
+// ANONYMISES the row rather than removing it (0057: audit rows, DM sender
+// identity and comment tombstones all keep resolving), so the foreign key holds
+// and the import would quietly re-populate a deleted person's account.
+// deleted_at is what says the account is gone. is_active is deliberately NOT
+// consulted: an account that was SUSPENDED on the source is written inactive on
+// purpose and is still a perfectly good parent. And a comment TOMBSTONE is still
+// a valid parent for a reply — 0057 keeps that row precisely so the thread under
+// it goes on resolving.
+func (q *Queries) ImportParentStillExists(ctx context.Context, arg ImportParentStillExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, importParentStillExists, arg.EntityKind, arg.VidraID)
+	var still_exists bool
+	err := row.Scan(&still_exists)
+	return still_exists, err
+}
+
 const importResyncChannels = `-- name: ImportResyncChannels :many
 SELECT l.source_id, c.id, c.owner_id, c.handle, c.display_name, c.description
 FROM peertube_import_ledger l

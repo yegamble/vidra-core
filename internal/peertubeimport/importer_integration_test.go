@@ -3936,3 +3936,169 @@ func TestPeerTubeImportCopyModeOnAnHLSOnlySource(t *testing.T) {
 		}
 	}
 }
+
+// The documented workflow is REPEATED runs against a still-live PeerTube up to a
+// cutover, days or weeks apart, with the new instance in use in between. So
+// between two runs a moderator deletes an imported channel, or somebody deletes
+// their account (which hard-deletes their channels and videos and anonymises the
+// users row). The ledger keeps the mapping — deliberately, there is no foreign
+// key on vidra_id, because a cascade would delete the ledger row and the next run
+// would treat the entity as never-imported and RESURRECT it.
+//
+// What was never traced is the consequence: resolveParent handed that dead UUID
+// back as a live parent and the children were inserted against it. Each one is a
+// foreign-key violation, caught per entity (markFailed + continue), so the run
+// does not abort — it ends state=done with a pile of unexplained `failed` counts,
+// on the cutover run, which is the one nobody is watching.
+func TestPeerTubeImportDoesNotResolveADeletedParent(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	// A moderator deletes Bob's imported channel here. Its ledger row still says
+	// 'done' and still names the row that no longer exists.
+	mustExec(t, ctx, dest, `DELETE FROM channels WHERE id = (
+		SELECT vidra_id FROM peertube_import_ledger WHERE entity_kind='channel' AND source_id='2')`)
+	// …and the source, which is still live, gains a video on that channel before
+	// the cutover run. This is the only shape that reaches the parent pointer: a
+	// child already imported has a terminal ledger row of its own and is never
+	// re-resolved.
+	mustExec(t, ctx, src, `INSERT INTO "video" (id,uuid,"channelId",name,description,privacy,state,duration,views)
+		VALUES (3,'33333333-3333-3333-3333-333333333333',2,'Bob Video','',1,1,30,0)`)
+
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("cutover run: %v", err)
+	}
+
+	if got := report.Entities[KindVideo].Failed; got != 0 {
+		t.Errorf("videos failed on the cutover run = %d, want 0 — a deleted channel must skip its "+
+			"children, not fail them on a foreign-key violation", got)
+	}
+	// The child is skipped, and the reason is in the ledger where the operator's
+	// post-import conflict report reads it (ListImportLedgerConflicts).
+	var status, note string
+	if err := dest.QueryRow(ctx,
+		`SELECT status, note FROM peertube_import_ledger WHERE entity_kind='channel' AND source_id='2'`,
+	).Scan(&status, &note); err != nil {
+		t.Fatalf("read the channel ledger row: %v", err)
+	}
+	if status != "skipped" {
+		t.Errorf("ledger status for the deleted channel = %q, want %q", status, "skipped")
+	}
+	if note == "" {
+		t.Errorf("the repaired ledger row carries no note; the operator has no way to explain the skip")
+	}
+	var mapped *uuid.UUID
+	if err := dest.QueryRow(ctx,
+		`SELECT vidra_id FROM peertube_import_ledger WHERE entity_kind='channel' AND source_id='2'`,
+	).Scan(&mapped); err != nil {
+		t.Fatalf("read the channel ledger pointer: %v", err)
+	}
+	if mapped != nil {
+		t.Errorf("the ledger still points at %s; a pointer to a deleted row must be cleared", mapped)
+	}
+
+	// And the deletion sticks. Neither this run nor the one after it may stand the
+	// channel back up: the repaired row is TERMINAL, which is the whole reason it
+	// is 'skipped' and not 'failed'.
+	if n := countRows(t, ctx, dest, "channels"); n != 1 {
+		t.Fatalf("channels after the cutover run = %d, want 1 — the deleted channel was resurrected", n)
+	}
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("third run: %v", err)
+	}
+	if n := countRows(t, ctx, dest, "channels"); n != 1 {
+		t.Errorf("channels after a third run = %d, want 1 — the deleted channel was resurrected", n)
+	}
+}
+
+// The same trap through account deletion, which does NOT remove the users row:
+// §1 anonymises it (username/email replaced, is_active false, deleted_at
+// stamped) so audit rows and comment tombstones keep resolving. The foreign key
+// therefore holds, and the failure is quieter and worse — the import re-populates
+// a deleted person's account with channels carried over after they left.
+func TestPeerTubeImportDoesNotResolveADeletedAccount(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	// Bob deletes his account between runs (the anonymisation §1 performs — only
+	// the columns that decide the question here).
+	mustExec(t, ctx, dest, `UPDATE users SET deleted_at = now(), is_active = false
+		WHERE id = (SELECT vidra_id FROM peertube_import_ledger WHERE entity_kind='user' AND source_id='2')`)
+	// The still-live source gives Bob a second channel before the cutover run.
+	mustExec(t, ctx, src, `INSERT INTO "actor" (id,type,"preferredUsername","publicKey","privateKey")
+		VALUES (6,'Group','bob_second','PUBKEY-BCH2','PRIVKEY-BCH2-SECRET')`)
+	mustExec(t, ctx, src, `INSERT INTO "videoChannel" (id,name,description,"accountId","actorId")
+		VALUES (3,'Bob Second','',2,6)`)
+
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("cutover run: %v", err)
+	}
+
+	if got := report.Entities[KindChannel].Imported; got != 0 {
+		t.Errorf("channels imported for a deleted account = %d, want 0", got)
+	}
+	if n := countRows(t, ctx, dest, "channels"); n != 2 {
+		t.Errorf("channels = %d, want the same 2 — nothing may be attached to a deleted account", n)
+	}
+	var status string
+	if err := dest.QueryRow(ctx,
+		`SELECT status FROM peertube_import_ledger WHERE entity_kind='user' AND source_id='2'`,
+	).Scan(&status); err != nil {
+		t.Fatalf("read the user ledger row: %v", err)
+	}
+	if status != "skipped" {
+		t.Errorf("ledger status for the deleted account = %q, want %q", status, "skipped")
+	}
+	// The account stays deleted: a terminal row is what stops the next run from
+	// reading "never imported" and standing the person back up.
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("third run: %v", err)
+	}
+	var live int
+	if err := dest.QueryRow(ctx, `SELECT count(*) FROM users WHERE deleted_at IS NULL`).Scan(&live); err != nil {
+		t.Fatalf("count live users: %v", err)
+	}
+	if live != 1 {
+		t.Errorf("live users after a third run = %d, want 1 — the deleted account was resurrected", live)
+	}
+}
