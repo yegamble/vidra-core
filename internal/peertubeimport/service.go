@@ -50,6 +50,10 @@ type Service struct {
 	// recordAudit persists/emits a security-audit event. Nil = slog-only via the
 	// service logger.
 	recordAudit func(ctx context.Context, ev observability.AuditEvent)
+	// reconcileSearch sweeps the catalogue into the search index. Nil = unwired
+	// (search events are optional), in which case a finished import behaves
+	// exactly as it did before.
+	reconcileSearch func(ctx context.Context) error
 }
 
 // Repository is the durable run-store the service needs. *sqlcgen.Queries
@@ -79,6 +83,14 @@ var (
 	ErrRunNotFound = errors.New("peertubeimport: run not found")
 )
 
+// The two run modes, as stored in peertube_import_runs.mode. Named because the
+// mode now decides a side effect (the post-import search reconcile) and not just
+// which importer entry point runs, so a typo would be silent rather than a 400.
+const (
+	modeDryRun = "dry_run"
+	modeRun    = "run"
+)
+
 // Option customises the Service.
 type Option func(*Service)
 
@@ -100,6 +112,19 @@ func WithLogger(l *slog.Logger) Option {
 // WithAudit wires a durable audit sink (in addition to the slog audit line).
 func WithAudit(f func(ctx context.Context, ev observability.AuditEvent)) Option {
 	return func(s *Service) { s.recordAudit = f }
+}
+
+// WithSearchReconcile wires the search-index reconciliation sweep a completed
+// real run triggers (searchevents.Enqueuer.RunReconcile in cmd/api).
+//
+// The importer writes videos with direct SQL inside its own transactions and
+// emits no index event, so without this the only path into vidra-search is the
+// sweep worker: once at process start, then on a ticker that defaults to 24
+// hours. An admin-UI import on a running stack — the documented flow, chosen
+// precisely so cutover needs no restart — therefore left the whole migrated
+// catalogue unsearchable for up to a day, with restarting core as the remedy.
+func WithSearchReconcile(f func(ctx context.Context) error) Option {
+	return func(s *Service) { s.reconcileSearch = f }
 }
 
 // WithDefaultPolicy sets the fallback conflict policy for runs that do not
@@ -226,7 +251,7 @@ func (s *Service) CreateRun(ctx context.Context, in Launch, adminID uuid.UUID) (
 	if !s.Configured() {
 		return Run{}, ErrNotConfigured
 	}
-	if in.Mode != "dry_run" && in.Mode != "run" {
+	if in.Mode != modeDryRun && in.Mode != modeRun {
 		return Run{}, ErrInvalidMode
 	}
 	policy := in.Policy
@@ -417,7 +442,7 @@ func (s *Service) executeRun(ctx context.Context, claim sqlcgen.ClaimDueImportRu
 	}
 
 	var report *Report
-	if claim.Mode == "dry_run" {
+	if claim.Mode == modeDryRun {
 		report, err = importer.Plan(ctx, version)
 	} else {
 		report, err = importer.Run(ctx, version, func(r *Report) { s.persistProgress(ctx, claim.ID, r) })
@@ -427,7 +452,7 @@ func (s *Service) executeRun(ctx context.Context, claim sqlcgen.ClaimDueImportRu
 		s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, observability.ResultFailure, actor, overruled+"import failed")
 		return
 	}
-	s.finishRun(ctx, claim.ID, actor, overruled, report)
+	s.finishRun(ctx, claim, actor, overruled, report)
 }
 
 // finishRun records the terminal outcome of a run whose passes all ran: the
@@ -445,7 +470,13 @@ func (s *Service) executeRun(ctx context.Context, claim sqlcgen.ClaimDueImportRu
 // The run STATE is deliberately untouched. The run did finish, 0067's CHECK
 // admits only pending/running/done/failed, and a fifth state is not what needs
 // to change.
-func (s *Service) finishRun(ctx context.Context, id uuid.UUID, actor, overruled string, report *Report) {
+//
+// It takes the whole claim rather than just the id because the MODE decides the
+// last step: this is the one place a run is known to have completed, so it is
+// where the freshly written catalogue is swept into the search index — and a dry
+// run wrote nothing, so it sweeps nothing.
+func (s *Service) finishRun(ctx context.Context, claim sqlcgen.ClaimDueImportRunsRow, actor, overruled string, report *Report) {
+	id := claim.ID
 	data, merr := json.Marshal(report)
 	if merr != nil {
 		data = []byte("{}")
@@ -462,6 +493,29 @@ func (s *Service) finishRun(ctx context.Context, id uuid.UUID, actor, overruled 
 		note = fmt.Sprintf("finished with %d failed rows; ", failed)
 	}
 	s.emitAudit(ctx, observability.ActionPeerTubeImportFinish, result, actor, overruled+note+report.Summary())
+	if claim.Mode != modeDryRun {
+		s.reconcileSearchIndex(ctx, id)
+	}
+}
+
+// reconcileSearchIndex sweeps the catalogue into the search index after a real
+// import. It is safe to run twice: RunReconcile stamps every begin/page/end with
+// a fresh run id, so a second sweep simply restates the same documents under a
+// newer stamp and the receiver suppresses whatever the newest stamp did not
+// name. Re-running is therefore a no-op for the index, not a duplicate.
+//
+// Best-effort, like every other emission here: the run really did finish, and a
+// failed index refresh must not rewrite that record. The 24h sweep worker is
+// still the backstop if this drops.
+func (s *Service) reconcileSearchIndex(ctx context.Context, id uuid.UUID) {
+	if s.reconcileSearch == nil {
+		return
+	}
+	if err := s.reconcileSearch(ctx); err != nil {
+		s.logger.WarnContext(ctx, "peertube import: search reconcile after import failed; "+
+			"the imported catalogue stays unsearchable until the next sweep",
+			"run_id", id.String(), "error", err)
+	}
 }
 
 func (s *Service) persistProgress(ctx context.Context, id uuid.UUID, r *Report) {

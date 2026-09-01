@@ -134,7 +134,7 @@ func TestFinishAuditReportsAFailedRunAsFailed(t *testing.T) {
 	report.count(KindVideo).Failed = 13528
 	id := uuid.New()
 
-	svc.finishRun(context.Background(), id, "", "", report)
+	svc.finishRun(context.Background(), sqlcgen.ClaimDueImportRunsRow{ID: id, Mode: "run"}, "", "", report)
 
 	// The run genuinely finished, so the ROW is still completed rather than
 	// failed. There is no fifth run state and 0067's CHECK would not admit one.
@@ -175,7 +175,7 @@ func TestFinishAuditReportsACleanRunAsSuccess(t *testing.T) {
 	report.count(KindVideo).Skipped = 12
 	report.count(KindRendition).Unsupported = 40
 
-	svc.finishRun(context.Background(), uuid.New(), "", "", report)
+	svc.finishRun(context.Background(), sqlcgen.ClaimDueImportRunsRow{ID: uuid.New(), Mode: "run"}, "", "", report)
 
 	events := runAuditEvents(t, &buf)
 	if findRunAudit(events, observability.ActionPeerTubeImportFinish, observability.ResultFailure) != nil {

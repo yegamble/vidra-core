@@ -2122,6 +2122,16 @@ func run() error {
 			_ = auditsvc.Record(ctx, audit.Event{Action: ev.Action, Result: ev.Result, ActorID: ev.ActorID, Reason: ev.Reason, RequestID: ev.RequestID})
 		}),
 	}
+	if searchEnqueuer != nil {
+		// The importer writes videos with direct SQL and emits no index event, so
+		// a completed real run's catalogue was invisible to vidra-search until the
+		// reconcile worker's next tick — 24h by default, on a migration whose whole
+		// point is cutting over without a restart. Reconciling ON COMPLETION is the
+		// same sweep that worker runs, just at the moment there is something to sweep.
+		ptImportOpts = append(ptImportOpts, peertubeimport.WithSearchReconcile(func(ctx context.Context) error {
+			return searchEnqueuer.RunReconcile(ctx, searchevents.DefaultReconcilePageSize)
+		}))
+	}
 	if cfg.PeerTubeImportConfigured() {
 		// Actor-key sealer reuses the federation KEK so imported account/channel
 		// private keys are sealed exactly like the server seals them at rest.

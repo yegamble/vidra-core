@@ -15,7 +15,13 @@ make ci        # fmt-check, vet, openapi-verify, sqlc-verify, test-race
 Integration tests need live Postgres + Redis:
 
 ```
-docker compose --profile core up -d postgres redis migrate
+docker compose --profile core up -d postgres redis
+make migrate-up        # NOT `compose up migrate`: that service runs the
+                       # prebuilt vidra-core-api:local image, whose migrations
+                       # are EMBEDDED at build time, so a cold stack comes up
+                       # at whatever schema that image was built at and the
+                       # tests fail with a phantom "column ... does not exist".
+                       # migrate-up runs ./cmd/api from the working tree.
 DATABASE_URL=postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable \
 REDIS_URL=redis://localhost:6379/0 \
 go test -tags=integration ./internal/store/... ./internal/federation/...

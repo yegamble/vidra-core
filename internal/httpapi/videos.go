@@ -800,7 +800,19 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 	var svcPaging searchServicePaging
 	source := "local"
 	if s.useSearchService() && searchServiceCanRank(filter, sortKey) {
-		if svcViews, paging, ok := s.searchViaService(c, q, filter, page.Limit, page.Offset, viewerID, authed); ok {
+		svcViews, paging, ok := s.searchViaService(c, q, filter, page.Limit, page.Offset, viewerID, authed)
+		if ok && serviceAnsweredNothingOnPageOne(svcViews, page.Offset) {
+			// A healthy service that returned NOTHING for the first page is the
+			// cold-index case, and it is not an error, so the error-only fallback
+			// below never saw it. Taking the service branch here would set
+			// source="search" and then overwrite total with core's OWN SQL count —
+			// shipping `{"videos": [], "total": 13528}`, an empty grid under
+			// "13,528 results" with pagination through nothing. Search is never a
+			// hard dependency: fall through to SQL, which answers coherently
+			// whether the corpus is empty (nothing, total 0) or merely unindexed.
+			ok = false
+		}
+		if ok {
 			views, svcPaging = svcViews, paging
 			source = "search"
 			// The total stays core's own count of matching visible videos even
@@ -864,6 +876,23 @@ func (s *Server) handleSearchVideos(c echo.Context) error {
 // keeps its existing routing exactly.
 func searchServiceCanRank(filter video.SearchFilter, sort string) bool {
 	return sort == video.SearchSortRelevance && !filter.Narrows()
+}
+
+// serviceAnsweredNothingOnPageOne reports the one degenerate answer the service
+// path cannot ship: a first page with nothing on it.
+//
+// It is deliberately narrow. `total` staying core's per-viewer count while the
+// page holds fewer rows than that is the DESIGN (the service ranks and pages;
+// the count is core's), so this must not fire on any non-empty page. And past
+// the end of the ranked list an empty page is the correct answer — "you have run
+// out of results" — so it is scoped to offset 0, where an empty page can only
+// mean the service knows nothing about a corpus core can still search itself.
+// The query is always non-empty here: the handler 400s on a blank ?q.
+//
+// The cost of being wrong in this direction is one extra SQL search on a query
+// that genuinely matches nothing, which returns the same empty list either way.
+func serviceAnsweredNothingOnPageOne(views []videoView, offset int) bool {
+	return offset == 0 && len(views) == 0
 }
 
 // handleListChannelVideos lists a channel's videos. Behind optionalAuth: the
