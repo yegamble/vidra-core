@@ -276,3 +276,77 @@ func TestPurgeSkippedWithoutACDN(t *testing.T) {
 		t.Fatalf("delete = %d; body=%s", r.Code, r.Body.String())
 	}
 }
+
+// wantDownloadPurgeKeys is the subset of a public video's edge-reachable
+// objects that the DOWNLOAD gates control: the stored original, and the
+// derivatives remuxed out of the finalized HLS tree. Deliberately absent are
+// the thumbnail (no download gate applies) and every segment, variant playlist
+// and trick-play object in the ladder — closing downloads does not make a
+// video unwatchable, so purging the ladder would cold-start playback at the
+// edge for no reason.
+func wantDownloadPurgeKeys(id string) []string {
+	hls := "streaming-playlists/" + id
+	want := []string{
+		"web-videos/" + id + ".mp4",
+		hls + "/240p/video-only.mp4",
+		hls + "/240p/video.mp4",
+		hls + "/audio.m4a",
+	}
+	sort.Strings(want)
+	return want
+}
+
+// TestClosingTheDownloadGatePurgesDerivatives. publicDownload is a SECOND
+// fence, independent of Eligible: a public, published video with
+// download_enabled false still serves its ladder and still 403s its master
+// file. So revoking downloads leaves the video Eligible — which is why the
+// privacy-flip trigger never fired for it — while making objects an anonymous
+// visitor could previously fetch unauthorized. Those are exactly the bytes a
+// shared cache is still holding, at a stable and publicly derivable key.
+func TestClosingTheDownloadGatePurgesDerivatives(t *testing.T) {
+	srv, blobs, tcRepo, rec := purgeServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := publishedPublicVideo(t, srv, blobs, tcRepo, tok)
+
+	if r := doJSON(srv, http.MethodPatch, "/api/v1/videos/"+id, tok, `{"download_enabled":false}`); r.Code != http.StatusOK {
+		t.Fatalf("patch = %d; body=%s", r.Code, r.Body.String())
+	}
+	waitForPurge(t, rec, wantDownloadPurgeKeys(id))
+}
+
+// TestOpeningTheDownloadGateDoesNotPurge. The trigger is the LOSS of download
+// eligibility. Turning downloads ON authorises bytes rather than revoking
+// them, so there is nothing at the edge that has become wrong.
+func TestOpeningTheDownloadGateDoesNotPurge(t *testing.T) {
+	srv, blobs, tcRepo, rec := purgeServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := publishedPublicVideo(t, srv, blobs, tcRepo, tok)
+
+	if r := doJSON(srv, http.MethodPatch, "/api/v1/videos/"+id, tok, `{"download_enabled":false}`); r.Code != http.StatusOK {
+		t.Fatalf("close = %d; body=%s", r.Code, r.Body.String())
+	}
+	waitForPurge(t, rec, wantDownloadPurgeKeys(id))
+	rec.mu.Lock()
+	rec.keys = nil
+	rec.mu.Unlock()
+
+	if r := doJSON(srv, http.MethodPatch, "/api/v1/videos/"+id, tok, `{"download_enabled":true}`); r.Code != http.StatusOK {
+		t.Fatalf("open = %d; body=%s", r.Code, r.Body.String())
+	}
+	assertNoPurge(t, rec)
+}
+
+// TestDownloadGateFlipAwayFromPublicStillPurgesEverything. When a PATCH closes
+// the download gate AND leaves public in the same request, the privacy trigger
+// wins: the whole ladder became unauthorized, not just the derivatives.
+func TestDownloadGateFlipAwayFromPublicStillPurgesEverything(t *testing.T) {
+	srv, blobs, tcRepo, rec := purgeServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := publishedPublicVideo(t, srv, blobs, tcRepo, tok)
+
+	body := `{"download_enabled":false,"privacy":"private"}`
+	if r := doJSON(srv, http.MethodPatch, "/api/v1/videos/"+id, tok, body); r.Code != http.StatusOK {
+		t.Fatalf("patch = %d; body=%s", r.Code, r.Body.String())
+	}
+	waitForPurge(t, rec, wantVideoPurgeKeys(id))
+}

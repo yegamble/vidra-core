@@ -21,6 +21,15 @@ import (
 //   - a privacy flip away from public (handleUpdateVideo);
 //   - an admin block (handleBlockVideo).
 //
+// Download-gated purges — the strictly smaller set the SECOND fence controls
+// (videoDownloadPurgeSnapshot), fired when a per-video download_enabled flip
+// shuts while the video stays public and watchable:
+//   - the stored original, the VP9 alternate, every rendition's progressive MP4
+//     in both audio-included and video-only form, and audio.m4a. Exact keys
+//     only: they live inside the ladder's directory, so a prefix purge would
+//     evict the segments and cold-start playback to enforce a gate on
+//     four objects.
+//
 // Single-key purges — assets at ONE stable identity key (purgeEdgeKey):
 //   - user/channel avatar and banner replacement and deletion
 //     (profile_images.go), including the channel-delete cascade;
@@ -38,7 +47,17 @@ import (
 //     generation-addressed keys (phase-5 item 1a) or a purge at the worker's
 //     promote step;
 //   - account deletion (internal/account): cascades channels, videos and
-//     images away without visiting any of the handlers above.
+//     images away without visiting any of the handlers above;
+//   - the INSTANCE-WIDE downloads_enabled toggle: publicDownload is the AND of
+//     it and the per-video flag, so closing it globally revokes the same
+//     objects on EVERY public video at once. Deliberately not wired: the
+//     per-video flip purges four keys, and this would fan out four keys times
+//     the whole public catalogue from a single settings write — thousands of
+//     third-party HTTP calls off one admin click, with no batching, no
+//     progress and no way to stop it. It needs a job with a lease and a
+//     resumable cursor (the videoimport/mediagc shape), not a detached
+//     goroutine. Until then an operator closing downloads globally must treat
+//     the edge as still serving them until TTL.
 // (Instance branding images need no entry: they are served through
 // serveStoredObjectNamed, never through the resolver, so they cannot be at
 // the edge at all.)
@@ -166,6 +185,74 @@ func (s *Server) videoEdgePurgeSnapshot(ctx context.Context, videoID uuid.UUID) 
 			}
 		}
 	}
+	return snap
+}
+
+// downloadGatedVideoFileKinds are the video_files kinds whose objects the
+// DOWNLOAD gates control, as opposed to the Eligible fence: publicDownload
+// (downloads.go) is a second, independent gate, so these can become
+// unauthorized while the video stays public, published and perfectly watchable.
+//
+// "thumbnail" and "storyboard" are edge-cacheable but carry no download gate,
+// so they are deliberately absent — closing downloads does not make a poster
+// unauthorized.
+var downloadGatedVideoFileKinds = []string{"original", "webm"}
+
+// videoDownloadPurgeSnapshot records what a CDN edge could be holding for
+// videoID that the DOWNLOAD gates authorised — the stored original and the VP9
+// alternate, plus the derivatives remuxed out of the finalized HLS tree
+// (per-rendition progressive MP4s, both audio-included and video-only, and
+// audio.m4a).
+//
+// It returns EXACT KEYS ONLY, never a prefix, and that is the whole point. The
+// derivatives live INSIDE the ladder's directory alongside the segments
+// (media.HLSDownloadKey hangs off a rendition's KeyPrefix, HLSAudioDownloadKey
+// off path.Dir of the master), so purging by prefix — the cheap thing
+// videoEdgePurgeSnapshot does for a takedown — would evict every segment and
+// variant playlist too. Revoking downloads leaves the video watchable, so that
+// would cold-start playback at the edge for every viewer to enforce a gate on
+// four objects.
+//
+// An EMPTY snapshot when the gates were ALREADY closed is load-bearing, not an
+// optimisation: it is what makes a re-close idempotent and what keeps a PATCH
+// that merely restates download_enabled:false from firing a purge. The question
+// this answers is "what could an anonymous visitor have fetched as a download
+// immediately BEFORE this change?", and if downloads were off the answer is
+// nothing.
+func (s *Server) videoDownloadPurgeSnapshot(ctx context.Context, videoID uuid.UUID) edgePurgeSnapshot {
+	if !s.cdnConfigured() || s.videosvc == nil {
+		return edgePurgeSnapshot{}
+	}
+	v, err := s.videosvc.GetByID(ctx, videoID)
+	if err != nil || !s.publicDownload(v) {
+		return edgePurgeSnapshot{}
+	}
+	snap := edgePurgeSnapshot{}
+	for _, kind := range downloadGatedVideoFileKinds {
+		f, ferr := s.videosvc.FileForView(ctx, videoID, uuid.Nil, false, kind)
+		if ferr == nil && f.StorageKey != "" {
+			snap.keys = append(snap.keys, f.StorageKey)
+		}
+	}
+	if s.transcodesvc == nil {
+		return snap
+	}
+	sp, ok := s.transcodesvc.Playlist(ctx, videoID)
+	if !ok || sp.MasterKey == "" {
+		return snap
+	}
+	// Both variants of every rendition: the handler picks between them on
+	// ?audio=false, so both are separately reachable and separately cacheable.
+	for _, rendition := range s.transcodesvc.Renditions(ctx, videoID) {
+		if rendition.KeyPrefix == "" {
+			continue
+		}
+		snap.keys = append(snap.keys,
+			media.HLSDownloadKey(rendition.KeyPrefix, true),
+			media.HLSDownloadKey(rendition.KeyPrefix, false),
+		)
+	}
+	snap.keys = append(snap.keys, media.HLSAudioDownloadKey(sp.MasterKey))
 	return snap
 }
 
