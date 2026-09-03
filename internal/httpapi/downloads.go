@@ -237,7 +237,15 @@ func (s *Server) downloadStoredVideoFile(c echo.Context, kind, fallbackName stri
 // download URL leaves the building, not "no download URL except the one the
 // moderator's browser can be talked into fetching".
 func (s *Server) publicDownload(v sqlcgen.GetVideoByIDRow) bool {
-	return publicVideoForIPFS(v.Privacy, v.State) && s.downloadsEnabled() && v.DownloadEnabled
+	return s.publicDownloadOf(v.Privacy, v.State, v.DownloadEnabled)
+}
+
+// publicDownloadOf is publicDownload over plain values, for the callers that
+// hold a different row shape of the same video (the update handler writes and
+// re-reads a sqlcgen.Video). Same three-way AND, one definition — the fence and
+// the purge trigger that enforces it must never be able to disagree.
+func (s *Server) publicDownloadOf(privacy, state string, downloadEnabled bool) bool {
+	return publicVideoForIPFS(privacy, state) && s.downloadsEnabled() && downloadEnabled
 }
 
 func (s *Server) handleDownloadHLSRendition(c echo.Context) error {

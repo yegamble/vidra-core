@@ -1055,6 +1055,17 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	if in.Privacy != nil || in.PublishAt != nil || in.PublishAfterTranscode != nil {
 		purge = s.videoEdgePurgeSnapshot(c.Request().Context(), id)
 	}
+	// The download gates are a SECOND fence (publicDownload, downloads.go) and
+	// this is a separate snapshot because it invalidates a strictly smaller set:
+	// closing downloads leaves the video Eligible and watchable, so only the
+	// original, the VP9 alternate and the HLS-remuxed derivatives became
+	// unauthorized — not the ladder they sit inside. Taken whenever the field is
+	// present; the snapshot itself returns empty if the gates were already shut,
+	// and the post-update check below decides whether to fire.
+	var downloadPurge edgePurgeSnapshot
+	if in.DownloadEnabled != nil {
+		downloadPurge = s.videoDownloadPurgeSnapshot(c.Request().Context(), id)
+	}
 	v, err := s.videosvc.UpdateForActor(c.Request().Context(), userID, id, video.UpdateInput{
 		Title:           in.Title,
 		Description:     in.Description,
@@ -1091,6 +1102,15 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	// became unauthorized.
 	if !publicVideoForIPFS(v.Privacy, v.State) {
 		s.purgeVideoEdgeCopies(c.Request().Context(), id, purge)
+	} else if in.DownloadEnabled != nil && !s.publicDownloadOf(v.Privacy, v.State, v.DownloadEnabled) {
+		// Still Eligible, so the ladder stays legitimately cached and the branch
+		// above correctly did nothing — but the download gate just shut, and the
+		// master file is at a stable, publicly derivable key. publicDownload is
+		// re-read from the WRITTEN row rather than trusted from the request,
+		// because the instance-wide toggle is the other half of it: an admin can
+		// close downloads globally while this PATCH opens them per-video, and the
+		// visitor-facing answer is the AND of both.
+		s.purgeVideoEdgeCopies(c.Request().Context(), id, downloadPurge)
 	}
 	view := newVideoView(v)
 	s.attachVideoTags(c.Request().Context(), &view, v.ID)
