@@ -1520,6 +1520,11 @@ func (s *Server) routes() {
 		api.PUT("/videos/:id/watch-progress", s.handleRecordWatchProgress, s.requireAuth)
 		api.GET("/videos/config", s.handleVideoConfig)
 		api.GET("/videos/search", s.handleSearchVideos, s.optionalAuth)
+		// Resolves the two PUBLIC identifiers that are not a video's uuid (short
+		// code, legacy uuid). A static sibling of config/search, deliberately not
+		// /videos/by-code/{code} — that shape is ambiguous with
+		// /videos/{id}/{subresource} in the OpenAPI contract.
+		api.GET("/videos/resolve", s.handleResolveVideo, s.optionalAuth)
 		// Discovery (search-service W4): autocomplete + recommendation rails +
 		// behavioural events. Always mounted (they degrade to empty/fallback when
 		// vidra-search is disabled, so the contract surface is stable); each

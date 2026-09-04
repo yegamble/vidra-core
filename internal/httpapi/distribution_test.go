@@ -46,7 +46,11 @@ func seedVideo(repo *videoFakeRepo, ch sqlcgen.Channel, title, desc, privacy, st
 	id := uuid.New()
 	ts := time.Now().Add(-time.Duration(ageMinutes) * time.Minute).UTC()
 	repo.videos[id] = sqlcgen.GetVideoByIDRow{
-		ID:          id,
+		ID: id,
+		// Every video has a code in the database (0126's DEFAULT), so the fake
+		// mints one too — a seeded video with an empty code would not be a video
+		// this system can produce.
+		ShortCode:   fakeShortCode(),
 		ChannelID:   ch.ID,
 		OwnerID:     ch.OwnerID,
 		Title:       title,

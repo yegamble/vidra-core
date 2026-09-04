@@ -23,6 +23,7 @@ import (
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/pgconv"
+	"github.com/vidra/vidra-core/internal/shortid"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -133,6 +134,8 @@ var additionalVideoExts = map[string]bool{
 type Repository interface {
 	CreateVideo(ctx context.Context, arg sqlcgen.CreateVideoParams) (sqlcgen.Video, error)
 	GetVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
+	GetVideoIDByShortCode(ctx context.Context, shortCode string) (uuid.UUID, error)
+	GetVideoIDByLegacyUUID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	ListVideosByChannel(ctx context.Context, arg sqlcgen.ListVideosByChannelParams) ([]sqlcgen.ListVideosByChannelRow, error)
 	CountVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error)
 	ListVideoIDsByChannel(ctx context.Context, channelID uuid.UUID) ([]uuid.UUID, error)
@@ -1752,6 +1755,62 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoBy
 		return sqlcgen.GetVideoByIDRow{}, ErrNotFound
 	}
 	return v, nil
+}
+
+// ShortCodeLen is the length of videos.short_code: 11 base58 characters, about
+// 64.5 bits. Fixed, because the code carries no length information — it is
+// opaque, unlike the 16-22 character sids in internal/shortid, which vary with
+// the magnitude of the UUID they re-encode.
+const ShortCodeLen = 11
+
+// ValidShortCode reports whether s is shaped like a stored short code. It is the
+// same contract migration 0126 enforces in the database with a CHECK.
+//
+// Callers must answer a bad shape with 404, never 400 — see pathUUID's rule. A
+// distinguishable "malformed" reply would turn this into an enumeration oracle,
+// and that matters more here than for a UUID: an unlisted video is protected by
+// the obscurity of its URL alone, and a short code is a far smaller space to
+// search than a v4 UUID.
+func ValidShortCode(s string) bool {
+	if len(s) != ShortCodeLen {
+		return false
+	}
+	for _, r := range s {
+		if !strings.ContainsRune(shortid.Alphabet, r) {
+			return false
+		}
+	}
+	return true
+}
+
+// IDByShortCode resolves a stored short code to the video it names. It returns
+// only the id: the caller runs it through the same visibility check and detail
+// assembly the by-uuid path uses, so the two ways of naming one video cannot
+// drift apart on privacy semantics.
+func (s *Service) IDByShortCode(ctx context.Context, code string) (uuid.UUID, error) {
+	if !ValidShortCode(code) {
+		return uuid.Nil, ErrNotFound
+	}
+	id, err := s.repo.GetVideoIDByShortCode(ctx, code)
+	if err != nil {
+		return uuid.Nil, ErrNotFound
+	}
+	return id, nil
+}
+
+// IDByLegacyUUID resolves a UUID that appeared in an older public URL — either
+// one this instance minted itself (/videos/watch/{uuid}) or the source UUID of a
+// video imported from PeerTube (/w/{shortUUID}, /videos/watch/{uuid}) — to the
+// video it now names.
+func (s *Service) IDByLegacyUUID(ctx context.Context, legacy uuid.UUID) (uuid.UUID, error) {
+	if legacy == uuid.Nil {
+		return uuid.Nil, ErrNotFound
+	}
+	id, err := s.repo.GetVideoIDByLegacyUUID(ctx, legacy)
+	if err != nil {
+		return uuid.Nil, ErrNotFound
+	}
+	return id, nil
 }
 
 // OriginalFileKey returns the storage key of a video's stored original file, or

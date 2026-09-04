@@ -261,6 +261,29 @@ func TestPeerTubeImportEndToEnd(t *testing.T) {
 	if vidState != "published" || vidPrivacy != "public" {
 		t.Errorf("video state/privacy = %s/%s, want published/public", vidState, vidPrivacy)
 	}
+	// The SOURCE uuid is carried onto the row (0127). It is deliberately NOT the
+	// new row's own id — that is the whole reason the column exists — and it is
+	// what keeps the source instance's /w/{shortUUID} and /videos/watch/{uuid}
+	// links resolving after a domain cutover.
+	var srcUUID uuid.UUID
+	if err := dest.QueryRow(ctx, `SELECT peertube_uuid FROM videos WHERE id=$1`, vidID).Scan(&srcUUID); err != nil {
+		t.Fatalf("read peertube_uuid: %v", err)
+	}
+	if want := uuid.MustParse("11111111-1111-1111-1111-111111111111"); srcUUID != want {
+		t.Errorf("peertube_uuid = %s, want the SOURCE uuid %s", srcUUID, want)
+	}
+	if srcUUID == vidID {
+		t.Errorf("peertube_uuid equals the local id %s; the source uuid is not preserved as the primary key", vidID)
+	}
+	// Every video also has a short code minted by the database (0126), including
+	// ones the importer created without asking for one.
+	var code string
+	if err := dest.QueryRow(ctx, `SELECT short_code FROM videos WHERE id=$1`, vidID).Scan(&code); err != nil {
+		t.Fatalf("read short_code: %v", err)
+	}
+	if len(code) != 11 {
+		t.Errorf("imported video short_code = %q (len %d), want 11 characters", code, len(code))
+	}
 	var dur int
 	if err := dest.QueryRow(ctx, `SELECT duration_seconds FROM video_metadata WHERE video_id=$1`, vidID).Scan(&dur); err != nil {
 		t.Fatalf("read metadata: %v", err)

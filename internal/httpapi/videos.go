@@ -147,7 +147,13 @@ func validateTaxonomy(category, language, license string) []FieldError {
 // GET /remote-videos/{id} and its cached poster at
 // GET /remote-videos/{id}/thumbnail.
 type videoView struct {
-	ID          string `json:"id"`
+	ID string `json:"id"`
+	// ShortCode is the video's opaque 11-character public id (videos.short_code),
+	// the one the /v/{code} watch URL is built from. Present on the DETAIL and
+	// create/update views. Omitted on remote cards (a remote video has no local
+	// code) and, for now, on feed/search/playlist cards, whose queries do not yet
+	// select it — a card consumer must still build its link from ID.
+	ShortCode   string `json:"short_code,omitempty"`
 	Remote      bool   `json:"remote"`
 	ChannelID   string `json:"channel_id,omitempty"`
 	Title       string `json:"title"`
@@ -278,6 +284,7 @@ func newVideoView(v sqlcgen.Video) videoView {
 	publishAfterTranscode := v.PublishAfterTranscode
 	return videoView{
 		ID:                    v.ID.String(),
+		ShortCode:             v.ShortCode,
 		ChannelID:             v.ChannelID.String(),
 		Title:                 v.Title,
 		Description:           v.Description,
@@ -303,6 +310,7 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 	publishAfterTranscode := v.PublishAfterTranscode
 	view := videoView{
 		ID:              v.ID.String(),
+		ShortCode:       v.ShortCode,
 		ChannelID:       v.ChannelID.String(),
 		Title:           v.Title,
 		Description:     v.Description,
@@ -478,6 +486,65 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	return s.respondVideo(c, id)
+}
+
+// handleResolveVideo answers with exactly what GET /videos/{id} would, for a
+// video named by one of the two PUBLIC identifiers that are not its uuid:
+//
+//	?code=<11 base58 chars>  the short code a /v/{code} watch URL carries
+//	?legacy_uuid=<uuid>      a uuid from a URL this instance no longer mints —
+//	                         its own /videos/watch/{uuid} form, still held by
+//	                         remote ActivityPub servers, or the SOURCE uuid of a
+//	                         video imported from PeerTube (what /w/{shortUUID}
+//	                         decodes to)
+//
+// It is ONE endpoint on a static path rather than two /videos/by-.../{x} paths
+// because those collide in shape with /videos/{id}/{subresource} — 25 OpenAPI
+// "paths should resolve unambiguously" warnings — while a static sibling of
+// /videos/config and /videos/search collides with nothing.
+//
+// Two different error classes meet here and must not be merged. A request that
+// names NO identifier, or both, is a caller mistake with nothing to hide: 400,
+// as GET /services/oembed already answers a missing url. But a WELL-FORMED
+// identifier that resolves to nothing, and a malformed one, both answer 404 —
+// never 400 — per pathUUID's rule. Distinguishing them would let an
+// unauthenticated caller tell a real unknown code from a badly-formed one, and
+// an unlisted video is protected by the obscurity of its code alone.
+func (s *Server) handleResolveVideo(c echo.Context) error {
+	code, legacy := c.QueryParam("code"), c.QueryParam("legacy_uuid")
+	switch {
+	case code != "" && legacy != "":
+		return echo.NewHTTPError(http.StatusBadRequest, "give exactly one of code or legacy_uuid")
+	case code != "":
+		id, err := s.videosvc.IDByShortCode(c.Request().Context(), code)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		return s.respondVideo(c, id)
+	case legacy != "":
+		parsed, err := uuid.Parse(legacy)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		id, err := s.videosvc.IDByLegacyUUID(c.Request().Context(), parsed)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		return s.respondVideo(c, id)
+	default:
+		return echo.NewHTTPError(http.StatusBadRequest, "code or legacy_uuid is required")
+	}
+}
+
+// respondVideo is the detail response for an already-resolved video id: the
+// visibility check plus every follow-up lookup the watch page needs.
+//
+// It exists so the three ways of NAMING one video (uuid, short code, legacy
+// uuid) share one body. Privacy, quarantine and password semantics are decided
+// here exactly once, so a new naming scheme cannot accidentally expose a video
+// the canonical route would have refused.
+func (s *Server) respondVideo(c echo.Context, id uuid.UUID) error {
 	v, err := s.videoVisibleForDetail(c, id)
 	if err != nil {
 		return err

@@ -961,6 +961,8 @@ type Video struct {
 	PinnedCommentID       pgtype.UUID        `json:"pinned_comment_id"`
 	SensitiveReason       string             `json:"sensitive_reason"`
 	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
+	ShortCode             string             `json:"short_code"`
+	PeertubeUuid          pgtype.UUID        `json:"peertube_uuid"`
 }
 
 type VideoBlock struct {

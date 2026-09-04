@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -231,7 +232,7 @@ func (s *Server) handleOEmbed(c echo.Context) error {
 	if raw == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "url is required")
 	}
-	id, ok := s.parseLocalVideoURL(raw)
+	id, ok := s.parseLocalVideoURL(c.Request().Context(), raw)
 	if !ok {
 		return echo.NewHTTPError(http.StatusNotFound, "no video matches the url")
 	}
@@ -290,7 +291,24 @@ func (s *Server) handleOEmbed(c echo.Context) error {
 // chat app unfurling one calls oEmbed with the URL verbatim — it never follows
 // the redirect first. Without this branch every shared short link unfurls as a
 // dead card while the same video's long URL unfurls fine.
-func (s *Server) parseLocalVideoURL(raw string) (uuid.UUID, bool) {
+//
+// TWO encodings share the /v/ prefix and are told apart by LENGTH, which is
+// unambiguous because their ranges do not overlap:
+//
+//	11 chars    the STORED short code (videos.short_code) — resolved in the DB
+//	16-22 chars the DERIVED sid, a base58 re-encoding of the uuid (internal/shortid)
+//
+// The derived band is kept forever: those links were published and browsers
+// hold their redirects permanently. Note this is why the function now needs a
+// context — the stored code cannot be decoded, only looked up.
+//
+// Deliberately NOT handled here: /w/{shortUUID} and /videos/watch/{uuid}, the
+// forms an imported PeerTube instance's old links use. They redirect to the
+// canonical page, and an unfurler that follows the redirect reads the discovery
+// tag there. Supporting them verbatim would mean a PeerTube base58 decoder in
+// core — a DIFFERENT alphabet ordering from internal/shortid's, so it cannot
+// share that code — for links that are rare after a cutover.
+func (s *Server) parseLocalVideoURL(ctx context.Context, raw string) (uuid.UUID, bool) {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return uuid.Nil, false
@@ -314,6 +332,13 @@ func (s *Server) parseLocalVideoURL(raw string) (uuid.UUID, bool) {
 		}
 		return id, true
 	case "v":
+		if len(parts[1]) == video.ShortCodeLen {
+			id, err := s.videosvc.IDByShortCode(ctx, parts[1])
+			if err != nil {
+				return uuid.Nil, false
+			}
+			return id, true
+		}
 		return shortid.ToUUID(parts[1])
 	default:
 		return uuid.Nil, false

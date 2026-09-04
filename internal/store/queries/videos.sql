@@ -1,7 +1,7 @@
 -- name: CreateVideo :one
 INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid;
 
 -- name: CountPublicVideos :one
 -- Public, published videos — the "local posts" count NodeInfo advertises. Only
@@ -22,7 +22,7 @@ ORDER BY created_at DESC, id DESC
 LIMIT $2 OFFSET $3;
 
 -- name: GetVideoByID :one
-SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
+SELECT v.id, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license, v.publish_at, v.originally_published_at,
        v.is_sensitive, v.sensitive_reason,
        v.comments_policy, v.download_enabled, v.publish_after_transcode,
@@ -844,14 +844,14 @@ SET title       = COALESCE(sqlc.narg('title'), title),
     originally_published_at = COALESCE(sqlc.narg('originally_published_at'), originally_published_at),
     updated_at  = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid;
 
 -- name: SetVideoState :one
 UPDATE videos
 SET state      = sqlc.arg('state'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at;
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid;
 
 -- name: SetVideoPinnedComment :exec
 -- Set (or clear, when NULL) a video's pinned comment (YouTube-style creator pin,
@@ -1110,3 +1110,23 @@ WHERE (sqlc.narg('query')::text IS NULL OR inventory.title ILIKE '%' || sqlc.nar
   AND (sqlc.narg('has_original')::boolean IS NULL OR inventory.has_original = sqlc.narg('has_original')::boolean)
   AND (sqlc.narg('has_hls')::boolean IS NULL OR (inventory.hls_count > 0) = sqlc.narg('has_hls')::boolean)
   AND (sqlc.narg('has_web_files')::boolean IS NULL OR (inventory.web_video_count > 0) = sqlc.narg('has_web_files')::boolean);
+
+-- name: GetVideoIDByShortCode :one
+-- Resolve the public short code to a video id. Returns the id ONLY: the caller
+-- funnels it through the same visibility check and detail assembly the
+-- by-uuid endpoint uses, so private/unlisted/locked semantics cannot drift
+-- between the two ways of naming one video.
+SELECT id FROM videos WHERE short_code = $1;
+
+-- name: GetVideoIDByLegacyUUID :one
+-- Resolve a UUID that appeared in an OLD public URL to the video it now names.
+-- Two namespaces reach this query and both are UUIDs, so one lookup serves both:
+--   /videos/watch/{uuid} minted by this instance before /videos/{uuid}  -> videos.id
+--   /w/{shortUUID} and /videos/watch/{uuid} from an IMPORTED PeerTube   -> peertube_uuid
+-- ORDER BY prefers our own namespace, so the answer stays deterministic in the
+-- (astronomically unlikely) event one instance's video id equals another's
+-- imported source UUID.
+SELECT id FROM videos
+WHERE id = $1 OR peertube_uuid = $1
+ORDER BY (id = $1) DESC
+LIMIT 1;
