@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"math/rand/v2"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +42,7 @@ import (
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/rating"
+	"github.com/vidra/vidra-core/internal/shortid"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/transcode"
@@ -60,17 +62,21 @@ type videoFakeRepo struct {
 	// userBlocks mirrors the §13 user_blocks content filter (viewer = blocker).
 	userBlocks *blockFakeRepo
 	videos     map[uuid.UUID]sqlcgen.GetVideoByIDRow
-	files      map[uuid.UUID][]sqlcgen.VideoFile
-	metadata   map[uuid.UUID]sqlcgen.VideoMetadatum
-	views      map[uuid.UUID]int64
-	saved      map[string]time.Time                          // "userID|videoID" -> saved-at
-	history    map[string]historyMark                        // "userID|videoID" -> resume position + last-watched
-	captions   map[string]sqlcgen.Caption                    // "videoID|lang" -> caption
-	tags       map[uuid.UUID][]string                        // video ID -> normalized tag set
-	chapters   map[uuid.UUID][]sqlcgen.ListVideoChaptersRow  // video ID -> ordered chapters
-	passwords  map[uuid.UUID][]fakeVideoPassword             // video ID -> passwords (CORE-17)
-	embed      map[uuid.UUID]sqlcgen.GetVideoEmbedPrivacyRow // video ID -> embed policy override
-	viewDays   map[string]int64                              // "videoID|YYYY-MM-DD" -> rolled-up views
+	// peertubeUUIDs mirrors videos.peertube_uuid: video id -> the UUID this video
+	// had on the PeerTube instance it was imported from. Seeded directly by the
+	// legacy-URL tests; the importer is what writes it in production.
+	peertubeUUIDs map[uuid.UUID]uuid.UUID
+	files         map[uuid.UUID][]sqlcgen.VideoFile
+	metadata      map[uuid.UUID]sqlcgen.VideoMetadatum
+	views         map[uuid.UUID]int64
+	saved         map[string]time.Time                          // "userID|videoID" -> saved-at
+	history       map[string]historyMark                        // "userID|videoID" -> resume position + last-watched
+	captions      map[string]sqlcgen.Caption                    // "videoID|lang" -> caption
+	tags          map[uuid.UUID][]string                        // video ID -> normalized tag set
+	chapters      map[uuid.UUID][]sqlcgen.ListVideoChaptersRow  // video ID -> ordered chapters
+	passwords     map[uuid.UUID][]fakeVideoPassword             // video ID -> passwords (CORE-17)
+	embed         map[uuid.UUID]sqlcgen.GetVideoEmbedPrivacyRow // video ID -> embed policy override
+	viewDays      map[string]int64                              // "videoID|YYYY-MM-DD" -> rolled-up views
 	// ratings/commentsRepo mirror the cross-table joins the stats queries do.
 	ratings      *ratingFakeRepo
 	commentsRepo *commentFakeRepo
@@ -432,7 +438,7 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		}
 	}
 	v := sqlcgen.Video{
-		ID: uuid.New(), ChannelID: a.ChannelID, Title: a.Title,
+		ID: uuid.New(), ShortCode: fakeShortCode(), ChannelID: a.ChannelID, Title: a.Title,
 		Description: a.Description, Privacy: a.Privacy, State: "draft",
 		Category: a.Category, Language: a.Language, License: a.License,
 		PublishAt: a.PublishAt, IsSensitive: a.IsSensitive, SensitiveReason: a.SensitiveReason,
@@ -441,7 +447,7 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		CreatedAt:             time.Now(), UpdatedAt: time.Now(),
 	}
 	f.videos[v.ID] = sqlcgen.GetVideoByIDRow{
-		ID: v.ID, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
+		ID: v.ID, ShortCode: v.ShortCode, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
 		Privacy: v.Privacy, State: v.State, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 		Category: v.Category, Language: v.Language, License: v.License,
 		PublishAt: v.PublishAt, IsSensitive: v.IsSensitive, SensitiveReason: v.SensitiveReason,
@@ -450,6 +456,44 @@ func (f *videoFakeRepo) CreateVideo(_ context.Context, a sqlcgen.CreateVideoPara
 		OwnerID:               owner,
 	}
 	return v, nil
+}
+
+// GetVideoIDByShortCode mirrors the unique index on videos.short_code. The
+// empty-code guard matters: rows seeded directly by a test (rather than through
+// CreateVideo) carry no code, and without it a lookup for "" would match them.
+func (f *videoFakeRepo) GetVideoIDByShortCode(_ context.Context, code string) (uuid.UUID, error) {
+	for id, v := range f.videos {
+		if v.ShortCode != "" && v.ShortCode == code {
+			return id, nil
+		}
+	}
+	return uuid.Nil, pgx.ErrNoRows
+}
+
+// GetVideoIDByLegacyUUID mirrors "WHERE id = $1 OR peertube_uuid = $1", keeping
+// the query's preference for this instance's own id namespace.
+func (f *videoFakeRepo) GetVideoIDByLegacyUUID(_ context.Context, legacy uuid.UUID) (uuid.UUID, error) {
+	if _, ok := f.videos[legacy]; ok {
+		return legacy, nil
+	}
+	for id, src := range f.peertubeUUIDs {
+		if src == legacy {
+			return id, nil
+		}
+	}
+	return uuid.Nil, pgx.ErrNoRows
+}
+
+// fakeShortCode mints an 11-character base58 code, mirroring what migration 0126
+// makes Postgres do on INSERT via the vidra_short_code() DEFAULT. Tests that
+// resolve /v/{code} need the fake to behave like the column, not like a zero
+// value.
+func fakeShortCode() string {
+	b := make([]byte, video.ShortCodeLen)
+	for i := range b {
+		b[i] = shortid.Alphabet[rand.IntN(len(shortid.Alphabet))]
+	}
+	return string(b)
 }
 
 func (f *videoFakeRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {

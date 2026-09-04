@@ -3630,6 +3630,111 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/by-code/{code}:
+    get:
+      operationId: getVideoByShortCode
+      summary: Get a video by its short code
+      description: >-
+        Resolves the opaque 11-character short_code that the public /v/{code}
+        watch URL is built from, and returns exactly what GET /videos/{id}
+        returns for the same video — the same visibility, password and
+        moderator/admin rules, decided by the same code path, so the two ways of
+        naming one video cannot diverge.
+
+        A code that is not 11 base58 characters is reported as 404, NOT 400.
+        That is deliberate: a distinguishable "malformed" answer would let an
+        unauthenticated caller tell a well-formed unknown code from a
+        badly-formed one, and an unlisted video is protected by the obscurity of
+        its code alone.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: code
+          in: path
+          required: true
+          description: The video's short_code.
+          schema:
+            type: string
+            pattern: "^[1-9A-HJ-NP-Za-km-z]{11}$"
+      responses:
+        "200":
+          description: The video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+        "401":
+          description: >-
+            The video is password protected and the caller presented no valid
+            credential. Error code "password_required".
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: >-
+            No video has that code, the code is malformed, or the video is not
+            visible to this caller. The three are deliberately indistinguishable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/by-legacy-uuid/{uuid}:
+    get:
+      operationId: getVideoByLegacyUUID
+      summary: Get a video by a UUID from an older public URL
+      description: >-
+        Resolves a UUID that appeared in a public URL this instance no longer
+        mints, and returns exactly what GET /videos/{id} returns.
+
+        Two namespaces reach this endpoint and both are UUIDs. The first is this
+        instance's own id, as carried by the legacy /videos/watch/{uuid} form
+        that remote ActivityPub servers still hold. The second is the SOURCE
+        UUID of a video imported from a PeerTube instance — the value its
+        /w/{shortUUID} and /videos/watch/{uuid} links decode to — which the
+        importer records on the video. That second case is what keeps an
+        imported instance's existing links working after its domain is pointed
+        at Vidra.
+
+        This instance's own id namespace wins if a value somehow appears in
+        both.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          description: A video UUID from an older public URL, or an imported PeerTube video's source UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+        "401":
+          description: >-
+            The video is password protected and the caller presented no valid
+            credential. Error code "password_required".
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: >-
+            No video is named by that UUID in either namespace, or it is not
+            visible to this caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}:
     get:
       operationId: getVideo
@@ -15403,6 +15508,17 @@ components:
         id:
           type: string
           format: uuid
+        short_code:
+          type: string
+          pattern: "^[1-9A-HJ-NP-Za-km-z]{11}$"
+          description: >-
+            The video's opaque 11-character public id, minted by the database and
+            immutable. It is what the public /v/{code} watch URL is built from,
+            and it can be resolved with GET /videos/by-code/{code}.
+
+            Present on the DETAIL view and on the create/update responses.
+            Omitted on remote federated cards (which have no local code) and,
+            for now, on feed/search/playlist cards — build a link from id there.
         remote:
           type: boolean
           description: >-

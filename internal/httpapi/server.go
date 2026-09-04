@@ -1528,6 +1528,11 @@ func (s *Server) routes() {
 		api.GET("/recommendations/home", s.handleHomeRecommendations, s.optionalAuth)
 		api.GET("/videos/:id/recommendations", s.handleVideoRecommendations, s.optionalAuth)
 		api.POST("/search/events", s.handleSearchEvents, s.optionalAuth)
+		// Resolvers for the OTHER two ways a video is named in a public URL. They
+		// sit above /videos/:id only for readability — Echo prefers a static
+		// segment over a param, so registration order does not decide this.
+		api.GET("/videos/by-code/:code", s.handleGetVideoByShortCode, s.optionalAuth)
+		api.GET("/videos/by-legacy-uuid/:uuid", s.handleGetVideoByLegacyUUID, s.optionalAuth)
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
 		api.GET("/videos/:id/original", s.handleStreamVideoOriginal, s.optionalAuth)
 		api.GET("/videos/:id/download", s.handleGetVideoDownloads, s.optionalAuth)

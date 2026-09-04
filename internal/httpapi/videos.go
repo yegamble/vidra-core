@@ -147,7 +147,13 @@ func validateTaxonomy(category, language, license string) []FieldError {
 // GET /remote-videos/{id} and its cached poster at
 // GET /remote-videos/{id}/thumbnail.
 type videoView struct {
-	ID          string `json:"id"`
+	ID string `json:"id"`
+	// ShortCode is the video's opaque 11-character public id (videos.short_code),
+	// the one the /v/{code} watch URL is built from. Present on the DETAIL and
+	// create/update views. Omitted on remote cards (a remote video has no local
+	// code) and, for now, on feed/search/playlist cards, whose queries do not yet
+	// select it — a card consumer must still build its link from ID.
+	ShortCode   string `json:"short_code,omitempty"`
 	Remote      bool   `json:"remote"`
 	ChannelID   string `json:"channel_id,omitempty"`
 	Title       string `json:"title"`
@@ -278,6 +284,7 @@ func newVideoView(v sqlcgen.Video) videoView {
 	publishAfterTranscode := v.PublishAfterTranscode
 	return videoView{
 		ID:                    v.ID.String(),
+		ShortCode:             v.ShortCode,
 		ChannelID:             v.ChannelID.String(),
 		Title:                 v.Title,
 		Description:           v.Description,
@@ -303,6 +310,7 @@ func videoViewFromRow(v sqlcgen.GetVideoByIDRow) videoView {
 	publishAfterTranscode := v.PublishAfterTranscode
 	view := videoView{
 		ID:              v.ID.String(),
+		ShortCode:       v.ShortCode,
 		ChannelID:       v.ChannelID.String(),
 		Title:           v.Title,
 		Description:     v.Description,
@@ -478,6 +486,48 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	return s.respondVideo(c, id)
+}
+
+// handleGetVideoByShortCode resolves the opaque short code from a /v/{code} URL
+// and answers with exactly what GET /videos/{id} would.
+//
+// The 404 on a malformed code is deliberate and mirrors pathUUID: answering 400
+// here would let an unauthenticated caller tell "not a code" from "no such
+// code", which is the existence leak the whole convention exists to close.
+func (s *Server) handleGetVideoByShortCode(c echo.Context) error {
+	id, err := s.videosvc.IDByShortCode(c.Request().Context(), c.Param("code"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	return s.respondVideo(c, id)
+}
+
+// handleGetVideoByLegacyUUID resolves a UUID from an OLD public URL — one this
+// instance minted before /videos/{uuid}, or the SOURCE uuid of a video imported
+// from a PeerTube instance (whose /w/{shortUUID} decodes to it) — and answers
+// with exactly what GET /videos/{id} would. It is what keeps an imported
+// instance's existing links alive after its domain is cut over to Vidra.
+func (s *Server) handleGetVideoByLegacyUUID(c echo.Context) error {
+	legacy, err := pathUUID(c, "uuid", "video not found")
+	if err != nil {
+		return err
+	}
+	id, err := s.videosvc.IDByLegacyUUID(c.Request().Context(), legacy)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
+	return s.respondVideo(c, id)
+}
+
+// respondVideo is the detail response for an already-resolved video id: the
+// visibility check plus every follow-up lookup the watch page needs.
+//
+// It exists so the three ways of NAMING one video (uuid, short code, legacy
+// uuid) share one body. Privacy, quarantine and password semantics are decided
+// here exactly once, so a new naming scheme cannot accidentally expose a video
+// the canonical route would have refused.
+func (s *Server) respondVideo(c echo.Context, id uuid.UUID) error {
 	v, err := s.videoVisibleForDetail(c, id)
 	if err != nil {
 		return err

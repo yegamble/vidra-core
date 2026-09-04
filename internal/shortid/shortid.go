@@ -21,7 +21,15 @@ import (
 	"github.com/google/uuid"
 )
 
-const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+// Alphabet is base58 as Bitcoin defines it. Exported because the STORED short
+// code (videos.short_code, an opaque 11-character id minted by Postgres) is
+// spelled in the same alphabet and its validator must agree with this one
+// character for character — but the two are otherwise unrelated: a stored code
+// encodes nothing, while the sids in this package are a reversible re-encoding
+// of a video's UUID. Do not decode one as the other.
+const Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+const alphabet = Alphabet
 
 // 16 bytes never encode to more than 22 base58 characters (58^22 > 2^128) and
 // never to fewer than 16 (all-zero bytes each cost one '1'). Bounding the
