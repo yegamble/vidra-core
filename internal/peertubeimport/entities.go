@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -583,6 +584,14 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 		return err
 	}
 
+	// PeerTube stores the video UUID as text. A row whose uuid does not parse
+	// cannot have had a working public URL on the source either, so it imports
+	// with no legacy mapping rather than failing the whole video.
+	sourceUUID, uuidErr := uuid.Parse(v.UUID)
+	if uuidErr != nil {
+		sourceUUID = uuid.Nil
+	}
+
 	err = im.withTx(ctx, func(q *sqlcgen.Queries) error {
 		id, err := q.ImportInsertVideo(ctx, sqlcgen.ImportInsertVideoParams{
 			ChannelID:   channel,
@@ -601,8 +610,21 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 			// The source's nsfw flag (see ImportInsertVideo). Nothing was written
 			// here before, so every sensitive video imported clean.
 			IsSensitive: v.NSFW,
+			// The SOURCE video's UUID, which the new row's own id is NOT. It is
+			// what lets this instance keep answering the source's /w/{shortUUID}
+			// and /videos/watch/{uuid} links after a domain cutover.
+			PeertubeUuid: optUUID(sourceUUID),
 		})
 		if err != nil {
+			// A unique violation here means another video already claims this
+			// source UUID — the ledger row that would have made this a no-op is
+			// gone, and importing again would put two videos on one legacy URL.
+			// Report it as this video's failure and let the run continue (the
+			// caller records it and moves to the next source video) rather than
+			// silently producing an ambiguous redirect.
+			if pgconv.IsUniqueViolation(err) {
+				return fmt.Errorf("source video %s is already imported as another video: %w", v.UUID, err)
+			}
 			return err
 		}
 		if v.Duration > 0 {
