@@ -67,7 +67,7 @@ func (s *Server) hasPlaybackToken(c echo.Context, subjectID uuid.UUID, scope pla
 // moderator/admin, or presents a valid playback token for this video; otherwise
 // it returns a 401 password_required. The token/hash/password are never logged or
 // echoed.
-func (s *Server) passwordGate(c echo.Context, videoID uuid.UUID, privacy string, ownerID uuid.UUID) error {
+func (s *Server) passwordGate(c echo.Context, videoID uuid.UUID, privacy, shortCode string, ownerID uuid.UUID) error {
 	if privacy != video.PrivacyPassword {
 		return nil
 	}
@@ -77,7 +77,9 @@ func (s *Server) passwordGate(c echo.Context, videoID uuid.UUID, privacy string,
 	if s.hasPlaybackToken(c, videoID, playback.ScopePlayback) {
 		return nil
 	}
-	return &PasswordRequiredError{}
+	// The 401 names the video. A caller who reached it by short code has no
+	// other way to find the uuid that POST /videos/{id}/unlock is keyed on.
+	return &PasswordRequiredError{VideoID: videoID.String(), ShortCode: shortCode}
 }
 
 // --- unlock ---

@@ -14235,6 +14235,29 @@ components:
                   message:
                     type: string
                     example: must be a valid email
+            video_id:
+              type: string
+              format: uuid
+              description: >-
+                The video a password_required 401 refers to. Present ONLY on
+                that code.
+
+                It is not a leak: a password_required response already admits
+                the video exists — that is its documented purpose — and the
+                caller reached it by presenting one of the video's public
+                identifiers already. Nor is it a credential: every read path
+                re-runs the same password gate keyed on this id, so holding it
+                opens nothing without the password or a playback token.
+
+                It is present because a caller who arrived by short code has no
+                other way to reach POST /videos/{id}/unlock, which is keyed on
+                the uuid.
+            short_code:
+              type: string
+              pattern: "^[1-9A-HJ-NP-Za-km-z]{11}$"
+              description: >-
+                The same video's short code, alongside video_id and under the
+                same reasoning. Present ONLY on password_required.
     InstanceResponse:
       type: object
       required: [name, description, short_description, software, registration_enabled,
