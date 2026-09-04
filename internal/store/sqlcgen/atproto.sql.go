@@ -176,7 +176,7 @@ func (q *Queries) GetATProtoPostByVideo(ctx context.Context, videoID uuid.UUID) 
 }
 
 const getATProtoPostVideo = `-- name: GetATProtoPostVideo :one
-SELECT v.id, v.title, v.privacy, c.owner_id, c.atproto_enabled
+SELECT v.id, v.title, v.privacy, v.short_code, c.owner_id, c.atproto_enabled
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 WHERE v.id = $1
@@ -186,6 +186,7 @@ type GetATProtoPostVideoRow struct {
 	ID             uuid.UUID `json:"id"`
 	Title          string    `json:"title"`
 	Privacy        string    `json:"privacy"`
+	ShortCode      string    `json:"short_code"`
 	OwnerID        uuid.UUID `json:"owner_id"`
 	AtprotoEnabled bool      `json:"atproto_enabled"`
 }
@@ -201,6 +202,7 @@ func (q *Queries) GetATProtoPostVideo(ctx context.Context, id uuid.UUID) (GetATP
 		&i.ID,
 		&i.Title,
 		&i.Privacy,
+		&i.ShortCode,
 		&i.OwnerID,
 		&i.AtprotoEnabled,
 	)

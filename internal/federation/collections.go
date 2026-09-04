@@ -110,13 +110,19 @@ func (s *Service) ChannelOutboxPage(ctx context.Context, handle string, page int
 	}
 	items := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
-		videoURL := s.baseURL + "/videos/" + r.ID.String()
+		// Same split as buildVideoActivity: the object id is frozen at the uuid
+		// form, only the human-facing url moves.
+		objectID := s.baseURL + "/videos/" + r.ID.String()
+		watchURL := objectID
+		if r.ShortCode != "" {
+			watchURL = s.baseURL + "/v/" + r.ShortCode
+		}
 		items = append(items, map[string]any{
 			"id":     channelActor + "/activities/create/" + r.ID.String(),
 			"type":   "Create",
 			"actor":  channelActor,
 			"to":     []string{publicAudience},
-			"object": videoObject(channelActor, videoURL, r.Title, r.Description),
+			"object": videoObject(channelActor, objectID, watchURL, r.Title, r.Description),
 		})
 	}
 	pg := &OrderedCollectionPage{

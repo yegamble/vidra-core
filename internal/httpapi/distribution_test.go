@@ -127,12 +127,20 @@ func TestVideosFeedPublicPublishedLocalOnly(t *testing.T) {
 		}
 	}
 	it0 := doc.Channel.Items[0]
-	wantLink := "https://videos.example/videos/" + pub1.String()
+	// The link a reader clicks is the CANONICAL short form...
+	wantLink := "https://videos.example/v/" + repo.videos[pub1].ShortCode
 	if it0.Link != wantLink {
 		t.Errorf("item link = %q, want %q", it0.Link, wantLink)
 	}
-	if it0.GUID.Value != wantLink || !it0.GUID.IsPermaLink {
-		t.Errorf("item guid = %+v, want permalink %q", it0.GUID, wantLink)
+	// ...and the guid is FROZEN at the permanent id form. It is the
+	// subscriber-side dedup key: moving it re-surfaces every item in the window
+	// as new for everyone already subscribed. This assertion is the guard.
+	wantGUID := "https://videos.example/videos/" + pub1.String()
+	if it0.GUID.Value != wantGUID || !it0.GUID.IsPermaLink {
+		t.Errorf("item guid = %+v, want the frozen permalink %q", it0.GUID, wantGUID)
+	}
+	if it0.GUID.Value == it0.Link {
+		t.Error("guid moved with the link; it must stay the id-addressed form")
 	}
 	// Exactly one item (pub1) carries a media:thumbnail; the poster-less video omits it.
 	wantThumb := `<media:thumbnail url="https://videos.example/api/v1/videos/` + pub1.String() + `/thumbnail">`
@@ -472,9 +480,12 @@ func TestSitemap(t *testing.T) {
 		"https://videos.example/search",
 		"https://videos.example/channels/ada",
 		"https://videos.example/channels/bob",
-		"https://videos.example/videos/" + v1.String(),
-		"https://videos.example/videos/" + v2.String(),
-		"https://videos.example/videos/" + v3.String(),
+		// Videos are advertised at the CANONICAL /v/{code}, matching the
+		// rel=canonical the watch page declares. A sitemap that disagreed with
+		// the page's own canonical is a contradiction crawlers have to resolve.
+		"https://videos.example/v/" + repo.videos[v1].ShortCode,
+		"https://videos.example/v/" + repo.videos[v2].ShortCode,
+		"https://videos.example/v/" + repo.videos[v3].ShortCode,
 	}
 	for _, want := range mustHave {
 		if _, ok := locs[want]; !ok {
@@ -488,7 +499,7 @@ func TestSitemap(t *testing.T) {
 		}
 	}
 	// Video URLs carry a lastmod; parse it to prove W3C/RFC3339 shape.
-	lm := locs["https://videos.example/videos/"+v1.String()]
+	lm := locs["https://videos.example/v/"+repo.videos[v1].ShortCode]
 	if _, err := time.Parse(time.RFC3339, lm); err != nil {
 		t.Errorf("video lastmod = %q not RFC3339: %v", lm, err)
 	}
@@ -512,6 +523,10 @@ func TestDistributionHonoursInstanceSensitivePolicy(t *testing.T) {
 
 	feedBody := func() string { return get(t, srv, "/feeds/videos.xml").Body.String() }
 	sitemapBody := func() string { return get(t, srv, "/sitemap.xml").Body.String() }
+	// The sitemap now advertises the CANONICAL /v/{code}, so the video's uuid no
+	// longer appears in it at all — matching on the uuid would make the
+	// leak assertions below pass for the wrong reason, i.e. never fail.
+	spicyLoc := "/v/" + repo.videos[spicy].ShortCode
 
 	// Default policy "hide": the sensitive video never leaks; the normal one shows.
 	if body := feedBody(); strings.Contains(body, "Spicy Clip") {
@@ -520,7 +535,7 @@ func TestDistributionHonoursInstanceSensitivePolicy(t *testing.T) {
 	if body := feedBody(); !strings.Contains(body, "Normal Clip") {
 		t.Error("RSS dropped the non-sensitive video")
 	}
-	if body := sitemapBody(); strings.Contains(body, spicy.String()) {
+	if body := sitemapBody(); strings.Contains(body, spicyLoc) {
 		t.Error("sitemap leaked a sensitive video under the hide policy")
 	}
 
@@ -529,7 +544,7 @@ func TestDistributionHonoursInstanceSensitivePolicy(t *testing.T) {
 	if body := feedBody(); !strings.Contains(body, "Spicy Clip") {
 		t.Errorf("RSS excluded a sensitive video under the display policy:\n%s", body)
 	}
-	if body := sitemapBody(); !strings.Contains(body, spicy.String()) {
+	if body := sitemapBody(); !strings.Contains(body, spicyLoc) {
 		t.Error("sitemap excluded a sensitive video under the display policy")
 	}
 }

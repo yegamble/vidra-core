@@ -936,7 +936,7 @@ func (q *Queries) ListAdminVideos(ctx context.Context, arg ListAdminVideosParams
 }
 
 const listChannelOutboxVideos = `-- name: ListChannelOutboxVideos :many
-SELECT id, title, description
+SELECT id, title, description, short_code
 FROM videos
 WHERE channel_id = $1 AND privacy = 'public' AND state = 'published'
 ORDER BY created_at DESC, id DESC
@@ -953,10 +953,13 @@ type ListChannelOutboxVideosRow struct {
 	ID          uuid.UUID `json:"id"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
+	ShortCode   string    `json:"short_code"`
 }
 
 // One page of a channel's public, published videos (newest first) for the AP
 // outbox collection — just the fields needed to render a Create{Video}.
+// short_code builds the object's `url` (the human watch page). Its `id` stays
+// the uuid form and must never move: remote servers key on it.
 func (q *Queries) ListChannelOutboxVideos(ctx context.Context, arg ListChannelOutboxVideosParams) ([]ListChannelOutboxVideosRow, error) {
 	rows, err := q.db.Query(ctx, listChannelOutboxVideos, arg.ChannelID, arg.Limit, arg.Offset)
 	if err != nil {
@@ -966,7 +969,12 @@ func (q *Queries) ListChannelOutboxVideos(ctx context.Context, arg ListChannelOu
 	var items []ListChannelOutboxVideosRow
 	for rows.Next() {
 		var i ListChannelOutboxVideosRow
-		if err := rows.Scan(&i.ID, &i.Title, &i.Description); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Description,
+			&i.ShortCode,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

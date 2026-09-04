@@ -15,7 +15,9 @@ SELECT count(*) FROM videos WHERE channel_id = $1 AND privacy = 'public' AND sta
 -- name: ListChannelOutboxVideos :many
 -- One page of a channel's public, published videos (newest first) for the AP
 -- outbox collection — just the fields needed to render a Create{Video}.
-SELECT id, title, description
+-- short_code builds the object's `url` (the human watch page). Its `id` stays
+-- the uuid form and must never move: remote servers key on it.
+SELECT id, title, description, short_code
 FROM videos
 WHERE channel_id = $1 AND privacy = 'public' AND state = 'published'
 ORDER BY created_at DESC, id DESC
