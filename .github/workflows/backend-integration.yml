@@ -94,12 +94,65 @@ jobs:
       - name: Install ffmpeg (media integration tests use the real binary)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
 
+      # Real S3-compatible object storage for the six `//go:build integration`
+      # files that need a live bucket: internal/storage/s3_integration_test.go,
+      # internal/httpapi/delivery_integration_test.go,
+      # internal/mediagc/service_integration_test.go,
+      # internal/storagemigration/migration_integration_test.go,
+      # cmd/api/verify_blobs_integration_test.go and
+      # cmd/api/bucket_ownership_integration_test.go. Without it every one of
+      # them self-skips on an unset S3_TEST_ENDPOINT, so the S3 storage layer,
+      # the 307 direct-delivery path, media GC against a bucket, storage
+      # migration, bucket ownership and blob verification are unexercised by
+      # automation while production runs S3 — the same silence the clamav service
+      # above exists to end. With it they run and fail loudly on a regression.
+      #
+      # Started as a STEP and not a `services:` container because minio needs the
+      # argument `server /data`, and a services block can set an image, env,
+      # ports and a healthcheck but cannot pass a command.
+      #
+      # Mirrors the `minio` service in docker-compose.yml: same image pin, same
+      # dev-only credentials, same port, same readiness probe. THE TWO IMAGE PINS
+      # MUST BE BUMPED TOGETHER — a CI that tests a different MinIO release from
+      # the one the dev stack runs is testing something nobody deploys against.
+      # The test helpers default to exactly these credentials and call
+      # EnsureBucket themselves, so there is nothing to seed.
+      - name: Start MinIO (the S3 integration tests need a real bucket)
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=vidra \
+            -e MINIO_ROOT_PASSWORD=vidra-dev-secret \
+            --health-cmd "mc ready local" \
+            --health-interval 5s \
+            --health-timeout 5s \
+            --health-retries 10 \
+            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+
       # Embedded-migration path (`api migrate up`), same as the published image —
       # no golang-migrate CLI download, nothing to keep pinned in lock-step.
       - name: Run migrations against a fresh database
         env:
           DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
         run: go run ./cmd/api migrate up
+
+      # A `services:` container is health-gated by the runner before any step
+      # runs; a hand-started one is not, so wait for it here. Migrations ran in
+      # the step above while MinIO was booting, so this is usually instant — and
+      # if MinIO never comes up the job fails HERE, with its logs, instead of
+      # quietly running the whole suite with six packages skipped.
+      - name: Wait for MinIO to report healthy
+        run: |
+          for _ in $(seq 1 60); do
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' minio)" = "healthy" ]; then
+              echo "minio is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "minio did not become healthy within 120s" >&2
+          docker logs minio >&2
+          exit 1
 
       - name: Run integration tests (make test-integration)
         env:
@@ -108,4 +161,8 @@ jobs:
           # Points the EICAR real-clamd tests at the clamav service above so they
           # execute (and can fail the job) instead of self-skipping.
           CLAMAV_TEST_ADDR: localhost:3310
+          # Points the six S3 integration files at the MinIO started above so
+          # they execute (and can fail the job) instead of self-skipping. The
+          # bucket (vidra-test) and credentials are the helpers' own defaults.
+          S3_TEST_ENDPOINT: localhost:9000
         run: make test-integration
