@@ -831,6 +831,42 @@ Advanced page under *Delivery*. Default **off**. Flipping it takes effect on the
 next request; there is no restart and no env variable. It is inert unless the
 store can sign URLs, so on a local-filesystem install it does nothing.
 
+**Two prerequisites the API cannot check for you, and both fail SILENTLY.** The
+server's view of a presigned request is identical whether or not the viewer can
+actually use it: it mints a valid signature, answers `307`, and logs nothing. The
+failure is entirely in the browser.
+
+1. **`STORAGE_S3_ENDPOINT` must be reachable from the VIEWER'S browser, not just
+   from the API.** The presigned URL is minted from that one value — there is no
+   separate public-endpoint setting — so it is simultaneously the address the API
+   dials and the address a viewer is redirected to. If the API reaches the bucket
+   over a private name, every viewer is redirected somewhere that does not
+   resolve. Reproduced 2026-09-03 against the shipped `storage` compose profile:
+   with `STORAGE_S3_ENDPOINT=minio:9000` (the value this repo's own compose header
+   documents) the API correctly answered
+
+   ```
+   HTTP/1.1 307 Temporary Redirect
+   Location: http://minio:9000/vidra-media/streaming-playlists/<id>/cmaf/chunk-0-00001.m4s?X-Amz-Algorithm=AWS4-HMAC-SHA256&…
+   ```
+
+   …and `minio` does not resolve outside the compose network, so playback breaks
+   platform-wide while every server-side signal stays green. This bites the
+   real self-hosting shape where MinIO runs on the same host as Vidra and is
+   dialled internally: the bucket needs a name that resolves for both, and
+   `STORAGE_S3_ENDPOINT` must be that name.
+2. **The bucket's CORS policy must allow the instance's public origin.** hls.js
+   fetches segments with XHR, so a redirect to a bucket that does not return
+   `Access-Control-Allow-Origin` for your origin is a cross-origin failure in the
+   browser and, again, a clean `307` on the server. A bucket scoped to one
+   origin is the usual cause when a second environment (a beta or staging
+   hostname sharing the production bucket) cannot play anything.
+
+Verify both before enabling for real, from a machine that is not the server — the
+`curl` recipe under *Verifying it* checks the redirect, not whether a viewer can
+follow it. Turning the setting back off restores API-streamed delivery on the very
+next request, so the rollback is instant.
+
 **It is deliberately unavailable in two situations**, both decided at boot:
 
 - `STORAGE_BACKEND=local` — the filesystem has no HTTP surface to redirect to.
