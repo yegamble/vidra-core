@@ -5,6 +5,9 @@
 //
 //	docker compose --profile storage up -d minio
 //	S3_TEST_ENDPOINT=localhost:9000 go test -tags=integration ./internal/mediagc/...
+//
+// It runs in a bucket of its OWN (see newS3) because it is the one integration
+// test that deletes across a whole bucket.
 package mediagc
 
 import (
@@ -39,8 +42,17 @@ func newS3(t *testing.T) *storage.S3 {
 		return d
 	}
 	b, err := storage.NewS3(storage.S3Config{
-		Endpoint:       endpoint,
-		Bucket:         envOr("S3_TEST_BUCKET", "vidra-test"),
+		Endpoint: endpoint,
+		// A bucket of this package's own, NOT the shared vidra-test the other S3
+		// integration tests use. The sweep below deletes every attributable
+		// orphan in the WHOLE bucket, and `go test ./...` runs packages in
+		// parallel against one MinIO — so on the shared bucket this test would
+		// race to delete the objects internal/httpapi's direct-delivery test had
+		// just written (they are the same minted shapes: web-videos/<id>.mp4,
+		// thumbnails/<id>.jpg), failing that test intermittently and only in a
+		// full-suite run. verify_blobs and bucket_ownership already take a bucket
+		// each for the same reason.
+		Bucket:         envOr("S3_TEST_BUCKET", "vidra-test-mediagc"),
 		AccessKey:      envOr("S3_TEST_ACCESS_KEY", "vidra"),
 		SecretKey:      envOr("S3_TEST_SECRET_KEY", "vidra-dev-secret"),
 		UseSSL:         useSSL,
