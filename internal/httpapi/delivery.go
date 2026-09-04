@@ -146,6 +146,22 @@ func (s *Server) serveMediaAsset(c echo.Context, a mediaAsset) error {
 	return s.serveStoredObjectNamed(c, a.key, a.contentType, a.notFound)
 }
 
+// mediaObjectNotFound is the 404 for a media route whose object is absent from
+// the store.
+//
+// It RESETS the cache policy the route already stamped on the response. Media
+// routes set Cache-Control before they open the object, and returning an error
+// does not undo a header that is already set — so a versioned HLS URL, whose
+// policy is "max-age=31536000, immutable", used to hand the client a 404 under a
+// one-year immutable directive. Repairing the missing object then changed
+// nothing for any browser that had already cached the failure, which is how a
+// transient gap becomes a permanently unplayable video. The BYTES behind a
+// versioned URL are immutable; their ABSENCE is not, and must never be cached.
+func mediaObjectNotFound(c echo.Context, msg string) error {
+	c.Response().Header().Set("Cache-Control", delivery.CacheNoStore)
+	return echo.NewHTTPError(http.StatusNotFound, msg)
+}
+
 // setMediaCacheControl applies the class cache policy to a route that streams
 // its bytes without going through the resolver (the caption routes, which read
 // through video.Service and never see a storage key).

@@ -10,6 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/delivery"
+	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -128,8 +129,12 @@ func (s *Server) handleDownloadCaption(c echo.Context) error {
 	}
 	rc, err := s.videosvc.OpenCaption(c.Request().Context(), videoID, strings.TrimSpace(c.Param("lang")))
 	if err != nil {
-		if errors.Is(err, video.ErrCaptionNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "caption not found")
+		// A caption ROW whose OBJECT is gone is still just a missing caption:
+		// OpenCaption returns the storage sentinel unwrapped, and treating that
+		// as an unhandled error turned every such track into a 500 (beta serves
+		// a steady stream of them) rather than the 404 a player can shrug off.
+		if errors.Is(err, video.ErrCaptionNotFound) || errors.Is(err, storage.ErrNotFound) {
+			return mediaObjectNotFound(c, "caption not found")
 		}
 		return err
 	}

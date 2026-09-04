@@ -1444,12 +1444,12 @@ func (s *Server) serveStoredObjectNamed(c echo.Context, key, contentType, notFou
 	if pp, ok := s.media.(storage.PathProvider); ok {
 		path, err := pp.Path(key)
 		if err != nil {
-			return echo.NewHTTPError(http.StatusNotFound, notFoundMsg)
+			return mediaObjectNotFound(c, notFoundMsg)
 		}
 		file, err := os.Open(path)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return echo.NewHTTPError(http.StatusNotFound, notFoundMsg)
+				return mediaObjectNotFound(c, notFoundMsg)
 			}
 			return err
 		}
@@ -1464,7 +1464,7 @@ func (s *Server) serveStoredObjectNamed(c echo.Context, key, contentType, notFou
 	rc, err := s.media.Open(c.Request().Context(), key)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, notFoundMsg)
+			return mediaObjectNotFound(c, notFoundMsg)
 		}
 		return err
 	}

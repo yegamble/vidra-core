@@ -228,7 +228,7 @@ func (s *Server) serveHLSPlaylist(c echo.Context, key string, sp sqlcgen.Streami
 	rc, err := s.media.Open(c.Request().Context(), key)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+			return mediaObjectNotFound(c, "video not found")
 		}
 		return err
 	}
@@ -262,7 +262,7 @@ func (s *Server) serveCMAFManifest(c echo.Context, key string, sp sqlcgen.Stream
 	rc, err := s.media.Open(c.Request().Context(), key)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+			return mediaObjectNotFound(c, "video not found")
 		}
 		return err
 	}
@@ -282,7 +282,7 @@ func (s *Server) servePeerTubeHLSMaster(c echo.Context, sp sqlcgen.StreamingPlay
 	rc, err := s.media.Open(c.Request().Context(), sp.MasterKey)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+			return mediaObjectNotFound(c, "video not found")
 		}
 		return err
 	}
