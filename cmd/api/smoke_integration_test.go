@@ -61,13 +61,18 @@ type bootedAPI struct {
 	done bool
 }
 
-// startAPI builds the real binary, boots it against the live PostgreSQL and
-// Redis with extraEnv layered on, and waits until GET /readyz says it is ready.
+// startProcess builds the real binary and boots it against the live PostgreSQL
+// and Redis with extraEnv layered on, returning as soon as the process has been
+// STARTED.
 //
 // Exec'ing the artifact is the point: the test binary's own wiring proves
 // nothing about main(), which is where config load, pool sizing, service
 // construction and the shutdown sequence actually live.
-func startAPI(t *testing.T, extraEnv ...string) *bootedAPI {
+//
+// Waiting for "up" is the caller's job because what counts as up depends on the
+// role: an api answers /readyz (startAPI), while a worker-only process never
+// opens a listener and can only be observed through its logs (waitForLog).
+func startProcess(t *testing.T, extraEnv ...string) *bootedAPI {
 	t.Helper()
 
 	bin := filepath.Join(t.TempDir(), "api")
@@ -111,6 +116,16 @@ func startAPI(t *testing.T, extraEnv ...string) *bootedAPI {
 		}
 	})
 
+	return api
+}
+
+// startAPI boots the binary as startProcess does and waits until GET /readyz
+// says it is ready.
+func startAPI(t *testing.T, extraEnv ...string) *bootedAPI {
+	t.Helper()
+
+	api := startProcess(t, extraEnv...)
+
 	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(30 * time.Second)
 	for {
@@ -146,6 +161,30 @@ func startAPI(t *testing.T, extraEnv ...string) *bootedAPI {
 			t.Fatalf("api not ready within 30s\nlogs:\n%s", api.logs.String())
 		}
 		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// waitForLog blocks until the process has written substr to its logs, and fails
+// the test — with the whole log — if it exits or the deadline passes first. It
+// is how a role with no listener is observed: there is no endpoint to poll.
+func waitForLog(t *testing.T, api *bootedAPI, substr string, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for {
+		if strings.Contains(api.logs.String(), substr) {
+			return
+		}
+		select {
+		case err := <-api.exited:
+			api.done = true
+			t.Fatalf("process exited before logging %q: %v\nlogs:\n%s", substr, err, api.logs.String())
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%q not logged within %s\nlogs:\n%s", substr, timeout, api.logs.String())
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -364,4 +403,55 @@ func TestAPIDrainPhase(t *testing.T) {
 			t.Errorf("logs missing %q; got:\n%s", want, api.logs.String())
 		}
 	}
+}
+
+// TestWorkerRoleStartsTheSettingsPoller boots the real binary as
+// VIDRA_ROLE=worker and proves it runs the settings-version poller.
+//
+// WHY THIS NEEDS THE ARTIFACT. A worker holds the instance-settings cache and
+// reads it constantly — transcoding_enabled at every job pickup, the resolution
+// ladder / max fps / thread count at every encode, the import concurrency, the
+// upload ceiling, the transcription and retention knobs on every tick — and
+// internal/instancesettings has no TTL and no LISTEN, so the poller is the ONLY
+// thing that ever refreshes that cache after boot. Gate the poller on "this
+// process serves HTTP", as main did until this test, and a worker fleet keeps
+// encoding at whatever the settings said when it booted, forever, while the api
+// replicas and GET /instance all report the admin's new value. Nothing errors
+// and nothing logs, so the only honest proof is the running process.
+func TestWorkerRoleStartsTheSettingsPoller(t *testing.T) {
+	if os.Getenv("DATABASE_URL") == "" || os.Getenv("REDIS_URL") == "" {
+		t.Skip("DATABASE_URL/REDIS_URL not set; skipping worker role settings poller test")
+	}
+
+	api := startProcess(t, "VIDRA_ROLE=worker")
+
+	// The worker announces itself once every service is wired and every worker
+	// has been started, which is after the poller decision — so by the time this
+	// line appears, the poller line either exists or never will.
+	waitForLog(t, api, "worker-only process ready", 30*time.Second)
+
+	const started = "settings version poller started"
+	line := logLineContaining(api.logs.String(), started)
+	if line == "" {
+		t.Fatalf("a VIDRA_ROLE=worker process did not start the settings version poller: "+
+			"every runtime toggle it reads is frozen at its boot load\nlogs:\n%s", api.logs.String())
+	}
+	// The role is on the line because the operator question this answers is
+	// "which halves of my fleet are picking up admin changes?", and a fleet log
+	// aggregator sees every process's copy of the same message.
+	if !strings.Contains(line, `"role":"worker"`) {
+		t.Errorf("poller start line does not name the role it started in: %s", line)
+	}
+}
+
+// logLineContaining returns the first log line holding substr, or "" when there
+// is none. The lines are JSON (LOG_FORMAT=json), so a field assertion has to be
+// made against ONE line rather than the whole buffer.
+func logLineContaining(logs, substr string) string {
+	for _, line := range strings.Split(logs, "\n") {
+		if strings.Contains(line, substr) {
+			return line
+		}
+	}
+	return ""
 }

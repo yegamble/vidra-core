@@ -1431,9 +1431,10 @@ for an install that does not set it.
 
 ### Behind a load balancer
 
-Putting a balancer in front of several replicas adds three concerns the sections
+Putting a balancer in front of several replicas adds four concerns the sections
 above do not finish: what the balancer should poll, whose address a request
-appears to come from, and where rate-limit state lives.
+appears to come from, where rate-limit state lives, and how an admin change
+reaches the replicas that did not serve it.
 
 **Poll `/readyz`, and give the drain delay time to work.** `/readyz` answers the
 balancer's question — "should I send this instance traffic?" — and only
@@ -1489,6 +1490,22 @@ replica the balancer picks. Two departures from that:
   keeps its own count, so those budgets silently multiply by replica count: the
   contact form's 1 request per IP per hour becomes N, spent from whichever
   counter the balancer happens to route to.
+
+**An admin change reaches the other processes within about ten seconds.** The
+instance settings overlay, the instance documents (ToS/privacy links, homepage
+markdown, custom CSS/JS) and the branding images are held **in memory by every
+process**, and only the process that served the write reloads them itself.
+Without something to carry the change, an admin toggle would take effect on
+exactly one replica and the rest would answer with what they booted with — the
+admin's own read has a 1/N chance of confirming it, so the symptom is an
+intermittently wrong instance rather than an obviously broken one. What carries
+it is a counter row: every write bumps it, and every process re-reads it on a
+short jittered ticker (~10s) and reloads all three caches when it has moved.
+That interval is the staleness bound, it needs no configuration, and it applies
+to `VIDRA_ROLE=worker` processes too — they hold the settings overlay and read
+it constantly. The one write that does *not* carry is a settings row written
+straight into the database by a CLI rather than through the admin API: nothing
+bumps the counter, so it lands at the next restart or the next admin save.
 
 ### What was actually tested
 
@@ -1662,6 +1679,25 @@ would hold it while running zero leader-gated sweeps — media GC, the content-h
 backfill, operational-job retention, the transcode-hold sweep and the rest would
 simply stop — and the worker that *can* run them would sit as a follower waiting for
 a leader that never yields. The symptom would be nothing at all in the logs.
+
+### Runtime settings reach the workers too
+
+The admin-editable settings overlay is **cached in memory by every process**, and
+a worker reads it constantly: `transcoding_enabled` at every job pickup, the
+resolution ladder / max fps / thread count at every encode, the import
+concurrency, the upload ceiling, transcription, the retention windows. Every
+process — worker included — re-reads the invalidation counter on a ~10s ticker
+and reloads that cache when an admin has written, so a settings change reaches
+the worker fleet within about ten seconds without a restart. The mechanism is
+the same one described under
+[Behind a load balancer](#behind-a-load-balancer).
+
+The `settings_sync` component on the admin status page reports it, but only for
+processes that serve HTTP — a worker has no status page to report on, so a
+worker that could not reach the counter at all would show up as an unchanged
+setting, not as a red component. If a settings change has visibly taken effect
+on the api and the workers are still behaving as they were, restart them and
+report it.
 
 ### Health checks
 
