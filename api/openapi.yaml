@@ -3630,85 +3630,57 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-  /api/v1/videos/by-code/{code}:
+  /api/v1/videos/resolve:
     get:
-      operationId: getVideoByShortCode
-      summary: Get a video by its short code
+      operationId: resolveVideo
+      summary: Resolve a public identifier to a video
       description: >-
-        Resolves the opaque 11-character short_code that the public /v/{code}
-        watch URL is built from, and returns exactly what GET /videos/{id}
-        returns for the same video — the same visibility, password and
-        moderator/admin rules, decided by the same code path, so the two ways of
-        naming one video cannot diverge.
+        Returns exactly what GET /videos/{id} returns, for a video named by one
+        of the two public identifiers that are not its uuid. Give exactly one of
+        the query parameters.
 
-        A code that is not 11 base58 characters is reported as 404, NOT 400.
-        That is deliberate: a distinguishable "malformed" answer would let an
-        unauthenticated caller tell a well-formed unknown code from a
-        badly-formed one, and an unlisted video is protected by the obscurity of
-        its code alone.
+        `code` is the opaque 11-character short_code that the public /v/{code}
+        watch URL is built from.
+
+        `legacy_uuid` is a uuid from a URL this instance no longer mints: either
+        its own /videos/watch/{uuid} form, which remote ActivityPub servers still
+        hold, or the SOURCE uuid of a video imported from a PeerTube instance —
+        the value that instance's /w/{shortUUID} links decode to. That second
+        case is what keeps an imported instance's existing links working after
+        its domain is pointed at Vidra. This instance's own id namespace wins if
+        a value somehow appears in both.
+
+        Visibility, password and moderator/admin rules are decided by the same
+        code path as GET /videos/{id}, so the ways of naming one video cannot
+        diverge.
+
+        Naming no identifier, or both, is 400 — a caller mistake with nothing to
+        hide. But an identifier that is malformed and one that simply resolves to
+        nothing BOTH answer 404, never 400: a distinguishable reply would let an
+        unauthenticated caller tell a real unknown code from a badly-formed one,
+        and an unlisted video is protected by the obscurity of its code alone.
+
+        This endpoint is a static sibling of /videos/config and /videos/search
+        rather than /videos/by-code/{code}, because that shape does not resolve
+        unambiguously against /videos/{id}/{subresource}.
       tags: [videos]
       security:
         - bearerAuth: []
         - {}
       parameters:
         - name: code
-          in: path
-          required: true
-          description: The video's short_code.
+          in: query
+          required: false
+          description: The video's short_code. Mutually exclusive with legacy_uuid.
           schema:
             type: string
             pattern: "^[1-9A-HJ-NP-Za-km-z]{11}$"
-      responses:
-        "200":
-          description: The video.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Video"
-        "401":
+        - name: legacy_uuid
+          in: query
+          required: false
           description: >-
-            The video is password protected and the caller presented no valid
-            credential. Error code "password_required".
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: >-
-            No video has that code, the code is malformed, or the video is not
-            visible to this caller. The three are deliberately indistinguishable.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-  /api/v1/videos/by-legacy-uuid/{uuid}:
-    get:
-      operationId: getVideoByLegacyUUID
-      summary: Get a video by a UUID from an older public URL
-      description: >-
-        Resolves a UUID that appeared in a public URL this instance no longer
-        mints, and returns exactly what GET /videos/{id} returns.
-
-        Two namespaces reach this endpoint and both are UUIDs. The first is this
-        instance's own id, as carried by the legacy /videos/watch/{uuid} form
-        that remote ActivityPub servers still hold. The second is the SOURCE
-        UUID of a video imported from a PeerTube instance — the value its
-        /w/{shortUUID} and /videos/watch/{uuid} links decode to — which the
-        importer records on the video. That second case is what keeps an
-        imported instance's existing links working after its domain is pointed
-        at Vidra.
-
-        This instance's own id namespace wins if a value somehow appears in
-        both.
-      tags: [videos]
-      security:
-        - bearerAuth: []
-        - {}
-      parameters:
-        - name: uuid
-          in: path
-          required: true
-          description: A video UUID from an older public URL, or an imported PeerTube video's source UUID.
+            A video uuid from an older public URL, or an imported PeerTube
+            video's source uuid. Mutually exclusive with code.
           schema:
             type: string
             format: uuid
@@ -3719,6 +3691,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Video"
+        "400":
+          description: Neither identifier was given, or both were.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: >-
             The video is password protected and the caller presented no valid
@@ -3729,8 +3707,9 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: >-
-            No video is named by that UUID in either namespace, or it is not
-            visible to this caller.
+            No video is named by that identifier, the identifier is malformed, or
+            the video is not visible to this caller. The three are deliberately
+            indistinguishable.
           content:
             application/json:
               schema:

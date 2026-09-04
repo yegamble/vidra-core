@@ -489,35 +489,52 @@ func (s *Server) handleGetVideo(c echo.Context) error {
 	return s.respondVideo(c, id)
 }
 
-// handleGetVideoByShortCode resolves the opaque short code from a /v/{code} URL
-// and answers with exactly what GET /videos/{id} would.
+// handleResolveVideo answers with exactly what GET /videos/{id} would, for a
+// video named by one of the two PUBLIC identifiers that are not its uuid:
 //
-// The 404 on a malformed code is deliberate and mirrors pathUUID: answering 400
-// here would let an unauthenticated caller tell "not a code" from "no such
-// code", which is the existence leak the whole convention exists to close.
-func (s *Server) handleGetVideoByShortCode(c echo.Context) error {
-	id, err := s.videosvc.IDByShortCode(c.Request().Context(), c.Param("code"))
-	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
+//	?code=<11 base58 chars>  the short code a /v/{code} watch URL carries
+//	?legacy_uuid=<uuid>      a uuid from a URL this instance no longer mints —
+//	                         its own /videos/watch/{uuid} form, still held by
+//	                         remote ActivityPub servers, or the SOURCE uuid of a
+//	                         video imported from PeerTube (what /w/{shortUUID}
+//	                         decodes to)
+//
+// It is ONE endpoint on a static path rather than two /videos/by-.../{x} paths
+// because those collide in shape with /videos/{id}/{subresource} — 25 OpenAPI
+// "paths should resolve unambiguously" warnings — while a static sibling of
+// /videos/config and /videos/search collides with nothing.
+//
+// Two different error classes meet here and must not be merged. A request that
+// names NO identifier, or both, is a caller mistake with nothing to hide: 400,
+// as GET /services/oembed already answers a missing url. But a WELL-FORMED
+// identifier that resolves to nothing, and a malformed one, both answer 404 —
+// never 400 — per pathUUID's rule. Distinguishing them would let an
+// unauthenticated caller tell a real unknown code from a badly-formed one, and
+// an unlisted video is protected by the obscurity of its code alone.
+func (s *Server) handleResolveVideo(c echo.Context) error {
+	code, legacy := c.QueryParam("code"), c.QueryParam("legacy_uuid")
+	switch {
+	case code != "" && legacy != "":
+		return echo.NewHTTPError(http.StatusBadRequest, "give exactly one of code or legacy_uuid")
+	case code != "":
+		id, err := s.videosvc.IDByShortCode(c.Request().Context(), code)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		return s.respondVideo(c, id)
+	case legacy != "":
+		parsed, err := uuid.Parse(legacy)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		id, err := s.videosvc.IDByLegacyUUID(c.Request().Context(), parsed)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		return s.respondVideo(c, id)
+	default:
+		return echo.NewHTTPError(http.StatusBadRequest, "code or legacy_uuid is required")
 	}
-	return s.respondVideo(c, id)
-}
-
-// handleGetVideoByLegacyUUID resolves a UUID from an OLD public URL — one this
-// instance minted before /videos/{uuid}, or the SOURCE uuid of a video imported
-// from a PeerTube instance (whose /w/{shortUUID} decodes to it) — and answers
-// with exactly what GET /videos/{id} would. It is what keeps an imported
-// instance's existing links alive after its domain is cut over to Vidra.
-func (s *Server) handleGetVideoByLegacyUUID(c echo.Context) error {
-	legacy, err := pathUUID(c, "uuid", "video not found")
-	if err != nil {
-		return err
-	}
-	id, err := s.videosvc.IDByLegacyUUID(c.Request().Context(), legacy)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "video not found")
-	}
-	return s.respondVideo(c, id)
 }
 
 // respondVideo is the detail response for an already-resolved video id: the

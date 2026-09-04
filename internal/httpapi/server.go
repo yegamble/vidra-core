@@ -1520,6 +1520,11 @@ func (s *Server) routes() {
 		api.PUT("/videos/:id/watch-progress", s.handleRecordWatchProgress, s.requireAuth)
 		api.GET("/videos/config", s.handleVideoConfig)
 		api.GET("/videos/search", s.handleSearchVideos, s.optionalAuth)
+		// Resolves the two PUBLIC identifiers that are not a video's uuid (short
+		// code, legacy uuid). A static sibling of config/search, deliberately not
+		// /videos/by-code/{code} — that shape is ambiguous with
+		// /videos/{id}/{subresource} in the OpenAPI contract.
+		api.GET("/videos/resolve", s.handleResolveVideo, s.optionalAuth)
 		// Discovery (search-service W4): autocomplete + recommendation rails +
 		// behavioural events. Always mounted (they degrade to empty/fallback when
 		// vidra-search is disabled, so the contract surface is stable); each
@@ -1528,11 +1533,6 @@ func (s *Server) routes() {
 		api.GET("/recommendations/home", s.handleHomeRecommendations, s.optionalAuth)
 		api.GET("/videos/:id/recommendations", s.handleVideoRecommendations, s.optionalAuth)
 		api.POST("/search/events", s.handleSearchEvents, s.optionalAuth)
-		// Resolvers for the OTHER two ways a video is named in a public URL. They
-		// sit above /videos/:id only for readability — Echo prefers a static
-		// segment over a param, so registration order does not decide this.
-		api.GET("/videos/by-code/:code", s.handleGetVideoByShortCode, s.optionalAuth)
-		api.GET("/videos/by-legacy-uuid/:uuid", s.handleGetVideoByLegacyUUID, s.optionalAuth)
 		api.GET("/videos/:id", s.handleGetVideo, s.optionalAuth)
 		api.GET("/videos/:id/original", s.handleStreamVideoOriginal, s.optionalAuth)
 		api.GET("/videos/:id/download", s.handleGetVideoDownloads, s.optionalAuth)

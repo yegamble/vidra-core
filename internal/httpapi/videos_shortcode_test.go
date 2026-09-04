@@ -14,7 +14,7 @@ import (
 
 func getByCode(srv *Server, code, token string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/by-code/"+code, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/resolve?code="+url.QueryEscape(code), nil)
 	if token != "" {
 		req.Header.Set("authorization", "Bearer "+token)
 	}
@@ -24,7 +24,7 @@ func getByCode(srv *Server, code, token string) *httptest.ResponseRecorder {
 
 func getByLegacyUUID(srv *Server, id, token string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/by-legacy-uuid/"+id, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/resolve?legacy_uuid="+url.QueryEscape(id), nil)
 	if token != "" {
 		req.Header.Set("authorization", "Bearer "+token)
 	}
@@ -223,5 +223,42 @@ func TestOEmbedResolvesStoredShortCode(t *testing.T) {
 	byID := get(t, srv, "/services/oembed?format=json&url="+url.QueryEscape(base+"/videos/"+id.String()))
 	if byCode.Body.String() != byID.Body.String() {
 		t.Fatalf("short-code unfurl differs from canonical\n code: %s\n uuid: %s", byCode.Body.String(), byID.Body.String())
+	}
+}
+
+// The two error CLASSES must stay apart. Naming no identifier (or both) is a
+// caller mistake with nothing to hide, so it is 400 — the same answer
+// /services/oembed gives a missing url. Everything about whether a video EXISTS
+// stays 404.
+func TestResolveVideoParameterErrorsAre400NotFoundStays404(t *testing.T) {
+	srv := videoServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"Public","privacy":"public"}`)
+	code := shortCodeOf(t, srv, id, tok)
+
+	do := func(query string) int {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/videos/resolve"+query, nil))
+		return rec.Code
+	}
+	if got := do(""); got != http.StatusBadRequest {
+		t.Errorf("no identifier = %d, want 400", got)
+	}
+	if got := do("?code=" + code + "&legacy_uuid=" + id); got != http.StatusBadRequest {
+		t.Errorf("both identifiers = %d, want 400", got)
+	}
+	// Present-but-empty is "not given", not a malformed code.
+	if got := do("?code="); got != http.StatusBadRequest {
+		t.Errorf("empty code = %d, want 400", got)
+	}
+	// Existence questions stay 404 whichever way they are malformed.
+	if got := do("?code=abcdefghijk"); got != http.StatusNotFound {
+		t.Errorf("unknown well-formed code = %d, want 404", got)
+	}
+	if got := do("?code=nope"); got != http.StatusNotFound {
+		t.Errorf("malformed code = %d, want 404", got)
+	}
+	if got := do("?legacy_uuid=not-a-uuid"); got != http.StatusNotFound {
+		t.Errorf("malformed legacy_uuid = %d, want 404", got)
 	}
 }
