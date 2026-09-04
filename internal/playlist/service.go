@@ -106,6 +106,9 @@ type VideoCard struct {
 	HasThumbnail       bool
 	ChannelHandle      string
 	ChannelDisplayName string
+	// ShortCode is the video's opaque public id (videos.short_code), so a
+	// playlist card can build the same /v/{code} link a feed card does.
+	ShortCode string
 }
 
 // CreateInput is validated, normalized playlist-creation data. Visibility must
@@ -299,6 +302,7 @@ func (s *Service) ListItems(ctx context.Context, playlistID uuid.UUID, limit, of
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt,
 			Views: r.Views, HasThumbnail: r.HasThumbnail,
 			ChannelHandle: r.ChannelHandle, ChannelDisplayName: r.ChannelDisplayName,
+			ShortCode: r.ShortCode,
 		})
 	}
 	return cards, total, nil

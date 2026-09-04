@@ -66,6 +66,7 @@ func playlistCardView(c playlist.VideoCard) videoView {
 	name := c.ChannelDisplayName
 	return videoView{
 		ID:                 c.ID.String(),
+		ShortCode:          c.ShortCode,
 		ChannelID:          c.ChannelID.String(),
 		Title:              c.Title,
 		Description:        c.Description,

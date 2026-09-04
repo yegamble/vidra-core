@@ -245,7 +245,7 @@ func (f *videoFakeRepo) ListSavedVideos(_ context.Context, a sqlcgen.ListSavedVi
 			continue
 		}
 		rows = append(rows, sqlcgen.ListSavedVideosRow{
-			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+			ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
@@ -299,7 +299,7 @@ func (f *videoFakeRepo) ListWatchHistory(_ context.Context, a sqlcgen.ListWatchH
 		}
 		handle, name := f.channelInfo(r.ChannelID)
 		rows = append(rows, sqlcgen.ListWatchHistoryRow{
-			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+			ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			ChannelHandle: handle, ChannelDisplayName: name,
@@ -344,7 +344,7 @@ func (f *videoFakeRepo) ListWatchHistoryInProgress(_ context.Context, a sqlcgen.
 		}
 		handle, name := f.channelInfo(r.ChannelID)
 		rows = append(rows, sqlcgen.ListWatchHistoryInProgressRow{
-			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+			ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			ChannelHandle: handle, ChannelDisplayName: name,
@@ -381,7 +381,7 @@ func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.List
 		hidden := f.mutedFromFeed(pgtype.UUID{Bytes: a.FollowerID, Valid: true}, r.ChannelID)
 		if r.Privacy == "public" && r.State == "published" && follows && !hidden {
 			rows = append(rows, sqlcgen.ListSubscriptionVideosRow{
-				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 				IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
@@ -553,7 +553,7 @@ func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, a sqlcgen.ListVid
 	for _, r := range f.videos {
 		if r.ChannelID == channelID {
 			out = append(out, sqlcgen.ListVideosByChannelRow{
-				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				PublishAt: r.PublishAt, IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
@@ -636,7 +636,7 @@ func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, a sqlcgen.L
 		}
 		if r.ChannelID == channelID && r.Privacy == "public" && r.State == "published" {
 			out = append(out, sqlcgen.ListPublicVideosByChannelRow{
-				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 				IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
@@ -872,7 +872,7 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 			(strings.Contains(strings.ToLower(r.Title), q) || f.tagMatches(r.ID, q)) &&
 			!f.mutedFromFeed(a.ViewerID, r.ChannelID) && !f.ownerUnlisted(r.ChannelID) {
 			all = append(all, sqlcgen.SearchPublicVideosRow{
-				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 				AuthorDisplayName: f.authorName(r.ChannelID),
@@ -954,7 +954,7 @@ func (f *videoFakeRepo) ListPublicVideosByIDs(_ context.Context, a sqlcgen.ListP
 			continue
 		}
 		rows = append(rows, sqlcgen.ListPublicVideosByIDsRow{
-			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+			ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			AuthorDisplayName: f.authorName(r.ChannelID), IsSensitive: r.IsSensitive,
@@ -983,7 +983,7 @@ func (f *videoFakeRepo) ListRelatedVideosFallback(_ context.Context, a sqlcgen.L
 			continue
 		}
 		rows = append(rows, sqlcgen.ListRelatedVideosFallbackRow{
-			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+			ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 			AuthorDisplayName: f.authorName(r.ChannelID), IsSensitive: r.IsSensitive,
@@ -1187,7 +1187,7 @@ func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.List
 			!f.ownerUnlisted(r.ChannelID) {
 			ch, cn := f.channelInfo(r.ChannelID)
 			rows = append(rows, sqlcgen.ListPublicVideosSortedRow{
-				ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
 				ChannelHandle: ch, ChannelDisplayName: cn,

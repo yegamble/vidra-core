@@ -149,10 +149,11 @@ func validateTaxonomy(category, language, license string) []FieldError {
 type videoView struct {
 	ID string `json:"id"`
 	// ShortCode is the video's opaque 11-character public id (videos.short_code),
-	// the one the /v/{code} watch URL is built from. Present on the DETAIL and
-	// create/update views. Omitted on remote cards (a remote video has no local
-	// code) and, for now, on feed/search/playlist cards, whose queries do not yet
-	// select it — a card consumer must still build its link from ID.
+	// the one the /v/{code} watch URL is built from. Present on EVERY local view:
+	// detail, create/update, and the feed/search/subscriptions/channel/saved/
+	// history/playlist cards. Omitted only on remote federated cards, which have
+	// no local code — the UNION feed queries select ''::text for those rows, and
+	// a remote card links out via WatchURL instead.
 	ShortCode   string `json:"short_code,omitempty"`
 	Remote      bool   `json:"remote"`
 	ChannelID   string `json:"channel_id,omitempty"`
