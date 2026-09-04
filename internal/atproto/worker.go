@@ -111,7 +111,13 @@ func (s *Service) runPost(ctx context.Context, row sqlcgen.ClaimDueATProtoPostsR
 		return err // transient (network / 5xx / 429) — retried with backoff
 	}
 
+	// A Bluesky post is immutable once created, so whatever form ships here is
+	// permanent for that post. The canonical short form is what a reader should
+	// land on; a video with no code still posts the uuid form.
 	watchURL := s.baseURL + "/videos/" + info.ID.String()
+	if info.ShortCode != "" {
+		watchURL = s.baseURL + "/v/" + info.ShortCode
+	}
 	thumb := s.uploadThumbnail(ctx, sess, acct.PdsUrl, row.VideoID)
 	record := buildPostRecord(info.Title, watchURL, s.now(), thumb)
 

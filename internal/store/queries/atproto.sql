@@ -107,7 +107,7 @@ SELECT * FROM atproto_posts WHERE video_id = $1;
 -- building the post record. Joins through the owning channel so the atproto
 -- package needs no dependency on the video package. atproto_enabled gates the
 -- per-channel cross-post opt-out (migration 0096).
-SELECT v.id, v.title, v.privacy, c.owner_id, c.atproto_enabled
+SELECT v.id, v.title, v.privacy, v.short_code, c.owner_id, c.atproto_enabled
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 WHERE v.id = $1;

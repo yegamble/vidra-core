@@ -125,14 +125,18 @@ func (s *Service) fanOutToFollowers(ctx context.Context, channelID uuid.UUID, ch
 // AS Video object, attributed to the channel actor and addressed to the public.
 func (s *Service) buildVideoActivity(activityType, channelHandle string, v sqlcgen.GetVideoByIDRow) ([]byte, error) {
 	channelActor := s.baseURL + "/video-channels/" + channelHandle
-	videoURL := s.baseURL + "/videos/" + v.ID.String()
+	objectID := s.baseURL + "/videos/" + v.ID.String()
+	watchURL := objectID
+	if v.ShortCode != "" {
+		watchURL = s.baseURL + "/v/" + v.ShortCode
+	}
 	activity := map[string]any{
 		"@context": "https://www.w3.org/ns/activitystreams",
 		"id":       channelActor + "/activities/" + strings.ToLower(activityType) + "/" + uuid.NewString(),
 		"type":     activityType,
 		"actor":    channelActor,
 		"to":       []string{publicAudience},
-		"object":   videoObject(channelActor, videoURL, v.Title, v.Description),
+		"object":   videoObject(channelActor, objectID, watchURL, v.Title, v.Description),
 	}
 	return json.Marshal(activity)
 }
@@ -149,14 +153,24 @@ func (s *Service) buildVideoActivity(activityType, channelHandle string, v sqlcg
 // policies. Revisit if/when the outbound representation adopts the PT context
 // wholesale (duration, views, category would come with it); the contract
 // golden fixtures pin today's shape.
-func videoObject(channelActor, videoURL, title, description string) map[string]any {
+// videoObject renders the AS Video. objectID and watchURL are DIFFERENT things
+// and the split is deliberate:
+//
+//   - `id` is the object's identity across the fediverse. Remote servers store
+//     it, address Update/Delete to it, and thread replies against it. It stays
+//     the /videos/{uuid} form FOREVER; changing it re-identifies the video
+//     everywhere and orphans every existing reply.
+//   - `url` is the human landing page, and moves to /v/{code}. ActivityPub
+//     draws exactly this distinction, and remote copies pick the new value up
+//     on the next Update we send — there is no mass re-send.
+func videoObject(channelActor, objectID, watchURL, title, description string) map[string]any {
 	return map[string]any{
-		"id":           videoURL,
+		"id":           objectID,
 		"type":         "Video",
 		"name":         title,
 		"content":      description,
 		"attributedTo": channelActor,
-		"url":          videoURL,
+		"url":          watchURL,
 		"to":           []string{publicAudience},
 	}
 }

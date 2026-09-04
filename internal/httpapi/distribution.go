@@ -62,7 +62,25 @@ const (
 // trims it at load). It is non-empty whenever these routes are mounted.
 func (s *Server) webOrigin() string { return s.cfg.PublicBaseURL }
 
+// watchURL is the video's PERMANENT, id-addressed URL. It is what remote systems
+// key on — the ActivityPub object id and the RSS guid — and it must never move:
+// those values live in databases we do not control, and changing one re-identifies
+// the video or re-notifies every subscriber.
 func (s *Server) watchURL(id uuid.UUID) string { return s.webOrigin() + "/videos/" + id.String() }
+
+// canonicalWatchURL is the url a HUMAN should land on: /v/{code} when the video
+// has a short code, falling back to the permanent form when it does not (an
+// older row, or a remote video, which has no local code).
+//
+// The distinction from watchURL is the whole of stage 6: identifiers stay, links
+// move. Anything a remote system uses as a KEY takes watchURL; anything a person
+// clicks takes this.
+func (s *Server) canonicalWatchURL(id uuid.UUID, shortCode string) string {
+	if shortCode == "" {
+		return s.watchURL(id)
+	}
+	return s.webOrigin() + "/v/" + shortCode
+}
 func (s *Server) embedURL(id uuid.UUID) string { return s.webOrigin() + "/embed/" + id.String() }
 func (s *Server) channelURL(handle string) string {
 	return s.webOrigin() + "/channels/" + handle
@@ -186,8 +204,12 @@ func (s *Server) handleVideosFeed(c echo.Context) error {
 	for _, it := range items {
 		id := it.Video.ID
 		item := rssItem{
-			Title:       it.Video.Title,
-			Link:        s.watchURL(id),
+			Title: it.Video.Title,
+			// The link a reader clicks moves to the short form...
+			Link: s.canonicalWatchURL(id, it.Video.ShortCode),
+			// ...but the guid does NOT. It is the subscriber-side dedup key, so
+			// changing it re-surfaces every item in the window as new for every
+			// existing subscriber. A permanently-valid URL is still a permalink.
 			GUID:        rssGUID{Value: s.watchURL(id), IsPermaLink: true},
 			PubDate:     it.Video.CreatedAt.UTC().Format(time.RFC1123Z),
 			Description: truncateRunes(it.Video.Description, rssDescriptionMax),
@@ -423,7 +445,9 @@ func (s *Server) handleSitemap(c echo.Context) error {
 
 	for _, it := range items {
 		set.URLs = append(set.URLs, sitemapURL{
-			Loc:     s.watchURL(it.Video.ID),
+			// The sitemap advertises the canonical, matching the rel=canonical
+			// the page itself declares. No dedup key here, so nothing churns.
+			Loc:     s.canonicalWatchURL(it.Video.ID, it.Video.ShortCode),
 			LastMod: it.Video.UpdatedAt.UTC().Format(time.RFC3339),
 		})
 	}
