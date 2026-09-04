@@ -61,7 +61,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_reason
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -96,7 +96,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_reason
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -145,7 +145,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive, feed.sensitive_reason
+       feed.is_sensitive, feed.sensitive_reason, feed.short_code
 FROM (
     SELECT v.id,
            false AS remote,
@@ -164,7 +164,8 @@ FROM (
            ''::text AS watch_url,
            NULL::text AS stream_url,
            v.is_sensitive,
-           v.sensitive_reason
+           v.sensitive_reason,
+           v.short_code
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
     JOIN users au ON au.id = c.owner_id
@@ -207,7 +208,8 @@ FROM (
            rv.watch_url,
            rv.stream_url,
            false AS is_sensitive,
-           ''::text AS sensitive_reason
+           ''::text AS sensitive_reason,
+           ''::text AS short_code
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     WHERE sqlc.arg('include_remote')::bool
@@ -326,7 +328,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive, feed.sensitive_reason
+       feed.is_sensitive, feed.sensitive_reason, feed.short_code
 FROM (
     SELECT v.id,
            false AS remote,
@@ -345,7 +347,8 @@ FROM (
            ''::text AS watch_url,
            NULL::text AS stream_url,
            v.is_sensitive,
-           v.sensitive_reason
+           v.sensitive_reason,
+           v.short_code
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
     JOIN users au ON au.id = c.owner_id
@@ -381,7 +384,8 @@ FROM (
            rv.watch_url,
            rv.stream_url,
            false AS is_sensitive,
-           ''::text AS sensitive_reason
+           ''::text AS sensitive_reason,
+           ''::text AS short_code
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
     WHERE EXISTS (
@@ -505,7 +509,7 @@ SELECT feed.id, feed.remote, feed.channel_id, feed.title, feed.description,
        feed.has_thumbnail, feed.channel_handle, feed.channel_display_name,
        feed.author_display_name,
        feed.duration_seconds, feed.domain, feed.watch_url, feed.stream_url,
-       feed.is_sensitive, feed.sensitive_reason
+       feed.is_sensitive, feed.sensitive_reason, feed.short_code
 FROM (
     SELECT v.id,
            false AS remote,
@@ -525,6 +529,7 @@ FROM (
            NULL::text AS stream_url,
            v.is_sensitive,
            v.sensitive_reason,
+           v.short_code,
            similarity(v.title, sqlc.arg('query')) AS search_rank
     FROM videos v
     JOIN channels c ON c.id = v.channel_id
@@ -594,6 +599,7 @@ FROM (
            rv.stream_url,
            false AS is_sensitive,
            ''::text AS sensitive_reason,
+           ''::text AS short_code,
            similarity(rv.title, sqlc.arg('query')) AS search_rank
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
@@ -764,7 +770,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_reason
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -800,7 +806,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_reason,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code,
        (v.channel_id = sqlc.arg('channel_id'))::bool AS same_channel
 FROM videos v
 JOIN channels c ON c.id = v.channel_id

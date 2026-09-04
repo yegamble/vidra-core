@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/pgconv"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -139,4 +140,113 @@ func TestVideoShortCodeAndLegacyResolution(t *testing.T) {
 	// 7. ...but it is PARTIAL: any number of videos may have no source uuid.
 	insert("NoSource1", nil)
 	insert("NoSource2", nil)
+}
+
+// TestUnionFeedCarriesShortCodeInTheRightColumn runs the UNION discovery feed
+// against real PostgreSQL, with BOTH a local and a remote row in it.
+//
+// This is the one edit in the card change that a fake cannot police. short_code
+// and sensitive_reason are both text, and both branches of the UNION had to gain
+// the new column in the same position. A count or type mismatch would fail
+// loudly, but a POSITION mismatch between the two branches is silent: the result
+// column takes its NAME from the first branch and its VALUE, per row, from
+// whichever branch produced that row. So a local-only assertion proves nothing
+// about the remote branch — an earlier version of this test checked only a local
+// row and passed happily against a deliberately swapped query.
+//
+// Hence both rows are asserted. Note the remote branch can only be guarded
+// against columns holding DIFFERENT values: two adjacent ”::text literals are
+// interchangeable by definition, so the assertions that bite are short_code
+// against watch_url (verified by mutation), not short_code against
+// sensitive_reason.
+func TestUnionFeedCarriesShortCodeInTheRightColumn(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	_, channelID, cleanup := seedUserAndChannel(t, st)
+	defer cleanup()
+
+	const reason = "flashing-imagery-marker"
+	var id uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO videos (channel_id, title, privacy, state, is_sensitive, sensitive_reason)
+		 VALUES ($1, 'UnionFeedProbe', 'public', 'published', true, $2) RETURNING id`,
+		channelID, reason,
+	).Scan(&id); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	var want string
+	if err := st.Pool.QueryRow(ctx, `SELECT short_code FROM videos WHERE id=$1`, id).Scan(&want); err != nil {
+		t.Fatalf("read short_code: %v", err)
+	}
+
+	// A remote row so the UNION's SECOND branch is actually represented in the
+	// result set. It must come back with an EMPTY short code (no local code
+	// exists) while still carrying its own other columns intact.
+	const remoteActor = "https://tube.remote.example/accounts/probe"
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO remote_actors (actor_url, actor_type, preferred_username, domain, public_key_pem)
+		 VALUES ($1, 'Person', 'probe', 'tube.remote.example', 'x')
+		 ON CONFLICT (actor_url) DO NOTHING`, remoteActor); err != nil {
+		t.Fatalf("seed remote actor: %v", err)
+	}
+	var remoteID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO remote_videos (object_url, remote_actor_url, title, watch_url, published_at)
+		 VALUES ($1, $2, 'UnionFeedRemoteProbe', 'https://tube.remote.example/w/abc', now())
+		 RETURNING id`,
+		"https://tube.remote.example/videos/"+uuid.NewString(), remoteActor,
+	).Scan(&remoteID); err != nil {
+		t.Fatalf("seed remote video: %v", err)
+	}
+	defer func() {
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM remote_actors WHERE actor_url = $1`, remoteActor)
+	}()
+
+	// include_remote exercises the UNION rather than the local-only branch.
+	rows, err := q.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
+		IncludeRemote: true,
+		Sort:          "recent",
+		ResultLimit:   100,
+		ResultOffset:  0,
+	})
+	if err != nil {
+		t.Fatalf("ListPublicVideosSorted: %v", err)
+	}
+	var sawLocal, sawRemote bool
+	for _, r := range rows {
+		switch r.ID {
+		case id:
+			sawLocal = true
+			if r.ShortCode != want {
+				t.Errorf("local feed short_code = %q, want %q", r.ShortCode, want)
+			}
+			if r.SensitiveReason != reason {
+				t.Errorf("local feed sensitive_reason = %q, want %q — the local branch is misaligned", r.SensitiveReason, reason)
+			}
+		case remoteID:
+			sawRemote = true
+			if r.ShortCode != "" {
+				t.Errorf("remote feed short_code = %q, want empty — the remote branch is misaligned", r.ShortCode)
+			}
+			if !r.Remote {
+				t.Errorf("remote row came back with remote=false")
+			}
+			if r.WatchUrl != "https://tube.remote.example/w/abc" {
+				t.Errorf("remote watch_url = %q — the remote branch is misaligned", r.WatchUrl)
+			}
+		}
+	}
+	if !sawLocal {
+		t.Errorf("seeded local video %s did not appear in the feed", id)
+	}
+	if !sawRemote {
+		t.Errorf("seeded remote video %s did not appear in the feed; the remote branch was never exercised", remoteID)
+	}
 }

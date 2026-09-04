@@ -15495,9 +15495,10 @@ components:
             immutable. It is what the public /v/{code} watch URL is built from,
             and it can be resolved with GET /videos/by-code/{code}.
 
-            Present on the DETAIL view and on the create/update responses.
-            Omitted on remote federated cards (which have no local code) and,
-            for now, on feed/search/playlist cards — build a link from id there.
+            Present on every LOCAL view: the detail response, create/update,
+            and the feed, search, subscriptions, channel, saved, history and
+            playlist cards. Omitted only on remote federated cards, which have
+            no local code and link out via watch_url instead.
         remote:
           type: boolean
           description: >-

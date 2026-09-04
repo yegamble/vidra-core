@@ -130,7 +130,7 @@ func (f *playlistFakeRepo) ListPlaylistItems(_ context.Context, a sqlcgen.ListPl
 		}
 		handle, name := f.videos.channelInfo(v.ChannelID)
 		rows = append(rows, sqlcgen.ListPlaylistItemsRow{
-			ID: v.ID, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
+			ID: v.ID, ShortCode: v.ShortCode, ChannelID: v.ChannelID, Title: v.Title, Description: v.Description,
 			Privacy: v.Privacy, State: v.State, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 			Views: f.videos.views[v.ID], HasThumbnail: f.videos.hasThumb(v.ID),
 			ChannelHandle: handle, ChannelDisplayName: name,

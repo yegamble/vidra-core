@@ -107,7 +107,8 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
            SELECT 1 FROM video_files f
            WHERE f.video_id = v.id AND f.kind = 'thumbnail'
        ) AS has_thumbnail,
-       c.handle AS channel_handle, c.display_name AS channel_display_name
+       c.handle AS channel_handle, c.display_name AS channel_display_name,
+       v.short_code
 FROM playlist_items pi
 JOIN videos v ON v.id = pi.video_id
 JOIN channels c ON c.id = v.channel_id

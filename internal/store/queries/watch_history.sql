@@ -27,7 +27,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_reason,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code,
        wh.position_seconds, wh.updated_at AS watched_at
 FROM watch_history wh
 JOIN videos v ON v.id = wh.video_id
@@ -66,7 +66,7 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_reason,
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code,
        wh.position_seconds, wh.updated_at AS watched_at
 FROM watch_history wh
 JOIN videos v ON v.id = wh.video_id
