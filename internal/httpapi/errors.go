@@ -29,6 +29,25 @@ type ErrorBody struct {
 	// Fields lists field-level validation problems. Present only on validation
 	// failures (422 unprocessable_entity).
 	Fields []FieldError `json:"fields,omitempty"`
+	// VideoID and ShortCode name the video a password_required 401 refers to,
+	// and are present ONLY on that code.
+	//
+	// They are not a leak. A password_required response already admits the
+	// video exists — that is its documented purpose, the deliberate exception to
+	// the 404-for-invisible rule so a watch page can render an unlock prompt —
+	// and the caller reached it by presenting one of these identifiers already.
+	// Neither is a credential: every read path re-runs passwordGate keyed on the
+	// id, so holding it opens nothing without the password or a playback token.
+	// The one surface the id does reach, POST /videos/{id}/unlock, is ALWAYS
+	// rate-limited (it shares the login limiter; see server.go), so this widens
+	// no password-guessing surface — it hands the caller a second name for a
+	// video it already named.
+	//
+	// They are here because a caller who arrived by SHORT CODE cannot otherwise
+	// reach POST /videos/{id}/unlock, which is keyed on the uuid. Without this
+	// the unlock prompt on a /v/{code} page has nowhere to post.
+	VideoID   string `json:"video_id,omitempty"`
+	ShortCode string `json:"short_code,omitempty"`
 }
 
 // httpErrorHandler is Echo's central error handler. It converts any error
@@ -58,6 +77,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var fd *FeatureDisabledError
 	var id *IPFSDisabledError
 	var fml *ForeignMediaLayoutError
+	var videoID, shortCode string
 	var pr *PasswordRequiredError
 	var tma *TooManyActiveUploadsError
 	var cfd *ContactFormDisabledError
@@ -103,6 +123,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusUnauthorized
 		message = "this video is password protected"
 		code = "password_required"
+		videoID, shortCode = pr.VideoID, pr.ShortCode
 	case errors.As(err, &qe):
 		status = http.StatusUnprocessableEntity
 		message = "storing this file would exceed your storage quota"
@@ -186,6 +207,8 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		Message:   message,
 		RequestID: reqID,
 		Fields:    fields,
+		VideoID:   videoID,
+		ShortCode: shortCode,
 	}}
 
 	var writeErr error
@@ -268,8 +291,16 @@ func (e *TooManyActiveUploadsError) Error() string {
 // the requested video is privacy=password and the caller presented neither owner/
 // moderator authority nor a valid playback token (CORE-17 / W1.C2). It is the
 // deliberate exception to the 404-for-invisible rule so the watch/embed page can
-// render an unlock prompt. It carries no secret (no token, no hash, no password).
-type PasswordRequiredError struct{}
+// render an unlock prompt.
+//
+// It still carries no SECRET — no token, no hash, no password, and no metadata
+// the 401 was hiding. It does carry the video's two public identifiers, so a
+// caller who arrived by short code can reach POST /videos/{id}/unlock; see the
+// note on ErrorBody.VideoID for why that is not an escalation.
+type PasswordRequiredError struct {
+	VideoID   string
+	ShortCode string
+}
 
 func (e *PasswordRequiredError) Error() string { return "password required" }
 

@@ -1663,7 +1663,7 @@ func (s *Server) videoVisibleForRead(c echo.Context, videoID uuid.UUID) (sqlcgen
 	// token; everyone else gets 401 password_required (CORE-17 / W1.C2). This is
 	// the deliberate exception to the 404-for-invisible rule so the watch page can
 	// render an unlock prompt.
-	if err := s.passwordGate(c, v.ID, v.Privacy, v.OwnerID); err != nil {
+	if err := s.passwordGate(c, v.ID, v.Privacy, v.ShortCode, v.OwnerID); err != nil {
 		return sqlcgen.GetVideoByIDRow{}, err
 	}
 	return v, nil

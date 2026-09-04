@@ -87,7 +87,7 @@ func (s *Server) captionVideoID(c echo.Context) (uuid.UUID, error) {
 	if v.Privacy != video.PrivacyPassword {
 		return s.publicVideoID(c)
 	}
-	if err := s.passwordGate(c, id, v.Privacy, v.OwnerID); err != nil {
+	if err := s.passwordGate(c, id, v.Privacy, v.ShortCode, v.OwnerID); err != nil {
 		return uuid.UUID{}, err
 	}
 	if v.State != "published" {
