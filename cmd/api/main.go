@@ -1418,31 +1418,51 @@ func run() error {
 	}
 	opts = append(opts, httpapi.WithProfileImageService(imagesvc))
 
-	// Cross-replica cache invalidation (phase-5 item 8a). Every api replica
-	// polls one counter row and reloads the three caches above when another
-	// replica has written. Started here, where the last of the three services
-	// exists; it is deliberately NOT leader-gated and NOT worker-gated — every
-	// process that SERVES traffic holds its own copies, so every one of them
-	// must poll, and a worker-only process holds none of them.
+	// Cross-replica cache invalidation (phase-5 item 8a). Every process polls one
+	// counter row and reloads the three caches above when another process has
+	// written. Started here, where the last of the three services exists.
+	//
+	// It runs in EVERY role, and it is deliberately NOT leader-gated: the caches
+	// are per-process memory, so every process that READS one has to poll it.
+	// That includes a worker. A worker holds the same instance-settings overlay
+	// and consults it continuously — transcoding_enabled at every job pickup, the
+	// resolution ladder / max fps / thread count at every encode, the import
+	// concurrency and upload ceiling, transcription, the retention windows — and
+	// instancesettings has no TTL and no LISTEN, so its cache is written exactly
+	// once, at boot, by anything other than this poller. Gate the poller on
+	// "serves HTTP" and a worker is frozen at that boot load forever: an admin
+	// turns transcoding off or edits the ladder, the api replicas and GET
+	// /instance obey immediately, and the worker fleet keeps encoding at the old
+	// settings until someone restarts it, with nothing failing and nothing
+	// logged. Documents and branding are api-facing, so reloading them on a
+	// worker is only harmless cache warmth — and it keeps both halves wired to
+	// the same three caches rather than growing a per-role difference.
+	settingsPoller := settingsversion.New(db.Queries(), settingsversion.DefaultInterval,
+		settingsversion.Cache{Name: "instance settings", Reload: settingssvc.Load},
+		settingsversion.Cache{Name: "instance documents", Reload: instancedocssvc.Load},
+		settingsversion.Cache{Name: "instance branding", Reload: imagesvc.LoadInstanceImages},
+	)
+	// Prime AFTER the three boot loads above so this process starts in agreement
+	// with the database. A failure is not fatal: the token stays at zero and the
+	// first successful tick reloads once, harmlessly.
+	if err := settingsPoller.Prime(startCtx); err != nil {
+		logger.Warn("could not read the settings version at boot; the first poll will reload once", "error", err)
+	}
+	pollCtx, pollCancel := context.WithCancel(context.Background())
+	defer pollCancel()
+	go settingsPoller.Run(pollCtx, logger)
+	// The role is on the line because the operator question this answers is
+	// "which halves of my fleet pick up an admin change?", and a log aggregator
+	// sees one copy of this message per process.
+	logger.Info("settings version poller started",
+		"interval", settingsversion.DefaultInterval.String(),
+		"role", cfg.Role.String())
+	// THIS line stays role-gated, and only this one: the poller's health record
+	// feeds the admin status page's settings_sync component — an HTTP surface
+	// that a worker-only process does not have — so a replica whose every poll
+	// fails is visibly stale rather than silently so, and a log line is not an
+	// admin surface. The polling itself, above, is unconditional.
 	if cfg.Role.ServesHTTP() {
-		settingsPoller := settingsversion.New(db.Queries(), settingsversion.DefaultInterval,
-			settingsversion.Cache{Name: "instance settings", Reload: settingssvc.Load},
-			settingsversion.Cache{Name: "instance documents", Reload: instancedocssvc.Load},
-			settingsversion.Cache{Name: "instance branding", Reload: imagesvc.LoadInstanceImages},
-		)
-		// Prime AFTER the three boot loads above so this replica starts in
-		// agreement with the database. A failure is not fatal: the token stays
-		// at zero and the first successful tick reloads once, harmlessly.
-		if err := settingsPoller.Prime(startCtx); err != nil {
-			logger.Warn("could not read the settings version at boot; the first poll will reload once", "error", err)
-		}
-		pollCtx, pollCancel := context.WithCancel(context.Background())
-		defer pollCancel()
-		go settingsPoller.Run(pollCtx, logger)
-		logger.Info("settings version poller started", "interval", settingsversion.DefaultInterval.String())
-		// The poller's health record feeds the admin status page's
-		// settings_sync component: a replica whose every poll fails is silently
-		// stale, and a log line is not an admin surface.
 		opts = append(opts, httpapi.WithSettingsPoller(settingsPoller))
 	}
 
