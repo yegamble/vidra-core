@@ -550,7 +550,7 @@ func (q *Queries) CountVideosByChannel(ctx context.Context, channelID uuid.UUID)
 const createVideo = `-- name: CreateVideo :one
 INSERT INTO videos (channel_id, title, description, privacy, category, language, license, publish_at, is_sensitive, comments_policy, download_enabled, publish_after_transcode, sensitive_reason)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid
 `
 
 type CreateVideoParams struct {
@@ -608,6 +608,8 @@ func (q *Queries) CreateVideo(ctx context.Context, arg CreateVideoParams) (Video
 		&i.PinnedCommentID,
 		&i.SensitiveReason,
 		&i.OriginallyPublishedAt,
+		&i.ShortCode,
+		&i.PeertubeUuid,
 	)
 	return i, err
 }
@@ -622,7 +624,7 @@ func (q *Queries) DeleteVideo(ctx context.Context, id uuid.UUID) error {
 }
 
 const getVideoByID = `-- name: GetVideoByID :one
-SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
+SELECT v.id, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.state, v.created_at, v.updated_at,
        v.category, v.language, v.license, v.publish_at, v.originally_published_at,
        v.is_sensitive, v.sensitive_reason,
        v.comments_policy, v.download_enabled, v.publish_after_transcode,
@@ -636,6 +638,7 @@ WHERE v.id = $1
 
 type GetVideoByIDRow struct {
 	ID                    uuid.UUID          `json:"id"`
+	ShortCode             string             `json:"short_code"`
 	ChannelID             uuid.UUID          `json:"channel_id"`
 	Title                 string             `json:"title"`
 	Description           string             `json:"description"`
@@ -664,6 +667,7 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 	var i GetVideoByIDRow
 	err := row.Scan(
 		&i.ID,
+		&i.ShortCode,
 		&i.ChannelID,
 		&i.Title,
 		&i.Description,
@@ -687,6 +691,44 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 		&i.AuthorDisplayName,
 	)
 	return i, err
+}
+
+const getVideoIDByLegacyUUID = `-- name: GetVideoIDByLegacyUUID :one
+SELECT id FROM videos
+WHERE id = $1 OR peertube_uuid = $1
+ORDER BY (id = $1) DESC
+LIMIT 1
+`
+
+// Resolve a UUID that appeared in an OLD public URL to the video it now names.
+// Two namespaces reach this query and both are UUIDs, so one lookup serves both:
+//
+//	/videos/watch/{uuid} minted by this instance before /videos/{uuid}  -> videos.id
+//	/w/{shortUUID} and /videos/watch/{uuid} from an IMPORTED PeerTube   -> peertube_uuid
+//
+// ORDER BY prefers our own namespace, so the answer stays deterministic in the
+// (astronomically unlikely) event one instance's video id equals another's
+// imported source UUID.
+func (q *Queries) GetVideoIDByLegacyUUID(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getVideoIDByLegacyUUID, id)
+	var id_2 uuid.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const getVideoIDByShortCode = `-- name: GetVideoIDByShortCode :one
+SELECT id FROM videos WHERE short_code = $1
+`
+
+// Resolve the public short code to a video id. Returns the id ONLY: the caller
+// funnels it through the same visibility check and detail assembly the
+// by-uuid endpoint uses, so private/unlisted/locked semantics cannot drift
+// between the two ways of naming one video.
+func (q *Queries) GetVideoIDByShortCode(ctx context.Context, shortCode string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getVideoIDByShortCode, shortCode)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const listAdminVideos = `-- name: ListAdminVideos :many
@@ -2196,7 +2238,7 @@ UPDATE videos
 SET state      = $1,
     updated_at = now()
 WHERE id = $2
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid
 `
 
 type SetVideoStateParams struct {
@@ -2229,6 +2271,8 @@ func (q *Queries) SetVideoState(ctx context.Context, arg SetVideoStateParams) (V
 		&i.PinnedCommentID,
 		&i.SensitiveReason,
 		&i.OriginallyPublishedAt,
+		&i.ShortCode,
+		&i.PeertubeUuid,
 	)
 	return i, err
 }
@@ -2250,7 +2294,7 @@ SET title       = COALESCE($1, title),
     originally_published_at = COALESCE($13, originally_published_at),
     updated_at  = now()
 WHERE id = $14
-RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at
+RETURNING id, channel_id, title, description, privacy, state, created_at, updated_at, category, language, license, publish_at, embed_privacy, embed_allowed_domains, is_sensitive, comments_policy, download_enabled, publish_after_transcode, pinned_comment_id, sensitive_reason, originally_published_at, short_code, peertube_uuid
 `
 
 type UpdateVideoParams struct {
@@ -2310,6 +2354,8 @@ func (q *Queries) UpdateVideo(ctx context.Context, arg UpdateVideoParams) (Video
 		&i.PinnedCommentID,
 		&i.SensitiveReason,
 		&i.OriginallyPublishedAt,
+		&i.ShortCode,
+		&i.PeertubeUuid,
 	)
 	return i, err
 }

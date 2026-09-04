@@ -248,8 +248,13 @@ SELECT id FROM channels WHERE lower(handle) = lower($1) LIMIT 1;
 -- is_sensitive carries the source's video.nsfw, the flag its own hide/warn/blur
 -- policy acts on. Nothing was written for it before, so every sensitive video
 -- landed unflagged — including in the search index, which bakes the flag in.
-INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at, originally_published_at, is_sensitive)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+-- peertube_uuid is the SOURCE video's UUID. The new row's own id is minted here
+-- and is unrelated to it, so this column is the only thing that can answer "which
+-- source video became this one" for a public URL — see 0127 for why the import
+-- ledger cannot. It is what keeps the source instance's /w/{shortUUID} and
+-- /videos/watch/{uuid} links alive after an operator cuts their domain over.
+INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at, originally_published_at, is_sensitive, peertube_uuid)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING id;
 
 -- name: ImportUpsertVideoMetadata :exec
