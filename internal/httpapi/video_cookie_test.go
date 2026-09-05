@@ -71,6 +71,7 @@ func TestCookieModePrivateVideoReads(t *testing.T) {
 		{"malformed cookie", "GET", "/api/v1/videos/" + id + "/original", "invalid", "", 404},
 		{"explicit foreign bearer", "GET", "/api/v1/videos/" + id + "/original", ck.Value, "Bearer " + other, 404},
 		{"explicit invalid bearer", "GET", "/api/v1/videos/" + id + "/original", ck.Value, "Bearer invalid", 404},
+		{"no session mint authority", "POST", "/api/v1/videos/" + id + "/playback-session", ck.Value, "", 404},
 		{"no mutation authority", "DELETE", "/api/v1/videos/" + id, ck.Value, "", 401},
 		{"no account authority", "GET", "/api/v1/auth/me", ck.Value, "", 401},
 	} {

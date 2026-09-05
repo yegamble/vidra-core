@@ -98,7 +98,9 @@ func (s *Server) cdnDeliveryEnabled() bool {
 
 // credentialedMediaRequest reports whether the request carried a credential: a
 // playback token in ?pt= (password-protected media, CORE-17) or an
-// Authorization header. Such a response is never stored anywhere and is never
+// Authorization header, or a video-read cookie actually used for restricted
+// media. Merely carrying the cookie on public media changes nothing.
+// A credentialed response is never stored anywhere and is never
 // answered with a signed URL — a redirect would hand out a second, longer-lived
 // credential in exchange for the first, and ?pt= tokens must not reach an
 // intermediary's access log (risks.md §6).
