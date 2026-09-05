@@ -103,7 +103,7 @@ func (s *Server) cdnDeliveryEnabled() bool {
 // credential in exchange for the first, and ?pt= tokens must not reach an
 // intermediary's access log (risks.md §6).
 func credentialedMediaRequest(c echo.Context) bool {
-	return c.QueryParam(playbackTokenParam) != "" || c.Request().Header.Get("Authorization") != ""
+	return c.Get(ctxVideoCookieUsed) == true || c.QueryParam(playbackTokenParam) != "" || c.Request().Header.Get("Authorization") != ""
 }
 
 // serveMediaAsset serves one stored object through the delivery resolver.

@@ -499,7 +499,12 @@ paths:
         wins — the owner of an address is the only account that string can reach,
         so a lookalike username can never shadow someone else's sign-in.
         Unknown account and wrong password are reported identically (401) to
-        prevent account enumeration. With `cookie_mode: true` (or an existing `vidra_refresh`
+        prevent account enumeration. Browser cookie mode also sets `vidra_video_access`,
+        an HttpOnly, SameSite=Lax access-token cookie scoped to `/api/v1/videos/`,
+        Secure on HTTPS, with the access-token TTL. It authorizes only private or
+        unpublished video GET/HEAD reads, never mutations; public playback ignores
+        it. Refresh renews it; logout, logout-all and invalid-cookie refresh clear it.
+        With `cookie_mode: true` (or an existing `vidra_refresh`
         cookie) the refresh token is delivered as an httpOnly `vidra_refresh`
         cookie (Path=/api/v1/auth, SameSite=Lax, Secure on https instances)
         instead of in the response body. When the account has two-factor

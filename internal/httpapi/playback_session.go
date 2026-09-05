@@ -38,7 +38,7 @@ import (
 //
 // So the token is minted only for a video that genuinely cannot be played
 // without one. That is exactly the password tier: a private or unpublished video
-// is reachable by its owner through the session cookie, which a <video src> or
+// is reachable by its owner through the short-lived video-read cookie, which a <video src> or
 // native-HLS request carries on its own; a password video has no cookie
 // equivalent, which is why ?pt= exists at all.
 

@@ -23,7 +23,10 @@ import (
 //
 // In cookie mode the response body OMITS refresh_token — the cookie is the sole
 // carrier, so the raw token never has to touch JavaScript-accessible storage.
-// Logout and logout-all clear the cookie. See .ralph/specs/security.md.
+// Cookie mode also mirrors the short-lived access token in vidra_video_access
+// (Path=/api/v1/videos/) for private/unpublished native media reads. It grants
+// no mutation authority. Logout and logout-all clear both cookies.
+// See .ralph/specs/security.md.
 
 // refreshCookieName is the httpOnly cookie carrying the rotating refresh token.
 const refreshCookieName = "vidra_refresh"
@@ -42,6 +45,7 @@ func (s *Server) setRefreshCookie(c echo.Context, token string) {
 // logout/logout-all and when a cookie-presented token turns out to be invalid.
 func (s *Server) clearRefreshCookie(c echo.Context) {
 	s.clearStateCookie(c, refreshCookieName, refreshCookiePath)
+	s.clearStateCookie(c, videoAccessCookieName, videoAccessCookiePath)
 }
 
 // refreshCookieToken returns the refresh token carried by the request's
