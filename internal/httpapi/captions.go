@@ -69,40 +69,19 @@ func (s *Server) handleUploadCaption(c echo.Context) error {
 	return c.JSON(http.StatusCreated, captionView{Language: ct.Language, Label: ct.Label, CreatedAt: ct.CreatedAt})
 }
 
-// captionVideoID resolves the video a caption read targets. For a normal video it
-// applies the public+published rule (publicVideoID). For a password-protected
-// video (CORE-17) it instead gates on owner/moderator/valid-playback-token — a
-// wrong/absent credential is 401 password_required, matching the detail — and
-// still requires the video to be published and not blocked, so the token holder
-// can load caption tracks for the video they unlocked.
+// captionVideoID shares the media visibility gate. Captions are playback assets,
+// so an unlisted link or an owner's private video must retain its tracks; the
+// public-interaction gate used by comments intentionally has narrower semantics.
 func (s *Server) captionVideoID(c echo.Context) (uuid.UUID, error) {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
 		return uuid.UUID{}, err
 	}
-	v, err := s.videosvc.GetByID(c.Request().Context(), id)
-	if err != nil {
-		return uuid.UUID{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
-	}
-	if v.Privacy != video.PrivacyPassword {
-		return s.publicVideoID(c)
-	}
-	if err := s.passwordGate(c, id, v.Privacy, v.ShortCode, v.OwnerID); err != nil {
-		return uuid.UUID{}, err
-	}
-	if v.State != "published" {
-		return uuid.UUID{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
-	}
-	if hidden, err := s.videoHiddenByBlock(c, id); err != nil {
-		return uuid.UUID{}, err
-	} else if hidden {
-		return uuid.UUID{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
-	}
-	return id, nil
+	_, err = s.videoVisibleForMedia(c, id)
+	return id, err
 }
 
-// handleListCaptions lists a video's caption tracks. No account auth: a public
-// video is open; a password video needs a valid playback token (CORE-17).
+// handleListCaptions lists tracks under the same visibility gate as playback.
 func (s *Server) handleListCaptions(c echo.Context) error {
 	videoID, err := s.captionVideoID(c)
 	if err != nil {
@@ -119,9 +98,8 @@ func (s *Server) handleListCaptions(c echo.Context) error {
 	return c.JSON(http.StatusOK, captionListResponse{Captions: views})
 }
 
-// handleDownloadCaption serves a video's WebVTT caption for a language. No account
-// auth: a public video is open; a password video needs a valid playback token
-// (Bearer or ?pt=, CORE-17). An unknown language is 404.
+// handleDownloadCaption serves a WebVTT track under the playback visibility
+// gate. An unknown language is 404.
 func (s *Server) handleDownloadCaption(c echo.Context) error {
 	videoID, err := s.captionVideoID(c)
 	if err != nil {

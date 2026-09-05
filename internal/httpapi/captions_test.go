@@ -158,3 +158,42 @@ func TestCaptionsValidationAndAuth(t *testing.T) {
 		t.Errorf("list draft captions = %d, want 404", rec.Code)
 	}
 }
+
+func TestCaptionsFollowVideoMediaVisibility(t *testing.T) {
+	srv := videoServer(t)
+	owner := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	other := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	for _, privacy := range []string{"unlisted", "private"} {
+		id := createPublishedVideo(t, srv, owner, "ada", `{"title":"Captioned","privacy":"`+privacy+`"}`)
+		if r := uploadCaption(srv, id, "en", "English", sampleVTT, owner, true); r.Code != 201 {
+			t.Fatal("caption setup failed")
+		}
+		for _, suffix := range []string{"captions", "captions/en"} {
+			for _, viewer := range []struct{ name, cookie, bearer string }{
+				{"anonymous", "", ""}, {"owner native", owner, ""}, {"owner bearer", "", owner}, {"foreign native", other, ""},
+			} {
+				t.Run(privacy+"/"+suffix+"/"+viewer.name, func(t *testing.T) {
+					req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/"+id+"/"+suffix, nil)
+					if viewer.cookie != "" {
+						req.AddCookie(&http.Cookie{Name: "vidra_video_access", Value: viewer.cookie})
+					}
+					if viewer.bearer != "" {
+						req.Header.Set("Authorization", "Bearer "+viewer.bearer)
+					}
+					rec := httptest.NewRecorder()
+					srv.Handler().ServeHTTP(rec, req)
+					want := 200
+					if privacy == "private" && viewer.name != "owner native" && viewer.name != "owner bearer" {
+						want = 404
+					}
+					if rec.Code != want {
+						t.Fatalf("status=%d want=%d", rec.Code, want)
+					}
+					if want == 200 && suffix == "captions/en" && rec.Body.String() != sampleVTT {
+						t.Fatal("missing caption bytes")
+					}
+				})
+			}
+		}
+	}
+}
