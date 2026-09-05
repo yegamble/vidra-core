@@ -1701,6 +1701,9 @@ func (s *Server) videoReadBase(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVi
 		}
 		return sqlcgen.GetVideoByIDRow{}, err
 	}
+	if v.Privacy == "private" || v.State != "published" {
+		s.restoreVideoReadPrincipal(c)
+	}
 	if v.Privacy == "private" {
 		userID, _, ok := principalFromContext(c)
 		if !ok || userID != v.OwnerID {

@@ -293,6 +293,7 @@ func (s *Server) authResponse(status int, c echo.Context, user sqlcgen.User, tok
 		// rotated token httpOnly and keep the raw value out of the JSON body so
 		// it never has to touch JavaScript-accessible storage.
 		s.setRefreshCookie(c, tokens.RefreshToken)
+		s.writeStateCookie(c, videoAccessCookieName, videoAccessCookiePath, tokens.AccessToken, s.authTTL)
 		resp.RefreshToken = ""
 	}
 	return c.JSON(status, resp)
