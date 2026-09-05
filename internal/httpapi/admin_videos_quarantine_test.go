@@ -226,6 +226,17 @@ func TestQuarantineRejectNotifiesOwner(t *testing.T) {
 		t.Errorf("state after reject = %q, want failed", v.State)
 	}
 
+	// Rejection must not turn a held upload into publicly readable metadata.
+	other := createChannelFor(t, srv, "charlie", "charlie@example.test", "charlietube")
+	for name, token := range map[string]string{"anonymous": "", "non-owner": other} {
+		if got := getVideo(srv, vid, token); got.Code != http.StatusNotFound {
+			t.Errorf("%s get rejected = %d, want 404", name, got.Code)
+		}
+	}
+	if got := getVideo(srv, vid, admin); got.Code != http.StatusOK {
+		t.Errorf("admin get rejected = %d, want 200", got.Code)
+	}
+
 	// The owner is notified — type video_rejected with the video context, and
 	// the moderator's identity is NOT exposed.
 	nrec := getWithAuth(srv, "/api/v1/me/notifications", bob)
