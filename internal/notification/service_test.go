@@ -503,6 +503,72 @@ func TestNewVideoIsAKnownPreferenceType(t *testing.T) {
 	}
 }
 
+// TestVideoBlockedIsAKnownPreferenceType keeps the new moderation notification
+// registered with the preference model. A type missing from KnownTypes cannot be
+// turned off by the user it is delivered to — the exact failure the prefs
+// surface exists to prevent — and this one is delivered on an unhappy event, so
+// a creator who does not want it must be able to say so.
+func TestVideoBlockedIsAKnownPreferenceType(t *testing.T) {
+	if !knownType(TypeVideoBlocked) {
+		t.Fatal("video_blocked is not a known notification type")
+	}
+	found := false
+	for _, typ := range KnownTypes() {
+		if typ == TypeVideoBlocked {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("KnownTypes() = %v, missing %s", KnownTypes(), TypeVideoBlocked)
+	}
+	prefs, err := NewService(&fakeRepo{}).Prefs(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("Prefs: %v", err)
+	}
+	if enabled, ok := prefs[TypeVideoBlocked]; !ok || !enabled {
+		t.Fatalf("prefs[%s] = (%v, %v), want (true, true) by default", TypeVideoBlocked, enabled, ok)
+	}
+}
+
+// TestNotifyVideoBlockedSkipsSelfAndDisabled proves the two suppressions every
+// Notify* method shares, on the one type where getting them wrong is loudest: a
+// moderator blocking their OWN video must not notify themselves, and a creator
+// who turned video_blocked off must not be told.
+func TestNotifyVideoBlockedSkipsSelfAndDisabled(t *testing.T) {
+	ctx := context.Background()
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	self, videoID := uuid.New(), uuid.New()
+	if err := svc.NotifyVideoBlocked(ctx, self, self, videoID); err != nil {
+		t.Fatalf("self-block notify: %v", err)
+	}
+	if len(repo.notifs) != 0 {
+		t.Fatalf("a moderator blocking their own video notified themselves: %+v", repo.notifs)
+	}
+
+	owner := uuid.New()
+	if err := svc.SetPrefs(ctx, owner, map[string]bool{TypeVideoBlocked: false}); err != nil {
+		t.Fatalf("SetPrefs: %v", err)
+	}
+	if err := svc.NotifyVideoBlocked(ctx, owner, uuid.New(), videoID); err != nil {
+		t.Fatalf("notify with the type disabled: %v", err)
+	}
+	if len(repo.notifs) != 0 {
+		t.Fatalf("video_blocked delivered to a recipient who turned it off: %+v", repo.notifs)
+	}
+
+	other := uuid.New()
+	if err := svc.NotifyVideoBlocked(ctx, other, uuid.New(), videoID); err != nil {
+		t.Fatalf("notify: %v", err)
+	}
+	if len(repo.notifs) != 1 || repo.notifs[0].Type != TypeVideoBlocked {
+		t.Fatalf("notifications = %+v, want one video_blocked", repo.notifs)
+	}
+	if repo.notifs[0].ActorID.Valid {
+		t.Error("video_blocked stored the moderator as its actor")
+	}
+}
+
 func (f *fakeRepo) CountNotifications(ctx context.Context, a sqlcgen.CountNotificationsParams) (int64, error) {
 	rows, err := f.ListNotifications(ctx, sqlcgen.ListNotificationsParams{
 		UserID: a.UserID, UnreadOnly: a.UnreadOnly, ResultLimit: 1 << 30,

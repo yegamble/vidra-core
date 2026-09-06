@@ -1035,6 +1035,13 @@ type VideoRating struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type VideoRejection struct {
+	VideoID    uuid.UUID   `json:"video_id"`
+	Note       string      `json:"note"`
+	RejectedBy pgtype.UUID `json:"rejected_by"`
+	CreatedAt  time.Time   `json:"created_at"`
+}
+
 type VideoRendition struct {
 	ID        uuid.UUID `json:"id"`
 	VideoID   uuid.UUID `json:"video_id"`

@@ -43,6 +43,7 @@ type fakeRepo struct {
 	dislikes      map[uuid.UUID]int64
 	comments      map[uuid.UUID]int64
 	owner         uuid.UUID
+	rejections    map[uuid.UUID]string // video ID -> stored rejection note (0130)
 	// fileByKindErr, when set, makes GetVideoFileByKind fail with a transient
 	// error instead of answering. Distinct from a miss (pgx.ErrNoRows).
 	fileByKindErr error
@@ -505,6 +506,16 @@ func (f *fakeRepo) SetVideoState(_ context.Context, a sqlcgen.SetVideoStateParam
 	r.UpdatedAt = time.Now()
 	f.videos[a.ID] = r
 	return rowToVideo(r), nil
+}
+
+// RecordVideoRejection mirrors video_rejections (0130): one row per video, last
+// write wins (ON CONFLICT DO UPDATE).
+func (f *fakeRepo) RecordVideoRejection(_ context.Context, a sqlcgen.RecordVideoRejectionParams) error {
+	if f.rejections == nil {
+		f.rejections = map[uuid.UUID]string{}
+	}
+	f.rejections[a.VideoID] = a.Note
+	return nil
 }
 
 func (f *fakeRepo) ListAdminVideos(_ context.Context, a sqlcgen.ListAdminVideosParams) ([]sqlcgen.ListAdminVideosRow, error) {

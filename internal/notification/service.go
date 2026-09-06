@@ -30,7 +30,14 @@ const (
 	TypeMessage        = "message"
 	TypeReportResolved = "report_resolved"
 	TypeVideoRejected  = "video_rejected"
-	TypeCaptionReady   = "caption_ready"
+	// TypeVideoBlocked tells a creator that a moderator blocked one of their
+	// PUBLISHED videos. It is deliberately distinct from video_rejected, which
+	// is the quarantine outcome for an upload that never published: a block
+	// takes down live content, changes neither state nor privacy, and is
+	// reversible. Before it existed a block was invisible to its owner — the
+	// video 404'd for them too while their own dashboard still read "published".
+	TypeVideoBlocked = "video_blocked"
+	TypeCaptionReady = "caption_ready"
 	// TypeNewVideo tells a follower that a channel they follow published a new
 	// public video. Unlike every other type it is created by a set-based
 	// fan-out (NotifyNewVideo), not one row at a time.
@@ -44,13 +51,13 @@ const (
 // KnownTypes lists every notification type, in stable order. Preferences may
 // target exactly these; every type defaults to enabled.
 func KnownTypes() []string {
-	return []string{TypeCaptionReady, TypeComment, TypeCommentReply, TypeFollow, TypeMessage, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeVideoRejected}
+	return []string{TypeCaptionReady, TypeComment, TypeCommentReply, TypeFollow, TypeMessage, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeVideoBlocked, TypeVideoRejected}
 }
 
 // knownType reports whether t is a recognised notification type.
 func knownType(t string) bool {
 	switch t {
-	case TypeFollow, TypeComment, TypeCommentReply, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeCaptionReady, TypeNewVideo, TypeNewReport:
+	case TypeFollow, TypeComment, TypeCommentReply, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeVideoBlocked, TypeCaptionReady, TypeNewVideo, TypeNewReport:
 		return true
 	}
 	return false
@@ -111,6 +118,12 @@ type Item struct {
 	ReportID           string
 	ReportStatus       string
 	ReportTargetType   string
+	// ModerationNote is the moderator's rejection note (migration 0130),
+	// carried ONLY on video_rejected. The reject route has always collected it;
+	// until 0130 nothing stored it, so the creator was told their upload was
+	// refused and never why. It is empty when the moderator supplied no note.
+	// A BLOCK's reason is deliberately not here — that prose is staff-only.
+	ModerationNote string
 }
 
 // typeEnabled reports whether the recipient receives notifications of this
@@ -335,6 +348,27 @@ func (s *Service) NotifyVideoRejected(ctx context.Context, recipientID, actorID,
 	return err
 }
 
+// NotifyVideoBlocked records that a moderator (actorID) blocked recipientID's
+// published video. Blocking your own video is a no-op, as is a recipient who
+// disabled video_blocked notifications. Best-effort.
+//
+// Like NotifyVideoRejected it stores no actor, so the moderator is never exposed
+// to the creator — and unlike the rejection it carries NO note: whether a
+// creator may read the block reason is an open product ruling, and the safe
+// default is the neutral fact. The video's title is resolved from the joined
+// video row at read time.
+func (s *Service) NotifyVideoBlocked(ctx context.Context, recipientID, actorID, videoID uuid.UUID) error {
+	if recipientID == actorID || !s.typeEnabled(ctx, recipientID, TypeVideoBlocked) {
+		return nil
+	}
+	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
+		UserID:  recipientID,
+		Type:    TypeVideoBlocked,
+		VideoID: pgconv.UUID(videoID),
+	})
+	return err
+}
+
 // NotifyCaptionReady records that an auto-generated caption track finished for
 // recipientID's video (fix_plan P13). Unlike the other notifications this has no
 // actor — it is a system event addressed to the video's owner — so there is no
@@ -392,6 +426,7 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, unreadOnly bool, l
 			ReportID:           uuidString(r.ReportID),
 			ReportStatus:       pgconv.Deref(r.ReportStatus),
 			ReportTargetType:   pgconv.Deref(r.ReportTargetType),
+			ModerationNote:     r.ModerationNote,
 		})
 	}
 	return items, total, nil

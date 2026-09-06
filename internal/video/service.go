@@ -165,6 +165,7 @@ type Repository interface {
 	GetCaptionByLang(ctx context.Context, arg sqlcgen.GetCaptionByLangParams) (sqlcgen.Caption, error)
 	DeleteCaption(ctx context.Context, arg sqlcgen.DeleteCaptionParams) (int64, error)
 	SetVideoState(ctx context.Context, arg sqlcgen.SetVideoStateParams) (sqlcgen.Video, error)
+	RecordVideoRejection(ctx context.Context, arg sqlcgen.RecordVideoRejectionParams) error
 	UploadRequiresQuarantine(ctx context.Context, id uuid.UUID) (bool, error)
 	ListQuarantinedVideos(ctx context.Context, arg sqlcgen.ListQuarantinedVideosParams) ([]sqlcgen.ListQuarantinedVideosRow, error)
 	CountQuarantinedVideos(ctx context.Context) (int64, error)
@@ -1259,7 +1260,7 @@ func (s *Service) ApproveQuarantined(ctx context.Context, videoID uuid.UUID) (sq
 // notifies the owner. Returns the video row (with owner id) so the caller can
 // address that notification. Unknown id → ErrNotFound; any other state →
 // ErrNotQuarantined.
-func (s *Service) RejectQuarantined(ctx context.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+func (s *Service) RejectQuarantined(ctx context.Context, videoID, moderatorID uuid.UUID, note string) (sqlcgen.GetVideoByIDRow, error) {
 	v, err := s.GetByID(ctx, videoID)
 	if err != nil {
 		return sqlcgen.GetVideoByIDRow{}, err
@@ -1268,6 +1269,17 @@ func (s *Service) RejectQuarantined(ctx context.Context, videoID uuid.UUID) (sql
 		return sqlcgen.GetVideoByIDRow{}, ErrNotQuarantined
 	}
 	if _, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: "failed"}); err != nil {
+		return sqlcgen.GetVideoByIDRow{}, err
+	}
+	// The moderator's note (migration 0130). Recorded AFTER the state change so
+	// a storage failure here cannot leave a rejection note on a still-quarantined
+	// video, and NOT best-effort: the note is the only explanation the creator
+	// will ever get, so losing it silently is the defect this closes. It is
+	// moderation-domain state, deliberately not an audit record — audit_log
+	// keeps the classification only, because free-form prose can carry PII.
+	if err := s.repo.RecordVideoRejection(ctx, sqlcgen.RecordVideoRejectionParams{
+		VideoID: videoID, Note: note, RejectedBy: pgconv.UUID(moderatorID),
+	}); err != nil {
 		return sqlcgen.GetVideoByIDRow{}, err
 	}
 	v.State = "failed"
@@ -2070,6 +2082,7 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID, sort s
 		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
 		it.AuthorDisplayName = r.AuthorDisplayName
 		it.PublishAt = TimePtr(r.PublishAt) // studio view: badge scheduled videos
+		it.Blocked = r.Blocked              // studio view: badge blocked videos
 		items = append(items, it)
 	}
 	return items, total, nil
@@ -2132,6 +2145,11 @@ type FeedItem struct {
 	AuthorDisplayName string
 	DurationSeconds   *int32
 	PublishAt         *time.Time
+	// Blocked is set only on the OWNER/editor channel-management listing: a
+	// moderator block changes neither state nor privacy, so without it the
+	// owner's dashboard shows a taken-down video as "published". Public feeds
+	// never return a blocked row, so it is false everywhere else.
+	Blocked bool
 
 	Remote    bool
 	Domain    string
@@ -2686,8 +2704,12 @@ type AdminVideo struct {
 	WebVideoCount      int32
 	SizeBytes          int64
 	Blocked            bool
-	Likes              int64
-	Comments           int64
+	// ModerationNote is the stored rejection note (migration 0130) — the staff
+	// read-back of the prose the reject dialog collects. Empty for a video that
+	// was never rejected, and always empty on a federated row.
+	ModerationNote string
+	Likes          int64
+	Comments       int64
 }
 
 // Admin inventory sort keys. Each is accepted bare (ascending) or "-"-prefixed
@@ -2840,6 +2862,7 @@ func (s *Service) ListAdmin(ctx context.Context, filter AdminFilter, limit, offs
 			WebVideoCount:      r.WebVideoCount,
 			SizeBytes:          r.SizeBytes,
 			Blocked:            r.Blocked,
+			ModerationNote:     r.ModerationNote,
 			Likes:              r.LikeCount,
 			Comments:           r.CommentCount,
 		})

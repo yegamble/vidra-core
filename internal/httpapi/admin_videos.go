@@ -117,6 +117,11 @@ type adminVideoView struct {
 	ObjectStorage bool  `json:"object_storage"`
 	SizeBytes     int64 `json:"size_bytes"`
 	Blocked       bool  `json:"blocked"`
+	// ModerationNote is the moderator's rejection note (0130), staff-only and
+	// present only on a rejected local video. It is the read-back the quarantine
+	// UI promised when it said the reason was "recorded"; before 0130 nothing
+	// stored it at all.
+	ModerationNote string `json:"moderation_note,omitempty"`
 	// Likes/Comments are the engagement counts the inventory sorts on. Federated
 	// rows have no local ratings or comments and always report 0.
 	Likes    int64 `json:"likes"`
@@ -175,6 +180,7 @@ func (s *Server) handleListAdminVideos(c echo.Context) error {
 			ObjectStorage:      it.IsLocal && s.cfg.StorageBackend == "s3",
 			SizeBytes:          it.SizeBytes,
 			Blocked:            it.Blocked,
+			ModerationNote:     it.ModerationNote,
 			Likes:              it.Likes,
 			Comments:           it.Comments,
 		})
@@ -306,7 +312,10 @@ func (s *Server) handleApproveQuarantinedVideo(c echo.Context) error {
 }
 
 // rejectQuarantinedVideoRequest is the optional POST /admin/videos/{id}/reject
-// body; the reason is recorded in the audit trail (it may be empty).
+// body. The reason is stored as the video's moderation note (migration 0130) —
+// shown to the creator on their video_rejected notification and read back by
+// staff on the moderation-inventory row — and it may be empty. It is NOT what
+// the audit trail records: the security ledger keeps the classification only.
 type rejectQuarantinedVideoRequest struct {
 	Reason string `json:"reason"`
 }
@@ -318,11 +327,12 @@ func (r rejectQuarantinedVideoRequest) Validate() []FieldError {
 	return nil
 }
 
-// handleRejectQuarantinedVideo fails a quarantined video (it never publishes)
-// and notifies the owner (best-effort; the moderator's identity is not
-// exposed). Behind requireRole(admin, moderator). Unknown id → 404; a video not
-// in quarantine → 409. Emits an audit event with a stable rejection
-// classification; moderator prose remains outside the security ledger.
+// handleRejectQuarantinedVideo fails a quarantined video (it never publishes),
+// stores the moderator's note and notifies the owner (best-effort; the
+// moderator's identity is not exposed). Behind requireRole(admin, moderator).
+// Unknown id → 404; a video not in quarantine → 409. Emits an audit event with a
+// stable rejection classification; moderator prose remains outside the security
+// ledger and lives in video_rejections instead (0130).
 func (s *Server) handleRejectQuarantinedVideo(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
@@ -337,7 +347,7 @@ func (s *Server) handleRejectQuarantinedVideo(c echo.Context) error {
 		return err
 	}
 	ctx := c.Request().Context()
-	v, err := s.videosvc.RejectQuarantined(ctx, id)
+	v, err := s.videosvc.RejectQuarantined(ctx, id, userID, strings.TrimSpace(in.Reason))
 	if err != nil {
 		switch {
 		case errors.Is(err, video.ErrNotFound):
@@ -358,9 +368,11 @@ func (s *Server) handleRejectQuarantinedVideo(c echo.Context) error {
 	// W4). Best-effort suppression (it was likely never indexed, but this is the
 	// safe backstop).
 	s.searchEvents.EnqueueVideoSuppress(ctx, id, searchevents.SuppressModerated)
-	// The moderator's prose remains in the moderation workflow/notification; the
-	// security ledger stores only a stable classification and whether prose was
-	// supplied. Free-form content can contain PII and must never enter audit_log.
+	// The moderator's prose lives in video_rejections (0130) and reaches the
+	// creator on their notification; the security ledger stores only a stable
+	// classification and whether prose was supplied. Free-form content can
+	// contain PII and must never enter audit_log — asserted by the reject test,
+	// which fails if the note appears anywhere in the log stream.
 	s.auditEvent(c, audit.Event{
 		Action: observability.ActionVideoReject, Result: observability.ResultSuccess,
 		ActorID: userID.String(), Reason: "moderator_rejected",

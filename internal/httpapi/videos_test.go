@@ -88,6 +88,18 @@ type videoFakeRepo struct {
 	remoteSubs   []sqlcgen.ListSubscriptionVideosRow
 	remoteFeed   []sqlcgen.ListPublicVideosSortedRow
 	remoteSearch []sqlcgen.SearchPublicVideosRow
+	// rejections mirrors video_rejections (0130): video ID -> the moderator's
+	// rejection note. Empty means "never rejected", which is what the query's
+	// COALESCE(..., '') returns.
+	rejections map[uuid.UUID]string
+}
+
+func (f *videoFakeRepo) RecordVideoRejection(_ context.Context, a sqlcgen.RecordVideoRejectionParams) error {
+	if f.rejections == nil {
+		f.rejections = map[uuid.UUID]string{}
+	}
+	f.rejections[a.VideoID] = a.Note // ON CONFLICT DO UPDATE: last write wins
+	return nil
 }
 
 // ownerUnlisted mirrors the feed/search queries' NOT EXISTS unlisted check:
@@ -560,6 +572,11 @@ func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, a sqlcgen.ListVid
 				Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 				PublishAt: r.PublishAt, IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
 				Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+				// The SQL selects EXISTS(video_blocks) here. The owner view is
+				// the ONE listing that keeps a blocked row, so the fake must
+				// carry the marker or a green handler test would prove nothing
+				// (the slice-2 fake-fidelity lesson).
+				Blocked: f.blockedFromFeed(r.ID),
 			})
 		}
 	}
@@ -1087,6 +1104,7 @@ func (f *videoFakeRepo) adminInventory(a sqlcgen.ListAdminVideosParams) []sqlcge
 			IsLocal: true, IsSensitive: r.IsSensitive, HasThumbnail: hasThumbnail,
 			HasOriginal: hasOriginal, WebVideoCount: webVideoCount,
 			SizeBytes: sizeBytes, Blocked: blocked,
+			ModerationNote: f.rejections[r.ID], // '' when never rejected, as COALESCE returns
 		})
 	}
 	less := func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) }

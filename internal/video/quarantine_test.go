@@ -155,22 +155,29 @@ func TestRejectQuarantined(t *testing.T) {
 	svc, repo, id := quarantineHarness(t, CreateInput{Title: "bad", Privacy: "public"}, true,
 		&published, &transcoded)
 
-	v, err := svc.RejectQuarantined(context.Background(), id)
+	moderator := uuid.New()
+	v, err := svc.RejectQuarantined(context.Background(), id, moderator, "not a real upload")
 	if err != nil || v.State != "failed" {
 		t.Fatalf("RejectQuarantined = (%q, %v), want failed", v.State, err)
 	}
 	if got := repo.videos[id].State; got != "failed" {
 		t.Fatalf("stored state after reject = %q, want failed", got)
 	}
+	// The moderator's note is PERSISTED (migration 0130). Before it, the route
+	// accepted a reason and dropped it: no column in the database held it, so
+	// the creator was told their upload was refused and never why.
+	if got := repo.rejections[id]; got != "not a real upload" {
+		t.Errorf("stored rejection note = %q, want the moderator's note", got)
+	}
 	if len(published) != 0 || len(transcoded) != 0 {
 		t.Fatalf("hooks fired on reject: publish=%v transcode=%v", published, transcoded)
 	}
 
 	// Rejecting again (or a published/unknown video) is guarded.
-	if _, err := svc.RejectQuarantined(context.Background(), id); !errors.Is(err, ErrNotQuarantined) {
+	if _, err := svc.RejectQuarantined(context.Background(), id, moderator, ""); !errors.Is(err, ErrNotQuarantined) {
 		t.Errorf("re-reject = %v, want ErrNotQuarantined", err)
 	}
-	if _, err := svc.RejectQuarantined(context.Background(), uuid.New()); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.RejectQuarantined(context.Background(), uuid.New(), moderator, ""); !errors.Is(err, ErrNotFound) {
 		t.Errorf("reject unknown = %v, want ErrNotFound", err)
 	}
 	if _, err := svc.ApproveQuarantined(context.Background(), uuid.New()); !errors.Is(err, ErrNotFound) {
