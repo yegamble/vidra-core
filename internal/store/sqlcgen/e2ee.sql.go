@@ -189,6 +189,21 @@ func (q *Queries) DeleteE2EEDevice(ctx context.Context, arg DeleteE2EEDevicePara
 	return result.RowsAffected(), nil
 }
 
+const deleteE2EEDevicesByUser = `-- name: DeleteE2EEDevicesByUser :exec
+DELETE FROM e2ee_devices WHERE user_id = $1
+`
+
+// Account-delete purge (§1): every encrypted-messaging device the account
+// registered, and — through e2ee_one_time_keys.device_id ON DELETE CASCADE —
+// their unclaimed one-time keys. Needed explicitly because the §1 delete
+// ANONYMISES the users row instead of removing it, so the ON DELETE CASCADE on
+// e2ee_devices.user_id never fires. A device row carries a user-chosen
+// device_name, which the tombstone exists to take away.
+func (q *Queries) DeleteE2EEDevicesByUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteE2EEDevicesByUser, userID)
+	return err
+}
+
 const getConversationForParticipant = `-- name: GetConversationForParticipant :one
 SELECT c.encrypted
 FROM conversations c

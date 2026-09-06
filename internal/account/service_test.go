@@ -99,6 +99,12 @@ type fakeRepo struct {
 
 	exports []sqlcgen.AccountExport
 
+	// e2eeDevices/e2eeOneTimeKeys mirror the encrypted-messaging device
+	// directory: device ids per user, and the one-time keys hanging off each
+	// device by e2ee_one_time_keys.device_id ON DELETE CASCADE.
+	e2eeDevices     map[uuid.UUID][]uuid.UUID
+	e2eeOneTimeKeys map[uuid.UUID]int
+
 	// export data
 	prefs         []sqlcgen.ListNotificationPrefsRow
 	exportVideos  []sqlcgen.ListVideosByOwnerForExportRow
@@ -122,16 +128,18 @@ type fakeRepo struct {
 
 func newFakeRepo(user sqlcgen.User) *fakeRepo {
 	return &fakeRepo{
-		user:          user,
-		videos:        map[uuid.UUID][]sqlcgen.ListVideosByChannelRow{},
-		videoFiles:    map[uuid.UUID][]sqlcgen.VideoFile{},
-		captions:      map[uuid.UUID][]sqlcgen.Caption{},
-		userImages:    map[string]sqlcgen.UserImage{},
-		channelImages: map[uuid.UUID]map[string]sqlcgen.ChannelImage{},
-		tags:          map[uuid.UUID][]string{},
-		playlistItems: map[uuid.UUID][]uuid.UUID{},
-		localVideos:   map[uuid.UUID]bool{},
-		localChannels: map[string]sqlcgen.Channel{},
+		user:            user,
+		videos:          map[uuid.UUID][]sqlcgen.ListVideosByChannelRow{},
+		videoFiles:      map[uuid.UUID][]sqlcgen.VideoFile{},
+		captions:        map[uuid.UUID][]sqlcgen.Caption{},
+		userImages:      map[string]sqlcgen.UserImage{},
+		channelImages:   map[uuid.UUID]map[string]sqlcgen.ChannelImage{},
+		tags:            map[uuid.UUID][]string{},
+		playlistItems:   map[uuid.UUID][]uuid.UUID{},
+		localVideos:     map[uuid.UUID]bool{},
+		localChannels:   map[string]sqlcgen.Channel{},
+		e2eeDevices:     map[uuid.UUID][]uuid.UUID{},
+		e2eeOneTimeKeys: map[uuid.UUID]int{},
 	}
 }
 
@@ -254,6 +262,14 @@ func (f *fakeRepo) DeletePasswordResetTokensByUser(context.Context, uuid.UUID) e
 func (f *fakeRepo) DeleteEmailVerificationTokensByUser(context.Context, uuid.UUID) error {
 	return f.purge("verify_tokens")
 }
+func (f *fakeRepo) DeleteE2EEDevicesByUser(_ context.Context, userID uuid.UUID) error {
+	for _, id := range f.e2eeDevices[userID] {
+		delete(f.e2eeOneTimeKeys, id) // e2ee_one_time_keys.device_id ON DELETE CASCADE
+	}
+	delete(f.e2eeDevices, userID)
+	return f.purge("e2ee_devices")
+}
+
 func (f *fakeRepo) DeleteAccountActorKey(context.Context, uuid.UUID) error {
 	return f.purge("actor_key")
 }
@@ -556,7 +572,7 @@ func TestDeleteRunsFullChecklist(t *testing.T) {
 		"ratings", "saved", "history", "playlists", "follows", "remote_follows",
 		"mutes", "instance_mutes", "blocks", "oauth", "recovery_codes",
 		"notifications", "notification_prefs", "reset_tokens", "verify_tokens",
-		"actor_key", "mfa",
+		"actor_key", "mfa", "e2ee_devices",
 	}
 	got := map[string]bool{}
 	for _, p := range repo.purged {
@@ -589,6 +605,34 @@ func TestDeleteRunsFullChecklist(t *testing.T) {
 	// A second delete refuses: the account is already deleted.
 	if err := svc.Delete(ctx, user.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second Delete = %v, want ErrNotFound", err)
+	}
+}
+
+// TestDeletePurgesE2EEDeviceDirectory pins the one piece of a deleted account
+// the §1 checklist used to leave standing: its encrypted-messaging devices.
+// The users row is ANONYMISED rather than removed, so the ON DELETE CASCADE on
+// e2ee_devices.user_id never fires — the directory has to be purged explicitly
+// like every other per-user table. Left behind it keeps a user-CHOSEN device
+// name (and the identity/signing keys) readable through the participant-gated
+// GET /users/{id}/e2ee/devices long after the account carrying that name is
+// gone, which defeats the anonymisation the tombstone exists to provide.
+func TestDeletePurgesE2EEDeviceDirectory(t *testing.T) {
+	ctx := context.Background()
+	user := testUser()
+	repo := newFakeRepo(user)
+	dev := uuid.New()
+	repo.e2eeDevices[user.ID] = []uuid.UUID{dev}
+	repo.e2eeOneTimeKeys[dev] = 3
+
+	svc := NewService(repo, newFakeBlobs(), &fakeVideoDeleter{})
+	if err := svc.Delete(ctx, user.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if got := repo.e2eeDevices[user.ID]; len(got) != 0 {
+		t.Errorf("e2ee devices left behind for the deleted account: %v", got)
+	}
+	if n := repo.e2eeOneTimeKeys[dev]; n != 0 {
+		t.Errorf("one-time keys left behind for device %s: %d", dev, n)
 	}
 }
 
