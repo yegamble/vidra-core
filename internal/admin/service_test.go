@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -115,6 +116,36 @@ func (f *fakeRepo) RevokeAllUserSessions(_ context.Context, userID uuid.UUID) er
 
 func (f *fakeRepo) SumUserStorageUsage(_ context.Context, ownerID uuid.UUID) (int64, error) {
 	return f.used[ownerID], nil
+}
+
+// CountActiveAdmins mirrors the SQL predicate exactly (role='admin' AND
+// is_active AND deleted_at IS NULL). A fake that counted every admin row would
+// make the last-admin guard pass its tests while the real query disagreed —
+// the fake-fidelity trap this repo has been bitten by twice.
+func (f *fakeRepo) CountActiveAdmins(_ context.Context) (int64, error) {
+	var n int64
+	for _, u := range f.users {
+		if u.Role == RoleAdmin && u.IsActive && !u.DeletedAt.Valid {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// markOwner sets the 0131 owner marker on an existing fake row.
+func (f *fakeRepo) markOwner(id uuid.UUID) {
+	u := f.users[id]
+	u.IsOwner = true
+	f.users[id] = u
+}
+
+// tombstone mirrors the §1 hard delete's end state: anonymised, deactivated and
+// stamped deleted_at.
+func (f *fakeRepo) tombstone(id uuid.UUID) {
+	u := f.users[id]
+	u.IsActive = false
+	u.DeletedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	f.users[id] = u
 }
 
 func strptr(s string) *string { return &s }
@@ -309,5 +340,159 @@ func TestUpdateUserBypassQuarantine(t *testing.T) {
 	updated, err = svc.UpdateUser(ctx, adminID, bobID, UpdateUserInput{BypassQuarantine: boolptr(false)})
 	if err != nil || updated.BypassQuarantine {
 		t.Fatalf("revoke = %+v/%v, want bypass=false", updated, err)
+	}
+}
+
+// TestUpdateUserProtectsTheInstanceOwner is A16 slice 1's finding turned into a
+// test: an ordinary admin demoted the instance owner and got 200. The owner is
+// now marked (0131) and another admin cannot take its role, its access or its
+// account — while edits that carry no lockout risk still go through.
+func TestUpdateUserProtectsTheInstanceOwner(t *testing.T) {
+	repo := newFakeRepo()
+	owner := repo.add("mona", RoleAdmin)
+	repo.markOwner(owner)
+	other := repo.add("avery", RoleAdmin)
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name string
+		in   UpdateUserInput
+	}{
+		{"demote to user", UpdateUserInput{Role: strptr(RoleUser)}},
+		{"demote to moderator", UpdateUserInput{Role: strptr(RoleModerator)}},
+		{"deactivate", UpdateUserInput{IsActive: boolptr(false)}},
+	} {
+		if _, err := svc.UpdateUser(ctx, other, owner, tc.in); !errors.Is(err, ErrOwnerProtected) {
+			t.Errorf("%s by another admin = %v, want ErrOwnerProtected", tc.name, err)
+		}
+	}
+	if got := repo.users[owner]; got.Role != RoleAdmin || !got.IsActive {
+		t.Errorf("owner after the refusals = %s/%v, want admin/true", got.Role, got.IsActive)
+	}
+	if err := svc.CheckDelete(ctx, other, owner); !errors.Is(err, ErrOwnerProtected) {
+		t.Errorf("delete owner by another admin = %v, want ErrOwnerProtected", err)
+	}
+
+	// Edits that cannot lock anybody out are still allowed on the owner.
+	if _, err := svc.UpdateUser(ctx, other, owner, UpdateUserInput{SetStorageQuota: true, StorageQuotaBytes: int64ptr(1024)}); err != nil {
+		t.Errorf("quota on the owner = %v, want allowed", err)
+	}
+	if _, err := svc.UpdateUser(ctx, other, owner, UpdateUserInput{EmailVerified: boolptr(true)}); err != nil {
+		t.Errorf("email_verified on the owner = %v, want allowed", err)
+	}
+	// Re-asserting the role the owner already holds is a no-op, not a refusal.
+	if _, err := svc.UpdateUser(ctx, other, owner, UpdateUserInput{Role: strptr(RoleAdmin)}); err != nil {
+		t.Errorf("re-asserting admin on the owner = %v, want allowed", err)
+	}
+
+	// The owner's OWN self-guards are unchanged: it still gets ErrSelfChange,
+	// not the new owner error, so the message it reads did not silently move.
+	if _, err := svc.UpdateUser(ctx, owner, owner, UpdateUserInput{Role: strptr(RoleUser)}); !errors.Is(err, ErrSelfChange) {
+		t.Errorf("owner self-demote = %v, want ErrSelfChange", err)
+	}
+	if _, err := svc.UpdateUser(ctx, owner, owner, UpdateUserInput{IsActive: boolptr(false)}); !errors.Is(err, ErrSelfChange) {
+		t.Errorf("owner self-deactivate = %v, want ErrSelfChange", err)
+	}
+}
+
+// TestCheckAdminRemovalKeepsOneAdmin pins the last-admin guard's arithmetic:
+// only role='admin' AND is_active AND deleted_at IS NULL counts as a live
+// administrator, so a deactivated or tombstoned admin is not the safety net
+// that lets the last live one stand down.
+func TestCheckAdminRemovalKeepsOneAdmin(t *testing.T) {
+	ctx := context.Background()
+
+	repo := newFakeRepo()
+	sole := repo.add("mona", RoleAdmin)
+	repo.add("bob", RoleUser)
+	svc := NewService(repo)
+	if err := svc.CheckAdminRemoval(ctx, sole); !errors.Is(err, ErrLastAdmin) {
+		t.Errorf("removing the only admin = %v, want ErrLastAdmin", err)
+	}
+	// A non-admin is never the last admin.
+	if err := svc.CheckAdminRemoval(ctx, repo.add("cleo", RoleModerator)); err != nil {
+		t.Errorf("removing a moderator = %v, want nil", err)
+	}
+
+	// A deactivated second admin cannot sign in, so it does not count.
+	deactivated := repo.add("dana", RoleAdmin)
+	du := repo.users[deactivated]
+	du.IsActive = false
+	repo.users[deactivated] = du
+	if err := svc.CheckAdminRemoval(ctx, sole); !errors.Is(err, ErrLastAdmin) {
+		t.Errorf("with only a DEACTIVATED second admin = %v, want ErrLastAdmin", err)
+	}
+
+	// Neither does a tombstoned one.
+	tomb := repo.add("erin", RoleAdmin)
+	repo.tombstone(tomb)
+	if err := svc.CheckAdminRemoval(ctx, sole); !errors.Is(err, ErrLastAdmin) {
+		t.Errorf("with only a TOMBSTONED second admin = %v, want ErrLastAdmin", err)
+	}
+
+	// A second live admin releases the guard.
+	repo.add("fern", RoleAdmin)
+	if err := svc.CheckAdminRemoval(ctx, sole); err != nil {
+		t.Errorf("with a second live admin = %v, want nil", err)
+	}
+}
+
+// TestUpdateUserRefusesRemovingTheLastAdmin covers the same guard on the admin
+// route. Reaching it there needs a caller who is not themselves a live admin —
+// impossible through requireRole today, which is exactly why it is defence in
+// depth rather than the guard's only home.
+func TestUpdateUserRefusesRemovingTheLastAdmin(t *testing.T) {
+	repo := newFakeRepo()
+	sole := repo.add("mona", RoleAdmin)
+	caller := repo.add("script", RoleUser)
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	if _, err := svc.UpdateUser(ctx, caller, sole, UpdateUserInput{Role: strptr(RoleUser)}); !errors.Is(err, ErrLastAdmin) {
+		t.Errorf("demoting the last admin = %v, want ErrLastAdmin", err)
+	}
+	if _, err := svc.UpdateUser(ctx, caller, sole, UpdateUserInput{IsActive: boolptr(false)}); !errors.Is(err, ErrLastAdmin) {
+		t.Errorf("deactivating the last admin = %v, want ErrLastAdmin", err)
+	}
+	if err := svc.CheckDelete(ctx, caller, sole); !errors.Is(err, ErrLastAdmin) {
+		t.Errorf("deleting the last admin = %v, want ErrLastAdmin", err)
+	}
+	if got := repo.users[sole]; got.Role != RoleAdmin || !got.IsActive {
+		t.Errorf("last admin after the refusals = %s/%v, want admin/true", got.Role, got.IsActive)
+	}
+}
+
+// TestUpdateUserRefusesEveryWriteToATombstone closes A16 slice 1 finding (4):
+// every field of a hard-deleted account other than is_active was still
+// writable. The writes were inert, but "accepted and ignored" is the shape that
+// lets a console report a change that did not happen.
+func TestUpdateUserRefusesEveryWriteToATombstone(t *testing.T) {
+	repo := newFakeRepo()
+	adm := repo.add("mona", RoleAdmin)
+	gone := repo.add("ghost", RoleUser)
+	repo.tombstone(gone)
+	before := repo.users[gone]
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name string
+		in   UpdateUserInput
+	}{
+		{"reactivate", UpdateUserInput{IsActive: boolptr(true)}},
+		{"deactivate again", UpdateUserInput{IsActive: boolptr(false)}},
+		{"role", UpdateUserInput{Role: strptr(RoleModerator)}},
+		{"quota", UpdateUserInput{SetStorageQuota: true, StorageQuotaBytes: int64ptr(99)}},
+		{"email_verified", UpdateUserInput{EmailVerified: boolptr(true)}},
+		{"bypass_quarantine", UpdateUserInput{BypassQuarantine: boolptr(true)}},
+		{"a combined body", UpdateUserInput{Role: strptr(RoleAdmin), SetStorageQuota: true, StorageQuotaBytes: int64ptr(7)}},
+	} {
+		if _, err := svc.UpdateUser(ctx, adm, gone, tc.in); !errors.Is(err, ErrDeletedAccount) {
+			t.Errorf("%s on a tombstone = %v, want ErrDeletedAccount", tc.name, err)
+		}
+	}
+	if got := repo.users[gone]; got != before {
+		t.Errorf("tombstone changed:\n got %+v\nwant %+v", got, before)
 	}
 }

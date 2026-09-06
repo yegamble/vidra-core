@@ -354,6 +354,11 @@ func (f *authFakeRepo) ClaimOwnerAndCreateAdmin(ctx context.Context, a sqlcgen.C
 	if err != nil {
 		return sqlcgen.ClaimOwnerAndCreateAdminRow{}, err
 	}
+	// The SQL's INSERT writes is_owner = TRUE (0131). Mirrored here because the
+	// owner guards read that column and a fake that skipped it would let them
+	// pass a test the database would fail.
+	u.IsOwner = true
+	f.users[strings.ToLower(u.Email)] = u
 	f.ownerClaim.ClaimedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	return sqlcgen.ClaimOwnerAndCreateAdminRow{
 		ID: u.ID, Username: u.Username, Email: u.Email, PasswordHash: u.PasswordHash,
@@ -633,6 +638,7 @@ func (f *authFakeRepo) ListUsers(_ context.Context, a sqlcgen.ListUsersParams) (
 				DisplayName: u.DisplayName, Bio: u.Bio,
 				StorageQuotaBytes: u.StorageQuotaBytes, StorageUsedBytes: used,
 				BypassQuarantine: u.BypassQuarantine, DeletedAt: u.DeletedAt,
+				IsOwner:          u.IsOwner,
 			})
 		}
 	}
@@ -646,6 +652,18 @@ func (f *authFakeRepo) ListUsers(_ context.Context, a sqlcgen.ListUsersParams) (
 		hi = len(out)
 	}
 	return out[lo:hi], nil
+}
+
+// CountActiveAdmins mirrors the SQL predicate exactly: role='admin' AND
+// is_active AND deleted_at IS NULL.
+func (f *authFakeRepo) CountActiveAdmins(_ context.Context) (int64, error) {
+	var n int64
+	for _, u := range f.users {
+		if u.Role == "admin" && u.IsActive && !u.DeletedAt.Valid {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (f *authFakeRepo) AdminUpdateUser(_ context.Context, a sqlcgen.AdminUpdateUserParams) (sqlcgen.User, error) {

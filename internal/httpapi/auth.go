@@ -857,6 +857,16 @@ func (s *Server) handleDeactivateAccount(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
+	// Self-deactivation by the sole admin would lock the instance out of its own
+	// console exactly as a self-delete would, and this route has no admin
+	// self-guard either. Checked BEFORE the password confirmation (which lives
+	// inside DeactivateAccount): the caller is already authenticated as
+	// themselves and can read their own role from /auth/me, so the refusal
+	// discloses nothing new — and there is no point asking for a password to
+	// authorize an action that cannot proceed.
+	if err := s.ensureNotLastAdmin(c, userID, observability.ActionAccountDeactivate); err != nil {
+		return err
+	}
 	if err := s.authsvc.DeactivateAccount(c.Request().Context(), userID, in.Password); err != nil {
 		switch {
 		case errors.Is(err, auth.ErrInvalidPassword):

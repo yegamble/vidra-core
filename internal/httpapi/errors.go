@@ -86,7 +86,17 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var ale *ATProtoLoginError
 	var mtf *MailTestFailedError
 	var mnc *MailNotConfiguredError
+	var op *OwnerProtectedError
+	var la *LastAdminError
 	switch {
+	case errors.As(err, &op):
+		status = http.StatusUnprocessableEntity
+		message = "this is the instance owner's account: another administrator cannot demote, deactivate or delete it"
+		code = "owner_protected"
+	case errors.As(err, &la):
+		status = http.StatusUnprocessableEntity
+		message = "this is the last active administrator on this instance; promote another admin first, or the instance would have nobody who can reach its own console"
+		code = "last_admin"
 	case errors.As(err, &mtf):
 		status = http.StatusBadGateway
 		message = "the mail relay refused the test message. Check the SMTP host, port and credentials, then the relay's own logs — the server log for this request has its exact answer"
@@ -264,6 +274,23 @@ func (e *OwnerClaimRequiredError) Error() string { return "owner claim required"
 type OwnerClaimInvalidError struct{}
 
 func (e *OwnerClaimInvalidError) Error() string { return "invalid owner-claim token" }
+
+// OwnerProtectedError renders as 422 with the stable code "owner_protected":
+// the target is THE instance owner — the account that redeemed the first-run
+// setup token (0104/0131) — and the caller is a different administrator. Vidra
+// has no owner ROLE, so without this the person who installed the instance
+// could be removed by an admin they promoted themselves.
+type OwnerProtectedError struct{}
+
+func (e *OwnerProtectedError) Error() string { return "instance owner protected" }
+
+// LastAdminError renders as 422 with the stable code "last_admin": the change
+// would leave the instance with no account able to reach its own admin console.
+// Recovery from zero admins is a database edit, so it is refused rather than
+// warned about.
+type LastAdminError struct{}
+
+func (e *LastAdminError) Error() string { return "last active administrator" }
 
 // FeatureDisabledError renders as 403 with the stable code "feature_disabled":
 // the instance operator has turned off this feature via the admin

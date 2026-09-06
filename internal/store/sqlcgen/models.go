@@ -914,6 +914,7 @@ type User struct {
 	PersonalizedRecommendationsEnabled bool               `json:"personalized_recommendations_enabled"`
 	SensitiveContentPolicy             *string            `json:"sensitive_content_policy"`
 	ShowBluesky                        bool               `json:"show_bluesky"`
+	IsOwner                            bool               `json:"is_owner"`
 }
 
 type UserBlock struct {

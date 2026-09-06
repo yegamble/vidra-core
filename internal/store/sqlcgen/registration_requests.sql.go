@@ -221,11 +221,12 @@ func (q *Queries) ListRegistrationRequests(ctx context.Context, arg ListRegistra
 	return items, nil
 }
 
-const rejectRegistrationRequest = `-- name: RejectRegistrationRequest :execrows
+const rejectRegistrationRequest = `-- name: RejectRegistrationRequest :one
 UPDATE registration_requests
 SET status = 'rejected', moderator_note = $1,
     reviewed_by = $2, reviewed_at = now(), updated_at = now()
 WHERE id = $3 AND status = 'pending'
+RETURNING username, email
 `
 
 type RejectRegistrationRequestParams struct {
@@ -234,12 +235,19 @@ type RejectRegistrationRequestParams struct {
 	ID            uuid.UUID   `json:"id"`
 }
 
-// Reject a PENDING request with a moderator note. Returns rows affected so the
-// caller can 404 an unknown/already-resolved id.
-func (q *Queries) RejectRegistrationRequest(ctx context.Context, arg RejectRegistrationRequestParams) (int64, error) {
-	result, err := q.db.Exec(ctx, rejectRegistrationRequest, arg.ModeratorNote, arg.ReviewedBy, arg.ID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+type RejectRegistrationRequestRow struct {
+	Username string `json:"username"`
+	Email    string `json:"email"`
+}
+
+// Reject a PENDING request with a moderator note. Returns the applicant's
+// username and address (no rows = unknown/already-resolved id, which the caller
+// maps to 404): the rejection notice has to reach the person who applied, and
+// reading the row separately would be a second query racing this one — a
+// concurrent reject could otherwise mail the same applicant twice.
+func (q *Queries) RejectRegistrationRequest(ctx context.Context, arg RejectRegistrationRequestParams) (RejectRegistrationRequestRow, error) {
+	row := q.db.QueryRow(ctx, rejectRegistrationRequest, arg.ModeratorNote, arg.ReviewedBy, arg.ID)
+	var i RejectRegistrationRequestRow
+	err := row.Scan(&i.Username, &i.Email)
+	return i, err
 }

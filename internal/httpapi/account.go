@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/account"
+	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -53,6 +55,14 @@ func (s *Server) handleDeleteAccount(c echo.Context) error {
 		}
 		return err
 	}
+	// An instance must never be left with nobody who can reach its own console.
+	// This is the SELF-service delete, so the admin routes' self guard does not
+	// apply here — /auth/me is in fact the one path from which a sole admin can
+	// actually take the instance to zero admins. The recovery would be a
+	// database edit, so it is refused: promote another admin first.
+	if err := s.ensureNotLastAdmin(c, userID, observability.ActionAccountDelete); err != nil {
+		return err
+	}
 	if err := s.accountsvc.Delete(c.Request().Context(), userID); err != nil {
 		if errors.Is(err, account.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
@@ -80,6 +90,23 @@ func (s *Server) handleAdminDeleteUser(c echo.Context) error {
 		s.audit(c, observability.ActionAdminUserDelete, observability.ResultFailure, adminID.String(), "self_delete_refused")
 		return &ValidationError{Fields: []FieldError{{Field: "id", Message: "you cannot hard-delete your own account; use DELETE /api/v1/auth/me"}}}
 	}
+	// The same two guards PATCH /admin/users/{id} applies, checked before the
+	// irreversible call: the instance owner is not another admin's to delete,
+	// and the last active admin is nobody's.
+	if s.adminsvc != nil {
+		switch err := s.adminsvc.CheckDelete(c.Request().Context(), adminID, targetID); {
+		case errors.Is(err, admin.ErrNotFound):
+			return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		case errors.Is(err, admin.ErrOwnerProtected):
+			s.auditAdminUserRefusal(c, observability.ActionAdminUserDelete, adminID, targetID, "owner_protected")
+			return &OwnerProtectedError{}
+		case errors.Is(err, admin.ErrLastAdmin):
+			s.auditAdminUserRefusal(c, observability.ActionAdminUserDelete, adminID, targetID, "last_admin")
+			return &LastAdminError{}
+		case err != nil:
+			return err
+		}
+	}
 	if err := s.accountsvc.Delete(c.Request().Context(), targetID); err != nil {
 		if errors.Is(err, account.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "user not found")
@@ -90,6 +117,23 @@ func (s *Server) handleAdminDeleteUser(c echo.Context) error {
 	s.audit(c, observability.ActionAdminUserDelete, observability.ResultSuccess, adminID.String(), "target="+targetID.String())
 	s.purgeUserFromSearch(c.Request().Context(), targetID)
 	return c.NoContent(http.StatusNoContent)
+}
+
+// ensureNotLastAdmin refuses a SELF-service removal (deactivate or delete) by
+// the last active administrator, audited as a failure of the action it blocked.
+// A server with no admin service wired cannot answer the question, so it does
+// not pretend to: the guard is skipped rather than failing closed on an
+// unrelated misconfiguration.
+func (s *Server) ensureNotLastAdmin(c echo.Context, userID uuid.UUID, action string) error {
+	if s.adminsvc == nil {
+		return nil
+	}
+	err := s.adminsvc.CheckAdminRemoval(c.Request().Context(), userID)
+	if errors.Is(err, admin.ErrLastAdmin) {
+		s.auditAdminUserRefusal(c, action, userID, userID, "last_admin")
+		return &LastAdminError{}
+	}
+	return err
 }
 
 // accountExportView is the export-status projection shared by the request and
