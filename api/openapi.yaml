@@ -15383,6 +15383,16 @@ components:
           enum: [user, moderator, admin]
         email_verified:
           type: boolean
+        is_owner:
+          type: boolean
+          description: >-
+            True on THE instance owner's own view — the account that completed
+            first-run setup. It is here because ownership is something the caller
+            can act on: only the owner may transfer it (POST
+            /api/v1/admin/owner/transfer), and only the owner is refused their
+            own deactivation and deletion until they have. Inferring it from the
+            admin user list is not equivalent: that list's search filter can page
+            the caller's own row out of view.
         display_name:
           type: string
           description: Human-facing name; may be empty.
