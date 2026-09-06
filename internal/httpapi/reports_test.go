@@ -35,11 +35,11 @@ type modReportRow struct {
 	// messageBody is the body snapshot the SQL stores in message_body_snapshot:
 	// the moderator's only view of a reported private message.
 	messageBody string
-	reason         string
-	status         string
-	note           string
-	createdAt      time.Time
-	resolvedAt     pgtype.Timestamptz
+	reason      string
+	status      string
+	note        string
+	createdAt   time.Time
+	resolvedAt  pgtype.Timestamptz
 }
 
 // moderationFakeRepo is an in-memory moderation.Repository that resolves the
