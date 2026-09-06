@@ -203,6 +203,44 @@ func (s *SMTP) SendEmailVerification(ctx context.Context, email, token string) e
 	return s.send(ctx, email, "", subject, body)
 }
 
+// SendEmailChangeVerification delivers the token that confirms a requested NEW
+// address. It goes to the new address only: it IS the possession proof, so
+// sending it anywhere else would prove nothing. The token appears in the body
+// and is never logged.
+func (s *SMTP) SendEmailChangeVerification(ctx context.Context, newEmail, token string) error {
+	name := s.effectiveInstanceName()
+	subject := "Confirm your new email address on " + name
+	body := "Hi,\n\n" +
+		"Someone (hopefully you) asked to change the email address on a " + name +
+		" account to this one.\n\n" +
+		"Your confirmation code is:\n\n" +
+		"    " + token + "\n\n" +
+		"Enter it on the \"Confirm email change\" page while signed in to that account. " +
+		"The code can be used once and expires soon.\n\n" +
+		"Until it is used, the account keeps its current address. " +
+		"If you did not ask for this, you can ignore this message.\n"
+	return s.send(ctx, newEmail, "", subject, body)
+}
+
+// SendEmailChanged tells the OLD address that the account has moved to a new
+// one. It is the after-the-fact security notice and the LAST message that
+// reaches the mailbox the user still controls, so it names the new address —
+// without it the reader cannot tell what happened or prove it to an operator.
+// It carries no token and no link that could change anything.
+func (s *SMTP) SendEmailChanged(ctx context.Context, oldEmail, newEmail string) error {
+	name := s.effectiveInstanceName()
+	subject := "The email address on your " + name + " account was changed"
+	body := "Hi,\n\n" +
+		"The email address for your " + name + " account was just changed to " +
+		newEmail + ", after that address was confirmed.\n\n" +
+		"If that was you, there is nothing to do — this message is the last one " +
+		"this address will receive.\n\n" +
+		"If it was NOT you, someone else may have access to this account. " +
+		"Contact the instance operator: the sign-in address has moved, so " +
+		"\"Forgot password\" on this address will no longer reach it.\n"
+	return s.send(ctx, oldEmail, "", subject, body)
+}
+
 // send runs one SMTP conversation: EHLO, STARTTLS when offered, AUTH PLAIN when
 // credentials are configured, then a single-recipient plain-text message.
 // replyTo, when non-empty, is stamped as the Reply-To header (validated by the

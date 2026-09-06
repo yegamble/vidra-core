@@ -873,6 +873,234 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/me/email-change:
+    post:
+      operationId: requestEmailChange
+      summary: Request a change of the current account's email address
+      description: >-
+        Starts the two-step email change. Re-verifies the CURRENT password (a
+        stolen access token alone must not be able to move the address an
+        account is recovered through) and mails a single-use, expiring token to
+        the NEW address, which is the possession proof a password cannot give.
+        The account's live address is UNCHANGED until that token is confirmed,
+        and the pending state is readable here with GET. A second request
+        supersedes the first, killing its token. The address is refused when it
+        already resolves to another account's sign-in identifier — its email OR
+        its username, because sign-in accepts both with email taking precedence,
+        so an address equal to somebody's username would shadow their sign-in.
+        Rate limited alongside login, the reset and the password change.
+        Requires a bearer access token.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailChangeRequest"
+      responses:
+        "202":
+          description: >-
+            The request was recorded and the confirmation was mailed to the new
+            address. The account's live address is unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailChangeState"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The supplied current password is incorrect.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            Either the account has no password to re-verify (OAuth/ATProto-only —
+            use the password-reset flow to set one), or the requested address is
+            already in use on this instance as another account's email or
+            username.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            Validation failed: the address is malformed, or it is the one the
+            account already has.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many requests (auth rate limit).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: getEmailChange
+      summary: Read the pending email change, if any
+      description: >-
+        Returns the account's pending email change: which address is awaiting
+        confirmation, when it was requested, and when the confirmation stops
+        working. An expired request is not pending. Always 200 — "nothing
+        pending" is a state, not an error. Deliberately NOT behind the strict
+        auth limiter, so loading the settings page cannot exhaust a budget
+        shared with sign-in. Requires a bearer access token.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The pending state (possibly "nothing pending").
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailChangeState"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: cancelEmailChange
+      summary: Cancel the pending email change
+      description: >-
+        Drops the pending request and kills its confirmation token. 404 when
+        nothing was pending, rather than reporting success for a no-op.
+        Requires a bearer access token.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: The pending request was cancelled and its token is dead.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No email change is pending.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/me/email-change/resend:
+    post:
+      operationId: resendEmailChange
+      summary: Re-send the pending email-change confirmation
+      description: >-
+        Issues a fresh confirmation for the address already pending, superseding
+        the previous token. It takes no body and does NOT re-ask for the
+        password: the pending request is itself the record that the password was
+        proven, and the message can only ever go to the address that request
+        already named. Rate limited alongside login. Requires a bearer access
+        token.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "202":
+          description: A fresh confirmation was mailed to the pending address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailChangeState"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No email change is pending.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many requests (auth rate limit).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/me/email-change/confirm:
+    post:
+      operationId: confirmEmailChange
+      summary: Confirm a pending email change
+      description: >-
+        Consumes the single-use token delivered to the new address and switches
+        the account onto it, marking it verified — the token IS the possession
+        proof, so the account can never end up holding an unverified address.
+        The switch is one statement, so it is atomic and a second confirmation
+        cannot also succeed. A best-effort notice is mailed to the OLD address:
+        the only signal that reaches a user whose address was taken from them.
+        Other sessions are deliberately NOT revoked — the address is not a
+        credential, and the change is already gated on the password.
+        Requires a bearer access token as well as the token: the mail token
+        proves possession of the mailbox, the session proves whose account it
+        is, and a token issued to a DIFFERENT account is refused exactly like an
+        unknown one. Rate limited alongside login.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailChangeConfirmRequest"
+      responses:
+        "200":
+          description: The address was changed; the account now holds it, verified.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailChangeConfirmed"
+        "400":
+          description: >-
+            The token is unknown, already used, expired, or was issued to a
+            different account — deliberately one answer for all four.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The address was claimed by another account between the request and
+            the confirmation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (the token is required).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many requests (auth rate limit).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/auth/me/deactivate:
     post:
       operationId: deactivateAccount
@@ -18091,6 +18319,67 @@ components:
           description: >-
             The replacement password. Same policy as registration and the
             password reset, and must differ from the current one.
+    EmailChangeRequest:
+      type: object
+      description: >-
+        Current-password re-verification plus the requested new address. The
+        password is never echoed back or logged, and neither address appears in
+        the audit trail.
+      required: [current_password, new_email]
+      properties:
+        current_password:
+          type: string
+          format: password
+          description: The account's current password, for confirmation.
+        new_email:
+          type: string
+          format: email
+          description: >-
+            The address to move to. It must differ from the current one and must
+            not already resolve to another account's email or username.
+          example: ada.new@example.test
+    EmailChangeState:
+      type: object
+      description: >-
+        The pending email change, readable only by the account itself. It never
+        carries the confirmation token — that exists only in the message sent to
+        the new address.
+      required: [pending]
+      properties:
+        pending:
+          type: boolean
+          description: Whether a confirmation is outstanding.
+        new_email:
+          type: string
+          format: email
+          description: The address awaiting confirmation. Omitted when nothing is pending.
+        requested_at:
+          type: string
+          format: date-time
+          description: When the change was requested. Omitted when nothing is pending.
+        expires_at:
+          type: string
+          format: date-time
+          description: >-
+            When the confirmation stops working. Omitted when nothing is
+            pending; an expired request is not pending.
+    EmailChangeConfirmRequest:
+      type: object
+      description: The single-use token delivered to the new address.
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: The confirmation token from the message.
+    EmailChangeConfirmed:
+      type: object
+      description: The address the account holds after a successful confirmation.
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          example: ada.new@example.test
     DeleteAccountRequest:
       type: object
       description: >-

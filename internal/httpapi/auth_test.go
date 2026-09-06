@@ -40,7 +40,10 @@ type authFakeRepo struct {
 	sessions map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow
 	resets   map[string]*sqlcgen.PasswordResetToken     // keyed by token hash
 	verifs   map[string]*sqlcgen.EmailVerificationToken // keyed by token hash
-	regReqs  []*regReqRow
+	// emailChanges mirrors email_change_requests (0129), keyed by token hash.
+	// See auth_email_change_fake_test.go for the methods over it.
+	emailChanges map[string]*sqlcgen.EmailChangeRequest
+	regReqs      []*regReqRow
 	// usage mirrors SumUserStorageUsage: a user's total stored video-file bytes.
 	// Nil (pure-auth harnesses) means 0; videoServerEnv wires it to sum the
 	// video fake repo's files, mirroring the real aggregate query.
@@ -1098,6 +1101,14 @@ type captureResetMailer struct {
 	// best-effort and never fails the underlying action.
 	changedEmail string
 	fail         bool
+	// The two-step email change (0129): the confirmation token and the address
+	// it was addressed to, then the old/new pair the change NOTICE named. The
+	// addressing is the security property, so the tests assert on it.
+	changeToken   string
+	changeTo      string
+	noticeOld     string
+	noticeNew     string
+	changeNotices int
 }
 
 func (m *captureResetMailer) SendPasswordChanged(_ context.Context, email string) error {
@@ -1118,6 +1129,23 @@ func (m *captureResetMailer) SendPasswordReset(_ context.Context, _, token strin
 func (m *captureResetMailer) SendEmailVerification(_ context.Context, _, token string) error {
 	m.calls++
 	m.token = token
+	return nil
+}
+
+func (m *captureResetMailer) SendEmailChangeVerification(_ context.Context, newEmail, token string) error {
+	m.calls++
+	m.changeToken = token
+	m.changeTo = newEmail
+	return nil
+}
+
+func (m *captureResetMailer) SendEmailChanged(_ context.Context, oldEmail, newEmail string) error {
+	if m.fail {
+		return errors.New("mailer down")
+	}
+	m.changeNotices++
+	m.noticeOld = oldEmail
+	m.noticeNew = newEmail
 	return nil
 }
 

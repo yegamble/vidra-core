@@ -42,6 +42,16 @@ func (m *captureMailer) SendEmailVerification(_ context.Context, email, token st
 	return nil
 }
 
+// The email-change senders default to no-ops here: reset_test's captureMailer
+// only has to SATISFY the interface. emailchange_test.go's changeMailer embeds
+// this type and overrides both, and its overrides are what the email-change
+// tests assert on.
+func (m *captureMailer) SendEmailChangeVerification(context.Context, string, string) error {
+	return nil
+}
+
+func (m *captureMailer) SendEmailChanged(context.Context, string, string) error { return nil }
+
 func (m *captureMailer) SendNewReportAlert(context.Context, string, string, string, string) error {
 	return nil
 }
