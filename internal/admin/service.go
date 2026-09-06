@@ -32,6 +32,12 @@ var (
 	ErrNotFound = errors.New("admin: user not found")
 	// ErrSelfChange means an admin tried to demote or deactivate their own account.
 	ErrSelfChange = errors.New("admin: cannot demote or deactivate yourself")
+	// ErrDeletedAccount means an admin tried to reactivate a hard-deleted
+	// (tombstoned) account. Deletion anonymises the row irreversibly — the
+	// username, address, display name and bio are gone — so re-enabling it
+	// would republish a profile page for a person who asked to be erased
+	// without restoring anything they had. The row stays listed and readable.
+	ErrDeletedAccount = errors.New("admin: account is deleted and cannot be reactivated")
 )
 
 // Repository is the data access the admin service needs. *sqlcgen.Queries
@@ -101,12 +107,20 @@ type UpdateUserInput struct {
 // UpdateUser edits a user's role, active flag, and/or storage quota. An admin
 // may not demote (to a non-admin role) or deactivate their own account — that
 // returns ErrSelfChange to avoid locking the last admin out (quota changes on
-// oneself are allowed; they carry no lockout risk). An unknown target returns
-// ErrNotFound. Deactivating a user revokes their sessions so the ban takes
-// effect immediately (best-effort).
+// oneself are allowed; they carry no lockout risk). Reactivating a tombstoned
+// account returns ErrDeletedAccount. An unknown target returns ErrNotFound.
+// Deactivating a user revokes their sessions so the ban takes effect
+// immediately (best-effort).
 func (s *Service) UpdateUser(ctx context.Context, callerID, targetID uuid.UUID, in UpdateUserInput) (sqlcgen.User, error) {
-	if _, err := s.repo.GetUserByID(ctx, targetID); err != nil {
+	target, err := s.repo.GetUserByID(ctx, targetID)
+	if err != nil {
 		return sqlcgen.User{}, ErrNotFound
+	}
+	// A tombstone cannot be brought back. Deletion is the one admin action with
+	// no inverse: it anonymises the row in place, so "Reactivate" would restore
+	// a public profile for `deleted-<suffix>` and nothing else.
+	if target.DeletedAt.Valid && in.IsActive != nil && *in.IsActive {
+		return sqlcgen.User{}, ErrDeletedAccount
 	}
 	if callerID == targetID {
 		demoting := in.Role != nil && *in.Role != RoleAdmin

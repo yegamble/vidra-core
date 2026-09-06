@@ -210,3 +210,153 @@ func TestAdminUserListTotalTracksFilterAndPaging(t *testing.T) {
 		t.Errorf("total under limit=1 is %d, want 3", paged.Total)
 	}
 }
+
+// TestRoleChangeReachesTheExistingSession pins ADM-01's effect-timing rule: a
+// role change must bite on the token the demoted account is ALREADY holding,
+// not only after it signs in again. Every authenticated request already
+// re-reads the account (AUTH-05 slice (c) added the sessions⋈users lookup that
+// makes deactivation and deletion immediate), so trusting the JWT's COPY of the
+// role was the last piece of stale principal state left: a demoted moderator
+// kept every staff route for the rest of the access token's life, and a
+// promoted one could not use them until the token turned over.
+func TestRoleChangeReachesTheexistingSession(t *testing.T) {
+	srv := videoServer(t)
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	bobTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	bobID := userIDByName(t, adminUsers(t, srv, "?q=bob", adminTok).Users, "bob")
+
+	// Baseline: an ordinary user reaches neither the admin nor the staff route.
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/users", "", bobTok); rec.Code != http.StatusForbidden {
+		t.Fatalf("user on /admin/users = %d, want 403", rec.Code)
+	}
+
+	// PROMOTION reaches the token bob is already holding.
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+bobID, `{"role":"admin"}`, adminTok); rec.Code != http.StatusOK {
+		t.Fatalf("promote = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/users", "", bobTok); rec.Code != http.StatusOK {
+		t.Errorf("promoted admin on the SAME token = %d, want 200 (role still read from the JWT?)", rec.Code)
+	}
+
+	// A token minted while bob WAS an admin must stop working the moment the
+	// role is taken away — this is the direction that matters for security.
+	var fresh authResponse
+	_ = json.Unmarshal(postTo(srv, "/api/v1/auth/login", `{"email":"bob@example.test","password":"supersecret"}`).Body.Bytes(), &fresh)
+	if fresh.Token == "" {
+		t.Fatal("bob could not sign in after promotion")
+	}
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/users", "", fresh.Token); rec.Code != http.StatusOK {
+		t.Fatalf("admin on a fresh token = %d, want 200", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+bobID, `{"role":"user"}`, adminTok); rec.Code != http.StatusOK {
+		t.Fatalf("demote = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/users", "", fresh.Token); rec.Code != http.StatusForbidden {
+		t.Errorf("demoted admin on its own live token = %d, want 403", rec.Code)
+	}
+	// Demotion removes STAFF access, not the account: ordinary routes keep
+	// working on the very same token.
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/auth/me", "", fresh.Token); rec.Code != http.StatusOK {
+		t.Errorf("demoted user on /auth/me = %d, want 200 — demotion must not sign anyone out", rec.Code)
+	}
+}
+
+// TestModeratorDemotionReachesTheModerationRoutes is the same rule on the
+// moderator tier, which is the one an instance actually demotes: a moderator
+// route must refuse the demoted principal's live token.
+func TestModeratorDemotionReachesTheModerationRoutes(t *testing.T) {
+	srv := videoServer(t)
+	adminTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	registerAndToken(t, srv, `{"username":"mod","email":"mod@example.test","password":"supersecret"}`)
+	modID := userIDByName(t, adminUsers(t, srv, "?q=mod", adminTok).Users, "mod")
+
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+modID, `{"role":"moderator"}`, adminTok); rec.Code != http.StatusOK {
+		t.Fatalf("promote to moderator = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var fresh authResponse
+	_ = json.Unmarshal(postTo(srv, "/api/v1/auth/login", `{"email":"mod@example.test","password":"supersecret"}`).Body.Bytes(), &fresh)
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/videos", "", fresh.Token); rec.Code != http.StatusOK {
+		t.Fatalf("moderator on /admin/videos = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	// A moderator never had the admin tier.
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/users", "", fresh.Token); rec.Code != http.StatusForbidden {
+		t.Errorf("moderator on /admin/users = %d, want 403", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+modID, `{"role":"user"}`, adminTok); rec.Code != http.StatusOK {
+		t.Fatalf("demote = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/videos", "", fresh.Token); rec.Code != http.StatusForbidden {
+		t.Errorf("demoted moderator on /admin/videos with its live token = %d, want 403", rec.Code)
+	}
+}
+
+// TestReactivatingATombstonedAccountIsRefused pins the A12 finding: the admin
+// list still shows a hard-deleted account (as `deleted-<suffix>`) with a
+// Reactivate action, and flipping is_active back to true made a public profile
+// page answer 200 again for a person who had asked to be erased. A tombstone is
+// irreversible by design — the username, address, display name and bio are gone
+// and no re-activation can bring them back — so the write is refused rather
+// than half-honoured. Deletion stays idempotent and the row stays readable.
+func TestReactivatingATombstonedAccountIsRefused(t *testing.T) {
+	// The account env is the fixture that wires BOTH the account service (whose
+	// hard delete writes the tombstone) and the admin service reading the same
+	// user map, so the tombstone is observable through /admin/users.
+	env := newAccountEnv(t)
+	srv := env.srv
+	var buf bytes.Buffer
+	srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	adminTok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	_, bobID := registerAndUser(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/users/"+bobID, "", adminTok); rec.Code != http.StatusNoContent {
+		t.Fatalf("admin delete = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// The tombstone is visible to the admin, and says so.
+	list := adminUsers(t, srv, "", adminTok)
+	var tomb *adminUserView
+	for i := range list.Users {
+		if list.Users[i].ID == bobID {
+			tomb = &list.Users[i]
+		}
+	}
+	if tomb == nil {
+		t.Fatal("the deleted account left no row in the admin list")
+	}
+	if tomb.DeletedAt == nil {
+		t.Error("admin user view does not carry deleted_at, so the UI cannot tell a tombstone from a deactivation")
+	}
+	if tomb.IsActive {
+		t.Error("tombstoned account is still is_active")
+	}
+
+	// The refusal itself.
+	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+bobID, `{"is_active":true}`, adminTok)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("reactivate a tombstone = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	if after := adminUsers(t, srv, "", adminTok); func() bool {
+		for _, u := range after.Users {
+			if u.ID == bobID {
+				return u.IsActive
+			}
+		}
+		return false
+	}() {
+		t.Error("the refused PATCH still flipped is_active")
+	}
+
+	// The refusal is audited as a failure, like the self-change guard beside it.
+	var sawFailure bool
+	for _, e := range auditEvents(t, &buf) {
+		if e["action"] == observability.ActionAdminUserUpdate && e["result"] == observability.ResultFailure {
+			if reason, _ := e["reason"].(string); strings.Contains(reason, "deleted") {
+				sawFailure = true
+			}
+		}
+	}
+	if !sawFailure {
+		t.Error("no admin.user.update failure audit event for the refused reactivation")
+	}
+}

@@ -42,12 +42,14 @@ func (s *Server) requireAuth(next echo.HandlerFunc) echo.HandlerFunc {
 		// account's unexpired access token kept working on every route that did
 		// not itself load the user row, for the whole JWT_ACCESS_TTL. One
 		// indexed read; see auth.Service.AuthenticateAccessToken.
-		userID, err := s.authsvc.AuthenticateAccessToken(c.Request().Context(), claims)
+		principal, err := s.authsvc.AuthenticateAccessToken(c.Request().Context(), claims)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired token")
 		}
-		c.Set(ctxKeyUserID, userID)
-		c.Set(ctxKeyRole, claims.Role)
+		c.Set(ctxKeyUserID, principal.UserID)
+		// The ROLE comes from that same account row, not from the token's copy
+		// of it, so a role change reaches a session already in flight.
+		c.Set(ctxKeyRole, principal.Role)
 		c.Set(ctxKeySessionID, claims.SessionID)
 		if claims.ExpiresAt != nil {
 			c.Set(ctxKeyTokenExpiresAt, claims.ExpiresAt.Time)
@@ -95,9 +97,9 @@ func (s *Server) optionalAuth(next echo.HandlerFunc) echo.HandlerFunc {
 					// their own private resource). Failure is silent: the
 					// request proceeds anonymously, as it does for any other
 					// unusable token.
-					if userID, err := s.authsvc.AuthenticateAccessToken(c.Request().Context(), claims); err == nil {
-						c.Set(ctxKeyUserID, userID)
-						c.Set(ctxKeyRole, claims.Role)
+					if principal, err := s.authsvc.AuthenticateAccessToken(c.Request().Context(), claims); err == nil {
+						c.Set(ctxKeyUserID, principal.UserID)
+						c.Set(ctxKeyRole, principal.Role)
 					}
 				}
 			}

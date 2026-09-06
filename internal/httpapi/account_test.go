@@ -19,6 +19,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/account"
+	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -349,6 +350,10 @@ func newAccountEnv(t *testing.T, extra ...Option) *accountEnv {
 		// The quota service backs the user_export_max_quota_bytes gate; the
 		// auth fake's usage hook reports each user's stored bytes.
 		WithQuotaService(quota.NewService(authRepo, 0)),
+		// The admin service shares the same user map, so an account deleted
+		// through /auth/me or /admin/users is observable from the admin list —
+		// which is how the tombstone guard is tested end to end.
+		WithAdminService(admin.NewService(authRepo)),
 		WithLogger(slog.New(slog.NewJSONHandler(logs, nil))),
 	}, extra...)...)
 	return &accountEnv{srv: srv, accountsvc: accountsvc, repo: repo, blobs: blobs, logs: logs,

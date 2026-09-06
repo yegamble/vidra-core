@@ -34,11 +34,11 @@ func (s *Server) restoreVideoReadPrincipal(c echo.Context) {
 	// The cookie mirrors an access token, so it inherits the same revocation
 	// check: a signed-out, deactivated or deleted account must not keep reading
 	// private media until the token expires.
-	userID, err := s.authsvc.AuthenticateAccessToken(c.Request().Context(), claims)
+	principal, err := s.authsvc.AuthenticateAccessToken(c.Request().Context(), claims)
 	if err != nil {
 		return
 	}
-	c.Set(ctxKeyUserID, userID)
-	c.Set(ctxKeyRole, claims.Role)
+	c.Set(ctxKeyUserID, principal.UserID)
+	c.Set(ctxKeyRole, principal.Role)
 	c.Set(ctxVideoCookieUsed, true)
 }

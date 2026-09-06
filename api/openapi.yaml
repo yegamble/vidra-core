@@ -14255,10 +14255,16 @@ paths:
       description: >-
         Updates a user's role, active flag, and/or storage quota (partial).
         Restricted to admins. An admin cannot demote or deactivate their own
-        account (422). An unknown id is 404. Deactivating revokes the user's
-        sessions. storage_quota_bytes is tri-state — omitted: unchanged; null:
-        reset to the instance default; a non-negative integer: per-user
-        override (0 = unlimited).
+        account (422), and a hard-deleted account cannot be reactivated (422:
+        the tombstone is anonymised in place, so re-enabling it would republish
+        a profile without restoring anything). An unknown id is 404.
+        Deactivating revokes the user's sessions. A role change takes effect on
+        the target's EXISTING sessions immediately — the role is re-read from
+        the account on every authenticated request, not taken from the access
+        token — so a demoted staff member loses the staff routes at once while
+        keeping their ordinary session. storage_quota_bytes is tri-state —
+        omitted: unchanged; null: reset to the instance default; a non-negative
+        integer: per-user override (0 = unlimited).
       tags: [admin]
       security:
         - bearerAuth: []
@@ -18218,7 +18224,7 @@ components:
     AdminUser:
       type: object
       description: Admin projection of an account (never includes the password hash).
-      required: [id, username, email, role, is_active, email_verified, bypass_quarantine, display_name, storage_quota_bytes, storage_used_bytes, created_at]
+      required: [id, username, email, role, is_active, email_verified, bypass_quarantine, display_name, storage_quota_bytes, storage_used_bytes, created_at, deleted_at]
       properties:
         id:
           type: string
@@ -18258,6 +18264,15 @@ components:
         created_at:
           type: string
           format: date-time
+        deleted_at:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            When this account was hard-deleted, or null for a live account. A
+            deleted account stays listed as an anonymised tombstone
+            (`deleted-<suffix>`) so an admin can see it, but deletion is
+            permanent: PATCH with `is_active: true` on such a row is refused
+            with 422, and the console offers no reactivate action for it.
     AdminUserListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"

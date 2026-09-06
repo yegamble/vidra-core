@@ -51,7 +51,13 @@ WHERE expires_at < now();
 -- route at once, instead of only on the handful of handlers that happen to load
 -- the user row. It returns no row for a revoked, expired, disabled or
 -- tombstoned principal, all of which the caller maps to the same 401.
-SELECT s.id, s.user_id
+--
+-- It also returns the account's CURRENT role, so the principal the middleware
+-- builds carries the role the database holds rather than the copy the JWT was
+-- minted with: a demoted moderator loses the staff routes on the token they are
+-- already holding, and a promoted one gains them, instead of both waiting out
+-- JWT_ACCESS_TTL. One extra column on a row this query already reads.
+SELECT s.id, s.user_id, u.role
 FROM sessions s
          JOIN users u ON u.id = s.user_id
 WHERE s.id = $1
