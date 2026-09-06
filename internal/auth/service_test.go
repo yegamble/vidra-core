@@ -341,7 +341,8 @@ func (f *fakeRepo) RevokeOtherUserSessions(_ context.Context, a sqlcgen.RevokeOt
 }
 
 // GetActiveSessionForAccessToken mirrors the SQL join: no row for a revoked or
-// expired session, or for a disabled/tombstoned account.
+// expired session, or for a disabled/tombstoned account, and the account's
+// CURRENT role on the row it does return.
 func (f *fakeRepo) GetActiveSessionForAccessToken(_ context.Context, id uuid.UUID) (sqlcgen.GetActiveSessionForAccessTokenRow, error) {
 	s, ok := f.sessions[id]
 	if !ok || s.RevokedAt.Valid || !s.ExpiresAt.After(time.Now()) {
@@ -352,7 +353,7 @@ func (f *fakeRepo) GetActiveSessionForAccessToken(_ context.Context, id uuid.UUI
 			if !u.IsActive || u.DeletedAt.Valid {
 				return sqlcgen.GetActiveSessionForAccessTokenRow{}, pgx.ErrNoRows
 			}
-			return sqlcgen.GetActiveSessionForAccessTokenRow{ID: s.ID, UserID: s.UserID}, nil
+			return sqlcgen.GetActiveSessionForAccessTokenRow{ID: s.ID, UserID: s.UserID, Role: u.Role}, nil
 		}
 	}
 	return sqlcgen.GetActiveSessionForAccessTokenRow{}, pgx.ErrNoRows

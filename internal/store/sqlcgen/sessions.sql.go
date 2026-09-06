@@ -72,7 +72,7 @@ func (q *Queries) DeleteExpiredSessions(ctx context.Context) error {
 }
 
 const getActiveSessionForAccessToken = `-- name: GetActiveSessionForAccessToken :one
-SELECT s.id, s.user_id
+SELECT s.id, s.user_id, u.role
 FROM sessions s
          JOIN users u ON u.id = s.user_id
 WHERE s.id = $1
@@ -85,6 +85,7 @@ WHERE s.id = $1
 type GetActiveSessionForAccessTokenRow struct {
 	ID     uuid.UUID `json:"id"`
 	UserID uuid.UUID `json:"user_id"`
+	Role   string    `json:"role"`
 }
 
 // The per-request revocation check for a session-bound access token (AUTH-05).
@@ -96,10 +97,16 @@ type GetActiveSessionForAccessTokenRow struct {
 // route at once, instead of only on the handful of handlers that happen to load
 // the user row. It returns no row for a revoked, expired, disabled or
 // tombstoned principal, all of which the caller maps to the same 401.
+//
+// It also returns the account's CURRENT role, so the principal the middleware
+// builds carries the role the database holds rather than the copy the JWT was
+// minted with: a demoted moderator loses the staff routes on the token they are
+// already holding, and a promoted one gains them, instead of both waiting out
+// JWT_ACCESS_TTL. One extra column on a row this query already reads.
 func (q *Queries) GetActiveSessionForAccessToken(ctx context.Context, id uuid.UUID) (GetActiveSessionForAccessTokenRow, error) {
 	row := q.db.QueryRow(ctx, getActiveSessionForAccessToken, id)
 	var i GetActiveSessionForAccessTokenRow
-	err := row.Scan(&i.ID, &i.UserID)
+	err := row.Scan(&i.ID, &i.UserID, &i.Role)
 	return i, err
 }
 

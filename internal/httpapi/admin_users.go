@@ -14,25 +14,29 @@ import (
 
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 // adminUserView is the admin projection of an account. It deliberately omits the
 // password hash and never carries any secret. StorageQuotaBytes is the per-user
 // override (null = the instance default applies; 0 = unlimited);
-// StorageUsedBytes is the account's current usage.
+// StorageUsedBytes is the account's current usage. DeletedAt is non-null for a
+// hard-deleted (tombstoned) account — the row stays listed, anonymised, so the
+// console can label it and withhold the actions that cannot apply to it.
 type adminUserView struct {
-	ID                string    `json:"id"`
-	Username          string    `json:"username"`
-	Email             string    `json:"email"`
-	Role              string    `json:"role"`
-	IsActive          bool      `json:"is_active"`
-	EmailVerified     bool      `json:"email_verified"`
-	BypassQuarantine  bool      `json:"bypass_quarantine"`
-	DisplayName       string    `json:"display_name"`
-	StorageQuotaBytes *int64    `json:"storage_quota_bytes"`
-	StorageUsedBytes  int64     `json:"storage_used_bytes"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                string     `json:"id"`
+	Username          string     `json:"username"`
+	Email             string     `json:"email"`
+	Role              string     `json:"role"`
+	IsActive          bool       `json:"is_active"`
+	EmailVerified     bool       `json:"email_verified"`
+	BypassQuarantine  bool       `json:"bypass_quarantine"`
+	DisplayName       string     `json:"display_name"`
+	StorageQuotaBytes *int64     `json:"storage_quota_bytes"`
+	StorageUsedBytes  int64      `json:"storage_used_bytes"`
+	CreatedAt         time.Time  `json:"created_at"`
+	DeletedAt         *time.Time `json:"deleted_at"`
 }
 
 func newAdminUserView(u sqlcgen.User, usedBytes int64) adminUserView {
@@ -48,6 +52,7 @@ func newAdminUserView(u sqlcgen.User, usedBytes int64) adminUserView {
 		StorageQuotaBytes: u.StorageQuotaBytes,
 		StorageUsedBytes:  usedBytes,
 		CreatedAt:         u.CreatedAt,
+		DeletedAt:         pgconv.TimeOrNil(u.DeletedAt),
 	}
 }
 
@@ -59,7 +64,7 @@ func newAdminUserViewFromRow(r sqlcgen.ListUsersRow) adminUserView {
 		IsActive: r.IsActive, EmailVerified: r.EmailVerified,
 		BypassQuarantine: r.BypassQuarantine,
 		DisplayName:      r.DisplayName, StorageQuotaBytes: r.StorageQuotaBytes,
-		CreatedAt: r.CreatedAt,
+		CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
 	}, r.StorageUsedBytes)
 }
 
@@ -186,6 +191,9 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 		case errors.Is(err, admin.ErrSelfChange):
 			s.audit(c, observability.ActionAdminUserUpdate, observability.ResultFailure, callerID.String(), "self_change")
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "cannot demote or deactivate yourself")
+		case errors.Is(err, admin.ErrDeletedAccount):
+			s.audit(c, observability.ActionAdminUserUpdate, observability.ResultFailure, callerID.String(), "deleted_account target="+targetID.String())
+			return echo.NewHTTPError(http.StatusUnprocessableEntity, "this account was deleted; deletion is permanent and cannot be reversed")
 		}
 		return err
 	}
