@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/channel"
@@ -27,9 +28,53 @@ type notifFakeRepo struct {
 	channels  *channelFakeRepo
 	videos    *videoFakeRepo
 	reports   *moderationFakeRepo
+	comments  *commentFakeRepo
 	notifs    []sqlcgen.Notification
 	prefs     map[string]bool
 	createErr error
+}
+
+// CommentReplyRecipient mirrors the real :one query (who hears about a reply):
+// the parent comment's LOCAL author, excluded when either comment is a
+// tombstone, when the replier is that author, when the author's account is
+// inactive/deleted, when the author muted the replier, or when either side
+// blocked the other. pgx.ErrNoRows is the "nobody" answer — the normal one for
+// a top-level comment. The statement's real behaviour is proved against a live
+// database in store.TestCommentReplyRecipientOnRealPG; this fake exists so the
+// HTTP-level wiring (which recipient, and how it interacts with the video-owner
+// notification) is provable without one.
+func (f *notifFakeRepo) CommentReplyRecipient(_ context.Context, commentID uuid.UUID) (sqlcgen.CommentReplyRecipientRow, error) {
+	none := sqlcgen.CommentReplyRecipientRow{}
+	if f.comments == nil {
+		return none, pgx.ErrNoRows
+	}
+	reply, ok := f.comments.comments[commentID]
+	if !ok || reply.DeletedAt.Valid || !reply.ParentID.Valid || !reply.UserID.Valid {
+		return none, pgx.ErrNoRows
+	}
+	parent, ok := f.comments.comments[uuid.UUID(reply.ParentID.Bytes)]
+	if !ok || parent.DeletedAt.Valid || !parent.UserID.Valid {
+		return none, pgx.ErrNoRows
+	}
+	author, replier := uuid.UUID(parent.UserID.Bytes), uuid.UUID(reply.UserID.Bytes)
+	if author == replier {
+		return none, pgx.ErrNoRows
+	}
+	u, ok := f.userByID(author)
+	if !ok || !u.IsActive || u.DeletedAt.Valid {
+		return none, pgx.ErrNoRows
+	}
+	if f.comments.mutes != nil && f.comments.mutes.isMuted(author, replier) {
+		return none, pgx.ErrNoRows
+	}
+	if f.comments.userBlocks != nil &&
+		(f.comments.userBlocks.isBlocked(author, replier) || f.comments.userBlocks.isBlocked(replier, author)) {
+		return none, pgx.ErrNoRows
+	}
+	return sqlcgen.CommentReplyRecipientRow{
+		RecipientID: pgtype.UUID{Bytes: author, Valid: true},
+		VideoID:     reply.VideoID,
+	}, nil
 }
 
 func notifPrefKey(userID uuid.UUID, typ string) string { return userID.String() + "\x00" + typ }
@@ -510,4 +555,233 @@ func (f *notifFakeRepo) CountNotifications(ctx context.Context, a sqlcgen.CountN
 		UserID: a.UserID, UnreadOnly: a.UnreadOnly, ResultLimit: 1 << 30,
 	})
 	return int64(len(rows)), err
+}
+
+// notifTypes lists a user's notification types, newest first — the shape most
+// of the reply assertions below care about.
+func notifTypes(t *testing.T, srv *Server, token string) []notificationView {
+	t.Helper()
+	rec := listNotifications(srv, token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list notifications = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var body notificationListResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	return body.Notifications
+}
+
+// TestCommentReplyNotifiesTheParentAuthor is the regression this whole slice
+// exists for. Replying to someone's comment used to notify ONLY the video's
+// owner: the person actually being answered — who does not own the video — was
+// told nothing at all, so a conversation under a third party's video was
+// invisible to both participants.
+//
+// Cast: ada owns the video, bob comments on it, cara replies to bob.
+func TestCommentReplyNotifiesTheParentAuthor(t *testing.T) {
+	srv := videoServer(t)
+	adaTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, adaTok, "ada", `{"title":"My clip","privacy":"public"}`)
+	bobTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	caraTok := registerAndToken(t, srv, `{"username":"cara","email":"cara@example.test","password":"supersecret"}`)
+
+	rec := postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"nice clip"}`, bobTok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("bob comment = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var parent commentView
+	_ = json.Unmarshal(rec.Body.Bytes(), &parent)
+
+	rec = postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"agreed","parent_id":"`+parent.ID+`"}`, caraTok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("cara reply = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var reply commentView
+	_ = json.Unmarshal(rec.Body.Bytes(), &reply)
+
+	// bob — the parent's author — is told, and told it was a REPLY: the type
+	// separates "someone answered you" from "someone commented on your video",
+	// the actor names who answered, and the video context links the thread.
+	bobs := notifTypes(t, srv, bobTok)
+	if len(bobs) != 1 {
+		t.Fatalf("bob has %d notifications, want 1 (the reply to his comment)", len(bobs))
+	}
+	n := bobs[0]
+	if n.Type != notification.TypeCommentReply {
+		t.Errorf("type = %q, want %q", n.Type, notification.TypeCommentReply)
+	}
+	if n.Actor == nil || n.Actor.Username != "cara" {
+		t.Errorf("actor = %+v, want cara", n.Actor)
+	}
+	if n.VideoID != vid || n.VideoTitle != "My clip" {
+		t.Errorf("video context = (%s, %q), want (%s, My clip)", n.VideoID, n.VideoTitle, vid)
+	}
+	if n.CommentID != reply.ID {
+		t.Errorf("comment_id = %s, want the reply %s", n.CommentID, reply.ID)
+	}
+
+	// ada — the video's owner — still gets the pre-existing comment notification
+	// for BOTH the original comment and the reply. The reply path adds a
+	// recipient; it does not move or remove one.
+	adas := notifTypes(t, srv, adaTok)
+	if len(adas) != 2 {
+		t.Fatalf("owner has %d notifications, want 2 (one per comment); got %+v", len(adas), adas)
+	}
+	for i, a := range adas {
+		if a.Type != notification.TypeComment || a.VideoID != vid {
+			t.Errorf("owner notification %d = %+v, want a comment notification on %s", i, a, vid)
+		}
+	}
+
+	// Unread counting and read-marking are the shared mechanics, reused rather
+	// than reimplemented per type.
+	if got := unreadCount(t, srv, bobTok); got != 1 {
+		t.Errorf("bob unread = %d, want 1", got)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/notifications/"+n.ID+"/read", "", bobTok); rec.Code != http.StatusNoContent {
+		t.Fatalf("mark read = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := unreadCount(t, srv, bobTok); got != 0 {
+		t.Errorf("bob unread after mark-read = %d, want 0", got)
+	}
+}
+
+// TestCommentReplyNotificationNeverSelfOrDuplicates pins the two ways one reply
+// could produce the wrong NUMBER of notifications: answering yourself (zero),
+// and answering a comment whose author is also the video's owner (one, not the
+// same event reported twice).
+func TestCommentReplyNotificationNeverSelfOrDuplicates(t *testing.T) {
+	srv := videoServer(t)
+	adaTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, adaTok, "ada", `{"title":"My clip","privacy":"public"}`)
+	bobTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	// bob comments, then replies to HIMSELF: nobody is told he answered himself.
+	rec := postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"first"}`, bobTok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("bob comment = %d", rec.Code)
+	}
+	var bobParent commentView
+	_ = json.Unmarshal(rec.Body.Bytes(), &bobParent)
+	if rec := postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"ps"}`, bobTok); rec.Code != http.StatusCreated {
+		t.Fatalf("bob follow-up = %d", rec.Code)
+	}
+	rec = postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"self reply","parent_id":"`+bobParent.ID+`"}`, bobTok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("bob self-reply = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := notifTypes(t, srv, bobTok); len(got) != 0 {
+		t.Fatalf("bob has %d notifications after replying to himself, want 0; got %+v", len(got), got)
+	}
+
+	// ada comments on her OWN video (no self-notification), and bob replies to
+	// her. She is BOTH the parent's author and the video's owner: one reply must
+	// reach her once, as the reply — not once as a reply and once as a comment.
+	rec = postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"thanks all"}`, adaTok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("ada comment = %d", rec.Code)
+	}
+	var adaParent commentView
+	_ = json.Unmarshal(rec.Body.Bytes(), &adaParent)
+	before := len(notifTypes(t, srv, adaTok))
+	if rec := postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"you're welcome","parent_id":"`+adaParent.ID+`"}`, bobTok); rec.Code != http.StatusCreated {
+		t.Fatalf("bob reply to ada = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	adas := notifTypes(t, srv, adaTok)
+	if len(adas) != before+1 {
+		t.Fatalf("owner-and-parent-author got %d new notifications for one reply, want exactly 1; got %+v", len(adas)-before, adas)
+	}
+	if adas[0].Type != notification.TypeCommentReply {
+		t.Errorf("newest notification = %q, want %q (the more specific answer wins)", adas[0].Type, notification.TypeCommentReply)
+	}
+}
+
+// TestCommentReplyNotificationRespectsMutesAndBlocks proves the reply path does
+// not become a hole in the mute/block wall: an account you muted, or either
+// side of a block, must not reach your notification surface.
+func TestCommentReplyNotificationRespectsMutesAndBlocks(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// arrange runs after registration, given bob's token/id and cara's id.
+		arrange func(t *testing.T, srv *Server, bobTok, bobID, caraTok, caraID string)
+	}{
+		{
+			name: "bob muted cara",
+			arrange: func(t *testing.T, srv *Server, bobTok, _, _, caraID string) {
+				if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/mutes/accounts/"+caraID, "", bobTok); rec.Code != http.StatusNoContent {
+					t.Fatalf("mute = %d; body=%s", rec.Code, rec.Body.String())
+				}
+			},
+		},
+		{
+			name: "bob blocked cara",
+			arrange: func(t *testing.T, srv *Server, bobTok, _, _, caraID string) {
+				if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/blocks/"+caraID, "", bobTok); rec.Code != http.StatusNoContent {
+					t.Fatalf("block = %d; body=%s", rec.Code, rec.Body.String())
+				}
+			},
+		},
+		{
+			name: "cara blocked bob",
+			arrange: func(t *testing.T, srv *Server, _, bobID, caraTok, _ string) {
+				if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/blocks/"+bobID, "", caraTok); rec.Code != http.StatusNoContent {
+					t.Fatalf("block = %d; body=%s", rec.Code, rec.Body.String())
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := videoServer(t)
+			adaTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+			vid := createPublishedVideo(t, srv, adaTok, "ada", `{"title":"My clip","privacy":"public"}`)
+			bobTok, bobID := registerAndUser(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+			caraTok, caraID := registerAndUser(t, srv, `{"username":"cara","email":"cara@example.test","password":"supersecret"}`)
+
+			rec := postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"nice clip"}`, bobTok)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("bob comment = %d", rec.Code)
+			}
+			var parent commentView
+			_ = json.Unmarshal(rec.Body.Bytes(), &parent)
+
+			tc.arrange(t, srv, bobTok, bobID, caraTok, caraID)
+
+			if rec := postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"reply","parent_id":"`+parent.ID+`"}`, caraTok); rec.Code != http.StatusCreated {
+				t.Fatalf("cara reply = %d; body=%s", rec.Code, rec.Body.String())
+			}
+			if got := notifTypes(t, srv, bobTok); len(got) != 0 {
+				t.Fatalf("bob got %d notifications from a %s reply, want 0; got %+v", len(got), tc.name, got)
+			}
+			// The owner's notification is unaffected: a mute/block between two
+			// commenters is not a moderation action on ada's video.
+			if got := notifTypes(t, srv, adaTok); len(got) != 2 {
+				t.Errorf("owner has %d notifications, want 2 (both comments)", len(got))
+			}
+		})
+	}
+}
+
+// TestDisabledPrefSuppressesCommentReplyNotification keeps the new type inside
+// the preference model users actually control.
+func TestDisabledPrefSuppressesCommentReplyNotification(t *testing.T) {
+	srv := videoServer(t)
+	adaTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, adaTok, "ada", `{"title":"My clip","privacy":"public"}`)
+	bobTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	caraTok := registerAndToken(t, srv, `{"username":"cara","email":"cara@example.test","password":"supersecret"}`)
+
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/me/notification-prefs", `{"prefs":{"comment_reply":false}}`, bobTok); rec.Code != http.StatusOK {
+		t.Fatalf("patch prefs = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	rec := postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"nice clip"}`, bobTok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("bob comment = %d", rec.Code)
+	}
+	var parent commentView
+	_ = json.Unmarshal(rec.Body.Bytes(), &parent)
+	if rec := postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"reply","parent_id":"`+parent.ID+`"}`, caraTok); rec.Code != http.StatusCreated {
+		t.Fatalf("cara reply = %d", rec.Code)
+	}
+	if got := notifTypes(t, srv, bobTok); len(got) != 0 {
+		t.Fatalf("bob opted out but got %d notifications: %+v", len(got), got)
+	}
 }

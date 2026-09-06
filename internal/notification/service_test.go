@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -29,6 +30,30 @@ type fakeRepo struct {
 	// (same pass-through contract as fanOut above; rules proved in
 	// store.TestNewReportStaffFanOutOnRealPG).
 	reportFanOut []uuid.UUID
+	// replyRecipients answers CommentReplyRecipient: comment id -> the row the
+	// real query would return. An absent key is pgx.ErrNoRows, exactly like the
+	// :one query's "nobody to notify" answer. replyErr, when set, fails the
+	// lookup — for proving a resolution failure is surfaced, not swallowed.
+	replyRecipients map[uuid.UUID]sqlcgen.CommentReplyRecipientRow
+	replyLookups    []uuid.UUID
+	replyErr        error
+}
+
+// CommentReplyRecipient mirrors the :one contract of the real query: a resolved
+// row, or pgx.ErrNoRows when the statement's exclusions leave nobody. Its actual
+// selection rules live in SQL and are proved against a live database in
+// store.TestCommentReplyRecipientOnRealPG — here we only prove the service reacts
+// to each answer faithfully.
+func (f *fakeRepo) CommentReplyRecipient(_ context.Context, commentID uuid.UUID) (sqlcgen.CommentReplyRecipientRow, error) {
+	f.replyLookups = append(f.replyLookups, commentID)
+	if f.replyErr != nil {
+		return sqlcgen.CommentReplyRecipientRow{}, f.replyErr
+	}
+	row, ok := f.replyRecipients[commentID]
+	if !ok {
+		return sqlcgen.CommentReplyRecipientRow{}, pgx.ErrNoRows
+	}
+	return row, nil
 }
 
 func (f *fakeRepo) NotifyFollowersOfNewVideo(_ context.Context, videoID uuid.UUID) (int64, error) {
@@ -450,4 +475,150 @@ func (f *fakeRepo) CountNotifications(ctx context.Context, a sqlcgen.CountNotifi
 		UserID: a.UserID, UnreadOnly: a.UnreadOnly, ResultLimit: 1 << 30,
 	})
 	return int64(len(rows)), err
+}
+
+// TestNotifyCommentReply is the reply notification's own contract: the person
+// being ANSWERED hears about it. Before this existed, replying to someone's
+// comment notified only the video's owner, so the author of the parent comment
+// — the one actually addressed — got nothing at all.
+func TestNotifyCommentReply(t *testing.T) {
+	ctx := context.Background()
+	parentAuthor, replier := uuid.New(), uuid.New()
+	videoID, replyID := uuid.New(), uuid.New()
+	repo := &fakeRepo{replyRecipients: map[uuid.UUID]sqlcgen.CommentReplyRecipientRow{
+		replyID: {RecipientID: pgtype.UUID{Bytes: parentAuthor, Valid: true}, VideoID: videoID},
+	}}
+	svc := NewService(repo)
+
+	got, err := svc.NotifyCommentReply(ctx, replier, replyID)
+	if err != nil {
+		t.Fatalf("NotifyCommentReply: %v", err)
+	}
+	if got != parentAuthor {
+		t.Fatalf("recipient = %s, want the parent author %s", got, parentAuthor)
+	}
+	items, _, err := svc.List(ctx, parentAuthor, false, 20, 0)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("parent author has %d notifications, want 1", len(items))
+	}
+	it := items[0]
+	if it.Type != TypeCommentReply {
+		t.Errorf("type = %q, want %q — a reply must be distinguishable from a comment on your video", it.Type, TypeCommentReply)
+	}
+	if it.VideoID != videoID.String() {
+		t.Errorf("video_id = %q, want %q (the watch page the reply lives on)", it.VideoID, videoID)
+	}
+	if it.CommentID != replyID.String() {
+		t.Errorf("comment_id = %q, want the reply %q", it.CommentID, replyID)
+	}
+	// The actor is the replier: the copy has to be able to name who answered.
+	if len(repo.notifs) != 1 || !repo.notifs[0].ActorID.Valid || uuid.UUID(repo.notifs[0].ActorID.Bytes) != replier {
+		t.Fatalf("actor = %v, want the replier %s", repo.notifs[0].ActorID, replier)
+	}
+	// Unread and read-marking are the shared mechanics, not a per-type
+	// reimplementation: the new row counts toward the badge and clears with it.
+	if n, _ := svc.UnreadCount(ctx, parentAuthor); n != 1 {
+		t.Fatalf("unread = %d, want 1", n)
+	}
+	if err := svc.MarkRead(ctx, parentAuthor, it.ID); err != nil {
+		t.Fatalf("MarkRead: %v", err)
+	}
+	if n, _ := svc.UnreadCount(ctx, parentAuthor); n != 0 {
+		t.Fatalf("unread after MarkRead = %d, want 0", n)
+	}
+}
+
+// TestNotifyCommentReplySkips covers every answer that must produce NO reply
+// notification. The "no recipient" cases are the query's business (proved on
+// real PG); what this pins down is that the service treats each as a silent
+// no-op rather than an error or a stray row.
+func TestNotifyCommentReplySkips(t *testing.T) {
+	ctx := context.Background()
+	replier := uuid.New()
+	topLevel := uuid.New()
+
+	t.Run("no resolved recipient is not an error", func(t *testing.T) {
+		repo := &fakeRepo{}
+		svc := NewService(repo)
+		got, err := svc.NotifyCommentReply(ctx, replier, topLevel)
+		if err != nil {
+			t.Fatalf("NotifyCommentReply on a top-level comment: %v", err)
+		}
+		if got != uuid.Nil {
+			t.Fatalf("recipient = %s, want uuid.Nil", got)
+		}
+		if len(repo.notifs) != 0 {
+			t.Fatalf("wrote %d notifications, want 0", len(repo.notifs))
+		}
+	})
+
+	t.Run("replying to yourself notifies nobody", func(t *testing.T) {
+		replyID := uuid.New()
+		repo := &fakeRepo{replyRecipients: map[uuid.UUID]sqlcgen.CommentReplyRecipientRow{
+			replyID: {RecipientID: pgtype.UUID{Bytes: replier, Valid: true}, VideoID: uuid.New()},
+		}}
+		svc := NewService(repo)
+		got, err := svc.NotifyCommentReply(ctx, replier, replyID)
+		if err != nil {
+			t.Fatalf("self reply: %v", err)
+		}
+		if got != uuid.Nil || len(repo.notifs) != 0 {
+			t.Fatalf("self reply notified %s / wrote %d rows, want none", got, len(repo.notifs))
+		}
+	})
+
+	t.Run("a disabled preference suppresses the reply notification", func(t *testing.T) {
+		parentAuthor := uuid.New()
+		replyID := uuid.New()
+		repo := &fakeRepo{
+			replyRecipients: map[uuid.UUID]sqlcgen.CommentReplyRecipientRow{
+				replyID: {RecipientID: pgtype.UUID{Bytes: parentAuthor, Valid: true}, VideoID: uuid.New()},
+			},
+			prefs: map[string]bool{prefKey(parentAuthor, TypeCommentReply): false},
+		}
+		svc := NewService(repo)
+		got, err := svc.NotifyCommentReply(ctx, replier, replyID)
+		if err != nil {
+			t.Fatalf("opted-out reply: %v", err)
+		}
+		if got != uuid.Nil || len(repo.notifs) != 0 {
+			t.Fatalf("opted-out recipient got %s / %d rows, want none", got, len(repo.notifs))
+		}
+	})
+
+	t.Run("a failed resolution is surfaced, not swallowed", func(t *testing.T) {
+		repo := &fakeRepo{replyErr: context.DeadlineExceeded}
+		svc := NewService(repo)
+		if _, err := svc.NotifyCommentReply(ctx, replier, uuid.New()); err == nil {
+			t.Fatal("NotifyCommentReply with a failing lookup returned nil error")
+		}
+	})
+}
+
+// TestCommentReplyIsAKnownPreferenceType keeps the new type registered with the
+// preference model — a type missing from KnownTypes silently cannot be turned
+// off, the exact failure the prefs surface exists to prevent.
+func TestCommentReplyIsAKnownPreferenceType(t *testing.T) {
+	if !knownType(TypeCommentReply) {
+		t.Fatal("comment_reply is not a known notification type")
+	}
+	found := false
+	for _, typ := range KnownTypes() {
+		if typ == TypeCommentReply {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("KnownTypes() = %v, missing %s", KnownTypes(), TypeCommentReply)
+	}
+	prefs, err := NewService(&fakeRepo{}).Prefs(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("Prefs: %v", err)
+	}
+	if enabled, ok := prefs[TypeCommentReply]; !ok || !enabled {
+		t.Fatalf("prefs[%s] = (%v, %v), want (true, true) by default", TypeCommentReply, enabled, ok)
+	}
 }

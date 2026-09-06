@@ -1309,6 +1309,9 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	chRepo.mutes, chRepo.userBlocks = muteRepo, userBlockRepo
 	authRepo.mutes, authRepo.userBlocks = muteRepo, userBlockRepo
 	cmRepo := &commentFakeRepo{users: authRepo, mutes: muteRepo, userBlocks: userBlockRepo, videos: repo}
+	// The reply-notification recipient is resolved from the comment thread, so
+	// the notification fake reads the same comment/mute/block fakes its SQL joins.
+	notifRepo.comments = cmRepo
 	modRepo := &moderationFakeRepo{auth: authRepo, videos: repo, comments: cmRepo}
 	repo.blocks = modRepo
 	ratingRepo := newRatingFakeRepo()

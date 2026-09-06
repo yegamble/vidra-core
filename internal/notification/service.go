@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/pgconv"
@@ -19,8 +20,13 @@ import (
 
 // Notification type discriminators.
 const (
-	TypeFollow         = "follow"
-	TypeComment        = "comment"
+	TypeFollow  = "follow"
+	TypeComment = "comment"
+	// TypeCommentReply tells the author of a comment that someone replied to
+	// it. It is deliberately distinct from TypeComment: TypeComment addresses
+	// the VIDEO OWNER ("someone commented on your video") and says nothing to
+	// the person actually being answered, who may not own the video at all.
+	TypeCommentReply   = "comment_reply"
 	TypeMessage        = "message"
 	TypeReportResolved = "report_resolved"
 	TypeVideoRejected  = "video_rejected"
@@ -38,13 +44,13 @@ const (
 // KnownTypes lists every notification type, in stable order. Preferences may
 // target exactly these; every type defaults to enabled.
 func KnownTypes() []string {
-	return []string{TypeCaptionReady, TypeComment, TypeFollow, TypeMessage, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeVideoRejected}
+	return []string{TypeCaptionReady, TypeComment, TypeCommentReply, TypeFollow, TypeMessage, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeVideoRejected}
 }
 
 // knownType reports whether t is a recognised notification type.
 func knownType(t string) bool {
 	switch t {
-	case TypeFollow, TypeComment, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeCaptionReady, TypeNewVideo, TypeNewReport:
+	case TypeFollow, TypeComment, TypeCommentReply, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeCaptionReady, TypeNewVideo, TypeNewReport:
 		return true
 	}
 	return false
@@ -73,6 +79,7 @@ type Repository interface {
 	IsNotificationTypeEnabled(ctx context.Context, arg sqlcgen.IsNotificationTypeEnabledParams) (bool, error)
 	NotifyFollowersOfNewVideo(ctx context.Context, videoID uuid.UUID) (int64, error)
 	NotifyStaffOfNewReport(ctx context.Context, reportID uuid.UUID) (int64, error)
+	CommentReplyRecipient(ctx context.Context, commentID uuid.UUID) (sqlcgen.CommentReplyRecipientRow, error)
 }
 
 // Service holds the notification application logic.
@@ -152,6 +159,55 @@ func (s *Service) NotifyComment(ctx context.Context, recipientID, actorID, video
 		CommentID: pgconv.UUID(commentID),
 	})
 	return err
+}
+
+// NotifyCommentReply records that actorID replied to someone else's comment,
+// and returns the recipient it notified (uuid.Nil when nobody was notified).
+//
+// It answers a DIFFERENT question from NotifyComment: NotifyComment tells the
+// VIDEO OWNER that their video was commented on, which leaves the person
+// actually being answered — who usually does not own the video — with nothing.
+// This is the reply's own recipient.
+//
+// Every selection rule lives in the SQL (see CommentReplyRecipient): the
+// comment must be a reply whose parent still exists and was authored by a
+// local, active, non-deleted user; neither comment may be a tombstone; the
+// replier is never notified of their own reply; and a muted or blocked replier
+// never reaches the parent author's notification surface. No resolved
+// recipient — the normal answer for a top-level comment — is a silent no-op,
+// not an error.
+//
+// The returned recipient is what lets the caller keep the two comment
+// notifications mutually exclusive when the parent's author IS the video
+// owner: that user is answered once, not told twice about one reply.
+//
+// Best-effort, like every other Notify* method: the caller treats an error as
+// non-fatal — a notification failure must never fail the comment.
+func (s *Service) NotifyCommentReply(ctx context.Context, actorID, commentID uuid.UUID) (uuid.UUID, error) {
+	row, err := s.repo.CommentReplyRecipient(ctx, commentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, nil
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if !row.RecipientID.Valid {
+		return uuid.Nil, nil
+	}
+	recipient := uuid.UUID(row.RecipientID.Bytes)
+	if recipient == actorID || !s.typeEnabled(ctx, recipient, TypeCommentReply) {
+		return uuid.Nil, nil
+	}
+	if _, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
+		UserID:    recipient,
+		Type:      TypeCommentReply,
+		ActorID:   pgconv.UUID(actorID),
+		VideoID:   pgconv.UUID(row.VideoID),
+		CommentID: pgconv.UUID(commentID),
+	}); err != nil {
+		return uuid.Nil, err
+	}
+	return recipient, nil
 }
 
 // NotifyMessage records that actorID sent recipientID a direct message in a

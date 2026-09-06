@@ -6729,6 +6729,11 @@ paths:
         Posting requires the instance-wide comments_enabled setting AND the
         video's comments_policy to be "enabled" (403 feature_disabled
         otherwise, config-parity W9); reading comments stays open either way.
+        Best-effort notifications follow: the video's owner gets a "comment"
+        notification, and when parent_id names another user's comment its
+        author gets a "comment_reply" one. A user who is both (the owner
+        replying under their own video) receives comment_reply only — one
+        reply, one notification.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -7723,8 +7728,9 @@ paths:
       summary: Get the caller's notification preferences
       description: >-
         Returns the caller's per-type notification switchboard: every known
-        notification type (caption_ready, comment, follow, message, new_report,
-        new_video, report_resolved, video_rejected) mapped to whether it is
+        notification type (caption_ready, comment, comment_reply, follow,
+        message, new_report, new_video, report_resolved, video_rejected) mapped
+        to whether it is
         delivered. Types never configured default to enabled. The new_report
         type is only ever delivered to admins/moderators, but the switch is
         visible to everyone.
@@ -17157,8 +17163,8 @@ components:
           format: uuid
         type:
           type: string
-          enum: [follow, comment, message, new_video, new_report, report_resolved, video_rejected, caption_ready]
-          description: What happened. follow = someone followed your channel; comment = someone commented on your video; message = someone sent you a direct message; new_video = a channel you follow published a new public video (actor = the channel owner, channel_handle/channel_display_name = the channel, video_id/video_title = the video; sent only while your bell for that channel is "all"); new_report = a user filed an abuse report (delivered only to admins/moderators; actor = the reporter, report_id/report_status/report_target_type carry the report); report_resolved = a moderator resolved an abuse report you filed; video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one; the moderator's identity is never included); caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one).
+          enum: [follow, comment, comment_reply, message, new_video, new_report, report_resolved, video_rejected, caption_ready]
+          description: What happened. follow = someone followed your channel; comment = someone commented on your video (addressed to the video's OWNER); comment_reply = someone replied to a comment you wrote (addressed to the comment's AUTHOR, who is usually not the video's owner; actor = the replier, video_id/video_title = the video the thread lives on, comment_id = the reply). A reply to a comment written by the video's own owner delivers comment_reply only, never both; message = someone sent you a direct message; new_video = a channel you follow published a new public video (actor = the channel owner, channel_handle/channel_display_name = the channel, video_id/video_title = the video; sent only while your bell for that channel is "all"); new_report = a user filed an abuse report (delivered only to admins/moderators; actor = the reporter, report_id/report_status/report_target_type carry the report); report_resolved = a moderator resolved an abuse report you filed; video_rejected = a moderator rejected your quarantined upload (video_id/video_title carry which one; the moderator's identity is never included); caption_ready = an auto-generated caption track finished for your video (video_id/video_title carry which one).
         read:
           type: boolean
         created_at:
@@ -17175,14 +17181,14 @@ components:
         video_id:
           type: string
           format: uuid
-          description: Commented video's id (comment notifications).
+          description: Commented video's id (comment and comment_reply notifications).
         video_title:
           type: string
-          description: Commented video's title (comment notifications).
+          description: Commented video's title (comment and comment_reply notifications).
         comment_id:
           type: string
           format: uuid
-          description: The comment's id (comment notifications).
+          description: The comment's id — the new comment for comment, the reply for comment_reply.
         conversation_id:
           type: string
           format: uuid
@@ -17231,7 +17237,7 @@ components:
             this user. Types with no stored preference default to true.
           additionalProperties:
             type: boolean
-          example: { caption_ready: true, comment: true, follow: false, message: true, new_report: true, new_video: true, report_resolved: true, video_rejected: true }
+          example: { caption_ready: true, comment: true, comment_reply: true, follow: false, message: true, new_report: true, new_video: true, report_resolved: true, video_rejected: true }
     UpdateNotificationPrefsRequest:
       type: object
       required: [prefs]
@@ -17240,8 +17246,9 @@ components:
           type: object
           description: >-
             Partial map of notification type -> enabled. Only the types present
-            are changed. Known types: caption_ready, comment, follow, message,
-            new_report, new_video, report_resolved, video_rejected. An unknown
+            are changed. Known types: caption_ready, comment, comment_reply,
+            follow, message, new_report, new_video, report_resolved,
+            video_rejected. An unknown
             type rejects the whole update (422).
           additionalProperties:
             type: boolean
