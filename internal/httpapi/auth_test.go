@@ -269,6 +269,17 @@ func (f *authFakeRepo) GetSessionByRefreshHash(_ context.Context, hash string) (
 func (f *authFakeRepo) RevokeSession(_ context.Context, id uuid.UUID) error {
 	if s, ok := f.sessions[id]; ok {
 		s.RevokedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		s.RevokedReason = "signed_out"
+	}
+	return nil
+}
+
+// RotateSession mirrors the SQL: same revoke, but stamped with the reason whose
+// REUSE is the compromise signal.
+func (f *authFakeRepo) RotateSession(_ context.Context, id uuid.UUID) error {
+	if s, ok := f.sessions[id]; ok {
+		s.RevokedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		s.RevokedReason = "rotated"
 	}
 	return nil
 }
@@ -277,6 +288,7 @@ func (f *authFakeRepo) RevokeAllUserSessions(_ context.Context, userID uuid.UUID
 	for _, s := range f.sessions {
 		if s.UserID == userID {
 			s.RevokedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+			s.RevokedReason = "signed_out"
 		}
 	}
 	return nil
@@ -288,6 +300,7 @@ func (f *authFakeRepo) RevokeOtherUserSessions(_ context.Context, a sqlcgen.Revo
 	for _, s := range f.sessions {
 		if s.UserID == a.UserID && s.ID != a.ID {
 			s.RevokedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+			s.RevokedReason = "signed_out"
 		}
 	}
 	return nil

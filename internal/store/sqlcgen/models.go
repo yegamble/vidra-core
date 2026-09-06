@@ -753,14 +753,15 @@ type SearchOutbox struct {
 }
 
 type Session struct {
-	ID          uuid.UUID          `json:"id"`
-	UserID      uuid.UUID          `json:"user_id"`
-	RefreshHash string             `json:"refresh_hash"`
-	UserAgent   string             `json:"user_agent"`
-	IpAddress   *netip.Addr        `json:"ip_address"`
-	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
-	ExpiresAt   time.Time          `json:"expires_at"`
-	CreatedAt   time.Time          `json:"created_at"`
+	ID            uuid.UUID          `json:"id"`
+	UserID        uuid.UUID          `json:"user_id"`
+	RefreshHash   string             `json:"refresh_hash"`
+	UserAgent     string             `json:"user_agent"`
+	IpAddress     *netip.Addr        `json:"ip_address"`
+	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
+	ExpiresAt     time.Time          `json:"expires_at"`
+	CreatedAt     time.Time          `json:"created_at"`
+	RevokedReason string             `json:"revoked_reason"`
 }
 
 type SettingsVersion struct {

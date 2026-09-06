@@ -83,6 +83,10 @@ type Repository interface {
 	// account is disabled or tombstoned.
 	GetActiveSessionForAccessToken(ctx context.Context, id uuid.UUID) (sqlcgen.GetActiveSessionForAccessTokenRow, error)
 	RevokeSession(ctx context.Context, id uuid.UUID) error
+	// RotateSession revokes a session because its refresh token was exchanged.
+	// The reason matters: only a REPLAYED rotated token is the compromise
+	// signal that escalates to revoking everything.
+	RotateSession(ctx context.Context, id uuid.UUID) error
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
 	// RevokeOtherUserSessions revokes every session for the user except one —
 	// "sign out my other devices", used by the password change.
@@ -111,6 +115,11 @@ type Repository interface {
 	GetUnclaimedOwnerClaimToken(ctx context.Context) (sqlcgen.OwnerClaimToken, error)
 	ClaimOwnerAndCreateAdmin(ctx context.Context, arg sqlcgen.ClaimOwnerAndCreateAdminParams) (sqlcgen.ClaimOwnerAndCreateAdminRow, error)
 }
+
+// sessionRevokedRotated is the sessions.revoked_reason written when a refresh
+// token is exchanged (migration 0128). It is the ONLY reason whose reuse
+// escalates to revoking every session.
+const sessionRevokedRotated = "rotated"
 
 // defaultResetTTL is how long a password-reset token stays valid.
 const defaultResetTTL = time.Hour
@@ -452,8 +461,18 @@ func (s *Service) Refresh(ctx context.Context, rawRefresh, userAgent string) (sq
 		return sqlcgen.User{}, Tokens{}, ErrInvalidRefresh
 	}
 	if sess.RevokedAt.Valid {
-		// Reuse of a rotated token — assume compromise and revoke everything.
-		_ = s.repo.RevokeAllUserSessions(ctx, sess.UserID)
+		// Reuse of a ROTATED token — the token was exchanged and is being
+		// presented again — is the compromise signal: assume theft and revoke
+		// everything. A token revoked because the user was DELIBERATELY signed
+		// out (logout, "sign out everywhere", a password change, deactivation,
+		// the §1 delete) is a different event: that client is simply retrying
+		// on its first 401, and escalating would let any signed-out device take
+		// down the session the sign-out was meant to keep — including the
+		// browser a password was just changed in.
+		if sess.RevokedReason == sessionRevokedRotated || sess.RevokedReason == "" {
+			// "" is the pre-0128 unclassified state: escalate, as before.
+			_ = s.repo.RevokeAllUserSessions(ctx, sess.UserID)
+		}
 		return sqlcgen.User{}, Tokens{}, ErrInvalidRefresh
 	}
 	if !sess.ExpiresAt.After(s.now()) {
@@ -465,7 +484,7 @@ func (s *Service) Refresh(ctx context.Context, rawRefresh, userAgent string) (sq
 		return sqlcgen.User{}, Tokens{}, ErrInvalidRefresh
 	}
 
-	if err := s.repo.RevokeSession(ctx, sess.ID); err != nil {
+	if err := s.repo.RotateSession(ctx, sess.ID); err != nil {
 		return sqlcgen.User{}, Tokens{}, err
 	}
 	tokens, err := s.issueTokens(ctx, user, userAgent)

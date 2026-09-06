@@ -104,19 +104,20 @@ func (q *Queries) GetActiveSessionForAccessToken(ctx context.Context, id uuid.UU
 }
 
 const getSessionByRefreshHash = `-- name: GetSessionByRefreshHash :one
-SELECT id, user_id, refresh_hash, user_agent, revoked_at, expires_at, created_at
+SELECT id, user_id, refresh_hash, user_agent, revoked_at, revoked_reason, expires_at, created_at
 FROM sessions
 WHERE refresh_hash = $1
 `
 
 type GetSessionByRefreshHashRow struct {
-	ID          uuid.UUID          `json:"id"`
-	UserID      uuid.UUID          `json:"user_id"`
-	RefreshHash string             `json:"refresh_hash"`
-	UserAgent   string             `json:"user_agent"`
-	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
-	ExpiresAt   time.Time          `json:"expires_at"`
-	CreatedAt   time.Time          `json:"created_at"`
+	ID            uuid.UUID          `json:"id"`
+	UserID        uuid.UUID          `json:"user_id"`
+	RefreshHash   string             `json:"refresh_hash"`
+	UserAgent     string             `json:"user_agent"`
+	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
+	RevokedReason string             `json:"revoked_reason"`
+	ExpiresAt     time.Time          `json:"expires_at"`
+	CreatedAt     time.Time          `json:"created_at"`
 }
 
 func (q *Queries) GetSessionByRefreshHash(ctx context.Context, refreshHash string) (GetSessionByRefreshHashRow, error) {
@@ -128,6 +129,7 @@ func (q *Queries) GetSessionByRefreshHash(ctx context.Context, refreshHash strin
 		&i.RefreshHash,
 		&i.UserAgent,
 		&i.RevokedAt,
+		&i.RevokedReason,
 		&i.ExpiresAt,
 		&i.CreatedAt,
 	)
@@ -136,7 +138,8 @@ func (q *Queries) GetSessionByRefreshHash(ctx context.Context, refreshHash strin
 
 const revokeAllUserSessions = `-- name: RevokeAllUserSessions :exec
 UPDATE sessions
-SET revoked_at = now()
+SET revoked_at     = now(),
+    revoked_reason = 'signed_out'
 WHERE user_id = $1 AND revoked_at IS NULL
 `
 
@@ -147,7 +150,8 @@ func (q *Queries) RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) e
 
 const revokeOtherUserSessions = `-- name: RevokeOtherUserSessions :exec
 UPDATE sessions
-SET revoked_at = now()
+SET revoked_at     = now(),
+    revoked_reason = 'signed_out'
 WHERE user_id = $1
   AND id <> $2
   AND revoked_at IS NULL
@@ -168,11 +172,30 @@ func (q *Queries) RevokeOtherUserSessions(ctx context.Context, arg RevokeOtherUs
 
 const revokeSession = `-- name: RevokeSession :exec
 UPDATE sessions
-SET revoked_at = now()
+SET revoked_at     = now(),
+    revoked_reason = 'signed_out'
 WHERE id = $1 AND revoked_at IS NULL
 `
 
+// Deliberate sign-out of ONE session (logout). Presenting its refresh token
+// afterwards is a signed-out client retrying, not a replay, so it is recorded
+// as such and does not escalate.
 func (q *Queries) RevokeSession(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, revokeSession, id)
+	return err
+}
+
+const rotateSession = `-- name: RotateSession :exec
+UPDATE sessions
+SET revoked_at     = now(),
+    revoked_reason = 'rotated'
+WHERE id = $1 AND revoked_at IS NULL
+`
+
+// Revoke a session because its refresh token was just EXCHANGED for a new one.
+// Presenting that token again is the compromise signal reuse detection exists
+// for, so this reason (and only this one) escalates to revoking everything.
+func (q *Queries) RotateSession(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, rotateSession, id)
 	return err
 }

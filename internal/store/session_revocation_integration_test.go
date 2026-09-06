@@ -61,6 +61,17 @@ func TestSessionRevocationQueriesPersist(t *testing.T) {
 	other := newSession("other", time.Hour)
 	expired := newSession("expired", -time.Minute)
 
+	// The revocation REASON (0128) is what lets refresh-reuse detection tell a
+	// replayed rotated token from a deliberately signed-out client retrying.
+	reason := func(id uuid.UUID) string {
+		t.Helper()
+		var r string
+		if err := st.Pool.QueryRow(ctx, `SELECT revoked_reason FROM sessions WHERE id = $1`, id).Scan(&r); err != nil {
+			t.Fatalf("read revoked_reason: %v", err)
+		}
+		return r
+	}
+
 	// A live session resolves; an EXPIRED one does not, even though its row is
 	// still present and not revoked.
 	if !active(current) || !active(other) {
@@ -86,6 +97,19 @@ func TestSessionRevocationQueriesPersist(t *testing.T) {
 	}
 	if active(other) {
 		t.Error("another device's session survived RevokeOtherUserSessions")
+	}
+	if got := reason(other); got != "signed_out" {
+		t.Errorf("RevokeOtherUserSessions stamped revoked_reason %q, want signed_out — a signed-out client's retry would escalate to revoking everything", got)
+	}
+	rotated := newSession("rotated", time.Hour)
+	if err := q.RotateSession(ctx, rotated); err != nil {
+		t.Fatalf("rotate session: %v", err)
+	}
+	if got := reason(rotated); got != "rotated" {
+		t.Errorf("RotateSession stamped revoked_reason %q, want rotated", got)
+	}
+	if active(rotated) {
+		t.Error("a rotated session still authenticates an access token")
 	}
 
 	// DEACTIVATION kills the surviving session's access token too, with no
