@@ -36,6 +36,10 @@ type ImportSummary struct {
 	PlaylistItemsAdded   int `json:"playlist_items_added"`
 	PlaylistItemsSkipped int `json:"playlist_items_skipped"`
 
+	// FollowsCreated counts follows this import actually inserted.
+	// FollowsSkipped counts every archive follow it did NOT insert: the channel
+	// is not present locally (unknown or remote handle), or the caller already
+	// follows it. Created + Skipped equals the archive's follow count.
 	FollowsCreated int `json:"follows_created"`
 	FollowsSkipped int `json:"follows_skipped"`
 
@@ -171,10 +175,19 @@ func (s *Service) ImportArchive(ctx context.Context, userID uuid.UUID, archive A
 			sum.FollowsSkipped++
 			continue
 		}
-		if _, err := s.repo.FollowChannel(ctx, sqlcgen.FollowChannelParams{
+		// FollowChannel is :execrows with ON CONFLICT DO NOTHING, so it reports
+		// 0 when the caller already follows this channel. Honour that count:
+		// re-importing the same archive must not claim to have created follows
+		// it did not create.
+		n, err := s.repo.FollowChannel(ctx, sqlcgen.FollowChannelParams{
 			FollowerID: userID, ChannelID: ch.ID,
-		}); err != nil {
+		})
+		if err != nil {
 			return sum, fmt.Errorf("account: import follow: %w", err)
+		}
+		if n == 0 {
+			sum.FollowsSkipped++
+			continue
 		}
 		sum.FollowsCreated++
 	}

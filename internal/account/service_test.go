@@ -454,7 +454,16 @@ func (f *fakeRepo) GetChannelByHandle(_ context.Context, handle string) (sqlcgen
 	return ch, nil
 }
 
+// FollowChannel mirrors the SQL: `ON CONFLICT (follower_id, channel_id) DO
+// NOTHING` on an :execrows query, so a follow that already exists inserts NO
+// row and reports 0 affected. A fake that always answered 1 would hide exactly
+// the over-count this repo's import summary had.
 func (f *fakeRepo) FollowChannel(_ context.Context, arg sqlcgen.FollowChannelParams) (int64, error) {
+	for _, seen := range f.followed {
+		if seen.FollowerID == arg.FollowerID && seen.ChannelID == arg.ChannelID {
+			return 0, nil
+		}
+	}
 	f.followed = append(f.followed, arg)
 	return 1, nil
 }
@@ -918,6 +927,51 @@ func TestImportArchiveAppliesSafeSubsets(t *testing.T) {
 		if sum.SkippedSections[section] != 1 {
 			t.Errorf("skipped_sections[%s] = %d, want 1", section, sum.SkippedSections[section])
 		}
+	}
+}
+
+// TestImportArchiveDoesNotCountFollowsItDidNotCreate pins the summary to what
+// the import actually did. FollowChannel is `:execrows` with ON CONFLICT DO
+// NOTHING precisely so a caller can tell a new follow from an existing one;
+// discarding that count made a re-import report follows_created for follows
+// that were already there, so the number a user reads did not describe their
+// account.
+func TestImportArchiveDoesNotCountFollowsItDidNotCreate(t *testing.T) {
+	ctx := context.Background()
+	user := testUser()
+	repo := newFakeRepo(user)
+	svc := NewService(repo, newFakeBlobs(), nil)
+	repo.localChannels["other"] = sqlcgen.Channel{ID: uuid.New(), Handle: "other"}
+
+	archive := Archive{
+		Meta:    ArchiveMeta{Version: ArchiveVersion},
+		Profile: ArchiveProfile{DisplayName: "Alice Imported"},
+		Follows: []ArchiveFollow{{ChannelHandle: "other"}},
+	}
+
+	first, err := svc.ImportArchive(ctx, user.ID, archive)
+	if err != nil {
+		t.Fatalf("first ImportArchive: %v", err)
+	}
+	if first.FollowsCreated != 1 || first.FollowsSkipped != 0 {
+		t.Fatalf("first import follows = created %d / skipped %d, want 1 / 0",
+			first.FollowsCreated, first.FollowsSkipped)
+	}
+
+	second, err := svc.ImportArchive(ctx, user.ID, archive)
+	if err != nil {
+		t.Fatalf("second ImportArchive: %v", err)
+	}
+	if second.FollowsCreated != 0 {
+		t.Fatalf("re-import reported follows_created = %d, want 0 — the follow already existed",
+			second.FollowsCreated)
+	}
+	if second.FollowsSkipped != 1 {
+		t.Fatalf("re-import reported follows_skipped = %d, want 1 — nothing was created",
+			second.FollowsSkipped)
+	}
+	if len(repo.followed) != 1 {
+		t.Fatalf("follow rows = %d, want 1 (the follow itself is idempotent)", len(repo.followed))
 	}
 }
 
