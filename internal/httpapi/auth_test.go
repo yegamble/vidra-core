@@ -493,16 +493,18 @@ func (f *authFakeRepo) ApproveRegistrationRequest(ctx context.Context, a sqlcgen
 	return sqlcgen.ApproveRegistrationRequestRow{}, pgx.ErrNoRows
 }
 
-func (f *authFakeRepo) RejectRegistrationRequest(_ context.Context, a sqlcgen.RejectRegistrationRequestParams) (int64, error) {
+// RejectRegistrationRequest mirrors the SQL's RETURNING: the applicant on a
+// hit, pgx.ErrNoRows on an unknown or already-resolved id.
+func (f *authFakeRepo) RejectRegistrationRequest(_ context.Context, a sqlcgen.RejectRegistrationRequestParams) (sqlcgen.RejectRegistrationRequestRow, error) {
 	for _, r := range f.regReqs {
 		if r.id == a.ID && r.status == "pending" {
 			r.status = "rejected"
 			r.moderatorNote = a.ModeratorNote
 			r.reviewedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
-			return 1, nil
+			return sqlcgen.RejectRegistrationRequestRow{Username: r.username, Email: r.email}, nil
 		}
 	}
-	return 0, nil
+	return sqlcgen.RejectRegistrationRequestRow{}, pgx.ErrNoRows
 }
 
 func (f *authFakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUserProfileParams) (sqlcgen.User, error) {
@@ -638,7 +640,7 @@ func (f *authFakeRepo) ListUsers(_ context.Context, a sqlcgen.ListUsersParams) (
 				DisplayName: u.DisplayName, Bio: u.Bio,
 				StorageQuotaBytes: u.StorageQuotaBytes, StorageUsedBytes: used,
 				BypassQuarantine: u.BypassQuarantine, DeletedAt: u.DeletedAt,
-				IsOwner:          u.IsOwner,
+				IsOwner: u.IsOwner,
 			})
 		}
 	}
@@ -1129,10 +1131,12 @@ type captureResetMailer struct {
 	// The two-step email change (0129): the confirmation token and the address
 	// it was addressed to, then the old/new pair the change NOTICE named. The
 	// addressing is the security property, so the tests assert on it.
-	changeToken   string
-	changeTo      string
-	noticeOld     string
-	noticeNew     string
+	changeToken string
+	changeTo    string
+	noticeOld   string
+	noticeNew   string
+	// regDecisions records the signup approval/rejection notices, in send order.
+	regDecisions  []auth.CapturedRegistrationDecision
 	changeNotices int
 }
 
@@ -1179,6 +1183,23 @@ func (m *captureResetMailer) SendNewReportAlert(context.Context, string, string,
 }
 
 func (m *captureResetMailer) SendContactForm(context.Context, string, string, string, string, string) error {
+	return nil
+}
+
+// The signup-decision notices are captured so a test can prove that the
+// wrong-actor refusals on the approval queue send nothing at all.
+func (m *captureResetMailer) SendRegistrationApproved(_ context.Context, email, username, signInURL string, verifyRequired bool) error {
+	m.regDecisions = append(m.regDecisions, auth.CapturedRegistrationDecision{
+		Decision: "approved", Email: email, Username: username,
+		SignInURL: signInURL, VerifyRequired: verifyRequired,
+	})
+	return nil
+}
+
+func (m *captureResetMailer) SendRegistrationRejected(_ context.Context, email, username, note string) error {
+	m.regDecisions = append(m.regDecisions, auth.CapturedRegistrationDecision{
+		Decision: "rejected", Email: email, Username: username, Note: note,
+	})
 	return nil
 }
 
