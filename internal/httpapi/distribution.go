@@ -269,6 +269,17 @@ func (s *Server) handleOEmbed(c echo.Context) error {
 	if v.State != "published" {
 		return echo.NewHTTPError(http.StatusNotFound, "no video matches the url")
 	}
+	// A moderator block hides a video everywhere, and this is a public surface.
+	// It has to be asked for explicitly: a block changes neither state nor
+	// privacy, so the two checks around this one both pass on blocked content and
+	// the response would hand any CMS the title, the channel, a thumbnail URL and
+	// a ready-made <iframe> for the video that was just taken down. The route is
+	// unauthenticated, so the staff escape inside the helper never applies here.
+	if hidden, herr := s.videoHiddenByBlock(c, id); herr != nil {
+		return herr
+	} else if hidden {
+		return echo.NewHTTPError(http.StatusNotFound, "no video matches the url")
+	}
 	switch v.Privacy {
 	case "public", "unlisted":
 		// embeddable

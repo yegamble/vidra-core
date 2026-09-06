@@ -379,6 +379,9 @@ func (f *videoFakeRepo) ListSubscriptionVideos(_ context.Context, a sqlcgen.List
 	for _, r := range f.videos {
 		follows := f.channels != nil && f.channels.follows[a.FollowerID.String()+"|"+r.ChannelID.String()]
 		hidden := f.mutedFromFeed(pgtype.UUID{Bytes: a.FollowerID, Valid: true}, r.ChannelID)
+		if f.blockedFromFeed(r.ID) {
+			continue
+		}
 		if r.Privacy == "public" && r.State == "published" && follows && !hidden {
 			rows = append(rows, sqlcgen.ListSubscriptionVideosRow{
 				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
@@ -634,6 +637,9 @@ func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, a sqlcgen.L
 		if a.HideSensitive && r.IsSensitive {
 			continue
 		}
+		if f.blockedFromFeed(r.ID) {
+			continue
+		}
 		if r.ChannelID == channelID && r.Privacy == "public" && r.State == "published" {
 			out = append(out, sqlcgen.ListPublicVideosByChannelRow{
 				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
@@ -868,6 +874,9 @@ func (f *videoFakeRepo) SearchPublicVideos(_ context.Context, a sqlcgen.SearchPu
 		if len(a.TagsOneOf) > 0 && !f.hasAnyTag(r.ID, a.TagsOneOf) {
 			continue
 		}
+		if f.blockedFromFeed(r.ID) {
+			continue
+		}
 		if r.Privacy == "public" && r.State == "published" &&
 			(strings.Contains(strings.ToLower(r.Title), q) || f.tagMatches(r.ID, q)) &&
 			!f.mutedFromFeed(a.ViewerID, r.ChannelID) && !f.ownerUnlisted(r.ChannelID) {
@@ -947,6 +956,9 @@ func (f *videoFakeRepo) ListPublicVideosByIDs(_ context.Context, a sqlcgen.ListP
 		if !want[r.ID] || r.Privacy != "public" || r.State != "published" {
 			continue
 		}
+		if f.blockedFromFeed(r.ID) {
+			continue
+		}
 		if a.HideSensitive && r.IsSensitive {
 			continue
 		}
@@ -969,6 +981,9 @@ func (f *videoFakeRepo) ListRelatedVideosFallback(_ context.Context, a sqlcgen.L
 	var rows []sqlcgen.ListRelatedVideosFallbackRow
 	for _, r := range f.videos {
 		if r.ID == a.ExcludeID || r.Privacy != "public" || r.State != "published" {
+			continue
+		}
+		if f.blockedFromFeed(r.ID) {
 			continue
 		}
 		if a.HideSensitive && r.IsSensitive {
@@ -1168,6 +1183,20 @@ func (f *videoFakeRepo) mutedFromFeed(viewer pgtype.UUID, channelID uuid.UUID) b
 	return f.userBlocks != nil && f.userBlocks.isBlocked(uuid.UUID(viewer.Bytes), owner)
 }
 
+// blockedFromFeed reports whether a moderator has blocked the video — the
+// `NOT EXISTS (SELECT 1 FROM video_blocks ...)` predicate that every public
+// discovery query carries. It lived only in adminInventory before, so the feed,
+// channel, subscription, search and related fakes all answered as if a block
+// changed nothing about what a viewer sees, and no handler test could tell the
+// difference.
+func (f *videoFakeRepo) blockedFromFeed(videoID uuid.UUID) bool {
+	if f.blocks == nil {
+		return false
+	}
+	blocked, _ := f.blocks.IsVideoBlocked(context.Background(), videoID)
+	return blocked
+}
+
 func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error) {
 	var rows []sqlcgen.ListPublicVideosSortedRow
 	for _, r := range f.videos {
@@ -1182,6 +1211,9 @@ func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.List
 		}
 		if a.HideSensitive && r.IsSensitive {
 			continue // sensitive-content policy "hide" mirrors the SQL filter
+		}
+		if f.blockedFromFeed(r.ID) {
+			continue
 		}
 		if r.Privacy == "public" && r.State == "published" && !f.mutedFromFeed(a.ViewerID, r.ChannelID) &&
 			!f.ownerUnlisted(r.ChannelID) {

@@ -436,6 +436,50 @@ func TestOEmbedMaxDimensionClamp(t *testing.T) {
 	}
 }
 
+// TestOEmbedBlockedVideoIsNotEmbeddable pins the moderation promise on the
+// distribution surfaces: a moderator block hides a video EVERYWHERE, and oEmbed
+// is a public surface like any other. A block changes neither state nor privacy,
+// so a handler that only asks "is it published and public?" keeps answering 200
+// with the title, the channel name, a thumbnail URL and a ready-made <iframe> —
+// which is exactly the content that was just taken down, handed to any CMS that
+// asks. The RSS feed and the sitemap are asserted alongside it because they read
+// through the discovery queries (which do exclude blocks), so the three surfaces
+// together show the promise holding rather than one route in isolation.
+func TestOEmbedBlockedVideoIsNotEmbeddable(t *testing.T) {
+	srv, repo, ada := distributionServer(t)
+	pub := seedVideo(repo, ada, "Taken Down Clip", "d", "public", "published", 5)
+	seedThumbnail(repo, pub)
+	if _, err := repo.blocks.BlockVideo(context.Background(), sqlcgen.BlockVideoParams{
+		VideoID: pub, Reason: "moderator block",
+	}); err != nil {
+		t.Fatalf("block video: %v", err)
+	}
+
+	for _, u := range []string{
+		"https://videos.example/videos/" + pub.String(),
+		"https://videos.example/embed/" + pub.String(),
+		"https://videos.example/v/" + shortid.FromUUID(pub),
+	} {
+		rec := get(t, srv, "/services/oembed?url="+url.QueryEscape(u))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("oembed(%s) status = %d, want 404; body=%s", u, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "Taken Down Clip") {
+			t.Errorf("oembed(%s) leaked the blocked video's title: %s", u, rec.Body.String())
+		}
+	}
+
+	// The other two distribution surfaces must not carry it either.
+	if body := get(t, srv, "/feeds/videos.xml").Body.String(); strings.Contains(body, "Taken Down Clip") {
+		t.Errorf("rss feed carries the blocked video: %s", body)
+	}
+	// The sitemap advertises the canonical /v/{code} URL, so the uuid alone would
+	// never appear in it and an id-based assertion would pass on a leak.
+	if body := get(t, srv, "/sitemap.xml").Body.String(); strings.Contains(body, repo.videos[pub].ShortCode) {
+		t.Errorf("sitemap carries the blocked video: %s", body)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // E3 — sitemap
 // ---------------------------------------------------------------------------
