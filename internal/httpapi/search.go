@@ -115,6 +115,36 @@ func (s *Server) searchUserPrefs(c echo.Context) (uuid.UUID, searchUserPref, boo
 	return id, prefs, true
 }
 
+// searchEventsHeader lets a client declare that it emits its own
+// search.submitted through POST /search/events, so core must not emit the
+// routed one for this request. The only recognised value is "client".
+//
+// A browser search used to write TWO query_log rows: the client's batch (the
+// row that reaches the user's own history page — handleSearchEvents is the only
+// ingest path that sets allow_history) and core's own emit behind the same GET.
+// Both land in the same table, so every browser search double-counted
+// `use_count` and doubled the rows a k-anonymity floor reads, and a "Load more"
+// wrote another, because the routed emit fires per REQUEST rather than per
+// search.
+//
+// It has to be the CLIENT that says so: nothing on the server distinguishes a
+// browser (which will send the event) from an API consumer (which will not),
+// and an API consumer must keep the routed emit — it is the only record its
+// searches ever leave. Taking the caller's word costs nothing, because the
+// declaration can only make core collect LESS about that caller and can never
+// affect anyone else's rows. It is deliberately NOT declared in the OpenAPI
+// parameter list, following X-Vidra-Session, the sibling client-supplied search
+// header this contract also carries only in prose.
+const searchEventsHeader = "X-Vidra-Search-Events"
+
+// clientEmitsSearchSubmitted reports whether this request declared that its
+// caller emits its own search.submitted. Anything but the one token means no —
+// an unrecognised value must fail toward RECORDING the search, which is what
+// every client that never heard of this header already does.
+func clientEmitsSearchSubmitted(c echo.Context) bool {
+	return strings.EqualFold(strings.TrimSpace(c.Request().Header.Get(searchEventsHeader)), "client")
+}
+
 // sessionIDFromRequest returns the sanitized X-Vidra-Session id (a UUID) or "".
 // A non-UUID value is dropped so a client cannot inject an arbitrary session key.
 func sessionIDFromRequest(c echo.Context) string {
@@ -850,10 +880,17 @@ func (s *Server) purgeUserFromSearch(ctx context.Context, userID uuid.UUID) {
 //
 // This path still sets no allow_history (a known, recorded gap: an API-only
 // client's searches are retained yet never reach the user's own history page).
-// Setting it here now would DOUBLE-count use_count for every browser search,
-// which writes this row and the client's, so it stays a separate slice.
+// The double-count that used to block fixing it is gone — a browser search no
+// longer reaches this function at all — but setting it here is a change to what
+// an API consumer's searches DO, not merely to how many rows they write, so it
+// stays a separate slice with its own evidence.
 func (s *Server) emitSearchSubmitted(c echo.Context, query string, resultsCount int, source string) {
 	if s.searchEvents == nil {
+		return
+	}
+	// The caller emits its own search.submitted, so emitting here too would
+	// write the same search twice — see searchEventsHeader.
+	if clientEmitsSearchSubmitted(c) {
 		return
 	}
 	ident := s.searchEventIdentity(c)
