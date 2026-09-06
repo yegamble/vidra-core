@@ -194,10 +194,21 @@ type configUpdatedPayload struct {
 }
 
 // WatchProgress is the video.watch_progress event body (throttled by the caller).
+//
+// SubjectID is the day-scoped anonymous aggregation subject, set INSTEAD of
+// UserID when the caller is unattributed (the A13 opt-out ruling — see
+// httpapi/search_attribution.go). This event is emitted from an authenticated
+// route, so it used to be the one behavioural type that could never be
+// anonymous; vidra-search stores it in behavior_events like any other and
+// synthesises video.meaningful_watch from it, and the co-visitation k floor
+// counts that derived row under COALESCE(subject_id, session_id) when there is
+// no user — so an opted-out watcher without this field would be counted under
+// the client-controlled session id instead of once per day per address.
 type WatchProgress struct {
 	VideoID         uuid.UUID `json:"video_id"`
 	UserID          *string   `json:"user_id,omitempty"`
 	SessionID       *string   `json:"session_id,omitempty"`
+	SubjectID       *string   `json:"subject_id,omitempty"`
 	PositionSeconds int32     `json:"position_seconds"`
 	DurationSeconds *int32    `json:"duration_seconds,omitempty"`
 }

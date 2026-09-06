@@ -63,6 +63,14 @@ func (s *Server) handleRecordWatchProgress(c echo.Context) error {
 // service W4): at most one per (user,video) per 30s window, gated by the Redis
 // SETNX seam. duration_seconds is omitted (not cheaply available on this path).
 // No-op when the enqueuer or throttle is unwired.
+//
+// Identity follows the same rule as the two search-event paths
+// (search_attribution.go): a caller who has switched all three discovery
+// controls off is emitted unattributed, with the day-scoped subject instead of
+// their account id. The THROTTLE key is not part of that — it keys core's own
+// Redis, which already holds the watch-progress row itself under the same
+// account, and collapsing it to the subject would let one NAT'd address
+// suppress another viewer's events.
 func (s *Server) emitWatchProgress(c echo.Context, videoID, userID uuid.UUID, positionSeconds int32) {
 	if s.searchEvents == nil || s.searchWatchThrottle == nil {
 		return
@@ -71,15 +79,19 @@ func (s *Server) emitWatchProgress(c echo.Context, videoID, userID uuid.UUID, po
 	if !s.searchWatchThrottle(c.Request().Context(), key) {
 		return
 	}
-	uid := userID.String()
-	sid := sessionIDFromRequest(c)
+	// Resolved AFTER the throttle so a suppressed beacon costs no preference read.
+	ident := s.searchEventIdentity(c)
 	wp := searchevents.WatchProgress{
 		VideoID:         videoID,
-		UserID:          &uid,
 		PositionSeconds: positionSeconds,
 	}
-	if sid != "" {
-		wp.SessionID = &sid
+	if ident.Attributed() {
+		wp.UserID = &ident.UserID
+	} else if ident.SubjectID != "" {
+		wp.SubjectID = &ident.SubjectID
+	}
+	if ident.SessionID != "" {
+		wp.SessionID = &ident.SessionID
 	}
 	s.searchEvents.EnqueueWatchProgress(c.Request().Context(), wp)
 }

@@ -174,10 +174,11 @@ func (s *Server) handleSearchSuggestions(c echo.Context) error {
 	userID, prefs, authed := s.searchUserPrefs(c)
 	personalized := s.searchAdvanced() && s.instancePersonalizedSearch() && authed && prefs.Personalized
 	includeHistory := s.instanceSearchHistoryEnabled() && authed && prefs.History
-	var uid *uuid.UUID
-	if authed {
-		uid = &userID
-	}
+	// nil for a fully opted-out caller: every flag that would USE the id is
+	// already false for them, and sending it anyway would put their account id
+	// beside their query text in the search service's request line — see
+	// searchServiceUserID.
+	uid := s.attributedUserID(userID, prefs, authed)
 	out, err := s.searchClient.Suggestions(c.Request().Context(), searchclient.SuggestParams{
 		Query:          q,
 		Limit:          limit,
@@ -276,10 +277,7 @@ func (s *Server) handleHomeRecommendations(c echo.Context) error {
 	hideSensitive := s.effectiveHideSensitive(c)
 
 	if s.useSearchService() {
-		var uid *uuid.UUID
-		if authed {
-			uid = &userID
-		}
+		uid := s.attributedUserID(userID, prefs, authed)
 		out, err := s.searchClient.RecommendationsHome(ctx, searchclient.RecsParams{
 			UserID:        uid,
 			SessionID:     sessionIDFromRequest(c),
@@ -333,10 +331,7 @@ func (s *Server) handleVideoRecommendations(c echo.Context) error {
 	hideSensitive := s.effectiveHideSensitive(c)
 
 	if s.useSearchService() {
-		var uid *uuid.UUID
-		if authed {
-			uid = &userID
-		}
+		uid := s.attributedUserID(userID, prefs, authed)
 		out, err := s.searchClient.RecommendationsRelated(ctx, searchclient.RecsParams{
 			VideoID:       &id,
 			UserID:        uid,
@@ -414,9 +409,14 @@ const maxSearchEventsPerRequest = 20
 // subject_id is the anonymous half of the same problem: rotating X-Vidra-Session
 // mints unlimited well-formed session ids, which the floor counts for rows with
 // no user_id. It is derived from the connecting address instead — see
-// anonSearchSubject in search_subject.go for the derivation and for the NAT
-// limitation it does not close.
-var serverDerivedSearchEventFields = []string{"user_id", "session_id", "subject_id", "allow_history"}
+// unattributedSearchSubject in search_subject.go for the derivation and for the
+// NAT limitation it does not close.
+//
+// allow_personalization joined the list with the A13 opt-out ruling for the
+// same reason allow_history is on it: it gates a durable per-user store
+// (user_watch_projection) on the search side, so a client that could set it
+// would grant itself the collection its owner switched off.
+var serverDerivedSearchEventFields = []string{"user_id", "session_id", "subject_id", "allow_history", "allow_personalization"}
 
 // searchEventsRequest is the POST /search/events body: a batch of raw event
 // objects, each carrying a "type" plus its behavioural fields.
@@ -458,14 +458,12 @@ func (s *Server) handleSearchEvents(c echo.Context) error {
 		return &ValidationError{Fields: fes}
 	}
 
-	id, _, authed := principalFromContext(c)
-	session := sessionIDFromRequest(c)
-	// Anonymous callers only: an authenticated caller's user_id is already the
-	// trustworthy subject, so a second, address-derived one would be redundant
-	// AND would leak that derivation for a known account.
-	subject := s.anonSearchSubject(c)
-	_, prefs, _ := s.searchUserPrefs(c)
-	allowHistory := s.instanceSearchHistoryEnabled() && authed && prefs.History
+	// One decision for the whole batch: who this caller is on the wire, and
+	// which durable per-user stores their events may feed. See
+	// search_attribution.go — an unattributed caller (anonymous, or signed in
+	// with all three discovery controls off) gets the anonymous shape, subject
+	// and all.
+	ident := s.searchEventIdentity(c)
 
 	for i, ev := range in.Events {
 		payload := make(map[string]json.RawMessage, len(ev)+3)
@@ -479,20 +477,21 @@ func (s *Server) handleSearchEvents(c echo.Context) error {
 		for _, k := range serverDerivedSearchEventFields {
 			delete(payload, k)
 		}
-		if authed {
-			payload["user_id"], _ = json.Marshal(id.String())
+		if ident.Attributed() {
+			payload["user_id"], _ = json.Marshal(ident.UserID)
 		}
-		if session != "" {
-			payload["session_id"], _ = json.Marshal(session)
+		if ident.SessionID != "" {
+			payload["session_id"], _ = json.Marshal(ident.SessionID)
 		}
 		// subject_id sits ALONGSIDE session_id, never replacing it: session_id
 		// carries within-session correlation (co-visitation, reformulation), and
 		// collapsing every visitor behind one NAT into one shared session would
 		// splice unrelated people's browsing into a single chain.
-		if subject != "" {
-			payload["subject_id"], _ = json.Marshal(subject)
+		if ident.SubjectID != "" {
+			payload["subject_id"], _ = json.Marshal(ident.SubjectID)
 		}
-		payload["allow_history"], _ = json.Marshal(allowHistory)
+		payload["allow_history"], _ = json.Marshal(ident.AllowHistory)
+		payload["allow_personalization"], _ = json.Marshal(ident.AllowPersonalization)
 		raw, err := json.Marshal(payload)
 		if err != nil {
 			continue
@@ -682,10 +681,7 @@ func (s *Server) searchViaService(c echo.Context, q string, filter video.SearchF
 	ctx := c.Request().Context()
 	userID, prefs, _ := s.searchUserPrefs(c)
 	personalized := s.searchAdvanced() && s.instancePersonalizedSearch() && authed && prefs.Personalized
-	var uid *uuid.UUID
-	if authed {
-		uid = &userID
-	}
+	uid := s.attributedUserID(userID, prefs, authed)
 	out, err := s.searchClient.Search(ctx, searchclient.SearchParams{
 		Query:         q,
 		Limit:         overfetchCount(offset, limit),
@@ -846,29 +842,37 @@ func (s *Server) purgeUserFromSearch(ctx context.Context, userID uuid.UUID) {
 // an anonymous client that loops this endpoint with a rotated header mints
 // unlimited well-formed identities and clears the default floor of 3 on its own
 // — promoting a string it alone ever typed into instance-wide autosuggest.
-// anonSearchSubject is the server-derived, address-keyed answer to exactly that,
-// and it has to be on BOTH ingest paths or it is on neither.
+// unattributedSearchSubject is the server-derived, address-keyed answer to
+// exactly that, and it has to be on BOTH ingest paths or it is on neither. The
+// A13 opt-out ruling inherits that argument whole: attribution is decided by
+// searchEventIdentity here as well, or an opted-out user's browser searches
+// would be anonymized on one of the two rows they write and not the other.
+//
+// This path still sets no allow_history (a known, recorded gap: an API-only
+// client's searches are retained yet never reach the user's own history page).
+// Setting it here now would DOUBLE-count use_count for every browser search,
+// which writes this row and the client's, so it stays a separate slice.
 func (s *Server) emitSearchSubmitted(c echo.Context, query string, resultsCount int, source string) {
 	if s.searchEvents == nil {
 		return
 	}
-	id, _, authed := principalFromContext(c)
+	ident := s.searchEventIdentity(c)
 	payload := map[string]any{
 		"query":         query,
 		"results_count": resultsCount,
 		"source":        source,
 	}
-	if authed {
-		payload["user_id"] = id.String()
+	if ident.Attributed() {
+		payload["user_id"] = ident.UserID
 	}
-	if sid := sessionIDFromRequest(c); sid != "" {
-		payload["session_id"] = sid
+	if ident.SessionID != "" {
+		payload["session_id"] = ident.SessionID
 	}
-	// Anonymous callers only, and ALONGSIDE session_id, never replacing it —
-	// see anonSearchSubject in search_subject.go for both rules and for the NAT
-	// limitation this derivation does not close.
-	if subject := s.anonSearchSubject(c); subject != "" {
-		payload["subject_id"] = subject
+	// Unattributed callers only, and ALONGSIDE session_id, never replacing it —
+	// see unattributedSearchSubject in search_subject.go for both rules and for
+	// the NAT limitation this derivation does not close.
+	if ident.SubjectID != "" {
+		payload["subject_id"] = ident.SubjectID
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
