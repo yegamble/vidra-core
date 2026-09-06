@@ -173,6 +173,12 @@ type reportView struct {
 	RemoteVideoID     string `json:"remote_video_id,omitempty"`
 	RemoteVideoTitle  string `json:"remote_video_title,omitempty"`
 	RemoteVideoDomain string `json:"remote_video_domain,omitempty"`
+	// Message target context (target_type='message'). MessageBody is the
+	// snapshot captured at report time — a conversation is private, so it is the
+	// only thing a moderator ever sees of the reported message, and it survives
+	// the sender deleting it. MessageID empties once the row is hard-deleted.
+	MessageID   string `json:"message_id,omitempty"`
+	MessageBody string `json:"message_body,omitempty"`
 }
 
 func newReportView(it moderation.Item) reportView {
@@ -194,6 +200,8 @@ func newReportView(it moderation.Item) reportView {
 		RemoteVideoID:     it.RemoteVideoID,
 		RemoteVideoTitle:  it.RemoteVideoTitle,
 		RemoteVideoDomain: it.RemoteVideoDomain,
+		MessageID:         it.MessageID,
+		MessageBody:       it.MessageBody,
 	}
 }
 

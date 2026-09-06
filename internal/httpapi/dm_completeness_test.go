@@ -190,4 +190,27 @@ func TestDMReportMessage(t *testing.T) {
 	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/messages/"+msg.ID+"/report", `{"reason":"x"}`, strangerTok); rec.Code != http.StatusNotFound {
 		t.Fatalf("stranger report = %d, want 404", rec.Code)
 	}
+
+	// The report has to be ACTIONABLE, not merely accepted. A conversation is
+	// private, so the body snapshot taken at report time is the only thing a
+	// moderator will ever see of the reported message — the queue is useless
+	// without it. Asserting only the 204 above is what let the HTTP projection
+	// drop both fields while the OpenAPI contract kept promising them.
+	var queue reportListResponse
+	_ = json.Unmarshal(listReports(srv, "", adaTok).Body.Bytes(), &queue)
+	var got *reportView
+	for i := range queue.Reports {
+		if queue.Reports[i].TargetType == "message" {
+			got = &queue.Reports[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("no message report in the queue: %+v", queue.Reports)
+	}
+	if got.MessageID != msg.ID {
+		t.Errorf("message_id = %q, want %q", got.MessageID, msg.ID)
+	}
+	if got.MessageBody != "rude" {
+		t.Errorf("message_body = %q, want %q — the moderator cannot read the reported message", got.MessageBody, "rude")
+	}
 }
