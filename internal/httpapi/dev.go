@@ -12,7 +12,7 @@ import (
 // an email, for the DEVELOPMENT-ONLY mail-capture flow (see WithDevMailCapture).
 // It is registered only when DEV_MAIL_CAPTURE_ENABLED wired the capture mailer.
 //
-//	GET /api/v1/dev/email-token?email=<email>&kind=reset|verification
+//	GET /api/v1/dev/email-token?email=<email>&kind=reset|verification|email_change
 //	200 {"token":"..."} | 404 when nothing captured | 422 on a bad request
 //
 // This deliberately exposes single-use credentials and MUST never be reachable in
@@ -30,8 +30,11 @@ func (s *Server) handleDevEmailToken(c echo.Context) error {
 	if kind == "" {
 		kind = auth.TokenKindPasswordReset
 	}
-	if kind != auth.TokenKindPasswordReset && kind != auth.TokenKindEmailVerification {
-		return echo.NewHTTPError(http.StatusUnprocessableEntity, "kind must be 'reset' or 'verification'")
+	switch kind {
+	case auth.TokenKindPasswordReset, auth.TokenKindEmailVerification, auth.TokenKindEmailChange:
+	default:
+		return echo.NewHTTPError(http.StatusUnprocessableEntity,
+			"kind must be 'reset', 'verification' or 'email_change'")
 	}
 	token, ok := s.devMailCapture.Latest(kind, email)
 	if !ok {

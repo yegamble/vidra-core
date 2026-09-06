@@ -104,6 +104,21 @@ type Repository interface {
 	DeleteUnusedEmailVerificationTokens(ctx context.Context, userID uuid.UUID) error
 	SetUserEmailVerified(ctx context.Context, id uuid.UUID) error
 
+	// Two-step email change (AUTH-05, migration 0129). The pending request
+	// lives in its own table so the live users.email is untouched until the
+	// token delivered to the NEW address is consumed.
+	CreateEmailChangeRequest(ctx context.Context, arg sqlcgen.CreateEmailChangeRequestParams) (sqlcgen.EmailChangeRequest, error)
+	GetPendingEmailChangeRequest(ctx context.Context, userID uuid.UUID) (sqlcgen.EmailChangeRequest, error)
+	// DeleteUnusedEmailChangeRequests supersedes (a new request kills the old
+	// token) and cancels. The row count distinguishes "there was something
+	// pending" from "there was nothing".
+	DeleteUnusedEmailChangeRequests(ctx context.Context, userID uuid.UUID) (int64, error)
+	// ConfirmEmailChange consumes the token and moves the address in ONE
+	// statement, so the switch is atomic and a double confirmation cannot both
+	// win. No row means the token was unknown, used, expired, or another
+	// account's.
+	ConfirmEmailChange(ctx context.Context, arg sqlcgen.ConfirmEmailChangeParams) (sqlcgen.ConfirmEmailChangeRow, error)
+
 	CreateRegistrationRequest(ctx context.Context, arg sqlcgen.CreateRegistrationRequestParams) (sqlcgen.CreateRegistrationRequestRow, error)
 	ListRegistrationRequests(ctx context.Context, arg sqlcgen.ListRegistrationRequestsParams) ([]sqlcgen.ListRegistrationRequestsRow, error)
 	CountRegistrationRequests(ctx context.Context, status *string) (int64, error)

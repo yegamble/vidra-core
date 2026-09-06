@@ -31,6 +31,12 @@ const (
 	ActionPasswordChange        = "auth.password.change"
 	ActionEmailVerifyRequest    = "auth.email_verify.request"
 	ActionEmailVerifyConfirm    = "auth.email_verify.confirm"
+	// Two-step email change (AUTH-05). No event carries either address — the
+	// sensitive-key discipline keeps email addresses out of the audit trail, so
+	// the actor id is the whole record.
+	ActionEmailChangeRequest = "auth.email_change.request"
+	ActionEmailChangeConfirm = "auth.email_change.confirm"
+	ActionEmailChangeCancel  = "auth.email_change.cancel"
 	ActionAccountDeactivate     = "auth.account.deactivate"
 	ActionAccountDelete         = "auth.account.delete"
 	ActionAdminUserDelete       = "admin.user.delete"

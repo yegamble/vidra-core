@@ -1360,6 +1360,19 @@ func (s *Server) routes() {
 		// per IP so an attacker holding one stolen access token cannot brute
 		// force the current password from it.
 		authGroup.POST("/me/password", s.handleChangePassword, append(append([]echo.MiddlewareFunc{}, authMW...), s.requireAuth)...)
+		// Two-step email change (AUTH-05). The three write steps that either
+		// take a password or spend a token sit behind the SAME strict auth
+		// limiter as login and the password change — the request re-verifies the
+		// current password, and the confirmation consumes a single-use token, so
+		// both are guessing surfaces. The pending-state READ and the cancel are
+		// deliberately not in that 10/min bucket: a settings page load must not
+		// be able to exhaust a budget shared with sign-in.
+		emailChangeMW := append(append([]echo.MiddlewareFunc{}, authMW...), s.requireAuth)
+		authGroup.POST("/me/email-change", s.handleRequestEmailChange, emailChangeMW...)
+		authGroup.POST("/me/email-change/resend", s.handleResendEmailChange, emailChangeMW...)
+		authGroup.POST("/me/email-change/confirm", s.handleConfirmEmailChange, emailChangeMW...)
+		authGroup.GET("/me/email-change", s.handleGetEmailChange, s.requireAuth)
+		authGroup.DELETE("/me/email-change", s.handleCancelEmailChange, s.requireAuth)
 		authGroup.POST("/me/deactivate", s.handleDeactivateAccount, s.requireAuth)
 		authGroup.POST("/logout-all", s.handleLogoutAll, s.requireAuth)
 

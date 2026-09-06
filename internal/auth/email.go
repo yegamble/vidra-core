@@ -19,6 +19,15 @@ type Mailer interface {
 	// sent on success and must never fail the change.
 	SendPasswordChanged(ctx context.Context, email string) error
 	SendEmailVerification(ctx context.Context, email, token string) error
+	// SendEmailChangeVerification delivers the single-use token that confirms a
+	// requested NEW address. It goes to the new address and nowhere else — it
+	// is the possession proof, and the old mailbox cannot supply it.
+	SendEmailChangeVerification(ctx context.Context, newEmail, token string) error
+	// SendEmailChanged tells the OLD address that the account has moved to a
+	// new one. Like SendPasswordChanged it carries no credential: it is the
+	// after-the-fact notice that reaches a user whose address was taken, and it
+	// is the ONLY message that still lands in the mailbox they control.
+	SendEmailChanged(ctx context.Context, oldEmail, newEmail string) error
 	// SendContactForm delivers a visitor contact-form message to the operator
 	// address `to`, identifying the visitor by fromName/fromEmail (surfaced as
 	// Reply-To by real transports, never as the envelope sender).
@@ -41,6 +50,10 @@ type noopMailer struct{}
 func (noopMailer) SendPasswordReset(context.Context, string, string) error     { return nil }
 func (noopMailer) SendPasswordChanged(context.Context, string) error           { return nil }
 func (noopMailer) SendEmailVerification(context.Context, string, string) error { return nil }
+func (noopMailer) SendEmailChangeVerification(context.Context, string, string) error {
+	return nil
+}
+func (noopMailer) SendEmailChanged(context.Context, string, string) error { return nil }
 func (noopMailer) SendContactForm(context.Context, string, string, string, string, string) error {
 	return nil
 }

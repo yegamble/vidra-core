@@ -11,6 +11,10 @@ type TokenKind string
 const (
 	TokenKindPasswordReset     TokenKind = "reset"
 	TokenKindEmailVerification TokenKind = "verification"
+	// TokenKindEmailChange is the token that confirms a requested NEW address
+	// (AUTH-05). It is captured under the NEW address, which is the only one it
+	// is ever sent to.
+	TokenKindEmailChange TokenKind = "email_change"
 )
 
 // CaptureMailer is a DEVELOPMENT/TEST-ONLY Mailer that keeps the most recent raw
@@ -31,7 +35,10 @@ type CaptureMailer struct {
 	// passwordChanged records the addresses that received a "your password was
 	// changed" notice. No token is involved, so the address is the whole record.
 	passwordChanged []string
-	testMessages    []CapturedTestMessage
+	// emailChanged records the (old, new) pairs that received an "your address
+	// was changed" notice at the OLD address. No token is involved.
+	emailChanged []CapturedEmailChange
+	testMessages []CapturedTestMessage
 }
 
 // CapturedContact is one contact-form message recorded by the capture mailer
@@ -85,6 +92,35 @@ func (c *CaptureMailer) PasswordChangedNotices() []string {
 func (c *CaptureMailer) SendPasswordReset(_ context.Context, email, token string) error {
 	c.store(TokenKindPasswordReset, email, token)
 	return nil
+}
+
+// CapturedEmailChange is one "your email address was changed" notice recorded
+// by the capture mailer instead of being delivered to the OLD address.
+type CapturedEmailChange struct {
+	OldEmail string
+	NewEmail string
+}
+
+// SendEmailChangeVerification records the email-change confirmation token
+// instead of mailing it, keyed on the NEW address it was addressed to.
+func (c *CaptureMailer) SendEmailChangeVerification(_ context.Context, newEmail, token string) error {
+	c.store(TokenKindEmailChange, newEmail, token)
+	return nil
+}
+
+// SendEmailChanged records that the OLD address was told the account moved.
+func (c *CaptureMailer) SendEmailChanged(_ context.Context, oldEmail, newEmail string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.emailChanged = append(c.emailChanged, CapturedEmailChange{OldEmail: oldEmail, NewEmail: newEmail})
+	return nil
+}
+
+// EmailChangedNotices returns the notices sent to old addresses, oldest first.
+func (c *CaptureMailer) EmailChangedNotices() []CapturedEmailChange {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]CapturedEmailChange(nil), c.emailChanged...)
 }
 
 // SendEmailVerification records the verification token instead of mailing it.

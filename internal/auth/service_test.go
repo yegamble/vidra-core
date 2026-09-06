@@ -36,7 +36,9 @@ type fakeRepo struct {
 	sessions map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow
 	resets   map[string]*sqlcgen.PasswordResetToken     // keyed by token hash
 	verifs   map[string]*sqlcgen.EmailVerificationToken // keyed by token hash
-	regReqs  []*fakeRegReq
+	// emailChanges mirrors email_change_requests (0129), keyed by token hash.
+	emailChanges map[string]*sqlcgen.EmailChangeRequest
+	regReqs      []*fakeRegReq
 	// ownerClaim mirrors the single-row owner_claim_tokens table (0104). Nil =
 	// never minted, so most tests register freely, exactly like a database
 	// that predates the owner-claim flow.
@@ -56,6 +58,8 @@ func newFakeRepo() *fakeRepo {
 		sessions: map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow{},
 		resets:   map[string]*sqlcgen.PasswordResetToken{},
 		verifs:   map[string]*sqlcgen.EmailVerificationToken{},
+
+		emailChanges: map[string]*sqlcgen.EmailChangeRequest{},
 	}
 }
 
