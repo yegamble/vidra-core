@@ -15,8 +15,13 @@ import (
 // version — changing it makes every existing subject incomparable.
 const searchSubjectDomainSeparation = "vidra/search-anon-subject/v1"
 
-// anonSearchSubject returns the aggregation subject for an ANONYMOUS behavioural
-// search event, or "" when there is none to derive.
+// unattributedSearchSubject returns the aggregation subject for an
+// UNATTRIBUTED behavioural search event, or "" when there is none to derive.
+// Unattributed, not merely anonymous: since the A13 opt-out ruling a signed-in
+// caller with all three discovery controls off carries no user_id either, and
+// their rows need this subject for exactly the same reason an anonymous
+// visitor's do (see search_attribution.go — the caller decides attribution,
+// this function only derives).
 //
 // Why it exists: vidra-search's k-anonymity floor — the gate deciding whether a
 // query becomes instance-wide autosuggest — counts distinct user_ids plus, for
@@ -39,15 +44,15 @@ const searchSubjectDomainSeparation = "vidra/search-anon-subject/v1"
 // everyone behind one NAT into one shared session would splice unrelated
 // people's browsing into a single chain.
 //
-// Authenticated callers get "": user_id is already the trustworthy subject, and
-// an address-derived value beside a known account id is both redundant and a
-// leak. The address is never stored or logged; only the day-scoped pseudonym
-// leaves this function, and "subject_id" is on the observability sensitive-key
-// denylist so it cannot be used as a structured-log key either.
-func (s *Server) anonSearchSubject(c echo.Context) string {
-	if _, _, authed := principalFromContext(c); authed {
-		return ""
-	}
+// An ATTRIBUTED caller must never be given one: user_id is already the
+// trustworthy subject, and an address-derived value beside a known account id
+// is both redundant and a leak. That test does not live here — searchEventIdentity
+// asks for a subject only when it is writing no user_id — because "authenticated"
+// stopped being the same question as "attributed". The address is never stored
+// or logged; only the day-scoped pseudonym leaves this function, and
+// "subject_id" is on the observability sensitive-key denylist so it cannot be
+// used as a structured-log key either.
+func (s *Server) unattributedSearchSubject(c echo.Context) string {
 	// No address to derive from (an unusual transport, a malformed RemoteAddr) is
 	// no subject, not a digest of the empty string — otherwise every such request
 	// would silently share one subject, which is the wrong kind of collapse.
