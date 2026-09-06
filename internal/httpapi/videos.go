@@ -595,7 +595,17 @@ func (s *Server) respondVideo(c echo.Context, id uuid.UUID) error {
 func (s *Server) videoVisibleForDetail(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
 	_, role, ok := principalFromContext(c)
 	if !ok || !isStaff(role) {
-		return s.videoVisibleForRead(c, videoID)
+		v, err := s.videoVisibleForRead(c, videoID)
+		if err != nil {
+			return sqlcgen.GetVideoByIDRow{}, err
+		}
+		// Quarantine rejection changes state to failed, not privacy. Keep that
+		// metadata hidden instead of exposing a formerly held public upload.
+		viewerID, _, authed := principalFromContext(c)
+		if v.State == "failed" && (!authed || viewerID != v.OwnerID) {
+			return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+		}
+		return v, nil
 	}
 	v, err := s.videosvc.GetByID(c.Request().Context(), videoID)
 	if err != nil {
