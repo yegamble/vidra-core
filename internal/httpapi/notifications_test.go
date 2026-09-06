@@ -120,6 +120,40 @@ func (f *notifFakeRepo) CommentVideoOwnerRecipient(_ context.Context, commentID 
 	return sqlcgen.CommentVideoOwnerRecipientRow{RecipientID: owner, VideoID: c.VideoID}, nil
 }
 
+// FollowNotificationRecipient mirrors the real :one query (who hears about a
+// follow): the channel's owner, excluded on a self-follow, when the owner's
+// account is inactive/deleted, when the owner muted the follower, or when
+// either side blocked the other. pgx.ErrNoRows is the "nobody" answer. The
+// statement's real behaviour is proved against a live database in
+// store.TestFollowNotificationRecipientOnRealPG; this fake exists so the
+// HTTP-level wiring is provable without one. Mirroring the mute/block clauses
+// HERE is the point: a fake that ignored them would let a handler test pass
+// while a muted account reached the owner's inbox, which is exactly how the
+// comment path's version of this gap survived.
+func (f *notifFakeRepo) FollowNotificationRecipient(_ context.Context, arg sqlcgen.FollowNotificationRecipientParams) (uuid.UUID, error) {
+	ch, ok := f.channelByID(arg.ChannelID)
+	if !ok {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	owner, follower := ch.OwnerID, arg.FollowerID
+	if owner == follower {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	if u, ok := f.userByID(owner); !ok || !u.IsActive || u.DeletedAt.Valid {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	if f.comments != nil {
+		if f.comments.mutes != nil && f.comments.mutes.isMuted(owner, follower) {
+			return uuid.Nil, pgx.ErrNoRows
+		}
+		if f.comments.userBlocks != nil &&
+			(f.comments.userBlocks.isBlocked(owner, follower) || f.comments.userBlocks.isBlocked(follower, owner)) {
+			return uuid.Nil, pgx.ErrNoRows
+		}
+	}
+	return owner, nil
+}
+
 func notifPrefKey(userID uuid.UUID, typ string) string { return userID.String() + "\x00" + typ }
 
 func (f *notifFakeRepo) ListNotificationPrefs(_ context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationPrefsRow, error) {
@@ -904,6 +938,91 @@ func TestCommentNotificationRespectsMutesAndBlocks(t *testing.T) {
 			}
 			if got := unreadCount(t, srv, adaTok); got != int64(tc.want) {
 				t.Errorf("owner unread = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFollowNotificationRespectsMutesAndBlocks closes the last door a muted or
+// blocked account still had into the muter's inbox. Every other notification
+// path — the video owner's comment, the reply, the new-video fan-out — already
+// excluded them; the follow did not, and it is the one an unwanted account can
+// take unilaterally, repeatedly, against someone who has already blocked them:
+// the handler raises the notification whenever the follow row is genuinely new,
+// so unfollow and follow again produces another row naming them.
+//
+// Cast: ada owns the channel, bob follows it. Each case applies exactly one
+// relationship, and the control at the end proves the exclusions — not a broken
+// fixture — are doing the work.
+func TestFollowNotificationRespectsMutesAndBlocks(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		arrange func(t *testing.T, srv *Server, adaTok, adaID, bobTok, bobID string)
+		want    int
+	}{
+		{
+			name: "ada muted bob",
+			arrange: func(t *testing.T, srv *Server, adaTok, _, _, bobID string) {
+				if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/mutes/accounts/"+bobID, "", adaTok); rec.Code != http.StatusNoContent {
+					t.Fatalf("mute = %d; body=%s", rec.Code, rec.Body.String())
+				}
+			},
+		},
+		{
+			name: "ada blocked bob",
+			arrange: func(t *testing.T, srv *Server, adaTok, _, _, bobID string) {
+				if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/blocks/"+bobID, "", adaTok); rec.Code != http.StatusNoContent {
+					t.Fatalf("block = %d; body=%s", rec.Code, rec.Body.String())
+				}
+			},
+		},
+		{
+			name: "bob blocked ada",
+			arrange: func(t *testing.T, srv *Server, _, adaID, bobTok, _ string) {
+				if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/blocks/"+adaID, "", bobTok); rec.Code != http.StatusNoContent {
+					t.Fatalf("block = %d; body=%s", rec.Code, rec.Body.String())
+				}
+			},
+		},
+		{
+			name:    "control: no relationship at all",
+			arrange: func(*testing.T, *Server, string, string, string, string) {},
+			want:    1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := videoServer(t)
+			adaTok, adaID := registerAndUser(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+			if rec := postJSONAuth(srv, "/api/v1/channels", `{"handle":"ada","display_name":"ada"}`, adaTok); rec.Code != http.StatusCreated {
+				t.Fatalf("create channel = %d; body=%s", rec.Code, rec.Body.String())
+			}
+			bobTok, bobID := registerAndUser(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+			tc.arrange(t, srv, adaTok, adaID, bobTok, bobID)
+
+			// The follow itself is never refused — a mute is one-way and a block
+			// cuts direct messages, not following. Only the inbox row is at stake.
+			if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels/ada/follow", "", bobTok); rec.Code != http.StatusNoContent {
+				t.Fatalf("follow = %d; body=%s", rec.Code, rec.Body.String())
+			}
+			if got := notifTypes(t, srv, adaTok); len(got) != tc.want {
+				t.Fatalf("owner has %d notifications after %q, want %d; got %+v", len(got), tc.name, tc.want, got)
+			}
+			if got := unreadCount(t, srv, adaTok); got != int64(tc.want) {
+				t.Errorf("owner unread = %d, want %d", got, tc.want)
+			}
+
+			// Re-following is the repeatable half: unfollow, follow again, and the
+			// handler's "genuinely new" flag is true once more. An excluded actor
+			// must still deliver nothing, and the control must deliver a second row.
+			if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/channels/ada/follow", "", bobTok); rec.Code != http.StatusNoContent {
+				t.Fatalf("unfollow = %d; body=%s", rec.Code, rec.Body.String())
+			}
+			if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels/ada/follow", "", bobTok); rec.Code != http.StatusNoContent {
+				t.Fatalf("re-follow = %d; body=%s", rec.Code, rec.Body.String())
+			}
+			if got := notifTypes(t, srv, adaTok); len(got) != tc.want*2 {
+				t.Errorf("owner has %d notifications after a re-follow with %q, want %d; got %+v", len(got), tc.name, tc.want*2, got)
 			}
 		})
 	}

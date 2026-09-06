@@ -88,6 +88,7 @@ type Repository interface {
 	NotifyStaffOfNewReport(ctx context.Context, reportID uuid.UUID) (int64, error)
 	CommentReplyRecipient(ctx context.Context, commentID uuid.UUID) (sqlcgen.CommentReplyRecipientRow, error)
 	CommentVideoOwnerRecipient(ctx context.Context, commentID uuid.UUID) (sqlcgen.CommentVideoOwnerRecipientRow, error)
+	FollowNotificationRecipient(ctx context.Context, arg sqlcgen.FollowNotificationRecipientParams) (uuid.UUID, error)
 }
 
 // Service holds the notification application logic.
@@ -141,16 +142,41 @@ func (s *Service) typeEnabled(ctx context.Context, recipientID uuid.UUID, typ st
 	return on
 }
 
-// NotifyFollow records that actorID followed recipientID's channel. Notifying
-// yourself (recipient == actor) is a no-op, as is a recipient who disabled
-// follow notifications. Best-effort: the caller treats a returned error as
-// non-fatal.
-func (s *Service) NotifyFollow(ctx context.Context, recipientID, actorID, channelID uuid.UUID) error {
-	if recipientID == actorID || !s.typeEnabled(ctx, recipientID, TypeFollow) {
+// NotifyFollow records that actorID followed a channel, telling that channel's
+// OWNER.
+//
+// Like NotifyComment and NotifyCommentReply, every selection rule lives in the
+// SQL (see FollowNotificationRecipient): the channel must exist, the owner is
+// never told about their own follow, the owner must be an active, non-deleted
+// account, and a muted or blocked follower never reaches the owner's
+// notification surface. That last rule is why this method resolves its own
+// recipient instead of taking one: the caller cannot see the mute/block
+// relationship, and for a long time neither did this path. A follow was the one
+// action a muted or blocked account could still take to put its username in the
+// muter's inbox — and a repeatable one, because the handler raises the
+// notification whenever the follow row is genuinely new, so unfollow and follow
+// again produced another.
+//
+// No resolved recipient is a silent no-op, not an error.
+//
+// Best-effort, like every other Notify* method: the caller treats a returned
+// error as non-fatal.
+func (s *Service) NotifyFollow(ctx context.Context, actorID, channelID uuid.UUID) error {
+	recipient, err := s.repo.FollowNotificationRecipient(ctx, sqlcgen.FollowNotificationRecipientParams{
+		ChannelID:  channelID,
+		FollowerID: actorID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
-	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
-		UserID:    recipientID,
+	if err != nil {
+		return err
+	}
+	if !s.typeEnabled(ctx, recipient, TypeFollow) {
+		return nil
+	}
+	_, err = s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
+		UserID:    recipient,
 		Type:      TypeFollow,
 		ActorID:   pgconv.UUID(actorID),
 		ChannelID: pgconv.UUID(channelID),

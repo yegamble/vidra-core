@@ -2,6 +2,7 @@ package notification
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -43,6 +44,30 @@ type fakeRepo struct {
 	ownerRecipients map[uuid.UUID]sqlcgen.CommentVideoOwnerRecipientRow
 	ownerLookups    []uuid.UUID
 	ownerErr        error
+	// followRecipients answers FollowNotificationRecipient on the same :one
+	// contract: channel id -> the owner the real query would return, an absent
+	// key being its "nobody to notify" answer (the owner muted or blocked the
+	// follower, either side blocked the other, a self-follow, or an inactive or
+	// deleted owner).
+	followRecipients map[uuid.UUID]uuid.UUID
+	followLookups    []uuid.UUID
+	followErr        error
+}
+
+// FollowNotificationRecipient mirrors the :one contract of the real query. Its
+// selection rules live in SQL and are proved against a live database in
+// store.TestFollowNotificationRecipientOnRealPG — here we only prove the
+// service reacts to each answer faithfully.
+func (f *fakeRepo) FollowNotificationRecipient(_ context.Context, arg sqlcgen.FollowNotificationRecipientParams) (uuid.UUID, error) {
+	f.followLookups = append(f.followLookups, arg.ChannelID)
+	if f.followErr != nil {
+		return uuid.Nil, f.followErr
+	}
+	id, ok := f.followRecipients[arg.ChannelID]
+	if !ok {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	return id, nil
 }
 
 // CommentVideoOwnerRecipient mirrors the :one contract of the real query. Its
@@ -197,19 +222,25 @@ func TestNotifyAndList(t *testing.T) {
 	// query excludes it (owner IS NOT DISTINCT FROM commenter), so the fake maps
 	// only the fan's comment to a recipient.
 	selfComment := uuid.New()
-	svc := NewService(&fakeRepo{ownerRecipients: map[uuid.UUID]sqlcgen.CommentVideoOwnerRecipientRow{
-		comment: {RecipientID: owner, VideoID: video},
-	}})
+	selfChannel := uuid.New()
+	svc := NewService(&fakeRepo{
+		ownerRecipients: map[uuid.UUID]sqlcgen.CommentVideoOwnerRecipientRow{
+			comment: {RecipientID: owner, VideoID: video},
+		},
+		followRecipients: map[uuid.UUID]uuid.UUID{ch: owner},
+	})
 
 	// A follow and a comment from someone else both notify the owner.
-	if err := svc.NotifyFollow(ctx, owner, fan, ch); err != nil {
+	if err := svc.NotifyFollow(ctx, fan, ch); err != nil {
 		t.Fatalf("NotifyFollow: %v", err)
 	}
 	if got, err := svc.NotifyComment(ctx, fan, comment); err != nil || got != owner {
 		t.Fatalf("NotifyComment = (%s, %v), want (%s, nil)", got, err, owner)
 	}
 	// Self-actions never notify.
-	if err := svc.NotifyFollow(ctx, owner, owner, ch); err != nil {
+	// A self-follow is the statement's "nobody" answer (the fake maps only the
+	// fan's channel lookup to a recipient, mirroring `owner IS DISTINCT FROM`).
+	if err := svc.NotifyFollow(ctx, owner, selfChannel); err != nil {
 		t.Fatalf("self NotifyFollow: %v", err)
 	}
 	if got, err := svc.NotifyComment(ctx, owner, selfComment); err != nil || got != uuid.Nil {
@@ -288,12 +319,13 @@ func TestNotifyReportResolved(t *testing.T) {
 }
 
 func TestMarkReadAndAll(t *testing.T) {
-	repo := &fakeRepo{}
+	owner, fan := uuid.New(), uuid.New()
+	chA, chB := uuid.New(), uuid.New()
+	repo := &fakeRepo{followRecipients: map[uuid.UUID]uuid.UUID{chA: owner, chB: owner}}
 	svc := NewService(repo)
 	ctx := context.Background()
-	owner, fan := uuid.New(), uuid.New()
-	_ = svc.NotifyFollow(ctx, owner, fan, uuid.New())
-	_ = svc.NotifyFollow(ctx, owner, fan, uuid.New())
+	_ = svc.NotifyFollow(ctx, fan, chA)
+	_ = svc.NotifyFollow(ctx, fan, chB)
 
 	items, _, _ := svc.List(ctx, owner, false, 20, 0)
 	first := items[0].ID
@@ -383,10 +415,11 @@ func TestSetPrefsPartialUpdateAndUnknownType(t *testing.T) {
 }
 
 func TestDisabledTypeSuppressesCreation(t *testing.T) {
-	repo := &fakeRepo{}
+	owner, fan, conv, report := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	followCh := uuid.New()
+	repo := &fakeRepo{followRecipients: map[uuid.UUID]uuid.UUID{followCh: owner}}
 	svc := NewService(repo)
 	ctx := context.Background()
-	owner, fan, conv, report := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 
 	if err := svc.SetPrefs(ctx, owner, map[string]bool{
 		TypeFollow: false, TypeMessage: false, TypeReportResolved: false,
@@ -396,7 +429,7 @@ func TestDisabledTypeSuppressesCreation(t *testing.T) {
 
 	// Disabled types create nothing (and return nil — a suppressed notification
 	// is not an error).
-	if err := svc.NotifyFollow(ctx, owner, fan, uuid.New()); err != nil {
+	if err := svc.NotifyFollow(ctx, fan, followCh); err != nil {
 		t.Fatalf("NotifyFollow (disabled): %v", err)
 	}
 	if err := svc.NotifyMessage(ctx, owner, fan, conv); err != nil {
@@ -425,7 +458,7 @@ func TestDisabledTypeSuppressesCreation(t *testing.T) {
 	if err := svc.SetPrefs(ctx, owner, map[string]bool{TypeFollow: true}); err != nil {
 		t.Fatalf("SetPrefs re-enable: %v", err)
 	}
-	if err := svc.NotifyFollow(ctx, owner, fan, uuid.New()); err != nil {
+	if err := svc.NotifyFollow(ctx, fan, followCh); err != nil {
 		t.Fatalf("NotifyFollow (re-enabled): %v", err)
 	}
 	if len(repo.notifs) != 2 {
@@ -434,13 +467,14 @@ func TestDisabledTypeSuppressesCreation(t *testing.T) {
 }
 
 func TestPrefLookupFailureFailsOpen(t *testing.T) {
-	repo := &fakeRepo{prefsErr: context.DeadlineExceeded}
+	owner, fan := uuid.New(), uuid.New()
+	followCh := uuid.New()
+	repo := &fakeRepo{prefsErr: context.DeadlineExceeded, followRecipients: map[uuid.UUID]uuid.UUID{followCh: owner}}
 	svc := NewService(repo)
 	ctx := context.Background()
-	owner, fan := uuid.New(), uuid.New()
 
 	// The pref filter is unreadable → the notification is still created.
-	if err := svc.NotifyFollow(ctx, owner, fan, uuid.New()); err != nil {
+	if err := svc.NotifyFollow(ctx, fan, followCh); err != nil {
 		t.Fatalf("NotifyFollow with failing pref lookup: %v", err)
 	}
 	if len(repo.notifs) != 1 {
@@ -789,4 +823,46 @@ func TestNotifyCommentSkips(t *testing.T) {
 			t.Fatalf("a failed lookup notified %s / wrote %d rows, want none", got, len(repo.notifs))
 		}
 	})
+}
+
+// TestNotifyFollowResolvesItsOwnRecipient proves the service reacts faithfully
+// to the two answers FollowNotificationRecipient can give. The statement's own
+// rules — mute, block in either direction, self-follow, inactive or deleted
+// owner — live in SQL and are proved against a live database in
+// store.TestFollowNotificationRecipientOnRealPG.
+func TestNotifyFollowResolvesItsOwnRecipient(t *testing.T) {
+	ctx := context.Background()
+	owner, fan := uuid.New(), uuid.New()
+	open, hidden := uuid.New(), uuid.New()
+	repo := &fakeRepo{followRecipients: map[uuid.UUID]uuid.UUID{open: owner}}
+	svc := NewService(repo)
+
+	// A channel whose owner the statement resolves: the owner is notified.
+	if err := svc.NotifyFollow(ctx, fan, open); err != nil {
+		t.Fatalf("NotifyFollow: %v", err)
+	}
+	if n, _ := svc.UnreadCount(ctx, owner); n != 1 {
+		t.Fatalf("unread after a resolvable follow = %d, want 1", n)
+	}
+	// `hidden` is the answer the statement gives when the owner has muted or
+	// blocked the follower (or either of the other exclusions): no row. That is
+	// a silent no-op, not an error, and it must write NOTHING.
+	if err := svc.NotifyFollow(ctx, fan, hidden); err != nil {
+		t.Fatalf("NotifyFollow with no recipient: %v", err)
+	}
+	if n, _ := svc.UnreadCount(ctx, owner); n != 1 {
+		t.Fatalf("unread after an unresolvable follow = %d, want 1 — a muted or blocked follower reached the inbox", n)
+	}
+	if got := len(repo.followLookups); got != 2 {
+		t.Errorf("follow lookups = %d, want 2 (the service must ask, not assume)", got)
+	}
+
+	// A lookup failure is surfaced, not swallowed, and still writes nothing.
+	repo.followErr = errors.New("boom")
+	if err := svc.NotifyFollow(ctx, fan, open); err == nil {
+		t.Error("NotifyFollow swallowed a resolution failure, want it surfaced")
+	}
+	if n, _ := svc.UnreadCount(ctx, owner); n != 1 {
+		t.Errorf("unread after a failed resolution = %d, want 1", n)
+	}
 }

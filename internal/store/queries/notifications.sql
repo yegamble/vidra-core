@@ -229,3 +229,39 @@ WHERE c.id = sqlc.arg('comment_id')
       WHERE (ub.blocker_id = ch.owner_id AND ub.blocked_id = c.user_id)
          OR (ub.blocker_id = c.user_id AND ub.blocked_id = ch.owner_id)
   );
+
+-- name: FollowNotificationRecipient :one
+-- Who should be told that their channel was followed — the channel's owner,
+-- resolved with every exclusion applied IN SQL (the same 0101/0103 idiom
+-- CommentReplyRecipient and CommentVideoOwnerRecipient follow: selection rules
+-- belong in the statement, not in an N+1 of Go lookups). No row means nobody is
+-- notified.
+--
+-- Deliberately resolved only when ALL of these hold:
+--   * the channel exists;
+--   * the owner is not the follower (no self-notification, matching every other
+--     Notify* path);
+--   * the owner is an active, non-deleted account;
+--   * the owner has not muted the follower, and neither side has blocked the
+--     other. This clause is why the query exists. A follow is the one action a
+--     muted or blocked account could still take to put its username in the
+--     muter's inbox, and it is repeatable — unfollow and follow again and the
+--     handler's `created` flag is true again, so an account the viewer has
+--     BLOCKED could ping them without limit. Every other notification path
+--     already excluded them; this one simply never did.
+SELECT ch.owner_id AS recipient_id
+FROM channels ch
+JOIN users ou ON ou.id = ch.owner_id
+WHERE ch.id = sqlc.arg('channel_id')
+  AND ch.owner_id IS DISTINCT FROM sqlc.arg('follower_id')
+  AND ou.is_active
+  AND ou.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts ma
+      WHERE ma.muter_id = ch.owner_id AND ma.muted_id = sqlc.arg('follower_id')
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE (ub.blocker_id = ch.owner_id AND ub.blocked_id = sqlc.arg('follower_id'))
+         OR (ub.blocker_id = sqlc.arg('follower_id') AND ub.blocked_id = ch.owner_id)
+  );
