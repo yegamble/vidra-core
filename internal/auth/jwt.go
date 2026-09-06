@@ -14,9 +14,23 @@ import (
 var ErrInvalidToken = errors.New("auth: invalid token")
 
 // Claims is the vidra-core access-token payload: standard registered claims plus
-// the user's role for coarse authorization.
+// the user's role for coarse authorization and, for access tokens, the id of the
+// session the token was minted from.
 type Claims struct {
 	Role string `json:"role"`
+	// SessionID binds an ACCESS token to its sessions row so revocation can
+	// reach it. Without it the JWT is self-authenticating for its whole TTL:
+	// revoking a session (sign out everywhere, a password change, deactivation,
+	// the §1 hard delete) killed only the REFRESH token, and the already-issued
+	// access token kept writing for up to JWT_ACCESS_TTL — proven in the A12
+	// deletion evidence, where a hard-deleted account created a channel, a
+	// playlist and a fresh archive of itself after its own tombstone.
+	//
+	// It is omitempty because the single-purpose mfa_token carries no session
+	// (it is minted BEFORE one exists). The auth middleware refuses an access
+	// token without it: a token that names no session cannot be checked against
+	// a revocation, so it fails closed.
+	SessionID string `json:"sid,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -44,11 +58,23 @@ func NewTokenIssuer(secret, issuer, audience string, ttl time.Duration) *TokenIs
 // TTL reports the configured access-token lifetime.
 func (t *TokenIssuer) TTL() time.Duration { return t.ttl }
 
-// Issue returns a signed access token for the given user and role.
+// Issue returns a signed token for the given user and role with NO session
+// binding. It is for single-purpose tokens that exist before a session does —
+// today only the mfa_token, which lives on its own audience and can never be
+// presented as an access token. Access tokens use IssueForSession.
 func (t *TokenIssuer) Issue(userID uuid.UUID, role string) (string, error) {
+	return t.IssueForSession(userID, role, "")
+}
+
+// IssueForSession returns a signed access token bound to sessionID. The binding
+// is what makes revocation effective: the auth middleware resolves the session
+// on every authenticated request, so revoking the row (or disabling/deleting the
+// account) invalidates this token immediately rather than at its expiry.
+func (t *TokenIssuer) IssueForSession(userID uuid.UUID, role, sessionID string) (string, error) {
 	now := t.now()
 	claims := Claims{
-		Role: role,
+		Role:      role,
+		SessionID: sessionID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID.String(),
 			Issuer:    t.issuer,

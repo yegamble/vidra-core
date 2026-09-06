@@ -766,6 +766,70 @@ func (s *Server) handleConfirmEmailVerification(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// changePasswordRequest is the POST /api/v1/auth/me/password body. The current
+// password is required for the same reason deactivation and deletion require it:
+// a stolen access token alone must not be able to take an account over, and the
+// self-service password change is the one flow that would otherwise let it.
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+func (r changePasswordRequest) Validate() []FieldError {
+	var fes []FieldError
+	if r.CurrentPassword == "" {
+		fes = append(fes, FieldError{Field: "current_password", Message: "is required"})
+	}
+	// The same policy registration and the reset flow enforce — one rule for
+	// what a vidra password may be, wherever it is set.
+	switch {
+	case len(r.NewPassword) < 8:
+		fes = append(fes, FieldError{Field: "new_password", Message: "must be at least 8 characters"})
+	case len(r.NewPassword) > maxPasswordLen:
+		fes = append(fes, FieldError{Field: "new_password", Message: "must be at most 72 characters"})
+	case r.NewPassword == r.CurrentPassword:
+		// A no-op "change" would still sign out every other device and mail a
+		// security notice, so it is refused rather than performed.
+		fes = append(fes, FieldError{Field: "new_password", Message: "must be different from the current password"})
+	}
+	return fes
+}
+
+// handleChangePassword rotates the authenticated account's password after
+// re-verifying the current one, and signs every OTHER session out — access
+// tokens included, because access tokens are session-bound. Behind requireAuth
+// AND the strict auth limiter: it is a password-guessing surface exactly like
+// login. 204 on success; a wrong current password is 403; an account with no
+// password at all (OAuth/ATProto-only) is 409 and is pointed at the reset flow.
+// The passwords are never logged, echoed, or included in the audit event.
+func (s *Server) handleChangePassword(c echo.Context) error {
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
+	}
+	var in changePasswordRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	if err := s.authsvc.ChangePassword(c.Request().Context(), userID,
+		in.CurrentPassword, in.NewPassword, sessionIDFromContext(c)); err != nil {
+		switch {
+		case errors.Is(err, auth.ErrInvalidPassword):
+			s.audit(c, observability.ActionPasswordChange, observability.ResultFailure, userID.String(), "invalid_password")
+			return echo.NewHTTPError(http.StatusForbidden, "incorrect password")
+		case errors.Is(err, auth.ErrPasswordNotSet):
+			s.audit(c, observability.ActionPasswordChange, observability.ResultFailure, userID.String(), "password_not_set")
+			return echo.NewHTTPError(http.StatusConflict,
+				"this account has no password: use the password reset flow to set one")
+		case errors.Is(err, auth.ErrAccountNotFound):
+			return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
+		}
+		return err
+	}
+	s.audit(c, observability.ActionPasswordChange, observability.ResultSuccess, userID.String(), "")
+	return c.NoContent(http.StatusNoContent)
+}
+
 // deactivateAccountRequest is the POST /api/v1/auth/me/deactivate body. The
 // current password is required to confirm a sensitive self-service action (so a
 // stolen access token alone cannot disable the account).

@@ -28,6 +28,7 @@ const (
 	ActionRegistrationReject    = "auth.registration.reject"
 	ActionPasswordResetRequest  = "auth.password_reset.request"
 	ActionPasswordResetComplete = "auth.password_reset.complete"
+	ActionPasswordChange        = "auth.password.change"
 	ActionEmailVerifyRequest    = "auth.email_verify.request"
 	ActionEmailVerifyConfirm    = "auth.email_verify.confirm"
 	ActionAccountDeactivate     = "auth.account.deactivate"

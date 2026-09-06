@@ -307,6 +307,35 @@ func (f *fakeRepo) RevokeAllUserSessions(_ context.Context, userID uuid.UUID) er
 	return nil
 }
 
+// RevokeOtherUserSessions mirrors the SQL: every session for the user EXCEPT
+// the named one.
+func (f *fakeRepo) RevokeOtherUserSessions(_ context.Context, a sqlcgen.RevokeOtherUserSessionsParams) error {
+	for _, s := range f.sessions {
+		if s.UserID == a.UserID && s.ID != a.ID {
+			s.RevokedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		}
+	}
+	return nil
+}
+
+// GetActiveSessionForAccessToken mirrors the SQL join: no row for a revoked or
+// expired session, or for a disabled/tombstoned account.
+func (f *fakeRepo) GetActiveSessionForAccessToken(_ context.Context, id uuid.UUID) (sqlcgen.GetActiveSessionForAccessTokenRow, error) {
+	s, ok := f.sessions[id]
+	if !ok || s.RevokedAt.Valid || !s.ExpiresAt.After(time.Now()) {
+		return sqlcgen.GetActiveSessionForAccessTokenRow{}, pgx.ErrNoRows
+	}
+	for _, u := range f.byEmail {
+		if u.ID == s.UserID {
+			if !u.IsActive || u.DeletedAt.Valid {
+				return sqlcgen.GetActiveSessionForAccessTokenRow{}, pgx.ErrNoRows
+			}
+			return sqlcgen.GetActiveSessionForAccessTokenRow{ID: s.ID, UserID: s.UserID}, nil
+		}
+	}
+	return sqlcgen.GetActiveSessionForAccessTokenRow{}, pgx.ErrNoRows
+}
+
 func (f *fakeRepo) UpdateUserProfile(_ context.Context, a sqlcgen.UpdateUserProfileParams) (sqlcgen.User, error) {
 	for k, u := range f.byEmail {
 		if u.ID == a.ID {

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -12,6 +13,19 @@ type captureMailer struct {
 	calls int
 	email string
 	token string
+	// changed records the addresses that got a "your password was changed"
+	// notice; failChanged makes that send fail, so a test can prove it is
+	// best-effort.
+	changed     []string
+	failChanged bool
+}
+
+func (m *captureMailer) SendPasswordChanged(_ context.Context, email string) error {
+	if m.failChanged {
+		return errors.New("mailer down")
+	}
+	m.changed = append(m.changed, email)
+	return nil
 }
 
 func (m *captureMailer) SendPasswordReset(_ context.Context, email, token string) error {

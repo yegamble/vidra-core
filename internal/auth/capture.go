@@ -28,7 +28,10 @@ type CaptureMailer struct {
 	latest       map[string]string
 	contacts     []CapturedContact
 	reportAlerts []CapturedReportAlert
-	testMessages []CapturedTestMessage
+	// passwordChanged records the addresses that received a "your password was
+	// changed" notice. No token is involved, so the address is the whole record.
+	passwordChanged []string
+	testMessages    []CapturedTestMessage
 }
 
 // CapturedContact is one contact-form message recorded by the capture mailer
@@ -56,6 +59,26 @@ func (c *CaptureMailer) store(kind TokenKind, email, token string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.latest[captureKey(kind, email)] = token
+}
+
+// SendPasswordChanged records that a password-changed notice was "sent". It
+// carries no token, so there is nothing to store beyond the recipient — which is
+// exactly what the acceptance harness asserts.
+func (c *CaptureMailer) SendPasswordChanged(_ context.Context, email string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.passwordChanged = append(c.passwordChanged, email)
+	return nil
+}
+
+// PasswordChangedNotices returns the addresses that received a password-changed
+// notice, oldest first.
+func (c *CaptureMailer) PasswordChangedNotices() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, len(c.passwordChanged))
+	copy(out, c.passwordChanged)
+	return out
 }
 
 // SendPasswordReset records the reset token instead of mailing it.

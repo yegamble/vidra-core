@@ -38,6 +38,15 @@ var (
 	// table is empty and an unclaimed owner-claim token exists, so every normal
 	// signup path refuses until POST /setup/claim-owner creates the admin.
 	ErrOwnerClaimRequired = errors.New("auth: owner claim required")
+	// ErrSessionRevoked means the access token's session no longer authorizes
+	// anything: it was revoked or has expired, the account was deactivated or
+	// hard-deleted, or the token names no session at all. Deliberately one error
+	// for all of those — the HTTP layer answers the same 401 regardless.
+	ErrSessionRevoked = errors.New("auth: session revoked")
+	// ErrPasswordNotSet means the account has no password to change (the
+	// OAuth/ATProto-only shape: an empty stored hash bcrypt can never verify).
+	// The caller is pointed at the password-reset flow, which CAN set one.
+	ErrPasswordNotSet = errors.New("auth: account has no password set")
 	// ErrOwnerClaimInvalid means the presented owner-claim token is wrong,
 	// already redeemed, or no claim is pending. Deliberately one error for all
 	// three so the endpoint is non-probing.
@@ -68,8 +77,16 @@ type Repository interface {
 
 	CreateSession(ctx context.Context, arg sqlcgen.CreateSessionParams) (sqlcgen.CreateSessionRow, error)
 	GetSessionByRefreshHash(ctx context.Context, refreshHash string) (sqlcgen.GetSessionByRefreshHashRow, error)
+	// GetActiveSessionForAccessToken is the per-request revocation check behind
+	// every authenticated route: it resolves the session an access token is
+	// bound to and returns no row when the session is revoked or expired, or the
+	// account is disabled or tombstoned.
+	GetActiveSessionForAccessToken(ctx context.Context, id uuid.UUID) (sqlcgen.GetActiveSessionForAccessTokenRow, error)
 	RevokeSession(ctx context.Context, id uuid.UUID) error
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
+	// RevokeOtherUserSessions revokes every session for the user except one —
+	// "sign out my other devices", used by the password change.
+	RevokeOtherUserSessions(ctx context.Context, arg sqlcgen.RevokeOtherUserSessionsParams) error
 
 	CreatePasswordResetToken(ctx context.Context, arg sqlcgen.CreatePasswordResetTokenParams) (sqlcgen.PasswordResetToken, error)
 	GetPasswordResetToken(ctx context.Context, tokenHash string) (sqlcgen.PasswordResetToken, error)
@@ -226,21 +243,25 @@ type Tokens struct {
 // issueTokens mints an access token and a persisted, rotating refresh token for
 // the user. The raw refresh token is returned to the caller exactly once; only
 // its hash is stored.
+// The session row is created FIRST so the access token can carry its id: the
+// binding is what lets a later revocation invalidate the access token, not just
+// the refresh token (see Claims.SessionID).
 func (s *Service) issueTokens(ctx context.Context, user sqlcgen.User, userAgent string) (Tokens, error) {
-	access, err := s.issuer.Issue(user.ID, user.Role)
-	if err != nil {
-		return Tokens{}, err
-	}
 	raw, hash, err := generateRefreshToken()
 	if err != nil {
 		return Tokens{}, err
 	}
-	if _, err := s.repo.CreateSession(ctx, sqlcgen.CreateSessionParams{
+	sess, err := s.repo.CreateSession(ctx, sqlcgen.CreateSessionParams{
 		UserID:      user.ID,
 		RefreshHash: hash,
 		UserAgent:   userAgent,
 		ExpiresAt:   s.now().Add(s.refreshTTL),
-	}); err != nil {
+	})
+	if err != nil {
+		return Tokens{}, err
+	}
+	access, err := s.issuer.IssueForSession(user.ID, user.Role, sess.ID.String())
+	if err != nil {
 		return Tokens{}, err
 	}
 	return Tokens{AccessToken: access, RefreshToken: raw}, nil

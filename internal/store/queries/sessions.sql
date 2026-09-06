@@ -26,3 +26,32 @@ WHERE user_id = $1 AND revoked_at IS NULL;
 -- name: DeleteExpiredSessions :exec
 DELETE FROM sessions
 WHERE expires_at < now();
+
+-- name: GetActiveSessionForAccessToken :one
+-- The per-request revocation check for a session-bound access token (AUTH-05).
+-- It is deliberately the cheapest thing that makes revocation reach ACCESS
+-- tokens and not just refresh tokens: one primary-key lookup on sessions plus
+-- its primary-key join to users, so an authenticated request costs a single
+-- indexed read. Re-reading the account here (rather than trusting the JWT) is
+-- what stops a DEACTIVATED or hard-deleted account's unexpired token on EVERY
+-- route at once, instead of only on the handful of handlers that happen to load
+-- the user row. It returns no row for a revoked, expired, disabled or
+-- tombstoned principal, all of which the caller maps to the same 401.
+SELECT s.id, s.user_id
+FROM sessions s
+         JOIN users u ON u.id = s.user_id
+WHERE s.id = $1
+  AND s.revoked_at IS NULL
+  AND s.expires_at > now()
+  AND u.is_active
+  AND u.deleted_at IS NULL;
+
+-- name: RevokeOtherUserSessions :exec
+-- "Sign out my other devices" — every session for the user EXCEPT the one the
+-- caller is currently using. A password change uses it so the changer is not
+-- signed out of the browser they just changed it in.
+UPDATE sessions
+SET revoked_at = now()
+WHERE user_id = $1
+  AND id <> $2
+  AND revoked_at IS NULL;

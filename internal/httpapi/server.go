@@ -1354,6 +1354,12 @@ func (s *Server) routes() {
 		api.GET("/me/search-history", s.handleGetSearchHistory, s.requireAuth)
 		api.DELETE("/me/search-history", s.handleClearSearchHistory, s.requireAuth)
 		api.DELETE("/me/search-history/:query", s.handleDeleteSearchHistoryQuery, s.requireAuth)
+		// Self-service password change (AUTH-05). Authenticated AND behind the
+		// strict auth limiter: supplying the current password makes it a
+		// password-guessing surface exactly like login, and the limiter is keyed
+		// per IP so an attacker holding one stolen access token cannot brute
+		// force the current password from it.
+		authGroup.POST("/me/password", s.handleChangePassword, append(append([]echo.MiddlewareFunc{}, authMW...), s.requireAuth)...)
 		authGroup.POST("/me/deactivate", s.handleDeactivateAccount, s.requireAuth)
 		authGroup.POST("/logout-all", s.handleLogoutAll, s.requireAuth)
 
