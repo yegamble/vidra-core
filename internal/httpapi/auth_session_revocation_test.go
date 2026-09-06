@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/vidra/vidra-core/internal/auth"
 )
+
+// (The "an access token naming no session is refused" case lives in
+// internal/auth as TestAuthenticateAccessTokenRefusesATokenWithNoSession: it is
+// a property of the seam, and asserting it there needs no forged JWT — and so no
+// second copy of the test signing secret in this package.)
 
 // authedRoutes are the routes these tests probe to prove revocation reaches
 // EVERY authenticated route, not just the handful that happen to load the user
@@ -96,37 +98,6 @@ func TestChangePasswordRevokesOtherSessionsAccessTokens(t *testing.T) {
 		`{"refresh_token":"`+first.RefreshToken+`"}`); rec.Code != http.StatusUnauthorized {
 		t.Errorf("other session refresh after password change = %d, want 401", rec.Code)
 	}
-}
-
-// TestAccessTokenWithoutASessionClaimIsRejected pins the fail-closed rule: an
-// access token that names no session cannot be checked against a revocation, so
-// it is refused. Only the previous binary could mint one, and its holder's
-// refresh token still works, so the client re-authenticates transparently.
-func TestAccessTokenWithoutASessionClaimIsRejected(t *testing.T) {
-	srv := authServer(t)
-	reg := registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
-	claims, err := srv.authsvc.Parse(reg.Token)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	legacy := mintSessionlessToken(t, claims.Subject, claims.Role)
-	assertAllRoutesUnauthorized(t, srv, legacy, "session-less token")
-}
-
-// mintSessionlessToken forges the shape the PREVIOUS binary minted: a valid
-// access token with no "sid" claim. It uses the same secret/issuer/audience as
-// authServer, so only the missing session claim distinguishes it.
-func mintSessionlessToken(t *testing.T, subject, role string) string {
-	t.Helper()
-	id, err := uuid.Parse(subject)
-	if err != nil {
-		t.Fatalf("parse subject: %v", err)
-	}
-	tok, err := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute).Issue(id, role)
-	if err != nil {
-		t.Fatalf("issue: %v", err)
-	}
-	return tok
 }
 
 // clearPasswordHash puts the account into the OAuth/ATProto-only shape (empty

@@ -5,9 +5,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/vidra/vidra-core/internal/auth"
 )
 
 // The change-password fixtures. Defined once, and the request bodies are built
@@ -164,15 +161,4 @@ func TestChangePasswordRefusesPasswordlessAccount(t *testing.T) {
 	if !strings.Contains(strings.ToLower(rec.Body.String()), "reset") {
 		t.Errorf("the refusal does not point at the reset flow: %s", rec.Body.String())
 	}
-}
-
-// authServerWithFakeRepo is authServer plus a handle on the backing fake, for
-// the tests that must put the account into a state no endpoint can produce
-// (an empty password hash, a revoked session).
-func authServerWithFakeRepo(t *testing.T) (*Server, *authFakeRepo) {
-	t.Helper()
-	repo := newAuthFakeRepo()
-	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
-	svc := auth.NewService(repo, issuer, 720*time.Hour)
-	return New(testConfig(), nil, nil, WithAuthService(svc, 15*time.Minute)), repo
 }

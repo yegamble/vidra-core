@@ -666,10 +666,20 @@ func (f *authFakeRepo) AdminUpdateUser(_ context.Context, a sqlcgen.AdminUpdateU
 
 func authServer(t *testing.T) *Server {
 	t.Helper()
+	srv, _ := authServerWithFakeRepo(t)
+	return srv
+}
+
+// authServerWithFakeRepo is authServer plus a handle on the backing fake, for
+// the tests that must put an account into a state no endpoint can produce (an
+// empty password hash, a revoked session). One constructor, so the wiring — and
+// the test signing secret — has a single definition.
+func authServerWithFakeRepo(t *testing.T) (*Server, *authFakeRepo) {
+	t.Helper()
 	repo := newAuthFakeRepo()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
 	svc := auth.NewService(repo, issuer, 720*time.Hour)
-	return New(testConfig(), nil, nil, WithAuthService(svc, 15*time.Minute))
+	return New(testConfig(), nil, nil, WithAuthService(svc, 15*time.Minute)), repo
 }
 
 func postTo(srv *Server, path, body string) *httptest.ResponseRecorder {
