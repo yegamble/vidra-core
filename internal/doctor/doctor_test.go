@@ -2237,3 +2237,50 @@ func TestStorageMigrationViaContainer(t *testing.T) {
 		}
 	})
 }
+
+// TestInstanceOwner: A16 added the 0131 owner marker, and the marker cannot be
+// backfilled on every instance. An operator whose instance has no marked owner
+// has to LEARN that from somewhere, because nothing in the console will ever
+// badge anybody and no route sets it afterwards.
+func TestInstanceOwner(t *testing.T) {
+	withDSN := func() *fakeHost {
+		h := newFakeHost()
+		h.files[filepath.Join(testRoot, "env/production.env")] = healthyEnv +
+			"DATABASE_URL=postgres://u:p@db.example.net:25060/defaultdb?sslmode=require\n"
+		return h
+	}
+
+	t.Run("a marked owner beside a second admin is the ordinary answer", func(t *testing.T) {
+		wantFinding(t, one(t, only(t, "instance owner", withDSN(), nil)), StatusOK, "the instance owner is marked", "")
+	})
+
+	t.Run("a marked owner who is also the only admin says the guard is load-bearing", func(t *testing.T) {
+		p := newFakeProber()
+		p.activeAdmins = 1
+		wantFinding(t, one(t, only(t, "instance owner", withDSN(), p)), StatusOK, "the only active admin", "")
+	})
+
+	t.Run("no marked owner warns, and says how the backfill could not tell", func(t *testing.T) {
+		p := newFakeProber()
+		p.owners = 0
+		f := one(t, only(t, "instance owner", withDSN(), p))
+		wantFinding(t, f, StatusWarn, "no account is marked as this instance's owner", "UPDATE users SET is_owner = true")
+		for _, phrase := range []string{"auth.owner_claim", "owner_claim_tokens", "NO transfer route"} {
+			if !strings.Contains(f.Detail+f.Fix, phrase) {
+				t.Errorf("the unmarked-owner finding never mentions %q: %s / %s", phrase, f.Detail, f.Fix)
+			}
+		}
+	})
+
+	t.Run("no active administrator at all is a failure, whatever the marker says", func(t *testing.T) {
+		p := newFakeProber()
+		p.owners, p.activeAdmins = 1, 0
+		wantFinding(t, one(t, only(t, "instance owner", withDSN(), p)), StatusFail, "NO active administrator", "UPDATE users SET role = 'admin'")
+	})
+
+	t.Run("a database older than the marker is a skip, not a warning", func(t *testing.T) {
+		p := newFakeProber()
+		p.ownerCountsErr = errors.New(`ERROR: column "is_owner" does not exist (SQLSTATE 42703)`)
+		wantFinding(t, one(t, only(t, "instance owner", withDSN(), p)), StatusWarn, "skipped: this database predates migration 0131", "")
+	})
+}

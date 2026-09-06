@@ -352,6 +352,15 @@ func isMissingRelation(err error) bool {
 		(strings.Contains(msg, "does not exist") && strings.Contains(msg, "relation"))
 }
 
+// isMissingColumn reports whether an error is Postgres saying the COLUMN is not
+// there — a database that has not run migration 0131 yet, which is a definitive
+// answer rather than a plumbing failure.
+func isMissingColumn(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "42703") ||
+		(strings.Contains(msg, "does not exist") && strings.Contains(msg, "column"))
+}
+
 // maxBackupAge is how old the newest successful backup may be before it is a
 // failure rather than a warning. The timer runs daily at 03:15 with up to 15
 // minutes of jitter, so 26 hours is "one run has been missed", not "the schedule
@@ -656,4 +665,96 @@ func reachSummary(err error) string {
 		}
 	}
 	return "the connection did not complete"
+}
+
+// checkInstanceOwner reports whether this instance knows who owns it, and
+// whether it still has anyone who can administer it.
+//
+// Vidra has no owner ROLE (0104: the owner is the first admin, claimed with the
+// setup token), so until 0131 nothing distinguished the founding account and any
+// admin could demote it — measured, with HTTP 200. 0131 marks it, and 0131's
+// backfill can only mark instances where the claim left a trace: an instance
+// upgraded from before 0104, or one whose claim audit row was pruned AND whose
+// claim row was re-minted, has no owner to find. That is not a fault, but it IS
+// a fact an operator needs, because there is no route that sets the marker
+// afterwards and the console will never badge anyone.
+func checkInstanceOwner(ctx context.Context, s *state) []Finding {
+	if s.envErr != nil {
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s), so there is no connection string", s.envErr))}
+	}
+	dsn := s.value("DATABASE_URL")
+	if dsn == "" {
+		return []Finding{s.instanceOwnerViaContainer(ctx)}
+	}
+	owners, admins, err := s.opt.Prober.OwnerAndAdminCounts(ctx, dsn)
+	if err != nil {
+		if isMissingRelation(err) || isMissingColumn(err) {
+			return []Finding{instanceOwnerPredatesMarker}
+		}
+		return []Finding{skipf("the owner marker could not be read: " + reachSummary(err) + " (the core ledger check above reports the connection in full)")}
+	}
+	return []Finding{instanceOwnerFinding(owners, admins)}
+}
+
+// countOwnersAndActiveAdminsSQL is the sqlc query CountOwnersAndActiveAdmins,
+// transcribed for psql. If that query changes, this has to change with it.
+const countOwnersAndActiveAdminsSQL = `SELECT count(*) FILTER (WHERE is_owner) || ' ' || count(*) FILTER (WHERE role = 'admin' AND is_active AND deleted_at IS NULL) FROM users`
+
+// instanceOwnerViaContainer asks the same question from inside the stack, which
+// is the only way when the bundled Postgres is used (it publishes no host port
+// by design). Every plumbing failure here is a SKIP: not knowing how doctor
+// would have reached the database is not evidence about who owns the instance.
+func (s *state) instanceOwnerViaContainer(ctx context.Context) Finding {
+	const noPort = "this deployment uses the bundled Postgres, which publishes no host port (by design), so the owner marker was read from inside the network"
+	running, why := s.containers(ctx)
+	if why != "" {
+		return skipf(noPort + ", and the running containers could not be inspected (" + why + ") — read it at GET /api/v1/admin/users instead, where the owner's row carries is_owner")
+	}
+	if _, ok := serviceContainer(running, "postgres"); !ok {
+		return skipf(noPort + ", and the postgres container is not running to read it from — read it at GET /api/v1/admin/users instead")
+	}
+	args := s.composeArgs("exec", "-T", "postgres", "psql",
+		"-U", orDefault(s.value("POSTGRES_USER"), "vidra"),
+		"-d", orDefault(s.value("POSTGRES_DB"), "vidra"),
+		"-tA", "-c", countOwnersAndActiveAdminsSQL)
+	out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
+	if err != nil {
+		return skipf(noPort + ", and docker is not on this host's PATH to read it from the postgres container")
+	}
+	text := strings.TrimSpace(out.Stdout)
+	var owners, admins int64
+	if n, scanErr := fmt.Sscanf(text, "%d %d", &owners, &admins); scanErr == nil && n == 2 {
+		return instanceOwnerFinding(owners, admins)
+	}
+	problem := firstLine(orDefault(out.Stderr, text))
+	if isMissingRelation(errors.New(problem)) || isMissingColumn(errors.New(problem)) {
+		return instanceOwnerPredatesMarker
+	}
+	if problem == "" {
+		problem = "it answered nothing"
+	}
+	return skipf(noPort + ", and the postgres container did not answer the query (" + problem + ") — read it at GET /api/v1/admin/users instead")
+}
+
+// instanceOwnerPredatesMarker is the answer for a database older than migration
+// 0131: the column does not exist, so there is nothing to be missing.
+var instanceOwnerPredatesMarker = skipf("this database predates migration 0131, which adds the owner marker — run the migrations and ask again")
+
+// instanceOwnerFinding is the verdict, shared so the direct-DSN path and the
+// through-the-container fallback say exactly the same thing.
+func instanceOwnerFinding(owners, activeAdmins int64) Finding {
+	if activeAdmins == 0 {
+		return failf(
+			"this instance has NO active administrator: nobody can reach its own admin console, moderation queue or settings",
+			"promote an account directly in the database (UPDATE users SET role = 'admin', is_active = true WHERE username = '…') — there is no API route for it, because every route that could do it needs an admin to call it")
+	}
+	if owners == 0 {
+		return warnf(
+			"no account is marked as this instance's owner, so every administrator here is equal: any admin can demote, deactivate or delete any other. The owner marker (migration 0131) is written only by the first-run setup claim, and this instance was claimed before it existed — its backfill needs either the auth.owner_claim audit row or a claimed owner_claim_tokens row whose claimed_at matches the founding account's created_at, and neither survived here",
+			"if you want the founding account protected, mark it directly (UPDATE users SET is_owner = true WHERE username = '…'). Take care: there is exactly one owner slot (users_single_owner_idx) and NO transfer route yet, so pick the account you mean. Nothing is broken without it — the last-admin guard still stops the console being locked out")
+	}
+	if activeAdmins == 1 {
+		return okf("the instance owner is marked and protected from other administrators — though it is the only active admin, so the last-admin guard is what is holding the console open: promote a second admin before that account goes anywhere")
+	}
+	return okf(fmt.Sprintf("the instance owner is marked: no other administrator can demote, deactivate or delete it, and %d active admins mean the last-admin guard is not load-bearing today", activeAdmins))
 }

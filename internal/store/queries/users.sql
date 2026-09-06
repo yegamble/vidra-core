@@ -267,3 +267,13 @@ WHERE u.is_active = TRUE
 SELECT count(*)::bigint
 FROM users
 WHERE role = 'admin' AND is_active AND deleted_at IS NULL;
+
+-- name: CountOwnersAndActiveAdmins :one
+-- The two numbers `vidra doctor` needs to say whether this instance's
+-- administration is safe: how many accounts carry the 0131 owner marker (0 or 1
+-- — users_single_owner_idx makes more impossible), and how many can still reach
+-- the admin console. Asked as one row because they are one question: an instance
+-- with no marked owner AND one admin is a different sentence from either alone.
+SELECT count(*) FILTER (WHERE is_owner)::bigint AS owners,
+       count(*) FILTER (WHERE role = 'admin' AND is_active AND deleted_at IS NULL)::bigint AS active_admins
+FROM users;

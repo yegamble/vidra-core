@@ -101,6 +101,11 @@ type Prober interface {
 	// same question the media-GC interlock asks, so doctor and the sweep can
 	// never disagree about whether a move is happening.
 	ActiveStorageMigration(ctx context.Context, dsn string) (bool, error)
+	// OwnerAndAdminCounts reports how many accounts carry the 0131 owner marker
+	// and how many can still administer the instance. Both come back from one
+	// row because they are one question about whether this instance can still be
+	// run, and by whom.
+	OwnerAndAdminCounts(ctx context.Context, dsn string) (owners, activeAdmins int64, err error)
 	// ServerMaxConnections reads the SERVER's max_connections. It is the other
 	// half of a question DB_MAX_CONNS alone cannot answer: the pool is a
 	// per-process budget and this is the total, so what an operator needs is the
@@ -266,6 +271,26 @@ func (RealProber) ActiveStorageMigration(ctx context.Context, dsn string) (bool,
 	}
 	defer db.Close()
 	return db.Queries().HasActiveStorageMigration(ctx)
+}
+
+// OwnerAndAdminCounts asks the database the same question the admin console
+// does, through the sqlc query rather than a hand-written SELECT that would
+// drift from it.
+func (RealProber) OwnerAndAdminCounts(ctx context.Context, dsn string) (int64, int64, error) {
+	dsn, err := addDSNParams(dsn, map[string]string{"connect_timeout": "5"})
+	if err != nil {
+		return 0, 0, err
+	}
+	db, err := store.New(ctx, dsn)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer db.Close()
+	row, err := db.Queries().CountOwnersAndActiveAdmins(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	return row.Owners, row.ActiveAdmins, nil
 }
 
 // ServerMaxConnections reads `SHOW max_connections` over a pool opened for the
