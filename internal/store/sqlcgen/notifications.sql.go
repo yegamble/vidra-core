@@ -264,19 +264,25 @@ SELECT n.id, n.type, n.actor_id, n.channel_id, n.video_id, n.comment_id,
        a.username AS actor_username, a.display_name AS actor_display_name,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        v.title AS video_title,
-       -- The moderator's rejection note (0130), and ONLY on the notification
-       -- that exists to deliver it. Joining it unconditionally would hand the
-       -- note to every other video-linked notification about the same video
-       -- (new_video fans out to followers), so the type is part of the
-       -- predicate rather than something the Go layer is trusted to remember.
-       CASE WHEN n.type = 'video_rejected'
-            THEN COALESCE(vr.note, '') ELSE '' END::text AS moderation_note,
+       -- The moderator's prose, and ONLY on the two notifications that exist to
+       -- deliver it: the rejection note (0130) on video_rejected, and the block
+       -- reason (video_blocks.reason, creator-facing since the A16 ruling) on
+       -- video_blocked. Joining either unconditionally would hand it to every
+       -- other video-linked notification about the same video (new_video fans
+       -- out to followers), so the type is part of the predicate rather than
+       -- something the Go layer is trusted to remember. A lifted block deletes
+       -- its row, so an old video_blocked notice silently loses its reason and
+       -- renders as the neutral notice — correct: the reason no longer applies.
+       CASE WHEN n.type = 'video_rejected' THEN COALESCE(vr.note, '')
+            WHEN n.type = 'video_blocked'  THEN COALESCE(vb.reason, '')
+            ELSE '' END::text AS moderation_note,
        r.status AS report_status, r.target_type AS report_target_type
 FROM notifications n
 LEFT JOIN users a ON a.id = n.actor_id
 LEFT JOIN channels c ON c.id = n.channel_id
 LEFT JOIN videos v ON v.id = n.video_id
 LEFT JOIN video_rejections vr ON vr.video_id = n.video_id
+LEFT JOIN video_blocks vb ON vb.video_id = n.video_id
 LEFT JOIN reports r ON r.id = n.report_id
 WHERE n.user_id = $1
   AND (NOT $2::bool OR n.read_at IS NULL)

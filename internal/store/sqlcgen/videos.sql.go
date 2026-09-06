@@ -1885,7 +1885,16 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        -- 'published' while it 404s for everyone including them (A16 slice 2).
        -- It is selected only on the OWNER view; the public listing below never
        -- returns a blocked row at all.
-       EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked
+       EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked,
+       -- ...and WHY, which the A16 ruling made creator-facing: a creator told
+       -- only that something was taken down cannot appeal it or fix the next
+       -- upload. The subselect is correlated on the same row as ` + "`" + `blocked` + "`" + `, so an
+       -- unblocked video reads '' and the marker and its reason can never
+       -- disagree. This is the OWNER listing; no public query selects it.
+       COALESCE(
+           (SELECT b.reason FROM video_blocks b WHERE b.video_id = v.id),
+           ''
+       )::text AS block_reason
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -1926,6 +1935,7 @@ type ListVideosByChannelRow struct {
 	SensitiveReason    string             `json:"sensitive_reason"`
 	ShortCode          string             `json:"short_code"`
 	Blocked            bool               `json:"blocked"`
+	BlockReason        string             `json:"block_reason"`
 }
 
 // A channel's videos (owner view, all states) with discovery-card data plus
@@ -1968,6 +1978,7 @@ func (q *Queries) ListVideosByChannel(ctx context.Context, arg ListVideosByChann
 			&i.SensitiveReason,
 			&i.ShortCode,
 			&i.Blocked,
+			&i.BlockReason,
 		); err != nil {
 			return nil, err
 		}

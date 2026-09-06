@@ -866,3 +866,72 @@ func TestNotifyFollowResolvesItsOwnRecipient(t *testing.T) {
 		t.Errorf("unread after a failed resolution = %d, want 1", n)
 	}
 }
+
+// TestVideoUnblockedIsAKnownPreferenceType keeps the unblock notice registered
+// with the preference model, for the same reason its sibling is: a type missing
+// from KnownTypes cannot be turned off by the person it reaches. This one is
+// good news rather than bad, but a creator who silenced video_blocked and still
+// received video_unblocked would be reading half a conversation.
+func TestVideoUnblockedIsAKnownPreferenceType(t *testing.T) {
+	if !knownType(TypeVideoUnblocked) {
+		t.Fatal("video_unblocked is not a known notification type")
+	}
+	found := false
+	for _, typ := range KnownTypes() {
+		if typ == TypeVideoUnblocked {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("KnownTypes() = %v, missing %s", KnownTypes(), TypeVideoUnblocked)
+	}
+	prefs, err := NewService(&fakeRepo{}).Prefs(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("Prefs: %v", err)
+	}
+	if enabled, ok := prefs[TypeVideoUnblocked]; !ok || !enabled {
+		t.Fatalf("prefs[%s] = (%v, %v), want (true, true) by default", TypeVideoUnblocked, enabled, ok)
+	}
+}
+
+// TestNotifyVideoUnblockedSkipsSelfAndDisabled proves the two suppressions every
+// Notify* method shares on the unblock notice, and that the moderator is not
+// stored as its actor — the block notice hides the moderator's identity from the
+// creator and lifting the block must not disclose it either.
+func TestNotifyVideoUnblockedSkipsSelfAndDisabled(t *testing.T) {
+	ctx := context.Background()
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	self, videoID := uuid.New(), uuid.New()
+	if err := svc.NotifyVideoUnblocked(ctx, self, self, videoID); err != nil {
+		t.Fatalf("self-unblock notify: %v", err)
+	}
+	if len(repo.notifs) != 0 {
+		t.Fatalf("a moderator unblocking their own video notified themselves: %+v", repo.notifs)
+	}
+
+	owner := uuid.New()
+	if err := svc.SetPrefs(ctx, owner, map[string]bool{TypeVideoUnblocked: false}); err != nil {
+		t.Fatalf("SetPrefs: %v", err)
+	}
+	if err := svc.NotifyVideoUnblocked(ctx, owner, uuid.New(), videoID); err != nil {
+		t.Fatalf("notify with the type disabled: %v", err)
+	}
+	if len(repo.notifs) != 0 {
+		t.Fatalf("video_unblocked delivered to a recipient who turned it off: %+v", repo.notifs)
+	}
+
+	other := uuid.New()
+	if err := svc.NotifyVideoUnblocked(ctx, other, uuid.New(), videoID); err != nil {
+		t.Fatalf("notify: %v", err)
+	}
+	if len(repo.notifs) != 1 || repo.notifs[0].Type != TypeVideoUnblocked {
+		t.Fatalf("notifications = %+v, want one video_unblocked", repo.notifs)
+	}
+	if repo.notifs[0].ActorID.Valid {
+		t.Error("video_unblocked stored the moderator as its actor")
+	}
+	if !repo.notifs[0].VideoID.Valid {
+		t.Error("video_unblocked carries no video, so it cannot link back to the restored video")
+	}
+}
