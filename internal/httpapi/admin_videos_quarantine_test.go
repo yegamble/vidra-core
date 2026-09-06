@@ -245,10 +245,11 @@ func TestQuarantineRejectNotifiesOwner(t *testing.T) {
 	}
 	var notifs struct {
 		Notifications []struct {
-			Type       string          `json:"type"`
-			VideoID    string          `json:"video_id"`
-			VideoTitle string          `json:"video_title"`
-			Actor      json.RawMessage `json:"actor"`
+			Type           string          `json:"type"`
+			VideoID        string          `json:"video_id"`
+			VideoTitle     string          `json:"video_title"`
+			ModerationNote string          `json:"moderation_note"`
+			Actor          json.RawMessage `json:"actor"`
 		} `json:"notifications"`
 	}
 	_ = json.Unmarshal(nrec.Body.Bytes(), &notifs)
@@ -262,10 +263,44 @@ func TestQuarantineRejectNotifiesOwner(t *testing.T) {
 			if len(n.Actor) != 0 {
 				t.Errorf("video_rejected exposes the moderator: %s", n.Actor)
 			}
+			// The whole point of asking a moderator to write a reason: the
+			// creator reads it. Before migration 0130 the prose was accepted by
+			// the route and then discarded — no column in the database held it —
+			// while the quarantine UI told the moderator it was "recorded".
+			if n.ModerationNote != "spam" {
+				t.Errorf("video_rejected moderation_note = %q, want the moderator's note back", n.ModerationNote)
+			}
 		}
 	}
 	if !foundNotif {
 		t.Fatalf("owner got no video_rejected notification: %+v", notifs.Notifications)
+	}
+
+	// Staff read the same note back on the video's moderation-inventory row.
+	arec := getWithAuth(srv, "/api/v1/admin/videos?q=spammy", admin)
+	if arec.Code != http.StatusOK {
+		t.Fatalf("admin videos = %d; body=%s", arec.Code, arec.Body.String())
+	}
+	var inventory struct {
+		Videos []struct {
+			ID             string `json:"id"`
+			State          string `json:"state"`
+			ModerationNote string `json:"moderation_note"`
+		} `json:"videos"`
+	}
+	_ = json.Unmarshal(arec.Body.Bytes(), &inventory)
+	foundRow := false
+	for _, v := range inventory.Videos {
+		if v.ID != vid {
+			continue
+		}
+		foundRow = true
+		if v.State != "failed" || v.ModerationNote != "spam" {
+			t.Errorf("moderation inventory row = (%q, %q), want (failed, spam)", v.State, v.ModerationNote)
+		}
+	}
+	if !foundRow {
+		t.Fatalf("rejected video absent from the moderation inventory: %+v", inventory.Videos)
 	}
 
 	// Audited without moderator prose; state-guarded on repeat.

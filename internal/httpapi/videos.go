@@ -240,6 +240,14 @@ type videoView struct {
 	// exists; omitted when never scheduled. State stays 'scheduled' (public
 	// surfaces filter on state=published) until the sweeper publishes it.
 	PublishAt *time.Time `json:"publish_at,omitempty"`
+	// Blocked marks a video a moderator has taken down, and is emitted ONLY on
+	// the owner/editor channel-management listing (and only when true). A block
+	// changes neither state nor privacy, so without it that listing shows a
+	// blocked video as "published" while it 404s for everyone including its
+	// owner — which is exactly what A16 slice 2 measured. Public feeds never
+	// contain a blocked row, so it never appears there. The block REASON is
+	// deliberately absent: that prose is staff-only.
+	Blocked bool `json:"blocked,omitempty"`
 	// OriginallyPublishedAt is when the video was first published ELSEWHERE
 	// (migration 0119) — a PeerTube import's originallyPublishedAt, or a date the
 	// creator set by hand. Omitted when unset, which is the case for everything
@@ -661,6 +669,7 @@ func feedItemView(it video.FeedItem) videoView {
 	if it.PublishAt != nil {
 		v.PublishAt = it.PublishAt // owner (studio) list: scheduled badge
 	}
+	v.Blocked = it.Blocked // owner (studio) list: blocked badge
 	if it.Remote {
 		v.Remote = true
 		v.ChannelID = "" // no local channel; omitted from the JSON
@@ -1734,7 +1743,30 @@ func (s *Server) videoReadBase(c echo.Context, videoID uuid.UUID) (sqlcgen.GetVi
 	if transcodingHidesVideo(c, v.State, v.OwnerID) {
 		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
+	if rejectedHidesVideo(c, v.State, v.OwnerID) {
+		return sqlcgen.GetVideoByIDRow{}, echo.NewHTTPError(http.StatusNotFound, "video not found")
+	}
 	return v, nil
+}
+
+// rejectedHidesVideo keeps a REJECTED upload (quarantine sets state 'failed',
+// not privacy) hidden from everyone but its owner and moderation staff. The
+// detail route has always applied this rule in videoVisibleForDetail; it lives
+// here too because GET /videos/{id}/embed-privacy reaches the row through
+// videoReadBase, which knew about blocks, quarantine, scheduled and transcoding
+// and not about 'failed' — so it answered 200 to an anonymous caller for a video
+// the moderation queue had just refused (A16 slice 2, finding 5).
+//
+// Deliberately NOT extended to 'draft'/'processing': those stay readable as
+// metadata by the compatibility rule videoVisibleForMedia documents, and the
+// detail route answers 200 for them too. The two routes must agree, which is the
+// whole point of the fix.
+func rejectedHidesVideo(c echo.Context, state string, ownerID uuid.UUID) bool {
+	if state != "failed" {
+		return false
+	}
+	userID, role, ok := principalFromContext(c)
+	return !ok || (userID != ownerID && !isStaff(role))
 }
 
 // blockVideoRequest is the optional POST /admin/videos/{id}/block body; the reason
@@ -1770,6 +1802,14 @@ func (s *Server) handleBlockVideo(c echo.Context) error {
 	// the edge must be evicted — but a blocked video that keeps streaming from a
 	// CDN is not blocked. Snapshot before, invalidate after (media_purge.go).
 	purge := s.videoEdgePurgeSnapshot(c.Request().Context(), id)
+	// Read the owner BEFORE the block lands: afterwards every ordinary read path
+	// (this one included) answers 404, so a lookup after the fact would find
+	// nobody to notify. A miss here is not fatal — the block still applies and
+	// the notification is best-effort, like every other Notify* call site.
+	owner, ownerKnown := uuid.Nil, false
+	if v, verr := s.videosvc.GetByID(c.Request().Context(), id); verr == nil {
+		owner, ownerKnown = v.OwnerID, true
+	}
 	if err := s.moderationsvc.BlockVideo(c.Request().Context(), userID, id, strings.TrimSpace(in.Reason)); err != nil {
 		if errors.Is(err, moderation.ErrVideoNotFound) {
 			s.audit(c, observability.ActionVideoBlock, observability.ResultFailure, userID.String(), "not_found")
@@ -1778,6 +1818,17 @@ func (s *Server) handleBlockVideo(c echo.Context) error {
 		return err
 	}
 	s.audit(c, observability.ActionVideoBlock, observability.ResultSuccess, userID.String(), "")
+	// Tell the creator. Before this, a block was invisible to the person it was
+	// aimed at: the video 404'd for them too, it left every public surface, and
+	// their own management listing still read "published". The notification is
+	// deliberately neutral — no moderator, no reason — because whether a creator
+	// may read the block reason is an open product ruling and the reason is
+	// staff-only until it is settled.
+	if ownerKnown && s.notifsvc != nil {
+		if nerr := s.notifsvc.NotifyVideoBlocked(c.Request().Context(), owner, userID, id); nerr != nil {
+			s.logger.WarnContext(c.Request().Context(), "notify video block failed", "error", nerr, "video_id", id)
+		}
+	}
 	// Search: suppress the doc (search-service W4). Best-effort.
 	s.searchEvents.EnqueueVideoSuppress(c.Request().Context(), id, searchevents.SuppressBlocked)
 	s.purgeVideoEdgeCopies(c.Request().Context(), id, purge)

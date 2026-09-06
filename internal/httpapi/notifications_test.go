@@ -316,6 +316,12 @@ func (f *notifFakeRepo) ListNotifications(_ context.Context, a sqlcgen.ListNotif
 				tt := v.Title
 				row.VideoTitle = &tt
 			}
+			// The moderation note is joined ONLY onto video_rejected — the
+			// query's CASE, mirrored here so the fake cannot claim a note
+			// reaches a notification the SQL would leave empty.
+			if n.Type == notification.TypeVideoRejected && f.videos.rejections != nil {
+				row.ModerationNote = f.videos.rejections[uuid.UUID(n.VideoID.Bytes)]
+			}
 		}
 		if n.ReportID.Valid && f.reports != nil {
 			if r, ok := f.reports.reportByID(uuid.UUID(n.ReportID.Bytes)); ok {

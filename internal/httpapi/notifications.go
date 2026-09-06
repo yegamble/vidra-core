@@ -37,6 +37,11 @@ type notificationView struct {
 	ReportID         string `json:"report_id,omitempty"`
 	ReportStatus     string `json:"report_status,omitempty"`
 	ReportTargetType string `json:"report_target_type,omitempty"`
+	// Moderation context. Only video_rejected carries a note (migration 0130):
+	// the moderator's own words about why the upload was refused, which is what
+	// the reject dialog collects and what the creator needs in order to fix or
+	// re-upload. A BLOCK never carries one — see notification.NotifyVideoBlocked.
+	ModerationNote string `json:"moderation_note,omitempty"`
 }
 
 func newNotificationView(it notification.Item) notificationView {
@@ -54,6 +59,7 @@ func newNotificationView(it notification.Item) notificationView {
 		ReportID:           it.ReportID,
 		ReportStatus:       it.ReportStatus,
 		ReportTargetType:   it.ReportTargetType,
+		ModerationNote:     it.ModerationNote,
 	}
 	if it.ActorUsername != "" || it.ActorDisplayName != "" {
 		v.Actor = &notificationActorView{Username: it.ActorUsername, DisplayName: it.ActorDisplayName}

@@ -313,8 +313,10 @@ func (r addPlaylistItemRequest) Validate() []FieldError {
 	return nil
 }
 
-// handleAddPlaylistItem appends a public, published video to a playlist owned by
-// the caller (idempotent). A non-public/unpublished or unknown video is 404.
+// handleAddPlaylistItem appends a public, published, unblocked video to a
+// playlist owned by the caller (idempotent). A non-public/unpublished, blocked
+// or unknown video is 404 — one answer, so the route is not an existence oracle
+// for content a moderator has taken down.
 func (s *Server) handleAddPlaylistItem(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
@@ -333,12 +335,23 @@ func (s *Server) handleAddPlaylistItem(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	ctx := c.Request().Context()
-	// Only public, published videos can be added.
+	// Only public, published videos can be added — and a moderator block, which
+	// changes NEITHER of those, must count too. Without this a blocked video
+	// could still be appended (A16 slice 2, finding 6): the read side filters it
+	// so the row was inert, but it became a live item again the moment the block
+	// was lifted, and a write that succeeds on content the instance has taken
+	// down is the wrong answer. videoHiddenByBlock is the same helper every read
+	// path uses, so staff keep their inspection exemption here as they do there.
 	if s.videosvc != nil {
 		v, verr := s.videosvc.GetByID(ctx, videoID)
 		if verr != nil || v.State != "published" || v.Privacy != "public" {
 			return echo.NewHTTPError(http.StatusNotFound, "video not found")
 		}
+	}
+	if hidden, herr := s.videoHiddenByBlock(c, videoID); herr != nil {
+		return herr
+	} else if hidden {
+		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
 	if err := s.playlistsvc.AddItem(ctx, userID, id, videoID); err != nil {
 		return playlistError(err)

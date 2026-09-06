@@ -9,162 +9,188 @@ import (
 	"github.com/google/uuid"
 )
 
-// TestBlockVideoModeration covers the moderator video block/unblock flow and the
-// resulting visibility change on the public detail endpoint: a blocked video is
-// hidden (404) from anonymous + regular viewers but still visible to a
-// moderator/admin (so they can confirm before unblocking).
-func TestBlockVideoModeration(t *testing.T) {
+// ownerChannelListing parses GET /channels/{handle}/videos — the OWNER's
+// management view (drafts, private and scheduled rows included), which is a
+// different surface from the public channel page.
+type ownerChannelListing struct {
+	Videos []struct {
+		ID      string `json:"id"`
+		Title   string `json:"title"`
+		State   string `json:"state"`
+		Privacy string `json:"privacy"`
+		Blocked bool   `json:"blocked"`
+	} `json:"videos"`
+	Total int64 `json:"total"`
+}
+
+func ownerListing(t *testing.T, srv *Server, handle, token string) ownerChannelListing {
+	t.Helper()
+	rec := getWithAuth(srv, "/api/v1/channels/"+handle+"/videos", token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("owner listing = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var body ownerChannelListing
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("owner listing not JSON: %v", err)
+	}
+	return body
+}
+
+// TestBlockedVideoTellsItsOwner closes the sharpest gap A16 slice 2 recorded: a
+// moderator block makes a video 404 for EVERYONE including its owner, removes it
+// from every public surface, and told the creator nothing at all — while the
+// owner's own management listing kept reading `published` with no field that
+// could say otherwise. A creator's video became unreachable to them while their
+// dashboard said it was live.
+//
+// The block itself is unchanged (state and privacy stay exactly what they were,
+// which is why the marker has to be its own column rather than something read
+// off the row): what changes is that the owner's listing now carries it and the
+// owner is notified. The notification is deliberately NEUTRAL — the moderator's
+// reason is staff-only, so this asserts the reason text appears NOWHERE in the
+// owner's notification payload.
+func TestBlockedVideoTellsItsOwner(t *testing.T) {
 	srv := videoServer(t)
-	// The first registered account ("ada") becomes admin.
 	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
-	vid := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip","privacy":"public"}`)
-	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	owner := createChannelFor(t, srv, "bob", "bob@example.test", "bobtube")
+	vid := createPublishedVideo(t, srv, owner, "bobtube", `{"title":"Owner Clip","privacy":"public"}`)
 
-	// Before blocking, a public viewer sees the video.
-	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/"+vid, "", ""); rec.Code != http.StatusOK {
-		t.Fatalf("detail before block = %d; body=%s", rec.Code, rec.Body.String())
+	before := ownerListing(t, srv, "bobtube", owner)
+	if len(before.Videos) != 1 || before.Videos[0].ID != vid {
+		t.Fatalf("owner listing before block = %+v, want the one video", before.Videos)
+	}
+	if before.Videos[0].Blocked {
+		t.Errorf("unblocked video reads blocked=true in the owner listing")
 	}
 
-	// A regular user cannot block.
-	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/videos/"+vid+"/block", `{"reason":"spam"}`, bob); rec.Code != http.StatusForbidden {
-		t.Errorf("non-mod block = %d, want 403", rec.Code)
-	}
-
-	// The admin blocks it; re-blocking is idempotent.
-	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/videos/"+vid+"/block", `{"reason":"spam"}`, admin); rec.Code != http.StatusNoContent {
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/videos/"+vid+"/block", `{"reason":"copyright-strike-prose"}`, admin); rec.Code != http.StatusNoContent {
 		t.Fatalf("block = %d; body=%s", rec.Code, rec.Body.String())
 	}
-	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/videos/"+vid+"/block", `{"reason":"still spam"}`, admin); rec.Code != http.StatusNoContent {
-		t.Errorf("re-block = %d, want 204", rec.Code)
+
+	// The block's reach is unchanged: the owner still cannot read the video.
+	if rec := getVideo(srv, vid, owner); rec.Code != http.StatusNotFound {
+		t.Errorf("owner get blocked video = %d, want 404 (the block must not be weakened)", rec.Code)
 	}
 
-	// Anonymous + regular viewers now get 404; the admin (mod role) can still see it.
-	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/"+vid, "", ""); rec.Code != http.StatusNotFound {
-		t.Errorf("anon detail after block = %d, want 404", rec.Code)
+	after := ownerListing(t, srv, "bobtube", owner)
+	if len(after.Videos) != 1 {
+		t.Fatalf("owner listing after block = %+v, want the video still listed", after.Videos)
 	}
-	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/"+vid, "", bob); rec.Code != http.StatusNotFound {
-		t.Errorf("user detail after block = %d, want 404", rec.Code)
+	if !after.Videos[0].Blocked {
+		t.Errorf("owner listing after block = %+v, want blocked=true", after.Videos[0])
 	}
-	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/"+vid, "", admin); rec.Code != http.StatusOK {
-		t.Errorf("admin detail after block = %d, want 200 (mods can still view)", rec.Code)
+	if after.Videos[0].State != "published" {
+		t.Errorf("state after block = %q, want published (a block changes neither state nor privacy)", after.Videos[0].State)
 	}
 
-	// The admin unblocks it; it is visible to the public again. Unblocking again is idempotent.
+	// The owner is told, without the moderator's identity or prose.
+	nrec := getWithAuth(srv, "/api/v1/me/notifications", owner)
+	if nrec.Code != http.StatusOK {
+		t.Fatalf("notifications = %d; body=%s", nrec.Code, nrec.Body.String())
+	}
+	if strings.Contains(nrec.Body.String(), "copyright-strike-prose") {
+		t.Errorf("the moderator's block reason reached the creator: %s", nrec.Body.String())
+	}
+	var notifs struct {
+		Notifications []struct {
+			Type       string          `json:"type"`
+			VideoID    string          `json:"video_id"`
+			VideoTitle string          `json:"video_title"`
+			Actor      json.RawMessage `json:"actor"`
+		} `json:"notifications"`
+	}
+	_ = json.Unmarshal(nrec.Body.Bytes(), &notifs)
+	found := false
+	for _, n := range notifs.Notifications {
+		if n.Type != "video_blocked" {
+			continue
+		}
+		found = true
+		if n.VideoID != vid || n.VideoTitle != "Owner Clip" {
+			t.Errorf("video_blocked context = (%q, %q), want (%s, Owner Clip)", n.VideoID, n.VideoTitle, vid)
+		}
+		if len(n.Actor) != 0 {
+			t.Errorf("video_blocked exposes the moderator: %s", n.Actor)
+		}
+	}
+	if !found {
+		t.Fatalf("owner got no video_blocked notification: %+v", notifs.Notifications)
+	}
+
+	// Unblocking clears the marker again.
 	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/videos/"+vid+"/block", "", admin); rec.Code != http.StatusNoContent {
 		t.Fatalf("unblock = %d; body=%s", rec.Code, rec.Body.String())
 	}
-	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/"+vid, "", ""); rec.Code != http.StatusOK {
-		t.Errorf("anon detail after unblock = %d, want 200", rec.Code)
-	}
-	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/videos/"+vid+"/block", "", admin); rec.Code != http.StatusNoContent {
-		t.Errorf("idempotent unblock = %d, want 204", rec.Code)
+	if unblocked := ownerListing(t, srv, "bobtube", owner); unblocked.Videos[0].Blocked {
+		t.Errorf("owner listing after unblock still reads blocked=true")
 	}
 }
 
-// blockedListBody parses GET /admin/videos/blocked.
-type blockedListBody struct {
-	Videos []struct {
-		VideoID            string `json:"video_id"`
-		Title              string `json:"title"`
-		ChannelHandle      string `json:"channel_handle"`
-		ChannelDisplayName string `json:"channel_display_name"`
-		Reason             string `json:"reason"`
-		BlockedBy          string `json:"blocked_by"`
-	} `json:"videos"`
-	Limit  int `json:"limit"`
-	Offset int `json:"offset"`
-}
-
-// TestListBlockedVideos covers the moderation block-list endpoint: it lists
-// currently-blocked videos newest-first with the channel + reason + who blocked
-// them, drops a video on unblock, and is restricted to moderators/admins.
-func TestListBlockedVideos(t *testing.T) {
+// TestPlaylistAddRejectsBlockedVideo closes A16 slice 2's finding 6:
+// handleAddPlaylistItem asked only "public and published?", which a moderator
+// block changes neither of, so a blocked video could still be appended to a
+// playlist. The read side filters it out, so the row was inert — but a write
+// that succeeds on content the instance has taken down is the wrong answer, and
+// it becomes a live item the moment the block is lifted.
+func TestPlaylistAddRejectsBlockedVideo(t *testing.T) {
 	srv := videoServer(t)
 	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
-	v1 := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip one","privacy":"public"}`)
-	v2 := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip two","privacy":"public"}`)
-	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	viewer := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	vid := createPublishedVideo(t, srv, admin, "ada", `{"title":"Taken Down","privacy":"public"}`)
+	pl := createPlaylist(t, srv, viewer, `{"title":"Faves"}`)
 
-	// Empty before any block.
-	rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/videos/blocked", "", admin)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("blocked list = %d; body=%s", rec.Code, rec.Body.String())
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/playlists/"+pl.ID+"/videos", `{"video_id":"`+vid+`"}`, viewer); rec.Code != http.StatusNoContent {
+		t.Fatalf("add before block = %d; body=%s", rec.Code, rec.Body.String())
 	}
-	var empty blockedListBody
-	_ = json.Unmarshal(rec.Body.Bytes(), &empty)
-	if len(empty.Videos) != 0 {
-		t.Fatalf("blocked before block = %d, want 0", len(empty.Videos))
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/playlists/"+pl.ID+"/videos/"+vid, "", viewer); rec.Code != http.StatusNoContent {
+		t.Fatalf("remove = %d", rec.Code)
 	}
 
-	// Block v1 then v2.
-	for _, b := range []struct{ id, reason string }{{v1, "spam"}, {v2, "abuse"}} {
-		if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/videos/"+b.id+"/block", `{"reason":"`+b.reason+`"}`, admin); rec.Code != http.StatusNoContent {
-			t.Fatalf("block %s = %d; body=%s", b.id, rec.Code, rec.Body.String())
-		}
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/videos/"+vid+"/block", `{"reason":"spam"}`, admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("block = %d; body=%s", rec.Code, rec.Body.String())
 	}
-
-	// A regular user cannot read the block-list.
-	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/videos/blocked", "", bob); rec.Code != http.StatusForbidden {
-		t.Errorf("non-mod blocked list = %d, want 403", rec.Code)
-	}
-	// Anonymous → 401.
-	if rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/videos/blocked", "", ""); rec.Code != http.StatusUnauthorized {
-		t.Errorf("anon blocked list = %d, want 401", rec.Code)
-	}
-
-	// The admin sees both, newest block first (v2, then v1), with full context.
-	var body blockedListBody
-	_ = json.Unmarshal(sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/videos/blocked", "", admin).Body.Bytes(), &body)
-	if len(body.Videos) != 2 {
-		t.Fatalf("blocked list = %d, want 2; body=%+v", len(body.Videos), body)
-	}
-	first := body.Videos[0]
-	if first.VideoID != v2 || first.Title != "Clip two" || first.Reason != "abuse" ||
-		first.ChannelHandle != "ada" || first.ChannelDisplayName == "" || first.BlockedBy != "ada" {
-		t.Errorf("first blocked = %+v, want v2/Clip two/abuse/ada/<name>/ada", first)
-	}
-	if body.Videos[1].VideoID != v1 || body.Videos[1].Reason != "spam" {
-		t.Errorf("second blocked = %+v, want v1/spam", body.Videos[1])
-	}
-
-	// Unblocking v1 drops it from the list.
-	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/videos/"+v1+"/block", "", admin); rec.Code != http.StatusNoContent {
-		t.Fatalf("unblock = %d", rec.Code)
-	}
-	var after blockedListBody
-	_ = json.Unmarshal(sendJSONAuth(srv, http.MethodGet, "/api/v1/admin/videos/blocked", "", admin).Body.Bytes(), &after)
-	if len(after.Videos) != 1 || after.Videos[0].VideoID != v2 {
-		t.Errorf("blocked after unblock = %+v, want [v2]", after.Videos)
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/playlists/"+pl.ID+"/videos", `{"video_id":"`+vid+`"}`, viewer); rec.Code != http.StatusNotFound {
+		t.Errorf("add blocked video = %d, want 404 (same answer as an unknown id)", rec.Code)
 	}
 }
 
-// TestBlockVideoNotFoundValidationAndAuth covers the unknown-video, over-length
-// reason, and unauthenticated cases for the block endpoints.
-func TestBlockVideoNotFoundValidationAndAuth(t *testing.T) {
-	srv := videoServer(t)
+// TestEmbedPrivacyHidesRejectedVideo closes A16 slice 2's finding 5. The detail
+// route hides a rejected (state=failed) upload from everyone but its owner and
+// staff, but GET /videos/{id}/embed-privacy reaches the row through
+// videoReadBase, which gated blocks, quarantine, scheduled and transcoding and
+// simply did not know about `failed` — so it answered 200 to an anonymous
+// caller for a video the moderation queue had just refused. It leaks no content,
+// but it is an existence oracle contradicting the surface promise, and the two
+// routes must answer the same question the same way.
+func TestEmbedPrivacyHidesRejectedVideo(t *testing.T) {
+	srv, _, _, _, repo := videoServerFull(t, testConfig())
 	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
-	vid := createPublishedVideo(t, srv, admin, "ada", `{"title":"Clip","privacy":"public"}`)
+	owner := createChannelFor(t, srv, "bob", "bob@example.test", "bobtube")
+	vid := createPublishedVideo(t, srv, owner, "bobtube", `{"title":"Refused","privacy":"public"}`)
 
-	// Blocking an unknown video → 404.
-	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/videos/"+uuid.New().String()+"/block", `{"reason":"x"}`, admin); rec.Code != http.StatusNotFound {
-		t.Errorf("block unknown = %d, want 404", rec.Code)
+	embed := func(token string) int {
+		return sendJSONAuth(srv, http.MethodGet, "/api/v1/videos/"+vid+"/embed-privacy", "", token).Code
+	}
+	if got := embed(""); got != http.StatusOK {
+		t.Fatalf("anonymous embed-privacy on a published video = %d, want 200", got)
 	}
 
-	// An over-length reason → 422 (the block request's own validation).
-	tooLong := `{"reason":"` + strings.Repeat("a", maxReportReasonLen+1) + `"}`
-	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/videos/"+vid+"/block", tooLong, admin); rec.Code != http.StatusUnprocessableEntity {
-		t.Errorf("over-length reason = %d, want 422", rec.Code)
-	}
+	// Drive the row to `failed`, which is exactly what a rejection leaves behind.
+	row := repo.videos[uuid.MustParse(vid)]
+	row.State = "failed"
+	repo.videos[uuid.MustParse(vid)] = row
 
-	// Auth required on both routes.
-	someID := uuid.New().String()
-	cases := []struct{ method, path, body string }{
-		{http.MethodPost, "/api/v1/admin/videos/" + someID + "/block", `{"reason":"x"}`},
-		{http.MethodDelete, "/api/v1/admin/videos/" + someID + "/block", ""},
+	if got := embed(""); got != http.StatusNotFound {
+		t.Errorf("anonymous embed-privacy on a rejected video = %d, want 404", got)
 	}
-	for _, tc := range cases {
-		if rec := sendJSONAuth(srv, tc.method, tc.path, tc.body, ""); rec.Code != http.StatusUnauthorized {
-			t.Errorf("anon %s %s = %d, want 401", tc.method, tc.path, rec.Code)
-		}
+	if got := embed(owner); got != http.StatusOK {
+		t.Errorf("owner embed-privacy on their rejected video = %d, want 200", got)
+	}
+	if got := embed(admin); got != http.StatusOK {
+		t.Errorf("staff embed-privacy on a rejected video = %d, want 200", got)
+	}
+	// The detail route already answered this way; the two must agree.
+	if got := getVideo(srv, vid, "").Code; got != http.StatusNotFound {
+		t.Errorf("anonymous detail on a rejected video = %d, want 404", got)
 	}
 }

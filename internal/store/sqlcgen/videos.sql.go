@@ -732,7 +732,7 @@ func (q *Queries) GetVideoIDByShortCode(ctx context.Context, shortCode string) (
 }
 
 const listAdminVideos = `-- name: ListAdminVideos :many
-SELECT inventory.id, inventory.title, inventory.privacy, inventory.state, inventory.channel_handle, inventory.channel_display_name, inventory.views, inventory.created_at, inventory.duration_seconds, inventory.is_local, inventory.origin_domain, inventory.watch_url, inventory.is_sensitive, inventory.external_link, inventory.has_thumbnail, inventory.has_original, inventory.hls_count, inventory.web_video_count, inventory.size_bytes, inventory.blocked, inventory.like_count, inventory.comment_count
+SELECT inventory.id, inventory.title, inventory.privacy, inventory.state, inventory.channel_handle, inventory.channel_display_name, inventory.views, inventory.created_at, inventory.duration_seconds, inventory.is_local, inventory.origin_domain, inventory.watch_url, inventory.is_sensitive, inventory.external_link, inventory.has_thumbnail, inventory.has_original, inventory.hls_count, inventory.web_video_count, inventory.size_bytes, inventory.blocked, inventory.moderation_note, inventory.like_count, inventory.comment_count
 FROM (
     SELECT v.id, v.title, v.privacy, v.state,
            c.handle AS channel_handle, c.display_name AS channel_display_name,
@@ -753,6 +753,11 @@ FROM (
                COALESCE((SELECT sum(r.size_bytes) FROM video_renditions r WHERE r.video_id = v.id), 0)
            )::bigint AS size_bytes,
            EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked,
+           -- The moderator's rejection note (0130) — the staff read-back of the
+           -- prose the reject dialog collects. '' when the video was never
+           -- rejected; the remote arm below is always '' (a federated row
+           -- cannot be quarantined here).
+           COALESCE((SELECT rj.note FROM video_rejections rj WHERE rj.video_id = v.id), '')::text AS moderation_note,
            (SELECT count(*) FROM video_ratings vr
              WHERE vr.video_id = v.id AND vr.rating = 'like')::bigint AS like_count,
            (SELECT count(*) FROM comments cm
@@ -781,6 +786,7 @@ FROM (
            0::int AS web_video_count,
            0::bigint AS size_bytes,
            EXISTS (SELECT 1 FROM remote_video_blocks b WHERE b.remote_video_id = rv.id) AS blocked,
+           ''::text AS moderation_note,
            0::bigint AS like_count,
            0::bigint AS comment_count
     FROM remote_videos rv
@@ -856,6 +862,7 @@ type ListAdminVideosRow struct {
 	WebVideoCount      int32     `json:"web_video_count"`
 	SizeBytes          int64     `json:"size_bytes"`
 	Blocked            bool      `json:"blocked"`
+	ModerationNote     string    `json:"moderation_note"`
 	LikeCount          int64     `json:"like_count"`
 	CommentCount       int64     `json:"comment_count"`
 }
@@ -922,6 +929,7 @@ func (q *Queries) ListAdminVideos(ctx context.Context, arg ListAdminVideosParams
 			&i.WebVideoCount,
 			&i.SizeBytes,
 			&i.Blocked,
+			&i.ModerationNote,
 			&i.LikeCount,
 			&i.CommentCount,
 		); err != nil {
@@ -1871,7 +1879,13 @@ SELECT v.id, v.channel_id, v.title, v.description, v.privacy, v.state,
        ) AS has_thumbnail,
        c.handle AS channel_handle, c.display_name AS channel_display_name,
        au.display_name AS author_display_name,
-       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code
+       vm.duration_seconds, v.is_sensitive, v.sensitive_reason, v.short_code,
+       -- A moderator block changes neither state nor privacy, so without this
+       -- column the owner's own management list shows a blocked video as
+       -- 'published' while it 404s for everyone including them (A16 slice 2).
+       -- It is selected only on the OWNER view; the public listing below never
+       -- returns a blocked row at all.
+       EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id) AS blocked
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
@@ -1911,6 +1925,7 @@ type ListVideosByChannelRow struct {
 	IsSensitive        bool               `json:"is_sensitive"`
 	SensitiveReason    string             `json:"sensitive_reason"`
 	ShortCode          string             `json:"short_code"`
+	Blocked            bool               `json:"blocked"`
 }
 
 // A channel's videos (owner view, all states) with discovery-card data plus
@@ -1952,6 +1967,7 @@ func (q *Queries) ListVideosByChannel(ctx context.Context, arg ListVideosByChann
 			&i.IsSensitive,
 			&i.SensitiveReason,
 			&i.ShortCode,
+			&i.Blocked,
 		); err != nil {
 			return nil, err
 		}
