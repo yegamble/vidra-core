@@ -18272,9 +18272,14 @@ components:
           description: Items whose video does not exist on this instance.
         follows_created:
           type: integer
+          description: Follows this import actually created.
         follows_skipped:
           type: integer
-          description: Follows of channels not present locally.
+          description: >-
+            Follows the import did NOT create: the channel is not present
+            locally (unknown or remote handle), or the caller already follows
+            it. follows_created + follows_skipped equals the archive's follow
+            count.
         notification_prefs_applied:
           type: integer
         notification_prefs_skipped:
