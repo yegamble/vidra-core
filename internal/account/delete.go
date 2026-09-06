@@ -36,8 +36,10 @@ const anonymizeAttempts = 3
 //   - Per-user rows are hard-deleted: ratings, saved videos, watch history,
 //     playlists, follows (local + remote), mutes (accounts + instances, both
 //     directions), blocks (both directions), OAuth identities, MFA settings +
-//     recovery codes, notifications + prefs, reset/verification tokens, the
-//     ActivityPub account actor key, profile images, and any export archives.
+//     recovery codes, the encrypted-messaging device directory (and its
+//     one-time keys, by cascade), notifications + prefs, reset/verification
+//     tokens, the ActivityPub account actor key, profile images, and any export
+//     archives.
 //   - DM messages remain (the counterpart's copy of a conversation is their
 //     data); the sender resolves to the anonymised placeholder.
 //   - All sessions are revoked.
@@ -128,6 +130,7 @@ func (s *Service) Delete(ctx context.Context, userID uuid.UUID) error {
 		{"notification prefs", s.repo.DeleteNotificationPrefsByUser},
 		{"password reset tokens", s.repo.DeletePasswordResetTokensByUser},
 		{"email verification tokens", s.repo.DeleteEmailVerificationTokensByUser},
+		{"e2ee devices", s.repo.DeleteE2EEDevicesByUser},
 		{"actor key", s.repo.DeleteAccountActorKey},
 	}
 	for _, p := range purges {

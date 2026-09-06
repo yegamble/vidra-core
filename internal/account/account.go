@@ -72,6 +72,7 @@ type Repository interface {
 	DeleteNotificationPrefsByUser(ctx context.Context, userID uuid.UUID) error
 	DeletePasswordResetTokensByUser(ctx context.Context, userID uuid.UUID) error
 	DeleteEmailVerificationTokensByUser(ctx context.Context, userID uuid.UUID) error
+	DeleteE2EEDevicesByUser(ctx context.Context, userID uuid.UUID) error
 	DeleteAccountActorKey(ctx context.Context, userID uuid.UUID) error
 	DeleteUserImage(ctx context.Context, arg sqlcgen.DeleteUserImageParams) (int64, error)
 

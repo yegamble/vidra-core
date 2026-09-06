@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
@@ -179,16 +180,25 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 		return err
 	}
 	ctx := c.Request().Context()
+	// The author is the authenticated user; load their identity for the response
+	// — and do it BEFORE the write. requireAuth verifies the access JWT alone and
+	// never re-reads the account, so a token minted before the account was
+	// deactivated or §1-deleted still reaches this handler for the rest of its
+	// JWT_ACCESS_TTL. UserByID is the only thing here that notices (it refuses an
+	// inactive account); resolving after the insert meant the comment was already
+	// committed when it did, and the client got a 500 for a write that happened.
+	author, err := s.authsvc.UserByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, auth.ErrAccountNotFound) {
+			return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
+		}
+		return err
+	}
 	created, err := s.commentsvc.Create(ctx, videoID, userID, strings.TrimSpace(in.Body), in.parentID())
 	if err != nil {
 		if errors.Is(err, comment.ErrParentNotFound) {
 			return &ValidationError{Fields: []FieldError{{Field: "parent_id", Message: "is not a comment on this video"}}}
 		}
-		return err
-	}
-	// The author is the authenticated user; load their identity for the response.
-	author, err := s.authsvc.UserByID(ctx, userID)
-	if err != nil {
 		return err
 	}
 	// Tell the PARENT COMMENT'S AUTHOR that they were replied to (best-effort).
@@ -317,6 +327,16 @@ func (s *Server) handleUpdateComment(c echo.Context) error {
 		return err
 	}
 	ctx := c.Request().Context()
+	// Same ordering rule as handleCreateComment: resolve the author first, so a
+	// still-unexpired JWT from a deactivated or deleted account is refused
+	// instead of editing the body and then failing the response.
+	author, err := s.authsvc.UserByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, auth.ErrAccountNotFound) {
+			return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
+		}
+		return err
+	}
 	updated, err := s.commentsvc.Edit(ctx, id, userID, strings.TrimSpace(in.Body))
 	if err != nil {
 		switch {
@@ -333,10 +353,6 @@ func (s *Server) handleUpdateComment(c echo.Context) error {
 		if _, werr := s.watchwordsvc.FlagComment(ctx, updated.ID, updated.Body); werr != nil {
 			s.logger.WarnContext(ctx, "watched-word flagging failed", "error", werr, "comment_id", updated.ID)
 		}
-	}
-	author, err := s.authsvc.UserByID(ctx, userID)
-	if err != nil {
-		return err
 	}
 	view := newCommentView(updated, author.Username, author.DisplayName)
 	// An edited comment may itself be the video's pinned comment (0099): reflect

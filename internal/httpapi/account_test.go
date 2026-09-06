@@ -151,7 +151,8 @@ func (f *accountFakeRepo) DeletePasswordResetTokensByUser(context.Context, uuid.
 func (f *accountFakeRepo) DeleteEmailVerificationTokensByUser(context.Context, uuid.UUID) error {
 	return nil
 }
-func (f *accountFakeRepo) DeleteAccountActorKey(context.Context, uuid.UUID) error { return nil }
+func (f *accountFakeRepo) DeleteE2EEDevicesByUser(context.Context, uuid.UUID) error { return nil }
+func (f *accountFakeRepo) DeleteAccountActorKey(context.Context, uuid.UUID) error   { return nil }
 func (f *accountFakeRepo) DeleteUserImage(context.Context, sqlcgen.DeleteUserImageParams) (int64, error) {
 	return 0, nil
 }

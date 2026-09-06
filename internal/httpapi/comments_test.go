@@ -556,3 +556,60 @@ func (f *commentFakeRepo) CountAdminComments(ctx context.Context, query *string)
 	rows, err := f.ListAdminComments(ctx, sqlcgen.ListAdminCommentsParams{Query: query, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
 }
+
+// TestCommentWritesRefuseADisabledAccount pins the two comment WRITE paths
+// against an account that was deactivated (or hard-deleted — both clear
+// is_active) while one of its 15-minute access JWTs was still alive.
+// requireAuth verifies the JWT alone and never re-reads the account, so such a
+// token keeps reaching the handler; the handler's own author lookup is what
+// notices. Both paths used to run the MUTATION first and only then resolve the
+// author, so the write committed and the request answered 500 "auth: account
+// not found" — an internal error to the client, and a comment on the page from
+// an account that no longer exists. The author is resolved BEFORE the write
+// now: 401, and nothing is written.
+func TestCommentWritesRefuseADisabledAccount(t *testing.T) {
+	srv := videoServer(t)
+	ownerTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, ownerTok, "ada", `{"title":"v","privacy":"public"}`)
+	bob := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	created := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/comments", `{"body":"before"}`, bob)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("first create = %d; body=%s", created.Code, created.Body.String())
+	}
+	var first commentView
+	_ = json.Unmarshal(created.Body.Bytes(), &first)
+
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/deactivate",
+		`{"password":"supersecret"}`, bob); rec.Code != http.StatusNoContent {
+		t.Fatalf("deactivate = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	post := sendJSONAuth(srv, http.MethodPost, "/api/v1/videos/"+vid+"/comments",
+		`{"body":"posted after deactivation"}`, bob)
+	if post.Code != http.StatusUnauthorized {
+		t.Errorf("create with a disabled account = %d, want 401; body=%s", post.Code, post.Body.String())
+	}
+	edit := sendJSONAuth(srv, http.MethodPatch, "/api/v1/comments/"+first.ID,
+		`{"body":"edited after deactivation"}`, bob)
+	if edit.Code != http.StatusUnauthorized {
+		t.Errorf("edit with a disabled account = %d, want 401; body=%s", edit.Code, edit.Body.String())
+	}
+
+	// Nothing was written: no new comment, and the existing body is untouched.
+	rec := listComments(srv, vid)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d", rec.Code)
+	}
+	var list commentListResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &list)
+	if len(list.Comments) != 1 {
+		t.Fatalf("comments after the refused writes = %d, want 1: %+v", len(list.Comments), list.Comments)
+	}
+	if list.Comments[0].Body != "before" {
+		t.Errorf("comment body = %q, want it untouched (%q)", list.Comments[0].Body, "before")
+	}
+	if strings.Contains(rec.Body.String(), "after deactivation") {
+		t.Errorf("a disabled account's write reached the thread: %s", rec.Body.String())
+	}
+}

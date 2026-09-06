@@ -55,6 +55,15 @@ SELECT COUNT(*) FROM e2ee_devices WHERE user_id = $1;
 -- that to "device not found" so ownership is not leaked).
 DELETE FROM e2ee_devices WHERE id = $1 AND user_id = $2;
 
+-- name: DeleteE2EEDevicesByUser :exec
+-- Account-delete purge (§1): every encrypted-messaging device the account
+-- registered, and — through e2ee_one_time_keys.device_id ON DELETE CASCADE —
+-- their unclaimed one-time keys. Needed explicitly because the §1 delete
+-- ANONYMISES the users row instead of removing it, so the ON DELETE CASCADE on
+-- e2ee_devices.user_id never fires. A device row carries a user-chosen
+-- device_name, which the tombstone exists to take away.
+DELETE FROM e2ee_devices WHERE user_id = $1;
+
 -- name: TouchE2EEDevice :exec
 UPDATE e2ee_devices SET last_seen_at = now() WHERE id = $1;
 
