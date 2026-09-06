@@ -70,6 +70,62 @@ func (q *Queries) CommentReplyRecipient(ctx context.Context, commentID uuid.UUID
 	return i, err
 }
 
+const commentVideoOwnerRecipient = `-- name: CommentVideoOwnerRecipient :one
+SELECT ch.owner_id AS recipient_id, c.video_id AS video_id
+FROM comments c
+JOIN videos v ON v.id = c.video_id
+JOIN channels ch ON ch.id = v.channel_id
+JOIN users ou ON ou.id = ch.owner_id
+WHERE c.id = $1
+  AND c.deleted_at IS NULL
+  AND c.user_id IS NOT NULL
+  AND ch.owner_id IS DISTINCT FROM c.user_id
+  AND ou.is_active
+  AND ou.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts ma
+      WHERE ma.muter_id = ch.owner_id AND ma.muted_id = c.user_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE (ub.blocker_id = ch.owner_id AND ub.blocked_id = c.user_id)
+         OR (ub.blocker_id = c.user_id AND ub.blocked_id = ch.owner_id)
+  )
+`
+
+type CommentVideoOwnerRecipientRow struct {
+	RecipientID uuid.UUID `json:"recipient_id"`
+	VideoID     uuid.UUID `json:"video_id"`
+}
+
+// Who should be told that their VIDEO was commented on — the video's owner,
+// resolved with every exclusion applied IN SQL (the same 0101/0103 idiom
+// CommentReplyRecipient above and NotifyFollowersOfNewVideo already follow:
+// selection rules belong in the statement, not in an N+1 of Go lookups). No row
+// means nobody is notified.
+//
+// Deliberately resolved only when ALL of these hold:
+//   - the comment exists, is not a tombstone (0057), and was written by a LOCAL
+//     user — a federated comment has a NULL user_id (0053) and no local actor to
+//     name, and the inbound federation path does not raise this notification;
+//   - the video's owner is not the commenter (no self-notification, matching
+//     every other Notify* path);
+//   - the owner is an active, non-deleted account;
+//   - the owner has not muted the commenter, and neither side has blocked the
+//     other. This is the clause the reply path had from the start and this one
+//     did not: muting an account promises its comments are hidden from you, and
+//     an inbox row naming that account — carrying the comment id back to the
+//     hidden content — is the same content arriving through another door.
+//
+// The comment's video is returned alongside so the notification can carry the
+// watch context without a second round trip.
+func (q *Queries) CommentVideoOwnerRecipient(ctx context.Context, commentID uuid.UUID) (CommentVideoOwnerRecipientRow, error) {
+	row := q.db.QueryRow(ctx, commentVideoOwnerRecipient, commentID)
+	var i CommentVideoOwnerRecipientRow
+	err := row.Scan(&i.RecipientID, &i.VideoID)
+	return i, err
+}
+
 const countNotifications = `-- name: CountNotifications :one
 SELECT count(*)::bigint
 FROM notifications n

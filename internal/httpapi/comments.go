@@ -210,12 +210,14 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 		}
 	}
 	// Notify the video owner of the new comment (best-effort; skipped when no
-	// notifier is wired or you comment on your own video).
-	if s.notifsvc != nil {
-		if v, verr := s.videosvc.GetByID(ctx, videoID); verr == nil && v.OwnerID != notifiedReplyTo {
-			if nerr := s.notifsvc.NotifyComment(ctx, v.OwnerID, userID, videoID, created.ID); nerr != nil {
-				s.logger.WarnContext(ctx, "notify comment failed", "error", nerr, "video_id", videoID)
-			}
+	// notifier is wired, or when the owner was already answered as the parent
+	// comment's author just above — one reply, one notification). Who the owner
+	// is, and whether they have muted or blocked the commenter, is resolved
+	// inside the notifier's SQL; the owner id here is only the mutual-exclusion
+	// key, and comes from the video already loaded by publicVideo.
+	if s.notifsvc != nil && v.OwnerID != notifiedReplyTo {
+		if _, nerr := s.notifsvc.NotifyComment(ctx, userID, created.ID); nerr != nil {
+			s.logger.WarnContext(ctx, "notify comment failed", "error", nerr, "video_id", videoID)
 		}
 	}
 	// Flag the comment against the moderation watched-words list (best-effort;

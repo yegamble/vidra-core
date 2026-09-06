@@ -80,6 +80,7 @@ type Repository interface {
 	NotifyFollowersOfNewVideo(ctx context.Context, videoID uuid.UUID) (int64, error)
 	NotifyStaffOfNewReport(ctx context.Context, reportID uuid.UUID) (int64, error)
 	CommentReplyRecipient(ctx context.Context, commentID uuid.UUID) (sqlcgen.CommentReplyRecipientRow, error)
+	CommentVideoOwnerRecipient(ctx context.Context, commentID uuid.UUID) (sqlcgen.CommentVideoOwnerRecipientRow, error)
 }
 
 // Service holds the notification application logic.
@@ -144,21 +145,45 @@ func (s *Service) NotifyFollow(ctx context.Context, recipientID, actorID, channe
 	return err
 }
 
-// NotifyComment records that actorID commented on recipientID's video. Notifying
-// yourself is a no-op, as is a recipient who disabled comment notifications.
-// Best-effort.
-func (s *Service) NotifyComment(ctx context.Context, recipientID, actorID, videoID, commentID uuid.UUID) error {
-	if recipientID == actorID || !s.typeEnabled(ctx, recipientID, TypeComment) {
-		return nil
+// NotifyComment records that actorID commented on a video, telling that video's
+// OWNER, and returns the recipient it notified (uuid.Nil when nobody was).
+//
+// Like NotifyCommentReply, every selection rule lives in the SQL (see
+// CommentVideoOwnerRecipient): the comment must be a live, locally authored
+// comment; the owner is never told about their own comment; the owner must be an
+// active, non-deleted account; and a muted or blocked commenter never reaches
+// the owner's notification surface. That last rule is why this method resolves
+// its own recipient instead of taking one: the caller cannot see the mute/block
+// relationship, and for a long time neither did this path — an account the owner
+// had muted still reached their inbox by commenting, carrying the comment id
+// back to content the mute had hidden.
+//
+// No resolved recipient is a silent no-op, not an error.
+//
+// Best-effort, like every other Notify* method: the caller treats an error as
+// non-fatal — a notification failure must never fail the comment.
+func (s *Service) NotifyComment(ctx context.Context, actorID, commentID uuid.UUID) (uuid.UUID, error) {
+	row, err := s.repo.CommentVideoOwnerRecipient(ctx, commentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, nil
 	}
-	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
-		UserID:    recipientID,
+	if err != nil {
+		return uuid.Nil, err
+	}
+	recipient := row.RecipientID
+	if recipient == actorID || !s.typeEnabled(ctx, recipient, TypeComment) {
+		return uuid.Nil, nil
+	}
+	if _, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
+		UserID:    recipient,
 		Type:      TypeComment,
 		ActorID:   pgconv.UUID(actorID),
-		VideoID:   pgconv.UUID(videoID),
+		VideoID:   pgconv.UUID(row.VideoID),
 		CommentID: pgconv.UUID(commentID),
-	})
-	return err
+	}); err != nil {
+		return uuid.Nil, err
+	}
+	return recipient, nil
 }
 
 // NotifyCommentReply records that actorID replied to someone else's comment,

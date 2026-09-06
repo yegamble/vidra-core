@@ -77,6 +77,49 @@ func (f *notifFakeRepo) CommentReplyRecipient(_ context.Context, commentID uuid.
 	}, nil
 }
 
+// CommentVideoOwnerRecipient mirrors the real :one query (who hears that their
+// VIDEO was commented on): the commented video's owner, excluded when the
+// comment is a tombstone or federated, when the owner is the commenter, when the
+// owner's account is inactive/deleted, when the owner muted the commenter, or
+// when either side blocked the other. pgx.ErrNoRows is the "nobody" answer. The
+// statement's real behaviour is proved against a live database in
+// store.TestCommentVideoOwnerRecipientOnRealPG; this fake exists so the
+// HTTP-level wiring is provable without one.
+func (f *notifFakeRepo) CommentVideoOwnerRecipient(_ context.Context, commentID uuid.UUID) (sqlcgen.CommentVideoOwnerRecipientRow, error) {
+	none := sqlcgen.CommentVideoOwnerRecipientRow{}
+	if f.comments == nil {
+		return none, pgx.ErrNoRows
+	}
+	c, ok := f.comments.comments[commentID]
+	if !ok || c.DeletedAt.Valid || !c.UserID.Valid {
+		return none, pgx.ErrNoRows
+	}
+	v, ok := f.videos.videos[c.VideoID]
+	if !ok {
+		return none, pgx.ErrNoRows
+	}
+	ch, ok := f.channelByID(v.ChannelID)
+	if !ok {
+		return none, pgx.ErrNoRows
+	}
+	owner, commenter := ch.OwnerID, uuid.UUID(c.UserID.Bytes)
+	if owner == commenter {
+		return none, pgx.ErrNoRows
+	}
+	u, ok := f.userByID(owner)
+	if !ok || !u.IsActive || u.DeletedAt.Valid {
+		return none, pgx.ErrNoRows
+	}
+	if f.comments.mutes != nil && f.comments.mutes.isMuted(owner, commenter) {
+		return none, pgx.ErrNoRows
+	}
+	if f.comments.userBlocks != nil &&
+		(f.comments.userBlocks.isBlocked(owner, commenter) || f.comments.userBlocks.isBlocked(commenter, owner)) {
+		return none, pgx.ErrNoRows
+	}
+	return sqlcgen.CommentVideoOwnerRecipientRow{RecipientID: owner, VideoID: c.VideoID}, nil
+}
+
 func notifPrefKey(userID uuid.UUID, typ string) string { return userID.String() + "\x00" + typ }
 
 func (f *notifFakeRepo) ListNotificationPrefs(_ context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationPrefsRow, error) {
@@ -783,5 +826,79 @@ func TestDisabledPrefSuppressesCommentReplyNotification(t *testing.T) {
 	}
 	if got := notifTypes(t, srv, bobTok); len(got) != 0 {
 		t.Fatalf("bob opted out but got %d notifications: %+v", len(got), got)
+	}
+}
+
+// TestCommentNotificationRespectsMutesAndBlocks closes the hole the reply slice
+// deliberately left open (A12, SOC-02): the VIDEO OWNER's "someone commented on
+// your video" notification consulted no mute and no block, so an account the
+// owner had muted — or either side of a block — still reached the owner's inbox
+// simply by commenting on their video. Muting an account promises "their
+// comments are hidden from you"; a notification naming that account, with a
+// link straight back to the comment, is the same content arriving by another
+// door.
+//
+// Cast: ada owns the video, bob comments on it. Each case applies exactly one
+// relationship, and the control at the end proves the exclusions — not a broken
+// fixture — are doing the work.
+func TestCommentNotificationRespectsMutesAndBlocks(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// arrange runs after registration, given ada's and bob's tokens/ids.
+		arrange func(t *testing.T, srv *Server, adaTok, adaID, bobTok, bobID string)
+		// want is how many notifications ada should hold after bob comments.
+		want int
+	}{
+		{
+			name: "ada muted bob",
+			arrange: func(t *testing.T, srv *Server, adaTok, _, _, bobID string) {
+				if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/mutes/accounts/"+bobID, "", adaTok); rec.Code != http.StatusNoContent {
+					t.Fatalf("mute = %d; body=%s", rec.Code, rec.Body.String())
+				}
+			},
+		},
+		{
+			name: "ada blocked bob",
+			arrange: func(t *testing.T, srv *Server, adaTok, _, _, bobID string) {
+				if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/blocks/"+bobID, "", adaTok); rec.Code != http.StatusNoContent {
+					t.Fatalf("block = %d; body=%s", rec.Code, rec.Body.String())
+				}
+			},
+		},
+		{
+			name: "bob blocked ada",
+			arrange: func(t *testing.T, srv *Server, _, adaID, bobTok, _ string) {
+				if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/me/blocks/"+adaID, "", bobTok); rec.Code != http.StatusNoContent {
+					t.Fatalf("block = %d; body=%s", rec.Code, rec.Body.String())
+				}
+			},
+		},
+		{
+			name:    "control: no relationship at all",
+			arrange: func(*testing.T, *Server, string, string, string, string) {},
+			want:    1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := videoServer(t)
+			adaTok, adaID := registerAndUser(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+			if rec := postJSONAuth(srv, "/api/v1/channels", `{"handle":"ada","display_name":"ada"}`, adaTok); rec.Code != http.StatusCreated {
+				t.Fatalf("create channel = %d; body=%s", rec.Code, rec.Body.String())
+			}
+			vid := createPublishedVideo(t, srv, adaTok, "ada", `{"title":"My clip","privacy":"public"}`)
+			bobTok, bobID := registerAndUser(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+			tc.arrange(t, srv, adaTok, adaID, bobTok, bobID)
+
+			if rec := postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"nice clip"}`, bobTok); rec.Code != http.StatusCreated {
+				t.Fatalf("bob comment = %d; body=%s", rec.Code, rec.Body.String())
+			}
+			if got := notifTypes(t, srv, adaTok); len(got) != tc.want {
+				t.Fatalf("owner has %d notifications after %q, want %d; got %+v", len(got), tc.name, tc.want, got)
+			}
+			if got := unreadCount(t, srv, adaTok); got != int64(tc.want) {
+				t.Errorf("owner unread = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
