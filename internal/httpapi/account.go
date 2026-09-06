@@ -63,6 +63,11 @@ func (s *Server) handleDeleteAccount(c echo.Context) error {
 	if err := s.ensureNotLastAdmin(c, userID, observability.ActionAccountDelete); err != nil {
 		return err
 	}
+	// ...and the instance must never be left without an OWNER either. The marker
+	// cannot be moved by anyone but its holder, so it has to move before they go.
+	if err := s.ensureOwnerHasTransferred(c, userID, observability.ActionAccountDelete); err != nil {
+		return err
+	}
 	if err := s.accountsvc.Delete(c.Request().Context(), userID); err != nil {
 		if errors.Is(err, account.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
@@ -134,6 +139,44 @@ func (s *Server) ensureNotLastAdmin(c echo.Context, userID uuid.UUID, action str
 		return &LastAdminError{}
 	}
 	return err
+}
+
+// ensureOwnerHasTransferred refuses a SELF-service removal (deactivate or hard
+// delete) by the account that still holds the instance-owner marker, audited as
+// a failure of the action it blocked.
+//
+// `users.is_owner` has exactly one slot (users_single_owner_idx) and exactly two
+// writers: the first-run claim, which can never run again on a populated
+// instance, and POST /admin/owner/transfer, which only the owner may call. So an
+// owner who closes their own account does not hand the marker on — it goes with
+// them, permanently. What is left behind is an instance where every
+// administrator is equal, the owner guards protect nobody, and the only repair
+// is a hand-written UPDATE that `vidra doctor` has to tell the operator about.
+// Deactivation strands it exactly as deletion does: a disabled account cannot
+// sign in, so it can never call the transfer route again.
+//
+// This is deliberately NOT the last-admin guard and does not overlap it: an
+// owner on an instance with three other admins trips this and not that one.
+// Checked AFTER the last-admin guard so a sole owner-admin reads the actionable
+// sentence first ("promote another admin"), then this one ("now transfer").
+//
+// A server with no auth service wired cannot answer the question and does not
+// pretend to, matching ensureNotLastAdmin.
+func (s *Server) ensureOwnerHasTransferred(c echo.Context, userID uuid.UUID, action string) error {
+	if s.authsvc == nil {
+		return nil
+	}
+	user, err := s.authsvc.UserByID(c.Request().Context(), userID)
+	if err != nil {
+		// An unreadable or already-gone account is not this guard's business;
+		// the handler's own lookup answers it.
+		return nil
+	}
+	if !user.IsOwner {
+		return nil
+	}
+	s.auditAdminUserRefusal(c, action, userID, userID, "owner_must_transfer")
+	return &OwnerMustTransferError{}
 }
 
 // accountExportView is the export-status projection shared by the request and

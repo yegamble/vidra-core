@@ -867,6 +867,11 @@ func (s *Server) handleDeactivateAccount(c echo.Context) error {
 	if err := s.ensureNotLastAdmin(c, userID, observability.ActionAccountDeactivate); err != nil {
 		return err
 	}
+	// Deactivation strands the owner marker exactly as deletion does: a disabled
+	// account cannot sign in, so it can never call the transfer route again.
+	if err := s.ensureOwnerHasTransferred(c, userID, observability.ActionAccountDeactivate); err != nil {
+		return err
+	}
 	if err := s.authsvc.DeactivateAccount(c.Request().Context(), userID, in.Password); err != nil {
 		switch {
 		case errors.Is(err, auth.ErrInvalidPassword):

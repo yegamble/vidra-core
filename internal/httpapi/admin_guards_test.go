@@ -168,8 +168,23 @@ func TestLastAdminCannotStandDown(t *testing.T) {
 	if rec := sendJSONAuth(env.srv, http.MethodPatch, "/api/v1/admin/users/"+averyID, `{"role":"admin"}`, ownerTok); rec.Code != http.StatusOK {
 		t.Fatalf("promote avery = %d; body=%s", rec.Code, rec.Body.String())
 	}
+	// The last-admin guard has released, but the OWNER guard has not: mona still
+	// holds the one marker only she can move, and deactivating would strand it
+	// on an account that can never sign in to move it again (A16 ruling).
+	rec = doJSON(env.srv, http.MethodPost, "/api/v1/auth/me/deactivate", ownerTok, `{"password":"supersecret"}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("owner self-deactivate with a second admin = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	if code := errorCode(t, rec); code != "owner_must_transfer" {
+		t.Errorf("owner self-deactivate code = %q, want owner_must_transfer", code)
+	}
+	if rec := sendJSONAuth(env.srv, http.MethodPost, "/api/v1/admin/owner/transfer",
+		`{"user_id":"`+averyID+`","password":"supersecret"}`, ownerTok); rec.Code != http.StatusOK {
+		t.Fatalf("transfer ownership to avery = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	// Both guards released: the exit is open.
 	if rec := doJSON(env.srv, http.MethodPost, "/api/v1/auth/me/deactivate", ownerTok, `{"password":"supersecret"}`); rec.Code != http.StatusNoContent {
-		t.Errorf("self-deactivate with a second admin = %d, want 204; body=%s", rec.Code, rec.Body.String())
+		t.Errorf("self-deactivate after handing the instance over = %d, want 204; body=%s", rec.Code, rec.Body.String())
 	}
 }
 

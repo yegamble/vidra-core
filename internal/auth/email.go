@@ -55,6 +55,18 @@ type Mailer interface {
 	// for. Free-text prose, which is exactly why it travels by mail and never
 	// reaches the audit ledger's allowlisted metadata.
 	SendRegistrationRejected(ctx context.Context, email, username, note string) error
+	// SendOwnershipTransferred tells ONE party to an instance-ownership transfer
+	// that it happened. It is sent twice, once per side, with isNewOwner
+	// selecting which message the recipient reads (the same discriminator shape
+	// SendRegistrationApproved's verifyRequired uses) — the two sides need
+	// genuinely different sentences: one is being handed an instance, the other
+	// is being told they no longer hold it and keeps their admin role.
+	// counterpartUsername is the OTHER party; consoleURL is the admin console
+	// ("" when no public base URL is configured) and rides only on the new
+	// owner's copy. Neither body carries a credential or a token: like
+	// SendPasswordChanged these are after-the-fact notices, and the former
+	// owner's copy is the one that matters if the transfer was not their idea.
+	SendOwnershipTransferred(ctx context.Context, email, recipientUsername, counterpartUsername, consoleURL string, isNewOwner bool) error
 }
 
 // noopMailer is the default mailer. With no email provider configured it drops
@@ -79,6 +91,10 @@ func (noopMailer) SendNewReportAlert(context.Context, string, string, string, st
 func (noopMailer) SendRegistrationApproved(context.Context, string, string, string, bool) error {
 	return nil
 }
+func (noopMailer) SendOwnershipTransferred(context.Context, string, string, string, string, bool) error {
+	return nil
+}
+
 func (noopMailer) SendRegistrationRejected(context.Context, string, string, string) error {
 	return nil
 }

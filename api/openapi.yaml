@@ -12144,6 +12144,90 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/owner/transfer:
+    post:
+      operationId: transferInstanceOwnership
+      summary: Transfer instance ownership (owner only)
+      description: >-
+        Moves the instance-owner marker (users.is_owner) from the caller to
+        another administrator, and mails both parties. The former owner KEEPS
+        their admin role — this transfers the marker, not the role.
+
+        Restricted to THE instance owner, not to admins generally: the marker
+        exists precisely so other administrators cannot dispose of it, so an
+        ordinary admin is 403 owner_only. Vidra has no owner role, so this is a
+        service check rather than a router gate, and the route sits under /admin
+        because that is where the console surface and the admin gate already are.
+
+        The caller re-enters their current password, the same confirmation
+        DELETE /api/v1/auth/me and POST /api/v1/auth/me/deactivate ask for: this
+        is the one action that permanently strips the caller of a capability, so
+        a stolen access token alone must not perform it.
+
+        The target must be an active, non-tombstoned administrator other than the
+        caller (422 owner_target_invalid otherwise) — the marker must sit on an
+        account that can actually sign in and reach the console. The swap is one
+        SQL statement under a partial unique index, so of two simultaneous
+        transfers exactly one wins and the loser is 409 owner_transfer_conflict
+        with nothing changed.
+
+        Until this route existed the marker had a single writer (the first-run
+        owner claim) and no way to move, so an owner who closed their account
+        left the instance permanently unowned. That is also why closing the
+        owner's own account is now refused with 422 owner_must_transfer until
+        ownership has moved.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransferOwnershipRequest"
+      responses:
+        "200":
+          description: Ownership moved; the new and former owner are named.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerTransferResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            The caller is not an admin, is an admin but not the instance owner
+            (owner_only), or the password was wrong.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            Another ownership transfer completed first (owner_transfer_conflict).
+            Nothing changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            The target is not an active, non-tombstoned administrator other than
+            the caller (owner_target_invalid), or the body is missing a field.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/stats:
     get:
       operationId: adminStats
@@ -17789,6 +17873,38 @@ components:
           type: string
           maxLength: 2000
           description: Internal moderator note (not shown to the reporter).
+    TransferOwnershipRequest:
+      type: object
+      required: [user_id, password]
+      description: >-
+        Which administrator becomes the instance owner, and the caller's current
+        password confirming the action.
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          description: The administrator who becomes the new instance owner.
+        password:
+          type: string
+          description: >-
+            The CALLER's current password. Never logged, never audited, and
+            never echoed back.
+    OwnerTransferResponse:
+      type: object
+      required: [new_owner_id, new_owner_username, former_owner_id, former_owner_username]
+      properties:
+        new_owner_id:
+          type: string
+          format: uuid
+        new_owner_username:
+          type: string
+        former_owner_id:
+          type: string
+          format: uuid
+        former_owner_username:
+          type: string
+          description: >-
+            The caller. They remain an administrator; only the owner marker moved.
     BlockVideoRequest:
       type: object
       description: >-

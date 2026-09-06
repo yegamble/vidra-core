@@ -132,6 +132,10 @@ type Repository interface {
 	UpsertOwnerClaimToken(ctx context.Context, tokenHash string) (sqlcgen.OwnerClaimToken, error)
 	GetUnclaimedOwnerClaimToken(ctx context.Context) (sqlcgen.OwnerClaimToken, error)
 	ClaimOwnerAndCreateAdmin(ctx context.Context, arg sqlcgen.ClaimOwnerAndCreateAdminParams) (sqlcgen.ClaimOwnerAndCreateAdminRow, error)
+	// TransferInstanceOwner moves users.is_owner to another admin in one
+	// statement (ownertransfer.go). The claim above and this are the only two
+	// writers of the marker.
+	TransferInstanceOwner(ctx context.Context, newOwnerID uuid.UUID) (sqlcgen.TransferInstanceOwnerRow, error)
 }
 
 // sessionRevokedRotated is the sessions.revoked_reason written when a refresh
@@ -234,6 +238,17 @@ func (s *Service) signInURL() string {
 		return ""
 	}
 	return s.publicBaseURL + "/login"
+}
+
+// consoleURL is the instance's admin console, or "" when no public base URL is
+// configured — the same rule signInURL follows. It rides on the notice the NEW
+// owner receives, because the one thing they need after a transfer is the way
+// in to what they now own.
+func (s *Service) consoleURL() string {
+	if s.publicBaseURL == "" {
+		return ""
+	}
+	return s.publicBaseURL + "/admin"
 }
 
 // WithResetTTL overrides the password-reset token lifetime (default 1h). A

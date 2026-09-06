@@ -404,6 +404,28 @@ func promoteSuccessorAdmin(t *testing.T, srv *Server, adminToken, username strin
 	}
 }
 
+// handOverInstance is promoteSuccessorAdmin plus the ownership transfer that the
+// A16 ruling now requires before the OWNER can close their own account: the
+// marker has exactly one slot and only its holder can move it, so an owner who
+// deactivated or deleted themselves left the instance permanently unowned. Every
+// harness whose first account claims the instance has to hand it over before
+// that account can stand down — which is the operator flow the guard forces.
+func handOverInstance(t *testing.T, srv *Server, ownerToken, username string) string {
+	t.Helper()
+	promoteSuccessorAdmin(t, srv, ownerToken, username)
+	found := adminUsers(t, srv, "?q="+username, ownerToken)
+	if len(found.Users) != 1 {
+		t.Fatalf("successor lookup for %s = %+v, want one row", username, found.Users)
+	}
+	successorID := found.Users[0].ID
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/owner/transfer",
+		`{"user_id":"`+successorID+`","password":"supersecret"}`, ownerToken)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("transfer ownership to %s = %d; body=%s", username, rec.Code, rec.Body.String())
+	}
+	return successorID
+}
+
 func TestDeleteAccountFlow(t *testing.T) {
 	env := newAccountEnv(t)
 	token := registerAndToken(t, env.srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
@@ -421,11 +443,13 @@ func TestDeleteAccountFlow(t *testing.T) {
 		t.Error("the presented password was logged")
 	}
 
-	// ada is this harness's first account and therefore its only admin, and the
-	// A16 last-admin guard refuses a self-delete that would leave the instance
-	// with nobody who can reach its own console. Hand the role on first — which
-	// is the operator flow the guard exists to force.
-	promoteSuccessorAdmin(t, env.srv, token, "zed")
+	// ada is this harness's first account, so it is both the only admin and the
+	// instance OWNER. Two A16 guards refuse a self-delete from there: the
+	// last-admin guard (the instance would have nobody who can reach its own
+	// console) and the owner guard (the marker has one slot and only its holder
+	// can move it, so leaving with it strands the instance unowned). Hand both
+	// on first — which is the operator flow the guards exist to force.
+	handOverInstance(t, env.srv, token, "zed")
 
 	// Correct password → 204.
 	rec = doJSON(env.srv, http.MethodDelete, "/api/v1/auth/me", token, `{"password":"supersecret"}`)

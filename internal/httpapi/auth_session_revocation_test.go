@@ -55,6 +55,11 @@ func TestRevokedSessionKillsTheAccessToken(t *testing.T) {
 // for the rest of JWT_ACCESS_TTL. It must not.
 func TestDeactivatedAccountAccessTokenIsRejectedEverywhere(t *testing.T) {
 	srv := authServer(t)
+	// The FIRST account in this harness claims the instance, and the A16 ruling
+	// refuses to let the owner close their own account before handing the marker
+	// on. This test is about what a deactivated session can still reach, not
+	// about ownership, so it runs as an ordinary second account.
+	registerTokens(t, srv, `{"username":"mona","email":"mona@example.test","password":"supersecret"}`)
 	reg := registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 
 	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/deactivate",

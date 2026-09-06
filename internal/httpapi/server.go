@@ -1873,6 +1873,11 @@ func (s *Server) routes() {
 		// Instance-wide overview counts for the admin dashboard cards. Read-only
 		// aggregate; admin-only (this is the vidra-user admin-overview binding).
 		api.GET("/admin/stats", s.handleAdminStats, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		// Ownership transfer (0131 + the A16 ruling). requireRole(admin) is the
+		// coarse gate — every possible owner is an admin — and the OWNER-only
+		// rule is enforced in the service, because Vidra has no owner ROLE for a
+		// router gate to name. The password confirmation is in the body.
+		api.POST("/admin/owner/transfer", s.handleTransferOwnership, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// Suggestion bans (search-service moderation): the write path for
