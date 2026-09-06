@@ -178,7 +178,7 @@ func (s *Server) handleSearchSuggestions(c echo.Context) error {
 	// already false for them, and sending it anyway would put their account id
 	// beside their query text in the search service's request line — see
 	// searchServiceUserID.
-	uid := searchServiceUserID(userID, prefs, authed)
+	uid := s.attributedUserID(userID, prefs, authed)
 	out, err := s.searchClient.Suggestions(c.Request().Context(), searchclient.SuggestParams{
 		Query:          q,
 		Limit:          limit,
@@ -277,7 +277,7 @@ func (s *Server) handleHomeRecommendations(c echo.Context) error {
 	hideSensitive := s.effectiveHideSensitive(c)
 
 	if s.useSearchService() {
-		uid := searchServiceUserID(userID, prefs, authed)
+		uid := s.attributedUserID(userID, prefs, authed)
 		out, err := s.searchClient.RecommendationsHome(ctx, searchclient.RecsParams{
 			UserID:        uid,
 			SessionID:     sessionIDFromRequest(c),
@@ -331,7 +331,7 @@ func (s *Server) handleVideoRecommendations(c echo.Context) error {
 	hideSensitive := s.effectiveHideSensitive(c)
 
 	if s.useSearchService() {
-		uid := searchServiceUserID(userID, prefs, authed)
+		uid := s.attributedUserID(userID, prefs, authed)
 		out, err := s.searchClient.RecommendationsRelated(ctx, searchclient.RecsParams{
 			VideoID:       &id,
 			UserID:        uid,
@@ -681,7 +681,7 @@ func (s *Server) searchViaService(c echo.Context, q string, filter video.SearchF
 	ctx := c.Request().Context()
 	userID, prefs, _ := s.searchUserPrefs(c)
 	personalized := s.searchAdvanced() && s.instancePersonalizedSearch() && authed && prefs.Personalized
-	uid := searchServiceUserID(userID, prefs, authed)
+	uid := s.attributedUserID(userID, prefs, authed)
 	out, err := s.searchClient.Search(ctx, searchclient.SearchParams{
 		Query:         q,
 		Limit:         overfetchCount(offset, limit),

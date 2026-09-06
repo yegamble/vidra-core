@@ -210,10 +210,16 @@ func TestHistoryOnlyKeepsAttributionWithoutPersonalization(t *testing.T) {
 }
 
 // TestPersonalizationOnlyKeepsAttributionWithoutHistory is the mirror: the
-// projection may be fed while the user's own history page stays empty.
+// projection may be fed while the user's own history page stays empty. It needs
+// ADVANCED mode, because nothing in simple mode reads a watch projection and the
+// consent test asks whether a store is actually running, not merely switched on
+// (see searchConsent) — TestSimpleModeCollectsNoProjectionConsent is the other
+// half of that pair.
 func TestPersonalizationOnlyKeepsAttributionWithoutHistory(t *testing.T) {
 	outbox := &fakeSearchOutbox{}
 	srv := subjectServer(t, outbox)
+	owner := createChannelFor(t, srv, "mallory", "mallory@example.test", "mallory")
+	patchSettings(t, srv, owner, `{"search_mode":"advanced"}`)
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := principalID(t, srv, tok)
 	setPrefs(t, srv, tok, `{"search_history_enabled":false}`)
@@ -221,7 +227,9 @@ func TestPersonalizationOnlyKeepsAttributionWithoutHistory(t *testing.T) {
 	if rec := postEventsFrom(srv, submittedEvent, "203.0.113.7:44100", uuid.NewString(), tok); rec.Code != http.StatusAccepted {
 		t.Fatalf("code = %d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
-	payload := eventPayload(t, outbox, 0)
+	// By type, not by index: flipping the mode enqueued a search.config_updated
+	// ahead of the event under test.
+	payload := behavioralPayload(t, outbox, searchevents.TypeSearchSubmitted)
 	if got := payloadString(payload, "user_id"); got != id {
 		t.Errorf("user_id = %q, want the principal %q", got, id)
 	}
@@ -231,6 +239,31 @@ func TestPersonalizationOnlyKeepsAttributionWithoutHistory(t *testing.T) {
 	if !payloadBool(payload, "allow_personalization") {
 		t.Error("allow_personalization = false with the personalization controls on")
 	}
+}
+
+// TestSimpleModeCollectsNoProjectionConsent is the consequence the ruling
+// accepts on purpose. In the shipped `simple` default nothing reads a watch
+// projection — every personalized generator is behind `advanced` — so the
+// personalization controls grant no collection there either, and the settings
+// page says so by disabling them with a reason. A user whose only remaining
+// control is their search history therefore reaches "nothing is stored about me"
+// with the one switch the page leaves live, which is what makes the promise
+// reachable on a default instance at all.
+func TestSimpleModeCollectsNoProjectionConsent(t *testing.T) {
+	outbox := &fakeSearchOutbox{}
+	srv := subjectServer(t, outbox) // testConfig() leaves search_mode at its "simple" default
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := principalID(t, srv, tok)
+	setPrefs(t, srv, tok, `{"search_history_enabled":false}`)
+
+	if rec := postEventsFrom(srv, submittedEvent, "203.0.113.7:44100", uuid.NewString(), tok); rec.Code != http.StatusAccepted {
+		t.Fatalf("code = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	payload := eventPayload(t, outbox, 0)
+	if payloadBool(payload, "allow_personalization") {
+		t.Error("allow_personalization = true in simple mode — no personalized generator reads the projection there")
+	}
+	assertUnattributed(t, payload, id)
 }
 
 // TestOptOutIsForwardOnly: re-enabling resumes attribution from that moment.

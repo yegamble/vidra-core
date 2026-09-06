@@ -30,19 +30,24 @@ import (
 // decision is taken per event at emit time, so it is forward-only — re-enabling
 // resumes attribution from that moment and changes nothing already written.
 //
-// Two deliberate non-extensions, because both look like they belong here:
+// Where the boundary of "consent" falls, and why it is not just the user's row.
+// The test is not "did the user leave a switch on" but "may this event feed a
+// durable per-user store that is actually running": the user's control AND the
+// operator's configuration AND, for the projection, the search mode. All three
+// have to agree, because a control the site has switched off is one the settings
+// page already tells the user is unavailable — collecting on the strength of it
+// would be collecting on a consent the product has just declared moot. It also
+// keeps the promise REACHABLE: every control that could still justify attribution
+// is a control the page leaves live, so a user can always get to "nothing is
+// collected about me" by using switches that work.
 //
-//   - The INSTANCE-level switches gate serving, not attribution. An operator
-//     turning personalization off for everyone is not the user withdrawing
-//     consent, and making it retract attribution would silently anonymize whole
-//     instances on a settings toggle. They do gate the allow_* flags, exactly
-//     as before.
-//   - search_mode is not consulted either. A simple-mode instance serves no
-//     personalization, but the projection is a durable store built over months;
-//     dropping it on the operator's mode would leave an instance that flips to
-//     advanced with nothing to personalize FROM, for users who never asked for
-//     that. Mode gates serving (searchAdvanced, recsPersonalized); consent
-//     gates collection.
+// The one real cost, stated plainly: on the shipped `simple` default no
+// user_watch_projection is built at all any more (nothing in simple mode reads
+// one — every personalized generator is behind `advanced`), so an instance that
+// later flips to advanced starts personalizing from that moment rather than from
+// months of quietly accumulated history. That is the trade the ruling asks for:
+// a durable per-user store nothing can read is exactly the collection it
+// forbids. Serving gates and collection gates are now the same gates.
 
 // searchEventIdentity is the identity core stamps on one behavioural search
 // event. It is the whole answer for a request: which fields the payload carries
@@ -79,42 +84,53 @@ func (i searchEventIdentity) Attributed() bool { return i.UserID != "" }
 func (s *Server) searchEventIdentity(c echo.Context) searchEventIdentity {
 	userID, prefs, authed := s.searchUserPrefs(c)
 	out := searchEventIdentity{SessionID: sessionIDFromRequest(c)}
-	if !authed || !prefs.attributable() {
-		// Anonymous, or signed in with every control off: identical shapes, and
-		// deliberately so — "stored exactly as an anonymous caller's would be" is
-		// the promise the settings page now makes.
+	out.AllowHistory, out.AllowPersonalization = s.searchConsent(prefs, authed)
+	if !out.AllowHistory && !out.AllowPersonalization {
+		// Anonymous, or signed in with nothing left that may store anything about
+		// them: identical shapes, and deliberately so — "stored exactly as a
+		// signed-out visitor's would be" is the promise the settings page makes.
 		out.SubjectID = s.unattributedSearchSubject(c)
 		return out
 	}
 	out.UserID = userID.String()
-	out.AllowHistory = s.instanceSearchHistoryEnabled() && prefs.History
-	out.AllowPersonalization = (s.instancePersonalizedSearch() && prefs.Personalized) ||
-		(s.instancePersonalizedRecs() && prefs.PersonalizedRecs)
 	return out
 }
 
-// attributable reports whether ANY of the caller's three discovery controls is
-// still on. It is the consent test for writing their account id at all, and it
-// is deliberately an OR: a user who keeps their search history but turns
-// personalization off still needs attributed rows, because the history page is
-// built from them.
-func (p searchUserPref) attributable() bool {
-	return p.History || p.Personalized || p.PersonalizedRecs
+// searchConsent resolves the two per-store consent flags for a caller. They are
+// the whole rule: an event is attributed exactly when at least one of them is
+// true, because the account id exists in these payloads to key a durable
+// per-user store and nothing else.
+//
+//   - allow_history: the instance runs search history AND the user keeps theirs.
+//     Never mode-gated — history stores rows, it does not rank them, and it
+//     works identically in both search modes.
+//   - allow_personalization: the instance is in ADVANCED mode (nothing in simple
+//     mode reads a watch projection) AND at least one personalization feature is
+//     on instance-wide with the user's matching control on.
+func (s *Server) searchConsent(prefs searchUserPref, authed bool) (allowHistory, allowPersonalization bool) {
+	if !authed {
+		return false, false
+	}
+	allowHistory = s.instanceSearchHistoryEnabled() && prefs.History
+	allowPersonalization = s.searchAdvanced() &&
+		((s.instancePersonalizedSearch() && prefs.Personalized) ||
+			(s.instancePersonalizedRecs() && prefs.PersonalizedRecs))
+	return allowHistory, allowPersonalization
 }
 
-// searchServiceUserID is the account id core sends to vidra-search on a READ
-// call (suggestions, search, recommendations), or nil when it must send none.
+// attributedUserID is the account id core sends to vidra-search on a READ call
+// (suggestions, search, recommendations), or nil when it must send none.
 //
 // A read stores no row, so this is not what the ruling turns on — but handing
 // the service an account id in a request line beside the caller's query text,
-// for a user who has asked not to be attributed, is collection by another name
-// (an access log is a log of that pair). Every flag that would USE the id is
-// already false for such a caller — personalized and include_history are both
-// computed from the same prefs — so nothing is lost by withholding it; what
-// changes is that advanced mode's experiment bucketing falls back to the
-// session, which is the correct subject for someone who is not being attributed.
-func searchServiceUserID(userID uuid.UUID, prefs searchUserPref, authed bool) *uuid.UUID {
-	if !authed || !prefs.attributable() {
+// for a user nothing may be stored about, is collection by another name (an
+// access log is a log of that pair). Every flag that would USE the id is already
+// false for such a caller — `personalized` and `include_history` are computed
+// from the same prefs — so nothing is lost by withholding it; what changes is
+// that advanced mode's experiment bucketing falls back to the session, which is
+// the correct subject for someone who is not being attributed.
+func (s *Server) attributedUserID(userID uuid.UUID, prefs searchUserPref, authed bool) *uuid.UUID {
+	if h, p := s.searchConsent(prefs, authed); !h && !p {
 		return nil
 	}
 	return &userID
