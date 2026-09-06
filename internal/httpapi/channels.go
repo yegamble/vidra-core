@@ -437,7 +437,7 @@ func (s *Server) handleFollowChannel(c echo.Context) error {
 	// Notify the channel owner of a genuinely new follow (best-effort: never the
 	// caller's concern; skipped when no notifier is wired or you follow your own).
 	if created && s.notifsvc != nil {
-		if nerr := s.notifsvc.NotifyFollow(ctx, ch.OwnerID, userID, ch.ID); nerr != nil {
+		if nerr := s.notifsvc.NotifyFollow(ctx, userID, ch.ID); nerr != nil {
 			s.logger.WarnContext(ctx, "notify follow failed", "error", nerr, "channel_id", ch.ID)
 		}
 	}

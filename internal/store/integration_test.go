@@ -1308,3 +1308,139 @@ func TestCommentVideoOwnerRecipientOnRealPG(t *testing.T) {
 		t.Errorf("a FEDERATED comment resolved local recipient %s, want nobody", got)
 	}
 }
+
+// TestFollowNotificationRecipientOnRealPG holds the rules behind the 'follow'
+// notification. Until this slice that path consulted no mute and no block at
+// all: an account the channel owner had muted — or either side of a block —
+// reached the owner's inbox simply by following, and repeatably, because the
+// handler raises the notification whenever the follow row is genuinely new, so
+// unfollow-then-follow produces another. Every other notification path already
+// excluded them. Every decision about WHO hears it now lives in the
+// FollowNotificationRecipient statement, so this is the test that holds the
+// rules; the service unit test can only prove the service reacts faithfully.
+//
+// The failure that matters is over-delivery, so each case asserts the EXACT
+// answer (a specific recipient, or pgx.ErrNoRows) and then LIFTS the condition
+// and re-asserts — a clause deleted from the statement makes this test fail,
+// where a fixture-driven test would keep passing.
+func TestFollowNotificationRecipientOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suffix := uuid.NewString()[:8]
+	mkUser := func(name string) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+			name+"-"+suffix, name+"-"+suffix+"@example.test",
+		).Scan(&id); err != nil {
+			t.Fatalf("seed user %s: %v", name, err)
+		}
+		t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id) })
+		return id
+	}
+
+	owner := mkUser("owner-follow")
+	follower := mkUser("follower-follow")
+	var channelID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'Follow notifs') RETURNING id`,
+		owner, "ownerfollow-"+suffix,
+	).Scan(&channelID); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+
+	recipientOf := func(actor uuid.UUID) uuid.UUID {
+		t.Helper()
+		got, err := q.FollowNotificationRecipient(ctx, sqlcgen.FollowNotificationRecipientParams{
+			ChannelID: channelID, FollowerID: actor,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil
+		}
+		if err != nil {
+			t.Fatalf("FollowNotificationRecipient: %v", err)
+		}
+		return got
+	}
+
+	// The base case: the channel's owner is the recipient.
+	if got := recipientOf(follower); got != owner {
+		t.Fatalf("recipient = %s, want the channel's owner %s", got, owner)
+	}
+	// Following your own channel tells nobody.
+	if got := recipientOf(owner); got != uuid.Nil {
+		t.Errorf("a self-follow resolved recipient %s, want nobody", got)
+	}
+	// An unknown channel id is the "nobody" answer, not an error.
+	if _, err := q.FollowNotificationRecipient(ctx, sqlcgen.FollowNotificationRecipientParams{
+		ChannelID: uuid.New(), FollowerID: follower,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("unknown channel err = %v, want pgx.ErrNoRows", err)
+	}
+
+	for _, tc := range []struct {
+		why     string
+		apply   string
+		args    []any
+		unapply string
+		unargs  []any
+	}{
+		{
+			why:     "the owner muted the follower",
+			apply:   `INSERT INTO muted_accounts (muter_id, muted_id) VALUES ($1, $2)`,
+			args:    []any{owner, follower},
+			unapply: `DELETE FROM muted_accounts WHERE muter_id = $1 AND muted_id = $2`,
+			unargs:  []any{owner, follower},
+		},
+		{
+			why:     "the owner blocked the follower",
+			apply:   `INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)`,
+			args:    []any{owner, follower},
+			unapply: `DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2`,
+			unargs:  []any{owner, follower},
+		},
+		{
+			why:     "the follower blocked the owner",
+			apply:   `INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)`,
+			args:    []any{follower, owner},
+			unapply: `DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2`,
+			unargs:  []any{follower, owner},
+		},
+		{
+			why:     "the owner is deactivated",
+			apply:   `UPDATE users SET is_active = FALSE WHERE id = $1`,
+			args:    []any{owner},
+			unapply: `UPDATE users SET is_active = TRUE WHERE id = $1`,
+			unargs:  []any{owner},
+		},
+		{
+			why:     "the owner is a deleted account",
+			apply:   `UPDATE users SET deleted_at = now() WHERE id = $1`,
+			args:    []any{owner},
+			unapply: `UPDATE users SET deleted_at = NULL WHERE id = $1`,
+			unargs:  []any{owner},
+		},
+	} {
+		if _, err := st.Pool.Exec(ctx, tc.apply, tc.args...); err != nil {
+			t.Fatalf("apply %q: %v", tc.why, err)
+		}
+		if got := recipientOf(follower); got != uuid.Nil {
+			t.Errorf("resolved recipient %s even though %s", got, tc.why)
+		}
+		if _, err := st.Pool.Exec(ctx, tc.unapply, tc.unargs...); err != nil {
+			t.Fatalf("unapply %q: %v", tc.why, err)
+		}
+		if got := recipientOf(follower); got != owner {
+			t.Fatalf("lifting %q left the recipient at %s, want %s — the fixture, not the clause, was doing the work", tc.why, got, owner)
+		}
+	}
+}
