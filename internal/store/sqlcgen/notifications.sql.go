@@ -13,6 +13,63 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const commentReplyRecipient = `-- name: CommentReplyRecipient :one
+SELECT p.user_id AS recipient_id, r.video_id AS video_id
+FROM comments r
+JOIN comments p ON p.id = r.parent_id
+JOIN users pu ON pu.id = p.user_id
+WHERE r.id = $1
+  AND r.deleted_at IS NULL
+  AND p.deleted_at IS NULL
+  AND r.user_id IS NOT NULL
+  AND p.user_id IS DISTINCT FROM r.user_id
+  AND pu.is_active
+  AND pu.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts ma
+      WHERE ma.muter_id = p.user_id AND ma.muted_id = r.user_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE (ub.blocker_id = p.user_id AND ub.blocked_id = r.user_id)
+         OR (ub.blocker_id = r.user_id AND ub.blocked_id = p.user_id)
+  )
+`
+
+type CommentReplyRecipientRow struct {
+	RecipientID pgtype.UUID `json:"recipient_id"`
+	VideoID     uuid.UUID   `json:"video_id"`
+}
+
+// Who should be told that a comment is a REPLY to their comment — the parent
+// author, resolved with every exclusion applied IN SQL (the 0101/0103 idiom:
+// selection rules belong in the statement, not in an N+1 of Go lookups). No
+// row means nobody is notified, which is the normal answer for a top-level
+// comment.
+//
+// Deliberately resolved only when ALL of these hold:
+//   - the comment is a reply (parent_id set) and the parent still exists;
+//   - the parent is authored by a LOCAL user — a federated parent has a NULL
+//     user_id (0053) and no local inbox to deliver into;
+//   - neither the reply nor the parent is a tombstone (0057): a deleted
+//     account's comment must not pull its anonymised row back into someone's
+//     inbox;
+//   - the parent's author is an active, non-deleted account;
+//   - the replier is not the parent's author (no self-notification, matching
+//     every other Notify* path);
+//   - the parent author has not muted the replier, and neither side has
+//     blocked the other — a blocked/muted account must not reach the blocker's
+//     notification surface, the same exclusion NotifyFollowersOfNewVideo makes.
+//
+// The reply's video is returned alongside so the notification can carry the
+// watch context without a second round trip.
+func (q *Queries) CommentReplyRecipient(ctx context.Context, commentID uuid.UUID) (CommentReplyRecipientRow, error) {
+	row := q.db.QueryRow(ctx, commentReplyRecipient, commentID)
+	var i CommentReplyRecipientRow
+	err := row.Scan(&i.RecipientID, &i.VideoID)
+	return i, err
+}
+
 const countNotifications = `-- name: CountNotifications :one
 SELECT count(*)::bigint
 FROM notifications n

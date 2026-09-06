@@ -932,3 +932,193 @@ func TestNewReportStaffFanOutOnRealPG(t *testing.T) {
 		t.Fatalf("report_resolved notification blocked by the new_report dedup index: %v", err)
 	}
 }
+
+// TestCommentReplyRecipientOnRealPG holds the rules behind the comment_reply
+// notification. Every decision about WHO hears that they were replied to lives
+// in the CommentReplyRecipient statement rather than in Go, so the service unit
+// test can only prove the service reacts faithfully to each answer — this is the
+// test that holds the rules themselves.
+//
+// The failure that matters is over-delivery: a muted or blocked account
+// reaching the notification surface it was excluded from, or a tombstoned /
+// deactivated account being dragged back into one. Each case therefore asserts
+// the EXACT answer (a specific recipient, or pgx.ErrNoRows), never a subset.
+func TestCommentReplyRecipientOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suffix := uuid.NewString()[:8]
+	mkUser := func(name string) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+			name+"-"+suffix, name+"-"+suffix+"@example.test",
+		).Scan(&id); err != nil {
+			t.Fatalf("seed user %s: %v", name, err)
+		}
+		t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id) })
+		return id
+	}
+
+	owner := mkUser("reply-owner")
+	author := mkUser("reply-author")   // writes the parent comment
+	replier := mkUser("reply-replier") // answers it
+	var channelID, videoID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'Replies') RETURNING id`,
+		owner, "reply-"+suffix,
+	).Scan(&channelID); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO videos (channel_id, title, privacy, state) VALUES ($1, 'Reply thread', 'public', 'published') RETURNING id`,
+		channelID,
+	).Scan(&videoID); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+
+	comment := func(user uuid.UUID, body string, parent *uuid.UUID) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO comments (video_id, user_id, body, parent_id) VALUES ($1, $2, $3, $4) RETURNING id`,
+			videoID, user, body, parent,
+		).Scan(&id); err != nil {
+			t.Fatalf("seed comment %q: %v", body, err)
+		}
+		return id
+	}
+	// recipientOf is the whole assertion surface: the resolved recipient, or
+	// uuid.Nil when the statement deliberately answers "nobody".
+	recipientOf := func(commentID uuid.UUID) uuid.UUID {
+		t.Helper()
+		row, err := q.CommentReplyRecipient(ctx, commentID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil
+		}
+		if err != nil {
+			t.Fatalf("CommentReplyRecipient: %v", err)
+		}
+		if row.VideoID != videoID {
+			t.Errorf("video_id = %s, want the thread's video %s", row.VideoID, videoID)
+		}
+		if !row.RecipientID.Valid {
+			return uuid.Nil
+		}
+		return uuid.UUID(row.RecipientID.Bytes)
+	}
+
+	parent := comment(author, "parent", nil)
+	reply := comment(replier, "reply", &parent)
+
+	// The base case: the parent's author is the recipient.
+	if got := recipientOf(reply); got != author {
+		t.Fatalf("recipient = %s, want the parent's author %s", got, author)
+	}
+	// A top-level comment answers nobody — the normal "no row" case, not an error.
+	if got := recipientOf(parent); got != uuid.Nil {
+		t.Errorf("a top-level comment resolved recipient %s, want nobody", got)
+	}
+	// Replying to yourself notifies nobody.
+	if got := recipientOf(comment(author, "self reply", &parent)); got != uuid.Nil {
+		t.Errorf("a self-reply resolved recipient %s, want nobody", got)
+	}
+
+	// Each exclusion, applied and then lifted, so the test proves the clause is
+	// doing the work rather than the fixture being broken.
+	for _, tc := range []struct {
+		why     string
+		apply   string
+		args    []any
+		unapply string
+		unargs  []any
+	}{
+		{
+			why:     "the parent's author muted the replier",
+			apply:   `INSERT INTO muted_accounts (muter_id, muted_id) VALUES ($1, $2)`,
+			args:    []any{author, replier},
+			unapply: `DELETE FROM muted_accounts WHERE muter_id = $1 AND muted_id = $2`,
+			unargs:  []any{author, replier},
+		},
+		{
+			why:     "the parent's author blocked the replier",
+			apply:   `INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)`,
+			args:    []any{author, replier},
+			unapply: `DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2`,
+			unargs:  []any{author, replier},
+		},
+		{
+			why:     "the replier blocked the parent's author",
+			apply:   `INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)`,
+			args:    []any{replier, author},
+			unapply: `DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2`,
+			unargs:  []any{replier, author},
+		},
+		{
+			why:     "the parent is a tombstone (its author's account was deleted)",
+			apply:   `UPDATE comments SET deleted_at = now(), body = '' WHERE id = $1`,
+			args:    []any{parent},
+			unapply: `UPDATE comments SET deleted_at = NULL, body = 'parent' WHERE id = $1`,
+			unargs:  []any{parent},
+		},
+		{
+			why:     "the parent's author is deactivated",
+			apply:   `UPDATE users SET is_active = FALSE WHERE id = $1`,
+			args:    []any{author},
+			unapply: `UPDATE users SET is_active = TRUE WHERE id = $1`,
+			unargs:  []any{author},
+		},
+		{
+			why:     "the parent's author is a deleted account",
+			apply:   `UPDATE users SET deleted_at = now() WHERE id = $1`,
+			args:    []any{author},
+			unapply: `UPDATE users SET deleted_at = NULL WHERE id = $1`,
+			unargs:  []any{author},
+		},
+	} {
+		if _, err := st.Pool.Exec(ctx, tc.apply, tc.args...); err != nil {
+			t.Fatalf("apply %q: %v", tc.why, err)
+		}
+		if got := recipientOf(reply); got != uuid.Nil {
+			t.Errorf("resolved recipient %s even though %s", got, tc.why)
+		}
+		if _, err := st.Pool.Exec(ctx, tc.unapply, tc.unargs...); err != nil {
+			t.Fatalf("unapply %q: %v", tc.why, err)
+		}
+		if got := recipientOf(reply); got != author {
+			t.Fatalf("lifting %q left the recipient at %s, want %s — the fixture, not the clause, was doing the work", tc.why, got, author)
+		}
+	}
+
+	// A federated parent has no local user_id (0053) and therefore no inbox to
+	// deliver into: replying to one notifies nobody rather than erroring.
+	actorURL := "https://remote.example/users/ghost-" + suffix
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO remote_actors (actor_url, actor_type, preferred_username, domain, public_key_pem)
+		 VALUES ($1, 'Person', 'ghost', 'remote.example', 'x')`, actorURL,
+	); err != nil {
+		t.Fatalf("seed remote actor: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM remote_actors WHERE actor_url = $1`, actorURL)
+	})
+	var remoteParent uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO comments (video_id, body, remote_actor_url, remote_author_name, remote_object_url)
+		 VALUES ($1, 'from afar', $2, 'ghost', $3) RETURNING id`,
+		videoID, actorURL, actorURL+"/note",
+	).Scan(&remoteParent); err != nil {
+		t.Fatalf("seed remote parent comment: %v", err)
+	}
+	if got := recipientOf(comment(replier, "answering a remote comment", &remoteParent)); got != uuid.Nil {
+		t.Errorf("a reply to a FEDERATED comment resolved local recipient %s, want nobody", got)
+	}
+}

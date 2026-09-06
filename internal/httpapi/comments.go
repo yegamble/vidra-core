@@ -191,10 +191,28 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	// Tell the PARENT COMMENT'S AUTHOR that they were replied to (best-effort).
+	// This is a different recipient from the video owner below: the person being
+	// answered usually does not own the video, and before this existed a reply
+	// reached nobody but the owner. Resolved FIRST because the two comment
+	// notifications are mutually exclusive when the parent's author IS the video
+	// owner — that user is answered once, not told twice about one reply.
+	// notifiedReplyTo stays uuid.Nil when nobody was notified (a top-level
+	// comment, a self-reply, an opted-out or muted/blocked recipient), which
+	// never matches a real owner id.
+	notifiedReplyTo := uuid.Nil
+	if s.notifsvc != nil {
+		recipient, nerr := s.notifsvc.NotifyCommentReply(ctx, userID, created.ID)
+		if nerr != nil {
+			s.logger.WarnContext(ctx, "notify comment reply failed", "error", nerr, "video_id", videoID)
+		} else {
+			notifiedReplyTo = recipient
+		}
+	}
 	// Notify the video owner of the new comment (best-effort; skipped when no
 	// notifier is wired or you comment on your own video).
 	if s.notifsvc != nil {
-		if v, verr := s.videosvc.GetByID(ctx, videoID); verr == nil {
+		if v, verr := s.videosvc.GetByID(ctx, videoID); verr == nil && v.OwnerID != notifiedReplyTo {
 			if nerr := s.notifsvc.NotifyComment(ctx, v.OwnerID, userID, videoID, created.ID); nerr != nil {
 				s.logger.WarnContext(ctx, "notify comment failed", "error", nerr, "video_id", videoID)
 			}
