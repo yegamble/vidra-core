@@ -17,6 +17,9 @@ const (
 	ctxKeyUserID         = "auth.user_id"
 	ctxKeyRole           = "auth.role"
 	ctxKeyTokenExpiresAt = "auth.token_expires_at"
+	// ctxKeySessionID is the session the access token is bound to. Handlers that
+	// revoke sessions need it so they can spare the caller's own.
+	ctxKeySessionID = "auth.session_id"
 )
 
 // requireAuth authenticates the request from a Bearer access token and stores the
@@ -33,12 +36,19 @@ func (s *Server) requireAuth(next echo.HandlerFunc) echo.HandlerFunc {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired token")
 		}
-		userID, err := uuid.Parse(claims.Subject)
+		// Verifying the JWT proves only that this instance minted it. The
+		// session lookup is what makes revocation EFFECTIVE — without it a
+		// revoked session's, a deactivated account's or a hard-deleted
+		// account's unexpired access token kept working on every route that did
+		// not itself load the user row, for the whole JWT_ACCESS_TTL. One
+		// indexed read; see auth.Service.AuthenticateAccessToken.
+		userID, err := s.authsvc.AuthenticateAccessToken(c.Request().Context(), claims)
 		if err != nil {
-			return echo.NewHTTPError(http.StatusUnauthorized, "invalid token subject")
+			return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired token")
 		}
 		c.Set(ctxKeyUserID, userID)
 		c.Set(ctxKeyRole, claims.Role)
+		c.Set(ctxKeySessionID, claims.SessionID)
 		if claims.ExpiresAt != nil {
 			c.Set(ctxKeyTokenExpiresAt, claims.ExpiresAt.Time)
 		}
@@ -79,7 +89,13 @@ func (s *Server) optionalAuth(next echo.HandlerFunc) echo.HandlerFunc {
 		if s.authsvc != nil {
 			if token, ok := bearerToken(c.Request().Header.Get(echo.HeaderAuthorization)); ok {
 				if claims, err := s.authsvc.Parse(token); err == nil {
-					if userID, err := uuid.Parse(claims.Subject); err == nil {
+					// Same revocation check as requireAuth: a revoked or
+					// tombstoned principal must not be a principal here either
+					// (these routes vary behaviour by identity — an owner sees
+					// their own private resource). Failure is silent: the
+					// request proceeds anonymously, as it does for any other
+					// unusable token.
+					if userID, err := s.authsvc.AuthenticateAccessToken(c.Request().Context(), claims); err == nil {
 						c.Set(ctxKeyUserID, userID)
 						c.Set(ctxKeyRole, claims.Role)
 					}
@@ -131,6 +147,13 @@ func mustPrincipal(c echo.Context) (uuid.UUID, string, error) {
 // spelled out inline under six different local names before this helper.
 func isStaff(role string) bool {
 	return role == admin.RoleAdmin || role == admin.RoleModerator
+}
+
+// sessionIDFromContext returns the id of the session the caller's access token
+// is bound to (empty when the request did not pass through requireAuth).
+func sessionIDFromContext(c echo.Context) string {
+	id, _ := c.Get(ctxKeySessionID).(string)
+	return id
 }
 
 // tokenExpiryFromContext returns the authenticated access-token expiry. Long

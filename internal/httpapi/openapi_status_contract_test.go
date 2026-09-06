@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,9 +16,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 // TestOpenAPIContractDocumentsGateStatuses generalises, repo-wide, the guard
@@ -70,7 +73,11 @@ func TestOpenAPIContractDocumentsGateStatuses(t *testing.T) {
 
 	srv := quietContractServer(t)
 	issuer := auth.NewTokenIssuer(contractTestJWTSecret, "vidra", "vidra", time.Minute)
-	userToken, err := issuer.Issue(uuid.New(), "user")
+	// The probe token must name a LIVE session: since AUTH-05 slice (c) the auth
+	// middleware resolves the session on every authenticated request, so a
+	// session-less token 401s everywhere and the probe would see no 403 gates at
+	// all. contractAuthRepo answers that one lookup and nothing else.
+	userToken, err := issuer.IssueForSession(contractProbeUserID, "user", contractProbeSessionID.String())
 	if err != nil {
 		t.Fatalf("issue probe token: %v", err)
 	}
@@ -256,4 +263,28 @@ func declaredSecurity(t *testing.T, specPath string) map[string]bool {
 		}
 	}
 	return out
+}
+
+// contractProbeUserID / contractProbeSessionID are the fixed principal the
+// status probe authenticates as. They are fixed (not uuid.New()) so
+// contractAuthRepo can vouch for exactly this session and nothing else.
+var (
+	contractProbeUserID    = uuid.MustParse("00000000-0000-4000-8000-0000000c0de1")
+	contractProbeSessionID = uuid.MustParse("00000000-0000-4000-8000-0000000c0de2")
+)
+
+// contractAuthRepo is the auth repository fullRouteOptions wires: still empty,
+// except for the single session lookup the auth middleware now performs on every
+// authenticated request. The embedded interface is nil, so calling any OTHER
+// method panics exactly as the previous plain `nil` repo did — this probe never
+// gets past the middleware into a handler that would need one.
+type contractAuthRepo struct {
+	auth.Repository
+}
+
+func (contractAuthRepo) GetActiveSessionForAccessToken(_ context.Context, id uuid.UUID) (sqlcgen.GetActiveSessionForAccessTokenRow, error) {
+	if id != contractProbeSessionID {
+		return sqlcgen.GetActiveSessionForAccessTokenRow{}, pgx.ErrNoRows
+	}
+	return sqlcgen.GetActiveSessionForAccessTokenRow{ID: id, UserID: contractProbeUserID}, nil
 }

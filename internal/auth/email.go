@@ -13,6 +13,11 @@ import "context"
 // implementations must not log or persist those either.
 type Mailer interface {
 	SendPasswordReset(ctx context.Context, email, token string) error
+	// SendPasswordChanged tells an account its password was just changed. It
+	// carries NO credential — it is the after-the-fact security notice that
+	// reaches a user whose password was changed by somebody else, so it must be
+	// sent on success and must never fail the change.
+	SendPasswordChanged(ctx context.Context, email string) error
 	SendEmailVerification(ctx context.Context, email, token string) error
 	// SendContactForm delivers a visitor contact-form message to the operator
 	// address `to`, identifying the visitor by fromName/fromEmail (surfaced as
@@ -34,6 +39,7 @@ type Mailer interface {
 type noopMailer struct{}
 
 func (noopMailer) SendPasswordReset(context.Context, string, string) error     { return nil }
+func (noopMailer) SendPasswordChanged(context.Context, string) error           { return nil }
 func (noopMailer) SendEmailVerification(context.Context, string, string) error { return nil }
 func (noopMailer) SendContactForm(context.Context, string, string, string, string, string) error {
 	return nil

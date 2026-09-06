@@ -810,6 +810,69 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/me/password:
+    post:
+      operationId: changePassword
+      summary: Change the current account's password
+      description: >-
+        Rotates the authenticated account's password after re-verifying the
+        CURRENT one, so a stolen access token alone cannot take the account over.
+        On success every OTHER session is revoked — access tokens included,
+        because access tokens are bound to their session — while the caller's own
+        session continues, and a best-effort "your password was changed" notice
+        is emailed to the account address. The new password must satisfy the same
+        policy as registration and the password reset, and must differ from the
+        current one. An account with no password at all (OAuth/ATProto-only) is
+        refused 409 and directed to the password-reset flow, which can set one.
+        Rate limited alongside login and the reset endpoints. Requires a bearer
+        access token.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "204":
+          description: >-
+            The password was changed and every other session was signed out.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The supplied current password is incorrect.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The account has no password to change (OAuth/ATProto-only). Use the
+            password-reset flow to set one.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            Validation failed (missing field, new password too short or too long,
+            or the same as the current one).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many requests (auth rate limit).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/auth/me/deactivate:
     post:
       operationId: deactivateAccount
@@ -18009,6 +18072,25 @@ components:
             The instance's rolling-24h daily upload quota in bytes; null =
             unlimited/not configured. Exceeding it answers 422
             `daily_quota_exceeded` on the upload gates.
+    ChangePasswordRequest:
+      type: object
+      description: >-
+        Current-password re-verification plus the replacement. Neither value is
+        ever echoed back or logged.
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+          format: password
+          description: The account's current password, for confirmation.
+        new_password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 72
+          description: >-
+            The replacement password. Same policy as registration and the
+            password reset, and must differ from the current one.
     DeleteAccountRequest:
       type: object
       description: >-

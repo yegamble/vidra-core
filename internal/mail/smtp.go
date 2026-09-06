@@ -174,6 +174,22 @@ func (s *SMTP) SendPasswordReset(ctx context.Context, email, token string) error
 	return s.send(ctx, email, "", subject, body)
 }
 
+// SendPasswordChanged tells an account its password was just changed. It is the
+// after-the-fact security notice — the one signal that reaches a user whose
+// password was changed by somebody else — so it deliberately carries no token,
+// no link that could change anything, and nothing about the new password.
+func (s *SMTP) SendPasswordChanged(ctx context.Context, email string) error {
+	subject := "Your password on " + s.cfg.InstanceName + " was changed"
+	body := "Hi,\n\n" +
+		"The password for your " + s.cfg.InstanceName + " account was just changed, " +
+		"and every other signed-in device was signed out.\n\n" +
+		"If that was you, there is nothing to do.\n\n" +
+		"If it was NOT you, someone else may have access to this account: use " +
+		"\"Forgot password\" to take it back, and check your other accounts that " +
+		"share the same password.\n"
+	return s.send(ctx, email, "", subject, body)
+}
+
 // SendEmailVerification delivers an email-verification token. The token appears
 // only in the message body; it is never logged.
 func (s *SMTP) SendEmailVerification(ctx context.Context, email, token string) error {

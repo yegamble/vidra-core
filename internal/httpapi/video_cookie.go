@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 )
 
@@ -32,7 +31,10 @@ func (s *Server) restoreVideoReadPrincipal(c echo.Context) {
 	if err != nil {
 		return
 	}
-	userID, err := uuid.Parse(claims.Subject)
+	// The cookie mirrors an access token, so it inherits the same revocation
+	// check: a signed-out, deactivated or deleted account must not keep reading
+	// private media until the token expires.
+	userID, err := s.authsvc.AuthenticateAccessToken(c.Request().Context(), claims)
 	if err != nil {
 		return
 	}

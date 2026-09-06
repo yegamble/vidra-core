@@ -60,7 +60,7 @@ const contractTestJWTSecret = "contract-test-secret-contract-test-0"
 func fullRouteOptions() []Option {
 	issuer := auth.NewTokenIssuer(contractTestJWTSecret, "vidra", "vidra", time.Minute)
 	return []Option{
-		WithAuthService(auth.NewService(nil, issuer, time.Hour), time.Minute),
+		WithAuthService(auth.NewService(contractAuthRepo{}, issuer, time.Hour), time.Minute),
 		WithAccountService(account.NewService(nil, nil, nil)),
 		WithOAuthService(auth.NewOAuthService(nil, nil, nil)),
 		// ATProto identity login: always part of the contract, gated at request

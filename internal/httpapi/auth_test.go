@@ -269,6 +269,17 @@ func (f *authFakeRepo) GetSessionByRefreshHash(_ context.Context, hash string) (
 func (f *authFakeRepo) RevokeSession(_ context.Context, id uuid.UUID) error {
 	if s, ok := f.sessions[id]; ok {
 		s.RevokedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		s.RevokedReason = "signed_out"
+	}
+	return nil
+}
+
+// RotateSession mirrors the SQL: same revoke, but stamped with the reason whose
+// REUSE is the compromise signal.
+func (f *authFakeRepo) RotateSession(_ context.Context, id uuid.UUID) error {
+	if s, ok := f.sessions[id]; ok {
+		s.RevokedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		s.RevokedReason = "rotated"
 	}
 	return nil
 }
@@ -277,9 +288,40 @@ func (f *authFakeRepo) RevokeAllUserSessions(_ context.Context, userID uuid.UUID
 	for _, s := range f.sessions {
 		if s.UserID == userID {
 			s.RevokedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+			s.RevokedReason = "signed_out"
 		}
 	}
 	return nil
+}
+
+// RevokeOtherUserSessions mirrors the SQL: every session for the user EXCEPT
+// the named one.
+func (f *authFakeRepo) RevokeOtherUserSessions(_ context.Context, a sqlcgen.RevokeOtherUserSessionsParams) error {
+	for _, s := range f.sessions {
+		if s.UserID == a.UserID && s.ID != a.ID {
+			s.RevokedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+			s.RevokedReason = "signed_out"
+		}
+	}
+	return nil
+}
+
+// GetActiveSessionForAccessToken mirrors the SQL join: no row for a revoked or
+// expired session, or for a disabled/tombstoned account.
+func (f *authFakeRepo) GetActiveSessionForAccessToken(_ context.Context, id uuid.UUID) (sqlcgen.GetActiveSessionForAccessTokenRow, error) {
+	s, ok := f.sessions[id]
+	if !ok || s.RevokedAt.Valid || !s.ExpiresAt.After(time.Now()) {
+		return sqlcgen.GetActiveSessionForAccessTokenRow{}, pgx.ErrNoRows
+	}
+	for _, u := range f.users {
+		if u.ID == s.UserID {
+			if !u.IsActive || u.DeletedAt.Valid {
+				return sqlcgen.GetActiveSessionForAccessTokenRow{}, pgx.ErrNoRows
+			}
+			return sqlcgen.GetActiveSessionForAccessTokenRow{ID: s.ID, UserID: s.UserID}, nil
+		}
+	}
+	return sqlcgen.GetActiveSessionForAccessTokenRow{}, pgx.ErrNoRows
 }
 
 func (f *authFakeRepo) UpsertOwnerClaimToken(_ context.Context, tokenHash string) (sqlcgen.OwnerClaimToken, error) {
@@ -624,10 +666,20 @@ func (f *authFakeRepo) AdminUpdateUser(_ context.Context, a sqlcgen.AdminUpdateU
 
 func authServer(t *testing.T) *Server {
 	t.Helper()
+	srv, _ := authServerWithFakeRepo(t)
+	return srv
+}
+
+// authServerWithFakeRepo is authServer plus a handle on the backing fake, for
+// the tests that must put an account into a state no endpoint can produce (an
+// empty password hash, a revoked session). One constructor, so the wiring — and
+// the test signing secret — has a single definition.
+func authServerWithFakeRepo(t *testing.T) (*Server, *authFakeRepo) {
+	t.Helper()
 	repo := newAuthFakeRepo()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
 	svc := auth.NewService(repo, issuer, 720*time.Hour)
-	return New(testConfig(), nil, nil, WithAuthService(svc, 15*time.Minute))
+	return New(testConfig(), nil, nil, WithAuthService(svc, 15*time.Minute)), repo
 }
 
 func postTo(srv *Server, path, body string) *httptest.ResponseRecorder {
@@ -1041,6 +1093,20 @@ func TestLogoutEndpointRevokes(t *testing.T) {
 type captureResetMailer struct {
 	calls int
 	token string
+	// changedEmail records the address the "your password was changed" notice
+	// was sent to; fail makes every send fail, so a test can prove the notice is
+	// best-effort and never fails the underlying action.
+	changedEmail string
+	fail         bool
+}
+
+func (m *captureResetMailer) SendPasswordChanged(_ context.Context, email string) error {
+	if m.fail {
+		return errors.New("mailer down")
+	}
+	m.calls++
+	m.changedEmail = email
+	return nil
 }
 
 func (m *captureResetMailer) SendPasswordReset(_ context.Context, _, token string) error {
