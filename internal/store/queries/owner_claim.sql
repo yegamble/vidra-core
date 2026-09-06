@@ -32,9 +32,12 @@ WITH claimed AS (
     RETURNING id
 ),
 ins AS (
-    INSERT INTO users (username, email, password_hash, role, history_enabled)
+    -- is_owner TRUE (0131): this statement is the ONLY place the marker is
+    -- written, so the instance owner is exactly "the account the claim token
+    -- created" and nothing else can mint one.
+    INSERT INTO users (username, email, password_hash, role, history_enabled, is_owner)
     SELECT sqlc.arg('username'), sqlc.arg('email'), sqlc.arg('password_hash'),
-           'admin', sqlc.arg('history_enabled')::bool
+           'admin', sqlc.arg('history_enabled')::bool, TRUE
     FROM claimed
     RETURNING id, username, email, password_hash, role, email_verified, is_active,
               created_at, updated_at, display_name, bio, pending_email_verification,

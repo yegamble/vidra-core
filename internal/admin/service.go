@@ -38,6 +38,21 @@ var (
 	// would republish a profile page for a person who asked to be erased
 	// without restoring anything they had. The row stays listed and readable.
 	ErrDeletedAccount = errors.New("admin: account is deleted and cannot be reactivated")
+	// ErrOwnerProtected means an admin tried to demote, deactivate or delete
+	// THE instance owner — the account that redeemed the first-run claim token
+	// (0104/0131). Vidra has no owner ROLE: the owner holds `admin` like anyone
+	// else, so without this guard the person who installed the instance could be
+	// removed by an admin they themselves promoted. The owner's own self-guards
+	// are unaffected — this only restrains other admins.
+	ErrOwnerProtected = errors.New("admin: the instance owner cannot be demoted, deactivated or deleted by another admin")
+	// ErrLastAdmin means a change would leave the instance with no account that
+	// can reach its own admin console: it removes the last active admin's role,
+	// access or account. Reachable in practice from the SELF-service side — the
+	// sole admin deactivating or deleting their own account through
+	// /auth/me/deactivate or DELETE /auth/me, where the admin routes' self-guard
+	// does not apply. The recovery from zero admins is a database edit, so this
+	// is refused rather than warned about.
+	ErrLastAdmin = errors.New("admin: this is the last active admin; the instance would have none")
 )
 
 // Repository is the data access the admin service needs. *sqlcgen.Queries
@@ -49,6 +64,10 @@ type Repository interface {
 	AdminUpdateUser(ctx context.Context, arg sqlcgen.AdminUpdateUserParams) (sqlcgen.User, error)
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
 	SumUserStorageUsage(ctx context.Context, ownerID uuid.UUID) (int64, error)
+	// CountActiveAdmins counts accounts that can still administer the instance
+	// (role='admin' AND is_active AND deleted_at IS NULL) — the set the
+	// last-admin guard must never empty.
+	CountActiveAdmins(ctx context.Context) (int64, error)
 	// Instance-wide aggregates for the admin overview (Stats). Each is a single
 	// trivially-real COUNT/SUM over a committed column — no time-series store.
 	CountUsers(ctx context.Context) (int64, error)
@@ -104,6 +123,16 @@ type UpdateUserInput struct {
 	StorageQuotaBytes *int64
 }
 
+// UpdateResult carries both sides of an admin edit. The audit envelope's
+// `changes` array wants before/after pairs, and the pre-image only exists inside
+// the service — UpdateUser already reads the target to run its guards, so
+// handing it back costs nothing, while recovering it in the handler would cost
+// a second read on every admin edit.
+type UpdateResult struct {
+	Before sqlcgen.User
+	After  sqlcgen.User
+}
+
 // UpdateUser edits a user's role, active flag, and/or storage quota. An admin
 // may not demote (to a non-admin role) or deactivate their own account — that
 // returns ErrSelfChange to avoid locking the last admin out (quota changes on
@@ -112,21 +141,43 @@ type UpdateUserInput struct {
 // Deactivating a user revokes their sessions so the ban takes effect
 // immediately (best-effort).
 func (s *Service) UpdateUser(ctx context.Context, callerID, targetID uuid.UUID, in UpdateUserInput) (sqlcgen.User, error) {
+	res, err := s.UpdateUserDetailed(ctx, callerID, targetID, in)
+	return res.After, err
+}
+
+// UpdateUserDetailed is UpdateUser plus the row as it was before the write.
+func (s *Service) UpdateUserDetailed(ctx context.Context, callerID, targetID uuid.UUID, in UpdateUserInput) (UpdateResult, error) {
 	target, err := s.repo.GetUserByID(ctx, targetID)
 	if err != nil {
-		return sqlcgen.User{}, ErrNotFound
+		return UpdateResult{}, ErrNotFound
 	}
-	// A tombstone cannot be brought back. Deletion is the one admin action with
-	// no inverse: it anonymises the row in place, so "Reactivate" would restore
-	// a public profile for `deleted-<suffix>` and nothing else.
-	if target.DeletedAt.Valid && in.IsActive != nil && *in.IsActive {
-		return sqlcgen.User{}, ErrDeletedAccount
+	// A tombstone accepts NO admin write. Reactivation is refused because
+	// deletion is the one admin action with no inverse — it anonymises the row
+	// in place, so "Reactivate" would restore a public profile for
+	// `deleted-<suffix>` and nothing else. The rest (role, quota, both flags)
+	// is refused because those writes are inert: the session lookup requires
+	// deleted_at IS NULL, so the row can never authenticate and no rule they
+	// set can ever apply. Accepting them made the console report a change that
+	// would never take effect, which is worse than refusing the write.
+	if target.DeletedAt.Valid {
+		return UpdateResult{}, ErrDeletedAccount
 	}
+	// What this edit takes away, in the two senses that can lock an instance
+	// out: the admin role, and the ability to sign in at all.
+	demoting := in.Role != nil && *in.Role != RoleAdmin
+	deactivating := in.IsActive != nil && !*in.IsActive
 	if callerID == targetID {
-		demoting := in.Role != nil && *in.Role != RoleAdmin
-		deactivating := in.IsActive != nil && !*in.IsActive
 		if demoting || deactivating {
-			return sqlcgen.User{}, ErrSelfChange
+			return UpdateResult{}, ErrSelfChange
+		}
+	} else if target.IsOwner && (demoting || deactivating) {
+		// Checked AFTER the self guard so the owner keeps reading the message it
+		// always read for its own edits.
+		return UpdateResult{}, ErrOwnerProtected
+	}
+	if demoting || deactivating {
+		if err := s.ensureAdminRemains(ctx, target); err != nil {
+			return UpdateResult{}, err
 		}
 	}
 	updated, err := s.repo.AdminUpdateUser(ctx, sqlcgen.AdminUpdateUserParams{
@@ -139,13 +190,70 @@ func (s *Service) UpdateUser(ctx context.Context, callerID, targetID uuid.UUID, 
 		StorageQuotaBytes: in.StorageQuotaBytes,
 	})
 	if err != nil {
-		return sqlcgen.User{}, err
+		return UpdateResult{}, err
 	}
 	if in.IsActive != nil && !*in.IsActive {
 		// Best-effort: a disabled account's tokens stop resolving anyway.
 		_ = s.repo.RevokeAllUserSessions(ctx, targetID)
 	}
-	return updated, nil
+	return UpdateResult{Before: target, After: updated}, nil
+}
+
+// ensureAdminRemains refuses a change that would strip the last active admin of
+// its role or its access. target must be the CURRENT row: an account that is not
+// already a live admin cannot be the last one, so the count is only paid when
+// the change actually matters.
+//
+// This is a check-then-write guard, not an atomic one. It closes every
+// sequential path; two admins removing each other in the same instant can still
+// both pass their own count (each sees the other still live) — closing that
+// needs SERIALIZABLE or an advisory lock around the write and is recorded as a
+// follow-up rather than half-built here.
+func (s *Service) ensureAdminRemains(ctx context.Context, target sqlcgen.User) error {
+	if target.Role != RoleAdmin || !target.IsActive || target.DeletedAt.Valid {
+		return nil
+	}
+	n, err := s.repo.CountActiveAdmins(ctx)
+	if err != nil {
+		return err
+	}
+	if n <= 1 {
+		return ErrLastAdmin
+	}
+	return nil
+}
+
+// CheckAdminRemoval reports whether targetID may lose its administrator standing
+// — by demotion, deactivation or deletion. It is the guard's entry point for the
+// SELF-service routes (POST /auth/me/deactivate, DELETE /auth/me), which have no
+// admin caller to compare against and are the only paths from which an instance
+// can actually reach zero admins. An unknown id is not an admin, so it passes.
+func (s *Service) CheckAdminRemoval(ctx context.Context, targetID uuid.UUID) error {
+	target, err := s.repo.GetUserByID(ctx, targetID)
+	if err != nil {
+		return nil
+	}
+	return s.ensureAdminRemains(ctx, target)
+}
+
+// CheckDelete is the pre-flight for an admin hard-deleting another account
+// (DELETE /admin/users/{id}). It refuses removing the instance owner and
+// removing the last active admin, with the same errors the PATCH route uses, so
+// the two routes cannot drift apart. Deleting an already-deleted row is left
+// alone: the delete service answers that with its own 404, and re-refusing it
+// here would change a shipped answer.
+func (s *Service) CheckDelete(ctx context.Context, callerID, targetID uuid.UUID) error {
+	target, err := s.repo.GetUserByID(ctx, targetID)
+	if err != nil {
+		return ErrNotFound
+	}
+	if target.DeletedAt.Valid {
+		return nil
+	}
+	if target.IsOwner && callerID != targetID {
+		return ErrOwnerProtected
+	}
+	return s.ensureAdminRemains(ctx, target)
 }
 
 // StorageUsed returns an account's current storage usage in bytes (the same

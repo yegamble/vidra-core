@@ -61,10 +61,14 @@ SELECT ins.id, ins.username, ins.email, ins.password_hash, ins.role, ins.email_v
        ins.pending_email_verification
 FROM ins;
 
--- name: RejectRegistrationRequest :execrows
--- Reject a PENDING request with a moderator note. Returns rows affected so the
--- caller can 404 an unknown/already-resolved id.
+-- name: RejectRegistrationRequest :one
+-- Reject a PENDING request with a moderator note. Returns the applicant's
+-- username and address (no rows = unknown/already-resolved id, which the caller
+-- maps to 404): the rejection notice has to reach the person who applied, and
+-- reading the row separately would be a second query racing this one — a
+-- concurrent reject could otherwise mail the same applicant twice.
 UPDATE registration_requests
 SET status = 'rejected', moderator_note = sqlc.arg('moderator_note'),
     reviewed_by = sqlc.arg('reviewed_by'), reviewed_at = now(), updated_at = now()
-WHERE id = sqlc.arg('id') AND status = 'pending';
+WHERE id = sqlc.arg('id') AND status = 'pending'
+RETURNING username, email;

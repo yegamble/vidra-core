@@ -102,7 +102,12 @@ type fakeProber struct {
 	ledgerErr error
 
 	storageMigrationActive bool
-	storageMigrationErr    error
+	// The 0131 owner marker and the live-admin count doctor's "instance owner"
+	// check reads.
+	owners              int64
+	activeAdmins        int64
+	ownerCountsErr      error
+	storageMigrationErr error
 
 	// The server's max_connections. The baseline is PostgreSQL's own default,
 	// which is what the bundled image ships with, so the healthy deployment's
@@ -168,6 +173,10 @@ func (p *fakeProber) MigrationStatus(_ context.Context, _, table string) (dbmigr
 
 func (p *fakeProber) ActiveStorageMigration(_ context.Context, _ string) (bool, error) {
 	return p.storageMigrationActive, p.storageMigrationErr
+}
+
+func (p *fakeProber) OwnerAndAdminCounts(_ context.Context, _ string) (int64, int64, error) {
+	return p.owners, p.activeAdmins, p.ownerCountsErr
 }
 
 func (p *fakeProber) ServerMaxConnections(_ context.Context, _ string) (int, error) {
@@ -336,6 +345,10 @@ func newFakeProber() *fakeProber {
 		},
 		// PostgreSQL's own default, which is what the bundled image ships with.
 		maxConnections: 100,
+		// A healthy instance knows who owns it and has a second admin, so the
+		// last-admin guard is not the only thing holding the console open.
+		owners:       1,
+		activeAdmins: 2,
 	}
 }
 

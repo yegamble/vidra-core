@@ -159,6 +159,48 @@ func (s *SMTP) SendNewReportAlert(ctx context.Context, to, targetType, reason, q
 	return s.send(ctx, to, "", subj, msg)
 }
 
+// SendRegistrationApproved tells an applicant on an approval-gated instance
+// that their signup was accepted. It carries NO credential: the password is the
+// one they chose when they applied, and this message must never be able to
+// change it. verifyRequired says the instance also holds new accounts for email
+// verification, in which case the message says so rather than promising a
+// sign-in that would be refused.
+func (s *SMTP) SendRegistrationApproved(ctx context.Context, email, username, signInURL string, verifyRequired bool) error {
+	name := s.effectiveInstanceName()
+	subject := "Your account on " + name + " was approved"
+	body := "Hi,\n\n" +
+		"Your request for an account on " + name + " was approved, and the account " +
+		"\"" + username + "\" is now active.\n\n" +
+		"Sign in with the username and password you chose when you applied — " +
+		"this message carries no password and no sign-in link that could change one.\n"
+	if signInURL != "" {
+		body += "\nSign in here: " + signInURL + "\n"
+	}
+	if verifyRequired {
+		body += "\nOne more step: this instance also asks new accounts to confirm their " +
+			"email address, so look for a separate message with a confirmation code. " +
+			"Sign-in stays closed until that code is entered.\n"
+	}
+	return s.send(ctx, email, "", subject, body)
+}
+
+// SendRegistrationRejected tells an applicant their signup was declined, and
+// passes on the reviewer's note when one was written — it is prose meant for
+// exactly this reader, which is why it travels here and never into the audit
+// ledger. The note rides in the body only, never in a header.
+func (s *SMTP) SendRegistrationRejected(ctx context.Context, email, username, note string) error {
+	name := s.effectiveInstanceName()
+	subject := "Your account request on " + name + " was not approved"
+	body := "Hi,\n\n" +
+		"Your request for an account on " + name + " (username \"" + username + "\") " +
+		"was reviewed and not approved, so no account was created.\n"
+	if strings.TrimSpace(note) != "" {
+		body += "\nThe reviewer left this note:\n\n" + note + "\n"
+	}
+	body += "\nIf you think this was a mistake, contact the people who run " + name + ".\n"
+	return s.send(ctx, email, "", subject, body)
+}
+
 // SendPasswordReset delivers a password-reset token. The token appears only in
 // the message body; it is never logged.
 func (s *SMTP) SendPasswordReset(ctx context.Context, email, token string) error {

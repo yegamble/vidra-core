@@ -24,7 +24,7 @@ SET role       = COALESCE($1, role),
                                ELSE storage_quota_bytes END,
     updated_at = now()
 WHERE id = $7
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
 `
 
 type AdminUpdateUserParams struct {
@@ -77,6 +77,7 @@ func (q *Queries) AdminUpdateUser(ctx context.Context, arg AdminUpdateUserParams
 		&i.PersonalizedRecommendationsEnabled,
 		&i.SensitiveContentPolicy,
 		&i.ShowBluesky,
+		&i.IsOwner,
 	)
 	return i, err
 }
@@ -114,6 +115,47 @@ func (q *Queries) AnonymizeDeletedUser(ctx context.Context, arg AnonymizeDeleted
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const countActiveAdmins = `-- name: CountActiveAdmins :one
+SELECT count(*)::bigint
+FROM users
+WHERE role = 'admin' AND is_active AND deleted_at IS NULL
+`
+
+// How many accounts can still administer this instance. "Can still administer"
+// is deliberately narrow: role='admin' AND is_active AND not a tombstone —
+// exactly the set that can hold a session and reach an admin route. A deactivated
+// admin cannot sign in, and a tombstoned one cannot authenticate at all, so
+// neither counts as the safety net the last-admin guard is protecting.
+func (q *Queries) CountActiveAdmins(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveAdmins)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countOwnersAndActiveAdmins = `-- name: CountOwnersAndActiveAdmins :one
+SELECT count(*) FILTER (WHERE is_owner)::bigint AS owners,
+       count(*) FILTER (WHERE role = 'admin' AND is_active AND deleted_at IS NULL)::bigint AS active_admins
+FROM users
+`
+
+type CountOwnersAndActiveAdminsRow struct {
+	Owners       int64 `json:"owners"`
+	ActiveAdmins int64 `json:"active_admins"`
+}
+
+// The two numbers `vidra doctor` needs to say whether this instance's
+// administration is safe: how many accounts carry the 0131 owner marker (0 or 1
+// — users_single_owner_idx makes more impossible), and how many can still reach
+// the admin console. Asked as one row because they are one question: an instance
+// with no marked owner AND one admin is a different sentence from either alone.
+func (q *Queries) CountOwnersAndActiveAdmins(ctx context.Context) (CountOwnersAndActiveAdminsRow, error) {
+	row := q.db.QueryRow(ctx, countOwnersAndActiveAdmins)
+	var i CountOwnersAndActiveAdminsRow
+	err := row.Scan(&i.Owners, &i.ActiveAdmins)
+	return i, err
 }
 
 const countSearchPublicAccounts = `-- name: CountSearchPublicAccounts :one
@@ -185,7 +227,7 @@ func (q *Queries) CountUsersMatching(ctx context.Context, query string) (int64, 
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
 `
 
 type CreateUserParams struct {
@@ -235,6 +277,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.PersonalizedRecommendationsEnabled,
 		&i.SensitiveContentPolicy,
 		&i.ShowBluesky,
+		&i.IsOwner,
 	)
 	return i, err
 }
@@ -351,7 +394,7 @@ func (q *Queries) GetUserActorByUsername(ctx context.Context, lower string) (Get
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
 FROM users
 WHERE lower(email) = lower($1)
 `
@@ -383,12 +426,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.PersonalizedRecommendationsEnabled,
 		&i.SensitiveContentPolicy,
 		&i.ShowBluesky,
+		&i.IsOwner,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
 FROM users
 WHERE id = $1
 `
@@ -420,18 +464,19 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.PersonalizedRecommendationsEnabled,
 		&i.SensitiveContentPolicy,
 		&i.ShowBluesky,
+		&i.IsOwner,
 	)
 	return i, err
 }
 
 const getUserByLoginIdentifier = `-- name: GetUserByLoginIdentifier :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
 FROM (
-    SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, 1 AS match_priority
+    SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner, 1 AS match_priority
     FROM users
     WHERE lower(email) = lower($1)
     UNION ALL
-    SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, 2 AS match_priority
+    SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner, 2 AS match_priority
     FROM users
     WHERE lower(username) = lower($1)
 ) AS matches
@@ -480,12 +525,13 @@ func (q *Queries) GetUserByLoginIdentifier(ctx context.Context, lower string) (U
 		&i.PersonalizedRecommendationsEnabled,
 		&i.SensitiveContentPolicy,
 		&i.ShowBluesky,
+		&i.IsOwner,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
 FROM users
 WHERE lower(username) = lower($1) AND is_active = true
 `
@@ -521,6 +567,7 @@ func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, er
 		&i.PersonalizedRecommendationsEnabled,
 		&i.SensitiveContentPolicy,
 		&i.ShowBluesky,
+		&i.IsOwner,
 	)
 	return i, err
 }
@@ -529,6 +576,7 @@ const listUsers = `-- name: ListUsers :many
 SELECT u.id, u.username, u.email, u.password_hash, u.role, u.email_verified, u.is_active,
        u.created_at, u.updated_at, u.display_name, u.bio, u.storage_quota_bytes, u.unlisted,
        u.bypass_quarantine, u.deleted_at, u.pending_email_verification, u.history_enabled, u.profile_public,
+       u.is_owner,
        (SELECT COALESCE(SUM(vf.size_bytes), 0)::bigint
           FROM video_files vf
           JOIN videos v ON v.id = vf.video_id
@@ -567,6 +615,7 @@ type ListUsersRow struct {
 	PendingEmailVerification bool               `json:"pending_email_verification"`
 	HistoryEnabled           bool               `json:"history_enabled"`
 	ProfilePublic            bool               `json:"profile_public"`
+	IsOwner                  bool               `json:"is_owner"`
 	StorageUsedBytes         int64              `json:"storage_used_bytes"`
 }
 
@@ -602,6 +651,7 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 			&i.PendingEmailVerification,
 			&i.HistoryEnabled,
 			&i.ProfilePublic,
+			&i.IsOwner,
 			&i.StorageUsedBytes,
 		); err != nil {
 			return nil, err
@@ -734,7 +784,7 @@ SET display_name = COALESCE($1, display_name),
                                     ELSE sensitive_content_policy END,
     updated_at   = now()
 WHERE id = $12
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
 `
 
 type UpdateUserProfileParams struct {
@@ -792,6 +842,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.PersonalizedRecommendationsEnabled,
 		&i.SensitiveContentPolicy,
 		&i.ShowBluesky,
+		&i.IsOwner,
 	)
 	return i, err
 }

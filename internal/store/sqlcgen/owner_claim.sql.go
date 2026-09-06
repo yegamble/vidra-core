@@ -20,9 +20,12 @@ WITH claimed AS (
     RETURNING id
 ),
 ins AS (
-    INSERT INTO users (username, email, password_hash, role, history_enabled)
+    -- is_owner TRUE (0131): this statement is the ONLY place the marker is
+    -- written, so the instance owner is exactly "the account the claim token
+    -- created" and nothing else can mint one.
+    INSERT INTO users (username, email, password_hash, role, history_enabled, is_owner)
     SELECT $2, $3, $4,
-           'admin', $5::bool
+           'admin', $5::bool, TRUE
     FROM claimed
     RETURNING id, username, email, password_hash, role, email_verified, is_active,
               created_at, updated_at, display_name, bio, pending_email_verification,

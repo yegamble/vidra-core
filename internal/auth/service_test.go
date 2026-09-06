@@ -125,16 +125,18 @@ func (f *fakeRepo) ApproveRegistrationRequest(ctx context.Context, a sqlcgen.App
 	return sqlcgen.ApproveRegistrationRequestRow{}, pgx.ErrNoRows
 }
 
-func (f *fakeRepo) RejectRegistrationRequest(_ context.Context, a sqlcgen.RejectRegistrationRequestParams) (int64, error) {
+// RejectRegistrationRequest mirrors the SQL's RETURNING: the applicant on a
+// hit, pgx.ErrNoRows on an unknown or already-resolved id.
+func (f *fakeRepo) RejectRegistrationRequest(_ context.Context, a sqlcgen.RejectRegistrationRequestParams) (sqlcgen.RejectRegistrationRequestRow, error) {
 	for _, r := range f.regReqs {
 		if r.id == a.ID && r.status == "pending" {
 			r.status = "rejected"
 			r.moderatorNote = a.ModeratorNote
 			r.reviewedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
-			return 1, nil
+			return sqlcgen.RejectRegistrationRequestRow{Username: r.username, Email: r.email}, nil
 		}
 	}
-	return 0, nil
+	return sqlcgen.RejectRegistrationRequestRow{}, pgx.ErrNoRows
 }
 
 func (f *fakeRepo) UpsertOwnerClaimToken(_ context.Context, tokenHash string) (sqlcgen.OwnerClaimToken, error) {

@@ -32,6 +32,9 @@ type CaptureMailer struct {
 	latest       map[string]string
 	contacts     []CapturedContact
 	reportAlerts []CapturedReportAlert
+	// registrationDecisions are the approval/rejection notices the signup queue
+	// sent an applicant.
+	registrationDecisions []CapturedRegistrationDecision
 	// passwordChanged records the addresses that received a "your password was
 	// changed" notice. No token is involved, so the address is the whole record.
 	passwordChanged []string
@@ -200,6 +203,46 @@ func (c *CaptureMailer) ReportAlerts() []CapturedReportAlert {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]CapturedReportAlert(nil), c.reportAlerts...)
+}
+
+// CapturedRegistrationDecision is one approval or rejection notice the queue
+// sent an applicant. Decision is "approved" or "rejected".
+type CapturedRegistrationDecision struct {
+	Decision       string
+	Email          string
+	Username       string
+	SignInURL      string
+	VerifyRequired bool
+	Note           string
+}
+
+// SendRegistrationApproved records the approval notice instead of mailing it.
+func (c *CaptureMailer) SendRegistrationApproved(_ context.Context, email, username, signInURL string, verifyRequired bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.registrationDecisions = append(c.registrationDecisions, CapturedRegistrationDecision{
+		Decision: "approved", Email: email, Username: username,
+		SignInURL: signInURL, VerifyRequired: verifyRequired,
+	})
+	return nil
+}
+
+// SendRegistrationRejected records the rejection notice instead of mailing it.
+func (c *CaptureMailer) SendRegistrationRejected(_ context.Context, email, username, note string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.registrationDecisions = append(c.registrationDecisions, CapturedRegistrationDecision{
+		Decision: "rejected", Email: email, Username: username, Note: note,
+	})
+	return nil
+}
+
+// RegistrationDecisions returns a copy of every captured signup decision
+// notice, in send order.
+func (c *CaptureMailer) RegistrationDecisions() []CapturedRegistrationDecision {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]CapturedRegistrationDecision(nil), c.registrationDecisions...)
 }
 
 // Latest returns the most recently captured raw token for the (kind, email) and

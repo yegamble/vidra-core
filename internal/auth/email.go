@@ -39,6 +39,22 @@ type Mailer interface {
 	// reporter's identity is deliberately NOT included — it lives in the
 	// queue, not in email.
 	SendNewReportAlert(ctx context.Context, to, targetType, reason, queueURL string) error
+	// SendRegistrationApproved tells an applicant their signup was accepted, on
+	// an instance running registration approval. Until A16 the queue decided in
+	// silence: the applicant learned the outcome by trying to sign in, and a
+	// rejection was indistinguishable from a request still waiting. It carries
+	// no credential — the password is the one they chose when they applied.
+	// signInURL is the instance's sign-in page ("" when no public base URL is
+	// configured, exactly like SendNewReportAlert's queueURL); verifyRequired
+	// says the instance ALSO holds the account for email verification, so the
+	// message does not promise a sign-in that is about to be refused.
+	SendRegistrationApproved(ctx context.Context, email, username, signInURL string, verifyRequired bool) error
+	// SendRegistrationRejected tells an applicant their signup was declined, and
+	// carries the reviewer's note when one was given — the note already persists
+	// on the request row, and the applicant is the one person it was written
+	// for. Free-text prose, which is exactly why it travels by mail and never
+	// reaches the audit ledger's allowlisted metadata.
+	SendRegistrationRejected(ctx context.Context, email, username, note string) error
 }
 
 // noopMailer is the default mailer. With no email provider configured it drops
@@ -58,5 +74,11 @@ func (noopMailer) SendContactForm(context.Context, string, string, string, strin
 	return nil
 }
 func (noopMailer) SendNewReportAlert(context.Context, string, string, string, string) error {
+	return nil
+}
+func (noopMailer) SendRegistrationApproved(context.Context, string, string, string, bool) error {
+	return nil
+}
+func (noopMailer) SendRegistrationRejected(context.Context, string, string, string) error {
 	return nil
 }

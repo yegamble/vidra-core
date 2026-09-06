@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -159,22 +160,46 @@ func (s *Service) ApproveRegistration(ctx context.Context, adminID, requestID uu
 		// Best-effort verification send (see the composition note above).
 		_ = s.RequestEmailVerification(ctx, user.ID)
 	}
+	// Tell the applicant. Best-effort by the same rule the rest of this package
+	// follows: the account exists either way, and a relay that is down must not
+	// strand a request in the queue with the reviewer believing they resolved it.
+	if err := s.mailer.SendRegistrationApproved(ctx, user.Email, user.Username, s.signInURL(), gateActive); err != nil {
+		// The mail package's error text never carries the address.
+		s.logRegistrationNoticeFailure(ctx, "approved", err)
+	}
 	return user, nil
+}
+
+// logRegistrationNoticeFailure records a failed signup-decision notice without
+// naming the applicant: the address is PII and the observability denylist keeps
+// it out of the log stream.
+func (s *Service) logRegistrationNoticeFailure(ctx context.Context, decision string, err error) {
+	slog.WarnContext(ctx, "registration decision notice failed", "decision", decision, "error", err)
 }
 
 // RejectRegistration rejects a pending request with a moderator note. An
 // unknown/already resolved id → ErrRegistrationRequestNotFound.
+//
+// The applicant is then told, and the note goes with them: it was written for
+// exactly one reader, and until A16 it reached nobody — a rejected applicant
+// discovered the outcome only by failing to sign in, which is also what a
+// request still sitting in the queue looks like. The send is best-effort: the
+// rejection is already recorded, and re-running it is a 404.
 func (s *Service) RejectRegistration(ctx context.Context, adminID, requestID uuid.UUID, note string) error {
-	n, err := s.repo.RejectRegistrationRequest(ctx, sqlcgen.RejectRegistrationRequestParams{
+	note = strings.TrimSpace(note)
+	row, err := s.repo.RejectRegistrationRequest(ctx, sqlcgen.RejectRegistrationRequestParams{
 		ID:            requestID,
-		ModeratorNote: strings.TrimSpace(note),
+		ModeratorNote: note,
 		ReviewedBy:    pgconv.UUID(adminID),
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrRegistrationRequestNotFound
+		}
 		return err
 	}
-	if n == 0 {
-		return ErrRegistrationRequestNotFound
+	if err := s.mailer.SendRegistrationRejected(ctx, row.Email, row.Username, note); err != nil {
+		s.logRegistrationNoticeFailure(ctx, "rejected", err)
 	}
 	return nil
 }

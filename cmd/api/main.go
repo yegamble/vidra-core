@@ -524,6 +524,10 @@ func run() error {
 		auth.WithEmailVerificationGateFunc(func() bool {
 			return mailWired && settingssvc.Bool(instancesettings.KeyRegistrationRequireEmailVerification)
 		}),
+		// The signup-decision notices (A16) put the sign-in page in the approval
+		// mail. Empty when the operator configured no canonical origin, in which
+		// case the message carries no link rather than a guessed host.
+		auth.WithPublicBaseURL(cfg.PublicBaseURL),
 	)
 	// OWNER_CLAIM_TOKEN (dev/test-only; config refuses it in production) pins the
 	// owner-claim mint to a deterministic value so harnesses can claim the owner

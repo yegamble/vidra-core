@@ -60,6 +60,17 @@ func (m *captureMailer) SendContactForm(context.Context, string, string, string,
 	return nil
 }
 
+// The signup-decision notices default to no-ops here for the same reason as the
+// email-change senders above: registration_test.go asserts on them through
+// CaptureMailer, and this type only has to satisfy the interface.
+func (m *captureMailer) SendRegistrationApproved(context.Context, string, string, string, bool) error {
+	return nil
+}
+
+func (m *captureMailer) SendRegistrationRejected(context.Context, string, string, string) error {
+	return nil
+}
+
 func newResetService(repo Repository, mailer Mailer) *Service {
 	return NewService(repo, newTestIssuer(), time.Hour, WithMailer(mailer))
 }

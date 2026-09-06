@@ -387,6 +387,23 @@ func doJSON(srv *Server, method, path, token, body string) *httptest.ResponseRec
 	return rec
 }
 
+// promoteSuccessorAdmin registers username and makes it an admin, so the
+// caller's own account is no longer the last one and may stand down. The A16
+// last-admin guard refuses a self-deactivate or self-delete that would leave the
+// instance with no administrator, and these harnesses' first account is always
+// the only admin they have.
+func promoteSuccessorAdmin(t *testing.T, srv *Server, adminToken, username string) {
+	t.Helper()
+	registerAndToken(t, srv, `{"username":"`+username+`","email":"`+username+`@example.test","password":"supersecret"}`)
+	found := adminUsers(t, srv, "?q="+username, adminToken)
+	if len(found.Users) != 1 {
+		t.Fatalf("successor lookup for %s = %+v, want one row", username, found.Users)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/admin/users/"+found.Users[0].ID, `{"role":"admin"}`, adminToken); rec.Code != http.StatusOK {
+		t.Fatalf("promote %s = %d; body=%s", username, rec.Code, rec.Body.String())
+	}
+}
+
 func TestDeleteAccountFlow(t *testing.T) {
 	env := newAccountEnv(t)
 	token := registerAndToken(t, env.srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
@@ -403,6 +420,12 @@ func TestDeleteAccountFlow(t *testing.T) {
 	if strings.Contains(env.logs.String(), "wrong") {
 		t.Error("the presented password was logged")
 	}
+
+	// ada is this harness's first account and therefore its only admin, and the
+	// A16 last-admin guard refuses a self-delete that would leave the instance
+	// with nobody who can reach its own console. Hand the role on first — which
+	// is the operator flow the guard exists to force.
+	promoteSuccessorAdmin(t, env.srv, token, "zed")
 
 	// Correct password → 204.
 	rec = doJSON(env.srv, http.MethodDelete, "/api/v1/auth/me", token, `{"password":"supersecret"}`)

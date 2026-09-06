@@ -13,6 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/admin"
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -24,6 +25,9 @@ import (
 // StorageUsedBytes is the account's current usage. DeletedAt is non-null for a
 // hard-deleted (tombstoned) account — the row stays listed, anonymised, so the
 // console can label it and withhold the actions that cannot apply to it.
+// IsOwner marks THE instance owner (0131): there is no owner role, so this flag
+// is the only thing that tells a console which admin installed the instance and
+// which guarded actions it must not offer against that row.
 type adminUserView struct {
 	ID                string     `json:"id"`
 	Username          string     `json:"username"`
@@ -37,6 +41,7 @@ type adminUserView struct {
 	StorageUsedBytes  int64      `json:"storage_used_bytes"`
 	CreatedAt         time.Time  `json:"created_at"`
 	DeletedAt         *time.Time `json:"deleted_at"`
+	IsOwner           bool       `json:"is_owner"`
 }
 
 func newAdminUserView(u sqlcgen.User, usedBytes int64) adminUserView {
@@ -53,6 +58,7 @@ func newAdminUserView(u sqlcgen.User, usedBytes int64) adminUserView {
 		StorageUsedBytes:  usedBytes,
 		CreatedAt:         u.CreatedAt,
 		DeletedAt:         pgconv.TimeOrNil(u.DeletedAt),
+		IsOwner:           u.IsOwner,
 	}
 }
 
@@ -64,7 +70,7 @@ func newAdminUserViewFromRow(r sqlcgen.ListUsersRow) adminUserView {
 		IsActive: r.IsActive, EmailVerified: r.EmailVerified,
 		BypassQuarantine: r.BypassQuarantine,
 		DisplayName:      r.DisplayName, StorageQuotaBytes: r.StorageQuotaBytes,
-		CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
+		CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt, IsOwner: r.IsOwner,
 	}, r.StorageUsedBytes)
 }
 
@@ -176,7 +182,7 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 	}
 	quotaSet, quotaValue, _ := in.quotaField() // already validated
 
-	updated, err := s.adminsvc.UpdateUser(c.Request().Context(), callerID, targetID, admin.UpdateUserInput{
+	res, err := s.adminsvc.UpdateUserDetailed(c.Request().Context(), callerID, targetID, admin.UpdateUserInput{
 		Role:              in.Role,
 		IsActive:          in.IsActive,
 		EmailVerified:     in.EmailVerified,
@@ -192,8 +198,14 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 			s.audit(c, observability.ActionAdminUserUpdate, observability.ResultFailure, callerID.String(), "self_change")
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "cannot demote or deactivate yourself")
 		case errors.Is(err, admin.ErrDeletedAccount):
-			s.audit(c, observability.ActionAdminUserUpdate, observability.ResultFailure, callerID.String(), "deleted_account target="+targetID.String())
+			s.auditAdminUserRefusal(c, observability.ActionAdminUserUpdate, callerID, targetID, "deleted_account")
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "this account was deleted; deletion is permanent and cannot be reversed")
+		case errors.Is(err, admin.ErrOwnerProtected):
+			s.auditAdminUserRefusal(c, observability.ActionAdminUserUpdate, callerID, targetID, "owner_protected")
+			return &OwnerProtectedError{}
+		case errors.Is(err, admin.ErrLastAdmin):
+			s.auditAdminUserRefusal(c, observability.ActionAdminUserUpdate, callerID, targetID, "last_admin")
+			return &LastAdminError{}
 		}
 		return err
 	}
@@ -201,8 +213,70 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	s.audit(c, observability.ActionAdminUserUpdate, observability.ResultSuccess, callerID.String(), adminChangeReason(targetID, in))
-	return c.JSON(http.StatusOK, newAdminUserView(updated, used))
+	// The ledger carries BOTH: the structured field list a consumer can read
+	// without parsing, and the human line the admin audit view already renders.
+	s.auditEvent(c, audit.Event{
+		Action: observability.ActionAdminUserUpdate, Result: observability.ResultSuccess,
+		ActorID: callerID.String(), Reason: adminChangeReason(targetID, in),
+		ResourceType: auditResourceUser, ResourceID: targetID.String(),
+		Changes: adminUserChanges(res, in),
+	})
+	return c.JSON(http.StatusOK, newAdminUserView(res.After, used))
+}
+
+// auditResourceUser is the audit envelope's resource type for an account.
+const auditResourceUser = "user"
+
+// auditAdminUserRefusal records a refused admin write as a FAILURE naming the
+// target and the guard that fired. reason_code is an allowlisted metadata key,
+// so the machine-readable cause survives where prose would be rejected.
+func (s *Server) auditAdminUserRefusal(c echo.Context, action string, callerID, targetID uuid.UUID, code string) {
+	s.auditEvent(c, audit.Event{
+		Action: action, Result: observability.ResultFailure, ActorID: callerID.String(),
+		Reason:       code + " target=" + targetID.String(),
+		ResourceType: auditResourceUser, ResourceID: targetID.String(),
+		Metadata: []audit.MetadataField{{Key: "reason_code", Value: code}},
+	})
+}
+
+// adminUserChanges renders an admin edit as the envelope's structured changes
+// array — A16 slice 1 finding (5), which was that a consumer had to parse prose
+// to learn what an admin altered. Only fields the request actually carried are
+// listed, every one of them is in audit's allowlist of safe state/config fields,
+// and no user prose or address is ever included.
+func adminUserChanges(res admin.UpdateResult, in updateUserRequest) []audit.Change {
+	var out []audit.Change
+	if in.Role != nil {
+		out = append(out, audit.Change{Field: "role", Before: res.Before.Role, After: res.After.Role})
+	}
+	if in.IsActive != nil {
+		out = append(out, audit.Change{Field: "account_enabled",
+			Before: strconv.FormatBool(res.Before.IsActive), After: strconv.FormatBool(res.After.IsActive)})
+	}
+	if in.EmailVerified != nil {
+		out = append(out, audit.Change{Field: "email_verified",
+			Before: strconv.FormatBool(res.Before.EmailVerified), After: strconv.FormatBool(res.After.EmailVerified)})
+	}
+	if in.BypassQuarantine != nil {
+		out = append(out, audit.Change{Field: "bypass_quarantine",
+			Before: strconv.FormatBool(res.Before.BypassQuarantine), After: strconv.FormatBool(res.After.BypassQuarantine)})
+	}
+	if set, _, _ := in.quotaField(); set {
+		out = append(out, audit.Change{Field: "storage_quota_bytes",
+			Before: quotaAuditValue(res.Before.StorageQuotaBytes), After: quotaAuditValue(res.After.StorageQuotaBytes)})
+	}
+	return out
+}
+
+// quotaAuditValue renders the tri-state quota for the ledger. NULL — "the
+// instance default applies" — is spelled out rather than left empty, because an
+// empty change value means "absent" and would read as no quota information at
+// all.
+func quotaAuditValue(v *int64) string {
+	if v == nil {
+		return "default"
+	}
+	return strconv.FormatInt(*v, 10)
 }
 
 // adminChangeReason summarises an admin user edit for the audit log (no secrets).

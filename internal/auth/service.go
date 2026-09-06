@@ -123,7 +123,10 @@ type Repository interface {
 	ListRegistrationRequests(ctx context.Context, arg sqlcgen.ListRegistrationRequestsParams) ([]sqlcgen.ListRegistrationRequestsRow, error)
 	CountRegistrationRequests(ctx context.Context, status *string) (int64, error)
 	ApproveRegistrationRequest(ctx context.Context, arg sqlcgen.ApproveRegistrationRequestParams) (sqlcgen.ApproveRegistrationRequestRow, error)
-	RejectRegistrationRequest(ctx context.Context, arg sqlcgen.RejectRegistrationRequestParams) (int64, error)
+	// RejectRegistrationRequest returns the applicant it just rejected (no rows =
+	// unknown or already resolved), so the rejection notice can reach them without
+	// a second query racing this one.
+	RejectRegistrationRequest(ctx context.Context, arg sqlcgen.RejectRegistrationRequestParams) (sqlcgen.RejectRegistrationRequestRow, error)
 
 	// Owner-claim bootstrap (0104) — see ownerclaim.go.
 	UpsertOwnerClaimToken(ctx context.Context, tokenHash string) (sqlcgen.OwnerClaimToken, error)
@@ -151,7 +154,10 @@ type Service struct {
 	resetTTL   time.Duration
 	verifyTTL  time.Duration
 	mailer     Mailer
-	now        func() time.Time // injectable clock for tests
+	// publicBaseURL is the instance origin used to build links in account mail;
+	// "" when the operator has not configured one.
+	publicBaseURL string
+	now           func() time.Time // injectable clock for tests
 
 	// newUserHistoryFn resolves the new_user_history_enabled instance setting
 	// (config-parity W7): the watch-history preference seeded onto accounts at
@@ -210,6 +216,24 @@ func WithMailer(m Mailer) Option {
 			s.mailer = m
 		}
 	}
+}
+
+// WithPublicBaseURL wires the instance's canonical public origin
+// (config.PublicBaseURL) so account mail can carry a working link. Empty is the
+// normal state on an instance that has not configured one, and every message
+// that uses it omits the link rather than inventing a host — the same posture
+// as SendNewReportAlert's queueURL.
+func WithPublicBaseURL(base string) Option {
+	return func(s *Service) { s.publicBaseURL = strings.TrimRight(strings.TrimSpace(base), "/") }
+}
+
+// signInURL is the instance's sign-in page, or "" when no public base URL is
+// configured.
+func (s *Service) signInURL() string {
+	if s.publicBaseURL == "" {
+		return ""
+	}
+	return s.publicBaseURL + "/login"
 }
 
 // WithResetTTL overrides the password-reset token lifetime (default 1h). A

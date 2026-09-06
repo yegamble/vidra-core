@@ -273,6 +273,10 @@ func TestDeleteAccountErasesCoreOwnSearchRows(t *testing.T) {
 	srvEnqueue(env.srv, searchevents.TypeSearchSubmitted,
 		`{"query":"someone else","user_id":"`+otherID+`"}`)
 
+	// ada is this env's only admin; the A16 last-admin guard refuses a
+	// self-delete that would leave the instance with none.
+	promoteSuccessorAdmin(t, env.srv, token, "zed")
+
 	if rec := doJSON(env.srv, http.MethodDelete, "/api/v1/auth/me", token, `{"password":"supersecret"}`); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete account code = %d; body=%s", rec.Code, rec.Body.String())
 	}

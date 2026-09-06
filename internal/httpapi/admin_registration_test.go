@@ -174,3 +174,106 @@ func TestRegistrationRequestsStatusFilterIsValidated(t *testing.T) {
 		t.Errorf("status=nonsense = %d, want 400", rec.Code)
 	}
 }
+
+// approvalServerWithMailer is approvalServer plus a capturing mailer, for the
+// signup-decision notices (A16). Registration starts OPEN so the first account
+// (the admin) exists before approval mode is switched on.
+func approvalServerWithMailer(t *testing.T) (*Server, *config.Config, *captureResetMailer) {
+	t.Helper()
+	cfg := testConfig()
+	cfg.PublicBaseURL = "https://videos.example"
+	repo := newAuthFakeRepo()
+	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
+	mailer := &captureResetMailer{}
+	svc := auth.NewService(repo, issuer, 720*time.Hour,
+		auth.WithMailer(mailer), auth.WithPublicBaseURL(cfg.PublicBaseURL))
+	srv := New(cfg, nil, nil, WithAuthService(svc, 15*time.Minute))
+	return srv, cfg, mailer
+}
+
+// TestRegistrationDecisionsMailTheApplicant covers SC5 over HTTP: the decision
+// routes notify the applicant, and the refusals notify nobody — a moderator's
+// 403 must not leak an "approved" mail to somebody whose request is untouched.
+func TestRegistrationDecisionsMailTheApplicant(t *testing.T) {
+	srv, cfg, mailer := approvalServerWithMailer(t)
+	adminTok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	// An ordinary account, created while signups are still open, to attempt the
+	// decisions the queue must refuse.
+	outsiderTok := registerAndToken(t, srv, `{"username":"dana","email":"dana@example.test","password":"supersecret"}`)
+	cfg.RegistrationRequireApproval = true
+
+	apply := func(name string) string {
+		t.Helper()
+		if rec := postTo(srv, "/api/v1/auth/register",
+			`{"username":"`+name+`","email":"`+name+`@example.test","password":"supersecret"}`); rec.Code != http.StatusAccepted {
+			t.Fatalf("apply %s = %d; body=%s", name, rec.Code, rec.Body.String())
+		}
+		rec := getWithAuth(srv, "/api/v1/admin/registration-requests?status=pending", adminTok)
+		var list registrationRequestListResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &list)
+		for _, r := range list.Requests {
+			if r.Username == name {
+				return r.ID
+			}
+		}
+		t.Fatalf("applicant %s not in the pending queue", name)
+		return ""
+	}
+
+	approveID := apply("bob")
+	rejectID := apply("cleo")
+
+	// Applying notifies nobody: the decision is what the applicant is waiting on.
+	if len(mailer.regDecisions) != 0 {
+		t.Fatalf("notices after two applications = %+v, want none", mailer.regDecisions)
+	}
+
+	// A non-admin is refused on both, and mails nothing.
+	if rec := doJSON(srv, http.MethodPost, "/api/v1/admin/registration-requests/"+approveID+"/approve", outsiderTok, ""); rec.Code != http.StatusForbidden {
+		t.Errorf("non-admin approve = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(srv, http.MethodPost, "/api/v1/admin/registration-requests/"+rejectID+"/reject", outsiderTok, `{"note":"no"}`); rec.Code != http.StatusForbidden {
+		t.Errorf("non-admin reject = %d, want 403", rec.Code)
+	}
+	if rec := doJSON(srv, http.MethodPost, "/api/v1/admin/registration-requests/"+approveID+"/approve", "", ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("anonymous approve = %d, want 401", rec.Code)
+	}
+	if len(mailer.regDecisions) != 0 {
+		t.Fatalf("notices after the refusals = %+v, want none", mailer.regDecisions)
+	}
+
+	// The admin's approval mails the applicant, with the instance's sign-in page.
+	if rec := doJSON(srv, http.MethodPost, "/api/v1/admin/registration-requests/"+approveID+"/approve", adminTok, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("approve = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(mailer.regDecisions) != 1 {
+		t.Fatalf("notices after approve = %+v, want one", mailer.regDecisions)
+	}
+	got := mailer.regDecisions[0]
+	if got.Decision != "approved" || got.Email != "bob@example.test" || got.SignInURL != "https://videos.example/login" {
+		t.Errorf("approval notice = %+v, want approved bob with the sign-in URL", got)
+	}
+
+	// And the rejection carries the reviewer's note.
+	if rec := doJSON(srv, http.MethodPost, "/api/v1/admin/registration-requests/"+rejectID+"/reject", adminTok, `{"note":"not this time"}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("reject = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(mailer.regDecisions) != 2 {
+		t.Fatalf("notices after reject = %+v, want two", mailer.regDecisions)
+	}
+	got = mailer.regDecisions[1]
+	if got.Decision != "rejected" || got.Email != "cleo@example.test" || got.Note != "not this time" {
+		t.Errorf("rejection notice = %+v, want rejected cleo with the note", got)
+	}
+
+	// A repeat decision is 404 and mails nothing more.
+	if rec := doJSON(srv, http.MethodPost, "/api/v1/admin/registration-requests/"+approveID+"/approve", adminTok, ""); rec.Code != http.StatusNotFound {
+		t.Errorf("repeat approve = %d, want 404", rec.Code)
+	}
+	if rec := doJSON(srv, http.MethodPost, "/api/v1/admin/registration-requests/"+rejectID+"/reject", adminTok, `{"note":"again"}`); rec.Code != http.StatusNotFound {
+		t.Errorf("repeat reject = %d, want 404", rec.Code)
+	}
+	if len(mailer.regDecisions) != 2 {
+		t.Errorf("notices after the repeats = %+v, want still two", mailer.regDecisions)
+	}
+}

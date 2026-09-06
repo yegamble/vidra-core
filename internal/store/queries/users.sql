@@ -1,5 +1,5 @@
 -- name: GetUserByID :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
 FROM users
 WHERE id = $1;
 
@@ -31,7 +31,7 @@ FROM users
 WHERE id = $1 AND is_active = true;
 
 -- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
 FROM users
 WHERE lower(email) = lower($1);
 
@@ -50,13 +50,13 @@ WHERE lower(email) = lower($1);
 -- enumeration oracle.
 --
 -- Both branches are index-served (users_email_lower_idx / users_username_lower_idx).
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
 FROM (
-    SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, 1 AS match_priority
+    SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner, 1 AS match_priority
     FROM users
     WHERE lower(email) = lower($1)
     UNION ALL
-    SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, 2 AS match_priority
+    SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner, 2 AS match_priority
     FROM users
     WHERE lower(username) = lower($1)
 ) AS matches
@@ -68,7 +68,7 @@ LIMIT 1;
 -- (deactivated accounts are treated as not found → the caller 404s, so an
 -- inactive account's existence is not leaked differently from an unknown one).
 -- Used to start a DM by username instead of by id.
-SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
 FROM users
 WHERE lower(username) = lower($1) AND is_active = true;
 
@@ -79,7 +79,7 @@ WHERE lower(username) = lower($1) AND is_active = true;
 -- is seeded from the new_user_history_enabled instance setting.
 INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky;
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner;
 
 -- name: CountUsers :one
 SELECT count(*) FROM users;
@@ -109,7 +109,7 @@ SET display_name = COALESCE(sqlc.narg('display_name'), display_name),
                                     ELSE sensitive_content_policy END,
     updated_at   = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky;
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner;
 
 -- name: DeactivateUser :exec
 UPDATE users
@@ -125,6 +125,7 @@ WHERE id = $1;
 SELECT u.id, u.username, u.email, u.password_hash, u.role, u.email_verified, u.is_active,
        u.created_at, u.updated_at, u.display_name, u.bio, u.storage_quota_bytes, u.unlisted,
        u.bypass_quarantine, u.deleted_at, u.pending_email_verification, u.history_enabled, u.profile_public,
+       u.is_owner,
        (SELECT COALESCE(SUM(vf.size_bytes), 0)::bigint
           FROM video_files vf
           JOIN videos v ON v.id = vf.video_id
@@ -165,7 +166,7 @@ SET role       = COALESCE(sqlc.narg('role'), role),
                                ELSE storage_quota_bytes END,
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky;
+RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner;
 
 -- name: AnonymizeDeletedUser :execrows
 -- The §1 hard delete's final step: the users row is anonymised, NOT removed
@@ -256,3 +257,23 @@ WHERE u.is_active = TRUE
       SELECT 1 FROM user_blocks ub
       WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = u.id
   );
+
+-- name: CountActiveAdmins :one
+-- How many accounts can still administer this instance. "Can still administer"
+-- is deliberately narrow: role='admin' AND is_active AND not a tombstone —
+-- exactly the set that can hold a session and reach an admin route. A deactivated
+-- admin cannot sign in, and a tombstoned one cannot authenticate at all, so
+-- neither counts as the safety net the last-admin guard is protecting.
+SELECT count(*)::bigint
+FROM users
+WHERE role = 'admin' AND is_active AND deleted_at IS NULL;
+
+-- name: CountOwnersAndActiveAdmins :one
+-- The two numbers `vidra doctor` needs to say whether this instance's
+-- administration is safe: how many accounts carry the 0131 owner marker (0 or 1
+-- — users_single_owner_idx makes more impossible), and how many can still reach
+-- the admin console. Asked as one row because they are one question: an instance
+-- with no marked owner AND one admin is a different sentence from either alone.
+SELECT count(*) FILTER (WHERE is_owner)::bigint AS owners,
+       count(*) FILTER (WHERE role = 'admin' AND is_active AND deleted_at IS NULL)::bigint AS active_admins
+FROM users;

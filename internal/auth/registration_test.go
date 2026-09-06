@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -113,5 +115,178 @@ func TestRejectRegistration(t *testing.T) {
 	// No account was created, so login fails.
 	if _, err := svc.Login(ctx, LoginInput{Email: "carol@example.test", Password: "supersecret"}, "ua"); err == nil {
 		t.Error("login should fail for a rejected registration")
+	}
+}
+
+// failingMailer wraps a CaptureMailer and fails only the two signup-decision
+// notices, so a test can prove the DECISION still succeeds when the sink is
+// down — best-effort means the mail may fail, never the review.
+type failingMailer struct {
+	*CaptureMailer
+	err error
+}
+
+func (m failingMailer) SendRegistrationApproved(context.Context, string, string, string, bool) error {
+	return m.err
+}
+
+func (m failingMailer) SendRegistrationRejected(context.Context, string, string, string) error {
+	return m.err
+}
+
+// TestApproveRegistrationNotifiesTheApplicant closes A16 slice 1 finding (2):
+// "approval and rejection notify the applicant of nothing — they discover the
+// outcome by trying to sign in".
+func TestApproveRegistrationNotifiesTheApplicant(t *testing.T) {
+	ctx := context.Background()
+	mailer := NewCaptureMailer()
+	svc := NewService(newFakeRepo(), newTestIssuer(), time.Hour,
+		WithMailer(mailer), WithPublicBaseURL("https://videos.example/"))
+	admin := uuid.New()
+
+	req, err := svc.RequestRegistration(ctx, regInput("bob", "bob@example.test"), "")
+	if err != nil {
+		t.Fatalf("RequestRegistration: %v", err)
+	}
+	if got := mailer.RegistrationDecisions(); len(got) != 0 {
+		t.Fatalf("applying already notified: %+v", got)
+	}
+	if _, err := svc.ApproveRegistration(ctx, admin, req.ID); err != nil {
+		t.Fatalf("ApproveRegistration: %v", err)
+	}
+	got := mailer.RegistrationDecisions()
+	if len(got) != 1 {
+		t.Fatalf("decision notices = %+v, want exactly one", got)
+	}
+	if got[0].Decision != "approved" || got[0].Email != "bob@example.test" || got[0].Username != "bob" {
+		t.Errorf("approval notice = %+v, want approved bob@example.test", got[0])
+	}
+	// The trailing slash on the configured base must not survive into the link.
+	if got[0].SignInURL != "https://videos.example/login" {
+		t.Errorf("sign-in URL = %q, want https://videos.example/login", got[0].SignInURL)
+	}
+	if got[0].VerifyRequired {
+		t.Error("verify_required set while the verification gate is off")
+	}
+	// Approving twice is 404 and must not mail a second time.
+	if _, err := svc.ApproveRegistration(ctx, admin, req.ID); err != ErrRegistrationRequestNotFound {
+		t.Fatalf("second approve = %v, want ErrRegistrationRequestNotFound", err)
+	}
+	if got := mailer.RegistrationDecisions(); len(got) != 1 {
+		t.Errorf("notices after a repeat approve = %+v, want still one", got)
+	}
+}
+
+// TestApproveRegistrationSaysWhenVerificationStillHolds: promising "sign in
+// here" while the account is held for email verification would be a lie the
+// applicant discovers at the login form.
+func TestApproveRegistrationSaysWhenVerificationStillHolds(t *testing.T) {
+	ctx := context.Background()
+	mailer := NewCaptureMailer()
+	svc := NewService(newFakeRepo(), newTestIssuer(), time.Hour,
+		WithMailer(mailer),
+		WithEmailVerificationGateFunc(func() bool { return true }))
+	req, err := svc.RequestRegistration(ctx, regInput("bob", "bob@example.test"), "")
+	if err != nil {
+		t.Fatalf("RequestRegistration: %v", err)
+	}
+	if _, err := svc.ApproveRegistration(ctx, uuid.New(), req.ID); err != nil {
+		t.Fatalf("ApproveRegistration: %v", err)
+	}
+	got := mailer.RegistrationDecisions()
+	if len(got) != 1 || !got[0].VerifyRequired {
+		t.Fatalf("approval notice = %+v, want verify_required", got)
+	}
+	// With no public base URL configured the message carries no link at all.
+	if got[0].SignInURL != "" {
+		t.Errorf("sign-in URL = %q, want empty with no public base URL", got[0].SignInURL)
+	}
+}
+
+// TestRejectRegistrationNotifiesTheApplicantWithTheNote proves the reviewer's
+// note reaches the one person it was written for. The note is prose, which is
+// why it travels by mail: the audit envelope's metadata allowlist would reject
+// it outright.
+func TestRejectRegistrationNotifiesTheApplicantWithTheNote(t *testing.T) {
+	ctx := context.Background()
+	mailer := NewCaptureMailer()
+	svc := NewService(newFakeRepo(), newTestIssuer(), time.Hour, WithMailer(mailer))
+	admin := uuid.New()
+
+	req, err := svc.RequestRegistration(ctx, regInput("bob", "bob@example.test"), "")
+	if err != nil {
+		t.Fatalf("RequestRegistration: %v", err)
+	}
+	if err := svc.RejectRegistration(ctx, admin, req.ID, "  we only accept applicants from the co-op  "); err != nil {
+		t.Fatalf("RejectRegistration: %v", err)
+	}
+	got := mailer.RegistrationDecisions()
+	if len(got) != 1 {
+		t.Fatalf("decision notices = %+v, want exactly one", got)
+	}
+	if got[0].Decision != "rejected" || got[0].Email != "bob@example.test" || got[0].Username != "bob" {
+		t.Errorf("rejection notice = %+v, want rejected bob@example.test", got[0])
+	}
+	if got[0].Note != "we only accept applicants from the co-op" {
+		t.Errorf("note = %q, want the trimmed reviewer note", got[0].Note)
+	}
+
+	// Rejecting twice is 404 and mails nothing more.
+	if err := svc.RejectRegistration(ctx, admin, req.ID, "again"); err != ErrRegistrationRequestNotFound {
+		t.Fatalf("second reject = %v, want ErrRegistrationRequestNotFound", err)
+	}
+	if got := mailer.RegistrationDecisions(); len(got) != 1 {
+		t.Errorf("notices after a repeat reject = %+v, want still one", got)
+	}
+}
+
+// TestRejectRegistrationWithoutANoteSendsOne: a rejection with no note still
+// tells the applicant the outcome — silence is the defect being fixed.
+func TestRejectRegistrationWithoutANoteSendsOne(t *testing.T) {
+	ctx := context.Background()
+	mailer := NewCaptureMailer()
+	svc := NewService(newFakeRepo(), newTestIssuer(), time.Hour, WithMailer(mailer))
+	req, err := svc.RequestRegistration(ctx, regInput("bob", "bob@example.test"), "")
+	if err != nil {
+		t.Fatalf("RequestRegistration: %v", err)
+	}
+	if err := svc.RejectRegistration(ctx, uuid.New(), req.ID, ""); err != nil {
+		t.Fatalf("RejectRegistration: %v", err)
+	}
+	got := mailer.RegistrationDecisions()
+	if len(got) != 1 || got[0].Note != "" {
+		t.Fatalf("notice = %+v, want one rejection with an empty note", got)
+	}
+}
+
+// TestRegistrationDecisionsSurviveADeadMailer: the mail is best-effort, the
+// decision is not. A sink that is down must not strand a request in the queue.
+func TestRegistrationDecisionsSurviveADeadMailer(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	mailer := failingMailer{CaptureMailer: NewCaptureMailer(), err: errors.New("relay refused")}
+	svc := NewService(repo, newTestIssuer(), time.Hour, WithMailer(mailer))
+	admin := uuid.New()
+
+	approved, err := svc.RequestRegistration(ctx, regInput("bob", "bob@example.test"), "")
+	if err != nil {
+		t.Fatalf("RequestRegistration: %v", err)
+	}
+	if _, err := svc.ApproveRegistration(ctx, admin, approved.ID); err != nil {
+		t.Fatalf("approve with a dead mailer = %v, want the account created anyway", err)
+	}
+	rejected, err := svc.RequestRegistration(ctx, regInput("cleo", "cleo@example.test"), "")
+	if err != nil {
+		t.Fatalf("RequestRegistration: %v", err)
+	}
+	if err := svc.RejectRegistration(ctx, admin, rejected.ID, "no"); err != nil {
+		t.Fatalf("reject with a dead mailer = %v, want the rejection recorded anyway", err)
+	}
+	list, _, err := svc.ListRegistrationRequests(ctx, "pending", 20, 0)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("pending queue = %+v, want both decisions recorded despite the mail failures", list)
 	}
 }
