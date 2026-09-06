@@ -77,6 +77,49 @@ func (f *notifFakeRepo) CommentReplyRecipient(_ context.Context, commentID uuid.
 	}, nil
 }
 
+// CommentVideoOwnerRecipient mirrors the real :one query (who hears that their
+// VIDEO was commented on): the commented video's owner, excluded when the
+// comment is a tombstone or federated, when the owner is the commenter, when the
+// owner's account is inactive/deleted, when the owner muted the commenter, or
+// when either side blocked the other. pgx.ErrNoRows is the "nobody" answer. The
+// statement's real behaviour is proved against a live database in
+// store.TestCommentVideoOwnerRecipientOnRealPG; this fake exists so the
+// HTTP-level wiring is provable without one.
+func (f *notifFakeRepo) CommentVideoOwnerRecipient(_ context.Context, commentID uuid.UUID) (sqlcgen.CommentVideoOwnerRecipientRow, error) {
+	none := sqlcgen.CommentVideoOwnerRecipientRow{}
+	if f.comments == nil {
+		return none, pgx.ErrNoRows
+	}
+	c, ok := f.comments.comments[commentID]
+	if !ok || c.DeletedAt.Valid || !c.UserID.Valid {
+		return none, pgx.ErrNoRows
+	}
+	v, ok := f.videos.videos[c.VideoID]
+	if !ok {
+		return none, pgx.ErrNoRows
+	}
+	ch, ok := f.channelByID(v.ChannelID)
+	if !ok {
+		return none, pgx.ErrNoRows
+	}
+	owner, commenter := ch.OwnerID, uuid.UUID(c.UserID.Bytes)
+	if owner == commenter {
+		return none, pgx.ErrNoRows
+	}
+	u, ok := f.userByID(owner)
+	if !ok || !u.IsActive || u.DeletedAt.Valid {
+		return none, pgx.ErrNoRows
+	}
+	if f.comments.mutes != nil && f.comments.mutes.isMuted(owner, commenter) {
+		return none, pgx.ErrNoRows
+	}
+	if f.comments.userBlocks != nil &&
+		(f.comments.userBlocks.isBlocked(owner, commenter) || f.comments.userBlocks.isBlocked(commenter, owner)) {
+		return none, pgx.ErrNoRows
+	}
+	return sqlcgen.CommentVideoOwnerRecipientRow{RecipientID: owner, VideoID: c.VideoID}, nil
+}
+
 func notifPrefKey(userID uuid.UUID, typ string) string { return userID.String() + "\x00" + typ }
 
 func (f *notifFakeRepo) ListNotificationPrefs(_ context.Context, userID uuid.UUID) ([]sqlcgen.ListNotificationPrefsRow, error) {

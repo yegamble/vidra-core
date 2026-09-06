@@ -1122,3 +1122,189 @@ func TestCommentReplyRecipientOnRealPG(t *testing.T) {
 		t.Errorf("a reply to a FEDERATED comment resolved local recipient %s, want nobody", got)
 	}
 }
+
+// TestCommentVideoOwnerRecipientOnRealPG holds the rules behind the video-owner
+// 'comment' notification. Until A12/SOC-02 this path consulted no mute and no
+// block at all: an account the owner had muted — or either side of a block —
+// reached the owner's inbox simply by commenting on their video, with the
+// comment id attached, which is the muted content arriving through another
+// door. Every decision about WHO hears it now lives in the
+// CommentVideoOwnerRecipient statement, so this is the test that holds the
+// rules; the service unit test can only prove the service reacts faithfully.
+//
+// The failure that matters is over-delivery, so each case asserts the EXACT
+// answer (a specific recipient, or pgx.ErrNoRows) and then LIFTS the condition
+// and re-asserts — a clause deleted from the statement makes this test fail,
+// where a fixture-driven test would keep passing.
+func TestCommentVideoOwnerRecipientOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suffix := uuid.NewString()[:8]
+	mkUser := func(name string) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+			name+"-"+suffix, name+"-"+suffix+"@example.test",
+		).Scan(&id); err != nil {
+			t.Fatalf("seed user %s: %v", name, err)
+		}
+		t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id) })
+		return id
+	}
+
+	owner := mkUser("owner-notif")         // owns the channel and so the video
+	commenter := mkUser("commenter-notif") // comments on it
+	var channelID, videoID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'Owner notifs') RETURNING id`,
+		owner, "ownernotif-"+suffix,
+	).Scan(&channelID); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO videos (channel_id, title, privacy, state) VALUES ($1, 'Owner notifs', 'public', 'published') RETURNING id`,
+		channelID,
+	).Scan(&videoID); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+
+	mkComment := func(user uuid.UUID, body string) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO comments (video_id, user_id, body) VALUES ($1, $2, $3) RETURNING id`,
+			videoID, user, body,
+		).Scan(&id); err != nil {
+			t.Fatalf("seed comment %q: %v", body, err)
+		}
+		return id
+	}
+	recipientOf := func(commentID uuid.UUID) uuid.UUID {
+		t.Helper()
+		row, err := q.CommentVideoOwnerRecipient(ctx, commentID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil
+		}
+		if err != nil {
+			t.Fatalf("CommentVideoOwnerRecipient: %v", err)
+		}
+		if row.VideoID != videoID {
+			t.Errorf("video_id = %s, want the commented video %s", row.VideoID, videoID)
+		}
+		return row.RecipientID
+	}
+
+	c := mkComment(commenter, "nice clip")
+
+	// The base case: the video's owner is the recipient.
+	if got := recipientOf(c); got != owner {
+		t.Fatalf("recipient = %s, want the video's owner %s", got, owner)
+	}
+	// Commenting on your own video tells nobody.
+	if got := recipientOf(mkComment(owner, "thanks all")); got != uuid.Nil {
+		t.Errorf("the owner's own comment resolved recipient %s, want nobody", got)
+	}
+	// An unknown comment id is the "nobody" answer, not an error.
+	if got := recipientOf(uuid.New()); got != uuid.Nil {
+		t.Errorf("an unknown comment resolved recipient %s, want nobody", got)
+	}
+
+	for _, tc := range []struct {
+		why     string
+		apply   string
+		args    []any
+		unapply string
+		unargs  []any
+	}{
+		{
+			why:     "the owner muted the commenter",
+			apply:   `INSERT INTO muted_accounts (muter_id, muted_id) VALUES ($1, $2)`,
+			args:    []any{owner, commenter},
+			unapply: `DELETE FROM muted_accounts WHERE muter_id = $1 AND muted_id = $2`,
+			unargs:  []any{owner, commenter},
+		},
+		{
+			why:     "the owner blocked the commenter",
+			apply:   `INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)`,
+			args:    []any{owner, commenter},
+			unapply: `DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2`,
+			unargs:  []any{owner, commenter},
+		},
+		{
+			why:     "the commenter blocked the owner",
+			apply:   `INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)`,
+			args:    []any{commenter, owner},
+			unapply: `DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2`,
+			unargs:  []any{commenter, owner},
+		},
+		{
+			why:     "the comment is a tombstone (its author's account was deleted)",
+			apply:   `UPDATE comments SET deleted_at = now(), body = '' WHERE id = $1`,
+			args:    []any{c},
+			unapply: `UPDATE comments SET deleted_at = NULL, body = 'nice clip' WHERE id = $1`,
+			unargs:  []any{c},
+		},
+		{
+			why:     "the owner is deactivated",
+			apply:   `UPDATE users SET is_active = FALSE WHERE id = $1`,
+			args:    []any{owner},
+			unapply: `UPDATE users SET is_active = TRUE WHERE id = $1`,
+			unargs:  []any{owner},
+		},
+		{
+			why:     "the owner is a deleted account",
+			apply:   `UPDATE users SET deleted_at = now() WHERE id = $1`,
+			args:    []any{owner},
+			unapply: `UPDATE users SET deleted_at = NULL WHERE id = $1`,
+			unargs:  []any{owner},
+		},
+	} {
+		if _, err := st.Pool.Exec(ctx, tc.apply, tc.args...); err != nil {
+			t.Fatalf("apply %q: %v", tc.why, err)
+		}
+		if got := recipientOf(c); got != uuid.Nil {
+			t.Errorf("resolved recipient %s even though %s", got, tc.why)
+		}
+		if _, err := st.Pool.Exec(ctx, tc.unapply, tc.unargs...); err != nil {
+			t.Fatalf("unapply %q: %v", tc.why, err)
+		}
+		if got := recipientOf(c); got != owner {
+			t.Fatalf("lifting %q left the recipient at %s, want %s — the fixture, not the clause, was doing the work", tc.why, got, owner)
+		}
+	}
+
+	// A FEDERATED comment has no local user_id (0053). The inbound federation
+	// path does not raise this notification at all, and the statement must not
+	// resolve one either — an owner cannot mute or block a remote actor by
+	// account id, so a row here would be unmutable by construction.
+	actorURL := "https://remote.example/users/commenter-" + suffix
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO remote_actors (actor_url, actor_type, preferred_username, domain, public_key_pem)
+		 VALUES ($1, 'Person', 'ghost', 'remote.example', 'x')`, actorURL,
+	); err != nil {
+		t.Fatalf("seed remote actor: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM remote_actors WHERE actor_url = $1`, actorURL)
+	})
+	var remoteComment uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO comments (video_id, body, remote_actor_url, remote_author_name, remote_object_url)
+		 VALUES ($1, 'from afar', $2, 'ghost', $3) RETURNING id`,
+		videoID, actorURL, actorURL+"/note",
+	).Scan(&remoteComment); err != nil {
+		t.Fatalf("seed remote comment: %v", err)
+	}
+	if got := recipientOf(remoteComment); got != uuid.Nil {
+		t.Errorf("a FEDERATED comment resolved local recipient %s, want nobody", got)
+	}
+}

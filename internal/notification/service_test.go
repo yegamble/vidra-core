@@ -37,6 +37,29 @@ type fakeRepo struct {
 	replyRecipients map[uuid.UUID]sqlcgen.CommentReplyRecipientRow
 	replyLookups    []uuid.UUID
 	replyErr        error
+	// ownerRecipients answers CommentVideoOwnerRecipient on exactly the same
+	// contract as replyRecipients above: comment id -> the row the real query
+	// would return, an absent key being its "nobody to notify" answer.
+	ownerRecipients map[uuid.UUID]sqlcgen.CommentVideoOwnerRecipientRow
+	ownerLookups    []uuid.UUID
+	ownerErr        error
+}
+
+// CommentVideoOwnerRecipient mirrors the :one contract of the real query. Its
+// selection rules (mute, block either way, tombstone, federated author,
+// self-comment, inactive owner) live in SQL and are proved against a live
+// database in store.TestCommentVideoOwnerRecipientOnRealPG — here we only prove
+// the service reacts to each answer faithfully.
+func (f *fakeRepo) CommentVideoOwnerRecipient(_ context.Context, commentID uuid.UUID) (sqlcgen.CommentVideoOwnerRecipientRow, error) {
+	f.ownerLookups = append(f.ownerLookups, commentID)
+	if f.ownerErr != nil {
+		return sqlcgen.CommentVideoOwnerRecipientRow{}, f.ownerErr
+	}
+	row, ok := f.ownerRecipients[commentID]
+	if !ok {
+		return sqlcgen.CommentVideoOwnerRecipientRow{}, pgx.ErrNoRows
+	}
+	return row, nil
 }
 
 // CommentReplyRecipient mirrors the :one contract of the real query: a resolved
@@ -167,24 +190,30 @@ func (f *fakeRepo) MarkAllNotificationsRead(_ context.Context, userID uuid.UUID)
 }
 
 func TestNotifyAndList(t *testing.T) {
-	svc := NewService(&fakeRepo{})
 	ctx := context.Background()
 	owner, fan := uuid.New(), uuid.New()
 	ch, video, comment := uuid.New(), uuid.New(), uuid.New()
+	// selfComment is the comment the OWNER wrote on their own video: the real
+	// query excludes it (owner IS NOT DISTINCT FROM commenter), so the fake maps
+	// only the fan's comment to a recipient.
+	selfComment := uuid.New()
+	svc := NewService(&fakeRepo{ownerRecipients: map[uuid.UUID]sqlcgen.CommentVideoOwnerRecipientRow{
+		comment: {RecipientID: owner, VideoID: video},
+	}})
 
 	// A follow and a comment from someone else both notify the owner.
 	if err := svc.NotifyFollow(ctx, owner, fan, ch); err != nil {
 		t.Fatalf("NotifyFollow: %v", err)
 	}
-	if err := svc.NotifyComment(ctx, owner, fan, video, comment); err != nil {
-		t.Fatalf("NotifyComment: %v", err)
+	if got, err := svc.NotifyComment(ctx, fan, comment); err != nil || got != owner {
+		t.Fatalf("NotifyComment = (%s, %v), want (%s, nil)", got, err, owner)
 	}
 	// Self-actions never notify.
 	if err := svc.NotifyFollow(ctx, owner, owner, ch); err != nil {
 		t.Fatalf("self NotifyFollow: %v", err)
 	}
-	if err := svc.NotifyComment(ctx, owner, owner, video, comment); err != nil {
-		t.Fatalf("self NotifyComment: %v", err)
+	if got, err := svc.NotifyComment(ctx, owner, selfComment); err != nil || got != uuid.Nil {
+		t.Fatalf("self NotifyComment = (%s, %v), want (nil uuid, nil)", got, err)
 	}
 
 	if n, _ := svc.UnreadCount(ctx, owner); n != 2 {
@@ -381,8 +410,12 @@ func TestDisabledTypeSuppressesCreation(t *testing.T) {
 	}
 
 	// A type left enabled still notifies.
-	if err := svc.NotifyComment(ctx, owner, fan, uuid.New(), uuid.New()); err != nil {
-		t.Fatalf("NotifyComment (enabled): %v", err)
+	enabledComment := uuid.New()
+	repo.ownerRecipients = map[uuid.UUID]sqlcgen.CommentVideoOwnerRecipientRow{
+		enabledComment: {RecipientID: owner, VideoID: uuid.New()},
+	}
+	if got, err := svc.NotifyComment(ctx, fan, enabledComment); err != nil || got != owner {
+		t.Fatalf("NotifyComment (enabled) = (%s, %v), want (%s, nil)", got, err, owner)
 	}
 	if len(repo.notifs) != 1 || repo.notifs[0].Type != TypeComment {
 		t.Fatalf("notifs = %+v, want exactly one comment notification", repo.notifs)
@@ -621,4 +654,73 @@ func TestCommentReplyIsAKnownPreferenceType(t *testing.T) {
 	if enabled, ok := prefs[TypeCommentReply]; !ok || !enabled {
 		t.Fatalf("prefs[%s] = (%v, %v), want (true, true) by default", TypeCommentReply, enabled, ok)
 	}
+}
+
+// TestNotifyCommentSkips covers every answer that must produce NO video-owner
+// notification. The "no recipient" cases are the query's business (proved on
+// real PG in store.TestCommentVideoOwnerRecipientOnRealPG); what this pins down
+// is that the service treats each as a silent no-op rather than an error or a
+// stray row — and, for the failing lookup, that it does NOT fall back to
+// notifying anyone. A resolution failure that quietly notified the owner would
+// restore exactly the leak this change closes.
+func TestNotifyCommentSkips(t *testing.T) {
+	ctx := context.Background()
+	commenter := uuid.New()
+
+	t.Run("no resolved recipient is not an error", func(t *testing.T) {
+		repo := &fakeRepo{}
+		svc := NewService(repo)
+		got, err := svc.NotifyComment(ctx, commenter, uuid.New())
+		if err != nil {
+			t.Fatalf("NotifyComment with no recipient: %v", err)
+		}
+		if got != uuid.Nil || len(repo.notifs) != 0 {
+			t.Fatalf("notified %s / wrote %d rows, want none", got, len(repo.notifs))
+		}
+	})
+
+	t.Run("commenting on your own video notifies nobody", func(t *testing.T) {
+		commentID := uuid.New()
+		repo := &fakeRepo{ownerRecipients: map[uuid.UUID]sqlcgen.CommentVideoOwnerRecipientRow{
+			commentID: {RecipientID: commenter, VideoID: uuid.New()},
+		}}
+		svc := NewService(repo)
+		got, err := svc.NotifyComment(ctx, commenter, commentID)
+		if err != nil {
+			t.Fatalf("self comment: %v", err)
+		}
+		if got != uuid.Nil || len(repo.notifs) != 0 {
+			t.Fatalf("self comment notified %s / wrote %d rows, want none", got, len(repo.notifs))
+		}
+	})
+
+	t.Run("a disabled preference suppresses the owner notification", func(t *testing.T) {
+		owner, commentID := uuid.New(), uuid.New()
+		repo := &fakeRepo{
+			ownerRecipients: map[uuid.UUID]sqlcgen.CommentVideoOwnerRecipientRow{
+				commentID: {RecipientID: owner, VideoID: uuid.New()},
+			},
+			prefs: map[string]bool{prefKey(owner, TypeComment): false},
+		}
+		svc := NewService(repo)
+		got, err := svc.NotifyComment(ctx, commenter, commentID)
+		if err != nil {
+			t.Fatalf("opted-out owner: %v", err)
+		}
+		if got != uuid.Nil || len(repo.notifs) != 0 {
+			t.Fatalf("opted-out owner got %s / %d rows, want none", got, len(repo.notifs))
+		}
+	})
+
+	t.Run("a failed resolution is surfaced, never notified past", func(t *testing.T) {
+		repo := &fakeRepo{ownerErr: context.DeadlineExceeded}
+		svc := NewService(repo)
+		got, err := svc.NotifyComment(ctx, commenter, uuid.New())
+		if err == nil {
+			t.Fatal("NotifyComment with a failing lookup returned nil error")
+		}
+		if got != uuid.Nil || len(repo.notifs) != 0 {
+			t.Fatalf("a failed lookup notified %s / wrote %d rows, want none", got, len(repo.notifs))
+		}
+	})
 }
