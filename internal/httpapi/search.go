@@ -791,6 +791,17 @@ func (s *Server) purgeUserFromSearch(ctx context.Context, userID uuid.UUID) {
 
 // emitSearchSubmitted enqueues a search.submitted behavioural event (best-effort;
 // the outbox delivers it asynchronously). No-op when the enqueuer is unwired.
+//
+// Identity is built to the SAME rule as handleSearchEvents, and that is
+// load-bearing rather than tidiness: this event lands in the very same
+// vidra-search query_log the POST /search/events batch does, and the same
+// k-anonymity floor counts both. The floor counts distinct session_ids for rows
+// with no user_id, and X-Vidra-Session is client-supplied (UUID SHAPE only), so
+// an anonymous client that loops this endpoint with a rotated header mints
+// unlimited well-formed identities and clears the default floor of 3 on its own
+// — promoting a string it alone ever typed into instance-wide autosuggest.
+// anonSearchSubject is the server-derived, address-keyed answer to exactly that,
+// and it has to be on BOTH ingest paths or it is on neither.
 func (s *Server) emitSearchSubmitted(c echo.Context, query string, resultsCount int, source string) {
 	if s.searchEvents == nil {
 		return
@@ -806,6 +817,12 @@ func (s *Server) emitSearchSubmitted(c echo.Context, query string, resultsCount 
 	}
 	if sid := sessionIDFromRequest(c); sid != "" {
 		payload["session_id"] = sid
+	}
+	// Anonymous callers only, and ALONGSIDE session_id, never replacing it —
+	// see anonSearchSubject in search_subject.go for both rules and for the NAT
+	// limitation this derivation does not close.
+	if subject := s.anonSearchSubject(c); subject != "" {
+		payload["subject_id"] = subject
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

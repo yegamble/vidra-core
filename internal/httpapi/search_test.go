@@ -544,3 +544,98 @@ func TestSearchEventsAuthedCarriesNoSubject(t *testing.T) {
 		t.Errorf("authenticated payload carries subject_id = %s, want absent (user_id is already the trustworthy subject)", raw)
 	}
 }
+
+// --- the SAME subject property on the server-emitted search.submitted ---
+//
+// GET /videos/search emits its own search.submitted through emitSearchSubmitted,
+// and that event lands in exactly the same query_log the POST /search/events
+// batch does — so vidra-search's k-anonymity floor counts it the same way. The
+// anti-forgery subject therefore has to be on BOTH paths or it is on neither:
+// leaving it off this one lets a single anonymous client clear the default floor
+// of 3 by looping the search endpoint with a rotated X-Vidra-Session header,
+// which is the precise attack TestSearchEventsAnonSubjectIsSessionIndependent
+// closes on the other path.
+
+// getSearchFrom GETs /videos/search from a specific socket address with an
+// optional X-Vidra-Session header and bearer token.
+func getSearchFrom(srv *Server, q, remoteAddr, session, token string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/videos/search?q="+q, nil)
+	req.RemoteAddr = remoteAddr
+	if session != "" {
+		req.Header.Set("X-Vidra-Session", session)
+	}
+	if token != "" {
+		req.Header.Set(echo.HeaderAuthorization, "Bearer "+token)
+	}
+	srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+// TestSearchSubmittedEmitAnonSubjectIsSessionIndependent is the routed half of
+// the security property: two searches from one address with two different
+// X-Vidra-Session values must aggregate as ONE subject.
+func TestSearchSubmittedEmitAnonSubjectIsSessionIndependent(t *testing.T) {
+	outbox := &fakeSearchOutbox{}
+	srv := subjectServer(t, outbox)
+
+	for _, session := range []string{uuid.NewString(), uuid.NewString()} {
+		if rec := getSearchFrom(srv, "go", "203.0.113.7:44100", session, ""); rec.Code != http.StatusOK {
+			t.Fatalf("code = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	first := payloadString(eventPayload(t, outbox, 0), "subject_id")
+	second := payloadString(eventPayload(t, outbox, 1), "subject_id")
+	if first == "" || second == "" {
+		t.Fatalf("subject_id missing (%q / %q); the routed search.submitted must carry the same server-derived aggregation subject the event batch does", first, second)
+	}
+	if first != second {
+		t.Errorf("subject_id differs across two X-Vidra-Session values from one address (%q vs %q) — rotating the header must not mint new subjects", first, second)
+	}
+}
+
+// TestSearchSubmittedEmitAnonSubjectDiffersByClientAddress: two genuinely
+// different clients must stay two subjects here too, or the field would collapse
+// the whole instance into one and under-count every query to zero.
+func TestSearchSubmittedEmitAnonSubjectDiffersByClientAddress(t *testing.T) {
+	outbox := &fakeSearchOutbox{}
+	srv := subjectServer(t, outbox)
+	session := uuid.NewString()
+
+	for _, addr := range []string{"203.0.113.7:44100", "198.51.100.9:44100"} {
+		if rec := getSearchFrom(srv, "go", addr, session, ""); rec.Code != http.StatusOK {
+			t.Fatalf("code = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	if a, b := payloadString(eventPayload(t, outbox, 0), "subject_id"), payloadString(eventPayload(t, outbox, 1), "subject_id"); a == b {
+		t.Errorf("two different client addresses produced the same subject_id %q", a)
+	}
+}
+
+// TestSearchSubmittedEmitAuthedCarriesNoSubject keeps the authenticated shape
+// identical on both paths: user_id is already the trustworthy subject, so an
+// address-derived value beside a known account id is redundant AND leaks that
+// derivation for a named user.
+func TestSearchSubmittedEmitAuthedCarriesNoSubject(t *testing.T) {
+	outbox := &fakeSearchOutbox{}
+	srv := subjectServer(t, outbox)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	me := sendJSONAuth(srv, http.MethodGet, "/api/v1/auth/me", "", tok)
+	var self userView
+	_ = json.Unmarshal(me.Body.Bytes(), &self)
+	if self.ID == "" {
+		t.Fatalf("could not resolve principal id; body=%s", me.Body.String())
+	}
+	outbox.events = nil
+	if rec := getSearchFrom(srv, "go", "203.0.113.7:44100", "", tok); rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	payload := eventPayload(t, outbox, 0)
+	if got := payloadString(payload, "user_id"); got != self.ID {
+		t.Errorf("user_id = %q, want the principal %q", got, self.ID)
+	}
+	if raw, ok := payload["subject_id"]; ok {
+		t.Errorf("authenticated payload carries subject_id = %s, want absent (user_id is already the trustworthy subject)", raw)
+	}
+}
