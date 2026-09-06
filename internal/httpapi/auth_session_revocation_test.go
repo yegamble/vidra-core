@@ -83,7 +83,7 @@ func TestChangePasswordRevokesOtherSessionsAccessTokens(t *testing.T) {
 
 	// The SECOND session changes the password; the FIRST must die.
 	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/password",
-		`{"current_password":"supersecret","new_password":"evenmoresecret"}`, second.Token); rec.Code != http.StatusNoContent {
+		changeBody(fixtureCurrentPassword, fixtureNextPassword), second.Token); rec.Code != http.StatusNoContent {
 		t.Fatalf("change password = %d, want 204; body=%s", rec.Code, rec.Body.String())
 	}
 
@@ -168,7 +168,7 @@ func TestOtherDeviceRefreshAfterPasswordChangeDoesNotSignTheChangerOut(t *testin
 	}
 
 	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/password",
-		`{"current_password":"supersecret","new_password":"evenmoresecret"}`, changer.Token); rec.Code != http.StatusNoContent {
+		changeBody(fixtureCurrentPassword, fixtureNextPassword), changer.Token); rec.Code != http.StatusNoContent {
 		t.Fatalf("change password = %d, want 204; body=%s", rec.Code, rec.Body.String())
 	}
 

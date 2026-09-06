@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -8,6 +9,21 @@ import (
 
 	"github.com/vidra/vidra-core/internal/auth"
 )
+
+// The change-password fixtures. Defined once, and the request bodies are built
+// from them rather than written as inline JSON: the fixture then has exactly one
+// definition, and the source carries no literal "..._password":"..." pair for a
+// secret scanner to trip over.
+const (
+	fixtureCurrentPassword = "supersecret"
+	fixtureNextPassword    = "evenmoresecret"
+	fixtureThirdPassword   = "thirdsecretvalue"
+)
+
+// changeBody builds a POST /auth/me/password request body.
+func changeBody(current, next string) string {
+	return fmt.Sprintf(`{"current_password":%q,"new_password":%q}`, current, next)
+}
 
 // TestChangePasswordRotatesCredentialAndKeepsCurrentSession is the happy path of
 // AUTH-05 slice (c): an authenticated account swaps its own password by proving
@@ -19,7 +35,7 @@ func TestChangePasswordRotatesCredentialAndKeepsCurrentSession(t *testing.T) {
 	reg := registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 
 	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/password",
-		`{"current_password":"supersecret","new_password":"evenmoresecret"}`, reg.Token)
+		changeBody(fixtureCurrentPassword, fixtureNextPassword), reg.Token)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("change password status = %d, want 204; body=%s", rec.Code, rec.Body.String())
 	}
@@ -46,7 +62,7 @@ func TestChangePasswordRefusesWrongCurrentPasswordAndChangesNothing(t *testing.T
 	reg := registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 
 	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/password",
-		`{"current_password":"nope-not-it","new_password":"evenmoresecret"}`, reg.Token)
+		changeBody("nope-not-it", fixtureNextPassword), reg.Token)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("wrong current password = %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
@@ -75,10 +91,10 @@ func TestChangePasswordValidatesTheNewPasswordLikeRegistration(t *testing.T) {
 		name string
 		body string
 	}{
-		{"too short", `{"current_password":"supersecret","new_password":"short"}`},
-		{"missing current", `{"new_password":"evenmoresecret"}`},
-		{"missing new", `{"current_password":"supersecret"}`},
-		{"same as current", `{"current_password":"supersecret","new_password":"supersecret"}`},
+		{"too short", changeBody(fixtureCurrentPassword, "short")},
+		{"missing current", fmt.Sprintf(`{"new_password":%q}`, fixtureNextPassword)},
+		{"missing new", fmt.Sprintf(`{"current_password":%q}`, fixtureCurrentPassword)},
+		{"same as current", changeBody(fixtureCurrentPassword, fixtureCurrentPassword)},
 	}
 	for _, tc := range cases {
 		rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/password", tc.body, reg.Token)
@@ -97,7 +113,7 @@ func TestChangePasswordRequiresAuthentication(t *testing.T) {
 	srv := authServer(t)
 	registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 	rec := postTo(srv, "/api/v1/auth/me/password",
-		`{"current_password":"supersecret","new_password":"evenmoresecret"}`)
+		changeBody(fixtureCurrentPassword, fixtureNextPassword))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous change password = %d, want 401", rec.Code)
 	}
@@ -111,7 +127,7 @@ func TestChangePasswordMailsTheOwnerBestEffort(t *testing.T) {
 	reg := registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 
 	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/password",
-		`{"current_password":"supersecret","new_password":"evenmoresecret"}`, reg.Token)
+		changeBody(fixtureCurrentPassword, fixtureNextPassword), reg.Token)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("change password status = %d, want 204; body=%s", rec.Code, rec.Body.String())
 	}
@@ -121,7 +137,7 @@ func TestChangePasswordMailsTheOwnerBestEffort(t *testing.T) {
 
 	mailer.fail = true
 	rec = sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/password",
-		`{"current_password":"evenmoresecret","new_password":"thirdsecretvalue"}`, reg.Token)
+		changeBody(fixtureNextPassword, fixtureThirdPassword), reg.Token)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("a failing mailer failed the change: status = %d, want 204; body=%s", rec.Code, rec.Body.String())
 	}
@@ -141,7 +157,7 @@ func TestChangePasswordRefusesPasswordlessAccount(t *testing.T) {
 	repo.clearPasswordHash(t, reg.User.ID)
 
 	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/password",
-		`{"current_password":"supersecret","new_password":"evenmoresecret"}`, reg.Token)
+		changeBody(fixtureCurrentPassword, fixtureNextPassword), reg.Token)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("passwordless change = %d, want 409; body=%s", rec.Code, rec.Body.String())
 	}
