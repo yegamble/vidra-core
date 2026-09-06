@@ -32,11 +32,14 @@ type modReportRow struct {
 	reportedUserID pgtype.UUID
 	remoteVideoID  pgtype.UUID
 	messageID      pgtype.UUID
-	reason         string
-	status         string
-	note           string
-	createdAt      time.Time
-	resolvedAt     pgtype.Timestamptz
+	// messageBody is the body snapshot the SQL stores in message_body_snapshot:
+	// the moderator's only view of a reported private message.
+	messageBody string
+	reason      string
+	status      string
+	note        string
+	createdAt   time.Time
+	resolvedAt  pgtype.Timestamptz
 }
 
 // moderationFakeRepo is an in-memory moderation.Repository that resolves the
@@ -120,7 +123,8 @@ func (f *moderationFakeRepo) CreateMessageReport(_ context.Context, a sqlcgen.Cr
 	id := uuid.New()
 	f.reports = append(f.reports, modReportRow{
 		id: id, reporterID: a.ReporterID, targetType: "message",
-		messageID: a.MessageID, reason: a.Reason, status: "open", createdAt: time.Now(),
+		messageID: a.MessageID, messageBody: a.MessageBodySnapshot,
+		reason: a.Reason, status: "open", createdAt: time.Now(),
 	})
 	return id, nil
 }
@@ -141,6 +145,7 @@ func (f *moderationFakeRepo) ListReports(_ context.Context, a sqlcgen.ListReport
 		row := sqlcgen.ListReportsRow{
 			ID: r.id, TargetType: r.targetType, VideoID: r.videoID, CommentID: r.commentID,
 			ReportedUserID: r.reportedUserID, RemoteVideoID: r.remoteVideoID,
+			MessageID: r.messageID, MessageBodySnapshot: r.messageBody,
 			Reason: r.reason, Status: r.status,
 			ModeratorNote: r.note, ResolvedAt: r.resolvedAt, CreatedAt: r.createdAt,
 		}
