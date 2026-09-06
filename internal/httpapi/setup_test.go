@@ -202,3 +202,53 @@ func TestClaimOwnerEndpointIsRateLimited(t *testing.T) {
 		t.Fatalf("attempt #3 status = %d, want 429", rec.Code)
 	}
 }
+
+// TestClaimOwnerResponseCarriesTheDiscoveryControls.
+//
+// The owner's row is created with the schema defaults — search_history_enabled,
+// personalized_search_enabled and personalized_recommendations_enabled all TRUE
+// (migration 0093) — and GET /auth/me says so. The claim RESPONSE said the
+// opposite: ClaimOwner hand-copied a subset of columns into a fresh
+// sqlcgen.User, and the three it did not copy went out as Go zero values. The
+// owner therefore landed on /settings/search with all three discovery controls
+// drawn OFF until something refetched the session, and a "turn it back on" click
+// would have written a value that was already stored.
+func TestClaimOwnerResponseCarriesTheDiscoveryControls(t *testing.T) {
+	srv := claimServer(t, nil)
+	raw := mintSetupToken(t, srv)
+
+	rec := postTo(srv, "/api/v1/setup/claim-owner",
+		`{"token":"`+raw+`","username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("claim-owner = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var claimed struct {
+		Token string   `json:"token"`
+		User  userView `json:"user"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &claimed); err != nil {
+		t.Fatalf("unmarshal claim response: %v", err)
+	}
+
+	me := sendJSONAuth(srv, http.MethodGet, "/api/v1/auth/me", "", claimed.Token)
+	if me.Code != http.StatusOK {
+		t.Fatalf("GET /auth/me = %d; body=%s", me.Code, me.Body.String())
+	}
+	var stored userView
+	if err := json.Unmarshal(me.Body.Bytes(), &stored); err != nil {
+		t.Fatalf("unmarshal me: %v", err)
+	}
+
+	if !stored.SearchHistoryEnabled || !stored.PersonalizedSearchEnabled || !stored.PersonalizedRecommendationsEnabled {
+		t.Fatalf("stored owner prefs = %+v, want all three true (the schema defaults)", stored)
+	}
+	if claimed.User.SearchHistoryEnabled != stored.SearchHistoryEnabled ||
+		claimed.User.PersonalizedSearchEnabled != stored.PersonalizedSearchEnabled ||
+		claimed.User.PersonalizedRecommendationsEnabled != stored.PersonalizedRecommendationsEnabled {
+		t.Errorf("claim response reported history=%v search=%v recs=%v; the stored row says %v/%v/%v",
+			claimed.User.SearchHistoryEnabled, claimed.User.PersonalizedSearchEnabled,
+			claimed.User.PersonalizedRecommendationsEnabled,
+			stored.SearchHistoryEnabled, stored.PersonalizedSearchEnabled,
+			stored.PersonalizedRecommendationsEnabled)
+	}
+}

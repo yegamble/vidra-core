@@ -195,6 +195,12 @@ func (s *Service) ClaimOwner(ctx context.Context, in ClaimOwnerInput, userAgent 
 		DisplayName: created.DisplayName, Bio: created.Bio,
 		PendingEmailVerification: created.PendingEmailVerification,
 		HistoryEnabled:           created.HistoryEnabled,
+		// The discovery controls default TRUE in the schema and the claim
+		// response is what the account page first draws them from, so copying
+		// them is what keeps "on" from arriving as "off".
+		SearchHistoryEnabled:               created.SearchHistoryEnabled,
+		PersonalizedSearchEnabled:          created.PersonalizedSearchEnabled,
+		PersonalizedRecommendationsEnabled: created.PersonalizedRecommendationsEnabled,
 	}
 	tokens, err := s.issueTokens(ctx, user, userAgent)
 	if err != nil {

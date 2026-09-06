@@ -38,9 +38,17 @@ ins AS (
     FROM claimed
     RETURNING id, username, email, password_hash, role, email_verified, is_active,
               created_at, updated_at, display_name, bio, pending_email_verification,
-              history_enabled
+              history_enabled, search_history_enabled, personalized_search_enabled,
+              personalized_recommendations_enabled
 )
+-- The three search/discovery columns are returned for the same reason the row is
+-- returned at all: the claim response IS the owner's first session payload, and
+-- the account page draws its toggles from it. Defaulted columns left out here
+-- reach the client as Go zero values, i.e. as three controls the operator never
+-- turned off.
 SELECT ins.id, ins.username, ins.email, ins.password_hash, ins.role,
        ins.email_verified, ins.is_active, ins.created_at, ins.updated_at,
-       ins.display_name, ins.bio, ins.pending_email_verification, ins.history_enabled
+       ins.display_name, ins.bio, ins.pending_email_verification, ins.history_enabled,
+       ins.search_history_enabled, ins.personalized_search_enabled,
+       ins.personalized_recommendations_enabled
 FROM ins;

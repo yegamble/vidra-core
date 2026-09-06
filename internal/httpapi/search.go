@@ -249,6 +249,21 @@ func (s *Server) hydrateRankedRecs(ctx context.Context, items []searchclient.Rec
 	return out, true
 }
 
+// recsPersonalized reports whether this caller's recommendation rails are
+// actually personalized — and therefore whether `personalized: true` may go out
+// on the wire.
+//
+// The mode gate is the part that was missing. vidra-search dispatches BOTH rails
+// on the instance search_mode: simple runs homeSimple/relatedSimple, which
+// ignore the Personalized parameter outright, so a signed-in caller on the
+// shipped default got the byte-identical anonymous list. The flag is not
+// decoration — HomeRecommendationsRail chooses its heading from it — so claiming
+// it there put "For you" over a list that was nobody's. Personalized SEARCH has
+// carried this same gate all along (searchViaService).
+func (s *Server) recsPersonalized(authed bool, prefs searchUserPref) bool {
+	return s.searchAdvanced() && s.instancePersonalizedRecs() && authed && prefs.PersonalizedRecs
+}
+
 // handleHomeRecommendations returns the "for you"/trending home rail. optionalAuth.
 // Tries vidra-search (personalized when the instance + user allow it and the
 // caller is signed in); on disable/error/empty falls back to the trending feed.
@@ -257,7 +272,7 @@ func (s *Server) handleHomeRecommendations(c echo.Context) error {
 	ctx := c.Request().Context()
 	viewerID, _, authed := principalFromContext(c)
 	userID, prefs, _ := s.searchUserPrefs(c)
-	personalized := s.instancePersonalizedRecs() && authed && prefs.PersonalizedRecs
+	personalized := s.recsPersonalized(authed, prefs)
 	hideSensitive := s.effectiveHideSensitive(c)
 
 	if s.useSearchService() {
@@ -314,7 +329,7 @@ func (s *Server) handleVideoRecommendations(c echo.Context) error {
 	ctx := c.Request().Context()
 	viewerID, _, authed := principalFromContext(c)
 	userID, prefs, _ := s.searchUserPrefs(c)
-	personalized := s.instancePersonalizedRecs() && authed && prefs.PersonalizedRecs
+	personalized := s.recsPersonalized(authed, prefs)
 	hideSensitive := s.effectiveHideSensitive(c)
 
 	if s.useSearchService() {
@@ -688,12 +703,12 @@ func (s *Server) searchViaService(c echo.Context, q string, filter video.SearchF
 	if err != nil {
 		return nil, searchServicePaging{}, false
 	}
-	// Passed through as received: a field the service omitted stays nil, so
-	// "unknown" survives the hop instead of collapsing into 0/false.
+	// Total and TotalIsLowerBound are passed through as received: a field the
+	// service omitted stays nil, so "unknown" survives the hop instead of
+	// collapsing into 0/false. HasMore is NOT, and cannot be — see below.
 	paging := searchServicePaging{
 		Total:             out.Total,
 		TotalIsLowerBound: out.TotalIsLowerBound,
-		HasMore:           out.HasMore,
 	}
 	ids := make([]uuid.UUID, 0, len(out.IDs))
 	for _, x := range out.IDs {
@@ -703,13 +718,44 @@ func (s *Server) searchViaService(c echo.Context, q string, filter video.SearchF
 	if err != nil {
 		return nil, searchServicePaging{}, false
 	}
+	// has_more describes THIS request's page, not the service's window.
+	//
+	// The service was asked for an over-fetch (overfetchCount) at offset 0 and
+	// answers HasMore about that window, so a match set that fits inside the
+	// over-fetch comes back HasMore=false however small the caller's page was.
+	// Forwarding that verbatim shipped `has_more: false` on page one: the
+	// frontend's resolveHasMore trusts an explicit has_more over `loaded <
+	// total`, so it hid the Load-more control and made the rest of the results
+	// unreachable. At the shipped page size of 20 the over-fetch is 50, so every
+	// query matching 21..50 visible videos lost its tail.
+	//
+	// The honest answer combines what core actually holds — the hydrated,
+	// visibility-filtered list, which is authoritative up to the over-fetch —
+	// with the service's own ceiling, which is the only thing that knows about
+	// results beyond it.
+	// Absent still means UNKNOWN: a service too old to report HasMore leaves the
+	// field off entirely once core's own slice runs out, so the client falls back
+	// to `loaded < total` instead of being told "stop" by a fabricated false.
+	setHasMore := func(certainlyMore bool) {
+		switch {
+		case certainlyMore:
+			yes := true
+			paging.HasMore = &yes
+		case out.HasMore != nil:
+			paging.HasMore = out.HasMore
+		}
+	}
 	if offset >= len(feed) {
+		setHasMore(false)
 		return []videoView{}, paging, true
 	}
 	end := offset + limit
 	if end > len(feed) {
 		end = len(feed)
 	}
+	// Core hydrated the whole over-fetch, so rows past this window are a FACT it
+	// owns; only "nothing left inside the over-fetch" needs the service's ceiling.
+	setHasMore(end < len(feed))
 	views := make([]videoView, 0, end-offset)
 	for _, it := range feed[offset:end] {
 		views = append(views, feedItemView(it))
