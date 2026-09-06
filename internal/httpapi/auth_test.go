@@ -360,6 +360,11 @@ func (f *authFakeRepo) ClaimOwnerAndCreateAdmin(ctx context.Context, a sqlcgen.C
 		CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt, DisplayName: u.DisplayName,
 		Bio: u.Bio, PendingEmailVerification: u.PendingEmailVerification,
 		HistoryEnabled: u.HistoryEnabled,
+		// Mirrors the RETURNING list: the defaulted discovery columns come back
+		// with the row, so the service can carry them into the session payload.
+		SearchHistoryEnabled:               u.SearchHistoryEnabled,
+		PersonalizedSearchEnabled:          u.PersonalizedSearchEnabled,
+		PersonalizedRecommendationsEnabled: u.PersonalizedRecommendationsEnabled,
 	}, nil
 }
 

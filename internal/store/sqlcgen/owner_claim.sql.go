@@ -26,11 +26,14 @@ ins AS (
     FROM claimed
     RETURNING id, username, email, password_hash, role, email_verified, is_active,
               created_at, updated_at, display_name, bio, pending_email_verification,
-              history_enabled
+              history_enabled, search_history_enabled, personalized_search_enabled,
+              personalized_recommendations_enabled
 )
 SELECT ins.id, ins.username, ins.email, ins.password_hash, ins.role,
        ins.email_verified, ins.is_active, ins.created_at, ins.updated_at,
-       ins.display_name, ins.bio, ins.pending_email_verification, ins.history_enabled
+       ins.display_name, ins.bio, ins.pending_email_verification, ins.history_enabled,
+       ins.search_history_enabled, ins.personalized_search_enabled,
+       ins.personalized_recommendations_enabled
 FROM ins
 `
 
@@ -43,19 +46,22 @@ type ClaimOwnerAndCreateAdminParams struct {
 }
 
 type ClaimOwnerAndCreateAdminRow struct {
-	ID                       uuid.UUID `json:"id"`
-	Username                 string    `json:"username"`
-	Email                    string    `json:"email"`
-	PasswordHash             string    `json:"password_hash"`
-	Role                     string    `json:"role"`
-	EmailVerified            bool      `json:"email_verified"`
-	IsActive                 bool      `json:"is_active"`
-	CreatedAt                time.Time `json:"created_at"`
-	UpdatedAt                time.Time `json:"updated_at"`
-	DisplayName              string    `json:"display_name"`
-	Bio                      string    `json:"bio"`
-	PendingEmailVerification bool      `json:"pending_email_verification"`
-	HistoryEnabled           bool      `json:"history_enabled"`
+	ID                                 uuid.UUID `json:"id"`
+	Username                           string    `json:"username"`
+	Email                              string    `json:"email"`
+	PasswordHash                       string    `json:"password_hash"`
+	Role                               string    `json:"role"`
+	EmailVerified                      bool      `json:"email_verified"`
+	IsActive                           bool      `json:"is_active"`
+	CreatedAt                          time.Time `json:"created_at"`
+	UpdatedAt                          time.Time `json:"updated_at"`
+	DisplayName                        string    `json:"display_name"`
+	Bio                                string    `json:"bio"`
+	PendingEmailVerification           bool      `json:"pending_email_verification"`
+	HistoryEnabled                     bool      `json:"history_enabled"`
+	SearchHistoryEnabled               bool      `json:"search_history_enabled"`
+	PersonalizedSearchEnabled          bool      `json:"personalized_search_enabled"`
+	PersonalizedRecommendationsEnabled bool      `json:"personalized_recommendations_enabled"`
 }
 
 // Redeem the owner-claim token and create THE admin account in one atomic
@@ -65,6 +71,11 @@ type ClaimOwnerAndCreateAdminRow struct {
 // and the loser's `claimed` CTE is empty, so it inserts nothing and returns no
 // row (the service maps that to an invalid-claim error). A unique violation on
 // the users insert rolls the whole statement back, leaving the token unclaimed.
+// The three search/discovery columns are returned for the same reason the row is
+// returned at all: the claim response IS the owner's first session payload, and
+// the account page draws its toggles from it. Defaulted columns left out here
+// reach the client as Go zero values, i.e. as three controls the operator never
+// turned off.
 func (q *Queries) ClaimOwnerAndCreateAdmin(ctx context.Context, arg ClaimOwnerAndCreateAdminParams) (ClaimOwnerAndCreateAdminRow, error) {
 	row := q.db.QueryRow(ctx, claimOwnerAndCreateAdmin,
 		arg.TokenHash,
@@ -88,6 +99,9 @@ func (q *Queries) ClaimOwnerAndCreateAdmin(ctx context.Context, arg ClaimOwnerAn
 		&i.Bio,
 		&i.PendingEmailVerification,
 		&i.HistoryEnabled,
+		&i.SearchHistoryEnabled,
+		&i.PersonalizedSearchEnabled,
+		&i.PersonalizedRecommendationsEnabled,
 	)
 	return i, err
 }
