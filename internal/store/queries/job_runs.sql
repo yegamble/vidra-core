@@ -130,3 +130,79 @@ WHERE p.id IN (
     ORDER BY candidate.finished_at, candidate.id
     LIMIT sqlc.arg('batch_size')
 );
+
+-- IDENTITY STAMPS (migration 0133). The projection triggers maintain state; they
+-- cannot know the request that caused the work or the process doing it, because
+-- neither is a column of the queue table they read. These two statements carry
+-- that knowledge in from Go, keyed by the (queue, source_id) pair the projection
+-- already indexes uniquely.
+--
+-- Each also backfills the events written BEFORE it could run. The projection is
+-- an AFTER trigger on the queue table, so the 'enqueued' event exists by the time
+-- the enqueue path returns and the 'started' event by the time a claim returns —
+-- earlier than any Go statement can be. Later events inherit through the 0133
+-- BEFORE INSERT trigger and need no help.
+
+-- name: StampJobRunCorrelation :one
+-- Called by an enqueue path with the originating request's ids. Empty strings
+-- are written as empty strings: a job enqueued by a scheduler genuinely has no
+-- request behind it, and inventing one would be worse than an honest blank.
+WITH run AS (
+    UPDATE job_runs
+       SET request_id     = sqlc.arg('request_id'),
+           correlation_id = sqlc.arg('correlation_id'),
+           trace_id       = sqlc.arg('trace_id'),
+           -- COALESCE, never overwrite: the projection may already have derived
+           -- the actor from the queue row itself (account_exports, peertube).
+           actor_id       = COALESCE(job_runs.actor_id, sqlc.narg('actor_id')),
+           parent_job_id  = COALESCE(job_runs.parent_job_id, sqlc.narg('parent_job_id')),
+           updated_at     = updated_at
+     WHERE queue = sqlc.arg('queue') AND source_id = sqlc.arg('source_id')
+     RETURNING id
+), backfill AS (
+    UPDATE job_events e
+       SET request_id     = sqlc.arg('request_id'),
+           correlation_id = sqlc.arg('correlation_id'),
+           trace_id       = sqlc.arg('trace_id')
+      FROM run
+     WHERE e.job_id = run.id
+       AND e.request_id = '' AND e.correlation_id = '' AND e.trace_id = ''
+    RETURNING e.cursor
+)
+SELECT id FROM run;
+
+-- name: StampJobRunWorker :exec
+-- Called by a worker the moment it claims a job. lease_expires_at is the queue
+-- row's own lease (transcode/import claim to now() + 30 minutes and renew on a
+-- ticker), so the projection reports the same deadline the sweeper enforces
+-- rather than a second, drifting copy of it.
+WITH run AS (
+    UPDATE job_runs
+       SET worker_id        = sqlc.arg('worker_id'),
+           heartbeat_at     = now(),
+           lease_expires_at = sqlc.narg('lease_expires_at'),
+           claimed_at       = COALESCE(claimed_at, now()),
+           updated_at       = updated_at
+     WHERE queue = sqlc.arg('queue') AND source_id = sqlc.arg('source_id')
+     RETURNING id
+)
+UPDATE job_events e
+   SET worker_id = sqlc.arg('worker_id')
+  FROM run
+ WHERE e.job_id = run.id AND e.worker_id = '';
+
+-- name: TouchJobRunHeartbeat :exec
+-- The worker is still on this job. Called from the same ticker that renews the
+-- queue row's lease, so heartbeat_at answers "when did a process last say it was
+-- alive on this run" — the question the run detail's Heartbeat field asks.
+UPDATE job_runs
+SET heartbeat_at     = now(),
+    lease_expires_at = sqlc.narg('lease_expires_at'),
+    updated_at       = updated_at
+WHERE queue = sqlc.arg('queue') AND source_id = sqlc.arg('source_id')
+  AND worker_id = sqlc.arg('worker_id');
+
+-- name: GetJobRunIDBySource :one
+-- The projection's id for one queue row, so an audit envelope written by the
+-- originating request can link job_id forward to the run it created.
+SELECT id FROM job_runs WHERE queue = sqlc.arg('queue') AND source_id = sqlc.arg('source_id');

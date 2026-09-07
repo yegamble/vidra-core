@@ -614,6 +614,21 @@ type PlaylistItem struct {
 	AddedAt    time.Time `json:"added_at"`
 }
 
+type ProcessHeartbeat struct {
+	ProcessID                 string             `json:"process_id"`
+	Role                      string             `json:"role"`
+	Hostname                  string             `json:"hostname"`
+	Pid                       int32              `json:"pid"`
+	Version                   string             `json:"version"`
+	BuildCommit               string             `json:"build_commit"`
+	State                     string             `json:"state"`
+	StartedAt                 time.Time          `json:"started_at"`
+	LastSeenAt                time.Time          `json:"last_seen_at"`
+	LastSettingsPollSuccessAt pgtype.Timestamptz `json:"last_settings_poll_success_at"`
+	LastSettingsPollError     string             `json:"last_settings_poll_error"`
+	StoppedAt                 pgtype.Timestamptz `json:"stopped_at"`
+}
+
 type QoeEvent struct {
 	ID              uuid.UUID   `json:"id"`
 	ReceivedAt      time.Time   `json:"received_at"`
