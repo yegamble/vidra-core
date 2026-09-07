@@ -43,6 +43,19 @@ var (
 	// hard-deleted, or the token names no session at all. Deliberately one error
 	// for all of those — the HTTP layer answers the same 401 regardless.
 	ErrSessionRevoked = errors.New("auth: session revoked")
+	// ErrSessionLookupUnavailable means the session store could not be ASKED —
+	// the database is unreachable, the pool is exhausted, the query timed out.
+	// It is deliberately NOT ErrSessionRevoked: nothing was learned about this
+	// session, so answering "invalid or expired token" would be a lie with two
+	// costs. It tells every signed-in client its session is dead, turning a
+	// database blip into a fleet-wide sign-out; and it makes the admin status
+	// page — whose whole job is to report that the database is down — the first
+	// thing that stops answering. The HTTP layer maps this to 503, so the
+	// request is still refused; only the REASON changes.
+	//
+	// The underlying driver error is deliberately not wrapped: it can carry a
+	// DSN, and this error's text reaches an unauthenticated caller.
+	ErrSessionLookupUnavailable = errors.New("auth: the session store is unavailable")
 	// ErrPasswordNotSet means the account has no password to change (the
 	// OAuth/ATProto-only shape: an empty stored hash bcrypt can never verify).
 	// The caller is pointed at the password-reset flow, which CAN set one.

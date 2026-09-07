@@ -2,8 +2,10 @@ package auth
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // Principal is the authenticated caller the middleware builds from an access
@@ -56,7 +58,15 @@ func (s *Service) AuthenticateAccessToken(ctx context.Context, claims *Claims) (
 	}
 	sess, err := s.repo.GetActiveSessionForAccessToken(ctx, sessionID)
 	if err != nil {
-		return Principal{}, ErrSessionRevoked
+		// pgx.ErrNoRows is the ONE answer that means this token no longer
+		// authorizes: the query ran and the join produced nothing, which covers
+		// all four revocation sources at once. Every OTHER error means the store
+		// could not be asked, and saying "revoked" to that is how a database
+		// outage signs the whole fleet out — see ErrSessionLookupUnavailable.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Principal{}, ErrSessionRevoked
+		}
+		return Principal{}, ErrSessionLookupUnavailable
 	}
 	// A session belongs to exactly one account; a token whose subject disagrees
 	// with the session row is not something this instance minted coherently.

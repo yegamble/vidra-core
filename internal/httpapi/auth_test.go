@@ -61,6 +61,11 @@ type authFakeRepo struct {
 	// ownerClaim mirrors the single-row owner_claim_tokens table (0104). Nil =
 	// never minted, so most tests register freely.
 	ownerClaim *sqlcgen.OwnerClaimToken
+	// sessionLookupErr, when set, is what GetActiveSessionForAccessToken
+	// returns instead of consulting the map: the in-memory stand-in for a
+	// database this process cannot reach. Distinct from "no such session",
+	// which is pgx.ErrNoRows and stays a 401.
+	sessionLookupErr error
 	// mutes/userBlocks mirror the per-viewer predicates the account-search query
 	// applies. Nil (pure-auth harnesses) means nobody has muted or blocked
 	// anyone; videoServerFullWith wires the shared fakes.
@@ -313,6 +318,9 @@ func (f *authFakeRepo) RevokeOtherUserSessions(_ context.Context, a sqlcgen.Revo
 // expired session, or for a disabled/tombstoned account, and the account's
 // CURRENT role on the row it does return.
 func (f *authFakeRepo) GetActiveSessionForAccessToken(_ context.Context, id uuid.UUID) (sqlcgen.GetActiveSessionForAccessTokenRow, error) {
+	if f.sessionLookupErr != nil {
+		return sqlcgen.GetActiveSessionForAccessTokenRow{}, f.sessionLookupErr
+	}
 	s, ok := f.sessions[id]
 	if !ok || s.RevokedAt.Valid || !s.ExpiresAt.After(time.Now()) {
 		return sqlcgen.GetActiveSessionForAccessTokenRow{}, pgx.ErrNoRows

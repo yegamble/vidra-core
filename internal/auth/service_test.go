@@ -49,6 +49,11 @@ type fakeRepo struct {
 	// one identifier reach two accounts.
 	loginLookups int
 	emailLookups int
+	// sessionLookupErr, when set, is what GetActiveSessionForAccessToken
+	// returns INSTEAD of consulting the map — the in-memory stand-in for "the
+	// database is unreachable", which is a different answer from "no such
+	// session" and must stay different all the way to the HTTP status.
+	sessionLookupErr error
 }
 
 func newFakeRepo() *fakeRepo {
@@ -381,6 +386,9 @@ func (f *fakeRepo) RevokeOtherUserSessions(_ context.Context, a sqlcgen.RevokeOt
 // expired session, or for a disabled/tombstoned account, and the account's
 // CURRENT role on the row it does return.
 func (f *fakeRepo) GetActiveSessionForAccessToken(_ context.Context, id uuid.UUID) (sqlcgen.GetActiveSessionForAccessTokenRow, error) {
+	if f.sessionLookupErr != nil {
+		return sqlcgen.GetActiveSessionForAccessTokenRow{}, f.sessionLookupErr
+	}
 	s, ok := f.sessions[id]
 	if !ok || s.RevokedAt.Valid || !s.ExpiresAt.After(time.Now()) {
 		return sqlcgen.GetActiveSessionForAccessTokenRow{}, pgx.ErrNoRows

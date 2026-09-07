@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -43,5 +44,46 @@ func TestAuthenticateAccessTokenRefusesATokenWithNoSession(t *testing.T) {
 	missing.Subject = id.String()
 	if _, err := svc.AuthenticateAccessToken(context.Background(), missing); !errors.Is(err, ErrSessionRevoked) {
 		t.Errorf("unknown session: err = %v, want ErrSessionRevoked", err)
+	}
+}
+
+// TestAuthenticateAccessTokenSeparatesAnOutageFromARevocation is the whole
+// point of ErrSessionLookupUnavailable. Before it, EVERY error out of
+// GetActiveSessionForAccessToken — including "the database is unreachable" —
+// collapsed to ErrSessionRevoked, so a Postgres outage made every authenticated
+// route answer 401 "invalid or expired token". Two things follow from that and
+// both are bad: the admin status page whose JOB is to report the outage becomes
+// unreadable, and every signed-in client is told its session is invalid, which
+// is how a blip turns into a fleet-wide sign-out.
+//
+// The revocation semantics are unchanged and are asserted here beside it: a
+// session that is genuinely absent still answers ErrSessionRevoked, because
+// "no row" is the ONE answer that means the token no longer authorizes.
+func TestAuthenticateAccessTokenSeparatesAnOutageFromARevocation(t *testing.T) {
+	repo := newFakeRepo()
+	svc := newTestService(repo)
+	claims := &Claims{SessionID: uuid.NewString()}
+	claims.Subject = uuid.New().String()
+
+	// No row: still a revocation.
+	if _, err := svc.AuthenticateAccessToken(context.Background(), claims); !errors.Is(err, ErrSessionRevoked) {
+		t.Fatalf("absent session: err = %v, want ErrSessionRevoked", err)
+	}
+
+	// The store itself is down. Not a revocation — nothing was learned about
+	// this session at all.
+	repo.sessionLookupErr = errors.New("dial tcp 127.0.0.1:5432: connect: connection refused")
+	_, err := svc.AuthenticateAccessToken(context.Background(), claims)
+	if !errors.Is(err, ErrSessionLookupUnavailable) {
+		t.Fatalf("session store down: err = %v, want ErrSessionLookupUnavailable", err)
+	}
+	if errors.Is(err, ErrSessionRevoked) {
+		t.Error("an outage still reports as a revocation, so the caller cannot tell them apart")
+	}
+	// The driver's message must not travel with the error: it reaches an
+	// unauthenticated caller through the HTTP layer, and a DSN in a connection
+	// error is exactly the kind of thing that must not.
+	if strings.Contains(err.Error(), "127.0.0.1:5432") {
+		t.Errorf("the underlying connection error leaked into the returned error: %v", err)
 	}
 }
