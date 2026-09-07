@@ -130,8 +130,34 @@ func (s *Server) importsEnabled() bool {
 	return s.settingBool(instancesettings.KeyImportsEnabled, s.cfg.ImportsEnabled)
 }
 
+// liveEnabled is the raw runtime live-streaming SETTING (live_enabled). It is
+// half of the answer: see liveAvailable for the effective one.
 func (s *Server) liveEnabled() bool {
 	return s.settingBool(instancesettings.KeyLiveEnabled, s.cfg.LiveEnabled)
+}
+
+// liveIngestConfigured is live streaming's BOOT capability: an RTMP ingest URL
+// exists to hand a streamer. It is the same predicate the Go default derives
+// from (config.Load: LiveEnabled defaults to LIVE_RTMP_URL != ""), and it is
+// the ingest half of the /admin/infrastructure live row's `configured` column,
+// which reuses this helper rather than restating it. Deliberately NOT ANDed
+// with LIVE_HLS_ROOT here: that variable is the api's optional HLS-serving and
+// replay path (a deployment may package and serve HLS from the media server
+// itself), so it belongs in the admin row's stricter "the whole plane is
+// wired" reading and not in the gate that decides whether a creator can be
+// handed somewhere to publish.
+func (s *Server) liveIngestConfigured() bool {
+	return strings.TrimSpace(s.cfg.LiveRTMPURL) != ""
+}
+
+// liveAvailable is live streaming's EFFECTIVE availability: the setting AND the
+// boot capability, the same shape import_http, channel_sync, transcription,
+// transcoding, messaging, messaging_e2ee and mail already report at the
+// /instance seam. Without it the toggle alone advertised live on a deployment
+// with no ingest plane, and POST /channels/{handle}/live answered 201 with a
+// stream key and no rtmp_url — a key and nowhere to publish it.
+func (s *Server) liveAvailable() bool {
+	return s.liveEnabled() && s.liveIngestConfigured()
 }
 
 func (s *Server) commentsEnabled() bool {

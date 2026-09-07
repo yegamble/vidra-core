@@ -450,7 +450,7 @@ func (s *Server) infraFeatures() []infraFeature {
 			// A live plane needs somewhere for the RTMP media server to write
 			// HLS segments and a URL to hand streamers. The toggle alone
 			// produces streams nobody can publish to.
-			Configured: strings.TrimSpace(cfg.LiveHLSRoot) != "" && strings.TrimSpace(cfg.LiveRTMPURL) != "",
+			Configured: strings.TrimSpace(cfg.LiveHLSRoot) != "" && s.liveIngestConfigured(),
 		},
 		{
 			Key:        "ipfs",

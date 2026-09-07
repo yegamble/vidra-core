@@ -194,8 +194,16 @@ func (s *Server) handleCreateLiveStream(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	// Two gates, in the house order: the runtime admin SETTING answers 403
+	// feature_disabled, and a deployment whose ingest plane is missing (setting
+	// on, LIVE_RTMP_URL empty) answers 503 live_not_configured. Before the
+	// second gate this returned 201 with a stream key and no rtmp_url — the
+	// creator got a credential and nowhere to publish it.
 	if !s.liveEnabled() {
 		return &FeatureDisabledError{Feature: "live"}
+	}
+	if !s.liveIngestConfigured() {
+		return &LiveNotConfiguredError{}
 	}
 	var in createLiveStreamRequest
 	if err := bindAndValidate(c, &in); err != nil {

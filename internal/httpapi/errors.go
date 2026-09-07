@@ -76,6 +76,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var oci *OwnerClaimInvalidError
 	var fd *FeatureDisabledError
 	var id *IPFSDisabledError
+	var lnc *LiveNotConfiguredError
 	var fml *ForeignMediaLayoutError
 	var videoID, shortCode string
 	var pr *PasswordRequiredError
@@ -191,6 +192,10 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusServiceUnavailable
 		message = "IPFS mirroring is not enabled on this instance"
 		code = "ipfs_disabled"
+	case errors.As(err, &lnc):
+		status = http.StatusServiceUnavailable
+		message = "live streaming is turned on but this instance has no RTMP ingest to publish to. Set LIVE_RTMP_URL (and LIVE_HLS_ROOT, so the segments the media server writes can be served) and restart the api"
+		code = "live_not_configured"
 	case errors.As(err, &fml):
 		status = http.StatusConflict
 		message = "this instance references media stored under another system's key layout, so the object store may still belong to a live instance (a reference-mode import points at the source's own bucket). Adopting it would let media garbage collection delete that instance's files. Re-send with force=true only once the source instance is retired or its media has been copied across"
@@ -483,6 +488,21 @@ func (e *ATProtoLoginError) Error() string { return e.Code }
 type ForeignMediaLayoutError struct{}
 
 func (e *ForeignMediaLayoutError) Error() string { return "foreign media layout" }
+
+// LiveNotConfiguredError renders as 503 with the stable code
+// "live_not_configured": the live_enabled SETTING is on but this deployment has
+// no RTMP ingest plane (LIVE_RTMP_URL is empty), so there is nowhere for a
+// streamer to publish. It is the missing-BOOT-capability half of the live gate
+// — the runtime toggle being off stays 403 feature_disabled — matching the
+// yt-dlp and Whisper 503s beside it.
+//
+// It is a typed error rather than a bare echo.NewHTTPError for the reason the
+// mail one is: 503 is a 5xx and the central handler scrubs every 5xx message it
+// has no stable code for, which would replace the one sentence naming the
+// variable to set with "an unexpected error occurred".
+type LiveNotConfiguredError struct{}
+
+func (e *LiveNotConfiguredError) Error() string { return "live ingest is not configured" }
 
 // IPFSDisabledError renders as 503 with the stable code "ipfs_disabled": the
 // hybrid IPFS media mirror (fix_plan P19) is off (IPFS_ENABLED=false) on this

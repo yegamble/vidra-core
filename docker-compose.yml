@@ -211,13 +211,22 @@ x-api-env: &api-env
   # Boot-time seeds for the runtime-mutable instance feature flags (admins
   # change them live via PATCH /api/v1/admin/instance-settings, and the DB
   # overlay wins once set — these only supply the initial value).
-  # FEATURE_LIVE_ENABLED CAVEAT: it defaults true, but with no RTMP ingest
-  # running (the `media` profile) and LIVE_RTMP_URL empty, creators get a
-  # stream key pointing nowhere and the UI hides the server-URL row — a
-  # deployment without live ingest should set it false.
+  #
+  # FEATURE_LIVE_ENABLED IS A PASS-THROUGH, NOT A `:-` FALLBACK, and it is the
+  # only one of these four that is. A `${VAR:-x}` fallback materialises as an
+  # ordinary env var inside the container, indistinguishable at runtime from an
+  # operator's own export — so it does not "default" anything, it OVERRIDES the
+  # Go default. That is harmless for the three below, whose fallback equals
+  # their Go default, but live's Go default is DERIVED:
+  # `LiveEnabled: p.Bool("FEATURE_LIVE_ENABLED", liveRTMPURL != "")`. A pinned
+  # `:-true` shadowed that derivation and switched live on for every stock
+  # stack, ingest plane or not. Written bare, compose passes the variable
+  # through only when the operator sets it and the derived rule applies
+  # otherwise: live comes on when LIVE_RTMP_URL is set, and an operator who
+  # wants it on regardless still says FEATURE_LIVE_ENABLED=true.
   FEATURE_UPLOADS_ENABLED: ${FEATURE_UPLOADS_ENABLED:-true}
   FEATURE_IMPORTS_ENABLED: ${FEATURE_IMPORTS_ENABLED:-true}
-  FEATURE_LIVE_ENABLED: ${FEATURE_LIVE_ENABLED:-true}
+  FEATURE_LIVE_ENABLED:
   FEATURE_COMMENTS_ENABLED: ${FEATURE_COMMENTS_ENABLED:-true}
   # JWT access tokens (HS256) + the opaque rotating refresh session.
   #

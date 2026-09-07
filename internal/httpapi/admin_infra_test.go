@@ -563,6 +563,9 @@ func TestInfrastructureLiveCoordinates(t *testing.T) {
 	// and hiding the block would hide it.
 	bare := testConfig()
 	bare.LiveEnabled = true
+	// testConfig() ships an ingest URL (the live handler tests need the boot
+	// capability); clear it — "enabled with nothing behind it" is this case.
+	bare.LiveRTMPURL = ""
 	bareBody, _ := infrastructure(t, authServerWithConfig(t, bare))
 	if bareBody.Live == nil || bareBody.Live.RTMPURL != "" || bareBody.Live.HLSRoot != "" {
 		t.Errorf("live = %+v on an enabled-but-unconfigured install, want the block present with empty coordinates", bareBody.Live)
