@@ -160,6 +160,12 @@ type Server struct {
 	// single-process embedders, worker-role processes — reports not_configured
 	// rather than inventing a poller that does not exist.
 	settingsSync settingsSyncHealth
+	// processFleet reads the per-process heartbeat rows (migration 0133) so the
+	// settings_sync component and the status page's process list answer for the
+	// whole deployment rather than for whichever process served the request.
+	// Nil — unit tests, embedders, any process without the table — omits the
+	// process list and leaves settings_sync exactly as it was.
+	processFleet processFleetReader
 	// searchClient talks to the vidra-search internal API (search-service W4/W9).
 	// Nil when SEARCH_SERVICE_URL is unset — every search surface then degrades
 	// to local behaviour. searchEnabled() gates on it; useSearchService() folds in
@@ -819,6 +825,16 @@ func WithSettingsService(svc *instancesettings.Service) Option {
 // until restart — the same invisible-staleness class the poller itself closes.
 func WithSettingsPoller(p settingsSyncHealth) Option {
 	return func(s *Server) { s.settingsSync = p }
+}
+
+// WithProcessFleet wires the per-process heartbeat reader (migration 0133) into
+// the admin status page. With it, settings_sync stops being a report on the
+// process that served the request and becomes a report on the DEPLOYMENT: a
+// worker that has stopped checking in, or one whose settings poll is failing,
+// degrades the page and is named on it. Without it the page behaves exactly as
+// it did before — this replica's own poller and nothing else.
+func WithProcessFleet(f processFleetReader) Option {
+	return func(s *Server) { s.processFleet = f }
 }
 
 // WithSearchClient wires the vidra-search internal-API gateway (search-service

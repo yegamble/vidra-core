@@ -62,6 +62,7 @@ import (
 	"github.com/vidra/vidra-core/internal/peertubeimport"
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
+	"github.com/vidra/vidra-core/internal/processheartbeat"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/qoe"
 	"github.com/vidra/vidra-core/internal/quota"
@@ -1452,6 +1453,42 @@ func run() error {
 	if err := settingsPoller.Prime(startCtx); err != nil {
 		logger.Warn("could not read the settings version at boot; the first poll will reload once", "error", err)
 	}
+
+	// PER-PROCESS HEARTBEAT (migration 0133). The poller above is the one loop
+	// that runs in EVERY role, and it already keeps the health record the admin
+	// status page reads — so it is also the right place to make that record
+	// DURABLE. Without this the page can only answer for the process that served
+	// the request, and on a split topology that is the api: a worker whose polls
+	// all fail, or one that is not running at all, left the page reading "ok"
+	// with every component healthy.
+	//
+	// It is wired in every role for the same reason the poller is. A heartbeat
+	// only from the api would report on the half nobody needed reporting on.
+	heartbeat := processheartbeat.NewWriter(db.Queries(), settingsPoller, processheartbeat.Config{
+		Role:      cfg.Role.String(),
+		Version:   version.Version,
+		Commit:    version.Commit,
+		StartedAt: time.Now().UTC(),
+	})
+	settingsPoller.WithAfterTick(heartbeat.AfterTick)
+	// Beat once at boot, before the first (jittered) tick: a process that has
+	// just started must appear on the page immediately, not up to an interval
+	// later, or a rolling deploy looks like a partial outage.
+	if err := heartbeat.Beat(startCtx); err != nil {
+		logger.Warn("could not write this process's heartbeat at boot; it may read as stale on the admin status page",
+			"process_id", heartbeat.ProcessID(), "error", err)
+	}
+	// Say goodbye on the way out, so an operator can tell a replica they scaled
+	// down from one that crashed. Best effort and short-budgeted: shutdown must
+	// never block on it, and a process that never gets here shows as a stale
+	// 'running' row, which is the honest report of a crash.
+	defer func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer stopCancel()
+		if err := heartbeat.Stop(stopCtx); err != nil {
+			logger.Warn("could not mark this process stopped", "process_id", heartbeat.ProcessID(), "error", err)
+		}
+	}()
 	pollCtx, pollCancel := context.WithCancel(context.Background())
 	defer pollCancel()
 	go settingsPoller.Run(pollCtx, logger)
@@ -1468,6 +1505,12 @@ func run() error {
 	// admin surface. The polling itself, above, is unconditional.
 	if cfg.Role.ServesHTTP() {
 		opts = append(opts, httpapi.WithSettingsPoller(settingsPoller))
+		// And the FLEET half, which is what makes settings_sync a report on the
+		// deployment rather than on this process. The reader is api-side only
+		// because the page is; every role WRITES its row above.
+		opts = append(opts, httpapi.WithProcessFleet(processheartbeat.NewFleet(
+			db.Queries(), heartbeat.ProcessID(),
+			settingsversion.DefaultInterval, processheartbeat.DefaultForgetAfter)))
 	}
 
 	// Resumable/chunked upload sessions (P6.1). Chunk bytes go to the same blob

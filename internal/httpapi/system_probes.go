@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vidra/vidra-core/internal/preflight"
+	"github.com/vidra/vidra-core/internal/processheartbeat"
 )
 
 // systemProbeTimeout bounds EACH dependency probe on the admin status page. The
@@ -32,6 +33,15 @@ type bucketChecker interface {
 // page asks, not on the poller type.
 type settingsSyncHealth interface {
 	Health() (lastSuccess time.Time, lastErr error)
+}
+
+// processFleetReader is the per-process heartbeat read side
+// (internal/processheartbeat, migration 0133). An interface here so httpapi
+// depends on the two questions the page asks — who is out there, and is any of
+// them in trouble — rather than on the concrete reader.
+type processFleetReader interface {
+	List(ctx context.Context, now time.Time) ([]processheartbeat.Process, error)
+	StaleWindow() time.Duration
 }
 
 // systemComponents is componentHealth (postgres, redis) plus the dependencies
@@ -75,13 +85,48 @@ func (s *Server) systemComponents(ctx context.Context) (map[string]componentStat
 
 	// The settings poller is a fifth component but NOT a fifth probe: its
 	// health is an in-memory read of the record the poll loop already keeps, so
-	// there is no round trip to bound and no goroutine to spend on it.
+	// there is no round trip to bound and no goroutine to spend on it. The
+	// FLEET half of it is one indexed read of a table this process also writes,
+	// so it is bounded by the same probe timeout as the four above.
 	syncStatus := s.settingsSyncStatus()
+	if syncStatus.Status == "ok" {
+		if fleetStatus, ok := s.fleetSettingsSyncStatus(ctx); ok {
+			syncStatus = fleetStatus
+		}
+	}
 	components["settings_sync"] = syncStatus
 	if syncStatus.Status == "down" {
 		healthy = false
 	}
 	return components, healthy
+}
+
+// fleetSettingsSyncStatus judges every process the instance can see, and reports
+// the first one an operator should be told about. It is consulted only when THIS
+// process's own poll is healthy: a local failure is the more urgent fact and
+// already has a message that names it.
+//
+// A read failure here is reported as down rather than swallowed. The alternative
+// is the exact defect this closes one level up — a page that cannot see the
+// fleet quietly claiming the fleet is fine.
+func (s *Server) fleetSettingsSyncStatus(ctx context.Context) (componentStatus, bool) {
+	if s.processFleet == nil {
+		return componentStatus{}, false
+	}
+	fctx, cancel := context.WithTimeout(ctx, systemProbeTimeout)
+	defer cancel()
+	processes, err := s.processFleet.List(fctx, time.Now())
+	if err != nil {
+		return componentStatus{
+			Status: "down",
+			Error:  "the per-process heartbeats could not be read, so this page cannot say whether the other processes in this deployment are healthy: " + err.Error(),
+		}, true
+	}
+	fault, degraded := processheartbeat.Judge(processes)
+	if !degraded {
+		return componentStatus{}, false
+	}
+	return componentStatus{Status: "down", Error: fault.Reason}, true
 }
 
 // settingsSyncStatus reports the settings-version poller's health (core#115).

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -53,6 +54,38 @@ type systemDatabase struct {
 	PoolMaxConns      int32 `json:"pool_max_conns"` // DB_MAX_CONNS, per process
 }
 
+// systemProcess is one vidra-core process this deployment can currently see
+// (migration 0133). It exists because every other block on this page describes
+// the process that served the request, and on a split topology that is the api —
+// so the half that transcodes, imports and sweeps had no representation at all
+// and a killed worker left the page reading "ok".
+//
+// Operational metadata only: role, build, pid, hostname and two clocks. Nothing
+// here is a secret — a hostname and a pid are what a `docker ps` shows the same
+// operator — and there is no DSN, address or credential anywhere in the row.
+type systemProcess struct {
+	ProcessID string `json:"process_id"`
+	Role      string `json:"role"`
+	Hostname  string `json:"hostname"`
+	PID       int32  `json:"pid"`
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	// State is "running", "stale" (stopped checking in — the only report a
+	// SIGKILLed process can produce) or "stopped" (said goodbye on shutdown).
+	State              string `json:"state"`
+	StartedAt          string `json:"started_at"`
+	LastSeenAt         string `json:"last_seen_at"`
+	LastSeenSecondsAgo int64  `json:"last_seen_seconds_ago"`
+	// SettingsPoll is "ok", "failing" or "never", and SettingsPollError carries
+	// the reason when it is failing. This is the per-process truth the page's
+	// settings_sync component aggregates.
+	SettingsPoll      string `json:"settings_poll"`
+	SettingsPollError string `json:"settings_poll_error,omitempty"`
+	// Self marks the process that served this request, so an operator reading a
+	// three-row list knows which one is answering.
+	Self bool `json:"self"`
+}
+
 // systemStatusResponse is the admin-facing operational snapshot: build info, the
 // runtime environment, process uptime, an overall health flag, per-dependency
 // component status, the effective (non-secret) rate-limit config, and live
@@ -73,6 +106,15 @@ type systemStatusResponse struct {
 	// CDNPurge is omitted when no CDN is wired, on the same doctrine — see
 	// media_purge_metrics.go.
 	CDNPurge *systemCDNPurge `json:"cdn_purge,omitempty"`
+	// Processes is the deployment's fleet. Absent — not empty — when heartbeats
+	// are not wired, on the same doctrine as Database: an empty list would read
+	// as "no processes are running", which is never true of a page that just
+	// answered.
+	Processes []systemProcess `json:"processes,omitempty"`
+	// ProcessStaleSeconds is how long a process may stay silent before it is
+	// called stale, so the page can explain its own verdict instead of asking
+	// the reader to guess the threshold.
+	ProcessStaleSeconds int64 `json:"process_stale_seconds,omitempty"`
 }
 
 // handleSystemStatus returns an operational snapshot for the admin dashboard.
@@ -93,10 +135,13 @@ func (s *Server) handleSystemStatus(c echo.Context) error {
 	if s.draining.Load() {
 		status = "draining"
 	}
+	processes, staleSeconds := s.processFleetSnapshot(c.Request().Context())
 	return c.JSON(http.StatusOK, systemStatusResponse{
-		Status:   status,
-		Database: s.databasePoolSnapshot(),
-		CDNPurge: s.cdnPurgeSnapshot(),
+		Status:              status,
+		Database:            s.databasePoolSnapshot(),
+		CDNPurge:            s.cdnPurgeSnapshot(),
+		Processes:           processes,
+		ProcessStaleSeconds: staleSeconds,
 		Software: systemSoftware{
 			Name:      "vidra",
 			Version:   version.Version,
@@ -114,6 +159,44 @@ func (s *Server) handleSystemStatus(c echo.Context) error {
 			WindowSeconds: int64(s.cfg.RateLimitWindow.Seconds()),
 		},
 	})
+}
+
+// processFleetSnapshot lists the deployment's processes for the page, or nil
+// when heartbeats are not wired.
+//
+// A read failure returns nil rather than half a fleet: settings_sync has already
+// turned the same failure into a named "down" with the reason, and a truncated
+// list beside it would be a second, quieter answer to the same question.
+func (s *Server) processFleetSnapshot(ctx context.Context) ([]systemProcess, int64) {
+	if s.processFleet == nil {
+		return nil, 0
+	}
+	fctx, cancel := context.WithTimeout(ctx, systemProbeTimeout)
+	defer cancel()
+	now := time.Now()
+	rows, err := s.processFleet.List(fctx, now)
+	if err != nil || len(rows) == 0 {
+		return nil, 0
+	}
+	out := make([]systemProcess, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, systemProcess{
+			ProcessID:          r.ProcessID,
+			Role:               r.Role,
+			Hostname:           r.Hostname,
+			PID:                r.PID,
+			Version:            r.Version,
+			Commit:             r.Commit,
+			State:              r.State,
+			StartedAt:          r.StartedAt.UTC().Format(time.RFC3339),
+			LastSeenAt:         r.LastSeenAt.UTC().Format(time.RFC3339),
+			LastSeenSecondsAgo: int64(r.LastSeenAgo.Seconds()),
+			SettingsPoll:       r.SettingsPoll,
+			SettingsPollError:  r.PollError,
+			Self:               r.Self,
+		})
+	}
+	return out, int64(s.processFleet.StaleWindow().Seconds())
 }
 
 // databasePoolSnapshot samples the pool, or returns nil when none is wired.

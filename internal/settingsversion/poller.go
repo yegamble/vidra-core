@@ -107,6 +107,22 @@ type Poller struct {
 	mu          sync.Mutex
 	lastSuccess time.Time
 	lastErr     error
+
+	// afterTick is called once per poll, after the health record is filed and
+	// whether or not the poll succeeded. It exists so the per-process heartbeat
+	// (internal/processheartbeat, migration 0133) is written by the one loop
+	// that runs in EVERY role: an api-only hook would leave the worker — the
+	// process an operator most needs to see — invisible, which is the whole
+	// defect. It is deliberately a plain func rather than an interface so this
+	// package keeps depending on nothing but jobloop.
+	afterTick func(context.Context, *slog.Logger)
+}
+
+// WithAfterTick installs the per-tick hook. A nil hook is a no-op, so every
+// existing caller and every unit fake is unaffected.
+func (p *Poller) WithAfterTick(fn func(context.Context, *slog.Logger)) *Poller {
+	p.afterTick = fn
+	return p
 }
 
 // New builds a poller. A non-positive interval takes DefaultInterval.
@@ -230,6 +246,13 @@ func (p *Poller) Run(ctx context.Context, logger *slog.Logger) {
 			DoneMsg: "reloaded instance settings/documents/branding after a change on another replica",
 			Run: func(ctx context.Context, _ time.Time) (int, error) {
 				changed, err := p.Tick(ctx)
+				// The heartbeat is written on EVERY tick, failures included:
+				// its whole job is to carry this process's poll outcome to the
+				// admin status page, and the tick that failed is the one the
+				// page most needs to hear about.
+				if p.afterTick != nil {
+					p.afterTick(ctx, logger)
+				}
 				if err != nil {
 					return 0, err
 				}
