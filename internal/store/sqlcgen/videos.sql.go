@@ -146,22 +146,34 @@ func (q *Queries) CountPublicVideosByChannel(ctx context.Context, channelID uuid
 const countPublicVideosByChannelVisible = `-- name: CountPublicVideosByChannelVisible :one
 SELECT count(*)::bigint
 FROM videos v
+JOIN channels c ON c.id = v.channel_id
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
-  AND (NOT $2::bool OR NOT v.is_sensitive)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = c.owner_id
+  )
+  AND (NOT $3::bool OR NOT v.is_sensitive)
 `
 
 type CountPublicVideosByChannelVisibleParams struct {
-	ChannelID     uuid.UUID `json:"channel_id"`
-	HideSensitive bool      `json:"hide_sensitive"`
+	ChannelID     uuid.UUID   `json:"channel_id"`
+	ViewerID      pgtype.UUID `json:"viewer_id"`
+	HideSensitive bool        `json:"hide_sensitive"`
 }
 
 // How many rows ListPublicVideosByChannel would return, ignoring pagination.
 // The block predicate must stay identical: CountPublicVideosByChannel above
 // answers the AP outbox's question (it counts blocked videos too) and would
-// over-report this list.
+// over-report this list. Same for the per-viewer mute/block clause added with
+// the A16 ruling — a total taken without it would promise the muter a page the
+// list cannot serve. The channels JOIN exists only to reach c.owner_id.
 func (q *Queries) CountPublicVideosByChannelVisible(ctx context.Context, arg CountPublicVideosByChannelVisibleParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countPublicVideosByChannelVisible, arg.ChannelID, arg.HideSensitive)
+	row := q.db.QueryRow(ctx, countPublicVideosByChannelVisible, arg.ChannelID, arg.ViewerID, arg.HideSensitive)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -1048,24 +1060,38 @@ LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  -- A16 ruling: the per-viewer mute/block clause, verbatim from
+  -- ListPublicVideosSorted. It was missing here alone, so a muted account's own
+  -- channel page kept listing everything the mute hid everywhere else, and an
+  -- autosuggest channel hit linked straight to it. viewer_id is NULL for an
+  -- anonymous caller, which makes both NOT EXISTS trivially true.
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $2 AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $2 AND ub.blocked_id = c.owner_id
+  )
   -- Sensitive-content "hide" moved INTO the query (it used to be a Go-side skip
   -- over the whole result set). With a LIMIT that filter has to be in SQL or a
   -- page would silently return fewer rows than asked for and the total would
   -- count rows the caller can never see.
-  AND (NOT $2::bool OR NOT v.is_sensitive)
+  AND (NOT $3::bool OR NOT v.is_sensitive)
 ORDER BY
-    CASE WHEN $3::text = 'published_at' THEN v.created_at END ASC,
-    CASE WHEN $3::text <> 'published_at' THEN v.created_at END DESC,
+    CASE WHEN $4::text = 'published_at' THEN v.created_at END ASC,
+    CASE WHEN $4::text <> 'published_at' THEN v.created_at END DESC,
     v.id DESC
-LIMIT $5 OFFSET $4
+LIMIT $6 OFFSET $5
 `
 
 type ListPublicVideosByChannelParams struct {
-	ChannelID     uuid.UUID `json:"channel_id"`
-	HideSensitive bool      `json:"hide_sensitive"`
-	Sort          string    `json:"sort"`
-	ResultOffset  int32     `json:"result_offset"`
-	ResultLimit   int32     `json:"result_limit"`
+	ChannelID     uuid.UUID   `json:"channel_id"`
+	ViewerID      pgtype.UUID `json:"viewer_id"`
+	HideSensitive bool        `json:"hide_sensitive"`
+	Sort          string      `json:"sort"`
+	ResultOffset  int32       `json:"result_offset"`
+	ResultLimit   int32       `json:"result_limit"`
 }
 
 type ListPublicVideosByChannelRow struct {
@@ -1092,6 +1118,7 @@ type ListPublicVideosByChannelRow struct {
 func (q *Queries) ListPublicVideosByChannel(ctx context.Context, arg ListPublicVideosByChannelParams) ([]ListPublicVideosByChannelRow, error) {
 	rows, err := q.db.Query(ctx, listPublicVideosByChannel,
 		arg.ChannelID,
+		arg.ViewerID,
 		arg.HideSensitive,
 		arg.Sort,
 		arg.ResultOffset,

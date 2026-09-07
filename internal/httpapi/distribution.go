@@ -170,7 +170,7 @@ func (s *Server) handleVideosFeed(c echo.Context) error {
 		// Under "hide", flagged videos never leak into the public feed.
 		// The feed cap is the query's LIMIT now, so the RSS route never pulls a
 		// whole channel into memory to throw most of it away.
-		items, _, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, s.hideSensitiveVideos(), "", feedItemLimit, 0)
+		items, _, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, uuid.Nil, false, s.hideSensitiveVideos(), "", feedItemLimit, 0)
 		if err != nil {
 			return err
 		}

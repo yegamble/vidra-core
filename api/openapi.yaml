@@ -17064,7 +17064,7 @@ components:
     MutedAccount:
       type: object
       description: An account the caller has muted, with its display identity.
-      required: [user_id, username, display_name, muted_at]
+      required: [user_id, username, display_name, muted_at, channel_handles]
       properties:
         user_id:
           type: string
@@ -17076,6 +17076,18 @@ components:
         muted_at:
           type: string
           format: date-time
+        channel_handles:
+          type: array
+          items:
+            type: string
+          description: >-
+            Every channel handle this account publishes under, sorted. Present
+            so a client can recognise a channel that belongs to a muted account
+            without a lookup per handle: autocomplete suggestions
+            (GET /search/suggestions) are viewer-agnostic by design and carry
+            only channel_handle, so the client drops the ones naming a muted or
+            blocked account itself. An account with no channel yields an empty
+            array, never null.
     MutedAccountListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -17292,7 +17304,7 @@ components:
                 $ref: "#/components/schemas/RemoteFollow"
     BlockedUser:
       type: object
-      required: [user_id, username, display_name, blocked_at]
+      required: [user_id, username, display_name, blocked_at, channel_handles]
       properties:
         user_id:
           type: string
@@ -17304,6 +17316,15 @@ components:
         blocked_at:
           type: string
           format: date-time
+        channel_handles:
+          type: array
+          items:
+            type: string
+          description: >-
+            Every channel handle this account publishes under, sorted — the same
+            field MutedAccount carries, for the same client-side suggestion
+            filter. An account with no channel yields an empty array, never
+            null.
     BlockedUserListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"

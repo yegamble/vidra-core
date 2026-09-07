@@ -18,8 +18,10 @@ import (
 // account's identity from the auth fake (mirroring the real JOIN) and enforces
 // the target foreign key (an unknown blocked account → 23503).
 type blockFakeRepo struct {
-	auth   *authFakeRepo
-	blocks []blockRow
+	auth *authFakeRepo
+	// channels mirrors the ARRAY() subquery on the list — see muteFakeRepo.
+	channels *channelFakeRepo
+	blocks   []blockRow
 }
 
 type blockRow struct {
@@ -64,6 +66,7 @@ func (f *blockFakeRepo) ListBlockedUsers(_ context.Context, a sqlcgen.ListBlocke
 		}
 		rows = append(rows, sqlcgen.ListBlockedUsersRow{
 			BlockedID: b.blocked, Username: u.Username, DisplayName: u.DisplayName, CreatedAt: b.at,
+			ChannelHandles: f.channels.handlesOwnedBy(b.blocked),
 		})
 	}
 	return rows, nil

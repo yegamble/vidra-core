@@ -16,6 +16,9 @@ type blockedUserView struct {
 	Username    string    `json:"username"`
 	DisplayName string    `json:"display_name"`
 	BlockedAt   time.Time `json:"blocked_at"`
+	// ChannelHandles: see mutedAccountView — the same field, for the same
+	// client-side filter, on the list that must never disagree with it.
+	ChannelHandles []string `json:"channel_handles"`
 }
 
 // blockedUserListResponse is the paginated list of accounts the caller has blocked.
@@ -79,10 +82,11 @@ func (s *Server) handleListBlockedUsers(c echo.Context) error {
 	views := make([]blockedUserView, 0, len(items))
 	for _, it := range items {
 		views = append(views, blockedUserView{
-			UserID:      it.UserID.String(),
-			Username:    it.Username,
-			DisplayName: it.DisplayName,
-			BlockedAt:   it.BlockedAt,
+			UserID:         it.UserID.String(),
+			Username:       it.Username,
+			DisplayName:    it.DisplayName,
+			BlockedAt:      it.BlockedAt,
+			ChannelHandles: it.ChannelHandles,
 		})
 	}
 	return c.JSON(http.StatusOK, blockedUserListResponse{Users: views, pageMeta: page.meta(total)})

@@ -11,8 +11,15 @@ ON CONFLICT (blocker_id, blocked_id) DO NOTHING;
 DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2;
 
 -- name: ListBlockedUsers :many
--- A user's blocked accounts, newest block first, with the blocked account's identity.
-SELECT b.blocked_id, u.username, u.display_name, b.created_at
+-- A user's blocked accounts, newest block first, with the blocked account's
+-- identity and the handles it publishes under. channel_handles mirrors
+-- ListMutedAccounts exactly — a block is the mute predicate plus one thing
+-- more, so the two lists must never disagree about what to hide; see that
+-- query for why the field exists.
+SELECT b.blocked_id, u.username, u.display_name, b.created_at,
+       ARRAY(
+           SELECT c.handle FROM channels c WHERE c.owner_id = u.id ORDER BY c.handle
+       )::text[] AS channel_handles
 FROM user_blocks b
 JOIN users u ON u.id = b.blocked_id
 WHERE b.blocker_id = $1

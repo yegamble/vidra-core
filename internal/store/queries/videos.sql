@@ -121,6 +121,19 @@ LEFT JOIN video_view_counts vc ON vc.video_id = v.id
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.channel_id = sqlc.arg('channel_id') AND v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  -- A16 ruling: the per-viewer mute/block clause, verbatim from
+  -- ListPublicVideosSorted. It was missing here alone, so a muted account's own
+  -- channel page kept listing everything the mute hid everywhere else, and an
+  -- autosuggest channel hit linked straight to it. viewer_id is NULL for an
+  -- anonymous caller, which makes both NOT EXISTS trivially true.
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
+  )
   -- Sensitive-content "hide" moved INTO the query (it used to be a Go-side skip
   -- over the whole result set). With a LIMIT that filter has to be in SQL or a
   -- page would silently return fewer rows than asked for and the total would
@@ -136,11 +149,22 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 -- How many rows ListPublicVideosByChannel would return, ignoring pagination.
 -- The block predicate must stay identical: CountPublicVideosByChannel above
 -- answers the AP outbox's question (it counts blocked videos too) and would
--- over-report this list.
+-- over-report this list. Same for the per-viewer mute/block clause added with
+-- the A16 ruling — a total taken without it would promise the muter a page the
+-- list cannot serve. The channels JOIN exists only to reach c.owner_id.
 SELECT count(*)::bigint
 FROM videos v
+JOIN channels c ON c.id = v.channel_id
 WHERE v.channel_id = sqlc.arg('channel_id') AND v.privacy = 'public' AND v.state = 'published'
   AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = c.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = c.owner_id
+  )
   AND (NOT sqlc.arg('hide_sensitive')::bool OR NOT v.is_sensitive);
 
 -- name: ListPublicVideosSorted :many

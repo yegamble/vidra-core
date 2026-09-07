@@ -1080,7 +1080,7 @@ func TestListByChannelVsPublic(t *testing.T) {
 	if len(all) != 2 {
 		t.Errorf("ListByChannel = %d, want 2 (owner sees all states)", len(all))
 	}
-	pub, _, _ := svc.ListPublicByChannel(ctx, ch, false, "", 100, 0)
+	pub, _, _ := svc.ListPublicByChannel(ctx, ch, uuid.Nil, false, false, "", 100, 0)
 	if len(pub) != 1 || pub[0].Video.Privacy != "public" {
 		t.Errorf("ListPublicByChannel = %+v, want 1 public", pub)
 	}
@@ -1094,14 +1094,14 @@ func TestListPublicByChannelCanHideSensitive(t *testing.T) {
 	publishDraft(t, svc, ctx, ch, CreateInput{Title: "visible", Privacy: "public"})
 	publishDraft(t, svc, ctx, ch, CreateInput{Title: "sensitive", Privacy: "public", IsSensitive: true})
 
-	all, _, err := svc.ListPublicByChannel(ctx, ch, false, "", 100, 0)
+	all, _, err := svc.ListPublicByChannel(ctx, ch, uuid.Nil, false, false, "", 100, 0)
 	if err != nil {
 		t.Fatalf("ListPublicByChannel all: %v", err)
 	}
 	if len(all) != 2 {
 		t.Fatalf("ListPublicByChannel all = %d, want 2", len(all))
 	}
-	filtered, _, err := svc.ListPublicByChannel(ctx, ch, true, "", 100, 0)
+	filtered, _, err := svc.ListPublicByChannel(ctx, ch, uuid.Nil, false, true, "", 100, 0)
 	if err != nil {
 		t.Fatalf("ListPublicByChannel filtered: %v", err)
 	}

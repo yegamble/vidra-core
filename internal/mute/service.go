@@ -49,6 +49,10 @@ type MutedAccount struct {
 	Username    string
 	DisplayName string
 	MutedAt     time.Time
+	// ChannelHandles are the handles this account publishes under, so a client
+	// can recognise a channel suggestion that names it without a lookup per
+	// suggested handle. Empty (never nil) for an account with no channel.
+	ChannelHandles []string
 }
 
 // Mute records that muterID mutes mutedID. Idempotent. A self-mute →
@@ -89,11 +93,23 @@ func (s *Service) List(ctx context.Context, muterID uuid.UUID, limit, offset int
 	out := make([]MutedAccount, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, MutedAccount{
-			UserID:      r.MutedID,
-			Username:    r.Username,
-			DisplayName: r.DisplayName,
-			MutedAt:     r.CreatedAt,
+			UserID:         r.MutedID,
+			Username:       r.Username,
+			DisplayName:    r.DisplayName,
+			MutedAt:        r.CreatedAt,
+			ChannelHandles: nonNilStrings(r.ChannelHandles),
 		})
 	}
 	return out, total, nil
+}
+
+// nonNilStrings normalises a possibly-nil handle slice to an empty one, so the
+// HTTP layer always marshals `[]` and never `null`. A client that has to
+// null-check a set it intersects against is one missed check away from showing
+// what the mute hides.
+func nonNilStrings(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
 }

@@ -17,8 +17,12 @@ import (
 // identity from the auth fake (mirroring the real JOIN) and enforces the target
 // foreign key (an unknown muted account → 23503).
 type muteFakeRepo struct {
-	auth  *authFakeRepo
-	mutes []muteRow
+	auth *authFakeRepo
+	// channels mirrors the ARRAY() subquery on the list: the account's own
+	// channel handles. Nil means "no channel fake wired" — the harnesses that
+	// never create one then read an empty array, exactly as the SQL would.
+	channels *channelFakeRepo
+	mutes    []muteRow
 }
 
 type muteRow struct {
@@ -74,6 +78,7 @@ func (f *muteFakeRepo) ListMutedAccounts(_ context.Context, a sqlcgen.ListMutedA
 		}
 		rows = append(rows, sqlcgen.ListMutedAccountsRow{
 			MutedID: m.muted, Username: u.Username, DisplayName: u.DisplayName, CreatedAt: m.at,
+			ChannelHandles: f.channels.handlesOwnedBy(m.muted),
 		})
 	}
 	off := min(int(a.ResultOffset), len(rows))
@@ -165,4 +170,96 @@ func TestMuteAccountSelfUnknownAndAuth(t *testing.T) {
 func (f *muteFakeRepo) CountMutedAccounts(ctx context.Context, muterID uuid.UUID) (int64, error) {
 	rows, err := f.ListMutedAccounts(ctx, sqlcgen.ListMutedAccountsParams{MuterID: muterID, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
+}
+
+// TestMuteAndBlockListsCarryChannelHandles pins the one field the autosuggest
+// half of the A16 ruling depends on. Autosuggest stays viewer-agnostic on the
+// server — vidra-search's index stores static eligibility and never per-viewer
+// state, which is exactly what makes the ranked-ids contract visibility-safe —
+// so the frontend has to drop a channel suggestion naming a muted or blocked
+// account itself. A suggestion carries only `channel_handle`, and these two
+// lists carried only `user_id`/`username`: with nothing joining them, a client
+// could only resolve the owner of each suggested handle with a request per
+// keystroke. The lists now carry the account's channel handles, so the client
+// builds the set ONCE per settled session and every keystroke is free.
+//
+// An account with no channel reads `[]`, never null: a client that has to
+// null-check a set it intersects against would be one missed check away from
+// showing what the mute hides.
+func TestMuteAndBlockListsCarryChannelHandles(t *testing.T) {
+	srv := videoServer(t)
+	viewer, _ := registerAndUser(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	bobTok, bobID := registerAndUser(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	// Two channels, because one account may publish under several handles and
+	// filtering on only the first would leak the rest.
+	for _, h := range []string{"bobmain", "bobalt"} {
+		if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels", `{"handle":"`+h+`","display_name":"Bob"}`, bobTok); rec.Code != http.StatusCreated {
+			t.Fatalf("create channel %s = %d; body=%s", h, rec.Code, rec.Body.String())
+		}
+	}
+	// A channel-less account: the empty-array case.
+	_, carolID := registerAndUser(t, srv, `{"username":"carol","email":"carol@example.test","password":"supersecret"}`)
+
+	handlesOf := func(path string, decode func([]byte) map[string][]string) map[string][]string {
+		t.Helper()
+		rec := getWithAuth(srv, path, viewer)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d; body=%s", path, rec.Code, rec.Body.String())
+		}
+		return decode(rec.Body.Bytes())
+	}
+	// Decoded off the wire, not off the Go view struct: the field the frontend
+	// reads is the JSON one, and `omitempty` on a nil slice would drop it.
+	decodeMutes := func(b []byte) map[string][]string {
+		var body struct {
+			Accounts []struct {
+				UserID         string   `json:"user_id"`
+				ChannelHandles []string `json:"channel_handles"`
+			} `json:"accounts"`
+		}
+		_ = json.Unmarshal(b, &body)
+		out := map[string][]string{}
+		for _, a := range body.Accounts {
+			out[a.UserID] = a.ChannelHandles
+		}
+		return out
+	}
+	decodeBlocks := func(b []byte) map[string][]string {
+		var body struct {
+			Users []struct {
+				UserID         string   `json:"user_id"`
+				ChannelHandles []string `json:"channel_handles"`
+			} `json:"users"`
+		}
+		_ = json.Unmarshal(b, &body)
+		out := map[string][]string{}
+		for _, u := range body.Users {
+			out[u.UserID] = u.ChannelHandles
+		}
+		return out
+	}
+
+	for _, tc := range []struct {
+		what   string
+		mutate string
+		list   string
+		decode func([]byte) map[string][]string
+	}{
+		{"mute", "/api/v1/me/mutes/accounts/", "/api/v1/me/mutes/accounts", decodeMutes},
+		{"block", "/api/v1/me/blocks/", "/api/v1/me/blocks", decodeBlocks},
+	} {
+		for _, id := range []string{bobID, carolID} {
+			if rec := sendJSONAuth(srv, http.MethodPost, tc.mutate+id, "", viewer); rec.Code != http.StatusNoContent {
+				t.Fatalf("%s %s = %d; body=%s", tc.what, id, rec.Code, rec.Body.String())
+			}
+		}
+		got := handlesOf(tc.list, tc.decode)
+		want := []string{"bobalt", "bobmain"} // sorted, so the set is stable
+		if len(got[bobID]) != 2 || got[bobID][0] != want[0] || got[bobID][1] != want[1] {
+			t.Errorf("%s list channel_handles for bob = %v, want %v", tc.what, got[bobID], want)
+		}
+		if got[carolID] == nil || len(got[carolID]) != 0 {
+			t.Errorf("%s list channel_handles for a channel-less account = %v, want an empty array", tc.what, got[carolID])
+		}
+	}
 }

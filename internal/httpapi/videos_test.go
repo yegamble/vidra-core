@@ -662,6 +662,13 @@ func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, a sqlcgen.L
 		if f.blockedFromFeed(r.ID) {
 			continue
 		}
+		// The per-viewer mute/block clause the query carries (A16 ruling).
+		// Without this mirror the handler test below would pass on a fake that
+		// disagrees with the SQL, which is exactly how the channel page kept
+		// its gap through four slices of mute work.
+		if f.mutedFromFeed(a.ViewerID, r.ChannelID) {
+			continue
+		}
 		if r.ChannelID == channelID && r.Privacy == "public" && r.State == "published" {
 			out = append(out, sqlcgen.ListPublicVideosByChannelRow{
 				ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
@@ -1363,11 +1370,11 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	}
 	notifRepo := &notifFakeRepo{auth: authRepo, channels: chRepo, videos: repo}
 	plRepo := &playlistFakeRepo{videos: repo, playlists: map[uuid.UUID]sqlcgen.Playlist{}, items: map[uuid.UUID][]uuid.UUID{}}
-	muteRepo := &muteFakeRepo{auth: authRepo}
+	muteRepo := &muteFakeRepo{auth: authRepo, channels: chRepo}
 	repo.mutes = muteRepo
 	// One shared user-blocks fake backs the block service AND the §13
 	// content-hiding mirrors in the video/comment fakes.
-	userBlockRepo := &blockFakeRepo{auth: authRepo}
+	userBlockRepo := &blockFakeRepo{auth: authRepo, channels: chRepo}
 	repo.userBlocks = userBlockRepo
 	// The channel- and account-search fakes apply the same per-viewer
 	// mute/block predicates their SQL does, so they read the same two fakes.
@@ -2078,6 +2085,76 @@ func TestFeedHidesMutedAccounts(t *testing.T) {
 	}
 }
 
+// TestChannelVideosHideMutedAndBlockedAccounts closes the last discovery surface
+// that still showed a muted account's videos to the muter (A16 slice 3 recorded
+// it; the owner ruled it should hide). Every other public list — the feed,
+// search, the subscriptions feed, the recommendation rails' hydration — carried
+// the per-viewer `muted_accounts`/`user_blocks` clause; the channel's own page
+// did not, so autosuggest offering the channel was a complete route back to
+// everything the mute hid. The channel HEADER is untouched: a mute is not a
+// disappearance, and the viewer needs the page to reach the unmute control.
+func TestChannelVideosHideMutedAndBlockedAccounts(t *testing.T) {
+	srv := videoServer(t)
+	bobTok, bobID := registerAndUser(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/channels", `{"handle":"bob","display_name":"Bob"}`, bobTok); rec.Code != http.StatusCreated {
+		t.Fatalf("create bob channel = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	_ = createPublishedVideo(t, srv, bobTok, "bob", `{"title":"by bob","privacy":"public"}`)
+
+	charlie := registerAndToken(t, srv, `{"username":"charlie","email":"charlie@example.test","password":"supersecret"}`)
+
+	// Both halves of the contract, because a page that returned no rows while
+	// still reporting total:1 would promise a second page it cannot serve.
+	page := func(tok string) (titles []string, total int64) {
+		t.Helper()
+		rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/channels/bob/videos", "", tok)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("channel videos = %d; body=%s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Videos []struct {
+				Title string `json:"title"`
+			} `json:"videos"`
+			Total int64 `json:"total"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		for _, v := range body.Videos {
+			titles = append(titles, v.Title)
+		}
+		return titles, body.Total
+	}
+
+	if got, total := page(charlie); len(got) != 1 || total != 1 {
+		t.Fatalf("charlie before mute = %v total=%d, want 1/1", got, total)
+	}
+
+	for _, tc := range []struct{ name, path, id string }{
+		{"mute", "/api/v1/me/mutes/accounts/", bobID},
+		{"block", "/api/v1/me/blocks/", bobID},
+	} {
+		if rec := sendJSONAuth(srv, http.MethodPost, tc.path+tc.id, "", charlie); rec.Code != http.StatusNoContent {
+			t.Fatalf("%s bob = %d; body=%s", tc.name, rec.Code, rec.Body.String())
+		}
+		if got, total := page(charlie); len(got) != 0 || total != 0 {
+			t.Errorf("charlie after %s = %v total=%d, want none", tc.name, got, total)
+		}
+		// The live controls: the exclusion is per-viewer and does not touch the
+		// owner's own view of his channel.
+		if got, _ := page(""); len(got) != 1 {
+			t.Errorf("anon during %s = %v, want 1 (per-viewer)", tc.name, got)
+		}
+		if got, _ := page(bobTok); len(got) != 1 {
+			t.Errorf("bob's own channel during charlie's %s = %v, want 1", tc.name, got)
+		}
+		if rec := sendJSONAuth(srv, http.MethodDelete, tc.path+tc.id, "", charlie); rec.Code != http.StatusNoContent {
+			t.Fatalf("un%s = %d", tc.name, rec.Code)
+		}
+		if got, total := page(charlie); len(got) != 1 || total != 1 {
+			t.Errorf("charlie after un%s = %v total=%d, want 1/1", tc.name, got, total)
+		}
+	}
+}
+
 func TestPublicVideoFeed(t *testing.T) {
 	srv := videoServer(t)
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
@@ -2768,7 +2845,7 @@ func (f *videoFakeRepo) CountVideosByChannel(ctx context.Context, channelID uuid
 
 func (f *videoFakeRepo) CountPublicVideosByChannelVisible(ctx context.Context, a sqlcgen.CountPublicVideosByChannelVisibleParams) (int64, error) {
 	rows, err := f.ListPublicVideosByChannel(ctx, sqlcgen.ListPublicVideosByChannelParams{
-		ChannelID: a.ChannelID, HideSensitive: a.HideSensitive, ResultLimit: 1 << 30,
+		ChannelID: a.ChannelID, ViewerID: a.ViewerID, HideSensitive: a.HideSensitive, ResultLimit: 1 << 30,
 	})
 	return int64(len(rows)), err
 }

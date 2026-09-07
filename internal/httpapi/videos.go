@@ -1015,7 +1015,13 @@ func (s *Server) handleListChannelVideos(c echo.Context) error {
 	if userID, _, ok := principalFromContext(c); ok && s.canManageChannelContent(ctx, userID, ch.ID) {
 		items, total, err = s.videosvc.ListByChannel(ctx, ch.ID, sort, page.Limit32(), page.Offset32())
 	} else {
-		items, total, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, s.effectiveHideSensitive(c), sort, page.Limit32(), page.Offset32())
+		// Everyone else gets the PUBLIC list, filtered for THEM: an owner this
+		// viewer has muted or blocked drops out of it, the same per-viewer
+		// clause the feed, search and the subscriptions list carry (A16
+		// ruling). principalFromContext reports (uuid.Nil, false) for an
+		// anonymous caller, which passes a NULL viewer to the query.
+		viewerID, _, viewerAuthed := principalFromContext(c)
+		items, total, err = s.videosvc.ListPublicByChannel(ctx, ch.ID, viewerID, viewerAuthed, s.effectiveHideSensitive(c), sort, page.Limit32(), page.Offset32())
 	}
 	if err != nil {
 		return err
