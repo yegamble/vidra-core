@@ -12,6 +12,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteProcessHeartbeat = `-- name: DeleteProcessHeartbeat :exec
+DELETE FROM process_heartbeats WHERE process_id = $1
+`
+
+func (q *Queries) DeleteProcessHeartbeat(ctx context.Context, processID string) error {
+	_, err := q.db.Exec(ctx, deleteProcessHeartbeat, processID)
+	return err
+}
+
 const forgetStaleProcessHeartbeats = `-- name: ForgetStaleProcessHeartbeats :execrows
 DELETE FROM process_heartbeats
 WHERE last_seen_at < now() - $1::interval
@@ -39,6 +48,48 @@ ORDER BY last_seen_at DESC
 // and an operator staring at a machine they scrapped last month learns nothing.
 func (q *Queries) ListProcessHeartbeats(ctx context.Context, forgetAfter pgtype.Interval) ([]ProcessHeartbeat, error) {
 	rows, err := q.db.Query(ctx, listProcessHeartbeats, forgetAfter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProcessHeartbeat
+	for rows.Next() {
+		var i ProcessHeartbeat
+		if err := rows.Scan(
+			&i.ProcessID,
+			&i.Role,
+			&i.Hostname,
+			&i.Pid,
+			&i.Version,
+			&i.BuildCommit,
+			&i.State,
+			&i.StartedAt,
+			&i.LastSeenAt,
+			&i.LastSettingsPollSuccessAt,
+			&i.LastSettingsPollError,
+			&i.StoppedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProcessHeartbeatsOnHost = `-- name: ListProcessHeartbeatsOnHost :many
+SELECT process_id, role, hostname, pid, version, build_commit, state, started_at, last_seen_at, last_settings_poll_success_at, last_settings_poll_error, stopped_at FROM process_heartbeats WHERE hostname = $1
+`
+
+// Every row claiming to be a process on ONE host. Used at boot to reap the rows
+// left behind by this host's previous processes: a container or pod restarts
+// into the same process_id and simply upserts, but a bare-metal or systemd
+// deployment comes back with a NEW pid, so without a reap every restart would
+// leave a permanently stale row degrading the instance until the forget window.
+func (q *Queries) ListProcessHeartbeatsOnHost(ctx context.Context, hostname string) ([]ProcessHeartbeat, error) {
+	rows, err := q.db.Query(ctx, listProcessHeartbeatsOnHost, hostname)
 	if err != nil {
 		return nil, err
 	}

@@ -52,3 +52,14 @@ ORDER BY last_seen_at DESC;
 -- size of the fleet rather than the size of its history.
 DELETE FROM process_heartbeats
 WHERE last_seen_at < now() - sqlc.arg('forget_after')::interval;
+
+-- name: ListProcessHeartbeatsOnHost :many
+-- Every row claiming to be a process on ONE host. Used at boot to reap the rows
+-- left behind by this host's previous processes: a container or pod restarts
+-- into the same process_id and simply upserts, but a bare-metal or systemd
+-- deployment comes back with a NEW pid, so without a reap every restart would
+-- leave a permanently stale row degrading the instance until the forget window.
+SELECT * FROM process_heartbeats WHERE hostname = sqlc.arg('hostname');
+
+-- name: DeleteProcessHeartbeat :exec
+DELETE FROM process_heartbeats WHERE process_id = sqlc.arg('process_id');

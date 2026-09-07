@@ -102,3 +102,50 @@ $$;
 
 CREATE TRIGGER job_events_inherit_identity
 BEFORE INSERT ON job_events FOR EACH ROW EXECUTE FUNCTION inherit_job_event_identity();
+
+-- A CHILD run inherits its parent's identity.
+--
+-- 0094 projects transcode_steps as child runs under their transcode_jobs parent
+-- (parent_job_id), and 0083's roll-up hides the parent whenever children exist —
+-- so the row an operator actually sees on /admin/jobs is the CHILD. Stamping
+-- only the parent would leave that visible row with the empty worker and empty
+-- request id this migration exists to remove. The child is created by a trigger,
+-- with no Go statement anywhere near it, so the inheritance has to happen here.
+--
+-- Same rule as the events: FILL only, never overwrite, and one primary-key probe.
+CREATE FUNCTION inherit_job_run_identity() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    parent RECORD;
+BEGIN
+    IF NEW.parent_job_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.request_id <> '' AND NEW.correlation_id <> '' AND NEW.trace_id <> ''
+       AND NEW.worker_id <> '' AND NEW.actor_id IS NOT NULL AND NEW.pipeline_run_id IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT j.request_id, j.correlation_id, j.trace_id, j.worker_id, j.actor_id, j.pipeline_run_id
+      INTO parent
+      FROM job_runs j
+     WHERE j.id = NEW.parent_job_id;
+    IF NOT FOUND THEN
+        RETURN NEW;
+    END IF;
+
+    IF NEW.request_id = ''     THEN NEW.request_id     := parent.request_id;     END IF;
+    IF NEW.correlation_id = '' THEN NEW.correlation_id := parent.correlation_id; END IF;
+    IF NEW.trace_id = ''       THEN NEW.trace_id       := parent.trace_id;       END IF;
+    -- The worker running a step is by construction the worker running its
+    -- parent job: the step rows are written by that worker's own progress
+    -- callbacks inside the job it claimed.
+    IF NEW.worker_id = ''      THEN NEW.worker_id      := parent.worker_id;      END IF;
+    IF NEW.actor_id IS NULL        THEN NEW.actor_id        := parent.actor_id;        END IF;
+    IF NEW.pipeline_run_id IS NULL THEN NEW.pipeline_run_id := parent.pipeline_run_id; END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER job_runs_inherit_identity
+BEFORE INSERT ON job_runs FOR EACH ROW EXECUTE FUNCTION inherit_job_run_identity();

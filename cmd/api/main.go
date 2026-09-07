@@ -1492,6 +1492,15 @@ func run() error {
 		logger.Warn("could not write this process's heartbeat at boot; it may read as stale on the admin status page",
 			"process_id", heartbeat.ProcessID(), "error", err)
 	}
+	// And reap the rows this HOST's previous processes left behind. A container
+	// restarts into the same process_id and simply upserts; a systemd or
+	// bare-metal deployment comes back with a new pid, so without this every
+	// restart would leave a permanently stale row degrading the instance.
+	if n, err := heartbeat.ReapLocal(startCtx); err != nil {
+		logger.Warn("could not reap this host's exited process heartbeats", "error", err)
+	} else if n > 0 {
+		logger.Info("reaped heartbeats for processes this host no longer has", "count", n)
+	}
 	// Say goodbye on the way out, so an operator can tell a replica they scaled
 	// down from one that crashed. Best effort and short-budgeted: shutdown must
 	// never block on it, and a process that never gets here shows as a stale

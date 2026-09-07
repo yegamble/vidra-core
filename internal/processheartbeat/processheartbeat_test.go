@@ -3,6 +3,7 @@ package processheartbeat
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -66,6 +67,21 @@ func (f *fakeRepo) ListProcessHeartbeats(_ context.Context, forgetAfter pgtype.I
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+func (f *fakeRepo) ListProcessHeartbeatsOnHost(_ context.Context, host string) ([]sqlcgen.ProcessHeartbeat, error) {
+	var out []sqlcgen.ProcessHeartbeat
+	for _, r := range f.rows {
+		if r.Hostname == host {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeRepo) DeleteProcessHeartbeat(_ context.Context, id string) error {
+	delete(f.rows, id)
+	return nil
 }
 
 func (f *fakeRepo) ForgetStaleProcessHeartbeats(_ context.Context, forgetAfter pgtype.Interval) (int64, error) {
@@ -326,5 +342,52 @@ func TestForgetSweepIsRateLimited(t *testing.T) {
 	}
 	if !w.dueForForget(now.Add(2 * time.Hour)) {
 		t.Fatal("the sweep never came back")
+	}
+}
+
+// process_id is hostname:pid, so a container restart upserts over its own row —
+// but a systemd or bare-metal restart comes back with a NEW pid. Without the
+// boot reap, every restart would leave a row that is permanently stale and
+// permanently degrading, and the fleet list would grow one dead entry per
+// deploy.
+func TestReapLocalRemovesRowsThisHostNoLongerHas(t *testing.T) {
+	now := time.Now().UTC()
+	repo := newFakeRepo(now)
+	host, _ := os.Hostname()
+	self := os.Getpid()
+
+	// A previous run of this process on this host: a pid that is certainly not
+	// running (pid 0 is not addressable, so use a very high one).
+	deadPID := int32(4194303)
+	repo.rows[ProcessID(host, int(deadPID))] = sqlcgen.ProcessHeartbeat{
+		ProcessID: ProcessID(host, int(deadPID)), Role: "worker", Hostname: host,
+		Pid: deadPID, State: "running", LastSeenAt: now.Add(-time.Minute),
+	}
+	// A row for a DIFFERENT host must never be touched: this process knows
+	// nothing about that machine's pids.
+	repo.rows["other-host:9"] = sqlcgen.ProcessHeartbeat{
+		ProcessID: "other-host:9", Role: "worker", Hostname: "other-host",
+		Pid: 9, State: "running", LastSeenAt: now.Add(-time.Minute),
+	}
+
+	w := NewWriter(repo, nil, Config{Role: "api", Hostname: host, PID: self})
+	if err := w.Beat(context.Background()); err != nil {
+		t.Fatalf("Beat: %v", err)
+	}
+	n, err := w.ReapLocal(context.Background())
+	if err != nil {
+		t.Fatalf("ReapLocal: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("reaped %d, want 1", n)
+	}
+	if _, still := repo.rows[ProcessID(host, int(deadPID))]; still {
+		t.Error("the dead sibling row survived")
+	}
+	if _, gone := repo.rows["other-host:9"]; !gone {
+		t.Error("a row for another host was reaped; this process cannot know that machine's pids")
+	}
+	if _, gone := repo.rows[w.processID]; !gone {
+		t.Error("the reap removed this process's own row")
 	}
 }

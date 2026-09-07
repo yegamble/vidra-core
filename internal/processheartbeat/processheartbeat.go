@@ -37,11 +37,13 @@ package processheartbeat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -81,6 +83,8 @@ type Repository interface {
 	MarkProcessStopped(ctx context.Context, processID string) error
 	ListProcessHeartbeats(ctx context.Context, forgetAfter pgtype.Interval) ([]sqlcgen.ProcessHeartbeat, error)
 	ForgetStaleProcessHeartbeats(ctx context.Context, forgetAfter pgtype.Interval) (int64, error)
+	ListProcessHeartbeatsOnHost(ctx context.Context, hostname string) ([]sqlcgen.ProcessHeartbeat, error)
+	DeleteProcessHeartbeat(ctx context.Context, processID string) error
 }
 
 // PollHealth is the settings poller's health record: when this process last
@@ -228,6 +232,62 @@ func (w *Writer) Stop(ctx context.Context) error {
 		return nil
 	}
 	return w.repo.MarkProcessStopped(ctx, w.processID)
+}
+
+// ReapLocal removes the rows left behind by this host's PREVIOUS processes, and
+// reports how many.
+//
+// It exists because process_id is hostname:pid. A container or pod restarts into
+// the same key (pid 1, same pod name) and upserts over its own row, but a
+// bare-metal or systemd deployment comes back with a NEW pid — so without this,
+// every restart would leave a row that is permanently stale and permanently
+// degrading, and the fleet list would grow one dead entry per deploy.
+//
+// The judgement is LOCAL knowledge, not a heuristic: signal 0 to a pid on this
+// host answers "is there a process there" exactly. Rows for other hosts are
+// never touched, because this process cannot know anything about them — those
+// age out through the forget window instead. A pid that has been REUSED by an
+// unrelated program reads as alive and the row survives one more window, which
+// is the same answer the page gives today and errs toward keeping evidence.
+func (w *Writer) ReapLocal(ctx context.Context) (int, error) {
+	if w == nil {
+		return 0, nil
+	}
+	rows, err := w.repo.ListProcessHeartbeatsOnHost(ctx, w.hostname)
+	if err != nil {
+		return 0, err
+	}
+	var reaped int
+	for _, r := range rows {
+		if r.ProcessID == w.processID || r.Pid <= 0 {
+			continue
+		}
+		if processAlive(int(r.Pid)) {
+			continue
+		}
+		if err := w.repo.DeleteProcessHeartbeat(ctx, r.ProcessID); err != nil {
+			return reaped, err
+		}
+		reaped++
+	}
+	return reaped, nil
+}
+
+// processAlive reports whether pid names a live process on THIS host. Signal 0
+// performs the permission and existence checks without delivering anything; an
+// EPERM means the process exists and belongs to somebody else, which is still
+// alive. Anything this cannot determine is reported as alive, so an
+// unrecognised platform keeps the row rather than deleting evidence.
+func processAlive(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return true
+	}
+	err = proc.Signal(syscall.Signal(0))
+	if err == nil {
+		return true
+	}
+	return errors.Is(err, syscall.EPERM)
 }
 
 // Forget sweeps rows the fleet answer already hides, so the table stays the size
