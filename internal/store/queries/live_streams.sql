@@ -31,23 +31,47 @@ SELECT count(*)::bigint FROM live_streams WHERE channel_id = sqlc.arg('channel_i
 -- Public "Live now" listing: currently-live PUBLIC streams across all channels,
 -- most-recently-started first. Unlisted/private streams and offline/ended streams
 -- never appear. Joined with the owning channel for display; never the key hash.
+--
+-- A16 ruling: the per-viewer mute/block clause, verbatim from
+-- ListPublicVideosSorted and ListPublicVideosByChannel. This rail took NO viewer
+-- at all, so a muted or blocked account's live stream stayed on the muter's home
+-- rail while every other list had dropped it. viewer_id is NULL for an anonymous
+-- caller, which makes both NOT EXISTS trivially true.
 SELECT ls.id, ls.title, ls.description, ls.started_at,
        ch.handle AS channel_handle, ch.display_name AS channel_display_name
 FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
 WHERE ls.state = 'live' AND ls.privacy = 'public'
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = ch.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = ch.owner_id
+  )
 ORDER BY ls.started_at DESC NULLS LAST, ls.id
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
 -- name: CountLivePublicStreams :one
 -- How many rows ListLivePublicStreams would return, ignoring pagination. The
--- channels JOIN is part of the predicate. CountLiveStreamsLive below counts
--- ALL live sessions (including private/unlisted) for the instance-wide publish
--- cap and would over-report this public rail.
+-- channels JOIN is part of the predicate, and so is the per-viewer mute/block
+-- clause — a total that counted rows the list filters out would promise a page
+-- the list cannot serve. CountLiveStreamsLive below counts ALL live sessions
+-- (including private/unlisted) for the instance-wide publish cap and would
+-- over-report this public rail.
 SELECT count(*)::bigint
 FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
-WHERE ls.state = 'live' AND ls.privacy = 'public';
+WHERE ls.state = 'live' AND ls.privacy = 'public'
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = sqlc.narg('viewer_id') AND m.muted_id = ch.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = sqlc.narg('viewer_id') AND ub.blocked_id = ch.owner_id
+  );
 
 -- name: UpdateLiveStreamKey :exec
 -- Rotate a stream's key (store the new hash).

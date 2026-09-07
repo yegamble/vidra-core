@@ -1864,6 +1864,7 @@ func (s *Server) routes() {
 		api.POST("/admin/watched-words", s.handleAddWatchedWord, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.DELETE("/admin/watched-words/:id", s.handleDeleteWatchedWord, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.GET("/admin/watched-word-matches", s.handleListWatchedWordMatches, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/watched-word-matches/:id/resolve", s.handleResolveWatchedWordMatch, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
 
 	// Admin user management is admin-only (not moderators).

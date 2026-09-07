@@ -60,7 +60,7 @@ type Repository interface {
 	GetLiveStreamByKeyHash(ctx context.Context, streamKeyHash string) (sqlcgen.GetLiveStreamByKeyHashRow, error)
 	SetLiveStreamState(ctx context.Context, arg sqlcgen.SetLiveStreamStateParams) error
 	ListLivePublicStreams(ctx context.Context, arg sqlcgen.ListLivePublicStreamsParams) ([]sqlcgen.ListLivePublicStreamsRow, error)
-	CountLivePublicStreams(ctx context.Context) (int64, error)
+	CountLivePublicStreams(ctx context.Context, viewerID pgtype.UUID) (int64, error)
 	// Simultaneous-live caps + duration watchdog (config-parity W11).
 	CountLiveStreamsLive(ctx context.Context) (int64, error)
 	CountLiveStreamsLiveByOwner(ctx context.Context, ownerID uuid.UUID) (int64, error)
@@ -373,15 +373,24 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID, limit,
 // total matching the same predicate. Unlisted and private streams (and any not
 // currently live) never appear. limit/offset are assumed already clamped by the
 // caller.
-func (s *Service) ListLivePublic(ctx context.Context, limit, offset int) ([]LiveCard, int64, error) {
+//
+// viewerID/viewerAuthed carry WHO is asking, because this rail is per-viewer
+// like every other public list: a stream owner the viewer has muted or blocked
+// drops out of it (A16 ruling — this was the one public list that took no viewer
+// at all, so a muted account's live stream survived on the muter's home page).
+// An anonymous caller passes a NULL viewer, which makes both clauses trivially
+// true.
+func (s *Service) ListLivePublic(ctx context.Context, viewerID uuid.UUID, viewerAuthed bool, limit, offset int) ([]LiveCard, int64, error) {
+	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
 	rows, err := s.repo.ListLivePublicStreams(ctx, sqlcgen.ListLivePublicStreamsParams{
+		ViewerID:     viewer,
 		ResultLimit:  int32(limit),
 		ResultOffset: int32(offset),
 	})
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := s.repo.CountLivePublicStreams(ctx)
+	total, err := s.repo.CountLivePublicStreams(ctx, viewer)
 	if err != nil {
 		return nil, 0, err
 	}

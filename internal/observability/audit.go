@@ -47,16 +47,21 @@ const (
 	ActionMFAChallenge       = "auth.mfa.challenge"
 	ActionRateLimited        = "auth.rate_limited"
 	ActionReportResolve      = "moderation.report.resolve"
-	ActionReportDelete       = "moderation.report.delete"
-	ActionVideoBlock         = "moderation.video.block"
-	ActionVideoUnblock       = "moderation.video.unblock"
-	ActionVideoApprove       = "moderation.video.quarantine_approve"
-	ActionVideoReject        = "moderation.video.quarantine_reject"
-	ActionInstanceBlock      = "moderation.instance.block"
-	ActionInstanceUnblock    = "moderation.instance.unblock"
-	ActionRemoteVideoBlock   = "moderation.remote_video.block"
-	ActionRemoteVideoUnblock = "moderation.remote_video.unblock"
-	ActionAdminUserUpdate    = "admin.user.update"
+	// ActionWatchedWordMatchResolve records a moderator triaging one
+	// watched-word match (resolved / dismissed). The metadata carries the
+	// outcome and whether a note was supplied; the note itself lives on the
+	// match row, because audit_log's metadata allowlist rejects prose.
+	ActionWatchedWordMatchResolve = "moderation.watched_word_match.resolve"
+	ActionReportDelete            = "moderation.report.delete"
+	ActionVideoBlock              = "moderation.video.block"
+	ActionVideoUnblock            = "moderation.video.unblock"
+	ActionVideoApprove            = "moderation.video.quarantine_approve"
+	ActionVideoReject             = "moderation.video.quarantine_reject"
+	ActionInstanceBlock           = "moderation.instance.block"
+	ActionInstanceUnblock         = "moderation.instance.unblock"
+	ActionRemoteVideoBlock        = "moderation.remote_video.block"
+	ActionRemoteVideoUnblock      = "moderation.remote_video.unblock"
+	ActionAdminUserUpdate         = "admin.user.update"
 	// ActionOwnerTransfer records the instance-owner marker moving from one
 	// administrator to another (0131 + the A16 ruling). Before it existed the
 	// marker had one writer — the first-run claim — and no way to move, so an

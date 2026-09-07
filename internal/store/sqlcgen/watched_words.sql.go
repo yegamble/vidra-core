@@ -16,14 +16,15 @@ import (
 const countWatchedWordMatches = `-- name: CountWatchedWordMatches :one
 SELECT count(*)::bigint
 FROM watched_word_matches m
-JOIN watched_words w ON w.id = m.watched_word_id
+WHERE ($1::text IS NULL OR m.status = $1::text)
 `
 
 // How many rows ListWatchedWordMatches would return, ignoring pagination. The
-// watched_words JOIN is part of the predicate (a match whose term was deleted
-// is not listed); the LEFT JOINs only add context and cannot change the count.
-func (q *Queries) CountWatchedWordMatches(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countWatchedWordMatches)
+// watched_words join is no longer part of the predicate (a match outlives its
+// term now), so the only filter is the status one — and it has to be the SAME
+// filter, or the queue would page a total it cannot serve.
+func (q *Queries) CountWatchedWordMatches(ctx context.Context, status *string) (int64, error) {
+	row := q.db.QueryRow(ctx, countWatchedWordMatches, status)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -80,45 +81,85 @@ func (q *Queries) DeleteWatchedWord(ctx context.Context, id uuid.UUID) (int64, e
 }
 
 const listWatchedWordMatches = `-- name: ListWatchedWordMatches :many
-SELECT m.id, m.created_at, w.word,
+SELECT m.id, m.created_at,
+       COALESCE(NULLIF(m.matched_term, ''), w.word, '')::text AS word,
+       m.matched_text, m.match_offset, m.match_length, m.snapshot_backfilled,
+       m.status, m.moderator_note, m.resolved_at,
+       ru.username AS resolved_by_username,
+       (m.watched_word_id IS NOT NULL)::bool AS term_active,
        m.comment_id, c.body AS comment_body,
        COALESCE(m.video_id, c.video_id)::uuid AS video_id,
        v.title AS video_title,
-       COALESCE(cu.username, vu.username)::text AS author_username
+       COALESCE(cu.username, vu.username)::text AS author_username,
+       (CASE
+            WHEN strpos(
+                     lower(COALESCE(c.body, v.title || E'\n' || v.description, '')),
+                     lower(COALESCE(NULLIF(m.matched_term, ''), w.word, ''))
+                 ) > 0 THEN 'present'
+            ELSE 'edited_away'
+        END)::text AS target_status
 FROM watched_word_matches m
-JOIN watched_words w ON w.id = m.watched_word_id
+LEFT JOIN watched_words w ON w.id = m.watched_word_id
 LEFT JOIN comments c ON c.id = m.comment_id
 LEFT JOIN users cu ON cu.id = c.user_id
 LEFT JOIN videos v ON v.id = COALESCE(m.video_id, c.video_id)
 LEFT JOIN channels ch ON ch.id = v.channel_id
 LEFT JOIN users vu ON vu.id = ch.owner_id
+LEFT JOIN users ru ON ru.id = m.resolved_by
+WHERE ($1::text IS NULL OR m.status = $1::text)
 ORDER BY m.created_at DESC, m.id DESC
-LIMIT $2 OFFSET $1
+LIMIT $3 OFFSET $2
 `
 
 type ListWatchedWordMatchesParams struct {
-	ResultOffset int32 `json:"result_offset"`
-	ResultLimit  int32 `json:"result_limit"`
+	Status       *string `json:"status"`
+	ResultOffset int32   `json:"result_offset"`
+	ResultLimit  int32   `json:"result_limit"`
 }
 
 type ListWatchedWordMatchesRow struct {
-	ID             uuid.UUID   `json:"id"`
-	CreatedAt      time.Time   `json:"created_at"`
-	Word           string      `json:"word"`
-	CommentID      pgtype.UUID `json:"comment_id"`
-	CommentBody    *string     `json:"comment_body"`
-	VideoID        uuid.UUID   `json:"video_id"`
-	VideoTitle     *string     `json:"video_title"`
-	AuthorUsername string      `json:"author_username"`
+	ID                 uuid.UUID          `json:"id"`
+	CreatedAt          time.Time          `json:"created_at"`
+	Word               string             `json:"word"`
+	MatchedText        string             `json:"matched_text"`
+	MatchOffset        int32              `json:"match_offset"`
+	MatchLength        int32              `json:"match_length"`
+	SnapshotBackfilled bool               `json:"snapshot_backfilled"`
+	Status             string             `json:"status"`
+	ModeratorNote      string             `json:"moderator_note"`
+	ResolvedAt         pgtype.Timestamptz `json:"resolved_at"`
+	ResolvedByUsername *string            `json:"resolved_by_username"`
+	TermActive         bool               `json:"term_active"`
+	CommentID          pgtype.UUID        `json:"comment_id"`
+	CommentBody        *string            `json:"comment_body"`
+	VideoID            uuid.UUID          `json:"video_id"`
+	VideoTitle         *string            `json:"video_title"`
+	AuthorUsername     string             `json:"author_username"`
+	TargetStatus       string             `json:"target_status"`
 }
 
-// Flagged content (comments AND videos), newest match first, with the matched
-// term + target context: for a comment match, its body/author and the video it
-// is on; for a video match, the video's title and its owner as the author.
-// comment_id/comment_body are NULL for video matches (the review UI's type
-// badge keys off that).
+// The moderation review queue for flagged content (comments AND videos), newest
+// match first.
+//
+// What a row shows is the SNAPSHOT (matched_text + matched_term + the rune
+// offset/length of the hit inside it), never the live body: the live join this
+// replaced let an author edit the evidence away while the flag stood. The live
+// target is still reported, as target_status:
+//
+//	'present'      the term is still in the live comment/title+description
+//	'edited_away'  it is not — the snapshot and the live target now differ
+//
+// 'deleted' is not representable: comment_id/video_id keep ON DELETE CASCADE
+// (0132 says why), so a deleted target takes its match with it.
+//
+// term_active is false once the watched WORD is deleted. The match survives that
+// now (0132 relaxed the FK to ON DELETE SET NULL) and still reads back its term
+// from the snapshot, so pruning the term list no longer discards review history.
+// The word JOIN is therefore a LEFT JOIN and is NOT part of the predicate.
+//
+// status is 'open' | 'resolved' | 'dismissed', or NULL for all of them.
 func (q *Queries) ListWatchedWordMatches(ctx context.Context, arg ListWatchedWordMatchesParams) ([]ListWatchedWordMatchesRow, error) {
-	rows, err := q.db.Query(ctx, listWatchedWordMatches, arg.ResultOffset, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listWatchedWordMatches, arg.Status, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -130,11 +171,21 @@ func (q *Queries) ListWatchedWordMatches(ctx context.Context, arg ListWatchedWor
 			&i.ID,
 			&i.CreatedAt,
 			&i.Word,
+			&i.MatchedText,
+			&i.MatchOffset,
+			&i.MatchLength,
+			&i.SnapshotBackfilled,
+			&i.Status,
+			&i.ModeratorNote,
+			&i.ResolvedAt,
+			&i.ResolvedByUsername,
+			&i.TermActive,
 			&i.CommentID,
 			&i.CommentBody,
 			&i.VideoID,
 			&i.VideoTitle,
 			&i.AuthorUsername,
+			&i.TargetStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -225,36 +276,104 @@ func (q *Queries) MatchWatchedWords(ctx context.Context, text string) ([]MatchWa
 }
 
 const recordWatchedWordMatch = `-- name: RecordWatchedWordMatch :exec
-INSERT INTO watched_word_matches (watched_word_id, comment_id)
-VALUES ($1, $2)
+INSERT INTO watched_word_matches (
+    watched_word_id, comment_id, matched_text, matched_term, match_offset, match_length
+) VALUES ($1, $2, $3, $4,
+          $5, $6)
 ON CONFLICT (watched_word_id, comment_id) DO NOTHING
 `
 
 type RecordWatchedWordMatchParams struct {
-	WatchedWordID uuid.UUID   `json:"watched_word_id"`
+	WatchedWordID pgtype.UUID `json:"watched_word_id"`
 	CommentID     pgtype.UUID `json:"comment_id"`
+	MatchedText   string      `json:"matched_text"`
+	MatchedTerm   string      `json:"matched_term"`
+	MatchOffset   int32       `json:"match_offset"`
+	MatchLength   int32       `json:"match_length"`
 }
 
-// Record that a comment matched a watched term (idempotent per word+comment).
+// Record that a comment matched a watched term (idempotent per word+comment),
+// capturing the body AS IT READ AT FLAG TIME. The excerpt used to be a live join
+// on comments.body, so an author who edited the term away left the queue quoting
+// a clean body under the flag; the snapshot is what a moderator reviews, exactly
+// as reports.message_body_snapshot (0064) is for a reported DM. ON CONFLICT DO
+// NOTHING is what makes an edit that still contains the term keep the ORIGINAL
+// snapshot: only a term not yet recorded for this comment creates a row.
 func (q *Queries) RecordWatchedWordMatch(ctx context.Context, arg RecordWatchedWordMatchParams) error {
-	_, err := q.db.Exec(ctx, recordWatchedWordMatch, arg.WatchedWordID, arg.CommentID)
+	_, err := q.db.Exec(ctx, recordWatchedWordMatch,
+		arg.WatchedWordID,
+		arg.CommentID,
+		arg.MatchedText,
+		arg.MatchedTerm,
+		arg.MatchOffset,
+		arg.MatchLength,
+	)
 	return err
 }
 
 const recordWatchedWordVideoMatch = `-- name: RecordWatchedWordVideoMatch :exec
-INSERT INTO watched_word_matches (watched_word_id, video_id)
-VALUES ($1, $2)
+INSERT INTO watched_word_matches (
+    watched_word_id, video_id, matched_text, matched_term, match_offset, match_length
+) VALUES ($1, $2, $3, $4,
+          $5, $6)
 ON CONFLICT (watched_word_id, video_id) WHERE video_id IS NOT NULL DO NOTHING
 `
 
 type RecordWatchedWordVideoMatchParams struct {
-	WatchedWordID uuid.UUID   `json:"watched_word_id"`
+	WatchedWordID pgtype.UUID `json:"watched_word_id"`
 	VideoID       pgtype.UUID `json:"video_id"`
+	MatchedText   string      `json:"matched_text"`
+	MatchedTerm   string      `json:"matched_term"`
+	MatchOffset   int32       `json:"match_offset"`
+	MatchLength   int32       `json:"match_length"`
 }
 
 // Record that a video's title/description matched a watched term (idempotent
-// per word+video; §12).
+// per word+video; §12), with the same flag-time snapshot as the comment arm —
+// a title or description edited afterwards does not rewrite what was flagged.
 func (q *Queries) RecordWatchedWordVideoMatch(ctx context.Context, arg RecordWatchedWordVideoMatchParams) error {
-	_, err := q.db.Exec(ctx, recordWatchedWordVideoMatch, arg.WatchedWordID, arg.VideoID)
+	_, err := q.db.Exec(ctx, recordWatchedWordVideoMatch,
+		arg.WatchedWordID,
+		arg.VideoID,
+		arg.MatchedText,
+		arg.MatchedTerm,
+		arg.MatchOffset,
+		arg.MatchLength,
+	)
 	return err
+}
+
+const resolveWatchedWordMatch = `-- name: ResolveWatchedWordMatch :execrows
+UPDATE watched_word_matches
+SET status         = $1,
+    moderator_note = $2,
+    resolved_by    = $3,
+    resolved_at    = now()
+WHERE id = $4
+`
+
+type ResolveWatchedWordMatchParams struct {
+	Status        string      `json:"status"`
+	ModeratorNote string      `json:"moderator_note"`
+	ResolvedBy    pgtype.UUID `json:"resolved_by"`
+	ID            uuid.UUID   `json:"id"`
+}
+
+// Triage one match: 'resolved' (a moderator acted) or 'dismissed' (false
+// positive), with the moderator's note. Shaped like ResolveReport — the same
+// verb, the same idempotence (re-resolving overwrites and still succeeds), and
+// the note on the DOMAIN row because audit_log's metadata allowlist rejects
+// prose. Returns rows affected; 0 = no such match, which the service maps to
+// "not found".
+func (q *Queries) ResolveWatchedWordMatch(ctx context.Context, arg ResolveWatchedWordMatchParams) (int64, error) {
+	result, err := q.db.Exec(ctx, resolveWatchedWordMatch,
+		arg.Status,
+		arg.ModeratorNote,
+		arg.ResolvedBy,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
