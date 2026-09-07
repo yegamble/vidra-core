@@ -69,6 +69,14 @@ func TestClaimOwnerEndpointCreatesAdmin(t *testing.T) {
 		t.Errorf("claim response = role %q token/refresh present=%v/%v, want admin with a full session",
 			body.User.Role, body.Token != "", body.RefreshToken != "")
 	}
+	// The claim statement is the one place is_owner is written TRUE, so the row
+	// it just created IS the owner — and this response is the operator's very
+	// first session payload, the one the console draws its owner-only controls
+	// from. Leaving it to the Go zero value made it say false about the account
+	// that had just claimed the instance, while the next login said true.
+	if !body.User.IsOwner {
+		t.Error("the claim response says is_owner=false about the account that just claimed the instance")
+	}
 	if bytes.Contains(rec.Body.Bytes(), []byte("password_hash")) {
 		t.Error("response leaked password_hash")
 	}
