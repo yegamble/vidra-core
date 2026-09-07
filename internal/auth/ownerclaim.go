@@ -201,6 +201,12 @@ func (s *Service) ClaimOwner(ctx context.Context, in ClaimOwnerInput, userAgent 
 		SearchHistoryEnabled:               created.SearchHistoryEnabled,
 		PersonalizedSearchEnabled:          created.PersonalizedSearchEnabled,
 		PersonalizedRecommendationsEnabled: created.PersonalizedRecommendationsEnabled,
+		// This statement is the one place is_owner is set to TRUE, so the row it
+		// just wrote IS the owner. Leaving it to the Go zero value made the
+		// claim response — the operator's very first session payload — say
+		// is_owner:false about the account that had just claimed the instance,
+		// while the next login said true.
+		IsOwner: true,
 	}
 	tokens, err := s.issueTokens(ctx, user, userAgent)
 	if err != nil {

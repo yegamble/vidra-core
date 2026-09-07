@@ -201,6 +201,44 @@ func (s *SMTP) SendRegistrationRejected(ctx context.Context, email, username, no
 	return s.send(ctx, email, "", subject, body)
 }
 
+// SendOwnershipTransferred tells one party to an instance-ownership transfer
+// that it happened. Two sends, one per side, because the two sides need
+// different sentences: the new owner is told what they now hold and where the
+// console is, the former owner is told what they gave up and — the part that
+// matters if this was not their idea — that it took their password to do it and
+// who to contact. Neither body carries a credential or a link that could change
+// one, so the message is safe to leave in a mailbox.
+func (s *SMTP) SendOwnershipTransferred(ctx context.Context, email, recipientUsername, counterpartUsername, consoleURL string, isNewOwner bool) error {
+	name := s.effectiveInstanceName()
+	var subject, body string
+	if isNewOwner {
+		subject = "You are now the owner of " + name
+		body = "Hi,\n\n" +
+			"\"" + counterpartUsername + "\" transferred ownership of " + name + " to your " +
+			"account, \"" + recipientUsername + "\".\n\n" +
+			"You are now the one administrator this instance protects: other admins " +
+			"cannot change your role, deactivate you or delete your account, and you " +
+			"are the only account that can hand ownership on again.\n"
+		if consoleURL != "" {
+			body += "\nThe admin console is here: " + consoleURL + "\n"
+		}
+		body += "\nThis message carries no password and no sign-in link. " +
+			"Use the credentials you already have.\n"
+	} else {
+		subject = "You are no longer the owner of " + name
+		body = "Hi,\n\n" +
+			"Ownership of " + name + " moved from your account, \"" + recipientUsername +
+			"\", to \"" + counterpartUsername + "\".\n\n" +
+			"You are still an administrator and nothing else about your account changed. " +
+			"What you gave up is the owner protection — another administrator can now " +
+			"change your role, deactivate you or delete your account — and the ability " +
+			"to transfer ownership.\n\n" +
+			"This required your password, so if it was not you, change your password now " +
+			"and contact the people who run " + name + ".\n"
+	}
+	return s.send(ctx, email, "", subject, body)
+}
+
 // SendPasswordReset delivers a password-reset token. The token appears only in
 // the message body; it is never logged.
 func (s *SMTP) SendPasswordReset(ctx context.Context, email, token string) error {

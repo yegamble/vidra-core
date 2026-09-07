@@ -243,6 +243,13 @@ type userView struct {
 	// otherwise one of hide|warn|blur|display.
 	SensitiveContentPolicy *string   `json:"sensitive_content_policy,omitempty"`
 	CreatedAt              time.Time `json:"created_at"`
+	// IsOwner marks THE instance owner (0131) — the account that completed
+	// first-run setup. It is on the caller's OWN view because ownership is now
+	// something the caller can act on: only the owner may transfer it, and only
+	// the owner is refused their own deactivation and deletion until they do.
+	// Without it the console would have to infer "am I the owner?" from an
+	// admin list that the search filter can page the caller's own row out of.
+	IsOwner bool `json:"is_owner"`
 	// HasAvatar/HasBanner are set on GET/PATCH /auth/me (omitted elsewhere);
 	// when true the image is served at GET /users/{id}/avatar | /banner.
 	HasAvatar *bool `json:"has_avatar,omitempty"`
@@ -256,6 +263,7 @@ func newUserView(u sqlcgen.User) userView {
 		Email:                              u.Email,
 		Role:                               u.Role,
 		EmailVerified:                      u.EmailVerified,
+		IsOwner:                            u.IsOwner,
 		DisplayName:                        u.DisplayName,
 		Bio:                                u.Bio,
 		Unlisted:                           u.Unlisted,
@@ -865,6 +873,11 @@ func (s *Server) handleDeactivateAccount(c echo.Context) error {
 	// discloses nothing new — and there is no point asking for a password to
 	// authorize an action that cannot proceed.
 	if err := s.ensureNotLastAdmin(c, userID, observability.ActionAccountDeactivate); err != nil {
+		return err
+	}
+	// Deactivation strands the owner marker exactly as deletion does: a disabled
+	// account cannot sign in, so it can never call the transfer route again.
+	if err := s.ensureOwnerHasTransferred(c, userID, observability.ActionAccountDeactivate); err != nil {
 		return err
 	}
 	if err := s.authsvc.DeactivateAccount(c.Request().Context(), userID, in.Password); err != nil {

@@ -180,6 +180,41 @@ func (f *fakeRepo) ClaimOwnerAndCreateAdmin(ctx context.Context, a sqlcgen.Claim
 	}, nil
 }
 
+// TransferInstanceOwner mirrors the one-statement marker swap in
+// owner_claim.sql, INCLUDING the parts that make it safe: nothing moves unless
+// the target is a live, non-tombstoned admin (the statement's eligibility test,
+// carried by both halves so a refused transfer clears nobody), and the old
+// marker is cleared before the new one is set, so the single-owner invariant
+// holds at every point a reader could look. An ineligible target is
+// pgx.ErrNoRows, exactly as a zero-row RETURNING is.
+func (f *fakeRepo) TransferInstanceOwner(_ context.Context, newOwnerID uuid.UUID) (sqlcgen.TransferInstanceOwnerRow, error) {
+	targetKey := ""
+	for k, u := range f.byEmail {
+		if u.ID == newOwnerID && u.Role == "admin" && u.IsActive && !u.DeletedAt.Valid {
+			targetKey = k
+			break
+		}
+	}
+	if targetKey == "" {
+		return sqlcgen.TransferInstanceOwnerRow{}, pgx.ErrNoRows
+	}
+	var cleared int64
+	for k, u := range f.byEmail {
+		if u.IsOwner && u.ID != newOwnerID {
+			u.IsOwner = false
+			f.byEmail[k] = u
+			cleared++
+		}
+	}
+	target := f.byEmail[targetKey]
+	target.IsOwner = true
+	f.byEmail[targetKey] = target
+	return sqlcgen.TransferInstanceOwnerRow{
+		ID: target.ID, Username: target.Username, Email: target.Email,
+		PreviousOwnersCleared: cleared,
+	}, nil
+}
+
 func (f *fakeRepo) CreateEmailVerificationToken(_ context.Context, a sqlcgen.CreateEmailVerificationTokenParams) (sqlcgen.EmailVerificationToken, error) {
 	t := sqlcgen.EmailVerificationToken{
 		ID: uuid.New(), UserID: a.UserID, TokenHash: a.TokenHash,

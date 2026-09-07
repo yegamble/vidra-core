@@ -206,9 +206,24 @@ func (s *Service) UpdateUserDetailed(ctx context.Context, callerID, targetID uui
 //
 // This is a check-then-write guard, not an atomic one. It closes every
 // sequential path; two admins removing each other in the same instant can still
-// both pass their own count (each sees the other still live) — closing that
-// needs SERIALIZABLE or an advisory lock around the write and is recorded as a
-// follow-up rather than half-built here.
+// both pass their own count (each sees the other still live).
+//
+// The A16 rulings slice looked at closing it and did not, for a reason worth
+// writing down rather than re-deriving. The guard has FOUR write paths — the
+// admin PATCH, self-deactivation, self-deletion and the admin hard delete — and
+// they only serialize against each other if they share ONE lock, which means the
+// count and the write must sit in the same transaction. Two of them are a single
+// UPDATE and could carry a `SELECT ... FOR UPDATE` roster lock inside the
+// statement (READ COMMITTED re-evaluates a locked row's qual after the wait,
+// which is exactly the recheck this needs). The other two cannot: the hard
+// delete is a multi-table erasure that also deletes blobs and fans a federation
+// Delete out, and holding a roster lock across that is worse than the race. And
+// a partial fold buys almost nothing, because a mixed race — one admin PATCHing
+// while the other self-deletes — stays open unless every path takes the lock.
+//
+// So the real fix is a transaction seam (or an advisory lock) threaded through
+// admin, auth and account together, which is a structural change, not a
+// surgical one. Recorded, not half-built.
 func (s *Service) ensureAdminRemains(ctx context.Context, target sqlcgen.User) error {
 	if target.Role != RoleAdmin || !target.IsActive || target.DeletedAt.Valid {
 		return nil

@@ -14,11 +14,12 @@ import (
 // different surface from the public channel page.
 type ownerChannelListing struct {
 	Videos []struct {
-		ID      string `json:"id"`
-		Title   string `json:"title"`
-		State   string `json:"state"`
-		Privacy string `json:"privacy"`
-		Blocked bool   `json:"blocked"`
+		ID          string `json:"id"`
+		Title       string `json:"title"`
+		State       string `json:"state"`
+		Privacy     string `json:"privacy"`
+		Blocked     bool   `json:"blocked"`
+		BlockReason string `json:"block_reason"`
 	} `json:"videos"`
 	Total int64 `json:"total"`
 }
@@ -46,9 +47,11 @@ func ownerListing(t *testing.T, srv *Server, handle, token string) ownerChannelL
 // The block itself is unchanged (state and privacy stay exactly what they were,
 // which is why the marker has to be its own column rather than something read
 // off the row): what changes is that the owner's listing now carries it and the
-// owner is notified. The notification is deliberately NEUTRAL — the moderator's
-// reason is staff-only, so this asserts the reason text appears NOWHERE in the
-// owner's notification payload.
+// owner is notified. Slice 2 left "may a creator read the block reason?" open and
+// shipped the neutral notice; the A16 ruling settled it YES, so this test now
+// asserts the reason reaches the owner on BOTH surfaces — the listing row and
+// the notification — while the video itself stays 404 for them and the reason
+// stays unreachable to everybody else (TestBlockReasonIsOwnerOnly).
 func TestBlockedVideoTellsItsOwner(t *testing.T) {
 	srv := videoServer(t)
 	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
@@ -82,21 +85,22 @@ func TestBlockedVideoTellsItsOwner(t *testing.T) {
 	if after.Videos[0].State != "published" {
 		t.Errorf("state after block = %q, want published (a block changes neither state nor privacy)", after.Videos[0].State)
 	}
+	if after.Videos[0].BlockReason != "copyright-strike-prose" {
+		t.Errorf("owner listing block_reason = %q, want the moderator's reason", after.Videos[0].BlockReason)
+	}
 
 	// The owner is told, without the moderator's identity or prose.
 	nrec := getWithAuth(srv, "/api/v1/me/notifications", owner)
 	if nrec.Code != http.StatusOK {
 		t.Fatalf("notifications = %d; body=%s", nrec.Code, nrec.Body.String())
 	}
-	if strings.Contains(nrec.Body.String(), "copyright-strike-prose") {
-		t.Errorf("the moderator's block reason reached the creator: %s", nrec.Body.String())
-	}
 	var notifs struct {
 		Notifications []struct {
-			Type       string          `json:"type"`
-			VideoID    string          `json:"video_id"`
-			VideoTitle string          `json:"video_title"`
-			Actor      json.RawMessage `json:"actor"`
+			Type           string          `json:"type"`
+			VideoID        string          `json:"video_id"`
+			VideoTitle     string          `json:"video_title"`
+			ModerationNote string          `json:"moderation_note"`
+			Actor          json.RawMessage `json:"actor"`
 		} `json:"notifications"`
 	}
 	_ = json.Unmarshal(nrec.Body.Bytes(), &notifs)
@@ -112,6 +116,9 @@ func TestBlockedVideoTellsItsOwner(t *testing.T) {
 		if len(n.Actor) != 0 {
 			t.Errorf("video_blocked exposes the moderator: %s", n.Actor)
 		}
+		if n.ModerationNote != "copyright-strike-prose" {
+			t.Errorf("video_blocked moderation_note = %q, want the moderator's reason — a creator who is told nothing cannot appeal or fix it", n.ModerationNote)
+		}
 	}
 	if !found {
 		t.Fatalf("owner got no video_blocked notification: %+v", notifs.Notifications)
@@ -121,8 +128,115 @@ func TestBlockedVideoTellsItsOwner(t *testing.T) {
 	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/videos/"+vid+"/block", "", admin); rec.Code != http.StatusNoContent {
 		t.Fatalf("unblock = %d; body=%s", rec.Code, rec.Body.String())
 	}
-	if unblocked := ownerListing(t, srv, "bobtube", owner); unblocked.Videos[0].Blocked {
+	unblocked := ownerListing(t, srv, "bobtube", owner)
+	if unblocked.Videos[0].Blocked {
 		t.Errorf("owner listing after unblock still reads blocked=true")
+	}
+	if unblocked.Videos[0].BlockReason != "" {
+		t.Errorf("owner listing after unblock still carries a block reason: %q", unblocked.Videos[0].BlockReason)
+	}
+}
+
+// TestBlockReasonIsOwnerOnly is the other half of the ruling: making the reason
+// creator-facing must not make it PUBLIC. The reason is moderator prose about a
+// third party, so every caller who is not the video's owner — a signed-in
+// stranger and an anonymous reader — must see neither the row nor the reason,
+// and the video itself must stay 404 for all of them (including the owner).
+func TestBlockReasonIsOwnerOnly(t *testing.T) {
+	srv := videoServer(t)
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	owner := createChannelFor(t, srv, "bob", "bob@example.test", "bobtube")
+	stranger := createChannelFor(t, srv, "eve", "eve@example.test", "evetube")
+	vid := createPublishedVideo(t, srv, owner, "bobtube", `{"title":"Owner Clip","privacy":"public"}`)
+	const reason = "block-reason-prose-not-for-strangers"
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/videos/"+vid+"/block", `{"reason":"`+reason+`"}`, admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("block = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// A signed-in stranger reading the same channel listing.
+	srec := getWithAuth(srv, "/api/v1/channels/bobtube/videos", stranger)
+	if strings.Contains(srec.Body.String(), reason) {
+		t.Errorf("a stranger's channel listing carries the block reason: %s", srec.Body.String())
+	}
+	// Anonymous, on the public listing.
+	arec := get(t, srv, "/api/v1/channels/bobtube/videos")
+	if strings.Contains(arec.Body.String(), reason) {
+		t.Errorf("the anonymous channel listing carries the block reason: %s", arec.Body.String())
+	}
+	// And the video stays unreachable for all three, owner included.
+	for who, tok := range map[string]string{"owner": owner, "stranger": stranger, "anonymous": ""} {
+		if rec := getVideo(srv, vid, tok); rec.Code != http.StatusNotFound {
+			t.Errorf("%s get blocked video = %d, want 404 — the block must not be weakened by showing its reason", who, rec.Code)
+		}
+	}
+}
+
+// TestUnblockNotifiesTheOwner closes the loop the block notice opened. Before
+// this the creator was told their video had been taken down and never told when
+// it came back: A16 slice 2 and slice 3 both recorded "unblocking still notifies
+// nobody" as an open finding. The notice is its own type (video_unblocked), it
+// links to the restored video, and — because the unblock route is idempotent —
+// a repeated unblock must not deliver a second one.
+func TestUnblockNotifiesTheOwner(t *testing.T) {
+	srv := videoServer(t)
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	owner := createChannelFor(t, srv, "bob", "bob@example.test", "bobtube")
+	vid := createPublishedVideo(t, srv, owner, "bobtube", `{"title":"Owner Clip","privacy":"public"}`)
+
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/videos/"+vid+"/block", `{"reason":"a reason"}`, admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("block = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/videos/"+vid+"/block", "", admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("unblock = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	countUnblocked := func() (int, string) {
+		t.Helper()
+		nrec := getWithAuth(srv, "/api/v1/me/notifications", owner)
+		if nrec.Code != http.StatusOK {
+			t.Fatalf("notifications = %d; body=%s", nrec.Code, nrec.Body.String())
+		}
+		var notifs struct {
+			Notifications []struct {
+				Type       string          `json:"type"`
+				VideoID    string          `json:"video_id"`
+				VideoTitle string          `json:"video_title"`
+				Actor      json.RawMessage `json:"actor"`
+			} `json:"notifications"`
+		}
+		if err := json.Unmarshal(nrec.Body.Bytes(), &notifs); err != nil {
+			t.Fatalf("notifications not JSON: %v", err)
+		}
+		n := 0
+		for _, it := range notifs.Notifications {
+			if it.Type != "video_unblocked" {
+				continue
+			}
+			n++
+			if it.VideoID != vid || it.VideoTitle != "Owner Clip" {
+				t.Errorf("video_unblocked context = (%q, %q), want (%s, Owner Clip)", it.VideoID, it.VideoTitle, vid)
+			}
+			if len(it.Actor) != 0 {
+				t.Errorf("video_unblocked exposes the moderator: %s", it.Actor)
+			}
+		}
+		return n, nrec.Body.String()
+	}
+
+	if n, body := countUnblocked(); n != 1 {
+		t.Fatalf("video_unblocked notifications after one unblock = %d, want 1; body=%s", n, body)
+	}
+	// The video really is back for its owner, which is what the notice claims.
+	if rec := getVideo(srv, vid, owner); rec.Code != http.StatusOK {
+		t.Errorf("owner get after unblock = %d, want 200", rec.Code)
+	}
+
+	// Idempotent unblock: same 204, no second notice.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/videos/"+vid+"/block", "", admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("repeat unblock = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if n, body := countUnblocked(); n != 1 {
+		t.Fatalf("video_unblocked notifications after a repeated unblock = %d, want 1 — an idempotent route delivered a second notice; body=%s", n, body)
 	}
 }
 

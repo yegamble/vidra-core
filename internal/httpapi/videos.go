@@ -245,9 +245,16 @@ type videoView struct {
 	// changes neither state nor privacy, so without it that listing shows a
 	// blocked video as "published" while it 404s for everyone including its
 	// owner — which is exactly what A16 slice 2 measured. Public feeds never
-	// contain a blocked row, so it never appears there. The block REASON is
-	// deliberately absent: that prose is staff-only.
+	// contain a blocked row, so it never appears there.
 	Blocked bool `json:"blocked,omitempty"`
+	// BlockReason is the moderator's reason for that block, emitted beside
+	// Blocked on the same owner-only listing and only when non-empty. The A16
+	// ruling settled what slice 2 left open: a creator told only that something
+	// was taken down can neither appeal it nor avoid repeating it, so the reason
+	// the moderator was already writing for the block-list is shown to them. It
+	// is moderator prose about a named account, so it never leaves this surface
+	// — no public feed, no other viewer's channel page.
+	BlockReason string `json:"block_reason,omitempty"`
 	// OriginallyPublishedAt is when the video was first published ELSEWHERE
 	// (migration 0119) — a PeerTube import's originallyPublishedAt, or a date the
 	// creator set by hand. Omitted when unset, which is the case for everything
@@ -669,7 +676,8 @@ func feedItemView(it video.FeedItem) videoView {
 	if it.PublishAt != nil {
 		v.PublishAt = it.PublishAt // owner (studio) list: scheduled badge
 	}
-	v.Blocked = it.Blocked // owner (studio) list: blocked badge
+	v.Blocked = it.Blocked         // owner (studio) list: blocked badge
+	v.BlockReason = it.BlockReason // ...and the moderator's reason (A16 ruling)
 	if it.Remote {
 		v.Remote = true
 		v.ChannelID = "" // no local channel; omitted from the JSON
@@ -1847,10 +1855,28 @@ func (s *Server) handleUnblockVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := s.moderationsvc.UnblockVideo(c.Request().Context(), id); err != nil {
+	lifted, err := s.moderationsvc.UnblockVideo(c.Request().Context(), id)
+	if err != nil {
 		return err
 	}
 	s.audit(c, observability.ActionVideoUnblock, observability.ResultSuccess, userID.String(), "")
+	// Tell the creator their video is back. The block notice opened a loop this
+	// closes: they were told their video had been taken down and then nothing at
+	// all when it returned, so the only way to find out was to keep checking.
+	//
+	// Two details are load-bearing. The owner is read AFTER the unblock, the
+	// mirror image of the block path — while the block stands every ordinary
+	// read answers 404, so a lookup before the delete would find nobody. And it
+	// fires only when a block was actually LIFTED: this route is idempotent, and
+	// a second DELETE must not deliver a second "it's back". Best-effort, like
+	// every other Notify* call site.
+	if lifted && s.notifsvc != nil {
+		if v, verr := s.videosvc.GetByID(c.Request().Context(), id); verr == nil {
+			if nerr := s.notifsvc.NotifyVideoUnblocked(c.Request().Context(), v.OwnerID, userID, id); nerr != nil {
+				s.logger.WarnContext(c.Request().Context(), "notify video unblock failed", "error", nerr, "video_id", id)
+			}
+		}
+	}
 	// Search: re-index the doc; the service recomputes eligibility from it
 	// (search-service W4). Best-effort.
 	s.searchEvents.EnqueueVideoUpsert(c.Request().Context(), id)

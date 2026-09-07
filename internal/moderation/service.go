@@ -295,10 +295,14 @@ func (s *Service) BlockVideo(ctx context.Context, moderatorID, videoID uuid.UUID
 }
 
 // UnblockVideo lifts a video's block (idempotent: unblocking a video that is not
-// blocked is a no-op).
-func (s *Service) UnblockVideo(ctx context.Context, videoID uuid.UUID) error {
-	_, err := s.repo.UnblockVideo(ctx, videoID)
-	return err
+// blocked is a no-op) and reports whether a block was actually LIFTED. The
+// caller needs that distinction rather than just the error: the route is
+// idempotent, and the creator's "your video is available again" notice must
+// fire on the call that changed something and on no other, or a moderator
+// double-clicking the button puts two of them in an inbox.
+func (s *Service) UnblockVideo(ctx context.Context, videoID uuid.UUID) (bool, error) {
+	n, err := s.repo.UnblockVideo(ctx, videoID)
+	return n > 0, err
 }
 
 // IsBlocked reports whether a video is currently blocked.

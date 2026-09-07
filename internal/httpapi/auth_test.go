@@ -424,6 +424,41 @@ func (f *authFakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (sqlcgen.Use
 	return sqlcgen.User{}, errors.New("not found")
 }
 
+// TransferInstanceOwner mirrors the one-statement marker swap in
+// owner_claim.sql, INCLUDING the parts that make it safe: nothing moves unless
+// the target is a live, non-tombstoned admin (the statement's eligibility test,
+// carried by both halves so a refused transfer clears nobody), and the old
+// marker is cleared before the new one is set, so the single-owner invariant
+// holds at every point a reader could look. An ineligible target is
+// pgx.ErrNoRows, exactly as a zero-row RETURNING is.
+func (f *authFakeRepo) TransferInstanceOwner(_ context.Context, newOwnerID uuid.UUID) (sqlcgen.TransferInstanceOwnerRow, error) {
+	targetKey := ""
+	for k, u := range f.users {
+		if u.ID == newOwnerID && u.Role == "admin" && u.IsActive && !u.DeletedAt.Valid {
+			targetKey = k
+			break
+		}
+	}
+	if targetKey == "" {
+		return sqlcgen.TransferInstanceOwnerRow{}, pgx.ErrNoRows
+	}
+	var cleared int64
+	for k, u := range f.users {
+		if u.IsOwner && u.ID != newOwnerID {
+			u.IsOwner = false
+			f.users[k] = u
+			cleared++
+		}
+	}
+	target := f.users[targetKey]
+	target.IsOwner = true
+	f.users[targetKey] = target
+	return sqlcgen.TransferInstanceOwnerRow{
+		ID: target.ID, Username: target.Username, Email: target.Email,
+		PreviousOwnersCleared: cleared,
+	}, nil
+}
+
 func (f *authFakeRepo) GetPublicUserProfileByUsername(_ context.Context, username string) (sqlcgen.GetPublicUserProfileByUsernameRow, error) {
 	for _, u := range f.users {
 		if strings.EqualFold(u.Username, username) && u.IsActive && u.ProfilePublic {
@@ -1133,8 +1168,10 @@ type captureResetMailer struct {
 	// addressing is the security property, so the tests assert on it.
 	changeToken string
 	changeTo    string
-	noticeOld   string
-	noticeNew   string
+	// ownershipNotices records both sides of an instance-ownership transfer.
+	ownershipNotices []auth.CapturedOwnershipNotice
+	noticeOld        string
+	noticeNew        string
 	// regDecisions records the signup approval/rejection notices, in send order.
 	regDecisions  []auth.CapturedRegistrationDecision
 	changeNotices int
@@ -1199,6 +1236,18 @@ func (m *captureResetMailer) SendRegistrationApproved(_ context.Context, email, 
 func (m *captureResetMailer) SendRegistrationRejected(_ context.Context, email, username, note string) error {
 	m.regDecisions = append(m.regDecisions, auth.CapturedRegistrationDecision{
 		Decision: "rejected", Email: email, Username: username, Note: note,
+	})
+	return nil
+}
+
+func (m *captureResetMailer) SendOwnershipTransferred(_ context.Context, email, recipientUsername, counterpartUsername, consoleURL string, isNewOwner bool) error {
+	party := "former_owner"
+	if isNewOwner {
+		party = "new_owner"
+	}
+	m.ownershipNotices = append(m.ownershipNotices, auth.CapturedOwnershipNotice{
+		Party: party, Email: email, Username: recipientUsername,
+		Counterpart: counterpartUsername, ConsoleURL: consoleURL,
 	})
 	return nil
 }
@@ -1337,6 +1386,10 @@ func TestEmailVerificationConfirmValidatesToken(t *testing.T) {
 
 func TestDeactivateAccountFlow(t *testing.T) {
 	srv := authServer(t)
+	// The first account claims the instance and the owner guard refuses its
+	// self-deactivation until ownership moves; this test is about the password
+	// confirmation, so it runs as an ordinary second account.
+	registerTokens(t, srv, `{"username":"mona","email":"mona@example.test","password":"supersecret"}`)
 	reg := registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 
 	// Wrong password is rejected and leaves the account active.

@@ -134,6 +134,10 @@ func (m failingMailer) SendRegistrationRejected(context.Context, string, string,
 	return m.err
 }
 
+func (m failingMailer) SendOwnershipTransferred(context.Context, string, string, string, string, bool) error {
+	return m.err
+}
+
 // TestApproveRegistrationNotifiesTheApplicant closes A16 slice 1 finding (2):
 // "approval and rejection notify the applicant of nothing — they discover the
 // outcome by trying to sign in".

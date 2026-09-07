@@ -88,7 +88,27 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var mnc *MailNotConfiguredError
 	var op *OwnerProtectedError
 	var la *LastAdminError
+	var oo *OwnerOnlyError
+	var ot *OwnerTargetError
+	var otc *OwnerTransferConflictError
+	var omt *OwnerMustTransferError
 	switch {
+	case errors.As(err, &oo):
+		status = http.StatusForbidden
+		message = "only the instance owner can transfer ownership of this instance"
+		code = "owner_only"
+	case errors.As(err, &ot):
+		status = http.StatusUnprocessableEntity
+		message = "ownership can only be transferred to another administrator whose account is active — pick a live admin other than yourself, or promote one first"
+		code = "owner_target_invalid"
+	case errors.As(err, &otc):
+		status = http.StatusConflict
+		message = "another ownership transfer completed first; re-read who owns this instance before trying again"
+		code = "owner_transfer_conflict"
+	case errors.As(err, &omt):
+		status = http.StatusUnprocessableEntity
+		message = "you are this instance's owner, and there is exactly one owner slot that only you can move; transfer ownership to another administrator first, then close your account"
+		code = "owner_must_transfer"
 	case errors.As(err, &op):
 		status = http.StatusUnprocessableEntity
 		message = "this is the instance owner's account: another administrator cannot demote, deactivate or delete it"
@@ -283,6 +303,44 @@ func (e *OwnerClaimInvalidError) Error() string { return "invalid owner-claim to
 type OwnerProtectedError struct{}
 
 func (e *OwnerProtectedError) Error() string { return "instance owner protected" }
+
+// OwnerOnlyError renders as 403 with the stable code "owner_only": the caller is
+// an administrator but not THE instance owner, and this action is the owner's
+// alone. It is an authorization answer rather than a validation one — nothing
+// about the request is malformed — and it cannot be expressed by requireRole,
+// because Vidra deliberately has no owner ROLE for a router gate to name.
+type OwnerOnlyError struct{}
+
+func (e *OwnerOnlyError) Error() string { return "instance owner only" }
+
+// OwnerTargetError renders as 422 with the stable code "owner_target_invalid":
+// the account named as the new owner cannot hold the marker — it is not an
+// administrator, it is deactivated, it is a tombstone, or it is the caller. The
+// marker must sit on an account that can actually sign in and reach the console,
+// or the transfer manufactures the unowned instance it exists to prevent.
+type OwnerTargetError struct{}
+
+func (e *OwnerTargetError) Error() string { return "invalid ownership-transfer target" }
+
+// OwnerTransferConflictError renders as 409 with the stable code
+// "owner_transfer_conflict": another ownership transfer committed first and
+// users_single_owner_idx refused this one. Nothing changed.
+type OwnerTransferConflictError struct{}
+
+func (e *OwnerTransferConflictError) Error() string { return "ownership transfer conflict" }
+
+// OwnerMustTransferError renders as 422 with the stable code
+// "owner_must_transfer": the instance owner tried to close their own account
+// while still holding the marker. `users.is_owner` has exactly one slot and only
+// the owner can move it, so an owner who deactivates or deletes themselves
+// leaves the instance permanently unowned — every administrator equal, the
+// owner guards protecting nobody, and `vidra doctor` telling the next operator
+// to write an UPDATE by hand. Transfer first, then close.
+type OwnerMustTransferError struct{}
+
+func (e *OwnerMustTransferError) Error() string {
+	return "instance owner must transfer ownership first"
+}
 
 // LastAdminError renders as 422 with the stable code "last_admin": the change
 // would leave the instance with no account able to reach its own admin console.

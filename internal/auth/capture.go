@@ -35,6 +35,7 @@ type CaptureMailer struct {
 	// registrationDecisions are the approval/rejection notices the signup queue
 	// sent an applicant.
 	registrationDecisions []CapturedRegistrationDecision
+	ownershipNotices      []CapturedOwnershipNotice
 	// passwordChanged records the addresses that received a "your password was
 	// changed" notice. No token is involved, so the address is the whole record.
 	passwordChanged []string
@@ -235,6 +236,39 @@ func (c *CaptureMailer) SendRegistrationRejected(_ context.Context, email, usern
 		Decision: "rejected", Email: email, Username: username, Note: note,
 	})
 	return nil
+}
+
+// CapturedOwnershipNotice is one side of an ownership-transfer notice. Party is
+// "new_owner" or "former_owner".
+type CapturedOwnershipNotice struct {
+	Party       string
+	Email       string
+	Username    string
+	Counterpart string
+	ConsoleURL  string
+}
+
+// SendOwnershipTransferred records an ownership notice instead of mailing it.
+func (c *CaptureMailer) SendOwnershipTransferred(_ context.Context, email, recipientUsername, counterpartUsername, consoleURL string, isNewOwner bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	party := "former_owner"
+	if isNewOwner {
+		party = "new_owner"
+	}
+	c.ownershipNotices = append(c.ownershipNotices, CapturedOwnershipNotice{
+		Party: party, Email: email, Username: recipientUsername,
+		Counterpart: counterpartUsername, ConsoleURL: consoleURL,
+	})
+	return nil
+}
+
+// OwnershipNotices returns a copy of every captured ownership-transfer notice,
+// in send order.
+func (c *CaptureMailer) OwnershipNotices() []CapturedOwnershipNotice {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]CapturedOwnershipNotice(nil), c.ownershipNotices...)
 }
 
 // RegistrationDecisions returns a copy of every captured signup decision

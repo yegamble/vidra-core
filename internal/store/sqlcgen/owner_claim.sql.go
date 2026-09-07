@@ -130,6 +130,79 @@ func (q *Queries) GetUnclaimedOwnerClaimToken(ctx context.Context) (OwnerClaimTo
 	return i, err
 }
 
+const transferInstanceOwner = `-- name: TransferInstanceOwner :one
+WITH cleared AS (
+    UPDATE users
+    SET is_owner = FALSE, updated_at = now()
+    WHERE is_owner
+      AND id <> $1
+      AND EXISTS (
+          SELECT 1 FROM users t
+          WHERE t.id = $1
+            AND t.role = 'admin' AND t.is_active AND t.deleted_at IS NULL
+      )
+    RETURNING id
+),
+demoted AS (
+    SELECT count(*)::bigint AS n FROM cleared
+)
+UPDATE users u
+SET is_owner = TRUE, updated_at = now()
+FROM demoted d
+WHERE u.id = $1
+  AND u.role = 'admin' AND u.is_active AND u.deleted_at IS NULL
+RETURNING u.id, u.username, u.email, d.n AS previous_owners_cleared
+`
+
+type TransferInstanceOwnerRow struct {
+	ID                    uuid.UUID `json:"id"`
+	Username              string    `json:"username"`
+	Email                 string    `json:"email"`
+	PreviousOwnersCleared int64     `json:"previous_owners_cleared"`
+}
+
+// Move the `is_owner` marker (0131) from whoever holds it to new_owner_id, in
+// ONE statement. Until this existed the marker had exactly one writer — the
+// claim CTE above — so an owner who deleted their own account left the instance
+// permanently unmarked, with `vidra doctor` telling the operator to write an
+// UPDATE by hand.
+//
+// Why one statement rather than "clear, then set": `users_single_owner_idx` is a
+// partial UNIQUE index and is NOT deferrable, so the two writes cannot be split
+// without either a window in which the instance has no owner (a crash between
+// them leaves it unmarked, the exact state this route exists to escape) or a
+// window in which two rows claim the marker (which the index refuses outright).
+//
+// Why the clear provably runs FIRST: `demoted` aggregates `cleared`, and an
+// aggregate must consume its whole input before it yields a row, so the main
+// UPDATE cannot begin until the old marker is gone. Without that forced
+// ordering PostgreSQL is free to run an unreferenced data-modifying CTE after
+// the main query, and every transfer would raise a unique violation.
+//
+// Concurrency: two simultaneous transfers to DIFFERENT admins cannot both win.
+// The loser's `cleared` UPDATE blocks on the winner's row lock, re-evaluates
+// under READ COMMITTED against the committed row (which is no longer is_owner),
+// clears nothing, and its own set raises 23505 against the winner's row. The
+// caller maps that violation to a conflict rather than pretending it succeeded.
+//
+// Eligibility is re-asserted here, not just in the service: the target must be a
+// live, non-tombstoned admin at write time, so a target demoted or deleted
+// between the service's read and this write yields no row instead of handing the
+// instance to an account that can no longer sign in to it. No row returned means
+// "the target was not eligible" — nothing was cleared either, because the clear
+// carries the same test.
+func (q *Queries) TransferInstanceOwner(ctx context.Context, newOwnerID uuid.UUID) (TransferInstanceOwnerRow, error) {
+	row := q.db.QueryRow(ctx, transferInstanceOwner, newOwnerID)
+	var i TransferInstanceOwnerRow
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.PreviousOwnersCleared,
+	)
+	return i, err
+}
+
 const upsertOwnerClaimToken = `-- name: UpsertOwnerClaimToken :one
 INSERT INTO owner_claim_tokens (id, token_hash)
 VALUES (TRUE, $1)

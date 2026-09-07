@@ -383,15 +383,24 @@ func TestBlockUnblockVideo(t *testing.T) {
 	if err := svc.BlockVideo(ctx, mod, vid, "still spam"); err != nil {
 		t.Fatalf("re-BlockVideo: %v", err)
 	}
-	if err := svc.UnblockVideo(ctx, vid); err != nil {
+	lifted, err := svc.UnblockVideo(ctx, vid)
+	if err != nil {
 		t.Fatalf("UnblockVideo: %v", err)
+	}
+	if !lifted {
+		t.Error("UnblockVideo reported no block lifted after blocking one — the creator's notice would never fire")
 	}
 	if blocked, _ := svc.IsBlocked(ctx, vid); blocked {
 		t.Error("video should not be blocked after UnblockVideo")
 	}
-	// Unblocking an already-unblocked video is a no-op (no error).
-	if err := svc.UnblockVideo(ctx, vid); err != nil {
+	// Unblocking an already-unblocked video is a no-op (no error) — and it
+	// reports so, which is what keeps a second notice out of the creator's inbox.
+	again, err := svc.UnblockVideo(ctx, vid)
+	if err != nil {
 		t.Errorf("idempotent UnblockVideo: %v", err)
+	}
+	if again {
+		t.Error("a repeated UnblockVideo claimed it lifted a block; a second 'your video is back' would follow")
 	}
 }
 
@@ -426,7 +435,7 @@ func TestListBlocked(t *testing.T) {
 		t.Errorf("items[1] = {%s,%q}, want {v1,spam}", items[1].VideoID, items[1].Reason)
 	}
 	// Unblocking removes it from the list.
-	if err := svc.UnblockVideo(ctx, v1); err != nil {
+	if _, err := svc.UnblockVideo(ctx, v1); err != nil {
 		t.Fatalf("unblock v1: %v", err)
 	}
 	items, _, _ = svc.ListBlocked(ctx, 20, 0)

@@ -57,6 +57,12 @@ const (
 	ActionRemoteVideoBlock   = "moderation.remote_video.block"
 	ActionRemoteVideoUnblock = "moderation.remote_video.unblock"
 	ActionAdminUserUpdate    = "admin.user.update"
+	// ActionOwnerTransfer records the instance-owner marker moving from one
+	// administrator to another (0131 + the A16 ruling). Before it existed the
+	// marker had one writer — the first-run claim — and no way to move, so an
+	// owner who left stranded the instance unowned. Reason names both parties by
+	// id; the structured change is is_owner false->true on the new owner.
+	ActionOwnerTransfer = "admin.owner.transfer"
 	// ActionAdminInstanceUpdate records an admin changing the DB-backed instance
 	// settings overlay (fix_plan P10). Reason carries the changed KEY NAMES only
 	// — never the values, which can include the operator contact email.

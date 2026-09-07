@@ -350,11 +350,16 @@ func (f *notifFakeRepo) ListNotifications(_ context.Context, a sqlcgen.ListNotif
 				tt := v.Title
 				row.VideoTitle = &tt
 			}
-			// The moderation note is joined ONLY onto video_rejected — the
-			// query's CASE, mirrored here so the fake cannot claim a note
+			// The moderator's prose is joined onto exactly two types — the
+			// query's CASE, mirrored here so the fake cannot claim prose
 			// reaches a notification the SQL would leave empty.
-			if n.Type == notification.TypeVideoRejected && f.videos.rejections != nil {
+			switch {
+			case n.Type == notification.TypeVideoRejected && f.videos.rejections != nil:
 				row.ModerationNote = f.videos.rejections[uuid.UUID(n.VideoID.Bytes)]
+			case n.Type == notification.TypeVideoBlocked && f.videos.blocks != nil:
+				// A lifted block deletes the row, so this goes back to "" for an
+				// old notice — exactly what the LEFT JOIN does.
+				row.ModerationNote = f.videos.blocks.blockReason(uuid.UUID(n.VideoID.Bytes))
 			}
 		}
 		if n.ReportID.Valid && f.reports != nil {

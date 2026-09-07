@@ -2083,6 +2083,7 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID, sort s
 		it.AuthorDisplayName = r.AuthorDisplayName
 		it.PublishAt = TimePtr(r.PublishAt) // studio view: badge scheduled videos
 		it.Blocked = r.Blocked              // studio view: badge blocked videos
+		it.BlockReason = r.BlockReason      // ...and why (A16 ruling)
 		items = append(items, it)
 	}
 	return items, total, nil
@@ -2150,6 +2151,11 @@ type FeedItem struct {
 	// owner's dashboard shows a taken-down video as "published". Public feeds
 	// never return a blocked row, so it is false everywhere else.
 	Blocked bool
+	// BlockReason is the moderator's reason for that block, set on the same
+	// owner-only listing and empty when the video is not blocked. It travels
+	// with Blocked so a badge and its explanation cannot come from different
+	// reads (the A16 ruling: the creator sees WHY).
+	BlockReason string
 
 	Remote    bool
 	Domain    string

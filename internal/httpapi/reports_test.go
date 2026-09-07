@@ -312,6 +312,16 @@ func (f *moderationFakeRepo) UnblockVideo(_ context.Context, videoID uuid.UUID) 
 	return 0, nil
 }
 
+// blockReason is the fake's read of video_blocks.reason for one video ("" when
+// it is not blocked), so the owner-listing and notification fakes can mirror the
+// SQL that now hands that prose to the creator.
+func (f *moderationFakeRepo) blockReason(videoID uuid.UUID) string {
+	if m, ok := f.blocks[videoID]; ok {
+		return m.reason
+	}
+	return ""
+}
+
 func (f *moderationFakeRepo) IsVideoBlocked(_ context.Context, videoID uuid.UUID) (bool, error) {
 	_, ok := f.blocks[videoID]
 	return ok, nil

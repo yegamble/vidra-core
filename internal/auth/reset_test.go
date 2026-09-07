@@ -18,6 +18,8 @@ type captureMailer struct {
 	// best-effort.
 	changed     []string
 	failChanged bool
+	// ownershipNotices records both sides of an instance-ownership transfer.
+	ownershipNotices []CapturedOwnershipNotice
 }
 
 func (m *captureMailer) SendPasswordChanged(_ context.Context, email string) error {
@@ -68,6 +70,20 @@ func (m *captureMailer) SendRegistrationApproved(context.Context, string, string
 }
 
 func (m *captureMailer) SendRegistrationRejected(context.Context, string, string, string) error {
+	return nil
+}
+
+// SendOwnershipTransferred is captured so a test can assert both sides were
+// mailed; the bodies belong to internal/mail, which has its own tests.
+func (m *captureMailer) SendOwnershipTransferred(_ context.Context, email, recipientUsername, counterpartUsername, consoleURL string, isNewOwner bool) error {
+	party := "former_owner"
+	if isNewOwner {
+		party = "new_owner"
+	}
+	m.ownershipNotices = append(m.ownershipNotices, CapturedOwnershipNotice{
+		Party: party, Email: email, Username: recipientUsername,
+		Counterpart: counterpartUsername, ConsoleURL: consoleURL,
+	})
 	return nil
 }
 

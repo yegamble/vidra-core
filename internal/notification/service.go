@@ -37,7 +37,15 @@ const (
 	// reversible. Before it existed a block was invisible to its owner — the
 	// video 404'd for them too while their own dashboard still read "published".
 	TypeVideoBlocked = "video_blocked"
-	TypeCaptionReady = "caption_ready"
+	// TypeVideoUnblocked tells a creator that a moderator LIFTED a block on one
+	// of their videos, so it is available again. It exists because the block
+	// notice created an open loop: a creator was told their video was taken down
+	// and then, when it came back, told nothing at all — they had to keep
+	// checking. It is the only good-news moderation type, and it is deliberately
+	// its own type rather than a second video_blocked, which would read as a
+	// SECOND takedown in an inbox that renders by type.
+	TypeVideoUnblocked = "video_unblocked"
+	TypeCaptionReady   = "caption_ready"
 	// TypeNewVideo tells a follower that a channel they follow published a new
 	// public video. Unlike every other type it is created by a set-based
 	// fan-out (NotifyNewVideo), not one row at a time.
@@ -51,13 +59,13 @@ const (
 // KnownTypes lists every notification type, in stable order. Preferences may
 // target exactly these; every type defaults to enabled.
 func KnownTypes() []string {
-	return []string{TypeCaptionReady, TypeComment, TypeCommentReply, TypeFollow, TypeMessage, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeVideoBlocked, TypeVideoRejected}
+	return []string{TypeCaptionReady, TypeComment, TypeCommentReply, TypeFollow, TypeMessage, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeVideoBlocked, TypeVideoRejected, TypeVideoUnblocked}
 }
 
 // knownType reports whether t is a recognised notification type.
 func knownType(t string) bool {
 	switch t {
-	case TypeFollow, TypeComment, TypeCommentReply, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeVideoBlocked, TypeCaptionReady, TypeNewVideo, TypeNewReport:
+	case TypeFollow, TypeComment, TypeCommentReply, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeVideoBlocked, TypeVideoUnblocked, TypeCaptionReady, TypeNewVideo, TypeNewReport:
 		return true
 	}
 	return false
@@ -119,11 +127,14 @@ type Item struct {
 	ReportID           string
 	ReportStatus       string
 	ReportTargetType   string
-	// ModerationNote is the moderator's rejection note (migration 0130),
-	// carried ONLY on video_rejected. The reject route has always collected it;
-	// until 0130 nothing stored it, so the creator was told their upload was
-	// refused and never why. It is empty when the moderator supplied no note.
-	// A BLOCK's reason is deliberately not here — that prose is staff-only.
+	// ModerationNote is the moderator's prose about this video, carried ONLY on
+	// the two types that exist to deliver it: the rejection note (migration
+	// 0130) on video_rejected, and the block reason (video_blocks.reason) on
+	// video_blocked. Both routes always collected the text; until 0130 nothing
+	// stored the rejection note, and until the A16 ruling the block reason was
+	// staff-only — so a creator was told their work had been refused or taken
+	// down and never why. Empty when the moderator supplied no prose, which the
+	// renderer answers with its neutral notice, and empty on every other type.
 	ModerationNote string
 }
 
@@ -379,10 +390,11 @@ func (s *Service) NotifyVideoRejected(ctx context.Context, recipientID, actorID,
 // disabled video_blocked notifications. Best-effort.
 //
 // Like NotifyVideoRejected it stores no actor, so the moderator is never exposed
-// to the creator — and unlike the rejection it carries NO note: whether a
-// creator may read the block reason is an open product ruling, and the safe
-// default is the neutral fact. The video's title is resolved from the joined
-// video row at read time.
+// to the creator. The block REASON is not stored on the notification either —
+// it is joined from video_blocks at read time (the A16 ruling made it
+// creator-facing), so lifting the block, which deletes that row, correctly
+// leaves the old notice reading as the neutral fact it has become. The video's
+// title is resolved from the joined video row the same way.
 func (s *Service) NotifyVideoBlocked(ctx context.Context, recipientID, actorID, videoID uuid.UUID) error {
 	if recipientID == actorID || !s.typeEnabled(ctx, recipientID, TypeVideoBlocked) {
 		return nil
@@ -390,6 +402,29 @@ func (s *Service) NotifyVideoBlocked(ctx context.Context, recipientID, actorID, 
 	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
 		UserID:  recipientID,
 		Type:    TypeVideoBlocked,
+		VideoID: pgconv.UUID(videoID),
+	})
+	return err
+}
+
+// NotifyVideoUnblocked records that a moderator (actorID) LIFTED the block on
+// recipientID's video, so it is available again. Unblocking your own video is a
+// no-op, as is a recipient who disabled video_unblocked notifications.
+// Best-effort.
+//
+// Like NotifyVideoBlocked it stores no actor, so the moderator is never exposed
+// to the creator, and it carries no prose — there is nothing to explain about a
+// restoration. The caller is responsible for firing it ONLY when a block was
+// actually lifted: the unblock route is idempotent, and a second unblock of an
+// already-unblocked video must not put a second "your video is back" in an
+// inbox where the first one is still unread.
+func (s *Service) NotifyVideoUnblocked(ctx context.Context, recipientID, actorID, videoID uuid.UUID) error {
+	if recipientID == actorID || !s.typeEnabled(ctx, recipientID, TypeVideoUnblocked) {
+		return nil
+	}
+	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
+		UserID:  recipientID,
+		Type:    TypeVideoUnblocked,
 		VideoID: pgconv.UUID(videoID),
 	})
 	return err

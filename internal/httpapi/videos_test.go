@@ -577,6 +577,11 @@ func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, a sqlcgen.ListVid
 				// carry the marker or a green handler test would prove nothing
 				// (the slice-2 fake-fidelity lesson).
 				Blocked: f.blockedFromFeed(r.ID),
+				// ...and the reason beside it (A16 ruling). Same fake-fidelity
+				// rule: the SQL's correlated subselect returns '' for an
+				// unblocked row, so the fake must too or the owner-only test
+				// would pass against a fake that leaks nothing.
+				BlockReason: f.blockReasonFromFeed(r.ID),
 			})
 		}
 	}
@@ -1213,6 +1218,16 @@ func (f *videoFakeRepo) blockedFromFeed(videoID uuid.UUID) bool {
 	}
 	blocked, _ := f.blocks.IsVideoBlocked(context.Background(), videoID)
 	return blocked
+}
+
+// blockReasonFromFeed mirrors the owner listing's correlated subselect on
+// video_blocks.reason: the moderator's prose while a block stands, and "" the
+// moment it is lifted.
+func (f *videoFakeRepo) blockReasonFromFeed(videoID uuid.UUID) string {
+	if f.blocks == nil {
+		return ""
+	}
+	return f.blocks.blockReason(videoID)
 }
 
 func (f *videoFakeRepo) ListPublicVideosSorted(_ context.Context, a sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error) {
