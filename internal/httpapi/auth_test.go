@@ -177,6 +177,21 @@ func (f *authFakeRepo) DeleteUnusedEmailVerificationTokens(_ context.Context, us
 	return nil
 }
 
+// LatestUnusedEmailVerificationTokenAt mirrors the SQL: the newest UNUSED
+// token's created_at, or pgx.ErrNoRows when there is none.
+func (f *authFakeRepo) LatestUnusedEmailVerificationTokenAt(_ context.Context, userID uuid.UUID) (time.Time, error) {
+	var newest time.Time
+	for _, t := range f.verifs {
+		if t.UserID == userID && !t.UsedAt.Valid && t.CreatedAt.After(newest) {
+			newest = t.CreatedAt
+		}
+	}
+	if newest.IsZero() {
+		return time.Time{}, pgx.ErrNoRows
+	}
+	return newest, nil
+}
+
 func (f *authFakeRepo) SetUserEmailVerified(_ context.Context, id uuid.UUID) error {
 	for k, u := range f.users {
 		if u.ID == id {

@@ -68,6 +68,26 @@ func (q *Queries) GetEmailVerificationToken(ctx context.Context, tokenHash strin
 	return i, err
 }
 
+const latestUnusedEmailVerificationTokenAt = `-- name: LatestUnusedEmailVerificationTokenAt :one
+SELECT created_at
+FROM email_verification_tokens
+WHERE user_id = $1 AND used_at IS NULL
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+// When the account's newest UNUSED verification token was issued. It is the
+// per-address resend cooldown's clock: the anonymous resend route must answer
+// the same 202 to everybody, so it cannot refuse a rapid repeat — it declines
+// to SEND one, and this is the fact it decides on. No row means nothing is
+// outstanding and a send is due.
+func (q *Queries) LatestUnusedEmailVerificationTokenAt(ctx context.Context, userID uuid.UUID) (time.Time, error) {
+	row := q.db.QueryRow(ctx, latestUnusedEmailVerificationTokenAt, userID)
+	var created_at time.Time
+	err := row.Scan(&created_at)
+	return created_at, err
+}
+
 const markEmailVerificationTokenUsed = `-- name: MarkEmailVerificationTokenUsed :exec
 UPDATE email_verification_tokens
 SET used_at = now()

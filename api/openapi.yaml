@@ -1167,6 +1167,62 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/verify-email/resend:
+    post:
+      operationId: resendEmailVerification
+      summary: Re-send an email-verification message (no session)
+      description: >-
+        Re-sends the verification message for an address, WITHOUT a session. It
+        is the unauthenticated counterpart of POST /api/v1/auth/verify-email,
+        and it exists because the account that needs it is precisely the one
+        that cannot sign in: with `registration_require_email_verification`
+        effective, registration answers 202 with no session and login answers
+        403 `email_verification_required`.
+
+
+        Always 202 with an EMPTY body — for a known unverified address, an
+        unknown one, an already-verified one, a deactivated one, and a repeat
+        inside the send cooldown alike — so it cannot be used to enumerate
+        accounts. A message is actually sent only for an active, unverified
+        account whose last unused token is older than the cooldown; issuing a new
+        token invalidates the account's previous unused ones, so only the newest
+        link works. A relay failure is logged and audited and still answers 202,
+        for the same reason: a 500 for a registered address beside a 202 for an
+        unregistered one would be an account-existence oracle.
+
+
+        Behind the strict per-IP auth limiter (10/min) like every other
+        unauthenticated credential endpoint.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: The address to re-send the verification message to.
+      responses:
+        "202":
+          description: >-
+            Accepted. Identical for every input; it does not disclose whether the
+            address belongs to an account or whether anything was sent.
+        "422":
+          description: No address was supplied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many requests from this IP.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/auth/verify-email/confirm:
     post:
       operationId: confirmEmailVerification

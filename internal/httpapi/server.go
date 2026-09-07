@@ -1359,6 +1359,13 @@ func (s *Server) routes() {
 		authGroup.POST("/password-reset", s.handleRequestPasswordReset, authMW...)
 		authGroup.POST("/password-reset/confirm", s.handleConfirmPasswordReset, authMW...)
 		authGroup.POST("/verify-email", s.handleRequestEmailVerification, s.requireAuth)
+		// The ANONYMOUS resend (A05 defect 2). It cannot sit behind requireAuth
+		// like its neighbour above: with the verification gate on, the account
+		// that needs the message is the one whose login answers 403
+		// email_verification_required. Enumeration-safe 202 for every input,
+		// and behind the strict auth limiter like every other unauthenticated
+		// credential endpoint.
+		authGroup.POST("/verify-email/resend", s.handleResendEmailVerification, authMW...)
 		authGroup.POST("/verify-email/confirm", s.handleConfirmEmailVerification, authMW...)
 		authGroup.GET("/me", s.handleMe, s.requireAuth)
 		authGroup.PATCH("/me", s.handleUpdateMe, s.requireAuth)
