@@ -1656,12 +1656,21 @@ func run() error {
 		// Runtime overlay (config-parity W8): the effective gate is the boot
 		// capability (the yt-dlp resolver) AND the channel_sync_enabled setting
 		// AND the import_http_enabled setting (the sync path IS a yt-dlp import
-		// path). Resolved per call/tick so an admin can pause and resume syncs
+		// path) AND imports_enabled, the master switch above the import family.
+		// The master clause has to be HERE and not only on the HTTP gate: this
+		// is the predicate every worker TICK reads, and channel auto-sync is
+		// the one import path that runs on a timer. The worker enqueues through
+		// videoimport.Enqueue, below the handler that answers 403 on POST
+		// /videos/{id}/import — so with the master switch off but this
+		// predicate blind to it, an operator who turned URL import off kept a
+		// worker importing third-party uploads on a schedule.
+		// Resolved per call/tick so an admin can pause and resume syncs
 		// without a restart; the worker below stays constructed either way.
 		channelsync.WithEnabledFunc(func() bool {
 			return cfg.YtdlpImportEnabled &&
 				settingssvc.Bool(instancesettings.KeyChannelSyncEnabled) &&
-				settingssvc.Bool(instancesettings.KeyImportHTTPEnabled)
+				settingssvc.Bool(instancesettings.KeyImportHTTPEnabled) &&
+				settingssvc.Bool(instancesettings.KeyImportsEnabled)
 		}),
 		channelsync.WithAllowPrivateURLs(cfg.ImportAllowPrivateURLs),
 		channelsync.WithMaxPerUser(cfg.ChannelSyncMaxPerUser),

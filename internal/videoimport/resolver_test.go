@@ -358,3 +358,39 @@ func TestYtdlpGate(t *testing.T) {
 		}
 	})
 }
+
+// TestAutoDoesNotFallBackToYtdlpWhenTheGuardBlocks: resolver=auto probes the URL
+// with the SSRF-GUARDED client, and when that probe is refused because the
+// address is non-public the import must STOP. It must not fall through to the
+// yt-dlp extractor, whose own outbound sockets this repo cannot dial-pin (see
+// internal/ytdlp's package doc) — that fallback turns the guard's own refusal
+// into the trigger for an unguarded fetch of the very address it just refused.
+// A hostname is used deliberately: a literal private IP never reaches here (it
+// is 422 at enqueue), so the interesting case is the name that only resolves to
+// one.
+func TestAutoDoesNotFallBackToYtdlpWhenTheGuardBlocks(t *testing.T) {
+	ctx := context.Background()
+	repo, pipe := newFakeRepo(), newFakePipeline()
+	ext := &stubExtractor{body: []byte("platform-bytes"), ext: ".mp4"}
+	// No injected client: the real guard, private/loopback BLOCKED (production).
+	svc := NewService(repo, pipe, 1<<20, WithYtdlp(ext, t.TempDir()))
+	origin := originServer(t)
+	vid := seedVideo(pipe, uuid.New())
+
+	if _, err := svc.Enqueue(ctx, vid, loopbackHost(origin.URL)+"/page", ResolverAuto); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if _, err := svc.DrainJobs(ctx, 5); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if ext.metaCalls != 0 || ext.dlCalls != 0 {
+		t.Fatalf("the unpinned extractor ran on an address the guard refused (metadata=%d download=%d)", ext.metaCalls, ext.dlCalls)
+	}
+	j := repo.latest(vid)
+	if j.State == "done" || pipe.published[vid] {
+		t.Fatalf("a blocked address imported anyway: state=%q", j.State)
+	}
+	if j.Error == "" {
+		t.Errorf("want a safe failure reason recorded on the job")
+	}
+}

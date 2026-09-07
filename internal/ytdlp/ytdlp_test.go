@@ -45,7 +45,7 @@ func TestDownloadArgsAreSandboxed(t *testing.T) {
 	mustHavePair(t, args, "-o", "/tmp/job/media.%(ext)s")
 	mustNotHave(t, args, "--exec", "--update", "-U")
 	// The height cap must be reflected in the -f selector.
-	if !strings.Contains(strings.Join(args, " "), "height<=1080") {
+	if !strings.Contains(strings.Join(args, " "), "height<=?1080") {
 		t.Errorf("format selector missing the height cap: %v", args)
 	}
 }
@@ -72,10 +72,10 @@ func TestDownloadArgsOverlayFuncs(t *testing.T) {
 	args := downloadArgs(cfg, "https://example.com/v", "/tmp/j/media.%(ext)s")
 	mustHavePair(t, args, "--max-filesize", "5242880")
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "height<=480") {
+	if !strings.Contains(joined, "height<=?480") {
 		t.Errorf("format selector should use the overlay height 480: %v", args)
 	}
-	if strings.Contains(joined, "height<=1080") {
+	if strings.Contains(joined, "height<=?1080") {
 		t.Errorf("static height 1080 must not appear when the fn overrides it: %v", args)
 	}
 
@@ -98,9 +98,9 @@ func TestDownloadArgsOverlayFuncs(t *testing.T) {
 // to mkv when yt-dlp cannot prove mp4 compatibility.
 func TestDownloadArgsMergeSplitAudio(t *testing.T) {
 	args := downloadArgs(baseCfg(), "https://example.com/v", "/tmp/j/media.%(ext)s")
-	wantCapped := "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/" +
-		"bestvideo[height<=1080][ext=mp4]+bestaudio/" +
-		"best[height<=1080][ext=mp4]/best[height<=1080][ext=webm]/best[height<=1080]"
+	wantCapped := "bestvideo[height<=?1080][ext=mp4]+bestaudio[ext=m4a]/" +
+		"bestvideo[height<=?1080][ext=mp4]+bestaudio/" +
+		"best[height<=?1080][ext=mp4]/best[height<=?1080][ext=webm]/best[height<=?1080]"
 	mustHavePair(t, args, "-f", wantCapped)
 	mustHavePair(t, args, "--merge-output-format", "mp4/mkv")
 
@@ -306,5 +306,27 @@ func mustContainInOrder(t *testing.T, args []string, a, b string) {
 	}
 	if ai == -1 || bi == -1 || ai >= bi {
 		t.Errorf("args %v: want %q before %q", args, a, b)
+	}
+}
+
+// TestDownloadArgsHeightCapAdmitsUnknownHeight pins the `?` on every height
+// comparison. yt-dlp EXCLUDES a format whose compared field is missing unless
+// the operator carries `?` — and a format's height is routinely unknown: a
+// bare <video><source> page (the html5 extractor), a PeerTube static web video,
+// any progressive file the extractor cannot probe. With the shipped default cap
+// (YTDLP_MAX_HEIGHT=1080) a plain `height<=1080` therefore matched NOTHING and
+// yt-dlp exited "Requested format is not available", which the import surfaced
+// as "the URL could not be imported from this platform" — a whole capability
+// that could not import from an unknown-height source on its DEFAULT
+// configuration. `height<=?N` keeps the cap for formats that declare a height
+// and admits the ones that do not, which is the same "prefer, don't exclude"
+// discipline the split-audio fallbacks above already encode.
+func TestDownloadArgsHeightCapAdmitsUnknownHeight(t *testing.T) {
+	joined := strings.Join(downloadArgs(baseCfg(), "https://example.com/v", "/tmp/j/media.%(ext)s"), " ")
+	if strings.Contains(joined, "height<=1080") && !strings.Contains(joined, "height<=?1080") {
+		t.Fatalf("height cap excludes unknown-height formats (want height<=?1080): %s", joined)
+	}
+	if strings.Count(joined, "height<=?") != strings.Count(joined, "height<=") {
+		t.Errorf("every height comparison must carry the ? operator: %s", joined)
 	}
 }

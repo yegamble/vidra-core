@@ -206,11 +206,17 @@ func (s *Server) importHTTPEnabled() bool {
 // channelSyncEnabled is the channel auto-sync runtime gate: the
 // channel_sync_enabled setting AND the import_http_enabled setting (the sync
 // path IS a yt-dlp import path, so turning platform imports off pauses syncs
-// too). Boot capability (the yt-dlp resolver) is enforced separately by the
+// too) AND imports_enabled, the master switch above the whole import family.
+// The master clause is not decoration: channel auto-sync is the one import path
+// that runs on a TIMER, and the worker enqueues through videoimport.Enqueue,
+// below the handler gate that answers 403 on POST /videos/{id}/import. Without
+// it an operator who turned URL import off kept a worker importing third-party
+// uploads on a schedule while /instance still advertised the affordance.
+// Boot capability (the yt-dlp resolver) is enforced separately by the
 // channelsync service (503).
 func (s *Server) channelSyncEnabled() bool {
 	return s.settingBool(instancesettings.KeyChannelSyncEnabled, s.cfg.ChannelSyncEnabled) &&
-		s.importHTTPEnabled()
+		s.importHTTPEnabled() && s.importsEnabled()
 }
 
 // storyboardsEnabled is the storyboard-generation toggle (storyboards_enabled;

@@ -146,6 +146,13 @@ func channelSyncServer(t *testing.T, enabled bool) *Server {
 // callers append extra channelsync options.
 func channelSyncServerWithRepo(t *testing.T, enabled bool, opts ...channelsync.Option) (*Server, *csFakeRepo) {
 	t.Helper()
+	return channelSyncServerTuned(t, enabled, true, opts...)
+}
+
+// channelSyncServerTuned additionally sets imports_enabled — the MASTER switch
+// above the import family — so a test can prove channel auto-sync follows it.
+func channelSyncServerTuned(t *testing.T, enabled, importsEnabled bool, opts ...channelsync.Option) (*Server, *csFakeRepo) {
+	t.Helper()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
 	authsvc := auth.NewService(newAuthFakeRepo(), issuer, 720*time.Hour)
 	chRepo := newChannelFakeRepo()
@@ -164,6 +171,7 @@ func channelSyncServerWithRepo(t *testing.T, enabled bool, opts ...channelsync.O
 	// step with the service flag so `enabled` still means what it says.
 	cfg := testConfig()
 	cfg.ChannelSyncEnabled = enabled
+	cfg.ImportsEnabled = importsEnabled
 	srv := New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithChannelService(chansvc),
@@ -413,3 +421,41 @@ func TestChannelSyncDeleteNonOwner404(t *testing.T) {
 
 // RenewChannelSyncLease is the lease heartbeat; the fake has no leases to keep.
 func (*csFakeRepo) RenewChannelSyncLease(_ context.Context, _ uuid.UUID) error { return nil }
+
+// TestChannelSyncFollowsTheImportsMasterSwitch: imports_enabled is documented as
+// the master switch above the import family (see the KeyImportHTTPEnabled
+// registry comment, "imports_enabled stays the master"), and turning it off
+// already answers 403 on POST /videos/{id}/import and reports features.imports
+// and features.import_http false. Channel auto-sync is an import path that runs
+// on its own schedule, so it must go down with it: otherwise an operator who
+// turned URL import off keeps a worker importing third-party uploads on a timer,
+// and /instance keeps advertising the affordance.
+func TestChannelSyncFollowsTheImportsMasterSwitch(t *testing.T) {
+	srv, _ := channelSyncServerTuned(t, true, false)
+	tok := registerAndToken(t, srv, `{"username":"morgan","email":"morgan@example.test","password":"supersecret"}`)
+	chID := channelIDFor(t, srv, tok, "morgan")
+
+	rec := postJSONAuth(srv, "/api/v1/channel-syncs",
+		`{"channel_id":"`+chID+`","external_channel_url":"https://youtube.com/@mo"}`, tok)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("create with imports off = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := postJSONAuth(srv, "/api/v1/channel-syncs/"+uuid.NewString()+"/sync-now", "", tok); rec.Code != http.StatusForbidden {
+		t.Fatalf("sync-now with imports off = %d, want 403", rec.Code)
+	}
+	inst := get(t, srv, "/api/v1/instance")
+	if inst.Code != http.StatusOK {
+		t.Fatalf("instance = %d", inst.Code)
+	}
+	var body struct {
+		Features struct {
+			ChannelSync bool `json:"channel_sync"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(inst.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode instance: %v", err)
+	}
+	if body.Features.ChannelSync {
+		t.Errorf("features.channel_sync = true while imports are off; want false")
+	}
+}
