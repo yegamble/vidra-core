@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/audit"
@@ -61,7 +62,8 @@ func (s *Server) handleRunVideoTranscoding(c echo.Context) error {
 	if s.transcodesvc.HasLiveJob(ctx, id) {
 		return echo.NewHTTPError(http.StatusConflict, "a transcode job is already in progress for this video")
 	}
-	if err := s.transcodesvc.EnqueueTarget(ctx, id, sourceKey, in.Type); err != nil {
+	runID, err := s.transcodesvc.EnqueueTarget(ctx, id, sourceKey, in.Type)
+	if err != nil {
 		return err
 	}
 	// DELIBERATELY NOT PURGED (media_purge.go's still-unpurged ledger). A rerun
@@ -81,8 +83,19 @@ func (s *Server) handleRunVideoTranscoding(c echo.Context) error {
 			"video_id", id.String(),
 			"type", in.Type)
 	}
-	s.audit(c, observability.ActionVideoTranscode, observability.ResultSuccess,
-		actorID.String(), "video="+id.String()+" type="+in.Type)
+	// LINK THE AUDIT ROW TO THE WORK IT STARTED (A17). audit_log.job_id has
+	// existed since 0084 and was populated on 0 of 56 rows, so an operator
+	// reading "someone re-transcoded this video" had no way to reach the run
+	// that resulted, or its failure. It is the forward half of the chain whose
+	// backward half is the run's request_id/correlation_id.
+	ev := audit.Event{
+		Action: observability.ActionVideoTranscode, Result: observability.ResultSuccess,
+		ActorID: actorID.String(), Reason: "video=" + id.String() + " type=" + in.Type,
+	}
+	if runID != uuid.Nil {
+		ev.JobID = runID
+	}
+	s.auditEvent(c, ev)
 	return c.JSON(http.StatusAccepted, map[string]string{"status": "queued", "type": in.Type})
 }
 

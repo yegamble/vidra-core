@@ -34,6 +34,7 @@ import (
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/workerpool"
 
+	"github.com/vidra/vidra-core/internal/jobtrace"
 	"github.com/vidra/vidra-core/internal/lease"
 )
 
@@ -48,6 +49,11 @@ const (
 	fetchTimeout = 60 * time.Second
 	// maxErrorLen bounds the stored (client-visible) error string.
 	maxErrorLen = 300
+
+	// QueueName is this queue's name in the operational projection
+	// (job_runs.queue), which is also the source table's name. Every jobtrace
+	// stamp is made under it, so the projection and the queue cannot drift.
+	QueueName = "import_jobs"
 )
 
 // Job states persisted on import_jobs.
@@ -115,7 +121,11 @@ type QuotaChecker interface {
 
 // Service holds the URL-import logic.
 type Service struct {
-	repo         Repository
+	repo Repository
+	// trace stamps the operational projection with the request that caused a job
+	// and the process running it, and writes the worker's failure log line. nil
+	// is the pre-A17 behaviour and every method on a nil recorder is a no-op.
+	trace        *jobtrace.Recorder
 	pipeline     Pipeline
 	quota        QuotaChecker
 	maxBytes     int64
@@ -218,6 +228,13 @@ func (s *Service) Concurrency() int {
 // so an admin can turn the yt-dlp import path off without a restart. It can
 // only narrow availability — with no extractor wired (boot capability off) the
 // resolver stays disabled regardless of f.
+// WithJobTrace wires the operational-projection recorder (A17): the originating
+// request's ids onto the run, this process onto the jobs it claims, and one
+// structured line per failure and dead-letter. nil is the pre-A17 behaviour.
+func WithJobTrace(r *jobtrace.Recorder) Option {
+	return func(s *Service) { s.trace = r }
+}
+
 func WithYtdlpGate(f func() bool) Option {
 	return func(s *Service) { s.ytdlpGate = f }
 }
@@ -293,6 +310,10 @@ func (s *Service) Enqueue(ctx context.Context, videoID uuid.UUID, rawURL, reques
 	if err != nil {
 		return sqlcgen.ImportJob{}, err
 	}
+	// Carry the originating request's ids onto the run the AFTER trigger has
+	// just projected. Best effort — a stamp that cannot be written must never
+	// fail an import that was accepted.
+	s.trace.Enqueued(ctx, QueueName, job.ID.String(), jobtrace.ActorFromContext(ctx))
 	return job, nil
 }
 
@@ -325,8 +346,14 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 	)
 	workerpool.Run(s.Concurrency(), len(rows), func(i int) {
 		row := rows[i]
+		sourceID := row.ID.String()
+		s.trace.Claimed(ctx, QueueName, sourceID, time.Now().UTC().Add(lease.Duration))
 		stopLease := lease.Keep(ctx, lease.DefaultInterval, "import_job", func(c context.Context) error {
-			return s.repo.RenewImportJobLease(c, row.ID)
+			if err := s.repo.RenewImportJobLease(c, row.ID); err != nil {
+				return err
+			}
+			s.trace.Beat(c, QueueName, sourceID, time.Now().UTC().Add(lease.Duration))
+			return nil
 		})
 		err := s.runImport(ctx, row)
 		stopLease()
@@ -540,9 +567,17 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueImportJ
 		msg = msg[:maxErrorLen]
 	}
 	if attempts >= maxAttempts {
+		s.trace.Failed(ctx, jobtrace.Failure{
+			Queue: QueueName, SourceID: row.ID.String(), Resource: row.VideoID.String(),
+			Attempt: attempts, State: jobtrace.StateDeadLettered, Err: cause,
+		})
 		_ = s.repo.FailImportJob(ctx, sqlcgen.FailImportJobParams{ID: row.ID, Error: msg})
 		return
 	}
+	s.trace.Failed(ctx, jobtrace.Failure{
+		Queue: QueueName, SourceID: row.ID.String(), Resource: row.VideoID.String(),
+		Attempt: attempts, State: jobtrace.StateRetryScheduled, Err: cause,
+	})
 	_ = s.repo.RescheduleImportJob(ctx, sqlcgen.RescheduleImportJobParams{
 		ID:            row.ID,
 		NextAttemptAt: time.Now().UTC().Add(backoff(attempts)),

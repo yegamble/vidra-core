@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -101,6 +102,17 @@ func (f *transcodeFakeRepo) FailTranscodeJob(_ context.Context, a sqlcgen.FailTr
 	j.Attempts++
 	j.LastError = a.LastError
 	return nil
+}
+
+// GetLiveTranscodeJobID mirrors the SQL: the live job for the video, and
+// pgx.ErrNoRows when there is none (the :one shape).
+func (f *transcodeFakeRepo) GetLiveTranscodeJobID(_ context.Context, videoID uuid.UUID) (uuid.UUID, error) {
+	for _, j := range f.jobs {
+		if j.VideoID == videoID && (j.State == "pending" || j.State == "running") {
+			return j.ID, nil
+		}
+	}
+	return uuid.Nil, pgx.ErrNoRows
 }
 
 func (f *transcodeFakeRepo) HasLiveTranscodeJob(_ context.Context, videoID uuid.UUID) (bool, error) {

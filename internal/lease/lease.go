@@ -24,6 +24,13 @@ import (
 // saturated worker does not cost a job its lease.
 const DefaultInterval = 5 * time.Minute
 
+// Duration is how long a claim holds a queue row before the expiry sweep may
+// take it back — the `now() + interval '30 minutes'` every ClaimDue*/Renew*
+// statement writes. It is stated here so the operational projection can report
+// the SAME deadline the sweeper enforces (job_runs.lease_expires_at) instead of
+// growing a second, drifting copy of the number.
+const Duration = 30 * time.Minute
+
 // Keep renews a lease every interval until the returned stop is called. It
 // returns immediately; renewal runs on its own goroutine.
 //

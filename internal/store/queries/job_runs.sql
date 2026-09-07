@@ -202,7 +202,12 @@ SET heartbeat_at     = now(),
 WHERE queue = sqlc.arg('queue') AND source_id = sqlc.arg('source_id')
   AND worker_id = sqlc.arg('worker_id');
 
--- name: GetJobRunIDBySource :one
--- The projection's id for one queue row, so an audit envelope written by the
--- originating request can link job_id forward to the run it created.
-SELECT id FROM job_runs WHERE queue = sqlc.arg('queue') AND source_id = sqlc.arg('source_id');
+-- name: GetJobRunIdentityBySource :one
+-- The projection's id and stamped ids for one queue row. Two callers, one row:
+-- an audit envelope written by the originating request links job_id forward to
+-- the run it created, and a WORKER — whose context is a background one and
+-- carries no request — reads the originating ids back OFF the run so its failure
+-- log line shares them. That read-back is what makes the chain walkable in both
+-- directions from a single grep.
+SELECT id, request_id, correlation_id, trace_id
+FROM job_runs WHERE queue = sqlc.arg('queue') AND source_id = sqlc.arg('source_id');

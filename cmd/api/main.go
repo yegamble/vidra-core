@@ -47,6 +47,7 @@ import (
 	"github.com/vidra/vidra-core/internal/jobloop"
 	"github.com/vidra/vidra-core/internal/jobrecovery"
 	"github.com/vidra/vidra-core/internal/jobstatus"
+	"github.com/vidra/vidra-core/internal/jobtrace"
 	"github.com/vidra/vidra-core/internal/leaderlock"
 	"github.com/vidra/vidra-core/internal/linkpreview"
 	"github.com/vidra/vidra-core/internal/live"
@@ -240,6 +241,18 @@ func run() error {
 	// GET /schemaz reads the migration ledger over this same pool, so the version
 	// probe costs a pooled query rather than a connection.
 	opts = append(opts, httpapi.WithSchemaLedger(db.Pool))
+
+	// OPERATIONAL JOB IDENTITY (A17, migration 0133). Built HERE, above every
+	// service, because the queue services are constructed long before the
+	// heartbeat writer below and both must stamp the SAME process id — a run
+	// whose worker_id named a process the status page's list did not contain
+	// would be worse than the empty column it replaces. It carries the
+	// originating request's ids onto each enqueued run, this process onto each
+	// claimed one, and writes the structured line a failed job owes its
+	// operator: before it, job_runs/job_events carried those columns and
+	// NOTHING wrote them (0 of 9 runs, 0 of 53 events), and three real worker
+	// failures across three queues produced no log line at all.
+	jobTrace := jobtrace.New(db.Queries(), processheartbeat.SelfID(), logger)
 
 	// The pool sampler (phase-5 multi-node floor). THE ONLY place pgx's Stat
 	// type is translated, so neither internal/observability nor internal/httpapi
@@ -988,6 +1001,7 @@ func run() error {
 		},
 		uint64(cfg.TranscodingMinFreeScratchMB)<<20,
 	))
+	tcopts = append(tcopts, transcode.WithJobTrace(jobTrace))
 	transcodesvc = transcode.NewService(db.Queries(), hlsTranscoder, tcopts...)
 	opts = append(opts, httpapi.WithTranscodeService(transcodesvc))
 	// Publish-after-transcode seams (0098): whether a transcode will actually run
@@ -1604,6 +1618,7 @@ func run() error {
 		importOpts = append(importOpts, videoimport.WithYtdlp(ytdlpClient, ""))
 		logger.Info("yt-dlp platform-URL import enabled", "max_height", cfg.YtdlpMaxHeight, "proxy_set", cfg.YtdlpProxy != "")
 	}
+	importOpts = append(importOpts, videoimport.WithJobTrace(jobTrace))
 	importsvc := videoimport.NewService(db.Queries(), videosvc, importMaxBytes, importOpts...)
 	opts = append(opts, httpapi.WithVideoImportService(importsvc))
 

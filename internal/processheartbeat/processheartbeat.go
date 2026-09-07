@@ -104,6 +104,16 @@ func ProcessID(hostname string, pid int) string {
 	return fmt.Sprintf("%s:%d", hostname, pid)
 }
 
+// SelfID is this process's key, computed the same way NewWriter computes it. It
+// exists because the JOB recorder (internal/jobtrace) is built long before the
+// heartbeat writer in cmd/api — services are constructed first — and both must
+// stamp the SAME string, or a run's worker_id would name a process the status
+// page's list does not contain.
+func SelfID() string {
+	host, _ := os.Hostname()
+	return ProcessID(host, os.Getpid())
+}
+
 // Writer keeps one process's row current.
 type Writer struct {
 	repo        Repository

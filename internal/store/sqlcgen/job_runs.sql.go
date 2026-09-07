@@ -79,22 +79,39 @@ func (q *Queries) CountOperationalJobRuns(ctx context.Context, arg CountOperatio
 	return column_1, err
 }
 
-const getJobRunIDBySource = `-- name: GetJobRunIDBySource :one
-SELECT id FROM job_runs WHERE queue = $1 AND source_id = $2
+const getJobRunIdentityBySource = `-- name: GetJobRunIdentityBySource :one
+SELECT id, request_id, correlation_id, trace_id
+FROM job_runs WHERE queue = $1 AND source_id = $2
 `
 
-type GetJobRunIDBySourceParams struct {
+type GetJobRunIdentityBySourceParams struct {
 	Queue    string `json:"queue"`
 	SourceID string `json:"source_id"`
 }
 
-// The projection's id for one queue row, so an audit envelope written by the
-// originating request can link job_id forward to the run it created.
-func (q *Queries) GetJobRunIDBySource(ctx context.Context, arg GetJobRunIDBySourceParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getJobRunIDBySource, arg.Queue, arg.SourceID)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
+type GetJobRunIdentityBySourceRow struct {
+	ID            uuid.UUID `json:"id"`
+	RequestID     string    `json:"request_id"`
+	CorrelationID string    `json:"correlation_id"`
+	TraceID       string    `json:"trace_id"`
+}
+
+// The projection's id and stamped ids for one queue row. Two callers, one row:
+// an audit envelope written by the originating request links job_id forward to
+// the run it created, and a WORKER — whose context is a background one and
+// carries no request — reads the originating ids back OFF the run so its failure
+// log line shares them. That read-back is what makes the chain walkable in both
+// directions from a single grep.
+func (q *Queries) GetJobRunIdentityBySource(ctx context.Context, arg GetJobRunIdentityBySourceParams) (GetJobRunIdentityBySourceRow, error) {
+	row := q.db.QueryRow(ctx, getJobRunIdentityBySource, arg.Queue, arg.SourceID)
+	var i GetJobRunIdentityBySourceRow
+	err := row.Scan(
+		&i.ID,
+		&i.RequestID,
+		&i.CorrelationID,
+		&i.TraceID,
+	)
+	return i, err
 }
 
 const getOperationalJobRun = `-- name: GetOperationalJobRun :one

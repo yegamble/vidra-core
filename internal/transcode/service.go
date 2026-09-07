@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/jobtrace"
 	"github.com/vidra/vidra-core/internal/lease"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/retry"
@@ -98,6 +99,11 @@ const (
 	// that a full disk is not re-checked in a tight loop, short enough that
 	// freeing space brings the queue back within a few minutes.
 	scratchRetryDelay = 5 * time.Minute
+
+	// QueueName is this queue's name in the operational projection (job_runs.queue),
+	// which is also the source table's name. It is the key every jobtrace stamp
+	// is made under, so the projection and the queue can never drift apart.
+	QueueName = "transcode_jobs"
 )
 
 // Repository is the data access the transcode service needs. *sqlcgen.Queries
@@ -111,6 +117,7 @@ type Repository interface {
 	RenewTranscodeJobLease(ctx context.Context, id uuid.UUID) error
 	FailTranscodeJob(ctx context.Context, arg sqlcgen.FailTranscodeJobParams) error
 	HasLiveTranscodeJob(ctx context.Context, videoID uuid.UUID) (bool, error)
+	GetLiveTranscodeJobID(ctx context.Context, videoID uuid.UUID) (uuid.UUID, error)
 	UpsertStreamingPlaylist(ctx context.Context, arg sqlcgen.UpsertStreamingPlaylistParams) (sqlcgen.StreamingPlaylist, error)
 	MarkStreamingPlaylistFailed(ctx context.Context, videoID uuid.UUID) error
 	GetStreamingPlaylist(ctx context.Context, videoID uuid.UUID) (sqlcgen.StreamingPlaylist, error)
@@ -197,6 +204,12 @@ type Service struct {
 	scratchFn func() (uint64, error)
 	// minFreeScratch is the floor below which no job is claimed.
 	minFreeScratch uint64
+	// trace stamps the operational projection with the request that caused a
+	// job and the process running it, and writes the worker's failure log line.
+	// nil is the pre-A17 behaviour: the job still runs, its run detail just
+	// shows em-dashes where the ids belong. Every method on a nil recorder is a
+	// no-op, so no test or embedder has to wire one.
+	trace *jobtrace.Recorder
 	// bookkeepingTimeout overrides defaultBookkeepingTimeout. Zero means the
 	// default; it exists so tests can shrink the budget to milliseconds instead
 	// of running a ten-second transcode to exercise the boundary.
@@ -274,6 +287,14 @@ func WithConcurrencyFunc(f func() int64) Option {
 // internal/diskspace); minFree is the floor below which the worker claims
 // nothing. A zero minFree falls back to DefaultMinFreeScratchBytes; a nil free
 // leaves admission control off.
+// WithJobTrace wires the operational-projection recorder (A17). Without it the
+// queue behaves exactly as it did; with it, every run this service enqueues
+// carries the originating request's ids, every job it claims names this process
+// as its worker, and every failure and dead-letter writes one greppable line.
+func WithJobTrace(r *jobtrace.Recorder) Option {
+	return func(s *Service) { s.trace = r }
+}
+
 func WithScratchGuard(free func() (uint64, error), minFree uint64) Option {
 	return func(s *Service) {
 		s.scratchFn = free
@@ -322,25 +343,52 @@ func NewService(repo Repository, transcoder Transcoder, opts ...Option) *Service
 // original (progressive Range serving), matching the pre-existing
 // transcoding-disabled behavior.
 func (s *Service) Enqueue(ctx context.Context, videoID uuid.UUID, sourceKey string) error {
-	return s.EnqueueTarget(ctx, videoID, sourceKey, TargetAll)
+	_, err := s.EnqueueTarget(ctx, videoID, sourceKey, TargetAll)
+	return err
 }
 
 // EnqueueTarget queues a full initial transcode or one operator-requested
 // output class. sourceKey must be the video's retained original key; callers
 // never derive it from an HLS/Web Video output, preventing generational quality
 // loss on repeated manual runs.
-func (s *Service) EnqueueTarget(ctx context.Context, videoID uuid.UUID, sourceKey, target string) error {
+// It returns the operational RUN id for the queued job (uuid.Nil when tracing is
+// not wired, or when the run could not be resolved), so the caller's audit
+// envelope can link job_id forward to the work it started.
+func (s *Service) EnqueueTarget(ctx context.Context, videoID uuid.UUID, sourceKey, target string) (uuid.UUID, error) {
 	if !s.Enabled() {
-		return nil
+		return uuid.Nil, nil
 	}
 	if target != TargetAll && target != TargetHLS && target != TargetWebVideo {
-		return errors.New("transcode: invalid target")
+		return uuid.Nil, errors.New("transcode: invalid target")
 	}
-	return s.repo.EnqueueTranscodeJob(ctx, sqlcgen.EnqueueTranscodeJobParams{
+	if err := s.repo.EnqueueTranscodeJob(ctx, sqlcgen.EnqueueTranscodeJobParams{
 		VideoID:       videoID,
 		SourceKey:     sourceKey,
 		TranscodeType: target,
-	})
+	}); err != nil {
+		return uuid.Nil, err
+	}
+	// The insert is ON CONFLICT DO NOTHING (one live job per video), so it
+	// cannot return the row's id without changing that idempotency. A separate
+	// lookup keeps the hot insert exactly as it was and answers for both the
+	// row just created and the live one an idempotent call collided with —
+	// which is the right answer either way: that IS the job this request asked
+	// for. Best effort: a job must never fail to enqueue because its projection
+	// could not be labelled.
+	return s.stampEnqueue(ctx, videoID), nil
+}
+
+// stampEnqueue carries the originating request's ids onto the run the AFTER
+// trigger has just projected, and reports that run's id.
+func (s *Service) stampEnqueue(ctx context.Context, videoID uuid.UUID) uuid.UUID {
+	if s.trace == nil {
+		return uuid.Nil
+	}
+	jobID, err := s.repo.GetLiveTranscodeJobID(ctx, videoID)
+	if err != nil || jobID == uuid.Nil {
+		return uuid.Nil
+	}
+	return s.trace.Enqueued(ctx, QueueName, jobID.String(), jobtrace.ActorFromContext(ctx))
 }
 
 // HasLiveJob reports whether a pending/running transcode job exists for the
@@ -450,8 +498,21 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 		// A transcode routinely outlives one lease, and without renewal the
 		// recovery sweep would hand the same video to a second worker writing
 		// the same output prefix.
+		// The projection learns who owns this run and until when, using the
+		// lease the CLAIM already wrote (now + lease.Duration) rather than a
+		// second copy of the number. Before this, job_runs.worker_id was empty
+		// on every row ever written and the admin jobs table's WORKER column
+		// was a dash.
+		sourceID := row.ID.String()
+		s.trace.Claimed(ctx, QueueName, sourceID, time.Now().UTC().Add(lease.Duration))
 		stopLease := lease.Keep(ctx, lease.DefaultInterval, "transcode_job", func(c context.Context) error {
-			return s.repo.RenewTranscodeJobLease(c, row.ID)
+			if err := s.repo.RenewTranscodeJobLease(c, row.ID); err != nil {
+				return err
+			}
+			// A renewal IS the worker saying it is alive; the run detail's
+			// Heartbeat field is the place that says so.
+			s.trace.Beat(c, QueueName, sourceID, time.Now().UTC().Add(lease.Duration))
+			return nil
 		})
 		err := s.runTarget(ctx, row)
 		stopLease()
@@ -750,6 +811,16 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueTransco
 	// is decided where the failure is diagnosed, and internal/media cannot import
 	// this package.)
 	if attempts >= maxAttempts || media.IsPermanent(cause) {
+		// THE LINE THE OPERATOR IS TOLD TO GO AND READ. The dead-letter's own
+		// error_detail says "inspect correlated system logs for diagnostic
+		// detail", and before this the worker wrote nothing at all for a failed
+		// job — three real failures across three queues produced zero WARN or
+		// ERROR lines. It carries the run, the originating request and this
+		// process, so one grep walks the whole chain.
+		s.trace.Failed(bookkeeping, jobtrace.Failure{
+			Queue: QueueName, SourceID: row.ID.String(), Resource: row.VideoID.String(),
+			Attempt: attempts, State: jobtrace.StateDeadLettered, Err: cause,
+		})
 		if ferr := s.repo.FailTranscodeJob(bookkeeping, sqlcgen.FailTranscodeJobParams{ID: row.ID, LastError: msg}); ferr != nil {
 			slog.ErrorContext(ctx, "transcode: job could not be dead-lettered; the row stays 'running' until the lease sweep",
 				"job_id", row.ID, "video_id", row.VideoID, "error", ferr.Error())
@@ -772,6 +843,10 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueTransco
 		}
 		return
 	}
+	s.trace.Failed(bookkeeping, jobtrace.Failure{
+		Queue: QueueName, SourceID: row.ID.String(), Resource: row.VideoID.String(),
+		Attempt: attempts, State: jobtrace.StateRetryScheduled, Err: cause,
+	})
 	if rerr := s.repo.RescheduleTranscodeJob(bookkeeping, sqlcgen.RescheduleTranscodeJobParams{
 		ID:            row.ID,
 		NextAttemptAt: time.Now().UTC().Add(backoff(attempts)),

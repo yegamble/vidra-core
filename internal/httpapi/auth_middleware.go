@@ -11,6 +11,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/jobtrace"
 )
 
 // Echo context keys for the authenticated principal. Unexported so only this
@@ -66,6 +67,12 @@ func (s *Server) requireAuth(next echo.HandlerFunc) echo.HandlerFunc {
 		// of it, so a role change reaches a session already in flight.
 		c.Set(ctxKeyRole, principal.Role)
 		c.Set(ctxKeySessionID, claims.SessionID)
+		// And onto the REQUEST context, beside the correlation ids, so a job
+		// enqueued three service layers below this one records who asked for it
+		// (A17). The echo-context key above cannot travel there: services take a
+		// context.Context, not an echo.Context, which is why every enqueue path
+		// in the codebase had a nil actor on its operational run.
+		bindActor(c, principal.UserID)
 		if claims.ExpiresAt != nil {
 			c.Set(ctxKeyTokenExpiresAt, claims.ExpiresAt.Time)
 		}
@@ -119,6 +126,7 @@ func (s *Server) optionalAuth(next echo.HandlerFunc) echo.HandlerFunc {
 					if principal, err := s.authsvc.AuthenticateAccessToken(c.Request().Context(), claims); err == nil {
 						c.Set(ctxKeyUserID, principal.UserID)
 						c.Set(ctxKeyRole, principal.Role)
+						bindActor(c, principal.UserID)
 					}
 				}
 			}
@@ -183,4 +191,14 @@ func sessionIDFromContext(c echo.Context) string {
 func tokenExpiryFromContext(c echo.Context) (time.Time, bool) {
 	expires, ok := c.Get(ctxKeyTokenExpiresAt).(time.Time)
 	return expires, ok
+}
+
+// bindActor puts the authenticated principal on the REQUEST context so
+// instrumentation below the HTTP layer — today the operational job projection —
+// can attribute work to the person who asked for it. It rewrites the request on
+// the echo context, which is the only way a value set in middleware reaches a
+// service that takes a plain context.Context.
+func bindActor(c echo.Context, id uuid.UUID) {
+	req := c.Request()
+	c.SetRequest(req.WithContext(jobtrace.ContextWithActor(req.Context(), id)))
 }
