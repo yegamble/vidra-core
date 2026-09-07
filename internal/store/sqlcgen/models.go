@@ -953,6 +953,7 @@ type UserMfa struct {
 	TotpSecretSealed string    `json:"totp_secret_sealed"`
 	Enabled          bool      `json:"enabled"`
 	CreatedAt        time.Time `json:"created_at"`
+	LastTotpStep     *int64    `json:"last_totp_step"`
 }
 
 type UserPlayerSetting struct {

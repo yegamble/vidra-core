@@ -11,6 +11,59 @@ import (
 	"github.com/google/uuid"
 )
 
+const burnPendingTOTPStep = `-- name: BurnPendingTOTPStep :execrows
+UPDATE user_mfa
+SET last_totp_step = $1::bigint
+WHERE user_id = $2
+  AND (last_totp_step IS NULL OR last_totp_step < $1::bigint)
+`
+
+type BurnPendingTOTPStepParams struct {
+	Step   int64     `json:"step"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+// The enrollment-verification counterpart of BurnTOTPStep: the row is still
+// pending (enabled=FALSE) at the moment the first code is checked, so the
+// enabled guard above would never match. Confirming an enrollment burns the
+// code it was confirmed with, so the code that turned two-factor on cannot
+// then be spent again on a login challenge.
+func (q *Queries) BurnPendingTOTPStep(ctx context.Context, arg BurnPendingTOTPStepParams) (int64, error) {
+	result, err := q.db.Exec(ctx, burnPendingTOTPStep, arg.Step, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const burnTOTPStep = `-- name: BurnTOTPStep :execrows
+UPDATE user_mfa
+SET last_totp_step = $1::bigint
+WHERE user_id = $2
+  AND enabled
+  AND (last_totp_step IS NULL OR last_totp_step < $1::bigint)
+`
+
+type BurnTOTPStepParams struct {
+	Step   int64     `json:"step"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+// Records the RFC 6238 time step of an accepted TOTP code and, by the same
+// statement, refuses a replay: the UPDATE matches only when the presented step
+// is strictly NEWER than the last accepted one, so a second use of the same
+// code (or of an older ±1-skew code) touches 0 rows and the caller treats it
+// exactly like a wrong code. Doing the check and the write in one statement is
+// what makes it safe under concurrency — two simultaneous replays cannot both
+// read "not yet used" and then both write.
+func (q *Queries) BurnTOTPStep(ctx context.Context, arg BurnTOTPStepParams) (int64, error) {
+	result, err := q.db.Exec(ctx, burnTOTPStep, arg.Step, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countUnusedRecoveryCodes = `-- name: CountUnusedRecoveryCodes :one
 SELECT count(*)
 FROM mfa_recovery_codes
@@ -83,7 +136,7 @@ func (q *Queries) EnableUserMFA(ctx context.Context, userID uuid.UUID) (int64, e
 }
 
 const getUserMFA = `-- name: GetUserMFA :one
-SELECT user_id, totp_secret_sealed, enabled, created_at
+SELECT user_id, totp_secret_sealed, enabled, created_at, last_totp_step
 FROM user_mfa
 WHERE user_id = $1
 `
@@ -96,6 +149,7 @@ func (q *Queries) GetUserMFA(ctx context.Context, userID uuid.UUID) (UserMfa, er
 		&i.TotpSecretSealed,
 		&i.Enabled,
 		&i.CreatedAt,
+		&i.LastTotpStep,
 	)
 	return i, err
 }
@@ -105,9 +159,13 @@ INSERT INTO user_mfa (user_id, totp_secret_sealed, enabled)
 VALUES ($1, $2, FALSE)
 ON CONFLICT (user_id) DO UPDATE
 SET totp_secret_sealed = EXCLUDED.totp_secret_sealed,
-    created_at         = now()
+    created_at         = now(),
+    -- A restarted enrollment carries a NEW secret, so the burn high-water mark
+    -- (0134) is about codes that can never be presented again; keeping it would
+    -- only refuse the first code of the new secret inside the same 30s step.
+    last_totp_step     = NULL
 WHERE NOT user_mfa.enabled
-RETURNING user_id, totp_secret_sealed, enabled, created_at
+RETURNING user_id, totp_secret_sealed, enabled, created_at, last_totp_step
 `
 
 type UpsertUserMFAParams struct {
@@ -127,6 +185,7 @@ func (q *Queries) UpsertUserMFA(ctx context.Context, arg UpsertUserMFAParams) (U
 		&i.TotpSecretSealed,
 		&i.Enabled,
 		&i.CreatedAt,
+		&i.LastTotpStep,
 	)
 	return i, err
 }

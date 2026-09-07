@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"strings"
@@ -57,6 +58,13 @@ type MFARepository interface {
 	DeleteRecoveryCodes(ctx context.Context, userID uuid.UUID) error
 	UseRecoveryCode(ctx context.Context, arg sqlcgen.UseRecoveryCodeParams) (int64, error)
 	CountUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID) (int64, error)
+	// BurnTOTPStep records the time step of an accepted code on an ENABLED
+	// row and returns 0 rows when that step is not newer than the last one
+	// accepted — the single-use guarantee (0134).
+	BurnTOTPStep(ctx context.Context, arg sqlcgen.BurnTOTPStepParams) (int64, error)
+	// BurnPendingTOTPStep is the same write for a row still pending
+	// (enabled=FALSE), used when an enrollment is confirmed.
+	BurnPendingTOTPStep(ctx context.Context, arg sqlcgen.BurnPendingTOTPStepParams) (int64, error)
 }
 
 // mfaTokenTTL is the lifetime of the single-purpose mfa_token issued by a
@@ -173,7 +181,19 @@ func (s *Service) VerifyTOTPEnrollment(ctx context.Context, userID uuid.UUID, co
 	if err != nil {
 		return nil, err
 	}
-	if !s.validTOTPCode(code, secret) {
+	step, ok := s.matchTOTPStep(code, secret)
+	if !ok {
+		return nil, ErrInvalidMFACode
+	}
+	// Burn the confirming code BEFORE enabling: the code that switched
+	// two-factor on must not then be spendable on a login challenge, and doing
+	// it first means a burn that loses its race cannot leave MFA enabled by a
+	// code it also rejected.
+	burned, err := s.mfaRepo.BurnPendingTOTPStep(ctx, sqlcgen.BurnPendingTOTPStepParams{UserID: userID, Step: step})
+	if err != nil {
+		return nil, err
+	}
+	if burned == 0 {
 		return nil, ErrInvalidMFACode
 	}
 	n, err := s.mfaRepo.EnableUserMFA(ctx, userID)
@@ -301,7 +321,20 @@ func (s *Service) CompleteMFAChallenge(ctx context.Context, mfaToken, code, user
 		if err != nil {
 			return sqlcgen.User{}, Tokens{}, "", err
 		}
-		if !s.validTOTPCode(code, secret) {
+		step, ok := s.matchTOTPStep(code, secret)
+		if !ok {
+			return sqlcgen.User{}, Tokens{}, "", ErrInvalidMFACode
+		}
+		// Single-use (0134): the same statement that records the accepted step
+		// refuses one that is not newer, so a replayed code — the code itself,
+		// or an older one still inside the ±1 skew — is indistinguishable from
+		// a wrong code, right down to the status the caller sees and the
+		// challenge limiter's count.
+		burned, err := s.mfaRepo.BurnTOTPStep(ctx, sqlcgen.BurnTOTPStepParams{UserID: userID, Step: step})
+		if err != nil {
+			return sqlcgen.User{}, Tokens{}, "", err
+		}
+		if burned == 0 {
 			return sqlcgen.User{}, Tokens{}, "", ErrInvalidMFACode
 		}
 	} else {
@@ -336,11 +369,40 @@ func (s *Service) mfaEnabled(ctx context.Context, userID uuid.UUID) bool {
 	return err == nil && row.Enabled
 }
 
-// validTOTPCode checks an RFC 6238 code against the base32 secret at the
-// service clock, allowing ±1 period of skew.
+// matchTOTPStep checks an RFC 6238 code against the base32 secret at the
+// service clock, allowing ±1 period of skew, and reports WHICH time step it
+// matched. The step is what makes a code burnable (0134): "this code was
+// accepted" is only actionable if the server can say which 30-second window it
+// belonged to. Candidates are tried newest-first so a code that is valid at two
+// steps (it cannot be, but the loop must not depend on that) burns the later.
+//
+// The comparison is constant-time — the presented value is a credential, and
+// the house rule for credential comparison is subtle.ConstantTimeCompare.
+func (s *Service) matchTOTPStep(code, secret string) (int64, bool) {
+	code = strings.TrimSpace(code)
+	period := int64(totpValidateOpts.Period)
+	if period <= 0 {
+		return 0, false
+	}
+	base := s.now().Unix() / period
+	for _, step := range []int64{base + 1, base, base - 1} {
+		want, err := totp.GenerateCodeCustom(secret, time.Unix(step*period, 0), totpValidateOpts)
+		if err != nil {
+			return 0, false
+		}
+		if subtle.ConstantTimeCompare([]byte(want), []byte(code)) == 1 {
+			return step, true
+		}
+	}
+	return 0, false
+}
+
+// validTOTPCode reports whether the code verifies at all, ignoring replay. It
+// is the ±1-skew arithmetic and nothing else; every caller that ACCEPTS a code
+// must also burn its step.
 func (s *Service) validTOTPCode(code, secret string) bool {
-	ok, err := totp.ValidateCustom(strings.TrimSpace(code), secret, s.now(), totpValidateOpts)
-	return err == nil && ok
+	_, ok := s.matchTOTPStep(code, secret)
+	return ok
 }
 
 // looksLikeTOTPCode distinguishes a 6-digit TOTP code from a recovery code
