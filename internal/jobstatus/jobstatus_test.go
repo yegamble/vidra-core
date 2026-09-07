@@ -315,6 +315,53 @@ func TestRedactDetailIsPIISafeBoundedAndUTF8Valid(t *testing.T) {
 	}
 }
 
+// The stated invariant in this package's doc comment is that a failure carries
+// "never the inbox URL, source URL, storage key, or any argument". The first two
+// are true because RedactDetail strips URL schemes; the third was not. A real
+// transcode failure reads `media: ffprobe "web-videos/<uuid>.mp4" failed`, and
+// A17 recorded that the same text now also reaches the WORKER LOG through
+// jobtrace — a log aggregator is a wider audience than an admin-only page.
+func TestRedactDetailStripsBareStorageKeys(t *testing.T) {
+	vid := "0a0991c0-8656-4fb2-9ff2-ea6b2f1d78a4"
+	cases := []struct {
+		name   string
+		detail string
+		gone   string
+	}{
+		{"original", `media: ffprobe "web-videos/` + vid + `.mp4" failed: exit status 1`, "web-videos/" + vid},
+		{"generation", `open web-videos/` + vid + `.r3.mp4: no such file`, "web-videos/" + vid + ".r3.mp4"},
+		{"nested", "hls/" + vid + "/1080p/seg-00001.ts not found", "hls/" + vid},
+		{"thumbnail", "put thumbnails/" + vid + ".jpg: access denied", "thumbnails/" + vid + ".jpg"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := RedactDetail(tc.detail)
+			if strings.Contains(got, tc.gone) {
+				t.Fatalf("storage key survived redaction: %q", got)
+			}
+			if !strings.Contains(got, "[redacted-key]") {
+				t.Fatalf("no redaction marker in %q", got)
+			}
+		})
+	}
+}
+
+// The redaction must not eat the words an operator reads the failure FOR. A
+// slash is not evidence of a storage key: media types, protocol versions and
+// prose all carry one, and every object key in this codebase carries the
+// resource UUID (internal/media/keys.go), which is what tells them apart.
+func TestRedactDetailKeepsOrdinarySlashesAndBareIDs(t *testing.T) {
+	detail := "unexpected content-type application/json from HTTP/1.1 upstream; " +
+		"video 0a0991c0-8656-4fb2-9ff2-ea6b2f1d78a4 attempt 3/5 n/a"
+	got := RedactDetail(detail)
+	for _, want := range []string{"application/json", "HTTP/1.1", "3/5", "n/a",
+		"0a0991c0-8656-4fb2-9ff2-ea6b2f1d78a4"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("redaction removed %q from %q", want, got)
+		}
+	}
+}
+
 func TestEventCursorStaysDecimalString(t *testing.T) {
 	e := eventFromRow(sqlcgen.JobEvent{Cursor: int64(^uint64(0) >> 1)})
 	if e.Cursor != "9223372036854775807" {

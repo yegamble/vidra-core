@@ -109,6 +109,45 @@ func TestAuditContainsNoSensitiveKeys(t *testing.T) {
 	}
 }
 
+// AGENTS.md rule 6 is "never log tokens, passwords, EMAIL ADDRESSES, message
+// bodies, or report reasons", and TestNoSensitiveLogKeys is the mechanical half
+// of it — but the denylist it consulted held only credentials plus subject_id,
+// so nothing stopped the next `"email", user.Email` from compiling.
+//
+// The two lists have different jobs and this pins both: a SECRET must not appear
+// in a log, a response or an account archive, while a direct IDENTIFIER is
+// exactly what an account export is for and is only ever wrong as a log key.
+// Conflating them broke the archive assertion the moment it was tried.
+func TestIsSensitiveLogKeyCoversDirectIdentifiersNotOnlyCredentials(t *testing.T) {
+	for _, k := range []string{
+		"email", "email_address", "EMAIL",
+		"ip", "ip_address", "client_ip", "remote_addr",
+		"session_id", "viewer_digest",
+	} {
+		if !IsSensitiveLogKey(k) {
+			t.Errorf("%q must never be a structured-log key", k)
+		}
+		if k != "EMAIL" && IsSensitiveKey(k) {
+			t.Errorf("%q is identifying, not secret — flagging it as a secret would "+
+				"have to be weakened where an account archive carries it", k)
+		}
+	}
+	// Every secret stays a log key offence too.
+	for _, k := range []string{"password", "refresh_token", "smtp_password", "subject_id"} {
+		if !IsSensitiveLogKey(k) {
+			t.Errorf("%q must never be a structured-log key", k)
+		}
+	}
+	// Bounded, non-identifying request metadata must stay loggable — these are
+	// the fields the request logger and the audit envelope are built from.
+	for _, k := range []string{"actor_id", "user_id", "video_id", "resource_id",
+		"request_id", "correlation_id", "trace_id", "worker_id"} {
+		if IsSensitiveLogKey(k) {
+			t.Errorf("%q must stay loggable", k)
+		}
+	}
+}
+
 func TestIsSensitiveKey(t *testing.T) {
 	for _, k := range []string{"password", "Token", "REFRESH_TOKEN", "authorization", "secret", "private_key", "smtp_password", "ipfs_cluster_token", "ipfs_private_cluster_token", "subject_id"} {
 		if !IsSensitiveKey(k) {

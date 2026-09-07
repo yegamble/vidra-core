@@ -233,10 +233,48 @@ var sensitiveKeys = map[string]bool{
 	"subject_id": true,
 }
 
-// IsSensitiveKey reports whether a structured-log key is on the denylist
-// (case-insensitive). It is the canonical check callers and tests use to keep
-// secrets out of logs and audit events.
+// IsSensitiveKey reports whether a key names a SECRET (case-insensitive). It is
+// the canonical check callers and tests use to keep credentials out of logs,
+// audit events, response bodies and account archives alike — which is why it
+// stops at secrets: an account export is supposed to contain the account's own
+// email address, and a check that conflated "secret" with "identifying" would
+// have to be weakened at that call site to stay usable.
 func IsSensitiveKey(key string) bool { return sensitiveKeys[strings.ToLower(key)] }
+
+// identifierLogKeys names values that identify a PERSON rather than authorize
+// one. They are legitimate in a database column and in a body the account owner
+// asked for; they are not legitimate as a structured-log key, because a log is
+// fanned out to an aggregator with a wider audience and a longer memory than the
+// column ever had. AGENTS.md rule 6 has always said so — "never log tokens,
+// passwords, EMAIL ADDRESSES, message bodies, or report reasons" — and until
+// this list existed the mechanical guard enforced only the credential half.
+//
+// user_id/actor_id are deliberately absent: an opaque account UUID is the
+// bounded identifier the audit envelope and every operator surface are built on,
+// and denying it would empty the audit trail rather than protect it.
+var identifierLogKeys = map[string]bool{
+	"email":         true,
+	"email_address": true,
+	"ip":            true,
+	"ip_address":    true,
+	"client_ip":     true,
+	"remote_addr":   true,
+	// A session id is a bearer-adjacent handle to a live session.
+	"session_id": true,
+	// The QoE viewer pseudonym (internal/qoe/digest.go) is keyed and day-scoped
+	// precisely so it cannot follow a viewer across days; logging it beside any
+	// other request field would re-link exactly what the scoping separates —
+	// the same argument subject_id is on the secret list for.
+	"viewer_digest": true,
+}
+
+// IsSensitiveLogKey reports whether a key must never appear as a structured-log
+// key: every secret, plus the direct identifiers above. TestNoSensitiveLogKeys
+// enforces it across the module.
+func IsSensitiveLogKey(key string) bool {
+	k := strings.ToLower(key)
+	return sensitiveKeys[k] || identifierLogKeys[k]
+}
 
 // AuditEvent is a typed, security-sensitive event, emitted distinct from request
 // logs (marked audit=true). It must never carry secrets or unnecessary PII:

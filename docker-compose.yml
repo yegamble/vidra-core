@@ -374,6 +374,18 @@ x-api-env: &api-env
   YTDLP_IMPORT_ENABLED: ${YTDLP_IMPORT_ENABLED:-false}
   YTDLP_PATH: ${YTDLP_PATH:-yt-dlp}
   YTDLP_TIMEOUT: ${YTDLP_TIMEOUT:-15m}
+  # URL-import download budgets (core#189), PASS-THROUGHS for the reason spelled
+  # out at FEATURE_LIVE_ENABLED above: a `${VAR:-x}` fallback is an OVERRIDE, not
+  # a default, and these two have nothing to gain from being pinned here — the Go
+  # defaults (idle 60s, total 6h) stay the single place they are written.
+  #
+  # Two questions one deadline used to answer badly: IDLE is "the source went
+  # quiet" and fires only when NO bytes arrive for that long, while the TOTAL
+  # budget bounds how long one import may hold a worker slot and does not police
+  # speed. 0 on the idle timeout means the built-in default (the stall guard
+  # cannot be turned off); 0 on the total means no cap; neither may be negative.
+  IMPORT_FETCH_IDLE_TIMEOUT:
+  IMPORT_FETCH_TIMEOUT:
   YTDLP_MAX_HEIGHT: ${YTDLP_MAX_HEIGHT:-1080}
   # Recommended in production: route the extractor through an egress proxy that
   # blocks internal ranges (e.g. YTDLP_PROXY=http://ytdlp-egress:3128). Empty by
@@ -394,6 +406,11 @@ x-api-env: &api-env
   # Minimum spacing between manual POST .../sync-now triggers for one channel
   # (<=0 disables the throttle entirely).
   CHANNEL_SYNC_COOLDOWN: ${CHANNEL_SYNC_COOLDOWN:-1m}
+  # Consecutive-failure backoff ceiling (core#189): a failing sync is retried at
+  # interval x 2^(n-1), capped here, and reset by the first success — so a source
+  # that is permanently gone is not re-listed at the plain interval forever.
+  # Pass-through, like the import budgets above; the Go default is 24h.
+  CHANNEL_SYNC_BACKOFF_MAX:
   # vidra-search integration. EMPTY DISABLES THE WHOLE INTEGRATION (suggestions
   # go empty, search/recommendations fall back to local SQL, no outbox or
   # reconcile worker runs) — deliberately safe degradation.
