@@ -207,6 +207,87 @@ func TestJobEventAndChildRunIdentityInheritance(t *testing.T) {
 
 // onHost keeps only this test's rows: the lab database is shared with whatever
 // else has run against it.
+// TestStampJobRunCorrelationPrecedence pins the three-step precedence the
+// enqueue stamp applies: the caller's own ids, then the PARENT's, then whatever
+// the row already had. The middle step is what makes an upload finalize -> a
+// transcode a single chain: the finalize worker's context carries no request,
+// but the run it is executing does.
+func TestStampJobRunCorrelationPrecedence(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	tag := uuid.NewString()
+	defer func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM job_runs WHERE source_id LIKE 'st-%'`) }()
+
+	var parentID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO job_runs (type, queue, source_id, state, request_id, correlation_id)
+		 VALUES ('upload_finalize', 'upload_finalize_jobs', $1, 'running', 'req-parent', 'corr-parent')
+		 RETURNING id`, "st-parent-"+tag).Scan(&parentID); err != nil {
+		t.Fatalf("seed parent: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO job_runs (type, queue, source_id, state) VALUES ('video_transcode', 'transcode_jobs', $1, 'queued')`,
+		"st-child-"+tag); err != nil {
+		t.Fatalf("seed child: %v", err)
+	}
+
+	// No caller ids, but a parent: the child adopts the parent's.
+	if _, err := q.StampJobRunCorrelation(ctx, sqlcgen.StampJobRunCorrelationParams{
+		Queue: "transcode_jobs", SourceID: "st-child-" + tag,
+		ParentJobID: pgtype.UUID{Bytes: parentID, Valid: true},
+	}); err != nil {
+		t.Fatalf("stamp: %v", err)
+	}
+	var req, corr string
+	if err := st.Pool.QueryRow(ctx,
+		`SELECT request_id, correlation_id FROM job_runs WHERE queue='transcode_jobs' AND source_id=$1`,
+		"st-child-"+tag).Scan(&req, &corr); err != nil {
+		t.Fatalf("read child: %v", err)
+	}
+	if req != "req-parent" || corr != "corr-parent" {
+		t.Fatalf("child = %q/%q, want the parent's ids", req, corr)
+	}
+
+	// A later, id-less stamp must never WIPE what is there.
+	if _, err := q.StampJobRunCorrelation(ctx, sqlcgen.StampJobRunCorrelationParams{
+		Queue: "transcode_jobs", SourceID: "st-child-" + tag,
+	}); err != nil {
+		t.Fatalf("second stamp: %v", err)
+	}
+	if err := st.Pool.QueryRow(ctx,
+		`SELECT request_id FROM job_runs WHERE queue='transcode_jobs' AND source_id=$1`,
+		"st-child-"+tag).Scan(&req); err != nil {
+		t.Fatalf("re-read child: %v", err)
+	}
+	if req != "req-parent" {
+		t.Fatalf("a second, id-less stamp wiped the request id (now %q)", req)
+	}
+
+	// The CALLER's own ids win over the parent's.
+	if _, err := q.StampJobRunCorrelation(ctx, sqlcgen.StampJobRunCorrelationParams{
+		Queue: "transcode_jobs", SourceID: "st-child-" + tag,
+		RequestID: "req-caller", CorrelationID: "corr-caller",
+		ParentJobID: pgtype.UUID{Bytes: parentID, Valid: true},
+	}); err != nil {
+		t.Fatalf("third stamp: %v", err)
+	}
+	if err := st.Pool.QueryRow(ctx,
+		`SELECT request_id FROM job_runs WHERE queue='transcode_jobs' AND source_id=$1`,
+		"st-child-"+tag).Scan(&req); err != nil {
+		t.Fatalf("final read: %v", err)
+	}
+	if req != "req-caller" {
+		t.Fatalf("request_id = %q, want the caller's own id to win", req)
+	}
+}
+
 func onHost(rows []sqlcgen.ProcessHeartbeat, host string) []sqlcgen.ProcessHeartbeat {
 	var out []sqlcgen.ProcessHeartbeat
 	for _, r := range rows {

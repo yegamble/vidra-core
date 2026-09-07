@@ -144,32 +144,53 @@ WHERE p.id IN (
 -- BEFORE INSERT trigger and need no help.
 
 -- name: StampJobRunCorrelation :one
--- Called by an enqueue path with the originating request's ids. Empty strings
--- are written as empty strings: a job enqueued by a scheduler genuinely has no
--- request behind it, and inventing one would be worse than an honest blank.
-WITH run AS (
+-- Called by an enqueue path with the originating request's ids.
+--
+-- PRECEDENCE, and each step earns its place: the caller's own ids first; then
+-- the PARENT's, when this enqueue happened inside another job (an upload
+-- finalize spawning a transcode — that worker's context carries no request, but
+-- the run it is executing does, and the chain would break here otherwise); then
+-- whatever the row already had, so a second, id-less call never WIPES a stamp.
+-- The 0133 BEFORE INSERT trigger cannot do this job: it runs when the
+-- projection trigger inserts the row, which is before any Go statement can name
+-- the parent.
+--
+-- A job enqueued by a scheduler with no parent genuinely has no request behind
+-- it and keeps an honest blank; inventing one would be worse.
+WITH parent AS (
+    SELECT p.request_id, p.correlation_id, p.trace_id, p.actor_id, p.pipeline_run_id
+    FROM job_runs p WHERE p.id = sqlc.narg('parent_job_id')
+), run AS (
     UPDATE job_runs
-       SET request_id     = sqlc.arg('request_id'),
-           correlation_id = sqlc.arg('correlation_id'),
-           trace_id       = sqlc.arg('trace_id'),
+       SET request_id     = COALESCE(NULLIF(sqlc.arg('request_id')::text, ''),
+                                     (SELECT NULLIF(parent.request_id, '') FROM parent),
+                                     job_runs.request_id),
+           correlation_id = COALESCE(NULLIF(sqlc.arg('correlation_id')::text, ''),
+                                     (SELECT NULLIF(parent.correlation_id, '') FROM parent),
+                                     job_runs.correlation_id),
+           trace_id       = COALESCE(NULLIF(sqlc.arg('trace_id')::text, ''),
+                                     (SELECT NULLIF(parent.trace_id, '') FROM parent),
+                                     job_runs.trace_id),
            -- COALESCE, never overwrite: the projection may already have derived
            -- the actor from the queue row itself (account_exports, peertube).
-           actor_id       = COALESCE(job_runs.actor_id, sqlc.narg('actor_id')),
+           actor_id       = COALESCE(job_runs.actor_id, sqlc.narg('actor_id'),
+                                     (SELECT parent.actor_id FROM parent)),
            parent_job_id  = COALESCE(job_runs.parent_job_id, sqlc.narg('parent_job_id')),
+           pipeline_run_id = COALESCE(job_runs.pipeline_run_id, (SELECT parent.pipeline_run_id FROM parent)),
            updated_at     = updated_at
-     WHERE queue = sqlc.arg('queue') AND source_id = sqlc.arg('source_id')
-     RETURNING id
+     WHERE job_runs.queue = sqlc.arg('queue') AND job_runs.source_id = sqlc.arg('source_id')
+     RETURNING job_runs.id, job_runs.request_id, job_runs.correlation_id, job_runs.trace_id
 ), backfill AS (
     UPDATE job_events e
-       SET request_id     = sqlc.arg('request_id'),
-           correlation_id = sqlc.arg('correlation_id'),
-           trace_id       = sqlc.arg('trace_id')
+       SET request_id     = run.request_id,
+           correlation_id = run.correlation_id,
+           trace_id       = run.trace_id
       FROM run
      WHERE e.job_id = run.id
        AND e.request_id = '' AND e.correlation_id = '' AND e.trace_id = ''
     RETURNING e.cursor
 )
-SELECT id FROM run;
+SELECT run.id FROM run;
 
 -- name: StampJobRunWorker :exec
 -- Called by a worker the moment it claims a job. lease_expires_at is the queue

@@ -1556,6 +1556,7 @@ func run() error {
 	// The request now validates and enqueues; this queue does the work.
 	uploadfinalizesvc := uploadfinalize.NewService(db.Queries(), uploadsvc, videosvc,
 		uploadfinalize.WithLogger(logger),
+		uploadfinalize.WithJobTrace(jobTrace),
 		// A replace-purpose session has no Process to fire its transcode enqueue,
 		// so the same enqueue-or-invalidate decision the HTTP layer makes for the
 		// direct multipart shape (orchestrateReplaceTranscode) is wired here.
