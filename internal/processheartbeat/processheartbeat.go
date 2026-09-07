@@ -249,6 +249,13 @@ func (w *Writer) Stop(ctx context.Context) error {
 // age out through the forget window instead. A pid that has been REUSED by an
 // unrelated program reads as alive and the row survives one more window, which
 // is the same answer the page gives today and errs toward keeping evidence.
+//
+// AND IT REAPS ITS OWN ROLE ONLY. A starting api is the replacement for this
+// host's previous api and may speak for it; it is NOT the replacement for a
+// worker, and reaping a dead worker's row would delete the very fault the
+// fleet exists to report — an operator restarting the api after a worker crash
+// would watch the crash disappear from the page. Found in the lab, doing
+// exactly that.
 func (w *Writer) ReapLocal(ctx context.Context) (int, error) {
 	if w == nil {
 		return 0, nil
@@ -259,7 +266,7 @@ func (w *Writer) ReapLocal(ctx context.Context) (int, error) {
 	}
 	var reaped int
 	for _, r := range rows {
-		if r.ProcessID == w.processID || r.Pid <= 0 {
+		if r.ProcessID == w.processID || r.Pid <= 0 || r.Role != w.role {
 			continue
 		}
 		if processAlive(int(r.Pid)) {

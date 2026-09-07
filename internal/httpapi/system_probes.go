@@ -53,7 +53,21 @@ type processFleetReader interface {
 // "not_configured" NEVER degrades the instance: local storage, mail off and no
 // search service are all supported deployments, not faults. "down" does.
 func (s *Server) systemComponents(ctx context.Context) (map[string]componentStatus, bool) {
-	components, healthy := s.componentHealth(ctx)
+	// BOUND the two cheap pings too. They were the only unbounded work on this
+	// page: a refused Redis dial cost it 3.4-5.2s (five dial attempts), and a
+	// Redis that accepts a connection and then stops talking would hang the page
+	// outright — the page an operator opens BECAUSE something is wrong. Three
+	// seconds is the same budget the four probes below get, and a ping that
+	// overruns it is reported as down with the deadline as its reason, which is
+	// the honest answer: a dependency that cannot answer in three seconds is not
+	// serving this instance either.
+	//
+	// Deliberately applied HERE and not inside componentHealth, which /readyz
+	// also calls: that probe runs several times a minute forever and its timeout
+	// belongs to the orchestrator's own deadline, not to this page's.
+	healthCtx, cancelHealth := context.WithTimeout(ctx, systemProbeTimeout)
+	defer cancelHealth()
+	components, healthy := s.componentHealth(healthCtx)
 
 	probes := map[string]func(context.Context) componentStatus{
 		"s3":     s.probeObjectStore,

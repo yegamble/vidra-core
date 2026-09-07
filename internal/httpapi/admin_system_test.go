@@ -713,3 +713,44 @@ func TestSystemStatusSettingsSyncIsFleetWide(t *testing.T) {
 		}
 	})
 }
+
+// The page an operator opens BECAUSE something is wrong must not be the page
+// that hangs. Measured on the shipped build: a refused Redis dial cost this
+// page 3.4-5.2s (five dial attempts), and the two pings were the only unbounded
+// work on it — a Redis that accepts a connection and then stops talking would
+// have held it open indefinitely.
+func TestSystemStatusBoundsThePings(t *testing.T) {
+	srv := authServer(t)
+	srv.lookPath = ffmpegFound
+	blocked := make(chan struct{})
+	t.Cleanup(func() { close(blocked) })
+	srv.rdb = hangingPinger{until: blocked}
+
+	start := time.Now()
+	body := systemStatus(t, srv)
+	elapsed := time.Since(start)
+
+	if elapsed > systemProbeTimeout+3*time.Second {
+		t.Fatalf("the page took %s with one wedged dependency; it must be bounded", elapsed)
+	}
+	c := body.Components["redis"]
+	if c.Status != "down" {
+		t.Fatalf("redis = %+v, want down", c)
+	}
+	if body.Status != "degraded" {
+		t.Errorf("status = %q, want degraded", body.Status)
+	}
+}
+
+// hangingPinger accepts the call and never answers until the test releases it —
+// the "connected, then silent" shape a TCP timeout cannot catch.
+type hangingPinger struct{ until chan struct{} }
+
+func (h hangingPinger) Ping(ctx context.Context) error {
+	select {
+	case <-h.until:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}

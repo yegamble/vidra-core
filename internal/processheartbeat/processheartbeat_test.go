@@ -360,7 +360,7 @@ func TestReapLocalRemovesRowsThisHostNoLongerHas(t *testing.T) {
 	// running (pid 0 is not addressable, so use a very high one).
 	deadPID := int32(4194303)
 	repo.rows[ProcessID(host, int(deadPID))] = sqlcgen.ProcessHeartbeat{
-		ProcessID: ProcessID(host, int(deadPID)), Role: "worker", Hostname: host,
+		ProcessID: ProcessID(host, int(deadPID)), Role: "api", Hostname: host,
 		Pid: deadPID, State: "running", LastSeenAt: now.Add(-time.Minute),
 	}
 	// A row for a DIFFERENT host must never be touched: this process knows
@@ -368,6 +368,14 @@ func TestReapLocalRemovesRowsThisHostNoLongerHas(t *testing.T) {
 	repo.rows["other-host:9"] = sqlcgen.ProcessHeartbeat{
 		ProcessID: "other-host:9", Role: "worker", Hostname: "other-host",
 		Pid: 9, State: "running", LastSeenAt: now.Add(-time.Minute),
+	}
+	// Nor a dead process of ANOTHER ROLE on this host. A starting api is the
+	// replacement for this host's previous api; it is not the replacement for a
+	// crashed worker, and reaping that row would delete the very fault the
+	// fleet exists to report.
+	repo.rows[ProcessID(host, 4194302)] = sqlcgen.ProcessHeartbeat{
+		ProcessID: ProcessID(host, 4194302), Role: "worker", Hostname: host,
+		Pid: 4194302, State: "running", LastSeenAt: now.Add(-time.Minute),
 	}
 
 	w := NewWriter(repo, nil, Config{Role: "api", Hostname: host, PID: self})
@@ -386,6 +394,9 @@ func TestReapLocalRemovesRowsThisHostNoLongerHas(t *testing.T) {
 	}
 	if _, gone := repo.rows["other-host:9"]; !gone {
 		t.Error("a row for another host was reaped; this process cannot know that machine's pids")
+	}
+	if _, gone := repo.rows[ProcessID(host, 4194302)]; !gone {
+		t.Error("a dead WORKER row was reaped by a starting api; that deletes the fault the fleet exists to report")
 	}
 	if _, gone := repo.rows[w.processID]; !gone {
 		t.Error("the reap removed this process's own row")
