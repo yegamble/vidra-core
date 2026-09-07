@@ -73,7 +73,10 @@ func (q *Queries) IsBlockedBetween(ctx context.Context, arg IsBlockedBetweenPara
 }
 
 const listBlockedUsers = `-- name: ListBlockedUsers :many
-SELECT b.blocked_id, u.username, u.display_name, b.created_at
+SELECT b.blocked_id, u.username, u.display_name, b.created_at,
+       ARRAY(
+           SELECT c.handle FROM channels c WHERE c.owner_id = u.id ORDER BY c.handle
+       )::text[] AS channel_handles
 FROM user_blocks b
 JOIN users u ON u.id = b.blocked_id
 WHERE b.blocker_id = $1
@@ -88,13 +91,18 @@ type ListBlockedUsersParams struct {
 }
 
 type ListBlockedUsersRow struct {
-	BlockedID   uuid.UUID `json:"blocked_id"`
-	Username    string    `json:"username"`
-	DisplayName string    `json:"display_name"`
-	CreatedAt   time.Time `json:"created_at"`
+	BlockedID      uuid.UUID `json:"blocked_id"`
+	Username       string    `json:"username"`
+	DisplayName    string    `json:"display_name"`
+	CreatedAt      time.Time `json:"created_at"`
+	ChannelHandles []string  `json:"channel_handles"`
 }
 
-// A user's blocked accounts, newest block first, with the blocked account's identity.
+// A user's blocked accounts, newest block first, with the blocked account's
+// identity and the handles it publishes under. channel_handles mirrors
+// ListMutedAccounts exactly — a block is the mute predicate plus one thing
+// more, so the two lists must never disagree about what to hide; see that
+// query for why the field exists.
 func (q *Queries) ListBlockedUsers(ctx context.Context, arg ListBlockedUsersParams) ([]ListBlockedUsersRow, error) {
 	rows, err := q.db.Query(ctx, listBlockedUsers, arg.BlockerID, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
@@ -109,6 +117,7 @@ func (q *Queries) ListBlockedUsers(ctx context.Context, arg ListBlockedUsersPara
 			&i.Username,
 			&i.DisplayName,
 			&i.CreatedAt,
+			&i.ChannelHandles,
 		); err != nil {
 			return nil, err
 		}

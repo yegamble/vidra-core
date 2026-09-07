@@ -2090,15 +2090,22 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID, sort s
 }
 
 // ListPublicByChannel returns one page of a channel's public, published videos
-// (the anonymous view) with discovery-card data, plus the matching total. When
+// (the public view) with discovery-card data, plus the matching total. When
 // hideSensitive is true, sensitive videos are excluded for the instance-level
 // "hide" policy — that exclusion is now applied IN THE QUERY rather than by
 // skipping rows here, because a Go-side skip under a LIMIT would hand back short
 // pages and a total counting rows the viewer can never see. sort is
 // "published_at" (oldest first) or anything else for newest first.
-func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID, hideSensitive bool, sort string, limit, offset int32) ([]FeedItem, int64, error) {
+//
+// viewerID/viewerAuthed carry WHO is asking, because this list is per-viewer
+// like every other public list: an owner the viewer has muted or blocked drops
+// out of it (A16 ruling). An anonymous caller passes a NULL viewer, which makes
+// both clauses trivially true.
+func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID, viewerID uuid.UUID, viewerAuthed bool, hideSensitive bool, sort string, limit, offset int32) ([]FeedItem, int64, error) {
+	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
 	rows, err := s.repo.ListPublicVideosByChannel(ctx, sqlcgen.ListPublicVideosByChannelParams{
 		ChannelID:     channelID,
+		ViewerID:      viewer,
 		HideSensitive: hideSensitive,
 		Sort:          NormalizeChannelSort(sort),
 		ResultLimit:   limit,
@@ -2108,7 +2115,7 @@ func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID, 
 		return nil, 0, err
 	}
 	total, err := s.repo.CountPublicVideosByChannelVisible(ctx, sqlcgen.CountPublicVideosByChannelVisibleParams{
-		ChannelID: channelID, HideSensitive: hideSensitive,
+		ChannelID: channelID, ViewerID: viewer, HideSensitive: hideSensitive,
 	})
 	if err != nil {
 		return nil, 0, err
