@@ -29,10 +29,34 @@ type liveFakeRepo struct {
 	channels *channelFakeRepo
 	rows     map[uuid.UUID]sqlcgen.CreateLiveStreamRow
 	hashes   map[uuid.UUID]string
+	// mutes/userBlocks mirror the per-viewer predicate the public "Live now"
+	// query applies (A16 ruling). A fake that ignored them would let a green
+	// handler test pass against SQL that hides the stream — the fake-fidelity
+	// lesson four A16 slices paid for.
+	mutes      *muteFakeRepo
+	userBlocks *blockFakeRepo
 }
 
 func newLiveFakeRepo(channels *channelFakeRepo) *liveFakeRepo {
 	return &liveFakeRepo{channels: channels, rows: map[uuid.UUID]sqlcgen.CreateLiveStreamRow{}, hashes: map[uuid.UUID]string{}}
+}
+
+// hiddenFromViewer mirrors the two NOT EXISTS clauses on ListLivePublicStreams /
+// CountLivePublicStreams: an authenticated viewer never sees a stream whose
+// channel owner they have muted or blocked. An anonymous viewer (NULL) sees all.
+func (f *liveFakeRepo) hiddenFromViewer(viewer pgtype.UUID, channelID uuid.UUID) bool {
+	if !viewer.Valid {
+		return false
+	}
+	ch, ok := f.channelByID(channelID)
+	if !ok {
+		return false
+	}
+	v := uuid.UUID(viewer.Bytes)
+	if f.mutes != nil && f.mutes.isMuted(v, ch.OwnerID) {
+		return true
+	}
+	return f.userBlocks != nil && f.userBlocks.isBlocked(v, ch.OwnerID)
 }
 
 func (f *liveFakeRepo) channelByID(id uuid.UUID) (sqlcgen.Channel, bool) {
@@ -90,7 +114,7 @@ func (f *liveFakeRepo) ListLiveStreamsByChannel(_ context.Context, a sqlcgen.Lis
 func (f *liveFakeRepo) ListLivePublicStreams(_ context.Context, a sqlcgen.ListLivePublicStreamsParams) ([]sqlcgen.ListLivePublicStreamsRow, error) {
 	var rows []sqlcgen.CreateLiveStreamRow
 	for _, r := range f.rows {
-		if r.State == "live" && r.Privacy == "public" {
+		if r.State == "live" && r.Privacy == "public" && !f.hiddenFromViewer(a.ViewerID, r.ChannelID) {
 			rows = append(rows, r)
 		}
 	}
@@ -973,7 +997,76 @@ func (f *liveFakeRepo) CountLiveStreamsByChannel(ctx context.Context, channelID 
 	return int64(len(rows)), err
 }
 
-func (f *liveFakeRepo) CountLivePublicStreams(ctx context.Context) (int64, error) {
-	rows, err := f.ListLivePublicStreams(ctx, sqlcgen.ListLivePublicStreamsParams{ResultLimit: 1 << 30})
+func (f *liveFakeRepo) CountLivePublicStreams(ctx context.Context, viewerID pgtype.UUID) (int64, error) {
+	rows, err := f.ListLivePublicStreams(ctx, sqlcgen.ListLivePublicStreamsParams{ViewerID: viewerID, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
+}
+
+// TestListLivePublicStreamsHonoursMutes closes the last public list that took no
+// viewer at all. The A16 mute-scope slice read this out of the code and could
+// not measure it — the lab had no live stream — so `GET /live`, the home "Live
+// now" rail, kept a muted or blocked account's stream on the muter's rail while
+// the feed, search, subscriptions and the channel page had all dropped it.
+//
+// The mute and the block are applied and then LIFTED, with an anonymous control
+// read at the same instant, so a broken fixture cannot pass for a working
+// filter; the total is asserted with the rows because a rail that returned
+// nothing while still promising one would promise a page it cannot serve.
+func TestListLivePublicStreamsHonoursMutes(t *testing.T) {
+	cfg := testConfig()
+	cfg.LiveIngestSecret = "s3cret"
+	srv := videoServerCfg(t, cfg)
+	ada := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	bob := createChannelFor(t, srv, "bob", "bob@example.test", "bobtube")
+	bobID := userIDByName(t, adminUsers(t, srv, "", ada).Users, "bob")
+
+	var out createLiveStreamResponse
+	_ = json.Unmarshal(createLiveStream(srv, "bobtube", `{"title":"Bob Live","privacy":"public"}`, bob).Body.Bytes(), &out)
+	if r := ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"`+out.StreamKey+`"}`, "s3cret"); r.Code != http.StatusOK {
+		t.Fatalf("ingest start = %d", r.Code)
+	}
+
+	rail := func(token string) (int, int64) {
+		t.Helper()
+		rec := getWithAuth(srv, "/api/v1/live", token)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("live rail = %d; body=%s", rec.Code, rec.Body.String())
+		}
+		var body liveStreamPublicListResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		if len(body.LiveStreams) != int(body.Total) {
+			t.Errorf("rail returned %d rows while total says %d", len(body.LiveStreams), body.Total)
+		}
+		return len(body.LiveStreams), body.Total
+	}
+
+	if n, _ := rail(ada); n != 1 {
+		t.Fatalf("before muting, ada's rail = %d, want 1", n)
+	}
+
+	for _, tc := range []struct{ why, path string }{
+		{"mute", "/api/v1/me/mutes/accounts/" + bobID},
+		{"block", "/api/v1/me/blocks/" + bobID},
+	} {
+		if rec := sendJSONAuth(srv, http.MethodPost, tc.path, "", ada); rec.Code != http.StatusNoContent {
+			t.Fatalf("%s = %d; body=%s", tc.why, rec.Code, rec.Body.String())
+		}
+		if n, total := rail(ada); n != 0 || total != 0 {
+			t.Errorf("with a %s, ada's rail = %d/%d, want 0/0", tc.why, n, total)
+		}
+		// The live control: the exclusion is per-viewer, so anonymous and the
+		// streamer themselves are untouched at the same instant.
+		if n, _ := rail(""); n != 1 {
+			t.Errorf("with a %s, the anonymous rail = %d, want 1 (per-viewer)", tc.why, n)
+		}
+		if n, _ := rail(bob); n != 1 {
+			t.Errorf("with a %s, bob's own rail = %d, want 1", tc.why, n)
+		}
+		if rec := sendJSONAuth(srv, http.MethodDelete, tc.path, "", ada); rec.Code != http.StatusNoContent {
+			t.Fatalf("un%s = %d", tc.why, rec.Code)
+		}
+		if n, total := rail(ada); n != 1 || total != 1 {
+			t.Errorf("after lifting the %s, ada's rail = %d/%d, want 1/1", tc.why, n, total)
+		}
+	}
 }
