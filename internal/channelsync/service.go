@@ -469,11 +469,20 @@ func (s *Service) importEntry(ctx context.Context, row sqlcgen.ClaimDueChannelSy
 
 // recordFailure marks a sync failed with a bounded safe message and reschedules
 // it for the next cadence (a transient failure self-heals on a later tick).
+//
+// It also LOGS, because nothing else does: channel_syncs is not projected into
+// job_runs and has no admin surface, so without this line the operator's only
+// window on a failing sync is the owner's own GET /channel-syncs. Per-entry
+// failures already log (importEntry), which left the more severe outcome — the
+// whole pass failing — as the silent one. Only the sync id and the SAFE reason
+// go in: the external URL can carry a credential and the raw extractor error
+// can carry the URL.
 func (s *Service) recordFailure(ctx context.Context, id uuid.UUID, cause error) {
 	msg := cause.Error()
 	if len(msg) > maxSyncErrorLen {
 		msg = msg[:maxSyncErrorLen]
 	}
+	s.logger.Warn("channel sync pass failed", "sync", id, "reason", msg)
 	_ = s.repo.FailChannelSync(ctx, sqlcgen.FailChannelSyncParams{
 		ID:        id,
 		LastError: msg,
