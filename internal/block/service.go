@@ -53,6 +53,10 @@ type BlockedUser struct {
 	Username    string
 	DisplayName string
 	BlockedAt   time.Time
+	// ChannelHandles mirrors mute.MutedAccount.ChannelHandles: the handles this
+	// account publishes under, so the same client-side filter covers both
+	// lists. Empty (never nil) for an account with no channel.
+	ChannelHandles []string
 }
 
 // Block records that blockerID blocks blockedID. Idempotent. A self-block →
@@ -93,10 +97,11 @@ func (s *Service) List(ctx context.Context, blockerID uuid.UUID, limit, offset i
 	out := make([]BlockedUser, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, BlockedUser{
-			UserID:      r.BlockedID,
-			Username:    r.Username,
-			DisplayName: r.DisplayName,
-			BlockedAt:   r.CreatedAt,
+			UserID:         r.BlockedID,
+			Username:       r.Username,
+			DisplayName:    r.DisplayName,
+			BlockedAt:      r.CreatedAt,
+			ChannelHandles: nonNilStrings(r.ChannelHandles),
 		})
 	}
 	return out, total, nil
@@ -107,4 +112,13 @@ func (s *Service) List(ctx context.Context, blockerID uuid.UUID, limit, offset i
 // messaging.Blocker interface.
 func (s *Service) IsBlockedBetween(ctx context.Context, a, b uuid.UUID) (bool, error) {
 	return s.repo.IsBlockedBetween(ctx, sqlcgen.IsBlockedBetweenParams{BlockerID: a, BlockedID: b})
+}
+
+// nonNilStrings normalises a possibly-nil handle slice to an empty one so the
+// HTTP layer marshals `[]` and never `null` — see the twin in internal/mute.
+func nonNilStrings(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
 }

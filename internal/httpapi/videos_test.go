@@ -1370,11 +1370,11 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	}
 	notifRepo := &notifFakeRepo{auth: authRepo, channels: chRepo, videos: repo}
 	plRepo := &playlistFakeRepo{videos: repo, playlists: map[uuid.UUID]sqlcgen.Playlist{}, items: map[uuid.UUID][]uuid.UUID{}}
-	muteRepo := &muteFakeRepo{auth: authRepo}
+	muteRepo := &muteFakeRepo{auth: authRepo, channels: chRepo}
 	repo.mutes = muteRepo
 	// One shared user-blocks fake backs the block service AND the §13
 	// content-hiding mirrors in the video/comment fakes.
-	userBlockRepo := &blockFakeRepo{auth: authRepo}
+	userBlockRepo := &blockFakeRepo{auth: authRepo, channels: chRepo}
 	repo.userBlocks = userBlockRepo
 	// The channel- and account-search fakes apply the same per-viewer
 	// mute/block predicates their SQL does, so they read the same two fakes.

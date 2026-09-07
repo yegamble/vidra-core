@@ -55,6 +55,24 @@ func (f *channelFakeRepo) channelOwnerVisible(ownerID uuid.UUID) bool {
 	return true
 }
 
+// handlesOwnedBy mirrors the ARRAY() subquery the mute and block lists carry:
+// every handle an account publishes under, sorted so the array is stable. The
+// nil receiver is deliberate — harnesses that wire no channel fake read an
+// empty array, which is what the SQL returns for an account with no channel.
+func (f *channelFakeRepo) handlesOwnedBy(ownerID uuid.UUID) []string {
+	out := []string{}
+	if f == nil {
+		return out
+	}
+	for _, ch := range f.byHandle {
+		if ch.OwnerID == ownerID {
+			out = append(out, ch.Handle)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (f *channelFakeRepo) SearchPublicChannels(ctx context.Context, a sqlcgen.SearchPublicChannelsParams) ([]sqlcgen.SearchPublicChannelsRow, error) {
 	q := strings.ToLower(a.Query)
 	var out []sqlcgen.SearchPublicChannelsRow

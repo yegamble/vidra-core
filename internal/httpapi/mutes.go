@@ -16,6 +16,10 @@ type mutedAccountView struct {
 	Username    string    `json:"username"`
 	DisplayName string    `json:"display_name"`
 	MutedAt     time.Time `json:"muted_at"`
+	// ChannelHandles: the handles this account publishes under. No `omitempty`
+	// — the client intersects a set against it, so an account with no channel
+	// must marshal `[]` and never disappear from the shape.
+	ChannelHandles []string `json:"channel_handles"`
 }
 
 // mutedAccountListResponse is the paginated list of accounts the caller has muted.
@@ -79,10 +83,11 @@ func (s *Server) handleListMutedAccounts(c echo.Context) error {
 	views := make([]mutedAccountView, 0, len(items))
 	for _, it := range items {
 		views = append(views, mutedAccountView{
-			UserID:      it.UserID.String(),
-			Username:    it.Username,
-			DisplayName: it.DisplayName,
-			MutedAt:     it.MutedAt,
+			UserID:         it.UserID.String(),
+			Username:       it.Username,
+			DisplayName:    it.DisplayName,
+			MutedAt:        it.MutedAt,
+			ChannelHandles: it.ChannelHandles,
 		})
 	}
 	return c.JSON(http.StatusOK, mutedAccountListResponse{Accounts: views, pageMeta: page.meta(total)})

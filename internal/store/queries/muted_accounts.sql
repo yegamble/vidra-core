@@ -11,8 +11,21 @@ ON CONFLICT (muter_id, muted_id) DO NOTHING;
 DELETE FROM muted_accounts WHERE muter_id = $1 AND muted_id = $2;
 
 -- name: ListMutedAccounts :many
--- A user's muted accounts, newest mute first, with the muted account's identity.
-SELECT m.muted_id, u.username, u.display_name, m.created_at
+-- A user's muted accounts, newest mute first, with the muted account's identity
+-- and the handles it publishes under.
+--
+-- channel_handles exists for ONE caller: the frontend's autosuggest filter
+-- (A16 ruling). Autosuggest is viewer-agnostic by design — vidra-search's index
+-- stores static eligibility and never per-viewer state, which is what makes the
+-- ranked-ids contract visibility-safe — so the client drops a channel
+-- suggestion naming a muted account itself. A suggestion carries only the
+-- handle, so without this the client would need a lookup per suggested handle
+-- per keystroke. The subquery is ordered so the array is stable, and an account
+-- with no channel yields an empty array rather than NULL.
+SELECT m.muted_id, u.username, u.display_name, m.created_at,
+       ARRAY(
+           SELECT c.handle FROM channels c WHERE c.owner_id = u.id ORDER BY c.handle
+       )::text[] AS channel_handles
 FROM muted_accounts m
 JOIN users u ON u.id = m.muted_id
 WHERE m.muter_id = $1
