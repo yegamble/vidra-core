@@ -9130,6 +9130,60 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/watched-word-matches/{id}/resolve:
+    post:
+      operationId: resolveWatchedWordMatch
+      summary: Triage one watched-word match
+      description: >-
+        Marks a flagged item "resolved" (a moderator acted on it) or "dismissed"
+        (a false positive), with an optional note stored on the match row.
+        Restricted to moderators/admins. Idempotent, like resolving a report — a
+        repeat overwrites the outcome and the note and still answers 204. The
+        note never enters the audit ledger, which records the outcome and
+        whether a note was supplied.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveWatchedWordMatchRequest"
+      responses:
+        "204":
+          description: The match was triaged.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not a moderator or admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such flagged item.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/watched-word-matches:
     get:
       operationId: listWatchedWordMatches
@@ -9141,12 +9195,32 @@ paths:
         flagged video's title + owner. Comments are matched on post/edit;
         videos on create/edit (title+description). Restricted to
         moderators/admins. Detection only — nothing is auto-hidden (the upload
-        quarantine pipeline is the hold mechanism for videos). Paginated via
-        ?limit (1–100, default 20)/?offset.
+        quarantine pipeline is the hold mechanism for videos).
+
+
+        Each row carries `matched_text`, the SNAPSHOT of the text as it read
+        when the flag was raised. The live target (`comment_body` /
+        `video_title`) may since have changed, and `target_status` says which —
+        "present" when the live text still contains the term, "edited_away"
+        when it no longer does. `snapshot_backfilled` marks a row whose
+        snapshot was reconstructed from the live text by migration 0132 rather
+        than captured at flag time.
+
+
+        ?status filters the triage state and defaults to `open`; pass `all` for
+        the whole history. Paginated via ?limit (1–100, default 20)/?offset.
       tags: [moderation]
       security:
         - bearerAuth: []
       parameters:
+        - name: status
+          in: query
+          description: >-
+            Triage state to list. Defaults to open — the queue is a work list.
+          schema:
+            type: string
+            enum: [open, resolved, dismissed, all]
+            default: open
         - name: limit
           in: query
           schema:
@@ -18375,14 +18449,31 @@ components:
         the video it is on) or a video (type "video"; comment fields absent,
         video_id/video_title are the flagged video). author_username is the
         comment's author or the video's owner respectively.
-      required: [id, word, type, video_id, video_title, author_username, created_at]
+      required:
+        - id
+        - word
+        - type
+        - video_id
+        - video_title
+        - author_username
+        - created_at
+        - matched_text
+        - match_offset
+        - match_length
+        - snapshot_backfilled
+        - term_active
+        - target_status
+        - status
+        - moderator_note
       properties:
         id:
           type: string
           format: uuid
         word:
           type: string
-          description: The watched term that matched.
+          description: >-
+            The watched term that matched, as it read when the flag was raised.
+            It survives the term being deleted from the list (see term_active).
         type:
           type: string
           enum: [comment, video]
@@ -18393,7 +18484,9 @@ components:
           description: The flagged comment (comment matches only).
         comment_body:
           type: string
-          description: The flagged comment's body (comment matches only).
+          description: >-
+            The flagged comment's LIVE body (comment matches only) — which may
+            no longer contain the term. matched_text is what was flagged.
         video_id:
           type: string
           format: uuid
@@ -18406,6 +18499,56 @@ components:
         created_at:
           type: string
           format: date-time
+        matched_text:
+          type: string
+          description: >-
+            The SNAPSHOT — the comment body, or the video's title and
+            description joined by a newline, as it read at flag time. This is
+            what a moderator reviews; the live target may since have changed.
+        match_offset:
+          type: integer
+          description: >-
+            Where the term begins inside matched_text, counted in RUNES (code
+            points) so a highlight cannot split a multi-byte character. -1 means
+            the term could not be located and the client should fall back to
+            searching matched_text for `word`.
+        match_length:
+          type: integer
+          description: The term's length in runes, 0 when match_offset is -1.
+        snapshot_backfilled:
+          type: boolean
+          description: >-
+            True for a row whose snapshot was reconstructed from the LIVE text
+            by migration 0132 rather than captured at flag time. Such a quote is
+            the body as it reads today and must not be read as evidence of what
+            was flagged.
+        term_active:
+          type: boolean
+          description: >-
+            False once the watched word itself was deleted. The match survives
+            that and keeps its term in `word`.
+        target_status:
+          type: string
+          enum: [present, edited_away]
+          description: >-
+            Whether the LIVE target still contains the term. "edited_away" means
+            the author has since removed it, so the snapshot and the live text
+            differ. A DELETED target is not representable — the match row is
+            removed with its comment or video.
+        status:
+          type: string
+          enum: [open, resolved, dismissed]
+          description: Triage state.
+        moderator_note:
+          type: string
+          description: The triaging moderator's note (empty when none was given).
+        resolved_at:
+          type: string
+          format: date-time
+          description: When the match was triaged (absent while open).
+        resolved_by_username:
+          type: string
+          description: Who triaged it (absent while open).
     WatchedWordMatchListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -18416,6 +18559,22 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/WatchedWordMatch"
+    ResolveWatchedWordMatchRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [resolved, dismissed]
+          description: >-
+            The outcome — "resolved" when a moderator acted on the flagged
+            content, "dismissed" when it was a false positive.
+        note:
+          type: string
+          maxLength: 2000
+          description: >-
+            The moderator's internal note. Stored on the match row and never in
+            the audit ledger.
     CreateWatchedWordRequest:
       type: object
       required: [word]

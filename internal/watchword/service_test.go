@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -19,10 +20,23 @@ type fakeRepo struct {
 	order   []uuid.UUID
 	present map[string]bool // lower(word) -> exists
 	matches []sqlcgen.ListWatchedWordMatchesRow
+	// live maps a target id to its CURRENT text, so the fake can project the
+	// live excerpt and target_status the SQL computes rather than echoing the
+	// snapshot back — the distinction this slice exists to make.
+	live map[uuid.UUID]string
 }
 
 func newFakeRepo() *fakeRepo {
-	return &fakeRepo{words: map[uuid.UUID]sqlcgen.WatchedWord{}, present: map[string]bool{}}
+	return &fakeRepo{words: map[uuid.UUID]sqlcgen.WatchedWord{}, present: map[string]bool{}, live: map[uuid.UUID]string{}}
+}
+
+// wordOf resolves the term a stored match points at, NULL id included (0132:
+// the FK is ON DELETE SET NULL, so a match outlives its word).
+func (f *fakeRepo) wordOf(id pgtype.UUID) string {
+	if !id.Valid {
+		return ""
+	}
+	return f.words[uuid.UUID(id.Bytes)].Word
 }
 
 func (f *fakeRepo) CreateWatchedWord(_ context.Context, a sqlcgen.CreateWatchedWordParams) (sqlcgen.WatchedWord, error) {
@@ -48,6 +62,9 @@ func (f *fakeRepo) ListWatchedWords(_ context.Context, _ sqlcgen.ListWatchedWord
 	return rows, nil
 }
 
+// DeleteWatchedWord removes the term but KEEPS its matches, with term_active
+// false — 0132 relaxed the FK to ON DELETE SET NULL so pruning the term list no
+// longer discards review history.
 func (f *fakeRepo) DeleteWatchedWord(_ context.Context, id uuid.UUID) (int64, error) {
 	w, ok := f.words[id]
 	if !ok {
@@ -55,6 +72,11 @@ func (f *fakeRepo) DeleteWatchedWord(_ context.Context, id uuid.UUID) (int64, er
 	}
 	delete(f.words, id)
 	delete(f.present, strings.ToLower(w.Word))
+	for i := range f.matches {
+		if f.matches[i].Word == w.Word {
+			f.matches[i].TermActive = false
+		}
+	}
 	return 1, nil
 }
 
@@ -71,32 +93,71 @@ func (f *fakeRepo) MatchWatchedWords(_ context.Context, text string) ([]sqlcgen.
 
 func (f *fakeRepo) RecordWatchedWordMatch(_ context.Context, a sqlcgen.RecordWatchedWordMatchParams) error {
 	for _, m := range f.matches {
-		if m.CommentID == a.CommentID && m.Word == f.words[a.WatchedWordID].Word {
-			return nil // idempotent
+		if m.CommentID == a.CommentID && m.Word == f.wordOf(a.WatchedWordID) {
+			return nil // ON CONFLICT DO NOTHING: the original snapshot stands
 		}
 	}
 	f.matches = append(f.matches, sqlcgen.ListWatchedWordMatchesRow{
-		ID: uuid.New(), Word: f.words[a.WatchedWordID].Word, CommentID: a.CommentID, CreatedAt: time.Now(),
+		ID: uuid.New(), Word: a.MatchedTerm, CommentID: a.CommentID, CreatedAt: time.Now(),
+		MatchedText: a.MatchedText, MatchOffset: a.MatchOffset, MatchLength: a.MatchLength,
+		Status: StatusOpen, TermActive: true,
 	})
 	return nil
 }
 
 func (f *fakeRepo) RecordWatchedWordVideoMatch(_ context.Context, a sqlcgen.RecordWatchedWordVideoMatchParams) error {
 	for _, m := range f.matches {
-		if !m.CommentID.Valid && m.VideoID == uuid.UUID(a.VideoID.Bytes) && m.Word == f.words[a.WatchedWordID].Word {
+		if !m.CommentID.Valid && m.VideoID == uuid.UUID(a.VideoID.Bytes) && m.Word == f.wordOf(a.WatchedWordID) {
 			return nil // idempotent (mirrors the partial unique index)
 		}
 	}
 	f.matches = append(f.matches, sqlcgen.ListWatchedWordMatchesRow{
-		ID: uuid.New(), Word: f.words[a.WatchedWordID].Word, VideoID: uuid.UUID(a.VideoID.Bytes), CreatedAt: time.Now(),
+		ID: uuid.New(), Word: a.MatchedTerm, VideoID: uuid.UUID(a.VideoID.Bytes), CreatedAt: time.Now(),
+		MatchedText: a.MatchedText, MatchOffset: a.MatchOffset, MatchLength: a.MatchLength,
+		Status: StatusOpen, TermActive: true,
 	})
 	return nil
 }
 
-func (f *fakeRepo) ListWatchedWordMatches(_ context.Context, _ sqlcgen.ListWatchedWordMatchesParams) ([]sqlcgen.ListWatchedWordMatchesRow, error) {
+func (f *fakeRepo) ResolveWatchedWordMatch(_ context.Context, a sqlcgen.ResolveWatchedWordMatchParams) (int64, error) {
+	for i := range f.matches {
+		if f.matches[i].ID == a.ID {
+			f.matches[i].Status = a.Status
+			f.matches[i].ModeratorNote = a.ModeratorNote
+			f.matches[i].ResolvedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
+
+func (f *fakeRepo) ListWatchedWordMatches(_ context.Context, a sqlcgen.ListWatchedWordMatchesParams) ([]sqlcgen.ListWatchedWordMatchesRow, error) {
 	out := make([]sqlcgen.ListWatchedWordMatchesRow, 0, len(f.matches))
 	for i := len(f.matches) - 1; i >= 0; i-- { // newest first
-		out = append(out, f.matches[i])
+		row := f.matches[i]
+		if a.Status != nil && row.Status != *a.Status {
+			continue
+		}
+		// target_status compares the term against the LIVE text, not the
+		// snapshot: an unknown target keeps its snapshot as the live text so
+		// tests that never register one still read "present".
+		target := row.MatchedText
+		key := row.VideoID
+		if row.CommentID.Valid {
+			key = uuid.UUID(row.CommentID.Bytes)
+		}
+		if live, ok := f.live[key]; ok {
+			target = live
+		}
+		row.TargetStatus = TargetEditedAway
+		if row.Word != "" && strings.Contains(strings.ToLower(target), strings.ToLower(row.Word)) {
+			row.TargetStatus = TargetPresent
+		}
+		if row.CommentID.Valid {
+			body := target
+			row.CommentBody = &body
+		}
+		out = append(out, row)
 	}
 	return out, nil
 }
@@ -131,7 +192,7 @@ func TestFlagCommentAndListMatches(t *testing.T) {
 		t.Fatalf("re-FlagComment: %v", err)
 	}
 
-	matches, _, err := svc.ListMatches(ctx, 20, 0)
+	matches, _, err := svc.ListMatches(ctx, StatusAll, 20, 0)
 	if err != nil {
 		t.Fatalf("ListMatches: %v", err)
 	}
@@ -177,7 +238,7 @@ func TestFlagVideoAndListMatches(t *testing.T) {
 		t.Fatalf("re-FlagVideo: %v", err)
 	}
 
-	matches, _, err := svc.ListMatches(ctx, 20, 0)
+	matches, _, err := svc.ListMatches(ctx, StatusAll, 20, 0)
 	if err != nil {
 		t.Fatalf("ListMatches: %v", err)
 	}
@@ -198,7 +259,7 @@ func TestFlagVideoAndListMatches(t *testing.T) {
 	if _, err := svc.FlagComment(ctx, c1, "more spam"); err != nil {
 		t.Fatalf("FlagComment: %v", err)
 	}
-	mixed, _, _ := svc.ListMatches(ctx, 20, 0)
+	mixed, _, _ := svc.ListMatches(ctx, StatusAll, 20, 0)
 	if len(mixed) != 3 || mixed[0].Type != MatchTargetComment || mixed[0].CommentID != c1 {
 		t.Fatalf("mixed queue = %+v, want the comment match newest-first", mixed)
 	}
@@ -254,7 +315,7 @@ func (f *fakeRepo) CountWatchedWords(ctx context.Context) (int64, error) {
 	return int64(len(rows)), err
 }
 
-func (f *fakeRepo) CountWatchedWordMatches(ctx context.Context) (int64, error) {
-	rows, err := f.ListWatchedWordMatches(ctx, sqlcgen.ListWatchedWordMatchesParams{ResultLimit: 1 << 30})
+func (f *fakeRepo) CountWatchedWordMatches(ctx context.Context, status *string) (int64, error) {
+	rows, err := f.ListWatchedWordMatches(ctx, sqlcgen.ListWatchedWordMatchesParams{Status: status, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
 }

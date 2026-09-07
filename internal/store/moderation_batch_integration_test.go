@@ -147,7 +147,7 @@ func TestWatchedWordVideoMatchesPersist(t *testing.T) {
 	// Idempotent video-target insert (partial unique index).
 	for i := 0; i < 2; i++ {
 		if err := q.RecordWatchedWordVideoMatch(ctx, sqlcgen.RecordWatchedWordVideoMatchParams{
-			WatchedWordID: word.ID, VideoID: pgtype.UUID{Bytes: videoID, Valid: true},
+			WatchedWordID: pgtype.UUID{Bytes: word.ID, Valid: true}, VideoID: pgtype.UUID{Bytes: videoID, Valid: true},
 		}); err != nil {
 			t.Fatalf("RecordWatchedWordVideoMatch #%d: %v", i+1, err)
 		}
@@ -175,7 +175,7 @@ func TestWatchedWordVideoMatchesPersist(t *testing.T) {
 
 	// A comment match joins the same queue; both rows are typed with context.
 	if err := q.RecordWatchedWordMatch(ctx, sqlcgen.RecordWatchedWordMatchParams{
-		WatchedWordID: word.ID, CommentID: pgtype.UUID{Bytes: commentID, Valid: true},
+		WatchedWordID: pgtype.UUID{Bytes: word.ID, Valid: true}, CommentID: pgtype.UUID{Bytes: commentID, Valid: true},
 	}); err != nil {
 		t.Fatalf("RecordWatchedWordMatch: %v", err)
 	}

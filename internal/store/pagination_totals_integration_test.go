@@ -100,18 +100,23 @@ func TestListTotalsExecuteAgainstPostgres(t *testing.T) {
 		resolved := "resolved"
 		pending := "pending"
 		checks := map[string]func() error{
-			"CountBlockedVideos":        func() error { _, e := q.CountBlockedVideos(ctx); return e },
-			"CountBlockedRemoteVideos":  func() error { _, e := q.CountBlockedRemoteVideos(ctx); return e },
-			"CountBlockedInstances":     func() error { _, e := q.CountBlockedInstances(ctx); return e },
-			"CountPendingRemoteFollows": func() error { _, e := q.CountPendingRemoteFollows(ctx); return e },
-			"CountWatchedWords":         func() error { _, e := q.CountWatchedWords(ctx); return e },
-			"CountWatchedWordMatches":   func() error { _, e := q.CountWatchedWordMatches(ctx); return e },
-			"CountQuarantinedVideos":    func() error { _, e := q.CountQuarantinedVideos(ctx); return e },
-			"CountLivePublicStreams":    func() error { _, e := q.CountLivePublicStreams(ctx); return e },
-			"CountAuditLog":             func() error { _, e := q.CountAuditLog(ctx, nil); return e },
-			"CountAdminComments":        func() error { _, e := q.CountAdminComments(ctx, nil); return e },
-			"CountReports/all":          func() error { _, e := q.CountReports(ctx, nil); return e },
-			"CountReports/open":         func() error { _, e := q.CountReports(ctx, &open); return e },
+			"CountBlockedVideos":           func() error { _, e := q.CountBlockedVideos(ctx); return e },
+			"CountBlockedRemoteVideos":     func() error { _, e := q.CountBlockedRemoteVideos(ctx); return e },
+			"CountBlockedInstances":        func() error { _, e := q.CountBlockedInstances(ctx); return e },
+			"CountPendingRemoteFollows":    func() error { _, e := q.CountPendingRemoteFollows(ctx); return e },
+			"CountWatchedWords":            func() error { _, e := q.CountWatchedWords(ctx); return e },
+			"CountWatchedWordMatches":      func() error { _, e := q.CountWatchedWordMatches(ctx, nil); return e },
+			"CountWatchedWordMatches/open": func() error { _, e := q.CountWatchedWordMatches(ctx, &open); return e },
+			"CountQuarantinedVideos":       func() error { _, e := q.CountQuarantinedVideos(ctx); return e },
+			"CountLivePublicStreams":       func() error { _, e := q.CountLivePublicStreams(ctx, pgtype.UUID{}); return e },
+			"CountLivePublicStreams/viewer": func() error {
+				_, e := q.CountLivePublicStreams(ctx, pgtype.UUID{Bytes: uuid.New(), Valid: true})
+				return e
+			},
+			"CountAuditLog":      func() error { _, e := q.CountAuditLog(ctx, nil); return e },
+			"CountAdminComments": func() error { _, e := q.CountAdminComments(ctx, nil); return e },
+			"CountReports/all":   func() error { _, e := q.CountReports(ctx, nil); return e },
+			"CountReports/open":  func() error { _, e := q.CountReports(ctx, &open); return e },
 			// "resolved" is a query value, not a stored status — it must reach the
 			// `status <> 'open'` branch rather than comparing equal to nothing.
 			"CountReports/resolved": func() error { _, e := q.CountReports(ctx, &resolved); return e },

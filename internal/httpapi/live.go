@@ -140,9 +140,16 @@ type liveStreamPublicListResponse struct {
 // GET /live/{id}, it is NOT gated on the live feature toggle (that gate guards
 // creation/ingest) — when live is disabled there are simply no live streams to
 // list.
+//
+// It is behind optionalAuth so it can be filtered FOR the caller: a stream owner
+// the viewer has muted or blocked drops out, the same per-viewer clause the
+// feed, search, subscriptions and the channel page carry (A16 ruling).
+// principalFromContext reports (uuid.Nil, false) for an anonymous caller, which
+// passes a NULL viewer to the query and changes nothing for them.
 func (s *Server) handleListLivePublicStreams(c echo.Context) error {
 	page := parsePage(c, defaultLivePublicLimit, maxLivePublicLimit)
-	cards, total, err := s.livesvc.ListLivePublic(c.Request().Context(), page.Limit, page.Offset)
+	viewerID, _, viewerAuthed := principalFromContext(c)
+	cards, total, err := s.livesvc.ListLivePublic(c.Request().Context(), viewerID, viewerAuthed, page.Limit, page.Offset)
 	if err != nil {
 		return err
 	}

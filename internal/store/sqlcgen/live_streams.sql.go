@@ -18,14 +18,24 @@ SELECT count(*)::bigint
 FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
 WHERE ls.state = 'live' AND ls.privacy = 'public'
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $1 AND m.muted_id = ch.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $1 AND ub.blocked_id = ch.owner_id
+  )
 `
 
 // How many rows ListLivePublicStreams would return, ignoring pagination. The
-// channels JOIN is part of the predicate. CountLiveStreamsLive below counts
-// ALL live sessions (including private/unlisted) for the instance-wide publish
-// cap and would over-report this public rail.
-func (q *Queries) CountLivePublicStreams(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countLivePublicStreams)
+// channels JOIN is part of the predicate, and so is the per-viewer mute/block
+// clause — a total that counted rows the list filters out would promise a page
+// the list cannot serve. CountLiveStreamsLive below counts ALL live sessions
+// (including private/unlisted) for the instance-wide publish cap and would
+// over-report this public rail.
+func (q *Queries) CountLivePublicStreams(ctx context.Context, viewerID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countLivePublicStreams, viewerID)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -231,13 +241,22 @@ SELECT ls.id, ls.title, ls.description, ls.started_at,
 FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
 WHERE ls.state = 'live' AND ls.privacy = 'public'
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts m
+      WHERE m.muter_id = $1 AND m.muted_id = ch.owner_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE ub.blocker_id = $1 AND ub.blocked_id = ch.owner_id
+  )
 ORDER BY ls.started_at DESC NULLS LAST, ls.id
-LIMIT $2 OFFSET $1
+LIMIT $3 OFFSET $2
 `
 
 type ListLivePublicStreamsParams struct {
-	ResultOffset int32 `json:"result_offset"`
-	ResultLimit  int32 `json:"result_limit"`
+	ViewerID     pgtype.UUID `json:"viewer_id"`
+	ResultOffset int32       `json:"result_offset"`
+	ResultLimit  int32       `json:"result_limit"`
 }
 
 type ListLivePublicStreamsRow struct {
@@ -252,8 +271,14 @@ type ListLivePublicStreamsRow struct {
 // Public "Live now" listing: currently-live PUBLIC streams across all channels,
 // most-recently-started first. Unlisted/private streams and offline/ended streams
 // never appear. Joined with the owning channel for display; never the key hash.
+//
+// A16 ruling: the per-viewer mute/block clause, verbatim from
+// ListPublicVideosSorted and ListPublicVideosByChannel. This rail took NO viewer
+// at all, so a muted or blocked account's live stream stayed on the muter's home
+// rail while every other list had dropped it. viewer_id is NULL for an anonymous
+// caller, which makes both NOT EXISTS trivially true.
 func (q *Queries) ListLivePublicStreams(ctx context.Context, arg ListLivePublicStreamsParams) ([]ListLivePublicStreamsRow, error) {
-	rows, err := q.db.Query(ctx, listLivePublicStreams, arg.ResultOffset, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listLivePublicStreams, arg.ViewerID, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}

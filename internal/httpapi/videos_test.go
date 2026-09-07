@@ -1436,6 +1436,9 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 	}
 	authRepo.statComments = func() int64 { return int64(len(cmRepo.comments)) }
 	liveRepo := newLiveFakeRepo(chRepo)
+	// The public "Live now" rail is per-viewer like every other public list
+	// (A16 ruling), so its fake reads the same mute/block fakes its SQL joins.
+	liveRepo.mutes, liveRepo.userBlocks = muteRepo, userBlockRepo
 	// Daily-upload accounting (config-parity W7): the recorder feeds the quota
 	// service's rolling ledger from AttachOriginal, late-bound because the
 	// quota service is constructed after the video service (as in cmd/api,
@@ -1537,7 +1540,7 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		WithModerationService(moderation.NewService(modRepo)),
 		WithMuteService(mute.NewService(muteRepo)),
 		WithBlockService(blocksvc),
-		WithWatchWordService(watchword.NewService(&watchwordFakeRepo{auth: authRepo, videos: repo})),
+		WithWatchWordService(watchword.NewService(&watchwordFakeRepo{auth: authRepo, videos: repo, comments: cmRepo})),
 		WithAdminService(admin.NewService(authRepo)),
 		WithMessagingService(messaging.NewService(msgRepo, messaging.WithBlocker(blocksvc),
 			messaging.WithAttachments(blobs, nil, 0))),

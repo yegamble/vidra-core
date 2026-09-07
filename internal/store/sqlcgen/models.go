@@ -1097,9 +1097,18 @@ type WatchedWord struct {
 }
 
 type WatchedWordMatch struct {
-	ID            uuid.UUID   `json:"id"`
-	WatchedWordID uuid.UUID   `json:"watched_word_id"`
-	CommentID     pgtype.UUID `json:"comment_id"`
-	CreatedAt     time.Time   `json:"created_at"`
-	VideoID       pgtype.UUID `json:"video_id"`
+	ID                 uuid.UUID          `json:"id"`
+	WatchedWordID      pgtype.UUID        `json:"watched_word_id"`
+	CommentID          pgtype.UUID        `json:"comment_id"`
+	CreatedAt          time.Time          `json:"created_at"`
+	VideoID            pgtype.UUID        `json:"video_id"`
+	MatchedText        string             `json:"matched_text"`
+	MatchedTerm        string             `json:"matched_term"`
+	MatchOffset        int32              `json:"match_offset"`
+	MatchLength        int32              `json:"match_length"`
+	SnapshotBackfilled bool               `json:"snapshot_backfilled"`
+	Status             string             `json:"status"`
+	ModeratorNote      string             `json:"moderator_note"`
+	ResolvedBy         pgtype.UUID        `json:"resolved_by"`
+	ResolvedAt         pgtype.Timestamptz `json:"resolved_at"`
 }
