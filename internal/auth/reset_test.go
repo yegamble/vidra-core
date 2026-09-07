@@ -202,3 +202,67 @@ func TestResetPasswordRejectsExpiredToken(t *testing.T) {
 		t.Errorf("expired token error = %v, want ErrInvalidResetToken", err)
 	}
 }
+
+// failResetMailer fails only the password-reset send, so a test can separate a
+// delivery failure from a storage failure.
+type failResetMailer struct {
+	captureMailer
+	err error
+}
+
+func (m *failResetMailer) SendPasswordReset(_ context.Context, _, _ string) error {
+	m.calls++
+	return m.err
+}
+
+// TestRequestPasswordResetStaysEnumerationSafeWhenTheRelayIsDown is the A05
+// acceptance regression. RequestPasswordReset returns nil for an address that
+// matches nothing — that is what makes the endpoint's single 202 honest — but
+// it used to return the mailer's error verbatim for an address that DOES match,
+// so a broken relay turned the endpoint into an account-existence oracle: 500
+// meant "registered here", 202 meant "not". Proven live on 2026-09-07 with the
+// relay stopped (known 500 x3, unknown 202 x3).
+//
+// A delivery failure now comes back wrapped in ErrMailDelivery, which the HTTP
+// layer answers 202 to (and audits), while any other error still surfaces. The
+// operator's signal for a relay that is down is the smtp component on
+// /admin/system, not a status code handed to an anonymous caller.
+func TestRequestPasswordResetStaysEnumerationSafeWhenTheRelayIsDown(t *testing.T) {
+	repo := newFakeRepo()
+	mailer := &failResetMailer{err: errors.New("mail: dial smtp relay: connection refused")}
+	svc := newResetService(repo, mailer)
+	register(t, svc, "ada", "ada@example.test")
+
+	err := svc.RequestPasswordReset(context.Background(), "ada@example.test")
+	if err == nil {
+		t.Fatal("RequestPasswordReset swallowed the delivery failure entirely; the caller must be able to audit it")
+	}
+	if !errors.Is(err, ErrMailDelivery) {
+		t.Fatalf("RequestPasswordReset error = %v, want it to wrap ErrMailDelivery so the HTTP layer can answer 202", err)
+	}
+	// The token was still minted and stored: the failure is delivery, not state.
+	if mailer.calls != 1 {
+		t.Errorf("mailer called %d times, want 1", mailer.calls)
+	}
+}
+
+// TestRequestPasswordResetSurfacesNonDeliveryErrors keeps the other half: a
+// storage failure is a real 500 and must NOT be laundered into a 202.
+func TestRequestPasswordResetSurfacesNonDeliveryErrors(t *testing.T) {
+	repo := newFakeRepo()
+	repo.failCreateResetToken = errors.New("boom")
+	mailer := &captureMailer{}
+	svc := newResetService(repo, mailer)
+	register(t, svc, "ada", "ada@example.test")
+
+	err := svc.RequestPasswordReset(context.Background(), "ada@example.test")
+	if err == nil {
+		t.Fatal("a storage failure must not be silently swallowed")
+	}
+	if errors.Is(err, ErrMailDelivery) {
+		t.Fatalf("storage failure misreported as a delivery failure: %v", err)
+	}
+	if mailer.calls != 0 {
+		t.Errorf("mailer called %d times after a storage failure, want 0", mailer.calls)
+	}
+}

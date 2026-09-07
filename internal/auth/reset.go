@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -15,6 +16,17 @@ import (
 // ErrInvalidResetToken means the password-reset token is unknown, already used,
 // or expired. It is deliberately indistinct so a caller cannot probe which.
 var ErrInvalidResetToken = errors.New("auth: invalid or expired reset token")
+
+// ErrMailDelivery marks a failure to HAND a message to the relay, as opposed to
+// a failure to do the work the message reports. It exists so the password-reset
+// endpoint can keep its single answer: RequestPasswordReset already returns nil
+// for an address that matches nothing, and before this sentinel it returned the
+// relay's error verbatim for an address that DOES match — which made a broken
+// relay an account-existence oracle (500 = registered, 202 = not; proven live
+// 2026-09-07). The HTTP layer answers 202 and audits the failure; the operator
+// learns the relay is down from the smtp component on /admin/system, which is
+// where that fact belongs.
+var ErrMailDelivery = errors.New("auth: could not deliver the message")
 
 // resetTokenBytes is the entropy of a raw password-reset token (256 bits).
 const resetTokenBytes = 32
@@ -61,7 +73,10 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 	}); err != nil {
 		return err
 	}
-	return s.mailer.SendPasswordReset(ctx, user.Email, raw)
+	if err := s.mailer.SendPasswordReset(ctx, user.Email, raw); err != nil {
+		return fmt.Errorf("%w: %w", ErrMailDelivery, err)
+	}
+	return nil
 }
 
 // ResetPassword consumes a valid reset token: it sets a new password, marks the

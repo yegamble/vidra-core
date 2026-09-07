@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net"
 	"net/smtp"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +39,11 @@ type Config struct {
 	Password     string
 	From         string
 	InstanceName string
+	// PublicBaseURL is the instance's canonical public origin (PUBLIC_BASE_URL),
+	// used to build the redemption links in the three token messages. Empty on
+	// an instance that has not configured one, in which case those messages
+	// carry the bare code alone rather than a link to a guessed host.
+	PublicBaseURL string
 }
 
 // SMTP is an auth.Mailer that delivers over an SMTP relay.
@@ -245,10 +251,14 @@ func (s *SMTP) SendPasswordReset(ctx context.Context, email, token string) error
 	subject := "Reset your password on " + s.cfg.InstanceName
 	body := "Hi,\n\n" +
 		"Someone (hopefully you) asked to reset the password for the " + s.cfg.InstanceName +
-		" account tied to this address.\n\n" +
-		"Your password reset code is:\n\n" +
-		"    " + token + "\n\n" +
-		"Enter it on the \"Reset password\" page to choose a new password. " +
+		" account tied to this address.\n\n"
+	if link := s.redemptionLink(resetPasswordPath, token); link != "" {
+		body += "Choose a new password here:\n\n" + "    " + link + "\n\n" +
+			"If the link does not open, your password reset code is:\n\n"
+	} else {
+		body += "Your password reset code is:\n\n"
+	}
+	body += "    " + token + "\n\n" +
 		"The code can be used once and expires soon.\n\n" +
 		"If you did not ask for this, you can ignore this message — your password is unchanged.\n"
 	return s.send(ctx, email, "", subject, body)
@@ -275,10 +285,15 @@ func (s *SMTP) SendPasswordChanged(ctx context.Context, email string) error {
 func (s *SMTP) SendEmailVerification(ctx context.Context, email, token string) error {
 	subject := "Confirm your email address on " + s.cfg.InstanceName
 	body := "Hi,\n\n" +
-		"To confirm this address for your " + s.cfg.InstanceName + " account, use the code below.\n\n" +
-		"Your email verification code is:\n\n" +
-		"    " + token + "\n\n" +
-		"Enter it on the \"Verify email\" page. The code can be used once and expires soon.\n\n" +
+		"To confirm this address for your " + s.cfg.InstanceName + " account, follow the link below.\n\n"
+	if link := s.redemptionLink(verifyEmailPath, token); link != "" {
+		body += "Confirm your address here:\n\n" + "    " + link + "\n\n" +
+			"If the link does not open, your email verification code is:\n\n"
+	} else {
+		body += "Your email verification code is:\n\n"
+	}
+	body += "    " + token + "\n\n" +
+		"The code can be used once and expires soon.\n\n" +
 		"If you did not create an account, you can ignore this message.\n"
 	return s.send(ctx, email, "", subject, body)
 }
@@ -292,10 +307,15 @@ func (s *SMTP) SendEmailChangeVerification(ctx context.Context, newEmail, token 
 	subject := "Confirm your new email address on " + name
 	body := "Hi,\n\n" +
 		"Someone (hopefully you) asked to change the email address on a " + name +
-		" account to this one.\n\n" +
-		"Your confirmation code is:\n\n" +
-		"    " + token + "\n\n" +
-		"Enter it on the \"Confirm email change\" page while signed in to that account. " +
+		" account to this one.\n\n"
+	if link := s.redemptionLink(emailChangePath, token); link != "" {
+		body += "Confirm the change here, while signed in to that account:\n\n" +
+			"    " + link + "\n\n" +
+			"If the link does not open, your confirmation code is:\n\n"
+	} else {
+		body += "Your confirmation code is:\n\n"
+	}
+	body += "    " + token + "\n\n" +
 		"The code can be used once and expires soon.\n\n" +
 		"Until it is used, the account keeps its current address. " +
 		"If you did not ask for this, you can ignore this message.\n"
@@ -419,6 +439,28 @@ func message(from, to, replyTo, subject, body string) []byte {
 // sanitizeHeader strips CR/LF so a header value can never break the envelope.
 func sanitizeHeader(v string) string {
 	return strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
+}
+
+// Redemption paths on the frontend. Every one of these pages reads its token
+// from the URL query (?token=) and none offers a field to paste a bare code
+// into, so a message that carries only the code hands the recipient a
+// credential they have no way to spend. They live here for the same reason
+// signInURL does in internal/auth: the mailer is the one place that has to
+// name a page.
+const (
+	resetPasswordPath = "/reset-password/confirm"
+	verifyEmailPath   = "/verify-email/confirm"
+	emailChangePath   = "/email-change/confirm"
+)
+
+// redemptionLink builds the URL that spends a token, or "" when the instance
+// has no configured public origin — a link to a guessed host is worse than no
+// link, because it looks redeemable and is not.
+func (s *SMTP) redemptionLink(path, token string) string {
+	if s.cfg.PublicBaseURL == "" {
+		return ""
+	}
+	return strings.TrimRight(s.cfg.PublicBaseURL, "/") + path + "?token=" + url.QueryEscape(token)
 }
 
 // effectiveInstanceName is the name substituted for {instance_name}: the
