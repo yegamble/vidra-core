@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -495,4 +497,62 @@ func rendezvous(n int, wait time.Duration) (arrive func(), serialized *atomic.Bo
 			flag.Store(true)
 		}
 	}, &flag
+}
+
+// TestAdminSystemStatusSurvivesTheOutageItReports is the ADM-04 property that
+// was missing: the page whose job is to report that PostgreSQL is down must not
+// be the first thing that stops answering when PostgreSQL goes down.
+//
+// requireAuth re-reads the session row on every authenticated request. Before
+// this, ANY error out of that read — including "connection refused" — collapsed
+// to 401 "invalid or expired token", so a database outage made the admin status
+// page (and every other authenticated route) tell the admin their token was bad.
+// The status code is now 503 with a sentence naming the real cause, which is
+// both true and the code a client must not react to by discarding its session.
+//
+// The 401 for a genuinely revoked session is asserted alongside it, because the
+// value of the change is entirely in the two being told apart.
+func TestAdminSystemStatusSurvivesTheOutageItReports(t *testing.T) {
+	srv, repo := authServerWithFakeRepo(t)
+	srv.lookPath = ffmpegFound
+	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	if rec := getWithAuth(srv, "/api/v1/admin/system", admin); rec.Code != http.StatusOK {
+		t.Fatalf("baseline system status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	repo.sessionLookupErr = errors.New("dial tcp 10.0.0.5:5432: connect: connection refused")
+	rec := getWithAuth(srv, "/api/v1/admin/system", admin)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("with the session store down, system status = %d, want 503; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "session_store_unavailable") {
+		t.Errorf("the 503 does not carry the session_store_unavailable code: %s", body)
+	}
+	// The sentence has to SURVIVE the handler's 5xx message scrubbing, which is
+	// why this is a typed error and not a bare echo.NewHTTPError — a generic
+	// "an unexpected error occurred" here would be the same unhelpful answer in
+	// a different status code.
+	if !strings.Contains(body, "cannot reach its session store") {
+		t.Errorf("the 503 was scrubbed to a generic message: %s", body)
+	}
+	// The reason must be the outage, not a claim about the caller's token.
+	if strings.Contains(body, "invalid or expired token") {
+		t.Errorf("an outage is still reported as a bad token: %s", body)
+	}
+	// And nothing about the deployment's database leaks to an unauthenticated
+	// reader of this response.
+	if strings.Contains(body, "10.0.0.5") || strings.Contains(body, "5432") {
+		t.Errorf("the driver's connection error leaked into the response: %s", body)
+	}
+
+	// A genuinely revoked session is unchanged: still 401.
+	repo.sessionLookupErr = nil
+	for id := range repo.sessions {
+		repo.sessions[id].RevokedAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Minute), Valid: true}
+	}
+	if rec := getWithAuth(srv, "/api/v1/admin/system", admin); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked session = %d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
 }

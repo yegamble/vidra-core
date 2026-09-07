@@ -83,6 +83,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var cfd *ContactFormDisabledError
 	var rc *ReplaceConflictError
 	var su *SearchUnavailableError
+	var ssu *SessionStoreUnavailableError
 	var ale *ATProtoLoginError
 	var mtf *MailTestFailedError
 	var mnc *MailNotConfiguredError
@@ -129,6 +130,10 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = ale.Status
 		message = ale.Message
 		code = ale.Code
+	case errors.As(err, &ssu):
+		status = http.StatusServiceUnavailable
+		message = "this server cannot reach its session store right now, so it cannot tell whether you are signed in. Your session is unaffected — retry shortly"
+		code = "session_store_unavailable"
 	case errors.As(err, &su):
 		status = http.StatusServiceUnavailable
 		message = "search is temporarily unavailable"
@@ -437,6 +442,24 @@ func (e *MailTestFailedError) Error() string { return "mail test failed" }
 type SearchUnavailableError struct{}
 
 func (e *SearchUnavailableError) Error() string { return "search service unavailable" }
+
+// SessionStoreUnavailableError renders as 503 with the stable code
+// "session_store_unavailable": requireAuth could not ASK whether the caller's
+// session is still valid, because the database is unreachable, the pool is
+// exhausted, or the query timed out.
+//
+// It is a typed error rather than a bare echo.NewHTTPError for the reason the
+// mail one is: the central handler scrubs every 5xx message unless a stable code
+// was already chosen, and a generic "an unexpected error occurred" here is
+// exactly the answer this whole change exists to remove. The code is more
+// specific than service_unavailable on purpose — it is the one 503 a client must
+// NOT react to by discarding its session.
+//
+// It carries no detail of its own. The driver's error (which can hold a DSN)
+// stays in the operator's log, where the 5xx branch already writes it.
+type SessionStoreUnavailableError struct{}
+
+func (e *SessionStoreUnavailableError) Error() string { return "session store unavailable" }
 
 // ATProtoLoginError renders an ATProto identity-login failure with a stable,
 // snake_case code at the given status (503 atproto_disabled, 422 invalid_handle,

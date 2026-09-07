@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/admin"
+	"github.com/vidra/vidra-core/internal/auth"
 )
 
 // Echo context keys for the authenticated principal. Unexported so only this
@@ -44,6 +46,19 @@ func (s *Server) requireAuth(next echo.HandlerFunc) echo.HandlerFunc {
 		// indexed read; see auth.Service.AuthenticateAccessToken.
 		principal, err := s.authsvc.AuthenticateAccessToken(c.Request().Context(), claims)
 		if err != nil {
+			// A store that could not be ASKED is not a token that was refused.
+			// Collapsing the two (which this did) meant a PostgreSQL outage
+			// answered 401 "invalid or expired token" on every authenticated
+			// route: every signed-in client is told its session is dead — a
+			// blip becomes a fleet-wide sign-out — and the admin status page,
+			// whose entire job is to report that the database is down, is the
+			// first page that stops answering. 503 is the honest code: the
+			// request is still refused, and a client must not discard a session
+			// over it. The sentence names the cause without the driver's error,
+			// which can carry a DSN and reaches an unauthenticated caller.
+			if errors.Is(err, auth.ErrSessionLookupUnavailable) {
+				return &SessionStoreUnavailableError{}
+			}
 			return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired token")
 		}
 		c.Set(ctxKeyUserID, principal.UserID)
@@ -96,7 +111,11 @@ func (s *Server) optionalAuth(next echo.HandlerFunc) echo.HandlerFunc {
 					// (these routes vary behaviour by identity — an owner sees
 					// their own private resource). Failure is silent: the
 					// request proceeds anonymously, as it does for any other
-					// unusable token.
+					// unusable token. Deliberately asymmetric with requireAuth's
+					// 503: these routes have an anonymous rendering, so a
+					// session store that cannot be reached degrades the caller
+					// to anonymous rather than refusing a page that would have
+					// worked for a logged-out visitor anyway.
 					if principal, err := s.authsvc.AuthenticateAccessToken(c.Request().Context(), claims); err == nil {
 						c.Set(ctxKeyUserID, principal.UserID)
 						c.Set(ctxKeyRole, principal.Role)
