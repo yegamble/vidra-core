@@ -77,6 +77,9 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var fd *FeatureDisabledError
 	var id *IPFSDisabledError
 	var lnc *LiveNotConfiguredError
+	var pinc *PlatformImportNotConfiguredError
+	var csnc *ChannelSyncNotConfiguredError
+	var acnc *AutoCaptionsNotConfiguredError
 	var fml *ForeignMediaLayoutError
 	var videoID, shortCode string
 	var pr *PasswordRequiredError
@@ -125,7 +128,8 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		code = "mail_test_failed"
 	case errors.As(err, &mnc):
 		status = http.StatusServiceUnavailable
-		message = "this instance has no outbound mail path, so there is nothing to test. Set MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and SMTP_FROM, then restart the api"
+		message = "this instance has no outbound mail path, so " + mnc.consequence() +
+			". Set MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and SMTP_FROM, then restart the api"
 		code = "mail_not_configured"
 	case errors.As(err, &ale):
 		status = ale.Status
@@ -196,6 +200,18 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusServiceUnavailable
 		message = "live streaming is turned on but this instance has no RTMP ingest to publish to. Set LIVE_RTMP_URL (and LIVE_HLS_ROOT, so the segments the media server writes can be served) and restart the api"
 		code = "live_not_configured"
+	case errors.As(err, &pinc):
+		status = http.StatusServiceUnavailable
+		message = "platform-URL import is turned on but this instance has no yt-dlp import path. Set YTDLP_IMPORT_ENABLED=true (and make sure the yt-dlp binary is on the api's PATH), then restart the api"
+		code = "ytdlp_import_not_configured"
+	case errors.As(err, &csnc):
+		status = http.StatusServiceUnavailable
+		message = "channel auto-sync is turned on but this instance has no yt-dlp import path to sync THROUGH — the sync path is a yt-dlp import path. Set YTDLP_IMPORT_ENABLED=true as well as CHANNEL_SYNC_ENABLED, then restart the api"
+		code = "channel_sync_not_configured"
+	case errors.As(err, &acnc):
+		status = http.StatusServiceUnavailable
+		message = "auto-captioning is turned on but this instance has no transcription endpoint to send audio to. Set the Whisper endpoint (WHISPER_ENDPOINT) and restart the api"
+		code = "auto_captions_not_configured"
 	case errors.As(err, &fml):
 		status = http.StatusConflict
 		message = "this instance references media stored under another system's key layout, so the object store may still belong to a live instance (a reference-mode import points at the source's own bucket). Adopting it would let media garbage collection delete that instance's files. Re-send with force=true only once the source instance is retired or its media has been copied across"
@@ -417,17 +433,32 @@ type ContactFormDisabledError struct{}
 func (e *ContactFormDisabledError) Error() string { return "contact form disabled" }
 
 // MailNotConfiguredError renders as 503 with the stable code
-// "mail_not_configured": the admin mail probe was asked for on a deployment
-// with no outbound mail path at all.
+// "mail_not_configured": an action that CANNOT complete without delivering a
+// message was asked for on a deployment with no outbound mail path at all.
 //
 // It is a typed error rather than a bare echo.NewHTTPError for one reason: 503
 // is a 5xx, and the central handler scrubs every 5xx message it has no stable
 // code for down to "an unexpected error occurred". That would replace the one
 // sentence an operator needs — which variables to set — with nothing, for
 // anybody reading the API through curl or a script rather than the admin UI.
-type MailNotConfiguredError struct{}
+//
+// Consequence names what the caller was trying to do, because "no mail path" is
+// the same fact with two different meanings: a test message that has nowhere to
+// go is an operator's problem, and an email change that can never be confirmed
+// is a USER's dead end. Empty keeps the admin mail-probe sentence.
+type MailNotConfiguredError struct {
+	Consequence string
+}
 
 func (e *MailNotConfiguredError) Error() string { return "mail is not configured" }
+
+// consequence is the middle clause of the 503 message.
+func (e *MailNotConfiguredError) consequence() string {
+	if e == nil || e.Consequence == "" {
+		return "there is nothing to test"
+	}
+	return e.Consequence
+}
 
 // MailTestFailedError renders as 502 with the stable code "mail_test_failed":
 // the admin mail probe was refused by the relay. It carries NO cause on purpose
@@ -488,6 +519,31 @@ func (e *ATProtoLoginError) Error() string { return e.Code }
 type ForeignMediaLayoutError struct{}
 
 func (e *ForeignMediaLayoutError) Error() string { return "foreign media layout" }
+
+// PlatformImportNotConfiguredError, ChannelSyncNotConfiguredError and
+// AutoCaptionsNotConfiguredError are the same shape as LiveNotConfiguredError:
+// a capability whose SETTING may be on but whose deployment prerequisite is
+// absent, refused with a sentence that names the variable to set. A17 and A27
+// measured all three as bare echo.NewHTTPError 503s, which the central 5xx
+// scrubber replaced with "an unexpected error occurred" — so the operator
+// sentence existed in the source and reached nobody.
+type PlatformImportNotConfiguredError struct{}
+
+func (e *PlatformImportNotConfiguredError) Error() string {
+	return "platform-URL import is not configured"
+}
+
+type ChannelSyncNotConfiguredError struct{}
+
+func (e *ChannelSyncNotConfiguredError) Error() string {
+	return "channel auto-sync is not configured"
+}
+
+type AutoCaptionsNotConfiguredError struct{}
+
+func (e *AutoCaptionsNotConfiguredError) Error() string {
+	return "auto-captioning is not configured"
+}
 
 // LiveNotConfiguredError renders as 503 with the stable code
 // "live_not_configured": the live_enabled SETTING is on but this deployment has

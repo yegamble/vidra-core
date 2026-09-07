@@ -172,7 +172,9 @@ func (s *Server) handleSyncChannelNow(c echo.Context) error {
 func channelSyncError(err error) error {
 	switch {
 	case errors.Is(err, channelsync.ErrDisabled):
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "channel auto-sync is not enabled on this instance")
+		// Typed for the same reason live_not_configured is: a bare 503 loses
+		// its message to the central 5xx scrubber (measured, A27).
+		return &ChannelSyncNotConfiguredError{}
 	case errors.Is(err, channelsync.ErrInvalidURL):
 		return &ValidationError{Fields: []FieldError{{Field: "external_channel_url", Message: "must be a public http(s) URL"}}}
 	case errors.Is(err, channelsync.ErrMaxReached):

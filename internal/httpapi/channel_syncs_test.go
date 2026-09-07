@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -258,8 +259,14 @@ func TestChannelSyncBootDisabled503(t *testing.T) {
 		} `json:"error"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &body)
-	if body.Error.Code != "service_unavailable" {
-		t.Errorf("503 code = %q, want service_unavailable", body.Error.Code)
+	// A stable code, not the 5xx scrubber's generic "service_unavailable" —
+	// which is what this used to assert, and which is the same string for every
+	// unrelated 503 on the API.
+	if body.Error.Code != "channel_sync_not_configured" {
+		t.Errorf("503 code = %q, want channel_sync_not_configured", body.Error.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "YTDLP_IMPORT_ENABLED") {
+		t.Errorf("body = %s; it must name the variable to set", rec.Body.String())
 	}
 }
 

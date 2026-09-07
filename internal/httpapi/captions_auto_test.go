@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -195,8 +196,15 @@ func TestAutoCaptionBootDisabled503(t *testing.T) {
 	}
 	var env ErrorResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &env)
-	if env.Error.Code != "service_unavailable" {
-		t.Errorf("error code = %q, want service_unavailable", env.Error.Code)
+	// A STABLE code, not the scrubber's generic one. "service_unavailable" was
+	// what the central 5xx handler produced after throwing the message away, so
+	// pinning it pinned the defect: four unrelated causes shared one string and
+	// the operator sentence naming WHISPER_ENDPOINT reached nobody.
+	if env.Error.Code != "auto_captions_not_configured" {
+		t.Errorf("error code = %q, want auto_captions_not_configured", env.Error.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "WHISPER_ENDPOINT") {
+		t.Errorf("body = %s; it must name the variable to set", rec.Body.String())
 	}
 }
 

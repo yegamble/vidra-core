@@ -412,7 +412,7 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 			// The contact mailer is wired whenever ANY outbound mail path
 			// exists (SMTP or the dev capture seam) — the deployment's
 			// mail-capability signal.
-			Mail: s.contactMailer != nil,
+			Mail: s.mailPathConfigured(),
 		},
 		Branding:      s.instanceBrandingBlock(),
 		Defaults:      s.instanceDefaultsBlock(),
@@ -614,3 +614,15 @@ func (s *Server) contactFormAvailable() bool {
 		s.settingBool(instancesettings.KeyContactFormEnabled, false) &&
 		strings.TrimSpace(s.effectiveContactEmail()) != ""
 }
+
+// mailPathConfigured is THE statement of "this deployment can send email": the
+// contact mailer is wired whenever any outbound path exists (SMTP or the dev
+// capture seam). /instance features.mail, the admin infrastructure page's
+// bootDep note and the routes that refuse an action they could never complete
+// all read this one predicate, so a client cannot be told mail works by one
+// surface and refused by another.
+//
+// It is a boot fact, not a runtime setting: a toggle cannot conjure a mailer,
+// which A05 proved by turning registration_require_email_verification on with
+// MAIL_ENABLED=false and watching the gate stay ineffective.
+func (s *Server) mailPathConfigured() bool { return s.contactMailer != nil }
