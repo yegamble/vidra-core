@@ -57,6 +57,13 @@ func testConfig() *config.Config {
 		ImportsEnabled:  true,
 		LiveEnabled:     true,
 		CommentsEnabled: true,
+		// The live BOOT capability beside the toggle above: since live's
+		// effective availability is `setting AND an ingest URL`, a config that
+		// pins the toggle on and leaves the ingest empty is the one shape a
+		// live deployment never has, and every live handler test would probe
+		// the 503 instead of the path it is about. Tests that want the
+		// unconfigured half clear this field explicitly.
+		LiveRTMPURL: "rtmp://ingest.test.invalid/live",
 	}
 }
 

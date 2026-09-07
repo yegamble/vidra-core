@@ -383,9 +383,12 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 			Bluesky:  s.settingString(instancesettings.KeyBlueskyLink, ""),
 		},
 		Features: instanceFeatures{
-			Uploads:   s.uploadsEnabled(),
-			Imports:   s.importsEnabled(),
-			Live:      s.liveEnabled(),
+			Uploads: s.uploadsEnabled(),
+			Imports: s.importsEnabled(),
+			// Setting AND boot capability, like every neighbour below: an
+			// instance with live_enabled on and no RTMP ingest has no live
+			// streaming to advertise (see liveAvailable).
+			Live:      s.liveAvailable(),
 			Comments:  s.commentsEnabled(),
 			Downloads: s.downloadsEnabled(),
 			// Setting AND wiring, so the UI hides the DM affordances in

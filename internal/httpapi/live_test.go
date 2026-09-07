@@ -1070,3 +1070,117 @@ func TestListLivePublicStreamsHonoursMutes(t *testing.T) {
 		}
 	}
 }
+
+// TestLiveCapabilityIsSettingAndIngest pins live's EFFECTIVE availability as
+// `setting AND boot capability`, the shape every neighbouring capability flag
+// already reports (import_http, channel_sync, transcription, transcoding,
+// messaging, messaging_e2ee, mail).
+//
+// The defect it closes was observed on a live lab: with live_enabled true — the
+// value the stock compose fallback used to inject — and no RTMP ingest, GET
+// /instance advertised `features.live: true` and POST /channels/{handle}/live
+// answered 201 with a stream key and NO rtmp_url. The creator got a credential
+// and nowhere to publish it, and every client that reads the capability flag
+// drew a "Go live" control that could only ever produce that.
+//
+// All three states are asserted in one place because the interesting property
+// is the TABLE, not any single row: only "setting on AND ingest wired" may
+// advertise live, and the two refusals are deliberately DIFFERENT — 403
+// feature_disabled is the operator's switch, 503 live_not_configured is a
+// missing deployment prerequisite a runtime toggle cannot conjure.
+func TestLiveCapabilityIsSettingAndIngest(t *testing.T) {
+	instanceLive := func(t *testing.T, srv *Server) bool {
+		t.Helper()
+		rec := getWithAuth(srv, "/api/v1/instance", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /instance = %d, want 200", rec.Code)
+		}
+		var body instanceResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal /instance: %v", err)
+		}
+		return body.Features.Live
+	}
+
+	// (1) Setting on, NO ingest: the capability is false and creation is
+	// refused with the missing-dependency 503, not a 201 with a dangling key.
+	cfg := testConfig()
+	cfg.LiveEnabled = true
+	cfg.LiveRTMPURL = ""
+	srv := videoServerCfg(t, cfg)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	if instanceLive(t, srv) {
+		t.Error("features.live = true with the setting on and no ingest configured")
+	}
+	rec := createLiveStream(srv, "ada", `{"title":"Nowhere to publish"}`, tok)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("create with no ingest = %d, want 503; body=%s", rec.Code, rec.Body.String())
+	}
+	var errBody ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
+		t.Fatalf("unmarshal error body: %v", err)
+	}
+	if errBody.Error.Code != "live_not_configured" {
+		t.Errorf("code = %q, want live_not_configured", errBody.Error.Code)
+	}
+	// The operator-facing sentence must survive the central 5xx scrubbing, or
+	// the one answer that names the variable to set is lost to curl.
+	if !strings.Contains(errBody.Error.Message, "LIVE_RTMP_URL") {
+		t.Errorf("message = %q, want it to name LIVE_RTMP_URL", errBody.Error.Message)
+	}
+	// No stream key may be minted on the refused path.
+	if strings.Contains(rec.Body.String(), "stream_key") {
+		t.Errorf("refused create leaked a stream key: %s", rec.Body.String())
+	}
+
+	// (2) Setting on AND an ingest wired: the capability is true and creation
+	// returns the key WITH somewhere to publish it.
+	wired := testConfig()
+	wired.LiveEnabled = true
+	wired.LiveRTMPURL = "rtmp://ingest.example.test/live"
+	srvWired := videoServerCfg(t, wired)
+	tokWired := createChannelFor(t, srvWired, "ada", "ada@example.test", "ada")
+	if !instanceLive(t, srvWired) {
+		t.Error("features.live = false with the setting on and an ingest configured")
+	}
+	recWired := createLiveStream(srvWired, "ada", `{"title":"My Show"}`, tokWired)
+	if recWired.Code != http.StatusCreated {
+		t.Fatalf("create with an ingest = %d, want 201; body=%s", recWired.Code, recWired.Body.String())
+	}
+	var created createLiveStreamResponse
+	_ = json.Unmarshal(recWired.Body.Bytes(), &created)
+	if created.StreamKey == "" || created.RTMPURL != "rtmp://ingest.example.test/live" {
+		t.Errorf("create = %+v, want a key AND the ingest URL", created)
+	}
+
+	// (3) Setting OFF beats a wired ingest, and keeps its own answer: the
+	// operator's switch is 403 feature_disabled, never the deployment 503.
+	off := testConfig()
+	off.LiveEnabled = false
+	off.LiveRTMPURL = "rtmp://ingest.example.test/live"
+	srvOff := videoServerCfg(t, off)
+	tokOff := createChannelFor(t, srvOff, "ada", "ada@example.test", "ada")
+	if instanceLive(t, srvOff) {
+		t.Error("features.live = true with the setting off")
+	}
+	recOff := createLiveStream(srvOff, "ada", `{"title":"Switched off"}`, tokOff)
+	if recOff.Code != http.StatusForbidden {
+		t.Fatalf("create with the setting off = %d, want 403; body=%s", recOff.Code, recOff.Body.String())
+	}
+	var offBody ErrorResponse
+	_ = json.Unmarshal(recOff.Body.Bytes(), &offBody)
+	if offBody.Error.Code != "feature_disabled" {
+		t.Errorf("code = %q, want feature_disabled", offBody.Error.Code)
+	}
+
+	// Wrong actors are unchanged by any of this: an anonymous caller is 401 and
+	// a signed-in non-manager is 403 "you do not manage this channel", on the
+	// deployment where the capability is fully wired.
+	if anon := createLiveStream(srvWired, "ada", `{"title":"x"}`, ""); anon.Code != http.StatusUnauthorized {
+		t.Errorf("anonymous create = %d, want 401", anon.Code)
+	}
+	bob := registerAndToken(t, srvWired, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	if other := createLiveStream(srvWired, "ada", `{"title":"x"}`, bob); other.Code != http.StatusForbidden {
+		t.Errorf("non-manager create = %d, want 403", other.Code)
+	}
+}
