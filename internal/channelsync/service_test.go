@@ -642,3 +642,51 @@ func TestMaxPerUserFunc(t *testing.T) {
 
 // RenewChannelSyncLease is the lease heartbeat; the fake has no leases to keep.
 func (*fakeRepo) RenewChannelSyncLease(_ context.Context, _ uuid.UUID) error { return nil }
+
+// TestBootCapableIsIndependentOfTheRuntimeToggle pins the split that keeps a
+// worker fleet honest.
+//
+// cmd/api decides ONCE, at boot, whether to start the channel-sync drain loop.
+// It used to ask Enabled(), which folds in the channel_sync_enabled /
+// import_http_enabled overlay — so an instance booted with the toggle off never
+// started the loop, and an admin who turned it on afterwards got an api that
+// accepts syncs (features.channel_sync flips true, POST /channel-syncs answers
+// 201 waiting_first_run) and no worker anywhere that drains them, with nothing
+// failing and nothing logged until someone restarted the fleet. BootCapable()
+// answers only the boot-time half — "could this deployment ever run a sync" —
+// so a boot-time reading of it stays true for the process's lifetime.
+func TestBootCapableIsIndependentOfTheRuntimeToggle(t *testing.T) {
+	repo := newFakeRepo()
+	off := false
+	svc := NewService(repo, &fakeDrafter{}, &fakeEnqueuer{},
+		WithBootCapability(true),
+		WithEnabledFunc(func() bool { return off }))
+
+	if svc.Enabled() {
+		t.Fatal("Enabled() must follow the runtime overlay (off)")
+	}
+	if !svc.BootCapable() {
+		t.Fatal("BootCapable() must stay true while the runtime overlay is off — " +
+			"it is the gate cmd/api reads once at boot to start the drain loop")
+	}
+
+	off = true
+	if !svc.Enabled() {
+		t.Fatal("Enabled() must follow the runtime overlay (on)")
+	}
+	if !svc.BootCapable() {
+		t.Fatal("BootCapable() must not change with the runtime overlay")
+	}
+}
+
+// TestBootCapableFallsBackToTheStaticFlag keeps every caller that never wires a
+// boot capability (the tests below, and any embedder) on today's meaning.
+func TestBootCapableFallsBackToTheStaticFlag(t *testing.T) {
+	repo := newFakeRepo()
+	if !NewService(repo, &fakeDrafter{}, &fakeEnqueuer{}, WithEnabled(true)).BootCapable() {
+		t.Error("with no explicit boot capability, BootCapable() must report the static flag")
+	}
+	if NewService(repo, &fakeDrafter{}, &fakeEnqueuer{}, WithEnabled(false)).BootCapable() {
+		t.Error("with no explicit boot capability, BootCapable() must report the static flag")
+	}
+}
