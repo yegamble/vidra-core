@@ -79,6 +79,41 @@ func (q *Queries) CountOperationalJobRuns(ctx context.Context, arg CountOperatio
 	return column_1, err
 }
 
+const getJobRunIdentityBySource = `-- name: GetJobRunIdentityBySource :one
+SELECT id, request_id, correlation_id, trace_id
+FROM job_runs WHERE queue = $1 AND source_id = $2
+`
+
+type GetJobRunIdentityBySourceParams struct {
+	Queue    string `json:"queue"`
+	SourceID string `json:"source_id"`
+}
+
+type GetJobRunIdentityBySourceRow struct {
+	ID            uuid.UUID `json:"id"`
+	RequestID     string    `json:"request_id"`
+	CorrelationID string    `json:"correlation_id"`
+	TraceID       string    `json:"trace_id"`
+}
+
+// The projection's id and stamped ids for one queue row. Two callers, one row:
+// an audit envelope written by the originating request links job_id forward to
+// the run it created, and a WORKER — whose context is a background one and
+// carries no request — reads the originating ids back OFF the run so its failure
+// log line shares them. That read-back is what makes the chain walkable in both
+// directions from a single grep.
+func (q *Queries) GetJobRunIdentityBySource(ctx context.Context, arg GetJobRunIdentityBySourceParams) (GetJobRunIdentityBySourceRow, error) {
+	row := q.db.QueryRow(ctx, getJobRunIdentityBySource, arg.Queue, arg.SourceID)
+	var i GetJobRunIdentityBySourceRow
+	err := row.Scan(
+		&i.ID,
+		&i.RequestID,
+		&i.CorrelationID,
+		&i.TraceID,
+	)
+	return i, err
+}
+
 const getOperationalJobRun = `-- name: GetOperationalJobRun :one
 SELECT id, pipeline_run_id, parent_job_id, type, queue, source_id, state, stage, progress_percent, priority, attempt, max_attempts, idempotency_key, actor_id, resource_type, resource_id, request_id, correlation_id, trace_id, worker_id, lease_token, lease_expires_at, heartbeat_at, cancel_requested_at, input_metadata, output_metadata, error_class, error_code, error_detail, error_retryable, created_at, claimed_at, started_at, updated_at, finished_at FROM job_runs WHERE id = $1
 `
@@ -517,4 +552,158 @@ func (q *Queries) PruneTerminalPipelineRuns(ctx context.Context, arg PruneTermin
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const stampJobRunCorrelation = `-- name: StampJobRunCorrelation :one
+
+WITH parent AS (
+    SELECT p.request_id, p.correlation_id, p.trace_id, p.actor_id, p.pipeline_run_id
+    FROM job_runs p WHERE p.id = $1
+), run AS (
+    UPDATE job_runs
+       SET request_id     = COALESCE(NULLIF($2::text, ''),
+                                     (SELECT NULLIF(parent.request_id, '') FROM parent),
+                                     job_runs.request_id),
+           correlation_id = COALESCE(NULLIF($3::text, ''),
+                                     (SELECT NULLIF(parent.correlation_id, '') FROM parent),
+                                     job_runs.correlation_id),
+           trace_id       = COALESCE(NULLIF($4::text, ''),
+                                     (SELECT NULLIF(parent.trace_id, '') FROM parent),
+                                     job_runs.trace_id),
+           -- COALESCE, never overwrite: the projection may already have derived
+           -- the actor from the queue row itself (account_exports, peertube).
+           actor_id       = COALESCE(job_runs.actor_id, $5,
+                                     (SELECT parent.actor_id FROM parent)),
+           parent_job_id  = COALESCE(job_runs.parent_job_id, $1),
+           pipeline_run_id = COALESCE(job_runs.pipeline_run_id, (SELECT parent.pipeline_run_id FROM parent)),
+           updated_at     = updated_at
+     WHERE job_runs.queue = $6 AND job_runs.source_id = $7
+     RETURNING job_runs.id, job_runs.request_id, job_runs.correlation_id, job_runs.trace_id
+), backfill AS (
+    UPDATE job_events e
+       SET request_id     = run.request_id,
+           correlation_id = run.correlation_id,
+           trace_id       = run.trace_id
+      FROM run
+     WHERE e.job_id = run.id
+       AND e.request_id = '' AND e.correlation_id = '' AND e.trace_id = ''
+    RETURNING e.cursor
+)
+SELECT run.id FROM run
+`
+
+type StampJobRunCorrelationParams struct {
+	ParentJobID   pgtype.UUID `json:"parent_job_id"`
+	RequestID     string      `json:"request_id"`
+	CorrelationID string      `json:"correlation_id"`
+	TraceID       string      `json:"trace_id"`
+	ActorID       pgtype.UUID `json:"actor_id"`
+	Queue         string      `json:"queue"`
+	SourceID      string      `json:"source_id"`
+}
+
+// IDENTITY STAMPS (migration 0133). The projection triggers maintain state; they
+// cannot know the request that caused the work or the process doing it, because
+// neither is a column of the queue table they read. These two statements carry
+// that knowledge in from Go, keyed by the (queue, source_id) pair the projection
+// already indexes uniquely.
+//
+// Each also backfills the events written BEFORE it could run. The projection is
+// an AFTER trigger on the queue table, so the 'enqueued' event exists by the time
+// the enqueue path returns and the 'started' event by the time a claim returns —
+// earlier than any Go statement can be. Later events inherit through the 0133
+// BEFORE INSERT trigger and need no help.
+// Called by an enqueue path with the originating request's ids.
+//
+// PRECEDENCE, and each step earns its place: the caller's own ids first; then
+// the PARENT's, when this enqueue happened inside another job (an upload
+// finalize spawning a transcode — that worker's context carries no request, but
+// the run it is executing does, and the chain would break here otherwise); then
+// whatever the row already had, so a second, id-less call never WIPES a stamp.
+// The 0133 BEFORE INSERT trigger cannot do this job: it runs when the
+// projection trigger inserts the row, which is before any Go statement can name
+// the parent.
+//
+// A job enqueued by a scheduler with no parent genuinely has no request behind
+// it and keeps an honest blank; inventing one would be worse.
+func (q *Queries) StampJobRunCorrelation(ctx context.Context, arg StampJobRunCorrelationParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, stampJobRunCorrelation,
+		arg.ParentJobID,
+		arg.RequestID,
+		arg.CorrelationID,
+		arg.TraceID,
+		arg.ActorID,
+		arg.Queue,
+		arg.SourceID,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const stampJobRunWorker = `-- name: StampJobRunWorker :exec
+WITH run AS (
+    UPDATE job_runs
+       SET worker_id        = $1,
+           heartbeat_at     = now(),
+           lease_expires_at = $2,
+           claimed_at       = COALESCE(claimed_at, now()),
+           updated_at       = updated_at
+     WHERE queue = $3 AND source_id = $4
+     RETURNING id
+)
+UPDATE job_events e
+   SET worker_id = $1
+  FROM run
+ WHERE e.job_id = run.id AND e.worker_id = ''
+`
+
+type StampJobRunWorkerParams struct {
+	WorkerID       string             `json:"worker_id"`
+	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
+	Queue          string             `json:"queue"`
+	SourceID       string             `json:"source_id"`
+}
+
+// Called by a worker the moment it claims a job. lease_expires_at is the queue
+// row's own lease (transcode/import claim to now() + 30 minutes and renew on a
+// ticker), so the projection reports the same deadline the sweeper enforces
+// rather than a second, drifting copy of it.
+func (q *Queries) StampJobRunWorker(ctx context.Context, arg StampJobRunWorkerParams) error {
+	_, err := q.db.Exec(ctx, stampJobRunWorker,
+		arg.WorkerID,
+		arg.LeaseExpiresAt,
+		arg.Queue,
+		arg.SourceID,
+	)
+	return err
+}
+
+const touchJobRunHeartbeat = `-- name: TouchJobRunHeartbeat :exec
+UPDATE job_runs
+SET heartbeat_at     = now(),
+    lease_expires_at = $1,
+    updated_at       = updated_at
+WHERE queue = $2 AND source_id = $3
+  AND worker_id = $4
+`
+
+type TouchJobRunHeartbeatParams struct {
+	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
+	Queue          string             `json:"queue"`
+	SourceID       string             `json:"source_id"`
+	WorkerID       string             `json:"worker_id"`
+}
+
+// The worker is still on this job. Called from the same ticker that renews the
+// queue row's lease, so heartbeat_at answers "when did a process last say it was
+// alive on this run" — the question the run detail's Heartbeat field asks.
+func (q *Queries) TouchJobRunHeartbeat(ctx context.Context, arg TouchJobRunHeartbeatParams) error {
+	_, err := q.db.Exec(ctx, touchJobRunHeartbeat,
+		arg.LeaseExpiresAt,
+		arg.Queue,
+		arg.SourceID,
+		arg.WorkerID,
+	)
+	return err
 }

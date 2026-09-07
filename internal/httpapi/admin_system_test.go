@@ -18,6 +18,7 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/processheartbeat"
 )
 
 // ffmpegFound / ffmpegMissing pin the ffmpeg component so the suite asserts the
@@ -554,5 +555,202 @@ func TestAdminSystemStatusSurvivesTheOutageItReports(t *testing.T) {
 	}
 	if rec := getWithAuth(srv, "/api/v1/admin/system", admin); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked session = %d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// fakeProcessFleet is the per-process heartbeat read side (migration 0133).
+type fakeProcessFleet struct {
+	rows     []processheartbeat.Process
+	err      error
+	interval time.Duration
+}
+
+func (f fakeProcessFleet) List(context.Context, time.Time) ([]processheartbeat.Process, error) {
+	return f.rows, f.err
+}
+
+func (f fakeProcessFleet) StaleWindow() time.Duration {
+	if f.interval == 0 {
+		return 30 * time.Second
+	}
+	return f.interval
+}
+
+// A17/ADM-04's first blocking gap: /admin/system reported on the process that
+// served the request and nothing else, so on a split topology a killed
+// VIDRA_ROLE=worker left the page reading "ok" with seven healthy components —
+// measured live, twice, twelve seconds apart. settings_sync is now fleet-wide.
+func TestSystemStatusSettingsSyncIsFleetWide(t *testing.T) {
+	healthySelf := func(srv *Server) { WithSettingsPoller(fakeSettingsSync{last: time.Now()})(srv) }
+
+	t.Run("no fleet wired leaves the component exactly as it was", func(t *testing.T) {
+		srv := authServer(t)
+		srv.lookPath = ffmpegFound
+		healthySelf(srv)
+		body := systemStatus(t, srv)
+		if c := body.Components["settings_sync"]; c.Status != "ok" {
+			t.Errorf("settings_sync = %+v, want ok", c)
+		}
+		if body.Processes != nil {
+			t.Errorf("processes = %+v; absent, not empty, when heartbeats are not wired", body.Processes)
+		}
+	})
+
+	t.Run("a healthy fleet is listed and does not degrade", func(t *testing.T) {
+		srv := authServer(t)
+		srv.lookPath = ffmpegFound
+		healthySelf(srv)
+		now := time.Now()
+		WithProcessFleet(fakeProcessFleet{rows: []processheartbeat.Process{
+			{ProcessID: "box:1", Role: "api", State: "running", SettingsPoll: "ok",
+				LastSeenAt: now.Add(-2 * time.Second), LastSeenAgo: 2 * time.Second, StartedAt: now.Add(-time.Hour), Self: true},
+			{ProcessID: "box:2", Role: "worker", State: "running", SettingsPoll: "ok",
+				LastSeenAt: now.Add(-3 * time.Second), LastSeenAgo: 3 * time.Second, StartedAt: now.Add(-time.Hour)},
+		}})(srv)
+		body := systemStatus(t, srv)
+		if c := body.Components["settings_sync"]; c.Status != "ok" {
+			t.Errorf("settings_sync = %+v, want ok", c)
+		}
+		if body.Status != "ok" {
+			t.Errorf("status = %q, want ok", body.Status)
+		}
+		if len(body.Processes) != 2 {
+			t.Fatalf("processes = %+v, want two", body.Processes)
+		}
+		if body.ProcessStaleSeconds != 30 {
+			t.Errorf("process_stale_seconds = %d; the page must explain its own threshold", body.ProcessStaleSeconds)
+		}
+		var worker, self bool
+		for _, p := range body.Processes {
+			if p.Role == "worker" {
+				worker = true
+			}
+			if p.Self {
+				self = true
+			}
+		}
+		if !worker {
+			t.Error("the worker is missing from the fleet list — the whole defect")
+		}
+		if !self {
+			t.Error("no process marked self")
+		}
+	})
+
+	t.Run("a silent worker degrades the page and is named", func(t *testing.T) {
+		srv := authServer(t)
+		srv.lookPath = ffmpegFound
+		healthySelf(srv)
+		now := time.Now()
+		WithProcessFleet(fakeProcessFleet{rows: []processheartbeat.Process{
+			{ProcessID: "box:1", Role: "api", State: "running", SettingsPoll: "ok",
+				LastSeenAt: now, LastSeenAgo: time.Second, StartedAt: now.Add(-time.Hour), Self: true},
+			{ProcessID: "box:2", Role: "worker", State: "stale", SettingsPoll: "ok",
+				LastSeenAt: now.Add(-47 * time.Second), LastSeenAgo: 47 * time.Second, StartedAt: now.Add(-time.Hour)},
+		}})(srv)
+		body := systemStatus(t, srv)
+		c := body.Components["settings_sync"]
+		if c.Status != "down" {
+			t.Fatalf("settings_sync = %+v, want down — this is the killed-worker case that used to read ok", c)
+		}
+		for _, want := range []string{"box:2", "worker", "47s"} {
+			if !strings.Contains(c.Error, want) {
+				t.Errorf("settings_sync error = %q, want it to name %q", c.Error, want)
+			}
+		}
+		if body.Status != "degraded" {
+			t.Errorf("status = %q, want degraded", body.Status)
+		}
+	})
+
+	t.Run("the api's own failure still wins over the fleet's", func(t *testing.T) {
+		srv := authServer(t)
+		srv.lookPath = ffmpegFound
+		WithSettingsPoller(fakeSettingsSync{
+			last: time.Now().Add(-time.Minute),
+			err:  errors.New("read settings_version: connection refused"),
+		})(srv)
+		WithProcessFleet(fakeProcessFleet{rows: []processheartbeat.Process{
+			{ProcessID: "box:2", Role: "worker", State: "stale", LastSeenAgo: 90 * time.Second},
+		}})(srv)
+		c := systemStatus(t, srv).Components["settings_sync"]
+		if !strings.Contains(c.Error, "this replica") {
+			t.Errorf("settings_sync error = %q; a LOCAL failure is the more urgent fact and keeps its own message", c.Error)
+		}
+	})
+
+	t.Run("a fleet read that fails is reported, never swallowed", func(t *testing.T) {
+		srv := authServer(t)
+		srv.lookPath = ffmpegFound
+		healthySelf(srv)
+		WithProcessFleet(fakeProcessFleet{err: errors.New("boom")})(srv)
+		body := systemStatus(t, srv)
+		c := body.Components["settings_sync"]
+		if c.Status != "down" {
+			t.Fatalf("settings_sync = %+v; a page that cannot see the fleet must not claim the fleet is fine", c)
+		}
+		if body.Processes != nil {
+			t.Errorf("processes = %+v; a failed read must not render half a fleet beside a named failure", body.Processes)
+		}
+	})
+
+	t.Run("a cleanly stopped replica is listed and does not degrade", func(t *testing.T) {
+		srv := authServer(t)
+		srv.lookPath = ffmpegFound
+		healthySelf(srv)
+		now := time.Now()
+		WithProcessFleet(fakeProcessFleet{rows: []processheartbeat.Process{
+			{ProcessID: "box:1", Role: "api", State: "running", SettingsPoll: "ok", LastSeenAt: now, StartedAt: now, Self: true},
+			{ProcessID: "box:2", Role: "worker", State: "stopped", SettingsPoll: "ok",
+				LastSeenAt: now.Add(-10 * time.Minute), LastSeenAgo: 10 * time.Minute, StartedAt: now.Add(-time.Hour)},
+		}})(srv)
+		body := systemStatus(t, srv)
+		if c := body.Components["settings_sync"]; c.Status != "ok" {
+			t.Errorf("settings_sync = %+v; a scale-down is not an outage", c)
+		}
+		if len(body.Processes) != 2 {
+			t.Errorf("a stopped replica must stay visible: %+v", body.Processes)
+		}
+	})
+}
+
+// The page an operator opens BECAUSE something is wrong must not be the page
+// that hangs. Measured on the shipped build: a refused Redis dial cost this
+// page 3.4-5.2s (five dial attempts), and the two pings were the only unbounded
+// work on it — a Redis that accepts a connection and then stops talking would
+// have held it open indefinitely.
+func TestSystemStatusBoundsThePings(t *testing.T) {
+	srv := authServer(t)
+	srv.lookPath = ffmpegFound
+	blocked := make(chan struct{})
+	t.Cleanup(func() { close(blocked) })
+	srv.rdb = hangingPinger{until: blocked}
+
+	start := time.Now()
+	body := systemStatus(t, srv)
+	elapsed := time.Since(start)
+
+	if elapsed > systemProbeTimeout+3*time.Second {
+		t.Fatalf("the page took %s with one wedged dependency; it must be bounded", elapsed)
+	}
+	c := body.Components["redis"]
+	if c.Status != "down" {
+		t.Fatalf("redis = %+v, want down", c)
+	}
+	if body.Status != "degraded" {
+		t.Errorf("status = %q, want degraded", body.Status)
+	}
+}
+
+// hangingPinger accepts the call and never answers until the test releases it —
+// the "connected, then silent" shape a TCP timeout cannot catch.
+type hangingPinger struct{ until chan struct{} }
+
+func (h hangingPinger) Ping(ctx context.Context) error {
+	select {
+	case <-h.until:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }

@@ -302,7 +302,7 @@ func TestSafeMetadataRejectsNestedAndSensitiveAllowedValues(t *testing.T) {
 func TestRedactDetailIsPIISafeBoundedAndUTF8Valid(t *testing.T) {
 	detail := "contact ada@example.test at https://example.test/a?token=secret authorization=Bearer-secret " +
 		strings.Repeat("é", 3000)
-	got := redactDetail(detail)
+	got := RedactDetail(detail)
 	if strings.Contains(got, "ada@example.test") || strings.Contains(got, "https://") ||
 		strings.Contains(strings.ToLower(got), "authorization=") {
 		t.Fatalf("sensitive detail survived: %q", got)

@@ -206,3 +206,14 @@ WHERE id IN (
     LIMIT 1000
     FOR UPDATE SKIP LOCKED
 );
+
+-- name: GetLiveTranscodeJobID :one
+-- The id of the video's live (pending/running) transcode job. Enqueue is
+-- ON CONFLICT DO NOTHING and therefore cannot return an id without changing
+-- that idempotency, so the correlation stamp (A17) resolves the row it just
+-- created — or the live one an idempotent call collided with, which is the same
+-- job the caller asked for — through this second, indexed lookup.
+SELECT id FROM transcode_jobs
+WHERE video_id = $1 AND state IN ('pending', 'running')
+ORDER BY created_at DESC
+LIMIT 1;

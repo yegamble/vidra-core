@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -159,6 +160,19 @@ func (f *fakeRepo) FailTranscodeJob(_ context.Context, a sqlcgen.FailTranscodeJo
 	j.Attempts++
 	j.LastError = a.LastError
 	return nil
+}
+
+// GetLiveTranscodeJobID mirrors the SQL: the live (pending/running) job for the
+// video, and pgx.ErrNoRows when there is none — the :one shape.
+func (f *fakeRepo) GetLiveTranscodeJobID(_ context.Context, videoID uuid.UUID) (uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, j := range f.jobs {
+		if j.VideoID == videoID && (j.State == "pending" || j.State == "running") {
+			return j.ID, nil
+		}
+	}
+	return uuid.Nil, pgx.ErrNoRows
 }
 
 func (f *fakeRepo) HasLiveTranscodeJob(_ context.Context, videoID uuid.UUID) (bool, error) {
@@ -481,7 +495,7 @@ func TestJobProbesSourceOnce(t *testing.T) {
 	}
 	svc := NewService(repo, tc)
 
-	if err := svc.EnqueueTarget(context.Background(), videoID, originalKey, TargetAll); err != nil {
+	if _, err := svc.EnqueueTarget(context.Background(), videoID, originalKey, TargetAll); err != nil {
 		t.Fatalf("EnqueueTarget: %v", err)
 	}
 	if n, err := svc.DrainJobs(context.Background(), 1); err != nil || n != 1 {
@@ -517,7 +531,7 @@ func TestFullJobDerivesWebVideosFromTheSamePass(t *testing.T) {
 		},
 	}
 	svc := NewService(repo, tc)
-	if err := svc.EnqueueTarget(context.Background(), videoID, originalKey, TargetAll); err != nil {
+	if _, err := svc.EnqueueTarget(context.Background(), videoID, originalKey, TargetAll); err != nil {
 		t.Fatalf("EnqueueTarget: %v", err)
 	}
 	if n, err := svc.DrainJobs(context.Background(), 1); err != nil || n != 1 {
@@ -554,7 +568,7 @@ func TestProbeFailureFailsJobWithoutEncoding(t *testing.T) {
 	tc := &fakeTargetTranscoder{probeErr: errors.New("source unreadable")}
 	svc := NewService(repo, tc)
 
-	if err := svc.EnqueueTarget(context.Background(), videoID, "web-videos/x.mp4", TargetAll); err != nil {
+	if _, err := svc.EnqueueTarget(context.Background(), videoID, "web-videos/x.mp4", TargetAll); err != nil {
 		t.Fatalf("EnqueueTarget: %v", err)
 	}
 	if n, err := svc.DrainJobs(context.Background(), 1); err != nil || n != 0 {
@@ -575,7 +589,7 @@ func TestWebVideoTargetUsesOriginalAndProjectsResolutionProgress(t *testing.T) {
 	}}
 	svc := NewService(repo, tc)
 
-	if err := svc.EnqueueTarget(context.Background(), videoID, originalKey, TargetWebVideo); err != nil {
+	if _, err := svc.EnqueueTarget(context.Background(), videoID, originalKey, TargetWebVideo); err != nil {
 		t.Fatalf("EnqueueTarget: %v", err)
 	}
 	if got := repo.job(t, videoID); got.SourceKey != originalKey || got.TranscodeType != TargetWebVideo {
@@ -634,7 +648,7 @@ func TestWebVideoFailureDoesNotReplaceHealthyHLSState(t *testing.T) {
 	repo.playlists[videoID] = sqlcgen.StreamingPlaylist{VideoID: videoID, MasterKey: "master.m3u8", State: PlaylistReady}
 	tc := &fakeTargetTranscoder{webErr: errors.New("web encode failed")}
 	svc := NewService(repo, tc)
-	if err := svc.EnqueueTarget(context.Background(), videoID, "web-videos/original.mp4", TargetWebVideo); err != nil {
+	if _, err := svc.EnqueueTarget(context.Background(), videoID, "web-videos/original.mp4", TargetWebVideo); err != nil {
 		t.Fatalf("EnqueueTarget: %v", err)
 	}
 	repo.job(t, videoID).Attempts = maxAttempts - 1
@@ -1368,7 +1382,7 @@ func TestPermanentFailureDeadLettersOnTheFirstAttempt(t *testing.T) {
 	tc := &fakeTargetTranscoder{hlsErr: mediaPermanentError(msg)}
 	svc := NewService(repo, tc)
 
-	if err := svc.EnqueueTarget(context.Background(), videoID, "web-videos/x.m4a", TargetAll); err != nil {
+	if _, err := svc.EnqueueTarget(context.Background(), videoID, "web-videos/x.m4a", TargetAll); err != nil {
 		t.Fatalf("EnqueueTarget: %v", err)
 	}
 	if n, err := svc.DrainJobs(context.Background(), 10); err != nil || n != 0 {
@@ -1409,7 +1423,7 @@ func TestTransientFailureStillRetries(t *testing.T) {
 	videoID := uuid.New()
 	tc := &fakeTargetTranscoder{hlsErr: errors.New("ffmpeg: signal: killed")}
 	svc := NewService(repo, tc)
-	if err := svc.EnqueueTarget(context.Background(), videoID, "web-videos/x.mp4", TargetAll); err != nil {
+	if _, err := svc.EnqueueTarget(context.Background(), videoID, "web-videos/x.mp4", TargetAll); err != nil {
 		t.Fatalf("EnqueueTarget: %v", err)
 	}
 	if _, err := svc.DrainJobs(context.Background(), 10); err != nil {
@@ -1451,7 +1465,7 @@ func TestProgressWritesAreThrottledButKeepEveryTransition(t *testing.T) {
 	}
 	svc := NewService(repo, tc)
 
-	if err := svc.EnqueueTarget(context.Background(), videoID, "originals/x.mp4", TargetHLS); err != nil {
+	if _, err := svc.EnqueueTarget(context.Background(), videoID, "originals/x.mp4", TargetHLS); err != nil {
 		t.Fatalf("EnqueueTarget: %v", err)
 	}
 	if n, err := svc.DrainJobs(context.Background(), 1); err != nil || n != 1 {

@@ -47,6 +47,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/vidra/vidra-core/internal/jobtrace"
 	"github.com/vidra/vidra-core/internal/lease"
 	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/safeerr"
@@ -65,6 +66,10 @@ const (
 	maxBackoff = time.Hour
 	// maxErrorLen bounds the stored (client-visible) error string.
 	maxErrorLen = 300
+
+	// QueueName is this queue's name in the operational projection
+	// (job_runs.queue, migration 0120), which is also the source table's name.
+	QueueName = "upload_finalize_jobs"
 )
 
 // Job states persisted on upload_finalize_jobs.
@@ -116,6 +121,10 @@ type Service struct {
 	// concurrencyFn is the runtime worker parallelism, resolved per DrainJobs
 	// call so a change applies without a restart. nil = 1.
 	concurrencyFn func() int64
+	// trace stamps the operational projection with the request that caused a job
+	// and the process running it, and writes the worker's failure log line. nil
+	// is the pre-A17 behaviour and every method on a nil recorder is a no-op.
+	trace *jobtrace.Recorder
 }
 
 // Option customises the Service.
@@ -142,6 +151,14 @@ func WithReplaceHook(fn func(ctx context.Context, videoID uuid.UUID, sourceKey s
 
 // WithConcurrencyFunc makes the worker parallelism dynamic; f is resolved once
 // per DrainJobs call and clamped to [1, workerpool.MaxConcurrency].
+// WithJobTrace wires the operational-projection recorder (A17): the originating
+// request's ids onto the run, this process onto the jobs it claims, one
+// structured line per failure and dead-letter, and the parent link on the
+// transcode this job spawns. nil is the pre-A17 behaviour.
+func WithJobTrace(r *jobtrace.Recorder) Option {
+	return func(s *Service) { s.trace = r }
+}
+
 func WithConcurrencyFunc(f func() int64) Option {
 	return func(s *Service) { s.concurrencyFn = f }
 }
@@ -193,6 +210,10 @@ func (s *Service) Enqueue(ctx context.Context, uploadID, videoID uuid.UUID, purp
 	if err != nil {
 		return sqlcgen.UploadFinalizeJob{}, err
 	}
+	// Carry the uploading request's ids onto the run the AFTER trigger has just
+	// projected. Best effort — an upload that was accepted must never fail
+	// because its projection could not be labelled.
+	s.trace.Enqueued(ctx, QueueName, job.ID.String(), jobtrace.ActorFromContext(ctx))
 	// The session moves to 'queued' only once a job actually landed: a session
 	// advertising 'queued' with nothing queued is the one state a poller can
 	// never escape.
@@ -279,10 +300,20 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 		// it routinely outlives one lease, so renew while the work runs —
 		// otherwise the sweep hands the same session to a second worker, and
 		// two AttachOriginal calls race on the same deterministic key.
+		sourceID := row.ID.String()
+		s.trace.Claimed(ctx, QueueName, sourceID, time.Now().UTC().Add(lease.Duration))
 		stopLease := lease.Keep(ctx, lease.DefaultInterval, "upload_finalize_job", func(c context.Context) error {
-			return s.repo.RenewUploadFinalizeJobLease(c, row.ID)
+			if err := s.repo.RenewUploadFinalizeJobLease(c, row.ID); err != nil {
+				return err
+			}
+			s.trace.Beat(c, QueueName, sourceID, time.Now().UTC().Add(lease.Duration))
+			return nil
 		})
-		err := s.runFinalize(ctx, row)
+		// A finalize SPAWNS a transcode. Marking this run as the parent on the
+		// context is what turns two unrelated rows on the jobs dashboard into a
+		// chain an operator can follow from the upload that caused it.
+		jobCtx := jobtrace.ContextWithParentJob(ctx, s.trace.RunID(ctx, QueueName, sourceID))
+		err := s.runFinalize(jobCtx, row)
 		stopLease()
 		if err != nil {
 			s.recordFailure(ctx, row, err)
@@ -404,6 +435,10 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueUploadF
 		msg = msg[:maxErrorLen]
 	}
 	if attempts >= maxAttempts {
+		s.trace.Failed(ctx, jobtrace.Failure{
+			Queue: QueueName, SourceID: row.ID.String(), Resource: row.VideoID.String(),
+			Attempt: attempts, State: jobtrace.StateDeadLettered, Err: cause,
+		})
 		if ferr := s.repo.FailUploadFinalizeJob(ctx, sqlcgen.FailUploadFinalizeJobParams{ID: row.ID, Error: msg}); ferr != nil {
 			s.logger.Error("upload finalize: job could not be dead-lettered; the row stays 'running' until the lease sweep",
 				"job_id", row.ID.String(), "error", ferr.Error())
@@ -414,6 +449,10 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueUploadF
 		}
 		return
 	}
+	s.trace.Failed(ctx, jobtrace.Failure{
+		Queue: QueueName, SourceID: row.ID.String(), Resource: row.VideoID.String(),
+		Attempt: attempts, State: jobtrace.StateRetryScheduled, Err: cause,
+	})
 	if rerr := s.repo.RescheduleUploadFinalizeJob(ctx, sqlcgen.RescheduleUploadFinalizeJobParams{
 		ID:            row.ID,
 		NextAttemptAt: time.Now().UTC().Add(backoff(attempts)),

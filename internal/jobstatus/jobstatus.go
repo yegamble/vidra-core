@@ -160,35 +160,35 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 		return ov, err
 	} else {
 		for _, r := range rows {
-			failures = append(failures, Failure{QueueTranscode, r.ID, redactDetail(r.Error), r.Attempts, r.UpdatedAt})
+			failures = append(failures, Failure{QueueTranscode, r.ID, RedactDetail(r.Error), r.Attempts, r.UpdatedAt})
 		}
 	}
 	if rows, err := s.q.FederationRecentFailures(ctx, perQueueFailureFetch); err != nil {
 		return ov, err
 	} else {
 		for _, r := range rows {
-			failures = append(failures, Failure{QueueFederation, r.ID, redactDetail(r.Error), r.Attempts, r.UpdatedAt})
+			failures = append(failures, Failure{QueueFederation, r.ID, RedactDetail(r.Error), r.Attempts, r.UpdatedAt})
 		}
 	}
 	if rows, err := s.q.ImportRecentFailures(ctx, perQueueFailureFetch); err != nil {
 		return ov, err
 	} else {
 		for _, r := range rows {
-			failures = append(failures, Failure{QueueImport, r.ID, redactDetail(r.Error), r.Attempts, r.UpdatedAt})
+			failures = append(failures, Failure{QueueImport, r.ID, RedactDetail(r.Error), r.Attempts, r.UpdatedAt})
 		}
 	}
 	if rows, err := s.q.CaptionRecentFailures(ctx, perQueueFailureFetch); err != nil {
 		return ov, err
 	} else {
 		for _, r := range rows {
-			failures = append(failures, Failure{QueueCaption, r.ID, redactDetail(r.Error), r.Attempts, r.UpdatedAt})
+			failures = append(failures, Failure{QueueCaption, r.ID, RedactDetail(r.Error), r.Attempts, r.UpdatedAt})
 		}
 	}
 	if rows, err := s.q.AccountExportRecentFailures(ctx, perQueueFailureFetch); err != nil {
 		return ov, err
 	} else {
 		for _, r := range rows {
-			failures = append(failures, Failure{QueueAccountExport, r.ID, redactDetail(r.Error), r.Attempts, r.UpdatedAt})
+			failures = append(failures, Failure{QueueAccountExport, r.ID, RedactDetail(r.Error), r.Attempts, r.UpdatedAt})
 		}
 	}
 
@@ -199,7 +199,7 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 		return ov, err
 	} else {
 		for _, r := range rows {
-			failures = append(failures, Failure{QueueStorageMigration, r.ID, redactDetail(r.Error), r.Attempts, r.UpdatedAt})
+			failures = append(failures, Failure{QueueStorageMigration, r.ID, RedactDetail(r.Error), r.Attempts, r.UpdatedAt})
 		}
 	}
 
@@ -567,7 +567,7 @@ func runFromRow(row sqlcgen.JobRun) Run {
 		UpdatedAt: row.UpdatedAt, FinishedAt: pgconv.TimeOrNil(row.FinishedAt),
 		InputMetadata: safeMetadata(row.InputMetadata), OutputMetadata: safeMetadata(row.OutputMetadata),
 		ErrorClass: row.ErrorClass, ErrorCode: row.ErrorCode,
-		ErrorDetail: redactDetail(row.ErrorDetail), ErrorRetryable: row.ErrorRetryable,
+		ErrorDetail: RedactDetail(row.ErrorDetail), ErrorRetryable: row.ErrorRetryable,
 	}
 }
 
@@ -576,7 +576,7 @@ func eventFromRow(row sqlcgen.JobEvent) Event {
 		ID: row.ID, Cursor: formatCursor(row.Cursor), JobID: row.JobID,
 		PipelineRunID: pgUUIDString(row.PipelineRunID), Kind: row.Kind, State: row.State,
 		Stage: row.Stage, ProgressPercent: row.ProgressPercent, Attempt: row.Attempt,
-		WorkerID: row.WorkerID, Message: redactDetail(row.Message), Metadata: safeMetadata(row.Metadata),
+		WorkerID: row.WorkerID, Message: RedactDetail(row.Message), Metadata: safeMetadata(row.Metadata),
 		RequestID: row.RequestID, CorrelationID: row.CorrelationID, TraceID: row.TraceID,
 		OccurredAt: row.OccurredAt,
 	}
@@ -652,7 +652,12 @@ func safeMetadataValue(value any) (any, bool) {
 	return nil, false
 }
 
-func redactDetail(s string) string {
+// RedactDetail strips URLs, credential-shaped pairs and email addresses from a
+// free-form failure cause and bounds its length. Exported because the WORKER
+// must log the same cause the admin failure list shows, and the two must be
+// redacted identically or the log becomes the leak the list was built to
+// prevent (internal/jobtrace).
+func RedactDetail(s string) string {
 	s = strings.ToValidUTF8(strings.TrimSpace(s), "�")
 	s = sensitiveDetail.ReplaceAllString(s, "[redacted]")
 	s = emailDetail.ReplaceAllString(s, "[redacted-email]")

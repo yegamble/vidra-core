@@ -201,6 +201,25 @@ func (q *Queries) FailTranscodeJob(ctx context.Context, arg FailTranscodeJobPara
 	return err
 }
 
+const getLiveTranscodeJobID = `-- name: GetLiveTranscodeJobID :one
+SELECT id FROM transcode_jobs
+WHERE video_id = $1 AND state IN ('pending', 'running')
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+// The id of the video's live (pending/running) transcode job. Enqueue is
+// ON CONFLICT DO NOTHING and therefore cannot return an id without changing
+// that idempotency, so the correlation stamp (A17) resolves the row it just
+// created — or the live one an idempotent call collided with, which is the same
+// job the caller asked for — through this second, indexed lookup.
+func (q *Queries) GetLiveTranscodeJobID(ctx context.Context, videoID uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getLiveTranscodeJobID, videoID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getStreamingPlaylist = `-- name: GetStreamingPlaylist :one
 SELECT video_id, master_key, state, created_at, updated_at, format FROM streaming_playlists WHERE video_id = $1
 `

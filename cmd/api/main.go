@@ -47,6 +47,7 @@ import (
 	"github.com/vidra/vidra-core/internal/jobloop"
 	"github.com/vidra/vidra-core/internal/jobrecovery"
 	"github.com/vidra/vidra-core/internal/jobstatus"
+	"github.com/vidra/vidra-core/internal/jobtrace"
 	"github.com/vidra/vidra-core/internal/leaderlock"
 	"github.com/vidra/vidra-core/internal/linkpreview"
 	"github.com/vidra/vidra-core/internal/live"
@@ -62,6 +63,7 @@ import (
 	"github.com/vidra/vidra-core/internal/peertubeimport"
 	"github.com/vidra/vidra-core/internal/playersettings"
 	"github.com/vidra/vidra-core/internal/playlist"
+	"github.com/vidra/vidra-core/internal/processheartbeat"
 	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/qoe"
 	"github.com/vidra/vidra-core/internal/quota"
@@ -239,6 +241,18 @@ func run() error {
 	// GET /schemaz reads the migration ledger over this same pool, so the version
 	// probe costs a pooled query rather than a connection.
 	opts = append(opts, httpapi.WithSchemaLedger(db.Pool))
+
+	// OPERATIONAL JOB IDENTITY (A17, migration 0133). Built HERE, above every
+	// service, because the queue services are constructed long before the
+	// heartbeat writer below and both must stamp the SAME process id — a run
+	// whose worker_id named a process the status page's list did not contain
+	// would be worse than the empty column it replaces. It carries the
+	// originating request's ids onto each enqueued run, this process onto each
+	// claimed one, and writes the structured line a failed job owes its
+	// operator: before it, job_runs/job_events carried those columns and
+	// NOTHING wrote them (0 of 9 runs, 0 of 53 events), and three real worker
+	// failures across three queues produced no log line at all.
+	jobTrace := jobtrace.New(db.Queries(), processheartbeat.SelfID(), logger)
 
 	// The pool sampler (phase-5 multi-node floor). THE ONLY place pgx's Stat
 	// type is translated, so neither internal/observability nor internal/httpapi
@@ -987,6 +1001,7 @@ func run() error {
 		},
 		uint64(cfg.TranscodingMinFreeScratchMB)<<20,
 	))
+	tcopts = append(tcopts, transcode.WithJobTrace(jobTrace))
 	transcodesvc = transcode.NewService(db.Queries(), hlsTranscoder, tcopts...)
 	opts = append(opts, httpapi.WithTranscodeService(transcodesvc))
 	// Publish-after-transcode seams (0098): whether a transcode will actually run
@@ -1452,6 +1467,51 @@ func run() error {
 	if err := settingsPoller.Prime(startCtx); err != nil {
 		logger.Warn("could not read the settings version at boot; the first poll will reload once", "error", err)
 	}
+
+	// PER-PROCESS HEARTBEAT (migration 0133). The poller above is the one loop
+	// that runs in EVERY role, and it already keeps the health record the admin
+	// status page reads — so it is also the right place to make that record
+	// DURABLE. Without this the page can only answer for the process that served
+	// the request, and on a split topology that is the api: a worker whose polls
+	// all fail, or one that is not running at all, left the page reading "ok"
+	// with every component healthy.
+	//
+	// It is wired in every role for the same reason the poller is. A heartbeat
+	// only from the api would report on the half nobody needed reporting on.
+	heartbeat := processheartbeat.NewWriter(db.Queries(), settingsPoller, processheartbeat.Config{
+		Role:      cfg.Role.String(),
+		Version:   version.Version,
+		Commit:    version.Commit,
+		StartedAt: time.Now().UTC(),
+	})
+	settingsPoller.WithAfterTick(heartbeat.AfterTick)
+	// Beat once at boot, before the first (jittered) tick: a process that has
+	// just started must appear on the page immediately, not up to an interval
+	// later, or a rolling deploy looks like a partial outage.
+	if err := heartbeat.Beat(startCtx); err != nil {
+		logger.Warn("could not write this process's heartbeat at boot; it may read as stale on the admin status page",
+			"process_id", heartbeat.ProcessID(), "error", err)
+	}
+	// And reap the rows this HOST's previous processes left behind. A container
+	// restarts into the same process_id and simply upserts; a systemd or
+	// bare-metal deployment comes back with a new pid, so without this every
+	// restart would leave a permanently stale row degrading the instance.
+	if n, err := heartbeat.ReapLocal(startCtx); err != nil {
+		logger.Warn("could not reap this host's exited process heartbeats", "error", err)
+	} else if n > 0 {
+		logger.Info("reaped heartbeats for processes this host no longer has", "count", n)
+	}
+	// Say goodbye on the way out, so an operator can tell a replica they scaled
+	// down from one that crashed. Best effort and short-budgeted: shutdown must
+	// never block on it, and a process that never gets here shows as a stale
+	// 'running' row, which is the honest report of a crash.
+	defer func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer stopCancel()
+		if err := heartbeat.Stop(stopCtx); err != nil {
+			logger.Warn("could not mark this process stopped", "process_id", heartbeat.ProcessID(), "error", err)
+		}
+	}()
 	pollCtx, pollCancel := context.WithCancel(context.Background())
 	defer pollCancel()
 	go settingsPoller.Run(pollCtx, logger)
@@ -1468,6 +1528,12 @@ func run() error {
 	// admin surface. The polling itself, above, is unconditional.
 	if cfg.Role.ServesHTTP() {
 		opts = append(opts, httpapi.WithSettingsPoller(settingsPoller))
+		// And the FLEET half, which is what makes settings_sync a report on the
+		// deployment rather than on this process. The reader is api-side only
+		// because the page is; every role WRITES its row above.
+		opts = append(opts, httpapi.WithProcessFleet(processheartbeat.NewFleet(
+			db.Queries(), heartbeat.ProcessID(),
+			settingsversion.DefaultInterval, processheartbeat.DefaultForgetAfter)))
 	}
 
 	// Resumable/chunked upload sessions (P6.1). Chunk bytes go to the same blob
@@ -1490,6 +1556,7 @@ func run() error {
 	// The request now validates and enqueues; this queue does the work.
 	uploadfinalizesvc := uploadfinalize.NewService(db.Queries(), uploadsvc, videosvc,
 		uploadfinalize.WithLogger(logger),
+		uploadfinalize.WithJobTrace(jobTrace),
 		// A replace-purpose session has no Process to fire its transcode enqueue,
 		// so the same enqueue-or-invalidate decision the HTTP layer makes for the
 		// direct multipart shape (orchestrateReplaceTranscode) is wired here.
@@ -1561,6 +1628,7 @@ func run() error {
 		importOpts = append(importOpts, videoimport.WithYtdlp(ytdlpClient, ""))
 		logger.Info("yt-dlp platform-URL import enabled", "max_height", cfg.YtdlpMaxHeight, "proxy_set", cfg.YtdlpProxy != "")
 	}
+	importOpts = append(importOpts, videoimport.WithJobTrace(jobTrace))
 	importsvc := videoimport.NewService(db.Queries(), videosvc, importMaxBytes, importOpts...)
 	opts = append(opts, httpapi.WithVideoImportService(importsvc))
 
