@@ -755,6 +755,57 @@ func (s *Server) handleRequestEmailVerification(c echo.Context) error {
 	return c.NoContent(http.StatusAccepted)
 }
 
+// emailVerificationResendRequest is the POST /api/v1/auth/verify-email/resend
+// body. The address is the whole request: the caller has no session, which is
+// the point of the route.
+type emailVerificationResendRequest struct {
+	Email string `json:"email"`
+}
+
+func (r emailVerificationResendRequest) Validate() []FieldError {
+	if strings.TrimSpace(r.Email) == "" {
+		return []FieldError{{Field: "email", Message: "is required"}}
+	}
+	return nil
+}
+
+// handleResendEmailVerification re-sends a verification message to an address
+// with NO session. It is the missing half of the verification gate: with the
+// gate on, registration returns 202 and no session and login answers 403
+// email_verification_required, so the account that needs the message is exactly
+// the one that cannot authenticate to ask for it. Until this route the only
+// resend sat behind requireAuth and a registrant who lost the mail was stuck
+// until an admin flipped email_verified by hand.
+//
+// It always answers 202 with an empty body — for a known address, an unknown
+// one, an already-verified one, a deactivated one, and a repeat inside the
+// send cooldown alike — so it cannot be used to enumerate accounts. Behind the
+// strict auth limiter (10/min per IP) like every other unauthenticated
+// credential endpoint, and the service applies a per-address send cooldown on
+// top, which is what bounds what a distributed caller can do to one inbox.
+func (s *Server) handleResendEmailVerification(c echo.Context) error {
+	var in emailVerificationResendRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	if err := s.authsvc.ResendEmailVerification(c.Request().Context(), in.Email); err != nil {
+		// A relay that would not take the message must not change the answer —
+		// the same reasoning as the password-reset route, where a 500 for a
+		// registered address and a 202 for an unregistered one was a flat
+		// account-existence oracle available whenever the relay was down.
+		if !errors.Is(err, auth.ErrMailDelivery) {
+			return err
+		}
+		s.logger.Error("verification message could not be delivered", "error", err)
+		s.audit(c, observability.ActionEmailVerifyRequest, observability.ResultFailure, "", "mail_delivery")
+		return c.NoContent(http.StatusAccepted)
+	}
+	// No actor_id and no address: enumeration-safe, so the event records that a
+	// verification was requested and not for whom.
+	s.audit(c, observability.ActionEmailVerifyRequest, observability.ResultSuccess, "", "")
+	return c.NoContent(http.StatusAccepted)
+}
+
 // emailVerificationConfirmRequest is the POST /api/v1/auth/verify-email/confirm body.
 type emailVerificationConfirmRequest struct {
 	Token string `json:"token"`

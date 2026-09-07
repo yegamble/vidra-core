@@ -112,6 +112,8 @@ func (m *changeMailer) SendEmailChanged(_ context.Context, oldEmail, newEmail st
 	return nil
 }
 
+func (m *changeMailer) SendTwoFactorRemoved(context.Context, string, bool) error { return nil }
+
 func (m *changeMailer) lastToken(t *testing.T) string {
 	t.Helper()
 	if len(m.changeTokens) == 0 {

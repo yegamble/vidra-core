@@ -43,6 +43,17 @@ type CaptureMailer struct {
 	// was changed" notice at the OLD address. No token is involved.
 	emailChanged []CapturedEmailChange
 	testMessages []CapturedTestMessage
+	// twoFactorRemoved records the "two-factor was turned off" notices, with
+	// the flag saying whether an administrator did it — the acceptance harness
+	// asserts both the recipient and which of the two messages they got.
+	twoFactorRemoved []CapturedTwoFactorRemoval
+}
+
+// CapturedTwoFactorRemoval is one two-factor-removed notice recorded instead of
+// being delivered.
+type CapturedTwoFactorRemoval struct {
+	Email   string
+	ByAdmin bool
 }
 
 // CapturedContact is one contact-form message recorded by the capture mailer
@@ -89,6 +100,23 @@ func (c *CaptureMailer) PasswordChangedNotices() []string {
 	defer c.mu.Unlock()
 	out := make([]string, len(c.passwordChanged))
 	copy(out, c.passwordChanged)
+	return out
+}
+
+// SendTwoFactorRemoved records that a two-factor-removed notice was "sent".
+func (c *CaptureMailer) SendTwoFactorRemoved(_ context.Context, email string, byAdmin bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.twoFactorRemoved = append(c.twoFactorRemoved, CapturedTwoFactorRemoval{Email: email, ByAdmin: byAdmin})
+	return nil
+}
+
+// TwoFactorRemovedNotices returns the two-factor-removed notices, oldest first.
+func (c *CaptureMailer) TwoFactorRemovedNotices() []CapturedTwoFactorRemoval {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]CapturedTwoFactorRemoval, len(c.twoFactorRemoved))
+	copy(out, c.twoFactorRemoved)
 	return out
 }
 

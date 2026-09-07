@@ -2,9 +2,7 @@ package httpapi
 
 import (
 	"context"
-	"net"
-	"strconv"
-	"strings"
+	"errors"
 	"sync"
 	"time"
 
@@ -190,25 +188,67 @@ func (s *Server) probeObjectStore(ctx context.Context) componentStatus {
 	}
 }
 
-// probeSMTP dials the relay and reads its greeting — it never authenticates and
-// never sends, so running it on every page load costs the relay one connection
-// and cannot get the account rate-limited.
+// probeSMTP walks the handshake a real send depends on — EHLO, STARTTLS if the
+// relay offers it, AUTH if credentials are configured — and stops before MAIL
+// FROM. It sends no message, so running it on every page load costs the relay
+// one connection and cannot get the account rate-limited.
+//
+// Reading the 220 greeting, which is all this used to do, proved almost
+// nothing. A05 pointed it at a relay whose certificate this instance refuses and
+// it reported `smtp: ok` while every single send failed — and again while every
+// send failed for want of AUTH. `ok` here now means a real send would get past
+// the steps that break; anything short of that is `down`, with a sentence that
+// names the stage, because "connection refused" and "certificate signed by
+// unknown authority" send an operator to two completely different places.
 func (s *Server) probeSMTP(ctx context.Context) componentStatus {
 	if !s.cfg.MailEnabled || s.cfg.SMTPHost == "" {
 		return componentStatus{Status: "not_configured"}
 	}
-	addr := net.JoinHostPort(s.cfg.SMTPHost, strconv.Itoa(s.cfg.SMTPPort))
-	banner, err := preflight.CheckSMTP(ctx, addr)
-	switch {
-	case err != nil:
-		return componentStatus{Status: "down", Error: err.Error()}
-	case !strings.HasPrefix(strings.TrimSpace(banner), "220"):
-		// Something answered, but not a mail relay — a proxy or a captive portal
-		// in front of one. Password resets fail exactly as if nothing were there.
-		return componentStatus{Status: "down", Error: "the greeting was not an SMTP 220"}
-	default:
+	_, err := preflight.CheckSMTPHandshake(ctx, preflight.SMTPHandshake{
+		Host:     s.cfg.SMTPHost,
+		Port:     s.cfg.SMTPPort,
+		Username: s.cfg.SMTPUsername,
+		Password: s.cfg.SMTPPassword,
+	})
+	if err == nil {
 		return componentStatus{Status: "ok"}
 	}
+	return componentStatus{Status: "down", Error: smtpProbeReason(err)}
+}
+
+// smtpProbeReason turns a handshake failure into the sentence an operator can
+// act on. It names the CONSEQUENCE as well as the cause, the same discipline
+// settingsSyncStatus uses: an operator who reads only the cause routinely fixes
+// the wrong thing.
+func smtpProbeReason(err error) string {
+	var he *preflight.SMTPHandshakeError
+	if !errors.As(err, &he) {
+		return err.Error()
+	}
+	switch he.Stage {
+	case preflight.SMTPStageDial:
+		return "the mail relay could not be reached, so every password reset and verification message fails: " + underlying(he)
+	case preflight.SMTPStageGreeting:
+		// Something answered, but not a mail relay — a proxy or a captive portal
+		// in front of one. Password resets fail exactly as if nothing were there.
+		return "something answered on that port but it did not greet as an SMTP relay (a proxy or captive portal in front of the port answers exactly like this): " + underlying(he)
+	case preflight.SMTPStageSTARTTLS:
+		return "the relay advertises STARTTLS but the encrypted session could not be established, so every message fails before it is sent. Vidra verifies the certificate strictly against SMTP_HOST and has no skip-verify knob: use a certificate the host trust store accepts, or add the relay's CA to that store: " + underlying(he)
+	case preflight.SMTPStageAuthUnsupported:
+		return "SMTP_USERNAME is set but this relay offers no AUTH, so every send fails closed rather than going out unauthenticated. Either clear the credentials or point at the relay's submission port (587), which is usually the one that advertises AUTH"
+	case preflight.SMTPStageAuth:
+		return "the relay rejected the configured SMTP credentials, so every message fails before it is sent. Check SMTP_USERNAME and SMTP_PASSWORD: " + underlying(he)
+	default:
+		return "the mail relay handshake failed at the " + he.Stage + " step: " + underlying(he)
+	}
+}
+
+// underlying renders the wrapped cause, or the whole error when there is none.
+func underlying(he *preflight.SMTPHandshakeError) string {
+	if he.Err == nil {
+		return he.Error()
+	}
+	return he.Err.Error()
 }
 
 // probeSearch asks the search service's own /readyz from inside the compose

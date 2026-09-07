@@ -80,7 +80,9 @@ func (s *Server) handleRequestAutoCaption(c echo.Context) error {
 		return &FeatureDisabledError{Feature: "transcription"}
 	}
 	if !s.captionjobsvc.Enabled() {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "auto-captioning is not enabled on this server")
+		// Typed, so the sentence naming the missing prerequisite survives the
+		// central 5xx scrubber (measured, A17).
+		return &AutoCaptionsNotConfiguredError{}
 	}
 	var in autoCaptionRequest
 	if err := bindAndValidate(c, &in); err != nil {
@@ -98,7 +100,7 @@ func (s *Server) handleRequestAutoCaption(c echo.Context) error {
 	if err != nil {
 		switch {
 		case errors.Is(err, captionjob.ErrDisabled):
-			return echo.NewHTTPError(http.StatusServiceUnavailable, "auto-captioning is not enabled on this server")
+			return &AutoCaptionsNotConfiguredError{}
 		case errors.Is(err, captionjob.ErrInvalidLanguage):
 			return &ValidationError{Fields: []FieldError{{Field: "language", Message: "must be a valid BCP-47 language tag"}}}
 		case errors.Is(err, captionjob.ErrJobActive):

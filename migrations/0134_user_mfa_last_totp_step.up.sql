@@ -1,0 +1,19 @@
+-- 0134: burn a TOTP code after its first use (A05 follow-up ruling).
+--
+-- RFC 6238 §5.2 is explicit that a verified OTP must not be accepted twice: a
+-- code is valid for its whole 30-second step, and with the ±1 step of skew the
+-- shipped validator allows, a code observed once (shoulder-surfed, phished,
+-- read off a shared screen) stayed spendable for roughly 90 seconds. The
+-- second factor is supposed to be single-use; without this column it was not.
+--
+-- last_totp_step is the RFC 6238 time step (unix seconds / 30) of the most
+-- recently ACCEPTED code. A challenge accepts a code only when its step is
+-- strictly greater, so the same code is refused for the rest of its window
+-- exactly like a wrong one — and so is any older-skew code, which is the same
+-- replay a step later. NULL means "no code has been accepted yet", the state
+-- every existing row starts in: nothing is burned retroactively and a pending
+-- enrollment is unaffected.
+--
+-- Recovery codes are untouched: mfa_recovery_codes.used_at has always made
+-- them single-use.
+ALTER TABLE user_mfa ADD COLUMN last_totp_step BIGINT;

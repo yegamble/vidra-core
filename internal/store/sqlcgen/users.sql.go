@@ -581,7 +581,12 @@ SELECT u.id, u.username, u.email, u.password_hash, u.role, u.email_verified, u.i
           FROM video_files vf
           JOIN videos v ON v.id = vf.video_id
           JOIN channels c ON c.id = v.channel_id
-         WHERE c.owner_id = u.id) AS storage_used_bytes
+         WHERE c.owner_id = u.id) AS storage_used_bytes,
+       -- Whether the account has a CONFIRMED second factor. A pending
+       -- enrollment (enabled=FALSE) is not two-factor protection and must not
+       -- be shown as one. EXISTS keeps the list one query: an admin console
+       -- that asked per row would issue a query per account on every page.
+       EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = u.id AND m.enabled) AS mfa_enabled
 FROM users u
 WHERE ($1::text = ''
        OR u.username ILIKE '%' || $1::text || '%'
@@ -617,6 +622,7 @@ type ListUsersRow struct {
 	ProfilePublic            bool               `json:"profile_public"`
 	IsOwner                  bool               `json:"is_owner"`
 	StorageUsedBytes         int64              `json:"storage_used_bytes"`
+	MfaEnabled               bool               `json:"mfa_enabled"`
 }
 
 // Admin user list: newest first, optionally filtered by a username/email
@@ -653,6 +659,7 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 			&i.ProfilePublic,
 			&i.IsOwner,
 			&i.StorageUsedBytes,
+			&i.MfaEnabled,
 		); err != nil {
 			return nil, err
 		}

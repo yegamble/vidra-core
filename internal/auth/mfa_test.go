@@ -37,6 +37,7 @@ func (f *fakeMFARepo) UpsertUserMFA(_ context.Context, a sqlcgen.UpsertUserMFAPa
 		}
 		row.TotpSecretSealed = a.TotpSecretSealed
 		row.CreatedAt = time.Now()
+		row.LastTotpStep = nil // the new secret makes old steps meaningless
 		return *row, nil
 	}
 	row := &sqlcgen.UserMfa{UserID: a.UserID, TotpSecretSealed: a.TotpSecretSealed, CreatedAt: time.Now()}
@@ -88,6 +89,37 @@ func (f *fakeMFARepo) UseRecoveryCode(_ context.Context, a sqlcgen.UseRecoveryCo
 		}
 	}
 	return 0, nil
+}
+
+// BurnTOTPStep mirrors the SQL: it matches only an ENABLED row whose recorded
+// step is strictly older than the presented one, so a replay writes nothing and
+// returns 0.
+func (f *fakeMFARepo) BurnTOTPStep(_ context.Context, a sqlcgen.BurnTOTPStepParams) (int64, error) {
+	row, ok := f.rows[a.UserID]
+	if !ok || !row.Enabled {
+		return 0, nil
+	}
+	if row.LastTotpStep != nil && *row.LastTotpStep >= a.Step {
+		return 0, nil
+	}
+	step := a.Step
+	row.LastTotpStep = &step
+	return 1, nil
+}
+
+// BurnPendingTOTPStep is the same write without the enabled guard (the row is
+// still pending when an enrollment is confirmed).
+func (f *fakeMFARepo) BurnPendingTOTPStep(_ context.Context, a sqlcgen.BurnPendingTOTPStepParams) (int64, error) {
+	row, ok := f.rows[a.UserID]
+	if !ok {
+		return 0, nil
+	}
+	if row.LastTotpStep != nil && *row.LastTotpStep >= a.Step {
+		return 0, nil
+	}
+	step := a.Step
+	row.LastTotpStep = &step
+	return 1, nil
 }
 
 func (f *fakeMFARepo) CountUnusedRecoveryCodes(_ context.Context, userID uuid.UUID) (int64, error) {
@@ -183,8 +215,9 @@ func TestTOTPEnrollVerifyAndMFALogin(t *testing.T) {
 		t.Fatalf("MFA login = %+v; want mfa_token and no session tokens", res)
 	}
 
-	// The challenge completes with a real TOTP code.
-	got, tokens, method, err := svc.CompleteMFAChallenge(ctx, res.MFAToken, totpCode(t, enr.Secret, time.Now()), "ua")
+	// The challenge completes with a real TOTP code — from the NEXT step, since
+	// the one that confirmed the enrollment has been burned (0134).
+	got, tokens, method, err := svc.CompleteMFAChallenge(ctx, res.MFAToken, totpCode(t, enr.Secret, time.Now().Add(30*time.Second)), "ua")
 	if err != nil {
 		t.Fatalf("CompleteMFAChallenge: %v", err)
 	}
@@ -341,13 +374,13 @@ func TestDisableTOTPRequiresPasswordAndDropsEverything(t *testing.T) {
 		t.Fatalf("verify: %v", err)
 	}
 
-	if err := svc.DisableTOTP(ctx, user.ID, "wrong-password"); !errors.Is(err, ErrInvalidPassword) {
+	if err := svc.DisableTOTP(ctx, user.ID, "wrong-password", ""); !errors.Is(err, ErrInvalidPassword) {
 		t.Fatalf("wrong-password disable err = %v, want ErrInvalidPassword", err)
 	}
 	if st, _ := svc.GetMFAStatus(ctx, user.ID); !st.Enabled {
 		t.Fatal("a failed disable must leave MFA on")
 	}
-	if err := svc.DisableTOTP(ctx, user.ID, "supersecret"); err != nil {
+	if err := svc.DisableTOTP(ctx, user.ID, "supersecret", ""); err != nil {
 		t.Fatalf("DisableTOTP: %v", err)
 	}
 	if st, _ := svc.GetMFAStatus(ctx, user.ID); st.Enabled || st.RecoveryCodesRemaining != 0 {
@@ -361,7 +394,7 @@ func TestDisableTOTPRequiresPasswordAndDropsEverything(t *testing.T) {
 		t.Errorf("post-disable login = %+v, %v; want plain tokens", res, err)
 	}
 	// Nothing left to disable.
-	if err := svc.DisableTOTP(ctx, user.ID, "supersecret"); !errors.Is(err, ErrMFANotEnabled) {
+	if err := svc.DisableTOTP(ctx, user.ID, "supersecret", ""); !errors.Is(err, ErrMFANotEnabled) {
 		t.Errorf("second disable err = %v, want ErrMFANotEnabled", err)
 	}
 }
@@ -416,5 +449,111 @@ func TestMFAUnavailableWithoutWiring(t *testing.T) {
 	// Login is completely unchanged.
 	if res, err := svc.Login(ctx, LoginInput{Email: "ada@example.test", Password: "supersecret"}, "ua"); err != nil || res.MFARequired || res.Tokens.AccessToken == "" {
 		t.Errorf("login = %+v, %v; want plain tokens", res, err)
+	}
+}
+
+// TestTOTPCodeIsBurnedAfterFirstUse pins the 0134 ruling: a code that has been
+// accepted once is refused for the rest of its validity window exactly like a
+// wrong one, and the NEXT step's code works. Before this, a code stayed
+// spendable for its whole 30s step plus the ±1 skew — roughly 90 seconds of
+// replay for anyone who saw it once.
+func TestTOTPCodeIsBurnedAfterFirstUse(t *testing.T) {
+	ctx := context.Background()
+	svc, _, mfaRepo := newMFAService(t, nil)
+	user, _ := register(t, svc, "ada", "ada@example.test")
+
+	// A fixed clock: replay is time-window arithmetic, and a wall clock that
+	// crosses a step boundary mid-test would hide the very thing under test.
+	at := time.Date(2026, 9, 7, 10, 0, 5, 0, time.UTC)
+	svc.now = func() time.Time { return at }
+	svc.mfaTokens.now = svc.now
+
+	enr, err := svc.BeginTOTPEnrollment(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("BeginTOTPEnrollment: %v", err)
+	}
+	enrollCode := totpCode(t, enr.Secret, at)
+	if _, err := svc.VerifyTOTPEnrollment(ctx, user.ID, enrollCode); err != nil {
+		t.Fatalf("verify enrollment: %v", err)
+	}
+
+	login := func() string {
+		res, err := svc.Login(ctx, LoginInput{Email: "ada@example.test", Password: "supersecret"}, "ua")
+		if err != nil || !res.MFARequired {
+			t.Fatalf("login = %+v, %v; want MFA challenge", res, err)
+		}
+		return res.MFAToken
+	}
+
+	// The code that CONFIRMED the enrollment is already spent: it cannot then
+	// be handed to a login challenge.
+	if _, _, _, err := svc.CompleteMFAChallenge(ctx, login(), enrollCode, "ua"); !errors.Is(err, ErrInvalidMFACode) {
+		t.Fatalf("enrollment code reused on a challenge err = %v, want ErrInvalidMFACode", err)
+	}
+
+	// Move one step on and spend a fresh code.
+	at = at.Add(30 * time.Second)
+	code := totpCode(t, enr.Secret, at)
+	if _, tokens, method, err := svc.CompleteMFAChallenge(ctx, login(), code, "ua"); err != nil || tokens.AccessToken == "" || method != MFAMethodTOTP {
+		t.Fatalf("first use of a fresh code = %v (method %q), want a session", err, method)
+	}
+
+	// Same code, same 30-second window, same clock: refused, and refused with
+	// the WRONG-CODE error so the caller cannot tell replay from a typo.
+	if _, _, _, err := svc.CompleteMFAChallenge(ctx, login(), code, "ua"); !errors.Is(err, ErrInvalidMFACode) {
+		t.Fatalf("replayed code err = %v, want ErrInvalidMFACode", err)
+	}
+	// And it stays refused for the rest of the window that the ±1 skew keeps
+	// open — the replay a stolen code was previously worth.
+	at = at.Add(29 * time.Second)
+	if _, _, _, err := svc.CompleteMFAChallenge(ctx, login(), code, "ua"); !errors.Is(err, ErrInvalidMFACode) {
+		t.Fatalf("replayed code inside the skew window err = %v, want ErrInvalidMFACode", err)
+	}
+
+	// The NEXT step's code works: burning a code must not lock the account out.
+	at = at.Add(31 * time.Second)
+	next := totpCode(t, enr.Secret, at)
+	if _, tokens, _, err := svc.CompleteMFAChallenge(ctx, login(), next, "ua"); err != nil || tokens.AccessToken == "" {
+		t.Fatalf("next step's code = %v, want a session", err)
+	}
+	if row := mfaRepo.rows[user.ID]; row.LastTotpStep == nil || *row.LastTotpStep != at.Unix()/30 {
+		t.Errorf("last_totp_step = %v, want the step just accepted (%d)", row.LastTotpStep, at.Unix()/30)
+	}
+}
+
+// TestBurnedTOTPStepLeavesRecoveryCodesAlone: recovery codes have their own
+// single-use ledger (used_at) and the step burn must not touch it — the account
+// that has just replayed a code is exactly the one that may need to fall back.
+func TestBurnedTOTPStepLeavesRecoveryCodesAlone(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _ := newMFAService(t, nil)
+	user, _ := register(t, svc, "ada", "ada@example.test")
+	at := time.Date(2026, 9, 7, 11, 0, 5, 0, time.UTC)
+	svc.now = func() time.Time { return at }
+	svc.mfaTokens.now = svc.now
+
+	enr, _ := svc.BeginTOTPEnrollment(ctx, user.ID)
+	codes, err := svc.VerifyTOTPEnrollment(ctx, user.ID, totpCode(t, enr.Secret, at))
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	login := func() string {
+		res, err := svc.Login(ctx, LoginInput{Email: "ada@example.test", Password: "supersecret"}, "ua")
+		if err != nil || !res.MFARequired {
+			t.Fatalf("login = %+v, %v; want MFA challenge", res, err)
+		}
+		return res.MFAToken
+	}
+	at = at.Add(30 * time.Second)
+	code := totpCode(t, enr.Secret, at)
+	if _, _, _, err := svc.CompleteMFAChallenge(ctx, login(), code, "ua"); err != nil {
+		t.Fatalf("first use: %v", err)
+	}
+	if _, _, _, err := svc.CompleteMFAChallenge(ctx, login(), code, "ua"); !errors.Is(err, ErrInvalidMFACode) {
+		t.Fatalf("replay err = %v, want ErrInvalidMFACode", err)
+	}
+	// A recovery code still completes the challenge in the same window.
+	if _, tokens, method, err := svc.CompleteMFAChallenge(ctx, login(), codes[0], "ua"); err != nil || tokens.AccessToken == "" || method != MFAMethodRecovery {
+		t.Fatalf("recovery code after a burned TOTP step = %v (method %q), want a session", err, method)
 	}
 }

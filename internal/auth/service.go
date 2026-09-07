@@ -115,6 +115,10 @@ type Repository interface {
 	GetEmailVerificationToken(ctx context.Context, tokenHash string) (sqlcgen.EmailVerificationToken, error)
 	MarkEmailVerificationTokenUsed(ctx context.Context, id uuid.UUID) error
 	DeleteUnusedEmailVerificationTokens(ctx context.Context, userID uuid.UUID) error
+	// LatestUnusedEmailVerificationTokenAt is when the account's newest unused
+	// verification token was issued — the anonymous resend's cooldown clock.
+	// pgx.ErrNoRows when nothing is outstanding.
+	LatestUnusedEmailVerificationTokenAt(ctx context.Context, userID uuid.UUID) (time.Time, error)
 	SetUserEmailVerified(ctx context.Context, id uuid.UUID) error
 
 	// Two-step email change (AUTH-05, migration 0129). The pending request

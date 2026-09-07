@@ -7,12 +7,16 @@ INSERT INTO user_mfa (user_id, totp_secret_sealed, enabled)
 VALUES ($1, $2, FALSE)
 ON CONFLICT (user_id) DO UPDATE
 SET totp_secret_sealed = EXCLUDED.totp_secret_sealed,
-    created_at         = now()
+    created_at         = now(),
+    -- A restarted enrollment carries a NEW secret, so the burn high-water mark
+    -- (0134) is about codes that can never be presented again; keeping it would
+    -- only refuse the first code of the new secret inside the same 30s step.
+    last_totp_step     = NULL
 WHERE NOT user_mfa.enabled
-RETURNING user_id, totp_secret_sealed, enabled, created_at;
+RETURNING user_id, totp_secret_sealed, enabled, created_at, last_totp_step;
 
 -- name: GetUserMFA :one
-SELECT user_id, totp_secret_sealed, enabled, created_at
+SELECT user_id, totp_secret_sealed, enabled, created_at, last_totp_step
 FROM user_mfa
 WHERE user_id = $1;
 
@@ -50,3 +54,34 @@ WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL;
 SELECT count(*)
 FROM mfa_recovery_codes
 WHERE user_id = $1 AND used_at IS NULL;
+
+-- name: BurnTOTPStep :execrows
+-- Records the RFC 6238 time step of an accepted TOTP code and, by the same
+-- statement, refuses a replay: the UPDATE matches only when the presented step
+-- is strictly NEWER than the last accepted one, so a second use of the same
+-- code (or of an older ±1-skew code) touches 0 rows and the caller treats it
+-- exactly like a wrong code. Doing the check and the write in one statement is
+-- what makes it safe under concurrency — two simultaneous replays cannot both
+-- read "not yet used" and then both write.
+UPDATE user_mfa
+SET last_totp_step = sqlc.arg('step')::bigint
+WHERE user_id = sqlc.arg('user_id')
+  AND enabled
+  AND (last_totp_step IS NULL OR last_totp_step < sqlc.arg('step')::bigint);
+
+-- name: BurnPendingTOTPStep :execrows
+-- The enrollment-verification counterpart of BurnTOTPStep: the row is still
+-- pending (enabled=FALSE) at the moment the first code is checked, so the
+-- enabled guard above would never match. Confirming an enrollment burns the
+-- code it was confirmed with, so the code that turned two-factor on cannot
+-- then be spent again on a login challenge.
+UPDATE user_mfa
+SET last_totp_step = sqlc.arg('step')::bigint
+WHERE user_id = sqlc.arg('user_id')
+  AND (last_totp_step IS NULL OR last_totp_step < sqlc.arg('step')::bigint);
+
+-- name: UserHasMFAEnabled :one
+-- Whether ONE account has a confirmed second factor, for the admin views that
+-- render a single user (the detail response after an edit, and the MFA reset).
+-- A pending enrollment does not count.
+SELECT EXISTS (SELECT 1 FROM user_mfa WHERE user_id = $1 AND enabled);

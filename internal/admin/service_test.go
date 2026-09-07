@@ -22,10 +22,17 @@ type fakeRepo struct {
 	comments     int64
 	storedBytes  int64
 	peers        int64
+	// mfa mirrors user_mfa: the accounts with a CONFIRMED second factor.
+	mfa map[uuid.UUID]bool
 }
 
 func newFakeRepo() *fakeRepo {
-	return &fakeRepo{users: map[uuid.UUID]sqlcgen.User{}, used: map[uuid.UUID]int64{}, revoked: map[uuid.UUID]bool{}}
+	return &fakeRepo{
+		users:   map[uuid.UUID]sqlcgen.User{},
+		used:    map[uuid.UUID]int64{},
+		revoked: map[uuid.UUID]bool{},
+		mfa:     map[uuid.UUID]bool{},
+	}
 }
 
 func (f *fakeRepo) CountUsers(_ context.Context) (int64, error) { return int64(len(f.users)), nil }
@@ -51,6 +58,9 @@ func (f *fakeRepo) CountPublicVideos(_ context.Context) (int64, error) {
 }
 func (f *fakeRepo) CountComments(_ context.Context) (int64, error)      { return f.comments, nil }
 func (f *fakeRepo) SumAllStorageUsage(_ context.Context) (int64, error) { return f.storedBytes, nil }
+func (f *fakeRepo) UserHasMFAEnabled(_ context.Context, userID uuid.UUID) (bool, error) {
+	return f.mfa[userID], nil
+}
 func (f *fakeRepo) CountFederatedPeers(_ context.Context) (int64, error) {
 	return f.peers, nil
 }

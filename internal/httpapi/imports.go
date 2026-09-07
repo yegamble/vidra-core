@@ -118,8 +118,11 @@ func (s *Server) handleImportVideoFile(c echo.Context) error {
 		case errors.Is(err, videoimport.ErrInvalidResolver):
 			return &ValidationError{Fields: []FieldError{{Field: "resolver", Message: "must be auto, direct, or ytdlp"}}}
 		case errors.Is(err, videoimport.ErrResolverDisabled):
-			// The requested resolver (e.g. ytdlp) is turned off on this instance.
-			return echo.NewHTTPError(http.StatusServiceUnavailable, "platform-URL import is not enabled on this instance")
+			// The requested resolver (e.g. ytdlp) is turned off on this
+			// instance. Typed, not a bare echo.NewHTTPError: 503 is a 5xx and
+			// the central handler scrubs every 5xx message it has no stable
+			// code for, which threw this sentence away (measured, A27).
+			return &PlatformImportNotConfiguredError{}
 		default:
 			return err
 		}

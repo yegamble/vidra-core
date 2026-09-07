@@ -75,6 +75,11 @@ type authFakeRepo struct {
 	// anyone; videoServerFullWith wires the shared fakes.
 	mutes      *muteFakeRepo
 	userBlocks *blockFakeRepo
+	// mfaOf mirrors the user_mfa EXISTS the admin views read: nil (pure-auth
+	// harnesses with no MFA wired) means nobody has a second factor. The MFA
+	// harness points it at its own fake repo so the admin list and the reset
+	// route read the SAME state the /auth/mfa endpoints write.
+	mfaOf func(uuid.UUID) bool
 }
 
 // SearchPublicAccounts mirrors the real query's visibility gate EXACTLY —
@@ -170,6 +175,21 @@ func (f *authFakeRepo) DeleteUnusedEmailVerificationTokens(_ context.Context, us
 		}
 	}
 	return nil
+}
+
+// LatestUnusedEmailVerificationTokenAt mirrors the SQL: the newest UNUSED
+// token's created_at, or pgx.ErrNoRows when there is none.
+func (f *authFakeRepo) LatestUnusedEmailVerificationTokenAt(_ context.Context, userID uuid.UUID) (time.Time, error) {
+	var newest time.Time
+	for _, t := range f.verifs {
+		if t.UserID == userID && !t.UsedAt.Valid && t.CreatedAt.After(newest) {
+			newest = t.CreatedAt
+		}
+	}
+	if newest.IsZero() {
+		return time.Time{}, pgx.ErrNoRows
+	}
+	return newest, nil
 }
 
 func (f *authFakeRepo) SetUserEmailVerified(_ context.Context, id uuid.UUID) error {
@@ -665,6 +685,19 @@ func (f *authFakeRepo) CountComments(context.Context) (int64, error) {
 	return f.statComments(), nil
 }
 
+// UserHasMFAEnabled mirrors the user_mfa EXISTS: only a CONFIRMED enrollment
+// counts, and an account with no row at all reads false.
+func (f *authFakeRepo) UserHasMFAEnabled(_ context.Context, userID uuid.UUID) (bool, error) {
+	return f.mfaEnabledFor(userID), nil
+}
+
+func (f *authFakeRepo) mfaEnabledFor(userID uuid.UUID) bool {
+	if f.mfaOf == nil {
+		return false
+	}
+	return f.mfaOf(userID)
+}
+
 func (f *authFakeRepo) CountFederatedPeers(context.Context) (int64, error) {
 	if f.statPeers == nil {
 		return 0, nil
@@ -687,7 +720,7 @@ func (f *authFakeRepo) ListUsers(_ context.Context, a sqlcgen.ListUsersParams) (
 				DisplayName: u.DisplayName, Bio: u.Bio,
 				StorageQuotaBytes: u.StorageQuotaBytes, StorageUsedBytes: used,
 				BypassQuarantine: u.BypassQuarantine, DeletedAt: u.DeletedAt,
-				IsOwner: u.IsOwner,
+				IsOwner: u.IsOwner, MfaEnabled: f.mfaEnabledFor(u.ID),
 			})
 		}
 	}
@@ -1190,6 +1223,14 @@ type captureResetMailer struct {
 	// failReset fails only the password-reset send, so a test can prove a
 	// broken relay does not change what an anonymous caller is told.
 	failReset bool
+	// twoFactorRemoved records the two-factor-removed notices, with the flag
+	// saying whether an administrator did the removing.
+	twoFactorRemoved []auth.CapturedTwoFactorRemoval
+}
+
+func (m *captureResetMailer) SendTwoFactorRemoved(_ context.Context, email string, byAdmin bool) error {
+	m.twoFactorRemoved = append(m.twoFactorRemoved, auth.CapturedTwoFactorRemoval{Email: email, ByAdmin: byAdmin})
+	return nil
 }
 
 func (m *captureResetMailer) SendPasswordChanged(_ context.Context, email string) error {

@@ -944,6 +944,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            This deployment has no outbound mail path, so the confirmation this
+            change depends on can never be delivered. Stable code
+            `mail_not_configured` — the request is refused rather than left
+            pending forever. Set MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and
+            SMTP_FROM and restart the api.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     get:
       operationId: getEmailChange
       summary: Read the pending email change, if any
@@ -1030,6 +1041,16 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "429":
           description: Too many requests (auth rate limit).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            This deployment has no outbound mail path, so the confirmation
+            cannot be re-sent. Stable code `mail_not_configured`. Set
+            MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and SMTP_FROM and
+            restart the api.
           content:
             application/json:
               schema:
@@ -1163,6 +1184,62 @@ paths:
           description: Accepted. If the account was unverified, a token has been sent.
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/verify-email/resend:
+    post:
+      operationId: resendEmailVerification
+      summary: Re-send an email-verification message (no session)
+      description: >-
+        Re-sends the verification message for an address, WITHOUT a session. It
+        is the unauthenticated counterpart of POST /api/v1/auth/verify-email,
+        and it exists because the account that needs it is precisely the one
+        that cannot sign in: with `registration_require_email_verification`
+        effective, registration answers 202 with no session and login answers
+        403 `email_verification_required`.
+
+
+        Always 202 with an EMPTY body — for a known unverified address, an
+        unknown one, an already-verified one, a deactivated one, and a repeat
+        inside the send cooldown alike — so it cannot be used to enumerate
+        accounts. A message is actually sent only for an active, unverified
+        account whose last unused token is older than the cooldown; issuing a new
+        token invalidates the account's previous unused ones, so only the newest
+        link works. A relay failure is logged and audited and still answers 202,
+        for the same reason: a 500 for a registered address beside a 202 for an
+        unregistered one would be an account-existence oracle.
+
+
+        Behind the strict per-IP auth limiter (10/min) like every other
+        unauthenticated credential endpoint.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: The address to re-send the verification message to.
+      responses:
+        "202":
+          description: >-
+            Accepted. Identical for every input; it does not disclose whether the
+            address belongs to an account or whether anything was sent.
+        "422":
+          description: No address was supplied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many requests from this IP.
           content:
             application/json:
               schema:
@@ -6443,7 +6520,8 @@ paths:
           description: >-
             The requested resolver is disabled on this instance (e.g.
             resolver=ytdlp while YTDLP_IMPORT_ENABLED is off). Stable code
-            service_unavailable.
+            `ytdlp_import_not_configured`; the message names the variable to
+            set.
           content:
             application/json:
               schema:
@@ -6562,7 +6640,8 @@ paths:
           description: >-
             The deployment lacks the yt-dlp import resolver
             (YTDLP_IMPORT_ENABLED off), so channel auto-sync cannot run. Stable
-            code service_unavailable.
+            code `channel_sync_not_configured`; the message names the variable
+            to set.
           content:
             application/json:
               schema:
@@ -6684,7 +6763,7 @@ paths:
         "503":
           description: >-
             The deployment lacks the yt-dlp import resolver, so channel
-            auto-sync cannot run. Stable code service_unavailable.
+            auto-sync cannot run. Stable code `channel_sync_not_configured`.
           content:
             application/json:
               schema:
@@ -6767,7 +6846,9 @@ paths:
         "503":
           description: >-
             The Whisper boot capability is not configured on this deployment
-            (WHISPER_ENDPOINT), so auto-captioning cannot run.
+            (WHISPER_ENDPOINT), so auto-captioning cannot run. Stable code
+            `auto_captions_not_configured`; the message names the variable to
+            set.
           content:
             application/json:
               schema:
@@ -14542,6 +14623,89 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/users/{id}/mfa:
+    delete:
+      operationId: adminRemoveUserMFA
+      summary: Remove a user's second factor (admin)
+      description: >-
+        Removes a target account's TOTP configuration and every recovery code.
+        Restricted to admins, and the CALLER re-confirms their OWN password —
+        the target cannot supply theirs, which is the situation this exists for
+        (an authenticator lost together with the recovery codes; self-service
+        removal needs both the account's password and a session it can no longer
+        obtain). The action removes protection and never grants access: nothing
+        secret is read or returned, the response has no body, and no admin route
+        anywhere discloses the shared secret or a recovery code. The target's
+        sessions are revoked and the target is mailed a notice naming an
+        administrator as the actor. Removing your OWN second factor here is
+        allowed — an owner who loses their authenticator has nobody above them
+        to ask — and in that case the acting session survives. Every outcome is
+        audited (`admin.user.mfa_reset`) with the target named.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminRemoveUserMFARequest"
+      responses:
+        "204":
+          description: The account's second factor was removed.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin, or the supplied password is wrong.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such user, or the account has no two-factor authentication to remove.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The calling admin has no password to confirm with (an OIDC/ATProto-only
+            account); set one through the password reset flow first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (no password supplied).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: >-
+            Too many attempts from this IP. The route sits behind the strict auth
+            limiter because supplying a password makes it a guessing surface.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Two-factor authentication is not configured on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -18604,10 +18768,20 @@ components:
         word:
           type: string
           maxLength: 100
+    AdminRemoveUserMFARequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          description: >-
+            The CALLING administrator's own current password. Not the target's:
+            the target is, by construction, the party who cannot prove anything
+            right now.
     AdminUser:
       type: object
       description: Admin projection of an account (never includes the password hash).
-      required: [id, username, email, role, is_active, email_verified, bypass_quarantine, display_name, storage_quota_bytes, storage_used_bytes, created_at, deleted_at, is_owner]
+      required: [id, username, email, role, is_active, email_verified, bypass_quarantine, display_name, storage_quota_bytes, storage_used_bytes, created_at, deleted_at, is_owner, mfa_enabled]
       properties:
         id:
           type: string
@@ -18668,6 +18842,16 @@ components:
             nobody can remove the last active administrator (422 `last_admin`).
             False for every account on an instance claimed before the marker
             existed whose owner could not be determined.
+        mfa_enabled:
+          type: boolean
+          description: >-
+            Whether this account has a CONFIRMED second factor (TOTP). A pending
+            enrollment reads false, exactly as the account's own GET
+            /api/v1/auth/mfa reports it. It is a boolean and nothing more: no
+            admin route ever returns the shared secret or a recovery code. An
+            admin can remove the factor with DELETE
+            /api/v1/admin/users/{id}/mfa, which is the only operator answer to a
+            user who has lost both their authenticator and their recovery codes.
     AdminUserListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"

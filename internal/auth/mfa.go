@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"strings"
@@ -57,6 +58,13 @@ type MFARepository interface {
 	DeleteRecoveryCodes(ctx context.Context, userID uuid.UUID) error
 	UseRecoveryCode(ctx context.Context, arg sqlcgen.UseRecoveryCodeParams) (int64, error)
 	CountUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID) (int64, error)
+	// BurnTOTPStep records the time step of an accepted code on an ENABLED
+	// row and returns 0 rows when that step is not newer than the last one
+	// accepted — the single-use guarantee (0134).
+	BurnTOTPStep(ctx context.Context, arg sqlcgen.BurnTOTPStepParams) (int64, error)
+	// BurnPendingTOTPStep is the same write for a row still pending
+	// (enabled=FALSE), used when an enrollment is confirmed.
+	BurnPendingTOTPStep(ctx context.Context, arg sqlcgen.BurnPendingTOTPStepParams) (int64, error)
 }
 
 // mfaTokenTTL is the lifetime of the single-purpose mfa_token issued by a
@@ -173,7 +181,19 @@ func (s *Service) VerifyTOTPEnrollment(ctx context.Context, userID uuid.UUID, co
 	if err != nil {
 		return nil, err
 	}
-	if !s.validTOTPCode(code, secret) {
+	step, ok := s.matchTOTPStep(code, secret)
+	if !ok {
+		return nil, ErrInvalidMFACode
+	}
+	// Burn the confirming code BEFORE enabling: the code that switched
+	// two-factor on must not then be spendable on a login challenge, and doing
+	// it first means a burn that loses its race cannot leave MFA enabled by a
+	// code it also rejected.
+	burned, err := s.mfaRepo.BurnPendingTOTPStep(ctx, sqlcgen.BurnPendingTOTPStepParams{UserID: userID, Step: step})
+	if err != nil {
+		return nil, err
+	}
+	if burned == 0 {
 		return nil, ErrInvalidMFACode
 	}
 	n, err := s.mfaRepo.EnableUserMFA(ctx, userID)
@@ -214,7 +234,15 @@ func (s *Service) issueRecoveryCodes(ctx context.Context, userID uuid.UUID) ([]s
 // access token alone must not be able to strip 2FA). All recovery codes are
 // dropped. ErrInvalidPassword on a wrong password; ErrMFANotEnabled when there
 // is nothing (pending or enabled) to disable.
-func (s *Service) DisableTOTP(ctx context.Context, userID uuid.UUID, password string) error {
+//
+// Removing the second factor lowers the account's protection, so it does what a
+// password change does: every OTHER session is revoked and the account is
+// mailed a notice. The session that made the change stays signed in. Access
+// tokens are session-bound, so the revocation reaches the other devices within
+// one request rather than within JWT_ACCESS_TTL. Before this, an attacker who
+// held a session AND the password could strip 2FA and leave every session they
+// had planted alive and unmentioned.
+func (s *Service) DisableTOTP(ctx context.Context, userID uuid.UUID, password, currentSessionID string) error {
 	if s.mfaRepo == nil {
 		return ErrMFAUnavailable
 	}
@@ -232,7 +260,77 @@ func (s *Service) DisableTOTP(ctx context.Context, userID uuid.UUID, password st
 	if n == 0 {
 		return ErrMFANotEnabled
 	}
-	return s.mfaRepo.DeleteRecoveryCodes(ctx, userID)
+	if err := s.mfaRepo.DeleteRecoveryCodes(ctx, userID); err != nil {
+		return err
+	}
+	s.afterTwoFactorRemoved(ctx, user, currentSessionID, false)
+	return nil
+}
+
+// AdminRemoveTOTP is the operator's answer to "I lost my phone and my recovery
+// codes". It removes a target account's second factor after re-verifying the
+// ADMINISTRATOR's own password — the acting party is the one who must prove
+// possession, since the whole point is that the target cannot.
+//
+// It never reads, returns or re-issues anything secret: the TOTP secret and the
+// recovery codes are deleted, not disclosed, so an admin cannot use this to
+// impersonate a user's second factor. The target's sessions are revoked (an
+// account whose protection just changed should re-authenticate) and the target
+// is mailed the notice — the only signal that reaches a user whose second factor
+// was removed by somebody else. Self-reset is ALLOWED and audited: the owner may
+// lock themselves out too, and there is nobody above them to ask; in that one
+// case the acting session survives, exactly as it does for a self-service
+// removal.
+func (s *Service) AdminRemoveTOTP(ctx context.Context, adminID uuid.UUID, adminPassword string, targetID uuid.UUID, adminSessionID string) error {
+	if s.mfaRepo == nil {
+		return ErrMFAUnavailable
+	}
+	admin, err := s.UserByID(ctx, adminID)
+	if err != nil {
+		return err
+	}
+	if admin.PasswordHash == "" {
+		return ErrPasswordNotSet
+	}
+	if err := CheckPassword(admin.PasswordHash, adminPassword); err != nil {
+		return ErrInvalidPassword
+	}
+	target, err := s.UserByID(ctx, targetID)
+	if err != nil {
+		return ErrAccountNotFound
+	}
+	n, err := s.mfaRepo.DeleteUserMFA(ctx, targetID)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrMFANotEnabled
+	}
+	if err := s.mfaRepo.DeleteRecoveryCodes(ctx, targetID); err != nil {
+		return err
+	}
+	sessionToKeep := ""
+	if targetID == adminID {
+		sessionToKeep = adminSessionID
+	}
+	s.afterTwoFactorRemoved(ctx, target, sessionToKeep, targetID != adminID)
+	return nil
+}
+
+// afterTwoFactorRemoved is the shared tail of both removal paths: revoke the
+// account's sessions (all of them, unless one is the caller's own to keep) and
+// mail the notice. Both are best-effort — the second factor is already gone, and
+// reporting a failure the user would read as "2FA is still on" would be a lie.
+func (s *Service) afterTwoFactorRemoved(ctx context.Context, user sqlcgen.User, sessionToKeep string, byAdmin bool) {
+	if sessionID, perr := uuid.Parse(sessionToKeep); perr == nil {
+		_ = s.repo.RevokeOtherUserSessions(ctx, sqlcgen.RevokeOtherUserSessionsParams{
+			UserID: user.ID,
+			ID:     sessionID,
+		})
+	} else {
+		_ = s.repo.RevokeAllUserSessions(ctx, user.ID)
+	}
+	_ = s.mailer.SendTwoFactorRemoved(ctx, user.Email, byAdmin)
 }
 
 // MFAStatus is the account's two-factor state.
@@ -301,7 +399,20 @@ func (s *Service) CompleteMFAChallenge(ctx context.Context, mfaToken, code, user
 		if err != nil {
 			return sqlcgen.User{}, Tokens{}, "", err
 		}
-		if !s.validTOTPCode(code, secret) {
+		step, ok := s.matchTOTPStep(code, secret)
+		if !ok {
+			return sqlcgen.User{}, Tokens{}, "", ErrInvalidMFACode
+		}
+		// Single-use (0134): the same statement that records the accepted step
+		// refuses one that is not newer, so a replayed code — the code itself,
+		// or an older one still inside the ±1 skew — is indistinguishable from
+		// a wrong code, right down to the status the caller sees and the
+		// challenge limiter's count.
+		burned, err := s.mfaRepo.BurnTOTPStep(ctx, sqlcgen.BurnTOTPStepParams{UserID: userID, Step: step})
+		if err != nil {
+			return sqlcgen.User{}, Tokens{}, "", err
+		}
+		if burned == 0 {
 			return sqlcgen.User{}, Tokens{}, "", ErrInvalidMFACode
 		}
 	} else {
@@ -336,11 +447,40 @@ func (s *Service) mfaEnabled(ctx context.Context, userID uuid.UUID) bool {
 	return err == nil && row.Enabled
 }
 
-// validTOTPCode checks an RFC 6238 code against the base32 secret at the
-// service clock, allowing ±1 period of skew.
+// matchTOTPStep checks an RFC 6238 code against the base32 secret at the
+// service clock, allowing ±1 period of skew, and reports WHICH time step it
+// matched. The step is what makes a code burnable (0134): "this code was
+// accepted" is only actionable if the server can say which 30-second window it
+// belonged to. Candidates are tried newest-first so a code that is valid at two
+// steps (it cannot be, but the loop must not depend on that) burns the later.
+//
+// The comparison is constant-time — the presented value is a credential, and
+// the house rule for credential comparison is subtle.ConstantTimeCompare.
+func (s *Service) matchTOTPStep(code, secret string) (int64, bool) {
+	code = strings.TrimSpace(code)
+	period := int64(totpValidateOpts.Period)
+	if period <= 0 {
+		return 0, false
+	}
+	base := s.now().Unix() / period
+	for _, step := range []int64{base + 1, base, base - 1} {
+		want, err := totp.GenerateCodeCustom(secret, time.Unix(step*period, 0), totpValidateOpts)
+		if err != nil {
+			return 0, false
+		}
+		if subtle.ConstantTimeCompare([]byte(want), []byte(code)) == 1 {
+			return step, true
+		}
+	}
+	return 0, false
+}
+
+// validTOTPCode reports whether the code verifies at all, ignoring replay. It
+// is the ±1-skew arithmetic and nothing else; every caller that ACCEPTS a code
+// must also burn its step.
 func (s *Service) validTOTPCode(code, secret string) bool {
-	ok, err := totp.ValidateCustom(strings.TrimSpace(code), secret, s.now(), totpValidateOpts)
-	return err == nil && ok
+	_, ok := s.matchTOTPStep(code, secret)
+	return ok
 }
 
 // looksLikeTOTPCode distinguishes a 6-digit TOTP code from a recovery code

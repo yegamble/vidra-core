@@ -7,6 +7,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -38,6 +41,56 @@ func generateVerificationToken() (raw, hash string, err error) {
 func hashVerificationToken(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
+}
+
+// VerificationResendCooldown is the minimum spacing between anonymous
+// verification resends for ONE address. It is a SEND throttle, not a request
+// throttle: the endpoint must answer every caller the same 202, so a repeat
+// inside the window is accepted and simply does not put a second message in the
+// mailbox. The per-IP auth limiter is the other half — this one bounds what a
+// distributed caller can do to a single inbox.
+const VerificationResendCooldown = 60 * time.Second
+
+// ResendEmailVerification re-issues a verification message for an address,
+// WITHOUT a session. It exists because the account that needs it is precisely
+// the one that cannot log in: with the verification gate on, registration
+// returns 202 and no session, login answers 403 email_verification_required, and
+// the only resend that shipped sat behind requireAuth. A registrant who lost the
+// message was stuck until an admin flipped email_verified by hand.
+//
+// It is enumeration-safe by construction: it returns nil for an address that
+// matches nothing, for one that is already verified, for a disabled account, and
+// for a repeat inside the cooldown, so the caller cannot tell any of those apart
+// from a real send. The one error it can return is a delivery failure, wrapped
+// in ErrMailDelivery — which the HTTP layer answers 202 for, for the same reason
+// the password-reset route does: a broken relay must not become the oracle the
+// endpoint was written to avoid.
+func (s *Service) ResendEmailVerification(ctx context.Context, email string) error {
+	user, err := s.repo.GetUserByEmail(ctx, strings.TrimSpace(email))
+	if err != nil || !user.IsActive || user.EmailVerified {
+		return nil
+	}
+	if at, err := s.repo.LatestUnusedEmailVerificationTokenAt(ctx, user.ID); err == nil {
+		if s.now().Sub(at) < VerificationResendCooldown {
+			return nil
+		}
+	}
+	raw, hash, err := generateVerificationToken()
+	if err != nil {
+		return err
+	}
+	_ = s.repo.DeleteUnusedEmailVerificationTokens(ctx, user.ID)
+	if _, err := s.repo.CreateEmailVerificationToken(ctx, sqlcgen.CreateEmailVerificationTokenParams{
+		UserID:    user.ID,
+		TokenHash: hash,
+		ExpiresAt: s.now().Add(s.verifyTTL),
+	}); err != nil {
+		return err
+	}
+	if err := s.mailer.SendEmailVerification(ctx, user.Email, raw); err != nil {
+		return fmt.Errorf("%w: %w", ErrMailDelivery, err)
+	}
+	return nil
 }
 
 // RequestEmailVerification issues a single-use, expiring verification token for

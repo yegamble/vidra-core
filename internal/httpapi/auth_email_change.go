@@ -111,6 +111,20 @@ func (s *Server) handleRequestEmailChange(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
+	// A change this deployment can never confirm must not be STARTED. The
+	// confirmation token goes to the new address and nowhere else — it is the
+	// possession proof, and the old mailbox cannot supply it — so with no mail
+	// path the request would mint a token, deliver it nowhere, and leave the
+	// settings card reading "Waiting for confirmation at …" forever. A05 found
+	// exactly that. Refused before the password check, because the answer does
+	// not depend on it and re-verifying a password on a request that cannot
+	// succeed only spends the caller's limiter budget.
+	if !s.mailPathConfigured() {
+		s.audit(c, observability.ActionEmailChangeRequest, observability.ResultFailure, userID.String(), "mail_not_configured")
+		return &MailNotConfiguredError{
+			Consequence: "it cannot deliver the confirmation this change needs. The token goes to the new address and nowhere else, so starting the change would leave it pending forever",
+		}
+	}
 	pending, err := s.authsvc.RequestEmailChange(c.Request().Context(), userID, in.CurrentPassword, in.NewEmail)
 	if err != nil {
 		s.audit(c, observability.ActionEmailChangeRequest, observability.ResultFailure, userID.String(), emailChangeReason(err))
@@ -128,6 +142,11 @@ func (s *Server) handleResendEmailChange(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
+	}
+	if !s.mailPathConfigured() {
+		return &MailNotConfiguredError{
+			Consequence: "it cannot re-send the confirmation this change needs",
+		}
 	}
 	pending, err := s.authsvc.ResendEmailChange(c.Request().Context(), userID)
 	if err != nil {

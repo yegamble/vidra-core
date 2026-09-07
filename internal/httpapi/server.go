@@ -1359,6 +1359,13 @@ func (s *Server) routes() {
 		authGroup.POST("/password-reset", s.handleRequestPasswordReset, authMW...)
 		authGroup.POST("/password-reset/confirm", s.handleConfirmPasswordReset, authMW...)
 		authGroup.POST("/verify-email", s.handleRequestEmailVerification, s.requireAuth)
+		// The ANONYMOUS resend (A05 defect 2). It cannot sit behind requireAuth
+		// like its neighbour above: with the verification gate on, the account
+		// that needs the message is the one whose login answers 403
+		// email_verification_required. Enumeration-safe 202 for every input,
+		// and behind the strict auth limiter like every other unauthenticated
+		// credential endpoint.
+		authGroup.POST("/verify-email/resend", s.handleResendEmailVerification, authMW...)
 		authGroup.POST("/verify-email/confirm", s.handleConfirmEmailVerification, authMW...)
 		authGroup.GET("/me", s.handleMe, s.requireAuth)
 		authGroup.PATCH("/me", s.handleUpdateMe, s.requireAuth)
@@ -1887,6 +1894,18 @@ func (s *Server) routes() {
 	if s.adminsvc != nil {
 		api.GET("/admin/users", s.handleListUsers, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.PATCH("/admin/users/:id", s.handleUpdateUser, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		// Administrator removal of a user's second factor (A05 ruling 2): the
+		// operator answer to a lost authenticator AND lost recovery codes,
+		// which self-service cannot reach by construction. Admin-only, and it
+		// re-verifies the CALLER's password, so it also sits behind the strict
+		// auth limiter — supplying a password makes it a guessing surface
+		// exactly like login.
+		adminMFAMW := []echo.MiddlewareFunc{}
+		if s.authLimit != nil {
+			adminMFAMW = append(adminMFAMW, s.authRateLimit(s.authLimit))
+		}
+		adminMFAMW = append(adminMFAMW, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/users/:id/mfa", s.handleAdminRemoveUserMFA, adminMFAMW...)
 		// Instance-wide overview counts for the admin dashboard cards. Read-only
 		// aggregate; admin-only (this is the vidra-user admin-overview binding).
 		api.GET("/admin/stats", s.handleAdminStats, s.requireAuth, s.requireRole(admin.RoleAdmin))

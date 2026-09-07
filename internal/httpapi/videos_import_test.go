@@ -299,8 +299,12 @@ func TestImportResolverRequestValidation(t *testing.T) {
 		} `json:"error"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &body)
-	if body.Error.Code != "service_unavailable" {
-		t.Errorf("503 code = %q, want service_unavailable", body.Error.Code)
+	// A stable code, not the 5xx scrubber's generic "service_unavailable".
+	if body.Error.Code != "ytdlp_import_not_configured" {
+		t.Errorf("503 code = %q, want ytdlp_import_not_configured", body.Error.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "YTDLP_IMPORT_ENABLED") {
+		t.Errorf("body = %s; it must name the variable to set", rec.Body.String())
 	}
 }
 

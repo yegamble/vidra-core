@@ -97,6 +97,33 @@ func (f *mfaFakeRepo) UseRecoveryCode(_ context.Context, a sqlcgen.UseRecoveryCo
 	return 0, nil
 }
 
+// BurnTOTPStep / BurnPendingTOTPStep mirror the 0134 SQL: the accepted step is
+// recorded only when it is strictly newer than the last one, so a replayed code
+// writes nothing and the service refuses it like a wrong code.
+func (f *mfaFakeRepo) BurnTOTPStep(_ context.Context, a sqlcgen.BurnTOTPStepParams) (int64, error) {
+	row, ok := f.rows[a.UserID]
+	if !ok || !row.Enabled {
+		return 0, nil
+	}
+	return burnStep(row, a.Step), nil
+}
+
+func (f *mfaFakeRepo) BurnPendingTOTPStep(_ context.Context, a sqlcgen.BurnPendingTOTPStepParams) (int64, error) {
+	row, ok := f.rows[a.UserID]
+	if !ok {
+		return 0, nil
+	}
+	return burnStep(row, a.Step), nil
+}
+
+func burnStep(row *sqlcgen.UserMfa, step int64) int64 {
+	if row.LastTotpStep != nil && *row.LastTotpStep >= step {
+		return 0
+	}
+	row.LastTotpStep = &step
+	return 1
+}
+
 func (f *mfaFakeRepo) CountUnusedRecoveryCodes(_ context.Context, userID uuid.UUID) (int64, error) {
 	var n int64
 	for _, c := range f.codes[userID] {
@@ -150,6 +177,30 @@ func deleteJSONWithAuth(srv *Server, path, token, body string) *httptest.Respons
 
 // enrollAndEnable drives register → enroll → verify and returns the access
 // token, the TOTP secret, and the recovery codes.
+// totpNow returns the TOTP code for secret at the current instant — the code an
+// ENROLLMENT is confirmed with.
+func totpNow(t *testing.T, secret string) string {
+	t.Helper()
+	code, err := totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatalf("GenerateCode: %v", err)
+	}
+	return code
+}
+
+// challengeCode returns a TOTP code the CHALLENGE will accept after
+// enrollAndEnable. It comes from the next 30-second step because the code that
+// confirmed the enrollment is burned (0134) — a code is single-use, so a test
+// that reuses the enrollment code is asserting the old, replayable behaviour.
+func challengeCode(t *testing.T, secret string) string {
+	t.Helper()
+	code, err := totp.GenerateCode(secret, time.Now().Add(30*time.Second))
+	if err != nil {
+		t.Fatalf("GenerateCode: %v", err)
+	}
+	return code
+}
+
 func enrollAndEnable(t *testing.T, srv *Server) (token, secret string, recovery []string) {
 	t.Helper()
 	token = registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
@@ -214,10 +265,7 @@ func TestMFAEnrollVerifyLoginChallengeRoundTrip(t *testing.T) {
 
 	// Status reflects the enabled state and the fresh recovery codes.
 	tokenBefore := mfaLogin(t, srv) // MFA challenge shape asserted inside
-	code, err := totp.GenerateCode(secret, time.Now())
-	if err != nil {
-		t.Fatalf("GenerateCode: %v", err)
-	}
+	code := challengeCode(t, secret)
 	rec := postTo(srv, "/api/v1/auth/mfa/challenge", `{"mfa_token":"`+tokenBefore+`","code":"`+code+`"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("challenge status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -269,10 +317,7 @@ func TestMFAChallengeCookieMode(t *testing.T) {
 	_, secret, _ := enrollAndEnable(t, srv)
 	mfaToken := mfaLogin(t, srv)
 
-	code, err := totp.GenerateCode(secret, time.Now())
-	if err != nil {
-		t.Fatalf("GenerateCode: %v", err)
-	}
+	code := challengeCode(t, secret)
 	rec := postTo(srv, "/api/v1/auth/mfa/challenge", `{"mfa_token":"`+mfaToken+`","code":"`+code+`","cookie_mode":true}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("challenge status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -387,10 +432,7 @@ func TestMFADisableRequiresPassword(t *testing.T) {
 func TestMFAChallengeRejectsTamperedAndExpiredTokens(t *testing.T) {
 	srv := mfaServer(t, nil)
 	_, secret, _ := enrollAndEnable(t, srv)
-	code, err := totp.GenerateCode(secret, time.Now())
-	if err != nil {
-		t.Fatalf("GenerateCode: %v", err)
-	}
+	code := challengeCode(t, secret)
 
 	// Tampered/garbage token.
 	rec := postTo(srv, "/api/v1/auth/mfa/challenge", `{"mfa_token":"garbage","code":"`+code+`"}`)

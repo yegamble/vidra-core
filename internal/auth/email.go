@@ -67,6 +67,13 @@ type Mailer interface {
 	// SendPasswordChanged these are after-the-fact notices, and the former
 	// owner's copy is the one that matters if the transfer was not their idea.
 	SendOwnershipTransferred(ctx context.Context, email, recipientUsername, counterpartUsername, consoleURL string, isNewOwner bool) error
+	// SendTwoFactorRemoved tells an account its second factor is gone. Like
+	// SendPasswordChanged it carries no credential and is the after-the-fact
+	// notice that reaches a user whose protection was removed by somebody else
+	// — which is precisely why it must also be sent when an ADMINISTRATOR
+	// removes it (byAdmin), the one case where the account holder took no
+	// action at all and every session they had was signed out.
+	SendTwoFactorRemoved(ctx context.Context, email string, byAdmin bool) error
 }
 
 // noopMailer is the default mailer. With no email provider configured it drops
@@ -98,3 +105,5 @@ func (noopMailer) SendOwnershipTransferred(context.Context, string, string, stri
 func (noopMailer) SendRegistrationRejected(context.Context, string, string, string) error {
 	return nil
 }
+
+func (noopMailer) SendTwoFactorRemoved(context.Context, string, bool) error { return nil }

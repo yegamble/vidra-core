@@ -34,13 +34,87 @@ func changeEmailBody(password, newEmail string) string {
 // email-change assertions need BOTH: the mailer to recover the token the way a
 // real mailbox would, and the repository to put an account into a state no
 // endpoint can produce (an empty password hash).
+//
+// The SAME mailer is wired as the contact mailer, which is the deployment's
+// mail-capability signal: the request route refuses to start a change it could
+// never confirm, so a harness with no mail path would answer 503 to everything
+// here — and a harness that faked the capability while dropping the token would
+// be worse than no test at all.
 func emailChangeServer(t *testing.T) (*Server, *authFakeRepo, *captureResetMailer) {
 	t.Helper()
 	repo := newAuthFakeRepo()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
 	mailer := &captureResetMailer{}
 	svc := auth.NewService(repo, issuer, 720*time.Hour, auth.WithMailer(mailer))
-	return New(testConfig(), nil, nil, WithAuthService(svc, 15*time.Minute)), repo, mailer
+	return New(testConfig(), nil, nil,
+		WithAuthService(svc, 15*time.Minute),
+		WithContactMailer(mailer),
+	), repo, mailer
+}
+
+// emailChangeServerWithoutMail is emailChangeServer with NO outbound mail path
+// — the shape A05 found parking a change forever.
+func emailChangeServerWithoutMail(t *testing.T) (*Server, *captureResetMailer) {
+	t.Helper()
+	repo := newAuthFakeRepo()
+	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
+	mailer := &captureResetMailer{}
+	svc := auth.NewService(repo, issuer, 720*time.Hour, auth.WithMailer(mailer))
+	return New(testConfig(), nil, nil, WithAuthService(svc, 15*time.Minute)), mailer
+}
+
+// TestEmailChangeRefusedWithNoMailPath is A05 defect 3. The confirmation token
+// goes to the NEW address and nowhere else — it is the possession proof, and the
+// old mailbox cannot supply it — so on an instance with no relay the request
+// minted a token, delivered it nowhere, and left the settings card reading
+// "Waiting for confirmation at …" forever. It is refused now, with the typed
+// 503 whose message survives the central 5xx scrubber.
+func TestEmailChangeRefusedWithNoMailPath(t *testing.T) {
+	srv, mailer := emailChangeServerWithoutMail(t)
+	reg := registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/email-change",
+		changeEmailBody("supersecret", fixtureNewEmail), reg.Token)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("email change with no mail path = %d, want 503; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if body.Error.Code != "mail_not_configured" {
+		t.Errorf("code = %q, want mail_not_configured", body.Error.Code)
+	}
+	// The whole reason the error is typed: a bare 503 is scrubbed to "an
+	// unexpected error occurred" and the operator sentence reaches nobody.
+	if !strings.Contains(body.Error.Message, "MAIL_ENABLED") {
+		t.Errorf("message = %q; it should name the variable to set", body.Error.Message)
+	}
+	if strings.Contains(body.Error.Message, "unexpected error") {
+		t.Error("the 5xx scrubber ate the message")
+	}
+	// Nothing was started: no token minted, no pending state, and the account's
+	// address is untouched.
+	if mailer.changeToken != "" {
+		t.Error("a confirmation token was minted for a change that cannot be confirmed")
+	}
+	if got := meEmail(t, srv, reg.Token); got != "ada@example.test" {
+		t.Errorf("address = %q, want it unchanged", got)
+	}
+	pending := sendJSONAuth(srv, http.MethodGet, "/api/v1/auth/me/email-change", "", reg.Token)
+	if strings.Contains(pending.Body.String(), "ada.new@example.test") {
+		t.Errorf("a pending change was recorded anyway: %s", pending.Body.String())
+	}
+	// The resend is equally dead and says so with the same code.
+	resend := sendJSONAuth(srv, http.MethodPost, "/api/v1/auth/me/email-change/resend", "", reg.Token)
+	if resend.Code != http.StatusServiceUnavailable {
+		t.Errorf("resend with no mail path = %d, want 503; body=%s", resend.Code, resend.Body.String())
+	}
 }
 
 // meEmail reads the account's address back through the API — an independent
@@ -382,7 +456,11 @@ func TestEmailChangeAuditNamesTheRuleNotTheAddress(t *testing.T) {
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
 	mailer := &captureResetMailer{}
 	svc := auth.NewService(repo, issuer, 720*time.Hour, auth.WithMailer(mailer))
-	srv := New(testConfig(), nil, nil, WithAuthService(svc, 15*time.Minute), WithLogger(logger))
+	srv := New(testConfig(), nil, nil, WithAuthService(svc, 15*time.Minute),
+		// The mail-capability signal: without it the request route refuses
+		// before it ever reaches the password check, and this suite would be
+		// auditing a 503 instead of the rule it is here for.
+		WithContactMailer(mailer), WithLogger(logger))
 
 	reg := registerTokens(t, srv, `{"username":"ada","email":"`+fixtureOldEmail+`","password":"`+fixtureCurrentPassword+`"}`)
 	sendJSONAuth(srv, http.MethodPost, emailChangePath, changeEmailBody("not-the-password", fixtureNewEmail), reg.Token)
