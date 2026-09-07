@@ -555,13 +555,24 @@ func (s *Service) probeContentType(ctx context.Context, guard urlsafety.Guard, t
 	}
 	resp, err := s.httpClient(guard).Do(req)
 	if err != nil {
-		return "", errors.Is(err, urlsafety.ErrBlockedAddress)
+		return "", guardRefused(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", false
 	}
 	return resp.Header.Get("Content-Type"), false
+}
+
+// guardRefused reports whether err is the SSRF guard refusing the fetch, in
+// either of the two shapes it takes. ErrBlockedAddress comes from the dial-time
+// control hook (a resolved IP that is not public). ErrInvalidURL comes from
+// CheckRedirect re-validating a redirect target, which is the path a LITERAL
+// private address in a Location header takes — it never reaches the dialer at
+// all. Anything else (a 405, a timeout, a TLS error, a redirect loop) is an
+// ordinary failure and must not be read as a refusal.
+func guardRefused(err error) bool {
+	return errors.Is(err, urlsafety.ErrBlockedAddress) || errors.Is(err, urlsafety.ErrInvalidURL)
 }
 
 // httpClient returns the injected test client, or a fresh SSRF-guarded client.

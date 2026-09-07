@@ -3,7 +3,9 @@ package videoimport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/urlsafety"
 	"github.com/vidra/vidra-core/internal/ytdlp"
 )
 
@@ -392,5 +395,36 @@ func TestAutoDoesNotFallBackToYtdlpWhenTheGuardBlocks(t *testing.T) {
 	}
 	if j.Error == "" {
 		t.Errorf("want a safe failure reason recorded on the job")
+	}
+}
+
+// TestGuardRefused classifies the probe errors that must STOP an auto import
+// rather than route it to the unpinned extractor. Both guard sentinels count:
+// ErrBlockedAddress is the dial-time refusal (the name resolved to a non-public
+// IP), and ErrInvalidURL is what CheckRedirect returns when a redirect target is
+// itself refused — a LITERAL private address in a Location header takes that
+// second path, never the first, which is exactly how a public redirector to
+// 127.0.0.1 slipped through a check that only looked for the dial error.
+// Ordinary failures — a 405 on HEAD, a timeout, a TLS error — are not the
+// guard's refusal and must keep falling back, or a platform URL that simply
+// does not answer HEAD would stop working.
+func TestGuardRefused(t *testing.T) {
+	wrapped := func(inner error) error {
+		return &neturl.Error{Op: "Head", URL: "https://example.com", Err: fmt.Errorf("probe: %w", inner)}
+	}
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"dial-time block", wrapped(urlsafety.ErrBlockedAddress), true},
+		{"redirect target refused", wrapped(urlsafety.ErrInvalidURL), true},
+		{"too many redirects", wrapped(urlsafety.ErrTooManyRedirects), false},
+		{"ordinary transport error", wrapped(errors.New("connection reset")), false},
+		{"nil", nil, false},
+	} {
+		if got := guardRefused(tc.err); got != tc.want {
+			t.Errorf("%s: guardRefused = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
