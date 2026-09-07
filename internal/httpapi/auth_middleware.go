@@ -57,8 +57,7 @@ func (s *Server) requireAuth(next echo.HandlerFunc) echo.HandlerFunc {
 			// over it. The sentence names the cause without the driver's error,
 			// which can carry a DSN and reaches an unauthenticated caller.
 			if errors.Is(err, auth.ErrSessionLookupUnavailable) {
-				return echo.NewHTTPError(http.StatusServiceUnavailable,
-					"this server cannot reach its session store right now, so it cannot tell whether you are signed in — your session is unaffected; retry shortly")
+				return &SessionStoreUnavailableError{}
 			}
 			return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired token")
 		}

@@ -527,8 +527,15 @@ func TestAdminSystemStatusSurvivesTheOutageItReports(t *testing.T) {
 		t.Fatalf("with the session store down, system status = %d, want 503; body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "service_unavailable") {
-		t.Errorf("the 503 does not carry the service_unavailable code: %s", body)
+	if !strings.Contains(body, "session_store_unavailable") {
+		t.Errorf("the 503 does not carry the session_store_unavailable code: %s", body)
+	}
+	// The sentence has to SURVIVE the handler's 5xx message scrubbing, which is
+	// why this is a typed error and not a bare echo.NewHTTPError — a generic
+	// "an unexpected error occurred" here would be the same unhelpful answer in
+	// a different status code.
+	if !strings.Contains(body, "cannot reach its session store") {
+		t.Errorf("the 503 was scrubbed to a generic message: %s", body)
 	}
 	// The reason must be the outage, not a claim about the caller's token.
 	if strings.Contains(body, "invalid or expired token") {
