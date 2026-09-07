@@ -54,6 +54,10 @@ type fakeRepo struct {
 	// database is unreachable", which is a different answer from "no such
 	// session" and must stay different all the way to the HTTP status.
 	sessionLookupErr error
+	// failCreateResetToken, when set, is what CreatePasswordResetToken returns
+	// instead of storing — the in-memory stand-in for "the database refused",
+	// which must stay distinguishable from "the relay refused".
+	failCreateResetToken error
 }
 
 func newFakeRepo() *fakeRepo {
@@ -279,6 +283,9 @@ func (f *fakeRepo) DeactivateUser(_ context.Context, id uuid.UUID) error {
 }
 
 func (f *fakeRepo) CreatePasswordResetToken(_ context.Context, a sqlcgen.CreatePasswordResetTokenParams) (sqlcgen.PasswordResetToken, error) {
+	if f.failCreateResetToken != nil {
+		return sqlcgen.PasswordResetToken{}, f.failCreateResetToken
+	}
 	t := sqlcgen.PasswordResetToken{
 		ID: uuid.New(), UserID: a.UserID, TokenHash: a.TokenHash,
 		ExpiresAt: a.ExpiresAt, CreatedAt: time.Now(),

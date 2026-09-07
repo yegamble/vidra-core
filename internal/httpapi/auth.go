@@ -678,7 +678,19 @@ func (s *Server) handleRequestPasswordReset(c echo.Context) error {
 		return err
 	}
 	if err := s.authsvc.RequestPasswordReset(c.Request().Context(), in.Email); err != nil {
-		return err
+		// A relay that would not take the message must not change the answer.
+		// The token is minted and stored either way, and an unknown address
+		// already answers 202 without sending anything, so surfacing this error
+		// would say "that address IS registered here" to anyone who asked —
+		// with the relay down, the endpoint became an account-existence oracle.
+		// The operator's signal is the smtp component on /admin/system plus this
+		// failure event; the caller's is the same 202 as everyone else.
+		if !errors.Is(err, auth.ErrMailDelivery) {
+			return err
+		}
+		s.logger.Error("password reset message could not be delivered", "error", err)
+		s.audit(c, observability.ActionPasswordResetRequest, observability.ResultFailure, "", "mail_delivery")
+		return c.NoContent(http.StatusAccepted)
 	}
 	// No actor_id/email: enumeration-safe, so the event records only that a reset
 	// was requested, not for whom.

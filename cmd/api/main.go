@@ -446,6 +446,10 @@ func run() error {
 			Password:     cfg.SMTPPassword,
 			From:         cfg.SMTPFrom,
 			InstanceName: cfg.InstanceName,
+			// The origin the three token messages build their redemption links
+			// from. Empty when the operator configured none, in which case those
+			// messages carry the bare code rather than a link to a guessed host.
+			PublicBaseURL: cfg.PublicBaseURL,
 		},
 			// Email customization (config-parity W6): the subject prefix (with
 			// {instance_name} substituted from the EFFECTIVE instance name) and

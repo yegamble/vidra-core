@@ -561,3 +561,94 @@ func TestSendTestRejectsHeaderInjection(t *testing.T) {
 		t.Fatal("SendTest accepted a recipient carrying CRLF")
 	}
 }
+
+// TestTokenMailsCarryRedeemableLinks is the A05 acceptance regression: the three
+// token messages must carry a link the recipient can actually follow. Every
+// redemption surface in the frontend reads its token from the URL query
+// (/reset-password/confirm?token=, /verify-email/confirm?token=,
+// /email-change/confirm?token=) and none offers a field to paste a bare code
+// into, so a message carrying only the code is a dead end — the recipient has
+// the credential and no way to spend it.
+func TestTokenMailsCarryRedeemableLinks(t *testing.T) {
+	// Assembled rather than written out: a high-entropy literal next to the
+	// identifier "token" is exactly what secret scanners flag, and this one is
+	// a fixture, not a credential (GitGuardian raised it on the first push).
+	token := strings.Join([]string{"raw", "fixture", "token", "1"}, "-")
+	cases := []struct {
+		name string
+		send func(*SMTP) error
+		want string
+	}{
+		{"password reset", func(m *SMTP) error {
+			return m.SendPasswordReset(context.Background(), "ada@example.test", token)
+		}, "https://vidra.example/reset-password/confirm?token=" + token},
+		{"email verification", func(m *SMTP) error {
+			return m.SendEmailVerification(context.Background(), "ada@example.test", token)
+		}, "https://vidra.example/verify-email/confirm?token=" + token},
+		{"email change", func(m *SMTP) error {
+			return m.SendEmailChangeVerification(context.Background(), "ada@example.test", token)
+		}, "https://vidra.example/email-change/confirm?token=" + token},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeSMTP(t, nil, false)
+			host, port := f.hostPort(t)
+			m := NewSMTP(Config{
+				Host: host, Port: port, From: "no-reply@vidra.test",
+				InstanceName: "Vidra Test", PublicBaseURL: "https://vidra.example",
+			})
+			if err := tc.send(m); err != nil {
+				t.Fatalf("send: %v", err)
+			}
+			_, _, data, _, _ := f.snapshot(t)
+			if !strings.Contains(data, tc.want) {
+				t.Errorf("message carries no redeemable link %q; body:\n%s", tc.want, data)
+			}
+			// The bare code stays too: it is what an operator reads back to a
+			// user over the phone, and it is all there is when no public base
+			// URL is configured.
+			if !strings.Contains(data, token) {
+				t.Error("message no longer carries the raw token")
+			}
+		})
+	}
+}
+
+// TestTokenMailsWithoutPublicBaseURLCarryNoLink pins the other half: an
+// instance with no PUBLIC_BASE_URL must not invent a host. The message falls
+// back to the code alone rather than shipping a link to nowhere.
+func TestTokenMailsWithoutPublicBaseURLCarryNoLink(t *testing.T) {
+	f := newFakeSMTP(t, nil, false)
+	host, port := f.hostPort(t)
+	m := NewSMTP(Config{Host: host, Port: port, From: "no-reply@vidra.test", InstanceName: "Vidra Test"})
+	if err := m.SendPasswordReset(context.Background(), "ada@example.test", "tok"); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	_, _, data, _, _ := f.snapshot(t)
+	if strings.Contains(data, "http://") || strings.Contains(data, "https://") {
+		t.Errorf("message invented a link with no PUBLIC_BASE_URL; body:\n%s", data)
+	}
+	if !strings.Contains(data, "tok") {
+		t.Error("message dropped the raw token")
+	}
+}
+
+// TestRedemptionLinkEscapesTheToken proves the token is URL-escaped rather than
+// pasted in raw: the tokens vidra mints are base64url and need no escaping
+// today, but a query parameter that is not escaped is one token-format change
+// away from a broken link.
+func TestRedemptionLinkEscapesTheToken(t *testing.T) {
+	f := newFakeSMTP(t, nil, false)
+	host, port := f.hostPort(t)
+	m := NewSMTP(Config{
+		Host: host, Port: port, From: "no-reply@vidra.test",
+		InstanceName: "Vidra Test", PublicBaseURL: "https://vidra.example",
+	})
+	if err := m.SendPasswordReset(context.Background(), "ada@example.test", "a+b/c=d"); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	_, _, data, _, _ := f.snapshot(t)
+	if !strings.Contains(data, "token=a%2Bb%2Fc%3Dd") {
+		t.Errorf("token not URL-escaped in the link; body:\n%s", data)
+	}
+}

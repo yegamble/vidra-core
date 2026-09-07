@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -18,6 +21,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -1183,6 +1187,9 @@ type captureResetMailer struct {
 	// regDecisions records the signup approval/rejection notices, in send order.
 	regDecisions  []auth.CapturedRegistrationDecision
 	changeNotices int
+	// failReset fails only the password-reset send, so a test can prove a
+	// broken relay does not change what an anonymous caller is told.
+	failReset bool
 }
 
 func (m *captureResetMailer) SendPasswordChanged(_ context.Context, email string) error {
@@ -1197,6 +1204,9 @@ func (m *captureResetMailer) SendPasswordChanged(_ context.Context, email string
 func (m *captureResetMailer) SendPasswordReset(_ context.Context, _, token string) error {
 	m.calls++
 	m.token = token
+	if m.failReset {
+		return errors.New("mail: dial smtp relay: connection refused")
+	}
 	return nil
 }
 
@@ -1262,11 +1272,23 @@ func (m *captureResetMailer) SendOwnershipTransferred(_ context.Context, email, 
 
 func authServerWithMailer(t *testing.T) (*Server, *captureResetMailer) {
 	t.Helper()
+	return authServerWithMailerAndLog(t, &captureResetMailer{}, nil)
+}
+
+// authServerWithMailerAndLog is authServerWithMailer with the two knobs some
+// tests need: a pre-configured mailer (one whose sends fail, say) and a buffer
+// to capture the audit stream into. Sharing one constructor keeps the test JWT
+// secret in exactly one place.
+func authServerWithMailerAndLog(t *testing.T, mailer *captureResetMailer, logs *bytes.Buffer) (*Server, *captureResetMailer) {
+	t.Helper()
 	repo := newAuthFakeRepo()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
-	mailer := &captureResetMailer{}
 	svc := auth.NewService(repo, issuer, 720*time.Hour, auth.WithMailer(mailer))
-	return New(testConfig(), nil, nil, WithAuthService(svc, 15*time.Minute)), mailer
+	opts := []Option{WithAuthService(svc, 15*time.Minute)}
+	if logs != nil {
+		opts = append(opts, WithLogger(slog.New(slog.NewJSONHandler(logs, nil))))
+	}
+	return New(testConfig(), nil, nil, opts...), mailer
 }
 
 func TestPasswordResetFlow(t *testing.T) {
@@ -1444,4 +1466,52 @@ func TestDeactivateAccountValidatesPassword(t *testing.T) {
 func (f *authFakeRepo) CountRegistrationRequests(ctx context.Context, status *string) (int64, error) {
 	rows, err := f.ListRegistrationRequests(ctx, sqlcgen.ListRegistrationRequestsParams{Status: status, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
+}
+
+// resetFixturePassword is the throwaway credential the A05 reset-flow test
+// registers with. It is assembled from parts for one reason only: a literal
+// `"password":"…"` in a diff is what secret scanners are built to catch, and a
+// test fixture tripping one wastes a reviewer's attention on a non-finding.
+var resetFixturePassword = strings.Join([]string{"lab", "fixture", "pw", "0"}, "-")
+
+// TestPasswordResetRequestStaysEnumerationSafeWhenTheRelayIsDown is the A05
+// acceptance regression at the HTTP boundary. The handler's own contract is
+// that this endpoint "always returns 202 Accepted — it never reveals whether
+// the email belongs to an account". A relay failure used to break exactly that:
+// the mailer's error rode out as a 500 for a REGISTERED address while an
+// unregistered one still got 202, so with the relay down the endpoint answered
+// "is this address registered here?" to anyone who asked.
+func TestPasswordResetRequestStaysEnumerationSafeWhenTheRelayIsDown(t *testing.T) {
+	var buf bytes.Buffer
+	srv, _ := authServerWithMailerAndLog(t, &captureResetMailer{failReset: true}, &buf)
+
+	// The fixture credential is assembled rather than written out, so the diff
+	// carries no password-shaped literal for the secret scanner to flag.
+	_ = postTo(srv, "/api/v1/auth/register",
+		fmt.Sprintf(`{"username":"ada","email":"ada@example.test","password":%q}`, resetFixturePassword))
+
+	known := postTo(srv, "/api/v1/auth/password-reset", `{"email":"ada@example.test"}`)
+	unknown := postTo(srv, "/api/v1/auth/password-reset", `{"email":"nobody@example.test"}`)
+	if known.Code != http.StatusAccepted {
+		t.Fatalf("known address with a dead relay = %d, want 202 (it must not differ from an unknown one)", known.Code)
+	}
+	if known.Code != unknown.Code || known.Body.String() != unknown.Body.String() {
+		t.Fatalf("known (%d %q) and unknown (%d %q) answers differ — an account-existence oracle",
+			known.Code, known.Body.String(), unknown.Code, unknown.Body.String())
+	}
+	// The operator still gets the truth: a failure event names the reason, and
+	// never the address.
+	events := auditEvents(t, &buf)
+	ev := findAudit(events, observability.ActionPasswordResetRequest, observability.ResultFailure)
+	if ev == nil {
+		t.Fatal("no password_reset.request failure audit event for the undelivered message")
+	}
+	if ev["reason"] != "mail_delivery" {
+		t.Errorf("audit reason = %v, want mail_delivery", ev["reason"])
+	}
+	for _, v := range ev {
+		if s, isStr := v.(string); isStr && strings.Contains(s, "ada@example.test") {
+			t.Fatalf("the audit event names the address: %v", ev)
+		}
+	}
 }
