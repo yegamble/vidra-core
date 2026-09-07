@@ -628,7 +628,40 @@ var (
 	sensitiveDetail   = regexp.MustCompile(`(?i)(?:https?|s3|file)://\S+|(?:authorization|cookie|password|token|secret)\s*[:=]\s*\S+`)
 	emailDetail       = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
 	safeMetadataToken = regexp.MustCompile(`^[A-Za-z0-9_.:\-]{1,128}$`)
+	// pathishDetail matches any whitespace-free, slash-separated token. It is
+	// deliberately LOOSE — "application/json", "HTTP/1.1" and "3/5" all match —
+	// because matching is only half the test; see redactStorageKeys.
+	pathishDetail = regexp.MustCompile(`[A-Za-z0-9._\-]+(?:/[A-Za-z0-9._\-]+)+`)
+	// uuidDetail is the second half. Every object key this codebase writes is
+	// <prefix>/<resource uuid>… (internal/media/keys.go, hls.go, storyboard.go),
+	// so "carries a UUID" is what separates a storage key from a media type, a
+	// protocol version or an attempt count — and RE2 has no lookahead, so the
+	// two-regex form is the shape rather than one clever pattern.
+	uuidDetail = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
 )
+
+// redactStorageKeys replaces object-key-shaped tokens with a marker.
+//
+// The package doc comment has always claimed a failure carries "never the inbox
+// URL, source URL, storage key, or any argument". The first two were true —
+// sensitiveDetail strips URL schemes — and the third was not: a real transcode
+// failure reads `media: ffprobe "web-videos/<uuid>.mp4" failed`. That was
+// survivable while the text was admin-only; A17 wired the SAME redacted cause
+// into the worker's structured failure log (internal/jobtrace), and a log
+// aggregator is a wider audience than an admin page.
+//
+// A BARE resource UUID is deliberately left alone. It is not a key, it is
+// already the run's own resource_id, and it is the identifier an operator
+// pastes into the admin video page — redacting it would remove the one thing
+// that makes the failure actionable.
+func redactStorageKeys(s string) string {
+	return pathishDetail.ReplaceAllStringFunc(s, func(m string) string {
+		if uuidDetail.MatchString(m) {
+			return "[redacted-key]"
+		}
+		return m
+	})
+}
 
 func safeMetadataValue(value any) (any, bool) {
 	switch v := value.(type) {
@@ -652,8 +685,8 @@ func safeMetadataValue(value any) (any, bool) {
 	return nil, false
 }
 
-// RedactDetail strips URLs, credential-shaped pairs and email addresses from a
-// free-form failure cause and bounds its length. Exported because the WORKER
+// RedactDetail strips URLs, credential-shaped pairs, email addresses and bare
+// object keys from a free-form failure cause and bounds its length. Exported because the WORKER
 // must log the same cause the admin failure list shows, and the two must be
 // redacted identically or the log becomes the leak the list was built to
 // prevent (internal/jobtrace).
@@ -661,6 +694,9 @@ func RedactDetail(s string) string {
 	s = strings.ToValidUTF8(strings.TrimSpace(s), "�")
 	s = sensitiveDetail.ReplaceAllString(s, "[redacted]")
 	s = emailDetail.ReplaceAllString(s, "[redacted-email]")
+	// After the URL pass: a key inside a stripped URL is already gone, so this
+	// only ever sees the bare ones.
+	s = redactStorageKeys(s)
 	if len(s) > 2048 {
 		s = s[:2048]
 		for !utf8.ValidString(s) {
