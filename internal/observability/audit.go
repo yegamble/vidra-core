@@ -50,8 +50,8 @@ const (
 	// is an ADMIN-domain action against a target account, distinct from
 	// auth.mfa.disable, which the account holder performs on themselves.
 	ActionAdminMFAReset = "admin.user.mfa_reset"
-	ActionRateLimited        = "auth.rate_limited"
-	ActionReportResolve      = "moderation.report.resolve"
+	ActionRateLimited   = "auth.rate_limited"
+	ActionReportResolve = "moderation.report.resolve"
 	// ActionWatchedWordMatchResolve records a moderator triaging one
 	// watched-word match (resolved / dismissed). The metadata carries the
 	// outcome and whether a note was supplied; the note itself lives on the
