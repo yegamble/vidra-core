@@ -79,3 +79,9 @@ UPDATE user_mfa
 SET last_totp_step = sqlc.arg('step')::bigint
 WHERE user_id = sqlc.arg('user_id')
   AND (last_totp_step IS NULL OR last_totp_step < sqlc.arg('step')::bigint);
+
+-- name: UserHasMFAEnabled :one
+-- Whether ONE account has a confirmed second factor, for the admin views that
+-- render a single user (the detail response after an edit, and the MFA reset).
+-- A pending enrollment does not count.
+SELECT EXISTS (SELECT 1 FROM user_mfa WHERE user_id = $1 AND enabled);

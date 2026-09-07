@@ -45,6 +45,11 @@ const (
 	ActionMFAEnable          = "auth.mfa.enable"
 	ActionMFADisable         = "auth.mfa.disable"
 	ActionMFAChallenge       = "auth.mfa.challenge"
+	// ActionAdminMFAReset records an administrator removing a user's second
+	// factor (A05 ruling 2) — the operator answer to a lost authenticator. It
+	// is an ADMIN-domain action against a target account, distinct from
+	// auth.mfa.disable, which the account holder performs on themselves.
+	ActionAdminMFAReset = "admin.user.mfa_reset"
 	ActionRateLimited        = "auth.rate_limited"
 	ActionReportResolve      = "moderation.report.resolve"
 	// ActionWatchedWordMatchResolve records a moderator triaging one

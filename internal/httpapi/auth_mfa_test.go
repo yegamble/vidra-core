@@ -177,6 +177,17 @@ func deleteJSONWithAuth(srv *Server, path, token, body string) *httptest.Respons
 
 // enrollAndEnable drives register → enroll → verify and returns the access
 // token, the TOTP secret, and the recovery codes.
+// totpNow returns the TOTP code for secret at the current instant — the code an
+// ENROLLMENT is confirmed with.
+func totpNow(t *testing.T, secret string) string {
+	t.Helper()
+	code, err := totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatalf("GenerateCode: %v", err)
+	}
+	return code
+}
+
 // challengeCode returns a TOTP code the CHALLENGE will accept after
 // enrollAndEnable. It comes from the next 30-second step because the code that
 // confirmed the enrollment is burned (0134) — a code is single-use, so a test

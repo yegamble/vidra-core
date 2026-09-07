@@ -234,7 +234,15 @@ func (s *Service) issueRecoveryCodes(ctx context.Context, userID uuid.UUID) ([]s
 // access token alone must not be able to strip 2FA). All recovery codes are
 // dropped. ErrInvalidPassword on a wrong password; ErrMFANotEnabled when there
 // is nothing (pending or enabled) to disable.
-func (s *Service) DisableTOTP(ctx context.Context, userID uuid.UUID, password string) error {
+//
+// Removing the second factor lowers the account's protection, so it does what a
+// password change does: every OTHER session is revoked and the account is
+// mailed a notice. The session that made the change stays signed in. Access
+// tokens are session-bound, so the revocation reaches the other devices within
+// one request rather than within JWT_ACCESS_TTL. Before this, an attacker who
+// held a session AND the password could strip 2FA and leave every session they
+// had planted alive and unmentioned.
+func (s *Service) DisableTOTP(ctx context.Context, userID uuid.UUID, password, currentSessionID string) error {
 	if s.mfaRepo == nil {
 		return ErrMFAUnavailable
 	}
@@ -252,7 +260,77 @@ func (s *Service) DisableTOTP(ctx context.Context, userID uuid.UUID, password st
 	if n == 0 {
 		return ErrMFANotEnabled
 	}
-	return s.mfaRepo.DeleteRecoveryCodes(ctx, userID)
+	if err := s.mfaRepo.DeleteRecoveryCodes(ctx, userID); err != nil {
+		return err
+	}
+	s.afterTwoFactorRemoved(ctx, user, currentSessionID, false)
+	return nil
+}
+
+// AdminRemoveTOTP is the operator's answer to "I lost my phone and my recovery
+// codes". It removes a target account's second factor after re-verifying the
+// ADMINISTRATOR's own password — the acting party is the one who must prove
+// possession, since the whole point is that the target cannot.
+//
+// It never reads, returns or re-issues anything secret: the TOTP secret and the
+// recovery codes are deleted, not disclosed, so an admin cannot use this to
+// impersonate a user's second factor. The target's sessions are revoked (an
+// account whose protection just changed should re-authenticate) and the target
+// is mailed the notice — the only signal that reaches a user whose second factor
+// was removed by somebody else. Self-reset is ALLOWED and audited: the owner may
+// lock themselves out too, and there is nobody above them to ask; in that one
+// case the acting session survives, exactly as it does for a self-service
+// removal.
+func (s *Service) AdminRemoveTOTP(ctx context.Context, adminID uuid.UUID, adminPassword string, targetID uuid.UUID, adminSessionID string) error {
+	if s.mfaRepo == nil {
+		return ErrMFAUnavailable
+	}
+	admin, err := s.UserByID(ctx, adminID)
+	if err != nil {
+		return err
+	}
+	if admin.PasswordHash == "" {
+		return ErrPasswordNotSet
+	}
+	if err := CheckPassword(admin.PasswordHash, adminPassword); err != nil {
+		return ErrInvalidPassword
+	}
+	target, err := s.UserByID(ctx, targetID)
+	if err != nil {
+		return ErrAccountNotFound
+	}
+	n, err := s.mfaRepo.DeleteUserMFA(ctx, targetID)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrMFANotEnabled
+	}
+	if err := s.mfaRepo.DeleteRecoveryCodes(ctx, targetID); err != nil {
+		return err
+	}
+	sessionToKeep := ""
+	if targetID == adminID {
+		sessionToKeep = adminSessionID
+	}
+	s.afterTwoFactorRemoved(ctx, target, sessionToKeep, targetID != adminID)
+	return nil
+}
+
+// afterTwoFactorRemoved is the shared tail of both removal paths: revoke the
+// account's sessions (all of them, unless one is the caller's own to keep) and
+// mail the notice. Both are best-effort — the second factor is already gone, and
+// reporting a failure the user would read as "2FA is still on" would be a lie.
+func (s *Service) afterTwoFactorRemoved(ctx context.Context, user sqlcgen.User, sessionToKeep string, byAdmin bool) {
+	if sessionID, perr := uuid.Parse(sessionToKeep); perr == nil {
+		_ = s.repo.RevokeOtherUserSessions(ctx, sqlcgen.RevokeOtherUserSessionsParams{
+			UserID: user.ID,
+			ID:     sessionID,
+		})
+	} else {
+		_ = s.repo.RevokeAllUserSessions(ctx, user.ID)
+	}
+	_ = s.mailer.SendTwoFactorRemoved(ctx, user.Email, byAdmin)
 }
 
 // MFAStatus is the account's two-factor state.

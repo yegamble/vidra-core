@@ -42,9 +42,16 @@ type adminUserView struct {
 	CreatedAt         time.Time  `json:"created_at"`
 	DeletedAt         *time.Time `json:"deleted_at"`
 	IsOwner           bool       `json:"is_owner"`
+	// MFAEnabled is whether the account has a CONFIRMED second factor. It is a
+	// boolean and nothing more: the console must be able to see who is
+	// protected (and whether "remove second factor" applies) without any
+	// exposure of the secret or the recovery codes, which no admin route
+	// returns at all. A pending enrollment reads as false, exactly as the
+	// account's own status endpoint reports it.
+	MFAEnabled bool `json:"mfa_enabled"`
 }
 
-func newAdminUserView(u sqlcgen.User, usedBytes int64) adminUserView {
+func newAdminUserView(u sqlcgen.User, usedBytes int64, mfaEnabled bool) adminUserView {
 	return adminUserView{
 		ID:                u.ID.String(),
 		Username:          u.Username,
@@ -59,6 +66,7 @@ func newAdminUserView(u sqlcgen.User, usedBytes int64) adminUserView {
 		CreatedAt:         u.CreatedAt,
 		DeletedAt:         pgconv.TimeOrNil(u.DeletedAt),
 		IsOwner:           u.IsOwner,
+		MFAEnabled:        mfaEnabled,
 	}
 }
 
@@ -71,7 +79,7 @@ func newAdminUserViewFromRow(r sqlcgen.ListUsersRow) adminUserView {
 		BypassQuarantine: r.BypassQuarantine,
 		DisplayName:      r.DisplayName, StorageQuotaBytes: r.StorageQuotaBytes,
 		CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt, IsOwner: r.IsOwner,
-	}, r.StorageUsedBytes)
+	}, r.StorageUsedBytes, r.MfaEnabled)
 }
 
 // Page bounds for the admin user list. These are the user list's OWN limits:
@@ -213,6 +221,10 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	mfaEnabled, err := s.adminsvc.MFAEnabled(c.Request().Context(), targetID)
+	if err != nil {
+		return err
+	}
 	// The ledger carries BOTH: the structured field list a consumer can read
 	// without parsing, and the human line the admin audit view already renders.
 	s.auditEvent(c, audit.Event{
@@ -221,7 +233,7 @@ func (s *Server) handleUpdateUser(c echo.Context) error {
 		ResourceType: auditResourceUser, ResourceID: targetID.String(),
 		Changes: adminUserChanges(res, in),
 	})
-	return c.JSON(http.StatusOK, newAdminUserView(res.After, used))
+	return c.JSON(http.StatusOK, newAdminUserView(res.After, used, mfaEnabled))
 }
 
 // auditResourceUser is the audit envelope's resource type for an account.

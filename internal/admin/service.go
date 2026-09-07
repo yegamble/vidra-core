@@ -75,6 +75,10 @@ type Repository interface {
 	CountComments(ctx context.Context) (int64, error)
 	SumAllStorageUsage(ctx context.Context) (int64, error)
 	CountFederatedPeers(ctx context.Context) (int64, error)
+	// UserHasMFAEnabled reports whether ONE account has a CONFIRMED second
+	// factor (a pending enrollment does not count). The list carries the same
+	// fact inline; this is for the single-user views.
+	UserHasMFAEnabled(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
 // Service holds the admin application logic.
@@ -104,6 +108,14 @@ func (s *Service) ListUsers(ctx context.Context, query string, limit, offset int
 // search filter rather than reporting the instance total next to a filtered page.
 func (s *Service) CountUsersMatching(ctx context.Context, query string) (int64, error) {
 	return s.repo.CountUsersMatching(ctx, query)
+}
+
+// MFAEnabled reports whether the account has a confirmed second factor. An
+// admin console needs it to answer "who has two-factor on" and to know whether
+// its "remove second factor" action applies at all — the answer is a boolean
+// about the account, never anything about the secret behind it.
+func (s *Service) MFAEnabled(ctx context.Context, userID uuid.UUID) (bool, error) {
+	return s.repo.UserHasMFAEnabled(ctx, userID)
 }
 
 // UpdateUserInput is a partial admin edit of an account; nil Role/IsActive/

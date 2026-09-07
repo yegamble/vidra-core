@@ -1887,6 +1887,18 @@ func (s *Server) routes() {
 	if s.adminsvc != nil {
 		api.GET("/admin/users", s.handleListUsers, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.PATCH("/admin/users/:id", s.handleUpdateUser, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		// Administrator removal of a user's second factor (A05 ruling 2): the
+		// operator answer to a lost authenticator AND lost recovery codes,
+		// which self-service cannot reach by construction. Admin-only, and it
+		// re-verifies the CALLER's password, so it also sits behind the strict
+		// auth limiter — supplying a password makes it a guessing surface
+		// exactly like login.
+		adminMFAMW := []echo.MiddlewareFunc{}
+		if s.authLimit != nil {
+			adminMFAMW = append(adminMFAMW, s.authRateLimit(s.authLimit))
+		}
+		adminMFAMW = append(adminMFAMW, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/users/:id/mfa", s.handleAdminRemoveUserMFA, adminMFAMW...)
 		// Instance-wide overview counts for the admin dashboard cards. Read-only
 		// aggregate; admin-only (this is the vidra-user admin-overview binding).
 		api.GET("/admin/stats", s.handleAdminStats, s.requireAuth, s.requireRole(admin.RoleAdmin))

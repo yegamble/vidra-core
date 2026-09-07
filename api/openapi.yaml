@@ -14542,6 +14542,89 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/users/{id}/mfa:
+    delete:
+      operationId: adminRemoveUserMFA
+      summary: Remove a user's second factor (admin)
+      description: >-
+        Removes a target account's TOTP configuration and every recovery code.
+        Restricted to admins, and the CALLER re-confirms their OWN password —
+        the target cannot supply theirs, which is the situation this exists for
+        (an authenticator lost together with the recovery codes; self-service
+        removal needs both the account's password and a session it can no longer
+        obtain). The action removes protection and never grants access: nothing
+        secret is read or returned, the response has no body, and no admin route
+        anywhere discloses the shared secret or a recovery code. The target's
+        sessions are revoked and the target is mailed a notice naming an
+        administrator as the actor. Removing your OWN second factor here is
+        allowed — an owner who loses their authenticator has nobody above them
+        to ask — and in that case the acting session survives. Every outcome is
+        audited (`admin.user.mfa_reset`) with the target named.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminRemoveUserMFARequest"
+      responses:
+        "204":
+          description: The account's second factor was removed.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin, or the supplied password is wrong.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such user, or the account has no two-factor authentication to remove.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The calling admin has no password to confirm with (an OIDC/ATProto-only
+            account); set one through the password reset flow first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (no password supplied).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: >-
+            Too many attempts from this IP. The route sits behind the strict auth
+            limiter because supplying a password makes it a guessing surface.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Two-factor authentication is not configured on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -18604,10 +18687,20 @@ components:
         word:
           type: string
           maxLength: 100
+    AdminRemoveUserMFARequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          description: >-
+            The CALLING administrator's own current password. Not the target's:
+            the target is, by construction, the party who cannot prove anything
+            right now.
     AdminUser:
       type: object
       description: Admin projection of an account (never includes the password hash).
-      required: [id, username, email, role, is_active, email_verified, bypass_quarantine, display_name, storage_quota_bytes, storage_used_bytes, created_at, deleted_at, is_owner]
+      required: [id, username, email, role, is_active, email_verified, bypass_quarantine, display_name, storage_quota_bytes, storage_used_bytes, created_at, deleted_at, is_owner, mfa_enabled]
       properties:
         id:
           type: string
@@ -18668,6 +18761,16 @@ components:
             nobody can remove the last active administrator (422 `last_admin`).
             False for every account on an instance claimed before the marker
             existed whose owner could not be determined.
+        mfa_enabled:
+          type: boolean
+          description: >-
+            Whether this account has a CONFIRMED second factor (TOTP). A pending
+            enrollment reads false, exactly as the account's own GET
+            /api/v1/auth/mfa reports it. It is a boolean and nothing more: no
+            admin route ever returns the shared secret or a recovery code. An
+            admin can remove the factor with DELETE
+            /api/v1/admin/users/{id}/mfa, which is the only operator answer to a
+            user who has lost both their authenticator and their recovery codes.
     AdminUserListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"

@@ -374,13 +374,13 @@ func TestDisableTOTPRequiresPasswordAndDropsEverything(t *testing.T) {
 		t.Fatalf("verify: %v", err)
 	}
 
-	if err := svc.DisableTOTP(ctx, user.ID, "wrong-password"); !errors.Is(err, ErrInvalidPassword) {
+	if err := svc.DisableTOTP(ctx, user.ID, "wrong-password", ""); !errors.Is(err, ErrInvalidPassword) {
 		t.Fatalf("wrong-password disable err = %v, want ErrInvalidPassword", err)
 	}
 	if st, _ := svc.GetMFAStatus(ctx, user.ID); !st.Enabled {
 		t.Fatal("a failed disable must leave MFA on")
 	}
-	if err := svc.DisableTOTP(ctx, user.ID, "supersecret"); err != nil {
+	if err := svc.DisableTOTP(ctx, user.ID, "supersecret", ""); err != nil {
 		t.Fatalf("DisableTOTP: %v", err)
 	}
 	if st, _ := svc.GetMFAStatus(ctx, user.ID); st.Enabled || st.RecoveryCodesRemaining != 0 {
@@ -394,7 +394,7 @@ func TestDisableTOTPRequiresPasswordAndDropsEverything(t *testing.T) {
 		t.Errorf("post-disable login = %+v, %v; want plain tokens", res, err)
 	}
 	// Nothing left to disable.
-	if err := svc.DisableTOTP(ctx, user.ID, "supersecret"); !errors.Is(err, ErrMFANotEnabled) {
+	if err := svc.DisableTOTP(ctx, user.ID, "supersecret", ""); !errors.Is(err, ErrMFANotEnabled) {
 		t.Errorf("second disable err = %v, want ErrMFANotEnabled", err)
 	}
 }

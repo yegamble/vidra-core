@@ -113,8 +113,9 @@ func (r disableTOTPRequest) Validate() []FieldError {
 }
 
 // handleDisableTOTP turns MFA off (dropping the secret and every recovery
-// code) after password re-authentication. Wrong password → 403; nothing to
-// disable → 404.
+// code) after password re-authentication, and signs every OTHER session out —
+// access tokens included, because access tokens are session-bound — then mails
+// the account the notice. Wrong password → 403; nothing to disable → 404.
 func (s *Server) handleDisableTOTP(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
@@ -124,7 +125,7 @@ func (s *Server) handleDisableTOTP(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	if err := s.authsvc.DisableTOTP(c.Request().Context(), userID, in.Password); err != nil {
+	if err := s.authsvc.DisableTOTP(c.Request().Context(), userID, in.Password, sessionIDFromContext(c)); err != nil {
 		switch {
 		case errors.Is(err, auth.ErrInvalidPassword):
 			s.audit(c, observability.ActionMFADisable, observability.ResultFailure, userID.String(), "invalid_password")

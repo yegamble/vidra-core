@@ -210,3 +210,17 @@ func (q *Queries) UseRecoveryCode(ctx context.Context, arg UseRecoveryCodeParams
 	}
 	return result.RowsAffected(), nil
 }
+
+const userHasMFAEnabled = `-- name: UserHasMFAEnabled :one
+SELECT EXISTS (SELECT 1 FROM user_mfa WHERE user_id = $1 AND enabled)
+`
+
+// Whether ONE account has a confirmed second factor, for the admin views that
+// render a single user (the detail response after an edit, and the MFA reset).
+// A pending enrollment does not count.
+func (q *Queries) UserHasMFAEnabled(ctx context.Context, userID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, userHasMFAEnabled, userID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}

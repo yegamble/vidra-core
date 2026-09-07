@@ -280,6 +280,37 @@ func (s *SMTP) SendPasswordChanged(ctx context.Context, email string) error {
 	return s.send(ctx, email, "", subject, body)
 }
 
+// SendTwoFactorRemoved tells an account that two-factor authentication is no
+// longer protecting it. Like SendPasswordChanged it is an after-the-fact notice
+// with no token and no link that could change anything. byAdmin selects the
+// sentence that matters: a removal the account holder performed needs one line,
+// while a removal an ADMINISTRATOR performed is something the holder did not do
+// and must be able to recognise as wrong — so that copy names the actor and says
+// their sessions were signed out, which is the only reason they might otherwise
+// think the sign-out was a glitch.
+func (s *SMTP) SendTwoFactorRemoved(ctx context.Context, email string, byAdmin bool) error {
+	subject := "Two-factor authentication on " + s.cfg.InstanceName + " was turned off"
+	body := "Hi,\n\n"
+	if byAdmin {
+		body += "An administrator of " + s.cfg.InstanceName + " removed the second factor " +
+			"(authenticator app) from your account, and every signed-in device was " +
+			"signed out. Your recovery codes no longer work.\n\n" +
+			"This is what an administrator does when someone has lost their " +
+			"authenticator and asks to be let back in. If you did not ask for it, " +
+			"reply to whoever runs this instance: your account is now protected by " +
+			"its password alone.\n\n" +
+			"You can set two-factor authentication up again from your security settings.\n"
+	} else {
+		body += "Two-factor authentication was just turned off for your " + s.cfg.InstanceName +
+			" account, and every other signed-in device was signed out. Your recovery " +
+			"codes no longer work.\n\n" +
+			"If that was you, there is nothing to do.\n\n" +
+			"If it was NOT you, someone else may have your password: change it now and " +
+			"turn two-factor authentication back on.\n"
+	}
+	return s.send(ctx, email, "", subject, body)
+}
+
 // SendEmailVerification delivers an email-verification token. The token appears
 // only in the message body; it is never logged.
 func (s *SMTP) SendEmailVerification(ctx context.Context, email, token string) error {

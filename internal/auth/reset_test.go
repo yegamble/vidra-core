@@ -20,6 +20,14 @@ type captureMailer struct {
 	failChanged bool
 	// ownershipNotices records both sides of an instance-ownership transfer.
 	ownershipNotices []CapturedOwnershipNotice
+	// twoFactorRemoved records the two-factor-removed notices, with the flag
+	// saying whether an administrator did the removing.
+	twoFactorRemoved []CapturedTwoFactorRemoval
+}
+
+func (m *captureMailer) SendTwoFactorRemoved(_ context.Context, email string, byAdmin bool) error {
+	m.twoFactorRemoved = append(m.twoFactorRemoved, CapturedTwoFactorRemoval{Email: email, ByAdmin: byAdmin})
+	return nil
 }
 
 func (m *captureMailer) SendPasswordChanged(_ context.Context, email string) error {
