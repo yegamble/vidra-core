@@ -1,9 +1,12 @@
 package channelsync
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -688,5 +691,40 @@ func TestBootCapableFallsBackToTheStaticFlag(t *testing.T) {
 	}
 	if NewService(repo, &fakeDrafter{}, &fakeEnqueuer{}, WithEnabled(false)).BootCapable() {
 		t.Error("with no explicit boot capability, BootCapable() must report the static flag")
+	}
+}
+
+// TestDrainDueFailureIsLogged: a whole PASS that fails must leave a line in the
+// process log. Per-ENTRY failures already log (importEntry), so the more severe
+// outcome was the silent one — and channel_syncs is not projected into job_runs
+// and has no admin surface, so the operator's only other channel is the owner's
+// own GET /channel-syncs. Measured in the A27 lab: an external source taken down
+// produced state=failed with a safe last_error and NOT ONE line in the worker
+// log. The line carries the sync id and the safe reason, never the URL (which
+// can carry a credential) and never the raw extractor error.
+func TestDrainDueFailureIsLogged(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	repo := newFakeRepo()
+	sync := sqlcgen.ChannelSync{ID: uuid.New(), UserID: uuid.New(), ChannelID: uuid.New(), ExternalChannelUrl: "https://youtube.com/@chan?key=shhh"}
+	repo.claimed = []sqlcgen.ClaimDueChannelSyncsRow{claimRow(sync)}
+	lister := &fakeLister{err: errors.New("yt-dlp: extractor run failed")}
+	svc := enabledService(repo, &fakeDrafter{}, &fakeEnqueuer{}, lister, WithLogger(logger))
+
+	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+		t.Fatalf("DrainDue: %v", err)
+	}
+	out := buf.String()
+	if out == "" {
+		t.Fatal("a failed sync pass logged nothing")
+	}
+	if !strings.Contains(out, sync.ID.String()) {
+		t.Errorf("log line does not name the sync: %s", out)
+	}
+	if !strings.Contains(out, "could not list the external channel") {
+		t.Errorf("log line does not carry the safe reason: %s", out)
+	}
+	if strings.Contains(out, "shhh") || strings.Contains(out, "youtube.com/@chan") {
+		t.Errorf("log line leaked the external URL: %s", out)
 	}
 }

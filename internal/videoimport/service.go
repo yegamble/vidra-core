@@ -517,7 +517,20 @@ func (s *Service) probeAuto(ctx context.Context, guard urlsafety.Guard, target *
 	if _, ok := video.AcceptedVideoExt(target.Path); ok {
 		return ResolverDirect
 	}
-	if ct := s.probeContentType(ctx, guard, target); ct != "" && isAcceptedVideoContentType(ct) {
+	ct, blocked := s.probeContentType(ctx, guard, target)
+	if blocked {
+		// The SSRF guard refused this address (the name resolved to a
+		// non-public IP, or a redirect landed on one). Falling through to the
+		// extractor here would make the guard's own refusal the TRIGGER for an
+		// unguarded fetch of that same address: internal/ytdlp cannot dial-pin
+		// yt-dlp's outbound sockets, so the extractor would happily follow the
+		// name or the redirect the guarded client just rejected. Stop instead.
+		// An explicit resolver=ytdlp request is unchanged — that is the
+		// operator's documented residual risk (OFF by default, YTDLP_PROXY),
+		// not something `auto` should reach on its own.
+		return ""
+	}
+	if ct != "" && isAcceptedVideoContentType(ct) {
 		return ResolverDirect
 	}
 	if s.YtdlpEnabled() {
@@ -528,20 +541,38 @@ func (s *Service) probeAuto(ctx context.Context, guard urlsafety.Guard, target *
 
 // probeContentType issues a bounded, SSRF-guarded HEAD and returns the response
 // Content-Type ("" on any failure). It never surfaces the URL or an error.
-func (s *Service) probeContentType(ctx context.Context, guard urlsafety.Guard, target *url.URL) string {
+//
+// blocked distinguishes the ONE failure the caller must not treat as "unknown,
+// try something else": the guard refused the address itself
+// (urlsafety.ErrBlockedAddress, raised at dial time per resolved IP and so also
+// covering redirects and DNS rebinding). Every other failure — a 405 on HEAD, a
+// timeout, a TLS error — stays an ordinary empty answer, so a platform URL that
+// simply does not answer HEAD still reaches the extractor.
+func (s *Service) probeContentType(ctx context.Context, guard urlsafety.Guard, target *url.URL) (contentType string, blocked bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, target.String(), nil)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	resp, err := s.httpClient(guard).Do(req)
 	if err != nil {
-		return ""
+		return "", guardRefused(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return ""
+		return "", false
 	}
-	return resp.Header.Get("Content-Type")
+	return resp.Header.Get("Content-Type"), false
+}
+
+// guardRefused reports whether err is the SSRF guard refusing the fetch, in
+// either of the two shapes it takes. ErrBlockedAddress comes from the dial-time
+// control hook (a resolved IP that is not public). ErrInvalidURL comes from
+// CheckRedirect re-validating a redirect target, which is the path a LITERAL
+// private address in a Location header takes — it never reaches the dialer at
+// all. Anything else (a 405, a timeout, a TLS error, a redirect loop) is an
+// ordinary failure and must not be read as a refusal.
+func guardRefused(err error) bool {
+	return errors.Is(err, urlsafety.ErrBlockedAddress) || errors.Is(err, urlsafety.ErrInvalidURL)
 }
 
 // httpClient returns the injected test client, or a fresh SSRF-guarded client.

@@ -141,11 +141,18 @@ func downloadArgs(cfg Config, url, outTemplate string) []string {
 	format := "bestvideo[ext=mp4]+bestaudio[ext=m4a]/" +
 		"bestvideo[ext=mp4]+bestaudio/" +
 		"best[ext=mp4]/best[ext=webm]/best"
+	// Every height comparison carries `?`, yt-dlp's "do not exclude a format
+	// whose value for this field is unknown" operator. Without it the cap is a
+	// silent exclusion filter: a bare <video><source> page, a PeerTube static
+	// web video and any progressive file the extractor cannot probe all report
+	// an UNKNOWN height, so `height<=1080` matched no format at all and yt-dlp
+	// exited "Requested format is not available" — on the SHIPPED default cap.
+	// `height<=?N` still caps everything that declares a height.
 	if maxHeight > 0 {
 		h := strconv.Itoa(maxHeight)
-		format = "bestvideo[height<=" + h + "][ext=mp4]+bestaudio[ext=m4a]/" +
-			"bestvideo[height<=" + h + "][ext=mp4]+bestaudio/" +
-			"best[height<=" + h + "][ext=mp4]/best[height<=" + h + "][ext=webm]/best[height<=" + h + "]"
+		format = "bestvideo[height<=?" + h + "][ext=mp4]+bestaudio[ext=m4a]/" +
+			"bestvideo[height<=?" + h + "][ext=mp4]+bestaudio/" +
+			"best[height<=?" + h + "][ext=mp4]/best[height<=?" + h + "][ext=webm]/best[height<=?" + h + "]"
 	}
 	args := []string{
 		"--ignore-config",
