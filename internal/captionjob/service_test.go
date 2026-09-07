@@ -354,3 +354,43 @@ func TestEnabledFunc(t *testing.T) {
 
 // RenewCaptionJobLease is the lease heartbeat; the fake has no leases to keep.
 func (*fakeRepo) RenewCaptionJobLease(_ context.Context, _ uuid.UUID) error { return nil }
+
+// TestBootCapableIsIndependentOfTheRuntimeToggle is the auto-caption twin of
+// channelsync's test: cmd/api decides ONCE, at boot, whether to start the
+// caption drain loop, and asking Enabled() there folds in the
+// transcription_enabled overlay. An instance booted with the toggle off then
+// never started the loop, and an admin turning transcription back on afterwards
+// got enqueued caption jobs that no worker drained — nothing failing, nothing
+// logged — until the fleet was restarted. BootCapable() answers only the
+// boot-side half (WHISPER_ENABLED plus a wired transcriber), which is a
+// boot-time fact and so stays true for the process's lifetime.
+func TestBootCapableIsIndependentOfTheRuntimeToggle(t *testing.T) {
+	off := false
+	svc := NewService(newFakeRepo(), &fakeVideoStore{}, nil,
+		WithBootCapability(true),
+		WithEnabledFunc(func() bool { return off }))
+
+	if svc.Enabled() {
+		t.Fatal("Enabled() must follow the runtime overlay (off)")
+	}
+	if !svc.BootCapable() {
+		t.Fatal("BootCapable() must stay true while the runtime overlay is off — " +
+			"it is the gate cmd/api reads once at boot to start the drain loop")
+	}
+
+	off = true
+	if !svc.Enabled() || !svc.BootCapable() {
+		t.Fatal("Enabled() must follow the overlay; BootCapable() must not move with it")
+	}
+}
+
+// TestBootCapableFallsBackToTheStaticFlag keeps callers that wire no explicit
+// boot capability on today's meaning.
+func TestBootCapableFallsBackToTheStaticFlag(t *testing.T) {
+	if !NewService(newFakeRepo(), &fakeVideoStore{}, nil, WithEnabled(true)).BootCapable() {
+		t.Error("with no explicit boot capability, BootCapable() must report the static flag")
+	}
+	if NewService(newFakeRepo(), &fakeVideoStore{}, nil, WithEnabled(false)).BootCapable() {
+		t.Error("with no explicit boot capability, BootCapable() must report the static flag")
+	}
+}

@@ -111,6 +111,7 @@ type Service struct {
 
 	enabled      bool
 	enabledFn    func() bool // when set, supersedes enabled (runtime overlay), resolved per call
+	bootCapable  *bool       // when set, the deployment-side prerequisite alone (see BootCapable)
 	allowPrivate bool
 	maxPerUser   int
 	maxPerUserFn func() int // when set, supersedes maxPerUser (runtime overlay), resolved per Create
@@ -136,6 +137,25 @@ func WithEnabled(enabled bool) Option { return func(s *Service) { s.enabled = en
 // capability (the yt-dlp resolver) so a runtime toggle can never enable a sync
 // path the deployment cannot run.
 func WithEnabledFunc(f func() bool) Option { return func(s *Service) { s.enabledFn = f } }
+
+// WithBootCapability records the DEPLOYMENT-side prerequisite on its own — for
+// channel auto-sync, the yt-dlp import resolver (YTDLP_IMPORT_ENABLED) — kept
+// apart from the runtime gate WithEnabledFunc resolves.
+//
+// The two answer different questions and must not share one answer. Enabled()
+// folds the admin's runtime toggle in, which is right for a request and for
+// every worker TICK. It is wrong for the once-per-process decision to START the
+// drain loop at all: a process that asks it at boot and never asks again bakes
+// whatever the toggle happened to say into the lifetime of the whole fleet. An
+// instance booted with channel_sync_enabled off then started no loop, and an
+// admin turning it on afterwards got an api that accepts syncs (features
+// .channel_sync flips true and POST /channel-syncs answers 201
+// waiting_first_run) with no worker anywhere that drains them — nothing failing
+// and nothing logged until someone restarted. That is the same invisible
+// staleness the settings poller exists to close, one layer up.
+func WithBootCapability(capable bool) Option {
+	return func(s *Service) { s.bootCapable = &capable }
+}
 
 // WithAllowPrivateURLs relaxes the SSRF guard's private/loopback block for the
 // external channel URL (dev/test only, from HTTP_IMPORT_ALLOW_PRIVATE_URLS).
@@ -220,6 +240,19 @@ func NewService(repo Repository, drafter Drafter, enqueuer Enqueuer, opts ...Opt
 func (s *Service) Enabled() bool {
 	if s.enabledFn != nil {
 		return s.enabledFn()
+	}
+	return s.enabled
+}
+
+// BootCapable reports whether this DEPLOYMENT could ever run a channel sync —
+// the boot-side prerequisite alone, never the admin's runtime toggle. It is the
+// gate for starting the drain loop (a boot-time fact stays true for the
+// process's lifetime); Enabled() stays the gate for serving a request and for
+// each tick's DrainDue. Without an explicit WithBootCapability it falls back to
+// the static flag, which is what a caller that wires no runtime provider means.
+func (s *Service) BootCapable() bool {
+	if s.bootCapable != nil {
+		return *s.bootCapable
 	}
 	return s.enabled
 }

@@ -114,6 +114,7 @@ type Service struct {
 	notifier        Notifier
 	enabled         bool
 	enabledFn       func() bool // when set, supersedes enabled (runtime overlay), resolved per call
+	bootCapable     *bool       // when set, the deployment-side prerequisite alone (see BootCapable)
 	defaultLanguage string
 	logger          *slog.Logger
 }
@@ -135,6 +136,20 @@ func WithEnabled(enabled bool) Option {
 // effective value is always settingAND(whisper configured).
 func WithEnabledFunc(f func() bool) Option {
 	return func(s *Service) { s.enabledFn = f }
+}
+
+// WithBootCapability records the DEPLOYMENT-side prerequisite on its own — for
+// auto-captioning, WHISPER_ENABLED plus a wired transcriber — kept apart from
+// the runtime gate WithEnabledFunc resolves.
+//
+// Enabled() folds the admin's transcription_enabled toggle in, which is right
+// for an enqueue and for every worker TICK. It is wrong for the once-per-process
+// decision to START the drain loop: a boot-time reading of a runtime-dynamic
+// predicate bakes whatever the toggle said at boot into the lifetime of the
+// fleet, so an admin turning transcription back on afterwards gets caption jobs
+// that queue and are never drained, with nothing failing and nothing logged.
+func WithBootCapability(capable bool) Option {
+	return func(s *Service) { s.bootCapable = &capable }
 }
 
 // WithDefaultLanguage sets the caption language used when a request omits one
@@ -183,6 +198,19 @@ func NewService(repo Repository, videos VideoStore, transcriber Transcriber, opt
 func (s *Service) Enabled() bool {
 	if s.enabledFn != nil {
 		return s.enabledFn()
+	}
+	return s.enabled
+}
+
+// BootCapable reports whether this DEPLOYMENT could ever transcribe — the
+// boot-side prerequisite alone, never the admin's runtime toggle. It is the
+// gate for starting the drain loop; Enabled() stays the gate for an enqueue and
+// for each tick's DrainJobs. Without an explicit WithBootCapability it falls
+// back to the static flag, which is what a caller wiring no runtime provider
+// means.
+func (s *Service) BootCapable() bool {
+	if s.bootCapable != nil {
+		return *s.bootCapable
 	}
 	return s.enabled
 }

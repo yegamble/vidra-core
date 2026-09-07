@@ -1576,6 +1576,11 @@ func run() error {
 	}
 	channelSyncOpts := []channelsync.Option{
 		channelsync.WithEnabled(channelSyncEffective),
+		// The BOOT half on its own: the yt-dlp resolver, with no runtime toggle
+		// folded in. It is what the worker-start gate below reads, because that
+		// gate fires once and a runtime-dynamic predicate read once is frozen
+		// for the process's lifetime.
+		channelsync.WithBootCapability(cfg.YtdlpImportEnabled),
 		// Runtime overlay (config-parity W8): the effective gate is the boot
 		// capability (the yt-dlp resolver) AND the channel_sync_enabled setting
 		// AND the import_http_enabled setting (the sync path IS a yt-dlp import
@@ -1617,6 +1622,10 @@ func run() error {
 	}
 	captionjobsvc := captionjob.NewService(db.Queries(), videosvc, transcriber,
 		captionjob.WithEnabled(cfg.WhisperEnabled),
+		// The BOOT half on its own (see the channel-sync twin above): whisper
+		// wired at boot, with transcription_enabled deliberately NOT folded in,
+		// because the worker-start gate below reads it exactly once.
+		captionjob.WithBootCapability(cfg.WhisperEnabled && transcriber != nil),
 		// Runtime overlay (config-parity W8): effective = transcription_enabled
 		// setting AND the Whisper boot capability (WHISPER_ENABLED/ENDPOINT stay
 		// env-only — mirroring the contact_form_enabled env-dependency pattern).
@@ -1908,9 +1917,18 @@ func run() error {
 
 	// Channel auto-sync worker (W2.C4): on a cadence, list each due sync's external
 	// channel and enqueue `ytdlp` imports for unseen uploads. Only started when the
-	// feature is effective (CHANNEL_SYNC_ENABLED + yt-dlp import); otherwise the
-	// service is wired for its stable 503 contract but no worker runs.
-	if runWorkers && channelsyncsvc.Enabled() {
+	// DEPLOYMENT can run one at all (the yt-dlp resolver); otherwise the service
+	// is wired for its stable 503 contract but no worker runs.
+	//
+	// BootCapable(), NOT Enabled(): this decision is made once per process, and
+	// Enabled() folds in the channel_sync_enabled / import_http_enabled overlay.
+	// Reading the overlay here froze the whole fleet at boot — an admin who
+	// turned channel sync on afterwards got an api that accepts syncs and no
+	// worker that drains them (measured: POST /channel-syncs 201
+	// waiting_first_run, features.channel_sync true, zero drain loops, until a
+	// restart). The loop is cheap while the toggle is off: DrainDue checks
+	// Enabled() every tick and returns immediately.
+	if runWorkers && channelsyncsvc.BootCapable() {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runChannelSyncWorker(workerCtx, logger, channelsyncsvc)
@@ -1919,8 +1937,12 @@ func run() error {
 
 	// Drain the auto-caption (Whisper) queue in the background: extract audio →
 	// transcribe → upsert the caption via the shared AddCaption path → notify the
-	// owner, with retry + dead-letter. Only when auto-captioning is enabled.
-	if runWorkers && captionjobsvc.Enabled() {
+	// owner, with retry + dead-letter. Only when the DEPLOYMENT has a
+	// transcriber wired.
+	//
+	// BootCapable(), not Enabled() — the channel-sync reasoning above applies
+	// verbatim; DrainJobs checks Enabled() per tick.
+	if runWorkers && captionjobsvc.BootCapable() {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runCaptionJobWorker(workerCtx, logger, captionjobsvc)
