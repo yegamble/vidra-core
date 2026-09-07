@@ -500,3 +500,179 @@ func TestDrainJobsConcurrentFailureIsolation(t *testing.T) {
 
 // RenewImportJobLease is the lease heartbeat; the fake has no leases to keep.
 func (*fakeRepo) RenewImportJobLease(_ context.Context, _ uuid.UUID) error { return nil }
+
+// ---- download budgets (A27 ruling 1) ---------------------------------------
+
+// dripOrigin serves /drip.mp4 in `chunks` flushed writes spaced `gap` apart: a
+// slow but PROGRESSING transfer, the shape a big file on a thin link has and the
+// shape a whole-request timeout kills for no good reason.
+func dripOrigin(t *testing.T, chunks int, gap time.Duration) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		for i := 0; i < chunks; i++ {
+			_, _ = w.Write([]byte("x"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			time.Sleep(gap)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// stallOrigin answers with headers and then sends nothing: the hung source.
+func stallOrigin(t *testing.T) *httptest.Server {
+	t.Helper()
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-done
+	}))
+	t.Cleanup(func() { close(done); srv.Close() })
+	return srv
+}
+
+// TestDrainSlowDripImportsUnderIdleTimeout is the ruling: an origin that takes
+// far longer than the idle timeout to deliver the whole file, but never goes
+// quiet for that long, now imports and publishes. Under the old whole-request
+// deadline this was a failure regardless of size.
+func TestDrainSlowDripImportsUnderIdleTimeout(t *testing.T) {
+	ctx := context.Background()
+	repo, pipe := newFakeRepo(), newFakePipeline()
+	chunks, gap := 24, 25*time.Millisecond // ~600ms of steady progress
+	svc := NewService(repo, pipe, 1<<20,
+		WithAllowPrivateFetch(true), // real guarded client, loopback permitted
+		WithFetchBudget(0, 250*time.Millisecond))
+	origin := dripOrigin(t, chunks, gap)
+	vid := seedVideo(pipe, uuid.New())
+
+	if _, err := svc.Enqueue(ctx, vid, origin.URL+"/drip.mp4", ResolverDirect); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if _, err := svc.DrainJobs(ctx, 5); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if j := repo.latest(vid); j.State != "done" {
+		t.Fatalf("drip import state = %q (err=%q), want done", j.State, j.Error)
+	}
+	if !pipe.published[vid] || pipe.storedSize[vid] != int64(chunks) {
+		t.Errorf("drip import not finalised: published=%v size=%d want %d", pipe.published[vid], pipe.storedSize[vid], chunks)
+	}
+}
+
+// TestDrainStalledDownloadFailsOnTheIdleTimeout: headers then silence still
+// fails, promptly, with the idle reason — the limit an idle timeout exists for.
+func TestDrainStalledDownloadFailsOnTheIdleTimeout(t *testing.T) {
+	ctx := context.Background()
+	repo, pipe := newFakeRepo(), newFakePipeline()
+	svc := NewService(repo, pipe, 1<<20,
+		WithAllowPrivateFetch(true),
+		WithFetchBudget(time.Minute, 150*time.Millisecond)) // generous total, tight idle
+	origin := stallOrigin(t)
+	vid := seedVideo(pipe, uuid.New())
+
+	if _, err := svc.Enqueue(ctx, vid, origin.URL+"/stall.mp4", ResolverDirect); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	start := time.Now()
+	if _, err := svc.DrainJobs(ctx, 5); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 20*time.Second {
+		t.Fatalf("stalled import took %s; the idle timeout is not bounding it", elapsed)
+	}
+	j := repo.latest(vid)
+	if j.State == "done" || pipe.published[vid] {
+		t.Fatalf("stalled import succeeded; want a failure")
+	}
+	if j.Error != reasonDownloadStalled {
+		t.Errorf("job error = %q, want %q", j.Error, reasonDownloadStalled)
+	}
+	if strings.Contains(j.Error, origin.URL) {
+		t.Errorf("job error %q leaks the URL", j.Error)
+	}
+}
+
+// TestDrainOverBudgetDownloadFailsWithTheOtherReason: the SAME drip that
+// succeeds above fails once the TOTAL budget is small enough — and with the
+// other reason, so the operator learns which of the two knobs to turn.
+func TestDrainOverBudgetDownloadFailsWithTheOtherReason(t *testing.T) {
+	ctx := context.Background()
+	repo, pipe := newFakeRepo(), newFakePipeline()
+	svc := NewService(repo, pipe, 1<<20,
+		WithAllowPrivateFetch(true),
+		WithFetchBudget(200*time.Millisecond, 5*time.Second)) // tight total, generous idle
+	origin := dripOrigin(t, 100, 20*time.Millisecond) // ~2s of steady progress
+	vid := seedVideo(pipe, uuid.New())
+
+	if _, err := svc.Enqueue(ctx, vid, origin.URL+"/drip.mp4", ResolverDirect); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if _, err := svc.DrainJobs(ctx, 5); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	j := repo.latest(vid)
+	if j.State == "done" || pipe.published[vid] {
+		t.Fatalf("over-budget import succeeded; want a failure")
+	}
+	if j.Error != reasonDownloadOverBudget {
+		t.Errorf("job error = %q, want %q", j.Error, reasonDownloadOverBudget)
+	}
+	if j.Error == reasonDownloadStalled {
+		t.Error("over-budget import reported the stall reason; the two limits must not be confused")
+	}
+}
+
+// TestDrainSizeCapStillRefusesOversize pins the bound the budgets must not
+// weaken: a body larger than UPLOAD_MAX_SIZE is refused mid-stream even when it
+// is arriving briskly and well inside both time limits.
+func TestDrainSizeCapStillRefusesOversize(t *testing.T) {
+	ctx := context.Background()
+	repo, pipe := newFakeRepo(), newFakePipeline()
+	svc := NewService(repo, pipe, 8, // 8-byte cap
+		WithAllowPrivateFetch(true),
+		WithFetchBudget(time.Minute, 10*time.Second))
+	origin := dripOrigin(t, 64, time.Millisecond)
+	vid := seedVideo(pipe, uuid.New())
+
+	if _, err := svc.Enqueue(ctx, vid, origin.URL+"/drip.mp4", ResolverDirect); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if _, err := svc.DrainJobs(ctx, 5); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if j := repo.latest(vid); j.Error != "the file is too large" {
+		t.Errorf("job error = %q, want the size-cap reason", j.Error)
+	}
+}
+
+// TestFetchBudgetDefaults pins the shipped semantics: the 60 s that used to bound
+// the WHOLE request is now the idle timeout, and the total budget is generous
+// enough that an ordinary large import never meets it.
+func TestFetchBudgetDefaults(t *testing.T) {
+	svc := NewService(newFakeRepo(), newFakePipeline(), 1<<20)
+	if got := svc.fetchIdleTimeout(); got != defaultFetchIdleTimeout {
+		t.Errorf("idle timeout = %s, want %s", got, defaultFetchIdleTimeout)
+	}
+	if got := svc.fetchBudget(); got != defaultFetchBudget {
+		t.Errorf("total budget = %s, want %s", got, defaultFetchBudget)
+	}
+	// 0 means "no total cap" (the house 0-disables convention); a negative idle
+	// timeout is meaningless and falls back to the default rather than disabling
+	// the stall guard.
+	zero := NewService(newFakeRepo(), newFakePipeline(), 1<<20, WithFetchBudget(0, -1))
+	if got := zero.fetchBudget(); got != 0 {
+		t.Errorf("explicit zero budget = %s, want 0 (no cap)", got)
+	}
+	if got := zero.fetchIdleTimeout(); got != defaultFetchIdleTimeout {
+		t.Errorf("negative idle timeout = %s, want the default %s", got, defaultFetchIdleTimeout)
+	}
+}

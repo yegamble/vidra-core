@@ -174,6 +174,7 @@ type ChannelSync struct {
 	NextRunAt          time.Time          `json:"next_run_at"`
 	CreatedAt          time.Time          `json:"created_at"`
 	UpdatedAt          time.Time          `json:"updated_at"`
+	FailureCount       int32              `json:"failure_count"`
 }
 
 type ChannelSyncSeen struct {

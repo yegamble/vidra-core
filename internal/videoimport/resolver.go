@@ -2,6 +2,7 @@ package videoimport
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/vidra/vidra-core/internal/safeerr"
+	"github.com/vidra/vidra-core/internal/urlsafety"
 	"github.com/vidra/vidra-core/internal/video"
 	"github.com/vidra/vidra-core/internal/ytdlp"
 )
@@ -80,6 +82,15 @@ func (d *directResolver) resolve(ctx context.Context, target *url.URL) (*resolve
 	}
 	resp, err := d.client.Do(req)
 	if err != nil {
+		// The two download budgets keep their identity so the worker can name the
+		// limit that fired; the BARE sentinel is returned, never the client's own
+		// error, which is a *url.Error carrying the attacker-controlled URL.
+		switch {
+		case errors.Is(err, urlsafety.ErrIdleTimeout):
+			return nil, urlsafety.ErrIdleTimeout
+		case errors.Is(err, urlsafety.ErrBudgetExceeded):
+			return nil, urlsafety.ErrBudgetExceeded
+		}
 		// Blocked address (SSRF guard), DNS failure, timeout, TLS error, etc. The
 		// URL is never echoed back.
 		return nil, safeerr.New("could not fetch the URL")

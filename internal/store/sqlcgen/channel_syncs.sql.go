@@ -23,7 +23,7 @@ WHERE id IN (
     LIMIT $1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, channel_id, user_id, external_channel_url
+RETURNING id, channel_id, user_id, external_channel_url, failure_count
 `
 
 type ClaimDueChannelSyncsRow struct {
@@ -31,6 +31,7 @@ type ClaimDueChannelSyncsRow struct {
 	ChannelID          uuid.UUID `json:"channel_id"`
 	UserID             uuid.UUID `json:"user_id"`
 	ExternalChannelUrl string    `json:"external_channel_url"`
+	FailureCount       int32     `json:"failure_count"`
 }
 
 // Atomically claims due syncs (oldest first) by flipping them to 'syncing', so an
@@ -55,6 +56,7 @@ func (q *Queries) ClaimDueChannelSyncs(ctx context.Context, limit int32) ([]Clai
 			&i.ChannelID,
 			&i.UserID,
 			&i.ExternalChannelUrl,
+			&i.FailureCount,
 		); err != nil {
 			return nil, err
 		}
@@ -82,7 +84,7 @@ const createChannelSync = `-- name: CreateChannelSync :one
 
 INSERT INTO channel_syncs (channel_id, user_id, external_channel_url)
 VALUES ($1, $2, $3)
-RETURNING id, channel_id, user_id, external_channel_url, state, last_sync_at, last_error, next_run_at, created_at, updated_at
+RETURNING id, channel_id, user_id, external_channel_url, state, last_sync_at, last_error, next_run_at, created_at, updated_at, failure_count
 `
 
 type CreateChannelSyncParams struct {
@@ -111,6 +113,7 @@ func (q *Queries) CreateChannelSync(ctx context.Context, arg CreateChannelSyncPa
 		&i.NextRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FailureCount,
 	)
 	return i, err
 }
@@ -127,7 +130,8 @@ func (q *Queries) DeleteChannelSync(ctx context.Context, id uuid.UUID) error {
 
 const failChannelSync = `-- name: FailChannelSync :exec
 UPDATE channel_syncs
-SET state = 'failed', last_error = $2, next_run_at = $3, updated_at = now()
+SET state = 'failed', last_error = $2, failure_count = channel_syncs.failure_count + 1,
+    next_run_at = $3, updated_at = now()
 WHERE id = $1
 `
 
@@ -137,8 +141,12 @@ type FailChannelSyncParams struct {
 	NextRunAt time.Time `json:"next_run_at"`
 }
 
-// Failure: mark failed with a SAFE reason and reschedule for a retry on the next
-// cadence (next_run_at computed by the worker).
+// Failure: mark failed with a SAFE reason and reschedule for a retry, with the
+// backoff delay the worker computed from the failure_count it claimed.
+//
+// The increment is done in SQL rather than by writing back a Go-side value so
+// the counter can never be clobbered by a stale read; the claim already holds
+// the row (state='syncing'), and this keeps that true even if that ever changes.
 func (q *Queries) FailChannelSync(ctx context.Context, arg FailChannelSyncParams) error {
 	_, err := q.db.Exec(ctx, failChannelSync, arg.ID, arg.LastError, arg.NextRunAt)
 	return err
@@ -146,7 +154,8 @@ func (q *Queries) FailChannelSync(ctx context.Context, arg FailChannelSyncParams
 
 const finishChannelSync = `-- name: FinishChannelSync :exec
 UPDATE channel_syncs
-SET state = 'idle', last_sync_at = now(), last_error = '', next_run_at = $2, updated_at = now()
+SET state = 'idle', last_sync_at = now(), last_error = '', failure_count = 0,
+    next_run_at = $2, updated_at = now()
 WHERE id = $1
 `
 
@@ -157,13 +166,18 @@ type FinishChannelSyncParams struct {
 
 // Success: back to idle, stamp last_sync_at, clear last_error, and reschedule for
 // the next cadence (next_run_at computed by the worker).
+//
+// failure_count resets here and only here (migration 0135): one good run means
+// the source is healthy again, so the next failure starts the backoff over at
+// 1x the interval rather than resuming a doubling earned by an outage that is
+// over.
 func (q *Queries) FinishChannelSync(ctx context.Context, arg FinishChannelSyncParams) error {
 	_, err := q.db.Exec(ctx, finishChannelSync, arg.ID, arg.NextRunAt)
 	return err
 }
 
 const getChannelSyncByID = `-- name: GetChannelSyncByID :one
-SELECT id, channel_id, user_id, external_channel_url, state, last_sync_at, last_error, next_run_at, created_at, updated_at FROM channel_syncs
+SELECT id, channel_id, user_id, external_channel_url, state, last_sync_at, last_error, next_run_at, created_at, updated_at, failure_count FROM channel_syncs
 WHERE id = $1
 `
 
@@ -181,6 +195,7 @@ func (q *Queries) GetChannelSyncByID(ctx context.Context, id uuid.UUID) (Channel
 		&i.NextRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FailureCount,
 	)
 	return i, err
 }
@@ -209,7 +224,7 @@ func (q *Queries) InsertChannelSyncSeen(ctx context.Context, arg InsertChannelSy
 }
 
 const listChannelSyncsByUser = `-- name: ListChannelSyncsByUser :many
-SELECT id, channel_id, user_id, external_channel_url, state, last_sync_at, last_error, next_run_at, created_at, updated_at FROM channel_syncs
+SELECT id, channel_id, user_id, external_channel_url, state, last_sync_at, last_error, next_run_at, created_at, updated_at, failure_count FROM channel_syncs
 WHERE user_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT $3 OFFSET $2
@@ -243,6 +258,7 @@ func (q *Queries) ListChannelSyncsByUser(ctx context.Context, arg ListChannelSyn
 			&i.NextRunAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.FailureCount,
 		); err != nil {
 			return nil, err
 		}
@@ -319,6 +335,12 @@ WHERE id = $1
 // Manual trigger: schedule the sync to run on the next tick. A no-op while it is
 // already 'syncing' (the claim below excludes that state, and the running pass
 // reschedules on completion).
+//
+// This is also how a creator BYPASSES the failure backoff (migration 0135):
+// next_run_at jumps to now() whatever the backoff had scheduled. failure_count
+// is deliberately left alone — the manual run is an attempt like any other, so
+// if it also fails the backoff continues widening from where it was; only a
+// SUCCESS (FinishChannelSync) resets it.
 func (q *Queries) TriggerChannelSyncNow(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, triggerChannelSyncNow, id)
 	return err

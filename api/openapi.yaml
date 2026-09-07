@@ -21770,7 +21770,8 @@ components:
     ChannelSync:
       type: object
       description: A binding that mirrors an external channel's uploads into a local channel.
-      required: [id, channel_id, external_channel_url, state, created_at, updated_at]
+      required:
+        [id, channel_id, external_channel_url, state, failure_count, next_run_at, created_at, updated_at]
       properties:
         id:
           type: string
@@ -21795,6 +21796,22 @@ components:
           description: >-
             A safe, human-readable reason for the last failed run (omitted when
             empty). Never a raw internal error or credentials.
+        failure_count:
+          type: integer
+          format: int32
+          description: >-
+            Consecutive failed runs. 0 means the last run succeeded. The
+            scheduler backs off exponentially on this count — the next attempt is
+            CHANNEL_SYNC_INTERVAL x 2^(failure_count-1) after the failure, capped
+            at CHANNEL_SYNC_BACKOFF_MAX — so a source that stays down is re-listed
+            ever more slowly instead of at the plain cadence forever. A single
+            success resets it. Requesting a sync now bypasses the backoff.
+        next_run_at:
+          type: string
+          format: date-time
+          description: >-
+            When the next run is currently scheduled. While a run is in progress
+            this is the lease expiry rather than a future attempt.
         created_at:
           type: string
           format: date-time

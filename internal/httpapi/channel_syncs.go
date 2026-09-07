@@ -38,6 +38,11 @@ func (r createChannelSyncRequest) Validate() []FieldError {
 // channelSyncView is the public projection of a channel auto-sync. last_error is
 // a safe, human-readable reason on the last failed run (never a raw internal
 // error or credentials); last_sync_at is omitted until the first run completes.
+//
+// failure_count and next_run_at are what make a failing sync legible to its
+// owner: without them a row that says "failed" gives no clue whether the next
+// attempt is in an hour or a day, which is exactly the question the backoff
+// (migration 0135) makes worth asking.
 type channelSyncView struct {
 	ID                 string     `json:"id"`
 	ChannelID          string     `json:"channel_id"`
@@ -45,6 +50,8 @@ type channelSyncView struct {
 	State              string     `json:"state"`
 	LastSyncAt         *time.Time `json:"last_sync_at,omitempty"`
 	LastError          string     `json:"last_error,omitempty"`
+	FailureCount       int32      `json:"failure_count"`
+	NextRunAt          time.Time  `json:"next_run_at"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 }
@@ -56,6 +63,8 @@ func newChannelSyncView(s sqlcgen.ChannelSync) channelSyncView {
 		ExternalChannelURL: s.ExternalChannelUrl,
 		State:              s.State,
 		LastError:          s.LastError,
+		FailureCount:       s.FailureCount,
+		NextRunAt:          s.NextRunAt,
 		CreatedAt:          s.CreatedAt,
 		UpdatedAt:          s.UpdatedAt,
 	}
