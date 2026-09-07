@@ -9,7 +9,7 @@ package observability
 //     fmt.Print*, log.Print*/Fatal*/Panic*, or the println/print builtins
 //     (outside package main and tests).
 //   - TestNoSensitiveLogKeys: a denylisted sensitive field name (see
-//     IsSensitiveKey) must never be used as a structured-log key.
+//     IsSensitiveLogKey) must never be used as a structured-log key.
 //
 // They run under `make ci` as part of `go test -race ./...`; there is no
 // Makefile change to make — being ordinary Go tests is the enforcement.
@@ -189,7 +189,7 @@ func checkLogCallKeys(call *ast.CallExpr, fset *token.FileSet, report func(*toke
 	// slog attribute constructors: the key is the first argument.
 	if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "slog" && slogAttrCtor[name] {
 		if len(call.Args) > 0 {
-			if k, ok := litString(call.Args[0]); ok && IsSensitiveKey(k) {
+			if k, ok := litString(call.Args[0]); ok && IsSensitiveLogKey(k) {
 				report(fset, call.Args[0].Pos(), k)
 			}
 		}
@@ -201,7 +201,7 @@ func checkLogCallKeys(call *ast.CallExpr, fset *token.FileSet, report func(*toke
 		return
 	}
 	for i := start; i < len(call.Args); i += 2 {
-		if k, ok := litString(call.Args[i]); ok && IsSensitiveKey(k) {
+		if k, ok := litString(call.Args[i]); ok && IsSensitiveLogKey(k) {
 			report(fset, call.Args[i].Pos(), k)
 		}
 	}
@@ -216,7 +216,7 @@ func checkArgSliceKeys(cl *ast.CompositeLit, fset *token.FileSet, report func(*t
 		return
 	}
 	for i := 0; i < len(cl.Elts); i += 2 {
-		if k, ok := litString(cl.Elts[i]); ok && IsSensitiveKey(k) {
+		if k, ok := litString(cl.Elts[i]); ok && IsSensitiveLogKey(k) {
 			report(fset, cl.Elts[i].Pos(), k)
 		}
 	}
