@@ -581,6 +581,26 @@ type Config struct {
 	// loudly when on. See internal/urlsafety.Guard.AllowPrivate.
 	ImportAllowPrivateURLs bool
 
+	// ImportFetchTimeout is the TOTAL wall clock one direct URL import download
+	// may spend, however steadily it is progressing. It bounds how long a single
+	// import can hold a worker slot; it does NOT police speed — that is
+	// ImportFetchIdleTimeout's job. 0 disables the total cap (the house
+	// 0-disables convention, cf. YTDLP_MAX_HEIGHT). The default is deliberately
+	// generous: UPLOAD_MAX_SIZE defaults to 2 GiB, and 2 GiB in 6 h is ~0.8
+	// Mbit/s. Does not apply to the yt-dlp resolver, whose own wall clock is
+	// YTDLP_TIMEOUT (a subprocess we cannot instrument per read).
+	ImportFetchTimeout time.Duration
+	// ImportFetchIdleTimeout is the PER-READ idle timeout on an import download:
+	// the fetch fails only when no bytes arrive for this long, so a slow but
+	// progressing transfer is never mistaken for a dead one. It also bounds the
+	// resolver's HEAD probe as a whole-request deadline (a probe transfers no
+	// body). Deliberately NOT symmetric with ImportFetchTimeout: 0 here means
+	// "the built-in 60 s default", not "no idle bound". An operator may sensibly
+	// want no total cap; nobody wants a download with no idle bound AND no total
+	// bound, which would hold a worker slot for as long as the source keeps the
+	// socket open. A negative value is a config error.
+	ImportFetchIdleTimeout time.Duration
+
 	// OwnerClaimToken pins the first-run owner-claim token (0104) to this FIXED
 	// value instead of the high-entropy random minted at boot, so test harnesses
 	// and local dev can claim the owner (admin) account deterministically without
@@ -878,6 +898,12 @@ type Config struct {
 	// triggers, measured from the last completed run. A request inside the window
 	// is rejected 429. <= 0 disables the throttle.
 	ChannelSyncCooldown time.Duration
+	// ChannelSyncBackoffMax caps the exponential backoff applied to a sync whose
+	// runs keep failing: the next attempt is ChannelSyncInterval * 2^(n-1) after
+	// n consecutive failures, never more than this. Without it a permanently dead
+	// source is re-listed at the plain interval forever. Reset on the first
+	// success; POST .../sync-now bypasses it.
+	ChannelSyncBackoffMax time.Duration
 
 	// PeerTube import / migration (fix_plan P18, .ralph/specs/peertube-import.md).
 	// A one-way tool that reads an existing PeerTube instance's PostgreSQL DB +
@@ -1095,6 +1121,8 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		SMTPFrom:                               getEnv("SMTP_FROM", ""),
 		DevMailCaptureEnabled:                  p.Bool("DEV_MAIL_CAPTURE_ENABLED", false),
 		ImportAllowPrivateURLs:                 p.Bool("HTTP_IMPORT_ALLOW_PRIVATE_URLS", false),
+		ImportFetchTimeout:                     p.Duration("IMPORT_FETCH_TIMEOUT", 6*time.Hour),
+		ImportFetchIdleTimeout:                 p.Duration("IMPORT_FETCH_IDLE_TIMEOUT", 60*time.Second),
 		OwnerClaimToken:                        getEnv("OWNER_CLAIM_TOKEN", ""),
 		DatabaseURL:                            getEnv("DATABASE_URL", DefaultDatabaseURL),
 		ExternalPostgres:                       isShellTrue(getEnv("VIDRA_EXTERNAL_POSTGRES", "")),
@@ -1166,6 +1194,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		ChannelSyncEnabled:                     p.Bool("CHANNEL_SYNC_ENABLED", false),
 		ChannelSyncInterval:                    p.Duration("CHANNEL_SYNC_INTERVAL", time.Hour),
 		ChannelSyncCooldown:                    p.Duration("CHANNEL_SYNC_COOLDOWN", time.Minute),
+		ChannelSyncBackoffMax:                  p.Duration("CHANNEL_SYNC_BACKOFF_MAX", 24*time.Hour),
 		PeerTubeImportEnabled:                  p.Bool("PEERTUBE_IMPORT_ENABLED", false),
 		PeerTubeSourceDatabaseURL:              getEnv("PEERTUBE_SOURCE_DATABASE_URL", ""),
 		PeerTubeSourceStorageBackend:           getEnv("PEERTUBE_SOURCE_STORAGE_BACKEND", "local"),
@@ -1689,6 +1718,14 @@ func (c *Config) validate() error {
 			add(varErrorf("SEARCH_INTERNAL_SECRET", "config: SEARCH_INTERNAL_SECRET must be at least 32 characters when SEARCH_SERVICE_URL is set in production"))
 		}
 	}
+	// Direct URL-import download budgets. Always validated: they apply to the
+	// `direct` resolver, which needs no feature flag at all.
+	if c.ImportFetchTimeout < 0 {
+		add(varErrorf("IMPORT_FETCH_TIMEOUT", "config: IMPORT_FETCH_TIMEOUT must not be negative (0 = no total cap)"))
+	}
+	if c.ImportFetchIdleTimeout < 0 {
+		add(varErrorf("IMPORT_FETCH_IDLE_TIMEOUT", "config: IMPORT_FETCH_IDLE_TIMEOUT must not be negative (0 = the built-in default; the stall guard cannot be turned off)"))
+	}
 	// yt-dlp platform-URL import: validate the combination only when enabled so a
 	// default (disabled) deployment never trips these. YTDLP_MAX_HEIGHT is bounded
 	// even when disabled (a nonsensical value is always a config error).
@@ -1721,6 +1758,9 @@ func (c *Config) validate() error {
 		}
 		if c.ChannelSyncCooldown < 0 {
 			add(varErrorf("CHANNEL_SYNC_COOLDOWN", "config: CHANNEL_SYNC_COOLDOWN must not be negative"))
+		}
+		if c.ChannelSyncBackoffMax <= 0 {
+			add(varErrorf("CHANNEL_SYNC_BACKOFF_MAX", "config: CHANNEL_SYNC_BACKOFF_MAX must be a positive duration when CHANNEL_SYNC_ENABLED=true"))
 		}
 	}
 	if c.MFAKeyKEK != "" {

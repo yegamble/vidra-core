@@ -45,10 +45,29 @@ const (
 	baseBackoff = time.Minute
 	// maxBackoff caps the exponential backoff.
 	maxBackoff = time.Hour
-	// fetchTimeout bounds the outbound fetch of one remote video.
-	fetchTimeout = 60 * time.Second
+	// defaultFetchIdleTimeout is how long a download may go with NO bytes
+	// arriving before it is abandoned. It is the 60 s that used to bound the
+	// WHOLE request: silence for a minute is a dead source on any link, while
+	// the transfer TAKING a minute says nothing at all about its health.
+	// Configurable as IMPORT_FETCH_IDLE_TIMEOUT.
+	defaultFetchIdleTimeout = 60 * time.Second
+	// defaultFetchBudget is the total wall clock one direct download may spend,
+	// however steadily it is progressing. It exists to bound how long a single
+	// import can hold a worker slot, not to police speed, so it is deliberately
+	// generous: UPLOAD_MAX_SIZE defaults to 2 GiB, and 2 GiB in 6 h is ~0.8
+	// Mbit/s — slower than any link an operator would import over, so the budget
+	// only fires on a transfer that is pathological rather than merely slow.
+	// Configurable as IMPORT_FETCH_TIMEOUT; 0 means no total cap.
+	defaultFetchBudget = 6 * time.Hour
 	// maxErrorLen bounds the stored (client-visible) error string.
 	maxErrorLen = 300
+
+	// reasonDownloadStalled / reasonDownloadOverBudget are the two download-budget
+	// failures as the OWNER reads them on the job. They are separate sentences on
+	// purpose: one says the source went quiet (nothing the operator configured is
+	// at fault), the other says this instance's own limit ended it.
+	reasonDownloadStalled    = "the download stopped receiving data from the source"
+	reasonDownloadOverBudget = "the download took longer than this instance allows"
 
 	// QueueName is this queue's name in the operational projection
 	// (job_runs.queue), which is also the source table's name. Every jobtrace
@@ -134,6 +153,13 @@ type Service struct {
 	client       *http.Client // test seam; nil → build an SSRF-guarded client per fetch
 	logger       *slog.Logger
 
+	// budget / idleTimeout are the download limits (IMPORT_FETCH_TIMEOUT,
+	// IMPORT_FETCH_IDLE_TIMEOUT). budgetSet distinguishes "the operator asked for
+	// no total cap" (0) from "nothing was wired" (the default).
+	budget      time.Duration
+	budgetSet   bool
+	idleTimeout time.Duration
+
 	// ytdlp is the sandboxed platform extractor. nil = disabled (the default):
 	// an explicit resolver=ytdlp is refused at enqueue (503) and resolver=auto
 	// never falls back to it.
@@ -184,6 +210,40 @@ func (s *Service) effectiveMaxBytes() int64 {
 // loopback origin the production guard would refuse). Production leaves it nil.
 func WithHTTPClient(c *http.Client) Option {
 	return func(s *Service) { s.client = c }
+}
+
+// WithFetchBudget sets the two download limits (IMPORT_FETCH_TIMEOUT,
+// IMPORT_FETCH_IDLE_TIMEOUT). total is the whole-transfer wall clock — 0 means
+// no total cap, the house 0-disables convention. idle is the per-read timeout;
+// <= 0 keeps the default rather than disabling the stall guard, because a
+// download with no idle bound and no total bound would hang a worker slot for
+// as long as the source cares to hold the socket open.
+func WithFetchBudget(total, idle time.Duration) Option {
+	return func(s *Service) {
+		if total >= 0 {
+			s.budget = total
+			s.budgetSet = true
+		}
+		if idle > 0 {
+			s.idleTimeout = idle
+		}
+	}
+}
+
+// fetchBudget is the effective total download wall clock (0 = no cap).
+func (s *Service) fetchBudget() time.Duration {
+	if s.budgetSet {
+		return s.budget
+	}
+	return defaultFetchBudget
+}
+
+// fetchIdleTimeout is the effective per-read idle timeout.
+func (s *Service) fetchIdleTimeout() time.Duration {
+	if s.idleTimeout > 0 {
+		return s.idleTimeout
+	}
+	return defaultFetchIdleTimeout
 }
 
 // WithLogger overrides the logger used for unexpected (non-client-facing)
@@ -409,7 +469,9 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 	s.setStage(ctx, row.ID, StageDownloading)
 	media, err := res.resolve(ctx, target)
 	if err != nil {
-		return err // already a safe failure
+		// A budget refusal becomes the owner's sentence here (and names the knob
+		// in the log); everything else is already a safe failure.
+		return s.budgetFailure(row, err)
 	}
 	defer func() { _ = media.body.Close() }()
 
@@ -448,6 +510,10 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 			return safeerr.New("the URL is not an accepted video container")
 		case errors.Is(err, video.ErrNotFound), errors.Is(err, video.ErrForbidden):
 			return safeerr.New("the video no longer exists")
+		case errors.Is(err, urlsafety.ErrIdleTimeout), errors.Is(err, urlsafety.ErrBudgetExceeded):
+			// The budget fired MID-STREAM: the bytes were flowing through
+			// AttachOriginal when the source went quiet or the wall clock ran out.
+			return s.budgetFailure(row, err)
 		default:
 			return s.internalf("import attach original", err)
 		}
@@ -505,7 +571,7 @@ func (s *Service) buildResolver(guard urlsafety.Guard, concrete string) (resolve
 		}
 		return &ytdlpResolver{ext: s.ytdlp, workRoot: s.ytdlpWork}, nil
 	}
-	return &directResolver{client: s.httpClient(guard)}, nil
+	return &directResolver{client: s.downloadClient(guard)}, nil
 }
 
 // probeAuto decides between the direct and ytdlp resolvers for an 'auto' request
@@ -553,7 +619,7 @@ func (s *Service) probeContentType(ctx context.Context, guard urlsafety.Guard, t
 	if err != nil {
 		return "", false
 	}
-	resp, err := s.httpClient(guard).Do(req)
+	resp, err := s.probeClient(guard).Do(req)
 	if err != nil {
 		return "", guardRefused(err)
 	}
@@ -575,12 +641,47 @@ func guardRefused(err error) bool {
 	return errors.Is(err, urlsafety.ErrBlockedAddress) || errors.Is(err, urlsafety.ErrInvalidURL)
 }
 
-// httpClient returns the injected test client, or a fresh SSRF-guarded client.
-func (s *Service) httpClient(guard urlsafety.Guard) *http.Client {
+// downloadClient returns the injected test client, or a fresh SSRF-guarded
+// DOWNLOAD client: a per-read idle timeout so a slow-but-progressing transfer is
+// never mistaken for a dead one, plus a total wall clock so one import cannot
+// hold a worker slot indefinitely.
+func (s *Service) downloadClient(guard urlsafety.Guard) *http.Client {
 	if s.client != nil {
 		return s.client
 	}
-	return guard.NewClient(fetchTimeout)
+	return guard.NewBudgetClient(urlsafety.Budget{Total: s.fetchBudget(), Idle: s.fetchIdleTimeout()})
+}
+
+// probeClient returns the client for the resolver's HEAD probe. A probe
+// transfers no body, so the idle timeout IS its whole-request budget — giving it
+// the download's generous total would let one unanswered HEAD stall a worker for
+// hours before any bytes were ever in play.
+func (s *Service) probeClient(guard urlsafety.Guard) *http.Client {
+	if s.client != nil {
+		return s.client
+	}
+	return guard.NewBudgetClient(urlsafety.Budget{Total: s.fetchIdleTimeout(), Idle: s.fetchIdleTimeout()})
+}
+
+// budgetFailure turns a download-budget refusal into the owner's sentence and
+// logs WHICH limit fired. The stored job error is client-visible and stays a
+// short sentence; the log line is where the operator learns the knob to turn.
+// Anything that is not a budget refusal is returned unchanged (it is already a
+// safe failure).
+func (s *Service) budgetFailure(row sqlcgen.ClaimDueImportJobsRow, err error) error {
+	switch {
+	case errors.Is(err, urlsafety.ErrIdleTimeout):
+		s.logger.Warn("video import download stalled",
+			"job", row.ID, "video", row.VideoID,
+			"limit", "IMPORT_FETCH_IDLE_TIMEOUT", "idle_timeout", s.fetchIdleTimeout().String())
+		return safeerr.New(reasonDownloadStalled)
+	case errors.Is(err, urlsafety.ErrBudgetExceeded):
+		s.logger.Warn("video import download exceeded its time budget",
+			"job", row.ID, "video", row.VideoID,
+			"limit", "IMPORT_FETCH_TIMEOUT", "budget", s.fetchBudget().String())
+		return safeerr.New(reasonDownloadOverBudget)
+	}
+	return err
 }
 
 // setStage records coarse progress (best-effort; a bookkeeping write failure

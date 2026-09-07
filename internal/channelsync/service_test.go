@@ -118,17 +118,43 @@ func (f *fakeRepo) TriggerChannelSyncNow(_ context.Context, id uuid.UUID) error 
 	return nil
 }
 
+// ClaimDueChannelSyncs mirrors the SQL claim, which RETURNS the row's CURRENT
+// failure_count (0135): a claim re-reads the stored counter, so a worker that
+// restarted mid-backoff resumes the schedule the rows already earned.
 func (f *fakeRepo) ClaimDueChannelSyncs(_ context.Context, _ int32) ([]sqlcgen.ClaimDueChannelSyncsRow, error) {
-	return f.claimed, nil
+	rows := make([]sqlcgen.ClaimDueChannelSyncsRow, 0, len(f.claimed))
+	for _, row := range f.claimed {
+		if stored, ok := f.syncs[row.ID]; ok {
+			row.FailureCount = stored.FailureCount
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
 }
 
+// FinishChannelSync mirrors the SQL: success RESETS the consecutive-failure
+// counter.
 func (f *fakeRepo) FinishChannelSync(_ context.Context, arg sqlcgen.FinishChannelSyncParams) error {
 	f.finished = append(f.finished, arg)
+	if stored, ok := f.syncs[arg.ID]; ok {
+		stored.FailureCount = 0
+		stored.State = "idle"
+		stored.NextRunAt = arg.NextRunAt
+		f.syncs[arg.ID] = stored
+	}
 	return nil
 }
 
+// FailChannelSync mirrors the SQL: failure INCREMENTS the counter in place.
 func (f *fakeRepo) FailChannelSync(_ context.Context, arg sqlcgen.FailChannelSyncParams) error {
 	f.failed = append(f.failed, arg)
+	if stored, ok := f.syncs[arg.ID]; ok {
+		stored.FailureCount++
+		stored.State = "failed"
+		stored.LastError = arg.LastError
+		stored.NextRunAt = arg.NextRunAt
+		f.syncs[arg.ID] = stored
+	}
 	return nil
 }
 
@@ -726,5 +752,147 @@ func TestDrainDueFailureIsLogged(t *testing.T) {
 	}
 	if strings.Contains(out, "shhh") || strings.Contains(out, "youtube.com/@chan") {
 		t.Errorf("log line leaked the external URL: %s", out)
+	}
+}
+
+// ---- failure backoff (A27 ruling 2) ---------------------------------------
+
+// runs drives one DrainDue pass and returns the delay the pass just scheduled,
+// measured from now — i.e. how long until this sync is tried again.
+func nextDelay(t *testing.T, at time.Time, base time.Time) time.Duration {
+	t.Helper()
+	return at.Sub(base).Round(time.Second)
+}
+
+// TestDrainDueFailuresBackOffExponentially is the ruling: a source that stays
+// down is re-listed at 1x, 2x, 4x the interval rather than at the plain interval
+// forever, and the FIRST success puts it straight back to 1x.
+func TestDrainDueFailuresBackOffExponentially(t *testing.T) {
+	repo := newFakeRepo()
+	sync := sqlcgen.ChannelSync{ID: uuid.New(), UserID: uuid.New(), ChannelID: uuid.New(), ExternalChannelUrl: "https://youtube.com/@chan"}
+	repo.syncs[sync.ID] = sync
+	repo.claimed = []sqlcgen.ClaimDueChannelSyncsRow{claimRow(sync)}
+	lister := &fakeLister{err: errors.New("origin down")}
+	interval := time.Hour
+	svc := enabledService(repo, &fakeDrafter{}, &fakeEnqueuer{}, lister,
+		WithInterval(interval), WithBackoffMax(24*time.Hour))
+
+	want := []time.Duration{interval, 2 * interval, 4 * interval}
+	for i, wantDelay := range want {
+		start := time.Now().UTC()
+		if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+			t.Fatalf("DrainDue %d: %v", i+1, err)
+		}
+		if len(repo.failed) != i+1 {
+			t.Fatalf("after run %d: %d failures recorded, want %d", i+1, len(repo.failed), i+1)
+		}
+		if got := nextDelay(t, repo.failed[i].NextRunAt, start); got != wantDelay {
+			t.Errorf("failure %d rescheduled in %s, want %s (%dx the interval)", i+1, got, wantDelay, 1<<i)
+		}
+	}
+
+	// The source comes back: the run succeeds, the counter resets, and the
+	// cadence is the plain interval again.
+	lister.err = nil
+	start := time.Now().UTC()
+	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+		t.Fatalf("DrainDue after recovery: %v", err)
+	}
+	if len(repo.finished) != 1 {
+		t.Fatalf("recovered run: finished=%d, want 1", len(repo.finished))
+	}
+	if got := nextDelay(t, repo.finished[0].NextRunAt, start); got != interval {
+		t.Errorf("recovered run rescheduled in %s, want the plain interval %s", got, interval)
+	}
+	if stored := repo.syncs[sync.ID]; stored.FailureCount != 0 {
+		t.Errorf("failure_count after a success = %d, want 0", stored.FailureCount)
+	}
+
+	// And the NEXT failure starts the backoff over at 1x rather than resuming
+	// the doubling the outage had earned.
+	lister.err = errors.New("origin down again")
+	start = time.Now().UTC()
+	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+		t.Fatalf("DrainDue after the second outage began: %v", err)
+	}
+	last := repo.failed[len(repo.failed)-1]
+	if got := nextDelay(t, last.NextRunAt, start); got != interval {
+		t.Errorf("first failure after a success rescheduled in %s, want %s", got, interval)
+	}
+}
+
+// TestDrainDueBackoffIsCapped: the doubling stops at CHANNEL_SYNC_BACKOFF_MAX,
+// so a long-dead source settles at a fixed slow cadence instead of drifting to
+// never.
+func TestDrainDueBackoffIsCapped(t *testing.T) {
+	repo := newFakeRepo()
+	sync := sqlcgen.ChannelSync{
+		ID: uuid.New(), UserID: uuid.New(), ChannelID: uuid.New(),
+		ExternalChannelUrl: "https://youtube.com/@chan",
+		FailureCount:       9, // 2^9 = 512x the interval without a cap
+	}
+	repo.syncs[sync.ID] = sync
+	repo.claimed = []sqlcgen.ClaimDueChannelSyncsRow{claimRow(sync)}
+	svc := enabledService(repo, &fakeDrafter{}, &fakeEnqueuer{}, &fakeLister{err: errors.New("origin down")},
+		WithInterval(time.Hour), WithBackoffMax(6*time.Hour))
+
+	start := time.Now().UTC()
+	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+		t.Fatalf("DrainDue: %v", err)
+	}
+	if got := nextDelay(t, repo.failed[0].NextRunAt, start); got != 6*time.Hour {
+		t.Errorf("rescheduled in %s, want the cap 6h", got)
+	}
+}
+
+// TestDrainDueBackoffSurvivesARestart: the position in the backoff is a column,
+// not worker memory, so a brand-new Service claiming the same row schedules from
+// the failures already recorded rather than starting the doubling over.
+func TestDrainDueBackoffSurvivesARestart(t *testing.T) {
+	repo := newFakeRepo()
+	sync := sqlcgen.ChannelSync{
+		ID: uuid.New(), UserID: uuid.New(), ChannelID: uuid.New(),
+		ExternalChannelUrl: "https://youtube.com/@chan",
+		FailureCount:       2, // two failures already on the row
+	}
+	repo.syncs[sync.ID] = sync
+	repo.claimed = []sqlcgen.ClaimDueChannelSyncsRow{claimRow(sync)}
+	// A FRESH service — a restarted worker process, holding no state of its own.
+	svc := enabledService(repo, &fakeDrafter{}, &fakeEnqueuer{}, &fakeLister{err: errors.New("origin down")},
+		WithInterval(time.Hour), WithBackoffMax(24*time.Hour))
+
+	start := time.Now().UTC()
+	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+		t.Fatalf("DrainDue: %v", err)
+	}
+	if got := nextDelay(t, repo.failed[0].NextRunAt, start); got != 4*time.Hour {
+		t.Errorf("restarted worker rescheduled in %s, want 4h (the third consecutive failure)", got)
+	}
+}
+
+// TestSyncNowBypassesTheBackoff: the creator's manual trigger sets next_run_at to
+// now() whatever the backoff had scheduled, and leaves the counter alone (only a
+// success resets it).
+func TestSyncNowBypassesTheBackoff(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo()
+	sync := sqlcgen.ChannelSync{
+		ID: uuid.New(), UserID: owner, ChannelID: uuid.New(),
+		ExternalChannelUrl: "https://youtube.com/@chan",
+		State:              "failed",
+		FailureCount:       5,
+		NextRunAt:          time.Now().Add(24 * time.Hour), // deep in the backoff
+	}
+	repo.syncs[sync.ID] = sync
+	svc := enabledService(repo, &fakeDrafter{}, &fakeEnqueuer{}, &fakeLister{}, WithCooldown(0))
+
+	if err := svc.SyncNow(context.Background(), owner, sync.ID); err != nil {
+		t.Fatalf("SyncNow while backed off: %v", err)
+	}
+	if len(repo.triggered) != 1 || repo.triggered[0] != sync.ID {
+		t.Fatalf("triggered = %v, want the sync scheduled immediately", repo.triggered)
+	}
+	if stored := repo.syncs[sync.ID]; stored.FailureCount != 5 {
+		t.Errorf("failure_count after sync-now = %d, want it untouched at 5", stored.FailureCount)
 	}
 }

@@ -1607,6 +1607,12 @@ func run() error {
 		videoimport.WithYtdlpGate(func() bool {
 			return settingssvc.Bool(instancesettings.KeyImportHTTPEnabled)
 		}),
+		// Download budgets for the `direct` resolver: a per-read idle timeout so
+		// a slow-but-progressing transfer is never mistaken for a dead one, and a
+		// generous total wall clock so one import cannot hold a worker slot
+		// forever. The yt-dlp resolver keeps its own YTDLP_TIMEOUT wall clock —
+		// it is a subprocess, so there is no read to instrument.
+		videoimport.WithFetchBudget(cfg.ImportFetchTimeout, cfg.ImportFetchIdleTimeout),
 	}
 	// yt-dlp platform-URL import (W2.C1, UPLOAD-09). OFF by default; admin opt-in.
 	// The binary is pinned in the image (never self-updated at runtime); when the
@@ -1681,6 +1687,10 @@ func run() error {
 		}),
 		channelsync.WithBatch(cfg.ChannelSyncBatch),
 		channelsync.WithInterval(cfg.ChannelSyncInterval),
+		// Consecutive failures back off exponentially from the interval, capped
+		// here, so a permanently dead source is not re-listed at the plain
+		// cadence forever. Reset on the first success; sync-now bypasses it.
+		channelsync.WithBackoffMax(cfg.ChannelSyncBackoffMax),
 		channelsync.WithCooldown(cfg.ChannelSyncCooldown),
 		channelsync.WithLogger(logger),
 	}

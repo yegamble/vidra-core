@@ -34,6 +34,12 @@ WHERE id = $1;
 -- Manual trigger: schedule the sync to run on the next tick. A no-op while it is
 -- already 'syncing' (the claim below excludes that state, and the running pass
 -- reschedules on completion).
+--
+-- This is also how a creator BYPASSES the failure backoff (migration 0135):
+-- next_run_at jumps to now() whatever the backoff had scheduled. failure_count
+-- is deliberately left alone — the manual run is an attempt like any other, so
+-- if it also fails the backoff continues widening from where it was; only a
+-- SUCCESS (FinishChannelSync) resets it.
 UPDATE channel_syncs
 SET next_run_at = now(), updated_at = now()
 WHERE id = $1;
@@ -57,20 +63,31 @@ WHERE id IN (
     LIMIT $1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, channel_id, user_id, external_channel_url;
+RETURNING id, channel_id, user_id, external_channel_url, failure_count;
 
 -- name: FinishChannelSync :exec
 -- Success: back to idle, stamp last_sync_at, clear last_error, and reschedule for
 -- the next cadence (next_run_at computed by the worker).
+--
+-- failure_count resets here and only here (migration 0135): one good run means
+-- the source is healthy again, so the next failure starts the backoff over at
+-- 1x the interval rather than resuming a doubling earned by an outage that is
+-- over.
 UPDATE channel_syncs
-SET state = 'idle', last_sync_at = now(), last_error = '', next_run_at = $2, updated_at = now()
+SET state = 'idle', last_sync_at = now(), last_error = '', failure_count = 0,
+    next_run_at = $2, updated_at = now()
 WHERE id = $1;
 
 -- name: FailChannelSync :exec
--- Failure: mark failed with a SAFE reason and reschedule for a retry on the next
--- cadence (next_run_at computed by the worker).
+-- Failure: mark failed with a SAFE reason and reschedule for a retry, with the
+-- backoff delay the worker computed from the failure_count it claimed.
+--
+-- The increment is done in SQL rather than by writing back a Go-side value so
+-- the counter can never be clobbered by a stale read; the claim already holds
+-- the row (state='syncing'), and this keeps that true even if that ever changes.
 UPDATE channel_syncs
-SET state = 'failed', last_error = $2, next_run_at = $3, updated_at = now()
+SET state = 'failed', last_error = $2, failure_count = channel_syncs.failure_count + 1,
+    next_run_at = $3, updated_at = now()
 WHERE id = $1;
 
 -- name: InsertChannelSyncSeen :execrows

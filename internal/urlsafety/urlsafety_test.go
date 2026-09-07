@@ -2,6 +2,7 @@ package urlsafety
 
 import (
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -157,4 +158,160 @@ func FuzzValidateURL(f *testing.F) {
 			t.Errorf("accepted URL %q with userinfo", raw)
 		}
 	})
+}
+
+// dripServer serves a body in `chunks` writes spaced `gap` apart, flushing each
+// one, so the transfer makes steady progress but takes chunks*gap overall. It is
+// the shape a real slow origin (or a big file on a thin link) has, and the shape
+// a whole-request timeout kills for no good reason.
+func dripServer(t *testing.T, chunks int, gap time.Duration) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		for i := 0; i < chunks; i++ {
+			_, _ = w.Write([]byte("x"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			time.Sleep(gap)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// stallServer answers with headers and then sends no bytes at all until the test
+// finishes — the shape a hung origin has, and the ONE shape an idle timeout must
+// still kill.
+func stallServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-done
+	}))
+	t.Cleanup(func() { close(done); srv.Close() })
+	return srv
+}
+
+// TestNewClientTimeoutKillsAProgressingTransfer is the REPRODUCTION of the limit
+// A27 recorded: NewClient's argument is http.Client.Timeout, the WHOLE-request
+// deadline, so a transfer that is delivering bytes the entire time still dies on
+// it. This is deliberately kept — the legacy helper's semantics are unchanged for
+// its short-RPC callers (federation, atproto, link previews), where a slow
+// response really is a failure.
+func TestNewClientTimeoutKillsAProgressingTransfer(t *testing.T) {
+	origin := dripServer(t, 20, 30*time.Millisecond) // ~600ms of steady progress
+	client := Guard{AllowPrivate: true}.NewClient(200 * time.Millisecond)
+	resp, err := client.Get(origin.URL)
+	if err == nil {
+		_, err = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
+	if err == nil {
+		t.Fatal("whole-request client read the drip to completion; the reproduction no longer holds")
+	}
+}
+
+// TestBudgetClientAllowsSlowProgressingTransfer is the ruling: with an idle
+// timeout and no total cap, a slow but PROGRESSING transfer completes even though
+// it runs far longer than any single gap between reads.
+func TestBudgetClientAllowsSlowProgressingTransfer(t *testing.T) {
+	chunks := 20
+	origin := dripServer(t, chunks, 30*time.Millisecond) // ~600ms overall
+	client := Guard{AllowPrivate: true}.NewBudgetClient(Budget{Idle: 300 * time.Millisecond})
+	resp, err := client.Get(origin.URL)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	n, err := io.Copy(io.Discard, resp.Body)
+	if err != nil {
+		t.Fatalf("read drip: %v", err)
+	}
+	if n != int64(chunks) {
+		t.Errorf("read %d bytes, want %d", n, chunks)
+	}
+}
+
+// TestBudgetClientIdleTimeoutKillsAStall: headers then silence fails with
+// ErrIdleTimeout — typed, so the caller can name the limit that fired.
+func TestBudgetClientIdleTimeoutKillsAStall(t *testing.T) {
+	origin := stallServer(t)
+	client := Guard{AllowPrivate: true}.NewBudgetClient(Budget{Idle: 150 * time.Millisecond})
+	start := time.Now()
+	resp, err := client.Get(origin.URL)
+	if err == nil {
+		_, err = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
+	if !errors.Is(err, ErrIdleTimeout) {
+		t.Fatalf("stalled transfer err = %v, want ErrIdleTimeout", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Errorf("stall took %s to fail; the idle timeout is not bounding it", elapsed)
+	}
+}
+
+// TestBudgetClientTotalBudgetKillsALongTransfer: the OTHER limit. A drip that
+// never goes quiet still fails once the total budget is spent, and with the other
+// typed reason so an operator learns which knob to turn.
+func TestBudgetClientTotalBudgetKillsALongTransfer(t *testing.T) {
+	origin := dripServer(t, 100, 20*time.Millisecond) // ~2s overall
+	client := Guard{AllowPrivate: true}.NewBudgetClient(Budget{
+		Total: 200 * time.Millisecond,
+		Idle:  5 * time.Second,
+	})
+	resp, err := client.Get(origin.URL)
+	if err == nil {
+		_, err = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
+	if !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("over-budget transfer err = %v, want ErrBudgetExceeded", err)
+	}
+	if errors.Is(err, ErrIdleTimeout) {
+		t.Error("over-budget transfer also reported the idle timeout; the two limits must not be confused")
+	}
+}
+
+// TestBudgetClientKeepsTheSSRFPinning is the load-bearing one: the new client is
+// built through the SAME dialer control hook, so it still refuses a private
+// address at dial time. A budget knob must never be a way around the guard.
+func TestBudgetClientKeepsTheSSRFPinning(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewBudgetClient(Budget{Total: 5 * time.Second, Idle: time.Second}) // secure default guard
+	resp, err := client.Get(srv.URL)                                             // http://127.0.0.1:<port>
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatalf("budget client fetched loopback %q; want a blocked-address refusal", srv.URL)
+	}
+	if !errors.Is(err, ErrBlockedAddress) {
+		t.Errorf("err = %v, want ErrBlockedAddress", err)
+	}
+}
+
+// TestBudgetClientZeroTotalMeansNoCap: 0 is "no total cap" (the house convention,
+// cf. YTDLP_MAX_HEIGHT=0), so only the idle timeout bounds the transfer.
+func TestBudgetClientZeroTotalMeansNoCap(t *testing.T) {
+	origin := dripServer(t, 30, 20*time.Millisecond) // ~600ms
+	client := Guard{AllowPrivate: true}.NewBudgetClient(Budget{Total: 0, Idle: time.Second})
+	resp, err := client.Get(origin.URL)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		t.Fatalf("read: %v", err)
+	}
 }

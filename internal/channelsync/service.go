@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/pgconv"
+	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/safeerr"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
@@ -117,6 +118,7 @@ type Service struct {
 	maxPerUserFn func() int // when set, supersedes maxPerUser (runtime overlay), resolved per Create
 	batch        int
 	interval     time.Duration
+	backoffMax   time.Duration
 	cooldown     time.Duration
 	logger       *slog.Logger
 }
@@ -190,6 +192,16 @@ func WithInterval(d time.Duration) Option {
 	}
 }
 
+// WithBackoffMax caps the exponential backoff applied to a sync whose runs keep
+// failing (CHANNEL_SYNC_BACKOFF_MAX). <= 0 keeps the default.
+func WithBackoffMax(d time.Duration) Option {
+	return func(s *Service) {
+		if d > 0 {
+			s.backoffMax = d
+		}
+	}
+}
+
 // WithCooldown sets the minimum spacing between manual sync-now triggers,
 // measured from the last completed run (CHANNEL_SYNC_COOLDOWN). A request inside
 // the window is rejected with ErrCooldown (429). <= 0 disables the throttle.
@@ -224,6 +236,7 @@ func NewService(repo Repository, drafter Drafter, enqueuer Enqueuer, opts ...Opt
 		maxPerUser: 5,
 		batch:      15,
 		interval:   time.Hour,
+		backoffMax: 24 * time.Hour,
 		cooldown:   time.Minute,
 		logger:     slog.Default(),
 	}
@@ -394,7 +407,7 @@ func (s *Service) DrainDue(ctx context.Context, limit int) (int, error) {
 	done := 0
 	for _, row := range rows {
 		if serr := s.runSync(ctx, row); serr != nil {
-			s.recordFailure(ctx, row.ID, serr)
+			s.recordFailure(ctx, row, serr)
 			continue
 		}
 		_ = s.repo.FinishChannelSync(ctx, sqlcgen.FinishChannelSyncParams{
@@ -468,7 +481,14 @@ func (s *Service) importEntry(ctx context.Context, row sqlcgen.ClaimDueChannelSy
 }
 
 // recordFailure marks a sync failed with a bounded safe message and reschedules
-// it for the next cadence (a transient failure self-heals on a later tick).
+// it with EXPONENTIAL BACKOFF: the nth consecutive failure is retried after
+// interval * 2^(n-1), capped at backoffMax. A transient failure still self-heals
+// on a later tick (the first retry is still one plain interval away), but a
+// source that is permanently gone stops being re-listed at the plain cadence
+// forever — A27 measured that shape: an origin taken down was re-listed every
+// interval indefinitely, an unbounded self-inflicted load on somebody else's
+// server. The count comes from the CLAIMED row, so it is the persisted one and a
+// worker restarted mid-backoff resumes rather than restarting the doubling.
 //
 // It also LOGS, because nothing else does: channel_syncs is not projected into
 // job_runs and has no admin surface, so without this line the operator's only
@@ -477,18 +497,31 @@ func (s *Service) importEntry(ctx context.Context, row sqlcgen.ClaimDueChannelSy
 // whole pass failing — as the silent one. Only the sync id and the SAFE reason
 // go in: the external URL can carry a credential and the raw extractor error
 // can carry the URL.
-func (s *Service) recordFailure(ctx context.Context, id uuid.UUID, cause error) {
+func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueChannelSyncsRow, cause error) {
 	msg := cause.Error()
 	if len(msg) > maxSyncErrorLen {
 		msg = msg[:maxSyncErrorLen]
 	}
-	s.logger.Warn("channel sync pass failed", "sync", id, "reason", msg)
+	// The claimed count is the failures BEFORE this one; this run is the nth.
+	failures := int(row.FailureCount) + 1
+	delay := s.retryDelay(failures)
+	s.logger.Warn("channel sync pass failed",
+		"sync", row.ID, "reason", msg, "consecutive_failures", failures, "retry_in", delay.String())
 	_ = s.repo.FailChannelSync(ctx, sqlcgen.FailChannelSyncParams{
-		ID:        id,
+		ID:        row.ID,
 		LastError: msg,
-		NextRunAt: s.nextRun(),
+		NextRunAt: time.Now().UTC().Add(delay),
 	})
 }
 
-// nextRun is the wall-clock time of the next scheduled sync pass.
+// retryDelay is interval * 2^(failures-1), capped at backoffMax — the same
+// doubling every other queue in this repo uses, with the sync cadence as its
+// base so an operator's CHANNEL_SYNC_INTERVAL stays the unit of the schedule.
+func (s *Service) retryDelay(failures int) time.Duration {
+	return retry.Backoff(failures, s.interval, s.backoffMax)
+}
+
+// nextRun is the wall-clock time of the next scheduled sync pass after a
+// SUCCESS: always the plain interval (FinishChannelSync clears the counter, so
+// the next failure starts the backoff over at 1x).
 func (s *Service) nextRun() time.Time { return time.Now().UTC().Add(s.interval) }
