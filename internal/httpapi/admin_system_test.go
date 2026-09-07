@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -407,8 +408,63 @@ func smtpGreeter(t *testing.T, greeting string) (host string, port int) {
 	return addr.IP.String(), addr.Port
 }
 
+// smtpMiniRelay is a minimal ESMTP responder: the greeting, EHLO with the
+// offers a test chooses, a refused STARTTLS, and QUIT. It is a narrower TWIN of
+// internal/preflight's fakeRelay — the exhaustive per-variant matrix lives
+// beside the handshake it exercises; this one exists to prove the PAGE's
+// sentences, so it only needs enough protocol to reach each of them.
+func smtpMiniRelay(t *testing.T, offers ...string) (host string, port int) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				if _, err := conn.Write([]byte("220 relay.example.test ESMTP\r\n")); err != nil {
+					return
+				}
+				br := bufio.NewReader(conn)
+				for {
+					line, err := br.ReadString('\n')
+					if err != nil {
+						return
+					}
+					switch strings.ToUpper(strings.Fields(strings.TrimSpace(line) + " ")[0]) {
+					case "EHLO", "HELO":
+						reply := "250-relay.example.test\r\n"
+						for _, o := range offers {
+							reply += "250-" + o + "\r\n"
+						}
+						reply += "250 8BITMIME\r\n"
+						if _, err := conn.Write([]byte(reply)); err != nil {
+							return
+						}
+					case "STARTTLS":
+						_, _ = conn.Write([]byte("454 4.7.0 TLS not available right now\r\n"))
+					case "QUIT":
+						_, _ = conn.Write([]byte("221 2.0.0 Bye\r\n"))
+						return
+					default:
+						_, _ = conn.Write([]byte("250 2.0.0 OK\r\n"))
+					}
+				}
+			}()
+		}
+	}()
+	addr := ln.Addr().(*net.TCPAddr)
+	return addr.IP.String(), addr.Port
+}
+
 func TestSystemStatusSMTPProbe(t *testing.T) {
-	host, port := smtpGreeter(t, "220 mail.example.test ESMTP ready\r\n")
+	host, port := smtpMiniRelay(t)
 
 	cfg := testConfig()
 	cfg.MailEnabled = true
@@ -421,10 +477,82 @@ func TestSystemStatusSMTPProbe(t *testing.T) {
 	body := systemStatus(t, srv)
 
 	if got := body.Components["smtp"].Status; got != "ok" {
-		t.Errorf("smtp status = %q, want ok (a relay answered 220)", got)
+		t.Errorf("smtp status = %q, want ok (the handshake completed)", got)
 	}
 	if body.Status != "ok" {
 		t.Errorf("status = %q, want ok", body.Status)
+	}
+}
+
+// TestSystemStatusSMTPGreetingOnlyIsNotOK is the A05 defect at the page level:
+// a server that answers 220 and then stops talking is NOT a working mail path,
+// and the greeting-only probe called it `ok` while every send failed.
+func TestSystemStatusSMTPGreetingOnlyIsNotOK(t *testing.T) {
+	host, port := smtpGreeter(t, "220 mail.example.test ESMTP ready\r\n")
+
+	cfg := testConfig()
+	cfg.MailEnabled = true
+	cfg.SMTPHost = host
+	cfg.SMTPPort = port
+
+	srv := authServerWithConfig(t, cfg)
+	srv.lookPath = ffmpegFound
+
+	c := systemStatus(t, srv).Components["smtp"]
+	if c.Status != "down" || c.Error == "" {
+		t.Errorf("smtp component = %+v, want down with an error: a relay that greets and hangs up cannot deliver", c)
+	}
+}
+
+// TestSystemStatusSMTPCredentialsAgainstNoAuthRelay is the second state A05
+// measured as `ok` while every send failed closed. The page must name the
+// variable an operator has to change.
+func TestSystemStatusSMTPCredentialsAgainstNoAuthRelay(t *testing.T) {
+	host, port := smtpMiniRelay(t)
+
+	cfg := testConfig()
+	cfg.MailEnabled = true
+	cfg.SMTPHost = host
+	cfg.SMTPPort = port
+	cfg.SMTPUsername = "postmaster"
+	cfg.SMTPPassword = "not-a-real-password"
+
+	srv := authServerWithConfig(t, cfg)
+	srv.lookPath = ffmpegFound
+
+	body := systemStatus(t, srv)
+	c := body.Components["smtp"]
+	if c.Status != "down" {
+		t.Fatalf("smtp component = %+v, want down", c)
+	}
+	if !strings.Contains(c.Error, "SMTP_USERNAME") {
+		t.Errorf("smtp error = %q; it should name the variable to change", c.Error)
+	}
+	if body.Status != "degraded" {
+		t.Errorf("status = %q, want degraded", body.Status)
+	}
+	if strings.Contains(c.Error, "not-a-real-password") {
+		t.Error("the probe's message leaks the configured SMTP password")
+	}
+}
+
+// TestSystemStatusSMTPSTARTTLSRefusedDegrades: a relay that advertises STARTTLS
+// and then will not do it leaves every message unsendable. In production the
+// same stage catches the certificate this instance refuses.
+func TestSystemStatusSMTPSTARTTLSRefusedDegrades(t *testing.T) {
+	host, port := smtpMiniRelay(t, "STARTTLS")
+
+	cfg := testConfig()
+	cfg.MailEnabled = true
+	cfg.SMTPHost = host
+	cfg.SMTPPort = port
+
+	srv := authServerWithConfig(t, cfg)
+	srv.lookPath = ffmpegFound
+
+	c := systemStatus(t, srv).Components["smtp"]
+	if c.Status != "down" || !strings.Contains(c.Error, "STARTTLS") {
+		t.Errorf("smtp component = %+v, want down naming STARTTLS", c)
 	}
 }
 
