@@ -98,6 +98,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var ale *ATProtoLoginError
 	var mtf *MailTestFailedError
 	var mnc *MailNotConfiguredError
+	var hr *HandleReservedError
 	var op *OwnerProtectedError
 	var la *LastAdminError
 	var oo *OwnerOnlyError
@@ -121,6 +122,10 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusUnprocessableEntity
 		message = "you are this instance's owner, and there is exactly one owner slot that only you can move; transfer ownership to another administrator first, then close your account"
 		code = "owner_must_transfer"
+	case errors.As(err, &hr):
+		status = http.StatusConflict
+		message = "that name is already in use on this instance — accounts and channels share one namespace here, so a username and a channel handle cannot be the same. Pick another name"
+		code = "handle_reserved"
 	case errors.As(err, &op):
 		status = http.StatusUnprocessableEntity
 		message = "this is the instance owner's account: another administrator cannot demote, deactivate or delete it"
@@ -356,6 +361,25 @@ func (e *OwnerClaimRequiredError) Error() string { return "owner claim required"
 type OwnerClaimInvalidError struct{}
 
 func (e *OwnerClaimInvalidError) Error() string { return "invalid owner-claim token" }
+
+// HandleReservedError renders as 409 with the stable code "handle_reserved": the
+// name is held by the OTHER kind of actor — a channel handle for a username, or
+// a username for a channel handle.
+//
+// Accounts and channels share one namespace (migration 0142) because ActivityPub
+// gives them one: `@name@domain` is resolved by WebFinger without saying which
+// kind of actor it means, and while both could hold `name`, every channel-scoped
+// federation feature keyed on that handle silently addressed the wrong actor —
+// the rehearsal measured a viewer's block of a colliding handle hiding nothing.
+//
+// The MESSAGE IS THE SAME for both directions on purpose. Telling an anonymous
+// registrant "that name belongs to a channel" — or a creator "that handle
+// belongs to an account" — would turn either form into an oracle for the other
+// namespace, and neither caller can act on the distinction anyway: the remedy is
+// the same word, "pick another name".
+type HandleReservedError struct{}
+
+func (e *HandleReservedError) Error() string { return "handle reserved by another actor" }
 
 // OwnerProtectedError renders as 422 with the stable code "owner_protected":
 // the target is THE instance owner — the account that redeemed the first-run

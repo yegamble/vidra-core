@@ -367,7 +367,7 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 	})
 	if err != nil {
 		if pgconv.IsUniqueViolation(err) {
-			return sqlcgen.User{}, Tokens{}, "", ErrConflict
+			return sqlcgen.User{}, Tokens{}, "", nameConflict(err)
 		}
 		return sqlcgen.User{}, Tokens{}, "", err
 	}
@@ -377,7 +377,7 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 		Provider: atprotoProvider, Subject: did, UserID: user.ID, Email: "", Handle: handle,
 	}); err != nil {
 		if pgconv.IsUniqueViolation(err) {
-			return sqlcgen.User{}, Tokens{}, "", ErrConflict
+			return sqlcgen.User{}, Tokens{}, "", nameConflict(err)
 		}
 		return sqlcgen.User{}, Tokens{}, "", err
 	}

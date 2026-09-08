@@ -345,6 +345,9 @@ func (s *Server) handleRegister(c echo.Context) error {
 			if errors.Is(err, auth.ErrOwnerClaimRequired) {
 				return &OwnerClaimRequiredError{}
 			}
+			if errors.Is(err, auth.ErrHandleReserved) {
+				return &HandleReservedError{}
+			}
 			if errors.Is(err, auth.ErrConflict) {
 				return echo.NewHTTPError(http.StatusConflict, "username or email already taken")
 			}
@@ -362,6 +365,9 @@ func (s *Server) handleRegister(c echo.Context) error {
 		if err != nil {
 			if errors.Is(err, auth.ErrOwnerClaimRequired) {
 				return &OwnerClaimRequiredError{}
+			}
+			if errors.Is(err, auth.ErrHandleReserved) {
+				return &HandleReservedError{}
 			}
 			if errors.Is(err, auth.ErrConflict) {
 				return echo.NewHTTPError(http.StatusConflict, "username or email already taken")
@@ -383,6 +389,9 @@ func (s *Server) handleRegister(c echo.Context) error {
 	if err != nil {
 		if errors.Is(err, auth.ErrOwnerClaimRequired) {
 			return &OwnerClaimRequiredError{}
+		}
+		if errors.Is(err, auth.ErrHandleReserved) {
+			return &HandleReservedError{}
 		}
 		if errors.Is(err, auth.ErrConflict) {
 			return echo.NewHTTPError(http.StatusConflict, "username or email already taken")

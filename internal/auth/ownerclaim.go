@@ -183,7 +183,7 @@ func (s *Service) ClaimOwner(ctx context.Context, in ClaimOwnerInput, userAgent 
 			return sqlcgen.User{}, Tokens{}, ErrOwnerClaimInvalid
 		}
 		if pgconv.IsUniqueViolation(err) {
-			return sqlcgen.User{}, Tokens{}, ErrConflict
+			return sqlcgen.User{}, Tokens{}, nameConflict(err)
 		}
 		return sqlcgen.User{}, Tokens{}, err
 	}

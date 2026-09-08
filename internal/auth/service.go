@@ -14,11 +14,28 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
+// nameConflict classifies a lost uniqueness race on an account write. The two
+// answers are different refusals: another ACCOUNT holds the name (or address),
+// or a CHANNEL holds it. Callers map them to different response codes; every
+// account-creating path here goes through this so they cannot disagree.
+func nameConflict(err error) error {
+	if pgconv.IsHandleReserved(err) {
+		return ErrHandleReserved
+	}
+	return ErrConflict
+}
+
 // Sentinel errors the HTTP layer maps to status codes. They never carry
 // sensitive detail.
 var (
 	// ErrConflict means the username or email is already taken.
 	ErrConflict = errors.New("auth: username or email already taken")
+	// ErrHandleReserved means the username is held by a CHANNEL. Accounts and
+	// channels share one handle namespace (migration 0142) because ActivityPub
+	// gives them one — `@name@domain` names an actor without saying which kind —
+	// and while both could hold the same name, every channel-scoped federation
+	// feature keyed on that handle addressed the wrong actor.
+	ErrHandleReserved = errors.New("auth: username reserved by a channel")
 	// ErrInvalidCredentials is returned for both unknown account and wrong
 	// password, so callers cannot probe which emails exist.
 	ErrInvalidCredentials = errors.New("auth: invalid credentials")
@@ -400,7 +417,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput, userAgent stri
 	})
 	if err != nil {
 		if pgconv.IsUniqueViolation(err) {
-			return sqlcgen.User{}, Tokens{}, ErrConflict
+			return sqlcgen.User{}, Tokens{}, nameConflict(err)
 		}
 		return sqlcgen.User{}, Tokens{}, err
 	}
@@ -438,7 +455,7 @@ func (s *Service) RegisterPendingVerification(ctx context.Context, in RegisterIn
 	})
 	if err != nil {
 		if pgconv.IsUniqueViolation(err) {
-			return sqlcgen.User{}, ErrConflict
+			return sqlcgen.User{}, nameConflict(err)
 		}
 		return sqlcgen.User{}, err
 	}

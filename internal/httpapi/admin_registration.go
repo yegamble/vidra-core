@@ -91,6 +91,8 @@ func (s *Server) handleApproveRegistration(c echo.Context) error {
 		switch {
 		case errors.Is(err, auth.ErrRegistrationRequestNotFound):
 			return echo.NewHTTPError(http.StatusNotFound, "registration request not found")
+		case errors.Is(err, auth.ErrHandleReserved):
+			return &HandleReservedError{}
 		case errors.Is(err, auth.ErrConflict):
 			return echo.NewHTTPError(http.StatusConflict, "username or email already taken")
 		}

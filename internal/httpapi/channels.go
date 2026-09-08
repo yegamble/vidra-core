@@ -145,6 +145,9 @@ func (s *Server) handleCreateChannel(c echo.Context) error {
 		Description: in.Description,
 	})
 	if err != nil {
+		if errors.Is(err, channel.ErrHandleReserved) {
+			return &HandleReservedError{}
+		}
 		if errors.Is(err, channel.ErrConflict) {
 			return echo.NewHTTPError(http.StatusConflict, "channel handle already taken")
 		}
@@ -353,6 +356,8 @@ func channelError(err error) error {
 		return echo.NewHTTPError(http.StatusNotFound, "channel not found")
 	case errors.Is(err, channel.ErrForbidden):
 		return echo.NewHTTPError(http.StatusForbidden, "you do not own this channel")
+	case errors.Is(err, channel.ErrHandleReserved):
+		return &HandleReservedError{}
 	case errors.Is(err, channel.ErrConflict):
 		return echo.NewHTTPError(http.StatusConflict, "channel handle already taken")
 	default:

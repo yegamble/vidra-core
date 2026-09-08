@@ -114,6 +114,16 @@ type Repository interface {
 	CountRemoteActorBlocks(ctx context.Context, blockerID uuid.UUID) (int64, error)
 	DeleteRemoteVideoByObjectURL(ctx context.Context, objectURL string) (int64, error)
 	DeleteRemoteActor(ctx context.Context, actorURL string) (int64, error)
+
+	// One handle namespace + the admin half of the per-actor block (A29 parity,
+	// migration 0142).
+	GetChannelHandleAlias(ctx context.Context, lower string) (sqlcgen.GetChannelHandleAliasRow, error)
+	GetChannelActorAlias(ctx context.Context, channelID uuid.UUID) (string, error)
+	IsRemoteActorBlockedInstanceWide(ctx context.Context, actorURL string) (bool, error)
+	BlockRemoteActorInstanceWide(ctx context.Context, arg sqlcgen.BlockRemoteActorInstanceWideParams) error
+	UnblockRemoteActorInstanceWide(ctx context.Context, remoteActorURL string) (int64, error)
+	ListBlockedRemoteActors(ctx context.Context, arg sqlcgen.ListBlockedRemoteActorsParams) ([]sqlcgen.ListBlockedRemoteActorsRow, error)
+	CountBlockedRemoteActors(ctx context.Context) (int64, error)
 }
 
 // CommentFlagger runs the watched-words moderation flagging over a stored

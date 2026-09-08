@@ -107,12 +107,13 @@ func (s *Service) AccountActor(ctx context.Context, username string) (*Actor, er
 
 // ChannelActor returns the ActivityPub Group document for a local channel,
 // minting its keypair on first request. Unknown handle → ErrNotFound.
+//
+// The handle may be the channel's CURRENT one or a handle it was renamed away
+// from — the actor id a peer already holds is exactly the latter, so refusing it
+// would be refusing the address every existing follower uses.
 func (s *Service) ChannelActor(ctx context.Context, handle string) (*Actor, error) {
-	ch, err := s.repo.GetChannelByHandle(ctx, strings.TrimSpace(handle))
+	ch, err := s.resolveLocalChannel(ctx, strings.TrimSpace(handle))
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
 		return nil, err
 	}
 	pub, err := s.ensureChannelKey(ctx, ch.ID)
@@ -131,13 +132,66 @@ func (s *Service) ChannelActor(ctx context.Context, handle string) (*Actor, erro
 		}
 		return nil, err
 	}
-	base := s.baseURL + "/video-channels/" + ch.Handle
+	base := s.baseURL + "/video-channels/" + s.channelActorHandle(ctx, ch)
 	actor := buildActor(base, "Group", ch.Handle, ch.DisplayName, ch.Description, pub)
 	actor.AttributedTo = []AttributedItem{{
 		Type: "Person",
 		ID:   s.baseURL + "/accounts/" + owner.Username,
 	}}
 	return actor, nil
+}
+
+// resolveLocalChannel finds a local channel by its current handle, falling back
+// to a handle it was renamed away from (migration 0142's alias). Unknown →
+// ErrNotFound.
+//
+// Alias resolution here is NOT bounded by expires_at. The alias table serves two
+// different promises with two different lifetimes: a human redirect, which
+// expires, and the ActivityPub identity, which does not — a peer holding
+// `…/video-channels/ownera` in its follow rows must keep resolving it for as
+// long as that follow exists.
+func (s *Service) resolveLocalChannel(ctx context.Context, handle string) (sqlcgen.Channel, error) {
+	ch, err := s.repo.GetChannelByHandle(ctx, handle)
+	if err == nil {
+		return ch, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return sqlcgen.Channel{}, err
+	}
+	alias, aerr := s.repo.GetChannelHandleAlias(ctx, handle)
+	if aerr != nil {
+		if errors.Is(aerr, pgx.ErrNoRows) {
+			return sqlcgen.Channel{}, ErrNotFound
+		}
+		return sqlcgen.Channel{}, aerr
+	}
+	ch, err = s.repo.GetChannelByHandle(ctx, alias.CurrentHandle)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return sqlcgen.Channel{}, ErrNotFound
+		}
+		return sqlcgen.Channel{}, err
+	}
+	return ch, nil
+}
+
+// channelActorHandle is the handle a channel's ActivityPub id is built from: the
+// frozen one when the channel was renamed out of a namespace collision, its own
+// otherwise.
+//
+// This is the whole of "the actor id must not change". A rename moves
+// preferredUsername, the profile URL and the human 301; the id, the inbox, the
+// outbox, the followers and following collections and the key id all stay where
+// the peers that already federated with this channel expect them. A lookup
+// failure falls back to the live handle rather than failing the document: an
+// actor served under a slightly wrong id is recoverable, and no actor at all is
+// a follower silently losing a creator.
+func (s *Service) channelActorHandle(ctx context.Context, ch sqlcgen.Channel) string {
+	frozen, err := s.repo.GetChannelActorAlias(ctx, ch.ID)
+	if err != nil || frozen == "" {
+		return ch.Handle
+	}
+	return frozen
 }
 
 // buildActor assembles an Actor from its base URL and public fields. url and the
@@ -165,9 +219,26 @@ func buildActor(base, typ, preferredUsername, name, summary, publicKeyPEM string
 	}
 }
 
-// WebFinger resolves an `acct:name@domain` resource to its actor URL. It only
-// answers for its own domain (else ErrNotFound) and tries an account first, then
-// a channel. A malformed resource → ErrBadResource.
+// WebFinger resolves an `acct:name@domain` resource to its actor URL(s). It only
+// answers for its own domain (else ErrNotFound). A malformed resource →
+// ErrBadResource.
+//
+// IT RETURNS BOTH LINKS WHEN BOTH EXIST. Before migration 0142 an account and a
+// channel could hold the same name, and this function resolved the account
+// first and stopped — so on such an instance every channel-scoped feature keyed
+// on the handle silently addressed the Person: a remote Follow of the handle was
+// dropped with no Reject, and a remote viewer's block of `@name@domain` stored
+// the Person url while the videos are attributed to the Group, hiding nothing.
+// 0142 stops NEW collisions and renames the existing ones, but a renamed
+// channel's old name still resolves — through its alias — to a Group, and peers
+// that already federated with it still ask for it by that name.
+//
+// So the answer names both actors and lets the peer pick BY TYPE, which is what
+// the `rel`/`type` pair is for. The Person, when there is one, is the `self`
+// link, because `self` is singular by RFC 7033 and an account is the identity a
+// bare `acct:` most often means; the Group is an `alternate` link carrying the
+// same activity+json type. A peer that only understands `self` gets the same
+// answer it got before this change.
 func (s *Service) WebFinger(ctx context.Context, resource string) (*JRD, error) {
 	acct := strings.TrimPrefix(resource, "acct:")
 	name, domain, ok := strings.Cut(acct, "@")
@@ -177,29 +248,54 @@ func (s *Service) WebFinger(ctx context.Context, resource string) (*JRD, error) 
 	if !strings.EqualFold(domain, s.domain()) {
 		return nil, ErrNotFound
 	}
+	var accountURL, channelURL string
 	if u, err := s.repo.GetUserActorByUsername(ctx, name); err == nil {
-		return jrd(resource, s.baseURL+"/accounts/"+u.Username), nil
+		accountURL = s.baseURL + "/accounts/" + u.Username
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	if ch, err := s.repo.GetChannelByHandle(ctx, name); err == nil {
-		return jrd(resource, s.baseURL+"/video-channels/"+ch.Handle), nil
-	} else if !errors.Is(err, pgx.ErrNoRows) {
+	switch ch, err := s.resolveLocalChannel(ctx, name); {
+	case err == nil:
+		channelURL = s.baseURL + "/video-channels/" + s.channelActorHandle(ctx, ch)
+	case errors.Is(err, ErrNotFound):
+		// no channel by that name — the account-only answer below
+	default:
 		return nil, err
 	}
-	return nil, ErrNotFound
+	if accountURL == "" && channelURL == "" {
+		return nil, ErrNotFound
+	}
+	return jrd(resource, accountURL, channelURL), nil
 }
 
-func jrd(subject, actorURL string) *JRD {
-	return &JRD{
-		Subject: subject,
-		Links: []JRDLink{{
+// jrd renders the JRD for one resource. Either URL may be empty; when only the
+// channel exists it takes the `self` slot, so a channel-only name answers
+// exactly as it always did.
+func jrd(subject, accountURL, channelURL string) *JRD {
+	out := &JRD{Subject: subject}
+	if accountURL != "" {
+		out.Links = append(out.Links, JRDLink{
 			Rel:  "self",
-			Type: "application/activity+json",
-			Href: actorURL,
-		}},
+			Type: activityJSONType,
+			Href: accountURL,
+		})
 	}
+	if channelURL != "" {
+		rel := "alternate"
+		if accountURL == "" {
+			rel = "self"
+		}
+		out.Links = append(out.Links, JRDLink{
+			Rel:  rel,
+			Type: activityJSONType,
+			Href: channelURL,
+		})
+	}
+	return out
 }
+
+// activityJSONType is the media type every WebFinger actor link advertises.
+const activityJSONType = "application/activity+json"
 
 // domain returns the host of the configured base URL (for WebFinger matching).
 func (s *Service) domain() string {

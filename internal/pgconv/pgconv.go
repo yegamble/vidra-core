@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -113,4 +114,37 @@ const SQLStateForeignKeyViolation = "23503"
 // violation (SQLSTATE 23505).
 func IsUniqueViolation(err error) bool {
 	return SQLState(err) == SQLStateUniqueViolation
+}
+
+// ConstraintName returns the name of the constraint a PostgreSQL error names,
+// "" otherwise.
+//
+// WHICH constraint lost the race is a different question from WHETHER one did,
+// and the handle namespace (migration 0142) is where the difference became
+// load-bearing: a duplicate username violates users_username_lower_idx and means
+// "that name is taken by another account", while the same INSERT violating
+// actor_handles_pkey means "that name is held by a CHANNEL" — a different
+// refusal, with a different remedy, that the API answers with a different code.
+// Matching on the message text would break the moment Postgres speaks another
+// locale; the driver already reports the name.
+//
+// This is the one helper here that names *pgconn.PgError, because the constraint
+// arrives as a struct FIELD and no interface exposes it.
+func ConstraintName(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.ConstraintName
+	}
+	return ""
+}
+
+// ConstraintActorHandles is the primary key of the one-handle-namespace
+// reservation table (migration 0142). An insert or update that violates it means
+// the handle is held by the OTHER kind of actor.
+const ConstraintActorHandles = "actor_handles_pkey"
+
+// IsHandleReserved reports whether err is the namespace reservation refusing a
+// name because the other kind of actor holds it.
+func IsHandleReserved(err error) bool {
+	return IsUniqueViolation(err) && ConstraintName(err) == ConstraintActorHandles
 }

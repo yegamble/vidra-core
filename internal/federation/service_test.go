@@ -56,6 +56,87 @@ type fakeRepo struct {
 	// remoteVideoComments are the MIRRORED threads on remote videos (migration
 	// 0140), keyed by the origin's object url.
 	remoteVideoComments map[string]*sqlcgen.UpsertRemoteVideoCommentParams
+	// channelAliases are handles a channel was renamed away from (0142), keyed
+	// by the lower-cased old handle; actorAliases is the subset that also
+	// carries the frozen ActivityPub identity, keyed by channel id.
+	channelAliases map[string]uuid.UUID
+	actorAliases   map[uuid.UUID]string
+	// adminActorBlocks are the instance-wide per-actor blocks (0142), keyed by
+	// actor url.
+	adminActorBlocks map[string]string
+}
+
+func (f fakeRepo) GetChannelHandleAlias(_ context.Context, handle string) (sqlcgen.GetChannelHandleAliasRow, error) {
+	id, ok := f.channelAliases[strings.ToLower(handle)]
+	if !ok {
+		return sqlcgen.GetChannelHandleAliasRow{}, pgx.ErrNoRows
+	}
+	ch, ok := f.channelsByID[id]
+	if !ok {
+		return sqlcgen.GetChannelHandleAliasRow{}, pgx.ErrNoRows
+	}
+	return sqlcgen.GetChannelHandleAliasRow{
+		HandleLower:   strings.ToLower(handle),
+		ChannelID:     id,
+		IsActorID:     f.actorAliases[id] == strings.ToLower(handle),
+		CurrentHandle: ch.Handle,
+	}, nil
+}
+
+func (f fakeRepo) GetChannelActorAlias(_ context.Context, channelID uuid.UUID) (string, error) {
+	if h, ok := f.actorAliases[channelID]; ok {
+		return h, nil
+	}
+	return "", pgx.ErrNoRows
+}
+
+func (f fakeRepo) IsRemoteActorBlockedInstanceWide(_ context.Context, actorURL string) (bool, error) {
+	if _, ok := f.adminActorBlocks[actorURL]; ok {
+		return true, nil
+	}
+	// The reach: an admin block of an ACCOUNT covers the channel actors that
+	// account owns, exactly as remote_actor_block_reach does in SQL.
+	if ra, ok := f.remoteActors[actorURL]; ok && ra.AttributedTo != "" {
+		_, ok := f.adminActorBlocks[ra.AttributedTo]
+		return ok, nil
+	}
+	return false, nil
+}
+
+func (f fakeRepo) BlockRemoteActorInstanceWide(_ context.Context, arg sqlcgen.BlockRemoteActorInstanceWideParams) error {
+	if f.adminActorBlocks != nil {
+		f.adminActorBlocks[arg.RemoteActorUrl] = arg.Reason
+	}
+	return nil
+}
+
+func (f fakeRepo) UnblockRemoteActorInstanceWide(_ context.Context, actorURL string) (int64, error) {
+	if _, ok := f.adminActorBlocks[actorURL]; !ok {
+		return 0, nil
+	}
+	delete(f.adminActorBlocks, actorURL)
+	return 1, nil
+}
+
+func (f fakeRepo) ListBlockedRemoteActors(_ context.Context, _ sqlcgen.ListBlockedRemoteActorsParams) ([]sqlcgen.ListBlockedRemoteActorsRow, error) {
+	out := make([]sqlcgen.ListBlockedRemoteActorsRow, 0, len(f.adminActorBlocks))
+	urls := make([]string, 0, len(f.adminActorBlocks))
+	for u := range f.adminActorBlocks {
+		urls = append(urls, u)
+	}
+	sort.Strings(urls)
+	for _, u := range urls {
+		row := sqlcgen.ListBlockedRemoteActorsRow{RemoteActorUrl: u, Reason: f.adminActorBlocks[u]}
+		if ra, ok := f.remoteActors[u]; ok {
+			row.PreferredUsername, row.Domain = ra.PreferredUsername, ra.Domain
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+func (f fakeRepo) CountBlockedRemoteActors(_ context.Context) (int64, error) {
+	return int64(len(f.adminActorBlocks)), nil
 }
 
 // withAP stamps a fixture channel's activitypub_enabled from the apDisabled set

@@ -19,8 +19,14 @@ import (
 
 // Sentinel errors the HTTP layer maps to status codes.
 var (
-	// ErrConflict means the handle is already taken.
+	// ErrConflict means the handle is already taken by another CHANNEL.
 	ErrConflict = errors.New("channel: handle already taken")
+	// ErrHandleReserved means the handle is held by an ACCOUNT. Accounts and
+	// channels share one handle namespace (migration 0142) because ActivityPub
+	// gives them one — `@name@domain` names an actor without saying which kind —
+	// and while both could hold the same name, every channel-scoped federation
+	// feature keyed on that handle addressed the wrong actor.
+	ErrHandleReserved = errors.New("channel: handle reserved by an account")
 	// ErrNotFound means no channel matches the lookup.
 	ErrNotFound = errors.New("channel: not found")
 	// ErrForbidden means the caller does not own the channel.
@@ -155,6 +161,9 @@ func (s *Service) Create(ctx context.Context, ownerID uuid.UUID, in CreateInput)
 		Description: strings.TrimSpace(in.Description),
 	})
 	if err != nil {
+		if pgconv.IsHandleReserved(err) {
+			return sqlcgen.Channel{}, ErrHandleReserved
+		}
 		if pgconv.IsUniqueViolation(err) {
 			return sqlcgen.Channel{}, ErrConflict
 		}
@@ -189,7 +198,9 @@ type UpdateInput struct {
 
 // Update changes a channel's mutable fields. Only the owner may update; a
 // non-owner gets ErrForbidden and an unknown handle gets ErrNotFound. The handle
-// itself is immutable.
+// itself is immutable — and should it ever stop being, migration 0142's trigger
+// fires on UPDATE OF handle too, so the namespace reservation covers a handle
+// change before the endpoint that would make one exists.
 func (s *Service) Update(ctx context.Context, ownerID uuid.UUID, handle string, in UpdateInput) (sqlcgen.Channel, error) {
 	ch, err := s.GetByHandle(ctx, handle)
 	if err != nil {

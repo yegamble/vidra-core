@@ -17,6 +17,7 @@ DROP TRIGGER IF EXISTS channels_reserve_handle ON channels;
 DROP TRIGGER IF EXISTS users_reserve_handle ON users;
 DROP FUNCTION IF EXISTS reserve_channel_handle();
 DROP FUNCTION IF EXISTS reserve_account_handle();
+DROP FUNCTION IF EXISTS backfill_actor_handles();
 
 -- The rename is reversed where it can be: a channel that holds a frozen
 -- federated identity goes back to that handle. Aliases and reservations then

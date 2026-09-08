@@ -78,13 +78,6 @@ BEGIN
 END;
 $$;
 
--- (2) THE BACKFILL, and the rule it applies. Accounts are seeded first and win
--- every collision, because a username is a SIGN-IN identifier: renaming it would
--- lock a person out of their own instance, while renaming a channel handle
--- changes a URL that this migration also keeps alive.
-INSERT INTO actor_handles (handle_lower, user_id)
-SELECT lower(username), id FROM users;
-
 -- channel_handle_aliases — the renamed side keeps working, in the two different
 -- senses a name can keep working.
 --
@@ -126,18 +119,34 @@ CREATE INDEX channel_handle_aliases_channel_idx ON channel_handle_aliases (chann
 CREATE UNIQUE INDEX channel_handle_aliases_actor_id_idx
     ON channel_handle_aliases (channel_id) WHERE is_actor_id;
 
--- Rename every channel whose handle collides with an account, deterministically:
--- `<handle>-channel`, then `-channel-2`, `-channel-3`, … until the name is free
--- of both the account namespace and the channel namespace. Each rename writes the
--- alias that both redirects humans and freezes the AP identity, and an audit row —
--- audit_log carries no prose, so the old and new names go in `reason` as the
--- structured `from=… to=…` pair every other rename-shaped action here uses.
-DO $$
+-- (2) THE BACKFILL, and the rule it applies. Accounts are seeded first and win
+-- every collision, because a username is a SIGN-IN identifier: renaming it would
+-- lock a person out of their own instance, while renaming a channel handle
+-- changes a URL that this migration also keeps alive.
+--
+-- The whole backfill is a FUNCTION rather than an inline DO block so the rule
+-- can be exercised on a seeded collision by a test, instead of only by the one
+-- run that ever executes it. It is idempotent: every insert is ON CONFLICT DO
+-- NOTHING and the rename loop only ever sees channels that still collide.
+CREATE OR REPLACE FUNCTION backfill_actor_handles() RETURNS INT
+LANGUAGE plpgsql AS $$
 DECLARE
-    ch          RECORD;
-    candidate   TEXT;
-    suffix      INT;
+    ch        RECORD;
+    candidate TEXT;
+    suffix    INT;
+    renamed   INT := 0;
 BEGIN
+    INSERT INTO actor_handles (handle_lower, user_id)
+    SELECT lower(username), id FROM users
+    ON CONFLICT DO NOTHING;
+
+    -- Rename every channel whose handle collides with an account,
+    -- deterministically: `<handle>-channel`, then `-channel-2`, `-channel-3`, …
+    -- until the name is free of both namespaces and of the aliases already
+    -- written. Each rename writes the alias that redirects humans AND freezes
+    -- the ActivityPub identity, plus an audit row — audit_log carries no prose,
+    -- so the names go in `reason` as the structured `from=… to=…` pair every
+    -- other rename-shaped action here uses, and in `metadata` as fields.
     FOR ch IN
         SELECT c.id, c.handle
         FROM channels c
@@ -149,6 +158,7 @@ BEGIN
         suffix := 1;
         WHILE EXISTS (SELECT 1 FROM actor_handles WHERE handle_lower = lower(candidate))
            OR EXISTS (SELECT 1 FROM channels WHERE lower(handle) = lower(candidate))
+           OR EXISTS (SELECT 1 FROM channel_handle_aliases WHERE handle_lower = lower(candidate))
         LOOP
             suffix := suffix + 1;
             candidate := ch.handle || '-channel-' || suffix::text;
@@ -167,13 +177,19 @@ BEGIN
                 'from=' || ch.handle || ' to=' || candidate,
                 jsonb_build_object('from', ch.handle, 'to', candidate,
                                    'cause', 'handle_namespace_backfill'));
+        renamed := renamed + 1;
     END LOOP;
+
+    -- Everything that survived the rename is a channel handle nothing else holds.
+    INSERT INTO actor_handles (handle_lower, channel_id)
+    SELECT lower(handle), id FROM channels
+    ON CONFLICT DO NOTHING;
+
+    RETURN renamed;
 END;
 $$;
 
--- Everything that survived the rename is a channel handle nothing else holds.
-INSERT INTO actor_handles (handle_lower, channel_id)
-SELECT lower(handle), id FROM channels;
+SELECT backfill_actor_handles();
 
 -- Only now can the triggers arm: attaching them before the backfill would make
 -- the backfill's own UPDATEs fight the reservation it is building.
