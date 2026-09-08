@@ -66,23 +66,21 @@ func (s *Server) handleRunVideoTranscoding(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	// DELIBERATELY NOT PURGED (media_purge.go's still-unpurged ledger). A rerun
-	// from an UNCHANGED source writes into the SAME output prefix
-	// (HLSPrefixForSource/WebVideoPrefixForSource keep the prefix for the same
-	// source version), overwriting the exact edge-cacheable keys a CDN is
-	// holding. Purging here, at enqueue, would be wrong: the job has produced
-	// no new bytes yet, so the edge would immediately re-cache the OLD objects
-	// from origin and keep serving them after the job completes — one
-	// purge-API call per object for nothing. The correct purge moment is the
-	// worker's promote step (out of scope here), and the tracked fix that
-	// removes the need entirely is generation-addressed output keys (phase-5
-	// item 1a). Until one of those lands, tell the operator whose CDN makes
-	// the overwrite observable — without leaking any object key into the log.
-	if s.cdnConfigured() {
-		s.logger.WarnContext(ctx, "same-generation re-transcode overwrites edge-cached objects without purge; the CDN may serve stale media until its TTLs expire",
-			"video_id", id.String(),
-			"type", in.Type)
-	}
+	// NO PURGE, AND NOW NONE IS NEEDED — the tracked fix landed rather than the
+	// warning being deleted. A rerun used to write into the SAME output prefix,
+	// because the prefix came from the source key's version and a rerun does not
+	// change the source; it overwrote the exact objects an edge was holding, and
+	// A32/A33 measured the stale segment decoding in a browser afterwards.
+	// Purging here, at enqueue, would have been wrong anyway: the job has
+	// produced no new bytes yet, so the edge would re-cache the OLD objects from
+	// origin and keep serving them after the job completed.
+	//
+	// Migration 0136 makes every run write its own generation prefix
+	// (media.HLSPrefixForGeneration), and promotion moves both the rows and the
+	// ?v= tag the api stamps on every child URL — so the new generation is a new
+	// KEY and a new URL, and an edge holding the old one can never answer for
+	// it. The superseded generation is mediagc's, exactly as a source
+	// replacement's already was.
 	// LINK THE AUDIT ROW TO THE WORK IT STARTED (A17). audit_log.job_id has
 	// existed since 0084 and was populated on 0 of 56 rows, so an operator
 	// reading "someone re-transcoded this video" had no way to reach the run

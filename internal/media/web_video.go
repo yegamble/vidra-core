@@ -175,12 +175,14 @@ func (d *webVideoDeriver) rungPackaged(ctx context.Context, r HLSRung, dir strin
 	return nil
 }
 
-// WebVideoPrefixForSource keeps manual reruns stable while source replacements
-// write a fresh generation. Originals are sibling objects
+// WebVideoPrefixForGeneration is where a transcode generation's progressive
+// per-rung MP4s go. It tracks the HLS tree's generation exactly — one run, one
+// number, both trees — so the two cannot drift into a state where one has been
+// superseded and the other overwritten. Originals are sibling objects
 // (web-videos/<id>.<ext>), so deleting this directory never deletes the source.
-func WebVideoPrefixForSource(videoID uuid.UUID, sourceKey string) string {
+func WebVideoPrefixForGeneration(videoID uuid.UUID, generation int) string {
 	prefix := "web-videos/" + videoID.String()
-	if gen := HLSGenerationName(OriginalKeyVersion(sourceKey)); gen != "" {
+	if gen := HLSGenerationName(generation); gen != "" {
 		prefix += "/" + gen
 	}
 	return prefix
@@ -188,9 +190,12 @@ func WebVideoPrefixForSource(videoID uuid.UUID, sourceKey string) string {
 
 // TranscodeWebVideos creates one independently tracked progressive MP4 per
 // planned resolution, always from the retained original sourceKey.
-// md is the caller's already-obtained probe of sourceKey; the worker probes once
-// per job and shares it across targets.
-func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, md Metadata, progress ProgressFunc) ([]WebVideoResult, error) {
+//
+// generation is videos.transcode_generation, this run's output address, so a
+// standalone web-video rebuild writes its own directory rather than overwriting
+// the one the last run left. md is the caller's already-obtained probe of
+// sourceKey; the worker probes once per job and shares it across targets.
+func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, generation int, md Metadata, progress ProgressFunc) ([]WebVideoResult, error) {
 	settings := t.encodeSettings()
 	rungs := PlanHLSLadderWith(settings, md.Width, md.Height, md.FPS)
 	if len(rungs) == 0 {
@@ -247,7 +252,7 @@ func (t *HLSTranscoder) TranscodeWebVideos(ctx context.Context, videoID uuid.UUI
 		return nil, fmt.Errorf("media: ffmpeg web video ladder for %q: %w: %s", sourceKey, redactSource(src, runErr), tailOf(stderr))
 	}
 
-	prefix := WebVideoPrefixForSource(videoID, sourceKey)
+	prefix := WebVideoPrefixForGeneration(videoID, generation)
 	if deleter, ok := t.blobs.(storage.PrefixDeleter); ok {
 		if err := deleter.DeletePrefix(ctx, prefix); err != nil {
 			return nil, err

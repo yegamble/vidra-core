@@ -321,10 +321,10 @@ func (s *Server) handleDeleteChannel(c echo.Context) error {
 	// at stable identity keys the edge may hold — snapshot them alongside the
 	// videos (the helpers self-gate on the CDN and the image service).
 	imageKinds := [...]string{profileimage.KindAvatar, profileimage.KindBanner}
-	var imageKeys [len(imageKinds)]string
+	var imagePaths [len(imageKinds)]string
 	if chID != uuid.Nil {
 		for i, kind := range imageKinds {
-			imageKeys[i] = s.channelImageEdgeKey(ctx, chID, kind)
+			imagePaths[i] = s.channelImageEdgePath(ctx, chID, c.Param("handle"), kind)
 		}
 	}
 	if err := s.channelsvc.Delete(ctx, userID, c.Param("handle")); err != nil {
@@ -341,7 +341,7 @@ func (s *Server) handleDeleteChannel(c echo.Context) error {
 		s.purgeVideoEdgeCopies(ctx, p.id, p.snap)
 	}
 	for i, kind := range imageKinds {
-		s.purgeEdgeKey(ctx, kind, chID, imageKeys[i])
+		s.purgeEdgePath(ctx, kind, chID, imagePaths[i])
 	}
 	return c.NoContent(http.StatusNoContent)
 }

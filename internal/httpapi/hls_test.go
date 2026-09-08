@@ -24,17 +24,30 @@ import (
 // semantics (dedupe, due filtering, state transitions), so the end-to-end
 // integration test can run the real transcode.Service.DrainJobs against it.
 type transcodeFakeRepo struct {
-	jobs       map[uuid.UUID]*sqlcgen.TranscodeJob
-	playlists  map[uuid.UUID]sqlcgen.StreamingPlaylist
-	renditions map[uuid.UUID][]sqlcgen.VideoRendition
+	jobs        map[uuid.UUID]*sqlcgen.TranscodeJob
+	playlists   map[uuid.UUID]sqlcgen.StreamingPlaylist
+	renditions  map[uuid.UUID][]sqlcgen.VideoRendition
+	generations map[uuid.UUID]int32
 }
 
 func newTranscodeFakeRepo() *transcodeFakeRepo {
 	return &transcodeFakeRepo{
-		jobs:       map[uuid.UUID]*sqlcgen.TranscodeJob{},
-		playlists:  map[uuid.UUID]sqlcgen.StreamingPlaylist{},
-		renditions: map[uuid.UUID][]sqlcgen.VideoRendition{},
+		jobs:        map[uuid.UUID]*sqlcgen.TranscodeJob{},
+		playlists:   map[uuid.UUID]sqlcgen.StreamingPlaylist{},
+		renditions:  map[uuid.UUID][]sqlcgen.VideoRendition{},
+		generations: map[uuid.UUID]int32{},
 	}
+}
+
+// The transcode generation (migration 0136): one increment per enqueue, read
+// once per run, so no two runs of the same source share an output prefix.
+func (f *transcodeFakeRepo) BumpVideoTranscodeGeneration(_ context.Context, videoID uuid.UUID) (int32, error) {
+	f.generations[videoID]++
+	return f.generations[videoID], nil
+}
+
+func (f *transcodeFakeRepo) GetVideoTranscodeGeneration(_ context.Context, videoID uuid.UUID) (int32, error) {
+	return f.generations[videoID], nil
 }
 
 func (f *transcodeFakeRepo) EnqueueTranscodeJob(_ context.Context, a sqlcgen.EnqueueTranscodeJobParams) error {

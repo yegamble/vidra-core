@@ -97,6 +97,20 @@ func (s *Server) cdnDeliveryEnabled() bool {
 	return s.settingBool(instancesettings.KeyDeliveryCDNEnabled, false)
 }
 
+// edgeOriginRequest reports whether this request is the CDN edge fetching from
+// its origin, rather than a viewer talking to the api.
+//
+// It is the marker the api itself minted into the edge URL
+// (delivery.EdgeOriginParam), gated on a CDN being configured at all so that a
+// stray parameter on an install with no edge means nothing. See that constant
+// for why a minted parameter rather than a trusted header — and for why it
+// grants the sender nothing: all it can do is decline a redirect and take the
+// authoritative path, which every media route authorises exactly as it always
+// did.
+func (s *Server) edgeOriginRequest(c echo.Context) bool {
+	return s.cdnConfigured() && c.QueryParam(delivery.EdgeOriginParam) == delivery.EdgeOriginValue
+}
+
 // credentialedMediaRequest reports whether the request carried a credential: a
 // playback token in ?pt= (password-protected media, CORE-17) or an
 // Authorization header, or a video-read cookie actually used for restricted
@@ -134,11 +148,18 @@ func (s *Server) serveMediaAsset(c echo.Context, a mediaAsset) error {
 		a.contentType = storage.ContentTypeForKey(a.key)
 	}
 	req := delivery.Request{
-		ObjectKey:    a.key,
+		ObjectKey: a.key,
+		// THE EDGE IS ADDRESSED BY THIS REQUEST'S OWN URL, because the CDN's
+		// origin is this api. RequestURI() is the path and query exactly as the
+		// client sent them — which is what makes the ?v= generation tag and a
+		// ?audio=false variant part of the edge's cache key rather than
+		// something the redirect quietly drops.
+		Path:         c.Request().URL.RequestURI(),
 		Class:        a.class,
 		Eligible:     a.eligible,
 		Versioned:    a.versioned,
 		Credentialed: credentialedMediaRequest(c),
+		FromEdge:     s.edgeOriginRequest(c),
 		MirrorClass:  string(a.mirrorClass),
 		ContentType:  a.contentType,
 	}
@@ -185,6 +206,8 @@ func mediaObjectNotFound(c echo.Context, msg string) error {
 // its bytes without going through the resolver (the caption routes, which read
 // through video.Service and never see a storage key).
 func setMediaCacheControl(c echo.Context, class delivery.Class) {
+	// shared=false unconditionally: these routes never expose a storage key, so
+	// they are never handed to the edge and an edge can never be the caller.
 	c.Response().Header().Set("Cache-Control",
-		delivery.CacheControl(class, false, credentialedMediaRequest(c)))
+		delivery.CacheControl(class, false, credentialedMediaRequest(c), false))
 }

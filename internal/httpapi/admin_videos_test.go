@@ -151,15 +151,22 @@ func TestAdminRunTranscodingQueuesRetainedOriginal(t *testing.T) {
 	}
 }
 
-// TestAdminRunTranscodingWarnsAboutUnpurgedOverwrite. A same-generation rerun
-// writes into the SAME output prefix (HLSPrefixForSource/WebVideoPrefixForSource
-// keep the prefix for an unchanged source version), overwriting the exact keys
-// a CDN edge is holding — and nothing purges them, deliberately: at enqueue
-// there are no new bytes yet, so a purge would just re-cache the old ones. The
-// tracked fix is generation-addressed keys (phase-5 item 1a); until then the
-// enqueue must at least tell the operator whose CDN makes the overwrite
-// observable. Asserted: a WARN naming the video — and never a storage key.
-func TestAdminRunTranscodingWarnsAboutUnpurgedOverwrite(t *testing.T) {
+// TestAdminRunTranscodingAdvancesTheGeneration replaces the warning this
+// endpoint used to emit.
+//
+// A same-source rerun wrote into the SAME output prefix, overwriting the exact
+// objects a CDN edge was holding, and nothing purged them — deliberately: at
+// enqueue there are no new bytes yet, so a purge would only re-cache the old
+// ones. All the endpoint could do was tell the operator. Migration 0136 removes
+// the situation instead: the enqueue advances videos.transcode_generation, the
+// run writes that generation's own prefix, and promotion moves the ?v= tag with
+// it — so the new generation is a new key AND a new URL, and there is nothing
+// stale for an edge to serve.
+//
+// Asserted: the counter moves on every enqueue, and the endpoint no longer
+// warns about an overwrite that cannot happen. Object keys still never reach
+// the log, which was the other half of the original test.
+func TestAdminRunTranscodingAdvancesTheGeneration(t *testing.T) {
 	opt, _ := testCDNPurge(t)
 	srv, _, jobs, _, _ := videoServerFullWith(t, testConfig(), []Option{opt})
 	srv.transcodesvc = transcode.NewService(jobs, capableAdminTranscoder{})
@@ -167,35 +174,30 @@ func TestAdminRunTranscodingWarnsAboutUnpurgedOverwrite(t *testing.T) {
 	srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
 	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	videoID := createPublishedVideo(t, srv, admin, "ada", `{"title":"Source quality","privacy":"public"}`)
+	id := uuid.MustParse(videoID)
 
+	before, err := jobs.GetVideoTranscodeGeneration(context.Background(), id)
+	if err != nil {
+		t.Fatalf("read generation: %v", err)
+	}
 	if rec := postJSONAuth(srv, "/api/v1/admin/videos/"+videoID+"/transcoding", `{"type":"hls"}`, admin); rec.Code != http.StatusAccepted {
 		t.Fatalf("run HLS = %d; body=%s", rec.Code, rec.Body.String())
 	}
+	after, err := jobs.GetVideoTranscodeGeneration(context.Background(), id)
+	if err != nil {
+		t.Fatalf("read generation: %v", err)
+	}
+	if after != before+1 {
+		t.Fatalf("generation %d -> %d; a rerun that does not advance it overwrites the previous generation in place", before, after)
+	}
+
 	logged := buf.String()
-	if !strings.Contains(logged, "re-transcode") || !strings.Contains(logged, videoID) {
-		t.Fatalf("want a WARN naming the unpurged re-transcode overwrite and the video; logs=%s", logged)
+	if strings.Contains(logged, "re-transcode") {
+		t.Errorf("the endpoint still warns about an overwrite that cannot happen; logs=%s", logged)
 	}
 	// The purge-seam log discipline: object keys never reach the log.
 	if strings.Contains(logged, "streaming-playlists/") || strings.Contains(logged, "web-videos/") {
 		t.Fatalf("log leaked a storage key; logs=%s", logged)
-	}
-}
-
-// TestAdminRunTranscodingWithoutACDNStaysQuiet. With no CDN there is no edge
-// copy to go stale, so the warning would be noise on every default install.
-func TestAdminRunTranscodingWithoutACDNStaysQuiet(t *testing.T) {
-	srv, _, jobs, _, _ := videoServerFull(t, testConfig())
-	srv.transcodesvc = transcode.NewService(jobs, capableAdminTranscoder{})
-	var buf bytes.Buffer
-	srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
-	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
-	videoID := createPublishedVideo(t, srv, admin, "ada", `{"title":"Source quality","privacy":"public"}`)
-
-	if rec := postJSONAuth(srv, "/api/v1/admin/videos/"+videoID+"/transcoding", `{"type":"hls"}`, admin); rec.Code != http.StatusAccepted {
-		t.Fatalf("run HLS = %d; body=%s", rec.Code, rec.Body.String())
-	}
-	if logged := buf.String(); strings.Contains(logged, "re-transcode") {
-		t.Fatalf("re-transcode warning fired with no CDN configured; logs=%s", logged)
 	}
 }
 

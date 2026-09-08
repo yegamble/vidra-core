@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -52,51 +53,89 @@ func TestNewRejectsUnusableBases(t *testing.T) {
 	}
 }
 
-// TestEdgeURLIsBasePlusKey pins the whole addressing contract: the edge URL is
-// the base plus the storage key, which is why the CDN's origin has to be
-// key-addressed.
-func TestEdgeURLIsBasePlusKey(t *testing.T) {
-	cases := []struct{ base, key, want string }{
-		{"https://cdn.example.com", "web-videos/x.mp4", "https://cdn.example.com/web-videos/x.mp4"},
+// TestEdgeURLIsBasePlusTheAPIMediaPath pins the whole addressing contract: the
+// edge URL is the operator's base plus THIS API's own media route path, which
+// is why the CDN's origin has to be the api rather than the object store.
+func TestEdgeURLIsBasePlusTheAPIMediaPath(t *testing.T) {
+	const marker = "__vidra_edge=1"
+	cases := []struct{ base, mediaPath, want string }{
+		{"https://cdn.example.com", "/api/v1/videos/a/original",
+			"https://cdn.example.com/api/v1/videos/a/original?" + marker},
 		// A trailing slash on the base must not double up.
-		{"https://cdn.example.com/", "web-videos/x.mp4", "https://cdn.example.com/web-videos/x.mp4"},
+		{"https://cdn.example.com/", "/api/v1/videos/a/thumbnail",
+			"https://cdn.example.com/api/v1/videos/a/thumbnail?" + marker},
 		// A path prefix on the base survives.
-		{"https://cdn.example.com/media", "thumbnails/x.jpg", "https://cdn.example.com/media/thumbnails/x.jpg"},
-		// Deep keys keep their separators; only the segments are escaped.
-		{"https://cdn.example.com", "streaming-playlists/a/240p/seg_00000.ts", "https://cdn.example.com/streaming-playlists/a/240p/seg_00000.ts"},
-		// A ? or # inside a segment would otherwise truncate the URL.
-		{"https://cdn.example.com", "downloads/My Holiday?.mp4", "https://cdn.example.com/downloads/My%20Holiday%3F.mp4"},
-		{"https://cdn.example.com", "downloads/a#b.mp4", "https://cdn.example.com/downloads/a%23b.mp4"},
+		{"https://cdn.example.com/media", "/api/v1/videos/a/thumbnail",
+			"https://cdn.example.com/media/api/v1/videos/a/thumbnail?" + marker},
+		// THE GENERATION TAG TRAVELS. This is the defect the key-addressed model
+		// had: cdn.EdgeURL was base + "/" + key with no query at all, so a
+		// re-transcode's new ?v= never reached the edge and could not version
+		// anything there.
+		{"https://cdn.example.com", "/api/v1/videos/a/hls/cmaf/chunk-0-00001.m4s?v=dl9u7z2ka8zk",
+			"https://cdn.example.com/api/v1/videos/a/hls/cmaf/chunk-0-00001.m4s?v=dl9u7z2ka8zk&" + marker},
+		// So does a route's own variant selector: ?audio=false is a different
+		// resource and therefore a different cache entry.
+		{"https://cdn.example.com", "/api/v1/videos/a/download/hls/720?audio=false",
+			"https://cdn.example.com/api/v1/videos/a/download/hls/720?audio=false&" + marker},
+		// Percent-escaping in the path SURVIVES UNTOUCHED rather than being
+		// escaped again: the caller's path is already a request URI.
+		{"https://cdn.example.com", "/api/v1/channels/a%20b/avatar",
+			"https://cdn.example.com/api/v1/channels/a%20b/avatar?" + marker},
 	}
 	for _, tc := range cases {
 		p := mustNew(t, Config{BaseURL: tc.base})
-		got, ok, err := p.EdgeURL(context.Background(), tc.key)
+		got, ok, err := p.EdgeURL(context.Background(), tc.mediaPath)
 		if err != nil || !ok {
-			t.Fatalf("EdgeURL(%q, %q) = (%q, %v, %v)", tc.base, tc.key, got, ok, err)
+			t.Fatalf("EdgeURL(%q, %q) = (%q, %v, %v)", tc.base, tc.mediaPath, got, ok, err)
 		}
 		if got != tc.want {
-			t.Errorf("EdgeURL(%q, %q) = %q, want %q", tc.base, tc.key, got, tc.want)
+			t.Errorf("EdgeURL(%q, %q) = %q, want %q", tc.base, tc.mediaPath, got, tc.want)
 		}
 	}
 }
 
-// TestEdgeURLRejectsEscapingKeys. A "../" key would address an object outside
+// TestEdgeURLRejectsEscapingPaths. A "../" path would address something outside
 // the base — on a shared CDN account, plausibly somebody else's. This validates
-// independently of storage rather than trusting its caller, because this
-// package's caller is a resolver whose whole job is handling keys from
-// elsewhere.
-func TestEdgeURLRejectsEscapingKeys(t *testing.T) {
+// independently of the caller, because this package's caller is a resolver
+// whose whole job is handling paths from elsewhere.
+func TestEdgeURLRejectsEscapingPaths(t *testing.T) {
 	p := mustNew(t, Config{BaseURL: "https://cdn.example.com/media"})
-	for _, key := range []string{
-		"", "/absolute", "../escape", "a/../../escape", "a/./b",
-		"a//b", "with\x00null", "with\nnewline",
+	for _, mediaPath := range []string{
+		"",
+		"api/v1/videos/a/original", // not rooted
+		"//evil.example/x",         // protocol-relative: leaves the base entirely
+		"/../escape",               //
+		"/a/../../escape",          //
+		"/a/./b",                   //
+		"/a/%2e%2e/escape",         // the origin decodes before it routes
+		"/a//b",                    // an empty segment some origins collapse
+		"/a/b#frag",                // a fragment cannot appear in a request URI
+		"/with\x00null",
+		"/with\nnewline",
 	} {
-		got, ok, err := p.EdgeURL(context.Background(), key)
+		got, ok, err := p.EdgeURL(context.Background(), mediaPath)
 		if err == nil || ok {
-			t.Errorf("EdgeURL(%q) = (%q, %v, %v), want ErrInvalidObjectKey", key, got, ok, err)
+			t.Errorf("EdgeURL(%q) = (%q, %v, %v), want ErrInvalidMediaPath", mediaPath, got, ok, err)
 		}
-		if err != nil && !errors.Is(err, ErrInvalidObjectKey) {
-			t.Errorf("EdgeURL(%q) err = %v, want ErrInvalidObjectKey", key, err)
+		if err != nil && !errors.Is(err, ErrInvalidMediaPath) {
+			t.Errorf("EdgeURL(%q) err = %v, want ErrInvalidMediaPath", mediaPath, err)
+		}
+	}
+}
+
+// TestEdgeURLRefusesAPathThatAlreadyCameFromTheEdge. Minting an edge URL for a
+// request the edge itself made is a redirect loop, so it is refused here as
+// well as prevented in the resolver: two independent fences on the one failure
+// mode this topology introduces.
+func TestEdgeURLRefusesAPathThatAlreadyCameFromTheEdge(t *testing.T) {
+	p := mustNew(t, Config{BaseURL: "https://cdn.example.com"})
+	for _, mediaPath := range []string{
+		"/api/v1/videos/a/original?__vidra_edge=1",
+		"/api/v1/videos/a/original?v=abc&__vidra_edge=1",
+		"/api/v1/videos/a/original?__vidra_edge=0",
+	} {
+		if _, ok, err := p.EdgeURL(context.Background(), mediaPath); ok || !errors.Is(err, ErrInvalidMediaPath) {
+			t.Errorf("EdgeURL(%q) = (ok=%v, err=%v), want ErrInvalidMediaPath", mediaPath, ok, err)
 		}
 	}
 }
@@ -113,7 +152,7 @@ func TestEdgeURLMakesNoNetworkCall(t *testing.T) {
 	defer srv.Close()
 	p := mustNew(t, Config{BaseURL: srv.URL, HTTPClient: srv.Client()})
 	for range 5 {
-		if _, _, err := p.EdgeURL(context.Background(), "web-videos/x.mp4"); err != nil {
+		if _, _, err := p.EdgeURL(context.Background(), "/api/v1/videos/a/original"); err != nil {
 			t.Fatalf("EdgeURL: %v", err)
 		}
 	}
@@ -136,7 +175,9 @@ type purgeRecorder struct {
 func (r *purgeRecorder) serve(w http.ResponseWriter, req *http.Request) {
 	r.hits++
 	r.method = req.Method
-	r.path = req.URL.Path
+	// EscapedPath, not Path: a purge has to name the URL byte-for-byte as the
+	// edge was asked for it, so a decoded "%20" would hide a real mismatch.
+	r.path = req.URL.EscapedPath()
 	r.query = req.URL.RawQuery
 	r.header = req.Header.Clone()
 	if r.status == 0 {
@@ -153,8 +194,9 @@ func TestPurgeTemplatePlaceholders(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(rec.serve))
 	defer srv.Close()
 
-	const key = "streaming-playlists/a/240p/seg_00000.ts"
-	edge := "https://cdn.example.com/" + key
+	const mediaPath = "/api/v1/videos/a/hls/240p/seg_00000.ts?v=abc"
+	const suffix = "/api/v1/videos/a/hls/240p/seg_00000.ts?v=abc&__vidra_edge=1"
+	edge := "https://cdn.example.com" + suffix
 
 	cases := []struct {
 		name       string
@@ -172,7 +214,8 @@ func TestPurgeTemplatePlaceholders(t *testing.T) {
 			name: "{url} against the asset's own URL",
 			base: srv.URL, template: "{url}",
 			wantMethod: DefaultPurgeMethod,
-			wantPath:   "/" + key,
+			wantPath:   "/api/v1/videos/a/hls/240p/seg_00000.ts",
+			wantQuery:  "v=abc&__vidra_edge=1",
 		},
 		{
 			// A "?url=" API: the edge URL has to be query-encoded or the
@@ -182,15 +225,19 @@ func TestPurgeTemplatePlaceholders(t *testing.T) {
 			method:     "POST",
 			wantMethod: "POST",
 			wantPath:   "/purge",
-			wantQuery:  "url=" + strings.ReplaceAll(strings.ReplaceAll(edge, ":", "%3A"), "/", "%2F"),
+			wantQuery:  "url=" + url.QueryEscape(edge),
 		},
 		{
-			// A zone/path API: just the key.
+			// A zone/path API: the edge URL's path and query, no leading
+			// slash. With an api origin that suffix carries a query, so a
+			// template of this shape splices it into the caller's own URL —
+			// which is exactly what such an API needs to name the entry.
 			name:       "{key} in a path segment",
 			template:   srv.URL + "/zones/7/purge/{key}",
 			method:     "DELETE",
 			wantMethod: "DELETE",
-			wantPath:   "/zones/7/purge/" + key,
+			wantPath:   "/zones/7/purge/api/v1/videos/a/hls/240p/seg_00000.ts",
+			wantQuery:  "v=abc&__vidra_edge=1",
 		},
 	}
 	for _, tc := range cases {
@@ -206,7 +253,7 @@ func TestPurgeTemplatePlaceholders(t *testing.T) {
 				PurgeMethod: tc.method,
 				HTTPClient:  srv.Client(),
 			})
-			if err := p.Purge(context.Background(), key); err != nil {
+			if err := p.Purge(context.Background(), mediaPath); err != nil {
 				t.Fatalf("Purge = %v", err)
 			}
 			if rec.hits != 1 {
@@ -220,6 +267,13 @@ func TestPurgeTemplatePlaceholders(t *testing.T) {
 			}
 			if tc.wantQuery != "" && rec.query != tc.wantQuery {
 				t.Errorf("query = %q, want %q", rec.query, tc.wantQuery)
+			}
+			// The point of {url_encoded}: the edge URL's own "?" and "&" must
+			// not survive raw into the caller's query string, or the purge API
+			// reads them as its own parameters. With an api origin the edge URL
+			// always has a query, so this stopped being a corner case.
+			if strings.Contains(tc.template, "{url_encoded}") && strings.Count(rec.query, "&") != 0 {
+				t.Errorf("query = %q; the encoded edge URL leaked its separators", rec.query)
 			}
 		})
 	}
@@ -237,14 +291,16 @@ func TestPurgeSendsTheCredentialAsAHeader(t *testing.T) {
 		BaseURL: "https://cdn.example.com", PurgeURL: srv.URL + "/p/{key}",
 		PurgeHeader: "X-Purge-Key", PurgeToken: "s3cret", HTTPClient: srv.Client(),
 	})
-	if err := p.Purge(context.Background(), "k/x.mp4"); err != nil {
+	if err := p.Purge(context.Background(), "/api/v1/videos/a/original"); err != nil {
 		t.Fatalf("Purge = %v", err)
 	}
 	if got := rec.header.Get("X-Purge-Key"); got != "s3cret" {
 		t.Errorf("X-Purge-Key = %q, want the token", got)
 	}
-	if rec.query != "" {
-		t.Errorf("query = %q; the credential must not be put in the URL by this package", rec.query)
+	// The marker is the only thing this package puts in a URL. The CREDENTIAL
+	// is header-only, which is what this assertion is really about.
+	if strings.Contains(rec.query, "s3cret") || strings.Contains(rec.path, "s3cret") {
+		t.Errorf("request = %q?%q; the credential must not be put in the URL by this package", rec.path, rec.query)
 	}
 
 	// No header named: Authorization, so `Bearer …` needs no extra knob.
@@ -253,7 +309,7 @@ func TestPurgeSendsTheCredentialAsAHeader(t *testing.T) {
 		BaseURL: "https://cdn.example.com", PurgeURL: srv.URL + "/p/{key}",
 		PurgeToken: "Bearer abc123", HTTPClient: srv.Client(),
 	})
-	if err := p2.Purge(context.Background(), "k/x.mp4"); err != nil {
+	if err := p2.Purge(context.Background(), "/api/v1/videos/a/original"); err != nil {
 		t.Fatalf("Purge = %v", err)
 	}
 	if got := rec.header.Get(DefaultPurgeAuthHeader); got != "Bearer abc123" {
@@ -266,7 +322,7 @@ func TestPurgeSendsTheCredentialAsAHeader(t *testing.T) {
 		BaseURL: "https://cdn.example.com", PurgeURL: srv.URL + "/p/{key}",
 		HTTPClient: srv.Client(),
 	})
-	if err := p3.Purge(context.Background(), "k/x.mp4"); err != nil {
+	if err := p3.Purge(context.Background(), "/api/v1/videos/a/original"); err != nil {
 		t.Fatalf("Purge = %v", err)
 	}
 	if _, ok := rec.header[http.CanonicalHeaderKey(DefaultPurgeAuthHeader)]; ok {
@@ -299,7 +355,7 @@ func TestPurgeStatusHandling(t *testing.T) {
 			BaseURL: "https://cdn.example.com", PurgeURL: srv.URL + "/{key}",
 			HTTPClient: srv.Client(),
 		})
-		err := p.Purge(context.Background(), "k/x.mp4")
+		err := p.Purge(context.Background(), "/api/v1/videos/a/original")
 		if (err != nil) != tc.wantErr {
 			t.Errorf("status %d: Purge = %v, wantErr=%v", tc.status, err, tc.wantErr)
 		}
@@ -324,7 +380,7 @@ func TestPurgeErrorsCarryNoCredentialAndNoBody(t *testing.T) {
 		BaseURL: "https://cdn.example.com", PurgeURL: srv.URL + "/purge?token=" + secret + "&url={url_encoded}",
 		PurgeToken: secret, HTTPClient: srv.Client(),
 	})
-	err := p.Purge(context.Background(), "k/x.mp4")
+	err := p.Purge(context.Background(), "/api/v1/videos/a/original")
 	if err == nil {
 		t.Fatal("Purge = nil for a 403")
 	}
@@ -347,7 +403,7 @@ func TestPurgeErrorsCarryNoCredentialAndNoBody(t *testing.T) {
 		BaseURL: "https://cdn.example.com", PurgeURL: deadURL + "/purge?token=" + secret,
 		HTTPClient: &http.Client{Timeout: 2 * time.Second},
 	})
-	err = p2.Purge(context.Background(), "k/x.mp4")
+	err = p2.Purge(context.Background(), "/api/v1/videos/a/original")
 	if err == nil {
 		t.Fatal("Purge = nil against a closed server")
 	}
@@ -362,14 +418,14 @@ func TestPurgeWithoutAnEndpointIsAnError(t *testing.T) {
 	if p.CanPurge() {
 		t.Error("CanPurge = true with no purge URL")
 	}
-	if err := p.Purge(context.Background(), "k/x.mp4"); !errors.Is(err, ErrPurgeNotConfigured) {
+	if err := p.Purge(context.Background(), "/api/v1/videos/a/original"); !errors.Is(err, ErrPurgeNotConfigured) {
 		t.Fatalf("Purge = %v, want ErrPurgeNotConfigured", err)
 	}
 }
 
-// TestPurgeRejectsEscapingKeys: a purge template rendered with "../" would
+// TestPurgeRejectsEscapingPaths: a purge template rendered with "../" would
 // invalidate somebody else's object, and with "" would address the zone root.
-func TestPurgeRejectsEscapingKeys(t *testing.T) {
+func TestPurgeRejectsEscapingPaths(t *testing.T) {
 	rec := &purgeRecorder{}
 	srv := httptest.NewServer(http.HandlerFunc(rec.serve))
 	defer srv.Close()
@@ -377,13 +433,13 @@ func TestPurgeRejectsEscapingKeys(t *testing.T) {
 		BaseURL: "https://cdn.example.com", PurgeURL: srv.URL + "/{key}",
 		HTTPClient: srv.Client(),
 	})
-	for _, key := range []string{"", "/abs", "../escape", "a/../../escape", "x\x00y"} {
-		if err := p.Purge(context.Background(), key); !errors.Is(err, ErrInvalidObjectKey) {
-			t.Errorf("Purge(%q) = %v, want ErrInvalidObjectKey", key, err)
+	for _, mediaPath := range []string{"", "no-leading-slash", "/../escape", "/a/../../escape", "/x\x00y"} {
+		if err := p.Purge(context.Background(), mediaPath); !errors.Is(err, ErrInvalidMediaPath) {
+			t.Errorf("Purge(%q) = %v, want ErrInvalidMediaPath", mediaPath, err)
 		}
 	}
 	if rec.hits != 0 {
-		t.Errorf("server saw %d requests for invalid keys, want 0", rec.hits)
+		t.Errorf("server saw %d requests for invalid paths, want 0", rec.hits)
 	}
 }
 
@@ -402,7 +458,7 @@ func TestPurgeIsBounded(t *testing.T) {
 		PurgeTimeout: 100 * time.Millisecond, HTTPClient: srv.Client(),
 	})
 	start := time.Now()
-	err := p.Purge(context.Background(), "k/x.mp4")
+	err := p.Purge(context.Background(), "/api/v1/videos/a/original")
 	if err == nil {
 		t.Fatal("Purge = nil against a server that never answers")
 	}
@@ -453,10 +509,10 @@ func TestDescribeNeverCarriesTheToken(t *testing.T) {
 // contract is that an optional source never breaks a media request.
 func TestNilProviderIsSafe(t *testing.T) {
 	var p *Provider
-	if u, ok, err := p.EdgeURL(context.Background(), "k/x.mp4"); u != "" || ok || err != nil {
+	if u, ok, err := p.EdgeURL(context.Background(), "/api/v1/videos/a/original"); u != "" || ok || err != nil {
 		t.Errorf("nil EdgeURL = (%q, %v, %v), want the empty no-source answer", u, ok, err)
 	}
-	if err := p.Purge(context.Background(), "k/x.mp4"); err != nil {
+	if err := p.Purge(context.Background(), "/api/v1/videos/a/original"); err != nil {
 		t.Errorf("nil Purge = %v, want nil", err)
 	}
 	if p.CanPurge() {
@@ -464,5 +520,45 @@ func TestNilProviderIsSafe(t *testing.T) {
 	}
 	if p.Describe() != "none" {
 		t.Errorf("nil Describe = %q, want %q", p.Describe(), "none")
+	}
+}
+
+// TestPurgeTargetsExactlyTheURLEdgeURLHandsOut is the invariant the whole
+// invalidation path rests on, and it is a test rather than a comment because
+// the two are built by different call sites minutes apart in wall-clock time.
+//
+// An edge holds its entry under the URL it was ASKED for. A purge that
+// differed from that URL by one query parameter would be answered 404 by the
+// edge — which this package treats as success, on purpose — and the operator
+// would read "purged" in the log while the stale copy sat exactly where it was.
+// That is strictly worse than a failure, so the two constructions are pinned to
+// each other here.
+func TestPurgeTargetsExactlyTheURLEdgeURLHandsOut(t *testing.T) {
+	rec := &purgeRecorder{}
+	srv := httptest.NewServer(http.HandlerFunc(rec.serve))
+	defer srv.Close()
+
+	for _, mediaPath := range []string{
+		"/api/v1/videos/a/original",
+		"/api/v1/videos/a/hls/cmaf/chunk-0-00001.m4s?v=dl9u7z2ka8zk",
+		"/api/v1/videos/a/download/hls/720?audio=false",
+		"/api/v1/channels/a%20b/avatar",
+	} {
+		p := mustNew(t, Config{BaseURL: srv.URL, PurgeURL: "{url}", HTTPClient: srv.Client()})
+		want, ok, err := p.EdgeURL(context.Background(), mediaPath)
+		if err != nil || !ok {
+			t.Fatalf("EdgeURL(%q) = (%q, %v, %v)", mediaPath, want, ok, err)
+		}
+		*rec = purgeRecorder{}
+		if err := p.Purge(context.Background(), mediaPath); err != nil {
+			t.Fatalf("Purge(%q) = %v", mediaPath, err)
+		}
+		got := srv.URL + rec.path
+		if rec.query != "" {
+			got += "?" + rec.query
+		}
+		if got != want {
+			t.Errorf("purge asked the edge to invalidate %q, but viewers were sent to %q", got, want)
+		}
 	}
 }

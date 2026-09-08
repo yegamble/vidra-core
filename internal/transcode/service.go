@@ -127,6 +127,11 @@ type Repository interface {
 	ListVideoRenditions(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.VideoRendition, error)
 	CreateVideoFile(ctx context.Context, arg sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error)
 	DeleteVideoFilesByVideoAndKind(ctx context.Context, arg sqlcgen.DeleteVideoFilesByVideoAndKindParams) error
+	// The transcode generation (migration 0136): bumped once per enqueue, read
+	// once per run. See EnqueueTarget and runTarget for why those are the two
+	// moments and not one.
+	BumpVideoTranscodeGeneration(ctx context.Context, videoID uuid.UUID) (int32, error)
+	GetVideoTranscodeGeneration(ctx context.Context, videoID uuid.UUID) (int32, error)
 }
 
 // Transcoder produces the HLS ladder for a stored original. It is the seam the
@@ -147,15 +152,17 @@ type Transcoder interface {
 // source downloads answering the same question.
 type TargetTranscoder interface {
 	Probe(ctx context.Context, sourceKey string) (media.Metadata, error)
-	TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, md media.Metadata, progress media.ProgressFunc) (media.HLSResult, error)
-	TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, md media.Metadata, progress media.ProgressFunc) ([]media.WebVideoResult, error)
+	// generation is videos.transcode_generation — the output address of THIS
+	// run (migration 0136), so no two runs of the same source share a prefix.
+	TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, generation int, md media.Metadata, progress media.ProgressFunc) (media.HLSResult, error)
+	TranscodeWebVideos(ctx context.Context, videoID uuid.UUID, sourceKey string, generation int, md media.Metadata, progress media.ProgressFunc) ([]media.WebVideoResult, error)
 	// TranscodeAll is the FULL job, and it is one method rather than a call to
 	// each of the two above because running them independently is what made a
 	// target='all' job decode its source three times. The progressive MP4s are
 	// derived from the streaming tree's own per-rung downloads, which exist only
 	// on local scratch inside the packaging window — so the saving is available
 	// exactly when the two run together, and not otherwise.
-	TranscodeAll(ctx context.Context, videoID uuid.UUID, sourceKey string, md media.Metadata, progress media.ProgressFunc) (media.HLSResult, []media.WebVideoResult, error)
+	TranscodeAll(ctx context.Context, videoID uuid.UUID, sourceKey string, generation int, md media.Metadata, progress media.ProgressFunc) (media.HLSResult, []media.WebVideoResult, error)
 }
 
 type stepRepository interface {
@@ -387,6 +394,24 @@ func (s *Service) EnqueueTarget(ctx context.Context, videoID uuid.UUID, sourceKe
 		TranscodeType: target,
 	}); err != nil {
 		return uuid.Nil, err
+	}
+	// MINT THIS RUN'S OUTPUT ADDRESS (migration 0136). One increment per
+	// enqueue is what makes every transcode generation-addressed: a re-run of
+	// an unchanged source used to derive its prefix from the source key, stay at
+	// version 0 and overwrite the same objects in place, which A32/A33 measured
+	// a cache serving stale afterwards.
+	//
+	// AFTER the insert, not before, so a failed enqueue does not burn a number
+	// — the counter is monotonic and a skipped value is harmless, but spending
+	// one for work that never queued is a directory name nothing will ever
+	// write. And a failure HERE is not a failed enqueue: the job is already
+	// durable and will run, at the generation the row already holds, which is
+	// the previous run's if this is a re-run. That is exactly the pre-0136
+	// behaviour — an in-place overwrite with a warning — so it degrades to the
+	// old failure mode rather than to a lost job.
+	if _, err := s.repo.BumpVideoTranscodeGeneration(ctx, videoID); err != nil {
+		slog.WarnContext(ctx, "transcode: generation not advanced; this run may overwrite the previous generation's objects in place",
+			"video_id", videoID.String(), "error", err)
 	}
 	// The insert is ON CONFLICT DO NOTHING (one live job per video), so it
 	// cannot return the row's id without changing that idempotency. A separate
@@ -664,6 +689,18 @@ func (s *Service) runTarget(ctx context.Context, row sqlcgen.ClaimDueTranscodeJo
 		}
 		return s.storeResult(ctx, row.VideoID, res)
 	}
+	// THIS RUN'S OUTPUT ADDRESS (0136). Read here rather than carried on the job
+	// row so a RETRY recomputes the same answer — nothing has enqueued in
+	// between, so the counter has not moved — without a second column to keep in
+	// step with the first. A read failure falls back to generation 0, which is
+	// the legacy in-place prefix: worse than a fresh directory, identical to
+	// what every release before 0136 did, and never a failed job.
+	generation, gerr := s.repo.GetVideoTranscodeGeneration(ctx, row.VideoID)
+	if gerr != nil {
+		slog.WarnContext(ctx, "transcode: generation unreadable; writing the legacy in-place prefix",
+			"video_id", row.VideoID.String(), "error", gerr)
+		generation = 0
+	}
 	// One throttle per job: the media layer still calls back once per whole
 	// percent, but only a step's worth of movement (or a real transition) turns
 	// into a write. See stepProgressThrottle for why a write here stalls ffmpeg.
@@ -703,7 +740,7 @@ func (s *Service) runTarget(ctx context.Context, row sqlcgen.ClaimDueTranscodeJo
 	// the derivation runs inside HLS packaging, where a fault fails the transcode
 	// with nothing promoted, so the playlist state must reflect it.
 	if target == TargetAll {
-		res, files, err := advanced.TranscodeAll(ctx, row.VideoID, row.SourceKey, md, progress)
+		res, files, err := advanced.TranscodeAll(ctx, row.VideoID, row.SourceKey, int(generation), md, progress)
 		if err != nil {
 			return &targetRunError{target: TargetHLS, err: err}
 		}
@@ -716,7 +753,7 @@ func (s *Service) runTarget(ctx context.Context, row sqlcgen.ClaimDueTranscodeJo
 		return nil
 	}
 	if target == TargetHLS {
-		res, err := advanced.TranscodeHLS(ctx, row.VideoID, row.SourceKey, md, progress)
+		res, err := advanced.TranscodeHLS(ctx, row.VideoID, row.SourceKey, int(generation), md, progress)
 		if err != nil {
 			return &targetRunError{target: TargetHLS, err: err}
 		}
@@ -727,7 +764,7 @@ func (s *Service) runTarget(ctx context.Context, row sqlcgen.ClaimDueTranscodeJo
 	// A standalone web-video rebuild has no ladder to derive from, so it keeps
 	// the encode.
 	if target == TargetWebVideo {
-		files, err := advanced.TranscodeWebVideos(ctx, row.VideoID, row.SourceKey, md, progress)
+		files, err := advanced.TranscodeWebVideos(ctx, row.VideoID, row.SourceKey, int(generation), md, progress)
 		if err != nil {
 			return &targetRunError{target: TargetWebVideo, err: err}
 		}

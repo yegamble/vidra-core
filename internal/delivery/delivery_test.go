@@ -335,23 +335,72 @@ func TestCacheControlPolicy(t *testing.T) {
 		{ClassDownload, false, true, CacheNoStore},
 	}
 	for _, tc := range cases {
-		got := CacheControl(tc.class, tc.versioned, tc.credentialed)
+		got := CacheControl(tc.class, tc.versioned, tc.credentialed, false)
 		if got != tc.want {
 			t.Errorf("CacheControl(%s, versioned=%v, credentialed=%v) = %q, want %q",
 				tc.class, tc.versioned, tc.credentialed, got, tc.want)
 		}
 	}
-	// Nothing served as bytes is ever shared-cacheable: only the IPFS redirect,
-	// which carries no credential and points at an immutable CID, is public.
+	// NOTHING A VIEWER ASKS FOR DIRECTLY IS EVER SHARED-CACHEABLE. The shared
+	// policies exist for exactly one caller — the operator's own edge fetching
+	// its origin — and this loop is the fence around that: every class, both
+	// versioned states, uncredentialed, shared=false, still private. An
+	// intermediary between a viewer and this api is a cache Vidra cannot purge.
 	for _, class := range []Class{
 		ClassHLSPlaylist, ClassHLSSegment, ClassOriginal, ClassWebM, ClassAudio, ClassDownload,
 		ClassThumbnail, ClassStoryboard, ClassStoryboardVTT, ClassCaption, ClassAvatar,
 		ClassBanner, ClassPlaylistCover,
 	} {
 		for _, versioned := range []bool{false, true} {
-			if cc := CacheControl(class, versioned, false); !strings.HasPrefix(cc, "private") {
-				t.Errorf("CacheControl(%s, %v, false) = %q, want a private policy", class, versioned, cc)
+			if cc := CacheControl(class, versioned, false, false); !strings.HasPrefix(cc, "private") {
+				t.Errorf("CacheControl(%s, %v, false, false) = %q, want a private policy", class, versioned, cc)
 			}
+			// And a credential beats shared, whatever the class.
+			if cc := CacheControl(class, versioned, true, true); cc != CacheNoStore {
+				t.Errorf("CacheControl(%s, %v, credentialed, shared) = %q, want %q", class, versioned, cc, CacheNoStore)
+			}
+		}
+	}
+}
+
+// TestSharedCacheControlIsThePrivatePolicyPromoted pins the header table an
+// operator's edge is actually governed by: each shared value is its private
+// sibling with the same window, so "why is this cached for an hour?" keeps one
+// answer whichever side of the edge is asking.
+func TestSharedCacheControlIsThePrivatePolicyPromoted(t *testing.T) {
+	cases := []struct {
+		class     Class
+		versioned bool
+		want      string
+	}{
+		// A ?v=-stamped HLS child is immutable within its generation, and a new
+		// transcode generation is a new ?v= — so an edge entry can never be
+		// answered for a URL that means something else.
+		{ClassHLSSegment, true, CacheSharedVersionedImmutable},
+		// The unversioned compatibility URL revalidates every time, which is
+		// what makes it safe without a purge: the origin re-authorises.
+		{ClassHLSSegment, false, CacheSharedStableRevalidate},
+		{ClassOriginal, false, CacheSharedLongLived},
+		{ClassWebM, false, CacheSharedLongLived},
+		{ClassAudio, false, CacheSharedLongLived},
+		{ClassDownload, false, CacheSharedLongLived},
+		{ClassThumbnail, false, CacheSharedShortLived},
+		{ClassStoryboard, false, CacheSharedShortLived},
+		{ClassAvatar, false, CacheSharedShortLived},
+		{ClassBanner, false, CacheSharedShortLived},
+		{ClassPlaylistCover, false, CacheSharedShortLived},
+	}
+	for _, tc := range cases {
+		got := CacheControl(tc.class, tc.versioned, false, true)
+		if got != tc.want {
+			t.Errorf("CacheControl(%s, versioned=%v, shared) = %q, want %q", tc.class, tc.versioned, got, tc.want)
+		}
+		if !strings.HasPrefix(got, "public") {
+			t.Errorf("CacheControl(%s, shared) = %q, want a shared policy", tc.class, got)
+		}
+		private := CacheControl(tc.class, tc.versioned, false, false)
+		if strings.TrimPrefix(got, "public") != strings.TrimPrefix(private, "private") {
+			t.Errorf("shared %q and private %q differ by more than the directive", got, private)
 		}
 	}
 }
@@ -391,6 +440,7 @@ func TestCDNSourceFences(t *testing.T) {
 
 	segment := Request{
 		ObjectKey:   "streaming-playlists/x/240p/seg_00000.ts",
+		Path:        "/api/v1/videos/x/hls/240p/seg_00000.ts?v=abc",
 		Class:       ClassHLSSegment,
 		Eligible:    true,
 		ContentType: "video/mp2t",
@@ -457,13 +507,25 @@ func TestCDNSourceFences(t *testing.T) {
 			want: []SourceKind{SourceAPIProxy},
 		},
 		{
-			name: "no object key: nothing to address at the edge",
+			// The edge is addressed by the request's own URL now, so a request
+			// with no path has nothing to hand it — and an object key alone is
+			// no longer enough.
+			name: "no request path: nothing to address at the edge",
 			edge: edgeOK, enabled: on,
-			req:  withReq(func(r *Request) { r.ObjectKey = "" }),
+			req:  withReq(func(r *Request) { r.Path = "" }),
 			want: []SourceKind{SourceAPIProxy},
 		},
 		{
-			name: "provider says it cannot serve this key",
+			// THE EDGE'S OWN ORIGIN FETCH. Answering it with a redirect back to
+			// the edge is a loop; answering it with a presigned URL hands the
+			// bucket to the one hop this topology exists to keep away from it.
+			name: "the edge's own origin fetch is served, never redirected",
+			edge: edgeOK, enabled: on,
+			req:  withReq(func(r *Request) { r.FromEdge = true }),
+			want: []SourceKind{SourceAPIProxy},
+		},
+		{
+			name: "provider says it cannot serve this path",
 			edge: edgeMiss, enabled: on, req: segment,
 			want: []SourceKind{SourceAPIProxy},
 		},
@@ -521,6 +583,7 @@ func TestCDNSourceOrdering(t *testing.T) {
 		WithPresign(presigner, time.Minute, on),
 	).Resolve(context.Background(), Request{
 		ObjectKey:   "thumbnails/x.jpg",
+		Path:        "/api/v1/videos/x/thumbnail",
 		Class:       ClassThumbnail,
 		Eligible:    true,
 		MirrorClass: "thumbnail",
@@ -539,12 +602,15 @@ func TestCDNSourceOrdering(t *testing.T) {
 	}
 }
 
-// TestCDNRedirectStaysPrivate is the header-promotion guard. This change makes
-// Purge real; it deliberately does NOT make anything shared-cacheable, and the
-// mirror redirect must stay the only `public` value in the system.
+// TestCDNRedirectStaysPrivate. The 307 ITSELF stays private even though the
+// bytes behind it are now shared-cacheable at the edge, and the two are
+// different questions: the redirect is a per-viewer routing decision that has
+// to stop within minutes when an operator flips delivery_cdn_enabled off during
+// an incident, while the object at the edge is governed by the header the
+// origin sent the edge (see TestSharedCacheControlIsThePrivatePolicyPromoted).
 func TestCDNRedirectStaysPrivate(t *testing.T) {
 	src := New(WithCDN(edgeOK, nil, nil)).Resolve(context.Background(), Request{
-		ObjectKey: "web-videos/x.mp4", Class: ClassOriginal, Eligible: true,
+		ObjectKey: "web-videos/x.mp4", Path: "/api/v1/videos/x/original", Class: ClassOriginal, Eligible: true,
 	})
 	if src[0].Kind != SourceCDN {
 		t.Fatalf("first source = %q, want cdn", src[0].Kind)
@@ -553,10 +619,66 @@ func TestCDNRedirectStaysPrivate(t *testing.T) {
 		t.Errorf("cdn redirect cache-control = %q, want %q", src[0].CacheControl, CacheCDNRedirect)
 	}
 	if !strings.HasPrefix(CacheCDNRedirect, "private") {
-		t.Errorf("CacheCDNRedirect = %q; promoting a byte route to shared caching is a separate change, gated on Purge being EXERCISED", CacheCDNRedirect)
+		t.Errorf("CacheCDNRedirect = %q; a shared cache holding the routing decision would outlive the kill switch", CacheCDNRedirect)
 	}
-	if CacheMirrorRedirect == CacheCDNRedirect {
-		t.Error("the IPFS mirror redirect must remain the one public policy; the CDN redirect must not have joined it")
+}
+
+// TestTheEdgesOwnFetchIsNeverRedirectedAndIsSharedCacheable is the whole
+// api-as-origin contract in one assertion: the request the edge makes to its
+// origin gets bytes with a shared policy, and the request a viewer makes gets a
+// redirect with a private one — from the same resolver, on the same object,
+// distinguished only by FromEdge.
+func TestTheEdgesOwnFetchIsNeverRedirectedAndIsSharedCacheable(t *testing.T) {
+	presigner := &stubResponsePresigner{stubPresigner: stubPresigner{url: "https://bucket.example/signed"}}
+	res := New(
+		WithCDN(edgeOK, nil, nil),
+		WithMirror(func(context.Context, string, string) (string, bool, error) {
+			return "https://gateway.example/ipfs/bafy", true, nil
+		}, nil),
+		WithPresign(presigner, time.Minute, nil),
+	)
+	base := Request{
+		ObjectKey:   "streaming-playlists/x/cmaf/chunk-0-00001.m4s",
+		Path:        "/api/v1/videos/x/hls/cmaf/chunk-0-00001.m4s?v=abc",
+		Class:       ClassHLSSegment,
+		Eligible:    true,
+		Versioned:   true,
+		MirrorClass: "hls",
+		ContentType: "video/mp4",
+	}
+	viewer := res.Resolve(context.Background(), base)
+	if viewer[0].Kind == SourceAPIProxy {
+		t.Fatalf("a viewer's request was not offered any optional source: %v", kinds(viewer))
+	}
+	if !strings.HasPrefix(viewer[len(viewer)-1].CacheControl, "private") {
+		t.Errorf("a viewer's authoritative response = %q, want a private policy", viewer[len(viewer)-1].CacheControl)
+	}
+
+	edge := base
+	edge.FromEdge = true
+	presigner.call = 0
+	got := res.Resolve(context.Background(), edge)
+	if len(got) != 1 || got[0].Kind != SourceAPIProxy {
+		t.Fatalf("the edge's origin fetch got %v; every one of those is a redirect back at the cache that asked", kinds(got))
+	}
+	if got[0].CacheControl != CacheSharedVersionedImmutable {
+		t.Errorf("edge origin fetch cache-control = %q, want %q", got[0].CacheControl, CacheSharedVersionedImmutable)
+	}
+	if presigner.call != 0 {
+		t.Errorf("a presigned URL was minted for the edge (%d calls); that hands the private bucket to the edge", presigner.call)
+	}
+
+	// And the fences still bind on the edge's own request: an object that is
+	// not publicly servable is never shared-cacheable, whoever is asking.
+	ineligible := edge
+	ineligible.Eligible = false
+	if cc := res.Resolve(context.Background(), ineligible)[0].CacheControl; !strings.HasPrefix(cc, "private") {
+		t.Errorf("an ineligible object answered the edge with %q", cc)
+	}
+	credentialed := edge
+	credentialed.Credentialed = true
+	if cc := res.Resolve(context.Background(), credentialed)[0].CacheControl; cc != CacheNoStore {
+		t.Errorf("a credentialed request answered the edge with %q, want %q", cc, CacheNoStore)
 	}
 }
 
@@ -625,10 +747,10 @@ func TestPurgeFailureDoesNotBreakServing(t *testing.T) {
 	res := New(WithCDN(edgeOK, func(context.Context, string) error {
 		return errors.New("purge API returned 500")
 	}, func() bool { return true }))
-	req := Request{ObjectKey: "web-videos/x.mp4", Class: ClassOriginal, Eligible: true}
+	req := Request{ObjectKey: "web-videos/x.mp4", Path: "/api/v1/videos/x/original", Class: ClassOriginal, Eligible: true}
 
 	for i := range 3 {
-		if err := res.Purge(context.Background(), req.ObjectKey); err == nil {
+		if err := res.Purge(context.Background(), req.Path); err == nil {
 			t.Fatalf("purge %d: want an error", i)
 		}
 		got := res.Resolve(context.Background(), req)

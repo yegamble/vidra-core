@@ -14,7 +14,17 @@ import (
 // This file wires the delivery resolver's Purge hook to the moments an
 // edge-cached object becomes wrong.
 //
-// Fan-out purges — a video's whole key set (purgeVideoEdgeCopies):
+// IT PURGES URLS, NOT KEYS. The CDN's origin is this API (internal/cdn), so the
+// edge holds its entries under the api's own media route paths — and one object
+// is reachable at more than one of them (an original is both /original and
+// /download/original; a rendition's progressive MP4 is /download/hls/720p with
+// and without ?audio=false). Enumerating routes rather than keys is therefore
+// both what the edge can act on and STRICTLY MORE PRECISE than the key set was:
+// closing downloads on a video used to purge the original's key, which evicted
+// the playback URL for that same object too and cold-started every viewer to
+// enforce a gate that does not apply to playback.
+//
+// Fan-out purges — a video's whole URL set (purgeVideoEdgeCopies):
 //   - deletion, direct (handleDeleteVideo) or via the channel cascade
 //     (handleDeleteChannel: the DATABASE deletes the videos, 0006 ON DELETE
 //     CASCADE, so the channel handler snapshots them first);
@@ -40,12 +50,12 @@ import (
 // shared-cacheable while any of these can leave wrong bytes at the edge:
 //   - video thumbnail and storyboard replacement: both overwrite their stable
 //     key in place with no invalidation;
-//   - the same-generation admin re-transcode (admin_videos.go): a rerun from
-//     an unchanged source overwrites the same output prefix; purging at
-//     enqueue would be wrong (the edge would re-cache the old bytes from
-//     origin until the job completes), so it only warns — the fix is
-//     generation-addressed keys (phase-5 item 1a) or a purge at the worker's
-//     promote step;
+//   - (CLOSED) the same-generation admin re-transcode. It needed no purge in
+//     the end: every transcode run now mints its own generation prefix
+//     (media.HLSPrefixForGeneration) and the promotion moves the ?v= tag with
+//     it, so the new generation's URLs are new URLs and the edge cannot answer
+//     one of them from an old entry. The superseded generation's objects are
+//     mediagc's, exactly as a source replacement's already were;
 //   - account deletion (internal/account): cascades channels, videos and
 //     images away without visiting any of the handlers above;
 //   - the INSTANCE-WIDE downloads_enabled toggle: publicDownload is the AND of
@@ -71,19 +81,20 @@ import (
 // with nothing in the system even attempting an invalidation. Promoting any
 // media header to a shared directive is gated on this working.
 //
-// WHAT THE PROVIDER CAN ACTUALLY DO. internal/cdn's purge is ONE OBJECT KEY per
+// WHAT THE PROVIDER CAN ACTUALLY DO. internal/cdn's purge is ONE URL per
 // request — a method, a URL template and at most one auth header, which is what
 // every CDN's single-URL invalidation API reduces to. There is no prefix, no
 // wildcard and no "purge everything under this directory", and inventing one
 // here would mean inventing a vendor. So a video's invalidation is a fan-out of
-// single-key purges over the keys that video actually occupies, which is why
+// single-URL purges over the routes that video actually occupies, which is why
 // this file enumerates rather than issues one call.
 //
-// TWO-PHASE, AND THAT IS NOT STYLISTIC. The keys are SNAPSHOTTED BEFORE the
+// TWO-PHASE, AND THAT IS NOT STYLISTIC. The paths are SNAPSHOTTED BEFORE the
 // state change and purged AFTER it commits:
 //
-//   - before, because deleting a video deletes the rows that NAME its objects
-//     (mediagc collects the objects themselves much later), and because a video
+//   - before, because deleting a video deletes the rows that name its objects
+//     and its ladder generation (mediagc collects the objects themselves much
+//     later), and because a video
 //     that has already been flipped private no longer answers the question
 //     "what could an anonymous visitor have fetched?" — which is exactly the
 //     question the edge's contents are the answer to.
@@ -96,16 +107,14 @@ import (
 // file existed. Turning a successful deletion into a 5xx would be strictly
 // worse than the stale copy it is reporting.
 
-// maxVideoPurgeKeys bounds one video's fan-out.
+// maxVideoPurgePaths bounds one video's fan-out.
 //
 // A long video's ladder is thousands of segments, and each purge is a
 // third-party HTTP call: unbounded, that is a background task that runs for
 // hours and a purge API that starts rate-limiting the ones that matter. The cap
 // is high enough to cover an ordinary video whole and low enough that the worst
-// case stays a bounded background task. It is a mitigation, not a fix — the
-// real fix is generation-addressed keys (phase-5 item 1a), after which content
-// replacement stops needing purge at all.
-const maxVideoPurgeKeys = 5000
+// case stays a bounded background task.
+const maxVideoPurgePaths = 5000
 
 // edgeCacheableVideoFileKinds are the video_files kinds whose objects a CDN
 // edge can be holding: every one of them is served through a Redirectable
@@ -118,16 +127,63 @@ const maxVideoPurgeKeys = 5000
 // serveMediaAsset's non-resolver sibling).
 var edgeCacheableVideoFileKinds = []string{"original", "thumbnail", "webm", "storyboard"}
 
-// edgePurgeSnapshot is what the database knew about a video's edge-reachable
-// objects at the instant BEFORE the change that invalidated them: exact keys
-// for the whole-file objects video_files records, and listable directory
-// prefixes for the trees it does not (an HLS ladder's segments have no rows).
-type edgePurgeSnapshot struct {
-	keys     []string
-	prefixes []string
+// videoFileKindPaths maps a video_files kind onto the media route paths that
+// kind's object is REACHABLE at. More than one for two of them, which is the
+// whole reason this seam moved from keys to URLs: an original answers both the
+// playback route and the official download, and each is its own edge entry.
+func videoFileKindPaths(videoID uuid.UUID, kind string) []string {
+	switch kind {
+	case "original":
+		return []string{
+			videoMediaPath(videoID, "/original"),
+			videoMediaPath(videoID, "/download/original"),
+		}
+	case "webm":
+		return []string{
+			videoMediaPath(videoID, "/webm"),
+			videoMediaPath(videoID, "/download/webm"),
+		}
+	case "thumbnail":
+		return []string{videoMediaPath(videoID, "/thumbnail")}
+	case "storyboard":
+		return []string{videoMediaPath(videoID, "/storyboard.jpg")}
+	default:
+		return nil
+	}
 }
 
-func (s edgePurgeSnapshot) empty() bool { return len(s.keys) == 0 && len(s.prefixes) == 0 }
+// edgePurgeTree is a streaming tree whose children have to be enumerated from
+// storage before they can be named as URLs: an HLS ladder's segments have no
+// database rows.
+type edgePurgeTree struct {
+	// videoID is the route's own id — the tree is addressed by video, not by key.
+	videoID uuid.UUID
+	// listPrefix is what the storage backend is asked to enumerate. For a
+	// Vidra-laid-out video that is the whole per-video tree, EVERY generation
+	// included, so a superseded one can be SEEN even though its URLs can no
+	// longer be named (see servedPrefix).
+	listPrefix string
+	// servedPrefix is the promoted generation's own directory — path.Dir of the
+	// master key. Only keys under it are reachable at a URL today, because the
+	// route resolves every request through the recorded master key.
+	servedPrefix string
+	// version is the ?v= generation tag the promoted tree's children are
+	// requested with, and therefore cached under.
+	version string
+	// peertube marks an imported tree served through the compatibility
+	// pseudo-rendition (/hls/peertube/<basename>).
+	peertube bool
+}
+
+// edgePurgeSnapshot is what the database knew about a video's edge-reachable
+// URLs at the instant BEFORE the change that invalidated them: exact media
+// route paths for everything a row names, and listable trees for the ladder.
+type edgePurgeSnapshot struct {
+	paths []string
+	trees []edgePurgeTree
+}
+
+func (s edgePurgeSnapshot) empty() bool { return len(s.paths) == 0 && len(s.trees) == 0 }
 
 // cdnConfigured reports whether a CDN was wired at boot at all. It is the cheap
 // gate in front of everything below, and it is what keeps this feature free for
@@ -162,56 +218,97 @@ func (s *Server) videoEdgePurgeSnapshot(ctx context.Context, videoID uuid.UUID) 
 	snap := edgePurgeSnapshot{}
 	for _, kind := range edgeCacheableVideoFileKinds {
 		f, ferr := s.videosvc.FileForView(ctx, videoID, uuid.Nil, false, kind)
-		if ferr == nil && f.StorageKey != "" {
-			snap.keys = append(snap.keys, f.StorageKey)
+		if ferr != nil || f.StorageKey == "" {
+			continue
 		}
+		snap.paths = append(snap.paths, videoFileKindPaths(videoID, kind)...)
 	}
-	// The trees, by prefix. Both are recursive, so superseded HLS generations
-	// (streaming-playlists/<id>/rN) and the progressive web-video generations
-	// come along — an edge that cached a segment before a source replacement is
-	// still holding it afterwards.
-	snap.prefixes = append(snap.prefixes,
-		media.HLSKeyPrefix(videoID),
-		media.WebVideoPrefixForSource(videoID, ""),
-	)
-	// A PeerTube-imported ladder does NOT live under this video's id — it keeps
-	// the source instance's layout (streaming-playlists/hls/<source-uuid>/), and
-	// the only handle on it is the recorded master key. Its row cascades away
-	// with the video, so it has to be read here with the rest of the snapshot.
-	if s.transcodesvc != nil {
-		if sp, ok := s.transcodesvc.Playlist(ctx, videoID); ok {
-			if dir := path.Dir(sp.MasterKey); strings.Contains(sp.MasterKey, "/") && dir != "." {
-				snap.prefixes = append(snap.prefixes, dir)
-			}
-		}
+	snap.paths = append(snap.paths, s.videoDerivedDownloadPaths(ctx, videoID)...)
+	if tree, ok := s.videoEdgePurgeTree(ctx, videoID); ok {
+		snap.trees = append(snap.trees, tree)
 	}
 	return snap
 }
 
-// downloadGatedVideoFileKinds are the video_files kinds whose objects the
-// DOWNLOAD gates control, as opposed to the Eligible fence: publicDownload
-// (downloads.go) is a second, independent gate, so these can become
-// unauthorized while the video stays public, published and perfectly watchable.
+// videoEdgePurgeTree describes the streaming tree the edge could be holding
+// children of. Absent when there is no ready ladder to have served.
 //
-// "thumbnail" and "storyboard" are edge-cacheable but carry no download gate,
-// so they are deliberately absent — closing downloads does not make a poster
-// unauthorized.
-var downloadGatedVideoFileKinds = []string{"original", "webm"}
+// The web-video progressive MP4s (web-videos/<id>[/rN]/<rung>.mp4) have no
+// entry here and need none: no media route serves them, so they can never have
+// reached an edge. They were in the key-addressed snapshot only because it
+// enumerated a prefix.
+func (s *Server) videoEdgePurgeTree(ctx context.Context, videoID uuid.UUID) (edgePurgeTree, bool) {
+	if s.transcodesvc == nil {
+		return edgePurgeTree{}, false
+	}
+	sp, ok := s.transcodesvc.Playlist(ctx, videoID)
+	if !ok || sp.MasterKey == "" || !strings.Contains(sp.MasterKey, "/") {
+		return edgePurgeTree{}, false
+	}
+	served := path.Dir(sp.MasterKey)
+	if served == "." {
+		return edgePurgeTree{}, false
+	}
+	tree := edgePurgeTree{
+		videoID:      videoID,
+		listPrefix:   media.HLSKeyPrefix(videoID),
+		servedPrefix: served,
+		version:      hlsCacheVersion(sp),
+	}
+	// A PeerTube-imported ladder does NOT live under this video's id — it keeps
+	// the source instance's layout (streaming-playlists/hls/<source-uuid>/) and
+	// is served through the compatibility pseudo-rendition, so the tree to list
+	// is the master's own directory and there is no generation beneath it.
+	if isPeerTubeHLSMasterKey(sp.MasterKey) {
+		tree.listPrefix = served
+		tree.peertube = true
+	}
+	return tree, true
+}
+
+// videoDerivedDownloadPaths are the official-download routes whose objects are
+// derived from the finalized HLS tree rather than recorded as whole files: the
+// per-rendition progressive MP4s in both audio-included and video-only form,
+// and the audio-only m4a.
+//
+// They are named as ROUTES, which is what makes this list short: the objects
+// themselves live inside the ladder's directory, and the key-addressed
+// predecessor had to enumerate them by key precisely so that a prefix purge
+// would not evict the segments alongside them.
+func (s *Server) videoDerivedDownloadPaths(ctx context.Context, videoID uuid.UUID) []string {
+	if s.transcodesvc == nil {
+		return nil
+	}
+	sp, ok := s.transcodesvc.Playlist(ctx, videoID)
+	if !ok || sp.MasterKey == "" {
+		return nil
+	}
+	paths := []string{videoMediaPath(videoID, "/download/audio")}
+	for _, rendition := range s.transcodesvc.Renditions(ctx, videoID) {
+		if rendition.Height <= 0 {
+			continue
+		}
+		paths = append(paths,
+			videoRenditionDownloadPath(videoID, int(rendition.Height), true),
+			videoRenditionDownloadPath(videoID, int(rendition.Height), false),
+		)
+	}
+	return paths
+}
 
 // videoDownloadPurgeSnapshot records what a CDN edge could be holding for
-// videoID that the DOWNLOAD gates authorised — the stored original and the VP9
-// alternate, plus the derivatives remuxed out of the finalized HLS tree
-// (per-rendition progressive MP4s, both audio-included and video-only, and
-// audio.m4a).
+// videoID that the DOWNLOAD gates authorised.
 //
-// It returns EXACT KEYS ONLY, never a prefix, and that is the whole point. The
-// derivatives live INSIDE the ladder's directory alongside the segments
-// (media.HLSDownloadKey hangs off a rendition's KeyPrefix, HLSAudioDownloadKey
-// off path.Dir of the master), so purging by prefix — the cheap thing
-// videoEdgePurgeSnapshot does for a takedown — would evict every segment and
-// variant playlist too. Revoking downloads leaves the video watchable, so that
-// would cold-start playback at the edge for every viewer to enforce a gate on
-// four objects.
+// It is the strictly smaller set the SECOND fence controls: publicDownload
+// (downloads.go) is a gate independent of visibility, so these URLs can become
+// unauthorized while the video stays public, published and perfectly watchable.
+//
+// EVERY PATH HERE IS A /download ROUTE, and that is the correctness the move
+// from keys to URLs bought. The download gate does not apply to /original or
+// /webm — those are playback routes fenced on visibility alone — yet the
+// original and the VP9 alternate are the SAME OBJECTS behind both. Purging by
+// key therefore evicted the playback URLs too, cold-starting every viewer's
+// progressive fallback to enforce a gate that does not touch it.
 //
 // An EMPTY snapshot when the gates were ALREADY closed is load-bearing, not an
 // optimisation: it is what makes a re-close idempotent and what keeps a PATCH
@@ -230,34 +327,25 @@ func (s *Server) videoDownloadPurgeSnapshot(ctx context.Context, videoID uuid.UU
 	snap := edgePurgeSnapshot{}
 	for _, kind := range downloadGatedVideoFileKinds {
 		f, ferr := s.videosvc.FileForView(ctx, videoID, uuid.Nil, false, kind)
-		if ferr == nil && f.StorageKey != "" {
-			snap.keys = append(snap.keys, f.StorageKey)
-		}
-	}
-	if s.transcodesvc == nil {
-		return snap
-	}
-	sp, ok := s.transcodesvc.Playlist(ctx, videoID)
-	if !ok || sp.MasterKey == "" {
-		return snap
-	}
-	// Both variants of every rendition: the handler picks between them on
-	// ?audio=false, so both are separately reachable and separately cacheable.
-	for _, rendition := range s.transcodesvc.Renditions(ctx, videoID) {
-		if rendition.KeyPrefix == "" {
+		if ferr != nil || f.StorageKey == "" {
 			continue
 		}
-		snap.keys = append(snap.keys,
-			media.HLSDownloadKey(rendition.KeyPrefix, true),
-			media.HLSDownloadKey(rendition.KeyPrefix, false),
-		)
+		snap.paths = append(snap.paths, videoMediaPath(videoID, "/download/"+kind))
 	}
-	snap.keys = append(snap.keys, media.HLSAudioDownloadKey(sp.MasterKey))
+	snap.paths = append(snap.paths, s.videoDerivedDownloadPaths(ctx, videoID)...)
 	return snap
 }
 
-// purgeVideoEdgeCopies invalidates a snapshot's objects at the edge, detached
-// from the request.
+// downloadGatedVideoFileKinds are the video_files kinds whose objects the
+// DOWNLOAD gates control. Their /download/<kind> route names them directly.
+//
+// "thumbnail" and "storyboard" are edge-cacheable but carry no download gate,
+// so they are deliberately absent — closing downloads does not make a poster
+// unauthorized.
+var downloadGatedVideoFileKinds = []string{"original", "webm"}
+
+// purgeVideoEdgeCopies invalidates a snapshot's URLs at the edge, detached from
+// the request.
 //
 // Detached because a purge is a fan-out of third-party HTTP calls, each bounded
 // only by DELIVERY_CDN_PURGE_TIMEOUT (10s by default): holding a deletion open
@@ -271,66 +359,64 @@ func (s *Server) purgeVideoEdgeCopies(ctx context.Context, videoID uuid.UUID, sn
 	go s.runVideoEdgePurge(context.WithoutCancel(ctx), videoID, snap)
 }
 
-// runVideoEdgePurge issues one purge per key and reports the outcome ONCE.
+// runVideoEdgePurge issues one purge per URL and reports the outcome ONCE.
 //
-// One aggregate log line rather than one per key, and that is the point: a CDN
+// One aggregate log line rather than one per URL, and that is the point: a CDN
 // configured with no DELIVERY_CDN_PURGE_URL fails every single call (cmd/api
-// already warns about that at boot), and a per-key warning would turn one
-// takedown into thousands of identical lines. Neither the key nor the purge URL
+// already warns about that at boot), and a per-URL warning would turn one
+// takedown into thousands of identical lines. Neither the path nor the purge URL
 // is logged — a purge template is operator-supplied and some APIs carry the
 // credential in the query string.
 //
 // Sequential, not concurrent: purge APIs are rate-limited and a takedown is not
-// latency-critical. A rejected key never stops the loop — one object saying no
+// latency-critical. A rejected URL never stops the loop — one object saying no
 // tells you nothing about the next one, and stopping early would leave the rest
 // of the ladder cached.
 func (s *Server) runVideoEdgePurge(ctx context.Context, videoID uuid.UUID, snap edgePurgeSnapshot) {
-	keys, complete := s.expandEdgePurgeKeys(ctx, snap)
+	paths, complete := s.expandEdgePurgePaths(ctx, snap)
 	failed := 0
-	for _, key := range keys {
-		if err := s.deliverysvc.Purge(ctx, key); err != nil {
+	for _, mediaPath := range paths {
+		if err := s.deliverysvc.Purge(ctx, mediaPath); err != nil {
 			failed++
 		}
 	}
 	// The counters (media_purge_metrics.go) are the observable record of this
 	// run — the admin page's answer to "has purge been exercised".
-	recordVideoEdgePurgeRun(len(keys)-failed, failed, complete)
+	recordVideoEdgePurgeRun(len(paths)-failed, failed, complete)
 	if failed == 0 && complete {
 		return
 	}
 	s.logger.WarnContext(ctx, "cdn purge incomplete; the edge may still be serving this video",
 		"video_id", videoID.String(),
-		"purged", len(keys)-failed,
+		"purged", len(paths)-failed,
 		"failed", failed,
-		"key_set_complete", complete)
+		"url_set_complete", complete)
 }
 
-// purgeEdgeKey invalidates ONE object at the edge — the single-key sibling of
-// purgeVideoEdgeCopies, for the assets that occupy exactly one stable identity
-// key (avatars, banners, playlist covers). The stable key is what makes these
-// purges matter at all: replacement overwrites IN PLACE, so without an
-// invalidation the edge serves the old bytes until its TTL expires, and after
-// a deletion it serves them with nothing at the origin left to name them.
+// purgeEdgePath invalidates ONE media URL at the edge — the single-URL sibling
+// of purgeVideoEdgeCopies, for the assets that occupy exactly one stable route
+// (avatars, banners, playlist covers). The stable URL is what makes these
+// purges matter at all: replacement overwrites the bytes behind it, so without
+// an invalidation the edge serves the old image until its TTL expires, and after
+// a deletion it serves it with nothing at the origin left to name it.
 //
 // Same contract as the fan-out: detached (the work outlives the response by
 // design), best-effort (a purge failure never fails the mutation), and fired
-// AFTER the mutation commits with a key snapshotted BEFORE it — the
-// pre-mutation key is the one the edge cached; on an extension-changing
-// replacement the new key holds nothing yet.
+// AFTER the mutation commits with a path snapshotted BEFORE it.
 //
-// asset/resourceID label the failure log; the KEY is never logged (the purge
-// URL template is operator-supplied and may carry the credential, and log
-// lines must not become the place object keys leak from either).
-func (s *Server) purgeEdgeKey(ctx context.Context, asset string, resourceID uuid.UUID, key string) {
-	if !s.cdnConfigured() || key == "" {
+// asset/resourceID label the failure log; the PATH is never logged (the purge
+// URL template is operator-supplied and may carry the credential, and log lines
+// must not become the place media URLs leak from either).
+func (s *Server) purgeEdgePath(ctx context.Context, asset string, resourceID uuid.UUID, mediaPath string) {
+	if !s.cdnConfigured() || mediaPath == "" {
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
 	go func() {
-		// A one-key run is always a complete key set; it shares the fan-out's
+		// A one-URL run is always a complete set; it shares the fan-out's
 		// counters because the cdn_purge exercise record must cover every purge
 		// shape — an install that only ever replaces images still purges.
-		if err := s.deliverysvc.Purge(ctx, key); err != nil {
+		if err := s.deliverysvc.Purge(ctx, mediaPath); err != nil {
 			recordVideoEdgePurgeRun(0, 1, true)
 			s.logger.WarnContext(ctx, "cdn purge failed; the edge may still be serving this object",
 				"asset", asset,
@@ -341,42 +427,48 @@ func (s *Server) purgeEdgeKey(ctx context.Context, asset string, resourceID uuid
 	}()
 }
 
-// userImageEdgeKey and channelImageEdgeKey record the one key a CDN edge could
-// be holding for a profile image, BEFORE a mutation replaces or removes it.
-// Empty when there is nothing to invalidate: no CDN configured (the same free-
-// by-default gate as the video snapshot), no image service wired, or no image
-// set. There is no privacy fence to re-derive here — identity images are
+// userImageEdgePath and channelImageEdgePath record the one URL a CDN edge
+// could be holding for a profile image, BEFORE a mutation replaces or removes
+// it. Empty when there is nothing to invalidate: no CDN configured (the same
+// free-by-default gate as the video snapshot), no image service wired, or no
+// image set. There is no privacy fence to re-derive here — identity images are
 // served with unconditional eligibility (profile_images.go), so "an image
 // exists" IS "the edge could hold it".
-func (s *Server) userImageEdgeKey(ctx context.Context, userID uuid.UUID, kind string) string {
+//
+// The IMAGE ROW is still read rather than the path simply being built: the
+// route 404s when no image is set, so an unset image has no edge entry and must
+// not spend a purge call.
+func (s *Server) userImageEdgePath(ctx context.Context, userID uuid.UUID, kind string) string {
 	if !s.cdnConfigured() || s.imagesvc == nil {
 		return ""
 	}
-	img, err := s.imagesvc.UserImage(ctx, userID, kind)
-	if err != nil {
+	if _, err := s.imagesvc.UserImage(ctx, userID, kind); err != nil {
 		return ""
 	}
-	return img.StorageKey
+	return userImagePath(userID, kind)
 }
 
-func (s *Server) channelImageEdgeKey(ctx context.Context, channelID uuid.UUID, kind string) string {
-	if !s.cdnConfigured() || s.imagesvc == nil {
+// channelImageEdgePath takes the HANDLE because that is what the route is
+// addressed by. A handle rename therefore leaves the old URL at the edge under
+// a name nothing here can reconstruct; that is recorded rather than papered
+// over, and it is the same class of gap as a superseded HLS generation's ?v=.
+func (s *Server) channelImageEdgePath(ctx context.Context, channelID uuid.UUID, handle, kind string) string {
+	if !s.cdnConfigured() || s.imagesvc == nil || handle == "" {
 		return ""
 	}
-	img, err := s.imagesvc.ChannelImage(ctx, channelID, kind)
-	if err != nil {
+	if _, err := s.imagesvc.ChannelImage(ctx, channelID, kind); err != nil {
 		return ""
 	}
-	return img.StorageKey
+	return channelImagePath(handle, kind)
 }
 
-// playlistCoverEdgeKey records the one key a CDN edge could be holding for a
+// playlistCoverEdgePath records the one URL a CDN edge could be holding for a
 // playlist's cover, BEFORE a mutation replaces, removes or de-lists it. Unlike
 // the identity images this one HAS an eligibility fence to re-derive: a cover
 // may only leave the origin for a PUBLIC playlist (playlists.go), so a private
 // or unlisted playlist's cover was structurally never handed to the CDN and
 // returns empty here — the same self-fencing discipline as the video snapshot.
-func (s *Server) playlistCoverEdgeKey(ctx context.Context, playlistID uuid.UUID) string {
+func (s *Server) playlistCoverEdgePath(ctx context.Context, playlistID uuid.UUID) string {
 	if !s.cdnConfigured() || s.playlistsvc == nil {
 		return ""
 	}
@@ -384,56 +476,98 @@ func (s *Server) playlistCoverEdgeKey(ctx context.Context, playlistID uuid.UUID)
 	if err != nil || p.Visibility != "public" || p.ThumbnailExt == nil || *p.ThumbnailExt == "" {
 		return ""
 	}
-	return media.PlaylistThumbnailKey(playlistID, *p.ThumbnailExt)
+	return playlistCoverPath(playlistID)
 }
 
-// expandEdgePurgeKeys turns a snapshot into the deduplicated key list to purge,
-// enumerating each prefix through the storage backend.
+// supersededGenerationKey reports that a key under the promoted generation's own
+// prefix in fact belongs to a LATER generation directory
+// (streaming-playlists/<id>/rN/…). It is only ever true when the promoted
+// generation is the legacy in-place layout, because that layout is the parent of
+// every rN directory the video has ever had.
+func supersededGenerationKey(servedPrefix, key string) bool {
+	rest, ok := strings.CutPrefix(key, servedPrefix)
+	if !ok {
+		return false
+	}
+	seg, _, found := strings.Cut(rest, "/")
+	return found && media.IsHLSGenerationName(seg)
+}
+
+// expandEdgePurgePaths turns a snapshot into the deduplicated URL list to purge,
+// enumerating each tree through the storage backend.
 //
 // complete=false means the list is known to be short of what the edge could
-// hold — the backend cannot list, a listing failed, or the cap was hit — which
-// is a materially different outcome from "purged everything and some calls
-// failed" and is reported as such.
+// hold, which is a materially different outcome from "purged everything and some
+// calls failed" and is reported as such. Three causes, all named:
 //
-// The recorded whole-file keys go FIRST so that a capped fan-out still spends
-// its budget on the thumbnail and the original rather than exhausting it on
-// segments. Playlist objects come along in the tree listing even though
-// delivery.Redirectable excludes them from the edge entirely: they cost one
-// call each against a provider for which "there was never a copy" is a success
-// (404 is success in internal/cdn), and filtering by filename here would be a
-// second, drifting copy of the key grammar that lives in internal/media.
-func (s *Server) expandEdgePurgeKeys(ctx context.Context, snap edgePurgeSnapshot) ([]string, bool) {
-	seen := make(map[string]struct{}, len(snap.keys))
-	out := make([]string, 0, len(snap.keys))
-	add := func(key string) bool {
-		if key == "" {
+//   - the backend cannot list, or a listing failed;
+//   - the cap was hit;
+//   - A SUPERSEDED GENERATION IS STILL IN THE STORE. Its children were served
+//     at the same paths as today's under a DIFFERENT ?v= tag, and that tag is
+//     the promoted playlist's own updated-at — it is not recorded anywhere once
+//     the row moves on, so those URLs cannot be named. They stop existing when
+//     mediagc collects the generation, which is why generation-addressed output
+//     makes this bound shrink rather than grow.
+//
+// The recorded paths go FIRST so that a capped fan-out still spends its budget
+// on the thumbnail and the original rather than exhausting it on segments.
+func (s *Server) expandEdgePurgePaths(ctx context.Context, snap edgePurgeSnapshot) ([]string, bool) {
+	seen := make(map[string]struct{}, len(snap.paths))
+	out := make([]string, 0, len(snap.paths))
+	add := func(mediaPath string) bool {
+		if mediaPath == "" {
 			return true
 		}
-		if _, dup := seen[key]; dup {
+		if _, dup := seen[mediaPath]; dup {
 			return true
 		}
-		seen[key] = struct{}{}
-		out = append(out, key)
-		return len(out) < maxVideoPurgeKeys
+		seen[mediaPath] = struct{}{}
+		out = append(out, mediaPath)
+		return len(out) < maxVideoPurgePaths
 	}
-	for _, key := range snap.keys {
-		if !add(key) {
+	for _, mediaPath := range snap.paths {
+		if !add(mediaPath) {
 			return out, false
 		}
 	}
 	lister, ok := s.media.(storage.ObjectLister)
 	if !ok {
-		return out, len(snap.prefixes) == 0
+		return out, len(snap.trees) == 0
 	}
 	complete := true
-	for _, prefix := range snap.prefixes {
-		listed, err := lister.ListKeys(ctx, prefix)
+	for _, tree := range snap.trees {
+		listed, err := lister.ListKeys(ctx, tree.listPrefix)
 		if err != nil {
 			complete = false
 			continue
 		}
+		servedPrefix := strings.TrimSuffix(tree.servedPrefix, "/") + "/"
 		for _, key := range listed {
-			if !add(key) {
+			if !strings.HasPrefix(key, servedPrefix) {
+				// A key outside the promoted generation's own directory —
+				// which is what a SUPERSEDED generation looks like when the
+				// promoted one is streaming-playlists/<id>/rN.
+				complete = false
+				continue
+			}
+			rel, mapped := hlsTreeRelForKey(tree.servedPrefix, key, tree.peertube)
+			if !mapped {
+				// The OTHER shape a superseded generation takes, and it is the
+				// one a prefix test cannot see: when the promoted generation is
+				// the legacy in-place layout (generation 0), every later
+				// generation sits UNDER it at streaming-playlists/<id>/rN/…, so
+				// it passes the prefix check above and only the route grammar
+				// rejects it. Without this branch a video that had been
+				// re-transcoded once would report a complete purge while its
+				// previous generation stayed at the edge.
+				if !tree.peertube && supersededGenerationKey(servedPrefix, key) {
+					complete = false
+				}
+				// Otherwise: a playlist, a manifest or a download derivative —
+				// named by another route or never at the edge at all.
+				continue
+			}
+			if !add(videoHLSChildPath(tree.videoID, rel, tree.version)) {
 				return out, false
 			}
 		}

@@ -661,8 +661,9 @@ func TestSweepNeverCollectsAPeerTubeImportHLSTree(t *testing.T) {
 	}
 
 	repo := &fakeRepo{
-		fileKeys: []string{nativeSrc},
-		videoIDs: []uuid.UUID{imported, native},
+		fileKeys:    []string{nativeSrc},
+		videoIDs:    []uuid.UUID{imported, native},
+		generations: map[uuid.UUID]int32{native: 1},
 		playlists: []sqlcgen.ListStreamingPlaylistRefsRow{
 			{VideoID: imported, MasterKey: ptMaster},
 			{VideoID: native, MasterKey: "streaming-playlists/" + native.String() + "/r1/master.m3u8"},
@@ -883,7 +884,7 @@ func TestSweepNeverCollectsAReferenceModeSourceObject(t *testing.T) {
 // silently stopped reclaiming storage — a quieter failure than the one above,
 // and a harder one to notice. Every shape written under web-videos/: the
 // original, a replacement's generation-tagged original, and the progressive
-// rung derivatives (media.WebVideoPrefixForSource).
+// rung derivatives (media.WebVideoPrefixForGeneration).
 func TestOrphanedVidraMintedKeysAreStillCollected(t *testing.T) {
 	dead := uuid.New()
 	minted := []string{

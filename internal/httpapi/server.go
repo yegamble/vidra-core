@@ -1343,7 +1343,7 @@ func (s *Server) routes() {
 		s.echo.GET("/sitemap.xml", s.handleSitemap)
 	}
 
-	api := s.echo.Group("/api/v1")
+	api := s.echo.Group(apiBasePath)
 	// Rate limiting guards the API surface only; liveness/readiness/version/schema
 	// are root-mounted above and so exempt, which is what keeps an orchestrator
 	// probe — or `vidra update` asking the same question twice — from being

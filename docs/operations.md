@@ -955,7 +955,7 @@ Authorization header. Captions are the one eligible-looking asset that is never
 redirected today — they are read as a stream that does not expose a storage key —
 so they take the cache policy only.
 
-## CDN delivery — an edge in front of your object store
+## CDN delivery — an edge in front of this API
 
 The same machinery as direct delivery above, with a different destination: for a
 request that is already servable to an anonymous visitor, the API answers `307`
@@ -963,22 +963,82 @@ with a **CDN edge URL** instead of proxying the bytes or signing an object-store
 URL. Vidra contains no CDN-vendor code and names no provider; a CDN is described
 entirely by configuration.
 
-**Point the CDN at your object store, not at Vidra.** This is the one thing that
-has to be right and that nothing here can check for you. The delivery layer works
-in storage object keys, so the edge URL is `DELIVERY_CDN_BASE_URL` + `/` + the
-object key:
+**Point the CDN at this API, not at your object store.** This is the one thing
+that has to be right and that nothing here can check for you. The edge URL is
+`DELIVERY_CDN_BASE_URL` plus the API's own media route path, query and all:
 
 ```text
 DELIVERY_CDN_BASE_URL=https://cdn.example.com
-  → https://cdn.example.com/streaming-playlists/<uuid>/240p/seg_00000.ts
-  → https://cdn.example.com/web-videos/<uuid>.mp4
+  → https://cdn.example.com/api/v1/videos/<id>/hls/cmaf/chunk-0-00001.m4s?v=<tag>&__vidra_edge=1
+  → https://cdn.example.com/api/v1/videos/<id>/original?__vidra_edge=1
 ```
 
-So the CDN's **origin** must serve those same keys: the bucket, or a static
-server rooted at the media directory. A CDN pointed at the Vidra API origin 404s
-every request — the API addresses media by *route* (`/api/v1/videos/<id>/hls/…`),
-not by key — and a 404 from a third party is indistinguishable from a cold cache,
-so you will only see it in the browser.
+So the CDN's **origin** is the api host, serving the same routes a viewer would
+reach directly. Three expectations of the edge, none of them unusual:
+
+* **Forward `Range`.** Seeking in a progressive original is a Range request; an
+  edge that swallows it turns every seek into a whole-file fetch.
+* **Honour the origin's `Cache-Control`.** The api decides what is cacheable and
+  for how long, per class — see the table below. An edge with a fixed TTL of its
+  own overrides that and there is nothing Vidra can do about it.
+* **Pass the query string through, as part of the cache key.** `?v=<tag>` is the
+  transcode generation and `?audio=false` selects a different file. An edge that
+  strips or ignores the query will serve one generation's bytes under another's
+  URL, which is the exact failure this topology exists to make impossible.
+
+**This changed in the A33 remediation, and an existing deployment must
+repoint.** `DELIVERY_CDN_BASE_URL` used to be a base over your *bucket*, with
+the edge URL being the base plus the storage object key. The runtime
+`delivery_cdn_enabled` toggle defaults off, so upgrading alone changes nothing —
+but if you had it on, repoint the origin at the api before turning it back on,
+or every edge URL will 404 against a bucket that has no such key.
+
+**Why the API and not the bucket.** A key-addressed origin has to be readable by
+the CDN, and the obvious way to grant that — a public-read bucket policy —
+makes **every object in the store world-readable**, a private video's original
+and poster included, because public and private media share `web-videos/`,
+`thumbnails/` and `streaming-playlists/` and no key prefix separates them.
+Purging the edge after a privacy flip then sends the very next request back to
+an origin that still serves the object, so it is simply re-cached. That was
+measured on a lab bucket during the A32/A33 acceptance run: a correct 18-key
+purge undone by one request. With the api as origin:
+
+* your media bucket needs **no public policy at all**, and every cache miss and
+  every revalidation re-runs the route's own authorization — a video flipped
+  private is refused to the edge on its next fetch, exactly as to a viewer;
+* the edge caches the **API's** response headers, so a redirected official
+  download keeps the creator's filename (`Content-Disposition`) and media
+  answers with a real `Content-Type` instead of `application/octet-stream`;
+* the `?v=` generation tag reaches the edge, so a re-transcode is a **new URL**
+  rather than the same key with different bytes behind it.
+
+**How the API recognises your edge.** Every edge URL Vidra mints carries a
+`__vidra_edge=1` marker, which the CDN forwards to the origin as part of the
+request it was asked for. That is how the api answers the edge's own fetch with
+bytes rather than a redirect back to the edge — a loop. It needs nothing
+configured on your side beyond forwarding the query string, and it is **not a
+credential**: anyone may send it, and all it can do is decline the redirect and
+take the authoritative path, which is authorised exactly as every media request
+already is.
+
+**What the edge is allowed to store.** Media responses are `private` for every
+caller except the edge's own origin fetch of a publicly servable object, which
+gets the same window promoted to `public`:
+
+| what | to a viewer / any intermediary | to the edge (public object) |
+|---|---|---|
+| `?v=`-stamped HLS child | `private, max-age=31536000, immutable` | `public, max-age=31536000, immutable` |
+| unversioned HLS child | `private, max-age=0, must-revalidate` | `public, max-age=0, must-revalidate` |
+| `/original`, `/webm`, `/download/*` | `private, max-age=3600, must-revalidate` | `public, max-age=3600, must-revalidate` |
+| thumbnail, storyboard, avatar, banner, playlist cover | `private, max-age=300, must-revalidate` | `public, max-age=300, must-revalidate` |
+| HLS playlists, `storyboard.vtt` | `private` (never redirected) | never reaches the edge |
+| anything with `?pt=` or `Authorization` | `private, no-store` | never reaches the edge |
+
+Only the edge's URL carries the marker, so the shared entry and the private one
+are different URLs — there is no `Vary` to get wrong and no way for a viewer's
+request to be answered from the shared entry. Playlists stay on the origin for a
+reason the bucket topology never had: they are the generation switch, the one
+URL whose bytes must change the instant a new transcode generation is promoted.
 
 **Turning it on is two steps, deliberately.** `DELIVERY_CDN_BASE_URL` (env,
 needs a restart) makes the CDN *exist*; the `delivery_cdn_enabled` admin setting
@@ -1002,26 +1062,17 @@ public, published, uncredentialed media. **CDN-fronted private playback is not
 this feature** — it needs signed-URLs-at-the-edge, which is a different
 mechanism and a later decision.
 
-**That bound is about the redirect, not about your bucket.** It says what Vidra
-*hands* the edge. It cannot say what the edge is able to *fetch*, and the two
-are only the same if you fence the origin. A key-addressed origin has to be
-readable by the CDN; grant that with a public-read bucket policy and **every
-object in the bucket becomes world-readable at the origin** — a private video's
-original and its poster included, because public and private media share
-`web-videos/`, `thumbnails/` and `streaming-playlists/`, and no key prefix
-separates them. The consequence is worse than an exposure: purging the edge
-after a privacy flip sends the next request straight back to an origin that
-still serves the object, so the edge simply re-caches it. Measured on a lab
-bucket during the A32/A33 acceptance run — a private video's poster and original
-both answered 200 to an unauthenticated fetch, and a correct 18-key purge was
-undone by the very next request.
+**Your bucket stays private, and should.** Nothing about a CDN requires the
+object store to be reachable by anyone but this api. If you previously opened it
+so a key-addressed edge could read it, close it again — that policy is a
+decision to publish every video on the instance, and it is no longer buying you
+anything.
 
-Use your CDN's origin-access mechanism instead — a signed origin request, an
-origin-access identity, an allow-list of the edge's egress addresses, whatever
-your provider calls it — and read a public-read media bucket as a decision to
-publish every video on the instance.
-
-**Purge.**
+**Purge.** Purge names **URLs**, because that is what the edge holds entries
+under. A video's invalidation is therefore a fan-out over the media routes that
+video occupies (its poster, its original at both `/original` and
+`/download/original`, each rendition download with and without `?audio=false`,
+and every `?v=`-stamped segment), not over its object keys.
 
 ```bash
 DELIVERY_CDN_PURGE_URL={url}            # Varnish / nginx purge module
@@ -1033,7 +1084,8 @@ DELIVERY_CDN_PURGE_TOKEN='Bearer <token>'   # default header: Authorization
 ```
 
 Placeholders are `{url}` (the edge URL), `{url_encoded}` (the same, encoded for
-a query value) and `{key}` (the object key alone). `DELIVERY_CDN_PURGE_TOKEN` is
+a query value) and `{key}` (the edge URL's path and query with no leading
+slash). `DELIVERY_CDN_PURGE_TOKEN` is
 a **secret**: sent header-only, never logged, and never echoed in an error — the
 request URL is stripped out of transport errors too, because some purge APIs want
 the credential in the query string.
@@ -1042,12 +1094,19 @@ Leaving `DELIVERY_CDN_PURGE_URL` empty is legal and means the edge cannot be
 invalidated from here: a deletion, a privacy flip or a takedown will not reach
 it. The API warns about that once at boot rather than at the moment you need it.
 
-**Nothing calls purge automatically yet**, and that is on purpose. Automatic
-invalidation only becomes load-bearing once a media response is promoted from
-`private` to shared caching, and that promotion is a separate, riskier change
-gated on a purge path that has actually been fired in anger. Until then every
-byte route stays `private`, exactly as documented above, and the edge caches only
-what a viewer's own browser would have.
+**What fires a purge.** A video's deletion (directly, through its channel, or
+through an admin block), a privacy flip away from public, a per-video download
+flip that closes, and the replacement or deletion of an avatar, banner or public
+playlist cover. Each is best-effort and detached: a purge failure is a logged
+warning with a `purged`/`failed`/`url_set_complete` count and never a failed
+request, and `GET /api/v1/admin/system` carries the running `cdn_purge` totals.
+
+**What does not, and is named rather than hidden.** A same-source re-transcode
+needs none — every transcode generation writes its own prefix and moves the
+`?v=` tag, so the new generation is a new URL — but thumbnail/storyboard
+replacement, account deletion and the instance-wide `downloads_enabled` toggle
+are still unwired, and a failed purge is not retried. Until those land, treat
+the edge as still serving those objects until its own TTL.
 
 **Verifying it.** As with direct delivery these are GET requests with the body
 discarded — the media routes are GET-only and a `curl -I` answers `405`.
@@ -1056,12 +1115,19 @@ discarded — the media routes are GET-only and a `curl -I` answers `405`.
 # A public video's original should answer 307 to the edge.
 curl -s -o /dev/null -D - https://example.org/api/v1/videos/<id>/original
 #   HTTP/2 307
-#   location: https://cdn.example.com/web-videos/<id>.mp4
+#   location: https://cdn.example.com/api/v1/videos/<id>/original?__vidra_edge=1
 #   cache-control: private, max-age=300, must-revalidate
 
 # Follow it: the edge must serve the same bytes. A 404 here means the CDN's
-# origin is not key-addressed — see the top of this section.
+# origin is not this api — see the top of this section.
 curl -s -o /dev/null -D - -L https://example.org/api/v1/videos/<id>/original
+#   (from the edge) cache-control: public, max-age=3600, must-revalidate
+
+# The origin's own answer to an edge-shaped request, without the edge in the
+# way: bytes, never a redirect, with the shared policy the edge is governed by.
+curl -s -o /dev/null -D - "https://example.org/api/v1/videos/<id>/original?__vidra_edge=1"
+#   HTTP/2 200
+#   cache-control: public, max-age=3600, must-revalidate
 
 # A credentialed request must NOT redirect.
 curl -s -o /dev/null -D - -H "Authorization: Bearer <token>" \
@@ -1073,8 +1139,9 @@ curl -s -o /dev/null -D - -H "Authorization: Bearer <token>" \
 **Rolling back** is the setting, not a migration: turn `delivery_cdn_enabled`
 off and the next request is served by the API again. Turning delivery off does
 **not** evict what the edge already holds — if you are turning it off because
-something leaked, purge the object (or make it non-public, which stops Vidra
-handing out its edge URL) as well.
+something leaked, purge the object (or make it non-public, which both stops
+Vidra handing out its edge URL and makes the origin refuse the edge's next
+fetch) as well.
 
 ## Playback quality (QoE) — measuring whether delivery is actually better
 

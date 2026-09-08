@@ -99,32 +99,6 @@ func (q *Queries) ListAllVideoFileKeys(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
-const listAllVideoIDs = `-- name: ListAllVideoIDs :many
-SELECT id FROM videos
-`
-
-// Every live video id, used to keep the HLS tree (streaming-playlists/<id>/...)
-// of any existing video: a whole tree is orphan only when its video is gone.
-func (q *Queries) ListAllVideoIDs(ctx context.Context) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, listAllVideoIDs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listPlaylistThumbnailRefs = `-- name: ListPlaylistThumbnailRefs :many
 SELECT id, thumbnail_ext FROM playlists WHERE thumbnail_ext IS NOT NULL
 `
@@ -179,6 +153,44 @@ func (q *Queries) ListStreamingPlaylistRefs(ctx context.Context) ([]ListStreamin
 	for rows.Next() {
 		var i ListStreamingPlaylistRefsRow
 		if err := rows.Scan(&i.VideoID, &i.MasterKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVideoTranscodeGenerations = `-- name: ListVideoTranscodeGenerations :many
+SELECT id, transcode_generation FROM videos
+`
+
+type ListVideoTranscodeGenerationsRow struct {
+	ID                  uuid.UUID `json:"id"`
+	TranscodeGeneration int32     `json:"transcode_generation"`
+}
+
+// Every live video id with its transcode generation (migration 0136).
+//
+// The id keeps the HLS tree (streaming-playlists/<id>/...) of any existing
+// video: a whole tree is orphan only when its video is gone. The GENERATION is
+// what an in-flight transcode is writing into RIGHT NOW, and it has to come
+// from here rather than from the source key's version, because since 0136 the
+// two are different numbers — a re-transcode of an UNCHANGED source advances
+// the generation while the source key stays put, so a sweep that inferred the
+// target from the source would collect a half-written tree mid-transcode.
+func (q *Queries) ListVideoTranscodeGenerations(ctx context.Context) ([]ListVideoTranscodeGenerationsRow, error) {
+	rows, err := q.db.Query(ctx, listVideoTranscodeGenerations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListVideoTranscodeGenerationsRow
+	for rows.Next() {
+		var i ListVideoTranscodeGenerationsRow
+		if err := rows.Scan(&i.ID, &i.TranscodeGeneration); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -139,7 +139,7 @@ const (
 type Repository interface {
 	ListAllVideoFileKeys(ctx context.Context) ([]string, error)
 	ListAllCaptionKeys(ctx context.Context) ([]string, error)
-	ListAllVideoIDs(ctx context.Context) ([]uuid.UUID, error)
+	ListVideoTranscodeGenerations(ctx context.Context) ([]sqlcgen.ListVideoTranscodeGenerationsRow, error)
 	ListStreamingPlaylistRefs(ctx context.Context) ([]sqlcgen.ListStreamingPlaylistRefsRow, error)
 	ListPlaylistThumbnailRefs(ctx context.Context) ([]sqlcgen.ListPlaylistThumbnailRefsRow, error)
 }
@@ -416,6 +416,15 @@ var sweptPrefixes = []string{
 // kept. See hlsGenerations.
 const hlsPrefix = "streaming-playlists"
 
+// webVideoPrefix holds two different shapes and needs both rules. The source
+// blobs (web-videos/<id>[.rN].<ext>) are recorded in video_files and matched
+// exactly. The progressive per-rung MP4s a transcode derives
+// (web-videos/<id>/rN/<rung>.mp4) are recorded too — but only AFTER the run
+// promotes them, and since 0136 every run writes a NEW generation directory, so
+// between the first PUT and the promotion an in-flight generation has no row at
+// all. Collecting it there would delete a transcode's output from under it.
+const webVideoPrefix = "web-videos"
+
 // Sweep lists every object under the known prefixes and computes the orphan set
 // (objects with no DB reference). When dryRun is false it deletes each orphan
 // (best-effort; a per-object delete error is skipped, not fatal). Returns
@@ -557,10 +566,18 @@ type refSet struct {
 	// layout).
 	hasPlaylist map[string]bool
 	promotedGen map[string]string
-	// targetGen is the generation the video's CURRENT source would transcode
-	// into (from the original file key's version), kept so an in-flight
-	// replacement's half-written tree is never swept. Only set for videos with
-	// a stored original.
+	// targetGen is the generation an in-flight transcode of this video is
+	// WRITING INTO RIGHT NOW (videos.transcode_generation, migration 0136),
+	// kept so a half-written tree is never swept.
+	//
+	// It comes from the videos row rather than from the original file key's
+	// version, and since 0136 those are different numbers: a re-transcode of an
+	// UNCHANGED source advances the generation while the source key stays put,
+	// so inferring the target from the source key would read "" for it and
+	// collect the tree the worker is in the middle of writing. It is set for
+	// every live video, including the ones with no job running — keeping one
+	// unwritten directory name costs nothing and the alternative is a race with
+	// the enqueue.
 	targetGen map[string]string
 }
 
@@ -629,6 +646,22 @@ func (s *Service) isReferenced(key, prefix string, refs refSet) bool {
 		target, ok := refs.targetGen[vid]
 		return ok && gen == target
 	}
+	if prefix == webVideoPrefix {
+		if refs.referenced[key] {
+			return true
+		}
+		// key = web-videos/<video_id>/<gen>/<rung>.mp4 — a progressive
+		// generation. Unreferenced means either superseded (collect) or
+		// in-flight (keep): the video's CURRENT generation is the one a running
+		// transcode is writing into, and it is the only unreferenced one worth
+		// keeping. This mirrors the HLS rule above rather than restating it,
+		// because the two trees are written in the same window by the same job.
+		parts := strings.Split(key, "/")
+		if len(parts) == 4 && isEntityID(parts[1]) && media.IsHLSGenerationName(parts[2]) {
+			return refs.liveVideoIDs[parts[1]] && parts[2] == refs.targetGen[parts[1]]
+		}
+		return false
+	}
 	return refs.referenced[key]
 }
 
@@ -657,11 +690,6 @@ func referenceSet(ctx context.Context, repo Repository) (refSet, error) {
 	}
 	for _, k := range fileKeys {
 		refs.referenced[k] = true
-		// An original's key names the video's CURRENT source version — the
-		// target generation of any in-flight re-transcode (W14).
-		if vid, ok := videoIDOfOriginalKey(k); ok {
-			refs.targetGen[vid] = media.HLSGenerationName(media.OriginalKeyVersion(k))
-		}
 	}
 	capKeys, err := repo.ListAllCaptionKeys(ctx)
 	if err != nil {
@@ -707,12 +735,14 @@ func referenceSet(ctx context.Context, repo Repository) (refSet, error) {
 		}
 		refs.promotedGen[vid] = gen
 	}
-	ids, err := repo.ListAllVideoIDs(ctx)
+	gens, err := repo.ListVideoTranscodeGenerations(ctx)
 	if err != nil {
 		return refSet{}, err
 	}
-	for _, id := range ids {
-		refs.liveVideoIDs[id.String()] = true
+	for _, v := range gens {
+		id := v.ID.String()
+		refs.liveVideoIDs[id] = true
+		refs.targetGen[id] = media.HLSGenerationName(int(v.TranscodeGeneration))
 	}
 	return refs, nil
 }
@@ -817,7 +847,7 @@ func isEntityID(seg string) bool {
 // rule and why our keys may be guessable):
 //
 //	web-videos/<video_id>.mp4, web-videos/<video_id>.r2.mp4  media.OriginalVideoKey
-//	web-videos/<video_id>[/rN]/<rung>.mp4                    media.WebVideoPrefixForSource
+//	web-videos/<video_id>[/rN]/<rung>.mp4                    media.WebVideoPrefixForGeneration
 //	thumbnails/<video_id>.jpg                                media.VideoThumbnailKey
 //	storyboards/<video_id>.jpg, storyboards/<video_id>.vtt   media.StoryboardKeyJPG/VTT
 //	captions/<video_id>/<lang>.vtt                           video.captionKey
@@ -848,21 +878,4 @@ func isMintedKey(key, prefix string) bool {
 	// FIRST dot rather than the last.
 	stem, _, found := strings.Cut(seg, ".")
 	return found && isEntityID(stem)
-}
-
-// videoIDOfOriginalKey extracts the video id from an original-file storage key
-// (web-videos/<id>[.rN]<ext>), reporting false for any other key shape.
-func videoIDOfOriginalKey(key string) (string, bool) {
-	rest, ok := strings.CutPrefix(key, "web-videos/")
-	if !ok || strings.Contains(rest, "/") {
-		return "", false
-	}
-	base, _, found := strings.Cut(rest, ".")
-	if !found {
-		return "", false
-	}
-	if _, err := uuid.Parse(base); err != nil {
-		return "", false
-	}
-	return base, true
 }

@@ -8,6 +8,28 @@ INSERT INTO transcode_jobs (video_id, source_key, transcode_type)
 VALUES ($1, $2, $3)
 ON CONFLICT (video_id) WHERE state IN ('pending', 'running') DO NOTHING;
 
+-- name: BumpVideoTranscodeGeneration :one
+-- Advance a video's transcode generation and return the new value (migration
+-- 0136). One increment per ENQUEUE, which is what makes a retry of the same job
+-- write the same output prefix: a retry claims the existing row and never comes
+-- back through here.
+--
+-- Unconditional and unguarded on purpose. Two enqueues racing produce two
+-- different numbers rather than one contested one, and the worse outcome — two
+-- jobs deriving the SAME prefix and overwriting each other, which is the state
+-- this column exists to end — is the one this cannot produce.
+UPDATE videos
+SET transcode_generation = transcode_generation + 1,
+    updated_at = now()
+WHERE id = $1
+RETURNING transcode_generation;
+
+-- name: GetVideoTranscodeGeneration :one
+-- The generation the video's CURRENT job writes into. Read at run time rather
+-- than carried on the job row, so a retry recomputes the same answer (nothing
+-- has enqueued in between) without a second column to keep in step.
+SELECT transcode_generation FROM videos WHERE id = $1;
+
 -- name: ClaimDueTranscodeJobs :many
 -- Atomically claims due pending jobs (oldest first) by flipping them to
 -- 'running', so no two workers -- in one process or across instances -- ever

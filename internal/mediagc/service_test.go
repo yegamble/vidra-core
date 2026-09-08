@@ -15,16 +15,26 @@ import (
 
 // fakeRepo returns fixed reference sets.
 type fakeRepo struct {
-	fileKeys  []string
-	capKeys   []string
-	videoIDs  []uuid.UUID
-	plThumbs  []sqlcgen.ListPlaylistThumbnailRefsRow
-	playlists []sqlcgen.ListStreamingPlaylistRefsRow
+	fileKeys []string
+	capKeys  []string
+	videoIDs []uuid.UUID
+	// generations is videos.transcode_generation per id (0136); absent means 0.
+	// It is what an in-flight transcode is WRITING INTO, so it is what keeps a
+	// half-written tree out of the orphan set.
+	generations map[uuid.UUID]int32
+	plThumbs    []sqlcgen.ListPlaylistThumbnailRefsRow
+	playlists   []sqlcgen.ListStreamingPlaylistRefsRow
 }
 
 func (f *fakeRepo) ListAllVideoFileKeys(context.Context) ([]string, error) { return f.fileKeys, nil }
 func (f *fakeRepo) ListAllCaptionKeys(context.Context) ([]string, error)   { return f.capKeys, nil }
-func (f *fakeRepo) ListAllVideoIDs(context.Context) ([]uuid.UUID, error)   { return f.videoIDs, nil }
+func (f *fakeRepo) ListVideoTranscodeGenerations(context.Context) ([]sqlcgen.ListVideoTranscodeGenerationsRow, error) {
+	out := make([]sqlcgen.ListVideoTranscodeGenerationsRow, 0, len(f.videoIDs))
+	for _, id := range f.videoIDs {
+		out = append(out, sqlcgen.ListVideoTranscodeGenerationsRow{ID: id, TranscodeGeneration: f.generations[id]})
+	}
+	return out, nil
+}
 func (f *fakeRepo) ListPlaylistThumbnailRefs(context.Context) ([]sqlcgen.ListPlaylistThumbnailRefsRow, error) {
 	return f.plThumbs, nil
 }
@@ -246,6 +256,12 @@ func TestSweepCollectsSupersededHLSGenerations(t *testing.T) {
 	repo := &fakeRepo{
 		fileKeys: []string{promotedSrc, inflightSrc},
 		videoIDs: []uuid.UUID{promoted, inflight},
+		// Both are at generation 1: the promoted video's r1 tree IS its current
+		// generation, and the in-flight one is writing r1 while r0 still serves.
+		// Since 0136 this comes from videos.transcode_generation, not from the
+		// source key — a re-transcode of an unchanged source advances one and
+		// not the other.
+		generations: map[uuid.UUID]int32{promoted: 1, inflight: 1},
 		playlists: []sqlcgen.ListStreamingPlaylistRefsRow{
 			{VideoID: promoted, MasterKey: "streaming-playlists/" + promoted.String() + "/r1/master.m3u8"},
 			{VideoID: inflight, MasterKey: "streaming-playlists/" + inflight.String() + "/master.m3u8"},
@@ -370,6 +386,10 @@ func TestSweepIsBlindToPackagingFormat(t *testing.T) {
 	repo := &fakeRepo{
 		fileKeys: []string{legacySrc, replacedSrc},
 		videoIDs: []uuid.UUID{legacy, replaced},
+		// The replaced video is at generation 1 (0136's backfill puts an
+		// existing row at its source version); the legacy one has never been
+		// re-transcoded and is still at 0.
+		generations: map[uuid.UUID]int32{replaced: 1},
 		playlists: []sqlcgen.ListStreamingPlaylistRefsRow{
 			{VideoID: legacy, MasterKey: "streaming-playlists/" + legacy.String() + "/master.m3u8"},
 			{VideoID: replaced, MasterKey: "streaming-playlists/" + replaced.String() + "/r1/master.m3u8"},
@@ -426,4 +446,126 @@ func TestAuditFieldsCarryDryRunAndTheBreaker(t *testing.T) {
 	// The audit envelope validates its metadata VOCABULARY and refuses the whole
 	// event on an unknown key, so the sweep's fields have to be in it —
 	// internal/audit's own test pins that end.
+}
+
+// TestSweepCollectsASupersededSameSourceGeneration closes the other half of
+// migration 0136 — the half that says where the old bytes go.
+//
+// A same-source re-transcode used to overwrite its output in place, so there
+// was never an old generation to collect and never a moment when both existed.
+// Now there is: the run writes rN+1, promotion swaps the rows, and rN becomes
+// unreferenced. Two things have to be true of that, and only one of them is
+// "the old one is garbage":
+//
+//   - IN-FLIGHT VIEWERS ARE NOT CUT OFF. Nothing deletes the old generation at
+//     promotion; it survives until the collector's next sweep, which is what
+//     lets a player mid-ladder finish the segments it already has URLs for.
+//     The dry run below is that guarantee, and it is also what an operator sees
+//     before arming a destructive sweep.
+//   - THE OLD GENERATION IS ACTUALLY COLLECTIBLE. A scheme that minted fresh
+//     prefixes without being sweepable would trade a stale-cache bug for an
+//     unbounded storage leak, one whole ladder per re-transcode.
+func TestSweepCollectsASupersededSameSourceGeneration(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	vid := uuid.New()
+	// The source never changed — this is a RERUN, not a replacement, which is
+	// exactly the case the old addressing could not express.
+	src := "web-videos/" + vid.String() + ".mp4"
+	live := []string{
+		src,
+		"streaming-playlists/" + vid.String() + "/r2/master.m3u8",
+		"streaming-playlists/" + vid.String() + "/r2/cmaf/chunk-0-00001.m4s",
+		"web-videos/" + vid.String() + "/r2/720p.mp4",
+	}
+	superseded := []string{
+		"streaming-playlists/" + vid.String() + "/r1/master.m3u8",
+		"streaming-playlists/" + vid.String() + "/r1/cmaf/chunk-0-00001.m4s",
+		"web-videos/" + vid.String() + "/r1/720p.mp4",
+	}
+	for _, k := range append(append([]string{}, live...), superseded...) {
+		put(t, blobs, k)
+	}
+	repo := &fakeRepo{
+		fileKeys:    []string{src, "web-videos/" + vid.String() + "/r2/720p.mp4"},
+		videoIDs:    []uuid.UUID{vid},
+		generations: map[uuid.UUID]int32{vid: 2},
+		playlists: []sqlcgen.ListStreamingPlaylistRefsRow{
+			{VideoID: vid, MasterKey: "streaming-playlists/" + vid.String() + "/r2/master.m3u8"},
+		},
+	}
+	svc := NewService(repo, blobs)
+
+	// A dry run names the superseded generation and touches nothing: this is
+	// where an in-flight viewer's bytes still are.
+	dry, err := svc.Sweep(ctx, true)
+	if err != nil {
+		t.Fatalf("dry sweep: %v", err)
+	}
+	wantOrphans := append([]string{}, superseded...)
+	sort.Strings(wantOrphans)
+	if strings.Join(dry.Orphans, "|") != strings.Join(wantOrphans, "|") {
+		t.Fatalf("dry-run orphans:\n got %v\nwant %v", dry.Orphans, wantOrphans)
+	}
+	for _, k := range superseded {
+		if !exists(t, blobs, k) {
+			t.Errorf("the dry run deleted %q; a superseded generation must survive until a real sweep", k)
+		}
+	}
+
+	// And the real sweep collects it, both trees, leaving the promoted one whole.
+	if _, err := svc.Sweep(ctx, false); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	for _, k := range superseded {
+		if exists(t, blobs, k) {
+			t.Errorf("superseded generation key %q survived the sweep; every re-transcode would leak a ladder", k)
+		}
+	}
+	for _, k := range live {
+		if !exists(t, blobs, k) {
+			t.Errorf("live key %q was deleted", k)
+		}
+	}
+}
+
+// TestSweepKeepsAnInFlightWebVideoGeneration. The progressive MP4s a run derives
+// have no rows until the run promotes them, and since 0136 they go into a NEW
+// directory every time — so between the first PUT and the promotion the whole
+// generation is unreferenced. Collecting it there would delete a transcode's
+// output from under the job that is writing it.
+func TestSweepKeepsAnInFlightWebVideoGeneration(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	vid := uuid.New()
+	src := "web-videos/" + vid.String() + ".mp4"
+	inflight := "web-videos/" + vid.String() + "/r3/720p.mp4" // being written now
+	promoted := "web-videos/" + vid.String() + "/r2/720p.mp4" // superseded
+	for _, k := range []string{src, inflight, promoted} {
+		put(t, blobs, k)
+	}
+	repo := &fakeRepo{
+		fileKeys:    []string{src},
+		videoIDs:    []uuid.UUID{vid},
+		generations: map[uuid.UUID]int32{vid: 3},
+	}
+	res, err := NewService(repo, blobs).Sweep(ctx, false)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if !exists(t, blobs, inflight) {
+		t.Errorf("the sweep deleted %q, which the running transcode is still writing", inflight)
+	}
+	if exists(t, blobs, promoted) {
+		t.Errorf("the superseded generation key %q survived", promoted)
+	}
+	if len(res.Orphans) != 1 || res.Orphans[0] != promoted {
+		t.Errorf("orphans = %v, want just %q", res.Orphans, promoted)
+	}
 }
