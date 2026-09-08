@@ -101,6 +101,13 @@ const (
 	ActionVideoCaptionGenerate     = "content.video.caption_generate"
 	ActionChannelDelete            = "content.channel.delete"
 	ActionMediaGC                  = "admin.media.gc"
+	// ActionAuditRetentionPrune is the audit trail recording its own retention
+	// sweep. It is written once per run that actually deleted something, with
+	// the row count in the `count` metadata field — audit_log carries no prose,
+	// so the number is structured or it is nowhere. A run that deleted nothing
+	// writes no row: the trail's own bookkeeping must not become the bulk of the
+	// trail on a quiet instance.
+	ActionAuditRetentionPrune = "admin.audit.retention_prune"
 	// ActionMediaGCAdoptBucket records an admin claiming the configured object
 	// store for this install — writing the instance identity into the ownership
 	// marker, which re-enables DESTRUCTIVE media garbage collection against a

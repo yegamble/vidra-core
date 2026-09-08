@@ -24,6 +24,9 @@ type Repository interface {
 	InsertAuditLog(ctx context.Context, arg sqlcgen.InsertAuditLogParams) error
 	ListAuditLog(ctx context.Context, arg sqlcgen.ListAuditLogParams) ([]sqlcgen.ListAuditLogRow, error)
 	CountAuditLog(ctx context.Context, action *string) (int64, error)
+	// PruneAuditLog deletes one bounded batch of expired rows and reports how
+	// many went. See retention.go.
+	PruneAuditLog(ctx context.Context, arg sqlcgen.PruneAuditLogParams) (int64, error)
 }
 
 // Service persists and reads the audit trail.

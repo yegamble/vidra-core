@@ -122,6 +122,16 @@ x-api-env: &api-env
   OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
   OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
   OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-vidra-core}
+  # How long the security-audit trail (audit_log) is kept before the hourly,
+  # leader-elected retention sweep deletes it in bounded batches. A Go duration
+  # (e.g. 9600h = 400 days, the shipped default); 0 keeps it forever.
+  #
+  # Left EMPTY on purpose rather than pinned to `:-9600h`. A default written here
+  # would SHADOW the Go default — the number an operator reads in this file would
+  # become the number that governs, and the two could then drift apart silently
+  # (A17 found exactly that with FEATURE_LIVE_ENABLED). Empty means unset, and
+  # unset means the binary's own default.
+  AUDIT_LOG_RETENTION: ${AUDIT_LOG_RETENTION:-}
   # Default per-user storage quota in bytes (0/unset = unlimited). Admins can
   # override per account via PATCH /api/v1/admin/users/{id}.
   INSTANCE_DEFAULT_QUOTA_BYTES: ${INSTANCE_DEFAULT_QUOTA_BYTES:-0}

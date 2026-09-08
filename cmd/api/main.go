@@ -2238,8 +2238,11 @@ func run() error {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runQoERollupWorker(workerCtx, logger, qoeSvc, cronLeader)
-		go runQoERetentionWorker(workerCtx, logger, qoeSvc, cronLeader)
-		logger.Info("qoe rollup + retention workers started")
+		// One retention loop covers both self-observation tables; see
+		// runTelemetryRetentionWorker.
+		go runTelemetryRetentionWorker(workerCtx, logger, qoeSvc, auditsvc, cfg.AuditLogRetention, cronLeader)
+		logger.Info("qoe rollup + telemetry retention workers started",
+			"audit_log_retention", cfg.AuditLogRetention.String())
 	}
 
 	// PeerTube import / migration (fix_plan P18). The admin API is ALWAYS wired
@@ -3349,14 +3352,24 @@ func runQoERollupWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Servi
 	}.Run(ctx, logger)
 }
 
-// runQoERetentionWorker enforces the QoE retention windows (7 days of raw
-// measurements, 90 days of rollups).
+// runTelemetryRetentionWorker enforces the retention windows on the two tables
+// core keeps about its own operation: QoE playback measurements (7 days raw, 90
+// days of rollups) and the security-audit trail (AUDIT_LOG_RETENTION, default
+// 400 days; 0 keeps it forever).
 //
 // Hourly rather than daily, unlike the operational-job retention worker it is
-// otherwise modelled on: that table grows with operator activity, this one grows
-// with traffic, and a daily sweep on a busy instance would leave a day's worth
-// of expired rows sitting in the table for most of every day.
-func runQoERetentionWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Service, leader *leaderlock.Elector) {
+// otherwise modelled on: qoe_events grows with traffic rather than with operator
+// activity, and a daily sweep on a busy instance would leave a day's worth of
+// expired rows sitting in the table for most of every day. The audit prune rides
+// the same tick because it is idempotent and a no-op tick costs one indexed
+// query — a separate loop would buy nothing but a second thing to schedule, and
+// on a 400-day window the tick granularity is irrelevant to the policy anyway.
+//
+// TWO PASSES, not one function doing both. jobloop runs each pass
+// independently, so a QoE prune that fails still leaves the audit prune to run
+// (and logs its own failure), which is what keeps one table's problem from
+// silently stopping the other table's retention.
+func runTelemetryRetentionWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Service, auditsvc *audit.Service, auditRetention time.Duration, leader *leaderlock.Elector) {
 	const interval = time.Hour
 	jobloop.Loop{
 		Interval: interval,
@@ -3372,6 +3385,19 @@ func runQoERetentionWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Se
 					logger.Info("qoe retention pruned rows", "events", events, "rollups", rollups)
 				}
 				return 0, nil
+			},
+		}, {
+			FailMsg: "audit log retention failed",
+			Run: func(ctx context.Context, tick time.Time) (int, error) {
+				deleted, err := auditsvc.Prune(ctx, tick.UTC(), auditRetention)
+				if deleted > 0 {
+					// The same count the sweep's own audit row carries, so an
+					// operator reading logs and an operator reading /admin/audit
+					// see the same number.
+					logger.Info("audit log retention pruned rows",
+						"count", deleted, "retention", auditRetention.String())
+				}
+				return 0, err
 			},
 		}},
 	}.Run(ctx, logger)

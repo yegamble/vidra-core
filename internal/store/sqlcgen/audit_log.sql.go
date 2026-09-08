@@ -182,3 +182,38 @@ func (q *Queries) ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]L
 	}
 	return items, nil
 }
+
+const pruneAuditLog = `-- name: PruneAuditLog :execrows
+DELETE FROM audit_log
+WHERE id IN (
+    SELECT a.id FROM audit_log a
+    WHERE a.occurred_at < $1
+    ORDER BY a.occurred_at, a.id
+    LIMIT $2
+)
+`
+
+type PruneAuditLogParams struct {
+	Cutoff    time.Time `json:"cutoff"`
+	BatchSize int32     `json:"batch_size"`
+}
+
+// One batch of expired audit rows, OLDEST FIRST.
+//
+// Batched for the same reason every other prune in this tree is: an unbounded
+// DELETE over a table nobody has ever pruned is one statement holding row locks
+// across however many years accumulated, on the table every security-sensitive
+// write appends to. A short batch that runs a hundred times is a hundred short
+// locks.
+//
+// The subselect ORDERs so a run that hits the batch cap has deleted the OLDEST
+// expired rows rather than an arbitrary slice of them; without it a partial
+// sweep can leave the very oldest rows alive forever while newer expired ones
+// go. It rides audit_log_occurred_idx (a DESC index, scanned backwards).
+func (q *Queries) PruneAuditLog(ctx context.Context, arg PruneAuditLogParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneAuditLog, arg.Cutoff, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
