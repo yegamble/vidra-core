@@ -1,6 +1,9 @@
 package main
 
 import (
+	"io"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -51,10 +54,55 @@ func TestMigrateForceRefusesWithoutConfirmation(t *testing.T) {
 // The usage string main.go prints has to name the recovery command, or the
 // runbook's `force` is undiscoverable from the binary itself.
 func TestMigrateUsageMentionsForce(t *testing.T) {
-	for _, want := range []string{"up", "version", "force", forceConfirmFlag} {
+	for _, want := range []string{"up", "version", "embedded-max", "force", forceConfirmFlag} {
 		if !strings.Contains(migrateUsage, want) {
 			t.Errorf("migrateUsage = %q, want it to mention %q", migrateUsage, want)
 		}
+	}
+}
+
+// `migrate embedded-max` is deploy/restore.sh's preflight question and it is
+// asked of an image that may have NO database in front of it, so it must answer
+// without opening one — DATABASE_URL here points at a closed port, and a run
+// that reached it would fail.
+func TestMigrateEmbeddedMaxNeedsNoDatabase(t *testing.T) {
+	t.Setenv("DATABASE_URL", unreachableDSN)
+	if err := runMigrate([]string{"embedded-max"}); err != nil {
+		t.Fatalf("runMigrate([embedded-max]) = %v, want it to answer from the embedded FS alone", err)
+	}
+}
+
+// It prints a BARE integer and nothing else: restore.sh reads it with $(...)
+// and compares it numerically.
+func TestMigrateEmbeddedMaxPrintsABareInteger(t *testing.T) {
+	stdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	runErr := runMigrate([]string{"embedded-max"})
+	_ = w.Close()
+	os.Stdout = stdout
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read pipe: %v", err)
+	}
+	if runErr != nil {
+		t.Fatalf("runMigrate([embedded-max]): %v", runErr)
+	}
+
+	got := strings.TrimSpace(string(out))
+	n, err := strconv.ParseUint(got, 10, 64)
+	if err != nil {
+		t.Fatalf("migrate embedded-max printed %q, want a bare integer: %v", got, err)
+	}
+	want, err := dbmigrate.EmbeddedMax()
+	if err != nil {
+		t.Fatalf("EmbeddedMax: %v", err)
+	}
+	if uint(n) != want {
+		t.Fatalf("migrate embedded-max printed %d, want %d", n, want)
 	}
 }
 

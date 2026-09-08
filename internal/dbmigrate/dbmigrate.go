@@ -13,6 +13,7 @@ package dbmigrate
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"strings"
 
@@ -65,6 +66,31 @@ func Up(dsn string, logger *slog.Logger) error {
 	before, err := status(m)
 	if err != nil {
 		return err
+	}
+
+	// THE ROLLBACK FLOOR (A38, 2026-09-07). A CLEAN ledger ahead of this
+	// binary's newest embedded migration is the state a rollback puts us in, and
+	// the one-release schema-compat policy says it is SUPPORTED — release N-1's
+	// code must run against release N's schema. Without this branch
+	// golang-migrate reads the current version out of the source, cannot find a
+	// file for it, and returns "no migration found for version 135: read down
+	// for version 135 .: file does not exist"; the one-shot exits 1, every
+	// service that waits on it with service_completed_successfully never starts,
+	// and `deploy/rollback.sh` takes the whole site down instead of flipping a
+	// tag. So: say so loudly, change nothing, exit 0.
+	//
+	// Deliberately NOT extended to a DIRTY ledger, whatever its version: dirty
+	// means the schema state is unknown, which no policy makes safe to run on.
+	embeddedMax, err := EmbeddedMax()
+	if err != nil {
+		return err
+	}
+	if before.Applied && !before.Dirty && before.Version > embeddedMax {
+		if logger != nil {
+			logger.Warn(LedgerAheadMessage(before.Version, embeddedMax),
+				"ledger_version", before.Version, "embedded_max", embeddedMax, "dirty", false)
+		}
+		return nil
 	}
 
 	switch err := m.Up(); {
@@ -136,6 +162,56 @@ func Version(dsn string) (Status, error) {
 	}
 	defer closeMigrate(m, nil)
 	return status(m)
+}
+
+// EmbeddedMax reports the newest migration version compiled into this binary,
+// or 0 when it carries none. It reads the embedded FS only — no database, no
+// configuration — which is what lets `migrate embedded-max` answer from a bare
+// `docker run` so deploy/restore.sh can compare a dump's ledger against the
+// image it is about to restore under.
+//
+// TWIN: vidra-search internal/dbmigrate.EmbeddedMax — same walk over the same
+// iofs source driver, over that repo's migrations. Keep them in step.
+func EmbeddedMax() (uint, error) {
+	src, err := iofs.New(migrations.FS, ".")
+	if err != nil {
+		return 0, fmt.Errorf("dbmigrate: read embedded migrations: %w", err)
+	}
+	defer func() { _ = src.Close() }()
+
+	// The source driver is walked rather than the filenames parsed, so this
+	// answers with exactly the versions golang-migrate itself would see: a file
+	// the parser rejects is absent from both.
+	version, err := src.First()
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("dbmigrate: read first embedded migration: %w", err)
+	}
+	for {
+		next, err := src.Next(version)
+		if errors.Is(err, fs.ErrNotExist) {
+			return version, nil
+		}
+		if err != nil {
+			return 0, fmt.Errorf("dbmigrate: walk embedded migrations after %d: %w", version, err)
+		}
+		version = next
+	}
+}
+
+// LedgerAheadMessage is the single line an operator sees when the schema in
+// front of this binary is newer than the migrations inside it. It is exported
+// because it is a contract, not a detail: the deploy scripts and the A38
+// rehearsal grep for this wording to tell "the rollback target no-opped, as
+// designed" apart from "the migrator failed".
+//
+// TWIN: vidra-search internal/dbmigrate.LedgerAheadMessage — byte-identical
+// wording on purpose, so one grep finds a rolled-back core AND a rolled-back
+// search.
+func LedgerAheadMessage(ledgerVersion, embeddedMax uint) string {
+	return fmt.Sprintf("schema version %d is newer than this binary's newest migration %d; nothing to apply", ledgerVersion, embeddedMax)
 }
 
 // open builds a migrator over the embedded files. The source name ("iofs") is a
