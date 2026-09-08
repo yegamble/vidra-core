@@ -64,7 +64,7 @@ func TestReplaceSourceSwapsVersionedKeyAndAccounts(t *testing.T) {
 			recordedOwner, recordedBytes = ownerID, bytes
 			return nil
 		}),
-		WithUpdateHook(func(context.Context, uuid.UUID) { updates++ }),
+		WithUpdateHook(func(context.Context, uuid.UUID, bool) { updates++ }),
 	)
 	ctx := context.Background()
 	id := publishWithOriginal(t, svc, owner, "old source bytes")

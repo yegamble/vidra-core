@@ -1076,7 +1076,13 @@ func run() error {
 		if !cfg.FederationEnabled || fedsvc == nil {
 			return
 		}
-		if err := fedsvc.UpdateVideo(ctx, videoID); err != nil {
+		// wasFederated=false: finishing a transcode never WITHDRAWS a video
+		// from public+published, so this path has no retraction to send. A
+		// public video takes the Update arm on its current state; a private or
+		// unlisted one must stay silent, and passing true here is precisely how
+		// the A29 rehearsal caught a private upload broadcasting a Delete that
+		// named it to every remote follower.
+		if err := fedsvc.UpdateVideo(ctx, videoID, false); err != nil {
 			logger.Warn("federation transcode-complete update failed", "video_id", videoID, "error", err)
 		}
 	}
@@ -1189,9 +1195,9 @@ func run() error {
 					}
 				}
 			}),
-			video.WithUpdateHook(func(ctx context.Context, videoID uuid.UUID) {
+			video.WithUpdateHook(func(ctx context.Context, videoID uuid.UUID, wasFederated bool) {
 				if fedsvc != nil {
-					if err := fedsvc.UpdateVideo(ctx, videoID); err != nil {
+					if err := fedsvc.UpdateVideo(ctx, videoID, wasFederated); err != nil {
 						logger.Warn("federation update failed", "video_id", videoID, "error", err)
 					}
 				}
@@ -1220,7 +1226,7 @@ func run() error {
 					logger.Warn("ipfs mirror publish sync failed", "video_id", videoID, "error", err)
 				}
 			}),
-			video.WithUpdateHook(func(ctx context.Context, videoID uuid.UUID) {
+			video.WithUpdateHook(func(ctx context.Context, videoID uuid.UUID, _ bool) {
 				if err := ipfsMirror.SyncVideo(ctx, videoID); err != nil {
 					logger.Warn("ipfs mirror update sync failed", "video_id", videoID, "error", err)
 				}
@@ -1240,7 +1246,7 @@ func run() error {
 			video.WithPublishHook(func(ctx context.Context, videoID uuid.UUID) {
 				searchEnqueuer.EnqueueVideoUpsert(ctx, videoID)
 			}),
-			video.WithUpdateHook(func(ctx context.Context, videoID uuid.UUID) {
+			video.WithUpdateHook(func(ctx context.Context, videoID uuid.UUID, _ bool) {
 				searchEnqueuer.EnqueueVideoUpsert(ctx, videoID)
 			}),
 			video.WithDeleteHook(func(ctx context.Context, videoID, channelID uuid.UUID, wasPublic bool) {

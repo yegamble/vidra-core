@@ -75,7 +75,7 @@ func TestUpdateVideoSkippedWhenActivityPubDisabled(t *testing.T) {
 	repo.apDisabled = map[uuid.UUID]bool{channelID: true}
 
 	svc := NewService(repo, WithBaseURL("https://videos.example"))
-	if err := svc.UpdateVideo(context.Background(), videoID); err != nil {
+	if err := svc.UpdateVideo(context.Background(), videoID, true); err != nil {
 		t.Fatalf("UpdateVideo: %v", err)
 	}
 	if len(repo.deliveries) != 0 {
