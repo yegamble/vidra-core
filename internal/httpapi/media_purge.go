@@ -479,6 +479,20 @@ func (s *Server) playlistCoverEdgePath(ctx context.Context, playlistID uuid.UUID
 	return playlistCoverPath(playlistID)
 }
 
+// supersededGenerationKey reports that a key under the promoted generation's own
+// prefix in fact belongs to a LATER generation directory
+// (streaming-playlists/<id>/rN/…). It is only ever true when the promoted
+// generation is the legacy in-place layout, because that layout is the parent of
+// every rN directory the video has ever had.
+func supersededGenerationKey(servedPrefix, key string) bool {
+	rest, ok := strings.CutPrefix(key, servedPrefix)
+	if !ok {
+		return false
+	}
+	seg, _, found := strings.Cut(rest, "/")
+	return found && media.IsHLSGenerationName(seg)
+}
+
 // expandEdgePurgePaths turns a snapshot into the deduplicated URL list to purge,
 // enumerating each tree through the storage backend.
 //
@@ -530,15 +544,27 @@ func (s *Server) expandEdgePurgePaths(ctx context.Context, snap edgePurgeSnapsho
 		servedPrefix := strings.TrimSuffix(tree.servedPrefix, "/") + "/"
 		for _, key := range listed {
 			if !strings.HasPrefix(key, servedPrefix) {
-				// Another generation of this video's ladder: still at the
-				// origin, once reachable, and no longer nameable.
+				// A key outside the promoted generation's own directory —
+				// which is what a SUPERSEDED generation looks like when the
+				// promoted one is streaming-playlists/<id>/rN.
 				complete = false
 				continue
 			}
 			rel, mapped := hlsTreeRelForKey(tree.servedPrefix, key, tree.peertube)
 			if !mapped {
-				// A playlist, a manifest or a download derivative: named by
-				// another route or never at the edge at all.
+				// The OTHER shape a superseded generation takes, and it is the
+				// one a prefix test cannot see: when the promoted generation is
+				// the legacy in-place layout (generation 0), every later
+				// generation sits UNDER it at streaming-playlists/<id>/rN/…, so
+				// it passes the prefix check above and only the route grammar
+				// rejects it. Without this branch a video that had been
+				// re-transcoded once would report a complete purge while its
+				// previous generation stayed at the edge.
+				if !tree.peertube && supersededGenerationKey(servedPrefix, key) {
+					complete = false
+				}
+				// Otherwise: a playlist, a manifest or a download derivative —
+				// named by another route or never at the edge at all.
 				continue
 			}
 			if !add(videoHLSChildPath(tree.videoID, rel, tree.version)) {

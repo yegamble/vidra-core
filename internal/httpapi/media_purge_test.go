@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -379,4 +380,48 @@ func TestDownloadGateFlipAwayFromPublicStillPurgesEverything(t *testing.T) {
 		t.Fatalf("patch = %d; body=%s", r.Code, r.Body.String())
 	}
 	waitForPurge(t, rec, wantVideoPurgePaths(t, srv, id))
+}
+
+// TestPurgeReportsASupersededGenerationAsIncomplete.
+//
+// A generation that has been superseded was once served at the SAME paths the
+// promoted one is served at now, under a different ?v= — and that tag is the
+// playlist row's own updated_at, which nothing records once the row moves on.
+// Those URLs cannot be named, so the run must report itself short rather than
+// claim a complete takedown. The counters and the WARN line are the operator's
+// only signal, and "purged everything and some calls failed" is a materially
+// different answer from "did not know what to purge".
+//
+// Both shapes are covered because only one of them is visible to a prefix test.
+// When the promoted generation is streaming-playlists/<id>/rN, a superseded one
+// sits OUTSIDE that directory. When the promoted generation is the legacy
+// in-place layout, every later generation sits UNDERNEATH it — it passes the
+// prefix check and only the route grammar rejects it, which is how the second
+// case hid.
+func TestPurgeReportsASupersededGenerationAsIncomplete(t *testing.T) {
+	ctx := context.Background()
+	srv, blobs, tcRepo, _ := purgeServer(t)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := publishedPublicVideo(t, srv, blobs, tcRepo, tok)
+	vid := uuid.MustParse(id)
+
+	// Baseline: one generation in the store, nothing unnameable.
+	if _, complete := srv.expandEdgePurgePaths(ctx, srv.videoEdgePurgeSnapshot(ctx, vid)); !complete {
+		t.Fatal("a single-generation video reported an incomplete URL set")
+	}
+
+	// A re-transcode has happened: the promoted tree is still the legacy
+	// in-place one and an r1 generation sits underneath it.
+	if _, err := blobs.Put(ctx, "streaming-playlists/"+id+"/r1/240p/seg_00000.ts", strings.NewReader("old-generation")); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	paths, complete := srv.expandEdgePurgePaths(ctx, srv.videoEdgePurgeSnapshot(ctx, vid))
+	if complete {
+		t.Error("a superseded generation under the legacy prefix was not reported; the operator would read a complete takedown")
+	}
+	for _, p := range paths {
+		if strings.Contains(p, "/r1/") {
+			t.Errorf("purged %q; an rN directory is a storage key, not a route the api serves", p)
+		}
+	}
 }
