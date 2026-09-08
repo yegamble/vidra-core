@@ -3,6 +3,9 @@ package live
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -415,3 +418,34 @@ type auditEventView struct {
 type actorView struct{ Kind, ID string }
 
 var _ = time.Second
+
+// TestIngestTemplateRunsOneWorker pins `worker_processes 1` in the shipped
+// media config, and it is the drop contract's real precondition.
+//
+// nginx-rtmp's control and stat modules are PER WORKER: each nginx worker keeps
+// its own stream index, and a control request can only reach publishers held by
+// whichever worker happens to accept that HTTP connection. Under
+// `worker_processes auto` the RTMP publisher lands on one worker and the control
+// request on another, so the drop matches nothing — and this module build
+// answers a no-match with 200 and a body of "0" rather than 404, which
+// DropPublisher reads as success. The A26 rehearsal measured exactly that: 12
+// consecutive drops against a live publisher all returned "0", the streamer
+// stayed connected and kept writing segments and a recording for as long as the
+// lab let it, and the moderator was told `publisher_disconnected: true` every
+// time. One worker is what makes the control surface see the sessions it is
+// asked about; an RTMP ingest that transcodes nothing does not need more.
+func TestIngestTemplateRunsOneWorker(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deploy", "media", "nginx.conf.template"))
+	if err != nil {
+		t.Fatalf("read the shipped media template: %v", err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, "worker_processes 1;") {
+		t.Error("deploy/media/nginx.conf.template does not declare `worker_processes 1;`: " +
+			"nginx-rtmp's control module is per-worker, so a drop issued to any other worker " +
+			"silently matches nothing and the termination never reaches the publisher")
+	}
+	if strings.Contains(body, "worker_processes auto;") {
+		t.Error("deploy/media/nginx.conf.template still declares `worker_processes auto;`")
+	}
+}

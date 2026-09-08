@@ -51,7 +51,24 @@
 # stream stays "live" with no HLS behind it until the live_max_duration_secs
 # watchdog closes it.
 
-worker_processes auto;
+# ONE worker, and it is the control surface's precondition rather than a tuning
+# choice. nginx-rtmp's control and stat modules are PER WORKER: every worker
+# keeps its own stream index, and a control request can only act on publishers
+# held by whichever worker accepted that HTTP connection. Under `auto` the
+# streamer's RTMP session lands on one worker and the api's drop request on
+# another, where it matches nothing — and this module build answers a no-match
+# with 200 and a body of "0", not 404, so the api reads it as a successful
+# disconnect. Measured in the A26 rehearsal: twelve consecutive drops against a
+# live publisher all returned "0", the streamer stayed connected and kept
+# writing segments and a recording, and the moderator was told
+# `publisher_disconnected: true` every single time. The `/stat` probe splits the
+# same way — consecutive reads showed the packaging stream on one worker and an
+# empty server on another.
+#
+# The cost is bounded: this nginx ingests RTMP and muxes MPEG-TS, it transcodes
+# nothing (the ladder is whatever the publisher pushes), so a single worker is
+# not the throughput limit an operator will hit first.
+worker_processes 1;
 error_log /dev/stderr info;
 events {
     worker_connections 1024;
