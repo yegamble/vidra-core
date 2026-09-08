@@ -42,7 +42,7 @@ type fetchedActor struct {
 	// blocking @name@domain saw nothing change, because the videos are
 	// attributed to the Group and the block named the Person.
 	AttributedTo json.RawMessage `json:"attributedTo"`
-	PublicKey         struct {
+	PublicKey    struct {
 		PublicKeyPem string `json:"publicKeyPem"`
 	} `json:"publicKey"`
 	Endpoints struct {

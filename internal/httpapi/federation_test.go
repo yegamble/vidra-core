@@ -43,8 +43,8 @@ type fakeFedRepo struct {
 	channelAliases   map[string]sqlcgen.GetChannelHandleAliasRow
 	actorAliases     map[uuid.UUID]string
 	adminActorBlocks map[string]string
-	channelVideoN           int64
-	outboxVideos            []sqlcgen.ListChannelOutboxVideosRow
+	channelVideoN    int64
+	outboxVideos     []sqlcgen.ListChannelOutboxVideosRow
 	// A29 remediation: the rows the dereferenceable object ids read.
 	videosByID map[uuid.UUID]sqlcgen.GetVideoByIDRow
 	commentsBy map[uuid.UUID]sqlcgen.Comment
@@ -801,9 +801,16 @@ func (f fakeFedRepo) IsRemoteActorBlockedInstanceWide(_ context.Context, actorUR
 }
 
 func (f fakeFedRepo) BlockRemoteActorInstanceWide(_ context.Context, arg sqlcgen.BlockRemoteActorInstanceWideParams) error {
-	if f.adminActorBlocks != nil {
-		f.adminActorBlocks[arg.RemoteActorUrl] = arg.Reason
+	if f.adminActorBlocks == nil {
+		return nil
 	}
+	// Mirrors the SQL CONFLICT arm: a re-block with an empty reason keeps the
+	// first note, which is the only prose on the row.
+	if existing, ok := f.adminActorBlocks[arg.RemoteActorUrl]; ok && arg.Reason == "" {
+		f.adminActorBlocks[arg.RemoteActorUrl] = existing
+		return nil
+	}
+	f.adminActorBlocks[arg.RemoteActorUrl] = arg.Reason
 	return nil
 }
 

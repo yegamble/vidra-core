@@ -218,9 +218,9 @@ type RemoteVideoComment struct {
 	// top level: a thread with a hole beats the dropped reply this replaces.
 	ParentObjectURL string
 	Body            string
-	Edited      bool
-	PublishedAt *time.Time
-	CreatedAt   time.Time
+	Edited          bool
+	PublishedAt     *time.Time
+	CreatedAt       time.Time
 }
 
 // ListRemoteVideoComments returns one remote video's mirrored thread for a

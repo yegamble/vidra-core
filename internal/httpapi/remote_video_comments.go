@@ -45,9 +45,9 @@ type remoteVideoCommentView struct {
 	// among the rows it holds renders the reply at the top level.
 	ParentObjectURL string     `json:"parent_object_url,omitempty"`
 	Body            string     `json:"body"`
-	Edited      bool       `json:"edited"`
-	PublishedAt *time.Time `json:"published_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	Edited          bool       `json:"edited"`
+	PublishedAt     *time.Time `json:"published_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
 type remoteVideoCommentListResponse struct {
@@ -82,16 +82,16 @@ func (s *Server) handleListRemoteVideoComments(c echo.Context) error {
 	views := make([]remoteVideoCommentView, 0, len(items))
 	for _, it := range items {
 		views = append(views, remoteVideoCommentView{
-			ID:           it.ID.String(),
-			AuthorName:   it.AuthorName,
-			AuthorDomain: it.Domain,
-			ActorURL:     it.ActorURL,
+			ID:              it.ID.String(),
+			AuthorName:      it.AuthorName,
+			AuthorDomain:    it.Domain,
+			ActorURL:        it.ActorURL,
 			ObjectURL:       it.ObjectURL,
 			ParentObjectURL: it.ParentObjectURL,
-			Body:         it.Body,
-			Edited:       it.Edited,
-			PublishedAt:  it.PublishedAt,
-			CreatedAt:    it.CreatedAt,
+			Body:            it.Body,
+			Edited:          it.Edited,
+			PublishedAt:     it.PublishedAt,
+			CreatedAt:       it.CreatedAt,
 		})
 	}
 	return c.JSON(http.StatusOK, remoteVideoCommentListResponse{

@@ -735,3 +735,52 @@ func TestAThirdPartyCannotReplyIntoAnotherOriginsMirroredThread(t *testing.T) {
 		t.Fatalf("a third instance replied into a thread it does not host (total %d)", total)
 	}
 }
+
+// --- A block names the ACCOUNT, and reaches its channels (A29 parity) ---
+
+// TestBlockingAChannelActorRecordsItsOwningAccount is the rehearsal's finding
+// (b) at the resolution seam. A viewer pasting a channel's actor URL — which is
+// what the remote watch page hands them — must end up blocking the PERSON, so
+// the reach view covers every channel that person owns, including the ones they
+// have not created yet.
+func TestBlockingAChannelActorRecordsItsOwningAccount(t *testing.T) {
+	repo := newContractRepo()
+	const (
+		person = "https://peer.example/accounts/kaisa"
+		group  = "https://peer.example/video-channels/films"
+	)
+	cacheContractActor(repo, person, "Person", "kaisa", "peer.example")
+	cacheContractActor(repo, group, "Group", "films", "peer.example")
+	// The Group names its owner, exactly as vidra and PeerTube both emit it.
+	owned := repo.remoteActors[group]
+	owned.AttributedTo = person
+	repo.remoteActors[group] = owned
+
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	got, err := svc.ResolveRemoteActorIdentity(context.Background(), group)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got != person {
+		t.Fatalf("resolved %q, want the OWNING ACCOUNT %q — a block on the channel hides only that channel", got, person)
+	}
+}
+
+// An actor this instance has never cached keeps the URL it was given, and no
+// fetch is made to find out. A block must work against an actor that is
+// offline, gone or refusing us — which is the actor most likely to be blocked —
+// and dereferencing a supplied URL would turn "block this actor" into "make my
+// server fetch this address".
+func TestBlockingAnUncachedActorNeitherFetchesNorFails(t *testing.T) {
+	repo := newContractRepo()
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	const unknown = "https://never-seen.example/accounts/ghost"
+
+	got, err := svc.ResolveRemoteActorIdentity(context.Background(), unknown)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got != unknown {
+		t.Fatalf("resolved %q, want the URL as given", got)
+	}
+}

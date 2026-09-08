@@ -277,3 +277,61 @@ func TestParentJobContextChainsARunToItsCause(t *testing.T) {
 		t.Error("an unparented enqueue must leave parent_job_id NULL")
 	}
 }
+
+// TestRunContextPutsTheOriginatingRequestBackOnTheContext is the rehearsal's
+// finding (d). A worker's context is a background one and carries no request, so
+// every row queued from inside a job recorded an empty request_id and
+// correlation_id — the 24 federation deliveries the transcode-completion hook
+// queued were faithfully blank on BOTH the queue row and its projected run, and
+// /admin/jobs showed a dash where the act that caused them should be. The
+// identity was never missing, only one row away.
+func TestRunContextPutsTheOriginatingRequestBackOnTheContext(t *testing.T) {
+	repo := newFakeRepo()
+	runID := uuid.New()
+	repo.runs[key("transcode_jobs", "job-1")] = sqlcgen.GetJobRunIdentityBySourceRow{
+		ID: runID, RequestID: "req-abc", CorrelationID: "corr-abc",
+	}
+	logger, _ := capture()
+	r := New(repo, "box:7", logger)
+
+	ctx := r.RunContext(context.Background(), "transcode_jobs", "job-1")
+	ids := observability.CorrelationFromContext(ctx)
+	if ids.RequestID != "req-abc" || ids.CorrelationID != "corr-abc" {
+		t.Fatalf("correlation = %+v, want the run's originating ids", ids)
+	}
+	// And the run is still marked as the parent, so the chain stays a chain.
+	if got := parentFromContext(ctx); !got.Valid || uuid.UUID(got.Bytes) != runID {
+		t.Errorf("parent job = %+v, want %v", got, runID)
+	}
+}
+
+// A LIVE request wins over the row: the row is a record of an older request, and
+// overwriting the one actually in flight would misattribute everything it does.
+func TestRunContextDoesNotOverwriteALiveRequest(t *testing.T) {
+	repo := newFakeRepo()
+	repo.runs[key("transcode_jobs", "job-1")] = sqlcgen.GetJobRunIdentityBySourceRow{
+		ID: uuid.New(), RequestID: "req-old", CorrelationID: "corr-old",
+	}
+	logger, _ := capture()
+	r := New(repo, "box:7", logger)
+
+	live := observability.ContextWithCorrelation(context.Background(),
+		observability.Correlation{RequestID: "req-live", CorrelationID: "corr-live"})
+	ids := observability.CorrelationFromContext(r.RunContext(live, "transcode_jobs", "job-1"))
+	if ids.RequestID != "req-live" {
+		t.Fatalf("request id = %q, want the live request", ids.RequestID)
+	}
+}
+
+// An unknown run invents nothing: a blank id is honest, and a made-up one would
+// send an operator to logs that do not exist.
+func TestRunContextOnAnUnknownRunLeavesTheContextAlone(t *testing.T) {
+	repo := newFakeRepo()
+	logger, _ := capture()
+	r := New(repo, "box:7", logger)
+
+	ids := observability.CorrelationFromContext(r.RunContext(context.Background(), "transcode_jobs", "nope"))
+	if ids.RequestID != "" || ids.CorrelationID != "" {
+		t.Fatalf("correlation = %+v, want empty", ids)
+	}
+}

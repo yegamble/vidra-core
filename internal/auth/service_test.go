@@ -31,11 +31,14 @@ type fakeRegReq struct {
 
 // fakeRepo is an in-memory auth.Repository keyed by lowercased email/username.
 type fakeRepo struct {
-	byEmail  map[string]sqlcgen.User
-	names    map[string]bool
-	sessions map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow
-	resets   map[string]*sqlcgen.PasswordResetToken     // keyed by token hash
-	verifs   map[string]*sqlcgen.EmailVerificationToken // keyed by token hash
+	byEmail map[string]sqlcgen.User
+	names   map[string]bool
+	// channelHandles are names a CHANNEL holds in the one shared handle
+	// namespace (migration 0142).
+	channelHandles map[string]bool
+	sessions       map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow
+	resets         map[string]*sqlcgen.PasswordResetToken     // keyed by token hash
+	verifs         map[string]*sqlcgen.EmailVerificationToken // keyed by token hash
 	// emailChanges mirrors email_change_requests (0129), keyed by token hash.
 	emailChanges map[string]*sqlcgen.EmailChangeRequest
 	regReqs      []*fakeRegReq
@@ -62,11 +65,12 @@ type fakeRepo struct {
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
-		byEmail:  map[string]sqlcgen.User{},
-		names:    map[string]bool{},
-		sessions: map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow{},
-		resets:   map[string]*sqlcgen.PasswordResetToken{},
-		verifs:   map[string]*sqlcgen.EmailVerificationToken{},
+		byEmail:        map[string]sqlcgen.User{},
+		names:          map[string]bool{},
+		channelHandles: map[string]bool{},
+		sessions:       map[uuid.UUID]*sqlcgen.GetSessionByRefreshHashRow{},
+		resets:         map[string]*sqlcgen.PasswordResetToken{},
+		verifs:         map[string]*sqlcgen.EmailVerificationToken{},
 
 		emailChanges: map[string]*sqlcgen.EmailChangeRequest{},
 	}
@@ -456,7 +460,14 @@ func (f *fakeRepo) CountUsers(context.Context) (int64, error) {
 func (f *fakeRepo) CreateUser(_ context.Context, arg sqlcgen.CreateUserParams) (sqlcgen.User, error) {
 	email := lower(arg.Email)
 	if _, ok := f.byEmail[email]; ok || f.names[lower(arg.Username)] {
-		return sqlcgen.User{}, &pgconn.PgError{Code: "23505"}
+		return sqlcgen.User{}, &pgconn.PgError{Code: "23505", ConstraintName: "users_username_lower_idx"}
+	}
+	// The one shared handle namespace (migration 0142): a username held by a
+	// CHANNEL is refused by a DIFFERENT constraint on a different table, and it
+	// means something else — the fake mirrors the trigger so the service's
+	// classification is exercised on the shape Postgres actually raises.
+	if f.channelHandles[lower(arg.Username)] {
+		return sqlcgen.User{}, &pgconn.PgError{Code: "23505", ConstraintName: "actor_handles_pkey"}
 	}
 	u := sqlcgen.User{
 		ID:           uuid.New(),
@@ -729,4 +740,34 @@ func TestLogoutUnknownTokenIsNoError(t *testing.T) {
 func (f *fakeRepo) CountRegistrationRequests(ctx context.Context, status *string) (int64, error) {
 	rows, err := f.ListRegistrationRequests(ctx, sqlcgen.ListRegistrationRequestsParams{Status: status, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
+}
+
+// TestRegisteringAUsernameHeldByAChannelIsRefused is SC1's account direction of
+// the one shared handle namespace (migration 0142). It is a DIFFERENT sentinel
+// from "that username is taken", because the two are different facts: the HTTP
+// layer renders this one as the stable `handle_reserved` code, and conflating
+// them would have made the reservation's arrival invisible to every caller.
+func TestRegisteringAUsernameHeldByAChannelIsRefused(t *testing.T) {
+	repo := newFakeRepo()
+	repo.channelHandles["films"] = true
+	svc := newTestService(repo)
+
+	_, _, err := svc.Register(context.Background(), RegisterInput{
+		Username: "Films", Email: "films@example.test", Password: "supersecret",
+	}, "test")
+	if !errors.Is(err, ErrHandleReserved) {
+		t.Fatalf("register over a channel handle: err = %v, want ErrHandleReserved", err)
+	}
+
+	// A duplicate USERNAME keeps its own answer, unchanged.
+	if _, _, err := svc.Register(context.Background(), RegisterInput{
+		Username: "ada", Email: "ada@example.test", Password: "supersecret",
+	}, "test"); err != nil {
+		t.Fatalf("first register: %v", err)
+	}
+	if _, _, err := svc.Register(context.Background(), RegisterInput{
+		Username: "Ada", Email: "ada2@example.test", Password: "supersecret",
+	}, "test"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate username: err = %v, want ErrConflict", err)
+	}
 }

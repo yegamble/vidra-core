@@ -1970,11 +1970,6 @@ func (s *Server) routes() {
 		api.GET("/admin/instances/blocked", s.handleListBlockedInstances, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.POST("/admin/instances/blocked", s.handleBlockInstance, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.DELETE("/admin/instances/blocked/:domain", s.handleUnblockInstance, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
-		// One remote ACCOUNT blocked for everyone, instead of defederating the
-		// whole server it lives on (A29 parity).
-		api.GET("/admin/federation/blocked-actors", s.handleAdminListBlockedRemoteActors, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
-		api.POST("/admin/federation/blocked-actors", s.handleAdminBlockRemoteActor, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
-		api.DELETE("/admin/federation/blocked-actors", s.handleAdminUnblockRemoteActor, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
 
 	// Per-remote-account blocks (A29-F7). Mounted with the federation service,
@@ -1984,6 +1979,14 @@ func (s *Server) routes() {
 		api.GET("/me/blocks/remote", s.handleListRemoteBlocks, s.requireAuth)
 		api.POST("/me/blocks/remote", s.handleBlockRemoteActor, s.requireAuth)
 		api.DELETE("/me/blocks/remote", s.handleUnblockRemoteActor, s.requireAuth)
+		// The ADMIN scope of the same control: one remote ACCOUNT blocked for
+		// everyone, instead of defederating the whole server it lives on
+		// (A29 parity). It mounts HERE and not with the instance blocklist
+		// because it resolves its identity through the same WebFinger +
+		// SSRF-guarded machinery the viewer surface does.
+		api.GET("/admin/federation/blocked-actors", s.handleAdminListBlockedRemoteActors, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/federation/blocked-actors", s.handleAdminBlockRemoteActor, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.DELETE("/admin/federation/blocked-actors", s.handleAdminUnblockRemoteActor, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
 
 	// Remote videos (federated, metadata-only): the remote-watch surface + the

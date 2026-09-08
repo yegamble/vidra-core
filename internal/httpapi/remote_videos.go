@@ -15,13 +15,13 @@ import (
 // stream_url from the origin (when present) and watch_url always links the
 // origin's watch page.
 type remoteVideoView struct {
-	ID              string     `json:"id"`
-	Remote          bool       `json:"remote"` // always true; parity with local video cards
-	Domain          string     `json:"domain"`
-	Title           string     `json:"title"`
-	Description     string     `json:"description"`
-	ObjectURL string `json:"object_url"`
-	WatchURL  string `json:"watch_url"`
+	ID          string `json:"id"`
+	Remote      bool   `json:"remote"` // always true; parity with local video cards
+	Domain      string `json:"domain"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	ObjectURL   string `json:"object_url"`
+	WatchURL    string `json:"watch_url"`
 	// ActorURL, AccountActorURL and ChannelHandle are the block affordance
 	// (A29 parity). Without them the remote watch page could name the origin
 	// DOMAIN and nothing finer, so the only control it could offer a viewer was

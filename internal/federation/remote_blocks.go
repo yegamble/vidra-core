@@ -94,7 +94,7 @@ func (s *Service) ResolveRemoteActorIdentity(ctx context.Context, identity strin
 		if err != nil {
 			return "", fmt.Errorf("%w: %w", ErrRemoteUnresolvable, err)
 		}
-		return s.accountActorFor(ctx, actorURL), nil
+		return s.accountActorFor(ctx, actorURL, true), nil
 	case SearchQueryURI:
 		if strings.EqualFold(hostOf(identity), s.domain()) {
 			return "", ErrLocalFollowTarget
@@ -103,7 +103,7 @@ func (s *Service) ResolveRemoteActorIdentity(ctx context.Context, identity strin
 		if _, err := guard.ValidateURL(identity); err != nil {
 			return "", fmt.Errorf("%w: %w", ErrRemoteUnresolvable, err)
 		}
-		return s.accountActorFor(ctx, identity), nil
+		return s.accountActorFor(ctx, identity, false), nil
 	}
 	return "", ErrRemoteActorRequired
 }
@@ -122,8 +122,25 @@ func (s *Service) ResolveRemoteActorIdentity(ctx context.Context, identity strin
 // offline, gone, or refusing us — exactly the actor a viewer is most likely to be
 // blocking — so an unresolvable or unowned actor keeps the URL it was given. The
 // worst case is the block a viewer could already make before this existed.
-func (s *Service) accountActorFor(ctx context.Context, actorURL string) string {
-	ra, err := s.resolveRemoteActor(ctx, actorURL)
+//
+// allowFetch preserves the surrounding rule that a supplied URL is validated but
+// NEVER DEREFERENCED. A HANDLE has already cost a WebFinger fetch by the time it
+// gets here, so one actor fetch on that path changes nothing about what the
+// caller can make this server do. A URL has cost nothing, and dereferencing it
+// would turn "block this actor" into "make my server fetch this address" — so
+// the URL path climbs only through the actor CACHE, which is populated for every
+// actor whose content this instance actually holds, i.e. every actor a viewer
+// has a reason to block.
+func (s *Service) accountActorFor(ctx context.Context, actorURL string, allowFetch bool) string {
+	var (
+		ra  sqlcgen.RemoteActor
+		err error
+	)
+	if allowFetch {
+		ra, err = s.resolveRemoteActor(ctx, actorURL)
+	} else {
+		ra, err = s.repo.GetRemoteActor(ctx, actorURL)
+	}
 	if err != nil || ra.AttributedTo == "" {
 		return actorURL
 	}

@@ -115,9 +115,14 @@ func (f fakeRepo) IsRemoteActorBlockedInstanceWide(_ context.Context, actorURL s
 }
 
 func (f fakeRepo) BlockRemoteActorInstanceWide(_ context.Context, arg sqlcgen.BlockRemoteActorInstanceWideParams) error {
-	if f.adminActorBlocks != nil {
-		f.adminActorBlocks[arg.RemoteActorUrl] = arg.Reason
+	if f.adminActorBlocks == nil {
+		return nil
 	}
+	if existing, ok := f.adminActorBlocks[arg.RemoteActorUrl]; ok && arg.Reason == "" {
+		f.adminActorBlocks[arg.RemoteActorUrl] = existing
+		return nil
+	}
+	f.adminActorBlocks[arg.RemoteActorUrl] = arg.Reason
 	return nil
 }
 
