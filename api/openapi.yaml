@@ -14903,7 +14903,32 @@ components:
           properties:
             code:
               type: string
-              description: Stable snake_case identifier for the error class.
+              description: >-
+                Stable snake_case identifier for the error class.
+
+
+                Two codes govern every ingestion route (uploads, source
+                replacement, URL imports, channel syncs, posters, caption
+                tracks, playlist covers, avatars, banners, instance branding, DM
+                attachments and account-import archives):
+
+
+                `scanner_not_configured` (503) — this instance has no malware
+                scanner wired and has not declared the explicit opt-out
+                (MALWARE_SCAN_MODE=disabled), so it accepts no user-supplied
+                file at all. `GET /instance` reports features.uploads and
+                features.imports false in the same state, so a client should
+                hide the affordance rather than discover this per request.
+
+
+                `safety_scan_rejected` (422) — the scanner refused this file.
+                The message is a fixed neutral sentence ("This file was rejected
+                by the instance's safety scan and was not stored."); the
+                signature and the scanner are deliberately NOT disclosed. The
+                asynchronous paths report the same refusal out of band: the
+                upload session settles state `failed` with that sentence in
+                `failure_reason`, and the import job settles `failed` with it in
+                `error`.
               example: not_found
             message:
               type: string
