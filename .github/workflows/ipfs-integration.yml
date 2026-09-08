@@ -1,17 +1,25 @@
 name: ipfs-integration
 
-# Optional job: runs the IPFS-integration-tagged tests (`-tags=ipfs_integration`)
-# against a REAL ipfs/kubo node. These exercise the actual Kubo RPC add→pin→cat
-# round-trip, a directory (HLS-tree) add resolved through the HTTP gateway, and
-# a fresh real MP4 retrieved through an independently operated PUBLIC gateway —
-# coverage the fast `make ci` gate (unit tests against FakeIPFSClient) deliberately
-# does not have.
+# REQUIRED lane: the LOCAL-kubo half of the `-tags=ipfs_integration` proofs,
+# against a REAL ipfs/kubo node brought up by this repo's own compose file. It
+# exercises the actual Kubo RPC add→pin→cat round trip and a directory
+# (HLS-tree) add resolved through the node's HTTP gateway — coverage the fast
+# `make ci` gate (unit tests against FakeIPFSClient) deliberately does not have.
+#
+# The third proof in that build tag, TestIntegrationPublicVideoRoundTrip, is NOT
+# here (A39): it fetches a fresh CID back through an INDEPENDENTLY OPERATED
+# public gateway with a five-minute budget. That is a real and valuable proof of
+# provider reachability, but a third party's availability must not decide whether
+# a pull request can merge — it made this lane the flakiest required check in the
+# repo. It moved to ipfs-public-gateway.yml, which runs on a schedule and on
+# demand, with IPFS_PUBLIC_PROOFS_REQUIRED set so it cannot pass by skipping.
 #
 # Kept SEPARATE from backend-ci.yml on purpose: the canonical `make ci` gate must
 # stay fast and runnable on hosts WITHOUT a kubo node, so these tests live behind
-# their own `ipfs_integration` build tag + `make test-ipfs-integration` target +
-# this job. Each test self-skips when IPFS_TEST_API_URL is unset, so the target is
-# safe to run locally too. This job does not gate the canonical pipeline.
+# their own `ipfs_integration` build tag + make target + this job. Each test
+# self-skips when IPFS_TEST_API_URL is unset, so the target is safe to run
+# locally — and this lane asserts, over its own verbose log, that none of them
+# actually did.
 on:
   push:
     branches: [main]
@@ -19,6 +27,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  GOFLAGS: -mod=readonly
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -36,7 +47,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26"
+          go-version: "1.27"
           cache: true
           cache-dependency-path: go.sum
 
@@ -89,32 +100,38 @@ jobs:
           filters=$(docker compose exec -T ipfs ipfs config --json Swarm.AddrFilters)
           case "$filters" in *'/ip4/0.0.0.0/ipcidr/0'*) exit 1 ;; *) ;; esac
 
-      # ubuntu-latest (24.04) no longer ships ffmpeg preinstalled (it did on 22.04),
-      # so install it explicitly before generating the fixture below.
-      - name: Install ffmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-
-      - name: Generate a tiny real MP4 fixture
-        run: >-
-          ffmpeg -hide_banner -loglevel error
-          -f lavfi -i testsrc2=size=160x90:rate=10
-          -f lavfi -i sine=frequency=440:sample_rate=8000
-          -t 1 -c:v libx264 -pix_fmt yuv420p -c:a aac
-          -movflags +faststart -y /tmp/vidra-ipfs-live-test.mp4
-
-      - name: Run IPFS integration tests (make test-ipfs-integration)
+      - name: Run the local-kubo IPFS proofs (make test-ipfs-integration-local)
         env:
           # Point the tests at the kubo service above so they execute (and can fail
-          # the job) instead of self-skipping.
+          # the job) instead of self-skipping. No public-gateway variables here:
+          # the -run selection excludes that proof entirely, so it cannot even be
+          # reached, let alone skipped.
           IPFS_TEST_API_URL: http://localhost:5001
           IPFS_TEST_GATEWAY_URL: http://localhost:9090
-          IPFS_TEST_PUBLIC_GATEWAY_URL: https://ipfs.io
-          IPFS_TEST_PUBLIC_GATEWAY_TIMEOUT: 5m
-          IPFS_TEST_VIDEO_PATH: /tmp/vidra-ipfs-live-test.mp4
-          IPFS_PUBLIC_PROOFS_REQUIRED: "1"
-        run: make test-ipfs-integration
+        run: |
+          mkdir -p ci-report
+          set -o pipefail
+          make test-ipfs-integration-local 2>&1 | tee ci-report/ipfs-local.log
+
+      - name: No silent skips in the local IPFS proofs
+        # Empty allowlist: nothing here is allowed to skip. If the kubo node is
+        # not reachable the tests must fail, not quietly pass.
+        run: bash scripts/ci/assert-no-silent-skips.sh ci-report/ipfs-local.log scripts/ci/allowed-skips-none.txt
+
+      - name: Collect kubo logs
+        if: always()
+        run: |
+          mkdir -p ci-report
+          docker compose --profile ipfs logs --no-color ipfs > ci-report/kubo.log 2>&1 || true
+
+      - name: Upload IPFS lane evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-ipfs-local-log
+          path: ci-report/
+          retention-days: 14
+          if-no-files-found: warn
 
       - name: Tear down
         if: always()

@@ -1,0 +1,116 @@
+name: ipfs-public-gateway
+
+# OPTIONAL lane, explicitly named as such (A39 / QLT-01).
+#
+# TestIntegrationPublicVideoRoundTrip adds a freshly-marked real MP4 to the local
+# kubo node and then fetches it back through an INDEPENDENTLY OPERATED public
+# gateway (ipfs.io), with a five-minute budget for the DHT provide/lookup to
+# converge. That is genuine end-to-end proof that a pinned video is retrievable
+# by someone who is not us — and it depends on a third party's availability and
+# on DHT propagation timing, neither of which may decide whether a pull request
+# can merge. It used to live in ipfs-integration.yml and was the flakiest
+# required check in the repo.
+#
+# So it runs here instead: on a schedule and on demand, never on push/PR, and
+# never as a merge gate. IPFS_PUBLIC_PROOFS_REQUIRED=1 is set so a missing
+# fixture or a dropped env var is a hard failure rather than a skip — an optional
+# lane may be absent, but it may not be falsely green.
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 07:00 UTC, an hour after bench-fuzz so the two do not contend.
+    - cron: "0 7 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GOFLAGS: -mod=readonly
+
+jobs:
+  ipfs-public-gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27"
+          cache: true
+          cache-dependency-path: go.sum
+
+      # The public proof needs a node that actually announces to the DHT, which
+      # is the IPFS_PUBLIC_NETWORK transition operators run.
+      - name: Bring up Kubo in live public mode
+        env:
+          IPFS_PUBLIC_NETWORK: "true"
+        run: docker compose --profile ipfs up -d ipfs
+
+      - name: Wait for the node to report healthy
+        run: |
+          set -eux
+          for _ in $(seq 1 30); do
+            health=$(docker inspect -f '{{ .State.Health.Status }}' "$(docker compose ps -q ipfs)" 2>/dev/null || echo starting)
+            if [ "$health" = healthy ]; then break; fi
+            sleep 3
+          done
+          test "$(docker inspect -f '{{ .State.Health.Status }}' "$(docker compose ps -q ipfs)")" = healthy
+
+      # ubuntu-latest (24.04) no longer ships ffmpeg preinstalled (it did on 22.04),
+      # so install it explicitly before generating the fixture below.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Generate a tiny real MP4 fixture
+        run: >-
+          ffmpeg -hide_banner -loglevel error
+          -f lavfi -i testsrc2=size=160x90:rate=10
+          -f lavfi -i sine=frequency=440:sample_rate=8000
+          -t 1 -c:v libx264 -pix_fmt yuv420p -c:a aac
+          -movflags +faststart -y /tmp/vidra-ipfs-live-test.mp4
+
+      - name: Run the public-gateway round trip
+        env:
+          IPFS_TEST_API_URL: http://localhost:5001
+          IPFS_TEST_GATEWAY_URL: http://localhost:9090
+          IPFS_TEST_PUBLIC_GATEWAY_URL: https://ipfs.io
+          IPFS_TEST_PUBLIC_GATEWAY_TIMEOUT: 5m
+          IPFS_TEST_VIDEO_PATH: /tmp/vidra-ipfs-live-test.mp4
+          # Turns a would-be skip into t.Fatal: an optional lane may be absent,
+          # but it may not report success having proved nothing.
+          IPFS_PUBLIC_PROOFS_REQUIRED: "1"
+        run: |
+          mkdir -p ci-report
+          set -o pipefail
+          make test-ipfs-public-gateway 2>&1 | tee ci-report/ipfs-public.log
+
+      - name: No silent skips in the public-gateway proof
+        run: bash scripts/ci/assert-no-silent-skips.sh ci-report/ipfs-public.log scripts/ci/allowed-skips-none.txt
+
+      - name: Collect kubo logs
+        if: always()
+        run: |
+          mkdir -p ci-report
+          docker compose --profile ipfs logs --no-color ipfs > ci-report/kubo.log 2>&1 || true
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-ipfs-public-gateway-log
+          path: ci-report/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Tear down
+        if: always()
+        run: docker compose --profile ipfs down -v

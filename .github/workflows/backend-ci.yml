@@ -16,6 +16,14 @@ on:
 permissions:
   contents: read
 
+# The gate runs on the toolchain the RELEASE IMAGE builds with (Dockerfile:
+# golang:1.27-alpine), not merely on the minimum go.mod accepts. -mod=readonly is
+# already Go's default; stating it makes "exact manifest" a property of the job
+# rather than of the toolchain version, so no step can silently rewrite go.mod
+# or resolve a module that go.sum does not pin.
+env:
+  GOFLAGS: -mod=readonly
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -55,9 +63,19 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26"
+          go-version: "1.27"
           cache: true
           cache-dependency-path: go.sum
+
+      # EXACT MANIFEST. `go mod verify` re-hashes every module in the build list
+      # against go.sum, so a tampered or re-tagged dependency fails here rather
+      # than compiling silently; `go mod tidy -diff` fails when go.mod/go.sum are
+      # not what this source tree actually requires, which is the module-graph
+      # equivalent of a stale lockfile.
+      - name: Exact module manifest (go mod verify + tidy diff)
+        run: |
+          go mod verify
+          go mod tidy -diff
 
       # Pinned to the Makefile's SQLC_VERSION so `make ci`'s sqlc-verify takes
       # the fast binary path instead of compiling sqlc via `go run` each run.
@@ -76,8 +94,33 @@ jobs:
           DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
         run: go run ./cmd/api migrate up
 
+      # STATIC no-silent-skip gate for the canonical suite. `make ci` runs
+      # `go test -race ./...` non-verbosely, where a skipped test prints nothing
+      # at all — so a test in the DEFAULT build that self-skips on a missing env
+      # var would be part of the required gate in name only. The tagged
+      # integration lanes are audited at RUNTIME instead (they are designed to
+      # self-skip); this guard keeps that design from leaking into the untagged
+      # suite. See scripts/ci/allowed-skips-unit.txt for the registered skips.
+      - name: No self-skipping tests in the canonical suite
+        run: bash scripts/ci/assert-no-untagged-skips.sh
+
       - name: Run canonical gate (make ci)
         env:
           DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
-        run: make ci
+        # pipefail so `tee` cannot mask a failing gate. The log is the artifact
+        # this lane attaches: the exact console output of the run that produced
+        # the green check, retrievable after the run page's logs age out.
+        run: |
+          mkdir -p ci-report
+          set -o pipefail
+          make ci 2>&1 | tee ci-report/make-ci.log
+
+      - name: Upload canonical gate log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-make-ci-log
+          path: ci-report/
+          retention-days: 14
+          if-no-files-found: warn

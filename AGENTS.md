@@ -6,6 +6,46 @@ all SQL, golang-migrate migrations, in-process workers (transcode, imports,
 search outbox, media GC). The frontend (yegamble/vidra-user) consumes this
 repo only through `api/openapi.yaml` — the spec is the contract.
 
+## CI: what "required for merge" means
+
+One check stands for the whole required set: **`ci-required`**. It is the only
+name that belongs in branch protection for this repo. It reads
+[`.github/required-checks.txt`](.github/required-checks.txt) — the checked-in
+definition of required — and fails if any listed lane failed, was cancelled,
+timed out, or **never ran** (a `paths:` filter that grew too narrow, or a
+renamed job, otherwise produces a PR with fewer proofs and no signal at all).
+
+Required today: `build-test`, `integration`, `openapi`, `ipfs-integration`,
+`ipfs-private-integration`, plus `guard`, `prev-migrator-against-new-schema`
+and `prev-release-against-new-schema` when their path filters fire.
+Deliberately NOT required, each for a stated reason in its own workflow header:
+`bench`/`fuzz` (scheduled exploratory signal) and `ipfs-public-gateway` (depends
+on a third party's availability, so it cannot decide whether a PR merges).
+
+**No silent skips.** Nearly every integration test here self-skips when its
+dependency is absent — right on a laptop, wrong in the lane whose job is to
+prove that path works, where it means `go test` exits 0 having executed
+nothing. Two guards close that:
+
+- the untagged suite (`make ci`) is checked STATICALLY —
+  `scripts/ci/assert-no-untagged-skips.sh` fails on any `t.Skip`/`testing.Short`
+  in a test file outside the integration build tags whose reason is not in
+  `scripts/ci/allowed-skips-unit.txt`;
+- every tagged lane runs verbosely, tees its log, and
+  `scripts/ci/assert-no-silent-skips.sh` fails on any skip whose reason is not
+  in that lane's allowlist. `allowed-skips-none.txt` (empty) is the default;
+  `allowed-skips-integration.txt` registers the handful of ffmpeg-capability
+  probes and the RTMP lane that genuinely cannot run there.
+
+Adding a skip to an allowlist is a reviewed edit with a written reason, never a
+quiet green. Every required lane uploads its log as an artifact (14 days).
+
+**Toolchain.** CI pins Go to the version the RELEASE IMAGE builds with —
+`golang:1.27-alpine` in the Dockerfile — not merely the minimum `go.mod`
+accepts. `go mod verify` + `go mod tidy -diff` run in the gate, and
+`GOFLAGS=-mod=readonly` is stated in every Go job. When the Dockerfile's Go
+version moves, move the workflows with it.
+
 ## Verification gates (run before opening any PR; paste the output tail into the PR body)
 
 ```

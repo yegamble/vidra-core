@@ -1,0 +1,54 @@
+# The definition of "required for merge" for vidra-core.
+#
+# scripts/ci/require-checks.sh reads this file in the `ci-required` job and
+# fails unless every entry is satisfied for the commit under test. Configure
+# ONE required status check in branch protection — `ci-required` — and this
+# file becomes the single place the required set is declared and reviewed.
+#
+# Syntax (one check-run name per line, i.e. a job's name as GitHub reports it):
+#   name    must EXIST for this commit and must conclude `success`
+#   ?name   required only IF it ran (path-filtered lanes)
+#
+# Nothing but `success` passes: `cancelled`, `timed_out`, `neutral` and
+# `skipped` all fail, so a lane cannot be waved through by being interrupted.
+
+# backend-ci.yml — the canonical `make ci` gate (fmt, vet, migrate-lint,
+# openapi-verify, sqlc-verify, race unit tests) + exact module manifest.
+build-test
+
+# backend-integration.yml — `-tags=integration` against real Postgres, Redis,
+# ffmpeg, clamd and MinIO, with the no-silent-skip audit over its verbose log.
+integration
+
+# openapi.yml — Redocly lint + route/spec drift guard. This spec is what the
+# separate vidra-user repo generates its client from, so drift here breaks a
+# repo that cannot see this PR.
+openapi
+
+# ipfs-integration.yml — local-kubo add/pin/cat and HLS-tree gateway proofs.
+# (The public-gateway round trip is deliberately NOT required; it runs in the
+# scheduled ipfs-public-gateway lane.)
+ipfs-integration
+
+# ipfs-private-integration.yml — private-swarm isolation proofs. All-local
+# dependencies and IPFS_PRIVATE_PROOFS_REQUIRED=1, so it is deterministic.
+ipfs-private-integration
+
+# ci-guard.yml — action pins, no hidden continue-on-error, backend-ci really
+# runs `make ci`. Path-filtered to .github/workflows/**, so required only when
+# a workflow changed — which is exactly when it has anything to say.
+?guard
+
+# rollback-floor.yml — the PREVIOUS release's migrator against this schema.
+# Path-filtered to migrations/, internal/dbmigrate/ and cmd/api/migrate.go.
+?prev-migrator-against-new-schema
+
+# schema-compat.yml — the previous release's integration suite against this
+# schema (~45 min). Path-filtered to migrations/; cadence unchanged.
+?prev-release-against-new-schema
+
+# NOT required, deliberately, and each one says why in its own workflow header:
+#   bench                          bench-fuzz.yml, scheduled exploratory signal
+#   fuzz                           bench-fuzz.yml, scheduled exploratory signal
+#   ipfs-public-gateway            depends on a third party's availability
+#   assets / publish               release-triggered, not PR gates

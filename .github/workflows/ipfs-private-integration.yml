@@ -9,8 +9,15 @@ name: ipfs-private-integration
 #
 # Kept SEPARATE from backend-ci.yml on purpose: the canonical `make ci` gate must stay
 # fast and runnable WITHOUT any Kubo node. Each test self-skips when its env is unset,
-# so this job never fails the canonical pipeline and is safe to run locally too
-# (`make test-ipfs-private-integration`).
+# so the target is safe to run locally too (`make test-ipfs-private-integration`).
+#
+# A39: this lane IS required for merge. Its dependencies are all local — a
+# swarm.key'd kubo pair from this repo's own compose file — so there is nothing
+# third-party to flake on, and the proofs it carries (network-level isolation of
+# the private tier) are not proved anywhere else. It already sets
+# IPFS_PRIVATE_PROOFS_REQUIRED=1, which turns every would-be skip into a hard
+# failure; the log audit below is the belt to that braces and the artifact is
+# the evidence.
 on:
   push:
     branches: [main]
@@ -18,6 +25,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  GOFLAGS: -mod=readonly
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -34,7 +44,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26"
+          go-version: "1.27"
           cache: true
           cache-dependency-path: go.sum
 
@@ -135,7 +145,22 @@ jobs:
           IPFS_PRIVATE_TEST_CLUSTER_API: http://localhost:9094
           # Real media bytes for the keyed A→B replication proof.
           IPFS_PRIVATE_TEST_VIDEO_PATH: /tmp/vidra-ipfs-private-test.mp4
-        run: make test-ipfs-private-integration
+        run: |
+          mkdir -p ci-report
+          set -o pipefail
+          make test-ipfs-private-integration 2>&1 | tee ci-report/ipfs-private.log
+
+      - name: No silent skips in the private-swarm proofs
+        run: bash scripts/ci/assert-no-silent-skips.sh ci-report/ipfs-private.log scripts/ci/allowed-skips-none.txt
+
+      - name: Upload private-swarm evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-ipfs-private-log
+          path: ci-report/
+          retention-days: 14
+          if-no-files-found: warn
 
       - name: Tear down
         if: always()
