@@ -263,13 +263,18 @@ func TestContractFixturesDispatch(t *testing.T) {
 			},
 		},
 		{
-			name:    "mastodon Reject{Follow} deletes our pending follow",
+			name:    "mastodon Reject{Follow} marks our pending follow rejected",
 			fixture: "inbound/mastodon_reject_follow.json",
 			signer:  ctMastoUser,
 			seed:    func(r fakeRepo) { seedPendingContractFollow(r, ctMastoUser) },
 			check: func(t *testing.T, r fakeRepo) {
-				if len(r.rcFollows) != 0 {
-					t.Errorf("pending follow survived the Reject: %+v", r.rcFollows)
+				if len(r.rcFollows) != 1 {
+					t.Fatalf("the refused follow must stay visible: %+v", r.rcFollows)
+				}
+				for _, row := range r.rcFollows {
+					if row.State != "rejected" {
+						t.Errorf("state = %q, want rejected", row.State)
+					}
 				}
 			},
 		},

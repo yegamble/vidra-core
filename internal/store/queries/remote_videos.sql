@@ -81,10 +81,15 @@ WHERE object_url = $1 OR (watch_url <> '' AND watch_url = $1);
 -- `edited` is set by the CONFLICT arm only: the first arrival is not an edit,
 -- and a redelivery of the same body must not claim to be one either, which is
 -- why the flag ORs the existing value with a real body change.
+-- parent_object_url is '' for a reply to the VIDEO (which in vidra's model IS a
+-- top-level comment) and the ORIGIN's object id of the parent comment otherwise.
+-- The CONFLICT arm does not touch it: a redelivery cannot re-parent a comment,
+-- and an Update{Note} is an edit of a body, never a move in the thread.
 INSERT INTO remote_video_comments (
-    remote_video_id, remote_actor_url, remote_author_name, object_url, body, published_at
+    remote_video_id, remote_actor_url, remote_author_name, object_url, body,
+    published_at, parent_object_url
 )
-VALUES ($1, $2, $3, $4, $5, $6)
+VALUES ($1, $2, $3, $4, $5, $6, sqlc.arg('parent_object_url'))
 ON CONFLICT (object_url) DO UPDATE SET
     body        = EXCLUDED.body,
     edited      = remote_video_comments.edited OR remote_video_comments.body <> EXCLUDED.body,
@@ -98,7 +103,7 @@ RETURNING id, remote_video_id, remote_actor_url, object_url, body, edited;
 -- thread can never show what the card would have hidden. viewer_id is NULL for
 -- an anonymous caller, which makes the per-viewer clause trivially true.
 SELECT c.id, c.remote_actor_url, c.remote_author_name, c.object_url, c.body,
-       c.edited, c.published_at, c.created_at,
+       c.edited, c.published_at, c.created_at, c.parent_object_url,
        COALESCE(ra.domain, '')::text AS domain
 FROM remote_video_comments c
 JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
@@ -136,7 +141,7 @@ WHERE c.remote_video_id = sqlc.arg('remote_video_id')
 -- name: GetRemoteVideoCommentByObjectURL :one
 -- Resolve a mirrored comment by the origin's object id — the authority check an
 -- inbound Update{Note} or Delete runs before it may touch the row.
-SELECT c.id, c.remote_video_id, c.remote_actor_url, c.object_url
+SELECT c.id, c.remote_video_id, c.remote_actor_url, c.object_url, c.parent_object_url
 FROM remote_video_comments c
 WHERE c.object_url = $1;
 

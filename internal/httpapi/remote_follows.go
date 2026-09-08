@@ -23,7 +23,11 @@ type remoteFollowView struct {
 	ActorURL  string    `json:"actor_url"`
 	Handle    string    `json:"handle"` // name@domain
 	Domain    string    `json:"domain"`
-	State     string    `json:"state"` // pending | accepted
+	// State is pending | accepted | rejected. `rejected` is terminal and
+	// deliberately VISIBLE: a Reject used to delete the row, which made a
+	// refusal indistinguishable from a follow that was never made. Re-following
+	// the same actor re-arms it to pending and sends a fresh Follow.
+	State string `json:"state"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

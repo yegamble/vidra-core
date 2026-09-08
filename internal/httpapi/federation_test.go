@@ -298,7 +298,7 @@ func (fakeFedRepo) DeleteRemoteChannelFollowByID(context.Context, sqlcgen.Delete
 func (fakeFedRepo) AcceptRemoteChannelFollowByActivity(context.Context, sqlcgen.AcceptRemoteChannelFollowByActivityParams) (int64, error) {
 	return 0, nil
 }
-func (fakeFedRepo) DeleteRemoteChannelFollowByActivity(context.Context, sqlcgen.DeleteRemoteChannelFollowByActivityParams) (int64, error) {
+func (fakeFedRepo) RejectRemoteChannelFollowByActivity(context.Context, sqlcgen.RejectRemoteChannelFollowByActivityParams) (int64, error) {
 	return 0, nil
 }
 func (fakeFedRepo) HasAcceptedRemoteChannelFollow(context.Context, string) (bool, error) {
@@ -834,4 +834,11 @@ func (f fakeFedRepo) ListBlockedRemoteActors(_ context.Context, _ sqlcgen.ListBl
 
 func (f fakeFedRepo) CountBlockedRemoteActors(_ context.Context) (int64, error) {
 	return int64(len(f.adminActorBlocks)), nil
+}
+
+// GetRemoteVideoByID is the mirrored thread's origin-authority lookup: a REPLY
+// to a mirrored comment must still come from the server that hosts the VIDEO, so
+// the check needs the video's object url and not the parent comment's.
+func (f fakeFedRepo) GetRemoteVideoByID(_ context.Context, _ uuid.UUID) (sqlcgen.GetRemoteVideoByIDRow, error) {
+	return sqlcgen.GetRemoteVideoByIDRow{}, pgx.ErrNoRows
 }

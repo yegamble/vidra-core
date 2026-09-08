@@ -639,3 +639,99 @@ func TestMirroredCommentFromAnUncachedActorIsIgnoredNotFailed(t *testing.T) {
 		t.Errorf("total = %d, want 0", total)
 	}
 }
+
+// --- The mirrored thread stops being flat (A29 parity, finding (a)) ---
+//
+// The rehearsal watched this fail twice in the same run: A's creator replied to
+// the remote commenter's note, and then to their own top-level comment. Both
+// deliveries succeeded and B stored NOTHING, because storeRemoteVideoNote
+// resolved the thread with GetRemoteVideoByURL(inReplyTo) and only a Note
+// replying to the VIDEO object matched. "The same failure shape A29 found, one
+// level down."
+
+// remoteReply is remoteNote with an explicit parent, so a test can build the
+// second level of a thread the way the origin actually sends it.
+func remoteReply(id, actor, body, inReplyTo string) inboxActivity {
+	return inboxActivity{
+		ID: "https://peer.example/act/" + id, Type: "Create", Actor: actor,
+		Object: json.RawMessage(`{"id":"https://peer.example/notes/` + id + `","type":"Note",` +
+			`"content":"` + body + `","attributedTo":"` + actor + `",` +
+			`"published":"2026-09-05T10:05:00Z",` +
+			`"inReplyTo":"` + inReplyTo + `"}`),
+	}
+}
+
+func TestMirroredThreadKeepsRepliesToComments(t *testing.T) {
+	repo, videoID := remoteThreadRepo(t)
+	const author = "https://peer.example/accounts/ada"
+	const other = "https://peer.example/accounts/bo"
+	cacheContractActor(repo, author, "Person", "ada", "peer.example")
+	cacheContractActor(repo, other, "Person", "bo", "peer.example")
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	ctx := context.Background()
+
+	if err := svc.handleCreateNote(ctx, remoteNote("10", author, "top level"), author); err != nil {
+		t.Fatalf("top-level note: %v", err)
+	}
+	// The delivery the rehearsal watched land in a drop.
+	reply := remoteReply("11", other, "a reply", "https://peer.example/notes/10")
+	if err := svc.handleCreateNote(ctx, reply, other); err != nil {
+		t.Fatalf("reply: %v", err)
+	}
+	// And a reply to the reply, so the fix is not "one more level" but "levels".
+	deep := remoteReply("12", author, "deeper", "https://peer.example/notes/11")
+	if err := svc.handleCreateNote(ctx, deep, author); err != nil {
+		t.Fatalf("deep reply: %v", err)
+	}
+
+	got, total, err := svc.ListRemoteVideoComments(ctx, videoID, uuid.Nil, 20, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if total != 3 {
+		t.Fatalf("the mirrored thread must hold all three rows, got %d: %+v", total, got)
+	}
+	parents := map[string]string{}
+	for _, c := range got {
+		parents[c.ObjectURL] = c.ParentObjectURL
+	}
+	if p := parents["https://peer.example/notes/10"]; p != "" {
+		t.Errorf("a reply to the VIDEO is top-level, got parent %q", p)
+	}
+	if p := parents["https://peer.example/notes/11"]; p != "https://peer.example/notes/10" {
+		t.Errorf("reply parent = %q, want the comment it answers", p)
+	}
+	if p := parents["https://peer.example/notes/12"]; p != "https://peer.example/notes/11" {
+		t.Errorf("deep reply parent = %q, want the reply it answers", p)
+	}
+}
+
+// A reply is still subject to the ORIGIN AUTHORITY rule, and the parent comment
+// must not become a way around it: the check is against the VIDEO's origin, not
+// the parent's, so a third instance cannot answer into a thread it does not host.
+func TestAThirdPartyCannotReplyIntoAnotherOriginsMirroredThread(t *testing.T) {
+	repo, videoID := remoteThreadRepo(t)
+	const author = "https://peer.example/accounts/ada"
+	const stranger = "https://elsewhere.example/accounts/mallory"
+	cacheContractActor(repo, author, "Person", "ada", "peer.example")
+	cacheContractActor(repo, stranger, "Person", "mallory", "elsewhere.example")
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	ctx := context.Background()
+
+	if err := svc.handleCreateNote(ctx, remoteNote("20", author, "top level"), author); err != nil {
+		t.Fatalf("top-level note: %v", err)
+	}
+	intruder := inboxActivity{
+		ID: "https://elsewhere.example/act/21", Type: "Create", Actor: stranger,
+		Object: json.RawMessage(`{"id":"https://elsewhere.example/notes/21","type":"Note",` +
+			`"content":"me too","attributedTo":"` + stranger + `",` +
+			`"inReplyTo":"https://peer.example/notes/20"}`),
+	}
+	if err := svc.handleCreateNote(ctx, intruder, stranger); err != nil {
+		t.Fatalf("intruder: %v", err)
+	}
+	_, total, _ := svc.ListRemoteVideoComments(ctx, videoID, uuid.Nil, 20, 0)
+	if total != 1 {
+		t.Fatalf("a third instance replied into a thread it does not host (total %d)", total)
+	}
+}

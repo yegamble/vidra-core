@@ -182,16 +182,17 @@ func (q *Queries) GetRemoteVideoByURL(ctx context.Context, objectUrl string) (Ge
 }
 
 const getRemoteVideoCommentByObjectURL = `-- name: GetRemoteVideoCommentByObjectURL :one
-SELECT c.id, c.remote_video_id, c.remote_actor_url, c.object_url
+SELECT c.id, c.remote_video_id, c.remote_actor_url, c.object_url, c.parent_object_url
 FROM remote_video_comments c
 WHERE c.object_url = $1
 `
 
 type GetRemoteVideoCommentByObjectURLRow struct {
-	ID             uuid.UUID `json:"id"`
-	RemoteVideoID  uuid.UUID `json:"remote_video_id"`
-	RemoteActorUrl string    `json:"remote_actor_url"`
-	ObjectUrl      string    `json:"object_url"`
+	ID              uuid.UUID `json:"id"`
+	RemoteVideoID   uuid.UUID `json:"remote_video_id"`
+	RemoteActorUrl  string    `json:"remote_actor_url"`
+	ObjectUrl       string    `json:"object_url"`
+	ParentObjectUrl string    `json:"parent_object_url"`
 }
 
 // Resolve a mirrored comment by the origin's object id — the authority check an
@@ -204,13 +205,14 @@ func (q *Queries) GetRemoteVideoCommentByObjectURL(ctx context.Context, objectUr
 		&i.RemoteVideoID,
 		&i.RemoteActorUrl,
 		&i.ObjectUrl,
+		&i.ParentObjectUrl,
 	)
 	return i, err
 }
 
 const listRemoteVideoComments = `-- name: ListRemoteVideoComments :many
 SELECT c.id, c.remote_actor_url, c.remote_author_name, c.object_url, c.body,
-       c.edited, c.published_at, c.created_at,
+       c.edited, c.published_at, c.created_at, c.parent_object_url,
        COALESCE(ra.domain, '')::text AS domain
 FROM remote_video_comments c
 JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
@@ -245,6 +247,7 @@ type ListRemoteVideoCommentsRow struct {
 	Edited           bool               `json:"edited"`
 	PublishedAt      pgtype.Timestamptz `json:"published_at"`
 	CreatedAt        time.Time          `json:"created_at"`
+	ParentObjectUrl  string             `json:"parent_object_url"`
 	Domain           string             `json:"domain"`
 }
 
@@ -276,6 +279,7 @@ func (q *Queries) ListRemoteVideoComments(ctx context.Context, arg ListRemoteVid
 			&i.Edited,
 			&i.PublishedAt,
 			&i.CreatedAt,
+			&i.ParentObjectUrl,
 			&i.Domain,
 		); err != nil {
 			return nil, err
@@ -362,9 +366,10 @@ func (q *Queries) UpsertRemoteVideo(ctx context.Context, arg UpsertRemoteVideoPa
 
 const upsertRemoteVideoComment = `-- name: UpsertRemoteVideoComment :one
 INSERT INTO remote_video_comments (
-    remote_video_id, remote_actor_url, remote_author_name, object_url, body, published_at
+    remote_video_id, remote_actor_url, remote_author_name, object_url, body,
+    published_at, parent_object_url
 )
-VALUES ($1, $2, $3, $4, $5, $6)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (object_url) DO UPDATE SET
     body        = EXCLUDED.body,
     edited      = remote_video_comments.edited OR remote_video_comments.body <> EXCLUDED.body,
@@ -379,6 +384,7 @@ type UpsertRemoteVideoCommentParams struct {
 	ObjectUrl        string             `json:"object_url"`
 	Body             string             `json:"body"`
 	PublishedAt      pgtype.Timestamptz `json:"published_at"`
+	ParentObjectUrl  string             `json:"parent_object_url"`
 }
 
 type UpsertRemoteVideoCommentRow struct {
@@ -397,6 +403,10 @@ type UpsertRemoteVideoCommentRow struct {
 // `edited` is set by the CONFLICT arm only: the first arrival is not an edit,
 // and a redelivery of the same body must not claim to be one either, which is
 // why the flag ORs the existing value with a real body change.
+// parent_object_url is ” for a reply to the VIDEO (which in vidra's model IS a
+// top-level comment) and the ORIGIN's object id of the parent comment otherwise.
+// The CONFLICT arm does not touch it: a redelivery cannot re-parent a comment,
+// and an Update{Note} is an edit of a body, never a move in the thread.
 func (q *Queries) UpsertRemoteVideoComment(ctx context.Context, arg UpsertRemoteVideoCommentParams) (UpsertRemoteVideoCommentRow, error) {
 	row := q.db.QueryRow(ctx, upsertRemoteVideoComment,
 		arg.RemoteVideoID,
@@ -405,6 +415,7 @@ func (q *Queries) UpsertRemoteVideoComment(ctx context.Context, arg UpsertRemote
 		arg.ObjectUrl,
 		arg.Body,
 		arg.PublishedAt,
+		arg.ParentObjectUrl,
 	)
 	var i UpsertRemoteVideoCommentRow
 	err := row.Scan(

@@ -37,8 +37,14 @@ type remoteVideoCommentView struct {
 	ActorURL     string `json:"actor_url"`
 	// ObjectURL is the comment's ActivityPub id ON THE ORIGIN, so a reader can
 	// follow the thread back to where it is actually hosted.
-	ObjectURL   string     `json:"object_url"`
-	Body        string     `json:"body"`
+	ObjectURL string `json:"object_url"`
+	// ParentObjectURL is the origin object id of the comment this one answers,
+	// absent for a reply to the video itself. Before it, the mirror was FLAT:
+	// only Notes replying to the video object were stored and every deeper reply
+	// was delivered and dropped silently. A client that cannot find the parent
+	// among the rows it holds renders the reply at the top level.
+	ParentObjectURL string     `json:"parent_object_url,omitempty"`
+	Body            string     `json:"body"`
 	Edited      bool       `json:"edited"`
 	PublishedAt *time.Time `json:"published_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
@@ -80,7 +86,8 @@ func (s *Server) handleListRemoteVideoComments(c echo.Context) error {
 			AuthorName:   it.AuthorName,
 			AuthorDomain: it.Domain,
 			ActorURL:     it.ActorURL,
-			ObjectURL:    it.ObjectURL,
+			ObjectURL:       it.ObjectURL,
+			ParentObjectURL: it.ParentObjectURL,
 			Body:         it.Body,
 			Edited:       it.Edited,
 			PublishedAt:  it.PublishedAt,

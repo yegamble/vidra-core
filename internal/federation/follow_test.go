@@ -281,7 +281,12 @@ func TestInboxAcceptFlipsFollowAccepted(t *testing.T) {
 	}
 }
 
-func TestInboxRejectDeletesFollow(t *testing.T) {
+// A Reject marks the row REJECTED rather than deleting it, so the person who
+// asked can see that their request was refused rather than watching it vanish.
+// Re-following the same actor re-arms it to 'pending' with a fresh Follow — the
+// one deliberate retry, and the only path back for a follow refused during an
+// instance block, which gets no Reject at all.
+func TestInboxRejectMarksTheFollowRejected(t *testing.T) {
 	userID := uuid.New()
 	repo := newFollowRepo(userID)
 	cacheRemoteChannel(repo, remoteChan, "remote.example", nil)
@@ -296,8 +301,23 @@ func TestInboxRejectDeletesFollow(t *testing.T) {
 	if err := svc.HandleInbox(context.Background(), remoteChan, []byte(reject)); err != nil {
 		t.Fatalf("HandleInbox Reject: %v", err)
 	}
-	if len(repo.rcFollows) != 0 {
-		t.Error("Reject did not delete the pending follow")
+	if len(repo.rcFollows) != 1 {
+		t.Fatalf("the refused follow must stay visible, got %+v", repo.rcFollows)
+	}
+	if got := repo.rcFollows[follow.ID].State; got != "rejected" {
+		t.Fatalf("state after Reject = %q, want rejected", got)
+	}
+
+	// Asking again re-arms the row and mints a new Follow to send.
+	again, err := svc.FollowRemoteChannel(context.Background(), userID, remoteChan)
+	if err != nil {
+		t.Fatalf("re-follow: %v", err)
+	}
+	if got := repo.rcFollows[again.ID].State; got != "pending" {
+		t.Fatalf("state after re-follow = %q, want pending", got)
+	}
+	if repo.rcFollows[again.ID].FollowActivityUrl == followURL {
+		t.Error("a retry must mint a NEW Follow activity id; the old one was already answered")
 	}
 }
 

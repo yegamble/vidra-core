@@ -47,15 +47,12 @@ import (
 // ok is false (nil error) when the Note is not for a remote video of ours, so
 // the caller can fall through to the local-video path.
 func (s *Service) storeRemoteVideoNote(ctx context.Context, note apNoteObject, signerActorURL, inReplyTo string) (bool, error) {
-	rv, err := s.repo.GetRemoteVideoByURL(ctx, inReplyTo)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
-		}
+	remoteVideoID, parentObjectURL, videoObjectURL, ok, err := s.resolveMirrorThread(ctx, inReplyTo)
+	if err != nil || !ok {
 		return false, err
 	}
 	// Check (3): the comment must come from the video's own origin.
-	if !sameHost(note.ID, rv.ObjectUrl) {
+	if !sameHost(note.ID, videoObjectURL) {
 		return true, nil // ours to answer for, and the answer is no
 	}
 	body := truncate(stripHTMLTags(note.Content), maxRemoteCommentLen)
@@ -77,14 +74,60 @@ func (s *Service) storeRemoteVideoNote(ctx context.Context, note apNoteObject, s
 		published = pgtype.Timestamptz{Time: t, Valid: true}
 	}
 	_, err = s.repo.UpsertRemoteVideoComment(ctx, sqlcgen.UpsertRemoteVideoCommentParams{
-		RemoteVideoID:    rv.ID,
+		RemoteVideoID:    remoteVideoID,
 		RemoteActorUrl:   signerActorURL,
 		RemoteAuthorName: name,
 		ObjectUrl:        note.ID,
+		ParentObjectUrl:  parentObjectURL,
 		Body:             body,
 		PublishedAt:      published,
 	})
 	return true, err
+}
+
+// resolveMirrorThread answers "which mirrored thread does this Note belong to,
+// and what is it replying to?" for an inReplyTo.
+//
+// TWO THINGS CAN BE REPLIED TO and before this only the first was mirrored: the
+// VIDEO object (which in vidra's model IS a top-level comment) and ANOTHER
+// MIRRORED COMMENT. The rehearsal measured what the second cost — a creator
+// replied to their own comment, both deliveries succeeded, and the follower
+// stored nothing: "the same failure shape A29 found, one level down". Every
+// deeper reply was delivered and dropped silently.
+//
+// The parent is carried as the ORIGIN's object URL rather than a local row id
+// because replies arrive in any order: a reply can reach us before the comment
+// it answers, and a self-referencing foreign key would refuse it rather than
+// hold it. The renderer resolves the link when both rows are present and treats
+// an unmatched parent as a top-level row — a thread with a hole is better than a
+// dropped reply, which is what this replaces.
+//
+// ok is false (nil error) when inReplyTo names neither, so the caller falls
+// through to the local-video path exactly as before.
+func (s *Service) resolveMirrorThread(ctx context.Context, inReplyTo string) (remoteVideoID uuid.UUID, parentObjectURL, videoObjectURL string, ok bool, err error) {
+	if rv, verr := s.repo.GetRemoteVideoByURL(ctx, inReplyTo); verr == nil {
+		return rv.ID, "", rv.ObjectUrl, true, nil
+	} else if !errors.Is(verr, pgx.ErrNoRows) {
+		return uuid.Nil, "", "", false, verr
+	}
+	parent, perr := s.repo.GetRemoteVideoCommentByObjectURL(ctx, inReplyTo)
+	if perr != nil {
+		if errors.Is(perr, pgx.ErrNoRows) {
+			return uuid.Nil, "", "", false, nil
+		}
+		return uuid.Nil, "", "", false, perr
+	}
+	// The origin authority check needs the VIDEO's object url, not the parent
+	// comment's: a reply is legitimate when it comes from the server that hosts
+	// the video, which is the same rule the top-level arm applies.
+	rv, verr := s.repo.GetRemoteVideoByID(ctx, parent.RemoteVideoID)
+	if verr != nil {
+		if errors.Is(verr, pgx.ErrNoRows) {
+			return uuid.Nil, "", "", false, nil
+		}
+		return uuid.Nil, "", "", false, verr
+	}
+	return parent.RemoteVideoID, parent.ObjectUrl, rv.ObjectUrl, true, nil
 }
 
 // updateRemoteVideoNote applies an inbound Update{Note} to a mirrored comment.
@@ -113,7 +156,11 @@ func (s *Service) updateRemoteVideoNote(ctx context.Context, note apNoteObject, 
 		RemoteActorUrl:   row.RemoteActorUrl,
 		RemoteAuthorName: name,
 		ObjectUrl:        note.ID,
-		Body:             body,
+		// The stored parent is passed back rather than recomputed: the CONFLICT
+		// arm ignores it anyway, and an Update{Note} that quietly re-threaded a
+		// comment would be an edit doing something an edit must not do.
+		ParentObjectUrl: row.ParentObjectUrl,
+		Body:            body,
 	})
 	return true, err
 }
@@ -160,12 +207,17 @@ func (s *Service) remoteAuthorName(ctx context.Context, actorURL string) (string
 
 // RemoteVideoComment is one mirrored comment, as the read surface sees it.
 type RemoteVideoComment struct {
-	ID          uuid.UUID
-	ActorURL    string
-	AuthorName  string
-	Domain      string
-	ObjectURL   string
-	Body        string
+	ID         uuid.UUID
+	ActorURL   string
+	AuthorName string
+	Domain     string
+	ObjectURL  string
+	// ParentObjectURL is the ORIGIN's object id of the comment this one answers,
+	// or "" for a reply to the video itself (a top-level comment). A renderer
+	// that cannot find the parent among the rows it holds shows the reply at the
+	// top level: a thread with a hole beats the dropped reply this replaces.
+	ParentObjectURL string
+	Body            string
 	Edited      bool
 	PublishedAt *time.Time
 	CreatedAt   time.Time
@@ -198,14 +250,15 @@ func (s *Service) ListRemoteVideoComments(ctx context.Context, remoteVideoID, vi
 	out := make([]RemoteVideoComment, 0, len(rows))
 	for _, r := range rows {
 		c := RemoteVideoComment{
-			ID:         r.ID,
-			ActorURL:   r.RemoteActorUrl,
-			AuthorName: r.RemoteAuthorName,
-			Domain:     r.Domain,
-			ObjectURL:  r.ObjectUrl,
-			Body:       r.Body,
-			Edited:     r.Edited,
-			CreatedAt:  r.CreatedAt,
+			ID:              r.ID,
+			ActorURL:        r.RemoteActorUrl,
+			AuthorName:      r.RemoteAuthorName,
+			Domain:          r.Domain,
+			ObjectURL:       r.ObjectUrl,
+			ParentObjectURL: r.ParentObjectUrl,
+			Body:            r.Body,
+			Edited:          r.Edited,
+			CreatedAt:       r.CreatedAt,
 		}
 		if r.PublishedAt.Valid {
 			t := r.PublishedAt.Time

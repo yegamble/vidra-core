@@ -66,6 +66,17 @@ type fakeRepo struct {
 	adminActorBlocks map[string]string
 }
 
+// GetRemoteVideoByID resolves the VIDEO behind a mirrored comment — the origin
+// authority a REPLY is checked against.
+func (f fakeRepo) GetRemoteVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetRemoteVideoByIDRow, error) {
+	for _, rv := range f.remoteVideos {
+		if rv.id == id {
+			return sqlcgen.GetRemoteVideoByIDRow{ID: rv.id, ObjectUrl: rv.params.ObjectUrl}, nil
+		}
+	}
+	return sqlcgen.GetRemoteVideoByIDRow{}, pgx.ErrNoRows
+}
+
 func (f fakeRepo) GetChannelHandleAlias(_ context.Context, handle string) (sqlcgen.GetChannelHandleAliasRow, error) {
 	id, ok := f.channelAliases[strings.ToLower(handle)]
 	if !ok {
@@ -635,7 +646,14 @@ func (f fakeRepo) GetUserActorByID(_ context.Context, id uuid.UUID) (sqlcgen.Get
 func (f fakeRepo) UpsertRemoteChannelFollow(_ context.Context, arg sqlcgen.UpsertRemoteChannelFollowParams) (sqlcgen.RemoteChannelFollow, error) {
 	for _, row := range f.rcFollows {
 		if row.UserID == arg.UserID && row.RemoteActorUrl == arg.RemoteActorUrl {
-			return *row, nil // conflict: keep the existing row untouched
+			// Mirrors the SQL CONFLICT arm: a REJECTED row is re-armed with the
+			// new activity id (the one deliberate retry); every other state keeps
+			// the existing row untouched.
+			if row.State == "rejected" {
+				row.State = "pending"
+				row.FollowActivityUrl = arg.FollowActivityUrl
+			}
+			return *row, nil
 		}
 	}
 	row := &sqlcgen.RemoteChannelFollow{
@@ -700,10 +718,10 @@ func (f fakeRepo) AcceptRemoteChannelFollowByActivity(_ context.Context, arg sql
 	return 0, nil
 }
 
-func (f fakeRepo) DeleteRemoteChannelFollowByActivity(_ context.Context, arg sqlcgen.DeleteRemoteChannelFollowByActivityParams) (int64, error) {
-	for id, row := range f.rcFollows {
+func (f fakeRepo) RejectRemoteChannelFollowByActivity(_ context.Context, arg sqlcgen.RejectRemoteChannelFollowByActivityParams) (int64, error) {
+	for _, row := range f.rcFollows {
 		if row.FollowActivityUrl == arg.FollowActivityUrl && row.RemoteActorUrl == arg.RemoteActorUrl {
-			delete(f.rcFollows, id)
+			row.State = "rejected"
 			return 1, nil
 		}
 	}
@@ -885,9 +903,10 @@ func (f fakeRepo) UpsertRemoteVideoComment(_ context.Context, arg sqlcgen.Upsert
 func (f fakeRepo) GetRemoteVideoCommentByObjectURL(_ context.Context, objectURL string) (sqlcgen.GetRemoteVideoCommentByObjectURLRow, error) {
 	if c, ok := f.remoteVideoComments[objectURL]; ok {
 		return sqlcgen.GetRemoteVideoCommentByObjectURLRow{
-			RemoteVideoID:  c.RemoteVideoID,
-			RemoteActorUrl: c.RemoteActorUrl,
-			ObjectUrl:      objectURL,
+			RemoteVideoID:   c.RemoteVideoID,
+			RemoteActorUrl:  c.RemoteActorUrl,
+			ObjectUrl:       objectURL,
+			ParentObjectUrl: c.ParentObjectUrl,
 		}, nil
 	}
 	return sqlcgen.GetRemoteVideoCommentByObjectURLRow{}, pgx.ErrNoRows
@@ -911,6 +930,7 @@ func (f fakeRepo) ListRemoteVideoComments(_ context.Context, arg sqlcgen.ListRem
 			RemoteActorUrl:   c.RemoteActorUrl,
 			RemoteAuthorName: c.RemoteAuthorName,
 			ObjectUrl:        objectURL,
+			ParentObjectUrl:  c.ParentObjectUrl,
 			Body:             c.Body,
 		})
 	}

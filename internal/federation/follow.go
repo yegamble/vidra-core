@@ -336,13 +336,19 @@ func (s *Service) handleAccept(ctx context.Context, act inboxActivity, signerAct
 }
 
 // handleReject processes an inbound Reject{Follow}: the mirror of handleAccept,
-// deleting the pending follow instead of accepting it.
+// marking the pending follow REJECTED instead of accepting it.
+//
+// It used to delete the row, which made a refusal indistinguishable from a
+// follow that was never made. `rejected` is terminal and creator-VISIBLE, and
+// re-following the same actor re-arms it to 'pending' with a fresh Follow — the
+// one deliberate retry, which is also the only path back for a follow that was
+// refused during an instance block and got no Reject at all.
 func (s *Service) handleReject(ctx context.Context, act inboxActivity, signerActorURL string) error {
 	followURL, ok := acceptedFollowID(act, signerActorURL)
 	if !ok {
 		return nil
 	}
-	if _, err := s.repo.DeleteRemoteChannelFollowByActivity(ctx, sqlcgen.DeleteRemoteChannelFollowByActivityParams{
+	if _, err := s.repo.RejectRemoteChannelFollowByActivity(ctx, sqlcgen.RejectRemoteChannelFollowByActivityParams{
 		FollowActivityUrl: followURL,
 		RemoteActorUrl:    signerActorURL,
 	}); err != nil {
