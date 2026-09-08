@@ -112,3 +112,49 @@ func (c *ClamAV) Scan(ctx context.Context, key string) (bool, error) {
 		return false, fmt.Errorf("clamav: unexpected response %q", resp)
 	}
 }
+
+// Ping asks the clamd at addr whether it is alive (its PING/PONG command) and
+// returns nil when it answers. It is the liveness half of the scanner
+// dependency: /admin/system had no scanner component at all, so a dead clamd
+// left the page reporting a healthy instance while every upload and every URL
+// import failed closed.
+//
+// PING is deliberately not Scan: it costs the daemon one connection and no
+// signature work, so an admin refreshing the page during an incident cannot
+// make the queue slower. timeout bounds the whole exchange; a non-positive
+// value falls back to the same built-in default NewClamAV uses.
+func Ping(ctx context.Context, addr string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = clamDefaultScanDeadline
+	}
+	dialTimeout := clamDialTimeout
+	if timeout < dialTimeout {
+		dialTimeout = timeout
+	}
+	dialer := net.Dialer{Timeout: dialTimeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return fmt.Errorf("clamav: dial: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	deadline := time.Now().Add(timeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	_ = conn.SetDeadline(deadline)
+
+	if _, err := conn.Write([]byte("zPING\x00")); err != nil {
+		return fmt.Errorf("clamav: write command: %w", err)
+	}
+	resp, err := bufio.NewReader(conn).ReadString('\x00')
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("clamav: read response: %w", err)
+	}
+	if strings.TrimRight(resp, "\x00\n ") != "PONG" {
+		// Something is listening but it is not a clamd — an SSH banner, a proxy,
+		// a mistyped port. Saying so is the difference between an operator
+		// restarting the daemon and one fixing CLAMAV_ADDR.
+		return fmt.Errorf("clamav: the address answered but did not reply PONG")
+	}
+	return nil
+}
