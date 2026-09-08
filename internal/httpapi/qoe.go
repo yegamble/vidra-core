@@ -139,8 +139,7 @@ func (s *Server) handleQoEEvents(c echo.Context) error {
 	// Identity is enriched here, once, from the request — never from the body.
 	// A beacon that claimed a user id would be believed by nobody, so it is not
 	// even read.
-	viewerID, _, authed := principalFromContext(c)
-	digest := s.qoeDigester.Viewer(time.Now(), authed, viewerID, c.RealIP())
+	digest := s.qoeViewerDigest(c, time.Now())
 
 	ctx := c.Request().Context()
 	for i := range events {
@@ -148,6 +147,48 @@ func (s *Server) handleQoEEvents(c echo.Context) error {
 		s.qoesvc.Record(ctx, events[i])
 	}
 	return c.NoContent(http.StatusAccepted)
+}
+
+// qoeViewerDigest resolves the pseudonym a stored measurement carries, and is
+// where the owner's ruling that the DISCOVERY OPT-OUT COVERS PLAYBACK TELEMETRY
+// is applied.
+//
+// A13 decided that a signed-in user with all their discovery controls off is
+// collected about exactly as an anonymous visitor is: no account-derived value
+// in any behavioural event. The QoE beacon predates that ruling and did not
+// consult it — it stamped a keyed, day-scoped viewer_digest on every signed-in
+// viewer's rows whatever their settings said. It now asks the SAME question, via
+// the same searchConsent predicate (search_attribution.go), because two
+// definitions of "opted out" is one definition too many: the settings page makes
+// one promise, and a second predicate is how that promise quietly stops being
+// true on one surface.
+//
+// Three things deliberately do NOT change with it:
+//
+//   - The ROW still lands, with its session id. The digest is the only field
+//     that identifies anybody; dropping the measurement instead would make every
+//     percentile an admin reads a sample of the consenting half of the audience,
+//     which is a worse answer to "is playback healthy" than no answer.
+//   - An ANONYMOUS viewer keeps the IP-derived digest. The ruling is about a
+//     signed-in viewer's stored preference, and an anonymous visitor has none;
+//     the digest is what answers "was that spike one viewer or a thousand?" and
+//     it is day-scoped precisely so it cannot follow anyone further than that.
+//   - The DELIVERY SOURCE classification is untouched. It describes the network,
+//     not the person.
+//
+// The decision is taken server-side from the viewer's stored prefs, once per
+// batch. That is one extra user read on the beacon path — the same read the
+// search beacon already pays, and per REQUEST rather than per event — and it is
+// the only shape that cannot be steered by a client: a body has never carried
+// identity here, so there is nothing to send and nothing to withhold.
+func (s *Server) qoeViewerDigest(c echo.Context, now time.Time) string {
+	viewerID, prefs, authed := s.searchUserPrefs(c)
+	if authed {
+		if allowHistory, allowPersonalization := s.searchConsent(prefs, authed); !allowHistory && !allowPersonalization {
+			return ""
+		}
+	}
+	return s.qoeDigester.Viewer(now, authed, viewerID, c.RealIP())
 }
 
 // buildQoEEvent turns one client-supplied object into a validated event.
