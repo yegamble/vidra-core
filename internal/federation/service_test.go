@@ -56,6 +56,103 @@ type fakeRepo struct {
 	// remoteVideoComments are the MIRRORED threads on remote videos (migration
 	// 0140), keyed by the origin's object url.
 	remoteVideoComments map[string]*sqlcgen.UpsertRemoteVideoCommentParams
+	// channelAliases are handles a channel was renamed away from (0142), keyed
+	// by the lower-cased old handle; actorAliases is the subset that also
+	// carries the frozen ActivityPub identity, keyed by channel id.
+	channelAliases map[string]uuid.UUID
+	actorAliases   map[uuid.UUID]string
+	// adminActorBlocks are the instance-wide per-actor blocks (0142), keyed by
+	// actor url.
+	adminActorBlocks map[string]string
+}
+
+// GetRemoteVideoByID resolves the VIDEO behind a mirrored comment — the origin
+// authority a REPLY is checked against.
+func (f fakeRepo) GetRemoteVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetRemoteVideoByIDRow, error) {
+	for _, rv := range f.remoteVideos {
+		if rv.id == id {
+			return sqlcgen.GetRemoteVideoByIDRow{ID: rv.id, ObjectUrl: rv.params.ObjectUrl}, nil
+		}
+	}
+	return sqlcgen.GetRemoteVideoByIDRow{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) GetChannelHandleAlias(_ context.Context, handle string) (sqlcgen.GetChannelHandleAliasRow, error) {
+	id, ok := f.channelAliases[strings.ToLower(handle)]
+	if !ok {
+		return sqlcgen.GetChannelHandleAliasRow{}, pgx.ErrNoRows
+	}
+	ch, ok := f.channelsByID[id]
+	if !ok {
+		return sqlcgen.GetChannelHandleAliasRow{}, pgx.ErrNoRows
+	}
+	return sqlcgen.GetChannelHandleAliasRow{
+		HandleLower:   strings.ToLower(handle),
+		ChannelID:     id,
+		IsActorID:     f.actorAliases[id] == strings.ToLower(handle),
+		CurrentHandle: ch.Handle,
+	}, nil
+}
+
+func (f fakeRepo) GetChannelActorAlias(_ context.Context, channelID uuid.UUID) (string, error) {
+	if h, ok := f.actorAliases[channelID]; ok {
+		return h, nil
+	}
+	return "", pgx.ErrNoRows
+}
+
+func (f fakeRepo) IsRemoteActorBlockedInstanceWide(_ context.Context, actorURL string) (bool, error) {
+	if _, ok := f.adminActorBlocks[actorURL]; ok {
+		return true, nil
+	}
+	// The reach: an admin block of an ACCOUNT covers the channel actors that
+	// account owns, exactly as remote_actor_block_reach does in SQL.
+	if ra, ok := f.remoteActors[actorURL]; ok && ra.AttributedTo != "" {
+		_, ok := f.adminActorBlocks[ra.AttributedTo]
+		return ok, nil
+	}
+	return false, nil
+}
+
+func (f fakeRepo) BlockRemoteActorInstanceWide(_ context.Context, arg sqlcgen.BlockRemoteActorInstanceWideParams) error {
+	if f.adminActorBlocks == nil {
+		return nil
+	}
+	if existing, ok := f.adminActorBlocks[arg.RemoteActorUrl]; ok && arg.Reason == "" {
+		f.adminActorBlocks[arg.RemoteActorUrl] = existing
+		return nil
+	}
+	f.adminActorBlocks[arg.RemoteActorUrl] = arg.Reason
+	return nil
+}
+
+func (f fakeRepo) UnblockRemoteActorInstanceWide(_ context.Context, actorURL string) (int64, error) {
+	if _, ok := f.adminActorBlocks[actorURL]; !ok {
+		return 0, nil
+	}
+	delete(f.adminActorBlocks, actorURL)
+	return 1, nil
+}
+
+func (f fakeRepo) ListBlockedRemoteActors(_ context.Context, _ sqlcgen.ListBlockedRemoteActorsParams) ([]sqlcgen.ListBlockedRemoteActorsRow, error) {
+	out := make([]sqlcgen.ListBlockedRemoteActorsRow, 0, len(f.adminActorBlocks))
+	urls := make([]string, 0, len(f.adminActorBlocks))
+	for u := range f.adminActorBlocks {
+		urls = append(urls, u)
+	}
+	sort.Strings(urls)
+	for _, u := range urls {
+		row := sqlcgen.ListBlockedRemoteActorsRow{RemoteActorUrl: u, Reason: f.adminActorBlocks[u]}
+		if ra, ok := f.remoteActors[u]; ok {
+			row.PreferredUsername, row.Domain = ra.PreferredUsername, ra.Domain
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+func (f fakeRepo) CountBlockedRemoteActors(_ context.Context) (int64, error) {
+	return int64(len(f.adminActorBlocks)), nil
 }
 
 // withAP stamps a fixture channel's activitypub_enabled from the apDisabled set
@@ -494,7 +591,7 @@ func (f fakeRepo) IsRemoteActorBlockedByAnyone(_ context.Context, actorURL strin
 }
 
 func (f fakeRepo) IsRemoteActorBlockedBy(_ context.Context, arg sqlcgen.IsRemoteActorBlockedByParams) (bool, error) {
-	return f.remoteBlocks[arg.BlockerID.String()+"|"+arg.RemoteActorUrl], nil
+	return f.remoteBlocks[arg.BlockerID.String()+"|"+arg.ActorUrl], nil
 }
 
 func (f fakeRepo) BlockRemoteActor(_ context.Context, arg sqlcgen.BlockRemoteActorParams) error {
@@ -554,7 +651,14 @@ func (f fakeRepo) GetUserActorByID(_ context.Context, id uuid.UUID) (sqlcgen.Get
 func (f fakeRepo) UpsertRemoteChannelFollow(_ context.Context, arg sqlcgen.UpsertRemoteChannelFollowParams) (sqlcgen.RemoteChannelFollow, error) {
 	for _, row := range f.rcFollows {
 		if row.UserID == arg.UserID && row.RemoteActorUrl == arg.RemoteActorUrl {
-			return *row, nil // conflict: keep the existing row untouched
+			// Mirrors the SQL CONFLICT arm: a REJECTED row is re-armed with the
+			// new activity id (the one deliberate retry); every other state keeps
+			// the existing row untouched.
+			if row.State == "rejected" {
+				row.State = "pending"
+				row.FollowActivityUrl = arg.FollowActivityUrl
+			}
+			return *row, nil
 		}
 	}
 	row := &sqlcgen.RemoteChannelFollow{
@@ -619,10 +723,10 @@ func (f fakeRepo) AcceptRemoteChannelFollowByActivity(_ context.Context, arg sql
 	return 0, nil
 }
 
-func (f fakeRepo) DeleteRemoteChannelFollowByActivity(_ context.Context, arg sqlcgen.DeleteRemoteChannelFollowByActivityParams) (int64, error) {
-	for id, row := range f.rcFollows {
+func (f fakeRepo) RejectRemoteChannelFollowByActivity(_ context.Context, arg sqlcgen.RejectRemoteChannelFollowByActivityParams) (int64, error) {
+	for _, row := range f.rcFollows {
 		if row.FollowActivityUrl == arg.FollowActivityUrl && row.RemoteActorUrl == arg.RemoteActorUrl {
-			delete(f.rcFollows, id)
+			row.State = "rejected"
 			return 1, nil
 		}
 	}
@@ -804,9 +908,10 @@ func (f fakeRepo) UpsertRemoteVideoComment(_ context.Context, arg sqlcgen.Upsert
 func (f fakeRepo) GetRemoteVideoCommentByObjectURL(_ context.Context, objectURL string) (sqlcgen.GetRemoteVideoCommentByObjectURLRow, error) {
 	if c, ok := f.remoteVideoComments[objectURL]; ok {
 		return sqlcgen.GetRemoteVideoCommentByObjectURLRow{
-			RemoteVideoID:  c.RemoteVideoID,
-			RemoteActorUrl: c.RemoteActorUrl,
-			ObjectUrl:      objectURL,
+			RemoteVideoID:   c.RemoteVideoID,
+			RemoteActorUrl:  c.RemoteActorUrl,
+			ObjectUrl:       objectURL,
+			ParentObjectUrl: c.ParentObjectUrl,
 		}, nil
 	}
 	return sqlcgen.GetRemoteVideoCommentByObjectURLRow{}, pgx.ErrNoRows
@@ -830,6 +935,7 @@ func (f fakeRepo) ListRemoteVideoComments(_ context.Context, arg sqlcgen.ListRem
 			RemoteActorUrl:   c.RemoteActorUrl,
 			RemoteAuthorName: c.RemoteAuthorName,
 			ObjectUrl:        objectURL,
+			ParentObjectUrl:  c.ParentObjectUrl,
 			Body:             c.Body,
 		})
 	}

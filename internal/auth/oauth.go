@@ -406,7 +406,7 @@ func (s *OAuthService) resolveIdentity(ctx context.Context, provider, subject st
 	})
 	if err != nil {
 		if pgconv.IsUniqueViolation(err) {
-			return sqlcgen.User{}, Tokens{}, "", ErrConflict
+			return sqlcgen.User{}, Tokens{}, "", nameConflict(err)
 		}
 		return sqlcgen.User{}, Tokens{}, "", err
 	}

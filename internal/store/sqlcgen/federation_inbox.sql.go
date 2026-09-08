@@ -129,18 +129,22 @@ func (q *Queries) IsActivityProcessed(ctx context.Context, activityID string) (b
 
 const isRemoteActorBlockedBy = `-- name: IsRemoteActorBlockedBy :one
 SELECT EXISTS (
-    SELECT 1 FROM remote_actor_blocks
-    WHERE blocker_id = $1 AND remote_actor_url = $2
+    SELECT 1 FROM remote_actor_block_reach
+    WHERE blocker_id = $1 AND actor_url = $2
 )
 `
 
 type IsRemoteActorBlockedByParams struct {
-	BlockerID      uuid.UUID `json:"blocker_id"`
-	RemoteActorUrl string    `json:"remote_actor_url"`
+	BlockerID uuid.UUID `json:"blocker_id"`
+	ActorUrl  string    `json:"actor_url"`
 }
 
+// Through remote_actor_block_reach (0142), so a block taken against an ACCOUNT
+// also refuses activity from every channel actor that account owns. Restricted
+// to the viewer's OWN rows: the instance-wide half has its own query, because a
+// caller that conflates them cannot tell an admin decision from a viewer's.
 func (q *Queries) IsRemoteActorBlockedBy(ctx context.Context, arg IsRemoteActorBlockedByParams) (bool, error) {
-	row := q.db.QueryRow(ctx, isRemoteActorBlockedBy, arg.BlockerID, arg.RemoteActorUrl)
+	row := q.db.QueryRow(ctx, isRemoteActorBlockedBy, arg.BlockerID, arg.ActorUrl)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -148,15 +152,17 @@ func (q *Queries) IsRemoteActorBlockedBy(ctx context.Context, arg IsRemoteActorB
 
 const isRemoteActorBlockedByAnyone = `-- name: IsRemoteActorBlockedByAnyone :one
 SELECT EXISTS (
-    SELECT 1 FROM remote_actor_blocks WHERE remote_actor_url = $1
+    SELECT 1 FROM remote_actor_block_reach
+    WHERE blocker_id IS NOT NULL AND actor_url = $1
 )
 `
 
-// The INBOUND gate: does ANY local viewer block this actor? A Note or Follow
-// from an actor nobody blocks takes the ordinary path; one from an actor some
-// viewer blocks needs the per-viewer decision, which the caller then makes.
-func (q *Queries) IsRemoteActorBlockedByAnyone(ctx context.Context, remoteActorUrl string) (bool, error) {
-	row := q.db.QueryRow(ctx, isRemoteActorBlockedByAnyone, remoteActorUrl)
+// The INBOUND gate: does ANY local viewer block this actor (or the account that
+// owns it)? A Note or Follow from an actor nobody blocks takes the ordinary
+// path; one from an actor some viewer blocks needs the per-viewer decision,
+// which the caller then makes.
+func (q *Queries) IsRemoteActorBlockedByAnyone(ctx context.Context, actorUrl string) (bool, error) {
+	row := q.db.QueryRow(ctx, isRemoteActorBlockedByAnyone, actorUrl)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err

@@ -210,3 +210,45 @@ func (f *instanceModFakeRepo) CountBlockedInstances(ctx context.Context) (int64,
 	rows, err := f.ListBlockedInstances(ctx, sqlcgen.ListBlockedInstancesParams{ResultLimit: 1 << 30})
 	return int64(len(rows)), err
 }
+
+// TestUnblockAcceptsAPercentEncodedDomain is the rehearsal's finding (f). Any
+// instance behind a non-443 port — every lab, and plenty of real deployments —
+// has `host:port` fediverse domains, and a correct client percent-encodes the
+// colon in a path segment. Echo hands back the RAW segment, so
+// `…/blocked/127.0.0.1%3A28080` reached the validator as the literal text
+// "127.0.0.1%3A28080" and answered 422 while the raw colon worked.
+//
+// Both spellings must be the same request, which is what a percent-encoding is
+// for. The block is taken with a raw colon and lifted with an encoded one, so
+// the test fails if the two ever stop meeting in the middle.
+func TestUnblockAcceptsAPercentEncodedDomain(t *testing.T) {
+	srv := videoServer(t)
+	admin, _ := registerAndUser(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/instances/blocked",
+		`{"domain":"127.0.0.1:28080","reason":"lab peer"}`, admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("block host:port = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete,
+		"/api/v1/admin/instances/blocked/127.0.0.1%3A28080", "", admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("unblock with a percent-encoded colon = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var list blockedInstanceListResponse
+	rec := getWithAuth(srv, "/api/v1/admin/instances/blocked", admin)
+	_ = json.Unmarshal(rec.Body.Bytes(), &list)
+	if len(list.Instances) != 0 {
+		t.Fatalf("the encoded unblock did not lift the block: %+v", list.Instances)
+	}
+
+	// And the raw colon still works, so the fix widened the accepted spellings
+	// rather than swapping one for another.
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/instances/blocked",
+		`{"domain":"127.0.0.1:28080"}`, admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("re-block = %d", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodDelete,
+		"/api/v1/admin/instances/blocked/127.0.0.1:28080", "", admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("unblock with a raw colon = %d, want 204", rec.Code)
+	}
+}

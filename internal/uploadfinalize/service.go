@@ -311,8 +311,10 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 		})
 		// A finalize SPAWNS a transcode. Marking this run as the parent on the
 		// context is what turns two unrelated rows on the jobs dashboard into a
-		// chain an operator can follow from the upload that caused it.
-		jobCtx := jobtrace.ContextWithParentJob(ctx, s.trace.RunID(ctx, QueueName, sourceID))
+		// chain an operator can follow from the upload that caused it —
+		// RunContext does that AND puts the originating request's ids back on
+		// the context, so a row queued from in here is not blank.
+		jobCtx := s.trace.RunContext(ctx, QueueName, sourceID)
 		err := s.runFinalize(jobCtx, row)
 		stopLease()
 		if err != nil {

@@ -57,17 +57,23 @@ ON CONFLICT (blocker_id, remote_actor_url) DO NOTHING;
 DELETE FROM remote_actor_blocks WHERE blocker_id = $1 AND remote_actor_url = $2;
 
 -- name: IsRemoteActorBlockedBy :one
+-- Through remote_actor_block_reach (0142), so a block taken against an ACCOUNT
+-- also refuses activity from every channel actor that account owns. Restricted
+-- to the viewer's OWN rows: the instance-wide half has its own query, because a
+-- caller that conflates them cannot tell an admin decision from a viewer's.
 SELECT EXISTS (
-    SELECT 1 FROM remote_actor_blocks
-    WHERE blocker_id = $1 AND remote_actor_url = $2
+    SELECT 1 FROM remote_actor_block_reach
+    WHERE blocker_id = $1 AND actor_url = $2
 );
 
 -- name: IsRemoteActorBlockedByAnyone :one
--- The INBOUND gate: does ANY local viewer block this actor? A Note or Follow
--- from an actor nobody blocks takes the ordinary path; one from an actor some
--- viewer blocks needs the per-viewer decision, which the caller then makes.
+-- The INBOUND gate: does ANY local viewer block this actor (or the account that
+-- owns it)? A Note or Follow from an actor nobody blocks takes the ordinary
+-- path; one from an actor some viewer blocks needs the per-viewer decision,
+-- which the caller then makes.
 SELECT EXISTS (
-    SELECT 1 FROM remote_actor_blocks WHERE remote_actor_url = $1
+    SELECT 1 FROM remote_actor_block_reach
+    WHERE blocker_id IS NOT NULL AND actor_url = $1
 );
 
 -- name: ListRemoteActorBlocks :many

@@ -394,7 +394,16 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Username or email already taken.
+          description: >-
+            Username or email already taken — or the username is held by a
+            CHANNEL, which answers with the stable code `handle_reserved`.
+            Accounts and channels share ONE handle namespace on this instance,
+            because ActivityPub gives them one: `@name@domain` names an actor
+            without saying which kind it is. The `handle_reserved` message is
+            deliberately identical in both directions and never says which kind
+            holds the name — saying so would make each form an oracle for the
+            other namespace, and the remedy ("pick another name") is the same
+            either way.
           content:
             application/json:
               schema:
@@ -482,7 +491,16 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Username or email already taken.
+          description: >-
+            Username or email already taken — or the username is held by a
+            CHANNEL, which answers with the stable code `handle_reserved`.
+            Accounts and channels share ONE handle namespace on this instance,
+            because ActivityPub gives them one: `@name@domain` names an actor
+            without saying which kind it is. The `handle_reserved` message is
+            deliberately identical in both directions and never says which kind
+            holds the name — saying so would make each form an oracle for the
+            other namespace, and the remedy ("pick another name") is the same
+            either way.
           content:
             application/json:
               schema:
@@ -1841,7 +1859,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Handle already taken.
+          description: >-
+            Handle already taken by another channel — or held by an ACCOUNT,
+            which answers with the stable code `handle_reserved`. Accounts and
+            channels share ONE handle namespace on this instance, because
+            ActivityPub gives them one: `@name@domain` names an actor without
+            saying which kind it is, and while both could hold the same name
+            every channel-scoped federation feature keyed on that handle
+            addressed the wrong actor.
           content:
             application/json:
               schema:
@@ -10169,6 +10194,133 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/federation/blocked-actors:
+    get:
+      operationId: listBlockedRemoteActors
+      summary: List remote accounts blocked instance-wide
+      description: >-
+        Returns the REMOTE accounts an administrator has blocked for EVERYONE on
+        this instance, newest block first. Requires admin or moderator.
+        Paginated via limit (1–100, default 20) and offset. An actor this
+        instance has never cached still lists, with an empty handle: a block
+        nobody can see is a block nobody can lift.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of instance-wide remote-account blocks (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockedRemoteActorListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an administrator or moderator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: blockRemoteActorInstanceWide
+      summary: Block a remote account for everyone
+      description: >-
+        Blocks one REMOTE account for every reader on this instance, addressed by
+        a fediverse handle (@user@domain) or an ActivityPub actor URL. It is the
+        instance-scoped sibling of the per-viewer block, and it exists so that
+        removing one hostile person does not require defederating the whole
+        server they live on — which would take every other creator there with
+        them.
+
+        The block is recorded against the ACCOUNT and reaches every channel that
+        account owns, including channels it creates afterwards: their federated
+        videos and their already-stored comments leave every reader's surfaces
+        (anonymous readers included), and their inbound follows and replies are
+        refused. It hides; it never deletes, so lifting the block restores every
+        hidden row exactly.
+
+        Requires admin or moderator. Idempotent — a re-block with an empty reason
+        keeps the first one. A local identity is 422, as is a handle that cannot
+        be resolved.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminRemoteBlockRequest"
+      responses:
+        "204":
+          description: The remote account is blocked instance-wide.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an administrator or moderator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The identity was local, malformed, or unresolvable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unblockRemoteActorInstanceWide
+      summary: Unblock a remote account instance-wide
+      description: >-
+        Lifts the instance-wide block of one remote account; its videos and
+        comments become visible again exactly as they were. The actor is a query
+        parameter, matched VERBATIM against the stored actor URL — no handle
+        resolution runs here, so a WebFinger that has since started failing can
+        never strand an administrator with a block they cannot lift. Requires
+        admin or moderator. Idempotent.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: actor
+          in: query
+          required: true
+          description: The actor URL exactly as the list returned it.
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The remote account is not blocked instance-wide.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an administrator or moderator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: No actor was supplied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/instances/blocked:
     get:
       operationId: listBlockedInstances
@@ -15120,6 +15272,23 @@ components:
         error:
           type: string
           description: Present only when the component is degraded or down.
+        detail:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Component-specific facts beside the verdict, omitted when a component
+            has none. Only the federation component sets it today, with pending,
+            dead_lettered and — when anything has ever been delivered —
+            last_delivered_at as an RFC 3339 timestamp. last_delivered_at is what
+            separates a DRAINED federation queue from an ABANDONED one: both read
+            as zero pending, and only the time of the last success tells them
+            apart. It is absent rather than zero on an instance that has never
+            delivered anything.
+          example:
+            pending: "0"
+            dead_lettered: "2"
+            last_delivered_at: "2026-09-08T17:41:09Z"
     ReadinessResponse:
       type: object
       required: [status, components]
@@ -17797,6 +17966,28 @@ components:
         watch_url:
           type: string
           description: The origin's human watch page.
+        actor_url:
+          type: string
+          description: >-
+            The ActivityPub actor the video is attributed to — for a PeerTube- or
+            vidra-shaped origin, the CHANNEL's Group actor. Omitted only when the
+            row predates this field.
+        account_actor_url:
+          type: string
+          description: >-
+            The ACCOUNT that owns that channel, read off the Group's
+            attributedTo. This is the identity a block should be taken against:
+            one block covers every channel the person owns, including channels
+            they create afterwards. Absent when the origin's actor document named
+            no owner, in which case the channel actor is the finest target
+            available.
+        channel_handle:
+          type: string
+          description: >-
+            preferredUsername@domain for actor_url — the human identity a viewer
+            recognises. Absent when this instance has not cached a
+            preferredUsername for the actor.
+          example: films@peer.example
         stream_url:
           type: string
           description: >-
@@ -17905,11 +18096,18 @@ components:
           description: The origin instance's domain.
         state:
           type: string
-          enum: [pending, accepted]
+          enum: [pending, accepted, rejected]
           description: >-
             pending until the remote instance Accepts the follow, then
             accepted (only accepted follows feed the subscriptions feed and
-            the ingestion gate). A remote Reject removes the follow.
+            the ingestion gate). A remote Reject makes it `rejected`, which is
+            terminal and deliberately visible: the refusal used to DELETE the
+            row, so it was indistinguishable from a follow that was never made.
+            POSTing the same actor again re-arms a rejected row to pending and
+            sends a fresh Follow — the one deliberate retry, which is also the
+            only path back for a follow refused while an instance block stood,
+            since that refusal produces no Reject at all and neither side
+            re-attempts on its own.
         created_at:
           type: string
           format: date-time
@@ -17967,6 +18165,16 @@ components:
         object_url:
           type: string
           description: The comment's ActivityPub id ON THE ORIGIN.
+        parent_object_url:
+          type: string
+          description: >-
+            The ORIGIN object id of the comment this one answers, absent for a
+            reply to the video itself (which in vidra's model IS a top-level
+            comment). Replies arrive in any order, so a client may hold a reply
+            whose parent it has not received: render it at the top level rather
+            than dropping it. Before this field the mirror was FLAT — only Notes
+            replying to the video object were stored, and every deeper reply was
+            delivered successfully and dropped silently.
         body:
           type: string
           description: Plain text; the origin's HTML is stripped on ingest.
@@ -18036,6 +18244,61 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RemoteBlockView"
+        total:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    AdminRemoteBlockRequest:
+      type: object
+      required: [actor]
+      properties:
+        actor:
+          type: string
+          description: >-
+            A fediverse handle (@user@domain or user@domain) or an ActivityPub
+            actor URL. A handle is resolved through WebFinger and then UP to the
+            ACCOUNT that owns the actor, so one block covers every channel that
+            account owns — including channels it has not created yet.
+          example: "@kaisa@peer.example"
+        reason:
+          type: string
+          maxLength: 500
+          description: >-
+            An optional moderator note, kept on the block row for the next
+            moderator to read. It is NOT written to the audit trail, which
+            carries no prose; the trail names the blocked actor URL instead.
+    BlockedRemoteActorView:
+      type: object
+      required: [actor_url, handle, domain, reason, blocked_at]
+      properties:
+        actor_url:
+          type: string
+          description: The ActivityPub actor URL the block is keyed on.
+        handle:
+          type: string
+          description: >-
+            preferredUsername@domain when this instance has the actor cached,
+            otherwise empty.
+        domain:
+          type: string
+        reason:
+          type: string
+          description: The moderator note, or empty.
+        blocked_at:
+          type: string
+          format: date-time
+    BlockedRemoteActorListResponse:
+      type: object
+      required: [actors, total, limit, offset]
+      properties:
+        actors:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlockedRemoteActorView"
         total:
           type: integer
           format: int64
@@ -20893,15 +21156,13 @@ components:
           format: int64
         components:
           type: object
+          description: >-
+            One entry per dependency, sharing ComponentStatus with /readyz — the
+            two surfaces render the same rows and an inline copy here had already
+            drifted (it described only status and error, so the federation
+            queue's `detail` was invisible to a generated client).
           additionalProperties:
-            type: object
-            required: [status]
-            properties:
-              status:
-                type: string
-                description: ok | down | not_configured
-              error:
-                type: string
+            $ref: "#/components/schemas/ComponentStatus"
         rate_limits:
           type: object
           description: >-

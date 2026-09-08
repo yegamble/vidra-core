@@ -30,9 +30,17 @@ UPDATE remote_videos SET thumbnail_key = $2, updated_at = now() WHERE id = $1;
 -- The remote-watch read model. Content from admin-blocked instances is hidden
 -- from all surfaces (§8), so a video whose origin domain is blocked is absent —
 -- and so is an individually admin-blocked remote video (remote_video_blocks).
+-- preferred_username and attributed_to are the block affordance (A29 parity).
+-- The rehearsal measured the gap precisely: this view carried domain, object_url
+-- and watch_url and NO actor identity at all, so the watch page could not offer
+-- a block that addressed the right actor and the settings page's placeholder was
+-- the only hint — the block a viewer could actually make was the one that did
+-- nothing. attributed_to is the ACCOUNT behind the channel, which is what a
+-- block should be taken against.
 SELECT rv.id, rv.object_url, rv.remote_actor_url, ra.domain, rv.title,
        rv.description, rv.duration_seconds, rv.published_at, rv.watch_url,
-       rv.stream_url, rv.thumbnail_key, rv.fetched_at, rv.updated_at
+       rv.stream_url, rv.thumbnail_key, rv.fetched_at, rv.updated_at,
+       ra.preferred_username, ra.attributed_to
 FROM remote_videos rv
 JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
 WHERE rv.id = $1
@@ -73,10 +81,15 @@ WHERE object_url = $1 OR (watch_url <> '' AND watch_url = $1);
 -- `edited` is set by the CONFLICT arm only: the first arrival is not an edit,
 -- and a redelivery of the same body must not claim to be one either, which is
 -- why the flag ORs the existing value with a real body change.
+-- parent_object_url is '' for a reply to the VIDEO (which in vidra's model IS a
+-- top-level comment) and the ORIGIN's object id of the parent comment otherwise.
+-- The CONFLICT arm does not touch it: a redelivery cannot re-parent a comment,
+-- and an Update{Note} is an edit of a body, never a move in the thread.
 INSERT INTO remote_video_comments (
-    remote_video_id, remote_actor_url, remote_author_name, object_url, body, published_at
+    remote_video_id, remote_actor_url, remote_author_name, object_url, body,
+    published_at, parent_object_url
 )
-VALUES ($1, $2, $3, $4, $5, $6)
+VALUES ($1, $2, $3, $4, $5, $6, sqlc.arg('parent_object_url'))
 ON CONFLICT (object_url) DO UPDATE SET
     body        = EXCLUDED.body,
     edited      = remote_video_comments.edited OR remote_video_comments.body <> EXCLUDED.body,
@@ -90,7 +103,7 @@ RETURNING id, remote_video_id, remote_actor_url, object_url, body, edited;
 -- thread can never show what the card would have hidden. viewer_id is NULL for
 -- an anonymous caller, which makes the per-viewer clause trivially true.
 SELECT c.id, c.remote_actor_url, c.remote_author_name, c.object_url, c.body,
-       c.edited, c.published_at, c.created_at,
+       c.edited, c.published_at, c.created_at, c.parent_object_url,
        COALESCE(ra.domain, '')::text AS domain
 FROM remote_video_comments c
 JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
@@ -101,8 +114,9 @@ WHERE c.remote_video_id = sqlc.arg('remote_video_id')
       WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
   )
   AND NOT EXISTS (
-      SELECT 1 FROM remote_actor_blocks rab
-      WHERE rab.blocker_id = sqlc.narg('viewer_id') AND rab.remote_actor_url = c.remote_actor_url
+      SELECT 1 FROM remote_actor_block_reach rab
+      WHERE (rab.blocker_id = sqlc.narg('viewer_id') OR rab.blocker_id IS NULL)
+        AND rab.actor_url = c.remote_actor_url
   )
 ORDER BY c.created_at, c.id
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
@@ -119,14 +133,15 @@ WHERE c.remote_video_id = sqlc.arg('remote_video_id')
       WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
   )
   AND NOT EXISTS (
-      SELECT 1 FROM remote_actor_blocks rab
-      WHERE rab.blocker_id = sqlc.narg('viewer_id') AND rab.remote_actor_url = c.remote_actor_url
+      SELECT 1 FROM remote_actor_block_reach rab
+      WHERE (rab.blocker_id = sqlc.narg('viewer_id') OR rab.blocker_id IS NULL)
+        AND rab.actor_url = c.remote_actor_url
   );
 
 -- name: GetRemoteVideoCommentByObjectURL :one
 -- Resolve a mirrored comment by the origin's object id — the authority check an
 -- inbound Update{Note} or Delete runs before it may touch the row.
-SELECT c.id, c.remote_video_id, c.remote_actor_url, c.object_url
+SELECT c.id, c.remote_video_id, c.remote_actor_url, c.object_url, c.parent_object_url
 FROM remote_video_comments c
 WHERE c.object_url = $1;
 

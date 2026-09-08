@@ -24,16 +24,22 @@ type fakeRepo struct {
 	followSeq   []string                         // follow keys in follow order
 	members     map[string]sqlcgen.ChannelMember // "channelID|userID"
 	usersByName map[string]sqlcgen.User          // lowercased username -> user
+	// accountHandles are names an ACCOUNT holds in the one shared handle
+	// namespace (migration 0142). The database refuses these through
+	// actor_handles_pkey, which is a different refusal from a duplicate channel
+	// handle and reaches the caller as a different error.
+	accountHandles map[string]bool
 }
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
-		byHandle:    map[string]sqlcgen.Channel{},
-		follows:     map[string]bool{},
-		bells:       map[string]string{},
-		followedAt:  map[string]time.Time{},
-		members:     map[string]sqlcgen.ChannelMember{},
-		usersByName: map[string]sqlcgen.User{},
+		accountHandles: map[string]bool{},
+		byHandle:       map[string]sqlcgen.Channel{},
+		follows:        map[string]bool{},
+		bells:          map[string]string{},
+		followedAt:     map[string]time.Time{},
+		members:        map[string]sqlcgen.ChannelMember{},
+		usersByName:    map[string]sqlcgen.User{},
 	}
 }
 
@@ -239,7 +245,14 @@ func (f *fakeRepo) CountFollowersByOwner(ctx context.Context, ownerID uuid.UUID)
 func (f *fakeRepo) CreateChannel(_ context.Context, a sqlcgen.CreateChannelParams) (sqlcgen.Channel, error) {
 	key := strings.ToLower(a.Handle)
 	if _, ok := f.byHandle[key]; ok {
-		return sqlcgen.Channel{}, &pgconn.PgError{Code: "23505"}
+		return sqlcgen.Channel{}, &pgconn.PgError{Code: "23505", ConstraintName: "channels_handle_lower_idx"}
+	}
+	// The reservation (migration 0142) is a DIFFERENT constraint on a different
+	// table, and it means something else: the name is held by an ACCOUNT. The
+	// fake mirrors the trigger so the service's classification is exercised on
+	// the shape Postgres actually raises.
+	if f.accountHandles[key] {
+		return sqlcgen.Channel{}, &pgconn.PgError{Code: "23505", ConstraintName: "actor_handles_pkey"}
 	}
 	ch := sqlcgen.Channel{
 		ID: uuid.New(), OwnerID: a.OwnerID, Handle: a.Handle,
@@ -848,4 +861,34 @@ func (f *fakeRepo) CountSearchPublicChannels(ctx context.Context, a sqlcgen.Coun
 func (f *fakeRepo) CountManagedChannels(ctx context.Context, userID uuid.UUID) (int64, error) {
 	rows, err := f.ListManagedChannels(ctx, sqlcgen.ListManagedChannelsParams{UserID: userID, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
+}
+
+// TestCreatingAChannelNamedAfterAnAccountIsRefused is SC1's channel direction.
+// Accounts and channels share ONE handle namespace (migration 0142) because
+// ActivityPub gives them one — `@name@domain` names an actor without saying
+// which kind — and while both could hold the same name, every channel-scoped
+// federation feature keyed on that handle addressed the wrong actor.
+//
+// The refusal is a DIFFERENT sentinel from "another channel has that handle",
+// because they are different facts with different remedies at the HTTP layer,
+// and because conflating them would have made the reservation's arrival
+// invisible to every caller.
+func TestCreatingAChannelNamedAfterAnAccountIsRefused(t *testing.T) {
+	repo := newFakeRepo()
+	repo.accountHandles["ownera"] = true
+	svc := NewService(repo)
+	owner := uuid.New()
+
+	_, err := svc.Create(context.Background(), owner, CreateInput{Handle: "OwnerA", DisplayName: "Owner A"})
+	if !errors.Is(err, ErrHandleReserved) {
+		t.Fatalf("Create over an account handle: err = %v, want ErrHandleReserved", err)
+	}
+
+	// A duplicate CHANNEL handle keeps its own answer, unchanged.
+	if _, err := svc.Create(context.Background(), owner, CreateInput{Handle: "films", DisplayName: "Films"}); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if _, err := svc.Create(context.Background(), owner, CreateInput{Handle: "Films", DisplayName: "Films again"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate handle: err = %v, want ErrConflict", err)
+	}
 }

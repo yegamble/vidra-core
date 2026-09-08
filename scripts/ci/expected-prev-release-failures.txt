@@ -1,0 +1,47 @@
+# Tests in the PREVIOUS RELEASE's integration suite that HEAD's schema is
+# EXPECTED to break, read by scripts/ci/assert-prev-release-failures.sh for
+# schema-compat.yml's `prev-release-against-new-schema` lane.
+#
+# One top-level Go test name per line; `#` comments and blank lines ignored.
+#
+# THIS FILE IS NOT A SKIP LIST AND NOT A MUTE. Every line is a compat break the
+# team has ACCEPTED IN WRITING, and the assertion is two-sided: a listed test
+# that fails is tolerated, a listed test that PASSES fails the job as a stale
+# expectation, and any UNLISTED failure fails the job hard. Nothing here makes a
+# lane quieter — it makes one known consequence explicit and self-clearing.
+#
+# The lane only consults this file when the previous release's tree does NOT
+# carry the migration that caused the break (a capability probe, not a version
+# string). The moment N-1 carries it, the whole suite must pass with no
+# expectations at all, and these lines become the stale-expectation error above.
+
+# --- migration 0142, one handle namespace (A29 parity) -----------------------
+#
+# ACCEPTED BREAK, ruled 2026-09-08. Accounts and channels now share one handle
+# namespace, because ActivityPub gives them one: `@name@domain` names an actor
+# without saying which kind it is, and while both could hold the same name every
+# channel-scoped federation feature keyed on that handle silently addressed the
+# wrong actor — a viewer's block of a colliding handle hid nothing.
+#
+# Unifying two namespaces is a TIGHTENING by construction, so it cannot satisfy
+# the additive-only half of the one-release schema-compat policy. It is accepted
+# rather than staged over two releases because the staged shape leaves exactly
+# the hole the A29 rehearsal found: for a whole release the database would not
+# guarantee the namespace, and creating a channel named after an existing
+# account would keep answering 201.
+#
+# WHY IT IS INSIDE THE SUPPORTED FLOOR. Under the A38 ruling, app-only rollback
+# is supported from v0.6.3 onward; a v0.6.2 target uses the RESTORE path, so
+# "v0.6.2 code on a v0.6.3+ schema" is already outside the supported rollback
+# floor. And the measured consequence is the boundary behaving, not breaking:
+# v0.6.2 maps 23505 through pgconv.IsUniqueViolation at both write sites, so it
+# answers 409 "channel handle already taken" where it answered 201, and 409 on
+# the account side. No crash, no 500, no data loss.
+#
+# WHAT ACTUALLY FAILS: v0.6.2's own fixture in
+# internal/store/search_filters_integration_test.go seeds a channel whose handle
+# EQUALS its owner's username — the exact collision 0142 refuses — and dies at
+# actor_handles_pkey while seeding. It is the fixture asserting the old
+# permissiveness, not a broken read or write path. It is the only such fixture
+# in that tree; every other one derives a distinct handle.
+TestEntitySearchVisibilityAgainstPostgres

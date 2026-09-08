@@ -42,9 +42,18 @@ func NewService(repo Repository, blobs storage.Backend) *Service {
 
 // RemoteVideo is the remote-watch read model.
 type RemoteVideo struct {
-	ID              uuid.UUID
-	ObjectURL       string
-	ActorURL        string
+	ID        uuid.UUID
+	ObjectURL string
+	// ActorURL is the actor the video is attributed to — for a PeerTube- or
+	// vidra-shaped origin, the CHANNEL's Group actor.
+	ActorURL string
+	// AccountActorURL is the account that owns that channel, when the origin's
+	// actor document named one. It is the identity a block should be taken
+	// against: one block, covering every channel the person owns.
+	AccountActorURL string
+	// ChannelHandle is preferredUsername@domain for ActorURL — the human
+	// identity a viewer recognises and can paste into a block form.
+	ChannelHandle   string
 	Domain          string
 	Title           string
 	Description     string
@@ -71,6 +80,7 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (RemoteVideo, error) {
 		ID:              row.ID,
 		ObjectURL:       row.ObjectUrl,
 		ActorURL:        row.RemoteActorUrl,
+		AccountActorURL: row.AttributedTo,
 		Domain:          row.Domain,
 		Title:           row.Title,
 		Description:     row.Description,
@@ -80,6 +90,9 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (RemoteVideo, error) {
 		HasThumbnail:    row.ThumbnailKey != nil && *row.ThumbnailKey != "",
 		FetchedAt:       row.FetchedAt,
 		UpdatedAt:       row.UpdatedAt,
+	}
+	if row.PreferredUsername != "" && row.Domain != "" {
+		rv.ChannelHandle = row.PreferredUsername + "@" + row.Domain
 	}
 	if row.PublishedAt.Valid {
 		t := row.PublishedAt.Time

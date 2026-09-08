@@ -37,11 +37,17 @@ type remoteVideoCommentView struct {
 	ActorURL     string `json:"actor_url"`
 	// ObjectURL is the comment's ActivityPub id ON THE ORIGIN, so a reader can
 	// follow the thread back to where it is actually hosted.
-	ObjectURL   string     `json:"object_url"`
-	Body        string     `json:"body"`
-	Edited      bool       `json:"edited"`
-	PublishedAt *time.Time `json:"published_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ObjectURL string `json:"object_url"`
+	// ParentObjectURL is the origin object id of the comment this one answers,
+	// absent for a reply to the video itself. Before it, the mirror was FLAT:
+	// only Notes replying to the video object were stored and every deeper reply
+	// was delivered and dropped silently. A client that cannot find the parent
+	// among the rows it holds renders the reply at the top level.
+	ParentObjectURL string     `json:"parent_object_url,omitempty"`
+	Body            string     `json:"body"`
+	Edited          bool       `json:"edited"`
+	PublishedAt     *time.Time `json:"published_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
 type remoteVideoCommentListResponse struct {
@@ -76,15 +82,16 @@ func (s *Server) handleListRemoteVideoComments(c echo.Context) error {
 	views := make([]remoteVideoCommentView, 0, len(items))
 	for _, it := range items {
 		views = append(views, remoteVideoCommentView{
-			ID:           it.ID.String(),
-			AuthorName:   it.AuthorName,
-			AuthorDomain: it.Domain,
-			ActorURL:     it.ActorURL,
-			ObjectURL:    it.ObjectURL,
-			Body:         it.Body,
-			Edited:       it.Edited,
-			PublishedAt:  it.PublishedAt,
-			CreatedAt:    it.CreatedAt,
+			ID:              it.ID.String(),
+			AuthorName:      it.AuthorName,
+			AuthorDomain:    it.Domain,
+			ActorURL:        it.ActorURL,
+			ObjectURL:       it.ObjectURL,
+			ParentObjectURL: it.ParentObjectURL,
+			Body:            it.Body,
+			Edited:          it.Edited,
+			PublishedAt:     it.PublishedAt,
+			CreatedAt:       it.CreatedAt,
 		})
 	}
 	return c.JSON(http.StatusOK, remoteVideoCommentListResponse{

@@ -132,3 +132,32 @@ func TestIsUniqueViolation(t *testing.T) {
 		t.Fatal("wrapped 23505 must read as a unique violation")
 	}
 }
+
+// TestIsHandleReserved separates the two 23505s that reach an account or channel
+// write. They are different facts with different remedies — "another account has
+// that name" versus "a channel holds it" — and the API renders them as different
+// codes, so classifying on SQLSTATE alone would have made the one-handle-
+// namespace reservation invisible to every caller.
+func TestIsHandleReserved(t *testing.T) {
+	reserved := &pgconn.PgError{Code: SQLStateUniqueViolation, ConstraintName: ConstraintActorHandles}
+	ordinary := &pgconn.PgError{Code: SQLStateUniqueViolation, ConstraintName: "users_username_lower_idx"}
+
+	if !IsHandleReserved(reserved) {
+		t.Error("a violation of the reservation must read as a reserved handle")
+	}
+	if !IsHandleReserved(fmt.Errorf("insert: %w", reserved)) {
+		t.Error("a wrapped violation must too")
+	}
+	if IsHandleReserved(ordinary) {
+		t.Error("an ordinary duplicate must NOT read as a reserved handle")
+	}
+	if IsHandleReserved(errors.New("plain")) || IsHandleReserved(nil) {
+		t.Error("non-pg errors must not read as a reserved handle")
+	}
+	if got := ConstraintName(ordinary); got != "users_username_lower_idx" {
+		t.Errorf("ConstraintName = %q", got)
+	}
+	if got := ConstraintName(errors.New("plain")); got != "" {
+		t.Errorf("ConstraintName of a non-pg error = %q, want empty", got)
+	}
+}

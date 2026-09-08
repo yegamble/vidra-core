@@ -78,6 +78,9 @@ func (s *Server) handleClaimOwner(c echo.Context) error {
 			s.audit(c, observability.ActionOwnerClaim, observability.ResultFailure, "", "invalid_token")
 			return &OwnerClaimInvalidError{}
 		}
+		if errors.Is(err, auth.ErrHandleReserved) {
+			return &HandleReservedError{}
+		}
 		if errors.Is(err, auth.ErrConflict) {
 			return echo.NewHTTPError(http.StatusConflict, "username or email already taken")
 		}

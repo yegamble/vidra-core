@@ -34,7 +34,15 @@ type fetchedActor struct {
 	PreferredUsername string `json:"preferredUsername"`
 	Inbox             string `json:"inbox"`
 	Followers         string `json:"followers"`
-	PublicKey         struct {
+	// AttributedTo names the ACCOUNT that owns a Group actor. PeerTube requires
+	// it on every channel actor and vidra emits it, so on the fediverse vidra
+	// actually federates with, a channel's owner is stated in its own document.
+	// It is the edge a block of an account travels down to reach that account's
+	// channels (0142); the rehearsal measured what its absence costs — a viewer
+	// blocking @name@domain saw nothing change, because the videos are
+	// attributed to the Group and the block named the Person.
+	AttributedTo json.RawMessage `json:"attributedTo"`
+	PublicKey    struct {
 		PublicKeyPem string `json:"publicKeyPem"`
 	} `json:"publicKey"`
 	Endpoints struct {
@@ -135,6 +143,16 @@ func (s *Service) refetchRemoteActor(ctx context.Context, actorURL string) (sqlc
 	if u, e := url.Parse(actorURL); e == nil {
 		domain = u.Host
 	}
+	// Only a SAME-HOST owner is stored. attributedTo is attacker-controlled
+	// text, and a Group claiming to be owned by an account on some other server
+	// would otherwise let that server's block list reach in — or, worse, let a
+	// hostile peer attach its actors to a well-behaved instance's account. Same
+	// host is the same authority rule the Announce ingest already applies to
+	// attribution.
+	owner := firstAttributedTo(fa.AttributedTo)
+	if owner != "" && !sameHost(owner, actorURL) {
+		owner = ""
+	}
 	if err := s.repo.UpsertRemoteActor(ctx, sqlcgen.UpsertRemoteActorParams{
 		ActorUrl:          actorURL,
 		ActorType:         fa.Type,
@@ -144,6 +162,7 @@ func (s *Service) refetchRemoteActor(ctx context.Context, actorURL string) (sqlc
 		SharedInboxUrl:    sharedInbox,
 		PublicKeyPem:      fa.PublicKey.PublicKeyPem,
 		FollowersUrl:      fa.Followers,
+		AttributedTo:      owner,
 	}); err != nil {
 		return sqlcgen.RemoteActor{}, err
 	}

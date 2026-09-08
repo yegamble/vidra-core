@@ -50,26 +50,6 @@ func (q *Queries) CountRemoteChannelFollows(ctx context.Context, userID uuid.UUI
 	return column_1, err
 }
 
-const deleteRemoteChannelFollowByActivity = `-- name: DeleteRemoteChannelFollowByActivity :execrows
-DELETE FROM remote_channel_follows
-WHERE follow_activity_url = $1 AND remote_actor_url = $2
-`
-
-type DeleteRemoteChannelFollowByActivityParams struct {
-	FollowActivityUrl string `json:"follow_activity_url"`
-	RemoteActorUrl    string `json:"remote_actor_url"`
-}
-
-// Inbound Reject{Follow}: removes the matching follow. Same signer-is-the-
-// followed-actor predicate as the Accept.
-func (q *Queries) DeleteRemoteChannelFollowByActivity(ctx context.Context, arg DeleteRemoteChannelFollowByActivityParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteRemoteChannelFollowByActivity, arg.FollowActivityUrl, arg.RemoteActorUrl)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const deleteRemoteChannelFollowByID = `-- name: DeleteRemoteChannelFollowByID :execrows
 DELETE FROM remote_channel_follows WHERE id = $1 AND user_id = $2
 `
@@ -228,11 +208,46 @@ func (q *Queries) ListRemoteChannelFollows(ctx context.Context, arg ListRemoteCh
 	return items, nil
 }
 
+const rejectRemoteChannelFollowByActivity = `-- name: RejectRemoteChannelFollowByActivity :execrows
+UPDATE remote_channel_follows
+SET state = 'rejected'
+WHERE follow_activity_url = $1 AND remote_actor_url = $2
+`
+
+type RejectRemoteChannelFollowByActivityParams struct {
+	FollowActivityUrl string `json:"follow_activity_url"`
+	RemoteActorUrl    string `json:"remote_actor_url"`
+}
+
+// Inbound Reject{Follow}: marks the matching follow REJECTED. Same
+// signer-is-the-followed-actor predicate as the Accept.
+//
+// It used to DELETE the row, and the rehearsal showed why that is the wrong
+// answer: a refused follow simply vanished from the follower's list, which is
+// indistinguishable from one that was never made. The neighbouring failure is
+// worse — a Follow refused during an instance block gets no Reject at all, and
+// the row sits `pending` forever with neither side re-attempting, so a creator's
+// UI shows a follow request that can never resolve. A terminal, VISIBLE state is
+// the half of that pair this query can fix; re-following the same actor moves
+// the row back to 'pending' and sends a fresh Follow.
+func (q *Queries) RejectRemoteChannelFollowByActivity(ctx context.Context, arg RejectRemoteChannelFollowByActivityParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rejectRemoteChannelFollowByActivity, arg.FollowActivityUrl, arg.RemoteActorUrl)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const upsertRemoteChannelFollow = `-- name: UpsertRemoteChannelFollow :one
 
 INSERT INTO remote_channel_follows (user_id, remote_actor_url, follow_activity_url)
 VALUES ($1, $2, $3)
-ON CONFLICT (user_id, remote_actor_url) DO UPDATE SET user_id = remote_channel_follows.user_id
+ON CONFLICT (user_id, remote_actor_url) DO UPDATE SET
+    state               = CASE WHEN remote_channel_follows.state = 'rejected'
+                               THEN 'pending' ELSE remote_channel_follows.state END,
+    follow_activity_url = CASE WHEN remote_channel_follows.state = 'rejected'
+                               THEN EXCLUDED.follow_activity_url
+                               ELSE remote_channel_follows.follow_activity_url END
 RETURNING id, user_id, remote_actor_url, state, follow_activity_url, created_at
 `
 
@@ -249,6 +264,12 @@ type UpsertRemoteChannelFollowParams struct {
 // only exists so the existing row is RETURNed). Callers detect a fresh insert
 // by comparing the returned follow_activity_url with the one they minted, and
 // only then enqueue the outbound Follow.
+// A REJECTED row is the one exception to "re-following keeps the existing row":
+// it is re-armed to 'pending' with the new activity id, so the caller sees a
+// fresh insert and enqueues a new Follow. That is the retry the rehearsal asked
+// for — one deliberate act by the person whose follow it is, not a loop — and it
+// is also the only path back for a follow refused during an instance block that
+// was later lifted, since neither side re-attempts on its own.
 func (q *Queries) UpsertRemoteChannelFollow(ctx context.Context, arg UpsertRemoteChannelFollowParams) (RemoteChannelFollow, error) {
 	row := q.db.QueryRow(ctx, upsertRemoteChannelFollow, arg.UserID, arg.RemoteActorUrl, arg.FollowActivityUrl)
 	var i RemoteChannelFollow

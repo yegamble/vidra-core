@@ -369,9 +369,14 @@ func TestEntitySearchVisibilityAgainstPostgres(t *testing.T) {
 		}
 		t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id) })
 		users[s.name] = id
+		// The channel handle is derived from the username rather than EQUAL to
+		// it: accounts and channels share one handle namespace (migration 0142),
+		// so this fixture's original shape is now a collision the database
+		// refuses — which is the point of the rule, and exactly the shape the
+		// backfill renames on a real instance.
 		if _, err := st.Pool.Exec(ctx,
 			`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, $3)`,
-			id, username, "Channel "+username,
+			id, username+"-ch", "Channel "+username,
 		); err != nil {
 			t.Fatalf("seed channel for %s: %v", s.name, err)
 		}
@@ -438,12 +443,12 @@ func TestEntitySearchVisibilityAgainstPostgres(t *testing.T) {
 	// Channels follow the OWNER: active and not unlisted. profile_public is not
 	// consulted, so the private account's channel IS discoverable.
 	chGot := channelHandles(t, anon)
-	for _, want := range []string{token + "_pub", token + "_private"} {
+	for _, want := range []string{token + "_pub-ch", token + "_private-ch"} {
 		if !has(chGot, want) {
 			t.Errorf("channel %s missing from channel search: %v", want, chGot)
 		}
 	}
-	for _, notWant := range []string{token + "_gone", token + "_hidden"} {
+	for _, notWant := range []string{token + "_gone-ch", token + "_hidden-ch"} {
 		if has(chGot, notWant) {
 			t.Errorf("channel %s of a deactivated/unlisted owner leaked: %v", notWant, chGot)
 		}

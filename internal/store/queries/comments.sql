@@ -57,6 +57,20 @@ WHERE c.video_id = $1
       SELECT 1 FROM muted_instances mi
       WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
   )
+  -- The per-remote-ACCOUNT block, RETROACTIVELY (A29 parity, migration 0142).
+  -- The rehearsal measured the gap here and nowhere else: blocking a remote
+  -- account removed its remote VIDEOS from six viewer-facing queries, and left
+  -- the comments it had already written sitting under the blocker's own video —
+  -- against the settings page's own promise that "their replies stay off your
+  -- videos". Hiding is a READ filter, so an unblock restores the thread exactly.
+  -- remote_actor_block_reach carries both scopes: the viewer's own blocks and
+  -- the admin's instance-wide per-actor blocks (blocker_id NULL, hidden for
+  -- everyone including anonymous readers).
+  AND NOT EXISTS (
+      SELECT 1 FROM remote_actor_block_reach rab
+      WHERE (rab.blocker_id = sqlc.narg('viewer_id') OR rab.blocker_id IS NULL)
+        AND rab.actor_url = c.remote_actor_url
+  )
 ORDER BY (c.id IS NOT DISTINCT FROM v.pinned_comment_id) DESC, c.created_at DESC, c.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 
@@ -84,6 +98,20 @@ WHERE c.video_id = $1
   AND NOT EXISTS (
       SELECT 1 FROM muted_instances mi
       WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
+  )
+  -- The per-remote-ACCOUNT block, RETROACTIVELY (A29 parity, migration 0142).
+  -- The rehearsal measured the gap here and nowhere else: blocking a remote
+  -- account removed its remote VIDEOS from six viewer-facing queries, and left
+  -- the comments it had already written sitting under the blocker's own video —
+  -- against the settings page's own promise that "their replies stay off your
+  -- videos". Hiding is a READ filter, so an unblock restores the thread exactly.
+  -- remote_actor_block_reach carries both scopes: the viewer's own blocks and
+  -- the admin's instance-wide per-actor blocks (blocker_id NULL, hidden for
+  -- everyone including anonymous readers).
+  AND NOT EXISTS (
+      SELECT 1 FROM remote_actor_block_reach rab
+      WHERE (rab.blocker_id = sqlc.narg('viewer_id') OR rab.blocker_id IS NULL)
+        AND rab.actor_url = c.remote_actor_url
   );
 
 -- name: GetComment :one

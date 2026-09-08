@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -12,6 +13,26 @@ import (
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/observability"
 )
+
+// domainParam reads the {domain} path segment, PERCENT-DECODED.
+//
+// The rehearsal measured the bug this closes: a fediverse domain in a lab (and
+// on any instance behind a non-443 port) is a `host:port` literal, and a client
+// that correctly percent-encodes the colon —
+// `DELETE /admin/instances/blocked/127.0.0.1%3A28080` — got 422 invalid domain,
+// while the raw colon worked. Echo hands back the RAW segment, so the encoded
+// form reached the validator as the literal text "127.0.0.1%3A28080". Decoding
+// here makes both spellings the same request, which is what a percent-encoding
+// is for. An undecodable segment is passed through unchanged so the validator
+// still refuses it with the message it already has.
+func domainParam(c echo.Context) string {
+	raw := c.Param("domain")
+	decoded, err := url.PathUnescape(raw)
+	if err != nil {
+		return raw
+	}
+	return decoded
+}
 
 // mutedInstanceView is one instance in the caller's instance-mute list.
 type mutedInstanceView struct {
@@ -33,7 +54,7 @@ func (s *Server) handleMuteInstance(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := s.instancemodsvc.MuteInstance(c.Request().Context(), userID, c.Param("domain")); err != nil {
+	if err := s.instancemodsvc.MuteInstance(c.Request().Context(), userID, domainParam(c)); err != nil {
 		if errors.Is(err, instancemod.ErrInvalidDomain) {
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "invalid instance domain")
 		}
@@ -49,7 +70,7 @@ func (s *Server) handleUnmuteInstance(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := s.instancemodsvc.UnmuteInstance(c.Request().Context(), userID, c.Param("domain")); err != nil {
+	if err := s.instancemodsvc.UnmuteInstance(c.Request().Context(), userID, domainParam(c)); err != nil {
 		if errors.Is(err, instancemod.ErrInvalidDomain) {
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "invalid instance domain")
 		}
@@ -146,7 +167,7 @@ func (s *Server) handleUnblockInstance(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	domain := c.Param("domain")
+	domain := domainParam(c)
 	blockedAt, wasBlocked, err := s.instancemodsvc.UnblockInstance(c.Request().Context(), domain)
 	if err != nil {
 		if errors.Is(err, instancemod.ErrInvalidDomain) {

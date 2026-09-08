@@ -80,17 +80,22 @@ func (s *Server) serveAPObject(c echo.Context, load func(uuid.UUID) (map[string]
 // A Tombstone is deliberately NOT cached (cacheable=false): the 410 is the one
 // answer that can turn back into a 200 if an operator restores from a backup,
 // and a cached-for-five-minutes deletion is a worse failure than an extra fetch.
+// It carries NO ETag either — the rehearsal caught one on the 410 and called it
+// meaningless, which is the polite reading. A validator invites a peer to send
+// If-None-Match, and this is precisely the answer that must never be revalidated
+// into a 304: a 304 says "what you already have is current", and what the peer
+// already has is the video.
 func (s *Server) writeAPObject(c echo.Context, status int, doc map[string]any, cacheable bool) error {
 	body, err := json.Marshal(doc)
 	if err != nil {
 		return err
 	}
-	sum := sha256.Sum256(body)
-	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
 	header := c.Response().Header()
 	header.Set(echo.HeaderContentType, activityJSONContentType)
-	header.Set("ETag", etag)
 	if cacheable {
+		sum := sha256.Sum256(body)
+		etag := `"` + hex.EncodeToString(sum[:16]) + `"`
+		header.Set("ETag", etag)
 		header.Set("Cache-Control", apObjectCacheControl)
 		if match := c.Request().Header.Get("If-None-Match"); match == etag {
 			return c.NoContent(http.StatusNotModified)

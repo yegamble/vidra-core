@@ -82,7 +82,7 @@ type Repository interface {
 	CountRemoteChannelFollows(ctx context.Context, userID uuid.UUID) (int64, error)
 	DeleteRemoteChannelFollowByID(ctx context.Context, arg sqlcgen.DeleteRemoteChannelFollowByIDParams) (int64, error)
 	AcceptRemoteChannelFollowByActivity(ctx context.Context, arg sqlcgen.AcceptRemoteChannelFollowByActivityParams) (int64, error)
-	DeleteRemoteChannelFollowByActivity(ctx context.Context, arg sqlcgen.DeleteRemoteChannelFollowByActivityParams) (int64, error)
+	RejectRemoteChannelFollowByActivity(ctx context.Context, arg sqlcgen.RejectRemoteChannelFollowByActivityParams) (int64, error)
 	HasAcceptedRemoteChannelFollow(ctx context.Context, remoteActorURL string) (bool, error)
 	HasRemoteChannelFollow(ctx context.Context, remoteActorURL string) (bool, error)
 	// Federated comments (remote-content §6): inbound Create/Update{Note}
@@ -114,6 +114,17 @@ type Repository interface {
 	CountRemoteActorBlocks(ctx context.Context, blockerID uuid.UUID) (int64, error)
 	DeleteRemoteVideoByObjectURL(ctx context.Context, objectURL string) (int64, error)
 	DeleteRemoteActor(ctx context.Context, actorURL string) (int64, error)
+
+	// One handle namespace + the admin half of the per-actor block (A29 parity,
+	// migration 0142).
+	GetRemoteVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetRemoteVideoByIDRow, error)
+	GetChannelHandleAlias(ctx context.Context, lower string) (sqlcgen.GetChannelHandleAliasRow, error)
+	GetChannelActorAlias(ctx context.Context, channelID uuid.UUID) (string, error)
+	IsRemoteActorBlockedInstanceWide(ctx context.Context, actorURL string) (bool, error)
+	BlockRemoteActorInstanceWide(ctx context.Context, arg sqlcgen.BlockRemoteActorInstanceWideParams) error
+	UnblockRemoteActorInstanceWide(ctx context.Context, remoteActorURL string) (int64, error)
+	ListBlockedRemoteActors(ctx context.Context, arg sqlcgen.ListBlockedRemoteActorsParams) ([]sqlcgen.ListBlockedRemoteActorsRow, error)
+	CountBlockedRemoteActors(ctx context.Context) (int64, error)
 }
 
 // CommentFlagger runs the watched-words moderation flagging over a stored

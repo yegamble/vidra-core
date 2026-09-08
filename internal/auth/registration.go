@@ -67,7 +67,7 @@ func (s *Service) RequestRegistration(ctx context.Context, in RegisterInput, not
 	})
 	if err != nil {
 		if pgconv.IsUniqueViolation(err) {
-			return RegistrationRequest{}, ErrConflict
+			return RegistrationRequest{}, nameConflict(err)
 		}
 		return RegistrationRequest{}, err
 	}
@@ -146,7 +146,7 @@ func (s *Service) ApproveRegistration(ctx context.Context, adminID, requestID uu
 			return sqlcgen.User{}, ErrRegistrationRequestNotFound
 		}
 		if pgconv.IsUniqueViolation(err) {
-			return sqlcgen.User{}, ErrConflict
+			return sqlcgen.User{}, nameConflict(err)
 		}
 		return sqlcgen.User{}, err
 	}

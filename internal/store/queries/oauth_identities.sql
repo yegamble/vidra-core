@@ -36,8 +36,16 @@ DELETE FROM oauth_identities
 WHERE user_id = $1 AND provider = $2;
 
 -- name: UsernameExists :one
--- Case-insensitive username existence probe, used to derive a unique username
--- for accounts created via OAuth login (the unique index remains the backstop).
+-- Case-insensitive HANDLE existence probe, used to derive a unique username for
+-- accounts created via OAuth or ATProto login (the unique index remains the
+-- backstop).
+--
+-- It reads actor_handles, not users: accounts and channels share one namespace
+-- (migration 0142), so a derived username that dodged every existing account and
+-- landed on a CHANNEL handle would be refused by the reservation at INSERT time
+-- and turn a first sign-in into a conflict the person cannot act on. Probing the
+-- namespace the insert is checked against is the only version of this that
+-- cannot drift.
 SELECT EXISTS (
-    SELECT 1 FROM users WHERE lower(username) = lower($1)
+    SELECT 1 FROM actor_handles WHERE handle_lower = lower($1)
 ) AS taken;

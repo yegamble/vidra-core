@@ -77,3 +77,39 @@ var errReadFailed = errStub("connection refused")
 type errStub string
 
 func (e errStub) Error() string { return string(e) }
+
+// TestFederationComponentRendersTheLastDelivery is the rehearsal's finding (c).
+// LastDeliveredAt was computed on every probe in cmd/api and rendered into
+// nothing, so the one number that separates a DRAINED federation queue from an
+// ABANDONED one — both of which read as zero pending — never reached the page
+// that asks the question.
+func TestFederationComponentRendersTheLastDelivery(t *testing.T) {
+	last := time.Date(2026, 9, 8, 17, 41, 9, 0, time.UTC)
+	got := federationComponent(FederationHealth{Pending: 0, LastDeliveredAt: last}, nil)
+	if got.Status != "ok" {
+		t.Fatalf("status = %q, want ok", got.Status)
+	}
+	if got.Detail["last_delivered_at"] != "2026-09-08T17:41:09Z" {
+		t.Errorf("last_delivered_at = %q", got.Detail["last_delivered_at"])
+	}
+	if got.Detail["pending"] != "0" || got.Detail["dead_lettered"] != "0" {
+		t.Errorf("detail = %+v, want the queue numbers beside the verdict", got.Detail)
+	}
+
+	// A failing verdict carries it too: an operator reading a stalled queue wants
+	// "and the last thing that DID leave was at …" more than anyone reading a
+	// healthy one does.
+	stalled := federationComponent(FederationHealth{
+		OldestPendingAgeSeconds: federationStallSeconds + 1, Pending: 3, LastDeliveredAt: last,
+	}, nil)
+	if stalled.Status != "down" || stalled.Detail["last_delivered_at"] == "" {
+		t.Errorf("stalled component = %+v, want down WITH the last delivery", stalled)
+	}
+
+	// And an instance that has never delivered anything says nothing rather than
+	// printing a zero timestamp, which looks like a bug and reads like a date.
+	fresh := federationComponent(FederationHealth{}, nil)
+	if _, present := fresh.Detail["last_delivered_at"]; present {
+		t.Errorf("a brand-new instance must not claim a last delivery: %+v", fresh.Detail)
+	}
+}

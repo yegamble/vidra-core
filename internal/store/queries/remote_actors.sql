@@ -2,16 +2,22 @@
 
 -- name: GetRemoteActor :one
 SELECT actor_url, actor_type, preferred_username, domain, inbox_url, shared_inbox_url,
-       public_key_pem, followers_url, fetched_at, updated_at
+       public_key_pem, followers_url, fetched_at, updated_at, attributed_to
 FROM remote_actors
 WHERE actor_url = $1;
 
 -- name: UpsertRemoteActor :exec
+-- attributed_to is the OWNING ACCOUNT of a Group actor, read off the actor
+-- document's attributedTo (0142). It is what makes a block of an account reach
+-- the channels that account owns: the rehearsal measured a viewer blocking
+-- @name@domain and seeing nothing change, because the videos are attributed to
+-- the Group and the block named the Person. It is '' for a Person and for any
+-- Group whose document does not name an owner.
 INSERT INTO remote_actors (
     actor_url, actor_type, preferred_username, domain, inbox_url,
-    shared_inbox_url, public_key_pem, followers_url
+    shared_inbox_url, public_key_pem, followers_url, attributed_to
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, sqlc.arg('attributed_to'))
 ON CONFLICT (actor_url) DO UPDATE SET
     actor_type         = EXCLUDED.actor_type,
     preferred_username = EXCLUDED.preferred_username,
@@ -20,6 +26,7 @@ ON CONFLICT (actor_url) DO UPDATE SET
     shared_inbox_url   = EXCLUDED.shared_inbox_url,
     public_key_pem     = EXCLUDED.public_key_pem,
     followers_url      = EXCLUDED.followers_url,
+    attributed_to      = EXCLUDED.attributed_to,
     updated_at         = now();
 
 -- name: CountFederatedPeers :one

@@ -140,6 +140,13 @@ func TestDeletedVideoObjectIsATombstone(t *testing.T) {
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("Tombstone cache-control = %q, want no-store", cc)
 	}
+	// Nor carry a validator. An ETag invites If-None-Match, and a 304 on this
+	// answer would tell the peer that what it already holds — the video — is
+	// current. The rehearsal found one here and called it meaningless; it is
+	// worse than meaningless.
+	if etag := rec.Header().Get("ETag"); etag != "" {
+		t.Errorf("Tombstone carries ETag %q: a 410 must not be revalidatable", etag)
+	}
 }
 
 // An id that was never a video and a private video answer identically, so the

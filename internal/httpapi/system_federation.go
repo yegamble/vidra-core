@@ -49,6 +49,10 @@ type FederationHealth struct {
 const federationStallSeconds = 20 * 60
 
 // federationComponent renders the component from a health snapshot.
+//
+// Every arm carries the same `detail`, including the failing ones: an operator
+// reading a stalled queue wants "and the last thing that DID leave was at …"
+// more than anyone reading a healthy one does.
 func federationComponent(h FederationHealth, err error) componentStatus {
 	if err != nil {
 		return componentStatus{
@@ -56,11 +60,13 @@ func federationComponent(h FederationHealth, err error) componentStatus {
 			Error:  "the federation delivery queue could not be read, so this page cannot say whether outbound activities are leaving this instance: " + err.Error(),
 		}
 	}
+	detail := federationDetail(h)
 	if h.OldestPendingAgeSeconds > federationStallSeconds {
 		return componentStatus{
 			Status: "down",
 			Error: "the oldest pending outbound delivery is " + strconv.FormatInt(h.OldestPendingAgeSeconds, 10) +
 				"s old, past the whole retry ladder: nothing is draining the federation queue, so no activity is reaching any peer.",
+			Detail: detail,
 		}
 	}
 	if h.DeadLettered > 0 {
@@ -68,9 +74,29 @@ func federationComponent(h FederationHealth, err error) componentStatus {
 			Status: "degraded",
 			Error: strconv.FormatInt(h.DeadLettered, 10) + " outbound deliveries exhausted their retries and were dead-lettered" +
 				federationBacklogSuffix(h) + ". The instance is serving; one or more peers did not accept what it sent.",
+			Detail: detail,
 		}
 	}
-	return componentStatus{Status: "ok"}
+	return componentStatus{Status: "ok", Detail: detail}
+}
+
+// federationDetail renders the facts behind the verdict.
+//
+// last_delivered_at is ABSENT rather than a zero timestamp when nothing has ever
+// been delivered, on the same doctrine as the component itself: an operator can
+// tell "no successful delivery yet" from "the last one was at midnight" only if
+// the two look different, and 0001-01-01T00:00:00Z looks like a bug.
+// pending/dead_lettered ride along because they are already in the prose and a
+// dashboard should not have to parse a sentence to draw a number.
+func federationDetail(h FederationHealth) map[string]string {
+	detail := map[string]string{
+		"pending":       strconv.FormatInt(h.Pending, 10),
+		"dead_lettered": strconv.FormatInt(h.DeadLettered, 10),
+	}
+	if !h.LastDeliveredAt.IsZero() {
+		detail["last_delivered_at"] = h.LastDeliveredAt.UTC().Format(time.RFC3339)
+	}
+	return detail
 }
 
 // federationBacklogSuffix adds the pending backlog to a message when there is
