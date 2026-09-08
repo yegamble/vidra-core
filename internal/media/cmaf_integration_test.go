@@ -1119,7 +1119,7 @@ func TestCoverArtSourceIsTranscodedAsAudioOnly(t *testing.T) {
 		t.Errorf("probed audio bitrate = %d kbps, want the source's 64", md.AudioKbps)
 	}
 
-	res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, md, nil)
+	res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, 0, md, nil)
 	if err != nil {
 		t.Fatalf("TranscodeAll on an audio-with-cover-art source: %v", err)
 	}
@@ -1377,10 +1377,10 @@ func TestFullJobDecodesTheSourceTwiceNotThreeTimes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Probe: %v", err)
 		}
-		if _, err := tc.TranscodeHLS(context.Background(), videoID, srcKey, md, nil); err != nil {
+		if _, err := tc.TranscodeHLS(context.Background(), videoID, srcKey, 0, md, nil); err != nil {
 			t.Fatalf("TranscodeHLS: %v", err)
 		}
-		if _, err := tc.TranscodeWebVideos(context.Background(), videoID, srcKey, md, nil); err != nil {
+		if _, err := tc.TranscodeWebVideos(context.Background(), videoID, srcKey, 0, md, nil); err != nil {
 			t.Fatalf("TranscodeWebVideos: %v", err)
 		}
 		before = len(decodePasses(invocations()))
@@ -1397,7 +1397,7 @@ func TestFullJobDecodesTheSourceTwiceNotThreeTimes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Probe: %v", err)
 		}
-		res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, md, nil)
+		res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, 0, md, nil)
 		if err != nil {
 			t.Fatalf("TranscodeAll: %v", err)
 		}
@@ -1505,7 +1505,7 @@ func TestStandaloneWebVideoTargetStillEncodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
-	files, err := tc.TranscodeWebVideos(context.Background(), videoID, srcKey, md, nil)
+	files, err := tc.TranscodeWebVideos(context.Background(), videoID, srcKey, 0, md, nil)
 	if err != nil {
 		t.Fatalf("TranscodeWebVideos: %v", err)
 	}
@@ -1588,7 +1588,7 @@ func TestFullJobDerivesWebVideosOnBothPackagers(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Probe: %v", err)
 			}
-			res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, md, nil)
+			res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, 0, md, nil)
 			if err != nil {
 				t.Fatalf("TranscodeAll: %v", err)
 			}
@@ -1653,7 +1653,7 @@ func TestFullJobDerivesWebVideosFromAStreamedLadder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
-	res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, md, nil)
+	res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, 0, md, nil)
 	if err != nil {
 		t.Fatalf("TranscodeAll: %v", err)
 	}
@@ -1705,7 +1705,7 @@ func TestAudioOnlyFullJobDerivesNoWebVideos(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
-	res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, md, nil)
+	res, files, err := tc.TranscodeAll(context.Background(), videoID, srcKey, 0, md, nil)
 	if err != nil {
 		t.Fatalf("TranscodeAll on an audio-only source: %v", err)
 	}

@@ -12,6 +12,30 @@ import (
 	"github.com/google/uuid"
 )
 
+const bumpVideoTranscodeGeneration = `-- name: BumpVideoTranscodeGeneration :one
+UPDATE videos
+SET transcode_generation = transcode_generation + 1,
+    updated_at = now()
+WHERE id = $1
+RETURNING transcode_generation
+`
+
+// Advance a video's transcode generation and return the new value (migration
+// 0136). One increment per ENQUEUE, which is what makes a retry of the same job
+// write the same output prefix: a retry claims the existing row and never comes
+// back through here.
+//
+// Unconditional and unguarded on purpose. Two enqueues racing produce two
+// different numbers rather than one contested one, and the worse outcome — two
+// jobs deriving the SAME prefix and overwriting each other, which is the state
+// this column exists to end — is the one this cannot produce.
+func (q *Queries) BumpVideoTranscodeGeneration(ctx context.Context, id uuid.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, bumpVideoTranscodeGeneration, id)
+	var transcode_generation int32
+	err := row.Scan(&transcode_generation)
+	return transcode_generation, err
+}
+
 const claimDueTranscodeJobs = `-- name: ClaimDueTranscodeJobs :many
 UPDATE transcode_jobs
 SET next_attempt_at = now() + interval '30 minutes',
@@ -252,6 +276,20 @@ func (q *Queries) GetVideoFileSizeByStorageKey(ctx context.Context, storageKey s
 	var size_bytes int64
 	err := row.Scan(&size_bytes)
 	return size_bytes, err
+}
+
+const getVideoTranscodeGeneration = `-- name: GetVideoTranscodeGeneration :one
+SELECT transcode_generation FROM videos WHERE id = $1
+`
+
+// The generation the video's CURRENT job writes into. Read at run time rather
+// than carried on the job row, so a retry recomputes the same answer (nothing
+// has enqueued in between) without a second column to keep in step.
+func (q *Queries) GetVideoTranscodeGeneration(ctx context.Context, id uuid.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, getVideoTranscodeGeneration, id)
+	var transcode_generation int32
+	err := row.Scan(&transcode_generation)
+	return transcode_generation, err
 }
 
 const hasLiveTranscodeJob = `-- name: HasLiveTranscodeJob :one

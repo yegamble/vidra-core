@@ -12,10 +12,17 @@ SELECT storage_key FROM video_files;
 -- name: ListAllCaptionKeys :many
 SELECT storage_key FROM captions;
 
--- name: ListAllVideoIDs :many
--- Every live video id, used to keep the HLS tree (streaming-playlists/<id>/...)
--- of any existing video: a whole tree is orphan only when its video is gone.
-SELECT id FROM videos;
+-- name: ListVideoTranscodeGenerations :many
+-- Every live video id with its transcode generation (migration 0136).
+--
+-- The id keeps the HLS tree (streaming-playlists/<id>/...) of any existing
+-- video: a whole tree is orphan only when its video is gone. The GENERATION is
+-- what an in-flight transcode is writing into RIGHT NOW, and it has to come
+-- from here rather than from the source key's version, because since 0136 the
+-- two are different numbers — a re-transcode of an UNCHANGED source advances
+-- the generation while the source key stays put, so a sweep that inferred the
+-- target from the source would collect a half-written tree mid-transcode.
+SELECT id, transcode_generation FROM videos;
 
 -- name: ListStreamingPlaylistRefs :many
 -- video id + master key of every recorded streaming playlist, so the GC can

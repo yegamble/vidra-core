@@ -23,7 +23,9 @@ type mediagcFakeRepo struct{}
 
 func (mediagcFakeRepo) ListAllVideoFileKeys(context.Context) ([]string, error) { return nil, nil }
 func (mediagcFakeRepo) ListAllCaptionKeys(context.Context) ([]string, error)   { return nil, nil }
-func (mediagcFakeRepo) ListAllVideoIDs(context.Context) ([]uuid.UUID, error)   { return nil, nil }
+func (mediagcFakeRepo) ListVideoTranscodeGenerations(context.Context) ([]sqlcgen.ListVideoTranscodeGenerationsRow, error) {
+	return nil, nil
+}
 func (mediagcFakeRepo) ListPlaylistThumbnailRefs(context.Context) ([]sqlcgen.ListPlaylistThumbnailRefsRow, error) {
 	return nil, nil
 }

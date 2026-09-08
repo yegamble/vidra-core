@@ -3,6 +3,7 @@ package transcode
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -23,18 +24,35 @@ type fakeRepo struct {
 	playlists  map[uuid.UUID]sqlcgen.StreamingPlaylist
 	renditions map[uuid.UUID][]sqlcgen.VideoRendition
 	videoFiles map[uuid.UUID][]sqlcgen.VideoFile
-	steps      []sqlcgen.UpsertTranscodeStepParams
-	sizes      map[string]int64 // storage key -> size_bytes, for the scratch estimate
+	// generations is videos.transcode_generation (0136): bumped by the enqueue,
+	// read by the run.
+	generations map[uuid.UUID]int32
+	steps       []sqlcgen.UpsertTranscodeStepParams
+	sizes       map[string]int64 // storage key -> size_bytes, for the scratch estimate
 }
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
-		jobs:       map[uuid.UUID]*sqlcgen.TranscodeJob{},
-		playlists:  map[uuid.UUID]sqlcgen.StreamingPlaylist{},
-		renditions: map[uuid.UUID][]sqlcgen.VideoRendition{},
-		videoFiles: map[uuid.UUID][]sqlcgen.VideoFile{},
-		sizes:      map[string]int64{},
+		jobs:        map[uuid.UUID]*sqlcgen.TranscodeJob{},
+		playlists:   map[uuid.UUID]sqlcgen.StreamingPlaylist{},
+		renditions:  map[uuid.UUID][]sqlcgen.VideoRendition{},
+		videoFiles:  map[uuid.UUID][]sqlcgen.VideoFile{},
+		generations: map[uuid.UUID]int32{},
+		sizes:       map[string]int64{},
 	}
+}
+
+func (f *fakeRepo) BumpVideoTranscodeGeneration(_ context.Context, videoID uuid.UUID) (int32, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.generations[videoID]++
+	return f.generations[videoID], nil
+}
+
+func (f *fakeRepo) GetVideoTranscodeGeneration(_ context.Context, videoID uuid.UUID) (int32, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.generations[videoID], nil
 }
 
 func (f *fakeRepo) CreateVideoFile(_ context.Context, a sqlcgen.CreateVideoFileParams) (sqlcgen.VideoFile, error) {
@@ -253,6 +271,18 @@ func (f *fakeRepo) ListVideoRenditions(_ context.Context, videoID uuid.UUID) ([]
 	return f.renditions[videoID], nil
 }
 
+// makeDue drags a rescheduled job's next attempt back into the past, so a
+// retry runs inside a test instead of after the real backoff.
+func (f *fakeRepo) makeDue(videoID uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, j := range f.jobs {
+		if j.VideoID == videoID {
+			j.NextAttemptAt = time.Now().Add(-time.Second)
+		}
+	}
+}
+
 // job returns the single job for a video (fails the test on 0 or >1).
 func (f *fakeRepo) job(t *testing.T, videoID uuid.UUID) *sqlcgen.TranscodeJob {
 	f.mu.Lock()
@@ -296,6 +326,13 @@ type fakeTargetTranscoder struct {
 	webCalls   []string
 	allCalls   []string
 	probeCalls []string
+	// hlsGenerations / webGenerations record the output address each run was
+	// handed (0136), so a test can assert two runs of one source never share one.
+	hlsGenerations []int
+	webGenerations []int
+	// addressResults makes the fake derive its result keys from that generation,
+	// the way the real transcoder does, so a test can assert on KEYS.
+	addressResults bool
 	// hlsPercentTicks makes TranscodeHLS report the real transcoder's shape: one
 	// callback per whole percent from the ffmpeg progress scanner, then the
 	// terminal completion. Zero keeps the original two-event fixture.
@@ -305,9 +342,9 @@ type fakeTargetTranscoder struct {
 // TranscodeAll mirrors the real transcoder: ONE pass that yields both output
 // classes, recorded separately from the single-target calls so a test can prove
 // a full job never runs the standalone web-video encode.
-func (f *fakeTargetTranscoder) TranscodeAll(ctx context.Context, videoID uuid.UUID, sourceKey string, md media.Metadata, progress media.ProgressFunc) (media.HLSResult, []media.WebVideoResult, error) {
+func (f *fakeTargetTranscoder) TranscodeAll(ctx context.Context, videoID uuid.UUID, sourceKey string, generation int, md media.Metadata, progress media.ProgressFunc) (media.HLSResult, []media.WebVideoResult, error) {
 	f.allCalls = append(f.allCalls, sourceKey)
-	res, err := f.TranscodeHLS(ctx, videoID, sourceKey, md, progress)
+	res, err := f.TranscodeHLS(ctx, videoID, sourceKey, generation, md, progress)
 	if err != nil {
 		return media.HLSResult{}, nil, err
 	}
@@ -319,11 +356,20 @@ func (f *fakeTargetTranscoder) TranscodeAll(ctx context.Context, videoID uuid.UU
 	if f.webErr != nil {
 		return media.HLSResult{}, nil, f.webErr
 	}
+	// A full job derives its progressive MP4s inside the same packaging window,
+	// so they carry the SAME generation as the tree — addressed here for the
+	// same reason TranscodeHLS addresses its own result.
+	if f.addressResults {
+		f.webResult = []media.WebVideoResult{{
+			Height: 720, Width: 1280,
+			StorageKey: media.WebVideoPrefixForGeneration(videoID, generation) + "/720p.mp4",
+		}}
+	}
 	return res, f.webResult, nil
 }
 
 func (f *fakeTargetTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, sourceKey string) (media.HLSResult, error) {
-	return f.TranscodeHLS(ctx, videoID, sourceKey, media.Metadata{}, nil)
+	return f.TranscodeHLS(ctx, videoID, sourceKey, media.OriginalKeyVersion(sourceKey), media.Metadata{}, nil)
 }
 
 func (f *fakeTargetTranscoder) Probe(_ context.Context, sourceKey string) (media.Metadata, error) {
@@ -334,8 +380,18 @@ func (f *fakeTargetTranscoder) Probe(_ context.Context, sourceKey string) (media
 	return media.Metadata{DurationSeconds: 120, Width: 1280, Height: 720, FPS: 30}, nil
 }
 
-func (f *fakeTargetTranscoder) TranscodeHLS(_ context.Context, _ uuid.UUID, sourceKey string, _ media.Metadata, progress media.ProgressFunc) (media.HLSResult, error) {
+func (f *fakeTargetTranscoder) TranscodeHLS(_ context.Context, videoID uuid.UUID, sourceKey string, generation int, _ media.Metadata, progress media.ProgressFunc) (media.HLSResult, error) {
 	f.hlsCalls = append(f.hlsCalls, sourceKey)
+	f.hlsGenerations = append(f.hlsGenerations, generation)
+	// Address the result the way the real transcoder does, so a test can assert
+	// on the KEYS a run produced rather than on the number it was handed.
+	if f.addressResults {
+		prefix := media.HLSPrefixForGeneration(videoID, generation)
+		res := f.hlsResult
+		res.MasterKey = prefix + "/master.m3u8"
+		res.Renditions = []media.HLSRendition{{Height: 720, Width: 1280, KeyPrefix: prefix + "/720p"}}
+		f.hlsResult = res
+	}
 	if f.hlsPercentTicks && progress != nil {
 		progress(media.TranscodeProgress{Format: media.TranscodeFormatHLS, Height: 720, Width: 1280, State: media.ProgressQueued, Stage: "queued", Percent: 0})
 		for p := 0; p <= 99; p++ {
@@ -355,8 +411,15 @@ func (f *fakeTargetTranscoder) TranscodeHLS(_ context.Context, _ uuid.UUID, sour
 	return f.hlsResult, f.hlsErr
 }
 
-func (f *fakeTargetTranscoder) TranscodeWebVideos(_ context.Context, _ uuid.UUID, sourceKey string, _ media.Metadata, progress media.ProgressFunc) ([]media.WebVideoResult, error) {
+func (f *fakeTargetTranscoder) TranscodeWebVideos(_ context.Context, videoID uuid.UUID, sourceKey string, generation int, _ media.Metadata, progress media.ProgressFunc) ([]media.WebVideoResult, error) {
 	f.webCalls = append(f.webCalls, sourceKey)
+	f.webGenerations = append(f.webGenerations, generation)
+	if f.addressResults {
+		f.webResult = []media.WebVideoResult{{
+			Height: 720, Width: 1280,
+			StorageKey: media.WebVideoPrefixForGeneration(videoID, generation) + "/720p.mp4",
+		}}
+	}
 	if progress != nil {
 		progress(media.TranscodeProgress{Format: media.TranscodeFormatWebVideo, Height: 720, Width: 1280, State: media.ProgressRunning, Stage: "encoding", Percent: 63})
 	}
@@ -1583,5 +1646,109 @@ func TestStorageWriteGateAdmitsWhenTheStoreIsWritable(t *testing.T) {
 				t.Fatalf("DrainJobs = (%d, %v), want (1, nil)", n, err)
 			}
 		})
+	}
+}
+
+// TestReTranscodeOfTheSameSourceMintsANewGeneration is the invariant migration
+// 0136 exists for, at the seam that owns it.
+//
+// Before it, the output prefix came from the SOURCE key's version, which
+// answers "which upload is this?" rather than "which run is this?". A rerun
+// from an unchanged source therefore stayed at version 0 and wrote the same
+// fourteen objects again. A32/A33 measured what that costs behind a cache: the
+// origin's bytes changed (208,623 B -> 203,095 B, different sha) and the edge
+// kept serving the old ones on a HIT, with the stale segment decoding in
+// Chromium against the new init segment and no error anywhere.
+//
+// The assertion is on KEYS, not on the generation number the run was handed: a
+// number that advanced while the keys did not would be the same bug.
+func TestReTranscodeOfTheSameSourceMintsANewGeneration(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	const sourceKey = "web-videos/x.mp4" // UNCHANGED across both runs
+	tc := &fakeTargetTranscoder{addressResults: true}
+	svc := NewService(repo, tc)
+
+	run := func() (string, []string, []string) {
+		t.Helper()
+		if _, err := svc.EnqueueTarget(ctx, videoID, sourceKey, TargetAll); err != nil {
+			t.Fatalf("EnqueueTarget: %v", err)
+		}
+		if n, err := svc.DrainJobs(ctx, 10); err != nil || n != 1 {
+			t.Fatalf("DrainJobs = (%d, %v), want (1, nil)", n, err)
+		}
+		sp, ok := svc.Playlist(ctx, videoID)
+		if !ok {
+			t.Fatal("no streaming playlist after a successful run")
+		}
+		var prefixes []string
+		for _, r := range svc.Renditions(ctx, videoID) {
+			prefixes = append(prefixes, r.KeyPrefix)
+		}
+		var webKeys []string
+		for _, f := range repo.videoFiles[videoID] {
+			if f.Kind == "rendition" {
+				webKeys = append(webKeys, f.StorageKey)
+			}
+		}
+		return sp.MasterKey, prefixes, webKeys
+	}
+
+	firstMaster, firstPrefixes, firstWeb := run()
+	secondMaster, secondPrefixes, secondWeb := run()
+
+	if firstMaster == secondMaster {
+		t.Errorf("both runs promoted the same master key %q; the second overwrote the first in place", firstMaster)
+	}
+	if len(firstPrefixes) == 0 || slices.Equal(firstPrefixes, secondPrefixes) {
+		t.Errorf("rendition prefixes did not move: %v -> %v", firstPrefixes, secondPrefixes)
+	}
+	// Both trees a run writes have to move together, or one is superseded while
+	// the other is overwritten.
+	if len(firstWeb) == 0 || slices.Equal(firstWeb, secondWeb) {
+		t.Errorf("progressive web-video keys did not move: %v -> %v", firstWeb, secondWeb)
+	}
+	// One increment per enqueue, in order, from a source that never changed.
+	if !slices.Equal(tc.hlsGenerations, []int{1, 2}) {
+		t.Errorf("generations handed to the transcoder = %v, want [1 2]", tc.hlsGenerations)
+	}
+	// And the promoted keys are the shape mediagc parses, so the superseded
+	// generation is collectible rather than stranded.
+	if want := media.HLSPrefixForGeneration(videoID, 2) + "/master.m3u8"; secondMaster != want {
+		t.Errorf("second master = %q, want %q", secondMaster, want)
+	}
+}
+
+// TestARetryOfTheSameJobKeepsItsGeneration. The counter advances on ENQUEUE,
+// not on run, and that is what makes a retry idempotent in the store: a failed
+// attempt that is rescheduled must write the same prefix it was already
+// half-way through, not mint a fresh directory per attempt and leave a trail of
+// abandoned trees for the sweep.
+func TestARetryOfTheSameJobKeepsItsGeneration(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	tc := &fakeTargetTranscoder{addressResults: true, hlsErr: errors.New("ffmpeg died")}
+	svc := NewService(repo, tc)
+
+	if _, err := svc.EnqueueTarget(ctx, videoID, "web-videos/x.mp4", TargetHLS); err != nil {
+		t.Fatalf("EnqueueTarget: %v", err)
+	}
+	for range 3 {
+		if _, err := svc.DrainJobs(ctx, 10); err != nil {
+			t.Fatalf("DrainJobs: %v", err)
+		}
+		// The queue reschedules with backoff; make the row due again so the
+		// retry actually runs within the test.
+		repo.makeDue(videoID)
+	}
+	if len(tc.hlsGenerations) < 2 {
+		t.Fatalf("the job ran %d times; the retry path was not exercised", len(tc.hlsGenerations))
+	}
+	for i, gen := range tc.hlsGenerations {
+		if gen != 1 {
+			t.Errorf("attempt %d wrote generation %d, want 1 — a retry must not mint a new prefix", i+1, gen)
+		}
 	}
 }

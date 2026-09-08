@@ -992,6 +992,7 @@ type Video struct {
 	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
 	ShortCode             string             `json:"short_code"`
 	PeertubeUuid          pgtype.UUID        `json:"peertube_uuid"`
+	TranscodeGeneration   int32              `json:"transcode_generation"`
 }
 
 type VideoBlock struct {

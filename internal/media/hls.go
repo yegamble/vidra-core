@@ -909,26 +909,42 @@ func HLSKeyPrefix(videoID uuid.UUID) string {
 	return "streaming-playlists/" + videoID.String()
 }
 
-// --- source versions & HLS generations (video file replacement, W14) --------
+// --- source versions & transcode generations (W14; re-based by 0136) --------
 //
-// SEMANTICS (the source-version model, documented here once): the VIDEO is the
-// stable identity — its id, URLs and metadata never change across a source
-// replacement. What versions is the SOURCE BLOB and the HLS tree derived from
-// it:
+// SEMANTICS, documented here once. The VIDEO is the stable identity — its id,
+// URLs and metadata never change. Two things underneath it version separately:
 //
-//   - source version 0 is the original upload at the legacy key
+//   - THE SOURCE BLOB. Version 0 is the original upload at the legacy key
 //     web-videos/<id><ext>; replacement N stores web-videos/<id>.rN<ext>.
-//   - the transcoder derives its output prefix from the SOURCE key: version 0
-//     keeps the legacy streaming-playlists/<id>/ layout, version N writes a
-//     fresh GENERATION directory streaming-playlists/<id>/rN/.
+//   - THE TRANSCODE OUTPUT. Every transcode RUN writes into its own generation
+//     directory, numbered by videos.transcode_generation (migration 0136):
+//     generation 0 is the legacy in-place layout streaming-playlists/<id>/, and
+//     generation N writes streaming-playlists/<id>/rN/ (and, for the
+//     progressive MP4s, web-videos/<id>/rN/).
+//
+// THOSE USED TO BE THE SAME NUMBER, AND THAT WAS THE BUG. The output prefix was
+// derived from the source key's .rN, which answers "which upload is this?" —
+// so a replacement got a fresh directory while a re-transcode of an UNCHANGED
+// source stayed at version 0 and overwrote the same objects in place. With a
+// cache in front, A32/A33 measured the consequence: new bytes at the origin,
+// the old ones still being served on a HIT, and the stale segment decoding in
+// a browser with no error. One counter, advanced once per enqueue, is what
+// makes every generation addressable.
+//
+// rN still means "generation directory" — one addressing scheme, the one a
+// source replacement already used and the one mediagc already parses. What
+// changed is only what advances N; a replacement still gets a fresh directory,
+// because it enqueues a transcode like everything else.
 //
 // Because playback resolves every HLS key through the DB-recorded master key
 // (streaming_playlists.master_key) and rendition prefixes, writing a new
 // generation never disturbs the tree players are streaming; the atomic
 // promotion is transcode.storeResult swapping those DB rows to the new
-// generation. mediagc then collects the superseded generation and the old
-// source blob (both unreferenced). Keys stay opaque to the DB — this scheme is
-// parsed only here and in mediagc.
+// generation, which also moves the ?v= cache tag the api stamps on every child
+// URL — so the new generation is a new URL as well as a new key. mediagc then
+// collects the superseded generation and the old source blob (both
+// unreferenced). Keys stay opaque to the DB — this scheme is parsed only here
+// and in mediagc.
 
 // hlsGenerationDirRE matches a generation directory name ("r3").
 var hlsGenerationDirRE = regexp.MustCompile(`^r[1-9][0-9]*$`)
@@ -977,12 +993,13 @@ func IsHLSGenerationName(segment string) bool {
 	return hlsGenerationDirRE.MatchString(segment)
 }
 
-// HLSPrefixForSource is the storage-key directory a transcode of the given
-// source writes into: the legacy per-video prefix for a version-0 source, a
-// fresh generation directory (streaming-playlists/<id>/rN) for replacement N —
-// so a re-transcode never overwrites the tree players are currently streaming.
-func HLSPrefixForSource(videoID uuid.UUID, sourceKey string) string {
-	if gen := HLSGenerationName(OriginalKeyVersion(sourceKey)); gen != "" {
+// HLSPrefixForGeneration is the storage-key directory a transcode GENERATION
+// writes into: the legacy per-video prefix for generation 0 (every tree written
+// before 0136) and a fresh directory streaming-playlists/<id>/rN for generation
+// N — so no transcode ever overwrites the tree players are currently streaming,
+// whether or not its source changed.
+func HLSPrefixForGeneration(videoID uuid.UUID, generation int) string {
+	if gen := HLSGenerationName(generation); gen != "" {
 		return HLSKeyPrefix(videoID) + "/" + gen
 	}
 	return HLSKeyPrefix(videoID)
@@ -1247,12 +1264,18 @@ func (t *HLSTranscoder) Probe(ctx context.Context, sourceKey string) (Metadata, 
 // planned ladder into a temp dir, then stores every playlist/segment under
 // streaming-playlists/<videoID>/. All playlist URIs are relative, so the files
 // serve correctly through the authenticated proxy endpoints.
+//
+// It is the NARROW Transcoder interface, kept for callers that have no
+// generation to supply (fixtures and the pre-0136 shape). It derives one from
+// the source key, which is what every output prefix used to do — so it keeps a
+// version-0 source writing in place. The durable worker never takes this path:
+// it is a TargetTranscoder and passes the video's real generation.
 func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, sourceKey string) (HLSResult, error) {
 	md, err := t.Probe(ctx, sourceKey)
 	if err != nil {
 		return HLSResult{}, err
 	}
-	return t.TranscodeHLS(ctx, videoID, sourceKey, md, nil)
+	return t.TranscodeHLS(ctx, videoID, sourceKey, OriginalKeyVersion(sourceKey), md, nil)
 }
 
 // TranscodeHLS is the progress-aware HLS path used by the durable worker. Each
@@ -1260,10 +1283,15 @@ func (t *HLSTranscoder) Transcode(ctx context.Context, videoID uuid.UUID, source
 // render one execution per resolution. The source is always sourceKey (the
 // retained original supplied by the queue), never a previous derivative.
 //
+// generation is videos.transcode_generation, the run's own output address (see
+// the source-versions block above). It is supplied rather than derived because
+// only the caller knows which RUN this is; deriving it from the source key is
+// exactly the bug 0136 closes.
+//
 // md is the caller's already-obtained probe of sourceKey; the worker probes once
 // per job and shares it across targets.
-func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, md Metadata, progress ProgressFunc) (HLSResult, error) {
-	return t.transcodeHLS(ctx, videoID, sourceKey, md, progress, false)
+func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, generation int, md Metadata, progress ProgressFunc) (HLSResult, error) {
+	return t.transcodeHLS(ctx, videoID, sourceKey, generation, md, progress, false)
 }
 
 // TranscodeAll produces BOTH output classes from ONE ladder encode: the
@@ -1281,8 +1309,8 @@ func (t *HLSTranscoder) TranscodeHLS(ctx context.Context, videoID uuid.UUID, sou
 // A failure is a failure of the whole thing: the derivation runs inside
 // packaging, where a fault already fails the transcode without promoting
 // anything.
-func (t *HLSTranscoder) TranscodeAll(ctx context.Context, videoID uuid.UUID, sourceKey string, md Metadata, progress ProgressFunc) (HLSResult, []WebVideoResult, error) {
-	res, err := t.transcodeHLS(ctx, videoID, sourceKey, md, progress, true)
+func (t *HLSTranscoder) TranscodeAll(ctx context.Context, videoID uuid.UUID, sourceKey string, generation int, md Metadata, progress ProgressFunc) (HLSResult, []WebVideoResult, error) {
+	res, err := t.transcodeHLS(ctx, videoID, sourceKey, generation, md, progress, true)
 	if err != nil {
 		return HLSResult{}, nil, err
 	}
@@ -1290,7 +1318,7 @@ func (t *HLSTranscoder) TranscodeAll(ctx context.Context, videoID uuid.UUID, sou
 }
 
 // transcodeHLS is TranscodeHLS with the web-video derivation switched on or off.
-func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, md Metadata, progress ProgressFunc, deriveWebVideos bool) (HLSResult, error) {
+func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sourceKey string, generation int, md Metadata, progress ProgressFunc, deriveWebVideos bool) (HLSResult, error) {
 	// Runtime encode knobs, resolved once per job (config-parity W10): a
 	// settings change applies to the next job, never mid-job.
 	settings := t.encodeSettings()
@@ -1358,20 +1386,19 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 		}
 	}
 
-	// The output prefix is derived from the SOURCE key (W14): a replacement
-	// source writes a fresh generation directory so the tree players are
-	// currently streaming is never disturbed; promotion is the DB-row swap in
-	// transcode.storeResult.
-	prefix := HLSPrefixForSource(videoID, sourceKey)
-	// A manual re-run of the same source version uses the same stable prefix, so
-	// the prior generation is cleared before the new one is written -- otherwise
-	// stale resolutions/segments survive the overwrite. Replacement uploads use a
-	// fresh rN prefix, preserving uninterrupted playback until DB promotion.
-	//
-	// This runs BEFORE any output is written rather than immediately before a
-	// single bulk store, which widens the window during which a re-run of the
-	// SAME source has no serving tree. Replacements (the common case) are
-	// unaffected because they write to a different prefix.
+	// The output prefix is this RUN's generation (0136): every transcode writes
+	// a fresh directory, so the tree players are currently streaming is never
+	// disturbed and no re-run overwrites the objects a cache is holding.
+	// Promotion is the DB-row swap in transcode.storeResult, which also moves
+	// the ?v= tag the api stamps on every child URL.
+	prefix := HLSPrefixForGeneration(videoID, generation)
+	// The prefix is cleared before anything is written. Since 0136 a generation
+	// directory is normally empty already, so this is a no-op on the happy path
+	// — it earns its place on the two paths where it is not: a RETRY of a failed
+	// run (same generation, possibly half-written) and the collision of two jobs
+	// that read the counter around the same enqueue. Without it a retry can
+	// leave a previous attempt's stale resolutions in a tree that then gets
+	// promoted.
 	if deleter, ok := t.blobs.(storage.PrefixDeleter); ok {
 		if err := deleter.DeletePrefix(ctx, prefix); err != nil {
 			return HLSResult{}, err
@@ -1480,10 +1507,10 @@ func (t *HLSTranscoder) transcodeHLS(ctx context.Context, videoID uuid.UUID, sou
 	var deriver *webVideoDeriver
 	var onRungPackaged func(context.Context, HLSRung, string) error
 	if deriveWebVideos && len(rungs) > 0 {
-		webPrefix := WebVideoPrefixForSource(videoID, sourceKey)
+		webPrefix := WebVideoPrefixForGeneration(videoID, generation)
 		// The same prefix-clearing a standalone web-video job does, for the same
-		// reason: a re-run of the SAME source version reuses this prefix, so a
-		// shorter ladder must not leave the previous run's taller rungs behind.
+		// reason: a RETRY reuses this generation's prefix, so a shorter ladder
+		// must not leave the previous attempt's taller rungs behind.
 		if deleter, ok := t.blobs.(storage.PrefixDeleter); ok {
 			if derr := deleter.DeletePrefix(ctx, webPrefix); derr != nil {
 				return HLSResult{}, derr

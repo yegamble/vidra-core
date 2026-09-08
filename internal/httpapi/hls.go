@@ -409,8 +409,15 @@ func validateHLSVersion(c echo.Context, sp sqlcgen.StreamingPlaylist) error {
 	if requested == "" || requested == hlsCacheVersion(sp) {
 		return nil
 	}
-	// Never serve a new generation under an old immutable URL.
-	return echo.NewHTTPError(http.StatusNotFound, "video not found")
+	// Never serve a new generation under an old immutable URL — and never let
+	// the REFUSAL be stored either. It went out with no cache directive at all
+	// until now, which was survivable while every media response was private
+	// and a shared cache held nothing; with an edge in front of these routes a
+	// directive-less 404 is heuristically cacheable, and an edge that cached
+	// one would keep refusing a URL that the very next promotion could make
+	// valid again. Same reasoning as mediaObjectNotFound: the BYTES behind a
+	// versioned URL are immutable, their absence is not.
+	return mediaObjectNotFound(c, "video not found")
 }
 
 // setHLSCacheControl applies the HLS cache policy to a playlist response. The

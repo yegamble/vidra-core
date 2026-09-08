@@ -47,7 +47,13 @@ func (f *fakeRepo) ListAllVideoFileKeys(context.Context) ([]string, error) {
 }
 
 func (f *fakeRepo) ListAllCaptionKeys(context.Context) ([]string, error) { return f.captions, f.err }
-func (f *fakeRepo) ListAllVideoIDs(context.Context) ([]uuid.UUID, error) { return f.videoIDs, f.err }
+func (f *fakeRepo) ListVideoTranscodeGenerations(context.Context) ([]sqlcgen.ListVideoTranscodeGenerationsRow, error) {
+	out := make([]sqlcgen.ListVideoTranscodeGenerationsRow, 0, len(f.videoIDs))
+	for _, id := range f.videoIDs {
+		out = append(out, sqlcgen.ListVideoTranscodeGenerationsRow{ID: id})
+	}
+	return out, f.err
+}
 
 func (f *fakeRepo) ListStreamingPlaylistRefs(context.Context) ([]sqlcgen.ListStreamingPlaylistRefsRow, error) {
 	return f.playlists, f.err
