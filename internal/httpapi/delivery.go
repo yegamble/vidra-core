@@ -9,6 +9,7 @@ import (
 	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
+	"github.com/vidra/vidra-core/internal/storage"
 )
 
 // This file is the ONE seam between the media routes and internal/delivery
@@ -116,6 +117,22 @@ func credentialedMediaRequest(c echo.Context) bool {
 // simply is not in the list, so there is no error path here that could turn an
 // optional delivery hop into a failed media request.
 func (s *Server) serveMediaAsset(c echo.Context, a mediaAsset) error {
+	// FILL A MISSING CONTENT TYPE FROM THE KEY. Not every media row carries
+	// one: the resumable upload path stores an original with an EMPTY
+	// content_type, and every PeerTube-era row predates the column being
+	// populated. The api-proxy path hides that, because http.ServeContent
+	// sniffs the first 512 bytes when no header is set — and sniffing is
+	// exactly what a redirect target cannot do. Without this the presigned
+	// URL carried no response-content-type and the object answered with its
+	// own stored type, so a redirect of an original delivered
+	// `application/octet-stream` where the byte path delivered `video/mp4`.
+	//
+	// Derived from the KEY, never from anything a client said (see
+	// storage.ContentTypeForKey), and only when the database has nothing —
+	// a recorded type always wins.
+	if a.contentType == "" {
+		a.contentType = storage.ContentTypeForKey(a.key)
+	}
 	req := delivery.Request{
 		ObjectKey:    a.key,
 		Class:        a.class,

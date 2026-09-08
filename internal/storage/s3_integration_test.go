@@ -455,3 +455,49 @@ func fetchPresigned(t *testing.T, url string) ([]byte, http.Header) {
 	}
 	return body, resp.Header
 }
+
+// TestS3PutStoresContentTypeFromKey pins the store-time half of header
+// equivalence. A presigned redirect can pin response headers; a CDN edge
+// pulling the same object at its own key cannot be told anything and forwards
+// what the origin returns. Until the PUT recorded a type, that was
+// `application/octet-stream` for every object Vidra writes, so every
+// non-proxy delivery path served media as an opaque download.
+//
+// It reads the type back over PLAIN HTTP against a presigned GET with no
+// response overrides, because that is exactly what a third-party edge does:
+// the assertion has to be about the stored object, not about a header this
+// process asked for on the way out.
+func TestS3PutStoresContentTypeFromKey(t *testing.T) {
+	b := newS3TestBackend(t)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		suffix string
+		want   string
+	}{
+		{"clip.mp4", "video/mp4"},
+		{"chunk-0-00001.m4s", "video/mp4"},
+		{"poster.jpg", "image/jpeg"},
+		{"track.vtt", "text/vtt; charset=utf-8"},
+		// No extension Vidra mints: the PUT must say nothing and the store's
+		// own default must survive, exactly as before this behaviour existed.
+		{"chunk-0", "application/octet-stream"},
+	} {
+		key := testKey(t, b, tc.suffix)
+		if _, err := b.Put(ctx, key, bytes.NewReader([]byte("bytes for "+tc.suffix))); err != nil {
+			t.Fatalf("Put %s: %v", tc.suffix, err)
+		}
+		u, err := b.PresignGet(ctx, key, time.Minute)
+		if err != nil {
+			t.Fatalf("PresignGet %s: %v", tc.suffix, err)
+		}
+		resp, err := http.Get(u) //nolint:gosec // presigned URL built above
+		if err != nil {
+			t.Fatalf("GET %s: %v", tc.suffix, err)
+		}
+		got := resp.Header.Get("Content-Type")
+		_ = resp.Body.Close()
+		if got != tc.want {
+			t.Errorf("%s stored Content-Type = %q, want %q", tc.suffix, got, tc.want)
+		}
+	}
+}

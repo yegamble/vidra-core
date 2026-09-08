@@ -608,3 +608,49 @@ func TestIdentityImageCacheHeaders(t *testing.T) {
 		}
 	}
 }
+
+// TestDeliveryPresignsMediaWithNoRecordedContentType is the production shape of
+// an original file, which every other test in this file misses.
+//
+// The resumable upload path (POST /videos/{id}/upload-session → complete, the
+// only path the Studio uses) stores its video_files row with an EMPTY
+// content_type — `AttachOriginal` writes whatever the caller declared and the
+// finalize worker declares nothing. The API proxy hides that: with no type,
+// http.ServeContent SNIFFS the first 512 bytes and answers `video/mp4`. A
+// presigned redirect cannot sniff. Before serveMediaAsset filled the gap the
+// redirect carried no `response-content-type` at all, so the object store
+// answered with its own stored type — `application/octet-stream` — and the
+// redirect was not header-equivalent to the byte path it replaced. Measured on
+// a real MinIO during the A32 acceptance run.
+func TestDeliveryPresignsMediaWithNoRecordedContentType(t *testing.T) {
+	p := &deliveryFakePresigner{}
+	srv, blobs, tcRepo := deliveryServer(t, p, true)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := createVideo(t, srv, tok, "ada", `{"title":"Clip","privacy":"public"}`)
+	if rec := uploadThumbnail(srv, id, "poster.png", "image/png", "poster-bytes", tok); rec.Code != http.StatusCreated {
+		t.Fatalf("thumbnail upload = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	// The empty declared type is what makes this the production shape.
+	if rec := uploadVideoFile(srv, id, "clip.mp4", "", "video-bytes", tok); rec.Code != http.StatusCreated {
+		t.Fatalf("publish upload = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	seedReadyHLS(t, tcRepo, blobs, id)
+
+	key := "web-videos/" + id + ".mp4"
+	for _, path := range []string{
+		"/api/v1/videos/" + id + "/original",
+		"/api/v1/videos/" + id + "/download/original",
+	} {
+		p.reset()
+		// The api-proxy path answers video/mp4 by sniffing; the redirect has to
+		// reach the same answer or it is delivering a different resource.
+		assertSignedRedirect(t, getWith(srv, path, "", ""), key)
+		call, ok := p.callFor(key)
+		if !ok {
+			t.Fatalf("%s: no presign call for %q", path, key)
+		}
+		if call.resp.ContentType != contentTypeMP4 {
+			t.Errorf("%s: signed content type = %q, want %q", path, call.resp.ContentType, contentTypeMP4)
+		}
+	}
+}
