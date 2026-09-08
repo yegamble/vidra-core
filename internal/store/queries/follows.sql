@@ -10,13 +10,29 @@ DELETE FROM channel_follows
 WHERE follower_id = $1 AND channel_id = $2;
 
 -- name: CountChannelFollowers :one
-SELECT count(*) FROM channel_follows WHERE channel_id = $1;
+-- A channel's follower count, LOCAL + REMOTE (A29-F6).
+--
+-- It used to count channel_follows alone, so a creator with three federated
+-- followers read 0 on every surface they own while the ActivityPub followers
+-- collection — the only place that summed both — read 3. Two answers to one
+-- question, and the one the creator saw was the wrong one. This is now the
+-- single definition, and the AP collection reads it too rather than summing on
+-- its own.
+--
+-- 'accepted' is the whole of the remote side: a pending follow (the admin
+-- approval queue) is not a follower yet, and a rejected one never was.
+SELECT ((SELECT count(*) FROM channel_follows cf WHERE cf.channel_id = $1)
+      + (SELECT count(*) FROM remote_follows rf
+         WHERE rf.channel_id = $1 AND rf.state = 'accepted'))::bigint;
 
 -- name: CountFollowersByOwner :many
 -- Follower count for every channel a user owns, in one grouped query — the
 -- channel-domain half of the account stats rollup (GET /me/stats). Channels
 -- with no followers appear with 0 via the LEFT JOIN.
-SELECT c.id AS channel_id, count(cf.follower_id)::bigint AS followers
+SELECT c.id AS channel_id,
+       (count(cf.follower_id)
+        + (SELECT count(*) FROM remote_follows rf
+           WHERE rf.channel_id = c.id AND rf.state = 'accepted'))::bigint AS followers
 FROM channels c
 LEFT JOIN channel_follows cf ON cf.channel_id = c.id
 WHERE c.owner_id = $1
@@ -52,7 +68,9 @@ WHERE follower_id = sqlc.arg('follower_id') AND channel_id = sqlc.arg('channel_i
 SELECT
     c.id, c.owner_id, c.handle, c.display_name, c.description,
     c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
-    (SELECT count(*) FROM channel_follows cf2 WHERE cf2.channel_id = c.id) AS follower_count,
+    -- Local + remote, the CountChannelFollowers definition (A29-F6).
+    ((SELECT count(*) FROM channel_follows cf2 WHERE cf2.channel_id = c.id)
+     + (SELECT count(*) FROM remote_follows rf WHERE rf.channel_id = c.id AND rf.state = 'accepted'))::bigint AS follower_count,
     cf.created_at AS followed_at, cf.notification_setting
 FROM channel_follows cf
 JOIN channels c ON c.id = cf.channel_id

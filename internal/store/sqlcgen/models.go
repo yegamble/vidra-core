@@ -290,6 +290,11 @@ type EmailVerificationToken struct {
 	CreatedAt time.Time          `json:"created_at"`
 }
 
+type FederatedVideoTombstone struct {
+	VideoID   uuid.UUID `json:"video_id"`
+	DeletedAt time.Time `json:"deleted_at"`
+}
+
 type FederationDelivery struct {
 	ID                   uuid.UUID   `json:"id"`
 	InboxUrl             string      `json:"inbox_url"`
@@ -304,6 +309,8 @@ type FederationDelivery struct {
 	UpdatedAt            time.Time   `json:"updated_at"`
 	SigningUserID        pgtype.UUID `json:"signing_user_id"`
 	SigningUsername      string      `json:"signing_username"`
+	RequestID            string      `json:"request_id"`
+	CorrelationID        string      `json:"correlation_id"`
 }
 
 type FederationInboxActivity struct {
@@ -715,6 +722,12 @@ type RemoteActor struct {
 	FollowersUrl      string    `json:"followers_url"`
 	FetchedAt         time.Time `json:"fetched_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type RemoteActorBlock struct {
+	BlockerID      uuid.UUID `json:"blocker_id"`
+	RemoteActorUrl string    `json:"remote_actor_url"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type RemoteChannelFollow struct {

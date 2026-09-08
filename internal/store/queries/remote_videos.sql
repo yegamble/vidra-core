@@ -50,3 +50,17 @@ WHERE object_url = $1;
 -- name: DeleteRemoteVideoByObjectURL :execrows
 -- Inbound Delete of a remote video (§7): the origin retracted it.
 DELETE FROM remote_videos WHERE object_url = $1;
+
+-- name: GetRemoteVideoByURL :one
+-- Resolve a remote video by ANY url a person might paste: its ActivityPub
+-- object id, or the human watch page the origin advertised (A29-F3).
+--
+-- A29 measured the gap this closes: B already held the exact object_url a
+-- viewer pasted, and ResolveSearchTarget went straight to the network anyway —
+-- so a video the instance was already storing could not be found by its own
+-- URL. Consulting the store first is also the only way the /v/{code} form can
+-- ever resolve: that path belongs to the origin's frontend and answers no
+-- ActivityPub, so there is nothing to dereference, only something to remember.
+SELECT id, object_url, remote_actor_url
+FROM remote_videos
+WHERE object_url = $1 OR (watch_url <> '' AND watch_url = $1);

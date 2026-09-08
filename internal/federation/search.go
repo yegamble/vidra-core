@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/google/uuid"
 )
 
@@ -130,6 +132,16 @@ func (s *Service) ResolveSearchTarget(ctx context.Context, query string) (Search
 			return SearchResolution{}, ErrLocalFollowTarget
 		}
 		if err := s.refuseBlockedDomain(ctx, host); err != nil {
+			return SearchResolution{}, err
+		}
+		// THE STORE BEFORE THE NETWORK (A29-F3). A url this instance already
+		// holds resolves without a fetch — which is both faster and the only
+		// way the origin's /v/{code} watch URL can resolve at all, since that
+		// path answers HTML, not ActivityPub. A29 measured B failing to find a
+		// video whose object_url it was already storing.
+		if row, err := s.repo.GetRemoteVideoByURL(ctx, query); err == nil {
+			return SearchResolution{VideoID: row.ID}, nil
+		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return SearchResolution{}, err
 		}
 		obj, err := s.fetchVideoObject(ctx, query)

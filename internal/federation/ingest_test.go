@@ -296,10 +296,14 @@ func TestHandleInboxBlockedDomainDropped(t *testing.T) {
 	repo.blockedDomains["remote.example"] = true
 	svc := NewService(repo, WithBaseURL("https://videos.example"))
 
-	// A Follow that would otherwise be recorded is dropped silently (202, no
-	// dispatch) and NOT marked processed, so an unblock lets a redelivery in.
-	if err := svc.HandleInbox(context.Background(), remoteBob, []byte(filmsFollow)); err != nil {
-		t.Fatalf("HandleInbox: %v", err)
+	// A Follow that would otherwise be recorded is refused and NOT marked
+	// processed, so an unblock lets a redelivery in. Since A29-F4 the refusal is
+	// a TYPED error rather than a silent nil: the wire answer stays 202 (the
+	// handler's job), but the caller can now write the audit row that makes the
+	// block visible to the admin who asked for it.
+	err := svc.HandleInbox(context.Background(), remoteBob, []byte(filmsFollow))
+	if !errors.Is(err, ErrSenderBlocked) {
+		t.Fatalf("HandleInbox = %v, want ErrSenderBlocked", err)
 	}
 	if len(repo.remoteFollows) != 0 {
 		t.Error("activity from a blocked domain was dispatched")

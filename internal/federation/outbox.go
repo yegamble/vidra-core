@@ -66,6 +66,15 @@ func (s *Service) DeleteVideo(ctx context.Context, videoID, channelID uuid.UUID,
 	if !wasPublic {
 		return nil
 	}
+	// TOMBSTONE FIRST, and unconditionally (A29-F9). A peer that dereferences
+	// the Delete it is about to receive must get 410 + Tombstone rather than the
+	// frontend's soft-404 page, and that has to be true even when the fan-out
+	// below no-ops — a channel already gone, or one that opted out of
+	// ActivityPub after the video was federated. The record outlives the row it
+	// describes; that is its entire job.
+	if err := s.RecordVideoTombstone(ctx, videoID); err != nil {
+		return err
+	}
 	ch, err := s.repo.GetChannelByID(ctx, channelID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/httpsig"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/secretbox"
@@ -59,8 +60,17 @@ func (s *Service) DrainDeliveries(ctx context.Context, limit int) (int, error) {
 	delivered := 0
 	for _, row := range rows {
 		// Instance blocklist (remote-content §8): deliveries to a blocked domain
-		// are cancelled (dead-lettered) instead of sent.
-		if blocked, err := s.repo.IsInstanceBlocked(ctx, hostOf(row.InboxUrl)); err == nil && blocked {
+		// are cancelled (dead-lettered) instead of sent — EXCEPT the ones whose
+		// whole content is "stop" (A29-F5).
+		//
+		// A29 measured the failure this exception closes: an unfollow issued
+		// while the destination was blocked deleted the local row (local intent
+		// wins) while its Undo was cancelled, so the remote kept counting the
+		// follower and kept delivering to an inbox that no longer wanted it — a
+		// ghost follower with no reconciliation path. A block is a refusal to
+		// RECEIVE, and cancelling the one message that reduces future contact
+		// makes the block leakier, not tighter.
+		if blocked, err := s.repo.IsInstanceBlocked(ctx, hostOf(row.InboxUrl)); err == nil && blocked && !severingActivity(row.Payload) {
 			_ = s.repo.FailDelivery(ctx, sqlcgen.FailDeliveryParams{
 				ID:        row.ID,
 				LastError: "cancelled: destination instance is blocked",
@@ -124,11 +134,14 @@ func deliveryBackoff(attempts int) time.Duration {
 // enqueueChannelDelivery queues an activity payload to inboxURL, to be signed as
 // the given local channel at send time.
 func (s *Service) enqueueChannelDelivery(ctx context.Context, channelID uuid.UUID, channelHandle, inboxURL string, payload []byte) error {
+	ids := observability.CorrelationFromContext(ctx)
 	return s.repo.EnqueueDelivery(ctx, sqlcgen.EnqueueDeliveryParams{
 		InboxUrl:             inboxURL,
 		Payload:              payload,
 		SigningChannelID:     pgconv.UUID(channelID),
 		SigningChannelHandle: channelHandle,
+		RequestID:            ids.RequestID,
+		CorrelationID:        ids.CorrelationID,
 	})
 }
 
@@ -136,11 +149,17 @@ func (s *Service) enqueueChannelDelivery(ctx context.Context, channelID uuid.UUI
 // the given local user's ACCOUNT actor at send time (outbound remote-channel
 // Follow/Undo — remote-content §3).
 func (s *Service) enqueueAccountDelivery(ctx context.Context, userID uuid.UUID, username, inboxURL string, payload []byte) error {
+	// The identity of the REQUEST that produced the fan-out rides along on the
+	// queue row (migration 0139), so N deliveries from one act are recognisably
+	// one act and a stuck inbox traces back to what queued for it (A29-F10).
+	ids := observability.CorrelationFromContext(ctx)
 	return s.repo.EnqueueDelivery(ctx, sqlcgen.EnqueueDeliveryParams{
 		InboxUrl:        inboxURL,
 		Payload:         payload,
 		SigningUserID:   pgconv.UUID(userID),
 		SigningUsername: username,
+		RequestID:       ids.RequestID,
+		CorrelationID:   ids.CorrelationID,
 	})
 }
 
@@ -306,4 +325,22 @@ func (s *Service) deliverActivity(ctx context.Context, signer httpsig.Signer, in
 		return fmt.Errorf("federation: delivery returned status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// severingActivity reports whether a queued payload's whole purpose is to END a
+// relationship — an Undo (of a Follow) or a Reject (of one). Those are the only
+// activities a destination block must not cancel: they carry no content, they
+// reduce future contact rather than creating it, and swallowing one strands the
+// remote side in a relationship this instance has already left.
+//
+// It reads the envelope's `type` only; a malformed payload is treated as
+// ordinary (not severing), so the conservative answer is the default.
+func severingActivity(payload []byte) bool {
+	var env struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(payload, &env); err != nil {
+		return false
+	}
+	return env.Type == "Undo" || env.Type == "Reject"
 }

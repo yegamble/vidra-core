@@ -272,6 +272,13 @@ var knownNonContractRoutes = map[string]string{
 	"GET /video-channels/{handle}/followers": "ActivityPub collection",
 	"GET /video-channels/{handle}/following": "ActivityPub collection",
 	"GET /video-channels/{handle}/outbox":    "ActivityPub collection",
+	// The OBJECT ids (A29-F2). They answer AP JSON only — a non-AP Accept is
+	// 406 — and they sit on paths the FRONTEND owns, reachable here only
+	// because the operator's proxy content-negotiates an ActivityPub Accept to
+	// the api. Documenting them in the REST contract would put two different
+	// representations of /videos/{id} in one generated client.
+	"GET /videos/{id}":   "ActivityPub object id",
+	"GET /comments/{id}": "ActivityPub object id",
 
 	// PUBLIC_BASE_URL (+ wired video/channel services). Syndication formats
 	// answering XML/oEmbed JSON to feed readers, crawlers and embed resolvers,

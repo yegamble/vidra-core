@@ -99,6 +99,34 @@ func (q *Queries) GetRemoteVideoByObjectURL(ctx context.Context, objectUrl strin
 	return i, err
 }
 
+const getRemoteVideoByURL = `-- name: GetRemoteVideoByURL :one
+SELECT id, object_url, remote_actor_url
+FROM remote_videos
+WHERE object_url = $1 OR (watch_url <> '' AND watch_url = $1)
+`
+
+type GetRemoteVideoByURLRow struct {
+	ID             uuid.UUID `json:"id"`
+	ObjectUrl      string    `json:"object_url"`
+	RemoteActorUrl string    `json:"remote_actor_url"`
+}
+
+// Resolve a remote video by ANY url a person might paste: its ActivityPub
+// object id, or the human watch page the origin advertised (A29-F3).
+//
+// A29 measured the gap this closes: B already held the exact object_url a
+// viewer pasted, and ResolveSearchTarget went straight to the network anyway —
+// so a video the instance was already storing could not be found by its own
+// URL. Consulting the store first is also the only way the /v/{code} form can
+// ever resolve: that path belongs to the origin's frontend and answers no
+// ActivityPub, so there is nothing to dereference, only something to remember.
+func (q *Queries) GetRemoteVideoByURL(ctx context.Context, objectUrl string) (GetRemoteVideoByURLRow, error) {
+	row := q.db.QueryRow(ctx, getRemoteVideoByURL, objectUrl)
+	var i GetRemoteVideoByURLRow
+	err := row.Scan(&i.ID, &i.ObjectUrl, &i.RemoteActorUrl)
+	return i, err
+}
+
 const setRemoteVideoThumbnail = `-- name: SetRemoteVideoThumbnail :exec
 UPDATE remote_videos SET thumbnail_key = $2, updated_at = now() WHERE id = $1
 `

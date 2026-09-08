@@ -55,16 +55,73 @@ func (s *Service) ResolveKey(ctx context.Context, keyID string) (*rsa.PublicKey,
 	return parseRSAPublicKey(ra.PublicKeyPem)
 }
 
+// ResolveKeyFresh re-fetches the actor document and returns the key it carries
+// NOW, bypassing the cached copy. It is the second half of the verifier's
+// fetch-once-then-verify: a signature that does not check against the cached key
+// is retried once against a freshly fetched one, which is what lets a peer
+// rotate its keypair without becoming permanently unverifiable here (A29-F12).
+//
+// It is bounded by construction: only a request that already failed against a
+// CACHED key reaches it, so an actor this instance has never seen cannot trigger
+// a fetch through this path, and one failed signature buys exactly one re-fetch.
+func (s *Service) ResolveKeyFresh(ctx context.Context, keyID string) (*rsa.PublicKey, error) {
+	actorURL, _, _ := strings.Cut(keyID, "#")
+	ra, err := s.refreshRemoteActorKey(ctx, actorURL)
+	if err != nil {
+		return nil, err
+	}
+	return parseRSAPublicKey(ra.PublicKeyPem)
+}
+
 // resolveRemoteActor returns the cached remote actor for actorURL, fetching and
-// caching it on a miss. (Key rotation / TTL refresh is a later slice; a present
-// row is served as-is.)
+// caching it on a miss.
+//
+// THE GUARD RUNS ON EVERY RESOLUTION, CACHED OR NOT (A29-F12). A29 measured an
+// SSRF probe PASSING with the relax off, because resolveRemoteActor returned a
+// row that an earlier inbound signature verification had cached before
+// urlsafety.Guard ever ran. The cache was doing the fetch's job of deciding
+// whether a URL is reachable at all, which is a decision it has no business
+// making: the guard's answer is about the ADDRESS, and an address does not
+// become safe by having been seen before. Validating first costs one parse and
+// one DNS resolution on a path that is about to do a database read anyway.
 func (s *Service) resolveRemoteActor(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error) {
+	guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
+	if _, err := guard.ValidateURL(actorURL); err != nil {
+		return sqlcgen.RemoteActor{}, fmt.Errorf("federation: unsafe actor URL: %w", err)
+	}
 	if ra, err := s.repo.GetRemoteActor(ctx, actorURL); err == nil {
 		return ra, nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return sqlcgen.RemoteActor{}, err
 	}
+	return s.refetchRemoteActor(ctx, actorURL)
+}
 
+// refreshRemoteActorKey re-fetches a cached actor and replaces its stored
+// publicKeyPem — the recovery path for key rotation at a peer (A29-F12).
+//
+// Vidra caches an actor's key once and never refreshed it, so a peer rotating
+// its keypair became a PERMANENT verification failure here: every subsequent
+// signed activity from that server was 401, with no path back short of an
+// operator deleting the row. It is called at most once per verification failure
+// (fetch-once-then-verify) and only when a row already exists, so an unsigned or
+// forged request cannot use it to make this instance fetch anything it would not
+// have fetched anyway.
+func (s *Service) refreshRemoteActorKey(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error) {
+	guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
+	if _, err := guard.ValidateURL(actorURL); err != nil {
+		return sqlcgen.RemoteActor{}, fmt.Errorf("federation: unsafe actor URL: %w", err)
+	}
+	if _, err := s.repo.GetRemoteActor(ctx, actorURL); err != nil {
+		// Nothing cached: this is not a rotation, it is a first resolution, and
+		// the ordinary path already handles it.
+		return sqlcgen.RemoteActor{}, err
+	}
+	return s.refetchRemoteActor(ctx, actorURL)
+}
+
+// refetchRemoteActor fetches an actor document and upserts the cache row.
+func (s *Service) refetchRemoteActor(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error) {
 	fa, err := s.fetchActor(ctx, actorURL)
 	if err != nil {
 		return sqlcgen.RemoteActor{}, err

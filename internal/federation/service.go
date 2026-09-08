@@ -92,6 +92,13 @@ type Repository interface {
 	// Inbound Delete authority + effects (remote-content §7): retracted remote
 	// videos and deleted remote actors (whose content cascades away).
 	GetRemoteVideoByObjectURL(ctx context.Context, objectURL string) (sqlcgen.GetRemoteVideoByObjectURLRow, error)
+	GetRemoteVideoByURL(ctx context.Context, url string) (sqlcgen.GetRemoteVideoByURLRow, error)
+	// Dereferenceable ids + per-remote-account blocks (A29 remediation,
+	// migration 0138).
+	InsertFederatedVideoTombstone(ctx context.Context, videoID uuid.UUID) error
+	GetFederatedVideoTombstone(ctx context.Context, videoID uuid.UUID) (sqlcgen.FederatedVideoTombstone, error)
+	IsRemoteActorBlockedByAnyone(ctx context.Context, remoteActorURL string) (bool, error)
+	IsRemoteActorBlockedBy(ctx context.Context, arg sqlcgen.IsRemoteActorBlockedByParams) (bool, error)
 	DeleteRemoteVideoByObjectURL(ctx context.Context, objectURL string) (int64, error)
 	DeleteRemoteActor(ctx context.Context, actorURL string) (int64, error)
 }

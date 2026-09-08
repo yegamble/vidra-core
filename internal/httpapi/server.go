@@ -251,6 +251,10 @@ type Server struct {
 	// Nil — unit tests, and any embedder that wires nothing — omits the block
 	// rather than reporting a pool of zeroes, which reads as a saturated pool.
 	dbPoolStats func() observability.DBPoolStats
+	// federationHealth reads the outbound delivery queue for the admin status
+	// page's `federation` component. Nil = federation is not wired and the
+	// component is absent (A29-F10, system_federation.go).
+	federationHealth func(context.Context) (FederationHealth, error)
 	// playbackSigner mints/verifies the short-lived, video-scoped playback tokens
 	// that unlock password-protected videos (CORE-17 / W1.C2). Derived in New()
 	// from the JWT secret via domain separation, so it is always present.
@@ -746,6 +750,18 @@ func WithDRM(p drm.Provider) Option {
 // as 0 of 0 is indistinguishable from a pool that is fully checked out.
 func WithDBPoolStats(sample func() observability.DBPoolStats) Option {
 	return func(s *Server) { s.dbPoolStats = sample }
+}
+
+// WithFederationHealth mounts the `federation` component on GET /admin/system:
+// the outbound delivery backlog, its dead letters, and when a delivery last
+// succeeded (A29-F10).
+//
+// Unset means the component is ABSENT rather than "ok", on the same doctrine as
+// the pool block above: an instance with federation switched off has no
+// federation health, and claiming it is fine would be a claim about something
+// that is not running.
+func WithFederationHealth(read func(context.Context) (FederationHealth, error)) Option {
+	return func(s *Server) { s.federationHealth = read }
 }
 
 // WithMetrics attaches the Prometheus RED-metrics registry. When set AND
@@ -1367,6 +1383,13 @@ func (s *Server) routes() {
 		}
 		s.echo.GET("/video-channels/:handle/outbox", s.channelOutbox)
 		s.echo.GET("/accounts/:handle/outbox", s.accountCollection("outbox"))
+		// The OBJECT ids vidra mints (A29-F2). They live on frontend paths, so
+		// they are reachable here only when the operator's proxy
+		// content-negotiates an ActivityPub Accept to the api — which the
+		// shipped Caddy config now does. A non-AP Accept is 406, like every
+		// other document in this block.
+		s.echo.GET("/videos/:id", s.handleVideoObject)
+		s.echo.GET("/comments/:id", s.handleNoteObject)
 	}
 
 	// Distribution surfaces (audit Wave E): RSS 2.0 feed, oEmbed provider, and an

@@ -57,15 +57,15 @@ func (s *Service) ChannelCollection(ctx context.Context, handle, kind string) (*
 	var total int64
 	switch kind {
 	case "followers":
-		local, err := s.repo.CountChannelFollowers(ctx, ch.ID)
+		// ONE definition of "how many followers does this channel have",
+		// shared with the REST/UI count (A29-F6). This collection used to sum
+		// local + remote itself while every other surface counted local alone,
+		// so a creator with three federated followers read 3 here and 0
+		// everywhere they could actually see.
+		total, err = s.repo.CountChannelFollowers(ctx, ch.ID)
 		if err != nil {
 			return nil, err
 		}
-		remote, err := s.repo.CountRemoteFollowers(ctx, ch.ID)
-		if err != nil {
-			return nil, err
-		}
-		total = local + remote
 	case "outbox":
 		total, err = s.repo.CountPublicVideosByChannel(ctx, ch.ID)
 		if err != nil {

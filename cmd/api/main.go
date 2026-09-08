@@ -2394,6 +2394,29 @@ func run() error {
 	// endpoint (P17.4) and the queue-depth Prometheus gauge both read from here.
 	jobStatusSvc := jobstatus.NewService(db.Queries())
 	opts = append(opts, httpapi.WithJobStatusService(jobStatusSvc))
+	// The `federation` component on /admin/system (A29-F10). Wired only when
+	// federation is enabled, so an instance that does not federate has no
+	// federation component rather than a component claiming to be fine.
+	if cfg.FederationEnabled {
+		queries := db.Queries()
+		opts = append(opts, httpapi.WithFederationHealth(func(ctx context.Context) (httpapi.FederationHealth, error) {
+			row, err := queries.FederationDeliveryHealth(ctx)
+			if err != nil {
+				return httpapi.FederationHealth{}, err
+			}
+			h := httpapi.FederationHealth{
+				Pending:                 row.Pending,
+				DeadLettered:            row.DeadLettered,
+				OldestPendingAgeSeconds: row.OldestPendingAgeSeconds,
+			}
+			// interface{} because max() over a filtered set is nullable; a
+			// non-time value is simply "never", never a panic.
+			if t, ok := row.LastDeliveredAt.(time.Time); ok {
+				h.LastDeliveredAt = t
+			}
+			return h, nil
+		}))
+	}
 	if runWorkers {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()

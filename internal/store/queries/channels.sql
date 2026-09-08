@@ -30,7 +30,11 @@ SELECT count(*) FROM channels WHERE owner_id = $1;
 -- CountChannelFollowers per row — an N+1 that grew with the user's channel
 -- count. The follower count comes back inline as one scalar subquery per row.
 SELECT managed.*,
-       (SELECT count(*) FROM channel_follows cf WHERE cf.channel_id = managed.id)::bigint AS follower_count
+       -- Local + remote, the CountChannelFollowers definition (A29-F6): the
+       -- Studio list is exactly where a creator was reading zero.
+       ((SELECT count(*) FROM channel_follows cf WHERE cf.channel_id = managed.id)
+        + (SELECT count(*) FROM remote_follows rf
+           WHERE rf.channel_id = managed.id AND rf.state = 'accepted'))::bigint AS follower_count
 FROM (
     SELECT c.id, c.owner_id, c.handle, c.display_name, c.description,
            c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
@@ -111,7 +115,9 @@ DELETE FROM channels WHERE id = $1;
 -- hide them from the other party).
 SELECT c.id, c.owner_id, c.handle, c.display_name, c.description,
        c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
-       (SELECT count(*) FROM channel_follows cf WHERE cf.channel_id = c.id)::bigint AS follower_count
+       ((SELECT count(*) FROM channel_follows cf WHERE cf.channel_id = c.id)
+        + (SELECT count(*) FROM remote_follows rf
+           WHERE rf.channel_id = c.id AND rf.state = 'accepted'))::bigint AS follower_count
 FROM channels c
 JOIN users u ON u.id = c.owner_id
 WHERE u.is_active = TRUE

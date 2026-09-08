@@ -131,6 +131,16 @@ func (s *Server) systemComponents(ctx context.Context) (map[string]componentStat
 	if syncStatus.Status == "down" {
 		healthy = false
 	}
+	// The federation delivery queue is a sixth component on the same terms: an
+	// indexed aggregate over a table this process writes, so it is bounded by
+	// the probe timeout and needs no goroutine. Absent when federation is not
+	// wired (A29-F10 — see system_federation.go for why absence, not "ok").
+	if fedStatus, ok := s.federationStatus(ctx); ok {
+		components["federation"] = fedStatus
+		if fedStatus.Status == "down" {
+			healthy = false
+		}
+	}
 	return components, healthy
 }
 

@@ -64,6 +64,16 @@ const (
 	ActionVideoReject             = "moderation.video.quarantine_reject"
 	ActionInstanceBlock           = "moderation.instance.block"
 	ActionInstanceUnblock         = "moderation.instance.unblock"
+	// ActionFederationInboxRejected records an inbound ActivityPub activity
+	// refused because its origin instance is on the admin blocklist (A29-F4).
+	// A29 measured the gap: the refusal answered 202 — indistinguishable from
+	// acceptance at HTTP level — with no audit row, no log line beyond the plain
+	// request line, and no inbox row, so an admin could not tell a block that was
+	// working from a peer that had gone quiet. The reason carries `domain=<host>`
+	// and nothing else; the activity id, the actor URL and the body never appear
+	// (audit_log's metadata allowlist rejects prose, and a refused payload is
+	// content this instance deliberately did not accept).
+	ActionFederationInboxRejected = "federation.inbox.rejected"
 	ActionRemoteVideoBlock        = "moderation.remote_video.block"
 	ActionRemoteVideoUnblock      = "moderation.remote_video.unblock"
 	ActionAdminUserUpdate         = "admin.user.update"

@@ -7,9 +7,41 @@ package sqlcgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+const blockRemoteActor = `-- name: BlockRemoteActor :exec
+INSERT INTO remote_actor_blocks (blocker_id, remote_actor_url)
+VALUES ($1, $2)
+ON CONFLICT (blocker_id, remote_actor_url) DO NOTHING
+`
+
+type BlockRemoteActorParams struct {
+	BlockerID      uuid.UUID `json:"blocker_id"`
+	RemoteActorUrl string    `json:"remote_actor_url"`
+}
+
+// A viewer blocks one remote PERSON rather than their whole instance (A29-F7).
+// Addressed by actor URL, not by a remote_actors FK: the block must be possible
+// against an actor this instance has never cached, and an actor-cache eviction
+// must never silently lift it.
+func (q *Queries) BlockRemoteActor(ctx context.Context, arg BlockRemoteActorParams) error {
+	_, err := q.db.Exec(ctx, blockRemoteActor, arg.BlockerID, arg.RemoteActorUrl)
+	return err
+}
+
+const countRemoteActorBlocks = `-- name: CountRemoteActorBlocks :one
+SELECT count(*)::bigint FROM remote_actor_blocks WHERE blocker_id = $1
+`
+
+func (q *Queries) CountRemoteActorBlocks(ctx context.Context, blockerID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countRemoteActorBlocks, blockerID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
 
 const countRemoteFollowers = `-- name: CountRemoteFollowers :one
 SELECT count(*) FROM remote_follows WHERE channel_id = $1 AND state = 'accepted'
@@ -34,6 +66,32 @@ type DeleteRemoteFollowParams struct {
 // A remote actor un-following a local channel (inbound Undo{Follow}). Idempotent.
 func (q *Queries) DeleteRemoteFollow(ctx context.Context, arg DeleteRemoteFollowParams) error {
 	_, err := q.db.Exec(ctx, deleteRemoteFollow, arg.ChannelID, arg.RemoteActorUrl)
+	return err
+}
+
+const getFederatedVideoTombstone = `-- name: GetFederatedVideoTombstone :one
+SELECT video_id, deleted_at FROM federated_video_tombstones WHERE video_id = $1
+`
+
+func (q *Queries) GetFederatedVideoTombstone(ctx context.Context, videoID uuid.UUID) (FederatedVideoTombstone, error) {
+	row := q.db.QueryRow(ctx, getFederatedVideoTombstone, videoID)
+	var i FederatedVideoTombstone
+	err := row.Scan(&i.VideoID, &i.DeletedAt)
+	return i, err
+}
+
+const insertFederatedVideoTombstone = `-- name: InsertFederatedVideoTombstone :exec
+INSERT INTO federated_video_tombstones (video_id)
+VALUES ($1)
+ON CONFLICT (video_id) DO NOTHING
+`
+
+// Record that a federated (public) video's ActivityPub id once existed, so a
+// peer dereferencing the Delete we just sent gets 410 + Tombstone rather than
+// the frontend's soft-404 page (A29-F9). Idempotent: a re-delete keeps the
+// FIRST deletion time, which is the one the Tombstone should carry.
+func (q *Queries) InsertFederatedVideoTombstone(ctx context.Context, videoID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, insertFederatedVideoTombstone, videoID)
 	return err
 }
 
@@ -67,6 +125,93 @@ func (q *Queries) IsActivityProcessed(ctx context.Context, activityID string) (b
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const isRemoteActorBlockedBy = `-- name: IsRemoteActorBlockedBy :one
+SELECT EXISTS (
+    SELECT 1 FROM remote_actor_blocks
+    WHERE blocker_id = $1 AND remote_actor_url = $2
+)
+`
+
+type IsRemoteActorBlockedByParams struct {
+	BlockerID      uuid.UUID `json:"blocker_id"`
+	RemoteActorUrl string    `json:"remote_actor_url"`
+}
+
+func (q *Queries) IsRemoteActorBlockedBy(ctx context.Context, arg IsRemoteActorBlockedByParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isRemoteActorBlockedBy, arg.BlockerID, arg.RemoteActorUrl)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const isRemoteActorBlockedByAnyone = `-- name: IsRemoteActorBlockedByAnyone :one
+SELECT EXISTS (
+    SELECT 1 FROM remote_actor_blocks WHERE remote_actor_url = $1
+)
+`
+
+// The INBOUND gate: does ANY local viewer block this actor? A Note or Follow
+// from an actor nobody blocks takes the ordinary path; one from an actor some
+// viewer blocks needs the per-viewer decision, which the caller then makes.
+func (q *Queries) IsRemoteActorBlockedByAnyone(ctx context.Context, remoteActorUrl string) (bool, error) {
+	row := q.db.QueryRow(ctx, isRemoteActorBlockedByAnyone, remoteActorUrl)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const listRemoteActorBlocks = `-- name: ListRemoteActorBlocks :many
+SELECT b.remote_actor_url, b.created_at,
+       COALESCE(ra.preferred_username, '')::text AS preferred_username,
+       COALESCE(ra.domain, '')::text AS domain
+FROM remote_actor_blocks b
+LEFT JOIN remote_actors ra ON ra.actor_url = b.remote_actor_url
+WHERE b.blocker_id = $1
+ORDER BY b.created_at DESC, b.remote_actor_url
+LIMIT $2 OFFSET $3
+`
+
+type ListRemoteActorBlocksParams struct {
+	BlockerID uuid.UUID `json:"blocker_id"`
+	Limit     int32     `json:"limit"`
+	Offset    int32     `json:"offset"`
+}
+
+type ListRemoteActorBlocksRow struct {
+	RemoteActorUrl    string    `json:"remote_actor_url"`
+	CreatedAt         time.Time `json:"created_at"`
+	PreferredUsername string    `json:"preferred_username"`
+	Domain            string    `json:"domain"`
+}
+
+// A viewer's remote blocks, newest first, joined to the cached actor row when
+// there is one so the settings surface can render a handle rather than a URL.
+// The LEFT JOIN is deliberate: a block against an uncached actor still lists.
+func (q *Queries) ListRemoteActorBlocks(ctx context.Context, arg ListRemoteActorBlocksParams) ([]ListRemoteActorBlocksRow, error) {
+	rows, err := q.db.Query(ctx, listRemoteActorBlocks, arg.BlockerID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRemoteActorBlocksRow
+	for rows.Next() {
+		var i ListRemoteActorBlocksRow
+		if err := rows.Scan(
+			&i.RemoteActorUrl,
+			&i.CreatedAt,
+			&i.PreferredUsername,
+			&i.Domain,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listRemoteFollowerInboxes = `-- name: ListRemoteFollowerInboxes :many
@@ -109,4 +254,21 @@ ON CONFLICT (activity_id) DO NOTHING
 func (q *Queries) MarkActivityProcessed(ctx context.Context, activityID string) error {
 	_, err := q.db.Exec(ctx, markActivityProcessed, activityID)
 	return err
+}
+
+const unblockRemoteActor = `-- name: UnblockRemoteActor :execrows
+DELETE FROM remote_actor_blocks WHERE blocker_id = $1 AND remote_actor_url = $2
+`
+
+type UnblockRemoteActorParams struct {
+	BlockerID      uuid.UUID `json:"blocker_id"`
+	RemoteActorUrl string    `json:"remote_actor_url"`
+}
+
+func (q *Queries) UnblockRemoteActor(ctx context.Context, arg UnblockRemoteActorParams) (int64, error) {
+	result, err := q.db.Exec(ctx, unblockRemoteActor, arg.BlockerID, arg.RemoteActorUrl)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
