@@ -35,7 +35,7 @@ func (s *Server) videoReplaceEnabled() bool {
 // the instance-wide uploads gate (disabling uploads stops all content ingress,
 // replacements included). Exposed as features.video_replace on GET /instance.
 func (s *Server) videoReplaceAvailable() bool {
-	return s.uploadsEnabled() && s.videoReplaceEnabled()
+	return s.uploadsEnabled() && s.videoReplaceEnabled() && s.scannerReadyForIngestion()
 }
 
 // replaceTarget authorises a replacement request: the video must exist and be

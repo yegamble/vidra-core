@@ -288,16 +288,28 @@ func (s *Server) probeSearch(ctx context.Context) componentStatus {
 // static config — it reports "enabled and configured" for a daemon that has
 // been dead for a week.
 //
-// MALWARE_SCAN_ENABLED=false is a supported deployment (nothing is scanned; the
-// infrastructure page says so in prose), so it is not_configured and never
-// degrades the instance.
+// Running with no scanner is only supported when the operator SAID SO
+// (MALWARE_SCAN_MODE=disabled): that reads not_configured with an honest
+// sentence and never degrades the instance. No scanner and no opt-out is the
+// posture nobody chose — every ingestion route is answering 503
+// scanner_not_configured — so it degrades, because that is exactly the state an
+// operator needs this page to surface.
 //
 // The sentence names the consequence and the policy in force, never the
 // address: an internal host on an admin page is free reconnaissance, and
 // admin_infra_test pins that rule for CLAMAV_ADDR specifically.
 func (s *Server) probeMalwareScanner(ctx context.Context) componentStatus {
-	if !s.cfg.MalwareScanEnabled || strings.TrimSpace(s.cfg.ClamAVAddr) == "" {
-		return componentStatus{Status: "not_configured"}
+	if strings.TrimSpace(s.cfg.ClamAVAddr) == "" {
+		if s.cfg.MalwareScanOptedOut() {
+			return componentStatus{
+				Status: "not_configured",
+				Error:  "this instance runs with MALWARE_SCAN_MODE=disabled: uploads, imports, posters, avatars, banners and account archives are stored without being scanned. Point CLAMAV_ADDR at a ClamAV daemon and drop the disabled mode to turn scanning on",
+			}
+		}
+		return componentStatus{
+			Status: "degraded",
+			Error:  scannerUnconfiguredReason,
+		}
 	}
 	if err := media.Ping(ctx, s.cfg.ClamAVAddr, s.cfg.ClamAVTimeout); err != nil {
 		return componentStatus{
@@ -307,6 +319,11 @@ func (s *Server) probeMalwareScanner(ctx context.Context) componentStatus {
 	}
 	return componentStatus{Status: "ok"}
 }
+
+// scannerUnconfiguredReason is the one sentence for "no scanner, no opt-out".
+// It names both levers because either one resolves the state, and an operator
+// who reads only half of it will pick the wrong one.
+const scannerUnconfiguredReason = "no malware scanner is configured and MALWARE_SCAN_MODE is not disabled, so every upload, import and image upload is refused with 503 scanner_not_configured: point CLAMAV_ADDR at a ClamAV daemon, or set MALWARE_SCAN_MODE=disabled to ingest unscanned on purpose"
 
 // scannerProbeReason spells out what an unreachable scanner is doing to
 // ingestion RIGHT NOW, which is entirely decided by MALWARE_SCAN_MODE — the

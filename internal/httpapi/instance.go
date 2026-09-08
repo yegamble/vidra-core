@@ -383,8 +383,13 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 			Bluesky:  s.settingString(instancesettings.KeyBlueskyLink, ""),
 		},
 		Features: instanceFeatures{
-			Uploads: s.uploadsEnabled(),
-			Imports: s.importsEnabled(),
+			// AND the scan posture into both: an instance with no scanner and no
+			// explicit opt-out refuses every ingestion route with 503
+			// scanner_not_configured, so advertising uploads as available would
+			// send the Studio to a control that cannot work. A17's capability
+			// truth: /instance reports what the server will actually do.
+			Uploads: s.uploadsEnabled() && s.scannerReadyForIngestion(),
+			Imports: s.importsEnabled() && s.scannerReadyForIngestion(),
 			// Setting AND boot capability, like every neighbour below: an
 			// instance with live_enabled on and no RTMP ingest has no live
 			// streaming to advertise (see liveAvailable).
@@ -398,13 +403,13 @@ func (s *Server) instanceDocument(ctx context.Context) instanceResponse {
 			MessagingE2EE: s.messagingE2EEEnabled() && s.messagingsvc != nil && s.e2eesvc != nil,
 			// W8 flags: setting AND boot capability (service Enabled() folds
 			// the runtime provider in when cmd/api wires one).
-			ImportHTTP:                      s.importsEnabled() && s.importHTTPEnabled() && s.importsvc != nil && s.importsvc.YtdlpEnabled(),
-			ChannelSync:                     s.channelSyncEnabled() && s.channelsyncsvc != nil && s.channelsyncsvc.Enabled(),
+			ImportHTTP:                      s.importsEnabled() && s.importHTTPEnabled() && s.importsvc != nil && s.importsvc.YtdlpEnabled() && s.scannerReadyForIngestion(),
+			ChannelSync:                     s.channelSyncEnabled() && s.channelsyncsvc != nil && s.channelsyncsvc.Enabled() && s.scannerReadyForIngestion(),
 			Storyboards:                     s.storyboardsEnabled(),
 			VideoCardPreviews:               s.videoCardPreviewsEnabled(),
 			VideoCardPreviewsDefaultEnabled: s.videoCardPreviewsDefaultEnabled(),
 			Transcription:                   s.transcriptionEnabled() && s.captionjobsvc != nil && s.captionjobsvc.Enabled(),
-			UserImport:                      s.userImportEnabled(),
+			UserImport:                      s.userImportEnabled() && s.scannerReadyForIngestion(),
 			UserExport:                      s.userExportEnabled(),
 			Transcoding:                     s.transcodingEnabled() && s.transcodesvc != nil && s.transcodesvc.Capable(),
 			VideoReplace:                    s.videoReplaceAvailable(),

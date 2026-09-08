@@ -144,6 +144,20 @@ const (
 	// carries only the safe video id, the outcome (infected|scan_error), and the
 	// applied policy — never the scanned bytes or any file content.
 	ActionUploadMalwareRejected = "content.upload.malware_rejected"
+	// ActionUploadMalwareSkipped records that a file was PUBLISHED WITHOUT being
+	// scanned because the scan could not complete and MALWARE_SCAN_MODE is
+	// fail-open. A28 measured this path leaving nothing but a WARN log line, so
+	// an instance that spent a week publishing unscanned media had no durable
+	// trace of it. Reason carries the safe video id, the reason class
+	// (scanner_unavailable) and the applied policy — never the scanner's error,
+	// which carries CLAMAV_ADDR, and never any file content.
+	ActionUploadMalwareSkipped = "content.upload.malware_scan_skipped"
+	// ActionMalwareScanDisabled records, ONCE PER BOOT, that this instance runs
+	// with MALWARE_SCAN_MODE=disabled — the explicit opt-out from the
+	// scan-by-default posture. An opt-out that lives only in an env file is not
+	// reviewable; this row is what makes "we ingest unscanned" a decision
+	// somebody can point at afterwards. Reason carries the mode only.
+	ActionMalwareScanDisabled = "system.malware_scan.disabled"
 	// E2EE one-time-key claims are audited with COUNTS ONLY (never key
 	// material): key exhaustion/abuse is a security-relevant signal.
 	ActionE2EEClaim = "e2ee.otk.claim"

@@ -2,6 +2,7 @@ package media
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -51,7 +52,23 @@ func (c *ClamAV) Scan(ctx context.Context, key string) (bool, error) {
 		return false, err
 	}
 	defer func() { _ = rc.Close() }()
+	return c.scan(ctx, rc)
+}
 
+// ScanBytes runs the same INSTREAM scan over an in-memory buffer, for the
+// small user-supplied files that are scanned BEFORE they are stored: poster
+// images, channel avatars and banners, playlist covers, caption tracks and
+// account-import archives. Those paths have no "delete the object we just
+// wrote" recovery worth writing — the file is bounded by the 8 MiB body limit
+// and is already in memory when the handler validates it — so scanning the
+// buffer keeps a rejected file from ever reaching the object store at all.
+func (c *ClamAV) ScanBytes(ctx context.Context, data []byte) (bool, error) {
+	return c.scan(ctx, bytes.NewReader(data))
+}
+
+// scan is the shared INSTREAM body: everything after "where do the bytes come
+// from".
+func (c *ClamAV) scan(ctx context.Context, rc io.Reader) (bool, error) {
 	// The dial never waits longer than the whole scan budget.
 	dialTimeout := clamDialTimeout
 	if c.timeout < dialTimeout {
