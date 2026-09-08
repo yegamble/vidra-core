@@ -608,6 +608,18 @@ x-api-env: &api-env
   DELIVERY_CDN_PURGE_HEADER: ${DELIVERY_CDN_PURGE_HEADER:-}
   DELIVERY_CDN_PURGE_TOKEN: ${DELIVERY_CDN_PURGE_TOKEN:-}
   DELIVERY_CDN_PURGE_TIMEOUT: ${DELIVERY_CDN_PURGE_TIMEOUT:-10s}
+  # The DURABLE purge queue's retry ladder. A purge the edge REFUSES is retried
+  # at CDN_PURGE_RETRY_BASE, doubling per attempt already spent and capped at
+  # CDN_PURGE_RETRY_MAX, until CDN_PURGE_MAX_ATTEMPTS is reached — then the job
+  # is dead-lettered with its URLs kept and NOTHING tries again. The defaults
+  # spend about two hours (1+2+4+8+16+32+60 minutes) before giving up, which is
+  # long enough for a transient edge outage to heal and short enough that a
+  # takedown nobody is watching lands on the operator's dead-letter list the
+  # same shift. Attempt 1 is the immediate pass, so 1 means "no persisted
+  # retries at all".
+  CDN_PURGE_RETRY_BASE: ${CDN_PURGE_RETRY_BASE:-1m}
+  CDN_PURGE_RETRY_MAX: ${CDN_PURGE_RETRY_MAX:-1h}
+  CDN_PURGE_MAX_ATTEMPTS: ${CDN_PURGE_MAX_ATTEMPTS:-8}
   # CONTENT PROTECTION / DRM (docs/productionization/interfaces.md §10, phase-5).
   # OFF by default and NOT USABLE YET: `none` is no content protection anywhere,
   # and nothing encrypts media in this build — the provider seam and its key

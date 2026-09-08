@@ -1360,6 +1360,18 @@ func run() error {
 		// they are different processes.
 		cdnPurgeSvc = cdnpurge.NewService(db.Queries(), cdnProvider.Purge,
 			cdnpurge.WithLogger(logger),
+			// The retry ladder, from configuration rather than from the
+			// package's constants: an operator has to be able to say how long
+			// their instance keeps trying to invalidate an edge that has
+			// stopped accepting invalidations, and a lab has to be able to
+			// reach the dead-letter cap without editing a queue row.
+			cdnpurge.WithRetry(cfg.CDNPurgeRetryBase, cfg.CDNPurgeRetryMax, cfg.CDNPurgeMaxAttempts),
+			// One audit row per JOB OUTCOME. Wired in every role for the same
+			// reason the queue itself is: the drain that reaches the outcome
+			// runs in the worker process, and an audit trail that only exists
+			// where the HTTP listener is would miss every dead letter in a
+			// split deployment.
+			cdnpurge.WithAuditor(auditsvc),
 			// The counters the admin status page reads. Wired here rather than
 			// inside httpapi because the immediate pass for a poster or
 			// storyboard replacement runs from the video service's hook, which
