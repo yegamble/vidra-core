@@ -68,3 +68,6 @@ deploy/ipfs-private/*.peerid
 
 # air (docker dev hot-reload) build output
 tmp/
+
+# A39: CI evidence bundles (uploaded as artifacts, never committed)
+/ci-report/
