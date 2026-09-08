@@ -6,6 +6,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/mediagc"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -100,7 +101,17 @@ func (s *Server) handleAdminMediaGC(c echo.Context) error {
 		}
 		return err
 	}
-	s.audit(c, observability.ActionMediaGC, observability.ResultSuccess, userID.String(), res.Summary())
+	// Same envelope as the scheduled sweep's, from the same helper: an admin's
+	// sweep and the worker's must be filterable by the same two fields, or
+	// "every sweep the breaker refused" answers differently depending on who ran
+	// it.
+	s.auditEvent(c, audit.Event{
+		Action:   observability.ActionMediaGC,
+		Result:   observability.ResultSuccess,
+		ActorID:  userID.String(),
+		Reason:   res.Summary(),
+		Metadata: res.AuditFields(),
+	})
 
 	orphans := res.Orphans
 	if orphans == nil {

@@ -3122,11 +3122,19 @@ func runMediaGCWorker(ctx context.Context, logger *slog.Logger, svc *mediagc.Ser
 				"orphan_percent", res.OrphanPercent, "scanned", res.Scanned, "orphans", len(res.Orphans))
 		}
 		if auditsvc != nil {
+			// The audit row is the ONLY operator-facing record of a sweep — a
+			// scheduled pass writes no job_runs row (that projection is
+			// maintained by triggers on the durable QUEUE tables, and a sweep has
+			// no queue row), so the admin jobs surfaces never show this work.
+			// dry_run and breaker_tripped therefore ride as queryable metadata
+			// beside the prose, so "every sweep the breaker refused" is a filter
+			// rather than a grep.
 			_ = auditsvc.Record(ctx, audit.Event{
-				Action: observability.ActionMediaGC,
-				Result: observability.ResultSuccess,
-				Actor:  audit.ActorSnapshot{Kind: "system"},
-				Reason: res.Summary(),
+				Action:   observability.ActionMediaGC,
+				Result:   observability.ResultSuccess,
+				Actor:    audit.ActorSnapshot{Kind: "system"},
+				Reason:   res.Summary(),
+				Metadata: res.AuditFields(),
 			})
 		}
 	}

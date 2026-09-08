@@ -253,3 +253,30 @@ func (f *fakeRepo) CountAuditLog(ctx context.Context, action *string) (int64, er
 	rows, err := f.ListAuditLog(ctx, sqlcgen.ListAuditLogParams{Action: action, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
 }
+
+// breaker_tripped joined the metadata vocabulary so a media-GC sweep's audit row
+// — the ONLY operator-facing record of a sweep, since a scheduled pass writes no
+// job_runs row — can be filtered on the fact that decides whether it deleted
+// anything. An unknown key fails the WHOLE event, so this is load-bearing.
+func TestMediaGCSweepMetadataIsAccepted(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	err := svc.Record(context.Background(), Event{
+		Action: "admin.media.gc",
+		Result: "success",
+		Actor:  ActorSnapshot{Kind: "system"},
+		Metadata: []MetadataField{
+			{Key: "dry_run", Value: "true"},
+			{Key: "breaker_tripped", Value: "true"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	rows, _, err := svc.List(context.Background(), "admin.media.gc", 10, 0)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Metadata["breaker_tripped"] != "true" || rows[0].Metadata["dry_run"] != "true" {
+		t.Fatalf("rows = %+v, want one row carrying both fields", rows)
+	}
+}

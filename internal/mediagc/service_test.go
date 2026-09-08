@@ -390,3 +390,40 @@ func TestSweepIsBlindToPackagingFormat(t *testing.T) {
 		}
 	}
 }
+
+// A11's close-out: a sweep writes no job_runs row (that projection is
+// trigger-maintained off the durable QUEUE tables, and a scheduled sweep has no
+// queue row), so the audit row is the only operator-facing record of one. The
+// two facts that decide whether it deleted anything must be queryable there,
+// not buried in a formatted sentence.
+func TestAuditFieldsCarryDryRunAndTheBreaker(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		res                     Result
+		wantDryRun, wantBreaker string
+	}{
+		{"a real delete", Result{DryRun: false}, "false", "false"},
+		{"an asked-for dry run", Result{DryRun: true}, "true", "false"},
+		{
+			"a delete the breaker refused",
+			// Sweep reports the refusal as a dry run, so BOTH fields move.
+			Result{DryRun: true, BreakerTripped: true},
+			"true", "true",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := map[string]string{}
+			for _, f := range tc.res.AuditFields() {
+				got[f.Key] = f.Value
+			}
+			if got["dry_run"] != tc.wantDryRun || got["breaker_tripped"] != tc.wantBreaker {
+				t.Fatalf("AuditFields = %v, want dry_run=%s breaker_tripped=%s",
+					got, tc.wantDryRun, tc.wantBreaker)
+			}
+		})
+	}
+
+	// The audit envelope validates its metadata VOCABULARY and refuses the whole
+	// event on an unknown key, so the sweep's fields have to be in it —
+	// internal/audit's own test pins that end.
+}
