@@ -528,6 +528,14 @@ func (s *Service) runImport(ctx context.Context, row sqlcgen.ClaimDueImportJobsR
 	}
 
 	if _, err := s.pipeline.Process(ctx, row.VideoID, file.StorageKey); err != nil {
+		// A safety-scan rejection is a verdict, not a transient failure: the
+		// video is already 'failed' and the bytes are already gone, so the job
+		// dead-letters now with the sentence the owner reads off the import job
+		// rather than retrying the same answer on a backoff ladder.
+		var rejected *video.MalwareRejectedError
+		if errors.As(err, &rejected) {
+			return safeerr.NewTerminal(video.SafetyScanRejectedMessage)
+		}
 		return s.internalf("import process", err)
 	}
 	return nil
@@ -698,7 +706,9 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueImportJ
 	if len(msg) > maxErrorLen {
 		msg = msg[:maxErrorLen]
 	}
-	if attempts >= maxAttempts {
+	// A terminal refusal (a safety-scan verdict) skips the backoff ladder: the
+	// answer will not change, and the owner should read it now.
+	if attempts >= maxAttempts || safeerr.IsTerminal(cause) {
 		s.trace.Failed(ctx, jobtrace.Failure{
 			Queue: QueueName, SourceID: row.ID.String(), Resource: row.VideoID.String(),
 			Attempt: attempts, State: jobtrace.StateDeadLettered, Err: cause,

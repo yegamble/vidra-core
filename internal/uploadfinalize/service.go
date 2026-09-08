@@ -389,6 +389,17 @@ func (s *Service) runFinalize(ctx context.Context, row sqlcgen.ClaimDueUploadFin
 	// it decides to FAIL is not a job failure — the session completed and the
 	// video row carries the outcome, exactly as when this ran in the request.
 	if _, err := s.pipeline.Process(ctx, row.VideoID, file.StorageKey); err != nil {
+		// A safety-scan rejection is a VERDICT, not a job failure: the video row
+		// is already 'failed' and the bytes are already gone. Report it to the
+		// creator in the one place a polling client reads (the session's
+		// failure_reason) and stop — retrying it four more times over fifteen
+		// minutes would only hold the session in 'processing' while the answer
+		// stays the same. A28 measured this path settling as `completed` with an
+		// empty reason and a bare FAILED badge in the Studio.
+		var rejected *video.MalwareRejectedError
+		if errors.As(err, &rejected) {
+			return safeerr.NewTerminal(video.SafetyScanRejectedMessage)
+		}
 		return s.internalf("process video", err)
 	}
 	return nil
@@ -434,7 +445,10 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueUploadF
 	if len(msg) > maxErrorLen {
 		msg = msg[:maxErrorLen]
 	}
-	if attempts >= maxAttempts {
+	// A terminal refusal skips the backoff ladder entirely: attempt five gets
+	// the same answer as attempt one, and the creator spends the interval
+	// watching a spinner.
+	if attempts >= maxAttempts || safeerr.IsTerminal(cause) {
 		s.trace.Failed(ctx, jobtrace.Failure{
 			Queue: QueueName, SourceID: row.ID.String(), Resource: row.VideoID.String(),
 			Attempt: attempts, State: jobtrace.StateDeadLettered, Err: cause,

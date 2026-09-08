@@ -8,7 +8,7 @@
 #              Add API_ROLE=api to make the split complete (api serves only).
 #              LAYERS ONTO core — it is not a stack of its own. See docs/operations.md.
 #   storage -> minio (S3-compatible object storage for STORAGE_BACKEND=s3)
-#   scan    -> clamav (virus scanning for MALWARE_SCAN_ENABLED=true)
+#   scan    -> clamav (virus scanning; set CLAMAV_ADDR=clamav:3310 to use it)
 #   media   -> rtmp (nginx-rtmp live ingest + HLS + session recording; P12).
 #              Run with LIVE_INGEST_SECRET set and LIVE_HLS_ROOT=/live-hls, e.g.
 #              LIVE_INGEST_SECRET=$(openssl rand -hex 24) LIVE_HLS_ROOT=/live-hls \
@@ -303,18 +303,26 @@ x-api-env: &api-env
   # the variable outright in production). Empty (default) keeps the random
   # per-boot mint.
   OWNER_CLAIM_TOKEN: ${OWNER_CLAIM_TOKEN:-}
-  # Malware scanning: when MALWARE_SCAN_ENABLED=true, uploaded originals are
-  # streamed to the clamd at CLAMAV_ADDR before publish. Run the bundled clamd
-  # with the "scan" profile (CLAMAV_ADDR=clamav:3310) or point at your own.
-  MALWARE_SCAN_ENABLED: ${MALWARE_SCAN_ENABLED:-false}
+  # Malware scanning. Setting CLAMAV_ADDR is what turns scanning ON: every
+  # user-supplied file is streamed to that clamd before it is stored. With
+  # neither an address NOR MALWARE_SCAN_MODE=disabled, every ingestion route
+  # answers 503 scanner_not_configured. Run the bundled clamd with the "scan"
+  # profile (CLAMAV_ADDR=clamav:3310) or point at your own.
   CLAMAV_ADDR: ${CLAMAV_ADDR:-}
+  # DEPRECATED and no longer read — passed through with NO default so an
+  # operator who still sets it gets the boot WARN, and one who does not sees
+  # nothing. A `:-false` here would fire the deprecation warning on every boot
+  # of every instance.
+  MALWARE_SCAN_ENABLED: ${MALWARE_SCAN_ENABLED:-}
   # CLAMAV_TIMEOUT bounds a single scan (dial + stream + verdict); a slow/wedged
   # clamd surfaces as a scan error (resolved by MALWARE_SCAN_MODE) not a hang.
   CLAMAV_TIMEOUT: ${CLAMAV_TIMEOUT:-60s}
   # MALWARE_SCAN_MODE: fallback policy on a scan ERROR — fail-closed (default;
   # unscannable media is not published), fail-open (publish anyway, logged
-  # loudly), or quarantine (park for moderator review). Infected media always
-  # fails, in every mode.
+  # loudly AND audited), or quarantine (park for moderator review) — plus
+  # `disabled`, the explicit opt-out that permits ingestion with no scanner
+  # (boot WARN + one audit row per boot; refused alongside CLAMAV_ADDR).
+  # Infected media always fails, in every mode.
   MALWARE_SCAN_MODE: ${MALWARE_SCAN_MODE:-fail-closed}
   # HLS transcoding: when TRANSCODING_ENABLED=true, published videos are
   # transcoded to an H.264/AAC HLS ladder by an in-process worker (ffmpeg is
@@ -728,7 +736,7 @@ services:
       retries: 10
 
   # ClamAV virus scanner (scan profile). When enabled, run with the "scan"
-  # profile and point the api at it: MALWARE_SCAN_ENABLED=true CLAMAV_ADDR=clamav:3310.
+  # profile and point the api at it: CLAMAV_ADDR=clamav:3310.
   # The clamav/clamav image bundles clamd; the first boot downloads signature
   # databases (freshclam) which can take a minute — the healthcheck waits for the
   # daemon to accept connections.

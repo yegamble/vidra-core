@@ -1364,6 +1364,94 @@ cluster_reachable, pins{by state}, by_class[]}` independently of the public bloc
 Omit `?network=` to reconcile both swarms; pass `network=public` for the public tier
 only.
 
+## Malware scanning — the posture you have to choose
+
+Scanning is **derived from `CLAMAV_ADDR`**. Setting it turns scanning on; there
+is no separate enable flag (`MALWARE_SCAN_ENABLED` is deprecated, still noticed
+for one release so boot can warn you about it).
+
+There are exactly three postures and the middle one is not a posture, it is an
+accident:
+
+| `CLAMAV_ADDR` | `MALWARE_SCAN_MODE` | What the instance does |
+| --- | --- | --- |
+| set | `fail-closed` (default) / `fail-open` / `quarantine` | Every user-supplied file is scanned. `clamav` component `ok`. |
+| **unset** | **anything but `disabled`** | **Refuses every ingestion route with `503 scanner_not_configured`.** `/instance` reports uploads and imports unavailable; the `clamav` component reads `degraded` and the instance status degrades. |
+| unset | `disabled` | Ingests unscanned, on purpose. Boot WARNs; one `system.malware_scan.disabled` audit row per boot. `clamav` component `not_configured` with an honest sentence. |
+
+`disabled` **together with** `CLAMAV_ADDR` is refused at boot: you have both wired
+a daemon and declared that nothing is scanned, and resolving that silently in
+either direction picks a security posture nobody chose.
+
+### What is scanned
+
+Everything a person uploads: the direct and resumable video upload paths, source
+replacement, URL imports and channel syncs, custom posters, caption tracks,
+playlist covers, user and channel avatars and banners, instance branding, DM
+attachments and account-import archives. The small in-memory files are scanned
+**before** they are stored, so a refused avatar never reaches the object store at
+all; a video original is stored first (it is too large to buffer) and its bytes
+and `video_files` row are dropped on an INFECTED verdict.
+
+Derived artefacts are exempt because their input was already cleared:
+server-generated storyboards, transcoder renditions, the frame-pick poster, and
+Whisper transcripts.
+
+### What the fallback modes mean
+
+An INFECTED verdict always refuses, in every mode. `MALWARE_SCAN_MODE` only
+decides what happens when the scan **cannot complete** — clamd unreachable,
+wedged past `CLAMAV_TIMEOUT`, or answering garbage:
+
+- `fail-closed` (default) — the file is refused.
+- `fail-open` — the file is stored/published unscanned. This writes one
+  `content.upload.malware_scan_skipped` audit row per file, with the reason class
+  `scanner_unavailable`. Before that row existed, an instance that ran a week
+  through a scanner outage had no durable record of which media went out
+  unchecked.
+- `quarantine` — a video is parked in `quarantined` for moderator review. The
+  object classes that have **no moderation queue** — avatars, banners, playlist
+  covers, caption tracks, account archives — fall back to **fail-closed** and
+  refuse. An avatar cannot be "held for review", and silently storing it would be
+  the mode not working.
+
+### What the creator sees
+
+One neutral sentence everywhere, with the stable code `safety_scan_rejected`:
+
+> This file was rejected by the instance's safety scan and was not stored.
+
+It appears as a 422 on the synchronous routes, as the upload session's
+`failure_reason` (state `failed`, never `completed`), and as the import job's
+`error`. The signature and the scanner's name never reach the creator — telling
+them "malware" tells an attacker their probe worked. The verdict is in the audit
+row (`content.upload.malware_rejected`, with `outcome=infected|scan_error`) and,
+under quarantine, on the moderation-queue entry.
+
+A rejection is **terminal**: the finalize and import workers dead-letter it
+immediately rather than walking the retry ladder, because attempt five gets the
+same answer as attempt one and in the meantime the creator watches a spinner.
+
+### Diagnosing it
+
+`GET /api/v1/admin/system` carries a `clamav` component. It reports `ok`,
+`down` (configured and unreachable — the sentence names the policy in force and
+therefore what is happening to ingestion right now), `degraded` (no scanner, no
+opt-out) or `not_configured` (the declared opt-out). It never prints
+`CLAMAV_ADDR`: an internal host on an admin page is free reconnaissance.
+
+`GET /api/v1/admin/infrastructure`'s `malware_scan` row is static config and says
+which of the three postures is in force.
+
+### Upgrading from the old flag
+
+- You had `MALWARE_SCAN_ENABLED=true` → delete it; `CLAMAV_ADDR` alone keeps
+  scanning on.
+- You had `MALWARE_SCAN_ENABLED=false` → delete it **and** set
+  `MALWARE_SCAN_MODE=disabled`, or the instance will refuse every upload. This is
+  the one upgrade that changes behaviour if you do nothing, and it is deliberate:
+  the old default published unscanned media silently.
+
 ## Restore drill
 
 Quarterly: restore the latest DB dump + media snapshot into a throwaway stack,

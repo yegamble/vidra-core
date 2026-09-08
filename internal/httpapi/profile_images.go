@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -44,7 +45,7 @@ func (s *Server) handleSetMyImage(kind string) echo.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		in, cleanup, err := imageUploadInput(c)
+		in, cleanup, err := s.imageUploadInput(c, "user_"+kind)
 		if err != nil {
 			return err
 		}
@@ -119,7 +120,7 @@ func (s *Server) handleSetChannelImage(kind string) echo.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		in, cleanup, err := imageUploadInput(c)
+		in, cleanup, err := s.imageUploadInput(c, "channel_"+kind)
 		if err != nil {
 			return err
 		}
@@ -203,9 +204,15 @@ func (s *Server) ownedChannel(c echo.Context) (sqlcgen.Channel, error) {
 	return ch, nil
 }
 
-// imageUploadInput reads the multipart "file" part into an UploadInput. The
-// returned cleanup closes the part and must be deferred by the caller.
-func imageUploadInput(c echo.Context) (profileimage.UploadInput, func(), error) {
+// imageUploadInput reads the multipart "file" part into an UploadInput, SCANNED.
+// The returned cleanup is a no-op kept for call-site symmetry.
+//
+// The part is read fully into memory and scanned before it becomes a reader: an
+// identity image is bounded by the global body limit, it is small, and — unlike
+// the video path, which stores first and deletes a rejected original afterwards
+// — there is no reason to let a refused avatar touch the object store at all.
+// A28 found every one of these routes storing unscanned.
+func (s *Server) imageUploadInput(c echo.Context, kind string) (profileimage.UploadInput, func(), error) {
 	fh, err := c.FormFile("file")
 	if err != nil {
 		return profileimage.UploadInput{}, nil, echo.NewHTTPError(http.StatusBadRequest, `multipart form field "file" is required`)
@@ -214,8 +221,22 @@ func imageUploadInput(c echo.Context) (profileimage.UploadInput, func(), error) 
 	if err != nil {
 		return profileimage.UploadInput{}, nil, err
 	}
-	return profileimage.UploadInput{Filename: fh.Filename, Reader: f}, func() { _ = f.Close() }, nil
+	defer func() { _ = f.Close() }()
+	data, err := readScannable(f, maxIdentityImageBytes)
+	if err != nil {
+		return profileimage.UploadInput{}, nil, err
+	}
+	if err := s.scanBeforeStore(c.Request().Context(), kind, data); err != nil {
+		return profileimage.UploadInput{}, nil, err
+	}
+	return profileimage.UploadInput{Filename: fh.Filename, Reader: bytes.NewReader(data)}, func() {}, nil
 }
+
+// maxIdentityImageBytes bounds an avatar/banner/logo part read into memory for
+// scanning. The global body limit is the real gate; this is the belt that keeps
+// a hostile multipart from being buffered whole regardless of what that limit
+// is set to.
+const maxIdentityImageBytes = 8 << 20 // 8 MiB
 
 // profileImageError maps profile-image service sentinels to HTTP error
 // envelopes. kind names the asset in the 404 message ("avatar not found").

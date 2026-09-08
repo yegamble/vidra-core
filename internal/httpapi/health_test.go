@@ -25,7 +25,15 @@ func testConfig() *config.Config {
 		Environment: "test",
 		// The production default: boot normalises an unset VIDRA_ROLE to "all",
 		// so a hand-built test config carries the same shape the server ships.
-		Role:                config.RoleAll,
+		Role: config.RoleAll,
+		// Scanning is derived from CLAMAV_ADDR now, and an instance with neither
+		// a scanner nor an explicit opt-out refuses every ingestion route with
+		// 503 scanner_not_configured. A test that is not ABOUT the scanner is,
+		// by construction, a deployment that opted out — say so, exactly as an
+		// operator would have to, rather than leaving the field zero and getting
+		// the refusal on every upload fixture. Scan-posture tests build their
+		// own config.
+		MalwareScanMode:     config.ScanOptOut,
 		HTTPHost:            "127.0.0.1",
 		HTTPPort:            8080,
 		CORSAllowedOrigins:  []string{"http://localhost:3000"},

@@ -10,6 +10,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/jobstatus"
 	"github.com/vidra/vidra-core/internal/storage"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 // ErrorResponse is the single, consistent JSON error envelope returned by every
@@ -83,6 +84,8 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var pinc *PlatformImportNotConfiguredError
 	var csnc *ChannelSyncNotConfiguredError
 	var acnc *AutoCaptionsNotConfiguredError
+	var snc *ScannerNotConfiguredError
+	var ssr *SafetyScanRejectedError
 	var fml *ForeignMediaLayoutError
 	var videoID, shortCode string
 	var pr *PasswordRequiredError
@@ -225,6 +228,17 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusServiceUnavailable
 		message = "auto-captioning is turned on but this instance has no transcription endpoint to send audio to. Set the Whisper endpoint (WHISPER_ENDPOINT) and restart the api"
 		code = "auto_captions_not_configured"
+	case errors.As(err, &snc):
+		status = http.StatusServiceUnavailable
+		message = "this instance has no malware scanner, so it accepts no uploads or imports. Point CLAMAV_ADDR at a ClamAV daemon and restart the api — or, to run without scanning, set MALWARE_SCAN_MODE=disabled to say so on purpose"
+		code = "scanner_not_configured"
+	case errors.As(err, &ssr):
+		// 422, not 4xx-with-a-signature: the creator learns their file was
+		// refused and nothing about WHAT was found. The verdict lives in the
+		// audit row and the moderation queue.
+		status = http.StatusUnprocessableEntity
+		message = video.SafetyScanRejectedMessage
+		code = video.SafetyScanRejectedCode
 	case errors.As(err, &fml):
 		status = http.StatusConflict
 		message = "this instance references media stored under another system's key layout, so the object store may still belong to a live instance (a reference-mode import points at the source's own bucket). Adopting it would let media garbage collection delete that instance's files. Re-send with force=true only once the source instance is retired or its media has been copied across"

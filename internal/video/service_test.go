@@ -1403,10 +1403,9 @@ func TestProcessPublishesWhenScanClean(t *testing.T) {
 	svc := NewService(newFakeRepo(uuid.New()), nil, WithScanner(fakeScanner{clean: true}))
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
-	got, err := svc.Process(ctx, v.ID, "k")
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
+	// A refusal now comes back as a terminal *MalwareRejectedError alongside
+	// the persisted row; mustProcess tolerates exactly that one error.
+	got := mustProcess(t, svc, ctx, v.ID, "k")
 	if got.State != "published" {
 		t.Errorf("state = %q, want published (clean scan)", got.State)
 	}
@@ -1421,10 +1420,9 @@ func TestProcessFailsWhenScanInfected(t *testing.T) {
 	)
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
-	got, err := svc.Process(ctx, v.ID, "k")
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
+	// A refusal now comes back as a terminal *MalwareRejectedError alongside
+	// the persisted row; mustProcess tolerates exactly that one error.
+	got := mustProcess(t, svc, ctx, v.ID, "k")
 	if got.State != "failed" {
 		t.Errorf("state = %q, want failed (infected)", got.State)
 	}
@@ -1435,10 +1433,9 @@ func TestProcessFailsWhenScanUnavailable(t *testing.T) {
 	svc := NewService(newFakeRepo(uuid.New()), nil, WithScanner(fakeScanner{err: errors.New("clamd down")}))
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
-	got, err := svc.Process(ctx, v.ID, "k")
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
+	// A refusal now comes back as a terminal *MalwareRejectedError alongside
+	// the persisted row; mustProcess tolerates exactly that one error.
+	got := mustProcess(t, svc, ctx, v.ID, "k")
 	if got.State != "failed" {
 		t.Errorf("state = %q, want failed (scan unavailable)", got.State)
 	}
@@ -1587,10 +1584,9 @@ func TestProcessThumbnailFailureStillPublishes(t *testing.T) {
 	svc := NewService(repo, blobs, WithThumbnailer(fakeThumbnailer{err: errors.New("ffmpeg boom")}))
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
-	got, err := svc.Process(ctx, v.ID, "k")
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
+	// A refusal now comes back as a terminal *MalwareRejectedError alongside
+	// the persisted row; mustProcess tolerates exactly that one error.
+	got := mustProcess(t, svc, ctx, v.ID, "k")
 	if got.State != "published" {
 		t.Errorf("state = %q, want published (thumbnail failure is non-fatal)", got.State)
 	}

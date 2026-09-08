@@ -1054,7 +1054,7 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 			label string
 			field *bool
 		}{
-			{"Run the bundled ClamAV upload scanner (profile scan; MALWARE_SCAN_ENABLED stays a separate setting)", &a.Features.Scan},
+			{"Run the bundled ClamAV upload scanner (profile scan; point CLAMAV_ADDR at it to actually scan)", &a.Features.Scan},
 			{"Run the bundled Whisper caption worker (profile captions)", &a.Features.Captions},
 			{"Run the bundled RTMP live-ingest server (profile media)", &a.Features.Media},
 			{"Run the bundled OpenTelemetry collector and Jaeger (profile otel)", &a.Features.Otel},
@@ -1647,7 +1647,7 @@ func (f *featureFlags) entries() []struct {
 		name, usage string
 		flag        *optionalBool
 	}{
-		{"scan", "run the bundled ClamAV upload scanner (compose profile scan; MALWARE_SCAN_ENABLED is a separate setting)", &f.scan},
+		{"scan", "run the bundled ClamAV upload scanner (compose profile scan; CLAMAV_ADDR is what points the api at it)", &f.scan},
 		{"captions", "run the bundled Whisper caption worker (compose profile captions)", &f.captions},
 		{"media", "run the bundled RTMP live-ingest server (compose profile media)", &f.media},
 		{"otel", "run the bundled OpenTelemetry collector and Jaeger (compose profile otel)", &f.otel},

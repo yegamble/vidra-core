@@ -68,7 +68,7 @@ func (s *Server) setInstanceImage(c echo.Context, kind string) error {
 	if err != nil {
 		return err
 	}
-	in, cleanup, err := imageUploadInput(c)
+	in, cleanup, err := s.imageUploadInput(c, "instance_"+kind)
 	if err != nil {
 		return err
 	}

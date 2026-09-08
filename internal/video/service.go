@@ -273,12 +273,18 @@ const (
 	// ScanModeQuarantine parks unscannable media in the 'quarantined' state for
 	// moderator review instead of publishing or failing it outright.
 	ScanModeQuarantine ScanMode = "quarantine"
+	// ScanModeDisabled is the operator's explicit declaration that this instance
+	// ingests unscanned. It is not a fallback policy — the other three decide
+	// what happens when a scan cannot complete, this one means there is no scan.
+	// It reaches this package only so the mode string round-trips honestly onto
+	// admin surfaces; with no scanner wired Process never consults it.
+	ScanModeDisabled ScanMode = "disabled"
 )
 
-// ValidScanMode reports whether s is one of the three policies.
+// ValidScanMode reports whether s is one of the four modes.
 func ValidScanMode(s string) bool {
 	switch ScanMode(s) {
-	case ScanModeFailClosed, ScanModeFailOpen, ScanModeQuarantine:
+	case ScanModeFailClosed, ScanModeFailOpen, ScanModeQuarantine, ScanModeDisabled:
 		return true
 	}
 	return false
@@ -901,13 +907,18 @@ func (s *Service) ReplaceSource(ctx context.Context, actorID, videoID uuid.UUID,
 			if s.scanMode == ScanModeFailOpen {
 				slog.WarnContext(ctx, "malware scan failed; accepting replacement anyway (MALWARE_SCAN_MODE=fail-open)",
 					"video_id", videoID.String(), "error", serr.Error())
+				s.auditMalwareSkipped(ctx, videoID)
 			} else {
 				s.auditMalwareRejected(ctx, videoID, "scan_error")
-				return reject("the file could not be scanned; try again later")
+				return reject(SafetyScanRejectedMessage)
 			}
 		case !clean:
 			s.auditMalwareRejected(ctx, videoID, "infected")
-			return reject("the file failed the malware scan")
+			// The SAME neutral sentence as the upload and import paths. It used
+			// to say "the file failed the malware scan", which told the creator
+			// more than the upload path did and told an attacker their probe
+			// worked.
+			return reject(SafetyScanRejectedMessage)
 		}
 	}
 	// Probe: the replacement must be playable media (when a prober is wired;
@@ -1033,6 +1044,11 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 	// is 'quarantine' — the finished upload is parked for moderator review below
 	// (after probe/thumbnail so the reviewer has metadata) rather than published.
 	scanQuarantine := false
+	// scanRejected is set when the scanner (not the prober) is what failed the
+	// video. It is returned to the caller as a TERMINAL error alongside the
+	// persisted row so the upload session and the import job can show the
+	// creator why — A28 measured both settling as success with an empty reason.
+	var scanRejected *MalwareRejectedError
 	if s.scanner != nil {
 		clean, err := s.scanner.Scan(ctx, originalKey)
 		switch {
@@ -1041,19 +1057,25 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 			switch s.scanMode {
 			case ScanModeFailOpen:
 				// Publish anyway, but log loudly: the upload is unscanned. Not a
-				// rejection (the video publishes), so no rejection audit event.
+				// rejection (the video publishes) — and yet it IS the security
+				// event of the run, so it gets its own audit row. Without one an
+				// operator who ran fail-open through an outage has no durable
+				// record of which media went out unscanned.
 				slog.WarnContext(ctx, "malware scan failed; publishing anyway (MALWARE_SCAN_MODE=fail-open)",
 					"video_id", videoID.String(), "error", err.Error())
+				s.auditMalwareSkipped(ctx, videoID)
 			case ScanModeQuarantine:
 				scanQuarantine = true
 				s.auditMalwareRejected(ctx, videoID, "scan_error")
 			default: // fail-closed
 				state = "failed"
+				scanRejected = &MalwareRejectedError{Outcome: "scan_error"}
 				s.auditMalwareRejected(ctx, videoID, "scan_error")
 			}
 		case !clean:
 			// Infected media ALWAYS fails, regardless of mode.
 			state = "failed"
+			scanRejected = &MalwareRejectedError{Outcome: "infected"}
 			s.auditMalwareRejected(ctx, videoID, "infected")
 			// …and its bytes go with it. Failing the state alone left the
 			// video_files row and the stored object in place, so the owner's
@@ -1136,7 +1158,37 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 		}
 		return s.publish(ctx, videoID, originalKey)
 	}
-	return s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: state})
+	v, err := s.repo.SetVideoState(ctx, sqlcgen.SetVideoStateParams{ID: videoID, State: state})
+	if err != nil {
+		return v, err
+	}
+	// The row is already persisted as 'failed'; the error is the REPORT, not a
+	// signal that the state write failed. Callers that only care about the row
+	// (the transcode/replay paths) may ignore it; the two ingestion pipelines
+	// use it to write the creator's sentence and to stop retrying — a scanner
+	// verdict does not change on attempt five.
+	if scanRejected != nil {
+		return v, scanRejected
+	}
+	return v, nil
+}
+
+// auditMalwareSkipped records (best-effort) that a file was published WITHOUT
+// being scanned because the scan could not complete under MALWARE_SCAN_MODE=
+// fail-open. The reason carries the safe video id, a reason CLASS and the
+// policy — never the scanner's error string, which embeds CLAMAV_ADDR.
+func (s *Service) auditMalwareSkipped(ctx context.Context, videoID uuid.UUID) {
+	if s.auditor == nil {
+		return
+	}
+	_ = s.auditor.Record(ctx, audit.Event{
+		Action:       observability.ActionUploadMalwareSkipped,
+		Result:       observability.ResultFailure,
+		Actor:        audit.ActorSnapshot{Kind: "system"},
+		Reason:       "video=" + videoID.String() + " reason=scanner_unavailable policy=" + string(ScanModeFailOpen),
+		ResourceType: "video",
+		ResourceID:   videoID.String(),
+	})
 }
 
 // publish is THE publish transition: it flips the state and fires the

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"strings"
@@ -13,6 +14,12 @@ import (
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/video"
 )
+
+// maxCaptionUploadBytes bounds a caption part read into memory for scanning. It
+// is deliberately larger than video.maxCaptionSize (4 MiB) so an oversize track
+// still fails the service's own ErrInvalidCaption check with its documented 422
+// rather than a 413 from this read.
+const maxCaptionUploadBytes = 8 << 20 // 8 MiB
 
 // captionView is the metadata projection of a caption track. The VTT itself is
 // fetched from GET /api/v1/videos/{id}/captions/{language}.
@@ -55,10 +62,20 @@ func (s *Server) handleUploadCaption(c echo.Context) error {
 	if !canManage {
 		return echo.NewHTTPError(http.StatusNotFound, "video not found")
 	}
+	// A caption track is a user-supplied file like any other. It is text, and a
+	// WebVTT signature check is not a malware verdict — clamd scans archives and
+	// scripts inside text containers that a `WEBVTT` prefix says nothing about.
+	data, err := readScannable(f, maxCaptionUploadBytes)
+	if err != nil {
+		return err
+	}
+	if err := s.scanBeforeStore(c.Request().Context(), "caption", data); err != nil {
+		return err
+	}
 	ct, err := s.videosvc.AddCaption(c.Request().Context(), v.OwnerID, id, video.CaptionInput{
 		Language: c.FormValue("language"),
 		Label:    c.FormValue("label"),
-		Reader:   f,
+		Reader:   bytes.NewReader(data),
 	})
 	if err != nil {
 		if errors.Is(err, video.ErrInvalidCaption) {

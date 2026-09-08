@@ -19,10 +19,9 @@ func TestProcessScanErrorFailClosed(t *testing.T) {
 	svc := NewService(newFakeRepo(uuid.New()), nil, WithScanner(fakeScanner{err: errors.New("clamd down")}))
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
-	got, err := svc.Process(ctx, v.ID, "k")
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
+	// A refusal now comes back as a terminal *MalwareRejectedError alongside
+	// the persisted row; mustProcess tolerates exactly that one error.
+	got := mustProcess(t, svc, ctx, v.ID, "k")
 	if got.State != "failed" {
 		t.Errorf("state = %q, want failed (fail-closed scan error)", got.State)
 	}
@@ -36,10 +35,9 @@ func TestProcessScanErrorFailOpenPublishes(t *testing.T) {
 	)
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
-	got, err := svc.Process(ctx, v.ID, "k")
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
+	// A refusal now comes back as a terminal *MalwareRejectedError alongside
+	// the persisted row; mustProcess tolerates exactly that one error.
+	got := mustProcess(t, svc, ctx, v.ID, "k")
 	if got.State != "published" {
 		t.Errorf("state = %q, want published (fail-open scan error)", got.State)
 	}
@@ -53,10 +51,9 @@ func TestProcessScanErrorFailOpenStillFailsInfected(t *testing.T) {
 	)
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
-	got, err := svc.Process(ctx, v.ID, "k")
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
+	// A refusal now comes back as a terminal *MalwareRejectedError alongside
+	// the persisted row; mustProcess tolerates exactly that one error.
+	got := mustProcess(t, svc, ctx, v.ID, "k")
 	if got.State != "failed" {
 		t.Errorf("state = %q, want failed (infected under fail-open)", got.State)
 	}
@@ -73,10 +70,9 @@ func TestProcessScanErrorQuarantines(t *testing.T) {
 	)
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
-	got, err := svc.Process(ctx, v.ID, "k")
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
+	// A refusal now comes back as a terminal *MalwareRejectedError alongside
+	// the persisted row; mustProcess tolerates exactly that one error.
+	got := mustProcess(t, svc, ctx, v.ID, "k")
 	if got.State != "quarantined" {
 		t.Errorf("state = %q, want quarantined (scan error under quarantine mode)", got.State)
 	}
@@ -93,10 +89,9 @@ func TestProcessScanErrorQuarantineStillFailsInfected(t *testing.T) {
 	)
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
-	got, err := svc.Process(ctx, v.ID, "k")
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
+	// A refusal now comes back as a terminal *MalwareRejectedError alongside
+	// the persisted row; mustProcess tolerates exactly that one error.
+	got := mustProcess(t, svc, ctx, v.ID, "k")
 	if got.State != "failed" {
 		t.Errorf("state = %q, want failed (infected under quarantine mode)", got.State)
 	}
@@ -165,10 +160,9 @@ func TestProcessStoryboardFailureStillPublishes(t *testing.T) {
 	svc := NewService(repo, blobs, WithStoryboarder(fakeStoryboarder{err: errors.New("ffmpeg boom")}))
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
-	got, err := svc.Process(ctx, v.ID, "k")
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
+	// A refusal now comes back as a terminal *MalwareRejectedError alongside
+	// the persisted row; mustProcess tolerates exactly that one error.
+	got := mustProcess(t, svc, ctx, v.ID, "k")
 	if got.State != "published" {
 		t.Errorf("state = %q, want published (storyboard failure is non-fatal)", got.State)
 	}

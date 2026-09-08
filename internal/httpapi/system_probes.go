@@ -62,8 +62,9 @@ type processFleetReader interface {
 // cheap two-dependency contract deliberately — this runs when an admin opens a
 // page, that runs several times a minute forever.
 //
-// "not_configured" NEVER degrades the instance: local storage, mail off and no
-// search service are all supported deployments, not faults. "down" does.
+// "not_configured" NEVER degrades the instance: local storage, mail off, no
+// search service and a DECLARED malware-scan opt-out are all supported
+// deployments, not faults. "down" and "degraded" do.
 func (s *Server) systemComponents(ctx context.Context) (map[string]componentStatus, bool) {
 	// BOUND the two cheap pings too. They were the only unbounded work on this
 	// page: a refused Redis dial cost it 3.4-5.2s (five dial attempts), and a
@@ -103,7 +104,12 @@ func (s *Server) systemComponents(ctx context.Context) (map[string]componentStat
 			mu.Lock()
 			defer mu.Unlock()
 			components[name] = status
-			if status.Status == "down" {
+			// "degraded" counts too. The scanner is the case that forced it: an
+			// instance refusing every upload with 503 scanner_not_configured is
+			// not healthy, and reporting the top line "ok" beside a degraded
+			// component is exactly the reading an operator scans past (the same
+			// argument /readyz's aggregation already makes).
+			if status.Status == "down" || status.Status == "degraded" {
 				healthy = false
 			}
 		}()
@@ -288,16 +294,28 @@ func (s *Server) probeSearch(ctx context.Context) componentStatus {
 // static config — it reports "enabled and configured" for a daemon that has
 // been dead for a week.
 //
-// MALWARE_SCAN_ENABLED=false is a supported deployment (nothing is scanned; the
-// infrastructure page says so in prose), so it is not_configured and never
-// degrades the instance.
+// Running with no scanner is only supported when the operator SAID SO
+// (MALWARE_SCAN_MODE=disabled): that reads not_configured with an honest
+// sentence and never degrades the instance. No scanner and no opt-out is the
+// posture nobody chose — every ingestion route is answering 503
+// scanner_not_configured — so it degrades, because that is exactly the state an
+// operator needs this page to surface.
 //
 // The sentence names the consequence and the policy in force, never the
 // address: an internal host on an admin page is free reconnaissance, and
 // admin_infra_test pins that rule for CLAMAV_ADDR specifically.
 func (s *Server) probeMalwareScanner(ctx context.Context) componentStatus {
-	if !s.cfg.MalwareScanEnabled || strings.TrimSpace(s.cfg.ClamAVAddr) == "" {
-		return componentStatus{Status: "not_configured"}
+	if strings.TrimSpace(s.cfg.ClamAVAddr) == "" {
+		if s.cfg.MalwareScanOptedOut() {
+			return componentStatus{
+				Status: "not_configured",
+				Error:  "this instance runs with MALWARE_SCAN_MODE=disabled: uploads, imports, posters, avatars, banners and account archives are stored without being scanned. Point CLAMAV_ADDR at a ClamAV daemon and drop the disabled mode to turn scanning on",
+			}
+		}
+		return componentStatus{
+			Status: "degraded",
+			Error:  scannerUnconfiguredReason,
+		}
 	}
 	if err := media.Ping(ctx, s.cfg.ClamAVAddr, s.cfg.ClamAVTimeout); err != nil {
 		return componentStatus{
@@ -307,6 +325,11 @@ func (s *Server) probeMalwareScanner(ctx context.Context) componentStatus {
 	}
 	return componentStatus{Status: "ok"}
 }
+
+// scannerUnconfiguredReason is the one sentence for "no scanner, no opt-out".
+// It names both levers because either one resolves the state, and an operator
+// who reads only half of it will pick the wrong one.
+const scannerUnconfiguredReason = "no malware scanner is configured and MALWARE_SCAN_MODE is not disabled, so every upload, import and image upload is refused with 503 scanner_not_configured: point CLAMAV_ADDR at a ClamAV daemon, or set MALWARE_SCAN_MODE=disabled to ingest unscanned on purpose"
 
 // scannerProbeReason spells out what an unreachable scanner is doing to
 // ingestion RIGHT NOW, which is entirely decided by MALWARE_SCAN_MODE — the

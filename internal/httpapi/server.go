@@ -138,6 +138,12 @@ type Server struct {
 	watchwordsvc      *watchword.Service
 	adminsvc          *admin.Service
 	auditLog          *audit.Service
+	// filescanner scans the SMALL user-supplied files that never go through the
+	// video pipeline — posters, avatars, banners, playlist covers, caption
+	// tracks, account-import archives. Nil means no scanner is wired at all, in
+	// which case requireScanner has already refused the request (or the operator
+	// opted out).
+	filescanner       FileScanner
 	messagingsvc      *messaging.Service
 	e2eesvc           *e2ee.Service
 	livesvc           *live.Service
@@ -920,6 +926,16 @@ func WithAuditLog(svc *audit.Service) Option {
 	return func(s *Server) { s.auditLog = svc }
 }
 
+// WithFileScanner wires the malware scanner used for the small user-supplied
+// files that do not go through the video pipeline (posters, avatars, banners,
+// playlist covers, caption tracks, account-import archives). Those are scanned
+// in memory BEFORE they are stored, so a rejected file never reaches the object
+// store. When unset those routes store unscanned — which requireScanner only
+// permits under the explicit MALWARE_SCAN_MODE=disabled opt-out.
+func WithFileScanner(sc FileScanner) Option {
+	return func(s *Server) { s.filescanner = sc }
+}
+
 // WithMediaStorage gives the server the blob backend used to stream stored media
 // (the original-file endpoint). It should be the same backend the video service
 // writes uploads to. When unset, the streaming route serves 503.
@@ -1485,7 +1501,7 @@ func (s *Server) routes() {
 		api.POST("/me/export", s.handleRequestAccountExport, s.requireAuth)
 		api.GET("/me/export", s.handleGetAccountExport, s.requireAuth)
 		api.GET("/me/export/download", s.handleDownloadAccountExport, s.requireAuth)
-		api.POST("/me/import", s.handleImportAccount, s.requireAuth)
+		api.POST("/me/import", s.handleImportAccount, s.requireAuth, s.requireScannerGate)
 	}
 
 	// DEV-ONLY: expose captured account-security tokens so e2e tests can complete
@@ -1557,11 +1573,11 @@ func (s *Server) routes() {
 	// HTTP body limit (same cap as the custom video thumbnail).
 	if s.imagesvc != nil {
 		for _, kind := range []string{profileimage.KindAvatar, profileimage.KindBanner} {
-			api.POST("/me/"+kind, s.handleSetMyImage(kind), s.requireAuth)
+			api.POST("/me/"+kind, s.handleSetMyImage(kind), s.requireAuth, s.requireScannerGate)
 			api.DELETE("/me/"+kind, s.handleDeleteMyImage(kind), s.requireAuth)
 			api.GET("/users/:id/"+kind, s.handleGetUserImage(kind))
 			if s.channelsvc != nil {
-				api.POST("/channels/:handle/"+kind, s.handleSetChannelImage(kind), s.requireAuth)
+				api.POST("/channels/:handle/"+kind, s.handleSetChannelImage(kind), s.requireAuth, s.requireScannerGate)
 				api.DELETE("/channels/:handle/"+kind, s.handleDeleteChannelImage(kind), s.requireAuth)
 				api.GET("/channels/:handle/"+kind, s.handleGetChannelImage(kind))
 			}
@@ -1571,11 +1587,11 @@ func (s *Server) routes() {
 		// instance avatar/banner + the four typed logo slots (mirroring PeerTube's
 		// dedicated asset API — these are not registry keys), plus public serving.
 		// URLs are referenced from the GET /instance branding block.
-		api.POST("/admin/instance-avatar", s.handleSetInstanceImage(profileimage.KindAvatar), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/instance-avatar", s.handleSetInstanceImage(profileimage.KindAvatar), s.requireAuth, s.requireRole(admin.RoleAdmin), s.requireScannerGate)
 		api.DELETE("/admin/instance-avatar", s.handleDeleteInstanceImage(profileimage.KindAvatar), s.requireAuth, s.requireRole(admin.RoleAdmin))
-		api.POST("/admin/instance-banner", s.handleSetInstanceImage(profileimage.KindBanner), s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/instance-banner", s.handleSetInstanceImage(profileimage.KindBanner), s.requireAuth, s.requireRole(admin.RoleAdmin), s.requireScannerGate)
 		api.DELETE("/admin/instance-banner", s.handleDeleteInstanceImage(profileimage.KindBanner), s.requireAuth, s.requireRole(admin.RoleAdmin))
-		api.POST("/admin/instance-logo/:type", s.handleSetInstanceLogo, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/instance-logo/:type", s.handleSetInstanceLogo, s.requireAuth, s.requireRole(admin.RoleAdmin), s.requireScannerGate)
 		api.DELETE("/admin/instance-logo/:type", s.handleDeleteInstanceLogo, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.GET("/instance/avatar", s.handleGetInstanceImage(profileimage.KindAvatar))
 		api.GET("/instance/banner", s.handleGetInstanceImage(profileimage.KindBanner))
@@ -1630,7 +1646,7 @@ func (s *Server) routes() {
 			api.GET("/videos/:id/hls/:rendition/:file", s.handleGetHLSFile, s.optionalAuth)
 		}
 		api.GET("/videos/:id/thumbnail", s.handleGetVideoThumbnail, s.optionalAuth)
-		api.POST("/videos/:id/thumbnail", s.handleSetVideoThumbnail, s.requireAuth)
+		api.POST("/videos/:id/thumbnail", s.handleSetVideoThumbnail, s.requireAuth, s.requireScannerGate)
 		// Seek-preview storyboard (sprite sheet + WebVTT map), same visibility as
 		// the detail endpoint. detail exposes has_storyboard.
 		api.GET("/videos/:id/storyboard.jpg", s.handleGetVideoStoryboardImage, s.optionalAuth)
@@ -1685,30 +1701,30 @@ func (s *Server) routes() {
 		api.GET("/me/stats", s.handleGetAccountStats, s.requireAuth)
 		api.PATCH("/videos/:id", s.handleUpdateVideo, s.requireAuth)
 		api.DELETE("/videos/:id", s.handleDeleteVideo, s.requireAuth)
-		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth, s.dynamicBodyLimit())
+		api.POST("/videos/:id/file", s.handleUploadVideoFile, s.requireAuth, s.requireScannerGate, s.dynamicBodyLimit())
 		// Video file replacement (config-parity W14): the direct multipart
 		// shape. Gated at runtime by video_replace_enabled (403 while off).
-		api.POST("/videos/:id/replace", s.handleReplaceVideoFile, s.requireAuth, s.dynamicBodyLimit())
+		api.POST("/videos/:id/replace", s.handleReplaceVideoFile, s.requireAuth, s.requireScannerGate, s.dynamicBodyLimit())
 
 		// Resumable/chunked upload (P6.1): open a session, PUT fixed-size chunks
 		// (each bounded by the upload service, hence exempt from the JSON body
 		// limit), GET progress, complete (→ the same AttachOriginal → Process
 		// pipeline as a direct upload), or cancel.
 		if s.uploadsvc != nil {
-			api.POST("/videos/:id/upload-session", s.handleCreateUploadSession, s.requireAuth)
+			api.POST("/videos/:id/upload-session", s.handleCreateUploadSession, s.requireAuth, s.requireScannerGate)
 			// Replace-purpose session (W14): identical chunk/complete/cancel
 			// machinery; completion routes through the replacement flow.
-			api.POST("/videos/:id/replace-session", s.handleCreateReplaceSession, s.requireAuth)
+			api.POST("/videos/:id/replace-session", s.handleCreateReplaceSession, s.requireAuth, s.requireScannerGate)
 			api.GET("/me/uploads", s.handleListMyUploads, s.requireAuth)
 			api.PUT("/uploads/:upload_id/chunks/:n", s.handlePutUploadChunk, s.requireAuth)
 			api.GET("/uploads/:upload_id", s.handleGetUploadSession, s.requireAuth)
-			api.POST("/uploads/:upload_id/complete", s.handleCompleteUploadSession, s.requireAuth)
+			api.POST("/uploads/:upload_id/complete", s.handleCompleteUploadSession, s.requireAuth, s.requireScannerGate)
 			api.DELETE("/uploads/:upload_id", s.handleCancelUploadSession, s.requireAuth)
 		}
 
 		// Asynchronous URL import (P2.2): enqueue → 202, then poll the job status.
 		if s.importsvc != nil {
-			api.POST("/videos/:id/import", s.handleImportVideoFile, s.requireAuth)
+			api.POST("/videos/:id/import", s.handleImportVideoFile, s.requireAuth, s.requireScannerGate)
 			api.GET("/videos/:id/import", s.handleGetVideoImport, s.requireAuth)
 		}
 
@@ -1723,7 +1739,7 @@ func (s *Server) routes() {
 		// lists/downloads them on a public, published video.
 		api.GET("/videos/:id/captions", s.handleListCaptions, s.optionalAuth)
 		api.GET("/videos/:id/captions/:lang", s.handleDownloadCaption, s.optionalAuth)
-		api.POST("/videos/:id/captions", s.handleUploadCaption, s.requireAuth)
+		api.POST("/videos/:id/captions", s.handleUploadCaption, s.requireAuth, s.requireScannerGate)
 		api.DELETE("/videos/:id/captions/:lang", s.handleDeleteCaption, s.requireAuth)
 
 		// Comments are scoped to a (public, published) video.
@@ -1754,10 +1770,10 @@ func (s *Server) routes() {
 	// scoped and self-contained (no dependency on the video service), so it mounts
 	// independently; the create/sync-now handlers 503 when the feature is disabled.
 	if s.channelsyncsvc != nil {
-		api.POST("/channel-syncs", s.handleCreateChannelSync, s.requireAuth)
+		api.POST("/channel-syncs", s.handleCreateChannelSync, s.requireAuth, s.requireScannerGate)
 		api.GET("/channel-syncs", s.handleListChannelSyncs, s.requireAuth)
 		api.DELETE("/channel-syncs/:id", s.handleDeleteChannelSync, s.requireAuth)
-		api.POST("/channel-syncs/:id/sync-now", s.handleSyncChannelNow, s.requireAuth)
+		api.POST("/channel-syncs/:id/sync-now", s.handleSyncChannelNow, s.requireAuth, s.requireScannerGate)
 	}
 
 	// Storage quota: the caller's own usage + effective cap. The same service
@@ -1800,7 +1816,7 @@ func (s *Server) routes() {
 		api.DELETE("/playlists/:id/videos/:videoId", s.handleRemovePlaylistItem, s.requireAuth)
 		// Playlist cover image: owner upload/remove + public (visibility-gated) get.
 		api.GET("/playlists/:id/thumbnail", s.handleGetPlaylistThumbnail, s.optionalAuth)
-		api.POST("/playlists/:id/thumbnail", s.handleSetPlaylistThumbnail, s.requireAuth)
+		api.POST("/playlists/:id/thumbnail", s.handleSetPlaylistThumbnail, s.requireAuth, s.requireScannerGate)
 		api.DELETE("/playlists/:id/thumbnail", s.handleDeletePlaylistThumbnail, s.requireAuth)
 	}
 
@@ -2031,7 +2047,7 @@ func (s *Server) routes() {
 	// mounted when the service is wired (stable contract); the launch answers 503
 	// when no source is configured. This is the vidra-user admin import UI contract.
 	if s.peertubeimportsvc != nil {
-		api.POST("/admin/peertube-import", s.handleLaunchPeerTubeImport, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/peertube-import", s.handleLaunchPeerTubeImport, s.requireAuth, s.requireRole(admin.RoleAdmin), s.requireScannerGate)
 		api.GET("/admin/peertube-import", s.handleListPeerTubeImports, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.GET("/admin/peertube-import/:id", s.handleGetPeerTubeImport, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
@@ -2067,7 +2083,7 @@ func (s *Server) routes() {
 		// (the no-quota compensating control, messaging-v2.md D6; a no-op when the
 		// attachment limiter is unset). Both endpoints return 503 when blob
 		// storage is not configured.
-		api.POST("/conversations/:id/attachments", s.handleUploadAttachment, s.requireAuth, s.requireMessaging, s.attachmentUploadRateLimit())
+		api.POST("/conversations/:id/attachments", s.handleUploadAttachment, s.requireAuth, s.requireMessaging, s.requireScannerGate, s.attachmentUploadRateLimit())
 		api.GET("/attachments/:id", s.handleDownloadAttachment, s.requireAuth, s.requireMessaging)
 	}
 

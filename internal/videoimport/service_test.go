@@ -143,6 +143,10 @@ type fakePipeline struct {
 	storedSize map[uuid.UUID]int64
 	published  map[uuid.UUID]bool
 	prefill    map[uuid.UUID][2]string // videoID → {title, description}
+	// processErr, when set, is what Process reports back — the seam for the
+	// safety-scan verdict, which arrives as an error ALONGSIDE the persisted
+	// 'failed' row.
+	processErr error
 }
 
 func newFakePipeline() *fakePipeline {
@@ -176,6 +180,9 @@ func (p *fakePipeline) AttachOriginal(_ context.Context, _, videoID uuid.UUID, i
 func (p *fakePipeline) Process(_ context.Context, videoID uuid.UUID, _ string) (sqlcgen.Video, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.processErr != nil {
+		return sqlcgen.Video{ID: videoID, State: "failed"}, p.processErr
+	}
 	p.published[videoID] = true
 	return sqlcgen.Video{ID: videoID, State: "published"}, nil
 }

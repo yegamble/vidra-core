@@ -875,9 +875,34 @@ func run() error {
 	// upload out of published (infection / unscannable under a non-publishing mode).
 	auditsvc := audit.NewService(db.Queries())
 	vopts = append(vopts, video.WithAuditor(auditsvc))
+	// Scanning is DERIVED from CLAMAV_ADDR now, not switched on by
+	// MALWARE_SCAN_ENABLED. The deprecated variable gets a WARN for one release
+	// so an operator who still has it in an env file learns it no longer decides
+	// anything, instead of discovering a behaviour change from a security
+	// incident.
+	if cfg.MalwareScanEnabledDeprecated {
+		logger.Warn("MALWARE_SCAN_ENABLED is deprecated and no longer read: scanning is on whenever CLAMAV_ADDR is set. Remove the variable; to run WITHOUT scanning, unset CLAMAV_ADDR and set MALWARE_SCAN_MODE=disabled",
+			"scanning_active", cfg.MalwareScanEnabled, "mode", cfg.MalwareScanMode)
+	}
+	var fileScanner *media.ClamAV
 	if cfg.MalwareScanEnabled {
-		vopts = append(vopts, video.WithScanner(media.NewClamAV(cfg.ClamAVAddr, blobs, cfg.ClamAVTimeout)))
+		fileScanner = media.NewClamAV(cfg.ClamAVAddr, blobs, cfg.ClamAVTimeout)
+		vopts = append(vopts, video.WithScanner(fileScanner))
 		logger.Info("malware scanning enabled (clamd)", "addr", cfg.ClamAVAddr, "mode", cfg.MalwareScanMode, "timeout", cfg.ClamAVTimeout.String())
+	} else if cfg.MalwareScanOptedOut() {
+		// The explicit opt-out. It is loud at boot AND durable in the audit
+		// trail: an opt-out that lives only in an env file is not something a
+		// reviewer can find later, and "we published unscanned media for a
+		// month" is exactly the question an audit log exists to answer.
+		logger.Warn("MALWARE_SCAN_MODE=disabled: this instance ingests uploads, imports, posters, avatars, banners, playlist covers, caption tracks and account archives WITHOUT scanning them. Set CLAMAV_ADDR to turn scanning on")
+		auditScanDisabled(context.Background(), auditsvc, logger, cfg.MalwareScanMode)
+	} else {
+		// No scanner and no opt-out: the instance boots, but every ingestion
+		// route answers 503 scanner_not_configured and /instance reports uploads
+		// and imports unavailable. Booting rather than refusing is deliberate —
+		// an instance that cannot accept an upload can still serve everything it
+		// already has, and the operator needs the admin pages to read the reason.
+		logger.Warn("no malware scanner is configured and MALWARE_SCAN_MODE is not 'disabled': every upload, import and image upload will be refused with 503 scanner_not_configured. Set CLAMAV_ADDR, or set MALWARE_SCAN_MODE=disabled to ingest unscanned on purpose")
 	}
 	// The scan fallback policy applies whenever a scanner is wired (default
 	// fail-closed); harmless to set when scanning is off.
@@ -1443,12 +1468,20 @@ func run() error {
 
 	opts = append(opts, httpapi.WithAuditLog(auditsvc))
 
+	// The same clamd, for the small user-supplied files that never enter the
+	// video pipeline: posters, avatars, banners, playlist covers, caption
+	// tracks and account-import archives. A28 measured every one of those
+	// reaching the object store unscanned.
+	if fileScanner != nil {
+		opts = append(opts, httpapi.WithFileScanner(fileScanner))
+	}
+
 	// DM completeness (product-decisions.md §14): attachments (scanned fail-closed
 	// when clamd is configured) and SSRF-guarded, best-effort link previews.
 	msgOpts := []messaging.Option{messaging.WithBlocker(blocksvc), messaging.WithLogger(logger)}
 	var attachScanner messaging.Scanner
-	if cfg.MalwareScanEnabled {
-		attachScanner = media.NewClamAV(cfg.ClamAVAddr, blobs, cfg.ClamAVTimeout)
+	if fileScanner != nil {
+		attachScanner = fileScanner
 	}
 	msgOpts = append(msgOpts, messaging.WithAttachments(blobs, attachScanner, messaging.MaxAttachmentBytes))
 	previewGuard := urlsafety.Guard{AllowPrivate: cfg.ImportAllowPrivateURLs}
@@ -3687,4 +3720,21 @@ func resolveBucketOwnership(ctx context.Context, logger *slog.Logger, blobs stor
 	}
 	logger.Info("media gc: claimed the object store with an ownership marker", "marker_key", storage.OwnerMarkerKey)
 	return mediagc.OwnershipOwned
+}
+
+// auditScanDisabled writes the one-per-boot row recording that this instance
+// runs with the safety scanner switched off on purpose. Best-effort: an audit
+// write failure must never stop a boot, but it is logged so the gap is visible.
+func auditScanDisabled(ctx context.Context, auditsvc *audit.Service, logger *slog.Logger, mode string) {
+	if auditsvc == nil {
+		return
+	}
+	if err := auditsvc.Record(ctx, audit.Event{
+		Action: observability.ActionMalwareScanDisabled,
+		Result: observability.ResultSuccess,
+		Actor:  audit.ActorSnapshot{Kind: "system"},
+		Reason: "mode=" + mode,
+	}); err != nil {
+		logger.Warn("could not record the malware-scan opt-out in the audit log", "error", err)
+	}
 }

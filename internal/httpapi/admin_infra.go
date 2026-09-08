@@ -435,8 +435,14 @@ func (s *Server) infraFeatures() []infraFeature {
 			Configured: cfg.ATProtoLoginEnabled,
 		},
 		{
-			Key:        "malware_scan",
-			Enabled:    cfg.MalwareScanEnabled,
+			Key: "malware_scan",
+			// "Enabled" is the operator's INTENT to ingest at all: an instance
+			// that has not opted out means to scan, whether or not it managed
+			// to configure a daemon. That is what puts the no-scanner-no-opt-out
+			// state in the enabled-but-unconfigured quadrant, where the finding
+			// copy lives — under the old shape it read "off, and that's fine"
+			// while every upload was being refused.
+			Enabled:    !cfg.MalwareScanOptedOut(),
 			Configured: strings.TrimSpace(cfg.ClamAVAddr) != "",
 		},
 		{
@@ -625,7 +631,7 @@ var infraFeatureOffNotes = map[string]string{
 	"federation":     "This instance is not on the fediverse: nobody on Mastodon or PeerTube can follow its channels, and its videos do not appear on other instances. Set FEDERATION_ENABLED=true with PUBLIC_BASE_URL and FEDERATION_KEY_KEK.",
 	"atproto":        "Creators cannot cross-post to Bluesky. Set ATPROTO_ENABLED=true (and ATPROTO_KEY_KEK, which seals their linked app passwords at rest).",
 	"atproto_login":  "Visitors cannot sign in with a Bluesky or other atproto account. Set ATPROTO_LOGIN_ENABLED=true — it is identity-only and needs no key.",
-	"malware_scan":   "Uploaded files are published without being scanned. Point CLAMAV_ADDR at a ClamAV daemon and set MALWARE_SCAN_ENABLED=true to scan every original before it goes live.",
+	"malware_scan":   "This instance runs with MALWARE_SCAN_MODE=disabled, so every user-supplied file — uploads, imports, posters, avatars, banners, playlist covers, caption tracks and account archives — is stored without being scanned. Point CLAMAV_ADDR at a ClamAV daemon and drop the disabled mode to scan everything before it goes live.",
 	"captions":       "Videos get no automatic captions, so they are unsearchable by spoken content and inaccessible to viewers who need subtitles. Run a Whisper-compatible service and set WHISPER_ENABLED=true with WHISPER_ENDPOINT.",
 	"live":           "Live streaming is off. Turning it on needs an RTMP media server as well as the toggle: LIVE_RTMP_URL for streamers to publish to and LIVE_HLS_ROOT for the segments it writes.",
 	"ipfs":           "Media is served only from this instance's storage. Enabling the IPFS mirror (IPFS_ENABLED with IPFS_API_URL and IPFS_GATEWAY_URL) replicates public media to a content-addressed network so it survives this server.",
@@ -654,7 +660,7 @@ var infraFeatureOffNotes = map[string]string{
 var infraFeatureMisconfiguredNotes = map[string]string{
 	"search":         "A search client is wired but SEARCH_SERVICE_URL is empty, so every query is falling back to the local database.",
 	"atproto":        "ATPROTO_ENABLED is set with no ATPROTO_KEY_KEK or FEDERATION_KEY_KEK, so linked Bluesky app passwords would be stored unsealed. Production refuses to boot in this state; fix it before promoting this instance.",
-	"malware_scan":   "MALWARE_SCAN_ENABLED is set with no CLAMAV_ADDR, so nothing is being scanned.",
+	"malware_scan":   "No malware scanner is configured and MALWARE_SCAN_MODE is not 'disabled', so EVERY upload, import and image upload is being refused with 503 scanner_not_configured. Set CLAMAV_ADDR, or set MALWARE_SCAN_MODE=disabled to ingest unscanned on purpose.",
 	"captions":       "WHISPER_ENABLED is set with no WHISPER_ENDPOINT, so caption requests answer 503.",
 	"live":           "Live streaming is on but the ingest plane is incomplete: LIVE_RTMP_URL tells streamers where to publish and LIVE_HLS_ROOT is where the media server writes segments. Without both, streams can be created and never started.",
 	"tracing":        "OTEL_ENABLED is set with no OTEL_EXPORTER_OTLP_ENDPOINT, so spans are produced and discarded.",

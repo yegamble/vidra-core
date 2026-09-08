@@ -285,27 +285,44 @@ type Config struct {
 	// No KEK is needed — identity login keeps no PDS tokens.
 	ATProtoLoginEnabled bool
 
-	// MalwareScanEnabled turns on ClamAV scanning of uploaded originals before
-	// publish (fail-closed: infected or unscannable media is not published).
-	// Requires ClamAVAddr. Default false.
+	// MalwareScanEnabled reports whether ingested files are scanned. It is
+	// DERIVED, not read: scanning is on exactly when ClamAVAddr is set. The
+	// MALWARE_SCAN_ENABLED variable that used to drive it is deprecated — it is
+	// still read for one release so an operator who has it in an env file gets a
+	// boot WARN naming the migration path instead of a silent behaviour change,
+	// and setting it to true with no address is still a boot refusal. The old
+	// posture ("unset means unscanned") shipped an instance that gated NOTHING
+	// and said so only on one admin page; the new posture is scan-by-default
+	// with an explicit, auditable opt-out (MALWARE_SCAN_MODE=disabled).
 	MalwareScanEnabled bool
 
-	// ClamAVAddr is the clamd TCP address (host:port) used when MalwareScanEnabled.
+	// MalwareScanEnabledDeprecated records that MALWARE_SCAN_ENABLED was present
+	// in the environment, so the boot path can WARN about a variable it no
+	// longer obeys. It is never a policy input.
+	MalwareScanEnabledDeprecated bool
+
+	// MalwareScanEnabledLegacy is the raw value of the deprecated variable. The
+	// ONLY thing still decided by it is the boot refusal below: an operator who
+	// wrote MALWARE_SCAN_ENABLED=true and no CLAMAV_ADDR asked for scanning and
+	// must be stopped, not quietly handed a refusing instance.
+	MalwareScanEnabledLegacy bool
+
+	// ClamAVAddr is the clamd TCP address (host:port). Setting it IS the switch
+	// that turns scanning on.
 	ClamAVAddr string
 
 	// ClamAVTimeout bounds a single INSTREAM scan: the connection deadline the
-	// scanner sets before streaming the object to clamd. A slow or wedged clamd
+	// scanner sets for dial + stream + verdict. A slow or wedged clamd
 	// therefore surfaces as a scan error within this window (which MalwareScanMode
-	// then resolves) rather than hanging the upload finalisation. Parsed with
-	// time.ParseDuration (e.g. "60s", "2m"); default 60s; must be > 0 when
-	// MalwareScanEnabled.
+	// resolves) instead of hanging an upload. Must be positive when scanning is
+	// on.
 	ClamAVTimeout time.Duration
 
 	// MalwareScanMode is the ClamAV fallback policy applied when a scan cannot
-	// complete (a dial/protocol/IO error): "fail-closed" (default — unscannable
-	// media is not published), "fail-open" (publish anyway, logged loudly), or
-	// "quarantine" (park for moderator review). An INFECTED result always fails
-	// the publish regardless of mode. Validated to one of the three.
+	// complete, plus the explicit opt-out. fail-closed (default) | fail-open |
+	// quarantine | disabled. 'disabled' is the only value that permits ingestion
+	// with no scanner, and it is refused alongside a set ClamAVAddr because the
+	// two together are contradictory.
 	MalwareScanMode string
 
 	// TranscodingEnabled turns on the HLS transcoding pipeline: publishing a
@@ -1103,7 +1120,9 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		ATProtoLoginEnabled:                    p.Bool("ATPROTO_LOGIN_ENABLED", false),
 		MFAKeyKEK:                              getEnv("MFA_KEY_KEK", ""),
 		TOTPIssuer:                             getEnv("TOTP_ISSUER", ""),
-		MalwareScanEnabled:                     p.Bool("MALWARE_SCAN_ENABLED", false),
+		MalwareScanEnabled:                     strings.TrimSpace(getEnv("CLAMAV_ADDR", "")) != "",
+		MalwareScanEnabledDeprecated:           p.Set("MALWARE_SCAN_ENABLED"),
+		MalwareScanEnabledLegacy:               p.Bool("MALWARE_SCAN_ENABLED", false),
 		ClamAVAddr:                             getEnv("CLAMAV_ADDR", ""),
 		ClamAVTimeout:                          p.Duration("CLAMAV_TIMEOUT", 60*time.Second),
 		MalwareScanMode:                        getEnv("MALWARE_SCAN_MODE", "fail-closed"),
@@ -1654,16 +1673,28 @@ func (c *Config) validate() error {
 			add(varErrorf("SMTP_FROM", "config: SMTP_FROM must be a plain email address"))
 		}
 	}
-	if c.MalwareScanEnabled && strings.TrimSpace(c.ClamAVAddr) == "" {
-		add(varErrorf("CLAMAV_ADDR", "config: CLAMAV_ADDR is required when MALWARE_SCAN_ENABLED=true"))
+	// The deprecated switch is still honoured in ONE direction: an explicit
+	// true with no address is an operator who asked for scanning and would
+	// otherwise get an instance that refuses every upload at runtime instead of
+	// failing at boot, which is strictly worse to diagnose.
+	if c.MalwareScanEnabledLegacy && strings.TrimSpace(c.ClamAVAddr) == "" {
+		add(varErrorf("CLAMAV_ADDR", "config: CLAMAV_ADDR is required when MALWARE_SCAN_ENABLED=true (MALWARE_SCAN_ENABLED is deprecated: setting CLAMAV_ADDR is what turns scanning on)"))
 	}
 	if c.MalwareScanEnabled && c.ClamAVTimeout <= 0 {
-		add(varErrorf("CLAMAV_TIMEOUT", "config: CLAMAV_TIMEOUT must be a positive duration when MALWARE_SCAN_ENABLED=true"))
+		add(varErrorf("CLAMAV_TIMEOUT", "config: CLAMAV_TIMEOUT must be a positive duration when CLAMAV_ADDR is set"))
 	}
 	switch c.MalwareScanMode {
 	case "", "fail-closed", "fail-open", "quarantine": // "" = default fail-closed
+	case "disabled":
+		// The explicit opt-out. Together with a configured scanner it is a
+		// contradiction — the operator has both wired a daemon and declared
+		// that ingestion runs unscanned — and a contradiction resolved silently
+		// in either direction is a security posture nobody chose.
+		if strings.TrimSpace(c.ClamAVAddr) != "" {
+			add(varErrorf("MALWARE_SCAN_MODE", "config: MALWARE_SCAN_MODE=disabled contradicts CLAMAV_ADDR being set: unset CLAMAV_ADDR to run without a scanner, or pick fail-closed, fail-open or quarantine to use the one you configured"))
+		}
 	default:
-		add(varErrorf("MALWARE_SCAN_MODE", "config: MALWARE_SCAN_MODE %q must be one of fail-closed, fail-open, quarantine", c.MalwareScanMode))
+		add(varErrorf("MALWARE_SCAN_MODE", "config: MALWARE_SCAN_MODE %q must be one of fail-closed, fail-open, quarantine, disabled", c.MalwareScanMode))
 	}
 	// The extra video codecs are CMAF-only. MPEG-TS is the frozen
 	// compatibility/rollback packaging path: a variant there is a rendition
@@ -2592,6 +2623,15 @@ func (p *envParser) Str(key, def string) string {
 	return def
 }
 
+// Set reports whether key was EXPLICITLY provided with a non-empty value. It
+// exists for deprecation: a variable that is now derived still has to be able
+// to say "you set this and it no longer does what you think", which a value
+// read alone cannot distinguish from the default.
+func (p *envParser) Set(key string) bool {
+	v, ok := p.lookup(key)
+	return ok && strings.TrimSpace(v) != ""
+}
+
 // Err returns every malformed-variable error recorded while parsing, joined,
 // or nil when the environment parsed cleanly.
 func (p *envParser) Err() error {
@@ -2659,4 +2699,24 @@ func splitAndTrim(s string) []string {
 		}
 	}
 	return out
+}
+
+// ScanOptOut is the MALWARE_SCAN_MODE value that permits ingestion with no
+// scanner wired. It is deliberately not one of the three fallback policies:
+// those decide what happens when a scan CANNOT COMPLETE, this one says there is
+// no scan at all.
+const ScanOptOut = "disabled"
+
+// MalwareScanOptedOut reports the explicit, operator-declared opt-out.
+func (c *Config) MalwareScanOptedOut() bool {
+	return strings.TrimSpace(c.MalwareScanMode) == ScanOptOut
+}
+
+// IngestionRefusedForScanner reports whether every user-supplied ingestion path
+// must refuse with 503 scanner_not_configured: no scanner is wired and the
+// operator has not declared they meant it. This is the whole of the new default
+// posture — an instance with no CLAMAV_ADDR and no opt-out accepts nothing,
+// rather than accepting everything unscanned and saying so on one admin page.
+func (c *Config) IngestionRefusedForScanner() bool {
+	return !c.MalwareScanEnabled && !c.MalwareScanOptedOut()
 }

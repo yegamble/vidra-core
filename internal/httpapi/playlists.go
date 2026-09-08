@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"strings"
@@ -453,13 +454,23 @@ func (s *Server) handleSetPlaylistThumbnail(c echo.Context) error {
 	defer func() { _ = f.Close() }()
 
 	ctx := c.Request().Context()
+	// Scanned before it is stored (A28: playlist covers were ingested
+	// unscanned). Read into memory first — the cover is body-limit bounded, and
+	// a refused file should never reach the object store.
+	data, err := readScannable(f, maxIdentityImageBytes)
+	if err != nil {
+		return err
+	}
+	if err := s.scanBeforeStore(ctx, "playlist_cover", data); err != nil {
+		return err
+	}
 	// Snapshot the OLD cover key before the write (media_purge.go): a same-
 	// extension re-upload overwrites it in place, and an extension change is
 	// exactly when the superseded key is the one the edge cached.
 	oldCover := s.playlistCoverEdgePath(ctx, id)
 	if _, err := s.playlistsvc.SetThumbnail(ctx, userID, id, playlist.UploadInput{
 		Filename: fh.Filename,
-		Reader:   f,
+		Reader:   bytes.NewReader(data),
 	}); err != nil {
 		if errors.Is(err, playlist.ErrUnsupportedMedia) {
 			return echo.NewHTTPError(http.StatusUnsupportedMediaType, "cover must be a JPEG, PNG, or WebP image")

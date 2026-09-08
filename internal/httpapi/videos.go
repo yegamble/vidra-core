@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -1384,6 +1385,14 @@ func (s *Server) handleUploadVideoFile(c echo.Context) error {
 	// transcoding will move this off the request path; for now it is immediate.
 	v, err := s.videosvc.Process(ctx, id, file.StorageKey)
 	if err != nil {
+		// A safety-scan rejection is the one Process failure the CREATOR has to
+		// see. It used to be reported as a 201 carrying state:"failed" — which
+		// is how A28 found the creator learning nothing at all — and it must not
+		// become a scrubbed 500 either. 422 with the neutral sentence.
+		var rejected *video.MalwareRejectedError
+		if errors.As(err, &rejected) {
+			return &SafetyScanRejectedError{}
+		}
 		return err
 	}
 	return c.JSON(http.StatusCreated, uploadVideoFileResponse{
@@ -1436,10 +1445,20 @@ func (s *Server) handleSetVideoThumbnail(c echo.Context) error {
 	}
 	defer func() { _ = f.Close() }()
 
+	// A CREATOR-SUPPLIED poster is scanned; the frame-pick branch above is not,
+	// because that image is derived by this instance from an original the
+	// scanner already cleared.
+	data, err := readScannable(f, maxIdentityImageBytes)
+	if err != nil {
+		return err
+	}
+	if err := s.scanBeforeStore(c.Request().Context(), "video_thumbnail", data); err != nil {
+		return err
+	}
 	file, err := s.videosvc.SetThumbnail(c.Request().Context(), v.OwnerID, id, video.UploadInput{
 		Filename:    fh.Filename,
 		ContentType: fh.Header.Get("Content-Type"),
-		Reader:      f,
+		Reader:      bytes.NewReader(data),
 	})
 	if err != nil {
 		return videoError(err)

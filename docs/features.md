@@ -267,16 +267,46 @@ response (`GET /api/v1/videos/{id}`) also carries `channel_handle` +
 `file` part) stores the original through the storage backend, then finalises the
 video: `draft → processing → published` (or `failed` if a configured media probe
 rejects it). Re-uploading replaces the prior original, and non-owner/unknown → `404`.
-**Malware scanning** (`MALWARE_SCAN_ENABLED=true`, streams the original to the
-clamd at `CLAMAV_ADDR` — the compose `scan` profile ships one): an INFECTED file
-always fails. `MALWARE_SCAN_MODE` decides the fallback on a scan *error*:
-`fail-closed` (default — not published), `fail-open` (published anyway, logged
-loudly), or `quarantine` (parked in the moderator review queue). A single scan is
+**Malware scanning is on by default.** Setting `CLAMAV_ADDR` (the compose `scan`
+profile ships a clamd at `clamav:3310`) is what turns it on — `MALWARE_SCAN_ENABLED`
+is deprecated and no longer read. An instance with **neither** an address **nor**
+`MALWARE_SCAN_MODE=disabled` refuses every user-supplied file with
+`503 scanner_not_configured`, and `/api/v1/instance` reports `features.uploads`,
+`features.imports`, `features.user_import` and `features.video_replace` as `false`
+so the Studio hides the controls rather than offering ones the server will refuse.
+
+**Everything a person uploads is scanned**, not just video originals: the direct
+and resumable upload paths, source replacement, URL imports and channel syncs,
+custom posters, caption tracks, playlist covers, user and channel avatars and
+banners, instance branding, DM attachments and account-import archives. The small
+in-memory files are scanned **before** they are stored, so a refused avatar never
+reaches the object store. Derived artefacts are exempt because their input was
+already cleared: server-generated storyboards, transcoder renditions, the
+frame-pick poster and Whisper transcripts.
+
+An INFECTED file always fails. `MALWARE_SCAN_MODE` decides the fallback on a scan
+*error*: `fail-closed` (default — not published), `fail-open` (published anyway,
+logged loudly **and** audited), or `quarantine` (parked in the moderator review
+queue; object classes that have no moderation queue — avatars, banners, covers,
+captions, archives — fall back to fail-closed and refuse). A single scan is
 bounded by `CLAMAV_TIMEOUT` (default `60s`), so a slow/unreachable clamd surfaces
-as a scan error (resolved by the mode above) rather than hanging the upload. Any
-outcome that keeps an upload out of `published` (infection, or unscannable under a
-non-publishing mode) writes a `content.upload.malware_rejected` audit event —
-safe ids/outcome/policy only, never file content.
+as a scan error (resolved by the mode above) rather than hanging the upload.
+
+**What the creator sees.** A refusal is neutral and identical everywhere — 422
+with the code `safety_scan_rejected` and the sentence *"This file was rejected by
+the instance's safety scan and was not stored."* — on the synchronous upload, on
+the upload session's `failure_reason` (state `failed`, never `completed`), and on
+the import job's error. The signature and the scanner's name never reach the
+creator: telling them "malware" tells an attacker their probe worked. The verdict
+lives in the audit row and, under quarantine, on the moderation-queue entry.
+
+**Audit.** Any outcome that keeps an upload out of `published` (infection, or
+unscannable under a non-publishing mode) writes `content.upload.malware_rejected`;
+a file **published unscanned** under `fail-open` writes
+`content.upload.malware_scan_skipped` with the reason class `scanner_unavailable`;
+booting with `MALWARE_SCAN_MODE=disabled` writes one `system.malware_scan.disabled`
+row per boot. All three carry safe ids/outcome/policy only, never file content and
+never `CLAMAV_ADDR`.
 The file extension must be an accepted video container (else `415`) and the body must
 be within `UPLOAD_MAX_SIZE` (else `413`; this route is exempt from the small
 `HTTP_BODY_LIMIT` that guards the JSON API). The stored file is tracked in
@@ -633,8 +663,8 @@ inbox (with per-conversation `unread_count`); `POST`/`GET /api/v1/conversations/
 send/list. A user block in either direction refuses messaging with `403`.
 
 DM completeness: **attachments** — `POST /api/v1/conversations/{id}/attachments`
-(multipart `file`, ≤100 MiB, image/video/audio/pdf/doc, ClamAV fail-closed when
-`MALWARE_SCAN_ENABLED`) returns an `attachment_id` to reference in a send
+(multipart `file`, ≤100 MiB, image/video/audio/pdf/doc, ClamAV fail-closed
+whenever `CLAMAV_ADDR` is set) returns an `attachment_id` to reference in a send
 (`attachment_ids: []`, ≤30, own-uploaded); `GET /api/v1/attachments/{id}` serves
 the bytes participant-gated; attachments are plaintext-only (encrypted
 conversations `422`). Facebook-Messenger-parity limits apply instead of storage-quota
