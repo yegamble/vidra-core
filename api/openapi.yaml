@@ -21156,15 +21156,13 @@ components:
           format: int64
         components:
           type: object
+          description: >-
+            One entry per dependency, sharing ComponentStatus with /readyz — the
+            two surfaces render the same rows and an inline copy here had already
+            drifted (it described only status and error, so the federation
+            queue's `detail` was invisible to a generated client).
           additionalProperties:
-            type: object
-            required: [status]
-            properties:
-              status:
-                type: string
-                description: ok | down | not_configured
-              error:
-                type: string
+            $ref: "#/components/schemas/ComponentStatus"
         rate_limits:
           type: object
           description: >-
