@@ -12621,7 +12621,8 @@ paths:
       description: >-
         Returns an operations snapshot of every durable background-work queue
         (transcode_jobs, federation_deliveries, import_jobs, caption_jobs,
-        account_exports, upload_sessions, storage_migrations): per-queue depth
+        account_exports, upload_sessions, storage_migrations,
+        cdn_purge_jobs): per-queue depth
         counts by state
         (pending/running/done/failed) plus the age of the oldest still-pending
         item (a stuck-worker signal), and a merged recent-failures list. This is
@@ -20442,16 +20443,17 @@ components:
         cdn_purge:
           type: object
           description: >-
-            This process's CDN purge record: how many invalidation fan-outs
-            have run since boot, the per-key outcomes, and when a run last
-            ended with the edge possibly still serving something. It exists
-            because purge success is otherwise silent and failure one aggregate
-            log line, while promoting media headers to shared-cacheable is
-            gated on purge being demonstrably exercised. ABSENT — not zeroed —
-            when no CDN is wired: zero runs on an edgeless install would read
-            as a purge system that never works. In-process counters, reset by a
-            restart. Never includes keys or URLs.
-          required: [runs, keys_purged, keys_failed]
+            The CDN purge record, in two halves with different lifetimes.
+            runs/keys_purged/keys_failed/last_incomplete_run_at are THIS
+            PROCESS's in-memory counters, reset by a restart: they answer "has
+            purge been exercised, and is it failing now". pending_retries,
+            oldest_pending_seconds and dead_letters are read from the durable
+            purge queue and answer what a restart must not erase: "is the edge
+            still serving something this instance has stopped serving". ABSENT
+            — not zeroed — when no CDN is wired: zero runs on an edgeless
+            install would read as a purge system that never works. Never
+            includes keys or URLs.
+          required: [runs, keys_purged, keys_failed, pending_retries, oldest_pending_seconds, dead_letters]
           properties:
             runs:
               type: integer
@@ -20476,6 +20478,27 @@ components:
                 list known to be short (listing failed / fan-out cap hit).
                 Omitted while every run since boot purged its full key set, so
                 absence is the good news it reads as.
+            pending_retries:
+              type: integer
+              format: int64
+              description: >-
+                Queued invalidations still outstanding — waiting on their
+                backoff or claimed by a worker. Zero is the healthy reading.
+                Survives a restart, unlike the counters above.
+            oldest_pending_seconds:
+              type: integer
+              format: int64
+              description: >-
+                How long the oldest outstanding invalidation has been waiting.
+                The staleness signal: a number that keeps growing means the
+                edge is refusing purges. `vidra doctor` warns on it.
+            dead_letters:
+              type: integer
+              format: int64
+              description: >-
+                Invalidations that gave up after the attempt cap. Each one is
+                an edge still serving an object this instance no longer serves;
+                only a manual invalidation at the provider clears it.
         process_stale_seconds:
           type: integer
           format: int64

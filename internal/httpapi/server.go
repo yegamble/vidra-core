@@ -24,6 +24,7 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/block"
 	"github.com/vidra/vidra-core/internal/captionjob"
+	"github.com/vidra/vidra-core/internal/cdnpurge"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/channelsync"
 	"github.com/vidra/vidra-core/internal/comment"
@@ -217,6 +218,12 @@ type Server struct {
 	// provider (phase-4 item 2). Both nil — the default — means no CDN source.
 	mediaCDNEdge  delivery.CDNLookup
 	mediaCDNPurge delivery.CDNPurge
+	// cdnpurgesvc is the DURABLE half of the invalidation seam (migration
+	// 0137): it persists whatever an immediate pass could not purge and owns
+	// the account-deletion snapshot and the downloads-revocation walk. Nil when
+	// no CDN is configured, and every method on it is nil-safe, so the call
+	// sites never branch.
+	cdnpurgesvc *cdnpurge.Service
 	// deliverysvc decides where each media request's bytes come from
 	// (api-proxy / presigned / cdn / ipfs-gateway). Built in New() after the
 	// options have been applied; never nil, so no handler needs a nil check.
@@ -686,6 +693,18 @@ func WithDeliveryCDN(edge delivery.CDNLookup, purge delivery.CDNPurge) Option {
 		s.mediaCDNEdge = edge
 		s.mediaCDNPurge = purge
 	}
+}
+
+// WithCDNPurgeQueue wires the durable purge queue (internal/cdnpurge). Unset —
+// every install with no CDN — leaves a nil service, which every caller in
+// media_purge.go handles by doing exactly what it did before this queue
+// existed: one immediate pass and one warning.
+//
+// It is a SEPARATE option from WithDeliveryCDN because the queue needs a
+// database and the edge does not, and because a worker-only process wires the
+// queue with no HTTP server at all.
+func WithCDNPurgeQueue(svc *cdnpurge.Service) Option {
+	return func(s *Server) { s.cdnpurgesvc = svc }
 }
 
 // WithDRM wires the configured content-protection provider (interfaces.md §10,

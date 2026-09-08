@@ -51,6 +51,14 @@ const (
 	// name so the depth gauge, the job_runs projection and the admin jobs page
 	// all say "storage_migrations" and mean the same feature.
 	QueueStorageMigration = "storage_migrations"
+	// QueueCDNPurge is the CDN invalidation queue (migration 0137). Its depth
+	// is the answer to "is the edge still serving something this instance has
+	// stopped serving": a pending row is an invalidation the edge has not
+	// accepted, and a failed one gave up after the attempt cap and needs a
+	// manual purge at the provider. It is the only queue here whose backlog is
+	// a CORRECTNESS problem rather than a latency one — nothing is slow because
+	// of it; something is wrong.
+	QueueCDNPurge = "cdn_purge_jobs"
 )
 
 // QueueStatus is one queue's normalised depth snapshot. For upload_sessions —
@@ -90,12 +98,14 @@ type Querier interface {
 	AccountExportStats(ctx context.Context) (sqlcgen.AccountExportStatsRow, error)
 	UploadSessionStats(ctx context.Context) (sqlcgen.UploadSessionStatsRow, error)
 	StorageMigrationStats(ctx context.Context) (sqlcgen.StorageMigrationStatsRow, error)
+	CDNPurgeJobStats(ctx context.Context) (sqlcgen.CDNPurgeJobStatsRow, error)
 	TranscodeRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.TranscodeRecentFailuresRow, error)
 	FederationRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.FederationRecentFailuresRow, error)
 	ImportRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.ImportRecentFailuresRow, error)
 	CaptionRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.CaptionRecentFailuresRow, error)
 	AccountExportRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.AccountExportRecentFailuresRow, error)
 	StorageMigrationRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.StorageMigrationRecentFailuresRow, error)
+	CDNPurgeRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.CDNPurgeRecentFailuresRow, error)
 }
 
 // Service produces the durable-queue overview.
@@ -145,6 +155,10 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return ov, err
 	}
+	cp, err := s.q.CDNPurgeJobStats(ctx)
+	if err != nil {
+		return ov, err
+	}
 	ov.Queues = []QueueStatus{
 		{QueueTranscode, tj.Pending, tj.Running, tj.Done, tj.Failed, tj.OldestPendingAgeSeconds},
 		{QueueFederation, fd.Pending, fd.Running, fd.Done, fd.Failed, fd.OldestPendingAgeSeconds},
@@ -153,6 +167,7 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 		{QueueAccountExport, ae.Pending, ae.Running, ae.Done, ae.Failed, ae.OldestPendingAgeSeconds},
 		{QueueUploadSessions, us.Pending, us.Running, us.Done, us.Failed, us.OldestPendingAgeSeconds},
 		{QueueStorageMigration, sm.Pending, sm.Running, sm.Done, sm.Failed, sm.OldestPendingAgeSeconds},
+		{QueueCDNPurge, cp.Pending, cp.Running, cp.Done, cp.Failed, cp.OldestPendingAgeSeconds},
 	}
 
 	failures := make([]Failure, 0, maxRecentFailures)
@@ -200,6 +215,17 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	} else {
 		for _, r := range rows {
 			failures = append(failures, Failure{QueueStorageMigration, r.ID, RedactDetail(r.Error), r.Attempts, r.UpdatedAt})
+		}
+	}
+
+	// CDN purge failures report the JOB id and a status summary, never a media
+	// URL: the overview contract forbids arguments, and internal/cdn has
+	// already stripped the request URL out of every error it returns.
+	if rows, err := s.q.CDNPurgeRecentFailures(ctx, perQueueFailureFetch); err != nil {
+		return ov, err
+	} else {
+		for _, r := range rows {
+			failures = append(failures, Failure{QueueCDNPurge, r.ID, RedactDetail(r.Error), r.Attempts, r.UpdatedAt})
 		}
 	}
 

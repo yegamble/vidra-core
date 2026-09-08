@@ -29,6 +29,7 @@ import (
 	"github.com/vidra/vidra-core/internal/cache"
 	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/cdn"
+	"github.com/vidra/vidra-core/internal/cdnpurge"
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/channelsync"
 	"github.com/vidra/vidra-core/internal/comment"
@@ -53,6 +54,7 @@ import (
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/mail"
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/mediaroute"
 	"github.com/vidra/vidra-core/internal/mediagc"
 	"github.com/vidra/vidra-core/internal/mediahash"
 	"github.com/vidra/vidra-core/internal/messaging"
@@ -996,9 +998,13 @@ func run() error {
 	// the video-service transcode seams only run post-startup (worker goroutines or
 	// request handlers), so these deferred-assignment closures see the built
 	// services. Nil-guarded regardless (mirrors the fedsvc/atprotosvc seam above).
+	// cdnPurgeSvc is the same shape of deferred assignment: the media-replaced
+	// hook is registered on the video service before the CDN provider exists,
+	// and stays a no-op on the installs that never configure one.
 	var (
 		transcodesvc *transcode.Service
 		videosvc     *video.Service
+		cdnPurgeSvc  *cdnpurge.Service
 	)
 	// releaseHold releases a publish-after-transcode hold once no live job
 	// remains (0098), shared by the completion and terminal-failure hooks. The
@@ -1201,6 +1207,25 @@ func run() error {
 			}),
 		)
 	}
+	// CDN invalidation for the two assets that are REPLACED IN PLACE at a URL
+	// that does not change with their bytes: the poster and the storyboard
+	// sprite. Everything else mints a new URL and needs no purge.
+	//
+	// The hook is registered unconditionally and closes over cdnPurgeSvc, which
+	// is assigned later (the CDN provider is not built yet at this point) and
+	// stays nil on the installs that have no CDN. Every method on it is
+	// nil-safe, so an edgeless instance runs an empty closure rather than
+	// branching here — and the alternative, moving the whole CDN block above
+	// the video service, would reorder a boot sequence for a nil check.
+	//
+	// It is on the SERVICE and not on a handler because the storyboard's write
+	// sites are the publish path, a source replacement and the backfill worker
+	// as well as the creator's own upload; the backfill worker runs in a
+	// process where httpapi.Server is never constructed.
+	vopts = append(vopts, video.WithMediaReplacedHook(
+		func(ctx context.Context, videoID uuid.UUID, kind string) {
+			cdnPurgeSvc.PurgeDetached(ctx, []string{replacedMediaPath(videoID, kind)}, true)
+		}))
 	videosvc = video.NewService(db.Queries(), blobs, vopts...)
 
 	// DUAL-READ during a storage migration. The HTTP layer's media handle — and
@@ -1287,6 +1312,18 @@ func run() error {
 			os.Exit(1)
 		}
 		opts = append(opts, httpapi.WithDeliveryCDN(cdnProvider.EdgeURL, cdnProvider.Purge))
+		// The DURABLE half of the purge seam (migration 0137). It is built in
+		// every role, because the queue is drained by workers and enqueued by
+		// handlers, and the two halves must agree about the table even when
+		// they are different processes.
+		cdnPurgeSvc = cdnpurge.NewService(db.Queries(), cdnProvider.Purge,
+			cdnpurge.WithLogger(logger),
+			// The counters the admin status page reads. Wired here rather than
+			// inside httpapi because the immediate pass for a poster or
+			// storyboard replacement runs from the video service's hook, which
+			// fires in the worker process too.
+			cdnpurge.WithRecorder(httpapi.RecordEdgePurgeRun))
+		opts = append(opts, httpapi.WithCDNPurgeQueue(cdnPurgeSvc))
 		logger.Info("cdn delivery available",
 			"cdn", cdnProvider.Describe(),
 			"origin", "point the CDN's origin at THIS api host; it must forward Range and the query string (the ?v= generation tag is part of the cache key)",
@@ -2049,6 +2086,21 @@ func run() error {
 		logger.Info("account export worker started")
 	}
 
+	// Drain the CDN purge queue (migration 0137): retries the invalidations an
+	// edge refused, runs the account-deletion snapshots, and advances the
+	// downloads-revocation walk one page at a time.
+	//
+	// Gated on a CDN being configured, unlike the queues above — cdnPurgeSvc is
+	// nil without one, and starting a ticker that claims from an always-empty
+	// table on every edgeless install is exactly the free-by-default gate the
+	// rest of the purge seam applies.
+	if runWorkers && cdnPurgeSvc != nil {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runCDNPurgeWorker(workerCtx, logger, cdnPurgeSvc)
+		logger.Info("cdn purge worker started")
+	}
+
 	// Hard-delete expired disappearing E2EE messages in the background (always
 	// on: the expiry scan is a cheap partial-index lookup; reads additionally
 	// filter expired rows so expiry is correct between sweeps).
@@ -2736,6 +2788,45 @@ func runAccountExportWorker(ctx context.Context, logger *slog.Logger, svc *accou
 				DoneMsg: "account export sweep removed expired archives",
 				Run: func(ctx context.Context, _ time.Time) (int, error) {
 					return svc.SweepExpiredExports(ctx, sweepBatch)
+				},
+			},
+		},
+	}.Run(ctx, logger)
+}
+
+// runCDNPurgeWorker drains the CDN purge queue and sweeps its finished rows on a
+// ticker until ctx is canceled (mirrors runAccountExportWorker).
+//
+// NOT LEADER-GATED, deliberately. Every claim is a lease under FOR UPDATE SKIP
+// LOCKED, so two instances take disjoint rows rather than the same one, and a
+// takedown is exactly the work that must not wait for an election to settle.
+// Per-job failures are recorded in the queue (retry/backoff/dead-letter); only
+// the claim and sweep query errors reach this log.
+func runCDNPurgeWorker(ctx context.Context, logger *slog.Logger, svc *cdnpurge.Service) {
+	const (
+		interval = 10 * time.Second
+		// One claim per tick per instance. A batch would let one slow edge hold
+		// the lease on several jobs at once, and there is no throughput problem
+		// to solve here: the catalogue walk is itself batched, and a retry is a
+		// handful of calls.
+		batch = 1
+	)
+	jobloop.Loop{
+		Interval: interval,
+		Jitter:   true,
+		Passes: []jobloop.Pass{
+			{
+				FailMsg: "cdn purge drain failed",
+				DoneMsg: "cdn purge drain completed jobs",
+				Run: func(ctx context.Context, _ time.Time) (int, error) {
+					return svc.DrainOnce(ctx, batch)
+				},
+			},
+			{
+				FailMsg: "cdn purge sweep failed",
+				DoneMsg: "cdn purge sweep removed finished jobs",
+				Run: func(ctx context.Context, _ time.Time) (int, error) {
+					return svc.SweepFinished(ctx)
 				},
 			},
 		},
@@ -3687,4 +3778,17 @@ func resolveBucketOwnership(ctx context.Context, logger *slog.Logger, blobs stor
 	}
 	logger.Info("media gc: claimed the object store with an ownership marker", "marker_key", storage.OwnerMarkerKey)
 	return mediagc.OwnershipOwned
+}
+
+// replacedMediaPath is the media route URL of an asset that was just replaced in
+// place. Both are served at a stable path — that is exactly why they need a
+// purge — so the mapping is a fixed two-entry table rather than anything
+// derived, and it uses the same builders the request handlers do
+// (internal/mediaroute) because an invalidation for a URL the routes do not
+// serve would answer 404 at the edge, which internal/cdn counts as success.
+func replacedMediaPath(videoID uuid.UUID, kind string) string {
+	if kind == "storyboard" {
+		return mediaroute.Video(videoID, "/storyboard.jpg")
+	}
+	return mediaroute.Video(videoID, "/thumbnail")
 }
