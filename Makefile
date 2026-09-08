@@ -59,7 +59,7 @@ test-integration: ## Run integration tests (-tags=integration); needs DATABASE_U
 
 .PHONY: test-ipfs-integration
 test-ipfs-integration: ## Run real-Kubo tests; public proof additionally needs IPFS_TEST_PUBLIC_GATEWAY_URL + IPFS_TEST_VIDEO_PATH (self-skips unless required)
-	go test -count=1 -v -tags=ipfs_integration -race ./internal/ipfs/...
+	go test -count=1 -v -tags=ipfs_integration -race ./internal/ipfs/... ./internal/ipfsmirror/...
 
 # The two halves of the ipfs_integration tag, split because they have very
 # different dependencies. The LOCAL half needs only the compose kubo node and is
@@ -69,7 +69,7 @@ test-ipfs-integration: ## Run real-Kubo tests; public proof additionally needs I
 # is not a merge gate. It runs in the scheduled ipfs-public-gateway lane.
 .PHONY: test-ipfs-integration-local
 test-ipfs-integration-local: ## Local-kubo IPFS proofs only (required CI lane); needs IPFS_TEST_API_URL + IPFS_TEST_GATEWAY_URL
-	go test -count=1 -v -tags=ipfs_integration -race -run 'TestIntegrationAddPinCat|TestIntegrationAddDirectoryHLSTree' ./internal/ipfs/...
+	go test -count=1 -v -tags=ipfs_integration -race -run 'TestIntegrationAddPinCat|TestIntegrationAddDirectoryHLSTree|TestIntegrationMirrorPinsPromotedGeneration' ./internal/ipfs/... ./internal/ipfsmirror/...
 
 .PHONY: test-ipfs-public-gateway
 test-ipfs-public-gateway: ## The public-gateway round trip only (optional, scheduled); needs IPFS_TEST_PUBLIC_GATEWAY_URL + IPFS_TEST_VIDEO_PATH

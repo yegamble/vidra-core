@@ -3,6 +3,8 @@ package ipfsmirror
 import (
 	"context"
 	"errors"
+	"path"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -23,6 +25,7 @@ type sqlQueries interface {
 	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
 	GetChannelByID(ctx context.Context, id uuid.UUID) (sqlcgen.Channel, error)
 	GetVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
+	GetStreamingPlaylist(ctx context.Context, videoID uuid.UUID) (sqlcgen.StreamingPlaylist, error)
 	ListVideoIDsByOwner(ctx context.Context, ownerID uuid.UUID) ([]uuid.UUID, error)
 	ListVideoFiles(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.VideoFile, error)
 	ListCaptionsByVideo(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.Caption, error)
@@ -73,6 +76,43 @@ func (l *SQLLookups) OwnerVideoIDs(ctx context.Context, userID uuid.UUID) ([]uui
 		return nil, err
 	}
 	return ids, nil
+}
+
+// VideoHLSTree returns the promoted transcode generation's directory: the
+// directory of streaming_playlists.master_key.
+//
+// The master key IS the promotion record — transcode.storeResult swapping it to
+// the new generation is what makes a re-transcode visible — so its directory is
+// by construction the one generation whose master.m3u8 players are being pointed
+// at, whichever rN that happens to be and however many other generations are
+// still sitting in the object store. The same derivation is what serves HLS
+// children (httpapi.serveHLSChild), what the CDN purge lists a tree with
+// (httpapi.videoEdgePurgeTree) and what the blob-reference check walks
+// (blobverify); reading it out of anywhere else — the transcode counter, the key
+// grammar — would be a second opinion that can disagree with what is served.
+//
+// A PeerTube reference-mode import keeps the source instance's layout
+// (streaming-playlists/hls/<source-uuid>/), which this handles for free and the
+// stable per-video prefix never could: that tree is what the video actually
+// serves, so it is what the mirror should carry.
+func (l *SQLLookups) VideoHLSTree(ctx context.Context, videoID uuid.UUID) (string, bool, error) {
+	sp, err := l.q.GetStreamingPlaylist(ctx, videoID)
+	if err != nil {
+		if missing(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if sp.MasterKey == "" || !strings.Contains(sp.MasterKey, "/") {
+		// No master ('' after a dead-lettered transcode) or a bare filename:
+		// there is no directory to mirror.
+		return "", false, nil
+	}
+	dir := path.Dir(sp.MasterKey)
+	if dir == "." || dir == "/" {
+		return "", false, nil
+	}
+	return dir, true, nil
 }
 
 func (l *SQLLookups) VideoFiles(ctx context.Context, videoID uuid.UUID) ([]VideoFileRef, error) {
