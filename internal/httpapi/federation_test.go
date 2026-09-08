@@ -224,7 +224,7 @@ func (f fakeFedRepo) IsRemoteActorBlockedByAnyone(_ context.Context, actorURL st
 }
 
 func (f fakeFedRepo) IsRemoteActorBlockedBy(_ context.Context, arg sqlcgen.IsRemoteActorBlockedByParams) (bool, error) {
-	return f.remoteBlocks[arg.BlockerID.String()+"|"+arg.RemoteActorUrl], nil
+	return f.remoteBlocks[arg.BlockerID.String()+"|"+arg.ActorUrl], nil
 }
 
 func (f fakeFedRepo) BlockRemoteActor(_ context.Context, arg sqlcgen.BlockRemoteActorParams) error {

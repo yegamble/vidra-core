@@ -24,8 +24,9 @@ WHERE c.remote_video_id = $1
       WHERE mi.muter_id = $2 AND mi.domain = ra.domain
   )
   AND NOT EXISTS (
-      SELECT 1 FROM remote_actor_blocks rab
-      WHERE rab.blocker_id = $2 AND rab.remote_actor_url = c.remote_actor_url
+      SELECT 1 FROM remote_actor_block_reach rab
+      WHERE (rab.blocker_id = $2 OR rab.blocker_id IS NULL)
+        AND rab.actor_url = c.remote_actor_url
   )
 `
 
@@ -208,8 +209,9 @@ WHERE c.remote_video_id = $1
       WHERE mi.muter_id = $2 AND mi.domain = ra.domain
   )
   AND NOT EXISTS (
-      SELECT 1 FROM remote_actor_blocks rab
-      WHERE rab.blocker_id = $2 AND rab.remote_actor_url = c.remote_actor_url
+      SELECT 1 FROM remote_actor_block_reach rab
+      WHERE (rab.blocker_id = $2 OR rab.blocker_id IS NULL)
+        AND rab.actor_url = c.remote_actor_url
   )
 ORDER BY c.created_at, c.id
 LIMIT $4 OFFSET $3

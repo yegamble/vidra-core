@@ -164,6 +164,40 @@ func (r *Recorder) RunID(ctx context.Context, queue, sourceID string) uuid.UUID 
 	return r.identity(ctx, queue, sourceID).ID
 }
 
+// RunContext is the context a worker should do a job's WORK under: it marks the
+// run as the parent of anything the work enqueues (ContextWithParentJob) and it
+// puts the ORIGINATING REQUEST's identifiers back on the context, read off the
+// run row this worker is executing.
+//
+// The second half is why it exists. A worker's context is a background one and
+// carries no request, so every row queued from inside a job recorded an empty
+// request_id and correlation_id — the rehearsal measured it on the federation
+// side, where the 24 deliveries queued by the transcode-completion hook were
+// faithfully blank on BOTH the queue row and its projected run, and /admin/jobs
+// showed a dash where the act that caused them should be. The identity is not
+// missing, it is one row away: the enqueue stamped it on the parent run, and
+// this reads it back so the whole chain — request → finalize → transcode →
+// twelve deliveries — carries one correlation id.
+//
+// An unknown run (no projection row yet, or a queue this recorder does not
+// know) leaves ctx exactly as it was: an invented id would be worse than a
+// blank one.
+func (r *Recorder) RunContext(ctx context.Context, queue, sourceID string) context.Context {
+	row := r.identity(ctx, queue, sourceID)
+	ctx = ContextWithParentJob(ctx, row.ID)
+	if row.RequestID == "" && row.CorrelationID == "" {
+		return ctx
+	}
+	// An identity already on the context wins: it is the live request, and this
+	// row is a record of an older one.
+	if ids := observability.CorrelationFromContext(ctx); ids.RequestID != "" || ids.CorrelationID != "" {
+		return ctx
+	}
+	return observability.ContextWithCorrelation(ctx, observability.Correlation{
+		RequestID: row.RequestID, CorrelationID: row.CorrelationID,
+	})
+}
+
 func (r *Recorder) identity(ctx context.Context, queue, sourceID string) sqlcgen.GetJobRunIdentityBySourceRow {
 	if r == nil || sourceID == "" {
 		return sqlcgen.GetJobRunIdentityBySourceRow{}

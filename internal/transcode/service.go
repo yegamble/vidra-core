@@ -589,8 +589,17 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 		}
 		// Best-effort completion hook (IPFS mirror HLS-tree pin, P19.4). A hook
 		// failure must never fail the job — the transcode already succeeded.
+		//
+		// It runs under the RUN's context, not the worker's bare one: this hook
+		// publishes the video and fans a federation Update out to every remote
+		// follower, and until it did, all of those deliveries recorded an empty
+		// request id on both the queue row and its projected run — the
+		// rehearsal's finding (d), and A17's complaint about six other queues
+		// arriving here by a different road. RunContext reads the originating
+		// request back off the run this worker is executing, so the whole chain
+		// carries one correlation id.
 		if s.onComplete != nil {
-			s.onComplete(ctx, row.VideoID)
+			s.onComplete(s.trace.RunContext(ctx, QueueName, sourceID), row.VideoID)
 		}
 		mu.Lock()
 		done++

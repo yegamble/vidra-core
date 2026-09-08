@@ -15120,6 +15120,23 @@ components:
         error:
           type: string
           description: Present only when the component is degraded or down.
+        detail:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Component-specific facts beside the verdict, omitted when a component
+            has none. Only the federation component sets it today, with pending,
+            dead_lettered and — when anything has ever been delivered —
+            last_delivered_at as an RFC 3339 timestamp. last_delivered_at is what
+            separates a DRAINED federation queue from an ABANDONED one: both read
+            as zero pending, and only the time of the last success tells them
+            apart. It is absent rather than zero on an instance that has never
+            delivered anything.
+          example:
+            pending: "0"
+            dead_lettered: "2"
+            last_delivered_at: "2026-09-08T17:41:09Z"
     ReadinessResponse:
       type: object
       required: [status, components]

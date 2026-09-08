@@ -85,44 +85,51 @@ $$;
 INSERT INTO actor_handles (handle_lower, user_id)
 SELECT lower(username), id FROM users;
 
--- channel_handle_aliases — the renamed side keeps working. `/channels/<old>`
--- and GET /api/v1/channels/{old} answer 301 to the new handle until expires_at,
--- one year from the rename; after that the alias stops resolving and the name is
--- free for a future channel (nothing else could claim it in the meantime,
--- because the account that caused the rename holds the reservation).
+-- channel_handle_aliases — the renamed side keeps working, in the two different
+-- senses a name can keep working.
+--
+-- FOR HUMANS: `/channels/<old>` and GET /api/v1/channels/{old} answer 301 to the
+-- new handle until expires_at, one year from the rename; after that the alias
+-- stops resolving and the name is free for a future channel (nothing else could
+-- claim it in the meantime, because the account that caused the rename holds the
+-- reservation).
+--
+-- FOR PEERS: `is_actor_id` marks the one alias the ActivityPub actor `id` is
+-- built from, and expires_at does not apply to it. A rename must NOT change the
+-- actor id: peers hold `…/video-channels/ownera` in their follow rows, in their
+-- cached actors and in every activity's attributedTo, and an id that changes
+-- underneath them is an actor that silently ceases to exist. So a rename moves
+-- the HUMAN handle — and with it preferredUsername, the profile URL and the
+-- 301 — and freezes the federated identity where it already was. An alias is a
+-- courtesy to humans and expires; a federated id is a promise to other servers
+-- and does not.
 --
 -- An alias is NOT a reservation: the account already holds `handle_lower` in
 -- actor_handles, and /accounts/<name> and /video-channels/<name> are different
 -- URL namespaces, so both can answer at once without ambiguity.
+--
+-- The frozen identity lives HERE rather than as a channels column on purpose:
+-- adding a column to `channels` would turn every channel query whose SELECT
+-- lists the table's columns into a bespoke row type, rippling a rename of one
+-- federation concept through the whole channel service.
 CREATE TABLE channel_handle_aliases (
     handle_lower TEXT        PRIMARY KEY,
     channel_id   UUID        NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
+    is_actor_id  BOOLEAN     NOT NULL DEFAULT FALSE,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at   TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX channel_handle_aliases_channel_idx ON channel_handle_aliases (channel_id);
-
--- channels.actor_handle — THE FEDERATED IDENTITY, frozen. A rename must not
--- change the ActivityPub actor `id`: peers hold `…/video-channels/ownera` in
--- their follow rows, their cached actors and every activity's `attributedTo`,
--- and an id that changes underneath them is an actor that silently ceases to
--- exist. So the rename moves the HUMAN handle (and with it preferredUsername,
--- the profile URL and the 301) and leaves the AP id where it was: when
--- actor_handle is non-NULL the actor document's id/inbox/outbox/followers/
--- following/publicKey.id are all built from IT, and only preferredUsername
--- follows the new handle. NULL — every channel that was never renamed — means
--- "derive the id from handle", exactly as before.
---
--- There is no expiry on this one, deliberately: an alias is a courtesy to
--- humans and expires; a federated id is a promise to other servers and does not.
-ALTER TABLE channels ADD COLUMN actor_handle TEXT;
-CREATE UNIQUE INDEX channels_actor_handle_lower_idx
-    ON channels (lower(actor_handle)) WHERE actor_handle IS NOT NULL;
+-- At most one frozen federated identity per channel — an actor id is single
+-- valued by definition, and a second row would make "which id do we serve?"
+-- unanswerable.
+CREATE UNIQUE INDEX channel_handle_aliases_actor_id_idx
+    ON channel_handle_aliases (channel_id) WHERE is_actor_id;
 
 -- Rename every channel whose handle collides with an account, deterministically:
 -- `<handle>-channel`, then `-channel-2`, `-channel-3`, … until the name is free
--- of both the account namespace and the channel namespace. Each rename freezes
--- the old handle as the AP identity, writes the alias, and writes an audit row —
+-- of both the account namespace and the channel namespace. Each rename writes the
+-- alias that both redirects humans and freezes the AP identity, and an audit row —
 -- audit_log carries no prose, so the old and new names go in `reason` as the
 -- structured `from=… to=…` pair every other rename-shaped action here uses.
 DO $$
@@ -147,14 +154,11 @@ BEGIN
             candidate := ch.handle || '-channel-' || suffix::text;
         END LOOP;
 
-        INSERT INTO channel_handle_aliases (handle_lower, channel_id, expires_at)
-        VALUES (lower(ch.handle), ch.id, now() + INTERVAL '365 days')
+        INSERT INTO channel_handle_aliases (handle_lower, channel_id, is_actor_id, expires_at)
+        VALUES (lower(ch.handle), ch.id, TRUE, now() + INTERVAL '365 days')
         ON CONFLICT (handle_lower) DO NOTHING;
 
-        UPDATE channels
-           SET actor_handle = COALESCE(actor_handle, handle),
-               handle       = candidate
-         WHERE id = ch.id;
+        UPDATE channels SET handle = candidate WHERE id = ch.id;
 
         INSERT INTO audit_log (action, result, domain, actor_kind,
                                resource_type, resource_id, reason, metadata)

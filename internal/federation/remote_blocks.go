@@ -154,7 +154,7 @@ func (s *Service) remoteActorBlockedBy(ctx context.Context, ownerID uuid.UUID, a
 		return false, err
 	}
 	return s.repo.IsRemoteActorBlockedBy(ctx, sqlcgen.IsRemoteActorBlockedByParams{
-		BlockerID: ownerID, RemoteActorUrl: actorURL,
+		BlockerID: ownerID, ActorUrl: actorURL,
 	})
 }
 

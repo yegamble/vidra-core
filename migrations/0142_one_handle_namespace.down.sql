@@ -18,12 +18,13 @@ DROP TRIGGER IF EXISTS users_reserve_handle ON users;
 DROP FUNCTION IF EXISTS reserve_channel_handle();
 DROP FUNCTION IF EXISTS reserve_account_handle();
 
--- The rename is reversed where it can be: a channel that still holds its frozen
--- federated identity goes back to it, which is also what restores the handle the
--- alias points at. Aliases and reservations then have nothing left to describe.
-UPDATE channels SET handle = actor_handle, actor_handle = NULL WHERE actor_handle IS NOT NULL;
-DROP INDEX IF EXISTS channels_actor_handle_lower_idx;
-ALTER TABLE channels DROP COLUMN IF EXISTS actor_handle;
+-- The rename is reversed where it can be: a channel that holds a frozen
+-- federated identity goes back to that handle. Aliases and reservations then
+-- have nothing left to describe.
+UPDATE channels c
+   SET handle = a.handle_lower
+  FROM channel_handle_aliases a
+ WHERE a.channel_id = c.id AND a.is_actor_id;
 
 DROP TABLE IF EXISTS channel_handle_aliases;
 DROP INDEX IF EXISTS actor_handles_channel_idx;

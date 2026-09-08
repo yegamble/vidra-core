@@ -24,6 +24,17 @@ type livenessResponse struct {
 type componentStatus struct {
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
+	// Detail carries the small number of component-specific FACTS an operator
+	// needs beside the verdict — today only the federation queue's last
+	// successful delivery. It is omitted when empty, so every other component's
+	// shape is byte-identical to what it was.
+	//
+	// The rehearsal is why it exists: FederationHealth.LastDeliveredAt is
+	// computed on every probe and was rendered into nothing, so the one number
+	// that separates "the queue is drained" from "the queue is abandoned" —
+	// both of which read as zero pending — never reached the page that asks the
+	// question.
+	Detail map[string]string `json:"detail,omitempty"`
 }
 
 // readinessResponse is returned by GET /readyz.

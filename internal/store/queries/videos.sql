@@ -312,9 +312,19 @@ FROM (
       -- whole instance — one troll costing them every creator on that server.
       -- One-directional like every other viewer control: it hides them from the
       -- blocker, not the blocker from them.
+      --
+      -- Read through remote_actor_block_reach (0142), which is where "blocked
+      -- for this reader" is defined ONCE: it expands a block of an ACCOUNT along
+      -- attributedTo to every channel actor that account owns — the rehearsal's
+      -- finding that a block of @name@domain hid nothing because the videos are
+      -- attributed to the Group — and unions in the admin's instance-wide
+      -- per-actor blocks as rows with a NULL blocker_id, which is why the
+      -- predicate reads "mine OR everyone's". A NULL viewer (anonymous) keeps
+      -- only the admin half, which is exactly the difference between the scopes.
       AND NOT EXISTS (
-          SELECT 1 FROM remote_actor_blocks rab
-          WHERE rab.blocker_id = sqlc.narg('viewer_id') AND rab.remote_actor_url = rv.remote_actor_url
+          SELECT 1 FROM remote_actor_block_reach rab
+          WHERE (rab.blocker_id = sqlc.narg('viewer_id') OR rab.blocker_id IS NULL)
+            AND rab.actor_url = rv.remote_actor_url
       )
 ) AS feed
 ORDER BY
@@ -413,9 +423,19 @@ FROM (
       -- whole instance — one troll costing them every creator on that server.
       -- One-directional like every other viewer control: it hides them from the
       -- blocker, not the blocker from them.
+      --
+      -- Read through remote_actor_block_reach (0142), which is where "blocked
+      -- for this reader" is defined ONCE: it expands a block of an ACCOUNT along
+      -- attributedTo to every channel actor that account owns — the rehearsal's
+      -- finding that a block of @name@domain hid nothing because the videos are
+      -- attributed to the Group — and unions in the admin's instance-wide
+      -- per-actor blocks as rows with a NULL blocker_id, which is why the
+      -- predicate reads "mine OR everyone's". A NULL viewer (anonymous) keeps
+      -- only the admin half, which is exactly the difference between the scopes.
       AND NOT EXISTS (
-          SELECT 1 FROM remote_actor_blocks rab
-          WHERE rab.blocker_id = sqlc.narg('viewer_id') AND rab.remote_actor_url = rv.remote_actor_url
+          SELECT 1 FROM remote_actor_block_reach rab
+          WHERE (rab.blocker_id = sqlc.narg('viewer_id') OR rab.blocker_id IS NULL)
+            AND rab.actor_url = rv.remote_actor_url
       )
 ) AS feed;
 
@@ -508,9 +528,19 @@ FROM (
       -- whole instance — one troll costing them every creator on that server.
       -- One-directional like every other viewer control: it hides them from the
       -- blocker, not the blocker from them.
+      --
+      -- Read through remote_actor_block_reach (0142), which is where "blocked
+      -- for this reader" is defined ONCE: it expands a block of an ACCOUNT along
+      -- attributedTo to every channel actor that account owns — the rehearsal's
+      -- finding that a block of @name@domain hid nothing because the videos are
+      -- attributed to the Group — and unions in the admin's instance-wide
+      -- per-actor blocks as rows with a NULL blocker_id, which is why the
+      -- predicate reads "mine OR everyone's". A NULL viewer (anonymous) keeps
+      -- only the admin half, which is exactly the difference between the scopes.
       AND NOT EXISTS (
-          SELECT 1 FROM remote_actor_blocks rab
-          WHERE rab.blocker_id = sqlc.arg('follower_id') AND rab.remote_actor_url = rv.remote_actor_url
+          SELECT 1 FROM remote_actor_block_reach rab
+          WHERE (rab.blocker_id = sqlc.arg('follower_id') OR rab.blocker_id IS NULL)
+            AND rab.actor_url = rv.remote_actor_url
       )
 ) AS feed
 ORDER BY feed.created_at DESC, feed.id DESC
@@ -595,9 +625,19 @@ FROM (
       -- whole instance — one troll costing them every creator on that server.
       -- One-directional like every other viewer control: it hides them from the
       -- blocker, not the blocker from them.
+      --
+      -- Read through remote_actor_block_reach (0142), which is where "blocked
+      -- for this reader" is defined ONCE: it expands a block of an ACCOUNT along
+      -- attributedTo to every channel actor that account owns — the rehearsal's
+      -- finding that a block of @name@domain hid nothing because the videos are
+      -- attributed to the Group — and unions in the admin's instance-wide
+      -- per-actor blocks as rows with a NULL blocker_id, which is why the
+      -- predicate reads "mine OR everyone's". A NULL viewer (anonymous) keeps
+      -- only the admin half, which is exactly the difference between the scopes.
       AND NOT EXISTS (
-          SELECT 1 FROM remote_actor_blocks rab
-          WHERE rab.blocker_id = sqlc.arg('follower_id') AND rab.remote_actor_url = rv.remote_actor_url
+          SELECT 1 FROM remote_actor_block_reach rab
+          WHERE (rab.blocker_id = sqlc.arg('follower_id') OR rab.blocker_id IS NULL)
+            AND rab.actor_url = rv.remote_actor_url
       )
 ) AS feed;
 
@@ -746,9 +786,19 @@ FROM (
       -- whole instance — one troll costing them every creator on that server.
       -- One-directional like every other viewer control: it hides them from the
       -- blocker, not the blocker from them.
+      --
+      -- Read through remote_actor_block_reach (0142), which is where "blocked
+      -- for this reader" is defined ONCE: it expands a block of an ACCOUNT along
+      -- attributedTo to every channel actor that account owns — the rehearsal's
+      -- finding that a block of @name@domain hid nothing because the videos are
+      -- attributed to the Group — and unions in the admin's instance-wide
+      -- per-actor blocks as rows with a NULL blocker_id, which is why the
+      -- predicate reads "mine OR everyone's". A NULL viewer (anonymous) keeps
+      -- only the admin half, which is exactly the difference between the scopes.
       AND NOT EXISTS (
-          SELECT 1 FROM remote_actor_blocks rab
-          WHERE rab.blocker_id = sqlc.narg('viewer_id') AND rab.remote_actor_url = rv.remote_actor_url
+          SELECT 1 FROM remote_actor_block_reach rab
+          WHERE (rab.blocker_id = sqlc.narg('viewer_id') OR rab.blocker_id IS NULL)
+            AND rab.actor_url = rv.remote_actor_url
       )
 ) AS feed
 WHERE (sqlc.narg('duration_min')::int IS NULL OR feed.duration_seconds >= sqlc.narg('duration_min')::int)
@@ -883,9 +933,19 @@ FROM (
       -- whole instance — one troll costing them every creator on that server.
       -- One-directional like every other viewer control: it hides them from the
       -- blocker, not the blocker from them.
+      --
+      -- Read through remote_actor_block_reach (0142), which is where "blocked
+      -- for this reader" is defined ONCE: it expands a block of an ACCOUNT along
+      -- attributedTo to every channel actor that account owns — the rehearsal's
+      -- finding that a block of @name@domain hid nothing because the videos are
+      -- attributed to the Group — and unions in the admin's instance-wide
+      -- per-actor blocks as rows with a NULL blocker_id, which is why the
+      -- predicate reads "mine OR everyone's". A NULL viewer (anonymous) keeps
+      -- only the admin half, which is exactly the difference between the scopes.
       AND NOT EXISTS (
-          SELECT 1 FROM remote_actor_blocks rab
-          WHERE rab.blocker_id = sqlc.narg('viewer_id') AND rab.remote_actor_url = rv.remote_actor_url
+          SELECT 1 FROM remote_actor_block_reach rab
+          WHERE (rab.blocker_id = sqlc.narg('viewer_id') OR rab.blocker_id IS NULL)
+            AND rab.actor_url = rv.remote_actor_url
       )
 ) AS feed
 WHERE (sqlc.narg('duration_min')::int IS NULL OR feed.duration_seconds >= sqlc.narg('duration_min')::int)

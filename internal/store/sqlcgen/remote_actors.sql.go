@@ -42,7 +42,7 @@ func (q *Queries) DeleteRemoteActor(ctx context.Context, actorUrl string) (int64
 const getRemoteActor = `-- name: GetRemoteActor :one
 
 SELECT actor_url, actor_type, preferred_username, domain, inbox_url, shared_inbox_url,
-       public_key_pem, followers_url, fetched_at, updated_at
+       public_key_pem, followers_url, fetched_at, updated_at, attributed_to
 FROM remote_actors
 WHERE actor_url = $1
 `
@@ -62,6 +62,7 @@ func (q *Queries) GetRemoteActor(ctx context.Context, actorUrl string) (RemoteAc
 		&i.FollowersUrl,
 		&i.FetchedAt,
 		&i.UpdatedAt,
+		&i.AttributedTo,
 	)
 	return i, err
 }
@@ -69,9 +70,9 @@ func (q *Queries) GetRemoteActor(ctx context.Context, actorUrl string) (RemoteAc
 const upsertRemoteActor = `-- name: UpsertRemoteActor :exec
 INSERT INTO remote_actors (
     actor_url, actor_type, preferred_username, domain, inbox_url,
-    shared_inbox_url, public_key_pem, followers_url
+    shared_inbox_url, public_key_pem, followers_url, attributed_to
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (actor_url) DO UPDATE SET
     actor_type         = EXCLUDED.actor_type,
     preferred_username = EXCLUDED.preferred_username,
@@ -80,6 +81,7 @@ ON CONFLICT (actor_url) DO UPDATE SET
     shared_inbox_url   = EXCLUDED.shared_inbox_url,
     public_key_pem     = EXCLUDED.public_key_pem,
     followers_url      = EXCLUDED.followers_url,
+    attributed_to      = EXCLUDED.attributed_to,
     updated_at         = now()
 `
 
@@ -92,8 +94,15 @@ type UpsertRemoteActorParams struct {
 	SharedInboxUrl    *string `json:"shared_inbox_url"`
 	PublicKeyPem      string  `json:"public_key_pem"`
 	FollowersUrl      string  `json:"followers_url"`
+	AttributedTo      string  `json:"attributed_to"`
 }
 
+// attributed_to is the OWNING ACCOUNT of a Group actor, read off the actor
+// document's attributedTo (0142). It is what makes a block of an account reach
+// the channels that account owns: the rehearsal measured a viewer blocking
+// @name@domain and seeing nothing change, because the videos are attributed to
+// the Group and the block named the Person. It is ” for a Person and for any
+// Group whose document does not name an owner.
 func (q *Queries) UpsertRemoteActor(ctx context.Context, arg UpsertRemoteActorParams) error {
 	_, err := q.db.Exec(ctx, upsertRemoteActor,
 		arg.ActorUrl,
@@ -104,6 +113,7 @@ func (q *Queries) UpsertRemoteActor(ctx context.Context, arg UpsertRemoteActorPa
 		arg.SharedInboxUrl,
 		arg.PublicKeyPem,
 		arg.FollowersUrl,
+		arg.AttributedTo,
 	)
 	return err
 }

@@ -32,6 +32,13 @@ type AccountExport struct {
 	UpdatedAt     time.Time          `json:"updated_at"`
 }
 
+type ActorHandle struct {
+	HandleLower string      `json:"handle_lower"`
+	UserID      pgtype.UUID `json:"user_id"`
+	ChannelID   pgtype.UUID `json:"channel_id"`
+	CreatedAt   time.Time   `json:"created_at"`
+}
+
 type AtprotoAccount struct {
 	UserID            uuid.UUID          `json:"user_id"`
 	Handle            string             `json:"handle"`
@@ -85,6 +92,13 @@ type BlockedInstance struct {
 	Reason    string      `json:"reason"`
 	BlockedBy pgtype.UUID `json:"blocked_by"`
 	CreatedAt time.Time   `json:"created_at"`
+}
+
+type BlockedRemoteActor struct {
+	RemoteActorUrl string      `json:"remote_actor_url"`
+	BlockedBy      pgtype.UUID `json:"blocked_by"`
+	Reason         string      `json:"reason"`
+	CreatedAt      time.Time   `json:"created_at"`
 }
 
 type Caption struct {
@@ -159,6 +173,14 @@ type ChannelFollowBack struct {
 	FollowActivityUrl string    `json:"follow_activity_url"`
 	State             string    `json:"state"`
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+type ChannelHandleAlias struct {
+	HandleLower string    `json:"handle_lower"`
+	ChannelID   uuid.UUID `json:"channel_id"`
+	IsActorID   bool      `json:"is_actor_id"`
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
 }
 
 type ChannelImage struct {
@@ -726,12 +748,18 @@ type RemoteActor struct {
 	FollowersUrl      string    `json:"followers_url"`
 	FetchedAt         time.Time `json:"fetched_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+	AttributedTo      string    `json:"attributed_to"`
 }
 
 type RemoteActorBlock struct {
 	BlockerID      uuid.UUID `json:"blocker_id"`
 	RemoteActorUrl string    `json:"remote_actor_url"`
 	CreatedAt      time.Time `json:"created_at"`
+}
+
+type RemoteActorBlockReach struct {
+	BlockerID uuid.UUID `json:"blocker_id"`
+	ActorUrl  string    `json:"actor_url"`
 }
 
 type RemoteChannelFollow struct {
@@ -785,6 +813,7 @@ type RemoteVideoComment struct {
 	PublishedAt      pgtype.Timestamptz `json:"published_at"`
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
+	ParentObjectUrl  string             `json:"parent_object_url"`
 }
 
 type Report struct {
