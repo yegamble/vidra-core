@@ -1,0 +1,2 @@
+# Intentionally empty: this lane provides every dependency its tests need,
+# so ANY skip is a wiring regression and must fail the job.

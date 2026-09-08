@@ -47,13 +47,33 @@ test-race: ## Run tests with the race detector
 cover: ## Run tests with coverage summary
 	go test -cover ./...
 
+# Extra `go test` flags for the integration target. CI passes GO_TEST_FLAGS=-v so
+# the run names every RUN/PASS/SKIP and scripts/ci/assert-no-silent-skips.sh can
+# prove no test self-skipped its way to a false green (A39). Empty locally, so
+# `make test-integration` behaves exactly as it always did.
+GO_TEST_FLAGS ?=
+
 .PHONY: test-integration
 test-integration: ## Run integration tests (-tags=integration); needs DATABASE_URL, REDIS_URL, ffmpeg — each test self-skips if its dependency is absent
-	go test -tags=integration -race ./...
+	go test -tags=integration -race $(GO_TEST_FLAGS) ./...
 
 .PHONY: test-ipfs-integration
 test-ipfs-integration: ## Run real-Kubo tests; public proof additionally needs IPFS_TEST_PUBLIC_GATEWAY_URL + IPFS_TEST_VIDEO_PATH (self-skips unless required)
 	go test -count=1 -v -tags=ipfs_integration -race ./internal/ipfs/...
+
+# The two halves of the ipfs_integration tag, split because they have very
+# different dependencies. The LOCAL half needs only the compose kubo node and is
+# deterministic, so it is a required CI lane. The PUBLIC half fetches a fresh CID
+# back through an INDEPENDENTLY OPERATED gateway (ipfs.io) with a 5-minute
+# budget: real proof of provider reachability, but a third party's availability
+# is not a merge gate. It runs in the scheduled ipfs-public-gateway lane.
+.PHONY: test-ipfs-integration-local
+test-ipfs-integration-local: ## Local-kubo IPFS proofs only (required CI lane); needs IPFS_TEST_API_URL + IPFS_TEST_GATEWAY_URL
+	go test -count=1 -v -tags=ipfs_integration -race -run 'TestIntegrationAddPinCat|TestIntegrationAddDirectoryHLSTree' ./internal/ipfs/...
+
+.PHONY: test-ipfs-public-gateway
+test-ipfs-public-gateway: ## The public-gateway round trip only (optional, scheduled); needs IPFS_TEST_PUBLIC_GATEWAY_URL + IPFS_TEST_VIDEO_PATH
+	go test -count=1 -v -tags=ipfs_integration -race -run 'TestIntegrationPublicVideoRoundTrip' ./internal/ipfs/...
 
 .PHONY: test-ipfs-private-integration
 test-ipfs-private-integration: ## Run PRIVATE-swarm IPFS integration tests (-tags=ipfs_private_integration) against a swarm.key'd kubo pair; needs IPFS_PRIVATE_TEST_API_A/_B (+ _OUTSIDE, _KUBO_BIN, _CLUSTER_API) — self-skips if unset. -v so the CI log shows each proof's RUN/PASS (this target is NOT part of `make ci`, so the canonical gate stays quiet).

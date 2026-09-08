@@ -1,0 +1,24 @@
+# Skips permitted in the `-tags=integration` lane (backend-integration.yml and
+# schema-compat.yml). One extended regex per line, matched against the t.Skip
+# reason by scripts/ci/assert-no-silent-skips.sh.
+#
+# EVERYTHING ELSE FAILS THE JOB. In particular a `DATABASE_URL not set`,
+# `REDIS_URL not set`, `S3_TEST_ENDPOINT not set` or `CLAMAV_TEST_ADDR not set`
+# skip is NOT allowed: the lane provides all four, so such a skip means a
+# service died or an env var was renamed, and the lane would otherwise pass
+# having exercised nothing.
+
+# Needs a running RTMP ingest (compose `media` profile) and a live api on
+# LIVE_RTMP_BASE_URL, neither of which this lane starts. Explicitly OPTIONAL:
+# covered by the meta-repo runtime smoke, not here.
+LIVE_RTMP_TEST!=1
+
+# Capability probes against the runner's actual ffmpeg build. These are
+# environment-conditional by design — the fixture would prove nothing on a build
+# that lacks the encoder/filter — and they are NOT dependency gates.
+this ffmpeg does not write a display matrix
+this ffmpeg does not mux the cover as a video stream
+this ffmpeg has no .* encoder
+ffmpeg -encoders:
+this machine cannot run the .* backend
+no such backend

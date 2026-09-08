@@ -1,0 +1,12 @@
+# Skips permitted in the DEFAULT build (the canonical `make ci` gate).
+# One extended regex per line, matched against the t.Skip reason.
+# Adding a line here is a reviewed decision: it removes a test from the required
+# gate on any machine where the condition holds. See scripts/ci/assert-no-untagged-skips.sh.
+
+# Windows-only bail-outs in the ffmpeg/hwaccel stub tests: the stub the test
+# execs is a POSIX shell script. CI runs on ubuntu-latest, so these never fire
+# there — the gate loses nothing.
+the stub is a shell script
+# internal/ytdlp process-group test: needs /bin/sh to spawn the child. Present on
+# every supported platform and on the runner.
+sh not available
