@@ -314,3 +314,143 @@ func mediaCORSHarnesses(t *testing.T) []*Server {
 	srvs = append(srvs, rsrv)
 	return srvs
 }
+
+// --- the edge's answer is a CONSTANT (A33 rehearsal finding 5) ----------------
+
+// testAllowListedOrigin is testConfig()'s CORS allow-list entry: the operator's
+// own frontend, the one origin echo's CORS middleware answers credentialed.
+const testAllowListedOrigin = "http://localhost:3000"
+
+// getFromOrigin issues a GET carrying an arbitrary browser Origin (or none when
+// origin is empty).
+func getFromOrigin(srv *Server, path, origin string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if origin != "" {
+		req.Header.Set(echo.HeaderOrigin, origin)
+	}
+	srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+// varyHasOrigin reports whether the response varies by request Origin, across
+// however many Vary headers the stack emitted (echo Adds rather than Sets).
+func varyHasOrigin(rec *httptest.ResponseRecorder) bool {
+	for _, v := range rec.Header().Values(echo.HeaderVary) {
+		for _, field := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(field), echo.HeaderOrigin) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// assertConstantEdgeCORS is the whole of SC1 in one place: the three headers an
+// edge origin fetch must and must not carry.
+func assertConstantEdgeCORS(t *testing.T, rec *httptest.ResponseRecorder, label string) {
+	t.Helper()
+	if got := corsHeader(rec); got != delivery.PublicMediaOrigin {
+		t.Errorf("%s: Access-Control-Allow-Origin = %q, want %q", label, got, delivery.PublicMediaOrigin)
+	}
+	if got := rec.Header().Get(echo.HeaderAccessControlAllowCredentials); got != "" {
+		t.Errorf("%s: Access-Control-Allow-Credentials = %q, want none", label, got)
+	}
+	if varyHasOrigin(rec) {
+		t.Errorf("%s: Vary = %q, want no Origin — the edge holds ONE entry for every viewer",
+			label, rec.Header().Values(echo.HeaderVary))
+	}
+}
+
+// TestEdgeOriginFetchCORSIsConstantWhateverTheOrigin is the defect the A33
+// rehearsal recorded (finding 5) and this closes.
+//
+// The edge's origin fetch populates ONE shared cache entry that is then served
+// to every viewer behind that edge. Echo's CORS middleware answers an
+// allow-listed Origin with that exact origin plus Access-Control-Allow-Credentials
+// — correct for a viewer, catastrophic for a shared entry: a CDN that forwards
+// Origin upstream and does not include it in its cache key would fill the entry
+// with the operator frontend's credentialed echo and hand it to every federated
+// player afterwards, which is exactly the cross-origin playback the header
+// exists to enable. The api therefore stops relying on a third party's cache
+// key: the edge's answer is the same three headers whatever Origin arrives.
+func TestEdgeOriginFetchCORSIsConstantWhateverTheOrigin(t *testing.T) {
+	srv, blobs, tcRepo := cdnServer(t, true, nil, false)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := publishedPublicVideo(t, srv, blobs, tcRepo, tok)
+
+	edgePath := "/api/v1/videos/" + id + "/hls/240p/seg_00000.ts?" +
+		delivery.EdgeOriginParam + "=" + delivery.EdgeOriginValue
+
+	for _, origin := range []string{"", testCrossOrigin, testAllowListedOrigin} {
+		label := "Origin: " + origin
+		if origin == "" {
+			label = "no Origin"
+		}
+		rec := getFromOrigin(srv, edgePath, origin)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200; body=%s", label, rec.Code, rec.Body.String())
+		}
+		// The pairing is the point: shared cache policy and constant wildcard
+		// come from the same request, or neither does.
+		if cc := rec.Header().Get("Cache-Control"); cc != delivery.CacheSharedStableRevalidate {
+			t.Errorf("%s: Cache-Control = %q, want %q", label, cc, delivery.CacheSharedStableRevalidate)
+		}
+		assertConstantEdgeCORS(t, rec, label)
+	}
+}
+
+// TestEdgeMarkedPreflightIsConstant: a CDN with the api as origin forwards a
+// browser's OPTIONS upstream with the marker on it. The middleware that would
+// normally terminate that preflight is skipped for edge-marked media, so
+// mediaPreflight answers it — with the same constant, and 204 rather than the
+// 405 a GET-only route would give.
+func TestEdgeMarkedPreflightIsConstant(t *testing.T) {
+	srv, blobs, tcRepo := cdnServer(t, true, nil, false)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := publishedPublicVideo(t, srv, blobs, tcRepo, tok)
+
+	edgePath := "/api/v1/videos/" + id + "/hls/240p/seg_00000.ts?" +
+		delivery.EdgeOriginParam + "=" + delivery.EdgeOriginValue
+
+	for _, origin := range []string{testCrossOrigin, testAllowListedOrigin} {
+		rec := optionsRequest(srv, edgePath, origin, "range")
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("Origin %s: preflight status = %d, want 204", origin, rec.Code)
+		}
+		assertConstantEdgeCORS(t, rec, "preflight from "+origin)
+		if got := rec.Header().Get(echo.HeaderAccessControlAllowHeaders); got != mediaPreflightHeaders {
+			t.Errorf("Origin %s: Access-Control-Allow-Headers = %q, want %q", origin, got, mediaPreflightHeaders)
+		}
+	}
+}
+
+// TestViewerRequestKeepsTheCredentialedAnswer is the guard on the skipper's
+// blast radius. Only an edge-marked PUBLIC MEDIA route is skipped: the same
+// media route without the marker, and any non-media route with it, still get
+// echo's allow-listed credentialed answer and its Vary: Origin. Without this a
+// green suite would be equally consistent with "CORS was turned off".
+func TestViewerRequestKeepsTheCredentialedAnswer(t *testing.T) {
+	srv, blobs, tcRepo := cdnServer(t, false, nil, false)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	id := publishedPublicVideo(t, srv, blobs, tcRepo, tok)
+
+	for _, tc := range []struct{ name, path string }{
+		{"a media route with no marker", "/api/v1/videos/" + id + "/hls/240p/seg_00000.ts"},
+		{"a JSON route carrying the marker", "/api/v1/videos?" +
+			delivery.EdgeOriginParam + "=" + delivery.EdgeOriginValue},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := getFromOrigin(srv, tc.path, testAllowListedOrigin)
+			if got := corsHeader(rec); got != testAllowListedOrigin {
+				t.Errorf("Access-Control-Allow-Origin = %q, want the allow-listed origin", got)
+			}
+			if got := rec.Header().Get(echo.HeaderAccessControlAllowCredentials); got != "true" {
+				t.Errorf("Access-Control-Allow-Credentials = %q, want true", got)
+			}
+			if !varyHasOrigin(rec) {
+				t.Error("Vary: Origin is missing from a response that DOES vary by origin")
+			}
+		})
+	}
+}

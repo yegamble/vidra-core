@@ -45,9 +45,10 @@ import (
 //     the header, which is exactly how the shared cache entry ends up carrying
 //     it for every cross-origin player behind that edge.)
 //   - Vary: Origin. The value is a constant, not a reflection of the request's
-//     Origin, so the response does not vary by it. (Echo's CORS middleware adds
-//     a Vary: Origin of its own to every response it sees; that is pre-existing
-//     and untouched here.)
+//     Origin, so the response does not vary by it. On an EDGE ORIGIN FETCH there
+//     is no Vary: Origin at all, and no credentialed echo either — see
+//     edgeMediaRequest for why that is a correctness requirement rather than a
+//     tidy-up.
 
 // setMediaCORS applies the public-media CORS policy to a response that is about
 // to carry media bytes. eligible is the route's own "these bytes are servable to
@@ -68,6 +69,45 @@ func setMediaCORS(c echo.Context, eligible bool) {
 	if v := delivery.AllowOrigin(eligible, credentialedMediaRequest(c)); v != "" {
 		header.Set(echo.HeaderAccessControlAllowOrigin, v)
 	}
+}
+
+// AN EDGE ORIGIN FETCH IS ANSWERED WITH THE CONSTANT, ALWAYS (A33 rehearsal
+// finding 5).
+//
+// The rule above — never overwrite the CORS middleware's allow-listed answer —
+// is right for a VIEWER's request and wrong for the edge's, and the difference
+// is that the edge's answer is CACHED AND SHARED. Measured on 2026-09-08: the
+// same shared cache entry was populated with `Access-Control-Allow-Origin: *`
+// when the fetch carried no Origin and with `http://127.0.0.1:8099` plus
+// `Access-Control-Allow-Credentials: true` when it carried an allow-listed one.
+// Echo supplies a `Vary: Origin` that makes that correct for a COMPLIANT cache,
+// but a CDN that forwards Origin upstream and does not key on it would populate
+// one entry with the credentialed echo and hand it to every other origin's
+// player afterwards — breaking exactly the federated playback core #203 added
+// the header for, and doing it for every viewer behind that edge rather than
+// for the one who caused it.
+//
+// So the api stops depending on a third party's cache key: for an edge origin
+// fetch the answer is a constant `*`, with no Access-Control-Allow-Credentials
+// and no Vary: Origin, whatever Origin the request carried. Nothing is lost —
+// the edge is only ever handed PUBLIC, non-credentialed bytes (a credentialed
+// request is never redirected to the edge in the first place), and a credential
+// cannot be used with a wildcard origin anyway.
+//
+// THE MECHANISM IS THE CORS MIDDLEWARE'S SKIPPER, not a strip after the fact.
+// Stripping would have to run in every handler that answers a media route and
+// would silently do nothing in the one that forgot to call it; skipping is a
+// property of the ROUTE plus the marker, so it holds for every response on that
+// request — including error responses and any media handler added later. See
+// server.go, where it is the CORSConfig.Skipper, and mediaPreflight below,
+// which answers the preflight itself precisely because the middleware that
+// normally would is skipped.
+//
+// It is not an authorization decision: the marker grants nothing (see
+// delivery.EdgeOriginParam), and the response's readability is still decided by
+// delivery.AllowOrigin from the route's own eligibility.
+func (s *Server) edgeMediaRequest(c echo.Context) bool {
+	return isPublicMediaRoute(c.Path()) && s.edgeOriginRequest(c)
 }
 
 // Preflight support for the media routes.
@@ -107,7 +147,16 @@ const (
 // surgery on the URL. Echo's router fills c.Path() even when the method does not
 // match (it is what produces the Allow header), so an OPTIONS on a GET-only
 // media route still identifies itself.
-func mediaPreflight() echo.MiddlewareFunc {
+//
+// AN EDGE-MARKED PREFLIGHT IS ANSWERED HERE AND GOES NO FURTHER. A CDN with the
+// api as its origin forwards a browser's OPTIONS upstream, marker and all, and
+// the CORS middleware that would normally terminate it is SKIPPED for exactly
+// those requests (edgeMediaRequest) — so without this the preflight would fall
+// through to a GET-only route and answer 405, which a browser reads as "the
+// cross-origin fetch is refused". Answering it here keeps the preflight's
+// answer the same constant as the GET's, which is the whole point: a cached
+// preflight must not carry one origin's echo either.
+func (s *Server) mediaPreflight() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if c.Request().Method != http.MethodOptions || !isPublicMediaRoute(c.Path()) {
@@ -118,6 +167,9 @@ func mediaPreflight() echo.MiddlewareFunc {
 			header.Set(echo.HeaderAccessControlAllowMethods, mediaPreflightMethods)
 			header.Set(echo.HeaderAccessControlAllowHeaders, mediaPreflightHeaders)
 			header.Set(echo.HeaderAccessControlMaxAge, mediaPreflightMaxAge)
+			if s.edgeOriginRequest(c) {
+				return c.NoContent(http.StatusNoContent)
+			}
 			return next(c)
 		}
 	}

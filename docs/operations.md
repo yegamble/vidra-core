@@ -988,6 +988,12 @@ reach directly. Three expectations of the edge, none of them unusual:
   transcode generation and `?audio=false` selects a different file. An edge that
   strips or ignores the query will serve one generation's bytes under another's
   URL, which is the exact failure this topology exists to make impossible.
+* **Do not key on `Origin`** — forwarding it is harmless, keying on it only
+  fragments the cache. Media answers the edge with a constant
+  `Access-Control-Allow-Origin: *`, no `Access-Control-Allow-Credentials` and no
+  `Vary: Origin`, whatever `Origin` the fetch carries, so one entry is correct
+  for every viewer behind the edge. See *Cross-origin reads* below for why the
+  api makes that guarantee itself rather than trusting a cache key.
 
 **This changed in the A33 remediation, and an existing deployment must
 repoint.** `DELIVERY_CDN_BASE_URL` used to be a base over your *bucket*, with
@@ -1038,10 +1044,32 @@ gets the same window promoted to `public`:
 | anything with `?pt=` or `Authorization` | `private, no-store` | never reaches the edge |
 
 Only the edge's URL carries the marker, so the shared entry and the private one
-are different URLs — there is no `Vary` to get wrong and no way for a viewer's
-request to be answered from the shared entry. Playlists stay on the origin for a
-reason the bucket topology never had: they are the generation switch, the one
-URL whose bytes must change the instant a new transcode generation is promoted.
+are different URLs, and no viewer's request can be answered from the shared
+entry. Playlists stay on the origin for a reason the bucket topology never had:
+they are the generation switch, the one URL whose bytes must change the instant
+a new transcode generation is promoted.
+
+**Cross-origin reads: what the edge stores is a constant.** A federated
+follower renders its own player against this instance's HLS, so public media
+carries a CORS header. On the edge's origin fetch that header is always exactly
+`Access-Control-Allow-Origin: *`, with no `Access-Control-Allow-Credentials` and
+**no `Vary: Origin`** — the same three headers whatever `Origin` the fetch
+carried, and whatever your `CORS_ALLOWED_ORIGINS` says.
+
+That is deliberate, and it is the api taking an obligation off your CDN rather
+than putting one on it. A viewer's own request is unchanged: an allow-listed
+browser origin still gets the credentialed echo plus `Vary: Origin`, because
+that answer is per-viewer and is never cached anywhere shared. The edge's is
+not per-viewer — it is **one entry served to everybody behind that edge** — so
+if the api answered it with an allow-listed origin's credentialed echo, a CDN
+that forwards `Origin` upstream without including it in its cache key would
+hand that one origin's answer to every other origin's player, and federated
+playback would break for everyone but the instance's own frontend. Measured on
+2026-09-08 against a caching edge; closed in the api rather than in a sentence
+telling you to configure your cache key correctly.
+
+You therefore need no `Origin` handling for media at all. Forward it or do not;
+key on it or do not; the answer is the same either way.
 
 **Turning it on is two steps, deliberately.** `DELIVERY_CDN_BASE_URL` (env,
 needs a restart) makes the CDN *exist*; the `delivery_cdn_enabled` admin setting
