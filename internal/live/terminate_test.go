@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/observability"
 )
@@ -17,17 +18,29 @@ import (
 // fakeIngestControl is the ingest control surface with no nginx anywhere: it
 // records what it was asked to drop and answers whatever the test pins.
 type fakeIngestControl struct {
-	dropped  []string
-	dropErr  error
-	probeErr error
-	calls    int
+	dropped []string
+	// dropCount is what the ingest says it closed. nil is the ordinary outcome —
+	// one publisher on one socket — so a test only pins it to describe a
+	// different reality.
+	dropCount *int
+	dropErr   error
+	probeErr  error
+	calls     int
 }
 
-func (f *fakeIngestControl) DropPublisher(_ context.Context, name string) error {
+func (f *fakeIngestControl) DropPublisher(_ context.Context, name string) (int, error) {
 	f.calls++
 	f.dropped = append(f.dropped, name)
-	return f.dropErr
+	if f.dropErr != nil {
+		return 0, f.dropErr
+	}
+	if f.dropCount != nil {
+		return *f.dropCount, nil
+	}
+	return 1, nil
 }
+
+func dropCount(n int) *int { return &n }
 
 func (f *fakeIngestControl) Probe(context.Context) error { return f.probeErr }
 
@@ -139,9 +152,9 @@ func TestTerminateRotatesBeforeDropping(t *testing.T) {
 
 type orderingControl struct{ onDrop func() }
 
-func (o *orderingControl) DropPublisher(context.Context, string) error {
+func (o *orderingControl) DropPublisher(context.Context, string) (int, error) {
 	o.onDrop()
-	return nil
+	return 1, nil
 }
 func (o *orderingControl) Probe(context.Context) error { return nil }
 
@@ -202,17 +215,81 @@ func TestTerminateUnreachableIngestIsAPartialOutcome(t *testing.T) {
 	}
 }
 
-// TestTerminateNoPublisherIsSuccess: the ingest reports there was nobody to drop.
-// That is the state a drop was asking for, not a failure.
-func TestTerminateNoPublisherIsSuccess(t *testing.T) {
-	svc, _, ctrl, id := liveStreamFixture(t)
+// TestTerminateNoPublisherIsNotADisconnect is the A26 finding as a test: the
+// ingest answers, and says it dropped NOTHING. That is not a confirmed
+// disconnect, and reporting it as one is how a hook-only phantom session — and,
+// for the whole of A26, a drop that reached the wrong nginx worker — told a
+// moderator the streamer was off while they kept uploading.
+func TestTerminateNoPublisherIsNotADisconnect(t *testing.T) {
+	auditor := &fakeAuditor{}
+	svc, _, ctrl, id := liveStreamFixture(t, WithAuditor(auditor))
 	ctrl.dropErr = ErrIngestNoPublisher
-	res, err := svc.Terminate(context.Background(), id, TerminateInput{ReasonCode: string(ReasonTechnical)})
+	res, err := svc.Terminate(context.Background(), id, TerminateInput{ActorID: uuid.New(), ReasonCode: string(ReasonTechnical)})
 	if err != nil {
 		t.Fatalf("terminate: %v", err)
 	}
-	if !res.PublisherDropped {
-		t.Error("\"there is no publisher\" was reported as a failed drop; it is the outcome the drop wanted")
+	if res.PublisherDropped {
+		t.Error("a drop that closed nothing was reported as a disconnect — this is the exact claim A26 measured being made while a publisher streamed on")
+	}
+	if !errors.Is(res.DropError, ErrIngestNoPublisher) {
+		t.Errorf("DropError = %v, want ErrIngestNoPublisher so the caller can say WHICH partial outcome this is", res.DropError)
+	}
+	if res.DroppedCount != 0 {
+		t.Errorf("DroppedCount = %d, want 0", res.DroppedCount)
+	}
+	ev := findAudit(t, auditor, observability.ActionLiveTerminate)
+	if ev.Reason != string(ReasonTechnical)+" no_publisher" {
+		t.Errorf("audit reason = %q, want the code plus the no_publisher marker", ev.Reason)
+	}
+	if ev.Metadata["count"] != "0" {
+		t.Errorf("audit metadata count = %q, want \"0\" — the count is the only thing in the trail that distinguishes a real disconnect from a no-op", ev.Metadata["count"])
+	}
+}
+
+// TestTerminateZeroCountWithoutAnErrorIsStillNotADisconnect: the defensive half
+// of the same rule. A controller that answers "closed 0" with no error at all
+// (a future implementation, a different media server) must not be read as a
+// success just because nothing went wrong — the number IS the outcome.
+func TestTerminateZeroCountWithoutAnErrorIsStillNotADisconnect(t *testing.T) {
+	svc, _, ctrl, id := liveStreamFixture(t)
+	ctrl.dropCount = dropCount(0)
+	res, err := svc.Terminate(context.Background(), id, TerminateInput{ReasonCode: string(ReasonOther)})
+	if err != nil {
+		t.Fatalf("terminate: %v", err)
+	}
+	if res.PublisherDropped {
+		t.Error("a drop that closed nothing was reported as a disconnect")
+	}
+	if !errors.Is(res.DropError, ErrIngestNoPublisher) {
+		t.Errorf("DropError = %v, want ErrIngestNoPublisher", res.DropError)
+	}
+}
+
+// TestTerminateCountedDropIsAudited: the ordinary outcome carries the number the
+// ingest returned, so a row read a week later says whether the drop landed.
+func TestTerminateCountedDropIsAudited(t *testing.T) {
+	auditor := &fakeAuditor{}
+	svc, _, ctrl, id := liveStreamFixture(t, WithAuditor(auditor))
+	ctrl.dropCount = dropCount(2)
+	actor := uuid.New()
+	res, err := svc.Terminate(context.Background(), id, TerminateInput{
+		ActorID: actor, ActorRole: "moderator", ReasonCode: string(ReasonSpam),
+	})
+	if err != nil {
+		t.Fatalf("terminate: %v", err)
+	}
+	if !res.PublisherDropped || res.DroppedCount != 2 {
+		t.Errorf("dropped=%v count=%d, want a confirmed drop of 2", res.PublisherDropped, res.DroppedCount)
+	}
+	ev := findAudit(t, auditor, observability.ActionLiveTerminate)
+	if ev.Metadata["count"] != "2" {
+		t.Errorf("audit metadata count = %q, want \"2\"", ev.Metadata["count"])
+	}
+	if ev.ResourceType != "live_stream" {
+		t.Errorf("audit resource_type = %q, want live_stream", ev.ResourceType)
+	}
+	if ev.Actor.Role != "moderator" {
+		t.Errorf("audit actor_role = %q, want moderator — A26 measured it empty, so the trail could not answer \"was this staff?\"", ev.Actor.Role)
 	}
 }
 
@@ -292,9 +369,30 @@ func TestTerminateRefusesAnUnknownReasonAndAnOfflineStream(t *testing.T) {
 // TestOwnerEndStoresNoReason: the creator's own end is the same mechanism, and
 // must never look like a takedown to the UI that renders it.
 func TestOwnerEndStoresNoReason(t *testing.T) {
-	svc, _, ctrl, id := liveStreamFixture(t)
-	if _, err := svc.Terminate(context.Background(), id, TerminateInput{}); err != nil {
+	auditor := &fakeAuditor{}
+	svc, _, ctrl, id := liveStreamFixture(t, WithAuditor(auditor))
+	owner := uuid.New()
+	if _, err := svc.Terminate(context.Background(), id, TerminateInput{
+		Source: SourceOwner, ActorID: owner, ActorRole: "user",
+	}); err != nil {
 		t.Fatalf("owner end: %v", err)
+	}
+	// A26 measured the owner's own end writing NO audit row at all: the one
+	// deliberate end of a broadcast a person performs that left no trace.
+	ev := findAudit(t, auditor, observability.ActionLiveEnded)
+	if ev.ResourceID != id.String() || ev.ResourceType != "live_stream" {
+		t.Errorf("audit resource = %s/%s, want live_stream/%s", ev.ResourceType, ev.ResourceID, id)
+	}
+	if ev.Actor.Kind != "user" || ev.Actor.ID != owner.String() || ev.Actor.Role != "user" {
+		t.Errorf("audit actor = %+v, want the creator with their role", ev.Actor)
+	}
+	if ev.Reason != "owner_ended" {
+		t.Errorf("audit reason = %q, want owner_ended", ev.Reason)
+	}
+	for _, e := range auditor.events {
+		if e.Action == observability.ActionLiveTerminate {
+			t.Error("the creator's own end wrote a MODERATION action; it is not one, and an operator filtering the trail must not have to tell them apart by the actor")
+		}
 	}
 	st, _ := svc.Get(context.Background(), id)
 	if !st.Terminated() {
@@ -409,7 +507,15 @@ func findAudit(t *testing.T, a *fakeAuditor, action string) auditEventView {
 	}
 	for _, ev := range a.events {
 		if ev.Action == action {
-			return auditEventView{Action: ev.Action, Result: ev.Result, Reason: ev.Reason, ResourceID: ev.ResourceID, Actor: actorView{Kind: ev.Actor.Kind, ID: ev.Actor.ID}}
+			meta := map[string]string{}
+			for _, f := range ev.Metadata {
+				meta[f.Key] = f.Value
+			}
+			return auditEventView{
+				Action: ev.Action, Result: ev.Result, Reason: ev.Reason,
+				ResourceType: ev.ResourceType, ResourceID: ev.ResourceID, Metadata: meta,
+				Actor: actorView{Kind: ev.Actor.Kind, ID: ev.Actor.ID, Role: ev.Actor.Role},
+			}
 		}
 	}
 	t.Fatalf("no %s audit event in %d recorded", action, len(a.events))
@@ -417,10 +523,11 @@ func findAudit(t *testing.T, a *fakeAuditor, action string) auditEventView {
 }
 
 type auditEventView struct {
-	Action, Result, Reason, ResourceID string
-	Actor                              actorView
+	Action, Result, Reason, ResourceType, ResourceID string
+	Metadata                                         map[string]string
+	Actor                                            actorView
 }
-type actorView struct{ Kind, ID string }
+type actorView struct{ Kind, ID, Role string }
 
 var _ = time.Second
 
@@ -452,5 +559,105 @@ func TestIngestTemplateRunsOneWorker(t *testing.T) {
 	}
 	if strings.Contains(body, "worker_processes auto;") {
 		t.Error("deploy/media/nginx.conf.template still declares `worker_processes auto;`")
+	}
+}
+
+// TestWatchdogDisconnectsThePublisher is SC2, and the defect it pins is what
+// A26 measured: the duration watchdog force-closed an over-limit session,
+// flipped the state and 404'd the playlist — and the publisher was STILL
+// INGESTING afterwards. "Force-closed" named something that had not happened to
+// the only party uploading bytes.
+func TestWatchdogDisconnectsThePublisher(t *testing.T) {
+	ctx := context.Background()
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	ctrl := &fakeIngestControl{}
+	auditor := &fakeAuditor{}
+	now := time.Now()
+	svc := NewService(repo,
+		WithIngestController(ctrl),
+		WithAuditor(auditor),
+		WithMaxDurationSecsFunc(func() int64 { return 3600 }),
+		WithNowFunc(func() time.Time { return now }),
+	)
+	st, key, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "Over the limit"})
+	if _, err := svc.StartIngest(ctx, key); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	beforeKey := repo.hashes[st.ID]
+	r := repo.rows[st.ID]
+	r.StartedAt = pgtype.Timestamptz{Time: now.Add(-2 * time.Hour), Valid: true}
+	repo.rows[st.ID] = r
+
+	n, err := svc.SweepOverdueLive(ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("sweep = (%d, %v), want (1, nil)", n, err)
+	}
+	if len(ctrl.dropped) != 1 || ctrl.dropped[0] != st.ID.String() {
+		t.Errorf("dropped %v, want exactly [%s] — the watchdog cut the AUDIENCE and left the publisher uploading, which is the A26 finding", ctrl.dropped, st.ID)
+	}
+	if repo.hashes[st.ID] == beforeKey {
+		t.Error("the key was not rotated: OBS reconnects within seconds on the key it holds and the next sweep cuts it again, so an over-limit publisher bounces every 30 s instead of stopping")
+	}
+	if got := repo.rows[st.ID].State; got != StateEnded {
+		t.Errorf("state = %q, want ended", got)
+	}
+
+	// The row keeps NO termination columns. A duration cut is not a person's
+	// decision, and the creator-facing copy for a stamped terminated_at with no
+	// reason code is "You ended this stream".
+	got, _ := svc.Get(ctx, st.ID)
+	if got.Terminated() {
+		t.Error("the watchdog stamped terminated_at; the creator's page would tell them they ended a stream the instance cut")
+	}
+
+	ev := findAudit(t, auditor, observability.ActionLiveForceClose)
+	if ev.ResourceType != "live_stream" || ev.ResourceID != st.ID.String() {
+		t.Errorf("audit resource = %s/%s, want live_stream/%s — A26 measured force_close leaving resource_id EMPTY", ev.ResourceType, ev.ResourceID, st.ID)
+	}
+	if ev.Reason != SystemReasonMaxDuration {
+		t.Errorf("audit reason = %q, want %q", ev.Reason, SystemReasonMaxDuration)
+	}
+	if ev.Actor.Kind != "system" || ev.Actor.ID != "" {
+		t.Errorf("audit actor = %+v, want a bare system actor", ev.Actor)
+	}
+	if ev.Metadata["count"] != "1" {
+		t.Errorf("audit metadata count = %q, want \"1\"", ev.Metadata["count"])
+	}
+}
+
+// TestWatchdogWithoutControlStillCloses: an instance with no control surface
+// keeps exactly the behaviour it had — the state flip — rather than failing the
+// sweep, and the trail says the publisher was not dropped.
+func TestWatchdogWithoutControlStillCloses(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo(uuid.New())
+	auditor := &fakeAuditor{}
+	now := time.Now()
+	svc := NewService(repo,
+		WithAuditor(auditor),
+		WithMaxDurationSecsFunc(func() int64 { return 60 }),
+		WithNowFunc(func() time.Time { return now }),
+	)
+	st, key, _ := svc.Create(ctx, uuid.New(), CreateInput{Title: "t"})
+	if _, err := svc.StartIngest(ctx, key); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	r := repo.rows[st.ID]
+	r.StartedAt = pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true}
+	repo.rows[st.ID] = r
+
+	if n, err := svc.SweepOverdueLive(ctx); err != nil || n != 1 {
+		t.Fatalf("sweep = (%d, %v), want (1, nil)", n, err)
+	}
+	if got := repo.rows[st.ID].State; got != StateEnded {
+		t.Errorf("state = %q, want ended", got)
+	}
+	ev := findAudit(t, auditor, observability.ActionLiveForceClose)
+	if ev.Reason != SystemReasonMaxDuration+" publisher_not_dropped" {
+		t.Errorf("audit reason = %q, want the code plus publisher_not_dropped", ev.Reason)
+	}
+	if _, ok := ev.Metadata["count"]; ok {
+		t.Error("a count was recorded on an instance that never asked an ingest anything")
 	}
 }

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -237,5 +238,103 @@ func TestLiveIngestComponentNotConfiguredWithoutRTMP(t *testing.T) {
 	}
 	if out.Status != "ok" {
 		t.Errorf("readiness = %q; an install that does no live is not degraded", out.Status)
+	}
+}
+
+// liveServerWithIngestControl builds a live-capable server whose ingest control
+// surface is a fake nginx-rtmp answering `body` to every drop. The whole point
+// is to go through the REAL HTTP controller: A26's defect was invisible to a
+// fake that returned what the caller hoped for.
+func liveServerWithIngestControl(t *testing.T, body string) (*Server, *int) {
+	t.Helper()
+	drops := 0
+	ingest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/control/") {
+			drops++
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(ingest.Close)
+	cfg := testConfig()
+	cfg.LiveIngestSecret = "s3cret"
+	cfg.LiveIngestControlURL = ingest.URL
+	return videoServerCfg(t, cfg), &drops
+}
+
+// TestTerminateReportsAnHonestDropCount is SC1 at the API boundary: the drop
+// answered 200 with `0`, so nothing was disconnected, and the moderator is told
+// so instead of being handed `publisher_disconnected: true`. This is the
+// hook-only phantom case — a session flipped live by a valid hook with no RTMP
+// publish behind it — and it is also what every drop looked like during A26,
+// when they were reaching the wrong nginx worker.
+func TestTerminateReportsAnHonestDropCount(t *testing.T) {
+	srv, drops := liveServerWithIngestControl(t, "0")
+	admin, id, _ := liveOnAir(t, srv, "ada", "ada")
+
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/live/"+id+"/terminate",
+		`{"reason_code":"spam"}`, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("terminate = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var res terminateLiveResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &res)
+	if *drops != 1 {
+		t.Errorf("the ingest control surface was called %d times, want 1", *drops)
+	}
+	if res.PublisherDisconnected {
+		t.Error("a drop that closed nothing was reported as a disconnect — the exact claim A26 measured being made while the publisher kept streaming")
+	}
+	if !strings.Contains(res.Detail, "NO publisher") {
+		t.Errorf("detail = %q, want a sentence naming what did not happen", res.Detail)
+	}
+	if !res.StreamKeyRotated || res.State != "ended" {
+		t.Errorf("res = %+v, want the broadcast off the air with a dead key regardless", res)
+	}
+}
+
+// TestTerminateConfirmsARealDrop: the other half. One dropped connection is a
+// confirmed disconnect, and nothing is added to the response to explain away.
+func TestTerminateConfirmsARealDrop(t *testing.T) {
+	srv, drops := liveServerWithIngestControl(t, "1")
+	admin, id, _ := liveOnAir(t, srv, "ada", "ada")
+
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/live/"+id+"/terminate",
+		`{"reason_code":"spam"}`, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("terminate = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var res terminateLiveResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &res)
+	if *drops != 1 {
+		t.Errorf("the ingest control surface was called %d times, want 1", *drops)
+	}
+	if !res.PublisherDisconnected {
+		t.Error("the ingest confirmed closing a publisher connection and the response denied it")
+	}
+	if res.Detail != "" {
+		t.Errorf("detail = %q, want none: nothing was partial", res.Detail)
+	}
+}
+
+// TestOwnerEndDisconnectsThePublisherToo: the creator's own end runs the same
+// sequence. An encoder that reconnects on its own would otherwise put the
+// stream back on air seconds after they ended it.
+func TestOwnerEndDisconnectsThePublisherToo(t *testing.T) {
+	srv, drops := liveServerWithIngestControl(t, "1")
+	owner, id, _ := liveOnAir(t, srv, "ada", "ada")
+
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/live/"+id+"/end", `{}`, owner)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("end = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var res terminateLiveResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &res)
+	if !res.PublisherDisconnected || *drops != 1 {
+		t.Errorf("res = %+v drops=%d, want a confirmed disconnect", res, *drops)
+	}
+	// And it is still not a moderation action: no reason code reaches the row.
+	got := getLiveStream(t, srv, id, owner)
+	if got.Termination == nil || got.Termination.ByModerator {
+		t.Errorf("termination = %+v, want the creator's own end", got.Termination)
 	}
 }

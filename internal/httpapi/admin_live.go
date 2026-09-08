@@ -87,7 +87,7 @@ type terminateLiveResponse struct {
 // handleTerminateLiveStream ends a live broadcast as a moderation action.
 // Behind requireAuth + requireRole(admin, moderator).
 func (s *Server) handleTerminateLiveStream(c echo.Context) error {
-	userID, _, err := mustPrincipal(c)
+	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err
 	}
@@ -103,14 +103,15 @@ func (s *Server) handleTerminateLiveStream(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
 	}
 	res, err := s.livesvc.Terminate(c.Request().Context(), id, live.TerminateInput{
+		Source:     live.SourceModerator,
 		ActorID:    userID,
+		ActorRole:  role,
 		ReasonCode: strings.TrimSpace(in.ReasonCode),
 		Reason:     strings.TrimSpace(in.Reason),
 	})
 	if err != nil {
 		return liveTerminateError(err)
 	}
-	s.afterLiveTerminated(c, res)
 	return c.JSON(http.StatusOK, s.terminateView(res))
 }
 
@@ -126,7 +127,7 @@ func (s *Server) handleTerminateLiveStream(c echo.Context) error {
 // renders it. Behind requireAuth; owner or a channel content manager only, and
 // 404 (not 403) to anyone else, matching every other owner-scoped live route.
 func (s *Server) handleEndOwnLiveStream(c echo.Context) error {
-	userID, _, err := mustPrincipal(c)
+	userID, role, err := mustPrincipal(c)
 	if err != nil {
 		return err
 	}
@@ -143,21 +144,19 @@ func (s *Server) handleEndOwnLiveStream(c echo.Context) error {
 	if err != nil || (stream.OwnerID != userID && !s.canManageChannelContent(ctx, userID, stream.ChannelID)) {
 		return notFound
 	}
-	res, err := s.livesvc.Terminate(ctx, id, live.TerminateInput{})
+	// The actor is carried even though the ROW stores none: A26 measured this
+	// route landing no audit row of any kind, so the one deliberate end of a
+	// broadcast that a person performs left no trace at all. live.SourceOwner is
+	// what keeps it off the row and out of the moderation action.
+	res, err := s.livesvc.Terminate(ctx, id, live.TerminateInput{
+		Source:    live.SourceOwner,
+		ActorID:   userID,
+		ActorRole: role,
+	})
 	if err != nil {
 		return liveTerminateError(err)
 	}
-	s.afterLiveTerminated(c, res)
 	return c.JSON(http.StatusOK, s.terminateView(res))
-}
-
-// afterLiveTerminated runs the side effects both entry points share: the viewer
-// count for a stream that is no longer live is meaningless, and leaving it
-// behind would let a stream that goes live again inherit the last session's tail.
-func (s *Server) afterLiveTerminated(c echo.Context, res live.TerminateResult) {
-	if s.livesvc != nil {
-		s.livesvc.Viewers().Reset(c.Request().Context(), res.Stream.ID)
-	}
 }
 
 // terminateView renders the outcome, including the sentence for a partial one.
@@ -178,6 +177,13 @@ func (s *Server) terminateView(res live.TerminateResult) terminateLiveResponse {
 		out.Detail = "The broadcast was ended, but rotating the stream key FAILED — the publisher's existing key still works and they can start broadcasting again. Rotate it from the stream's settings."
 	case !res.ControlConfigured:
 		out.Detail = "The broadcast was ended and the stream key rotated, but this instance has no ingest control surface (LIVE_INGEST_CONTROL_URL is unset), so the publisher's connection was left open. They cannot start a new broadcast, but they are still uploading to this server until they stop."
+	case errors.Is(res.DropError, live.ErrIngestNoPublisher):
+		// The honest reading of a drop that returned 0. Before this it was
+		// reported as a confirmed disconnect, which is what a hook-only phantom
+		// session — flipped live by a valid hook with no RTMP publish — always
+		// looks like, and what a drop that reaches the wrong nginx worker looked
+		// like for the whole of A26.
+		out.Detail = "The broadcast was ended and the stream key rotated. The media server reported that NO publisher was connected under this stream, so nothing was disconnected — either they had already stopped, or this session was never actually publishing."
 	case !res.PublisherDropped:
 		out.Detail = "The broadcast was ended and the stream key rotated, but the media server did not confirm disconnecting the publisher. They cannot start a new broadcast; check the ingest if their connection persists."
 	}

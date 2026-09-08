@@ -31,8 +31,14 @@ import (
 // candidate. That id is minted by the client and sent in a body the client
 // controls: a count keyed on it is a count anyone can inflate by rotating a
 // UUID, and a "concurrent viewers" number that a viewer can set is worse than no
-// number. The digest is derived server-side from the request principal and
-// cannot be steered.
+// number. The digest is derived server-side, from the request itself.
+//
+// The anonymous principal is the client address AND the User-Agent (see
+// httpapi.liveViewerDigest): the address alone collapsed every viewer behind one
+// NAT into a single member, which A26 measured directly. The UA half is
+// client-chosen, so this is not un-inflatable — but neither was the address on
+// an IPv6 client with a /64 to spend, and the number is a creator-facing
+// estimate rather than an input to anything that pays out.
 //
 // THE PRIVACY RULE (A35/A13). An opted-out signed-in viewer COUNTS but leaves no
 // account-derived value: they are digested as the anonymous visitor they asked

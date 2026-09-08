@@ -116,8 +116,17 @@ func liveStreamRequiresPlaybackToken(stream live.Stream) bool {
 }
 
 // liveViewerAuthorized reports whether the caller may watch a private live
-// stream: its owner (by account identity, which a media element carries in the
-// session cookie), or the bearer of a live-scoped playback token for this exact
+// stream: its owner, by the account identity on the request, or the bearer of a
+// live-scoped playback token for this exact stream.
+//
+// In practice it is almost always the TOKEN, including for the owner. The
+// account identity arrives only as a bearer Authorization header — the only
+// cookie this instance sets for auth is the refresh cookie, which is not an
+// access credential — and hls.js sets that header only when a playback token
+// exists. A media element sets no headers at all, which is the whole reason
+// ?pt= exists. The comment here used to claim the owner is recognised "by the
+// session cookie"; nothing has ever read one on this path, and that belief is
+// why the signed-in branch of liveViewerDigest below is unreachable on a public
 // stream.
 //
 // The token is what gives live a private-but-shareable tier. Live has no
@@ -278,10 +287,38 @@ func (s *Server) serveLiveHLSPlaylist(c echo.Context, file *os.File, eligible bo
 // COUNT. So they are digested as the anonymous visitor A13 says they asked to be
 // treated as: no account-derived value, a distinct member, an honest count.
 //
-// What that costs them is bounded and much smaller than the QoE row's: the
-// digest lives in Redis for the rolling window (90 s), is keyed and day-scoped
-// like every other pseudonym here, is never persisted, never logged, and is
-// never read back as anything but a cardinality.
+// WHO ACTUALLY REACHES THE SIGNED-IN BRANCH: on a PRIVATE stream, whose playlist
+// is fetched with the playback token, and nobody else. A26 measured this
+// directly — an anonymous viewer and a signed-in viewer on one address produced
+// ONE set member — because hls.js sends no session credential with a public
+// stream's playlist: it sets an Authorization header only when a playback token
+// exists (lib/use-playback-engine.ts), never `withCredentials`, and the session
+// is a bearer access token rather than a cookie, so a same-origin fetch carries
+// nothing either. A signed-in viewer of a PUBLIC stream is therefore counted as
+// an anonymous one, and the only way to change that would be a per-viewer
+// credential on the playlist — which A08 ruled out for the delivery path and
+// which would be a new tracking surface bought for a rounder number.
+//
+// So the anonymous principal is what almost every live viewer is counted by, and
+// it is the IP AND the User-Agent rather than the IP alone. One household, one
+// office or one mobile carrier NAT behind a single address collapsed into a
+// single viewer; the UA splits the common cases (a phone and a laptop, Safari
+// and Chrome) at no cost to anyone's privacy — the two are HMAC'd together into
+// the same day-scoped digest, the UA is never stored or logged, and a value that
+// was already re-derived every UTC day stays exactly as ephemeral. It is not a
+// fix, and nothing here pretends it is: two identical phones on one Wi-Fi still
+// count once. It is a smaller undercount than the one A26 measured.
+//
+// The half of the principal the client controls. A User-Agent is chosen by the
+// client, so one host can mint several members by rotating it — the exact
+// objection that ruled out the client-minted `?s=` session id. It is accepted
+// here because the IP-only digest was never inflation-proof either: RealIP is
+// per request, and any client on an IPv6 /64 already had 2^64 addresses to spend
+// on it. The UA does not change the class of the threat, only how cheaply an
+// IPv4-bound client reaches it — and that client is precisely the one this
+// change exists to stop under-counting. What keeps it proportionate is what the
+// number is for: a creator-facing estimate on a page, never an input to billing,
+// ranking or moderation.
 func (s *Server) liveViewerDigest(c echo.Context, now time.Time) string {
 	if s.liveViewers == nil {
 		return ""
@@ -292,12 +329,34 @@ func (s *Server) liveViewerDigest(c echo.Context, now time.Time) string {
 			authed = false
 		}
 	}
-	principal := "ip:" + strings.TrimSpace(c.RealIP())
 	if authed && viewerID != uuid.Nil {
-		principal = "u:" + viewerID.String()
+		return s.liveViewers.Of(now, "u:"+viewerID.String())
 	}
-	return s.liveViewers.Of(now, principal)
+	return s.liveViewers.Of(now, anonymousViewerPrincipal(c))
 }
+
+// anonymousViewerPrincipal is the pre-digest principal for a viewer with no
+// usable account identity: the client address and the User-Agent, separated by a
+// byte neither can contain.
+//
+// The separator matters more than it looks. Concatenating the two without one
+// lets a crafted UA impersonate another address's principal ("203.0.113.7" +
+// "x" vs "203.0.113." + "7x"), and while the worst that buys is a miscount of a
+// live audience, the fix is one byte. The UA is bounded because it is
+// attacker-controlled and a header-sized principal has no reason to reach the
+// MAC.
+func anonymousViewerPrincipal(c echo.Context) string {
+	ua := strings.TrimSpace(c.Request().UserAgent())
+	if len(ua) > maxViewerUserAgentBytes {
+		ua = ua[:maxViewerUserAgentBytes]
+	}
+	return "ip:" + strings.TrimSpace(c.RealIP()) + "\x00ua:" + ua
+}
+
+// maxViewerUserAgentBytes bounds the attacker-controlled half of the principal.
+// Real User-Agents are well under 256 bytes; a longer one is a client trying to
+// be several viewers, and truncation costs it nothing it should have had.
+const maxViewerUserAgentBytes = 256
 
 // countLiveViewer records that whoever made this request is watching.
 //

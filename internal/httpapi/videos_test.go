@@ -1325,6 +1325,23 @@ func videoServerFull(t *testing.T, cfg *config.Config, opts ...video.Option) (*S
 
 // videoServerFullWith is videoServerFull with extra httpapi options (e.g. a fake
 // IPFS mirror), so a test can exercise the additive IPFS serving fields end to end.
+// liveTestOptions mirrors cmd/api's live wiring, including the ingest control
+// surface: a test that points cfg.LiveIngestControlURL at an httptest server
+// gets the REAL HTTP controller, so the drop contract is exercised end to end
+// rather than through a fake that agrees with itself.
+func liveTestOptions(cfg *config.Config, settingssvc *instancesettings.Service) []live.Option {
+	opts := []live.Option{
+		live.WithAllowReplayFunc(func() bool { return settingssvc.Bool(instancesettings.KeyLiveAllowReplay) }),
+		live.WithMaxInstanceLivesFunc(func() int64 { return settingssvc.Int(instancesettings.KeyLiveMaxInstanceLives) }),
+		live.WithMaxUserLivesFunc(func() int64 { return settingssvc.Int(instancesettings.KeyLiveMaxUserLives) }),
+		live.WithMaxDurationSecsFunc(func() int64 { return settingssvc.Int(instancesettings.KeyLiveMaxDurationSecs) }),
+	}
+	if ctrl := live.NewHTTPIngestController(cfg.LiveIngestControlURL, cfg.LiveIngestSecret); ctrl != nil {
+		opts = append(opts, live.WithIngestController(ctrl))
+	}
+	return opts
+}
+
 func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, opts ...video.Option) (*Server, storage.Backend, *transcodeFakeRepo, *notifFakeRepo, *videoFakeRepo) {
 	t.Helper()
 	// The replace-completion hook reaches back into the Server that is built at
@@ -1548,11 +1565,7 @@ func videoServerFullWith(t *testing.T, cfg *config.Config, httpOpts []Option, op
 		// Live enforcement knobs follow the overlay (config-parity W11),
 		// mirroring cmd/api's wiring: replay gate, simultaneous-live caps at
 		// the ingest hooks, and the duration-watchdog limit.
-		WithLiveService(live.NewService(liveRepo,
-			live.WithAllowReplayFunc(func() bool { return settingssvc.Bool(instancesettings.KeyLiveAllowReplay) }),
-			live.WithMaxInstanceLivesFunc(func() int64 { return settingssvc.Int(instancesettings.KeyLiveMaxInstanceLives) }),
-			live.WithMaxUserLivesFunc(func() int64 { return settingssvc.Int(instancesettings.KeyLiveMaxUserLives) }),
-			live.WithMaxDurationSecsFunc(func() int64 { return settingssvc.Int(instancesettings.KeyLiveMaxDurationSecs) }))),
+		WithLiveService(live.NewService(liveRepo, liveTestOptions(cfg, settingssvc)...)),
 		WithQuotaService(quotasvc),
 		WithTranscodeService(transcode.NewService(tcRepo, nil)),
 		WithUploadService(uploadsvc),

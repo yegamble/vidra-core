@@ -995,10 +995,19 @@ func TestLiveDurationWatchdogHTTP(t *testing.T) {
 	if len(listing.LiveStreams) != 0 {
 		t.Errorf("public listing after force-close = %+v, want empty", listing.LiveStreams)
 	}
-	// ...and the publisher's lingering socket eventually fires publish_done,
-	// which lands as an idempotent stop (the documented no-control-endpoint
-	// reality: nginx-rtmp keeps the ingest socket until the client disconnects).
-	if r := ingestReq(srv, "/api/v1/live/ingest/stop", `{"stream_key":"`+key+`"}`, "s3cret"); r.Code != http.StatusNoContent {
+	// ...and the key the publisher is holding is DEAD, because the watchdog now
+	// runs the same termination a moderator does. Without the rotation the
+	// encoder reconnects on it within seconds and the next sweep cuts it again,
+	// so an over-limit publisher would bounce every 30 s instead of stopping.
+	if r := ingestReq(srv, "/api/v1/live/ingest/start", `{"stream_key":"`+key+`"}`, "s3cret"); r.Code == http.StatusOK {
+		t.Error("the pre-force-close key still starts a session; the publisher reconnects straight back on air")
+	}
+	// The eventual publish_done still lands as an idempotent stop. The shipped
+	// ingest fires it from the `hls` application, which is named by the STREAM
+	// ID from the start (deploy/media/nginx.conf.template), so the rotation
+	// above cannot orphan the session — and this is the hook that publishes the
+	// replay.
+	if r := ingestReq(srv, "/api/v1/live/ingest/stop", `{"stream_key":"`+id+`"}`, "s3cret"); r.Code != http.StatusNoContent {
 		t.Errorf("late publish_done after force-close = %d, want 204", r.Code)
 	}
 }
