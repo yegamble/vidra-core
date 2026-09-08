@@ -375,3 +375,42 @@ func Redirectable(class Class) bool {
 		return true
 	}
 }
+
+// PublicMediaOrigin is the Access-Control-Allow-Origin value a PUBLIC,
+// non-credentialed media response carries, and the only one this package ever
+// emits.
+//
+// WHY A WILDCARD AND NOT THE REQUEST'S ORIGIN. Federated playback is the whole
+// reason this header exists: a follower instance renders its own player against
+// the origin's HLS master, and the set of instances that may do so is unbounded
+// and unknowable in advance — it is every server that ever receives a Create or
+// an Announce naming this video. There is no allow-list to build. The bytes
+// behind the header are already servable to an anonymous public visitor
+// (Request.Eligible), so echoing a specific origin would grant nothing a
+// wildcard does not, and would cost a `Vary: Origin` that fragments both the
+// browser cache and the edge's.
+//
+// IT IS NEVER EMITTED WITH CREDENTIALS. A wildcard origin and
+// Access-Control-Allow-Credentials are mutually exclusive by the CORS spec (the
+// browser rejects the pair), and the rule below is stricter than that anyway: a
+// credentialed request — ?pt=, an Authorization header, a video-read cookie
+// actually used — gets no CORS header from here at all, so the cookie-mode
+// allow-list path (the echo CORS middleware's explicit origin +
+// Allow-Credentials) is the only thing that can answer it, exactly as before.
+const PublicMediaOrigin = "*"
+
+// AllowOrigin returns the CORS Access-Control-Allow-Origin value for a media
+// response, or "" for no header at all.
+//
+// It takes the SAME two inputs as CacheControl's `credentialed` and the
+// caller's public-and-published assertion, deliberately: "may a shared cache
+// hold this?" and "may another origin's page read this?" must never be able to
+// disagree about what "public" means. A private, unlisted, password-gated,
+// unpublished or otherwise restricted object answers "" here for the same
+// reason it answers `private` there.
+func AllowOrigin(eligible, credentialed bool) string {
+	if !eligible || credentialed {
+		return ""
+	}
+	return PublicMediaOrigin
+}

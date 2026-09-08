@@ -1119,6 +1119,12 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// the vidra_refresh cookie cross-origin. Allow-Credentials is only ever
 	// granted to the explicit allow-list — never combined with a wildcard
 	// origin (echoing "*" with credentials is unsafe; the browser rejects it).
+	// Public-media preflight (A29 remediation). Registered BEFORE the CORS
+	// middleware on purpose: it pre-seeds the wildcard answer for the media
+	// routes, and the CORS middleware overwrites it with the credentialed
+	// answer whenever the browser's Origin is on the operator's allow-list.
+	// See mediaPreflight.
+	e.Use(mediaPreflight())
 	corsAllowCredentials := true
 	for _, o := range cfg.CORSAllowedOrigins {
 		if o == "*" {

@@ -124,17 +124,18 @@ func (s *Server) handleGetHLSMaster(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	sp, _, err := s.hlsPlaylistForView(c, id)
+	sp, v, err := s.hlsPlaylistForView(c, id)
 	if err != nil {
 		return err
 	}
 	if err := validateHLSVersion(c, sp); err != nil {
 		return err
 	}
+	eligible := publicVideoForIPFS(v.Privacy, v.State)
 	if isPeerTubeHLSMasterKey(sp.MasterKey) {
-		return s.servePeerTubeHLSMaster(c, sp)
+		return s.servePeerTubeHLSMaster(c, sp, eligible)
 	}
-	return s.serveHLSPlaylist(c, sp.MasterKey, sp)
+	return s.serveHLSPlaylist(c, sp.MasterKey, sp, eligible)
 }
 
 // handleGetHLSFile serves one file under a video's streaming prefix: an MPEG-TS
@@ -186,11 +187,12 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 	// native player propagates the token to segment requests), which is exactly
 	// why a playlist can never be delivered from anywhere but here; a segment is
 	// opaque binary and goes through the delivery resolver.
+	eligible := publicVideoForIPFS(v.Privacy, v.State)
 	if strings.HasSuffix(file, ".m3u8") {
-		return s.serveHLSPlaylist(c, key, sp)
+		return s.serveHLSPlaylist(c, key, sp, eligible)
 	}
 	if cmaf && file == hlsCMAFManifestFile {
-		return s.serveCMAFManifest(c, key, sp)
+		return s.serveCMAFManifest(c, key, sp, eligible)
 	}
 	// .m4s segments are labelled video/mp4 rather than the registered
 	// video/iso.segment: Apple's HLS authoring specification asks for video/mp4
@@ -222,10 +224,10 @@ func (s *Server) handleGetHLSFile(c echo.Context) error {
 // Every response also rewrites relative references with the playlist generation
 // version. That makes variant and segment URLs immutable within a generation;
 // the unversioned compatibility route remains revalidated on every use.
-func (s *Server) serveHLSPlaylist(c echo.Context, key string, sp sqlcgen.StreamingPlaylist) error {
+func (s *Server) serveHLSPlaylist(c echo.Context, key string, sp sqlcgen.StreamingPlaylist, eligible bool) error {
 	token := c.QueryParam(playbackTokenParam)
 	version := hlsCacheVersion(sp)
-	setHLSCacheControl(c, sp)
+	setHLSCacheControl(c, sp, eligible)
 	if s.media == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
 	}
@@ -258,8 +260,8 @@ func (s *Server) serveHLSPlaylist(c echo.Context, key string, sp sqlcgen.Streami
 // Origin-served rather than presign-redirected for the same reason playlists
 // are: a manifest is the thing that decides what a client asks for next, so it
 // stays on the authoritative path.
-func (s *Server) serveCMAFManifest(c echo.Context, key string, sp sqlcgen.StreamingPlaylist) error {
-	setHLSCacheControl(c, sp)
+func (s *Server) serveCMAFManifest(c echo.Context, key string, sp sqlcgen.StreamingPlaylist, eligible bool) error {
+	setHLSCacheControl(c, sp, eligible)
 	if s.media == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
 	}
@@ -278,8 +280,8 @@ func (s *Server) serveCMAFManifest(c echo.Context, key string, sp sqlcgen.Stream
 	return c.Blob(http.StatusOK, contentTypeMPD, data)
 }
 
-func (s *Server) servePeerTubeHLSMaster(c echo.Context, sp sqlcgen.StreamingPlaylist) error {
-	setHLSCacheControl(c, sp)
+func (s *Server) servePeerTubeHLSMaster(c echo.Context, sp sqlcgen.StreamingPlaylist, eligible bool) error {
+	setHLSCacheControl(c, sp, eligible)
 	if s.media == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "media storage not configured")
 	}
@@ -435,13 +437,18 @@ func validateHLSVersion(c echo.Context, sp sqlcgen.StreamingPlaylist) error {
 // if a request arrived carrying the edge marker, a playlist must not become a
 // shared cache entry: it is the one URL whose bytes have to change the instant
 // a new transcode generation is promoted.
-func setHLSCacheControl(c echo.Context, sp sqlcgen.StreamingPlaylist) {
+func setHLSCacheControl(c echo.Context, sp sqlcgen.StreamingPlaylist, eligible bool) {
 	c.Response().Header().Set("Cache-Control", delivery.CacheControl(
 		delivery.ClassHLSPlaylist,
 		hlsVersionMatches(c, sp),
 		credentialedMediaRequest(c),
 		false,
 	))
+	// A playlist is never shared-cached (above) but it IS cross-origin readable
+	// when the video is public: the master is the URL a follower instance's
+	// player opens first, and refusing it there would make the stream link the
+	// outbound Video now carries unusable. Same two inputs as everywhere else.
+	setMediaCORS(c, eligible)
 }
 
 // hlsVersionMatches reports whether the request carries this playlist

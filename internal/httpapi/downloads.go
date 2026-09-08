@@ -344,7 +344,8 @@ func (s *Server) handleDownloadVideoSubtitle(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, _, _, err := s.videoForDownload(c, id); err != nil {
+	v, _, _, err := s.videoForDownload(c, id)
+	if err != nil {
 		return err
 	}
 	language := strings.TrimSpace(c.Param("lang"))
@@ -361,7 +362,7 @@ func (s *Server) handleDownloadVideoSubtitle(c echo.Context) error {
 	// surfaces the storage key, so this route keeps the API-proxy path and takes
 	// the cache policy alone (see docs/operations.md — captions are deliberately
 	// outside presigned delivery).
-	setMediaCacheControl(c, delivery.ClassCaption)
+	setMediaCacheControl(c, delivery.ClassCaption, publicVideoForIPFS(v.Privacy, v.State))
 	return c.Stream(http.StatusOK, "text/vtt; charset=utf-8", rc)
 }
 

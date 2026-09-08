@@ -12,6 +12,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/storage"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -90,12 +91,20 @@ func (s *Server) handleUploadCaption(c echo.Context) error {
 // so an unlisted link or an owner's private video must retain its tracks; the
 // public-interaction gate used by comments intentionally has narrower semantics.
 func (s *Server) captionVideoID(c echo.Context) (uuid.UUID, error) {
+	id, _, err := s.captionVideo(c)
+	return id, err
+}
+
+// captionVideo is captionVideoID plus the row the visibility decision was made
+// on, so a caption byte response can carry the same public-media assertion every
+// other media route derives from its own gate (never a second lookup).
+func (s *Server) captionVideo(c echo.Context) (uuid.UUID, sqlcgen.GetVideoByIDRow, error) {
 	id, err := pathUUID(c, "id", "video not found")
 	if err != nil {
-		return uuid.UUID{}, err
+		return uuid.UUID{}, sqlcgen.GetVideoByIDRow{}, err
 	}
-	_, err = s.videoVisibleForMedia(c, id)
-	return id, err
+	v, err := s.videoVisibleForMedia(c, id)
+	return id, v, err
 }
 
 // handleListCaptions lists tracks under the same visibility gate as playback.
@@ -118,7 +127,7 @@ func (s *Server) handleListCaptions(c echo.Context) error {
 // handleDownloadCaption serves a WebVTT track under the playback visibility
 // gate. An unknown language is 404.
 func (s *Server) handleDownloadCaption(c echo.Context) error {
-	videoID, err := s.captionVideoID(c)
+	videoID, v, err := s.captionVideo(c)
 	if err != nil {
 		return err
 	}
@@ -137,7 +146,7 @@ func (s *Server) handleDownloadCaption(c echo.Context) error {
 	// Caption tracks had no cache policy at all before the delivery wave; they
 	// now take the same short private window as the other small per-video assets
 	// (and no-store when the request carries a playback token).
-	setMediaCacheControl(c, delivery.ClassCaption)
+	setMediaCacheControl(c, delivery.ClassCaption, publicVideoForIPFS(v.Privacy, v.State))
 	return c.Stream(http.StatusOK, "text/vtt; charset=utf-8", rc)
 }
 
