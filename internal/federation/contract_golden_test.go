@@ -289,7 +289,7 @@ func TestContractGoldenVideoActivities(t *testing.T) {
 	}
 	assertGolden(t, "create_video.json", takeSingleDelivery(t, repo))
 
-	if err := svc.UpdateVideo(ctx, ctVideoID); err != nil {
+	if err := svc.UpdateVideo(ctx, ctVideoID, true); err != nil {
 		t.Fatalf("UpdateVideo: %v", err)
 	}
 	assertGolden(t, "update_video.json", takeSingleDelivery(t, repo))

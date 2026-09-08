@@ -39,7 +39,21 @@ func (s *Service) AnnounceVideo(ctx context.Context, videoID uuid.UUID) error {
 // UpdateVideo propagates an edit to remote followers: an Update{Video} while the
 // video is still public+published, or a Delete (unfederate) if it is no longer
 // public+published (e.g. went private). No-op if the video is gone.
-func (s *Service) UpdateVideo(ctx context.Context, videoID uuid.UUID) error {
+//
+// wasFederated says whether the video was public+published BEFORE the change
+// that triggered this call, and it gates the RETRACTION branch only — a video
+// that is public+published now is federated regardless of what it was.
+//
+// The gate exists because "not public+published" and "was withdrawn from
+// public+published" are different facts, and only the second one has anything
+// to retract. A video that was never public has never been sent to a peer, so a
+// Delete naming its id tells every follower instance the uuid — and the upload
+// time — of a video they were never shown. The A29 rehearsal measured both ways
+// in: a PRIVATE upload finishing its transcode (the completion hook added by
+// the A29 remediation), and a metadata edit on a private video (pre-existing),
+// each fanned a Delete out to every remote follower. INT-05's own procedure
+// says a private or unlisted video produces ZERO activities.
+func (s *Service) UpdateVideo(ctx context.Context, videoID uuid.UUID, wasFederated bool) error {
 	v, ch, ok, err := s.loadVideoAndChannel(ctx, videoID)
 	if err != nil || !ok {
 		return err
@@ -48,10 +62,13 @@ func (s *Service) UpdateVideo(ctx context.Context, videoID uuid.UUID) error {
 		return nil // channel opted out of ActivityPub (migration 0096)
 	}
 	var payload []byte
-	if v.Privacy == "public" && v.State == "published" {
+	switch {
+	case v.Privacy == "public" && v.State == "published":
 		payload, err = s.buildVideoActivity("Update", ch.Handle, v)
-	} else {
+	case wasFederated:
 		payload, err = s.buildDeleteVideo(ch.Handle, v.ID)
+	default:
+		return nil // never federated: nothing out there to retract
 	}
 	if err != nil {
 		return err

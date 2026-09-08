@@ -90,7 +90,7 @@ func TestUpdateVideoSendsUpdate(t *testing.T) {
 	channelID, videoID := uuid.New(), uuid.New()
 	repo := newOutboxRepo(channelID, videoID, "public", "published", []string{"https://a.example/inbox"})
 	svc := NewService(repo, WithBaseURL("https://videos.example"))
-	if err := svc.UpdateVideo(context.Background(), videoID); err != nil {
+	if err := svc.UpdateVideo(context.Background(), videoID, true); err != nil {
 		t.Fatalf("UpdateVideo: %v", err)
 	}
 	if len(repo.deliveries) != 1 {
@@ -116,8 +116,11 @@ func TestUpdateVideoGonePublicSendsDelete(t *testing.T) {
 	channelID, videoID := uuid.New(), uuid.New()
 	repo := newOutboxRepo(channelID, videoID, "private", "published", []string{"https://a.example/inbox"})
 	svc := NewService(repo, WithBaseURL("https://videos.example"))
-	if err := svc.UpdateVideo(context.Background(), videoID); err != nil {
+	if err := svc.UpdateVideo(context.Background(), videoID, true); err != nil {
 		t.Fatalf("UpdateVideo: %v", err)
+	}
+	if len(repo.deliveries) != 1 {
+		t.Fatalf("deliveries = %d, want 1 (a video that WAS federated retracts)", len(repo.deliveries))
 	}
 	for _, d := range repo.deliveries {
 		var a struct {
@@ -176,5 +179,51 @@ func TestAnnounceVideoUnknownIsNoop(t *testing.T) {
 	svc := NewService(fakeRepo{videosByID: map[uuid.UUID]sqlcgen.GetVideoByIDRow{}}, WithBaseURL("https://videos.example"))
 	if err := svc.AnnounceVideo(context.Background(), uuid.New()); err != nil {
 		t.Errorf("AnnounceVideo unknown video should be a no-op, got %v", err)
+	}
+}
+
+// A video that was NEVER public+published has never been federated, so no peer
+// holds a copy of it and there is nothing to retract. Fanning a Delete out
+// anyway would tell every follower instance the uuid of a video they were never
+// shown — the A29 rehearsal measured exactly that: a PRIVATE upload finishing
+// its transcode, and a metadata edit on a private video, each broadcast a
+// Delete naming the hidden video's id. INT-05's own procedure says a private or
+// unlisted video produces ZERO activities.
+func TestUpdateVideoNeverFederatedSendsNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		privacy string
+		state   string
+	}{
+		{"private published", "private", "published"},
+		{"unlisted published", "unlisted", "published"},
+		{"public draft", "public", "draft"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			channelID, videoID := uuid.New(), uuid.New()
+			repo := newOutboxRepo(channelID, videoID, tc.privacy, tc.state, []string{"https://a.example/inbox"})
+			svc := NewService(repo, WithBaseURL("https://videos.example"))
+			if err := svc.UpdateVideo(context.Background(), videoID, false); err != nil {
+				t.Fatalf("UpdateVideo: %v", err)
+			}
+			if len(repo.deliveries) != 0 {
+				t.Errorf("deliveries = %d, want 0 — a never-federated video must not be retracted", len(repo.deliveries))
+			}
+		})
+	}
+}
+
+// The retraction gate must not swallow a REAL unfederation: a video that was
+// public+published and has just gone private still has to be retracted, and the
+// wasFederated flag is what separates the two cases.
+func TestUpdateVideoStillPublicIgnoresWasFederated(t *testing.T) {
+	channelID, videoID := uuid.New(), uuid.New()
+	repo := newOutboxRepo(channelID, videoID, "public", "published", []string{"https://a.example/inbox"})
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if err := svc.UpdateVideo(context.Background(), videoID, false); err != nil {
+		t.Fatalf("UpdateVideo: %v", err)
+	}
+	if len(repo.deliveries) != 1 {
+		t.Fatalf("deliveries = %d, want 1 — a public+published video updates regardless of the flag", len(repo.deliveries))
 	}
 }

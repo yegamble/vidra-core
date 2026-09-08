@@ -319,7 +319,7 @@ type Service struct {
 	quarantineNewUploads func() bool
 	onPublish            []func(context.Context, uuid.UUID)
 	onTranscode          func(context.Context, uuid.UUID, string)
-	onUpdate             []func(context.Context, uuid.UUID)
+	onUpdate             []func(context.Context, uuid.UUID, bool)
 	onDelete             []func(context.Context, uuid.UUID, uuid.UUID, bool)
 	onMediaReplaced      []func(context.Context, uuid.UUID, string)
 	// uploadUsageRecorder appends a rolling daily-upload-quota ledger event
@@ -469,9 +469,14 @@ func WithTranscodeHook(fn func(ctx context.Context, videoID uuid.UUID, sourceKey
 
 // WithUpdateHook registers a callback invoked (best-effort) after a video's
 // metadata is updated — federation propagates an Update to remote followers, the
-// IPFS mirror re-evaluates derivative pins. Passed the video id. Multiple hooks
-// may be registered (each call appends); they run in registration order.
-func WithUpdateHook(fn func(context.Context, uuid.UUID)) Option {
+// IPFS mirror re-evaluates derivative pins. Passed the video id and whether the
+// video was public+published BEFORE this change, i.e. whether a peer could ever
+// have been sent it. Federation needs that second fact to tell a real
+// unfederation (public → private, which must retract) from a video that was
+// never federated at all (which must stay silent, because a Delete naming it
+// would disclose a hidden video's id). Multiple hooks may be registered (each
+// call appends); they run in registration order.
+func WithUpdateHook(fn func(context.Context, uuid.UUID, bool)) Option {
 	return func(s *Service) { s.onUpdate = append(s.onUpdate, fn) }
 }
 
@@ -1025,9 +1030,12 @@ func (s *Service) ReplaceSource(ctx context.Context, actorID, videoID uuid.UUID,
 		return sqlcgen.Video{}, sqlcgen.VideoFile{}, err
 	}
 	// Update hooks: federation fans an Update{Video} out to remote followers
-	// (duration/metadata changed), the IPFS mirror re-evaluates its pins.
+	// (duration/metadata changed), the IPFS mirror re-evaluates its pins. v is
+	// the row as it stood BEFORE the replacement, which is what says whether a
+	// peer was ever sent this video.
+	wasFederated := v.Privacy == "public" && v.State == "published"
 	for _, hook := range s.onUpdate {
-		hook(ctx, videoID)
+		hook(ctx, videoID, wasFederated)
 	}
 	return updated, file, nil
 }
@@ -2145,8 +2153,12 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 			updated.State = "published"
 		}
 	}
+	// v is the PRE-edit row: whether this video was public+published before the
+	// edit is the fact federation needs to tell a retraction from a video no
+	// peer ever held (see WithUpdateHook).
+	wasFederated := v.Privacy == "public" && v.State == "published"
 	for _, hook := range s.onUpdate {
-		hook(ctx, id)
+		hook(ctx, id, wasFederated)
 	}
 	return updated, nil
 }
