@@ -69,3 +69,31 @@ func TestSystemStatusScannerDownDegrades(t *testing.T) {
 		t.Errorf("instance status = ok with a dead scanner; a down dependency must degrade it")
 	}
 }
+
+// CLAMAV_ADDR must not reach an admin page: admin_infra_test forbids it there by
+// name, and net.Dialer embeds the dialed address verbatim in its error, so the
+// probe's reason sentence is exactly where it would come back.
+func TestSystemStatusScannerDownDoesNotLeakTheAddress(t *testing.T) {
+	cfg := testConfig()
+	cfg.MalwareScanEnabled = true
+	cfg.ClamAVAddr = "sentinel-clamav.internal:3310"
+	cfg.ClamAVTimeout = time.Second
+	cfg.MalwareScanMode = "fail-open"
+	srv := authServerWithConfig(t, cfg)
+	srv.lookPath = ffmpegFound
+
+	body := systemStatus(t, srv)
+
+	c := body.Components["clamav"]
+	if c.Status != "down" {
+		t.Fatalf("clamav status = %q, want down", c.Status)
+	}
+	if strings.Contains(c.Error, "sentinel-clamav.internal") {
+		t.Errorf("the scanner reason leaks CLAMAV_ADDR: %q", c.Error)
+	}
+	// The fail-open wording is the one an operator must not miss: the same dial
+	// failure is publishing unscanned media rather than refusing uploads.
+	if !strings.Contains(c.Error, "WITHOUT being scanned") {
+		t.Errorf("fail-open reason %q does not say media is going out unscanned", c.Error)
+	}
+}

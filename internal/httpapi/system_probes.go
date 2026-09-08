@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -299,7 +300,10 @@ func (s *Server) probeMalwareScanner(ctx context.Context) componentStatus {
 		return componentStatus{Status: "not_configured"}
 	}
 	if err := media.Ping(ctx, s.cfg.ClamAVAddr, s.cfg.ClamAVTimeout); err != nil {
-		return componentStatus{Status: "down", Error: scannerProbeReason(s.cfg.MalwareScanMode, err)}
+		return componentStatus{
+			Status: "down",
+			Error:  scannerProbeReason(s.cfg.MalwareScanMode, s.cfg.ClamAVAddr, err),
+		}
 	}
 	return componentStatus{Status: "ok"}
 }
@@ -309,8 +313,13 @@ func (s *Server) probeMalwareScanner(ctx context.Context) componentStatus {
 // same failure publishes unscanned media under fail-open and rejects every
 // upload under fail-closed, and an operator cannot infer which from a dial
 // error.
-func scannerProbeReason(mode string, err error) string {
-	cause := err.Error()
+func scannerProbeReason(mode, addr string, err error) string {
+	// net.Dialer puts the dialed address verbatim into its error ("dial tcp
+	// 10.0.0.4:3310: connect: connection refused"), so passing the cause through
+	// would put CLAMAV_ADDR on an admin page — which admin_infra_test forbids by
+	// name for exactly this value. The operator already knows what they
+	// configured; the reachability verdict is the new information.
+	cause := redactAddr(err.Error(), addr)
 	switch video.ScanMode(mode) {
 	case video.ScanModeFailOpen:
 		return "the malware scanner is unreachable and MALWARE_SCAN_MODE=fail-open, so every upload and every URL import is being published WITHOUT being scanned: " + cause
@@ -319,6 +328,20 @@ func scannerProbeReason(mode string, err error) string {
 	default:
 		return "the malware scanner is unreachable and MALWARE_SCAN_MODE=fail-closed, so every upload and every URL import is failing: " + cause
 	}
+}
+
+// redactAddr removes a configured host:port — and the bare host, which is what a
+// DNS failure reports on its own — from a dial error before it is shown.
+func redactAddr(cause, addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return cause
+	}
+	cause = strings.ReplaceAll(cause, addr, "the configured address")
+	if host, _, err := net.SplitHostPort(addr); err == nil && host != "" {
+		cause = strings.ReplaceAll(cause, host, "the configured address")
+	}
+	return cause
 }
 
 // probeFFmpeg answers "is the binary on the PATH", and nothing more. ffmpeg is
