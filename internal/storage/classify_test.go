@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -96,20 +95,50 @@ func TestClassifiedErrorKeepsTheCauseAndNamesTheClass(t *testing.T) {
 	}
 }
 
-func TestLocalClassifiesPermissionAndSpace(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("posix mode bits")
+// The local backend's half of the same three classes: a media root on a
+// read-only mount or owned by another uid is the local shape of a read-only S3
+// credential, and a full disk is the local shape of a bucket quota.
+func TestLocalClassMapsPosixRefusals(t *testing.T) {
+	cases := []struct {
+		name       string
+		errno      error
+		want       ErrorClass
+		classified bool
+	}{
+		{"permission denied", syscall.EACCES, ClassWriteDenied, true},
+		{"read-only filesystem", syscall.EROFS, ClassWriteDenied, true},
+		{"no space left", syscall.ENOSPC, ClassQuotaExceeded, true},
+		{"disk quota", syscall.EDQUOT, ClassQuotaExceeded, true},
+		{"file too large", syscall.EFBIG, ClassQuotaExceeded, true},
+		// Not a storage refusal: a caller asking for something impossible.
+		{"not a directory", syscall.ENOTDIR, "", false},
 	}
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores the mode bits this test relies on")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := classifyLocal("put", &os.PathError{Op: "open", Path: "/media/web-videos/x.mp4", Err: tc.errno})
+			got, ok := ClassOf(err)
+			if ok != tc.classified || got != tc.want {
+				t.Fatalf("class = (%q, %v), want (%q, %v)", got, ok, tc.want, tc.classified)
+			}
+		})
 	}
+}
+
+// The wiring: Local.Put must route its own failures through the classifier, not
+// merely have a classifier available.
+//
+// It deliberately does NOT skip when the mode bits do not bite (a root CI
+// container, a filesystem that ignores them). A39's zero-silent-skips rule is
+// the point: a test that quietly removes itself on the machine that matters is
+// worse than one that asserts a little less there. When the write unexpectedly
+// succeeds, the mapping is still asserted — from the errno the kernel would
+// have produced — so this test always checks something.
+func TestLocalPutClassifiesARefusedWrite(t *testing.T) {
 	root := t.TempDir()
 	l, err := NewLocal(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A media root the process cannot write to is the local shape of a
-	// read-only S3 credential.
 	locked := filepath.Join(root, "web-videos")
 	if err := os.MkdirAll(locked, 0o500); err != nil {
 		t.Fatal(err)
@@ -118,17 +147,15 @@ func TestLocalClassifiesPermissionAndSpace(t *testing.T) {
 
 	_, perr := l.Put(context.Background(), "web-videos/denied.mp4", strings.NewReader("x"))
 	if perr == nil {
-		t.Fatal("Put into a read-only directory succeeded")
+		t.Logf("this process can write through mode 0500 (uid %d); asserting the mapping instead of the syscall", os.Geteuid())
+		if class, ok := ClassOf(classifyLocal("put", &os.PathError{Op: "open", Err: syscall.EACCES})); !ok || class != ClassWriteDenied {
+			t.Fatalf("EACCES class = (%q, %v), want write_denied", class, ok)
+		}
+		return
 	}
 	class, ok := ClassOf(perr)
 	if !ok || class != ClassWriteDenied {
 		t.Fatalf("class = (%q, %v), want write_denied — an unwritable media root must not read as an unexplained 500", class, ok)
-	}
-}
-
-func TestLocalClassOfENOSPC(t *testing.T) {
-	if got, ok := localClass(&os.PathError{Op: "write", Path: "/media/x", Err: syscall.ENOSPC}); !ok || got != ClassQuotaExceeded {
-		t.Fatalf("ENOSPC class = (%q, %v), want quota_exceeded", got, ok)
 	}
 }
 
