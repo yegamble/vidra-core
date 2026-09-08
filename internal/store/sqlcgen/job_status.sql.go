@@ -83,6 +83,86 @@ func (q *Queries) AccountExportStats(ctx context.Context) (AccountExportStatsRow
 	return i, err
 }
 
+const cDNPurgeJobStats = `-- name: CDNPurgeJobStats :one
+SELECT
+    count(*) FILTER (WHERE state = 'pending')::bigint AS pending,
+    count(*) FILTER (WHERE state = 'running')::bigint AS running,
+    count(*) FILTER (WHERE state = 'done')::bigint    AS done,
+    count(*) FILTER (WHERE state = 'failed')::bigint  AS failed,
+    COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE state IN ('pending', 'running'))))::bigint, 0)::bigint AS oldest_pending_age_seconds
+FROM cdn_purge_jobs
+`
+
+type CDNPurgeJobStatsRow struct {
+	Pending                 int64 `json:"pending"`
+	Running                 int64 `json:"running"`
+	Done                    int64 `json:"done"`
+	Failed                  int64 `json:"failed"`
+	OldestPendingAgeSeconds int64 `json:"oldest_pending_age_seconds"`
+}
+
+// The CDN purge queue (0137). Its depth is what an operator reads after a
+// takedown: pending means the edge may still be serving something, and a
+// 'running' row is a claimed job rather than a stuck one until its lease passes.
+// Note the oldest-age filter admits 'running' as well as 'pending', which the
+// other queues here do not need: this queue's lease IS next_attempt_at, so a
+// resumable catalogue walk spends most of its life 'running' and an age that
+// ignored it would read 0 while the walk was hours behind.
+func (q *Queries) CDNPurgeJobStats(ctx context.Context) (CDNPurgeJobStatsRow, error) {
+	row := q.db.QueryRow(ctx, cDNPurgeJobStats)
+	var i CDNPurgeJobStatsRow
+	err := row.Scan(
+		&i.Pending,
+		&i.Running,
+		&i.Done,
+		&i.Failed,
+		&i.OldestPendingAgeSeconds,
+	)
+	return i, err
+}
+
+const cDNPurgeRecentFailures = `-- name: CDNPurgeRecentFailures :many
+SELECT id, last_error AS error, attempts, updated_at
+FROM cdn_purge_jobs
+WHERE state = 'failed'
+ORDER BY updated_at DESC
+LIMIT $1
+`
+
+type CDNPurgeRecentFailuresRow struct {
+	ID        uuid.UUID `json:"id"`
+	Error     string    `json:"error"`
+	Attempts  int32     `json:"attempts"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Dead-lettered invalidations. No URL is selected, for the same reason no other
+// queue's failure feed carries its arguments.
+func (q *Queries) CDNPurgeRecentFailures(ctx context.Context, limit int32) ([]CDNPurgeRecentFailuresRow, error) {
+	rows, err := q.db.Query(ctx, cDNPurgeRecentFailures, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CDNPurgeRecentFailuresRow
+	for rows.Next() {
+		var i CDNPurgeRecentFailuresRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Error,
+			&i.Attempts,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const captionJobStats = `-- name: CaptionJobStats :one
 SELECT
     count(*) FILTER (WHERE state = 'pending')::bigint AS pending,
