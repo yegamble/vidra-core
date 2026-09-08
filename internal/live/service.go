@@ -742,7 +742,7 @@ func (s *Service) RunReplay(ctx context.Context, streamID uuid.UUID) {
 		return
 	}
 	s.logger.InfoContext(ctx, "live replay published", "stream_id", streamID.String(), "video_id", draft.ID.String())
-	s.audit(ctx, observability.ResultSuccess, "stream="+streamID.String()+" video="+draft.ID.String())
+	s.audit(ctx, streamID, observability.ResultSuccess, "video="+draft.ID.String())
 
 	// LIVE_RECORDING_RETENTION = 0: the replay is now the copy, so the
 	// intermediate goes. Before this key, recordings were never deleted at all —
@@ -776,39 +776,53 @@ func (s *Service) replayFailed(ctx context.Context, streamID uuid.UUID, stage st
 	s.logger.WarnContext(ctx, "live replay failed; the session recording is KEPT under LIVE_HLS_ROOT/rec (it is the only copy of this broadcast) — re-transcode it before LIVE_RECORDING_RETENTION expires",
 		"stream_id", streamID.String(), "stage", stage,
 		"recording_retention", s.recordingRetention().String(), "error", cause)
-	s.audit(ctx, observability.ResultFailure, "stream="+streamID.String()+" stage="+stage)
+	s.audit(ctx, streamID, observability.ResultFailure, "stage="+stage)
 }
 
 // audit records a replay outcome when an auditor is wired (best-effort).
-func (s *Service) audit(ctx context.Context, result, reason string) {
+//
+// The STREAM goes in resource_id and not into the reason text. A26 measured this
+// row landing with an empty resource_id and `stream=<uuid>` inside free text,
+// which is unfilterable: the audit list can select every event about one stream
+// only if the id is in the column the filter reads.
+func (s *Service) audit(ctx context.Context, streamID uuid.UUID, result, reason string) {
 	if s.auditor == nil {
 		return
 	}
 	_ = s.auditor.Record(ctx, audit.Event{
-		Action: observability.ActionLiveReplay,
-		Result: result,
-		Actor:  audit.ActorSnapshot{Kind: "system"},
-		Reason: reason,
+		Action:       observability.ActionLiveReplay,
+		Result:       result,
+		Actor:        audit.ActorSnapshot{Kind: "system"},
+		ResourceType: auditResourceLiveStream,
+		ResourceID:   streamID.String(),
+		Reason:       reason,
 	})
 }
 
 // SweepOverdueLive is the live_max_duration_secs watchdog (config-parity W11):
 // it force-closes every currently-live session whose started_at is older than
-// the effective limit, flipping it to ended (or offline for a permanent
-// stream) exactly like an ingest-stop would. A no-op (0, nil) when the limit
-// is 0/unset. Returns how many sessions were closed.
+// the effective limit. A no-op (0, nil) when the limit is 0/unset. Returns how
+// many sessions were closed.
 //
-// Enforcement reality (documented finding): the deployed media server
-// (deploy/media/nginx.conf.template) exposes NO nginx-rtmp control/drop
-// endpoint, so this is a SERVER-SIDE termination: the state flip immediately
-// stops live HLS serving (the /live/{id}/hls routes 404 for non-live streams)
-// and drops the session from every listing, but the publisher's RTMP ingest
-// socket lingers — nginx-rtmp keeps accepting and packaging segments to disk
-// until the publisher disconnects. When that eventual disconnect fires the
-// on-publish-done hook, the normal stop path runs again (idempotent state
-// re-assert) and, for replay-enabled streams, triggers the replay-to-VOD —
-// which is also WHY the watchdog never runs the replay itself: the recording
-// is still being written while the socket lingers.
+// It runs the SAME termination as a moderator's End stream (Terminate, source
+// system) and that is the fix for what A26 measured: the watchdog flipped the
+// state and 404'd the playlist, and the publisher kept ingesting afterwards —
+// "force-closed" named something that had not happened to the only party
+// uploading bytes. The state flip removes the AUDIENCE; only the ingest's
+// control surface removes the PUBLISHER, and by the time this ran there was one.
+//
+// What the shared path buys, beyond the drop: the key rotation (without it OBS
+// reconnects within seconds and the next sweep cuts it again, so an over-limit
+// publisher would bounce every 30 s instead of stopping), the viewer-set reset,
+// and an audit row that names the stream in resource_id.
+//
+// What it deliberately does NOT do is write the row's termination columns — see
+// writeTerminatedState. A duration cut is not a person's decision, and the
+// creator-facing copy for a stamped terminated_at with no reason code is "You
+// ended this stream".
+//
+// The replay is still left to the ordinary stop path: the recording is open
+// while the publisher holds the socket, and the drop is what closes it.
 func (s *Service) SweepOverdueLive(ctx context.Context) (int, error) {
 	maxSecs := s.maxDurationSecs()
 	if maxSecs <= 0 {
@@ -821,25 +835,23 @@ func (s *Service) SweepOverdueLive(ctx context.Context) (int, error) {
 	}
 	closed := 0
 	for _, r := range rows {
-		next := StateEnded
-		if r.Permanent {
-			next = StateOffline
-		}
-		if err := s.repo.SetLiveStreamState(ctx, sqlcgen.SetLiveStreamStateParams{ID: r.ID, State: next}); err != nil {
-			s.logger.WarnContext(ctx, "live duration watchdog: force-close failed", "stream_id", r.ID.String(), "error", err)
+		res, terr := s.Terminate(ctx, r.ID, TerminateInput{
+			Source:     SourceSystem,
+			ReasonCode: SystemReasonMaxDuration,
+		})
+		if terr != nil {
+			// ErrNotLive is a race, not a failure: the stop hook or a moderator
+			// got there between the list and this call, and the session is off
+			// the air either way.
+			if !errors.Is(terr, ErrNotLive) {
+				s.logger.WarnContext(ctx, "live duration watchdog: force-close failed", "stream_id", r.ID.String(), "error", terr)
+			}
 			continue
 		}
 		closed++
 		s.logger.InfoContext(ctx, "live duration watchdog force-closed an over-limit session",
-			"stream_id", r.ID.String(), "max_duration_secs", maxSecs, "next_state", next)
-		if s.auditor != nil {
-			_ = s.auditor.Record(ctx, audit.Event{
-				Action: observability.ActionLiveForceClose,
-				Result: observability.ResultSuccess,
-				Actor:  audit.ActorSnapshot{Kind: "system"},
-				Reason: "stream=" + r.ID.String() + " max_duration_secs exceeded",
-			})
-		}
+			"stream_id", r.ID.String(), "max_duration_secs", maxSecs,
+			"publisher_dropped", res.PublisherDropped, "key_rotated", res.KeyRotated)
 	}
 	return closed, nil
 }

@@ -141,13 +141,26 @@ const (
 	// id + network only — never the signature, nonce, or any key material.
 	ActionDonationVerify = "content.donation.verify"
 	// ActionLiveReplay records the best-effort republish of a recorded live
-	// session as a VOD on ingest-stop (P12). Reason carries safe ids/outcome
-	// only — never the stream key.
+	// session as a VOD on ingest-stop (P12). ResourceID carries the live stream
+	// and Reason the safe outcome/stage plus the published video id — never the
+	// stream key.
 	ActionLiveReplay = "content.live.replay"
 	// ActionLiveForceClose records the live_max_duration_secs watchdog
-	// force-closing an over-limit live session (config-parity W11). Reason
-	// carries the safe stream id only — never the stream key.
+	// force-closing an over-limit live session (config-parity W11). ResourceID
+	// carries the stream and Reason the code `max_duration` — never the stream
+	// key. A26 measured this row landing with an EMPTY resource_id and the id
+	// buried in free text, so the audit filter could not target the stream it
+	// was about.
 	ActionLiveForceClose = "content.live.force_close"
+	// ActionLiveEnded records the CREATOR (or one of their channel's content
+	// managers) ending their own broadcast with POST /live/{id}/end. It is a
+	// separate action from ActionLiveTerminate because a creator stopping their
+	// own stream is not a moderation event and must not appear in the trail as
+	// one — and because A26 measured the owner's end writing no audit row at
+	// all, the only deliberate end of a broadcast that left no trace. Actor is
+	// the user + role; ResourceID is the stream; Reason is `owner_ended` plus
+	// the partial-outcome markers.
+	ActionLiveEnded = "content.live.ended"
 	// ActionLiveTerminate records a MODERATOR (or the stream's own owner)
 	// deliberately ending a live broadcast. ResourceID carries the stream id —
 	// unlike the two live actions above, which A26 measured leaving it empty and

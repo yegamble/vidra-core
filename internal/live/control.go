@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -75,6 +76,11 @@ const (
 	probeTimeout = 3 * time.Second
 )
 
+// maxControlBodyBytes bounds what is read back from the ingest. The only body
+// that is ever parsed is a decimal count of dropped connections; 256 bytes is
+// far more than that and far less than anything worth streaming into memory.
+const maxControlBodyBytes = 256
+
 // ErrIngestControlUnavailable means the ingest's control surface did not answer,
 // or answered with a failure. It is deliberately DISTINCT from "the stream was
 // not terminated": by the time a caller sees it the state flip and the key
@@ -84,8 +90,17 @@ const (
 var ErrIngestControlUnavailable = errors.New("live: ingest control unavailable")
 
 // ErrIngestNoPublisher means the ingest accepted the request and reported that
-// there is no publisher under that name. Not a failure: the publisher had
-// already gone, which is the outcome a drop was asking for.
+// it dropped NOTHING: no publisher was connected under that name.
+//
+// A26 measured why this has to be its own outcome rather than a synonym for
+// success. nginx-rtmp answers a drop that matches nothing with **200 and a body
+// of `0`**, not with the 404 the contract assumed, so every drop looked like a
+// disconnect — including the twelve consecutive drops that reached the wrong
+// worker and left the publisher streaming for another 60 s. A termination that
+// reports `publisher_disconnected: true` when nothing was dropped tells a
+// moderator the socket is closed at the one moment they cannot check for
+// themselves, so this error is what the count `0` becomes and the caller is told
+// plainly that there was nobody to disconnect.
 var ErrIngestNoPublisher = errors.New("live: no publisher on the ingest")
 
 // IngestController is the ingest control surface as the live service needs it.
@@ -94,9 +109,11 @@ var ErrIngestNoPublisher = errors.New("live: no publisher on the ingest")
 // with no control URL wires nil and degrades rather than failing.
 type IngestController interface {
 	// DropPublisher disconnects the RTMP publisher of streamName on the ingest
-	// application. Returns ErrIngestNoPublisher when there was none, and
-	// ErrIngestControlUnavailable when the ingest could not be reached.
-	DropPublisher(ctx context.Context, streamName string) error
+	// application and returns HOW MANY connections the ingest says it closed.
+	// The count is the whole point: 0 is ErrIngestNoPublisher (nothing matched),
+	// and ErrIngestControlUnavailable means the ingest could not be reached or
+	// did not answer with a count at all.
+	DropPublisher(ctx context.Context, streamName string) (int, error)
 	// Probe reports whether the ingest is answering at all. nil means alive.
 	Probe(ctx context.Context) error
 }
@@ -138,15 +155,27 @@ func NewHTTPIngestController(base, secret string) *HTTPIngestController {
 // nil-safe, so callers can ask without a nil check of their own.
 func (c *HTTPIngestController) Configured() bool { return c != nil }
 
-// DropPublisher issues nginx-rtmp's drop/publisher control command.
+// DropPublisher issues nginx-rtmp's drop/publisher control command and reports
+// how many publisher connections the module says it closed.
 //
-// The module answers 200 with the number of dropped connections in the body, and
-// 404 when the name matches no publisher. A 404 is reported as
-// ErrIngestNoPublisher rather than as an error, because "there is no publisher"
-// is the state a drop was trying to reach.
-func (c *HTTPIngestController) DropPublisher(ctx context.Context, streamName string) error {
+// THE BODY IS THE ANSWER, not the status. The control module answers 200 with a
+// decimal count for every request it understands, including one that matched
+// nothing — A26 read `200` / `0` off the wire twelve times in a row against a
+// publisher that was still streaming, because the drop reached a different
+// nginx WORKER than the one holding the socket. Reading only the status made a
+// total failure indistinguishable from a clean disconnect, so the count is
+// parsed and `0` becomes ErrIngestNoPublisher.
+//
+// A 404 is kept as the same "nothing matched" outcome: this build never sends
+// one, but the module's documentation describes it and a proxy in front of the
+// ingest may.
+//
+// A 2xx whose body is not a count is ErrIngestControlUnavailable rather than a
+// success — it is what a captive portal, an error page or a misrouted proxy
+// answers, and none of them dropped anybody.
+func (c *HTTPIngestController) DropPublisher(ctx context.Context, streamName string) (int, error) {
 	if c == nil {
-		return ErrIngestControlUnavailable
+		return 0, ErrIngestControlUnavailable
 	}
 	q := url.Values{}
 	q.Set("app", c.app)
@@ -155,17 +184,26 @@ func (c *HTTPIngestController) DropPublisher(ctx context.Context, streamName str
 
 	ctx, cancel := context.WithTimeout(ctx, dropTimeout)
 	defer cancel()
-	status, err := c.do(ctx, target)
+	status, body, err := c.do(ctx, target)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	switch {
 	case status == http.StatusNotFound:
-		return ErrIngestNoPublisher
+		return 0, ErrIngestNoPublisher
 	case status >= 200 && status < 300:
-		return nil
+		n, perr := strconv.Atoi(strings.TrimSpace(body))
+		if perr != nil || n < 0 {
+			// The body is not quoted into the error: it is whatever an unknown
+			// endpoint chose to send, and this string reaches logs.
+			return 0, fmt.Errorf("%w: drop answered %d with a body that is not a count", ErrIngestControlUnavailable, status)
+		}
+		if n == 0 {
+			return 0, ErrIngestNoPublisher
+		}
+		return n, nil
 	default:
-		return fmt.Errorf("%w: drop answered %d", ErrIngestControlUnavailable, status)
+		return 0, fmt.Errorf("%w: drop answered %d", ErrIngestControlUnavailable, status)
 	}
 }
 
@@ -182,7 +220,7 @@ func (c *HTTPIngestController) Probe(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	status, err := c.do(ctx, c.base+"/stat")
+	status, _, err := c.do(ctx, c.base+"/stat")
 	if err != nil {
 		return err
 	}
@@ -192,13 +230,17 @@ func (c *HTTPIngestController) Probe(ctx context.Context) error {
 	return nil
 }
 
-// do performs one authenticated GET and returns its status code. The body is
-// drained and discarded up to a small cap so the connection is reusable without
-// letting a misbehaving endpoint stream into core's memory.
-func (c *HTTPIngestController) do(ctx context.Context, target string) (int, error) {
+// do performs one authenticated GET and returns its status code and body.
+//
+// The body is read up to a small cap and no further: the only body this package
+// reads is the drop count, a handful of bytes, and a misbehaving endpoint must
+// not be able to stream into core's memory. The cap is also why the read is not
+// treated as a failure when it is short — a truncated count is caught by the
+// parse, not by the reader.
+func (c *HTTPIngestController) do(ctx context.Context, target string) (int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrIngestControlUnavailable, err)
+		return 0, "", fmt.Errorf("%w: %v", ErrIngestControlUnavailable, err)
 	}
 	req.Header.Set(ingestSecretHeader, c.secret)
 	resp, err := c.client.Do(req)
@@ -206,9 +248,11 @@ func (c *HTTPIngestController) do(ctx context.Context, target string) (int, erro
 		// The error is wrapped, not returned raw: it can carry the control URL,
 		// and a control URL in a 5xx body would tell an anonymous caller where
 		// the instance's ingest lives.
-		return 0, fmt.Errorf("%w: %v", ErrIngestControlUnavailable, err)
+		return 0, "", fmt.Errorf("%w: %v", ErrIngestControlUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxControlBodyBytes))
+	// Drain whatever is left so the connection stays reusable.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-	return resp.StatusCode, nil
+	return resp.StatusCode, string(body), nil
 }

@@ -1910,8 +1910,26 @@ Without it, ending a broadcast still takes it off the air and still kills the
 credential — **but the publisher's RTMP socket stays open**, and they keep
 uploading segments and a recording to this server's disk until they stop on their
 own. The API response says so in its `detail` field rather than reporting a clean
-success, and the same is true of the global `live_max_duration_secs` watchdog,
-which has always worked this way.
+success.
+
+`publisher_disconnected: true` means the media server reported closing at least
+one publisher connection, and nothing weaker. A drop that matches nothing answers
+`200` with a body of `0` on the bundled ingest — not the `404` the contract first
+assumed — so a session that was never really publishing, or one whose publisher
+had already gone, is reported as **not** disconnected with a `detail` saying so.
+The count the ingest returned rides the audit row's `count` metadata.
+
+The `live_max_duration_secs` watchdog runs **the same four steps**. It used to do
+step 1 alone: the state flipped, the playlist 404'd, and the publisher kept
+ingesting — "force-closed" named something that had not happened to the only
+party uploading bytes. It now rotates the key and drops the publisher as well,
+which is also why an over-limit creator must copy a fresh stream key from the
+Studio before going live again: without the rotation the encoder reconnects
+within seconds and the next sweep cuts it again. What it does **not** do is write
+the creator-facing termination reason — a duration cut is the instance's policy,
+not a person's decision, and the row's termination columns are the moderator's
+and the creator's. It is audited as `content.live.force_close` with the stream in
+`resource_id` and `max_duration` as its reason.
 
 `/admin/system` and `/readyz` carry a **`live_ingest`** component:
 `not_configured` with no `LIVE_RTMP_URL` (an install that does no live is not a
