@@ -25,6 +25,16 @@ import (
 	"github.com/labstack/gommon/bytes"
 )
 
+// DefaultAuditLogRetention is the shipped window for the security-audit trail.
+//
+// It lives here rather than being imported from internal/audit because this
+// package imports NO internal package — it is the one thing every other package
+// is allowed to depend on, and borrowing a constant from a domain package would
+// be the first edge of a cycle. internal/audit re-states it as
+// audit.DefaultRetention for readers of that package, and a config test asserts
+// the two agree, so the copy cannot drift silently.
+const DefaultAuditLogRetention = 400 * 24 * time.Hour
+
 // Role selects WHICH HALVES of the process run: the HTTP listener, the
 // background workers, or both. One binary, one image, one configuration surface
 // — the only thing that changes is which halves boot.
@@ -90,6 +100,19 @@ type Config struct {
 	OTelExporterEndpoint string
 	OTelExporterProtocol string
 	OTelServiceName      string
+
+	// AuditLogRetention is how long the security-audit trail is kept before the
+	// retention worker prunes it. 0 keeps it FOREVER, the house convention for
+	// every other unlimited window here.
+	//
+	// The default (400 days) is deliberately just over a year: a trail that
+	// cannot answer "what changed at this point last year" cannot serve the
+	// annual review that asks, and the five weeks of slack stop a 365-day window
+	// from deleting last year's evidence the week before somebody looks for it.
+	// It is a knob rather than a constant because the right answer is
+	// jurisdictional — some operators must keep a security trail for a year, and
+	// some must not keep one much longer than that.
+	AuditLogRetention time.Duration
 
 	// MetricsEnabled gates the Prometheus RED-metrics surface (a /metrics scrape
 	// endpoint + the request-metrics middleware). Opt-in and zero-cost when false:
@@ -1066,6 +1089,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		OTelExporterEndpoint:                   getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		OTelExporterProtocol:                   strings.ToLower(getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")),
 		OTelServiceName:                        getEnv("OTEL_SERVICE_NAME", "vidra-core"),
+		AuditLogRetention:                      p.Duration("AUDIT_LOG_RETENTION", DefaultAuditLogRetention),
 		MetricsEnabled:                         p.Bool("METRICS_ENABLED", false),
 		HTTPHost:                               getEnv("HTTP_HOST", "0.0.0.0"),
 		InstanceName:                           getEnv("INSTANCE_NAME", "Vidra (dev)"),
@@ -1705,6 +1729,13 @@ func (c *Config) validate() error {
 	}
 	if c.WhisperDefaultLanguage != "" && !languageTag.MatchString(c.WhisperDefaultLanguage) {
 		add(varErrorf("WHISPER_DEFAULT_LANGUAGE", "config: WHISPER_DEFAULT_LANGUAGE %q must be a BCP-47-ish language tag (e.g. en, pt-BR)", c.WhisperDefaultLanguage))
+	}
+	// Audit retention. Negative is a typo, not a policy: it would compute a
+	// cutoff in the FUTURE and delete the entire trail on the next tick, which is
+	// the one mistake here that cannot be undone. 0 is the deliberate
+	// keep-forever setting and is accepted.
+	if c.AuditLogRetention < 0 {
+		add(varErrorf("AUDIT_LOG_RETENTION", "config: AUDIT_LOG_RETENTION must not be negative (0 = keep the audit trail forever), got %s", c.AuditLogRetention))
 	}
 	// vidra-search integration (search-service W4): validate the URL shape when
 	// set, and require a strong shared secret in production. The two are about

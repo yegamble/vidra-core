@@ -42,3 +42,24 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 SELECT count(*)::bigint
 FROM audit_log a
 WHERE (sqlc.narg('action')::text IS NULL OR a.action = sqlc.narg('action')::text);
+
+-- name: PruneAuditLog :execrows
+-- One batch of expired audit rows, OLDEST FIRST.
+--
+-- Batched for the same reason every other prune in this tree is: an unbounded
+-- DELETE over a table nobody has ever pruned is one statement holding row locks
+-- across however many years accumulated, on the table every security-sensitive
+-- write appends to. A short batch that runs a hundred times is a hundred short
+-- locks.
+--
+-- The subselect ORDERs so a run that hits the batch cap has deleted the OLDEST
+-- expired rows rather than an arbitrary slice of them; without it a partial
+-- sweep can leave the very oldest rows alive forever while newer expired ones
+-- go. It rides audit_log_occurred_idx (a DESC index, scanned backwards).
+DELETE FROM audit_log
+WHERE id IN (
+    SELECT a.id FROM audit_log a
+    WHERE a.occurred_at < sqlc.arg('cutoff')
+    ORDER BY a.occurred_at, a.id
+    LIMIT sqlc.arg('batch_size')
+);

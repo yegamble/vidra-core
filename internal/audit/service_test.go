@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -14,8 +15,37 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// fakeRepo is an in-memory audit.Repository.
-type fakeRepo struct{ rows []sqlcgen.ListAuditLogRow }
+// fakeRepo is an in-memory audit.Repository. pruneCalls/maxBatch record how the
+// sweep asked, not just what it deleted: "did it batch" is the property that
+// keeps one DELETE off the table every security write appends to, and only the
+// call shape can prove it.
+type fakeRepo struct {
+	rows       []sqlcgen.ListAuditLogRow
+	pruneCalls int
+	maxBatch   int32
+}
+
+// PruneAuditLog mirrors the SQL: one bounded batch of the OLDEST expired rows,
+// reporting how many it took. Deleting an arbitrary slice instead would let a
+// fake pass a test the database would fail on a partial sweep.
+func (f *fakeRepo) PruneAuditLog(_ context.Context, a sqlcgen.PruneAuditLogParams) (int64, error) {
+	f.pruneCalls++
+	if a.BatchSize > f.maxBatch {
+		f.maxBatch = a.BatchSize
+	}
+	sort.SliceStable(f.rows, func(i, j int) bool { return f.rows[i].OccurredAt.Before(f.rows[j].OccurredAt) })
+	var kept []sqlcgen.ListAuditLogRow
+	var deleted int64
+	for _, r := range f.rows {
+		if deleted < int64(a.BatchSize) && r.OccurredAt.Before(a.Cutoff) {
+			deleted++
+			continue
+		}
+		kept = append(kept, r)
+	}
+	f.rows = kept
+	return deleted, nil
+}
 
 func (f *fakeRepo) InsertAuditLog(_ context.Context, a sqlcgen.InsertAuditLogParams) error {
 	f.rows = append(f.rows, sqlcgen.ListAuditLogRow{

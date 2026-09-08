@@ -20,6 +20,13 @@ import (
 // httpAuditFakeRepo is an in-memory audit.Repository for handler tests.
 type httpAuditFakeRepo struct{ rows []sqlcgen.ListAuditLogRow }
 
+// PruneAuditLog exists so this fake still satisfies audit.Repository. Handler
+// tests never sweep — retention is a worker, not a route — so the batching
+// semantics are proven against the fake in internal/audit instead.
+func (f *httpAuditFakeRepo) PruneAuditLog(context.Context, sqlcgen.PruneAuditLogParams) (int64, error) {
+	return 0, nil
+}
+
 func (f *httpAuditFakeRepo) InsertAuditLog(_ context.Context, a sqlcgen.InsertAuditLogParams) error {
 	f.rows = append(f.rows, sqlcgen.ListAuditLogRow{
 		ID: a.ID, SchemaVersion: a.SchemaVersion, Domain: a.Domain,
