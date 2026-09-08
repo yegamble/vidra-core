@@ -167,7 +167,13 @@ func TestReTranscodeMovesGenerationAndReleasesTheOld(t *testing.T) {
 		hlsTree:    gen1,
 		videoFiles: []VideoFileRef{{Kind: "webm", StorageKey: webm1}},
 	}
-	svc := New(repo, lk, blobs, client, testConfig())
+	// Serial drains. This is the only test that leaves three rows due at once
+	// (the tree plus BOTH generations' alternates), and the in-memory fake ledger
+	// is a plain map with no lock — concurrent workers over it trip -race on the
+	// fake, not on anything this test is about.
+	cfg := testConfig()
+	cfg.Concurrency = 1
+	svc := New(repo, lk, blobs, client, cfg)
 
 	// --- generation 1 ---
 	putBlob(t, blobs, gen1+"/master.m3u8", "r1-master")
