@@ -64,6 +64,13 @@ func (s *state) ledgerFinding(ctx context.Context, label, table, consumer string
 	return ledgerStatusFinding(label, table, consumer, st, s.envRel)
 }
 
+// apiEntrypoint is the path of the api binary INSIDE the release image — the
+// ENTRYPOINT of vidra-core's Dockerfile. It is spelled out here because
+// `docker compose exec` bypasses the entrypoint (see ledgerViaContainer below).
+// TestLedgerReadNamesTheImageEntrypoint reads the Dockerfile and fails if the two
+// ever drift apart, which is the only way this constant can go stale.
+const apiEntrypoint = "/app/api"
+
 // ledgerViaContainer reads the ledger from inside the stack, which is the only
 // way when the bundled Postgres is used.
 func (s *state) ledgerViaContainer(ctx context.Context, label, table string) Finding {
@@ -81,7 +88,20 @@ func (s *state) ledgerViaContainer(ctx context.Context, label, table string) Fin
 	if _, ok := serviceContainer(running, "api"); !ok {
 		return skipf("this deployment uses the bundled Postgres, which publishes no host port by design, and the api container is not running to read the ledger from inside the network")
 	}
-	args := s.composeArgs("exec", "-T", "api", "migrate", "version")
+	// THE BINARY IS NAMED, NOT THE SUBCOMMAND. `docker compose exec` REPLACES the
+	// container's command and — unlike `run` — does NOT prepend the image's
+	// ENTRYPOINT, so `exec api migrate version` asks Docker for an executable
+	// literally called `migrate`. No Vidra image has one: `migrate` is a
+	// SUBCOMMAND of the api binary, and /app is not on the container's PATH. The
+	// bare form therefore failed on every bundled-Postgres deployment — the
+	// default topology — with `exec: "migrate": executable file not found in
+	// $PATH`, which lands in the branch below and reports "the database is
+	// unreachable from the api container", sending the operator to check a
+	// Postgres that is perfectly healthy. Worst of all it made this check unable
+	// to report the one state it exists for: a DIRTY ledger after a failed
+	// migration, when `migrate version` prints `version=N dirty=true` and the
+	// runbook depends on somebody being told.
+	args := s.composeArgs("exec", "-T", "api", apiEntrypoint, "migrate", "version")
 	out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
 	if err != nil {
 		return skipf("the ledger could not be read from inside the api container (docker is not on this host's PATH)")

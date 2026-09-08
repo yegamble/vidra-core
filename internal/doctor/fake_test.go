@@ -303,7 +303,12 @@ func (h *fakeHost) healthyRespond(name string, args []string) (Output, error) {
 		return Output{Stdout: healthyPS}, nil
 	case name == "docker" && strings.HasPrefix(joined, "info "):
 		return Output{Stdout: healthyInfo}, nil
-	case name == "docker" && strings.Contains(joined, "exec -T api migrate version"):
+	// EXACT, not Contains-with-a-loose-substring: this fake is the only place the
+	// argv is checked, and the bare `exec -T api migrate version` it used to
+	// accept is a command Docker cannot run (see apiEntrypoint in
+	// checks_state.go). Matching the real form is what makes a regression here
+	// fail a test instead of only failing on a droplet.
+	case name == "docker" && strings.HasSuffix(joined, "exec -T api /app/api migrate version"):
 		return Output{Stdout: "version=42 dirty=false\n"}, nil
 	case name == "docker" && strings.Contains(joined, "exec -T postgres psql"):
 		// `psql -tA` prints the bare value and nothing else. Two different

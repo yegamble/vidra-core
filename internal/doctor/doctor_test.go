@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -703,7 +704,7 @@ func TestSchemaLedger(t *testing.T) {
 	// A dirty ledger is the one that must never be deployed over.
 	h = newFakeHost()
 	h.respond = func(name string, args []string) (Output, error) {
-		if strings.Contains(strings.Join(args, " "), "exec -T api migrate version") {
+		if strings.Contains(strings.Join(args, " "), "exec -T api /app/api migrate version") {
 			return Output{Stdout: "version=42 dirty=true\n", ExitCode: 1}, nil
 		}
 		return h.healthyRespond(name, args)
@@ -721,7 +722,7 @@ func TestSchemaLedger(t *testing.T) {
 	// Never migrated: a warning, because the next deploy fixes it.
 	h = newFakeHost()
 	h.respond = func(name string, args []string) (Output, error) {
-		if strings.Contains(strings.Join(args, " "), "exec -T api migrate version") {
+		if strings.Contains(strings.Join(args, " "), "exec -T api /app/api migrate version") {
 			return Output{Stdout: "version=none dirty=false\n"}, nil
 		}
 		return h.healthyRespond(name, args)
@@ -737,6 +738,41 @@ func TestSchemaLedger(t *testing.T) {
 		return h.healthyRespond(name, args)
 	}
 	wantFinding(t, one(t, only(t, "schema ledger", h, nil)), StatusWarn, "publishes no host port", "")
+}
+
+// TestLedgerReadNamesTheImageEntrypoint pins the one detail that made the
+// schema-ledger check unrunnable in production while every unit test passed:
+// `docker compose exec` does NOT prepend the image's ENTRYPOINT, so the command
+// has to name the api binary by path. Two assertions, because either half alone
+// can rot: the argv doctor actually builds, and the Dockerfile constant it is
+// copied from.
+func TestLedgerReadNamesTheImageEntrypoint(t *testing.T) {
+	h := newFakeHost()
+	only(t, "schema ledger", h, nil)
+
+	var seen string
+	for _, c := range h.commands() {
+		if strings.Contains(c, "migrate version") {
+			seen = c
+		}
+	}
+	if seen == "" {
+		t.Fatalf("the schema-ledger check never ran `migrate version`; commands were %v", h.commands())
+	}
+	if !strings.HasSuffix(seen, "exec -T api "+apiEntrypoint+" migrate version") {
+		t.Fatalf("schema-ledger read must name the api binary by path (docker compose exec bypasses ENTRYPOINT); got %q", seen)
+	}
+
+	// The constant is a copy of the Dockerfile's ENTRYPOINT. If somebody moves the
+	// binary, this is what tells them the doctor has to move with it.
+	df, err := os.ReadFile(filepath.Join("..", "..", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	want := `ENTRYPOINT ["` + apiEntrypoint + `"]`
+	if !strings.Contains(string(df), want) {
+		t.Fatalf("Dockerfile no longer has %s, so doctor's apiEntrypoint constant is stale", want)
+	}
 }
 
 func TestSearchLedger(t *testing.T) {
