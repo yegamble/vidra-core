@@ -1970,6 +1970,11 @@ func (s *Server) routes() {
 		api.GET("/admin/instances/blocked", s.handleListBlockedInstances, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.POST("/admin/instances/blocked", s.handleBlockInstance, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.DELETE("/admin/instances/blocked/:domain", s.handleUnblockInstance, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		// One remote ACCOUNT blocked for everyone, instead of defederating the
+		// whole server it lives on (A29 parity).
+		api.GET("/admin/federation/blocked-actors", s.handleAdminListBlockedRemoteActors, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.POST("/admin/federation/blocked-actors", s.handleAdminBlockRemoteActor, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
+		api.DELETE("/admin/federation/blocked-actors", s.handleAdminUnblockRemoteActor, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
 
 	// Per-remote-account blocks (A29-F7). Mounted with the federation service,

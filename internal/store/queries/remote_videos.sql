@@ -30,9 +30,17 @@ UPDATE remote_videos SET thumbnail_key = $2, updated_at = now() WHERE id = $1;
 -- The remote-watch read model. Content from admin-blocked instances is hidden
 -- from all surfaces (§8), so a video whose origin domain is blocked is absent —
 -- and so is an individually admin-blocked remote video (remote_video_blocks).
+-- preferred_username and attributed_to are the block affordance (A29 parity).
+-- The rehearsal measured the gap precisely: this view carried domain, object_url
+-- and watch_url and NO actor identity at all, so the watch page could not offer
+-- a block that addressed the right actor and the settings page's placeholder was
+-- the only hint — the block a viewer could actually make was the one that did
+-- nothing. attributed_to is the ACCOUNT behind the channel, which is what a
+-- block should be taken against.
 SELECT rv.id, rv.object_url, rv.remote_actor_url, ra.domain, rv.title,
        rv.description, rv.duration_seconds, rv.published_at, rv.watch_url,
-       rv.stream_url, rv.thumbnail_key, rv.fetched_at, rv.updated_at
+       rv.stream_url, rv.thumbnail_key, rv.fetched_at, rv.updated_at,
+       ra.preferred_username, ra.attributed_to
 FROM remote_videos rv
 JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
 WHERE rv.id = $1

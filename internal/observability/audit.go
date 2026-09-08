@@ -64,6 +64,12 @@ const (
 	ActionVideoReject             = "moderation.video.quarantine_reject"
 	ActionInstanceBlock           = "moderation.instance.block"
 	ActionInstanceUnblock         = "moderation.instance.unblock"
+	// ActionRemoteActorBlock/Unblock record an admin blocking ONE remote
+	// account for every reader on this instance (A29 parity), rather than
+	// defederating that account's whole server. The blocked actor URL is the
+	// resource, so the trail names who was silenced without a second lookup.
+	ActionRemoteActorBlock   = "moderation.remote_actor.block"
+	ActionRemoteActorUnblock = "moderation.remote_actor.unblock"
 	// ActionFederationInboxRejected records an inbound ActivityPub activity
 	// refused because its origin instance is on the admin blocklist (A29-F4).
 	// A29 measured the gap: the refusal answered 202 — indistinguishable from

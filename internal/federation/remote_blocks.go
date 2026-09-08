@@ -18,11 +18,26 @@ package federation
 //
 // WHAT IT DOES, in three places:
 //
-//   - the viewer's feeds and reads exclude that actor's remote videos (the
-//     NOT EXISTS clause added to every remote-video feed query);
+//   - the viewer's feeds and reads exclude that actor's remote videos AND the
+//     comments it has ALREADY written (the NOT EXISTS clause on every
+//     remote-video feed query and on the comment thread — a read filter, so an
+//     unblock restores every hidden row exactly);
 //   - an inbound Create{Note} from that actor onto content the BLOCKER owns is
 //     dropped rather than stored;
 //   - an inbound Follow of a channel the BLOCKER owns is refused.
+//
+// WHAT A BLOCK IS TAKEN AGAINST, since A29 parity: the ACCOUNT. A handle resolves
+// through WebFinger and then UP through the Group's attributedTo, so blocking
+// `@name@domain` records the person and the reach view expands that back down to
+// every channel they own — including channels they create afterwards, which a
+// per-channel row could never cover. The rehearsal measured the alternative:
+// a viewer blocked a colliding handle, the block stored the Person url while the
+// videos were attributed to the Group, and the feed did not change.
+//
+// AND WHO CAN TAKE ONE: a viewer, for themselves, and an ADMIN, for everyone.
+// The two live in different tables and meet in one view, because the instance's
+// decision and a viewer's are different facts that happen to answer the same
+// question at read time.
 //
 // WHAT IT DELIBERATELY DOES NOT DO: it does not hide the blocker from the
 // blocked actor, and it does not stop delivery. Federation has no mechanism that
@@ -38,6 +53,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/urlsafety"
@@ -78,7 +94,7 @@ func (s *Service) ResolveRemoteActorIdentity(ctx context.Context, identity strin
 		if err != nil {
 			return "", fmt.Errorf("%w: %w", ErrRemoteUnresolvable, err)
 		}
-		return actorURL, nil
+		return s.accountActorFor(ctx, actorURL), nil
 	case SearchQueryURI:
 		if strings.EqualFold(hostOf(identity), s.domain()) {
 			return "", ErrLocalFollowTarget
@@ -87,9 +103,38 @@ func (s *Service) ResolveRemoteActorIdentity(ctx context.Context, identity strin
 		if _, err := guard.ValidateURL(identity); err != nil {
 			return "", fmt.Errorf("%w: %w", ErrRemoteUnresolvable, err)
 		}
-		return identity, nil
+		return s.accountActorFor(ctx, identity), nil
 	}
 	return "", ErrRemoteActorRequired
+}
+
+// accountActorFor normalises an actor URL UP to the account that owns it, so a
+// block is recorded against the person rather than one of their channels.
+//
+// This is the rehearsal's finding (b) and the rule the owner asked for: blocking
+// `@name@domain` blocks the account AND every channel it owns. The reach view
+// (0142) expands the stored account URL back down to its channels on every read,
+// so recording the account is what makes ONE row cover all of them — and what
+// makes a channel the account creates TOMORROW blocked too, which a per-channel
+// row could never do.
+//
+// It is deliberately best-effort. A block must work against an actor that is
+// offline, gone, or refusing us — exactly the actor a viewer is most likely to be
+// blocking — so an unresolvable or unowned actor keeps the URL it was given. The
+// worst case is the block a viewer could already make before this existed.
+func (s *Service) accountActorFor(ctx context.Context, actorURL string) string {
+	ra, err := s.resolveRemoteActor(ctx, actorURL)
+	if err != nil || ra.AttributedTo == "" {
+		return actorURL
+	}
+	// Same-host only: attributedTo is text a remote server controls, and a Group
+	// claiming an owner on some OTHER server would let a stranger redirect the
+	// block. refetchRemoteActor already refuses to store a foreign owner; this
+	// is the belt to that brace, since the row may predate it.
+	if !sameHost(ra.AttributedTo, actorURL) {
+		return actorURL
+	}
+	return ra.AttributedTo
 }
 
 // BlockRemoteActor records a viewer's block of one remote actor. Idempotent.
@@ -149,6 +194,13 @@ const rfc3339 = "2006-01-02T15:04:05Z07:00"
 // check that is false for essentially every activity), and only then does the
 // per-owner question run. Blocks are rare; inbound activities are not.
 func (s *Service) remoteActorBlockedBy(ctx context.Context, ownerID uuid.UUID, actorURL string) (bool, error) {
+	// The ADMIN block first: it is instance-wide, so it needs no per-owner
+	// question and it answers for every local user at once. An account blocked
+	// by the instance cannot reach anybody's content here.
+	admin, err := s.repo.IsRemoteActorBlockedInstanceWide(ctx, actorURL)
+	if err != nil || admin {
+		return admin, err
+	}
 	anyone, err := s.repo.IsRemoteActorBlockedByAnyone(ctx, actorURL)
 	if err != nil || !anyone {
 		return false, err
@@ -181,4 +233,71 @@ func (s *Service) videoOwnerBlocksRemoteActor(ctx context.Context, videoID uuid.
 		return false, err
 	}
 	return s.remoteActorBlockedBy(ctx, ch.OwnerID, actorURL)
+}
+
+// --- The ADMIN half: one remote account blocked for everyone (A29 parity) ---
+//
+// An instance block is a sledgehammer in the other direction from the one 0138
+// removed: an admin who wants ONE remote person gone had to defederate that
+// person's entire server, taking every innocent creator on it with them. This is
+// the same block, at the instance's scope, over the same reach — an account, and
+// the channels it owns.
+
+// BlockedRemoteActor is one instance-wide block, as the admin surface sees it.
+type BlockedRemoteActor struct {
+	ActorURL string
+	// Handle is preferredUsername@domain when the actor is cached, else "".
+	Handle    string
+	Domain    string
+	Reason    string
+	BlockedAt string
+}
+
+// BlockRemoteActorInstanceWide records an admin's block of one remote actor for
+// every reader on this instance. Idempotent; a re-block with an empty reason
+// keeps the first one.
+func (s *Service) BlockRemoteActorInstanceWide(ctx context.Context, actorURL string, adminID uuid.UUID, reason string) error {
+	var by pgtype.UUID
+	if adminID != uuid.Nil {
+		by = pgtype.UUID{Bytes: adminID, Valid: true}
+	}
+	return s.repo.BlockRemoteActorInstanceWide(ctx, sqlcgen.BlockRemoteActorInstanceWideParams{
+		RemoteActorUrl: actorURL, BlockedBy: by, Reason: reason,
+	})
+}
+
+// UnblockRemoteActorInstanceWide lifts one, reporting whether a block was
+// standing. Hidden content comes back: the block is a read filter, never a
+// write, so nothing was destroyed to hide it.
+func (s *Service) UnblockRemoteActorInstanceWide(ctx context.Context, actorURL string) (bool, error) {
+	rows, err := s.repo.UnblockRemoteActorInstanceWide(ctx, actorURL)
+	return rows > 0, err
+}
+
+// ListBlockedRemoteActors returns the instance-wide blocks, newest first.
+func (s *Service) ListBlockedRemoteActors(ctx context.Context, limit, offset int32) ([]BlockedRemoteActor, int64, error) {
+	rows, err := s.repo.ListBlockedRemoteActors(ctx, sqlcgen.ListBlockedRemoteActorsParams{
+		ResultLimit: limit, ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.CountBlockedRemoteActors(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]BlockedRemoteActor, 0, len(rows))
+	for _, r := range rows {
+		b := BlockedRemoteActor{
+			ActorURL:  r.RemoteActorUrl,
+			Domain:    r.Domain,
+			Reason:    r.Reason,
+			BlockedAt: r.CreatedAt.UTC().Format(rfc3339),
+		}
+		if r.PreferredUsername != "" && r.Domain != "" {
+			b.Handle = r.PreferredUsername + "@" + r.Domain
+		}
+		out = append(out, b)
+	}
+	return out, total, nil
 }

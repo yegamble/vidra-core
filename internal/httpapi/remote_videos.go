@@ -20,8 +20,18 @@ type remoteVideoView struct {
 	Domain          string     `json:"domain"`
 	Title           string     `json:"title"`
 	Description     string     `json:"description"`
-	ObjectURL       string     `json:"object_url"`
-	WatchURL        string     `json:"watch_url"`
+	ObjectURL string `json:"object_url"`
+	WatchURL  string `json:"watch_url"`
+	// ActorURL, AccountActorURL and ChannelHandle are the block affordance
+	// (A29 parity). Without them the remote watch page could name the origin
+	// DOMAIN and nothing finer, so the only control it could offer a viewer was
+	// defederating a whole instance — and the per-account block a viewer could
+	// type by hand addressed the wrong actor whenever an account and a channel
+	// shared a handle. AccountActorURL is what a block should be taken against;
+	// it is absent when the origin's actor document named no owner.
+	ActorURL        string     `json:"actor_url,omitempty"`
+	AccountActorURL string     `json:"account_actor_url,omitempty"`
+	ChannelHandle   string     `json:"channel_handle,omitempty"`
 	StreamURL       *string    `json:"stream_url,omitempty"`
 	DurationSeconds *int32     `json:"duration_seconds,omitempty"`
 	PublishedAt     *time.Time `json:"published_at,omitempty"`
@@ -39,6 +49,9 @@ func newRemoteVideoView(rv remotevideo.RemoteVideo) remoteVideoView {
 		Description:     rv.Description,
 		ObjectURL:       rv.ObjectURL,
 		WatchURL:        rv.WatchURL,
+		ActorURL:        rv.ActorURL,
+		AccountActorURL: rv.AccountActorURL,
+		ChannelHandle:   rv.ChannelHandle,
 		StreamURL:       rv.StreamURL,
 		DurationSeconds: rv.DurationSeconds,
 		PublishedAt:     rv.PublishedAt,

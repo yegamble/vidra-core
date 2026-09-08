@@ -71,7 +71,8 @@ func (q *Queries) DeleteRemoteVideoCommentByObjectURL(ctx context.Context, objec
 const getRemoteVideoByID = `-- name: GetRemoteVideoByID :one
 SELECT rv.id, rv.object_url, rv.remote_actor_url, ra.domain, rv.title,
        rv.description, rv.duration_seconds, rv.published_at, rv.watch_url,
-       rv.stream_url, rv.thumbnail_key, rv.fetched_at, rv.updated_at
+       rv.stream_url, rv.thumbnail_key, rv.fetched_at, rv.updated_at,
+       ra.preferred_username, ra.attributed_to
 FROM remote_videos rv
 JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
 WHERE rv.id = $1
@@ -80,24 +81,33 @@ WHERE rv.id = $1
 `
 
 type GetRemoteVideoByIDRow struct {
-	ID              uuid.UUID          `json:"id"`
-	ObjectUrl       string             `json:"object_url"`
-	RemoteActorUrl  string             `json:"remote_actor_url"`
-	Domain          string             `json:"domain"`
-	Title           string             `json:"title"`
-	Description     string             `json:"description"`
-	DurationSeconds *int32             `json:"duration_seconds"`
-	PublishedAt     pgtype.Timestamptz `json:"published_at"`
-	WatchUrl        string             `json:"watch_url"`
-	StreamUrl       *string            `json:"stream_url"`
-	ThumbnailKey    *string            `json:"thumbnail_key"`
-	FetchedAt       time.Time          `json:"fetched_at"`
-	UpdatedAt       time.Time          `json:"updated_at"`
+	ID                uuid.UUID          `json:"id"`
+	ObjectUrl         string             `json:"object_url"`
+	RemoteActorUrl    string             `json:"remote_actor_url"`
+	Domain            string             `json:"domain"`
+	Title             string             `json:"title"`
+	Description       string             `json:"description"`
+	DurationSeconds   *int32             `json:"duration_seconds"`
+	PublishedAt       pgtype.Timestamptz `json:"published_at"`
+	WatchUrl          string             `json:"watch_url"`
+	StreamUrl         *string            `json:"stream_url"`
+	ThumbnailKey      *string            `json:"thumbnail_key"`
+	FetchedAt         time.Time          `json:"fetched_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+	PreferredUsername string             `json:"preferred_username"`
+	AttributedTo      string             `json:"attributed_to"`
 }
 
 // The remote-watch read model. Content from admin-blocked instances is hidden
 // from all surfaces (§8), so a video whose origin domain is blocked is absent —
 // and so is an individually admin-blocked remote video (remote_video_blocks).
+// preferred_username and attributed_to are the block affordance (A29 parity).
+// The rehearsal measured the gap precisely: this view carried domain, object_url
+// and watch_url and NO actor identity at all, so the watch page could not offer
+// a block that addressed the right actor and the settings page's placeholder was
+// the only hint — the block a viewer could actually make was the one that did
+// nothing. attributed_to is the ACCOUNT behind the channel, which is what a
+// block should be taken against.
 func (q *Queries) GetRemoteVideoByID(ctx context.Context, id uuid.UUID) (GetRemoteVideoByIDRow, error) {
 	row := q.db.QueryRow(ctx, getRemoteVideoByID, id)
 	var i GetRemoteVideoByIDRow
@@ -115,6 +125,8 @@ func (q *Queries) GetRemoteVideoByID(ctx context.Context, id uuid.UUID) (GetRemo
 		&i.ThumbnailKey,
 		&i.FetchedAt,
 		&i.UpdatedAt,
+		&i.PreferredUsername,
+		&i.AttributedTo,
 	)
 	return i, err
 }
