@@ -837,3 +837,72 @@ func instanceOwnerFinding(owners, activeAdmins int64) Finding {
 	}
 	return okf(fmt.Sprintf("the instance owner is marked: no other administrator can demote, deactivate or delete it, and %d active admins mean the last-admin guard is not load-bearing today", activeAdmins))
 }
+
+// maxPendingPurgeAge is how long an edge invalidation may be outstanding before
+// it is worth telling an operator about.
+//
+// The queue's own ladder gives up after roughly two hours (internal/cdnpurge:
+// 1+2+4+8+16+32+60 minutes after the immediate pass), so a backlog older than
+// that is not "the retry has not run yet" — it is either a walk over a very
+// large catalogue or an edge that has been refusing for longer than the system
+// is willing to keep trying. Three hours is that ceiling with room for the
+// worker's ten-second tick and a long walk.
+const maxPendingPurgeAge = 3 * time.Hour
+
+// checkCDNPurgeBacklog reports invalidations the CDN has not accepted.
+//
+// It is the one STATE check whose backlog is a CORRECTNESS problem rather than
+// a latency one: nothing is slow because of it, but a deleted video, a
+// now-private video or a revoked download is still being served by a third
+// party from bytes this instance has stopped handing out. Nothing else in this
+// report can see that — the api answers 404 correctly and the media plays
+// anyway — which is exactly why it is worth a line.
+//
+// A deployment with no CDN has an empty table and reads ✓, which is the truth
+// rather than a skip: with no edge there is provably no shared copy.
+func checkCDNPurgeBacklog(ctx context.Context, s *state) []Finding {
+	if s.envErr != nil {
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s), so there is no connection string", s.envErr))}
+	}
+	dsn := s.value("DATABASE_URL")
+	if dsn == "" {
+		// The bundled Postgres publishes no host port by design. Unlike the
+		// storage-migration check there is no through-the-container fallback
+		// here, because the same numbers are one authenticated GET away on the
+		// status page and a psql transcription would be a second definition of
+		// the query to keep in step.
+		return []Finding{skipf("this deployment uses the bundled Postgres, which publishes no host port (by design) — read the same numbers in the cdn_purge block of GET /api/v1/admin/system")}
+	}
+	pending, dead, oldest, err := s.opt.Prober.CDNPurgeBacklog(ctx, dsn)
+	if err != nil {
+		if isMissingRelation(err) {
+			return []Finding{cdnPurgePredatesTable}
+		}
+		return []Finding{skipf("the CDN purge queue could not be read: " + reachSummary(err) + " (the core ledger check above reports the connection in full)")}
+	}
+	return []Finding{cdnPurgeFinding(pending, dead, time.Duration(oldest)*time.Second)}
+}
+
+// cdnPurgePredatesTable is the answer for a database older than migration 0137:
+// nothing can be pending, because the queue does not exist there yet.
+var cdnPurgePredatesTable = okf("no CDN invalidations pending (this database predates the purge queue, so there is nothing that could be)")
+
+// cdnPurgeFinding is the verdict. A dead letter is the loud one — it is the
+// state in which nothing will try again — and a merely old backlog is a warning
+// because the queue may still clear it on its own.
+func cdnPurgeFinding(pending, dead int64, oldest time.Duration) Finding {
+	if dead > 0 {
+		return warnf(
+			fmt.Sprintf("%d CDN invalidation(s) GAVE UP after the retry cap, and %d are still pending. The edge is still serving media this instance has stopped serving — a deleted or now-private video, or a download that has been revoked — and nothing will try again", dead, pending),
+			"invalidate them by hand at the CDN's own console, then check DELIVERY_CDN_PURGE_URL/_METHOD/_TOKEN: a purge endpoint that rejects every call is the usual cause. The failed jobs and their URLs are in the cdn_purge_jobs table (state='failed'); GET /api/v1/admin/system's cdn_purge block and the admin jobs page both count them")
+	}
+	if pending > 0 && oldest > maxPendingPurgeAge {
+		return warnf(
+			fmt.Sprintf("%d CDN invalidation(s) have been pending for %s. Either a catalogue-wide revocation is still walking, or the edge is refusing purges — until they land it keeps serving media this instance no longer serves", pending, roundAge(oldest)),
+			"watch the cdn_purge block on GET /api/v1/admin/system: a pending count that falls is a walk in progress and needs nothing. A count that does not move means the purge endpoint is rejecting calls — check DELIVERY_CDN_PURGE_URL/_METHOD/_TOKEN against the provider's single-URL invalidation API")
+	}
+	if pending > 0 {
+		return okf(fmt.Sprintf("%d CDN invalidation(s) in flight, none older than %s — the queue is working through them", pending, roundAge(maxPendingPurgeAge)))
+	}
+	return okf("no CDN invalidations pending — nothing is known to be stale at the edge")
+}

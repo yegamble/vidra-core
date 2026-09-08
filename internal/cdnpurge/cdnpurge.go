@@ -500,6 +500,34 @@ func (s *Service) rescheduleWalk(ctx context.Context, row sqlcgen.ClaimDueCDNPur
 	}
 }
 
+// PurgeReplacedAsset invalidates the ONE URL a video's poster or storyboard
+// sprite is served at, after it was replaced in place.
+//
+// Both are the awkward case the rest of the purge seam does not have: their URL
+// does not change when their bytes do, so a shared cache keeps answering with
+// the old image. Everything else in a video's media set is either
+// generation-addressed (the ladder, since migration 0136) or removed outright.
+//
+// kind is a video_files kind. Anything other than "storyboard" is the poster,
+// because those are the only two kinds video.Service's replacement hook fires
+// for and a silent no-op on an unexpected third would be a purge that did not
+// happen.
+func (s *Service) PurgeReplacedAsset(ctx context.Context, videoID uuid.UUID, kind string) {
+	s.PurgeDetached(ctx, []string{ReplacedAssetPath(videoID, kind)}, true)
+}
+
+// ReplacedAssetPath is the media route URL of a replaced-in-place asset. It uses
+// the same builders the request handlers do (internal/mediaroute) because an
+// invalidation for a URL the routes do not serve would answer 404 at the edge,
+// which internal/cdn counts as success — a takedown that reads as working in the
+// log while the stale copy stays exactly where it is.
+func ReplacedAssetPath(videoID uuid.UUID, kind string) string {
+	if kind == "storyboard" {
+		return mediaroute.Video(videoID, "/storyboard.jpg")
+	}
+	return mediaroute.Video(videoID, "/thumbnail")
+}
+
 // PurgeDetached invalidates a small, already-known URL set immediately and
 // persists whatever the edge refused, so the retry ladder finishes the job.
 //

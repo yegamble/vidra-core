@@ -101,6 +101,12 @@ type Prober interface {
 	// same question the media-GC interlock asks, so doctor and the sweep can
 	// never disagree about whether a move is happening.
 	ActiveStorageMigration(ctx context.Context, dsn string) (bool, error)
+	// CDNPurgeBacklog reports how many edge invalidations are still outstanding
+	// and how many gave up (migration 0137), plus the oldest outstanding one's
+	// age. It is the only state check here whose backlog is a CORRECTNESS
+	// problem: a growing number means the CDN is still serving media this
+	// instance has stopped serving.
+	CDNPurgeBacklog(ctx context.Context, dsn string) (pending, deadLettered, oldestSeconds int64, err error)
 	// OwnerAndAdminCounts reports how many accounts carry the 0131 owner marker
 	// and how many can still administer the instance. Both come back from one
 	// row because they are one question about whether this instance can still be
@@ -271,6 +277,26 @@ func (RealProber) ActiveStorageMigration(ctx context.Context, dsn string) (bool,
 	}
 	defer db.Close()
 	return db.Queries().HasActiveStorageMigration(ctx)
+}
+
+// CDNPurgeBacklog asks the database the same question GET /api/v1/admin/system
+// asks — the sqlc query CDNPurgeJobStats — so the report and the status page
+// cannot disagree about whether a takedown finished.
+func (RealProber) CDNPurgeBacklog(ctx context.Context, dsn string) (int64, int64, int64, error) {
+	dsn, err := addDSNParams(dsn, map[string]string{"connect_timeout": "5"})
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	db, err := store.New(ctx, dsn)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	defer db.Close()
+	row, err := db.Queries().CDNPurgeJobStats(ctx)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return row.Pending + row.Running, row.Failed, row.OldestPendingAgeSeconds, nil
 }
 
 // OwnerAndAdminCounts asks the database the same question the admin console

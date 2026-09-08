@@ -655,3 +655,69 @@ func TestStatsReportsPendingAndDeadLetters(t *testing.T) {
 		t.Fatalf("stats = %+v, want one dead letter after the cap", st)
 	}
 }
+
+// TestPurgeReplacedAssetNamesTheServedURL is SC1's URL assertion: the poster and
+// the storyboard sprite are invalidated at the exact route a viewer requests
+// them from, which is what an edge holds its entry under.
+func TestPurgeReplacedAssetNamesTheServedURL(t *testing.T) {
+	clock := time.Now()
+	now := func() time.Time { return clock }
+	repo := newFakeRepo(now)
+	edge := &recordingEdge{}
+	svc := newTestService(t, repo, edge, now)
+	id := uuid.MustParse("00000000-0000-0000-0000-0000000000cd")
+
+	if got := ReplacedAssetPath(id, "thumbnail"); got != "/api/v1/videos/"+id.String()+"/thumbnail" {
+		t.Fatalf("thumbnail path = %q", got)
+	}
+	if got := ReplacedAssetPath(id, "storyboard"); got != "/api/v1/videos/"+id.String()+"/storyboard.jpg" {
+		t.Fatalf("storyboard path = %q", got)
+	}
+
+	// The synchronous body, so the assertion does not race the goroutine.
+	if n := svc.PurgeNow(context.Background(), []string{ReplacedAssetPath(id, "storyboard")}, true); n != 1 {
+		t.Fatalf("PurgeNow purged %d, want 1", n)
+	}
+	if len(edge.calls) != 1 || edge.calls[0] != "/api/v1/videos/"+id.String()+"/storyboard.jpg" {
+		t.Fatalf("edge saw %v", edge.calls)
+	}
+}
+
+// TestReplacedAssetRefusalIsQueuedForRetry: the poster replacement is exactly
+// the case where an edge that says no keeps showing the face the creator just
+// changed, so it must not be a single shot either.
+func TestReplacedAssetRefusalIsQueuedForRetry(t *testing.T) {
+	clock := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	now := func() time.Time { return clock }
+	repo := newFakeRepo(now)
+	id := uuid.MustParse("00000000-0000-0000-0000-0000000000ce")
+	path := ReplacedAssetPath(id, "thumbnail")
+	edge := &recordingEdge{reject: map[string]bool{path: true}}
+
+	var recorded [3]int
+	svc := newTestService(t, repo, edge, now, WithRecorder(func(purged, failed int, complete bool) {
+		recorded[0], recorded[1] = purged, failed
+		if complete {
+			recorded[2] = 1
+		}
+	}))
+
+	svc.PurgeNow(context.Background(), []string{path}, true)
+	if recorded[0] != 0 || recorded[1] != 1 || recorded[2] != 1 {
+		t.Fatalf("counters = %v, want one failed complete-set run", recorded)
+	}
+	if len(repo.rows) != 1 {
+		t.Fatalf("%d queued jobs, want 1 retry", len(repo.rows))
+	}
+	for _, r := range repo.rows {
+		if r.reason != ReasonRetry || len(r.urls) != 1 || r.urls[0] != path {
+			t.Fatalf("queued job = %+v", r)
+		}
+		if r.attempts != 1 {
+			t.Fatalf("attempts = %d, want 1 — the immediate pass counts", r.attempts)
+		}
+		if !r.nextAttemptAt.After(clock) {
+			t.Fatal("the retry is due immediately; the backoff was not applied")
+		}
+	}
+}

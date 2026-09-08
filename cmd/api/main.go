@@ -54,7 +54,6 @@ import (
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/mail"
 	"github.com/vidra/vidra-core/internal/media"
-	"github.com/vidra/vidra-core/internal/mediaroute"
 	"github.com/vidra/vidra-core/internal/mediagc"
 	"github.com/vidra/vidra-core/internal/mediahash"
 	"github.com/vidra/vidra-core/internal/messaging"
@@ -1224,7 +1223,7 @@ func run() error {
 	// process where httpapi.Server is never constructed.
 	vopts = append(vopts, video.WithMediaReplacedHook(
 		func(ctx context.Context, videoID uuid.UUID, kind string) {
-			cdnPurgeSvc.PurgeDetached(ctx, []string{replacedMediaPath(videoID, kind)}, true)
+			cdnPurgeSvc.PurgeReplacedAsset(ctx, videoID, kind)
 		}))
 	videosvc = video.NewService(db.Queries(), blobs, vopts...)
 
@@ -3778,17 +3777,4 @@ func resolveBucketOwnership(ctx context.Context, logger *slog.Logger, blobs stor
 	}
 	logger.Info("media gc: claimed the object store with an ownership marker", "marker_key", storage.OwnerMarkerKey)
 	return mediagc.OwnershipOwned
-}
-
-// replacedMediaPath is the media route URL of an asset that was just replaced in
-// place. Both are served at a stable path — that is exactly why they need a
-// purge — so the mapping is a fixed two-entry table rather than anything
-// derived, and it uses the same builders the request handlers do
-// (internal/mediaroute) because an invalidation for a URL the routes do not
-// serve would answer 404 at the edge, which internal/cdn counts as success.
-func replacedMediaPath(videoID uuid.UUID, kind string) string {
-	if kind == "storyboard" {
-		return mediaroute.Video(videoID, "/storyboard.jpg")
-	}
-	return mediaroute.Video(videoID, "/thumbnail")
 }

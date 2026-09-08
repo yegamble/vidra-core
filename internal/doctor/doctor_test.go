@@ -2426,3 +2426,60 @@ func TestSearchLedgerIsNotComparedAgainstCoresMigrations(t *testing.T) {
 	p.ledgers[searchLedgerTable] = dbmigrate.Status{Version: 9000, Applied: true}
 	wantFinding(t, one(t, only(t, "search ledger", h, p)), StatusOK, "is at version 9000", "")
 }
+
+// The CDN purge backlog is the one state check whose finding is about a THIRD
+// PARTY: nothing on this host is wrong, and a CDN is still handing out media the
+// instance has stopped serving. These pin the three answers an operator acts on
+// differently — a dead letter (nothing will try again), a stale backlog (the
+// edge may be refusing), and a backlog that is merely in flight.
+func TestCDNPurgeBacklog(t *testing.T) {
+	withDSN := func() *fakeHost {
+		h := newFakeHost()
+		h.files[filepath.Join(testRoot, "env/production.env")] = healthyEnv +
+			"DATABASE_URL=postgres://u:p@db.example.net:25060/defaultdb?sslmode=require\n"
+		return h
+	}
+
+	t.Run("an empty queue is the ordinary answer", func(t *testing.T) {
+		wantFinding(t, one(t, only(t, "cdn purge backlog", withDSN(), nil)), StatusOK, "no CDN invalidations pending", "")
+	})
+
+	t.Run("a dead letter warns and says nothing will retry", func(t *testing.T) {
+		p := newFakeProber()
+		p.purgeDead = 2
+		p.purgePending = 1
+		f := one(t, only(t, "cdn purge backlog", withDSN(), p))
+		wantFinding(t, f, StatusWarn, "GAVE UP", "DELIVERY_CDN_PURGE_URL")
+		if !strings.Contains(f.Detail, "nothing will try again") {
+			t.Errorf("the dead-letter finding does not say the retries have stopped: %s", f.Detail)
+		}
+	})
+
+	t.Run("an old backlog warns; a fresh one does not", func(t *testing.T) {
+		p := newFakeProber()
+		p.purgePending = 5
+		p.purgeOldestSeconds = int64((4 * time.Hour).Seconds())
+		wantFinding(t, one(t, only(t, "cdn purge backlog", withDSN(), p)), StatusWarn, "pending for", "cdn_purge")
+
+		fresh := newFakeProber()
+		fresh.purgePending = 5
+		fresh.purgeOldestSeconds = 30
+		wantFinding(t, one(t, only(t, "cdn purge backlog", withDSN(), fresh)), StatusOK, "in flight", "")
+	})
+
+	t.Run("a database older than the purge queue is a pass", func(t *testing.T) {
+		p := newFakeProber()
+		p.purgeErr = errors.New(`ERROR: relation "cdn_purge_jobs" does not exist (SQLSTATE 42P01)`)
+		wantFinding(t, one(t, only(t, "cdn purge backlog", withDSN(), p)), StatusOK, "predates the purge queue", "")
+	})
+
+	t.Run("an unreachable database is a skip, not a failure", func(t *testing.T) {
+		p := newFakeProber()
+		p.purgeErr = errors.New("dial tcp 10.0.0.1:5432: connect: connection refused")
+		wantFinding(t, one(t, only(t, "cdn purge backlog", withDSN(), p)), StatusWarn, "skipped:", "")
+	})
+
+	t.Run("the bundled Postgres skips with a pointer at the status page", func(t *testing.T) {
+		wantFinding(t, one(t, only(t, "cdn purge backlog", newFakeHost(), nil)), StatusWarn, "skipped:", "")
+	})
+}
