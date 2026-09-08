@@ -125,6 +125,7 @@ type watchedWordMatchView struct {
 	VideoID            string     `json:"video_id"`
 	VideoTitle         string     `json:"video_title"`
 	AuthorUsername     string     `json:"author_username"`
+	AuthorDomain       string     `json:"author_domain,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
 	MatchedText        string     `json:"matched_text"`
 	MatchOffset        int32      `json:"match_offset"`
@@ -174,6 +175,7 @@ func (s *Server) handleListWatchedWordMatches(c echo.Context) error {
 			VideoID:            m.VideoID.String(),
 			VideoTitle:         m.VideoTitle,
 			AuthorUsername:     m.AuthorUsername,
+			AuthorDomain:       m.AuthorDomain,
 			CreatedAt:          m.CreatedAt,
 			MatchedText:        m.MatchedText,
 			MatchOffset:        m.MatchOffset,

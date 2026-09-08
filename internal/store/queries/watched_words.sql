@@ -84,6 +84,13 @@ WHERE id = sqlc.arg('id');
 -- The word JOIN is therefore a LEFT JOIN and is NOT part of the predicate.
 --
 -- status is 'open' | 'resolved' | 'dismissed', or NULL for all of them.
+--
+-- author_username names WHOSE TEXT was flagged. A29's two-instance lab found
+-- this reading COALESCE(cu.username, vu.username): a FEDERATED comment has
+-- user_id NULL, so the row fell through to the video's owner and the queue
+-- accused an innocent local creator of a remote actor's words. The remote
+-- author's snapshotted name now sits between the two, and author_domain
+-- (empty for local text) says which instance it came from.
 SELECT m.id, m.created_at,
        COALESCE(NULLIF(m.matched_term, ''), w.word, '')::text AS word,
        m.matched_text, m.match_offset, m.match_length, m.snapshot_backfilled,
@@ -93,7 +100,8 @@ SELECT m.id, m.created_at,
        m.comment_id, c.body AS comment_body,
        COALESCE(m.video_id, c.video_id)::uuid AS video_id,
        v.title AS video_title,
-       COALESCE(cu.username, vu.username)::text AS author_username,
+       COALESCE(cu.username, c.remote_author_name, vu.username)::text AS author_username,
+       COALESCE(ra.domain, '')::text AS author_domain,
        (CASE
             WHEN strpos(
                      lower(COALESCE(c.body, v.title || E'\n' || v.description, '')),
@@ -105,6 +113,7 @@ FROM watched_word_matches m
 LEFT JOIN watched_words w ON w.id = m.watched_word_id
 LEFT JOIN comments c ON c.id = m.comment_id
 LEFT JOIN users cu ON cu.id = c.user_id
+LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
 LEFT JOIN videos v ON v.id = COALESCE(m.video_id, c.video_id)
 LEFT JOIN channels ch ON ch.id = v.channel_id
 LEFT JOIN users vu ON vu.id = ch.owner_id
