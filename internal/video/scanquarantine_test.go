@@ -40,10 +40,7 @@ func TestProcessInfectedDropsStoredOriginal(t *testing.T) {
 		t.Fatalf("AttachOriginal: %v", err)
 	}
 
-	got, err := svc.Process(ctx, v.ID, file.StorageKey)
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
+	got := mustProcess(t, svc, ctx, v.ID, file.StorageKey)
 	if got.State != "failed" {
 		t.Fatalf("state = %q, want failed", got.State)
 	}
@@ -84,9 +81,7 @@ func TestProcessKeepsOriginalWhenOnlyUnscannable(t *testing.T) {
 			if err != nil {
 				t.Fatalf("AttachOriginal: %v", err)
 			}
-			if _, err := svc.Process(ctx, v.ID, file.StorageKey); err != nil {
-				t.Fatalf("Process: %v", err)
-			}
+			mustProcess(t, svc, ctx, v.ID, file.StorageKey)
 			if _, err := repo.GetVideoFileByKind(ctx, sqlcgen.GetVideoFileByKindParams{
 				VideoID: v.ID, Kind: "original",
 			}); err != nil {

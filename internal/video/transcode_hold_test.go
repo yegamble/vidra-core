@@ -157,10 +157,7 @@ func TestProcessFailedScanNeverReachesHold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDraft: %v", err)
 	}
-	got, err := svc.Process(context.Background(), v.ID, "k")
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
+	got := mustProcess(t, svc, context.Background(), v.ID, "k")
 	if got.State != "failed" {
 		t.Fatalf("state = %q, want failed (an infected upload never reaches the hold)", got.State)
 	}

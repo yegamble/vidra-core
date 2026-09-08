@@ -306,6 +306,13 @@ func (s *Server) handleImportAccount(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	// The archive is a user-supplied file that this instance parses and expands
+	// (A12). It is already whole in memory, so scanning it costs one INSTREAM
+	// round-trip and closes A28's "account-import archives are ingested
+	// unscanned" gap without touching the parse path.
+	if err := s.scanBeforeStore(c.Request().Context(), "account_archive", raw); err != nil {
+		return err
+	}
 	archive, err := account.ParseArchive(raw)
 	if err != nil {
 		return &ValidationError{Fields: []FieldError{{Field: "archive", Message: "not a valid vidra account archive"}}}

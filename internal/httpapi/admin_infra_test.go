@@ -258,8 +258,13 @@ func TestInfrastructureFeatureDiscovery(t *testing.T) {
 			func(c *config.Config) { c.WhisperEnabled = true },
 			"captions", "WHISPER_ENDPOINT",
 		},
+		// No scanner AND no opt-out. "Enabled" here is the operator's intent to
+		// ingest at all — the instance means to scan and cannot — so it lands in
+		// the enabled-but-unconfigured quadrant where the finding copy lives.
+		// Under the old shape it read "off, and that's fine" while every upload
+		// was being refused with 503.
 		"clamav without an address": {
-			func(c *config.Config) { c.MalwareScanEnabled = true },
+			func(c *config.Config) { c.MalwareScanMode = "" },
 			"malware_scan", "CLAMAV_ADDR",
 		},
 		"otel without a collector": {

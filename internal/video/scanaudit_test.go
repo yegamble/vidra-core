@@ -33,11 +33,7 @@ func processWithAuditor(t *testing.T, sc Scanner, mode string) (string, *recordi
 	svc := NewService(newFakeRepo(uuid.New()), nil, opts...)
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
-	got, err := svc.Process(ctx, v.ID, "k")
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
-	return got.State, aud
+	return mustProcess(t, svc, ctx, v.ID, "k").State, aud
 }
 
 func TestProcessAuditsMalwareRejections(t *testing.T) {
@@ -54,8 +50,6 @@ func TestProcessAuditsMalwareRejections(t *testing.T) {
 		{"infected quarantine", fakeScanner{clean: false}, "quarantine", "failed", true, "infected"},
 		{"scan-error fail-closed", fakeScanner{err: errors.New("clamd down")}, "fail-closed", "failed", true, "scan_error"},
 		{"scan-error quarantine", fakeScanner{err: errors.New("clamd down")}, "quarantine", "quarantined", true, "scan_error"},
-		// fail-open publishes → not a rejection → no rejection audit event.
-		{"scan-error fail-open publishes", fakeScanner{err: errors.New("clamd down")}, "fail-open", "published", false, ""},
 		// A clean scan never audits.
 		{"clean publishes", fakeScanner{clean: true}, "fail-closed", "published", false, ""},
 	}
@@ -101,11 +95,52 @@ func TestProcessMalwareRejectionAuditIsOptional(t *testing.T) {
 	svc := NewService(newFakeRepo(uuid.New()), nil, WithScanner(fakeScanner{clean: false}))
 	ctx := context.Background()
 	v, _ := svc.CreateDraft(ctx, uuid.New(), CreateInput{Title: "t", Privacy: "public"})
-	got, err := svc.Process(ctx, v.ID, "k")
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
+	got := mustProcess(t, svc, ctx, v.ID, "k")
 	if got.State != "failed" {
 		t.Errorf("state = %q, want failed (infected, no auditor)", got.State)
+	}
+}
+
+// TestProcessAuditsUnscannedPublishUnderFailOpen closes A28 finding 2:
+// fail-open published unscanned media leaving nothing but a WARN log line, so
+// an instance that ran a week through a scanner outage had no durable record of
+// which media went out unchecked. It is not a REJECTION — the video publishes —
+// so it gets its own action rather than being folded into the rejection trail.
+func TestProcessAuditsUnscannedPublishUnderFailOpen(t *testing.T) {
+	state, aud := processWithAuditor(t, fakeScanner{err: errors.New("clamd down")}, "fail-open")
+	if state != "published" {
+		t.Fatalf("state = %q, want published", state)
+	}
+	if len(aud.events) != 1 {
+		t.Fatalf("got %d audit events, want exactly 1: %+v", len(aud.events), aud.events)
+	}
+	ev := aud.events[0]
+	if ev.Action != observability.ActionUploadMalwareSkipped {
+		t.Errorf("action = %q, want %q", ev.Action, observability.ActionUploadMalwareSkipped)
+	}
+	if ev.Actor.Kind != "system" || ev.Actor.ID != "" {
+		t.Errorf("actor = %+v, want system without a user id", ev.Actor)
+	}
+	if !strings.Contains(ev.Reason, "reason=scanner_unavailable") {
+		t.Errorf("reason = %q, want the reason CLASS scanner_unavailable", ev.Reason)
+	}
+	if !strings.Contains(ev.Reason, "policy=fail-open") {
+		t.Errorf("reason = %q, want policy=fail-open", ev.Reason)
+	}
+	// The scanner's own error carries CLAMAV_ADDR; it must not reach the trail.
+	if strings.Contains(ev.Reason, "clamd down") {
+		t.Errorf("reason = %q leaks the scanner error", ev.Reason)
+	}
+}
+
+// TestProcessDoesNotAuditACleanPublish keeps the trail signal-only: the
+// overwhelmingly common outcome writes nothing.
+func TestProcessDoesNotAuditACleanPublish(t *testing.T) {
+	state, aud := processWithAuditor(t, fakeScanner{clean: true}, "fail-closed")
+	if state != "published" {
+		t.Fatalf("state = %q, want published", state)
+	}
+	if len(aud.events) != 0 {
+		t.Fatalf("got %d audit events, want 0: %+v", len(aud.events), aud.events)
 	}
 }

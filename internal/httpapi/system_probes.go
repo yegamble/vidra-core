@@ -62,8 +62,9 @@ type processFleetReader interface {
 // cheap two-dependency contract deliberately — this runs when an admin opens a
 // page, that runs several times a minute forever.
 //
-// "not_configured" NEVER degrades the instance: local storage, mail off and no
-// search service are all supported deployments, not faults. "down" does.
+// "not_configured" NEVER degrades the instance: local storage, mail off, no
+// search service and a DECLARED malware-scan opt-out are all supported
+// deployments, not faults. "down" and "degraded" do.
 func (s *Server) systemComponents(ctx context.Context) (map[string]componentStatus, bool) {
 	// BOUND the two cheap pings too. They were the only unbounded work on this
 	// page: a refused Redis dial cost it 3.4-5.2s (five dial attempts), and a
@@ -103,7 +104,12 @@ func (s *Server) systemComponents(ctx context.Context) (map[string]componentStat
 			mu.Lock()
 			defer mu.Unlock()
 			components[name] = status
-			if status.Status == "down" {
+			// "degraded" counts too. The scanner is the case that forced it: an
+			// instance refusing every upload with 503 scanner_not_configured is
+			// not healthy, and reporting the top line "ok" beside a degraded
+			// component is exactly the reading an operator scans past (the same
+			// argument /readyz's aggregation already makes).
+			if status.Status == "down" || status.Status == "degraded" {
 				healthy = false
 			}
 		}()

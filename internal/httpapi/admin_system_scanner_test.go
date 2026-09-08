@@ -12,10 +12,13 @@ import (
 // left GET /api/v1/admin/system reporting `"status":"ok"` with nine healthy
 // components while ingestion was refusing everything (measured in the A28 lab).
 //
-// Not configured is a SUPPORTED deployment (MALWARE_SCAN_ENABLED=false) and must
-// never degrade the instance, exactly like s3/smtp/search.
-func TestSystemStatusScannerNotConfigured(t *testing.T) {
-	srv := authServer(t)
+// "No scanner" is now TWO different facts and this page must tell them apart.
+// The DECLARED one (MALWARE_SCAN_MODE=disabled) is supported and never degrades
+// the instance — but it still says out loud what is not being scanned, because
+// A28 found this posture discoverable only by an operator who happened to open
+// /admin/infrastructure.
+func TestSystemStatusScannerOptedOut(t *testing.T) {
+	srv := authServer(t) // testConfig declares the opt-out
 	srv.lookPath = ffmpegFound
 
 	body := systemStatus(t, srv)
@@ -27,8 +30,39 @@ func TestSystemStatusScannerNotConfigured(t *testing.T) {
 	if c.Status != "not_configured" {
 		t.Errorf("clamav status = %q, want not_configured", c.Status)
 	}
+	if !strings.Contains(c.Error, "MALWARE_SCAN_MODE=disabled") {
+		t.Errorf("clamav error %q does not say the opt-out is in force", c.Error)
+	}
 	if body.Status != "ok" {
-		t.Errorf("status = %q; an unscanned deployment is supported, not a fault", body.Status)
+		t.Errorf("status = %q; a DECLARED unscanned deployment is supported, not a fault", body.Status)
+	}
+}
+
+// The UNDECLARED one — no scanner and no opt-out — is the posture nobody chose.
+// Every ingestion route is answering 503, so the page degrades and names both
+// levers. This is the state A28 measured as silently, invisibly unscanned.
+func TestSystemStatusScannerUnconfiguredDegrades(t *testing.T) {
+	cfg := testConfig()
+	cfg.MalwareScanMode = ""
+	srv := authServerWithConfig(t, cfg)
+	srv.lookPath = ffmpegFound
+
+	body := systemStatus(t, srv)
+
+	c, ok := body.Components["clamav"]
+	if !ok {
+		t.Fatalf("clamav component missing from %+v", body.Components)
+	}
+	if c.Status != "degraded" {
+		t.Errorf("clamav status = %q, want degraded", c.Status)
+	}
+	for _, want := range []string{"CLAMAV_ADDR", "MALWARE_SCAN_MODE=disabled", "scanner_not_configured"} {
+		if !strings.Contains(c.Error, want) {
+			t.Errorf("clamav error %q does not name %s", c.Error, want)
+		}
+	}
+	if body.Status != "degraded" {
+		t.Errorf("instance status = %q, want degraded", body.Status)
 	}
 }
 
@@ -39,6 +73,7 @@ func TestSystemStatusScannerNotConfigured(t *testing.T) {
 func TestSystemStatusScannerDownDegrades(t *testing.T) {
 	cfg := testConfig()
 	cfg.MalwareScanEnabled = true
+	cfg.MalwareScanMode = "fail-closed"
 	// Port 1 on loopback: nothing listens, so the dial fails fast without
 	// depending on the test machine's network.
 	cfg.ClamAVAddr = "127.0.0.1:1"
