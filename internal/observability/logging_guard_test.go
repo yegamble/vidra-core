@@ -10,6 +10,8 @@ package observability
 //     (outside package main and tests).
 //   - TestNoSensitiveLogKeys: a denylisted sensitive field name (see
 //     IsSensitiveLogKey) must never be used as a structured-log key.
+//   - TestObjectKeyLogValuesAreRedacted: an object-key-shaped field name may be
+//     logged, but only through the redaction seam (jobstatus.RedactDetail).
 //
 // They run under `make ci` as part of `go test -race ./...`; there is no
 // Makefile change to make — being ordinary Go tests is the enforcement.
@@ -231,4 +233,113 @@ func isAnyType(e ast.Expr) bool {
 		return t.Methods == nil || len(t.Methods.List) == 0
 	}
 	return false
+}
+
+// keyShapedLogKeys are the structured-log field names whose VALUE is a storage
+// object key.
+//
+// They are not on the IsSensitiveLogKey denylist, because the answer for them is
+// not "never log this" — an operator debugging a failed pin or a stalled
+// migration needs the field to exist. The answer is "log it through the
+// redaction seam", which is the rule this guard mechanises.
+//
+// It exists because two loggers disagreed. The worker's job logger has redacted
+// storage keys since A17 (jobstatus.RedactDetail, `[redacted-key]`), while the
+// api's request logger wrote `storage: s3: put "web-videos/<uuid>.mp4": Access
+// Denied.` in full (A24), and A35 left a list of `object_key`/`storage_key` log
+// sites open behind it. A redaction only one of two loggers applies is
+// decoration: whatever ships logs off the box gets the key from the other one.
+//
+// `marker_key` is deliberately absent. Its value is the fixed constant
+// `.vidra/owner` — Vidra's own bookkeeping, no id in it — and redacting a
+// constant would only make the boot line harder to read.
+var keyShapedLogKeys = map[string]bool{
+	"object_key":  true,
+	"storage_key": true,
+	"media_key":   true,
+	"source_key":  true,
+	"dest_key":    true,
+	"master_key":  true,
+}
+
+// TestObjectKeyLogValuesAreRedacted fails when an object-key-shaped log field is
+// given a value that has not been through a redaction call.
+//
+// A string LITERAL passes: a hard-coded key in a log line is a constant an author
+// chose, not a caller's video id. Anything else — a struct field, a variable, a
+// method result — must be wrapped in RedactDetail, because that is exactly the
+// shape a real key arrives in.
+func TestObjectKeyLogValuesAreRedacted(t *testing.T) {
+	report := func(fset *token.FileSet, pos token.Pos, key string) {
+		t.Errorf("%s: object-key field %q is logged unredacted — wrap the value in jobstatus.RedactDetail (see .ralph/specs/observability.md)",
+			fset.Position(pos), key)
+	}
+	forEachSourceFile(t, func(_ string, fset *token.FileSet, file *ast.File) {
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch node := n.(type) {
+			case *ast.CallExpr:
+				checkLogCallKeyValues(node, fset, report)
+			case *ast.CompositeLit:
+				checkArgSliceKeyValues(node, fset, report)
+			}
+			return true
+		})
+	})
+}
+
+// isRedactedValue reports whether e is a call to a redaction helper (or a plain
+// string literal, which needs none).
+func isRedactedValue(e ast.Expr) bool {
+	if _, ok := litString(e); ok {
+		return true
+	}
+	call, ok := e.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	switch fun := call.Fun.(type) {
+	case *ast.Ident: // in-package call: RedactDetail(v)
+		return strings.HasPrefix(fun.Name, "Redact")
+	case *ast.SelectorExpr: // jobstatus.RedactDetail(v)
+		return strings.HasPrefix(fun.Sel.Name, "Redact")
+	}
+	return false
+}
+
+func checkLogCallKeyValues(call *ast.CallExpr, fset *token.FileSet, report func(*token.FileSet, token.Pos, string)) {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return
+	}
+	name := sel.Sel.Name
+	// slog attribute constructors: slog.String("object_key", v).
+	if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "slog" && slogAttrCtor[name] {
+		if len(call.Args) >= 2 {
+			if k, ok := litString(call.Args[0]); ok && keyShapedLogKeys[strings.ToLower(k)] && !isRedactedValue(call.Args[1]) {
+				report(fset, call.Args[1].Pos(), k)
+			}
+		}
+		return
+	}
+	start, ok := logKeyStart[name]
+	if !ok {
+		return
+	}
+	for i := start; i+1 < len(call.Args); i += 2 {
+		if k, ok := litString(call.Args[i]); ok && keyShapedLogKeys[strings.ToLower(k)] && !isRedactedValue(call.Args[i+1]) {
+			report(fset, call.Args[i+1].Pos(), k)
+		}
+	}
+}
+
+func checkArgSliceKeyValues(cl *ast.CompositeLit, fset *token.FileSet, report func(*token.FileSet, token.Pos, string)) {
+	at, ok := cl.Type.(*ast.ArrayType)
+	if !ok || at.Len != nil || !isAnyType(at.Elt) {
+		return
+	}
+	for i := 0; i+1 < len(cl.Elts); i += 2 {
+		if k, ok := litString(cl.Elts[i]); ok && keyShapedLogKeys[strings.ToLower(k)] && !isRedactedValue(cl.Elts[i+1]) {
+			report(fset, cl.Elts[i+1].Pos(), k)
+		}
+	}
 }

@@ -1530,3 +1530,58 @@ func TestProgressThrottleNeverSwallowsANewRung(t *testing.T) {
 		t.Error("a full step of progress must reach the database")
 	}
 }
+
+// TestStorageWriteGateStopsClaiming is the scratch floor's rule applied to the
+// OTHER destination a transcode writes to. A24 watched a bucket quota move the
+// wall into the worker: with the store refusing writes, every claimed job runs
+// the full encode and then fails on its first PUT, spending one of five attempts
+// on a condition the video did not cause — five ticks dead-letter it forever.
+// The jobs must stay 'pending' with an untouched retry budget, so restoring the
+// credential (or raising the quota) drains them with no operator action.
+func TestStorageWriteGateStopsClaiming(t *testing.T) {
+	repo := newFakeRepo()
+	videoID := uuid.New()
+	tc := &fakeTranscoder{}
+	svc := NewService(repo, tc, WithStorageWriteGate(func() (bool, string) {
+		return false, "write_denied"
+	}))
+
+	if err := svc.Enqueue(context.Background(), videoID, "web-videos/x.mp4"); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	n, err := svc.DrainJobs(context.Background(), 10)
+	if err != nil || n != 0 {
+		t.Fatalf("DrainJobs = (%d, %v), want (0, nil) while the store refuses writes", n, err)
+	}
+	if tc.calls != 0 {
+		t.Errorf("transcoder ran %d times with nowhere to put the output", tc.calls)
+	}
+	if got := repo.job(t, videoID); got.State != "pending" {
+		t.Errorf("job state = %q, want it left pending (not claimed-then-failed)", got.State)
+	}
+	if got := repo.job(t, videoID); got.Attempts != 0 {
+		t.Errorf("attempts = %d; an unwritable store must not consume the video's retry budget", got.Attempts)
+	}
+}
+
+// The other half: the gate must not be a permanent brake, and an unprobed or
+// unwired monitor must never be the reason work stops.
+func TestStorageWriteGateAdmitsWhenTheStoreIsWritable(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts []Option
+	}{
+		{"writable", []Option{WithStorageWriteGate(func() (bool, string) { return true, "" })}},
+		{"no gate wired", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			videoID := uuid.New()
+			svc := NewService(repo, &fakeTranscoder{}, tc.opts...)
+			_ = svc.Enqueue(context.Background(), videoID, "web-videos/x.mp4")
+			if n, err := svc.DrainJobs(context.Background(), 10); err != nil || n != 1 {
+				t.Fatalf("DrainJobs = (%d, %v), want (1, nil)", n, err)
+			}
+		})
+	}
+}

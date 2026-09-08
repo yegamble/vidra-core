@@ -166,6 +166,13 @@ type Server struct {
 	// Nil — unit tests, embedders, any process without the table — omits the
 	// process list and leaves settings_sync exactly as it was.
 	processFleet processFleetReader
+	// storageWrite is the object store's WRITE verdict (storage.WriteHealth),
+	// or nil when no monitor was wired — unit tests, embedders, any process
+	// built without a blob backend. It is a cached record rather than a probe:
+	// /readyz reads it several times a minute and must not turn that into a PUT
+	// against the store, so the monitor refreshes it on its own five-minute
+	// ticker and this is a memory read.
+	storageWrite storageWriteHealth
 	// mfaKEK is the boot-time MFA-KEK sample (A37-2), or nil when the check was
 	// not run — unit tests, embedders, any process without an auth service. A
 	// SNAPSHOT on purpose: the question it answers ("is the configured KEK the
@@ -842,6 +849,18 @@ func WithSettingsPoller(p settingsSyncHealth) Option {
 // it did before — this replica's own poller and nothing else.
 func WithProcessFleet(f processFleetReader) Option {
 	return func(s *Server) { s.processFleet = f }
+}
+
+// WithStorageWriteHealth wires the object store's write verdict into the
+// storage component of /readyz and the admin status page.
+//
+// Without it an instance whose credential can read but not write boots green and
+// stays green: every other storage probe in this codebase is a read
+// (EnsureBucket is a HeadBucket, the ownership-marker read is a GET, the
+// emptiness check is a list), and A24 measured exactly that instance serving
+// every page and failing every upload with a bare 500.
+func WithStorageWriteHealth(h storageWriteHealth) Option {
+	return func(s *Server) { s.storageWrite = h }
 }
 
 // WithMFAKEKReport records the boot-time MFA-KEK sample (A37-2) so /readyz and

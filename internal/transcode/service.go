@@ -204,6 +204,11 @@ type Service struct {
 	scratchFn func() (uint64, error)
 	// minFreeScratch is the floor below which no job is claimed.
 	minFreeScratch uint64
+	// storageWritableFn reports whether the object store will currently accept a
+	// write, and the class of refusal when it will not (see
+	// internal/storage.WriteHealth). nil = always writable, which is what every
+	// test and the read-only service get.
+	storageWritableFn func() (bool, string)
 	// trace stamps the operational projection with the request that caused a
 	// job and the process running it, and writes the worker's failure log line.
 	// nil is the pre-A17 behaviour: the job still runs, its run detail just
@@ -293,6 +298,21 @@ func WithConcurrencyFunc(f func() int64) Option {
 // as its worker, and every failure and dead-letter writes one greppable line.
 func WithJobTrace(r *jobtrace.Recorder) Option {
 	return func(s *Service) { s.trace = r }
+}
+
+// WithStorageWriteGate wires the object store's write verdict into job
+// admission. f reports whether the store will accept a write and, when it will
+// not, the class of refusal.
+//
+// It is the scratch floor's rule applied to the OTHER destination a transcode
+// writes to. A job claimed against a store that refuses writes runs the whole
+// encode — minutes of CPU — and then fails on the first PUT, burning one of the
+// job's five attempts on a condition that has nothing to do with the video; five
+// ticks of a revoked key dead-letter it permanently. Deferring instead leaves
+// the jobs pending, so restoring the key drains them with no operator action, in
+// exactly the shape A24 watched a raised bucket quota drain a queue.
+func WithStorageWriteGate(f func() (bool, string)) Option {
+	return func(s *Service) { s.storageWritableFn = f }
 }
 
 func WithScratchGuard(free func() (uint64, error), minFree uint64) Option {
@@ -460,6 +480,17 @@ func (s *Service) DrainJobs(ctx context.Context, limit int) (int, error) {
 		slog.WarnContext(ctx, "transcode: deferring all jobs, scratch space below the floor",
 			"free_bytes", free, "min_free_bytes", s.minFreeScratch)
 		return 0, nil
+	}
+	// Storage floor, same rule as the scratch floor above and for the same
+	// reason: a destination that will not take the output makes every claim a
+	// wasted encode and a spent attempt. Checked BEFORE the claim so the jobs
+	// stay 'pending' and drain themselves once the store accepts writes again.
+	if s.storageWritableFn != nil {
+		if writable, class := s.storageWritableFn(); !writable {
+			slog.WarnContext(ctx, "transcode: deferring all jobs, the object store is not accepting writes",
+				"class", class)
+			return 0, nil
+		}
 	}
 	rows, err := s.repo.ClaimDueTranscodeJobs(ctx, int32(limit))
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/preflight"
 	"github.com/vidra/vidra-core/internal/processheartbeat"
+	"github.com/vidra/vidra-core/internal/storage"
 )
 
 // systemProbeTimeout bounds EACH dependency probe on the admin status page. The
@@ -22,6 +23,15 @@ const systemProbeTimeout = 3 * time.Second
 // instance has no remote store to be down.
 type bucketChecker interface {
 	BucketExists(ctx context.Context) (bool, error)
+}
+
+// storageWriteHealth is the read side of the object store's write probe
+// (internal/storage.WriteHealth): the last verdict, already classified. An
+// interface here so httpapi depends on the one question it asks — can this
+// instance still store a byte — rather than on the monitor type, and so a test
+// can pin a verdict without a store.
+type storageWriteHealth interface {
+	Status() storage.WriteStatus
 }
 
 // settingsSyncHealth is the read side of the settings-version poller
