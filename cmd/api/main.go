@@ -1029,6 +1029,12 @@ func run() error {
 		transcodesvc *transcode.Service
 		videosvc     *video.Service
 		cdnPurgeSvc  *cdnpurge.Service
+		// fedsvc is declared here rather than at its assignment below because
+		// the transcode COMPLETION hook needs it: the federation Update that
+		// carries the now-playable HLS url fires from there. Same
+		// deferred-assignment, nil-guarded seam as every other closure in this
+		// block.
+		fedsvc *federation.Service
 	)
 	// releaseHold releases a publish-after-transcode hold once no live job
 	// remains (0098), shared by the completion and terminal-failure hooks. The
@@ -1062,7 +1068,19 @@ func run() error {
 	// FIRST, then sync the mirror — see composeTranscodeCompletion for why the
 	// order is load-bearing. Best-effort; a hook failure never fails the job.
 	var tcopts []transcode.Option
-	tcopts = append(tcopts, transcode.WithCompletionHook(composeTranscodeCompletion(releaseHold, mirrorSync)))
+	// fedUpdate re-federates the video once its HLS ladder exists, so the object
+	// remote followers hold gains the playable url the publish-time Create could
+	// not carry. Gated on federation being on; nil-guarded like every other
+	// deferred-service closure here.
+	fedUpdate := func(ctx context.Context, videoID uuid.UUID) {
+		if !cfg.FederationEnabled || fedsvc == nil {
+			return
+		}
+		if err := fedsvc.UpdateVideo(ctx, videoID); err != nil {
+			logger.Warn("federation transcode-complete update failed", "video_id", videoID, "error", err)
+		}
+	}
+	tcopts = append(tcopts, transcode.WithCompletionHook(composeTranscodeCompletion(releaseHold, mirrorSync, fedUpdate)))
 	// Terminal-failure hook (per dead-lettered job): release a publish-after-
 	// transcode hold so a video whose transcode permanently failed still publishes
 	// from its (playable) original rather than staying hidden forever (0098).
@@ -1147,7 +1165,6 @@ func run() error {
 	// When federation is on, fan a published video out to the channel's remote
 	// followers. fedsvc is assigned below; the hook only runs post-startup so the
 	// closure sees the built service (nil-guarded regardless).
-	var fedsvc *federation.Service
 	// When ATProto is on, enqueue an auto cross-post for a published PUBLIC video
 	// whose owner has auto_post. Same deferred-service seam as fedsvc: atprotosvc
 	// is assigned below and the closure is nil-guarded. Publish hooks are additive
@@ -2943,13 +2960,26 @@ func runScheduledPublishWorker(ctx context.Context, logger *slog.Logger, svc *vi
 // re-pins single-file refs (videoFileMirrorClass deliberately excludes 'hls').
 // Releasing first is safe for the normal (non-held) path: the release is a
 // state-guarded CAS no-op for any video not in the 'transcoding' state.
-func composeTranscodeCompletion(releaseHold, mirrorSync func(context.Context, uuid.UUID)) func(context.Context, uuid.UUID) {
+func composeTranscodeCompletion(releaseHold, mirrorSync, fedUpdate func(context.Context, uuid.UUID)) func(context.Context, uuid.UUID) {
 	return func(ctx context.Context, videoID uuid.UUID) {
 		if releaseHold != nil {
 			releaseHold(ctx, videoID)
 		}
 		if mirrorSync != nil {
 			mirrorSync(ctx, videoID)
+		}
+		// FEDERATION LAST, and that ordering is load-bearing (A29 remediation).
+		// The outbound AS Video advertises a playable HLS master only when a
+		// ready ladder exists, so the Create sent at PUBLISH time — which for
+		// every video that is not publish-after-transcode is BEFORE the
+		// transcode finishes — necessarily carries no stream link. Without this
+		// Update, a follower instance would hold a link-out-only copy of every
+		// such video forever, which is precisely what A29 measured. It runs
+		// after releaseHold because a publish-after-transcode video is not
+		// public+published until the hold is released, and UpdateVideo no-ops
+		// (or worse, unfederates) on a video that is not.
+		if fedUpdate != nil {
+			fedUpdate(ctx, videoID)
 		}
 	}
 }

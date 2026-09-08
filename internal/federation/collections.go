@@ -110,19 +110,15 @@ func (s *Service) ChannelOutboxPage(ctx context.Context, handle string, page int
 	}
 	items := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
-		// Same split as buildVideoActivity: the object id is frozen at the uuid
-		// form, only the human-facing url moves.
-		objectID := s.baseURL + "/videos/" + r.ID.String()
-		watchURL := objectID
-		if r.ShortCode != "" {
-			watchURL = s.baseURL + "/v/" + r.ShortCode
-		}
+		// The outbox renders the SAME object shape buildVideoActivity delivers —
+		// one builder, one shape, so a peer that discovers a video by walking the
+		// outbox and a peer that received the push agree on every field.
 		items = append(items, map[string]any{
 			"id":     channelActor + "/activities/create/" + r.ID.String(),
 			"type":   "Create",
 			"actor":  channelActor,
 			"to":     []string{publicAudience},
-			"object": videoObject(channelActor, objectID, watchURL, r.Title, r.Description),
+			"object": s.videoObjectFromOutbox(channelActor, r),
 		})
 	}
 	pg := &OrderedCollectionPage{

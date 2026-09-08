@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -67,6 +68,17 @@ func readFixture(t *testing.T, name string) []byte {
 // newContractRepo builds a fully-initialized fakeRepo seeded with the local
 // actors the corpus references: user ada, channel films, and one public,
 // published video on that channel.
+// The golden world's fixed clock. Fake values, deterministic, and far enough
+// apart that "published" and "updated" cannot be confused for each other.
+var (
+	ctPublishedAt = time.Date(2026, 8, 30, 8, 0, 0, 0, time.UTC)
+	ctCreatedAt   = time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	ctUpdatedAt   = time.Date(2026, 9, 2, 11, 30, 0, 0, time.UTC)
+)
+
+// ctDurationPtr is the nullable duration the probe writes.
+func ctDurationPtr(seconds int32) *int32 { return &seconds }
+
 func newContractRepo() fakeRepo {
 	r := fakeRepo{
 		usersByName:     map[string]sqlcgen.GetUserActorByUsernameRow{},
@@ -96,10 +108,21 @@ func newContractRepo() fakeRepo {
 	films := sqlcgen.Channel{ID: ctChannelID, OwnerID: ctUserID, Handle: "films", DisplayName: "Films", Description: "Hand-picked documentaries."}
 	r.channels["films"] = films
 	r.channelsByID[ctChannelID] = films
+	// The COMPLETE shape: a probed duration, a stored poster and a ready HLS
+	// ladder, so the goldens pin what a follower instance actually receives for
+	// a finished video (A29 remediation). ctVideo2ID below is deliberately the
+	// opposite — see newGoldenRepo.
 	r.videosByID[ctVideoID] = sqlcgen.GetVideoByIDRow{
 		ID: ctVideoID, ChannelID: ctChannelID,
 		Title: "Dawn over the fjord", Description: "A quiet opening.",
 		Privacy: "public", State: "published",
+		CreatedAt:               ctCreatedAt,
+		UpdatedAt:               ctUpdatedAt,
+		OriginallyPublishedAt:   pgtype.Timestamptz{Time: ctPublishedAt, Valid: true},
+		MetadataDurationSeconds: ctDurationPtr(367),
+		HasThumbnail:            true,
+		ThumbnailContentType:    "image/jpeg",
+		HasHls:                  true,
 	}
 	return r
 }

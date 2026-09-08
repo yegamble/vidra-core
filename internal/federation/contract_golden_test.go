@@ -106,14 +106,31 @@ func newGoldenRepo() fakeRepo {
 	r.localFollowers[ctChannelID] = 3
 	r.remoteFollowerN[ctChannelID] = 2
 	r.channelVideoN[ctChannelID] = 2
+	// The DEGRADED shape, kept deliberately alongside the complete one: a video
+	// still transcoding has no ladder and no poster yet, and the object must
+	// then carry no icon, no duration and only the html link — never an empty
+	// icon or a PT0S duration, which would be claims the origin cannot back.
 	r.videosByID[ctVideo2ID] = sqlcgen.GetVideoByIDRow{
 		ID: ctVideo2ID, ChannelID: ctChannelID,
 		Title: "Night paddle", Description: "Part two.",
 		Privacy: "public", State: "published",
+		CreatedAt: ctCreatedAt, UpdatedAt: ctCreatedAt,
 	}
 	r.outboxVideos[ctChannelID] = []sqlcgen.ListChannelOutboxVideosRow{
-		{ID: ctVideo2ID, Title: "Night paddle", Description: "Part two."},
-		{ID: ctVideoID, Title: "Dawn over the fjord", Description: "A quiet opening."},
+		{
+			ID: ctVideo2ID, Title: "Night paddle", Description: "Part two.",
+			CreatedAt: ctCreatedAt, UpdatedAt: ctCreatedAt,
+		},
+		{
+			ID: ctVideoID, Title: "Dawn over the fjord", Description: "A quiet opening.",
+			CreatedAt:             ctCreatedAt,
+			UpdatedAt:             ctUpdatedAt,
+			OriginallyPublishedAt: pgtype.Timestamptz{Time: ctPublishedAt, Valid: true},
+			DurationSeconds:       ctDurationPtr(367),
+			HasThumbnail:          true,
+			ThumbnailContentType:  "image/jpeg",
+			HasHls:                true,
+		},
 	}
 	// ada's top-level comment on the local video…
 	r.commentsByID[ctCommentID] = sqlcgen.Comment{

@@ -5,13 +5,32 @@
   "object": {
     "attributedTo": "https://videos.example/video-channels/films",
     "content": "A quiet opening.",
+    "duration": "PT367S",
+    "icon": {
+      "mediaType": "image/jpeg",
+      "type": "Image",
+      "url": "https://videos.example/api/v1/videos/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d/thumbnail"
+    },
     "id": "https://videos.example/videos/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d",
     "name": "Dawn over the fjord",
+    "published": "2026-08-30T08:00:00Z",
     "to": [
       "https://www.w3.org/ns/activitystreams#Public"
     ],
     "type": "Video",
-    "url": "https://videos.example/videos/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d"
+    "updated": "2026-09-02T11:30:00Z",
+    "url": [
+      {
+        "href": "https://videos.example/api/v1/videos/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d/hls/master.m3u8",
+        "mediaType": "application/x-mpegURL",
+        "type": "Link"
+      },
+      {
+        "href": "https://videos.example/videos/7a1d9e42-5b3c-4f8e-a6d0-9c8b7a6f5e4d",
+        "mediaType": "text/html",
+        "type": "Link"
+      }
+    ]
   },
   "to": [
     "https://www.w3.org/ns/activitystreams#Public"

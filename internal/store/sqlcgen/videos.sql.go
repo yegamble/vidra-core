@@ -642,37 +642,62 @@ SELECT v.id, v.short_code, v.channel_id, v.title, v.description, v.privacy, v.st
        v.is_sensitive, v.sensitive_reason,
        v.comments_policy, v.download_enabled, v.publish_after_transcode,
        c.owner_id, c.handle AS channel_handle, c.display_name AS channel_display_name,
-       au.display_name AS author_display_name
+       au.display_name AS author_display_name,
+       -- Federation's outbound Video needs the duration, the poster's media type
+       -- and whether a ready HLS ladder exists (A29 remediation). They ride this
+       -- row rather than a second lookup for the same reason every other
+       -- authorization-adjacent value does: two queries can disagree.
+       vm.duration_seconds AS metadata_duration_seconds,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       -- COALESCE, not a bare scalar subquery: a video with no poster makes the
+       -- subquery NULL, and the column the row scans into is NOT NULL. The
+       -- EXISTS above is what says whether there IS a poster; this only says
+       -- what type it is.
+       COALESCE((SELECT f.content_type FROM video_files f
+                 WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+                 ORDER BY f.created_at DESC LIMIT 1), '')::text AS thumbnail_content_type,
+       EXISTS (
+           SELECT 1 FROM streaming_playlists sp
+           WHERE sp.video_id = v.id AND sp.state = 'ready' AND sp.master_key <> ''
+       ) AS has_hls
 FROM videos v
 JOIN channels c ON c.id = v.channel_id
 JOIN users au ON au.id = c.owner_id
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
 WHERE v.id = $1
 `
 
 type GetVideoByIDRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	ShortCode             string             `json:"short_code"`
-	ChannelID             uuid.UUID          `json:"channel_id"`
-	Title                 string             `json:"title"`
-	Description           string             `json:"description"`
-	Privacy               string             `json:"privacy"`
-	State                 string             `json:"state"`
-	CreatedAt             time.Time          `json:"created_at"`
-	UpdatedAt             time.Time          `json:"updated_at"`
-	Category              *string            `json:"category"`
-	Language              *string            `json:"language"`
-	License               *string            `json:"license"`
-	PublishAt             pgtype.Timestamptz `json:"publish_at"`
-	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
-	IsSensitive           bool               `json:"is_sensitive"`
-	SensitiveReason       string             `json:"sensitive_reason"`
-	CommentsPolicy        string             `json:"comments_policy"`
-	DownloadEnabled       bool               `json:"download_enabled"`
-	PublishAfterTranscode bool               `json:"publish_after_transcode"`
-	OwnerID               uuid.UUID          `json:"owner_id"`
-	ChannelHandle         string             `json:"channel_handle"`
-	ChannelDisplayName    string             `json:"channel_display_name"`
-	AuthorDisplayName     string             `json:"author_display_name"`
+	ID                      uuid.UUID          `json:"id"`
+	ShortCode               string             `json:"short_code"`
+	ChannelID               uuid.UUID          `json:"channel_id"`
+	Title                   string             `json:"title"`
+	Description             string             `json:"description"`
+	Privacy                 string             `json:"privacy"`
+	State                   string             `json:"state"`
+	CreatedAt               time.Time          `json:"created_at"`
+	UpdatedAt               time.Time          `json:"updated_at"`
+	Category                *string            `json:"category"`
+	Language                *string            `json:"language"`
+	License                 *string            `json:"license"`
+	PublishAt               pgtype.Timestamptz `json:"publish_at"`
+	OriginallyPublishedAt   pgtype.Timestamptz `json:"originally_published_at"`
+	IsSensitive             bool               `json:"is_sensitive"`
+	SensitiveReason         string             `json:"sensitive_reason"`
+	CommentsPolicy          string             `json:"comments_policy"`
+	DownloadEnabled         bool               `json:"download_enabled"`
+	PublishAfterTranscode   bool               `json:"publish_after_transcode"`
+	OwnerID                 uuid.UUID          `json:"owner_id"`
+	ChannelHandle           string             `json:"channel_handle"`
+	ChannelDisplayName      string             `json:"channel_display_name"`
+	AuthorDisplayName       string             `json:"author_display_name"`
+	MetadataDurationSeconds *int32             `json:"metadata_duration_seconds"`
+	HasThumbnail            bool               `json:"has_thumbnail"`
+	ThumbnailContentType    string             `json:"thumbnail_content_type"`
+	HasHls                  bool               `json:"has_hls"`
 }
 
 func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDRow, error) {
@@ -702,6 +727,10 @@ func (q *Queries) GetVideoByID(ctx context.Context, id uuid.UUID) (GetVideoByIDR
 		&i.ChannelHandle,
 		&i.ChannelDisplayName,
 		&i.AuthorDisplayName,
+		&i.MetadataDurationSeconds,
+		&i.HasThumbnail,
+		&i.ThumbnailContentType,
+		&i.HasHls,
 	)
 	return i, err
 }
@@ -957,10 +986,28 @@ func (q *Queries) ListAdminVideos(ctx context.Context, arg ListAdminVideosParams
 }
 
 const listChannelOutboxVideos = `-- name: ListChannelOutboxVideos :many
-SELECT id, title, description, short_code
-FROM videos
-WHERE channel_id = $1 AND privacy = 'public' AND state = 'published'
-ORDER BY created_at DESC, id DESC
+SELECT v.id, v.title, v.description, v.short_code,
+       v.created_at, v.updated_at, v.publish_at, v.originally_published_at,
+       vm.duration_seconds,
+       EXISTS (
+           SELECT 1 FROM video_files f
+           WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+       ) AS has_thumbnail,
+       -- COALESCE, not a bare scalar subquery: a video with no poster makes the
+       -- subquery NULL, and the column the row scans into is NOT NULL. The
+       -- EXISTS above is what says whether there IS a poster; this only says
+       -- what type it is.
+       COALESCE((SELECT f.content_type FROM video_files f
+                 WHERE f.video_id = v.id AND f.kind = 'thumbnail'
+                 ORDER BY f.created_at DESC LIMIT 1), '')::text AS thumbnail_content_type,
+       EXISTS (
+           SELECT 1 FROM streaming_playlists sp
+           WHERE sp.video_id = v.id AND sp.state = 'ready' AND sp.master_key <> ''
+       ) AS has_hls
+FROM videos v
+LEFT JOIN video_metadata vm ON vm.video_id = v.id
+WHERE v.channel_id = $1 AND v.privacy = 'public' AND v.state = 'published'
+ORDER BY v.created_at DESC, v.id DESC
 LIMIT $2 OFFSET $3
 `
 
@@ -971,14 +1018,27 @@ type ListChannelOutboxVideosParams struct {
 }
 
 type ListChannelOutboxVideosRow struct {
-	ID          uuid.UUID `json:"id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	ShortCode   string    `json:"short_code"`
+	ID                    uuid.UUID          `json:"id"`
+	Title                 string             `json:"title"`
+	Description           string             `json:"description"`
+	ShortCode             string             `json:"short_code"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
+	PublishAt             pgtype.Timestamptz `json:"publish_at"`
+	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
+	DurationSeconds       *int32             `json:"duration_seconds"`
+	HasThumbnail          bool               `json:"has_thumbnail"`
+	ThumbnailContentType  string             `json:"thumbnail_content_type"`
+	HasHls                bool               `json:"has_hls"`
 }
 
 // One page of a channel's public, published videos (newest first) for the AP
-// outbox collection — just the fields needed to render a Create{Video}.
+// outbox collection — the fields needed to render a Create{Video}, which since
+// the A29 remediation includes what makes the object PLAYABLE at a follower:
+// the duration, whether a poster exists (and its media type), and whether a
+// ready HLS ladder exists. A remote server that renders its own player needs
+// all three, and inferring them from a second query per row is how an outbox
+// page becomes N+1 lookups.
 // short_code builds the object's `url` (the human watch page). Its `id` stays
 // the uuid form and must never move: remote servers key on it.
 func (q *Queries) ListChannelOutboxVideos(ctx context.Context, arg ListChannelOutboxVideosParams) ([]ListChannelOutboxVideosRow, error) {
@@ -995,6 +1055,14 @@ func (q *Queries) ListChannelOutboxVideos(ctx context.Context, arg ListChannelOu
 			&i.Title,
 			&i.Description,
 			&i.ShortCode,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PublishAt,
+			&i.OriginallyPublishedAt,
+			&i.DurationSeconds,
+			&i.HasThumbnail,
+			&i.ThumbnailContentType,
+			&i.HasHls,
 		); err != nil {
 			return nil, err
 		}
