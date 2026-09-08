@@ -290,6 +290,11 @@ type EmailVerificationToken struct {
 	CreatedAt time.Time          `json:"created_at"`
 }
 
+type FederatedVideoTombstone struct {
+	VideoID   uuid.UUID `json:"video_id"`
+	DeletedAt time.Time `json:"deleted_at"`
+}
+
 type FederationDelivery struct {
 	ID                   uuid.UUID   `json:"id"`
 	InboxUrl             string      `json:"inbox_url"`
@@ -304,6 +309,8 @@ type FederationDelivery struct {
 	UpdatedAt            time.Time   `json:"updated_at"`
 	SigningUserID        pgtype.UUID `json:"signing_user_id"`
 	SigningUsername      string      `json:"signing_username"`
+	RequestID            string      `json:"request_id"`
+	CorrelationID        string      `json:"correlation_id"`
 }
 
 type FederationInboxActivity struct {
@@ -717,6 +724,12 @@ type RemoteActor struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
+type RemoteActorBlock struct {
+	BlockerID      uuid.UUID `json:"blocker_id"`
+	RemoteActorUrl string    `json:"remote_actor_url"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
 type RemoteChannelFollow struct {
 	ID                uuid.UUID `json:"id"`
 	UserID            uuid.UUID `json:"user_id"`
@@ -755,6 +768,19 @@ type RemoteVideoBlock struct {
 	Reason        string      `json:"reason"`
 	BlockedBy     pgtype.UUID `json:"blocked_by"`
 	CreatedAt     time.Time   `json:"created_at"`
+}
+
+type RemoteVideoComment struct {
+	ID               uuid.UUID          `json:"id"`
+	RemoteVideoID    uuid.UUID          `json:"remote_video_id"`
+	RemoteActorUrl   string             `json:"remote_actor_url"`
+	RemoteAuthorName string             `json:"remote_author_name"`
+	ObjectUrl        string             `json:"object_url"`
+	Body             string             `json:"body"`
+	Edited           bool               `json:"edited"`
+	PublishedAt      pgtype.Timestamptz `json:"published_at"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
 }
 
 type Report struct {

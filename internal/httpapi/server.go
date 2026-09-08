@@ -251,6 +251,10 @@ type Server struct {
 	// Nil — unit tests, and any embedder that wires nothing — omits the block
 	// rather than reporting a pool of zeroes, which reads as a saturated pool.
 	dbPoolStats func() observability.DBPoolStats
+	// federationHealth reads the outbound delivery queue for the admin status
+	// page's `federation` component. Nil = federation is not wired and the
+	// component is absent (A29-F10, system_federation.go).
+	federationHealth func(context.Context) (FederationHealth, error)
 	// playbackSigner mints/verifies the short-lived, video-scoped playback tokens
 	// that unlock password-protected videos (CORE-17 / W1.C2). Derived in New()
 	// from the JWT secret via domain separation, so it is always present.
@@ -748,6 +752,18 @@ func WithDBPoolStats(sample func() observability.DBPoolStats) Option {
 	return func(s *Server) { s.dbPoolStats = sample }
 }
 
+// WithFederationHealth mounts the `federation` component on GET /admin/system:
+// the outbound delivery backlog, its dead letters, and when a delivery last
+// succeeded (A29-F10).
+//
+// Unset means the component is ABSENT rather than "ok", on the same doctrine as
+// the pool block above: an instance with federation switched off has no
+// federation health, and claiming it is fine would be a claim about something
+// that is not running.
+func WithFederationHealth(read func(context.Context) (FederationHealth, error)) Option {
+	return func(s *Server) { s.federationHealth = read }
+}
+
 // WithMetrics attaches the Prometheus RED-metrics registry. When set AND
 // cfg.MetricsEnabled is true, the request choke point records per-request
 // counters/histograms and GET /metrics serves the scrape. Mirrors the otelecho
@@ -1119,6 +1135,12 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// the vidra_refresh cookie cross-origin. Allow-Credentials is only ever
 	// granted to the explicit allow-list — never combined with a wildcard
 	// origin (echoing "*" with credentials is unsafe; the browser rejects it).
+	// Public-media preflight (A29 remediation). Registered BEFORE the CORS
+	// middleware on purpose: it pre-seeds the wildcard answer for the media
+	// routes, and the CORS middleware overwrites it with the credentialed
+	// answer whenever the browser's Origin is on the operator's allow-list.
+	// See mediaPreflight.
+	e.Use(mediaPreflight())
 	corsAllowCredentials := true
 	for _, o := range cfg.CORSAllowedOrigins {
 		if o == "*" {
@@ -1361,6 +1383,13 @@ func (s *Server) routes() {
 		}
 		s.echo.GET("/video-channels/:handle/outbox", s.channelOutbox)
 		s.echo.GET("/accounts/:handle/outbox", s.accountCollection("outbox"))
+		// The OBJECT ids vidra mints (A29-F2). They live on frontend paths, so
+		// they are reachable here only when the operator's proxy
+		// content-negotiates an ActivityPub Accept to the api — which the
+		// shipped Caddy config now does. A non-AP Accept is 406, like every
+		// other document in this block.
+		s.echo.GET("/videos/:id", s.handleVideoObject)
+		s.echo.GET("/comments/:id", s.handleNoteObject)
 	}
 
 	// Distribution surfaces (audit Wave E): RSS 2.0 feed, oEmbed provider, and an
@@ -1900,12 +1929,28 @@ func (s *Server) routes() {
 		api.DELETE("/admin/instances/blocked/:domain", s.handleUnblockInstance, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
 
+	// Per-remote-account blocks (A29-F7). Mounted with the federation service,
+	// because the identity a viewer supplies is resolved through the same
+	// WebFinger + SSRF-guarded machinery the follow flow uses.
+	if s.fedsvc != nil {
+		api.GET("/me/blocks/remote", s.handleListRemoteBlocks, s.requireAuth)
+		api.POST("/me/blocks/remote", s.handleBlockRemoteActor, s.requireAuth)
+		api.DELETE("/me/blocks/remote", s.handleUnblockRemoteActor, s.requireAuth)
+	}
+
 	// Remote videos (federated, metadata-only): the remote-watch surface + the
 	// locally cached thumbnail. Public reads; content from blocked instances or
 	// the per-video remote block-list is excluded at the query.
 	if s.remotevideosvc != nil {
 		api.GET("/remote-videos/:id", s.handleGetRemoteVideo)
 		api.GET("/remote-videos/:id/thumbnail", s.handleGetRemoteVideoThumbnail)
+		// The MIRRORED comment thread (A29-F8). Read-only by design — see
+		// remote_video_comments.go — and mounted with the federation service
+		// because that is what stores it. optionalAuth so a signed-in viewer's
+		// instance mutes and remote-account blocks filter the thread.
+		if s.fedsvc != nil {
+			api.GET("/remote-videos/:id/comments", s.handleListRemoteVideoComments, s.optionalAuth)
+		}
 	}
 
 	// Remote-video moderation (remote-content §8): local reports of federated

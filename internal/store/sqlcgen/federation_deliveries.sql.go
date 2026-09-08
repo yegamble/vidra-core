@@ -118,9 +118,9 @@ const enqueueDelivery = `-- name: EnqueueDelivery :exec
 
 INSERT INTO federation_deliveries (
     inbox_url, payload, signing_channel_id, signing_channel_handle,
-    signing_user_id, signing_username
+    signing_user_id, signing_username, request_id, correlation_id
 )
-VALUES ($1, $2, $3, $4, $5, $6)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type EnqueueDeliveryParams struct {
@@ -130,12 +130,18 @@ type EnqueueDeliveryParams struct {
 	SigningChannelHandle string      `json:"signing_channel_handle"`
 	SigningUserID        pgtype.UUID `json:"signing_user_id"`
 	SigningUsername      string      `json:"signing_username"`
+	RequestID            string      `json:"request_id"`
+	CorrelationID        string      `json:"correlation_id"`
 }
 
 // Outbound federation delivery queue (migration 0038, .ralph/specs/federation.md §8).
 // Exactly one signer is set per row: the channel columns (a channel actor
 // signs, e.g. video fan-out) or the user columns (the user's ACCOUNT actor
 // signs, e.g. an outbound remote-channel Follow/Undo — migration 0052).
+//
+// request_id/correlation_id come from the REQUEST that produced the fan-out
+// (migration 0139), so twelve deliveries from one publish are recognisably one
+// act — and so a stuck inbox can be traced back to what queued for it.
 func (q *Queries) EnqueueDelivery(ctx context.Context, arg EnqueueDeliveryParams) error {
 	_, err := q.db.Exec(ctx, enqueueDelivery,
 		arg.InboxUrl,
@@ -144,6 +150,8 @@ func (q *Queries) EnqueueDelivery(ctx context.Context, arg EnqueueDeliveryParams
 		arg.SigningChannelHandle,
 		arg.SigningUserID,
 		arg.SigningUsername,
+		arg.RequestID,
+		arg.CorrelationID,
 	)
 	return err
 }

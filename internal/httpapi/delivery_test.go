@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/delivery"
@@ -454,6 +455,16 @@ func TestDeliveryNeverPresignsGatedMedia(t *testing.T) {
 			if tt.wantCache != "" {
 				if cc := rec.Header().Get("Cache-Control"); cc != tt.wantCache {
 					t.Errorf("Cache-Control = %q, want %q", cc, tt.wantCache)
+				}
+			}
+			// A29 remediation: the same fence in its CORS form. A response that
+			// must not be stored anywhere must not be READABLE by another
+			// origin's page either — same (eligible, credentialed) pair, one
+			// answer. The two HLS playlist cases below the credentialed ones are
+			// public and non-credentialed, so they are deliberately exempt.
+			if tt.wantCache == delivery.CacheNoStore {
+				if got := rec.Header().Get(echo.HeaderAccessControlAllowOrigin); got != "" {
+					t.Errorf("Access-Control-Allow-Origin = %q on a no-store response, want none", got)
 				}
 			}
 		})

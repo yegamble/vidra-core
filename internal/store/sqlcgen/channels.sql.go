@@ -216,7 +216,11 @@ func (q *Queries) ListChannelsByOwner(ctx context.Context, ownerID uuid.UUID) ([
 
 const listManagedChannels = `-- name: ListManagedChannels :many
 SELECT managed.id, managed.owner_id, managed.handle, managed.display_name, managed.description, managed.created_at, managed.updated_at, managed.activitypub_enabled, managed.atproto_enabled, managed.role,
-       (SELECT count(*) FROM channel_follows cf WHERE cf.channel_id = managed.id)::bigint AS follower_count
+       -- Local + remote, the CountChannelFollowers definition (A29-F6): the
+       -- Studio list is exactly where a creator was reading zero.
+       ((SELECT count(*) FROM channel_follows cf WHERE cf.channel_id = managed.id)
+        + (SELECT count(*) FROM remote_follows rf
+           WHERE rf.channel_id = managed.id AND rf.state = 'accepted'))::bigint AS follower_count
 FROM (
     SELECT c.id, c.owner_id, c.handle, c.display_name, c.description,
            c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
@@ -298,7 +302,9 @@ func (q *Queries) ListManagedChannels(ctx context.Context, arg ListManagedChanne
 const searchPublicChannels = `-- name: SearchPublicChannels :many
 SELECT c.id, c.owner_id, c.handle, c.display_name, c.description,
        c.created_at, c.updated_at, c.activitypub_enabled, c.atproto_enabled,
-       (SELECT count(*) FROM channel_follows cf WHERE cf.channel_id = c.id)::bigint AS follower_count
+       ((SELECT count(*) FROM channel_follows cf WHERE cf.channel_id = c.id)
+        + (SELECT count(*) FROM remote_follows rf
+           WHERE rf.channel_id = c.id AND rf.state = 'accepted'))::bigint AS follower_count
 FROM channels c
 JOIN users u ON u.id = c.owner_id
 WHERE u.is_active = TRUE

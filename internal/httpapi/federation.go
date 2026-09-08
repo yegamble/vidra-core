@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/httpsig"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/version"
 )
 
@@ -228,17 +230,44 @@ func (s *Server) handleInbox(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "could not read request body")
 	}
-	verifier := httpsig.Verifier{ResolveKey: s.fedsvc.ResolveKey}
+	// RefreshKey is the rotation escape hatch (A29-F12): a signature that fails
+	// against the CACHED actor key is retried once against a freshly fetched
+	// one, so a peer rotating its keypair is not permanently unverifiable here.
+	verifier := httpsig.Verifier{
+		ResolveKey: s.fedsvc.ResolveKey,
+		RefreshKey: s.fedsvc.ResolveKeyFresh,
+	}
 	keyID, err := verifier.Verify(c.Request().Context(), c.Request(), body)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "signature verification failed")
 	}
 	signerActorURL, _, _ := strings.Cut(keyID, "#")
 	if err := s.fedsvc.HandleInbox(c.Request().Context(), signerActorURL, body); err != nil {
+		if errors.Is(err, federation.ErrSenderBlocked) {
+			// The WIRE answer is unchanged and deliberately so: a blocked
+			// instance is told nothing, because a distinguishable refusal is a
+			// probe target and an invitation to evade. What A29-F4 was actually
+			// about is this side of it — the admin who blocked the domain could
+			// not see the block doing anything. One audit row, carrying the
+			// domain and nothing else.
+			s.audit(c, observability.ActionFederationInboxRejected, observability.ResultSuccess, "",
+				"domain="+federationSignerDomain(signerActorURL))
+			return c.NoContent(http.StatusAccepted)
+		}
 		if errors.Is(err, federation.ErrBadResource) || errors.Is(err, federation.ErrActorMismatch) {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid activity")
 		}
 		return echo.NewHTTPError(http.StatusUnprocessableEntity, "could not process activity")
 	}
 	return c.NoContent(http.StatusAccepted)
+}
+
+// federationSignerDomain is the host of a signer's actor URL, lowercased — the
+// only part of a refused activity that reaches the audit trail.
+func federationSignerDomain(actorURL string) string {
+	u, err := url.Parse(actorURL)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Host)
 }

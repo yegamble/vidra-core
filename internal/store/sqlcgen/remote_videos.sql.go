@@ -13,6 +13,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countRemoteVideoComments = `-- name: CountRemoteVideoComments :one
+SELECT count(*)::bigint
+FROM remote_video_comments c
+JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
+WHERE c.remote_video_id = $1
+  AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_instances mi
+      WHERE mi.muter_id = $2 AND mi.domain = ra.domain
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM remote_actor_blocks rab
+      WHERE rab.blocker_id = $2 AND rab.remote_actor_url = c.remote_actor_url
+  )
+`
+
+type CountRemoteVideoCommentsParams struct {
+	RemoteVideoID uuid.UUID   `json:"remote_video_id"`
+	ViewerID      pgtype.UUID `json:"viewer_id"`
+}
+
+// How many rows ListRemoteVideoComments would return for the same viewer.
+func (q *Queries) CountRemoteVideoComments(ctx context.Context, arg CountRemoteVideoCommentsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countRemoteVideoComments, arg.RemoteVideoID, arg.ViewerID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deleteRemoteVideoByObjectURL = `-- name: DeleteRemoteVideoByObjectURL :execrows
 DELETE FROM remote_videos WHERE object_url = $1
 `
@@ -20,6 +49,18 @@ DELETE FROM remote_videos WHERE object_url = $1
 // Inbound Delete of a remote video (§7): the origin retracted it.
 func (q *Queries) DeleteRemoteVideoByObjectURL(ctx context.Context, objectUrl string) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteRemoteVideoByObjectURL, objectUrl)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteRemoteVideoCommentByObjectURL = `-- name: DeleteRemoteVideoCommentByObjectURL :execrows
+DELETE FROM remote_video_comments WHERE object_url = $1
+`
+
+func (q *Queries) DeleteRemoteVideoCommentByObjectURL(ctx context.Context, objectUrl string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteRemoteVideoCommentByObjectURL, objectUrl)
 	if err != nil {
 		return 0, err
 	}
@@ -99,6 +140,140 @@ func (q *Queries) GetRemoteVideoByObjectURL(ctx context.Context, objectUrl strin
 	return i, err
 }
 
+const getRemoteVideoByURL = `-- name: GetRemoteVideoByURL :one
+SELECT id, object_url, remote_actor_url
+FROM remote_videos
+WHERE object_url = $1 OR (watch_url <> '' AND watch_url = $1)
+`
+
+type GetRemoteVideoByURLRow struct {
+	ID             uuid.UUID `json:"id"`
+	ObjectUrl      string    `json:"object_url"`
+	RemoteActorUrl string    `json:"remote_actor_url"`
+}
+
+// Resolve a remote video by ANY url a person might paste: its ActivityPub
+// object id, or the human watch page the origin advertised (A29-F3).
+//
+// A29 measured the gap this closes: B already held the exact object_url a
+// viewer pasted, and ResolveSearchTarget went straight to the network anyway —
+// so a video the instance was already storing could not be found by its own
+// URL. Consulting the store first is also the only way the /v/{code} form can
+// ever resolve: that path belongs to the origin's frontend and answers no
+// ActivityPub, so there is nothing to dereference, only something to remember.
+func (q *Queries) GetRemoteVideoByURL(ctx context.Context, objectUrl string) (GetRemoteVideoByURLRow, error) {
+	row := q.db.QueryRow(ctx, getRemoteVideoByURL, objectUrl)
+	var i GetRemoteVideoByURLRow
+	err := row.Scan(&i.ID, &i.ObjectUrl, &i.RemoteActorUrl)
+	return i, err
+}
+
+const getRemoteVideoCommentByObjectURL = `-- name: GetRemoteVideoCommentByObjectURL :one
+SELECT c.id, c.remote_video_id, c.remote_actor_url, c.object_url
+FROM remote_video_comments c
+WHERE c.object_url = $1
+`
+
+type GetRemoteVideoCommentByObjectURLRow struct {
+	ID             uuid.UUID `json:"id"`
+	RemoteVideoID  uuid.UUID `json:"remote_video_id"`
+	RemoteActorUrl string    `json:"remote_actor_url"`
+	ObjectUrl      string    `json:"object_url"`
+}
+
+// Resolve a mirrored comment by the origin's object id — the authority check an
+// inbound Update{Note} or Delete runs before it may touch the row.
+func (q *Queries) GetRemoteVideoCommentByObjectURL(ctx context.Context, objectUrl string) (GetRemoteVideoCommentByObjectURLRow, error) {
+	row := q.db.QueryRow(ctx, getRemoteVideoCommentByObjectURL, objectUrl)
+	var i GetRemoteVideoCommentByObjectURLRow
+	err := row.Scan(
+		&i.ID,
+		&i.RemoteVideoID,
+		&i.RemoteActorUrl,
+		&i.ObjectUrl,
+	)
+	return i, err
+}
+
+const listRemoteVideoComments = `-- name: ListRemoteVideoComments :many
+SELECT c.id, c.remote_actor_url, c.remote_author_name, c.object_url, c.body,
+       c.edited, c.published_at, c.created_at,
+       COALESCE(ra.domain, '')::text AS domain
+FROM remote_video_comments c
+JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
+WHERE c.remote_video_id = $1
+  AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_instances mi
+      WHERE mi.muter_id = $2 AND mi.domain = ra.domain
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM remote_actor_blocks rab
+      WHERE rab.blocker_id = $2 AND rab.remote_actor_url = c.remote_actor_url
+  )
+ORDER BY c.created_at, c.id
+LIMIT $4 OFFSET $3
+`
+
+type ListRemoteVideoCommentsParams struct {
+	RemoteVideoID uuid.UUID   `json:"remote_video_id"`
+	ViewerID      pgtype.UUID `json:"viewer_id"`
+	ResultOffset  int32       `json:"result_offset"`
+	ResultLimit   int32       `json:"result_limit"`
+}
+
+type ListRemoteVideoCommentsRow struct {
+	ID               uuid.UUID          `json:"id"`
+	RemoteActorUrl   string             `json:"remote_actor_url"`
+	RemoteAuthorName string             `json:"remote_author_name"`
+	ObjectUrl        string             `json:"object_url"`
+	Body             string             `json:"body"`
+	Edited           bool               `json:"edited"`
+	PublishedAt      pgtype.Timestamptz `json:"published_at"`
+	CreatedAt        time.Time          `json:"created_at"`
+	Domain           string             `json:"domain"`
+}
+
+// One remote video's mirrored thread, oldest first — the order the origin's own
+// page shows. Rows from an admin-blocked instance and from an actor the VIEWER
+// blocks are excluded, the same two filters the remote-video feed applies, so a
+// thread can never show what the card would have hidden. viewer_id is NULL for
+// an anonymous caller, which makes the per-viewer clause trivially true.
+func (q *Queries) ListRemoteVideoComments(ctx context.Context, arg ListRemoteVideoCommentsParams) ([]ListRemoteVideoCommentsRow, error) {
+	rows, err := q.db.Query(ctx, listRemoteVideoComments,
+		arg.RemoteVideoID,
+		arg.ViewerID,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRemoteVideoCommentsRow
+	for rows.Next() {
+		var i ListRemoteVideoCommentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RemoteActorUrl,
+			&i.RemoteAuthorName,
+			&i.ObjectUrl,
+			&i.Body,
+			&i.Edited,
+			&i.PublishedAt,
+			&i.CreatedAt,
+			&i.Domain,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setRemoteVideoThumbnail = `-- name: SetRemoteVideoThumbnail :exec
 UPDATE remote_videos SET thumbnail_key = $2, updated_at = now() WHERE id = $1
 `
@@ -168,5 +343,63 @@ func (q *Queries) UpsertRemoteVideo(ctx context.Context, arg UpsertRemoteVideoPa
 	)
 	var i UpsertRemoteVideoRow
 	err := row.Scan(&i.ID, &i.ThumbnailKey)
+	return i, err
+}
+
+const upsertRemoteVideoComment = `-- name: UpsertRemoteVideoComment :one
+INSERT INTO remote_video_comments (
+    remote_video_id, remote_actor_url, remote_author_name, object_url, body, published_at
+)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (object_url) DO UPDATE SET
+    body        = EXCLUDED.body,
+    edited      = remote_video_comments.edited OR remote_video_comments.body <> EXCLUDED.body,
+    updated_at  = now()
+RETURNING id, remote_video_id, remote_actor_url, object_url, body, edited
+`
+
+type UpsertRemoteVideoCommentParams struct {
+	RemoteVideoID    uuid.UUID          `json:"remote_video_id"`
+	RemoteActorUrl   string             `json:"remote_actor_url"`
+	RemoteAuthorName string             `json:"remote_author_name"`
+	ObjectUrl        string             `json:"object_url"`
+	Body             string             `json:"body"`
+	PublishedAt      pgtype.Timestamptz `json:"published_at"`
+}
+
+type UpsertRemoteVideoCommentRow struct {
+	ID             uuid.UUID `json:"id"`
+	RemoteVideoID  uuid.UUID `json:"remote_video_id"`
+	RemoteActorUrl string    `json:"remote_actor_url"`
+	ObjectUrl      string    `json:"object_url"`
+	Body           string    `json:"body"`
+	Edited         bool      `json:"edited"`
+}
+
+// Store (or re-store) one federated comment on a remote video (A29-F8,
+// migration 0140). Deduped by the ORIGIN's object id, so a redelivery cannot
+// double the thread and an Update{Note} edits in place.
+//
+// `edited` is set by the CONFLICT arm only: the first arrival is not an edit,
+// and a redelivery of the same body must not claim to be one either, which is
+// why the flag ORs the existing value with a real body change.
+func (q *Queries) UpsertRemoteVideoComment(ctx context.Context, arg UpsertRemoteVideoCommentParams) (UpsertRemoteVideoCommentRow, error) {
+	row := q.db.QueryRow(ctx, upsertRemoteVideoComment,
+		arg.RemoteVideoID,
+		arg.RemoteActorUrl,
+		arg.RemoteAuthorName,
+		arg.ObjectUrl,
+		arg.Body,
+		arg.PublishedAt,
+	)
+	var i UpsertRemoteVideoCommentRow
+	err := row.Scan(
+		&i.ID,
+		&i.RemoteVideoID,
+		&i.RemoteActorUrl,
+		&i.ObjectUrl,
+		&i.Body,
+		&i.Edited,
+	)
 	return i, err
 }

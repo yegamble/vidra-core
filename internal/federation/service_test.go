@@ -3,6 +3,7 @@ package federation
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +47,15 @@ type fakeRepo struct {
 	// 0096). Nil-safe: a channel not listed here reads back AP-ENABLED, matching
 	// the DB column default (TRUE) so existing fixtures federate as before.
 	apDisabled map[uuid.UUID]bool
+	// tombstones records federated deletions (migration 0138): a deleted
+	// video's AP id answers 410 + Tombstone rather than the frontend soft-404.
+	tombstones map[uuid.UUID]time.Time
+	// remoteBlocks are per-viewer blocks of a remote ACTOR (migration 0138),
+	// keyed blockerID|actorURL.
+	remoteBlocks map[string]bool
+	// remoteVideoComments are the MIRRORED threads on remote videos (migration
+	// 0140), keyed by the origin's object url.
+	remoteVideoComments map[string]*sqlcgen.UpsertRemoteVideoCommentParams
 }
 
 // withAP stamps a fixture channel's activitypub_enabled from the apDisabled set
@@ -88,6 +98,9 @@ type fakeDelivery struct {
 	state       string
 	nextAttempt time.Time
 	lastError   string
+	// enqueued keeps the params as written, including the request/correlation
+	// identity the queue row now carries (migration 0139).
+	enqueued sqlcgen.EnqueueDeliveryParams
 }
 
 func (f fakeRepo) CountUsers(context.Context) (int64, error)        { return f.users, f.err }
@@ -302,8 +315,11 @@ func (f fakeRepo) ListRemoteFollowerInboxes(_ context.Context, channelID uuid.UU
 	return f.followerInboxes[channelID], nil
 }
 
+// CountChannelFollowers is the TOTAL (local + remote), matching the real query
+// since A29-F6 — the fake used to answer the local count alone, which is
+// exactly the bug the query had.
 func (f fakeRepo) CountChannelFollowers(_ context.Context, id uuid.UUID) (int64, error) {
-	return f.localFollowers[id], nil
+	return f.localFollowers[id] + f.remoteFollowerN[id], nil
 }
 func (f fakeRepo) CountRemoteFollowers(_ context.Context, id uuid.UUID) (int64, error) {
 	return f.remoteFollowerN[id], nil
@@ -336,7 +352,8 @@ func (f fakeRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDelivery
 			SigningUserID:        arg.SigningUserID,
 			SigningUsername:      arg.SigningUsername,
 		},
-		state: "pending",
+		state:    "pending",
+		enqueued: arg,
 	}
 	return nil
 }
@@ -405,6 +422,83 @@ func (f fakeRepo) SetRemoteVideoThumbnail(_ context.Context, arg sqlcgen.SetRemo
 func (f fakeRepo) IsInstanceBlocked(_ context.Context, domain string) (bool, error) {
 	return f.blockedDomains[domain], nil
 }
+
+func (f fakeRepo) InsertFederatedVideoTombstone(_ context.Context, videoID uuid.UUID) error {
+	if f.tombstones == nil {
+		return nil
+	}
+	if _, ok := f.tombstones[videoID]; !ok {
+		f.tombstones[videoID] = fakeTombstoneAt
+	}
+	return nil
+}
+
+func (f fakeRepo) GetFederatedVideoTombstone(_ context.Context, videoID uuid.UUID) (sqlcgen.FederatedVideoTombstone, error) {
+	if at, ok := f.tombstones[videoID]; ok {
+		return sqlcgen.FederatedVideoTombstone{VideoID: videoID, DeletedAt: at}, nil
+	}
+	return sqlcgen.FederatedVideoTombstone{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) IsRemoteActorBlockedByAnyone(_ context.Context, actorURL string) (bool, error) {
+	for key := range f.remoteBlocks {
+		if _, url, ok := strings.Cut(key, "|"); ok && url == actorURL {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f fakeRepo) IsRemoteActorBlockedBy(_ context.Context, arg sqlcgen.IsRemoteActorBlockedByParams) (bool, error) {
+	return f.remoteBlocks[arg.BlockerID.String()+"|"+arg.RemoteActorUrl], nil
+}
+
+func (f fakeRepo) BlockRemoteActor(_ context.Context, arg sqlcgen.BlockRemoteActorParams) error {
+	if f.remoteBlocks != nil {
+		f.remoteBlocks[arg.BlockerID.String()+"|"+arg.RemoteActorUrl] = true
+	}
+	return nil
+}
+
+func (f fakeRepo) UnblockRemoteActor(_ context.Context, arg sqlcgen.UnblockRemoteActorParams) (int64, error) {
+	key := arg.BlockerID.String() + "|" + arg.RemoteActorUrl
+	if f.remoteBlocks[key] {
+		delete(f.remoteBlocks, key)
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (f fakeRepo) ListRemoteActorBlocks(_ context.Context, arg sqlcgen.ListRemoteActorBlocksParams) ([]sqlcgen.ListRemoteActorBlocksRow, error) {
+	var out []sqlcgen.ListRemoteActorBlocksRow
+	for key := range f.remoteBlocks {
+		blocker, actorURL, _ := strings.Cut(key, "|")
+		if blocker != arg.BlockerID.String() {
+			continue
+		}
+		row := sqlcgen.ListRemoteActorBlocksRow{RemoteActorUrl: actorURL, CreatedAt: fakeTombstoneAt}
+		if ra, ok := f.remoteActors[actorURL]; ok {
+			row.PreferredUsername, row.Domain = ra.PreferredUsername, ra.Domain
+		}
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RemoteActorUrl < out[j].RemoteActorUrl })
+	return out, nil
+}
+
+func (f fakeRepo) CountRemoteActorBlocks(_ context.Context, blockerID uuid.UUID) (int64, error) {
+	var n int64
+	for key := range f.remoteBlocks {
+		if blocker, _, _ := strings.Cut(key, "|"); blocker == blockerID.String() {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// fakeTombstoneAt is the fixed deletion time every fake tombstone carries, so a
+// Tombstone document is byte-stable in the goldens.
+var fakeTombstoneAt = time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 
 func (f fakeRepo) GetUserActorByID(_ context.Context, id uuid.UUID) (sqlcgen.GetUserActorByIDRow, error) {
 	if u, ok := f.usersByID[id]; ok {
@@ -569,6 +663,17 @@ func (f fakeRepo) GetRemoteVideoByObjectURL(_ context.Context, objectURL string)
 	return sqlcgen.GetRemoteVideoByObjectURLRow{}, pgx.ErrNoRows
 }
 
+// GetRemoteVideoByURL matches the object id OR the stored watch url, like the
+// real query (A29-F3).
+func (f fakeRepo) GetRemoteVideoByURL(_ context.Context, url string) (sqlcgen.GetRemoteVideoByURLRow, error) {
+	for objectURL, rv := range f.remoteVideos {
+		if objectURL == url || (rv.params.WatchUrl != "" && rv.params.WatchUrl == url) {
+			return sqlcgen.GetRemoteVideoByURLRow{ID: rv.id, ObjectUrl: objectURL, RemoteActorUrl: rv.params.RemoteActorUrl}, nil
+		}
+	}
+	return sqlcgen.GetRemoteVideoByURLRow{}, pgx.ErrNoRows
+}
+
 func (f fakeRepo) DeleteRemoteVideoByObjectURL(_ context.Context, objectURL string) (int64, error) {
 	if _, ok := f.remoteVideos[objectURL]; ok {
 		delete(f.remoteVideos, objectURL)
@@ -629,4 +734,71 @@ func (f fakeRepo) CountPendingRemoteFollows(ctx context.Context) (int64, error) 
 func (f fakeRepo) CountRemoteChannelFollows(ctx context.Context, userID uuid.UUID) (int64, error) {
 	rows, err := f.ListRemoteChannelFollows(ctx, sqlcgen.ListRemoteChannelFollowsParams{UserID: userID, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
+}
+
+// --- mirrored remote-video comments (A29-F8, migration 0140) ----------------
+
+func (f fakeRepo) UpsertRemoteVideoComment(_ context.Context, arg sqlcgen.UpsertRemoteVideoCommentParams) (sqlcgen.UpsertRemoteVideoCommentRow, error) {
+	if f.remoteVideoComments == nil {
+		return sqlcgen.UpsertRemoteVideoCommentRow{}, nil
+	}
+	edited := false
+	if prev, ok := f.remoteVideoComments[arg.ObjectUrl]; ok && prev.Body != arg.Body {
+		edited = true
+	}
+	stored := arg
+	f.remoteVideoComments[arg.ObjectUrl] = &stored
+	return sqlcgen.UpsertRemoteVideoCommentRow{
+		RemoteVideoID:  arg.RemoteVideoID,
+		RemoteActorUrl: arg.RemoteActorUrl,
+		ObjectUrl:      arg.ObjectUrl,
+		Body:           arg.Body,
+		Edited:         edited,
+	}, nil
+}
+
+func (f fakeRepo) GetRemoteVideoCommentByObjectURL(_ context.Context, objectURL string) (sqlcgen.GetRemoteVideoCommentByObjectURLRow, error) {
+	if c, ok := f.remoteVideoComments[objectURL]; ok {
+		return sqlcgen.GetRemoteVideoCommentByObjectURLRow{
+			RemoteVideoID:  c.RemoteVideoID,
+			RemoteActorUrl: c.RemoteActorUrl,
+			ObjectUrl:      objectURL,
+		}, nil
+	}
+	return sqlcgen.GetRemoteVideoCommentByObjectURLRow{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) DeleteRemoteVideoCommentByObjectURL(_ context.Context, objectURL string) (int64, error) {
+	if _, ok := f.remoteVideoComments[objectURL]; ok {
+		delete(f.remoteVideoComments, objectURL)
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (f fakeRepo) ListRemoteVideoComments(_ context.Context, arg sqlcgen.ListRemoteVideoCommentsParams) ([]sqlcgen.ListRemoteVideoCommentsRow, error) {
+	var out []sqlcgen.ListRemoteVideoCommentsRow
+	for objectURL, c := range f.remoteVideoComments {
+		if c.RemoteVideoID != arg.RemoteVideoID {
+			continue
+		}
+		out = append(out, sqlcgen.ListRemoteVideoCommentsRow{
+			RemoteActorUrl:   c.RemoteActorUrl,
+			RemoteAuthorName: c.RemoteAuthorName,
+			ObjectUrl:        objectURL,
+			Body:             c.Body,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ObjectUrl < out[j].ObjectUrl })
+	return out, nil
+}
+
+func (f fakeRepo) CountRemoteVideoComments(_ context.Context, arg sqlcgen.CountRemoteVideoCommentsParams) (int64, error) {
+	var n int64
+	for _, c := range f.remoteVideoComments {
+		if c.RemoteVideoID == arg.RemoteVideoID {
+			n++
+		}
+	}
+	return n, nil
 }

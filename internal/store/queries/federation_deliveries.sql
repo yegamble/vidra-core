@@ -4,11 +4,15 @@
 -- Exactly one signer is set per row: the channel columns (a channel actor
 -- signs, e.g. video fan-out) or the user columns (the user's ACCOUNT actor
 -- signs, e.g. an outbound remote-channel Follow/Undo — migration 0052).
+--
+-- request_id/correlation_id come from the REQUEST that produced the fan-out
+-- (migration 0139), so twelve deliveries from one publish are recognisably one
+-- act — and so a stuck inbox can be traced back to what queued for it.
 INSERT INTO federation_deliveries (
     inbox_url, payload, signing_channel_id, signing_channel_handle,
-    signing_user_id, signing_username
+    signing_user_id, signing_username, request_id, correlation_id
 )
-VALUES ($1, $2, $3, $4, $5, $6);
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
 
 -- name: ClaimDueDeliveries :many
 -- LEASES pending deliveries whose backoff has elapsed, oldest first.

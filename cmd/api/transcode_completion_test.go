@@ -13,17 +13,32 @@ import (
 // state (non-published → NetworkNone), so a mirror sync against a still-held
 // video would skip the HLS-tree pin permanently — the later publish-hook
 // SyncVideo only re-pins single-file refs, never the 'hls' directory row.
+//
+// The federation Update comes LAST for the same class of reason (A29
+// remediation): the outbound AS Video advertises a playable HLS master only
+// when a ready ladder exists, and UpdateVideo reads the video's CURRENT
+// privacy/state — so it must not run before the hold that keeps the video
+// unpublished has been released, or the video is either skipped or actively
+// unfederated.
 func TestComposeTranscodeCompletionOrder(t *testing.T) {
 	var calls []string
 	hook := composeTranscodeCompletion(
 		func(context.Context, uuid.UUID) { calls = append(calls, "release") },
 		func(context.Context, uuid.UUID) { calls = append(calls, "mirror") },
+		func(context.Context, uuid.UUID) { calls = append(calls, "federate") },
 	)
 	hook(context.Background(), uuid.New())
-	if len(calls) != 2 || calls[0] != "release" || calls[1] != "mirror" {
-		t.Fatalf("completion hook order = %v, want [release mirror] (mirror eligibility reads committed state)", calls)
+	want := []string{"release", "mirror", "federate"}
+	if len(calls) != len(want) {
+		t.Fatalf("completion hook calls = %v, want %v", calls, want)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Fatalf("completion hook order = %v, want %v", calls, want)
+		}
 	}
 
-	// Nil components are tolerated (e.g. a build with no mirror wired).
-	composeTranscodeCompletion(nil, nil)(context.Background(), uuid.New())
+	// Nil components are tolerated (e.g. a build with no mirror and no
+	// federation wired).
+	composeTranscodeCompletion(nil, nil, nil)(context.Background(), uuid.New())
 }

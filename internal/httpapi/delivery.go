@@ -175,6 +175,11 @@ func (s *Server) serveMediaAsset(c echo.Context, a mediaAsset) error {
 		if src.CacheControl != "" {
 			header.Set("Cache-Control", src.CacheControl)
 		}
+		// Cross-origin readability travels with the cache policy, from the same
+		// two inputs, on the byte response only — never on the 307 above (a
+		// browser re-runs the CORS check against the redirect's TARGET, so the
+		// header that decides is the bucket's or the edge's). See media_cors.go.
+		setMediaCORS(c, a.eligible)
 		if req.ContentDisposition != "" {
 			header.Set(echo.HeaderContentDisposition, req.ContentDisposition)
 		}
@@ -202,12 +207,16 @@ func mediaObjectNotFound(c echo.Context, msg string) error {
 	return echo.NewHTTPError(http.StatusNotFound, msg)
 }
 
-// setMediaCacheControl applies the class cache policy to a route that streams
-// its bytes without going through the resolver (the caption routes, which read
-// through video.Service and never see a storage key).
-func setMediaCacheControl(c echo.Context, class delivery.Class) {
+// setMediaCacheControl applies the class cache policy — and the public-media
+// CORS header — to a route that streams its bytes without going through the
+// resolver (the caption routes, which read through video.Service and never see
+// a storage key, and the live HLS spool). eligible carries the same meaning it
+// does everywhere else: "these bytes are servable to an anonymous public
+// visitor".
+func setMediaCacheControl(c echo.Context, class delivery.Class, eligible bool) {
 	// shared=false unconditionally: these routes never expose a storage key, so
 	// they are never handed to the edge and an edge can never be the caller.
 	c.Response().Header().Set("Cache-Control",
 		delivery.CacheControl(class, false, credentialedMediaRequest(c), false))
+	setMediaCORS(c, eligible)
 }

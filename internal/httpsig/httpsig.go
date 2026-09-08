@@ -72,6 +72,21 @@ type Verifier struct {
 	// ResolveKey returns the RSA public key for a signature's keyId (typically by
 	// fetching the remote actor and parsing its publicKey).
 	ResolveKey func(ctx context.Context, keyID string) (*rsa.PublicKey, error)
+	// RefreshKey re-resolves a keyId bypassing any cache, and is tried ONCE when
+	// the signature does not verify against the key ResolveKey returned.
+	//
+	// It exists for key rotation (A29-F12). A peer that rotates its keypair was
+	// permanently unverifiable here, because the cached publicKeyPem was never
+	// refreshed and nothing in the verification path could ask for a newer one.
+	// The retry is deliberately gated on a FAILED verification rather than run
+	// per request: a valid signature costs no network, and an invalid one costs
+	// exactly one re-fetch of an actor this instance already holds — never of an
+	// actor an attacker names for the first time, because RefreshKey is
+	// implemented over the existing cache row.
+	//
+	// Nil disables the retry entirely, which is what every test that does not
+	// exercise rotation gets.
+	RefreshKey func(ctx context.Context, keyID string) (*rsa.PublicKey, error)
 	// MaxSkew bounds how far the request Date may be from Now. Zero means 5 minutes.
 	MaxSkew time.Duration
 	// Now is the clock; nil means time.Now.
@@ -137,11 +152,31 @@ func (v Verifier) Verify(ctx context.Context, req *http.Request, body []byte) (s
 		return "", err
 	}
 	hashed := sha256.Sum256([]byte(signingString))
-	if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, hashed[:], sig); err != nil {
-		return "", fmt.Errorf("httpsig: signature verification failed: %w", err)
+	if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, hashed[:], sig); err == nil {
+		return keyID, nil
+	}
+	// The cached key did not verify. Before refusing, try ONCE against a freshly
+	// fetched one: the overwhelmingly common cause of this in production is a
+	// peer that rotated its keypair, and the alternative is that every activity
+	// from that server 401s forever with no path back (A29-F12). A forged
+	// signature simply fails twice.
+	if v.RefreshKey == nil {
+		return "", errSignatureFailed
+	}
+	fresh, ferr := v.RefreshKey(ctx, keyID)
+	if ferr != nil || fresh == nil {
+		return "", errSignatureFailed
+	}
+	if err := rsa.VerifyPKCS1v15(fresh, crypto.SHA256, hashed[:], sig); err != nil {
+		return "", fmt.Errorf("%w: %w", errSignatureFailed, err)
 	}
 	return keyID, nil
 }
+
+// errSignatureFailed is the single refusal a caller sees for a signature that
+// does not verify, whichever key it was checked against. The reason is never
+// widened: a signer learning WHICH key was tried is a probing oracle.
+var errSignatureFailed = errors.New("httpsig: signature verification failed")
 
 // digestHeader returns the `SHA-256=<base64>` Digest header value for body.
 func digestHeader(body []byte) string {

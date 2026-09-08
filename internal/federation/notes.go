@@ -34,6 +34,10 @@ type apNoteObject struct {
 	Content      string          `json:"content"`
 	InReplyTo    json.RawMessage `json:"inReplyTo"`
 	AttributedTo json.RawMessage `json:"attributedTo"`
+	// Published is read only by the mirrored-thread path (A29-F8), which needs
+	// the ORIGIN's ordering: a follower that ordered by arrival would show a
+	// thread in delivery order, which is not the order anyone wrote it in.
+	Published string `json:"published"`
 }
 
 // handleCreateNote ingests an inbound Create{Note} as a federated comment (§6).
@@ -55,9 +59,27 @@ func (s *Service) handleCreateNote(ctx context.Context, act inboxActivity, signe
 	if !attributedToIncludes(note.AttributedTo, signerActorURL) {
 		return nil
 	}
-	videoID, parentID, ok, err := s.resolveNoteTarget(ctx, objectID(note.InReplyTo))
+	// A remote video of ours first (A29-F8): a follower instance mirrors the
+	// thread the origin is already sending it. Checked BEFORE the local-video
+	// path because the two are disjoint — an inReplyTo either names one of our
+	// own videos or one we mirror, never both — and because the local path's
+	// failure mode was to drop the activity silently.
+	inReplyTo := objectID(note.InReplyTo)
+	if handled, err := s.storeRemoteVideoNote(ctx, note, signerActorURL, inReplyTo); err != nil || handled {
+		return err
+	}
+	videoID, parentID, ok, err := s.resolveNoteTarget(ctx, inReplyTo)
 	if err != nil || !ok {
 		return err
+	}
+	// The per-remote-account block (A29-F7): a blocked actor's reply is not
+	// stored under the blocker's own video. Accept-and-ignore, not a refusal —
+	// telling the sender would make the block a probe target, exactly as with
+	// the instance blocklist.
+	if blocked, err := s.videoOwnerBlocksRemoteActor(ctx, videoID, signerActorURL); err != nil {
+		return err
+	} else if blocked {
+		return nil
 	}
 	body := truncate(stripHTMLTags(note.Content), maxRemoteCommentLen)
 	if body == "" {
@@ -102,6 +124,10 @@ func (s *Service) handleUpdateNote(ctx context.Context, act inboxActivity, signe
 	if err := json.Unmarshal(act.Object, &note); err != nil || note.Type != "Note" || note.ID == "" {
 		return nil
 	}
+	// A mirrored comment on a remote video (A29-F8) is edited in its own table.
+	if handled, err := s.updateRemoteVideoNote(ctx, note, signerActorURL); err != nil || handled {
+		return err
+	}
 	c, err := s.repo.GetCommentByRemoteObjectURL(ctx, note.ID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -145,6 +171,10 @@ func (s *Service) handleDelete(ctx context.Context, act inboxActivity, signerAct
 		_, err := s.repo.DeleteRemoteVideoByObjectURL(ctx, objURL)
 		return err
 	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	// A mirrored comment on a remote video (A29-F8)?
+	if handled, err := s.deleteRemoteVideoNote(ctx, objURL, signerActorURL); err != nil || handled {
 		return err
 	}
 	// A known federated comment?

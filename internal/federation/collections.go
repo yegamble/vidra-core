@@ -57,15 +57,15 @@ func (s *Service) ChannelCollection(ctx context.Context, handle, kind string) (*
 	var total int64
 	switch kind {
 	case "followers":
-		local, err := s.repo.CountChannelFollowers(ctx, ch.ID)
+		// ONE definition of "how many followers does this channel have",
+		// shared with the REST/UI count (A29-F6). This collection used to sum
+		// local + remote itself while every other surface counted local alone,
+		// so a creator with three federated followers read 3 here and 0
+		// everywhere they could actually see.
+		total, err = s.repo.CountChannelFollowers(ctx, ch.ID)
 		if err != nil {
 			return nil, err
 		}
-		remote, err := s.repo.CountRemoteFollowers(ctx, ch.ID)
-		if err != nil {
-			return nil, err
-		}
-		total = local + remote
 	case "outbox":
 		total, err = s.repo.CountPublicVideosByChannel(ctx, ch.ID)
 		if err != nil {
@@ -110,19 +110,15 @@ func (s *Service) ChannelOutboxPage(ctx context.Context, handle string, page int
 	}
 	items := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
-		// Same split as buildVideoActivity: the object id is frozen at the uuid
-		// form, only the human-facing url moves.
-		objectID := s.baseURL + "/videos/" + r.ID.String()
-		watchURL := objectID
-		if r.ShortCode != "" {
-			watchURL = s.baseURL + "/v/" + r.ShortCode
-		}
+		// The outbox renders the SAME object shape buildVideoActivity delivers —
+		// one builder, one shape, so a peer that discovers a video by walking the
+		// outbox and a peer that received the push agree on every field.
 		items = append(items, map[string]any{
 			"id":     channelActor + "/activities/create/" + r.ID.String(),
 			"type":   "Create",
 			"actor":  channelActor,
 			"to":     []string{publicAudience},
-			"object": videoObject(channelActor, objectID, watchURL, r.Title, r.Description),
+			"object": s.videoObjectFromOutbox(channelActor, r),
 		})
 	}
 	pg := &OrderedCollectionPage{

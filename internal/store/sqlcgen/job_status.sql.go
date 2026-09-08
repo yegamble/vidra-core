@@ -234,6 +234,45 @@ func (q *Queries) CaptionRecentFailures(ctx context.Context, limit int32) ([]Cap
 	return items, nil
 }
 
+const federationDeliveryHealth = `-- name: FederationDeliveryHealth :one
+SELECT
+    count(*) FILTER (WHERE state = 'pending')::bigint AS pending,
+    count(*) FILTER (WHERE state = 'failed')::bigint  AS dead_lettered,
+    COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE state = 'pending')))::bigint, 0)::bigint AS oldest_pending_age_seconds,
+    -- NULLABLE on purpose: an instance that has never delivered anything has
+    -- no answer here, and 'never' is exactly the fact the component reports.
+    max(updated_at) FILTER (WHERE state = 'delivered') AS last_delivered_at
+FROM federation_deliveries
+`
+
+type FederationDeliveryHealthRow struct {
+	Pending                 int64       `json:"pending"`
+	DeadLettered            int64       `json:"dead_lettered"`
+	OldestPendingAgeSeconds int64       `json:"oldest_pending_age_seconds"`
+	LastDeliveredAt         interface{} `json:"last_delivered_at"`
+}
+
+// The `federation` component on GET /admin/system (A29-F10): the backlog, the
+// dead letters, and when the last delivery actually left. A29 measured
+// /admin/system reporting `ok` across ten components with two dead-lettered
+// deliveries on the books, because federation had no component at all — the
+// operator's only signal was a queue-depth number on a different page.
+//
+// last_delivered_at is the liveness half and the reason this is not just the
+// stats query above: a drained queue and a queue nothing is draining look
+// identical by depth alone, and only differ by when something last succeeded.
+func (q *Queries) FederationDeliveryHealth(ctx context.Context) (FederationDeliveryHealthRow, error) {
+	row := q.db.QueryRow(ctx, federationDeliveryHealth)
+	var i FederationDeliveryHealthRow
+	err := row.Scan(
+		&i.Pending,
+		&i.DeadLettered,
+		&i.OldestPendingAgeSeconds,
+		&i.LastDeliveredAt,
+	)
+	return i, err
+}
+
 const federationDeliveryStats = `-- name: FederationDeliveryStats :one
 SELECT
     count(*) FILTER (WHERE state = 'pending')::bigint   AS pending,

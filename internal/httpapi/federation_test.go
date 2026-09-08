@@ -10,8 +10,10 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -37,6 +39,18 @@ type fakeFedRepo struct {
 	remoteFollowerN         int64
 	channelVideoN           int64
 	outboxVideos            []sqlcgen.ListChannelOutboxVideosRow
+	// A29 remediation: the rows the dereferenceable object ids read.
+	videosByID map[uuid.UUID]sqlcgen.GetVideoByIDRow
+	commentsBy map[uuid.UUID]sqlcgen.Comment
+	tombstones map[uuid.UUID]time.Time
+	// blockedDomains is the admin instance blocklist the inbox consults.
+	blockedDomains map[string]bool
+	// remoteBlocks are per-viewer blocks of a remote ACTOR (migration 0138),
+	// keyed blockerID|actorURL.
+	remoteBlocks map[string]bool
+	// remoteVideoComments are MIRRORED threads on remote videos (0140), keyed
+	// by the origin's object url.
+	remoteVideoComments map[string]sqlcgen.UpsertRemoteVideoCommentParams
 }
 
 func (f fakeFedRepo) CountUsers(context.Context) (int64, error)        { return f.users, nil }
@@ -115,17 +129,26 @@ func (f fakeFedRepo) DeleteRemoteFollow(_ context.Context, arg sqlcgen.DeleteRem
 	return nil
 }
 
-func (fakeFedRepo) GetVideoByID(context.Context, uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+func (f fakeFedRepo) GetVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error) {
+	if v, ok := f.videosByID[id]; ok {
+		return v, nil
+	}
 	return sqlcgen.GetVideoByIDRow{}, pgx.ErrNoRows
 }
-func (fakeFedRepo) GetChannelByID(context.Context, uuid.UUID) (sqlcgen.Channel, error) {
+func (f fakeFedRepo) GetChannelByID(_ context.Context, id uuid.UUID) (sqlcgen.Channel, error) {
+	if id == f.channelID {
+		return sqlcgen.Channel{ID: f.channelID, OwnerID: f.userID, Handle: "films", DisplayName: "Films", ActivitypubEnabled: true}, nil
+	}
 	return sqlcgen.Channel{}, pgx.ErrNoRows
 }
 func (fakeFedRepo) ListRemoteFollowerInboxes(context.Context, uuid.UUID) ([]string, error) {
 	return nil, nil
 }
+
+// CountChannelFollowers is the TOTAL since A29-F6 — local plus accepted remote,
+// one definition shared by the AP collection and every REST surface.
 func (f fakeFedRepo) CountChannelFollowers(context.Context, uuid.UUID) (int64, error) {
-	return f.localFollowerN, nil
+	return f.localFollowerN + f.remoteFollowerN, nil
 }
 func (f fakeFedRepo) CountRemoteFollowers(context.Context, uuid.UUID) (int64, error) {
 	return f.remoteFollowerN, nil
@@ -164,7 +187,83 @@ func (fakeFedRepo) UpsertRemoteVideo(context.Context, sqlcgen.UpsertRemoteVideoP
 func (fakeFedRepo) SetRemoteVideoThumbnail(context.Context, sqlcgen.SetRemoteVideoThumbnailParams) error {
 	return nil
 }
-func (fakeFedRepo) IsInstanceBlocked(context.Context, string) (bool, error) { return false, nil }
+func (f fakeFedRepo) IsInstanceBlocked(_ context.Context, domain string) (bool, error) {
+	return f.blockedDomains[domain], nil
+}
+
+// A29 remediation (migration 0138): dereferenceable ids and per-remote-account
+// blocks. Empty by default — the tests that exercise them seed their own repo.
+func (f fakeFedRepo) InsertFederatedVideoTombstone(_ context.Context, id uuid.UUID) error {
+	if f.tombstones != nil {
+		f.tombstones[id] = fedFakeDeletedAt
+	}
+	return nil
+}
+
+func (f fakeFedRepo) GetFederatedVideoTombstone(_ context.Context, id uuid.UUID) (sqlcgen.FederatedVideoTombstone, error) {
+	if at, ok := f.tombstones[id]; ok {
+		return sqlcgen.FederatedVideoTombstone{VideoID: id, DeletedAt: at}, nil
+	}
+	return sqlcgen.FederatedVideoTombstone{}, pgx.ErrNoRows
+}
+
+// fedFakeDeletedAt is the fixed deletion time the fake tombstones carry.
+var fedFakeDeletedAt = time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+
+func (f fakeFedRepo) IsRemoteActorBlockedByAnyone(_ context.Context, actorURL string) (bool, error) {
+	for key := range f.remoteBlocks {
+		if _, url, ok := strings.Cut(key, "|"); ok && url == actorURL {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f fakeFedRepo) IsRemoteActorBlockedBy(_ context.Context, arg sqlcgen.IsRemoteActorBlockedByParams) (bool, error) {
+	return f.remoteBlocks[arg.BlockerID.String()+"|"+arg.RemoteActorUrl], nil
+}
+
+func (f fakeFedRepo) BlockRemoteActor(_ context.Context, arg sqlcgen.BlockRemoteActorParams) error {
+	if f.remoteBlocks != nil {
+		f.remoteBlocks[arg.BlockerID.String()+"|"+arg.RemoteActorUrl] = true
+	}
+	return nil
+}
+
+func (f fakeFedRepo) UnblockRemoteActor(_ context.Context, arg sqlcgen.UnblockRemoteActorParams) (int64, error) {
+	key := arg.BlockerID.String() + "|" + arg.RemoteActorUrl
+	if f.remoteBlocks[key] {
+		delete(f.remoteBlocks, key)
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (f fakeFedRepo) ListRemoteActorBlocks(_ context.Context, arg sqlcgen.ListRemoteActorBlocksParams) ([]sqlcgen.ListRemoteActorBlocksRow, error) {
+	var out []sqlcgen.ListRemoteActorBlocksRow
+	for key := range f.remoteBlocks {
+		blocker, actorURL, _ := strings.Cut(key, "|")
+		if blocker != arg.BlockerID.String() {
+			continue
+		}
+		out = append(out, sqlcgen.ListRemoteActorBlocksRow{RemoteActorUrl: actorURL, CreatedAt: fedFakeDeletedAt})
+	}
+	return out, nil
+}
+
+func (f fakeFedRepo) CountRemoteActorBlocks(_ context.Context, blockerID uuid.UUID) (int64, error) {
+	var n int64
+	for key := range f.remoteBlocks {
+		if blocker, _, _ := strings.Cut(key, "|"); blocker == blockerID.String() {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (fakeFedRepo) GetRemoteVideoByURL(context.Context, string) (sqlcgen.GetRemoteVideoByURLRow, error) {
+	return sqlcgen.GetRemoteVideoByURLRow{}, pgx.ErrNoRows
+}
 
 // GetUserActorByID resolves ada — the owner of the "films" channel — so the
 // served Group actor can attribute itself to the owner account (PeerTube interop).
@@ -225,7 +324,10 @@ func (fakeFedRepo) DeleteChannelFollowBackByActivity(context.Context, sqlcgen.De
 
 // Federated-comment + inbound-delete stubs (remote-content §6-7): the handler
 // suite doesn't exercise Note ingestion (see internal/federation's own tests).
-func (fakeFedRepo) GetComment(context.Context, uuid.UUID) (sqlcgen.Comment, error) {
+func (f fakeFedRepo) GetComment(_ context.Context, id uuid.UUID) (sqlcgen.Comment, error) {
+	if c, ok := f.commentsBy[id]; ok {
+		return c, nil
+	}
 	return sqlcgen.Comment{}, pgx.ErrNoRows
 }
 func (fakeFedRepo) GetCommentByRemoteObjectURL(context.Context, string) (sqlcgen.Comment, error) {
@@ -255,6 +357,15 @@ func fedTestConfig() *config.Config {
 }
 
 func fedServerRepo(cfg *config.Config) (*Server, fakeFedRepo) {
+	repo := newFedRepoFor(cfg)
+	svc := federation.NewService(repo, federation.WithBaseURL(cfg.PublicBaseURL))
+	return New(cfg, nil, nil, WithFederationService(svc)), repo
+}
+
+// newFedRepoFor builds the seeded fake without the server, so a test that needs
+// its OWN server options (a captured logger, say) can still start from the same
+// world every other federation test uses.
+func newFedRepoFor(_ *config.Config) fakeFedRepo {
 	repo := fakeFedRepo{
 		users: 7, videos: 3, comments: 11,
 		localFollowerN:  3,
@@ -264,17 +375,22 @@ func fedServerRepo(cfg *config.Config) (*Server, fakeFedRepo) {
 			{ID: uuid.New(), Title: "One", Description: "a"},
 			{ID: uuid.New(), Title: "Two", Description: "b"},
 		},
-		userID:        uuid.New(),
-		channelID:     uuid.New(),
-		acctKeys:      map[uuid.UUID]sqlcgen.GetAccountActorKeyRow{},
-		chanKeys:      map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
-		remoteActors:  map[string]sqlcgen.RemoteActor{},
-		processed:     map[string]bool{},
-		remoteFollows: map[string]sqlcgen.InsertRemoteFollowParams{},
-		deliveries:    map[string]sqlcgen.EnqueueDeliveryParams{},
+		userID:              uuid.New(),
+		channelID:           uuid.New(),
+		acctKeys:            map[uuid.UUID]sqlcgen.GetAccountActorKeyRow{},
+		chanKeys:            map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
+		remoteActors:        map[string]sqlcgen.RemoteActor{},
+		processed:           map[string]bool{},
+		remoteFollows:       map[string]sqlcgen.InsertRemoteFollowParams{},
+		deliveries:          map[string]sqlcgen.EnqueueDeliveryParams{},
+		videosByID:          map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
+		commentsBy:          map[uuid.UUID]sqlcgen.Comment{},
+		tombstones:          map[uuid.UUID]time.Time{},
+		blockedDomains:      map[string]bool{},
+		remoteBlocks:        map[string]bool{},
+		remoteVideoComments: map[string]sqlcgen.UpsertRemoteVideoCommentParams{},
 	}
-	svc := federation.NewService(repo, federation.WithBaseURL(cfg.PublicBaseURL))
-	return New(cfg, nil, nil, WithFederationService(svc)), repo
+	return repo
 }
 
 func fedServer(cfg *config.Config) *Server {
@@ -589,4 +705,57 @@ func (fakeFedRepo) CountPendingRemoteFollows(context.Context) (int64, error) { r
 
 func (fakeFedRepo) CountRemoteChannelFollows(context.Context, uuid.UUID) (int64, error) {
 	return 0, nil
+}
+
+// --- mirrored remote-video comments (A29-F8, migration 0140) ----------------
+
+func (f fakeFedRepo) UpsertRemoteVideoComment(_ context.Context, arg sqlcgen.UpsertRemoteVideoCommentParams) (sqlcgen.UpsertRemoteVideoCommentRow, error) {
+	if f.remoteVideoComments != nil {
+		f.remoteVideoComments[arg.ObjectUrl] = arg
+	}
+	return sqlcgen.UpsertRemoteVideoCommentRow{ObjectUrl: arg.ObjectUrl, Body: arg.Body}, nil
+}
+
+func (f fakeFedRepo) GetRemoteVideoCommentByObjectURL(_ context.Context, objectURL string) (sqlcgen.GetRemoteVideoCommentByObjectURLRow, error) {
+	if c, ok := f.remoteVideoComments[objectURL]; ok {
+		return sqlcgen.GetRemoteVideoCommentByObjectURLRow{
+			RemoteVideoID: c.RemoteVideoID, RemoteActorUrl: c.RemoteActorUrl, ObjectUrl: objectURL,
+		}, nil
+	}
+	return sqlcgen.GetRemoteVideoCommentByObjectURLRow{}, pgx.ErrNoRows
+}
+
+func (f fakeFedRepo) DeleteRemoteVideoCommentByObjectURL(_ context.Context, objectURL string) (int64, error) {
+	if _, ok := f.remoteVideoComments[objectURL]; ok {
+		delete(f.remoteVideoComments, objectURL)
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (f fakeFedRepo) ListRemoteVideoComments(_ context.Context, arg sqlcgen.ListRemoteVideoCommentsParams) ([]sqlcgen.ListRemoteVideoCommentsRow, error) {
+	var out []sqlcgen.ListRemoteVideoCommentsRow
+	for objectURL, c := range f.remoteVideoComments {
+		if c.RemoteVideoID != arg.RemoteVideoID {
+			continue
+		}
+		out = append(out, sqlcgen.ListRemoteVideoCommentsRow{
+			RemoteActorUrl:   c.RemoteActorUrl,
+			RemoteAuthorName: c.RemoteAuthorName,
+			ObjectUrl:        objectURL,
+			Body:             c.Body,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ObjectUrl < out[j].ObjectUrl })
+	return out, nil
+}
+
+func (f fakeFedRepo) CountRemoteVideoComments(_ context.Context, arg sqlcgen.CountRemoteVideoCommentsParams) (int64, error) {
+	var n int64
+	for _, c := range f.remoteVideoComments {
+		if c.RemoteVideoID == arg.RemoteVideoID {
+			n++
+		}
+	}
+	return n, nil
 }

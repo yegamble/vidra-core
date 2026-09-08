@@ -10216,6 +10216,50 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/remote-videos/{id}/comments:
+    get:
+      operationId: listRemoteVideoComments
+      summary: The mirrored comment thread on a federated video
+      description: >-
+        Returns the comments this instance has MIRRORED for one remote video —
+        the thread the origin fans out to its followers — oldest first. Public;
+        paginated via limit (1–100, default 20) and offset.
+
+        READ-ONLY BY DESIGN. There is no POST: these rows are a mirror of
+        somebody else's thread and nothing on this instance writes one.
+        Comments, ratings and saving live on the origin instance; each comment
+        carries its `object_url` on the origin so a reader can follow the thread
+        back to where it is actually hosted.
+
+        Filtering matches the remote-video card exactly, so a thread can never
+        show what the card would have hidden: comments from an admin-blocked
+        instance are excluded for everyone, and a signed-in caller additionally
+        loses comments from an instance they mute and from a remote account they
+        block. An unknown remote video — or one hidden because its origin is
+        admin-blocked — is 404, the same answer its detail route gives.
+      tags: [federation]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of mirrored comments (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteVideoCommentListResponse"
+        "404":
+          description: No such remote video, or its origin instance is blocked here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/remote-videos/{id}/thumbnail:
     get:
       operationId: getRemoteVideoThumbnail
@@ -10667,6 +10711,111 @@ paths:
                 $ref: "#/components/schemas/BlockedUserListResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/blocks/remote:
+    get:
+      operationId: listRemoteBlocks
+      summary: List blocked remote accounts
+      description: >-
+        Returns the REMOTE (federated) accounts the caller has blocked, newest
+        block first. Requires authentication. Paginated via limit (1–100,
+        default 20) and offset. An actor this instance has never cached still
+        lists, with an empty handle: a block the viewer cannot see is a block
+        they cannot lift.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of blocked remote accounts (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteBlockListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: blockRemoteActor
+      summary: Block a remote account
+      description: >-
+        Blocks one REMOTE account for the caller, addressed by a fediverse
+        handle (@user@domain) or an ActivityPub actor URL. Their federated
+        videos leave the caller's feeds and reads, their replies are no longer
+        stored under the caller's own videos, and their follows of the caller's
+        channels are refused. It is a sibling of blocking a local account rather
+        than an extension of it: a remote actor is identified by a URL, which
+        cannot be a path segment.
+
+        It does NOT hide the caller from the blocked account and it does not
+        stop delivery — a remote server decides what it shows its own users, and
+        claiming otherwise would be a safety feature that only reads as one.
+
+        Requires authentication. Idempotent. A local identity is 422, as is a
+        handle that cannot be resolved.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemoteBlockRequest"
+      responses:
+        "204":
+          description: The remote account is blocked.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The identity was local, malformed, or unresolvable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unblockRemoteActor
+      summary: Unblock a remote account
+      description: >-
+        Lifts the caller's block of one remote account. The actor is supplied as
+        a query parameter and matched VERBATIM against the stored actor URL — no
+        handle resolution runs here, so a WebFinger that has since started
+        failing can never strand a viewer with a block they cannot lift.
+        Requires authentication. Idempotent.
+      tags: [moderation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: actor
+          in: query
+          required: true
+          description: The actor URL exactly as the list returned it.
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The remote account is not blocked.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: No actor was supplied.
           content:
             application/json:
               schema:
@@ -17644,6 +17793,104 @@ components:
             field MutedAccount carries, for the same client-side suggestion
             filter. An account with no channel yields an empty array, never
             null.
+    RemoteVideoComment:
+      type: object
+      required: [id, author_name, author_domain, actor_url, object_url, body, edited, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: This instance's id for the mirrored row, not the origin's.
+        author_name:
+          type: string
+          description: >-
+            The origin's preferredUsername, SNAPSHOT at the time the comment
+            arrived, so the thread still renders when the actor is no longer
+            cached. Falls back to the origin host.
+        author_domain:
+          type: string
+        actor_url:
+          type: string
+        object_url:
+          type: string
+          description: The comment's ActivityPub id ON THE ORIGIN.
+        body:
+          type: string
+          description: Plain text; the origin's HTML is stripped on ingest.
+        edited:
+          type: boolean
+          description: True once an Update{Note} changed the body.
+        published_at:
+          type: string
+          format: date-time
+          description: The origin's own publication time, when it sent one.
+        created_at:
+          type: string
+          format: date-time
+          description: When this instance first stored the comment.
+    RemoteVideoCommentListResponse:
+      type: object
+      required: [comments, total, limit, offset]
+      properties:
+        comments:
+          type: array
+          items:
+            $ref: "#/components/schemas/RemoteVideoComment"
+        total:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    RemoteBlockRequest:
+      type: object
+      required: [actor]
+      properties:
+        actor:
+          type: string
+          description: >-
+            A fediverse handle (@user@domain or user@domain) or an ActivityPub
+            actor URL. A handle is resolved through WebFinger rather than
+            string-built, because the actor URL for a handle is whatever that
+            server says it is. A URL is validated and SSRF-guarded but never
+            dereferenced: a block must work against an actor that is offline or
+            refusing us, which is the actor most likely to be blocked.
+          example: "@kaisa@peer.example"
+    RemoteBlockView:
+      type: object
+      required: [actor_url, handle, domain, blocked_at]
+      properties:
+        actor_url:
+          type: string
+          description: The ActivityPub actor URL the block is keyed on.
+        handle:
+          type: string
+          description: >-
+            preferredUsername@domain when this instance has the actor cached,
+            otherwise empty.
+        domain:
+          type: string
+        blocked_at:
+          type: string
+          format: date-time
+    RemoteBlockListResponse:
+      type: object
+      required: [actors, total, limit, offset]
+      properties:
+        actors:
+          type: array
+          items:
+            $ref: "#/components/schemas/RemoteBlockView"
+        total:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
+
     BlockedUserListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"

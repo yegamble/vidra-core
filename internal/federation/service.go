@@ -92,6 +92,23 @@ type Repository interface {
 	// Inbound Delete authority + effects (remote-content §7): retracted remote
 	// videos and deleted remote actors (whose content cascades away).
 	GetRemoteVideoByObjectURL(ctx context.Context, objectURL string) (sqlcgen.GetRemoteVideoByObjectURLRow, error)
+	GetRemoteVideoByURL(ctx context.Context, url string) (sqlcgen.GetRemoteVideoByURLRow, error)
+	// Mirrored comment threads on remote videos (A29-F8, migration 0140).
+	UpsertRemoteVideoComment(ctx context.Context, arg sqlcgen.UpsertRemoteVideoCommentParams) (sqlcgen.UpsertRemoteVideoCommentRow, error)
+	GetRemoteVideoCommentByObjectURL(ctx context.Context, objectURL string) (sqlcgen.GetRemoteVideoCommentByObjectURLRow, error)
+	DeleteRemoteVideoCommentByObjectURL(ctx context.Context, objectURL string) (int64, error)
+	ListRemoteVideoComments(ctx context.Context, arg sqlcgen.ListRemoteVideoCommentsParams) ([]sqlcgen.ListRemoteVideoCommentsRow, error)
+	CountRemoteVideoComments(ctx context.Context, arg sqlcgen.CountRemoteVideoCommentsParams) (int64, error)
+	// Dereferenceable ids + per-remote-account blocks (A29 remediation,
+	// migration 0138).
+	InsertFederatedVideoTombstone(ctx context.Context, videoID uuid.UUID) error
+	GetFederatedVideoTombstone(ctx context.Context, videoID uuid.UUID) (sqlcgen.FederatedVideoTombstone, error)
+	IsRemoteActorBlockedByAnyone(ctx context.Context, remoteActorURL string) (bool, error)
+	IsRemoteActorBlockedBy(ctx context.Context, arg sqlcgen.IsRemoteActorBlockedByParams) (bool, error)
+	BlockRemoteActor(ctx context.Context, arg sqlcgen.BlockRemoteActorParams) error
+	UnblockRemoteActor(ctx context.Context, arg sqlcgen.UnblockRemoteActorParams) (int64, error)
+	ListRemoteActorBlocks(ctx context.Context, arg sqlcgen.ListRemoteActorBlocksParams) ([]sqlcgen.ListRemoteActorBlocksRow, error)
+	CountRemoteActorBlocks(ctx context.Context, blockerID uuid.UUID) (int64, error)
 	DeleteRemoteVideoByObjectURL(ctx context.Context, objectURL string) (int64, error)
 	DeleteRemoteActor(ctx context.Context, actorURL string) (int64, error)
 }

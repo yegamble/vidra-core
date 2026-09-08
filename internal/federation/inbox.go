@@ -16,6 +16,16 @@ import (
 // i.e. someone tried to act on another actor's behalf.
 var ErrActorMismatch = errors.New("federation: activity actor does not match the signer")
 
+// ErrSenderBlocked means the activity was refused because its origin instance is
+// on the admin blocklist (A29-F4).
+//
+// It is a REPORTING signal, not a wire one: the caller still answers 202,
+// because telling a blocked instance that it is blocked turns the blocklist into
+// a probe target and invites evasion. What changes is on this side — the handler
+// writes one audit row so the refusal is visible to the admin who asked for it,
+// instead of being indistinguishable from acceptance.
+var ErrSenderBlocked = errors.New("federation: sender instance is blocked")
+
 // inboxActivity is the envelope we parse from an inbound ActivityPub activity.
 type inboxActivity struct {
 	ID     string          `json:"id"`
@@ -45,7 +55,7 @@ func (s *Service) HandleInbox(ctx context.Context, signerActorURL string, body [
 	if blocked, err := s.signerDomainBlocked(ctx, signerActorURL); err != nil {
 		return err
 	} else if blocked {
-		return nil
+		return ErrSenderBlocked
 	}
 	// Idempotency: process each activity id at most once. Dispatch first, then mark,
 	// so a failed dispatch is retried by the remote rather than silently dropped.
@@ -164,6 +174,15 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 	// Drop the inbound Follow — record nothing and send nothing (an AP-disabled
 	// channel emits no outbound activity, so no Reject either).
 	if !ch.ActivitypubEnabled {
+		return nil
+	}
+	// The channel OWNER's per-remote-account block (A29-F7). Dropped rather
+	// than Rejected, on the same reasoning as the instance blocklist: a Reject
+	// would tell the blocked actor exactly what happened, and a follow that is
+	// never recorded delivers nothing to them either way.
+	if blocked, err := s.remoteActorBlockedBy(ctx, ch.OwnerID, signerActorURL); err != nil {
+		return err
+	} else if blocked {
 		return nil
 	}
 	// federation_allow_channel_followers off: answer with a Reject and record

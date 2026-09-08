@@ -17,7 +17,9 @@ import (
 //   - `id` is its identity across the fediverse. Remote servers store it,
 //     address Update/Delete to it, and thread replies against it. It is frozen
 //     at the /videos/{uuid} form forever.
-//   - `url` is the human landing page, and moves to /v/{code}.
+//   - `url` is a Link ARRAY (A29 remediation): the playable HLS master when one
+//     exists, and the human landing page — which moves to /v/{code} — as the
+//     text/html link. The html link is the one this test is about.
 //
 // A change that moved `id` would re-identify every video on every remote server
 // and orphan every existing reply, and nothing else in the suite would notice —
@@ -49,7 +51,10 @@ func TestVideoObjectSplitsFrozenIdFromMovingURL(t *testing.T) {
 	var item struct {
 		Object struct {
 			ID  string `json:"id"`
-			URL string `json:"url"`
+			URL []struct {
+				Href      string `json:"href"`
+				MediaType string `json:"mediaType"`
+			} `json:"url"`
 		} `json:"object"`
 	}
 	if err := json.Unmarshal(raw, &item); err != nil {
@@ -60,11 +65,17 @@ func TestVideoObjectSplitsFrozenIdFromMovingURL(t *testing.T) {
 	if item.Object.ID != wantID {
 		t.Errorf("object id = %q, want the FROZEN %q — moving it re-identifies the video on every remote server", item.Object.ID, wantID)
 	}
-	wantURL := "https://videos.example/v/" + code
-	if item.Object.URL != wantURL {
-		t.Errorf("object url = %q, want %q", item.Object.URL, wantURL)
+	var watch string
+	for _, l := range item.Object.URL {
+		if l.MediaType == "text/html" {
+			watch = l.Href
+		}
 	}
-	if item.Object.ID == item.Object.URL {
+	wantURL := "https://videos.example/v/" + code
+	if watch != wantURL {
+		t.Errorf("object html url = %q, want %q", watch, wantURL)
+	}
+	if item.Object.ID == watch {
 		t.Error("id and url are the same string; the split did not happen")
 	}
 }

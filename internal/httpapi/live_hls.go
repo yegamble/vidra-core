@@ -90,6 +90,16 @@ func (s *Server) liveStreamForHLS(c echo.Context, id uuid.UUID) (live.Stream, er
 	return stream, nil
 }
 
+// publicLiveStream is the live plane's public-and-servable assertion — the same
+// meaning publicVideoForIPFS carries for VOD, and the input to both the shared
+// cache policy and the cross-origin CORS header. A live stream is public only
+// when its privacy says so; unlisted and private streams are reachable by id or
+// token but are NOT anonymous public media, so they carry no CORS header.
+// liveStreamForHLS has already refused anything that is not live.
+func publicLiveStream(stream live.Stream) bool {
+	return stream.Privacy == "public"
+}
+
 // liveStreamRequiresPlaybackToken reports whether this stream's media is
 // unreachable without either an account identity or a ?pt= credential — which is
 // exactly the private tier. Public and unlisted live streams are readable by
@@ -129,10 +139,11 @@ func (s *Server) handleGetLiveHLSMaster(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.liveStreamForHLS(c, id); err != nil {
+	stream, err := s.liveStreamForHLS(c, id)
+	if err != nil {
 		return err
 	}
-	return s.serveLiveHLSFile(c, liveHLSPlaylistName(id))
+	return s.serveLiveHLSFile(c, liveHLSPlaylistName(id), publicLiveStream(stream))
 }
 
 // handleGetLiveHLSFile serves one live HLS file: the media playlist referenced as
@@ -147,10 +158,11 @@ func (s *Server) handleGetLiveHLSFile(c echo.Context) error {
 	if !liveHLSFileAllowed(id, name) {
 		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
 	}
-	if _, err := s.liveStreamForHLS(c, id); err != nil {
+	stream, err := s.liveStreamForHLS(c, id)
+	if err != nil {
 		return err
 	}
-	return s.serveLiveHLSFile(c, name)
+	return s.serveLiveHLSFile(c, name, publicLiveStream(stream))
 }
 
 // serveLiveHLSFile streams a validated live HLS file from LIVE_HLS_ROOT. The name
@@ -170,7 +182,7 @@ func (s *Server) handleGetLiveHLSFile(c echo.Context) error {
 // nothing to mirror and nothing to version, so a delivery.Request describing them
 // would have to invent a non-storage source kind. See docs/operations.md, "The
 // live plane is single-host".
-func (s *Server) serveLiveHLSFile(c echo.Context, name string) error {
+func (s *Server) serveLiveHLSFile(c echo.Context, name string, eligible bool) error {
 	notFound := echo.NewHTTPError(http.StatusNotFound, "live stream not found")
 	root, err := filepath.Abs(s.cfg.LiveHLSRoot)
 	if err != nil {
@@ -196,7 +208,7 @@ func (s *Server) serveLiveHLSFile(c echo.Context, name string) error {
 		return notFound
 	}
 	if strings.HasSuffix(name, ".m3u8") {
-		return s.serveLiveHLSPlaylist(c, file)
+		return s.serveLiveHLSPlaylist(c, file, eligible)
 	}
 	// A segment is opaque bytes on a stable, unversioned URL, so it revalidates
 	// rather than carrying a TTL. That is stricter than the 12-second window this
@@ -205,7 +217,7 @@ func (s *Server) serveLiveHLSFile(c echo.Context, name string) error {
 	// be served the PREVIOUS broadcast's bytes under the right name. Revalidation
 	// costs a conditional request that ServeContent answers with a 304, and a live
 	// player fetches each segment once anyway.
-	setMediaCacheControl(c, delivery.ClassHLSSegment)
+	setMediaCacheControl(c, delivery.ClassHLSSegment, eligible)
 	c.Response().Header().Set("Content-Type", contentTypeTS)
 	http.ServeContent(c.Response(), c.Request(), info.Name(), info.ModTime(), file)
 	return nil
@@ -233,12 +245,12 @@ func (s *Server) serveLiveHLSFile(c echo.Context, name string) error {
 // It is served with c.Blob rather than http.ServeContent for the same reason the
 // VOD playlists are: the bytes on the wire are not the bytes on disk, so the
 // file's size and mtime are not validators for what is being sent.
-func (s *Server) serveLiveHLSPlaylist(c echo.Context, file *os.File) error {
+func (s *Server) serveLiveHLSPlaylist(c echo.Context, file *os.File, eligible bool) error {
 	data, err := io.ReadAll(io.LimitReader(file, maxPlaylistBytes))
 	if err != nil {
 		return err
 	}
-	setMediaCacheControl(c, delivery.ClassHLSPlaylist)
+	setMediaCacheControl(c, delivery.ClassHLSPlaylist, eligible)
 	return c.Blob(http.StatusOK, contentTypeM3U8,
 		rewritePlaylistToken(data, c.QueryParam(playbackTokenParam)))
 }
