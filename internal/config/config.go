@@ -539,6 +539,46 @@ type Config struct {
 	// both surface as 404 / no-op until a media server is provisioned.
 	LiveHLSRoot string
 
+	// LiveIngestControlURL is the base URL of the RTMP ingest's HTTP control
+	// surface (nginx-rtmp's `rtmp_control` + `rtmp_stat`), e.g.
+	// "http://rtmp:8082". It is the ONLY outbound path core has to the ingest,
+	// and it exists for two things a state flip in Postgres cannot do:
+	// DISCONNECT a publisher (moderator termination — the api's own state flip
+	// stops HLS serving but leaves the RTMP socket writing segments and a
+	// recording) and PROBE whether the ingest is alive (the `live_ingest`
+	// component).
+	//
+	// Empty (default) leaves both dormant: termination still closes the stream
+	// and rotates the key server-side, and the component reports
+	// "not_configured". That is a deliberate degrade rather than a hard
+	// requirement, because the control surface is a property of the DEPLOYED
+	// media server and an operator running their own ingest may not expose one.
+	//
+	// It is an operator-configured INFRASTRUCTURE endpoint, not a user-supplied
+	// URL — the same class as SEARCH_BASE_URL and IPFS_API_URL. No part of it
+	// comes from a request; the only request-derived values are the query
+	// parameters, which are a fixed application name and a UUID, both escaped.
+	// It is therefore expected to point at a private/compose address, and is
+	// validated at boot for scheme (http/https), host and embedded credentials
+	// rather than run through the public-address SSRF policy that would reject
+	// every correct value. See internal/live/control.go.
+	LiveIngestControlURL string
+
+	// LiveRecordingRetention is how long a finished session's RECORDING (the
+	// nginx-rtmp `.flv` under LIVE_HLS_ROOT/rec) is kept.
+	//
+	//	0 (default) — delete the recording as soon as its replay VOD is
+	//	              published. The replay is then the only copy, which is the
+	//	              point: the recording is an intermediate.
+	//	N > 0       — keep every recording N (e.g. "168h" = 7 days) and let the
+	//	              retention pass delete it after that, so an operator can
+	//	              re-transcode a replay from the original.
+	//
+	// Before this key, recordings were NEVER deleted (A26 measured six `.flv`
+	// files still on the volume after one lab session) on a volume the
+	// operations doc says is not backed up.
+	LiveRecordingRetention time.Duration
+
 	// Instance about/legal metadata surfaced at GET /api/v1/instance. All
 	// optional (empty when unset).
 	InstanceDescription  string
@@ -1146,6 +1186,8 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		LiveRTMPURL:                            liveRTMPURL,
 		LiveIngestSecret:                       getEnv("LIVE_INGEST_SECRET", ""),
 		LiveHLSRoot:                            strings.TrimRight(getEnv("LIVE_HLS_ROOT", ""), "/"),
+		LiveIngestControlURL:                   strings.TrimRight(getEnv("LIVE_INGEST_CONTROL_URL", ""), "/"),
+		LiveRecordingRetention:                 p.Duration("LIVE_RECORDING_RETENTION", 0),
 		InstanceDescription:                    getEnv("INSTANCE_DESCRIPTION", ""),
 		InstanceTermsURL:                       getEnv("INSTANCE_TERMS_URL", ""),
 		InstancePrivacyURL:                     getEnv("INSTANCE_PRIVACY_URL", ""),
@@ -1779,6 +1821,31 @@ func (c *Config) validate() error {
 		if c.Environment == "production" && len(c.SearchInternalSecret) < 32 {
 			add(varErrorf("SEARCH_INTERNAL_SECRET", "config: SEARCH_INTERNAL_SECRET must be at least 32 characters when SEARCH_SERVICE_URL is set in production"))
 		}
+	}
+	// Live ingest control surface + recording retention. Both are validated
+	// unconditionally: a malformed value is a typo whether or not live is on,
+	// and a boot failure is a far better answer than a moderator discovering at
+	// termination time that the drop call was never going to work.
+	if c.LiveIngestControlURL != "" {
+		u, err := url.Parse(c.LiveIngestControlURL)
+		switch {
+		case err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https"):
+			add(varErrorf("LIVE_INGEST_CONTROL_URL", "config: LIVE_INGEST_CONTROL_URL must be a valid http(s) URL when set"))
+		case u.User != nil:
+			// Credentials in the URL would be logged by every proxy between here
+			// and the ingest; the shared secret goes in a header instead.
+			add(varErrorf("LIVE_INGEST_CONTROL_URL", "config: LIVE_INGEST_CONTROL_URL must not embed credentials — the ingest is authenticated with LIVE_INGEST_SECRET"))
+		case c.LiveIngestSecret == "":
+			// An unauthenticated control surface is worse than none: anything
+			// that can reach it can disconnect any publisher on the instance.
+			add(varErrorf("LIVE_INGEST_SECRET", "config: LIVE_INGEST_SECRET is required when LIVE_INGEST_CONTROL_URL is set (the control calls are authenticated with it, exactly as the ingest hooks are)"))
+		}
+	}
+	// Negative retention would compute a cutoff in the FUTURE and delete every
+	// recording on the next pass — the same mistake AUDIT_LOG_RETENTION guards.
+	// 0 is the deliberate "delete once the replay is published" default.
+	if c.LiveRecordingRetention < 0 {
+		add(varErrorf("LIVE_RECORDING_RETENTION", "config: LIVE_RECORDING_RETENTION must not be negative (0 = delete a recording as soon as its replay is published), got %s", c.LiveRecordingRetention))
 	}
 	// Direct URL-import download budgets. Always validated: they apply to the
 	// `direct` resolver, which needs no feature flag at all.
