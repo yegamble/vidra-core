@@ -402,6 +402,11 @@ func TestLiveViewerDigestDomainIsItsOwn(t *testing.T) {
 // findAudit returns the one event with the given action.
 func findAudit(t *testing.T, a *fakeAuditor, action string) auditEventView {
 	t.Helper()
+	// An event the audit envelope rejects is not an audit event: Record's error
+	// is discarded everywhere in this package, so it leaves no row and no log.
+	for _, err := range a.rejected {
+		t.Errorf("a recorded audit event does not survive internal/audit's envelope: %v", err)
+	}
 	for _, ev := range a.events {
 		if ev.Action == action {
 			return auditEventView{Action: ev.Action, Result: ev.Result, Reason: ev.Reason, ResourceID: ev.ResourceID, Actor: actorView{Kind: ev.Actor.Kind, ID: ev.Actor.ID}}
