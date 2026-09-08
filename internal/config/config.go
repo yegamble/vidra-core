@@ -807,11 +807,14 @@ type Config struct {
 	// carries the posture an operator has to change at 3am without a restart
 	// (interfaces.md §1). None of these are secrets except the purge token.
 	//
-	// THE CDN'S ORIGIN MUST BE KEY-ADDRESSED — the object-store bucket, or a
-	// static server rooted at the media directory. The delivery resolver works
-	// in storage object keys, so the edge URL is BaseURL + "/" + objectKey.
-	// Pointing this at the Vidra API origin 404s every request: the API
-	// addresses media by ROUTE, not by key. See internal/cdn.
+	// THE CDN'S ORIGIN MUST BE THIS API. The edge URL is BaseURL plus the api's
+	// own media route path and query, so the edge fetches the same route a
+	// viewer would and the object store needs no public policy at all. This was
+	// inverted by the A33 remediation: it used to be a base over the BUCKET,
+	// with the edge URL being the base plus the storage object key, and this
+	// comment used to say pointing it at the api would 404 every request. A
+	// deployment upgrading with the old topology has to repoint the origin —
+	// docs/operations.md says so and cmd/api says so at boot. See internal/cdn.
 	//
 	// What a CDN may serve is bounded independently of all this: only public,
 	// published, uncredentialed media is ever handed to it (delivery.Request's
