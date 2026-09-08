@@ -2320,3 +2320,109 @@ func TestInstanceOwner(t *testing.T) {
 		wantFinding(t, one(t, only(t, "instance owner", withDSN(), p)), StatusWarn, "skipped: this database predates migration 0131", "")
 	})
 }
+
+// TestSchemaLedgerAheadOfTheBinary pins A38R-1. On the rolled-back stack of the
+// 2026-09-08 rehearsal — v0.6.3-a37 binaries, ledger 136 — doctor printed a
+// green "✓ schema ledger: … at version 136 and clean". Truthful about the ledger
+// and silent about the only fact that distinguishes that state from a matched
+// deployment. The migration one-shot says it loudly and exits; doctor is what an
+// operator runs AFTER the incident.
+func TestSchemaLedgerAheadOfTheBinary(t *testing.T) {
+	// The rolled-back deployment: the ledger is at 136, the image embeds 135.
+	h := newFakeHost()
+	h.respond = func(name string, args []string) (Output, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.HasSuffix(joined, "migrate version"):
+			return Output{Stdout: "version=136 dirty=false\n"}, nil
+		case strings.HasSuffix(joined, "migrate embedded-max"):
+			return Output{Stdout: "135\n"}, nil
+		}
+		return h.healthyRespond(name, args)
+	}
+	f := one(t, only(t, "schema ledger", h, nil))
+	// WARN and not FAIL: this state is SUPPORTED — one release of backward
+	// compatibility is the policy and the migrator no-ops rather than failing.
+	wantFinding(t, f, StatusWarn, "schema ledger 136 is ahead of this binary's newest migration 135", "app-only rollback")
+	for _, want := range []string{"this release can run on it", "roll forward", "no new migrations to apply"} {
+		if !strings.Contains(f.Detail, want) {
+			t.Errorf("detail %q does not say %q", f.Detail, want)
+		}
+	}
+	// The fix quotes the migrator's own line, so an operator grepping the deploy
+	// output and an operator reading doctor see the same sentence.
+	if !strings.Contains(f.Fix, dbmigrate.LedgerAheadMessage(136, 135)) {
+		t.Errorf("fix does not quote the migrator's line: %q", f.Fix)
+	}
+
+	// The number comes from the IMAGE, over the same exec that read the version.
+	var seen string
+	for _, c := range h.commands() {
+		if strings.Contains(c, "migrate embedded-max") {
+			seen = c
+		}
+	}
+	if !strings.HasSuffix(seen, "exec -T api "+apiEntrypoint+" migrate embedded-max") {
+		t.Fatalf("the embedded-max read must name the api binary by path; got %q", seen)
+	}
+
+	// An image that cannot answer (every release cut before the subcommand) must
+	// leave the check silent rather than turn "I could not check" into a warning
+	// about numbers it does not have.
+	h = newFakeHost()
+	h.respond = func(name string, args []string) (Output, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.HasSuffix(joined, "migrate version"):
+			return Output{Stdout: "version=136 dirty=false\n"}, nil
+		case strings.HasSuffix(joined, "migrate embedded-max"):
+			return Output{Stderr: "unknown migrate subcommand \"embedded-max\"\n", ExitCode: 1}, nil
+		}
+		return h.healthyRespond(name, args)
+	}
+	wantFinding(t, one(t, only(t, "schema ledger", h, nil)), StatusOK, "version 136 and clean", "")
+
+	// A matched pairing stays green, and a ledger BEHIND the binary is the
+	// ordinary "there are migrations to apply" state, which the deploy handles.
+	h = newFakeHost()
+	h.respond = func(name string, args []string) (Output, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.HasSuffix(joined, "migrate version"):
+			return Output{Stdout: "version=130 dirty=false\n"}, nil
+		case strings.HasSuffix(joined, "migrate embedded-max"):
+			return Output{Stdout: "135\n"}, nil
+		}
+		return h.healthyRespond(name, args)
+	}
+	wantFinding(t, one(t, only(t, "schema ledger", h, nil)), StatusOK, "version 130 and clean", "")
+
+	// A DIRTY ledger that is also ahead is still reported as dirty: a
+	// half-applied migration is the more urgent fact and has the runbook behind
+	// it.
+	h = newFakeHost()
+	h.respond = func(name string, args []string) (Output, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.HasSuffix(joined, "migrate version"):
+			return Output{Stdout: "version=136 dirty=true\n", ExitCode: 1}, nil
+		case strings.HasSuffix(joined, "migrate embedded-max"):
+			return Output{Stdout: "135\n"}, nil
+		}
+		return h.healthyRespond(name, args)
+	}
+	wantFinding(t, one(t, only(t, "schema ledger", h, nil)), StatusFail, "DIRTY at version 136", "migrate force")
+}
+
+// The search ledger is NOT compared against this binary's migrations:
+// vidra-search's live in that repo and are compiled into its binary, so the
+// only number available here would be core's — a confident lie rather than a
+// silence.
+func TestSearchLedgerIsNotComparedAgainstCoresMigrations(t *testing.T) {
+	h := newFakeHost()
+	h.files[filepath.Join(testRoot, "env/production.env")] = healthyEnv + "DATABASE_URL=postgres://u:p@db.example.net:25060/defaultdb?sslmode=require\n"
+	p := newFakeProber()
+	// A search ledger far ahead of anything core could embed.
+	p.ledgers[searchLedgerTable] = dbmigrate.Status{Version: 9000, Applied: true}
+	wantFinding(t, one(t, only(t, "search ledger", h, p)), StatusOK, "is at version 9000", "")
+}
