@@ -46,14 +46,17 @@ func orderedCollection(id string, total int64) *OrderedCollection {
 // ChannelCollection returns the OrderedCollection for a channel's followers,
 // following, or outbox. Unknown handle → ErrNotFound; unknown kind → ErrNotFound.
 func (s *Service) ChannelCollection(ctx context.Context, handle, kind string) (*OrderedCollection, error) {
-	ch, err := s.repo.GetChannelByHandle(ctx, handle)
+	// Through the 0142 alias, and named by the FROZEN handle: a collection whose
+	// id does not match the one the actor document advertises is a collection a
+	// peer cannot verify belongs to the actor it fetched.
+	ch, err := s.resolveLocalChannel(ctx, handle)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	base := s.baseURL + "/video-channels/" + ch.Handle
+	base := s.baseURL + "/video-channels/" + s.channelActorHandle(ctx, ch)
 	var total int64
 	switch kind {
 	case "followers":
@@ -91,14 +94,14 @@ func (s *Service) ChannelOutboxPage(ctx context.Context, handle string, page int
 	if page < 1 {
 		page = 1
 	}
-	ch, err := s.repo.GetChannelByHandle(ctx, handle)
+	ch, err := s.resolveLocalChannel(ctx, handle)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	base := s.baseURL + "/video-channels/" + ch.Handle
+	base := s.baseURL + "/video-channels/" + s.channelActorHandle(ctx, ch)
 	channelActor := base
 	rows, err := s.repo.ListChannelOutboxVideos(ctx, sqlcgen.ListChannelOutboxVideosParams{
 		ChannelID: ch.ID,

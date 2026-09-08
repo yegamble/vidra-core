@@ -136,3 +136,92 @@ func TestRenamedChannelKeepsItsActivityPubIdentity(t *testing.T) {
 		t.Errorf("an unknown handle must still be ErrNotFound, got %v", err)
 	}
 }
+
+// A29 rehearsal 3, SC1. The frozen actor id is 0142's promise to other servers:
+// after the backfill renames a colliding channel, `…/video-channels/<old>` is
+// the ONLY address existing peers hold for it, and it is what this instance
+// keeps serving as the actor's id, inbox, outbox, followers and key id.
+//
+// The lab followed that promise one step further than the parity slice's tests
+// did — B resolved the Group, delivered a Follow to the frozen inbox, got its
+// 202, and A recorded nothing and Accepted nothing. Every inbound arm except the
+// actor document itself resolved the handle with a plain GetChannelByHandle, so
+// the id this instance advertises addressed a channel none of them could find.
+func TestInboundActivityResolvesTheFrozenActorID(t *testing.T) {
+	const (
+		follower = "https://remote.example/accounts/kaisa"
+		frozen   = "https://videos.example/video-channels/ownera"
+		followAt = "https://remote.example/activities/follow/9"
+	)
+	newRepo := func() fakeRepo {
+		r := collidingRepo()
+		r.processed = map[string]bool{}
+		r.remoteFollows = map[string]*fakeRemoteFollow{}
+		r.followBacks = map[string]*fakeFollowBack{}
+		r.rcFollows = map[uuid.UUID]*sqlcgen.RemoteChannelFollow{}
+		r.deliveries = map[uuid.UUID]*fakeDelivery{}
+		r.remoteActors = map[string]sqlcgen.RemoteActor{
+			follower: {ActorUrl: follower, InboxUrl: follower + "/inbox"},
+		}
+		return r
+	}
+	channelID := func(r fakeRepo) uuid.UUID { return r.channels["ownera-channel"].ID }
+
+	t.Run("a Follow addressed at the frozen id is recorded and Accepted", func(t *testing.T) {
+		repo := newRepo()
+		svc := NewService(repo, WithBaseURL("https://videos.example"))
+		body := `{"id":"` + followAt + `","type":"Follow","actor":"` + follower + `","object":"` + frozen + `"}`
+		if err := svc.HandleInbox(context.Background(), follower, []byte(body)); err != nil {
+			t.Fatalf("HandleInbox: %v", err)
+		}
+		if _, ok := repo.remoteFollows[channelID(repo).String()+"|"+follower]; !ok {
+			t.Fatalf("no remote follow recorded for the frozen id: %+v", repo.remoteFollows)
+		}
+		if len(repo.deliveries) != 1 {
+			t.Fatalf("deliveries = %d, want the Accept", len(repo.deliveries))
+		}
+		// The Accept is signed as the actor the peer addressed — the frozen id
+		// — not as the channel's current handle, whose key id no peer holds.
+		for _, d := range repo.deliveries {
+			if d.row.SigningChannelHandle != "ownera" {
+				t.Errorf("Accept signed as %q, want the frozen handle ownera", d.row.SigningChannelHandle)
+			}
+		}
+	})
+
+	t.Run("an Undo{Follow} at the frozen id removes the row", func(t *testing.T) {
+		repo := newRepo()
+		svc := NewService(repo, WithBaseURL("https://videos.example"))
+		body := `{"id":"` + followAt + `","type":"Follow","actor":"` + follower + `","object":"` + frozen + `"}`
+		if err := svc.HandleInbox(context.Background(), follower, []byte(body)); err != nil {
+			t.Fatalf("HandleInbox follow: %v", err)
+		}
+		undo := `{"id":"https://remote.example/activities/undo/9","type":"Undo","actor":"` + follower +
+			`","object":{"type":"Follow","actor":"` + follower + `","object":"` + frozen + `"}}`
+		if err := svc.HandleInbox(context.Background(), follower, []byte(undo)); err != nil {
+			t.Fatalf("HandleInbox undo: %v", err)
+		}
+		if _, ok := repo.remoteFollows[channelID(repo).String()+"|"+follower]; ok {
+			t.Error("the follow survived an Undo addressed at the frozen id")
+		}
+	})
+
+	t.Run("the collections answer at the frozen id, and name it", func(t *testing.T) {
+		repo := newRepo()
+		svc := NewService(repo, WithBaseURL("https://videos.example"))
+		col, err := svc.ChannelCollection(context.Background(), "ownera", "followers")
+		if err != nil {
+			t.Fatalf("ChannelCollection(ownera, followers): %v", err)
+		}
+		if col.ID != frozen+"/followers" {
+			t.Errorf("collection id = %q, want %q — it must match the id the actor document advertises", col.ID, frozen+"/followers")
+		}
+		page, err := svc.ChannelOutboxPage(context.Background(), "ownera", 1)
+		if err != nil {
+			t.Fatalf("ChannelOutboxPage(ownera): %v", err)
+		}
+		if page.PartOf != frozen+"/outbox" {
+			t.Errorf("outbox page partOf = %q, want %q", page.PartOf, frozen+"/outbox")
+		}
+	})
+}
