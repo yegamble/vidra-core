@@ -43,11 +43,16 @@ var (
 	// Metadata is a deliberately small vocabulary of non-content operational
 	// classifications. Identifiers belong in resource_id/job_id/pipeline_run_id;
 	// user prose, URLs, payloads, headers and process output never belong here.
+	//
+	// attempts/url_count/purged/failed are the CDN purge queue's job-outcome
+	// counts (internal/cdnpurge). They are counts of URLs, never URLs: a purge
+	// path is built from an operator-supplied template that may carry a
+	// credential, so the path itself is refused from logs and from here alike.
 	allowedMetadataKeys = stringSet(
-		"attempt", "auth_method", "breaker_tripped", "changed_key",
-		"changed_keys", "count", "dry_run", "mode", "network", "outcome",
-		"policy", "provider", "reason_code", "reason_provided", "resolver",
-		"source_version", "stage",
+		"attempt", "attempts", "auth_method", "breaker_tripped", "changed_key",
+		"changed_keys", "count", "dry_run", "failed", "mode", "network",
+		"outcome", "policy", "provider", "purged", "reason_code",
+		"reason_provided", "resolver", "source_version", "stage", "url_count",
 	)
 
 	// Safe before/after values are limited to low-sensitivity state/config fields.

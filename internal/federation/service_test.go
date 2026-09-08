@@ -101,6 +101,9 @@ type fakeDelivery struct {
 	// enqueued keeps the params as written, including the request/correlation
 	// identity the queue row now carries (migration 0139).
 	enqueued sqlcgen.EnqueueDeliveryParams
+	// updatedAt is what the redelivery window is measured against; the real
+	// column moves on every state change.
+	updatedAt time.Time
 }
 
 func (f fakeRepo) CountUsers(context.Context) (int64, error)        { return f.users, f.err }
@@ -396,8 +399,49 @@ func (f fakeRepo) FailDelivery(_ context.Context, arg sqlcgen.FailDeliveryParams
 		d.row.Attempts++
 		d.state = "failed"
 		d.lastError = arg.LastError
+		d.updatedAt = time.Now()
 	}
 	return nil
+}
+
+// ListCancelledDeliveriesForRedelivery mirrors the real query's three
+// predicates — failed, this exact cancel marker, inside the window — and its
+// deterministic order, because the LIMIT cut means nothing without one.
+func (f fakeRepo) ListCancelledDeliveriesForRedelivery(_ context.Context, arg sqlcgen.ListCancelledDeliveriesForRedeliveryParams) ([]sqlcgen.ListCancelledDeliveriesForRedeliveryRow, error) {
+	var out []sqlcgen.ListCancelledDeliveriesForRedeliveryRow
+	for id, d := range f.deliveries {
+		if d.state != "failed" || d.lastError != arg.CancelReason || d.updatedAt.Before(arg.Since) {
+			continue
+		}
+		// The SQL prefilter, mirrored: a fake that ignored it would hide the
+		// starvation the clause exists to prevent.
+		if arg.HostLike != "" && !strings.Contains(strings.ToLower(d.row.InboxUrl), strings.ToLower(arg.HostLike)) {
+			continue
+		}
+		out = append(out, sqlcgen.ListCancelledDeliveriesForRedeliveryRow{
+			ID: id, InboxUrl: d.row.InboxUrl, Payload: d.row.Payload,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID.String() < out[j].ID.String() })
+	if arg.ResultLimit > 0 && len(out) > int(arg.ResultLimit) {
+		out = out[:arg.ResultLimit]
+	}
+	return out, nil
+}
+
+// RequeueCancelledDelivery carries the real query's state guard, which is what
+// makes a second unblock a no-op rather than a second fan-out.
+func (f fakeRepo) RequeueCancelledDelivery(_ context.Context, id uuid.UUID) (int64, error) {
+	d, ok := f.deliveries[id]
+	if !ok || d.state != "failed" {
+		return 0, nil
+	}
+	d.state = "pending"
+	d.row.Attempts = 0
+	d.lastError = ""
+	d.nextAttempt = time.Now()
+	d.updatedAt = time.Now()
+	return 1, nil
 }
 
 func (f fakeRepo) UpsertRemoteVideo(_ context.Context, arg sqlcgen.UpsertRemoteVideoParams) (sqlcgen.UpsertRemoteVideoRow, error) {

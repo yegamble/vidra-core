@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -135,21 +136,58 @@ func (s *Server) handleBlockInstance(c echo.Context) error {
 
 // handleUnblockInstance lifts an instance block. Behind requireRole(admin,
 // moderator). Idempotent; an invalid domain → 422. Emits an audit event.
+//
+// Lifting a block also RESUMES what the block cancelled: the outbound
+// activities this instance refused to send while it stood (A29-F4). See
+// federation.RedeliverAfterUnblock for which of them qualify and why the rest
+// stay cancelled.
 func (s *Server) handleUnblockInstance(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
 	if err != nil {
 		return err
 	}
 	domain := c.Param("domain")
-	if err := s.instancemodsvc.UnblockInstance(c.Request().Context(), domain); err != nil {
+	blockedAt, wasBlocked, err := s.instancemodsvc.UnblockInstance(c.Request().Context(), domain)
+	if err != nil {
 		if errors.Is(err, instancemod.ErrInvalidDomain) {
 			s.audit(c, observability.ActionInstanceUnblock, observability.ResultFailure, userID.String(), "invalid_domain")
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "invalid instance domain")
 		}
 		return err
 	}
+	if wasBlocked {
+		s.redeliverAfterUnblock(c, strings.ToLower(strings.TrimSpace(domain)), blockedAt)
+	}
 	s.audit(c, observability.ActionInstanceUnblock, observability.ResultSuccess, userID.String(), "domain="+strings.ToLower(strings.TrimSpace(domain)))
 	return c.NoContent(http.StatusNoContent)
+}
+
+// redeliverAfterUnblock resumes the cancelled outbound deliveries, DETACHED from
+// the request.
+//
+// Detached for the same reason the edge-purge fan-out is: the work is a scan of
+// the delivery queue and a bounded batch of updates, and an admin lifting a
+// block must get their 204 at the speed of the DELETE that already committed.
+// Nothing here can fail the unblock — the block IS lifted; a resumption that
+// did not happen leaves rows exactly where they already were, which is the same
+// place they were before this existed.
+func (s *Server) redeliverAfterUnblock(c echo.Context, domain string, blockedAt time.Time) {
+	if s.fedsvc == nil || !s.cfg.FederationEnabled {
+		return
+	}
+	ctx := context.WithoutCancel(c.Request().Context())
+	go func() {
+		n, err := s.fedsvc.RedeliverAfterUnblock(ctx, domain, blockedAt)
+		if err != nil {
+			s.logger.WarnContext(ctx, "resuming deliveries after an instance unblock failed; the activities cancelled during the block stay cancelled",
+				"domain", domain, "requeued", n)
+			return
+		}
+		if n > 0 {
+			s.logger.InfoContext(ctx, "resumed outbound deliveries cancelled while the instance was blocked",
+				"domain", domain, "requeued", n)
+		}
+	}()
 }
 
 // handleListBlockedInstances returns the admin instance blocklist, newest block

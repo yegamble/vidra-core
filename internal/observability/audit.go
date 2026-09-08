@@ -201,6 +201,29 @@ const (
 	// (GET /admin/search/suggestion-bans), which is the reversal surface.
 	ActionSearchSuggestionBan   = "moderation.search.suggestion_ban"
 	ActionSearchSuggestionUnban = "moderation.search.suggestion_unban"
+	// CDN edge invalidation, per QUEUED JOB OUTCOME (internal/cdnpurge). The
+	// A33 rehearsal (2026-09-08) recorded that a purge had no audit action at
+	// all: the whole durable record of a takedown reaching — or failing to
+	// reach — the edge was a queue row that a retention sweep eventually
+	// deletes, one log line, and a process-local counter that a restart resets.
+	//
+	// They are written for the QUEUE's outcomes and not for the immediate pass,
+	// because those are the outcomes no request can report: the immediate
+	// fan-out happens inside the deletion or privacy flip that caused it, and
+	// that act is already audited (content.video.delete, auth.account.delete,
+	// admin.instance.update, content.video.transcode). A queued job finishes
+	// minutes or hours later, in another process, long after the request that
+	// created it returned 204.
+	//
+	// dead_lettered is result=failure and is the one an operator must be able
+	// to find afterwards: the edge is still serving objects this instance has
+	// stopped serving, and nothing will try again. Metadata carries reason_code
+	// (the closed job-reason vocabulary), url_count, purged, failed and
+	// attempts — counts, never URLs: a purge path can carry an operator's own
+	// purge-API credential in the template it was built from, and audit_log
+	// carries no prose anywhere.
+	ActionCDNPurgeCompleted    = "cdn.purge.completed"
+	ActionCDNPurgeDeadLettered = "cdn.purge.dead_lettered"
 )
 
 // sensitiveKeys is the canonical denylist of structured-log field names that

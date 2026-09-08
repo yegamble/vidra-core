@@ -83,3 +83,60 @@ WHERE id = $1;
 UPDATE federation_deliveries
 SET state = 'failed', attempts = attempts + 1, last_error = $2, updated_at = now()
 WHERE id = $1;
+
+-- name: ListCancelledDeliveriesForRedelivery :many
+-- Deliveries this instance CANCELLED — never sent — because their destination
+-- was on the admin blocklist, since a given moment.
+--
+-- A29 measured the gap this closes: a block cancels outbound activities as well
+-- as refusing inbound ones, and lifting the block resumed nothing. The refused
+-- INBOUND activities are gone for good (the remote was answered 202 and will
+-- not resend), but this instance's own outbound rows are still here with their
+-- payloads intact, so the half that CAN be repaired is repaired.
+--
+-- The cancel marker is passed in rather than spelled here so the string lives
+-- once, next to the code that writes it (internal/federation's
+-- deliveryCancelledBlocked). `since` is the moment the block began, which is
+-- what bounds this to the block's own window: a delivery that failed for any
+-- other reason, or was cancelled by an EARLIER block that was already lifted,
+-- is not this unblock's to resume.
+--
+-- Rows are capped by the caller; a block window with more cancellations than
+-- the cap leaves the remainder where they are rather than unbounding an admin
+-- request.
+--
+-- host_like is a PREFILTER, not the answer. The caller decides which rows
+-- belong to the unblocked domain with the same hostOf() that decided to cancel
+-- them, so the two cannot disagree about what host an inbox URL has; this
+-- clause only keeps the LIMIT from being spent on OTHER domains' cancelled
+-- rows. Without it, an instance with three blocked domains and more than
+-- `result_limit` cancellations in the window could unblock one domain and
+-- resume none of its deliveries, because the page came back full of the two
+-- that are still blocked. It can only ever widen the candidate set relative to
+-- the real answer: hostOf(inbox_url) = <domain> implies the domain appears
+-- literally in the URL, and LIKE's own metacharacters in a hostname (an
+-- underscore) match more rather than fewer.
+SELECT id, inbox_url, payload
+FROM federation_deliveries
+WHERE state = 'failed'
+  AND last_error = sqlc.arg(cancel_reason)
+  AND updated_at >= sqlc.arg(since)
+  AND inbox_url ILIKE '%' || sqlc.arg(host_like)::text || '%'
+ORDER BY created_at, id
+LIMIT sqlc.arg(result_limit);
+
+-- name: RequeueCancelledDelivery :execrows
+-- Put ONE cancelled delivery back on the queue: pending, due now, attempts
+-- reset, the cancellation note cleared.
+--
+-- Attempts are reset because a cancellation is not an attempt — the activity
+-- was never sent, so the row's attempt budget was never spent on the remote
+-- side, and carrying the cancelled row's count forward would dead-letter it
+-- early for reasons that have nothing to do with the destination's health.
+--
+-- The state guard makes this idempotent under a double unblock: the second
+-- caller matches nothing because the first already moved the row to pending.
+UPDATE federation_deliveries
+SET state = 'pending', attempts = 0, next_attempt_at = now(),
+    last_error = '', updated_at = now()
+WHERE id = $1 AND state = 'failed';

@@ -54,6 +54,9 @@ type Repository interface {
 	MarkDeliveryDelivered(ctx context.Context, id uuid.UUID) error
 	RescheduleDelivery(ctx context.Context, arg sqlcgen.RescheduleDeliveryParams) error
 	FailDelivery(ctx context.Context, arg sqlcgen.FailDeliveryParams) error
+	// Redelivery after an instance unblock (A29-F4).
+	ListCancelledDeliveriesForRedelivery(ctx context.Context, arg sqlcgen.ListCancelledDeliveriesForRedeliveryParams) ([]sqlcgen.ListCancelledDeliveriesForRedeliveryRow, error)
+	RequeueCancelledDelivery(ctx context.Context, id uuid.UUID) (int64, error)
 	// Remote-video ingestion (remote-content Slice 1).
 	UpsertRemoteVideo(ctx context.Context, arg sqlcgen.UpsertRemoteVideoParams) (sqlcgen.UpsertRemoteVideoRow, error)
 	SetRemoteVideoThumbnail(ctx context.Context, arg sqlcgen.SetRemoteVideoThumbnailParams) error

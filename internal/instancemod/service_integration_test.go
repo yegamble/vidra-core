@@ -70,7 +70,7 @@ func TestInstanceModerationPersists(t *testing.T) {
 
 	// Admin blocklist round trip (re-block refreshes the reason).
 	blocked := "blocked-" + suf + ".example"
-	t.Cleanup(func() { _ = svc.UnblockInstance(context.Background(), blocked) })
+	t.Cleanup(func() { _, _, _ = svc.UnblockInstance(context.Background(), blocked) })
 	if err := svc.BlockInstance(ctx, u.ID, blocked, "first"); err != nil {
 		t.Fatalf("BlockInstance: %v", err)
 	}
@@ -99,8 +99,14 @@ func TestInstanceModerationPersists(t *testing.T) {
 	if !found {
 		t.Fatalf("blocked domain %s not in list (%d entries)", blocked, len(list))
 	}
-	if err := svc.UnblockInstance(ctx, blocked); err != nil {
+	blockedAt, wasBlocked, err := svc.UnblockInstance(ctx, blocked)
+	if err != nil {
 		t.Fatalf("UnblockInstance: %v", err)
+	}
+	// Against a real planner: DELETE ... RETURNING gives the deleting caller
+	// the block's own start, which is what bounds the A29-F4 redelivery window.
+	if !wasBlocked || blockedAt.IsZero() {
+		t.Errorf("UnblockInstance = (%v, %v), want the block start and true", blockedAt, wasBlocked)
 	}
 	if isBlocked, _ := q.IsInstanceBlocked(ctx, blocked); isBlocked {
 		t.Error("still blocked after unblock")

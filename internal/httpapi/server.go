@@ -1170,7 +1170,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	// routes, and the CORS middleware overwrites it with the credentialed
 	// answer whenever the browser's Origin is on the operator's allow-list.
 	// See mediaPreflight.
-	e.Use(mediaPreflight())
+	e.Use(s.mediaPreflight())
 	corsAllowCredentials := true
 	for _, o := range cfg.CORSAllowedOrigins {
 		if o == "*" {
@@ -1178,6 +1178,14 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 		}
 	}
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		// An EDGE ORIGIN FETCH is skipped entirely, so it can never be answered
+		// with an allow-listed origin, Access-Control-Allow-Credentials or the
+		// Vary: Origin this middleware stamps on everything it sees. Its answer
+		// is the constant wildcard setMediaCORS writes, because that response
+		// becomes ONE shared cache entry served to every viewer behind the edge
+		// — see edgeMediaRequest in media_cors.go. Every other request,
+		// including a viewer's own cross-origin media read, is unchanged.
+		Skipper:          s.edgeMediaRequest,
 		AllowOrigins:     cfg.CORSAllowedOrigins,
 		AllowMethods:     []string{echo.GET, echo.POST, echo.PUT, echo.PATCH, echo.DELETE, echo.OPTIONS},
 		AllowCredentials: corsAllowCredentials,

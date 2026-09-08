@@ -47,13 +47,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/mediaroute"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -133,6 +136,19 @@ type Purger func(ctx context.Context, mediaPath string) error
 // Recorder is the correct wiring there, not a missing one.
 type Recorder func(purged, failed int, complete bool)
 
+// Auditor files one JOB OUTCOME in the durable audit trail. *audit.Service
+// satisfies it directly; the tests substitute a real service over a fake repo,
+// which is the point of taking the envelope type rather than a bag of scalars —
+// an unallowed metadata key or a malformed action is refused by
+// audit.normalizeEvent, and that refusal must be a test failure here rather
+// than a row that silently never appears in production.
+//
+// A nil Auditor writes nothing and is the correct wiring for an install with no
+// audit service, not a missing one.
+type Auditor interface {
+	Record(ctx context.Context, ev audit.Event) error
+}
+
 // Repository is the data access this package needs. *sqlcgen.Queries satisfies
 // it directly; tests substitute an in-memory fake.
 type Repository interface {
@@ -154,6 +170,7 @@ type Service struct {
 	repo   Repository
 	purge  Purger
 	record Recorder
+	audit  Auditor
 	logger *slog.Logger
 	now    func() time.Time
 
@@ -175,6 +192,9 @@ func WithLogger(l *slog.Logger) Option { return func(s *Service) { s.logger = l 
 
 // WithRecorder wires the in-process purge counters.
 func WithRecorder(r Recorder) Option { return func(s *Service) { s.record = r } }
+
+// WithAuditor wires the durable audit trail.
+func WithAuditor(a Auditor) Option { return func(s *Service) { s.audit = a } }
 
 func WithClock(now func() time.Time) Option {
 	return func(s *Service) {
@@ -359,6 +379,60 @@ func (s *Service) DrainOnce(ctx context.Context, limit int) (int, error) {
 	return handled, nil
 }
 
+// auditJobOutcome files one row for a job that has REACHED AN OUTCOME — every
+// URL invalidated, or the attempt cap spent — and nothing for the attempts in
+// between.
+//
+// WHY OUTCOMES ONLY. A retry ladder is up to seven scheduled attempts per job;
+// writing one row each would make a single flapping edge the bulk of a quiet
+// instance's security trail, which is how an audit log stops being read. The
+// per-attempt record already exists in the right place: the queue row carries
+// attempts, next_attempt_at and last_error, and the admin jobs page renders it.
+//
+// WHY NOT THE IMMEDIATE PASS. A purge fired inside a request is reported by the
+// request's own audited act (content.video.delete, auth.account.delete,
+// admin.instance.update, content.video.transcode). What had no durable record
+// at all before this is the half that finishes LATER, in another process, after
+// that act returned — and, for a dead letter, the fact that it never finished.
+//
+// The write is best-effort and never changes the job's fate: the invalidation
+// has already happened (or already given up), and failing the queue because the
+// trail could not be written would turn a bookkeeping problem into a stale
+// public copy.
+func (s *Service) auditJobOutcome(ctx context.Context, row sqlcgen.ClaimDueCDNPurgeJobsRow, deadLettered bool, purged, failed, attempts int32) {
+	if s == nil || s.audit == nil {
+		return
+	}
+	action, result := observability.ActionCDNPurgeCompleted, "success"
+	if deadLettered {
+		action, result = observability.ActionCDNPurgeDeadLettered, "failure"
+	}
+	ev := audit.Event{
+		Action: action,
+		Result: result,
+		// The queue is not a person and not an API caller: nobody asked for
+		// THIS attempt, a ticker did.
+		Actor: audit.ActorSnapshot{Kind: "system"},
+		JobID: row.ID,
+		Metadata: []audit.MetadataField{
+			// The closed job-reason vocabulary (retry, account_delete,
+			// downloads_revoked) — this package's own constant, never text
+			// from a request.
+			{Key: "reason_code", Value: row.Reason},
+			// How many URLs THIS outcome was handed. A catalogue walk names no
+			// fixed set (it discovers pages as it goes), so its url_count is 0
+			// and `purged` is the running total that matters there.
+			{Key: "url_count", Value: strconv.Itoa(len(decodePaths(row.Urls)))},
+			{Key: "purged", Value: strconv.Itoa(int(purged))},
+			{Key: "failed", Value: strconv.Itoa(int(failed))},
+			{Key: "attempts", Value: strconv.Itoa(int(attempts))},
+		},
+	}
+	if err := s.audit.Record(ctx, ev); err != nil {
+		s.logger.WarnContext(ctx, "cdn purge outcome could not be audited", "job_id", row.ID.String(), "action", action)
+	}
+}
+
 // runURLJob issues one attempt at a fixed URL set.
 //
 // The set is REWRITTEN to what is still unpurged, which is what makes a retry
@@ -374,6 +448,7 @@ func (s *Service) runURLJob(ctx context.Context, row sqlcgen.ClaimDueCDNPurgeJob
 		if err := s.repo.CompleteCDNPurgeJob(ctx, sqlcgen.CompleteCDNPurgeJobParams{ID: row.ID, Purged: total}); err != nil {
 			s.logger.WarnContext(ctx, "cdn purge job completed but could not be recorded", "job_id", row.ID.String())
 		}
+		s.auditJobOutcome(ctx, row, false, total, 0, row.Attempts+1)
 		if !row.UrlSetComplete {
 			// Every URL this job could NAME is gone from the edge, and the job
 			// still leaves something behind. Saying so is the difference between
@@ -398,6 +473,7 @@ func (s *Service) runURLJob(ctx context.Context, row sqlcgen.ClaimDueCDNPurgeJob
 			s.logger.WarnContext(ctx, "cdn purge dead letter could not be recorded", "job_id", row.ID.String())
 			return
 		}
+		s.auditJobOutcome(ctx, row, true, total, int32(len(remaining)), spent)
 		// The ONE line an operator has to act on: after this the edge keeps the
 		// objects until its own TTL, and nothing else will try again.
 		s.logger.ErrorContext(ctx, "cdn purge gave up after the attempt cap; the edge is still serving these objects and must be invalidated by hand",
@@ -445,6 +521,7 @@ func (s *Service) runWalkBatch(ctx context.Context, row sqlcgen.ClaimDueCDNPurge
 			s.logger.WarnContext(ctx, "cdn purge walk completed but could not be recorded", "job_id", row.ID.String())
 			return
 		}
+		s.auditJobOutcome(ctx, row, false, row.Purged, 0, row.Attempts+1)
 		s.logger.InfoContext(ctx, "cdn purge walk finished revoking downloads at the edge",
 			"job_id", row.ID.String(), "purged", row.Purged, "url_set_complete", row.UrlSetComplete)
 		return
@@ -487,6 +564,7 @@ func (s *Service) rescheduleWalk(ctx context.Context, row sqlcgen.ClaimDueCDNPur
 		if err := s.repo.FailCDNPurgeJob(ctx, sqlcgen.FailCDNPurgeJobParams{
 			ID: row.ID, Urls: []byte("[]"), Purged: row.Purged, LastError: why,
 		}); err == nil {
+			s.auditJobOutcome(ctx, row, true, row.Purged, 0, spent)
 			s.logger.ErrorContext(ctx, "cdn purge walk gave up; downloads may still be served from the edge for videos it did not reach",
 				"job_id", row.ID.String(), "attempts", spent, "purged", row.Purged, "cause", why)
 		}

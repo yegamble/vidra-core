@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/audit"
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -720,4 +723,175 @@ func TestReplacedAssetRefusalIsQueuedForRetry(t *testing.T) {
 			t.Fatal("the retry is due immediately; the backoff was not applied")
 		}
 	}
+}
+
+// --- the durable record of a job's outcome (A33 rehearsal finding 6) ---------
+
+// fakeAuditRepo is an in-memory audit_log. It exists so the assertions below go
+// through the REAL audit.Service: an unallowed metadata key or a malformed
+// action name is refused by the envelope validator, and that refusal has to be
+// a test failure here rather than a row that silently never appears.
+type fakeAuditRepo struct {
+	rows []sqlcgen.InsertAuditLogParams
+}
+
+func (f *fakeAuditRepo) InsertAuditLog(_ context.Context, arg sqlcgen.InsertAuditLogParams) error {
+	f.rows = append(f.rows, arg)
+	return nil
+}
+
+func (f *fakeAuditRepo) ListAuditLog(context.Context, sqlcgen.ListAuditLogParams) ([]sqlcgen.ListAuditLogRow, error) {
+	return nil, nil
+}
+func (f *fakeAuditRepo) CountAuditLog(context.Context, *string) (int64, error) { return 0, nil }
+func (f *fakeAuditRepo) PruneAuditLog(context.Context, sqlcgen.PruneAuditLogParams) (int64, error) {
+	return 0, nil
+}
+
+// metadata decodes one audit row's allow-listed fields.
+func (f *fakeAuditRepo) metadata(t *testing.T, i int) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	if len(f.rows[i].Metadata) == 0 {
+		return out
+	}
+	if err := json.Unmarshal(f.rows[i].Metadata, &out); err != nil {
+		t.Fatalf("row %d metadata is not a JSON object: %v", i, err)
+	}
+	return out
+}
+
+func (f *fakeAuditRepo) assertRow(t *testing.T, i int, action, result string, want map[string]string) {
+	t.Helper()
+	if len(f.rows) <= i {
+		t.Fatalf("want an audit row at %d, got %d rows", i, len(f.rows))
+	}
+	row := f.rows[i]
+	if row.Action != action {
+		t.Errorf("row %d action = %q, want %q", i, row.Action, action)
+	}
+	if row.Result != result {
+		t.Errorf("row %d result = %q, want %q", i, row.Result, result)
+	}
+	// A ticker is not a person: nobody asked for this attempt.
+	if row.ActorKind != "system" || row.ActorID.Valid {
+		t.Errorf("row %d actor = (%q, valid=%v), want a system actor with no user id", i, row.ActorKind, row.ActorID.Valid)
+	}
+	if row.Reason != "" {
+		t.Errorf("row %d carries prose in reason (%q); audit_log carries counts, never text", i, row.Reason)
+	}
+	got := f.metadata(t, i)
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("row %d metadata[%q] = %q, want %q (all: %v)", i, k, got[k], v, got)
+		}
+	}
+	// A media path can carry the operator's own purge-API credential in the
+	// template it was built from. Nothing URL-shaped may reach this table.
+	for k, v := range got {
+		if strings.Contains(v, "/") {
+			t.Errorf("row %d metadata[%q] = %q looks like a path; only counts belong here", i, k, v)
+		}
+	}
+}
+
+// TestPurgeJobOutcomeIsAudited is the defect the A33 rehearsal recorded as
+// finding 6: "there is no audit_log action for a CDN purge at all", so the only
+// durable trace of a takedown reaching the edge was a queue row a retention
+// sweep eventually deletes plus one log line.
+//
+// Both outcomes are covered, and so is the silence in between: the retry ladder
+// writes nothing, because a flapping edge must not become the bulk of a quiet
+// instance's security trail.
+func TestPurgeJobOutcomeIsAudited(t *testing.T) {
+	clock := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	now := func() time.Time { return clock }
+
+	t.Run("a completed job", func(t *testing.T) {
+		repo := newFakeRepo(now)
+		edge := &recordingEdge{}
+		trail := &fakeAuditRepo{}
+		svc := newTestService(t, repo, edge, now, WithAuditor(audit.NewService(trail)))
+
+		svc.EnqueueSnapshot(context.Background(), ReasonAccountDelete,
+			[]string{"/api/v1/videos/a/thumbnail", "/api/v1/videos/a/original"}, true)
+		if n, err := svc.DrainOnce(context.Background(), 10); n != 1 || err != nil {
+			t.Fatalf("DrainOnce = (%d, %v), want (1, nil)", n, err)
+		}
+
+		if len(trail.rows) != 1 {
+			t.Fatalf("audit rows = %d, want exactly 1 per job outcome", len(trail.rows))
+		}
+		trail.assertRow(t, 0, observability.ActionCDNPurgeCompleted, "success", map[string]string{
+			"reason_code": ReasonAccountDelete,
+			"url_count":   "2",
+			"purged":      "2",
+			"failed":      "0",
+			"attempts":    "1",
+		})
+		// The job id is on the row, so an operator reading the trail can find
+		// the queue row (and its URL list) while it is still there.
+		var jobID uuid.UUID
+		for id := range repo.rows {
+			jobID = id
+		}
+		if !trail.rows[0].JobID.Valid || uuid.UUID(trail.rows[0].JobID.Bytes) != jobID {
+			t.Errorf("audit row job_id = %v, want the queue row's id %s", trail.rows[0].JobID, jobID)
+		}
+	})
+
+	t.Run("a dead letter, and silence on the way there", func(t *testing.T) {
+		repo := newFakeRepo(now)
+		const bad = "/api/v1/videos/a/thumbnail"
+		const good = "/api/v1/videos/a/original"
+		edge := &recordingEdge{reject: map[string]bool{bad: true}}
+		trail := &fakeAuditRepo{}
+		// base 1s, cap 4s, 3 attempts: the immediate pass plus two persisted.
+		svc := newTestService(t, repo, edge, now, WithRetry(time.Second, 4*time.Second, 3),
+			WithAuditor(audit.NewService(trail)))
+
+		svc.EnqueueRetry(context.Background(), []string{bad, good}, true, 1)
+		var row *jobRow
+		for _, r := range repo.rows {
+			row = r
+		}
+
+		clock = row.nextAttemptAt
+		if n, _ := svc.DrainOnce(context.Background(), 10); n != 1 {
+			t.Fatal("attempt 2 did not run")
+		}
+		if row.state != "pending" {
+			t.Fatalf("state after attempt 2 = %q, want pending", row.state)
+		}
+		if len(trail.rows) != 0 {
+			t.Fatalf("a scheduled retry wrote %d audit rows, want 0 — the queue row and the admin jobs page already carry attempts", len(trail.rows))
+		}
+
+		clock = row.nextAttemptAt
+		if n, _ := svc.DrainOnce(context.Background(), 10); n != 1 {
+			t.Fatal("attempt 3 did not run")
+		}
+		if row.state != "failed" {
+			t.Fatalf("state = %q, want failed", row.state)
+		}
+		if len(trail.rows) != 1 {
+			t.Fatalf("audit rows = %d, want exactly 1 for the dead letter", len(trail.rows))
+		}
+		trail.assertRow(t, 0, observability.ActionCDNPurgeDeadLettered, "failure", map[string]string{
+			"reason_code": ReasonRetry,
+			"url_count":   "1",
+			"purged":      "1",
+			"failed":      "1",
+			"attempts":    "3",
+		})
+	})
+
+	t.Run("no auditor wired is not an error", func(t *testing.T) {
+		repo := newFakeRepo(now)
+		svc := newTestService(t, repo, &recordingEdge{}, now)
+		svc.EnqueueSnapshot(context.Background(), ReasonAccountDelete, []string{"/api/v1/videos/a/thumbnail"}, true)
+		if n, err := svc.DrainOnce(context.Background(), 10); n != 1 || err != nil {
+			t.Fatalf("DrainOnce with no auditor = (%d, %v), want (1, nil)", n, err)
+		}
+	})
 }

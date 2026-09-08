@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -58,9 +59,13 @@ func (f *instanceModFakeRepo) BlockInstance(_ context.Context, a sqlcgen.BlockIn
 	return 1, nil
 }
 
-func (f *instanceModFakeRepo) UnblockInstance(_ context.Context, domain string) (int64, error) {
+func (f *instanceModFakeRepo) UnblockInstance(_ context.Context, domain string) (time.Time, error) {
+	b, ok := f.blocked[domain]
+	if !ok {
+		return time.Time{}, pgx.ErrNoRows
+	}
 	delete(f.blocked, domain)
-	return 1, nil
+	return b.CreatedAt, nil
 }
 
 func (f *instanceModFakeRepo) ListBlockedInstances(_ context.Context, _ sqlcgen.ListBlockedInstancesParams) ([]sqlcgen.BlockedInstance, error) {

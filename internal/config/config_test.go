@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vidra/vidra-core/internal/cdn"
+	"github.com/vidra/vidra-core/internal/cdnpurge"
 	"github.com/vidra/vidra-core/internal/drm"
 )
 
@@ -1076,8 +1077,14 @@ func prodFedConfig(kek string) *Config {
 		// Same reason as Role: the pool sizing has a validated floor (DB_MAX_CONNS
 		// >= 2, for the leader elector's pinned connection) and the zero value is
 		// below it, so a literal Config has to state what LoadFrom would default.
-		DBMaxConns:               DefaultDBMaxConns,
-		DBMinConns:               DefaultDBMinConns,
+		DBMaxConns: DefaultDBMaxConns,
+		DBMinConns: DefaultDBMinConns,
+		// Same reason again: the CDN purge retry ladder is validated for sanity
+		// on every config, CDN or not, and the zero value is a ladder with no
+		// delay and no attempts.
+		CDNPurgeRetryBase:        defaultCDNPurgeRetryBase,
+		CDNPurgeRetryMax:         defaultCDNPurgeRetryMax,
+		CDNPurgeMaxAttempts:      defaultCDNPurgeMaxAttempts,
 		DBConnMaxLifetime:        DefaultDBConnMaxLifetime,
 		DBConnMaxIdleTime:        DefaultDBConnMaxIdleTime,
 		DatabaseURL:              "postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable",
@@ -1667,6 +1674,72 @@ func TestLoadCDNDeliveryDefaults(t *testing.T) {
 		t.Errorf("DELIVERY_CDN_PURGE_TIMEOUT default = %v, want %v",
 			cfg.DeliveryCDNPurgeTimeout, defaultCDNPurgeTimeout)
 	}
+	// The retry ladder is NOT part of "inert": the queue exists only when a CDN
+	// does, but the numbers must be the shipped ones on every install so that
+	// what an operator reads in the template is what their instance does.
+	if cfg.CDNPurgeRetryBase != defaultCDNPurgeRetryBase ||
+		cfg.CDNPurgeRetryMax != defaultCDNPurgeRetryMax ||
+		cfg.CDNPurgeMaxAttempts != defaultCDNPurgeMaxAttempts {
+		t.Errorf("purge retry ladder defaults = (%v, %v, %d), want (%v, %v, %d)",
+			cfg.CDNPurgeRetryBase, cfg.CDNPurgeRetryMax, cfg.CDNPurgeMaxAttempts,
+			defaultCDNPurgeRetryBase, defaultCDNPurgeRetryMax, defaultCDNPurgeMaxAttempts)
+	}
+}
+
+// TestLoadCDNPurgeRetryKnobs: the ladder an operator can actually set, and the
+// four ways of setting it that must refuse to boot.
+//
+// The A33 rehearsal (2026-09-08) recorded that none of these existed — the
+// ladder was wired to no environment variable, so an operator could not tune it
+// and the acceptance run could only reach the dead-letter cap by writing
+// attempts=7 into a queue row by hand. Each refusal below is a value that would
+// otherwise silently produce a ladder the operator did not configure.
+func TestLoadCDNPurgeRetryKnobs(t *testing.T) {
+	t.Run("accepted", func(t *testing.T) {
+		t.Setenv("CDN_PURGE_RETRY_BASE", "2s")
+		t.Setenv("CDN_PURGE_RETRY_MAX", "30s")
+		t.Setenv("CDN_PURGE_MAX_ATTEMPTS", "2")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.CDNPurgeRetryBase != 2*time.Second || cfg.CDNPurgeRetryMax != 30*time.Second || cfg.CDNPurgeMaxAttempts != 2 {
+			t.Fatalf("ladder = (%v, %v, %d), want (2s, 30s, 2)",
+				cfg.CDNPurgeRetryBase, cfg.CDNPurgeRetryMax, cfg.CDNPurgeMaxAttempts)
+		}
+	})
+
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+	}{
+		{"a zero base is a retry with no delay", map[string]string{"CDN_PURGE_RETRY_BASE": "0s"}},
+		{"a negative base", map[string]string{"CDN_PURGE_RETRY_BASE": "-1m"}},
+		{"a zero cap", map[string]string{"CDN_PURGE_RETRY_MAX": "0s"}},
+		{"a cap below the base removes the backoff entirely", map[string]string{
+			"CDN_PURGE_RETRY_BASE": "10m", "CDN_PURGE_RETRY_MAX": "1m",
+		}},
+		{"zero attempts dead-letters work never attempted", map[string]string{"CDN_PURGE_MAX_ATTEMPTS": "0"}},
+		{"a non-duration base", map[string]string{"CDN_PURGE_RETRY_BASE": "soon"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() accepted %v; a purge ladder nobody configured is worse than a refused boot", tc.env)
+			}
+		})
+	}
+
+	// One attempt is LEGAL and means "the immediate pass only" — the boundary
+	// the refusal above must not swallow.
+	t.Run("one attempt is the immediate pass and is legal", func(t *testing.T) {
+		t.Setenv("CDN_PURGE_MAX_ATTEMPTS", "1")
+		if _, err := Load(); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+	})
 }
 
 // TestLoadCDNBaseURLIsNormalised: a trailing slash must not survive into the
@@ -1975,5 +2048,22 @@ func TestCDNPurgeTimeoutDefaultsAgree(t *testing.T) {
 	if defaultCDNPurgeTimeout != cdn.DefaultPurgeTimeout {
 		t.Fatalf("config default = %s, cdn.DefaultPurgeTimeout = %s; an operator who sets neither would get one of two different timeouts depending on which code path filled it in",
 			defaultCDNPurgeTimeout, cdn.DefaultPurgeTimeout)
+	}
+}
+
+// TestCDNPurgeRetryDefaultsAgree is the same drift guard for the three numbers
+// the retry ladder spells twice. If they diverged, an install that sets none of
+// the three would get one ladder from config.Load and a different one from
+// cdnpurge's own fallbacks depending on which side filled the value in — and
+// the env template would document neither.
+func TestCDNPurgeRetryDefaultsAgree(t *testing.T) {
+	if defaultCDNPurgeRetryBase != cdnpurge.DefaultRetryBase {
+		t.Errorf("config base = %s, cdnpurge.DefaultRetryBase = %s", defaultCDNPurgeRetryBase, cdnpurge.DefaultRetryBase)
+	}
+	if defaultCDNPurgeRetryMax != cdnpurge.DefaultRetryMax {
+		t.Errorf("config max = %s, cdnpurge.DefaultRetryMax = %s", defaultCDNPurgeRetryMax, cdnpurge.DefaultRetryMax)
+	}
+	if defaultCDNPurgeMaxAttempts != cdnpurge.DefaultMaxAttempts {
+		t.Errorf("config attempts = %d, cdnpurge.DefaultMaxAttempts = %d", defaultCDNPurgeMaxAttempts, cdnpurge.DefaultMaxAttempts)
 	}
 }

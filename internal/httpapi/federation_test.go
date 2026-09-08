@@ -181,6 +181,10 @@ func (fakeFedRepo) RescheduleDelivery(context.Context, sqlcgen.RescheduleDeliver
 	return nil
 }
 func (fakeFedRepo) FailDelivery(context.Context, sqlcgen.FailDeliveryParams) error { return nil }
+func (fakeFedRepo) ListCancelledDeliveriesForRedelivery(context.Context, sqlcgen.ListCancelledDeliveriesForRedeliveryParams) ([]sqlcgen.ListCancelledDeliveriesForRedeliveryRow, error) {
+	return nil, nil
+}
+func (fakeFedRepo) RequeueCancelledDelivery(context.Context, uuid.UUID) (int64, error) { return 0, nil }
 func (fakeFedRepo) UpsertRemoteVideo(context.Context, sqlcgen.UpsertRemoteVideoParams) (sqlcgen.UpsertRemoteVideoRow, error) {
 	return sqlcgen.UpsertRemoteVideoRow{ID: uuid.New()}, nil
 }

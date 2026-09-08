@@ -807,11 +807,14 @@ type Config struct {
 	// carries the posture an operator has to change at 3am without a restart
 	// (interfaces.md §1). None of these are secrets except the purge token.
 	//
-	// THE CDN'S ORIGIN MUST BE KEY-ADDRESSED — the object-store bucket, or a
-	// static server rooted at the media directory. The delivery resolver works
-	// in storage object keys, so the edge URL is BaseURL + "/" + objectKey.
-	// Pointing this at the Vidra API origin 404s every request: the API
-	// addresses media by ROUTE, not by key. See internal/cdn.
+	// THE CDN'S ORIGIN MUST BE THIS API. The edge URL is BaseURL plus the api's
+	// own media route path and query, so the edge fetches the same route a
+	// viewer would and the object store needs no public policy at all. This was
+	// inverted by the A33 remediation: it used to be a base over the BUCKET,
+	// with the edge URL being the base plus the storage object key, and this
+	// comment used to say pointing it at the api would 404 every request. A
+	// deployment upgrading with the old topology has to repoint the origin —
+	// docs/operations.md says so and cmd/api says so at boot. See internal/cdn.
 	//
 	// What a CDN may serve is bounded independently of all this: only public,
 	// published, uncredentialed media is ever handed to it (delivery.Request's
@@ -838,6 +841,26 @@ type Config struct {
 	// a best-effort side effect; an edge that stopped answering must not hold
 	// the operation that triggered it open.
 	DeliveryCDNPurgeTimeout time.Duration
+	// The DURABLE purge queue's retry ladder (internal/cdnpurge). A purge the
+	// edge refuses is rescheduled at CDNPurgeRetryBase, doubled per attempt
+	// spent and capped at CDNPurgeRetryMax, until CDNPurgeMaxAttempts is
+	// reached — after which the job is dead-lettered with its URLs intact and
+	// nothing tries again. The shipped ladder (1m, 1h, 8) spends about two
+	// hours before giving up.
+	//
+	// WHY THESE ARE CONFIGURABLE AT ALL. The A33 rehearsal (2026-09-08) recorded
+	// that the ladder was wired to no environment variable, so an operator could
+	// not tune it and an acceptance run could not reach the dead-letter cap
+	// except by editing a queue row by hand. Both are the same gap: the one
+	// behaviour an operator most needs to rehearse — what an instance does when
+	// its CDN stops accepting invalidations — was unreachable by configuration.
+	//
+	// They are read in every role, because the queue is drained by workers and
+	// enqueued by handlers, and a ladder the two halves disagree about is a
+	// backoff nobody can predict.
+	CDNPurgeRetryBase   time.Duration
+	CDNPurgeRetryMax    time.Duration
+	CDNPurgeMaxAttempts int
 
 	// Content protection (docs/productionization/interfaces.md §10, phase-5).
 	//
@@ -1258,6 +1281,9 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		DeliveryCDNPurgeHeader:                 strings.TrimSpace(getEnv("DELIVERY_CDN_PURGE_HEADER", "")),
 		DeliveryCDNPurgeToken:                  getEnv("DELIVERY_CDN_PURGE_TOKEN", ""),
 		DeliveryCDNPurgeTimeout:                p.Duration("DELIVERY_CDN_PURGE_TIMEOUT", defaultCDNPurgeTimeout),
+		CDNPurgeRetryBase:                      p.Duration("CDN_PURGE_RETRY_BASE", defaultCDNPurgeRetryBase),
+		CDNPurgeRetryMax:                       p.Duration("CDN_PURGE_RETRY_MAX", defaultCDNPurgeRetryMax),
+		CDNPurgeMaxAttempts:                    p.Int("CDN_PURGE_MAX_ATTEMPTS", defaultCDNPurgeMaxAttempts),
 		DRMProvider:                            strings.ToLower(strings.TrimSpace(getEnv("DRM_PROVIDER", drmProviderNone))),
 		DRMKeyKEK:                              strings.TrimSpace(getEnv("DRM_KEY_KEK", "")),
 		IPFSEnabled:                            p.Bool("IPFS_ENABLED", false),
@@ -1943,6 +1969,18 @@ func (c *Config) validate() error {
 // trade than a constant with a test on it.
 const defaultCDNPurgeTimeout = 10 * time.Second
 
+// The purge queue's retry-ladder defaults. They must stay equal to
+// cdnpurge.DefaultRetryBase, DefaultRetryMax and DefaultMaxAttempts, which
+// TestCDNPurgeRetryDefaultsAgree in internal/cdnpurge asserts — spelled here
+// rather than imported for the same reason defaultCDNPurgeTimeout is:
+// internal/config is a leaf and does not import the packages that consume its
+// output.
+const (
+	defaultCDNPurgeRetryBase   = time.Minute
+	defaultCDNPurgeRetryMax    = time.Hour
+	defaultCDNPurgeMaxAttempts = 8
+)
+
 // validateDeliveryCDN checks the CDN delivery surface (phase-4 item 2). Every
 // value is inert by default — with no DELIVERY_CDN_BASE_URL there is no CDN
 // source at all — so nothing here bites an install that has not opted in.
@@ -1954,6 +1992,32 @@ const defaultCDNPurgeTimeout = 10 * time.Second
 // is loud.
 func (c *Config) validateDeliveryCDN() error {
 	var errs []error
+
+	// The retry ladder is checked FIRST and unconditionally, before the "is a
+	// CDN configured at all" branch below returns. Unlike a purge URL or token,
+	// these three have working defaults and a value that is merely inert is not
+	// the "configured the half you thought mattered" bug — but a nonsense value
+	// is still a lie about what the instance will do in an incident, and an
+	// operator who wrote one must hear about it at boot rather than discover it
+	// from a takedown that gave up in eight seconds.
+	if c.CDNPurgeRetryBase <= 0 {
+		errs = append(errs, varErrorf("CDN_PURGE_RETRY_BASE", "config: CDN_PURGE_RETRY_BASE must be a positive duration (for example 1m); it is the delay before the first persisted retry of a refused purge"))
+	}
+	if c.CDNPurgeRetryMax <= 0 {
+		errs = append(errs, varErrorf("CDN_PURGE_RETRY_MAX", "config: CDN_PURGE_RETRY_MAX must be a positive duration (for example 1h); it caps the doubling of the purge retry delay"))
+	} else if c.CDNPurgeRetryBase > 0 && c.CDNPurgeRetryMax < c.CDNPurgeRetryBase {
+		// A cap below the base is not a slower ladder, it is a ladder with no
+		// rungs: every retry would be clamped to the cap, so the backoff an
+		// operator thinks they configured never happens.
+		errs = append(errs, varErrorf("CDN_PURGE_RETRY_MAX", "config: CDN_PURGE_RETRY_MAX (%s) is below CDN_PURGE_RETRY_BASE (%s), which would clamp every retry to the cap and remove the backoff entirely", c.CDNPurgeRetryMax, c.CDNPurgeRetryBase))
+	}
+	if c.CDNPurgeMaxAttempts < 1 {
+		// 1 is legal and means "the immediate pass only": attempt 1 IS the
+		// immediate fan-out, so a job that fails it is dead-lettered at once.
+		// 0 would be a queue that dead-letters work it never attempted.
+		errs = append(errs, varErrorf("CDN_PURGE_MAX_ATTEMPTS", "config: CDN_PURGE_MAX_ATTEMPTS must be at least 1 (attempt 1 is the immediate pass); the default is %d", defaultCDNPurgeMaxAttempts))
+	}
+
 	base := strings.TrimSpace(c.DeliveryCDNBaseURL)
 
 	// Purge settings without a base URL are the "I configured the CDN and it
