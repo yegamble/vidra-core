@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -25,8 +26,20 @@ import (
 const testCDNBase = "https://cdn.example.test/media"
 
 // originalObjectKey is the storage key of a video's original file — the same
-// literal shape the presign tests assert on, spelled once here.
+// literal shape the presign tests assert on, spelled once here. The CDN no
+// longer addresses anything by it; presign still does.
 func originalObjectKey(id string) string { return "web-videos/" + id + ".mp4" }
+
+// testEdgeURL is the edge URL the api mints for one of its own media paths:
+// the operator's base, the path verbatim, and the edge-origin marker that lets
+// the api recognise the edge's fetch of the same route.
+func testEdgeURL(mediaPath string) string {
+	sep := "?"
+	if strings.Contains(mediaPath, "?") {
+		sep = "&"
+	}
+	return testCDNBase + mediaPath + sep + delivery.EdgeOriginParam + "=" + delivery.EdgeOriginValue
+}
 
 // setCDNDelivery flips the runtime toggle the way an admin would.
 func setCDNDelivery(t *testing.T, srv *Server, on bool) {
@@ -64,17 +77,20 @@ func cdnServer(t *testing.T, on bool, presigner storage.Presigner, presignOn boo
 	return srv, blobs, tcRepo
 }
 
-func assertCDNRedirect(t *testing.T, rec *httptest.ResponseRecorder, wantKey string) {
+// assertCDNRedirect asserts the 307 points at the edge's copy of THIS API's own
+// media path — not at an object key, which is what it used to be and what made
+// the CDN's origin have to be a public bucket.
+func assertCDNRedirect(t *testing.T, rec *httptest.ResponseRecorder, mediaPath string) {
 	t.Helper()
 	if rec.Code != http.StatusTemporaryRedirect {
 		t.Fatalf("status = %d, want 307; body=%s", rec.Code, rec.Body.String())
 	}
-	if got, want := rec.Header().Get("Location"), testCDNBase+"/"+wantKey; got != want {
+	if got, want := rec.Header().Get("Location"), testEdgeURL(mediaPath); got != want {
 		t.Fatalf("Location = %q, want %q", got, want)
 	}
-	// The header-promotion guard, asserted where an operator would see it: this
-	// change makes Purge real and deliberately promotes nothing to shared
-	// caching.
+	// The REDIRECT stays private: it is a per-viewer routing decision that has
+	// to stop within minutes of the kill switch, unlike the bytes the edge then
+	// caches under the header the origin gives it.
 	if cc := rec.Header().Get("Cache-Control"); cc != delivery.CacheCDNRedirect {
 		t.Errorf("redirect Cache-Control = %q, want %q", cc, delivery.CacheCDNRedirect)
 	}
@@ -99,8 +115,7 @@ func TestCDNToggleOnRedirectsPublicMedia(t *testing.T) {
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := publishedPublicVideo(t, srv, blobs, tcRepo, tok)
 
-	origKey := originalObjectKey(id)
-	assertCDNRedirect(t, getWith(srv, "/api/v1/videos/"+id+"/original", "", ""), origKey)
+	assertCDNRedirect(t, getWith(srv, "/api/v1/videos/"+id+"/original", "", ""), "/api/v1/videos/"+id+"/original")
 
 	// And disabling it falls back cleanly, on the very next request.
 	setCDNDelivery(t, srv, false)
@@ -117,7 +132,7 @@ func TestCDNBeatsPresignWhenBothAreOn(t *testing.T) {
 	id := publishedPublicVideo(t, srv, blobs, tcRepo, tok)
 
 	rec := getWith(srv, "/api/v1/videos/"+id+"/original", "", "")
-	assertCDNRedirect(t, rec, originalObjectKey(id))
+	assertCDNRedirect(t, rec, "/api/v1/videos/"+id+"/original")
 
 	// The presigner is still consulted (the resolver builds every source and
 	// the caller picks the first), but nothing was served from it. What must
@@ -177,9 +192,9 @@ func TestCDNPurgeSurfacesItsFailureAndKeepsServing(t *testing.T) {
 	srv, blobs, tcRepo := cdnServer(t, true, nil, false)
 	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
 	id := publishedPublicVideo(t, srv, blobs, tcRepo, tok)
-	key := originalObjectKey(id)
+	mediaPath := "/api/v1/videos/" + id + "/original"
 
-	err := srv.deliverysvc.Purge(context.Background(), key)
+	err := srv.deliverysvc.Purge(context.Background(), mediaPath)
 	if err == nil {
 		t.Fatal("Purge = nil for a CDN with no purge endpoint; that claims an invalidation that never happened")
 	}
@@ -187,7 +202,7 @@ func TestCDNPurgeSurfacesItsFailureAndKeepsServing(t *testing.T) {
 		t.Errorf("Purge = %v, want cdn.ErrPurgeNotConfigured", err)
 	}
 	// Serving is untouched by a failed purge — they are independent paths.
-	assertCDNRedirect(t, getWith(srv, "/api/v1/videos/"+id+"/original", "", ""), key)
+	assertCDNRedirect(t, getWith(srv, mediaPath, "", ""), mediaPath)
 }
 
 // TestCDNNeverRedirectsACredentialedRequest. Any ?pt= or Authorization header
@@ -205,7 +220,7 @@ func TestCDNNeverRedirectsACredentialedRequest(t *testing.T) {
 	path := "/api/v1/videos/" + id + "/original"
 
 	// The same public object, same settings: anonymous goes to the edge.
-	assertCDNRedirect(t, getWith(srv, path, "", ""), originalObjectKey(id))
+	assertCDNRedirect(t, getWith(srv, path, "", ""), path)
 
 	// With a bearer token it does not, and the response is not stored anywhere.
 	rec := getWith(srv, path, tok, "")

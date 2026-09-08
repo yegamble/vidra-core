@@ -31,8 +31,8 @@ const PresignTTL = time.Hour
 // Request.MirrorClass as an opaque token and converts it back here.
 type MirrorLookup func(ctx context.Context, objectKey, mirrorClass string) (string, bool, error)
 
-// CDNLookup resolves a storage object key to the CDN edge URL a viewer should
-// fetch it from. ok=false means "the edge cannot serve this object"; an error
+// CDNLookup resolves a MEDIA ROUTE PATH to the CDN edge URL a viewer should
+// fetch it from. ok=false means "the edge cannot serve this path"; an error
 // means the provider could not answer. Both degrade to the next source.
 //
 // Like MirrorLookup it is a FUNCTION rather than an interface, and for a
@@ -43,15 +43,30 @@ type MirrorLookup func(ctx context.Context, objectKey, mirrorClass string) (stri
 // URLs, purge endpoints, HTTP and auth headers — lives in internal/cdn and
 // reaches this package only through these two func types.
 //
-// The lookup is handed an OBJECT KEY, which fixes what a CDN can be pointed at:
-// its origin has to address objects by the same keys the storage backend does.
-// See internal/cdn for what that means for an operator.
-type CDNLookup func(ctx context.Context, objectKey string) (string, bool, error)
+// THE LOOKUP IS HANDED A ROUTE PATH, NOT AN OBJECT KEY, AND THAT FIXES THE
+// TOPOLOGY: the CDN's origin is this API, not the object store. Four things
+// follow, and each of them was a measured defect of the key-addressed model
+// (docs/release-readiness.md, "A32/A33 delivery"):
+//
+//   - The bucket stays private. A key-addressed origin has to be readable by
+//     the edge, and the obvious way to grant that makes every object in the
+//     bucket world-readable — private videos included, since public and private
+//     media share the same key prefixes. An api origin re-runs the route's own
+//     authorization on every miss and every revalidation.
+//   - The response the edge caches is the API's: its Content-Type, its
+//     Content-Disposition (so a redirected official download keeps the
+//     creator's filename) and its Cache-Control. A stored object carries none
+//     of those.
+//   - The generation version travels. A ?v= tag is part of the path's query, so
+//     a new transcode generation is a NEW URL at the edge rather than the same
+//     key with different bytes behind it.
+//   - Purge names URLs, which is what an edge holds entries under.
+type CDNLookup func(ctx context.Context, mediaPath string) (string, bool, error)
 
-// CDNPurge invalidates every edge copy of one storage object key. nil means the
-// object is gone from the shared cache (or was never in it); an error means the
+// CDNPurge invalidates every edge copy of one media route path. nil means the
+// URL is gone from the shared cache (or was never in it); an error means the
 // caller must assume a stale copy survives.
-type CDNPurge func(ctx context.Context, objectKey string) error
+type CDNPurge func(ctx context.Context, mediaPath string) error
 
 // errNoResponseOverrides is the internal "this backend can presign but cannot
 // reproduce the response headers the API proxy sets" signal. It is a
@@ -65,10 +80,10 @@ var errNoResponseOverrides = errors.New("delivery: backend cannot override presi
 // promote a cache header is entitled to tell them apart.
 var errPurgeUnwired = errors.New("delivery: a CDN is configured but no purge endpoint is; the edge may still hold this object")
 
-// errPurgeNoKey guards the empty key. A purge template rendered with an empty
-// key addresses the CDN's ROOT, and "invalidate everything" is not a plausible
+// errPurgeNoPath guards the empty path. A purge template rendered with an empty
+// path addresses the CDN's ROOT, and "invalidate everything" is not a plausible
 // reading of "invalidate nothing".
-var errPurgeNoKey = errors.New("delivery: purge requires an object key")
+var errPurgeNoPath = errors.New("delivery: purge requires a media route path")
 
 // chain is the composed resolver: an ordered set of optional source providers
 // terminated by the always-present api-proxy source.
@@ -185,6 +200,19 @@ func New(opts ...Option) Resolver {
 //     can no longer rescue; and every viewer's bytes cross the object store's
 //     egress meter. The edge URL is stable, shared, unsigned and never expires.
 func (c *chain) Resolve(ctx context.Context, req Request) []Source {
+	// THE EDGE'S OWN ORIGIN FETCH IS ALWAYS SERVED FROM HERE. Every optional
+	// source is a redirect, and a redirect answered to the cache that was sent
+	// to fetch these bytes is at best a defeated cache and at worst a loop
+	// straight back to the edge. It also re-exposes the object store: a 307 to
+	// a presigned URL hands the bucket to the very hop the api-as-origin model
+	// exists to keep away from it. One source, and it carries the shared cache
+	// policy that governs what the edge does with the answer.
+	if req.FromEdge {
+		return []Source{{
+			Kind:         SourceAPIProxy,
+			CacheControl: CacheControl(req.Class, req.Versioned, req.Credentialed, c.sharedCache(req)),
+		}}
+	}
 	sources := make([]Source, 0, 4)
 	if src, ok := c.mirrorSource(ctx, req); ok {
 		sources = append(sources, src)
@@ -197,25 +225,37 @@ func (c *chain) Resolve(ctx context.Context, req Request) []Source {
 	}
 	return append(sources, Source{
 		Kind:         SourceAPIProxy,
-		CacheControl: CacheControl(req.Class, req.Versioned, req.Credentialed),
+		CacheControl: CacheControl(req.Class, req.Versioned, req.Credentialed, false),
 	})
+}
+
+// sharedCache decides whether THIS response may be stored by a shared cache.
+//
+// Three conditions, and all three are about the same question — is there a
+// cache Vidra can invalidate holding bytes it is still allowed to serve:
+// the request is the edge's own origin fetch, the caller has declared the
+// bytes servable to an anonymous public visitor, and the request carries no
+// credential. A false on any of them is the `private` policy, which is what
+// every media response was before the CDN's origin became this API.
+func (c *chain) sharedCache(req Request) bool {
+	return req.FromEdge && req.Eligible && !req.Credentialed
 }
 
 // Purge invalidates every edge copy of one object. See Resolver.Purge for why
 // the three outcomes are what they are: no CDN is nil (nothing to invalidate),
 // a CDN with no purge path is an error (something to invalidate and no way to),
 // and the kill switch is not consulted (switching delivery off evicts nothing).
-func (c *chain) Purge(ctx context.Context, objectKey string) error {
+func (c *chain) Purge(ctx context.Context, mediaPath string) error {
 	if c.cdn == nil && c.cdnPurge == nil {
 		return nil
 	}
-	if objectKey == "" {
-		return errPurgeNoKey
+	if mediaPath == "" {
+		return errPurgeNoPath
 	}
 	if c.cdnPurge == nil {
 		return errPurgeUnwired
 	}
-	return c.cdnPurge(ctx, objectKey)
+	return c.cdnPurge(ctx, mediaPath)
 }
 
 // cdnSource asks the provider for the edge URL of this object.
@@ -228,7 +268,7 @@ func (c *chain) Purge(ctx context.Context, objectKey string) error {
 // runtime toggle. Every failure yields "no source", so a broken or unreachable
 // CDN degrades to the next source and never to a failed media request.
 func (c *chain) cdnSource(ctx context.Context, req Request) (Source, bool) {
-	if c.cdn == nil || req.ObjectKey == "" {
+	if c.cdn == nil || req.Path == "" {
 		return Source{}, false
 	}
 	if !Redirectable(req.Class) || !req.Eligible || req.Credentialed {
@@ -237,10 +277,10 @@ func (c *chain) cdnSource(ctx context.Context, req Request) (Source, bool) {
 	if c.cdnEnabled != nil && !c.cdnEnabled() {
 		return Source{}, false
 	}
-	u, ok, err := c.cdn(ctx, req.ObjectKey)
+	u, ok, err := c.cdn(ctx, req.Path)
 	if err != nil {
-		// Class only, never the key or the URL — the same rule presign follows:
-		// the key names one viewer's media and a purge-endpoint template can
+		// Class only, never the path or the URL — the same rule presign follows:
+		// the path names one viewer's media and a purge-endpoint template can
 		// carry a token, so neither belongs in a log line about a failure.
 		c.logger.WarnContext(ctx, "cdn delivery URL unavailable; serving authoritative storage",
 			"error", err, "media_class", string(req.Class))

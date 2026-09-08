@@ -1255,10 +1255,18 @@ func run() error {
 	// process holds credentials for, so it can refuse when a migration makes
 	// "which store" ambiguous. A CDN is a third party pulling from an origin
 	// this process does not configure, so nothing here can verify that the base
-	// URL actually fronts these object keys. An operator who points it at the
-	// wrong origin gets 404s from the edge on the first request, loudly, rather
-	// than a wrong answer — which is the correct failure for something
-	// unverifiable, but it does mean the boot log has to say what was accepted.
+	// URL actually fronts this api. An operator who points it at the wrong
+	// origin gets 404s from the edge on the first request, loudly, rather than
+	// a wrong answer — which is the correct failure for something unverifiable,
+	// but it does mean the boot log has to say what was accepted.
+	//
+	// THE ORIGIN IS THIS API, NOT THE BUCKET, and that is a reversal of what an
+	// existing DELIVERY_CDN_BASE_URL was configured against. The boot line says
+	// so every time rather than assuming release notes were read: an operator
+	// upgrading with the old topology has a CDN pointed at an object store that
+	// will now 404 every edge URL. delivery_cdn_enabled defaults off, so an
+	// upgrade cannot break playback on its own — but a deployment that had it
+	// on has to repoint the origin.
 	//
 	// Wiring this does NOT enable CDN delivery: the delivery_cdn_enabled admin
 	// setting does, and it defaults off.
@@ -1281,12 +1289,14 @@ func run() error {
 		opts = append(opts, httpapi.WithDeliveryCDN(cdnProvider.EdgeURL, cdnProvider.Purge))
 		logger.Info("cdn delivery available",
 			"cdn", cdnProvider.Describe(),
+			"origin", "point the CDN's origin at THIS api host; it must forward Range and the query string (the ?v= generation tag is part of the cache key)",
 			"note", "enable with the delivery_cdn_enabled instance setting")
 		if !cdnProvider.CanPurge() {
 			// Said once, at boot, because the alternative is discovering it
 			// during the takedown that needed it. Not fatal: a deployment whose
 			// media URLs are all generation-versioned genuinely never needs a
-			// purge, and refusing to boot over it would be wrong.
+			// purge for a re-transcode, and refusing to boot over it would be
+			// wrong — but a takedown still does.
 			logger.Warn("cdn delivery has no purge endpoint",
 				"note", "DELIVERY_CDN_PURGE_URL is unset, so an object cached at the edge cannot be invalidated from here; a privacy flip, deletion or takedown will not reach it")
 		}

@@ -259,7 +259,7 @@ func (s *Server) handleUpdatePlaylist(c echo.Context) error {
 	// public with a cover set, i.e. unless the edge could hold anything.
 	var oldCover string
 	if in.Visibility != nil {
-		oldCover = s.playlistCoverEdgeKey(ctx, id)
+		oldCover = s.playlistCoverEdgePath(ctx, id)
 	}
 	if _, err := s.playlistsvc.Update(ctx, userID, id, playlist.UpdateInput{
 		Title:       in.Title,
@@ -269,7 +269,7 @@ func (s *Server) handleUpdatePlaylist(c echo.Context) error {
 		return playlistError(err)
 	}
 	if in.Visibility != nil && *in.Visibility != "public" {
-		s.purgeEdgeKey(ctx, "playlist_cover", id, oldCover)
+		s.purgeEdgePath(ctx, "playlist_cover", id, oldCover)
 	}
 	// Re-read so the response carries the current video count.
 	row, err := s.playlistsvc.GetByID(ctx, id)
@@ -293,11 +293,11 @@ func (s *Server) handleDeletePlaylist(c echo.Context) error {
 	// Deleting the playlist deletes the row that NAMES its cover without
 	// visiting the cover handler — snapshot before, purge after the delete
 	// commits (media_purge.go).
-	oldCover := s.playlistCoverEdgeKey(ctx, id)
+	oldCover := s.playlistCoverEdgePath(ctx, id)
 	if err := s.playlistsvc.Delete(ctx, userID, id); err != nil {
 		return playlistError(err)
 	}
-	s.purgeEdgeKey(ctx, "playlist_cover", id, oldCover)
+	s.purgeEdgePath(ctx, "playlist_cover", id, oldCover)
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -456,7 +456,7 @@ func (s *Server) handleSetPlaylistThumbnail(c echo.Context) error {
 	// Snapshot the OLD cover key before the write (media_purge.go): a same-
 	// extension re-upload overwrites it in place, and an extension change is
 	// exactly when the superseded key is the one the edge cached.
-	oldCover := s.playlistCoverEdgeKey(ctx, id)
+	oldCover := s.playlistCoverEdgePath(ctx, id)
 	if _, err := s.playlistsvc.SetThumbnail(ctx, userID, id, playlist.UploadInput{
 		Filename: fh.Filename,
 		Reader:   f,
@@ -466,7 +466,7 @@ func (s *Server) handleSetPlaylistThumbnail(c echo.Context) error {
 		}
 		return playlistError(err)
 	}
-	s.purgeEdgeKey(ctx, "playlist_cover", id, oldCover)
+	s.purgeEdgePath(ctx, "playlist_cover", id, oldCover)
 	// Re-read so the response carries has_thumbnail=true + the current count.
 	row, err := s.playlistsvc.GetByID(c.Request().Context(), id)
 	if err != nil {
@@ -488,11 +488,11 @@ func (s *Server) handleDeletePlaylistThumbnail(c echo.Context) error {
 	}
 	ctx := c.Request().Context()
 	// Snapshot before ClearThumbnail removes blob and column (media_purge.go).
-	oldCover := s.playlistCoverEdgeKey(ctx, id)
+	oldCover := s.playlistCoverEdgePath(ctx, id)
 	if err := s.playlistsvc.ClearThumbnail(ctx, userID, id); err != nil {
 		return playlistError(err)
 	}
-	s.purgeEdgeKey(ctx, "playlist_cover", id, oldCover)
+	s.purgeEdgePath(ctx, "playlist_cover", id, oldCover)
 	return c.NoContent(http.StatusNoContent)
 }
 

@@ -54,12 +54,12 @@ func (s *Server) handleSetMyImage(kind string) echo.HandlerFunc {
 		// extension re-upload overwrites that very key in place, and an
 		// extension change deletes its blob — either way it is the key the
 		// edge cached, and after the service call the row no longer names it.
-		oldKey := s.userImageEdgeKey(ctx, userID, kind)
+		oldPath := s.userImageEdgePath(ctx, userID, kind)
 		img, err := s.imagesvc.SetUserImage(ctx, userID, kind, in)
 		if err != nil {
 			return profileImageError(err, kind)
 		}
-		s.purgeEdgeKey(ctx, kind, userID, oldKey)
+		s.purgeEdgePath(ctx, kind, userID, oldPath)
 		return c.JSON(http.StatusCreated, newProfileImageView(img))
 	}
 }
@@ -74,11 +74,11 @@ func (s *Server) handleDeleteMyImage(kind string) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		// Snapshot before the delete removes row and blob (media_purge.go).
-		oldKey := s.userImageEdgeKey(ctx, userID, kind)
+		oldPath := s.userImageEdgePath(ctx, userID, kind)
 		if err := s.imagesvc.DeleteUserImage(ctx, userID, kind); err != nil {
 			return profileImageError(err, kind)
 		}
-		s.purgeEdgeKey(ctx, kind, userID, oldKey)
+		s.purgeEdgePath(ctx, kind, userID, oldPath)
 		return c.NoContent(http.StatusNoContent)
 	}
 }
@@ -126,12 +126,12 @@ func (s *Server) handleSetChannelImage(kind string) echo.HandlerFunc {
 		defer cleanup()
 		ctx := c.Request().Context()
 		// Same pre-write snapshot as the user path (media_purge.go).
-		oldKey := s.channelImageEdgeKey(ctx, ch.ID, kind)
+		oldPath := s.channelImageEdgePath(ctx, ch.ID, ch.Handle, kind)
 		img, err := s.imagesvc.SetChannelImage(ctx, ch.ID, kind, in)
 		if err != nil {
 			return profileImageError(err, kind)
 		}
-		s.purgeEdgeKey(ctx, kind, ch.ID, oldKey)
+		s.purgeEdgePath(ctx, kind, ch.ID, oldPath)
 		return c.JSON(http.StatusCreated, newProfileImageView(img))
 	}
 }
@@ -146,11 +146,11 @@ func (s *Server) handleDeleteChannelImage(kind string) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		// Snapshot before the delete removes row and blob (media_purge.go).
-		oldKey := s.channelImageEdgeKey(ctx, ch.ID, kind)
+		oldPath := s.channelImageEdgePath(ctx, ch.ID, ch.Handle, kind)
 		if err := s.imagesvc.DeleteChannelImage(ctx, ch.ID, kind); err != nil {
 			return profileImageError(err, kind)
 		}
-		s.purgeEdgeKey(ctx, kind, ch.ID, oldKey)
+		s.purgeEdgePath(ctx, kind, ch.ID, oldPath)
 		return c.NoContent(http.StatusNoContent)
 	}
 }

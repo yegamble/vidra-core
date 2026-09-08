@@ -48,9 +48,10 @@ const (
 	// SourceIPFSGateway is the configured public gateway URL for an
 	// already-pinned public asset (an immutable CID).
 	SourceIPFSGateway SourceKind = "ipfs-gateway"
-	// SourceCDN is a CDN edge URL: the operator's cache, in front of the same
-	// storage objects, addressed by the SAME object key. The provider is wired
-	// as opaque funcs (CDNLookup/CDNPurge) so no vendor reaches this package.
+	// SourceCDN is a CDN edge URL: the operator's cache, in front of THIS API,
+	// addressed by the same media route path the api-proxy serves. The provider
+	// is wired as opaque funcs (CDNLookup/CDNPurge) so no vendor reaches this
+	// package.
 	SourceCDN SourceKind = "cdn"
 )
 
@@ -151,6 +152,64 @@ const (
 	CacheCDNRedirect = CacheShortLived
 )
 
+// The SHARED cache policies. Each is its private sibling above with `private`
+// replaced by `public`, and nothing else — the windows are deliberately
+// identical so "why is this cached for an hour?" keeps one answer.
+//
+// THEY ARE EMITTED ON EXACTLY ONE KIND OF REQUEST: one that arrived through
+// the operator's own edge (Request.FromEdge — see EdgeOriginParam) for an
+// object the caller has already declared servable to an anonymous public
+// visitor. That is not a shortcut for "public media is public"; it is the
+// whole safety argument. A shared cache entry can outlive the authorization
+// decision that produced it, and the only shared cache Vidra can invalidate is
+// the one it hands out edge URLs for. A viewer talking to the origin directly,
+// or any intermediary between them, still gets the `private` policy, because
+// nothing here could purge such a cache if the video went private a second
+// later (docs/productionization/risks.md section 6).
+const (
+	CacheSharedVersionedImmutable = "public, max-age=31536000, immutable"
+	CacheSharedStableRevalidate   = "public, max-age=0, must-revalidate"
+	CacheSharedShortLived         = "public, max-age=300, must-revalidate"
+	CacheSharedLongLived          = "public, max-age=3600, must-revalidate"
+)
+
+// EdgeOriginParam is the query parameter the API mints into every CDN edge URL
+// it hands a viewer, and reads back to recognise the edge's own origin fetch.
+//
+// WHY A MINTED PARAMETER IS THE MECHANISM. With the api as the CDN's origin,
+// the edge fetches the SAME route a viewer does, so the api must be able to
+// tell the two apart or it answers the edge's origin fetch with a redirect
+// back to the edge — a loop, not a cache. Three candidates were considered and
+// this is the smallest that is honest:
+//
+//   - A TRUSTED HEADER the operator configures at the CDN. It works, but the
+//     failure mode of forgetting it IS the redirect loop, and it makes the
+//     feature unusable on any edge that cannot add an origin header.
+//   - THE Host HEADER, matched against a configured edge hostname. Some CDNs
+//     preserve the edge Host to the origin and some send the origin's own, so
+//     it is a signal that silently is not there on half the providers.
+//   - THIS: the api puts the marker in the URL it mints, so the edge carries
+//     it to the origin as part of the request it was asked for. It needs no
+//     operator configuration, it cannot be forgotten, and it cannot loop —
+//     every URL the api hands the edge already identifies itself.
+//
+// IT IS NOT A CREDENTIAL AND MUST NEVER BECOME ONE. Anyone may send it. All it
+// can do is decline the redirect and serve the authoritative bytes, through
+// exactly the same authorization every media route already runs — which is
+// what an unauthenticated caller can already force today by attaching any
+// Authorization header at all. It buys the sender nothing and it is checked
+// for nothing.
+//
+// It also carries a second property worth naming: because the marker is part
+// of the URL, the edge's origin request and the viewer's request are DIFFERENT
+// URLs. The shared cache policy above is therefore attached to a URL only the
+// edge ever asks for, with no Vary and no chance of a shared entry being
+// served to a request that should have had a private one.
+const (
+	EdgeOriginParam = "__vidra_edge"
+	EdgeOriginValue = "1"
+)
+
 // Source is one place a viewer may fetch the object from. URL is empty for
 // SourceAPIProxy (the caller is already serving that route). CacheControl is
 // the header the response carrying this source must set.
@@ -162,8 +221,27 @@ type Source struct {
 
 // Request describes one media byte-serving request.
 type Request struct {
-	// ObjectKey is the storage key, relative and opaque (migration 0008).
+	// ObjectKey is the storage key, relative and opaque (migration 0008). It is
+	// what the API PROXY opens and what a presigned URL signs. It is no longer
+	// what a CDN edge is addressed by — see Path.
 	ObjectKey string
+	// Path is this request's own media route path with its query, exactly as
+	// the client sent it ("/api/v1/videos/<id>/hls/cmaf/chunk-0-00001.m4s?v=…").
+	//
+	// It is the CDN's unit of addressing, because the CDN's origin is THIS API.
+	// The edge URL is the operator's base plus this path, so the edge fetches
+	// the same route the api-proxy serves and every answer it caches was
+	// produced by the api: authorization, privacy, Cache-Control, Content-Type
+	// and Content-Disposition are decided in one place, and the object store
+	// stays private. It is also the unit of PURGE, for the same reason — an
+	// invalidation has to name the URL the edge actually holds.
+	Path string
+	// FromEdge reports that this request IS the edge's origin fetch, recognised
+	// by EdgeOriginParam. Such a request is never answered with a redirect of
+	// any kind (the edge is the cache; sending it onward is a loop at worst and
+	// a defeated cache at best) and is the only request that may be answered
+	// with a shared cache policy.
+	FromEdge bool
 	// Class decides cache policy and redirect eligibility.
 	Class Class
 	// Eligible is the caller's assertion that these exact bytes are servable to
@@ -200,9 +278,15 @@ type Resolver interface {
 	// It never returns an error: an unreachable or misconfigured optional
 	// source degrades to the authoritative one.
 	Resolve(ctx context.Context, req Request) []Source
-	// Purge invalidates every shared-cache copy of an object. It is the
-	// precondition for ever promoting a byte response from private to shared
-	// caching.
+	// Purge invalidates every shared-cache copy of one media URL — mediaPath
+	// is a media route path with its query, the same shape Request.Path
+	// carries, because that is what the edge holds an entry under now that the
+	// CDN's origin is this API. Callers name the URL, not the object behind it:
+	// one object is reachable at more than one route (an original is both
+	// /original and /download/original) and each is a separate cache entry.
+	//
+	// It is the precondition for promoting a byte response from private to
+	// shared caching, which CacheControl now does for edge origin fetches.
 	//
 	// It is deliberately NOT gated on the CDN kill switch. Turning delivery off
 	// stops handing viewers edge URLs; it does not evict what the edge already
@@ -213,7 +297,7 @@ type Resolver interface {
 	// shared copy to invalidate. With a CDN configured but no purge endpoint it
 	// returns an error, because there is one and it cannot be reached — a state
 	// that must be loud rather than silently indistinguishable from success.
-	Purge(ctx context.Context, objectKey string) error
+	Purge(ctx context.Context, mediaPath string) error
 }
 
 // CacheControl is the single cache-header policy for stored media. Every media
@@ -225,23 +309,43 @@ type Resolver interface {
 //	whole-file media       → an hour, revalidated
 //	everything else        → five minutes, revalidated
 //
-// Nothing here is ever `public`. Media routes are authorization gates, and a
-// shared cache entry can outlive the decision that produced it; promoting any
-// of these requires the purge hook above to have a real implementation behind
-// it (docs/productionization/risks.md §6).
-func CacheControl(class Class, versioned, credentialed bool) string {
+// shared promotes the answer from `private` to `public` at the same window, and
+// it is true for EXACTLY ONE caller: an origin fetch from the operator's own
+// edge (Request.FromEdge) for an object the route has already declared publicly
+// servable. Every other request — a viewer talking to the origin directly
+// included — still gets `private`. Media routes are authorization gates and a
+// shared cache entry can outlive the decision that produced it, so the only
+// shared cache allowed to hold one is the cache Vidra can invalidate
+// (docs/productionization/risks.md §6, whose gate was a Purge that is real AND
+// exercised: internal/httpapi/media_purge.go wires it, and the A32/A33
+// acceptance run fired it against a real caching edge).
+func CacheControl(class Class, versioned, credentialed, shared bool) string {
 	if credentialed {
+		// A credential outranks everything, including shared: a response scoped
+		// to one caller's authorization must not be stored anywhere at all.
 		return CacheNoStore
 	}
 	switch class {
 	case ClassHLSPlaylist, ClassHLSSegment:
 		if versioned {
+			if shared {
+				return CacheSharedVersionedImmutable
+			}
 			return CacheVersionedImmutable
+		}
+		if shared {
+			return CacheSharedStableRevalidate
 		}
 		return CacheStableRevalidate
 	case ClassOriginal, ClassWebM, ClassAudio, ClassDownload:
+		if shared {
+			return CacheSharedLongLived
+		}
 		return CacheLongLived
 	default:
+		if shared {
+			return CacheSharedShortLived
+		}
 		return CacheShortLived
 	}
 }
@@ -253,6 +357,16 @@ func CacheControl(class Class, versioned, credentialed bool) string {
 // storyboard VTT both carry RELATIVE references that the origin rewrites or
 // that resolve against the application URL; served from anywhere else, those
 // references point at nothing.
+//
+// AN API-ORIGINED EDGE DOES NOT DISSOLVE EITHER OF THEM, which is worth saying
+// because it looks as though it should: the edge caches the api's own rewritten
+// bytes at the api's own path, so the relative references would in fact
+// resolve. The playlist stays here anyway, for a reason the object-store origin
+// never had — the master and variant playlists are the GENERATION SWITCH. They
+// are the one URL whose bytes must change the instant a new transcode
+// generation is promoted, and an edge entry for them is the one entry that
+// would keep players walking into the previous generation. Serving them from
+// the origin is what makes the switch atomic.
 func Redirectable(class Class) bool {
 	switch class {
 	case ClassHLSPlaylist, ClassStoryboardVTT:

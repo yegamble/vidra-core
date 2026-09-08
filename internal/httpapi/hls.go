@@ -417,11 +417,19 @@ func validateHLSVersion(c echo.Context, sp sqlcgen.StreamingPlaylist) error {
 // rules are unchanged; they are now expressed once, in internal/delivery, so a
 // playlist served here and a segment served through the delivery resolver
 // cannot drift apart.
+//
+// shared is FALSE unconditionally, and that is the generation switch's whole
+// safety. A playlist is never delivered by redirect (delivery.Redirectable),
+// so the edge is never handed one and can never be the caller here — but even
+// if a request arrived carrying the edge marker, a playlist must not become a
+// shared cache entry: it is the one URL whose bytes have to change the instant
+// a new transcode generation is promoted.
 func setHLSCacheControl(c echo.Context, sp sqlcgen.StreamingPlaylist) {
 	c.Response().Header().Set("Cache-Control", delivery.CacheControl(
 		delivery.ClassHLSPlaylist,
 		hlsVersionMatches(c, sp),
 		credentialedMediaRequest(c),
+		false,
 	))
 }
 
