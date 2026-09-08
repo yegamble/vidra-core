@@ -509,6 +509,10 @@ x-api-env: &api-env
   # fallback, rotating the federation KEK silently breaks atproto keys too.
   ATPROTO_ENABLED: ${ATPROTO_ENABLED:-false}
   ATPROTO_KEY_KEK: ${ATPROTO_KEY_KEK:-}
+  # ATPROTO_PLC_URL overrides the did:plc directory (default https://plc.directory).
+  # Only honoured with the loopback dev relax on; a lab points it at a local PLC
+  # stub so did:plc creation never reaches the public directory (A30).
+  ATPROTO_PLC_URL: ${ATPROTO_PLC_URL:-}
   # "Sign in with Bluesky" is INDEPENDENT of cross-posting: it is identity-only,
   # keeps no PDS tokens and needs no KEK. When false the /auth/atproto/*
   # endpoints answer 503.
