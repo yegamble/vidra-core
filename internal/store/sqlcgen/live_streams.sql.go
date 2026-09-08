@@ -204,24 +204,29 @@ func (q *Queries) GetLiveStreamByID(ctx context.Context, id uuid.UUID) (GetLiveS
 }
 
 const getLiveStreamByKeyHash = `-- name: GetLiveStreamByKeyHash :one
-SELECT ls.id, ls.channel_id, ls.permanent, ls.state, ch.owner_id
+SELECT ls.id, ls.channel_id, ls.permanent, ls.state, ch.owner_id, u.is_active AS owner_active
 FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
+JOIN users u ON u.id = ch.owner_id
 WHERE ls.stream_key_hash = $1
 `
 
 type GetLiveStreamByKeyHashRow struct {
-	ID        uuid.UUID `json:"id"`
-	ChannelID uuid.UUID `json:"channel_id"`
-	Permanent bool      `json:"permanent"`
-	State     string    `json:"state"`
-	OwnerID   uuid.UUID `json:"owner_id"`
+	ID          uuid.UUID `json:"id"`
+	ChannelID   uuid.UUID `json:"channel_id"`
+	Permanent   bool      `json:"permanent"`
+	State       string    `json:"state"`
+	OwnerID     uuid.UUID `json:"owner_id"`
+	OwnerActive bool      `json:"owner_active"`
 }
 
 // Look up a stream by its key hash — the RTMP ingest boundary authenticates a
 // publisher by hashing the presented stream key. Returns id, channel + owner
 // (the per-user simultaneous-lives cap counts by owner, config-parity W11),
-// permanent (so stop can decide ended vs offline), and current state.
+// permanent (so stop can decide ended vs offline), current state, and whether
+// the owner is still active — a deactivated account keeps its stream key, and
+// without this the publish boundary would let a blocked creator broadcast to
+// the public "Live now" rail while every HTTP route refuses their token.
 func (q *Queries) GetLiveStreamByKeyHash(ctx context.Context, streamKeyHash string) (GetLiveStreamByKeyHashRow, error) {
 	row := q.db.QueryRow(ctx, getLiveStreamByKeyHash, streamKeyHash)
 	var i GetLiveStreamByKeyHashRow
@@ -231,6 +236,7 @@ func (q *Queries) GetLiveStreamByKeyHash(ctx context.Context, streamKeyHash stri
 		&i.Permanent,
 		&i.State,
 		&i.OwnerID,
+		&i.OwnerActive,
 	)
 	return i, err
 }

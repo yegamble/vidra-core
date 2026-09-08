@@ -35,6 +35,9 @@ type liveFakeRepo struct {
 	// lesson four A16 slices paid for.
 	mutes      *muteFakeRepo
 	userBlocks *blockFakeRepo
+	// ownerBlocked mirrors owner_active on GetLiveStreamByKeyHash: the SQL joins
+	// users, so a deactivated owner is visible at the RTMP publish boundary.
+	ownerBlocked bool
 }
 
 func newLiveFakeRepo(channels *channelFakeRepo) *liveFakeRepo {
@@ -163,7 +166,7 @@ func (f *liveFakeRepo) GetLiveStreamByKeyHash(_ context.Context, h string) (sqlc
 		if hash == h {
 			r := f.rows[id]
 			ch, _ := f.channelByID(r.ChannelID)
-			return sqlcgen.GetLiveStreamByKeyHashRow{ID: id, ChannelID: r.ChannelID, Permanent: r.Permanent, State: r.State, OwnerID: ch.OwnerID}, nil
+			return sqlcgen.GetLiveStreamByKeyHashRow{ID: id, ChannelID: r.ChannelID, Permanent: r.Permanent, State: r.State, OwnerID: ch.OwnerID, OwnerActive: !f.ownerBlocked}, nil
 		}
 	}
 	return sqlcgen.GetLiveStreamByKeyHashRow{}, errors.New("not found")
@@ -400,9 +403,19 @@ func ingestForm(srv *Server, path, name, secret string) *httptest.ResponseRecord
 }
 
 // TestLiveIngestFormRedirectRename: the nginx-rtmp form callback flips the stream
-// live AND receives a 302 whose last path segment is the stream ID (the rename
-// that keeps the raw key off disk); a post-rename re-invocation with the id is
+// live AND receives a 302 whose Location is the BARE stream ID (the rename that
+// keeps the raw key off disk); a post-rename re-invocation with the id is
 // allowed (200) without another redirect.
+//
+// The Location must not be an rtmp:// URL, and that is the whole point of this
+// assertion. nginx-rtmp-module reads the on_publish redirect in
+// ngx_rtmp_notify_publish_handle and branches on the header value itself: a
+// value that does NOT start with "rtmp://" becomes the session's new name,
+// while one that DOES is treated as a PUSH RELAY target and the session keeps
+// its original name. Sending "rtmp://localhost/live/<id>" therefore renamed
+// nothing — it made the module dial itself — so every HLS segment and every
+// recording was written under the RAW STREAM KEY and the api, which serves
+// "<id>.m3u8", 404d the whole broadcast (A26).
 func TestLiveIngestFormRedirectRename(t *testing.T) {
 	cfg := testConfig()
 	cfg.LiveIngestSecret = "s3cret"
@@ -418,8 +431,11 @@ func TestLiveIngestFormRedirectRename(t *testing.T) {
 		t.Fatalf("form start = %d, want 302; body=%s", r.Code, r.Body.String())
 	}
 	loc := r.Header().Get("Location")
-	if !strings.HasSuffix(loc, "/"+id) {
-		t.Errorf("redirect Location = %q, want it to rename to the stream id %q", loc, id)
+	if loc != id {
+		t.Errorf("redirect Location = %q, want the bare stream id %q", loc, id)
+	}
+	if strings.HasPrefix(strings.ToLower(loc), "rtmp://") {
+		t.Errorf("redirect Location = %q: an rtmp:// Location makes nginx-rtmp push-relay instead of rename", loc)
 	}
 	// State flipped live.
 	var live liveStreamView
@@ -1182,5 +1198,49 @@ func TestLiveCapabilityIsSettingAndIngest(t *testing.T) {
 	bob := registerAndToken(t, srvWired, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
 	if other := createLiveStream(srvWired, "ada", `{"title":"x"}`, bob); other.Code != http.StatusForbidden {
 		t.Errorf("non-manager create = %d, want 403", other.Code)
+	}
+}
+
+// TestLiveIngestRefusesBlockedOwnerAndBareStreamID covers the two ways a publish
+// could get in without the key. A deactivated owner (the A16 account block) is
+// refused 403 — the RTMP boundary authenticates a key, not a session, so the
+// block has to be enforced here. And the stream ID, which the anonymous
+// GET /live/{id} hands out, is refused 404 for a stream that is not already
+// live: it is a rename target, never a credential.
+func TestLiveIngestRefusesBlockedOwnerAndBareStreamID(t *testing.T) {
+	cfg := testConfig()
+	cfg.LiveIngestSecret = "s3cret"
+	srv := videoServerCfg(t, cfg)
+	tok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	var created createLiveStreamResponse
+	_ = json.Unmarshal(createLiveStream(srv, "ada", `{"title":"Show"}`, tok).Body.Bytes(), &created)
+	id, key := created.LiveStream.ID, created.StreamKey
+
+	// The public stream id is not a publish credential.
+	if r := ingestForm(srv, "/api/v1/live/ingest/start", id, "s3cret"); r.Code != http.StatusNotFound {
+		t.Errorf("publish by bare stream id = %d, want 404 (deny); body=%s", r.Code, r.Body.String())
+	}
+	var afterID liveStreamView
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live/"+id, tok).Body.Bytes(), &afterID)
+	if afterID.State != "offline" {
+		t.Errorf("state = %q after a refused id publish, want offline", afterID.State)
+	}
+
+	// A blocked owner's key is refused too, and the state is untouched.
+	liveFakeRepoBySrv[srv].ownerBlocked = true
+	if r := ingestForm(srv, "/api/v1/live/ingest/start", key, "s3cret"); r.Code != http.StatusForbidden {
+		t.Errorf("blocked owner publish = %d, want 403 (deny); body=%s", r.Code, r.Body.String())
+	}
+	var afterBlock liveStreamView
+	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live/"+id, tok).Body.Bytes(), &afterBlock)
+	if afterBlock.State != "offline" {
+		t.Errorf("state = %q after a blocked-owner publish, want offline", afterBlock.State)
+	}
+
+	// Unblocked, the key works and the stream goes live.
+	liveFakeRepoBySrv[srv].ownerBlocked = false
+	if r := ingestForm(srv, "/api/v1/live/ingest/start", key, "s3cret"); r.Code != http.StatusFound {
+		t.Fatalf("publish after the block is lifted = %d, want 302", r.Code)
 	}
 }

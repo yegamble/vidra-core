@@ -1062,6 +1062,18 @@ services:
   # Then publish to rtmp://localhost:1935/live/<stream-key> (the key from
   # POST /api/v1/channels/{handle}/live). Viewers watch via the api's
   # GET /api/v1/live/{id}/hls/master.m3u8 while the stream is live.
+  #
+  # The command creates /data/hls/rec AND plants a `.keep` file in it, and both
+  # halves are load-bearing (A26). nginx-rtmp does NOT create a missing
+  # `record_path` — it silently records nothing — so on a fresh `live_hls`
+  # volume every finished session produced no recording and the api's
+  # replay-to-VOD logged "no recording for finished session" forever. And an
+  # EMPTY `rec` is not enough either: `record_path` sits INSIDE `hls_path`, and
+  # the HLS cleanup that reclaims stale fragments walks the tree and rmdir()s
+  # empty subdirectories — measured removing a bare `rec` ~12 seconds after
+  # start, before any streamer could ever publish into it. `.keep` is invisible
+  # to both: the HLS cleanup only deletes `.m3u8`/`.ts`, and the api's recording
+  # store only accepts `<stream-id>*.flv|.mp4`.
   rtmp:
     image: alfg/nginx-rtmp:latest
     profiles: ["media"]
@@ -1078,6 +1090,7 @@ services:
       - |
         sed "s|__LIVE_INGEST_SECRET__|$$LIVE_INGEST_SECRET|g" \
           /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
+        mkdir -p /data/hls/rec && : > /data/hls/rec/.keep
         exec nginx -g 'daemon off;'
     volumes:
       - ./deploy/media/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
