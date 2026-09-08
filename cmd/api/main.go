@@ -691,6 +691,31 @@ func run() error {
 		)
 	}
 
+	// BOOT WRITE PROBE. EnsureBucket above is a HeadBucket, and every other
+	// storage check this process performs is a read — the ownership-marker GET,
+	// the emptiness list — so an S3 credential scoped to reads passes all of
+	// them. A24 booted an instance on exactly such a key: it came up green,
+	// served every page, and failed its first upload with a bare 500.
+	// storage.ProbeWrite has existed for this since the migration whose comment
+	// it carries (three minutes of work, then 1,321 failed avatar uploads on a
+	// read-only key) — it was simply never on the boot path.
+	//
+	// It does NOT abort boot. An instance that cannot store bytes can still
+	// serve every video it already has, and can still serve the admin console
+	// the operator needs in order to fix the credential; refusing to start would
+	// take away the fix along with the fault. It reports itself instead: the
+	// `storage` component of /readyz and the admin status page goes `down` (the
+	// instance reads `degraded` with a 200, this file's convention for every
+	// non-PostgreSQL dependency), the write path answers 503 storage_unavailable
+	// instead of a bare 500, and the worker defers claiming media jobs rather
+	// than burning their retry budget on an encode with nowhere to go.
+	//
+	// The probe object lives under storage.WriteProbePrefix, outside every
+	// swept prefix, and is removed again immediately.
+	storageWrite := storage.NewWriteHealth(blobs, storage.WriteProbeInterval)
+	_ = storageWrite.Probe(startCtx)
+	storageWrite.LogTransition(startCtx, logger, storage.WriteStatus{})
+
 	// Bucket ownership for media GC (phase-2 storage, item 1). Resolved here
 	// because it needs both halves of the question — the identity is in the
 	// database and the marker is in the store — and once, at boot, because a
@@ -1035,6 +1060,15 @@ func run() error {
 		},
 		uint64(cfg.TranscodingMinFreeScratchMB)<<20,
 	))
+	// The other destination a transcode writes to. The scratch floor above stops
+	// a claim when there is nowhere to WORK; this stops one when there is
+	// nowhere to PUT the result — a revoked key or a full bucket would otherwise
+	// spend a full encode and one of the job's five attempts per tick, and
+	// dead-letter the video permanently after five.
+	tcopts = append(tcopts, transcode.WithStorageWriteGate(func() (bool, string) {
+		ok, class := storageWrite.Writable()
+		return ok, string(class)
+	}))
 	tcopts = append(tcopts, transcode.WithJobTrace(jobTrace))
 	transcodesvc = transcode.NewService(db.Queries(), hlsTranscoder, tcopts...)
 	opts = append(opts, httpapi.WithTranscodeService(transcodesvc))
@@ -1549,6 +1583,13 @@ func run() error {
 	pollCtx, pollCancel := context.WithCancel(context.Background())
 	defer pollCancel()
 	go settingsPoller.Run(pollCtx, logger)
+	// The write probe re-runs on its OWN five-minute ticker rather than as a
+	// hook on the poll above, and unconditionally in every role. The poller is
+	// the wrong clock for two reasons: it is not wired at all in worker-role
+	// processes, and the worker is precisely the process whose ability to write
+	// must not go unwatched — a transcode can run for minutes before its first
+	// PUT discovers a key that was revoked while it worked.
+	go storageWrite.Run(pollCtx, logger)
 	// The role is on the line because the operator question this answers is
 	// "which halves of my fleet pick up an admin change?", and a log aggregator
 	// sees one copy of this message per process.
@@ -1562,6 +1603,10 @@ func run() error {
 	// admin surface. The polling itself, above, is unconditional.
 	if cfg.Role.ServesHTTP() {
 		opts = append(opts, httpapi.WithSettingsPoller(settingsPoller))
+		// The write verdict is api-side only for the same reason: the storage
+		// component is an HTTP surface. Every role still PROBES, above — the
+		// worker acts on its own verdict through the job-admission gate.
+		opts = append(opts, httpapi.WithStorageWriteHealth(storageWrite))
 		// And the FLEET half, which is what makes settings_sync a report on the
 		// deployment rather than on this process. The reader is api-side only
 		// because the page is; every role WRITES its row above.

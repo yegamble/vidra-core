@@ -52,26 +52,32 @@ func (l *Local) Path(key string) (string, error) {
 }
 
 // Put writes r to the object at key, creating parent directories.
+//
+// Every failure path is classified (see classify.go): a media root on a
+// read-only mount or owned by another uid is EACCES/EROFS — the local shape of
+// an S3 credential that can read but not write — and a full disk is ENOSPC. Both
+// used to arrive at the uploader as a bare 500 with the cause in the server log
+// only.
 func (l *Local) Put(_ context.Context, key string, r io.Reader) (int64, error) {
 	full, err := l.resolve(key)
 	if err != nil {
 		return 0, err
 	}
 	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
-		return 0, err
+		return 0, classifyLocal("put", err)
 	}
 	f, err := os.OpenFile(full, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o640)
 	if err != nil {
-		return 0, err
+		return 0, classifyLocal("put", err)
 	}
 	n, copyErr := io.Copy(f, r)
 	closeErr := f.Close()
 	if copyErr != nil {
 		_ = os.Remove(full) // don't leave a partial object
-		return 0, copyErr
+		return 0, classifyLocal("put", copyErr)
 	}
 	if closeErr != nil {
-		return 0, closeErr
+		return 0, classifyLocal("put", closeErr)
 	}
 	return n, nil
 }
@@ -87,7 +93,7 @@ func (l *Local) Open(_ context.Context, key string) (io.ReadCloser, error) {
 		if os.IsNotExist(err) {
 			return nil, ErrNotFound
 		}
-		return nil, err
+		return nil, classifyLocal("open", err)
 	}
 	return f, nil
 }
@@ -99,7 +105,7 @@ func (l *Local) Delete(_ context.Context, key string) error {
 		return err
 	}
 	if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
-		return err
+		return classifyLocal("delete", err)
 	}
 	return nil
 }
@@ -113,7 +119,7 @@ func (l *Local) DeletePrefix(_ context.Context, prefix string) error {
 	if err != nil {
 		return err
 	}
-	return os.RemoveAll(full)
+	return classifyLocal("delete", os.RemoveAll(full))
 }
 
 // ListKeys returns every object key stored under prefix (recursively), as

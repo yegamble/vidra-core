@@ -7,6 +7,9 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/vidra/vidra-core/internal/jobstatus"
+	"github.com/vidra/vidra-core/internal/storage"
 )
 
 // ErrorResponse is the single, consistent JSON error envelope returned by every
@@ -88,6 +91,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var rc *ReplaceConflictError
 	var su *SearchUnavailableError
 	var ssu *SessionStoreUnavailableError
+	var stg *storage.Error
 	var ale *ATProtoLoginError
 	var mtf *MailTestFailedError
 	var mnc *MailNotConfiguredError
@@ -143,6 +147,15 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusServiceUnavailable
 		message = "search is temporarily unavailable"
 		code = "search_unavailable"
+	case errors.As(err, &stg):
+		// A classified storage failure (internal/storage.Error): the credential
+		// cannot write, the destination is full, or the store cannot be reached.
+		// A17's typed-503 idiom, applied to the one refusal A24 measured as a
+		// bare 500 on the upload path — see storageUnavailableMessage for why
+		// the class and not the provider's sentence reaches the client.
+		status = http.StatusServiceUnavailable
+		message = storageUnavailableMessage(stg.Class)
+		code = "storage_unavailable"
 	case errors.As(err, &rc):
 		status = http.StatusConflict
 		message = rc.Reason
@@ -242,8 +255,17 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	// handler-provided message to the client — unless we already chose a
 	// known-safe code/message above.
 	if status >= http.StatusInternalServerError {
+		// REDACTED, through the same seam the worker uses (jobstatus.RedactDetail,
+		// reused rather than reimplemented). A24 found this line writing the full
+		// object key — `storage: s3: put "web-videos/<uuid>.mp4": Access Denied.`
+		// — where the worker's job logger writes `[redacted-key]` for the very
+		// same failure. Two loggers disagreeing about whether a key is loggable
+		// means the stricter one is decoration: whatever ships logs off this box
+		// gets the key from here instead. The redaction also strips URLs,
+		// credential-shaped pairs and email addresses, so a DSN or a recipient in
+		// a driver's error stops landing here too.
 		s.logger.Error("request failed",
-			"error", err,
+			"error", jobstatus.RedactDetail(err.Error()),
 			"method", c.Request().Method,
 			"path", c.Path(),
 			"status", status,
@@ -567,6 +589,32 @@ func (e *LiveNotConfiguredError) Error() string { return "live ingest is not con
 type IPFSDisabledError struct{}
 
 func (e *IPFSDisabledError) Error() string { return "ipfs mirroring is not enabled" }
+
+// storageUnavailableMessage is the operator sentence a storage refusal answers
+// with, one per class (see internal/storage.ErrorClass).
+//
+// It is built from the CLASS and never from the provider's error, which is the
+// whole point: `storage: s3: put "web-videos/<uuid>.mp4": Access Denied.` names
+// a bucket layout, a video id and a vendor, and A24 measured it reaching the
+// server log while the uploader got "an unexpected error occurred". These
+// sentences carry no bucket name, no key and no provider text, and they survive
+// the 5xx scrubber because the case above sets a stable code — the A17 idiom
+// (see LiveNotConfiguredError).
+//
+// They name the fix, not just the fault, because on a self-hosted instance the
+// person who hits this is very often the person who can fix it.
+func storageUnavailableMessage(class storage.ErrorClass) string {
+	switch class {
+	case storage.ClassWriteDenied:
+		return "this instance's media store refused to accept the file: the configured credential can read the store but not write to it, so nothing can be uploaded, generated or transcoded until that is fixed. Grant the storage key permission to put and delete objects (on Backblaze B2, writeFiles and deleteFiles are granted separately), or check that the configured bucket is the one the key is scoped to, then retry — nothing was stored and nothing was lost"
+	case storage.ClassQuotaExceeded:
+		return "this instance's media store has no room left — its bucket quota or its disk is full — so the file could not be stored. Free space or raise the quota, then retry: nothing was stored and nothing was lost"
+	case storage.ClassUnreachable:
+		return "this instance cannot reach its media store right now, so the file could not be stored. This is usually a network path or an endpoint setting rather than anything about the file; retry shortly — nothing was stored and nothing was lost"
+	default:
+		return "this instance's media store could not accept the file, so nothing was stored. The server log for this request has the store's own answer"
+	}
+}
 
 // codeForStatus maps an HTTP status to a stable, snake_case error code. Unknown
 // statuses fall back to a generic code derived from the class.

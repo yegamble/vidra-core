@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/ipfs"
+	"github.com/vidra/vidra-core/internal/jobstatus"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/retry"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -620,11 +621,11 @@ func (s *Service) ReevaluateUser(ctx context.Context, userID uuid.UUID) error {
 			// unlisting an owner moves their identity assets public→private, re-listing
 			// moves them back — both through the ledger transition, no cross-pin.
 			if perr := s.routePin(ctx, ref.ObjectKey, ref.Class, uuid.Nil, userID, net); perr != nil {
-				s.logger.Warn("ipfs_reeval_image_repin_failed", "object_key", ref.ObjectKey, "error", perr)
+				s.logger.Warn("ipfs_reeval_image_repin_failed", "object_key", jobstatus.RedactDetail(ref.ObjectKey), "error", perr)
 				failures++
 			}
 		} else if uerr := s.repo.EnqueueIPFSUnpin(ctx, ref.ObjectKey); uerr != nil {
-			s.logger.Warn("ipfs_reeval_image_unpin_failed", "object_key", ref.ObjectKey, "error", uerr)
+			s.logger.Warn("ipfs_reeval_image_unpin_failed", "object_key", jobstatus.RedactDetail(ref.ObjectKey), "error", uerr)
 			failures++
 		}
 	}
@@ -1039,7 +1040,7 @@ func (s *Service) process(ctx context.Context, nc netClient, row sqlcgen.ClaimDu
 	// private row (spec §8); this is the last-line assertion of that invariant.
 	if normalizeNetwork(row.Network) != nc.network {
 		s.logger.Warn("ipfs_route_mismatch", "row_network", row.Network, "drain_network", nc.network,
-			"object_key", row.ObjectKey)
+			"object_key", jobstatus.RedactDetail(row.ObjectKey))
 		_ = s.repo.RescheduleIPFSPin(ctx, sqlcgen.RescheduleIPFSPinParams{
 			ObjectKey:     row.ObjectKey,
 			NextAttemptAt: time.Now().UTC().Add(s.backoff(1)),
@@ -1068,7 +1069,7 @@ func (s *Service) pin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPF
 	rc, err := s.blobs.Open(ctx, row.ObjectKey)
 	if err != nil {
 		s.recordFailure(ctx, row, "open source object failed")
-		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
 			"attempts", row.Attempts+1, "reason", "open_source", "error", err)
 		return false
 	}
@@ -1076,7 +1077,7 @@ func (s *Service) pin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPF
 	_ = rc.Close()
 	if err != nil {
 		s.recordFailure(ctx, row, "add+pin rpc failed")
-		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
 			"attempts", row.Attempts+1, "reason", "add_pin", "error", err)
 		return false
 	}
@@ -1084,7 +1085,7 @@ func (s *Service) pin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPF
 		ObjectKey: row.ObjectKey, Cid: res.CID, CarRoot: "", ByteSize: res.Size,
 	})
 	if err != nil {
-		s.logger.Warn("ipfs mark pinned failed", "object_key", row.ObjectKey, "error", err)
+		s.logger.Warn("ipfs mark pinned failed", "object_key", jobstatus.RedactDetail(row.ObjectKey), "error", err)
 		return false
 	}
 	if state != "pinned" {
@@ -1102,7 +1103,7 @@ func (s *Service) pin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPF
 	// Info level carries NO cid (CIDs are public capability handles — no spam);
 	// the cid is debug-only.
 	s.logger.Info("ipfs_pin_ok", "network", nc.network, "media_class", row.MediaClass, "byte_size", res.Size, "attempts", row.Attempts+1)
-	s.logger.Debug("ipfs_pin_ok cid", "object_key", row.ObjectKey, "cid", res.CID)
+	s.logger.Debug("ipfs_pin_ok cid", "object_key", jobstatus.RedactDetail(row.ObjectKey), "cid", res.CID)
 	return true
 }
 
@@ -1118,7 +1119,7 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 	lister, ok := s.blobs.(storage.ObjectLister)
 	if !ok {
 		s.recordFailure(ctx, row, "backend cannot list a directory tree")
-		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
 			"attempts", row.Attempts+1, "reason", "no_object_lister")
 		return false
 	}
@@ -1126,7 +1127,7 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 	keys, err := lister.ListKeys(ctx, prefix)
 	if err != nil {
 		s.recordFailure(ctx, row, "list directory tree failed")
-		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
 			"attempts", row.Attempts+1, "reason", "list_tree", "error", err)
 		return false
 	}
@@ -1149,14 +1150,14 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 	}()
 	if len(entries) == 0 {
 		s.recordFailure(ctx, row, "hls tree is empty")
-		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
 			"attempts", row.Attempts+1, "reason", "empty_tree")
 		return false
 	}
 	res, err := nc.client.AddDirectory(ctx, entries)
 	if err != nil {
 		s.recordFailure(ctx, row, "directory add+pin rpc failed")
-		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
 			"attempts", row.Attempts+1, "reason", "add_dir", "error", err)
 		return false
 	}
@@ -1164,7 +1165,7 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 		ObjectKey: row.ObjectKey, Cid: res.CID, CarRoot: res.CID, ByteSize: res.Size,
 	})
 	if err != nil {
-		s.logger.Warn("ipfs mark pinned failed", "object_key", row.ObjectKey, "error", err)
+		s.logger.Warn("ipfs mark pinned failed", "object_key", jobstatus.RedactDetail(row.ObjectKey), "error", err)
 		return false
 	}
 	if state != "pinned" {
@@ -1179,7 +1180,7 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 	s.swapUnpin(ctx, nc, row.CarRoot, res.CID, row.ObjectKey)
 	s.logger.Info("ipfs_pin_ok", "network", nc.network, "media_class", row.MediaClass, "byte_size", res.Size,
 		"attempts", row.Attempts+1, "files", len(entries))
-	s.logger.Debug("ipfs_pin_ok cid", "object_key", row.ObjectKey, "cid", res.CID)
+	s.logger.Debug("ipfs_pin_ok cid", "object_key", jobstatus.RedactDetail(row.ObjectKey), "cid", res.CID)
 	return true
 }
 
@@ -1194,7 +1195,7 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 // when the node pin was actually removed (row reached the 'unpinned' terminal).
 func (s *Service) pinRacedUnpin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPFSPinsRow, newCID, oldCID, racedState string) bool {
 	// Structured, CID-free at info: the CID is a public capability handle.
-	s.logger.Warn("ipfs_pin_raced_unpin", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
+	s.logger.Warn("ipfs_pin_raced_unpin", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
 		"raced_state", racedState, "attempts", row.Attempts+1)
 	// A superseded prior root (re-transcode / webm refresh in flight) is also
 	// orphaned by this add — clean it (reference-checked, no-op when absent/unchanged).
@@ -1223,13 +1224,13 @@ func (s *Service) swapUnpin(ctx context.Context, nc netClient, oldCID, newCID, o
 		return
 	}
 	if err := nc.client.Unpin(ctx, oldCID); err != nil {
-		s.logger.Warn("ipfs_unpin_failed", "network", nc.network, "object_key", objectKey, "reason", "swap_superseded", "error", err)
+		s.logger.Warn("ipfs_unpin_failed", "network", nc.network, "object_key", jobstatus.RedactDetail(objectKey), "reason", "swap_superseded", "error", err)
 		return
 	}
 	// Mirror the node unpin to the cluster (best-effort) so a superseded CID does
 	// not linger replicated.
 	s.clusterUnpin(ctx, nc, oldCID)
-	s.logger.Info("ipfs_unpin_ok", "network", nc.network, "object_key", objectKey, "reason", "superseded")
+	s.logger.Info("ipfs_unpin_ok", "network", nc.network, "object_key", jobstatus.RedactDetail(objectKey), "reason", "superseded")
 }
 
 // clusterPin best-effort replicates a node-pinned CID across the IPFS Cluster
@@ -1327,14 +1328,14 @@ func (s *Service) unpin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueI
 	if shared == 0 {
 		if err := nc.client.Unpin(ctx, row.Cid); err != nil {
 			s.recordFailure(ctx, row, "unpin rpc failed")
-			s.logger.Warn("ipfs_unpin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", row.ObjectKey,
+			s.logger.Warn("ipfs_unpin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
 				"attempts", row.Attempts+1, "error", err)
 			return false
 		}
 		// Mirror the node unpin to the cluster (best-effort).
 		s.clusterUnpin(ctx, nc, row.Cid)
 	} else {
-		s.logger.Debug("ipfs unpin skipped: cid still referenced", "object_key", row.ObjectKey, "shared", shared)
+		s.logger.Debug("ipfs unpin skipped: cid still referenced", "object_key", jobstatus.RedactDetail(row.ObjectKey), "shared", shared)
 	}
 	if err := s.repo.MarkIPFSPinUnpinned(ctx, row.ObjectKey); err != nil {
 		return false

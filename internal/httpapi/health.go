@@ -87,7 +87,50 @@ func (s *Server) componentHealth(ctx context.Context) (map[string]componentStatu
 	check("postgres", s.db)
 	check("redis", s.rdb)
 	components["mfa_kek"] = s.mfaKEKStatus()
+	components["storage"] = s.storageWriteStatus()
+	if components["storage"].Status == "down" {
+		healthy = false
+	}
 	return components, healthy
+}
+
+// storageWriteStatus reports whether this instance can still store a byte.
+//
+// It is on the CHEAP probe — the one /readyz runs several times a minute —
+// for the reason mfa_kek is: it costs no round trip. The probe itself runs on
+// its own five-minute ticker inside storage.WriteHealth, and this is a read of
+// the record it keeps. Turning readiness into a PUT would be the opposite
+// trade: a health check that writes to the object store as often as the
+// balancer asks.
+//
+// It is "down" rather than "degraded" because a store that will not accept a
+// write is not impaired, it is unable: every upload, every generated thumbnail,
+// every caption and every transcode output fails. What that does to READINESS is
+// a separate decision, and this file's existing convention makes it: only
+// PostgreSQL takes an instance out of rotation (see handleReady). A storage
+// refusal therefore reports the instance "degraded" with a 200 — exactly as a
+// Redis outage does — because the instance still serves every read, every watch
+// page and the admin console an operator needs in order to FIX it, and 503ing on
+// a shared bucket's refusal would empty every replica out of rotation at once.
+func (s *Server) storageWriteStatus() componentStatus {
+	if s.storageWrite == nil {
+		return componentStatus{Status: "not_configured"}
+	}
+	st := s.storageWrite.Status()
+	switch {
+	case !st.Probed:
+		// Wired but not yet asked. Not a fault; the same rule as a nil Pinger.
+		return componentStatus{Status: "not_configured"}
+	case st.OK && st.Leaked:
+		return componentStatus{
+			Status: "degraded",
+			Error:  "the object store accepts writes but would not let this instance delete its own scratch object, so media garbage collection and video deletion will leave objects behind. On Backblaze B2 deleteFiles is granted separately from writeFiles; grant the delete permission to the configured key.",
+		}
+	case st.OK:
+		return componentStatus{Status: "ok"}
+	default:
+		return componentStatus{Status: "down", Error: storageUnavailableMessage(st.Class)}
+	}
 }
 
 // mfaKEKStatus reports the boot-time MFA-KEK sample (A37-2). It is on the CHEAP

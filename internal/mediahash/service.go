@@ -26,6 +26,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/vidra/vidra-core/internal/jobstatus"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -111,7 +112,7 @@ func (s *Service) BackfillOnce(ctx context.Context, batch int32) (Result, error)
 			// sentinel is what turns that from an error retried forever into a
 			// fact a later consistency check can act on.
 			s.logger.WarnContext(ctx, "media hash backfill: object missing for stored file",
-				"video_file_id", row.ID.String(), "storage_key", row.StorageKey)
+				"video_file_id", row.ID.String(), "storage_key", jobstatus.RedactDetail(row.StorageKey))
 			if uerr := s.repo.SetVideoFileSHA256(ctx, sqlcgen.SetVideoFileSHA256Params{
 				ID: row.ID, Sha256: SentinelMissing,
 			}); uerr != nil {

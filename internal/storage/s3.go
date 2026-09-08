@@ -115,7 +115,7 @@ func NewS3(cfg S3Config) (*S3, error) {
 func (s *S3) EnsureBucket(ctx context.Context) (created bool, err error) {
 	ok, err := s.client.BucketExists(ctx, s.bucket)
 	if err != nil {
-		return false, fmt.Errorf("storage: s3: check bucket %q: %w", s.bucket, err)
+		return false, classifyS3("check-bucket", fmt.Errorf("storage: s3: check bucket %q: %w", s.bucket, err))
 	}
 	if ok {
 		return false, nil
@@ -126,7 +126,7 @@ func (s *S3) EnsureBucket(ctx context.Context) (created bool, err error) {
 		if ok2, err2 := s.client.BucketExists(ctx, s.bucket); err2 == nil && ok2 {
 			return false, nil
 		}
-		return false, fmt.Errorf("storage: s3: create bucket %q: %w", s.bucket, err)
+		return false, classifyS3("create-bucket", fmt.Errorf("storage: s3: create bucket %q: %w", s.bucket, err))
 	}
 	return true, nil
 }
@@ -141,7 +141,7 @@ func (s *S3) IsEmpty(ctx context.Context) (bool, error) {
 		MaxKeys:   1,
 	}) {
 		if obj.Err != nil {
-			return false, fmt.Errorf("storage: s3: list bucket %q: %w", s.bucket, obj.Err)
+			return false, classifyS3("list", fmt.Errorf("storage: s3: list bucket %q: %w", s.bucket, obj.Err))
 		}
 		return false, nil
 	}
@@ -160,7 +160,7 @@ func (s *S3) IsEmpty(ctx context.Context) (bool, error) {
 func (s *S3) BucketExists(ctx context.Context) (bool, error) {
 	ok, err := s.client.BucketExists(ctx, s.bucket)
 	if err != nil {
-		return false, fmt.Errorf("storage: s3: check bucket %q: %w", s.bucket, err)
+		return false, classifyS3("check-bucket", fmt.Errorf("storage: s3: check bucket %q: %w", s.bucket, err))
 	}
 	return ok, nil
 }
@@ -220,7 +220,7 @@ func (s *S3) PutSized(ctx context.Context, key string, r io.Reader, size int64) 
 	}
 	info, err := s.client.PutObject(ctx, s.bucket, key, r, size, opts)
 	if err != nil {
-		return 0, fmt.Errorf("storage: s3: put %q: %w", key, err)
+		return 0, classifyS3("put", fmt.Errorf("storage: s3: put %q: %w", key, err))
 	}
 	return info.Size, nil
 }
@@ -471,7 +471,7 @@ func (s *S3) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 	}
 	obj, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("storage: s3: open %q: %w", key, err)
+		return nil, classifyS3("open", fmt.Errorf("storage: s3: open %q: %w", key, err))
 	}
 	// GetObject is lazy — force the first request so a missing object surfaces
 	// here as ErrNotFound (matching Local) rather than on the first Read. The
@@ -483,7 +483,7 @@ func (s *S3) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 		if isS3NotFound(err) {
 			return nil, ErrNotFound
 		}
-		return nil, fmt.Errorf("storage: s3: open %q: %w", key, err)
+		return nil, classifyS3("open", fmt.Errorf("storage: s3: open %q: %w", key, err))
 	}
 	return &s3Object{Object: obj, total: info.Size}, nil
 }
@@ -497,7 +497,7 @@ func (s *S3) Delete(ctx context.Context, key string) error {
 		if isS3NotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("storage: s3: delete %q: %w", key, err)
+		return classifyS3("delete", fmt.Errorf("storage: s3: delete %q: %w", key, err))
 	}
 	return nil
 }
@@ -516,10 +516,10 @@ func (s *S3) DeletePrefix(ctx context.Context, prefix string) error {
 		Recursive: true,
 	}) {
 		if obj.Err != nil {
-			return fmt.Errorf("storage: s3: list %q: %w", prefix, obj.Err)
+			return classifyS3("list", fmt.Errorf("storage: s3: list %q: %w", prefix, obj.Err))
 		}
 		if err := s.client.RemoveObject(ctx, s.bucket, obj.Key, minio.RemoveObjectOptions{}); err != nil && !isS3NotFound(err) {
-			return fmt.Errorf("storage: s3: delete %q: %w", obj.Key, err)
+			return classifyS3("delete", fmt.Errorf("storage: s3: delete %q: %w", obj.Key, err))
 		}
 	}
 	return s.Delete(ctx, bare)
@@ -539,7 +539,7 @@ func (s *S3) ListKeys(ctx context.Context, prefix string) ([]string, error) {
 		Recursive: true,
 	}) {
 		if obj.Err != nil {
-			return nil, fmt.Errorf("storage: s3: list %q: %w", prefix, obj.Err)
+			return nil, classifyS3("list", fmt.Errorf("storage: s3: list %q: %w", prefix, obj.Err))
 		}
 		keys = append(keys, obj.Key)
 	}
@@ -555,7 +555,7 @@ func (s *S3) Exists(ctx context.Context, key string) (bool, error) {
 		if isS3NotFound(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("storage: s3: stat %q: %w", key, err)
+		return false, classifyS3("stat", fmt.Errorf("storage: s3: stat %q: %w", key, err))
 	}
 	return true, nil
 }
