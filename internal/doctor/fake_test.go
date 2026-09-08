@@ -310,6 +310,11 @@ func (h *fakeHost) healthyRespond(name string, args []string) (Output, error) {
 	// fail a test instead of only failing on a droplet.
 	case name == "docker" && strings.HasSuffix(joined, "exec -T api /app/api migrate version"):
 		return Output{Stdout: "version=42 dirty=false\n"}, nil
+	// A bare integer on stdout and nothing else — the contract cmd/api's
+	// `embedded-max` documents. The healthy deployment's image carries exactly
+	// the migration its ledger is at, which is what a matched pairing looks like.
+	case name == "docker" && strings.HasSuffix(joined, "exec -T api /app/api migrate embedded-max"):
+		return Output{Stdout: "42\n"}, nil
 	case name == "docker" && strings.Contains(joined, "exec -T postgres psql"):
 		// `psql -tA` prints the bare value and nothing else. Two different
 		// queries reach the bundled Postgres this way, so the answer depends on

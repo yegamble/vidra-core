@@ -154,6 +154,48 @@ func (q *Queries) GetUserMFA(ctx context.Context, userID uuid.UUID) (UserMfa, er
 	return i, err
 }
 
+const listRecentUserMFASecrets = `-- name: ListRecentUserMFASecrets :many
+SELECT user_id, totp_secret_sealed
+FROM user_mfa
+ORDER BY created_at DESC, user_id
+LIMIT $1
+`
+
+type ListRecentUserMFASecretsRow struct {
+	UserID           uuid.UUID `json:"user_id"`
+	TotpSecretSealed string    `json:"totp_secret_sealed"`
+}
+
+// The newest stored TOTP secrets, for the boot-time KEK sanity check (A37-2).
+//
+// A KEK that can decrypt NOTHING this database holds is invisible until the
+// first second-factor login — a restore that brought the dump without its
+// config archive boots clean, answers /readyz 200, and serves every password
+// login for as long as nobody with TOTP tries to sign in. One row answers the
+// question ("is this the KEK that sealed this database?") as well as ten
+// thousand, so this is a bounded SAMPLE and never a scan: newest first, because
+// those are the rows most likely to have been sealed by the key the operator
+// believes is configured.
+func (q *Queries) ListRecentUserMFASecrets(ctx context.Context, rowLimit int32) ([]ListRecentUserMFASecretsRow, error) {
+	rows, err := q.db.Query(ctx, listRecentUserMFASecrets, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRecentUserMFASecretsRow
+	for rows.Next() {
+		var i ListRecentUserMFASecretsRow
+		if err := rows.Scan(&i.UserID, &i.TotpSecretSealed); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertUserMFA = `-- name: UpsertUserMFA :one
 INSERT INTO user_mfa (user_id, totp_secret_sealed, enabled)
 VALUES ($1, $2, FALSE)

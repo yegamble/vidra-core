@@ -6,6 +6,7 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -85,7 +86,36 @@ func (s *Server) componentHealth(ctx context.Context) (map[string]componentStatu
 
 	check("postgres", s.db)
 	check("redis", s.rdb)
+	components["mfa_kek"] = s.mfaKEKStatus()
 	return components, healthy
+}
+
+// mfaKEKStatus reports the boot-time MFA-KEK sample (A37-2). It is on the CHEAP
+// probe — the one /readyz runs several times a minute — because it costs no
+// round trip at all: the sample was taken once at boot and the answer cannot
+// change while the process lives.
+//
+// It is "degraded" and never "down", which is a deliberate decision rather than
+// a softening. A KEK that cannot open this database's TOTP secrets breaks
+// exactly one thing, the second-factor challenge; every password login, every
+// read and every admin page still work. Taking the instance out of rotation
+// would remove the operator's own way in — and the fix (put the right KEK back
+// and restart) is only reachable through an api that is still serving.
+func (s *Server) mfaKEKStatus() componentStatus {
+	if s.mfaKEK == nil {
+		return componentStatus{Status: "not_configured"}
+	}
+	if !s.mfaKEK.Mismatch() {
+		return componentStatus{Status: "ok"}
+	}
+	// Counts only. Naming the accounts here would put a list of who holds a
+	// second factor on an unauthenticated probe.
+	return componentStatus{
+		Status: "degraded",
+		Error: fmt.Sprintf(
+			"%d of the %d sampled TOTP secrets cannot be decrypted with the configured MFA_KEY_KEK, so those accounts' second factor can never verify (their challenge is refused exactly like a wrong code). The usual cause is a database restored without the config archive that carries the KEK, or with a different one. Recovery codes still work and an admin can reset a second factor; the fix is to put the KEK that sealed this database back in the environment and restart.",
+			s.mfaKEK.Undecryptable, s.mfaKEK.Sealed),
+	}
 }
 
 // handleReady answers the load balancer's question — "should I send this
@@ -145,8 +175,12 @@ func (s *Server) readiness(ctx context.Context) readinessSnapshot {
 	case components["postgres"].Status == "down":
 		snap.resp.Status = "unavailable"
 		snap.code = http.StatusServiceUnavailable
-	case anyComponentDown(components):
-		// Reachable database, something else down. Still serving.
+	case anyComponentDown(components), anyComponentDegraded(components):
+		// Reachable database, something else down or impaired. Still serving —
+		// and still 200, because the balancer's question is answered either way.
+		// A DEGRADED component belongs in the top line too: a body that reads
+		// "ok" while one of its components does not is a body an operator scans
+		// past.
 		snap.resp.Status = "degraded"
 	}
 	s.readinessCached = &snap
@@ -159,6 +193,17 @@ func (s *Server) readiness(ctx context.Context) readinessSnapshot {
 func anyComponentDown(components map[string]componentStatus) bool {
 	for _, c := range components {
 		if c.Status == "down" {
+			return true
+		}
+	}
+	return false
+}
+
+// anyComponentDegraded reports whether any probed dependency answered
+// "degraded" — impaired but not a reason to stop routing here.
+func anyComponentDegraded(components map[string]componentStatus) bool {
+	for _, c := range components {
+		if c.Status == "degraded" {
 			return true
 		}
 	}

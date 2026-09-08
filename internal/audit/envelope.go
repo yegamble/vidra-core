@@ -44,9 +44,10 @@ var (
 	// classifications. Identifiers belong in resource_id/job_id/pipeline_run_id;
 	// user prose, URLs, payloads, headers and process output never belong here.
 	allowedMetadataKeys = stringSet(
-		"attempt", "auth_method", "changed_key", "changed_keys", "count",
-		"dry_run", "mode", "network", "outcome", "policy", "provider",
-		"reason_code", "reason_provided", "resolver", "source_version", "stage",
+		"attempt", "auth_method", "breaker_tripped", "changed_key",
+		"changed_keys", "count", "dry_run", "mode", "network", "outcome",
+		"policy", "provider", "reason_code", "reason_provided", "resolver",
+		"source_version", "stage",
 	)
 
 	// Safe before/after values are limited to low-sensitivity state/config fields.

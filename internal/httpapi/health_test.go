@@ -6,10 +6,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/config"
 )
 
@@ -256,5 +258,61 @@ func TestNodeInfo(t *testing.T) {
 	}
 	if body.Instance.Name != "Vidra Test" {
 		t.Errorf("instance.name = %q, want Vidra Test", body.Instance.Name)
+	}
+}
+
+// --- the MFA-KEK component (A37-2) --------------------------------------------
+
+// A wrong or missing MFA_KEY_KEK used to have NO surface at all: the key is
+// validated for shape and never against a stored ciphertext, so a restored api
+// booted, answered 200, and served everything except a second-factor login.
+func TestReadyzReportsAKEKThatDecryptsNothingWithoutFailingReadiness(t *testing.T) {
+	srv := New(testConfig(), fakePinger{}, fakePinger{},
+		WithMFAKEKReport(auth.MFAKEKReport{Sampled: 3, Sealed: 3, Undecryptable: 3}))
+	code, body := getReadyz(t, srv)
+
+	// Still 200. An operator who has just restored with the wrong KEK must be
+	// able to reach the api to fix it — taking it out of rotation is the one
+	// thing that would stop them.
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — a KEK mismatch must never fail readiness", code)
+	}
+	if body.Status != "degraded" {
+		t.Errorf("body status = %q, want degraded", body.Status)
+	}
+	kek := body.Components["mfa_kek"]
+	if kek.Status != "degraded" {
+		t.Fatalf("mfa_kek = %+v, want degraded", kek)
+	}
+	if !strings.Contains(kek.Error, "MFA_KEY_KEK") || !strings.Contains(kek.Error, "3") {
+		t.Errorf("mfa_kek error does not name the key and the count: %q", kek.Error)
+	}
+}
+
+func TestReadyzMFAKEKIsOkWhenEverySampledSecretOpens(t *testing.T) {
+	srv := New(testConfig(), fakePinger{}, fakePinger{},
+		WithMFAKEKReport(auth.MFAKEKReport{Sampled: 4, Sealed: 4}))
+	code, body := getReadyz(t, srv)
+	if code != http.StatusOK || body.Status != "ok" {
+		t.Fatalf("code=%d status=%q, want 200/ok", code, body.Status)
+	}
+	if got := body.Components["mfa_kek"].Status; got != "ok" {
+		t.Errorf("mfa_kek = %q, want ok", got)
+	}
+}
+
+// An install where nobody has ever enrolled, and one whose process never ran the
+// check, are both "nothing to say" — not a fault.
+func TestReadyzMFAKEKIsNotConfiguredWhenTheCheckDidNotRun(t *testing.T) {
+	srv := New(testConfig(), fakePinger{}, fakePinger{})
+	_, body := getReadyz(t, srv)
+	if got := body.Components["mfa_kek"].Status; got != "not_configured" {
+		t.Errorf("mfa_kek = %q, want not_configured", got)
+	}
+
+	empty := New(testConfig(), fakePinger{}, fakePinger{}, WithMFAKEKReport(auth.MFAKEKReport{}))
+	_, body = getReadyz(t, empty)
+	if got := body.Components["mfa_kek"].Status; got != "ok" {
+		t.Errorf("mfa_kek with no enrolled account = %q, want ok", got)
 	}
 }

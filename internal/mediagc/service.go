@@ -26,11 +26,13 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -367,6 +369,28 @@ func (r Result) Summary() string {
 	}
 	return fmt.Sprintf("mode=%s scanned=%d orphans=%d orphan_pct=%d deleted=%d breaker=%t ownership=%s forced_dry_run=%t forced_reason=%s",
 		r.Mode, r.Scanned, len(r.Orphans), r.OrphanPercent, r.Deleted, r.BreakerTripped, r.BucketOwnership, r.ForcedDryRun, reason)
+}
+
+// AuditFields is the sweep's outcome as QUERYABLE audit metadata, beside the
+// prose Summary() carries.
+//
+// A11's close-out recorded that a sweep writes no job_runs row — job_runs is a
+// trigger-maintained projection of the durable QUEUE tables, and a scheduled
+// sweep has no queue row to project, so no scheduled pass in this codebase
+// records one and the admin jobs surfaces cannot show this work at all. The
+// audit row is therefore the ONLY operator-facing record of a sweep, and until
+// now the two facts that decide whether it deleted anything — was it a dry run,
+// and did the orphan-ratio breaker refuse it — lived only inside a formatted
+// sentence, where "show me every sweep that tripped the breaker" means grepping
+// prose.
+//
+// Two fields, not eight: these are the two that change what the sweep DID.
+// Everything else stays in the reason.
+func (r Result) AuditFields() []audit.MetadataField {
+	return []audit.MetadataField{
+		{Key: "dry_run", Value: strconv.FormatBool(r.DryRun)},
+		{Key: "breaker_tripped", Value: strconv.FormatBool(r.BreakerTripped)},
+	}
 }
 
 // sweptPrefixes are the ONLY prefixes the sweep lists. Anything stored outside

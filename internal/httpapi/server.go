@@ -166,6 +166,13 @@ type Server struct {
 	// Nil — unit tests, embedders, any process without the table — omits the
 	// process list and leaves settings_sync exactly as it was.
 	processFleet processFleetReader
+	// mfaKEK is the boot-time MFA-KEK sample (A37-2), or nil when the check was
+	// not run — unit tests, embedders, any process without an auth service. A
+	// SNAPSHOT on purpose: the question it answers ("is the configured KEK the
+	// one that sealed this database?") cannot change while the process lives,
+	// and re-reading user_mfa on every status page would spend a query to
+	// re-derive a constant.
+	mfaKEK *auth.MFAKEKReport
 	// searchClient talks to the vidra-search internal API (search-service W4/W9).
 	// Nil when SEARCH_SERVICE_URL is unset — every search surface then degrades
 	// to local behaviour. searchEnabled() gates on it; useSearchService() folds in
@@ -835,6 +842,18 @@ func WithSettingsPoller(p settingsSyncHealth) Option {
 // it did before — this replica's own poller and nothing else.
 func WithProcessFleet(f processFleetReader) Option {
 	return func(s *Server) { s.processFleet = f }
+}
+
+// WithMFAKEKReport records the boot-time MFA-KEK sample (A37-2) so /readyz and
+// the admin status page can report a KEK that decrypts nothing this database
+// holds.
+//
+// Without it the fault has no surface at all: the key is only ever validated for
+// shape, so an api restored with the wrong MFA_KEY_KEK boots, probes healthy and
+// serves everything except a second-factor login — and nobody learns that until
+// the first person with TOTP tries to sign in.
+func WithMFAKEKReport(r auth.MFAKEKReport) Option {
+	return func(s *Server) { s.mfaKEK = &r }
 }
 
 // WithSearchClient wires the vidra-search internal-API gateway (search-service

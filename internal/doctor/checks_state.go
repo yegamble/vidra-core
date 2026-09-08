@@ -61,7 +61,27 @@ func (s *state) ledgerFinding(ctx context.Context, label, table, consumer string
 			"the database is unreachable: "+reachSummary(err),
 			"check DATABASE_URL in "+s.envRel+" and that this host can reach the managed instance (the provider's trusted-sources list is the usual culprit). Nothing the api does works until this does")
 	}
-	return ledgerStatusFinding(label, table, consumer, st, s.envRel)
+	return ledgerStatusFinding(label, table, consumer, st, s.envRel, s.hostEmbeddedMax(label))
+}
+
+// hostEmbeddedMax is the newest migration THIS binary carries, for the
+// ledger-ahead comparison below. It is the same source the migrator itself
+// reads — dbmigrate.EmbeddedMax over the embedded FS — so doctor and
+// `migrate embedded-max` can never disagree about the number.
+//
+// vidra-search's migrations live in that repo and are compiled into ITS binary;
+// this one carries none of them. So the search ledger gets 0 (unknown) and the
+// comparison stays silent rather than measuring that ledger against core's
+// migrations, which is the one way this check could produce a confident lie.
+func (s *state) hostEmbeddedMax(label string) uint {
+	if label != "core" {
+		return 0
+	}
+	max, err := dbmigrate.EmbeddedMax()
+	if err != nil {
+		return 0
+	}
+	return max
 }
 
 // apiEntrypoint is the path of the api binary INSIDE the release image — the
@@ -116,10 +136,33 @@ func (s *state) ledgerViaContainer(ctx context.Context, label, table string) Fin
 	if !ok {
 		return skipf("the api container answered with something `migrate version` does not print: " + firstLine(text))
 	}
-	return ledgerStatusFinding(label, "", "the api", st, s.envRel)
+	// The number that matters here is the API IMAGE's, not this CLI's: the
+	// container is what serves, and an operator can easily be running a `vidra`
+	// built from a different checkout than the tag pinned in the env file. It is
+	// the same `migrate embedded-max` deploy/restore.sh asks the image, over the
+	// exec that just answered `migrate version`.
+	return ledgerStatusFinding(label, "", "the api", st, s.envRel, s.imageEmbeddedMax(ctx))
 }
 
-func ledgerStatusFinding(label, table, consumer string, st dbmigrate.Status, envRel string) Finding {
+// imageEmbeddedMax asks the running api image what it embeds, or 0 when it
+// cannot say — a release cut before the subcommand existed, a container that has
+// gone away between the two execs, anything that is not a bare integer. 0 makes
+// the ledger-ahead check silent, which is the right failure: "I could not check"
+// must never render as "checked and fine".
+func (s *state) imageEmbeddedMax(ctx context.Context) uint {
+	args := s.composeArgs("exec", "-T", "api", apiEntrypoint, "migrate", "embedded-max")
+	out, err := s.opt.Host.Run(ctx, s.root, "docker", args...)
+	if err != nil || out.ExitCode != 0 {
+		return 0
+	}
+	n, perr := strconv.ParseUint(strings.TrimSpace(out.Stdout), 10, 32)
+	if perr != nil {
+		return 0
+	}
+	return uint(n)
+}
+
+func ledgerStatusFinding(label, table, consumer string, st dbmigrate.Status, envRel string, embeddedMax uint) Finding {
 	name := dbmigrate.Table
 	if table != "" {
 		name = table
@@ -133,6 +176,22 @@ func ledgerStatusFinding(label, table, consumer string, st dbmigrate.Status, env
 		return warnf(
 			fmt.Sprintf("no migration has ever run against this database (%s is empty), so %s has no schema to read", name, consumer),
 			"deploy once: the migration one-shot runs before the api and brings the schema up. If this is a restored database, restore it before deploying rather than migrating an empty one")
+	case embeddedMax > 0 && st.Version > embeddedMax:
+		// A38R-1. The ledger read is TRUE and, on its own, useless: "at version
+		// 136 and clean" is what a matched deployment prints too, and the one
+		// fact that distinguishes a rolled-back stack from a healthy one is the
+		// comparison nobody was making. The migration one-shot says it loudly
+		// (dbmigrate.LedgerAheadMessage) and then exits; doctor is what an
+		// operator runs AFTER the incident, and it was the quiet one.
+		//
+		// WARN and not FAIL, deliberately: this state is SUPPORTED. One release
+		// of backward compatibility is the release policy, the migrator no-ops
+		// rather than failing, and an operator who has just completed an app-only
+		// rollback is looking at exactly this. It is a state to be told about,
+		// not a fault to be stopped by.
+		return warnf(
+			fmt.Sprintf("schema ledger %d is ahead of this binary's newest migration %d — this release can run on it, but a newer release was deployed; roll forward or expect no new migrations to apply", st.Version, embeddedMax),
+			fmt.Sprintf("if this is where you meant to be (an app-only rollback), nothing needs doing — the migration one-shot logs %q and exits 0. Otherwise put the newer tag back in %s and redeploy. The ledger is not rolled back by either move: `migrate up` never walks backwards", dbmigrate.LedgerAheadMessage(st.Version, embeddedMax), envRel))
 	default:
 		return okf(fmt.Sprintf("the %s migration ledger (%s) is at version %d and clean", label, name, st.Version))
 	}

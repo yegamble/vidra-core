@@ -45,7 +45,42 @@ var (
 	// ErrInvalidMFAToken means the mfa_token is missing, tampered, expired, or
 	// no longer matches an MFA-enabled active account.
 	ErrInvalidMFAToken = errors.New("auth: invalid or expired mfa token")
+	// ErrMFASecretUndecryptable means the stored TOTP secret is `enc:`
+	// ciphertext the configured KEK cannot open — the signature of a database
+	// restored WITHOUT the config archive that carries MFA_KEY_KEK, or with the
+	// wrong one. It is an operator fault and never the user's, and it is the one
+	// failure a restore can hide for as long as nobody with a second factor
+	// tries to sign in (A37 close-out, finding A37-1).
+	//
+	// Every path that meets it must fail CLOSED and INDISTINGUISHABLY: the
+	// caller sees exactly what a wrong code produces, because an answer that
+	// singled this case out would tell an unauthenticated caller which accounts
+	// an instance can no longer verify. The whole signal goes to the operator's
+	// log instead. Recovery codes are SHA-256 hashes, not KEK-sealed, so they
+	// keep working — the account is not locked out.
+	ErrMFASecretUndecryptable = errors.New("auth: totp secret cannot be decrypted with the configured MFA KEK")
 )
+
+// MFASecretUndecryptableError names the account whose sealed TOTP secret could
+// not be opened, so the HTTP layer can write ONE actionable operator line —
+// which account, which failure class — while the response stays identical to a
+// wrong code's.
+//
+// Cause is the cipher's own message ("cipher: message authentication failed",
+// "secretbox: base64: illegal base64 data at input byte 7"), which names the
+// shape of the failure and never carries the ciphertext or any key material.
+type MFASecretUndecryptableError struct {
+	UserID uuid.UUID
+	Cause  string
+}
+
+func (e *MFASecretUndecryptableError) Error() string {
+	return "auth: totp secret for " + e.UserID.String() + " cannot be decrypted with the configured MFA KEK: " + e.Cause
+}
+
+// Unwrap makes errors.Is(err, ErrMFASecretUndecryptable) true, so a caller that
+// only needs the class does not have to know about this type.
+func (e *MFASecretUndecryptableError) Unwrap() error { return ErrMFASecretUndecryptable }
 
 // MFARepository is the data access the TOTP flows need. *sqlcgen.Queries
 // satisfies it directly.
@@ -65,6 +100,76 @@ type MFARepository interface {
 	// BurnPendingTOTPStep is the same write for a row still pending
 	// (enabled=FALSE), used when an enrollment is confirmed.
 	BurnPendingTOTPStep(ctx context.Context, arg sqlcgen.BurnPendingTOTPStepParams) (int64, error)
+	// ListRecentUserMFASecrets samples the newest stored secrets for the
+	// boot-time KEK check (CheckMFAKEK).
+	ListRecentUserMFASecrets(ctx context.Context, rowLimit int32) ([]sqlcgen.ListRecentUserMFASecretsRow, error)
+}
+
+// MFAKEKSample is how many user_mfa rows the boot-time KEK check reads. A
+// sample and not a scan: every row was sealed by whatever KEK the instance held
+// at the time, so a handful of the newest answers "is the configured KEK the
+// one that sealed this database" as well as a full table would, and it costs one
+// indexed read on a path that must not slow a boot down.
+const MFAKEKSample = 20
+
+// MFAKEKReport is what the boot-time check found. Counts only — never a user
+// id, never a ciphertext — because it is rendered on an operator page and
+// carried in a log line.
+type MFAKEKReport struct {
+	// Sampled is how many rows were read (0 = no account has ever enrolled).
+	Sampled int
+	// Sealed counts the sampled rows that are `enc:` ciphertext. A dev install
+	// with no KEK stores raw secrets, and those are not a KEK question.
+	Sealed int
+	// Undecryptable counts the sealed rows the configured KEK could not open.
+	// Anything above zero means at least one account's second factor can never
+	// verify; Undecryptable == Sealed is the whole-database case — a restore
+	// that came back without the config archive holding MFA_KEY_KEK.
+	Undecryptable int
+}
+
+// Mismatch reports whether the configured KEK failed to open something it is
+// supposed to own.
+func (r MFAKEKReport) Mismatch() bool { return r.Undecryptable > 0 }
+
+// CheckMFAKEK samples the newest stored TOTP secrets and reports how many the
+// configured KEK cannot open (A37-2).
+//
+// THE FAILURE IT CLOSES. A wrong or missing MFA_KEY_KEK is not a startup error
+// and not a probe failure: the key is validated for SHAPE (32 bytes of base64)
+// and never against anything it sealed, so an api restored with the wrong one
+// boots, answers /readyz 200, and serves every password login, HLS read and
+// admin page exactly as before. The first symptom arrives whenever the first
+// account with a second factor next tries to sign in, which on a small instance
+// can be days.
+//
+// It is deliberately NOT fatal and deliberately not a readiness failure: an
+// operator who has just restored with the wrong KEK needs to be able to log in
+// with a password to fix it, and 503ing the api is the one thing that would
+// stop them.
+func (s *Service) CheckMFAKEK(ctx context.Context, sample int32) (MFAKEKReport, error) {
+	var rep MFAKEKReport
+	if s.mfaRepo == nil {
+		return rep, nil
+	}
+	if sample <= 0 {
+		sample = MFAKEKSample
+	}
+	rows, err := s.mfaRepo.ListRecentUserMFASecrets(ctx, sample)
+	if err != nil {
+		return rep, err
+	}
+	rep.Sampled = len(rows)
+	for _, row := range rows {
+		if !secretbox.IsSealed(row.TotpSecretSealed) {
+			continue
+		}
+		rep.Sealed++
+		if _, oerr := s.openTOTPSecret(row.UserID, row.TotpSecretSealed); oerr != nil {
+			rep.Undecryptable++
+		}
+	}
+	return rep, nil
 }
 
 // mfaTokenTTL is the lifetime of the single-purpose mfa_token issued by a
@@ -177,7 +282,7 @@ func (s *Service) VerifyTOTPEnrollment(ctx context.Context, userID uuid.UUID, co
 	if row.Enabled {
 		return nil, ErrMFAAlreadyEnabled
 	}
-	secret, err := s.openTOTPSecret(row.TotpSecretSealed)
+	secret, err := s.openTOTPSecret(userID, row.TotpSecretSealed)
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +500,7 @@ func (s *Service) CompleteMFAChallenge(ctx context.Context, mfaToken, code, user
 
 	method := MFAMethodTOTP
 	if looksLikeTOTPCode(code) {
-		secret, err := s.openTOTPSecret(row.TotpSecretSealed)
+		secret, err := s.openTOTPSecret(userID, row.TotpSecretSealed)
 		if err != nil {
 			return sqlcgen.User{}, Tokens{}, "", err
 		}
@@ -507,19 +612,27 @@ func (s *Service) sealTOTPSecret(secret string) (string, error) {
 	return s.mfaCipher.Seal([]byte(secret))
 }
 
-// openTOTPSecret reverses sealTOTPSecret, tolerating raw dev-era values. A
-// sealed value with no cipher configured is an operator error, not a code
-// problem.
-func (s *Service) openTOTPSecret(stored string) (string, error) {
+// openTOTPSecret reverses sealTOTPSecret, tolerating raw dev-era values.
+//
+// Both ways of failing are the SAME operator fault — the KEK that sealed this
+// row is not the KEK this process holds — so both return the one sentinel the
+// HTTP layer knows to answer with a wrong-code refusal. Returning a bare error
+// here is what made the challenge 500 on a wrong-KEK restore (A37-1): an
+// unclassified error reaches echo's handler, which has no choice but to call it
+// internal.
+func (s *Service) openTOTPSecret(userID uuid.UUID, stored string) (string, error) {
 	if !secretbox.IsSealed(stored) {
 		return stored, nil
 	}
 	if s.mfaCipher == nil {
-		return "", errors.New("auth: totp secret is sealed but no MFA KEK is configured")
+		return "", &MFASecretUndecryptableError{
+			UserID: userID,
+			Cause:  "the stored secret is sealed but no MFA KEK is configured (MFA_KEY_KEK, or a shared FEDERATION_KEY_KEK)",
+		}
 	}
 	raw, err := s.mfaCipher.Open(stored)
 	if err != nil {
-		return "", err
+		return "", &MFASecretUndecryptableError{UserID: userID, Cause: err.Error()}
 	}
 	return string(raw), nil
 }
