@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -58,12 +59,15 @@ func (f *fakeRepo) BlockInstance(_ context.Context, a sqlcgen.BlockInstanceParam
 	return 1, nil
 }
 
-func (f *fakeRepo) UnblockInstance(_ context.Context, domain string) (int64, error) {
-	if _, ok := f.blocked[domain]; !ok {
-		return 0, nil
+func (f *fakeRepo) UnblockInstance(_ context.Context, domain string) (time.Time, error) {
+	b, ok := f.blocked[domain]
+	if !ok {
+		// The real DELETE ... RETURNING answers no rows when nothing was
+		// blocked, and the service reads that as "idempotent no-op".
+		return time.Time{}, pgx.ErrNoRows
 	}
 	delete(f.blocked, domain)
-	return 1, nil
+	return b.CreatedAt, nil
 }
 
 func (f *fakeRepo) ListBlockedInstances(_ context.Context, _ sqlcgen.ListBlockedInstancesParams) ([]sqlcgen.BlockedInstance, error) {
@@ -157,8 +161,19 @@ func TestBlockUnblockListInstances(t *testing.T) {
 	if items[0].BlockedBy == nil || *items[0].BlockedBy != adm {
 		t.Errorf("blocked_by = %v, want %s", items[0].BlockedBy, adm)
 	}
-	if err := svc.UnblockInstance(ctx, "bad.example"); err != nil {
+	blockedAt, wasBlocked, err := svc.UnblockInstance(ctx, "bad.example")
+	if err != nil {
 		t.Fatalf("UnblockInstance: %v", err)
+	}
+	// The window the redelivery of cancelled deliveries is bounded by (A29-F4)
+	// comes out of the DELETE itself, so an unblock that removed a row must
+	// report when that block began.
+	if !wasBlocked || blockedAt.IsZero() {
+		t.Errorf("UnblockInstance = (%v, %v), want the block start and true", blockedAt, wasBlocked)
+	}
+	// Idempotent: lifting a block that is not there is a success with no window.
+	if at, was, err := svc.UnblockInstance(ctx, "bad.example"); err != nil || was || !at.IsZero() {
+		t.Errorf("second UnblockInstance = (%v, %v, %v), want (zero, false, nil)", at, was, err)
 	}
 	if items, _, _ := svc.ListBlockedInstances(ctx, 20, 0); len(items) != 0 {
 		t.Errorf("after unblock items = %+v, want none", items)

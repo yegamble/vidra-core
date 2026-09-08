@@ -173,17 +173,24 @@ func (q *Queries) MuteInstance(ctx context.Context, arg MuteInstanceParams) (int
 	return result.RowsAffected(), nil
 }
 
-const unblockInstance = `-- name: UnblockInstance :execrows
+const unblockInstance = `-- name: UnblockInstance :one
 DELETE FROM blocked_instances WHERE domain = $1
+RETURNING created_at
 `
 
-// Lift an instance block (idempotent). Returns rows deleted (0 = not blocked).
-func (q *Queries) UnblockInstance(ctx context.Context, domain string) (int64, error) {
-	result, err := q.db.Exec(ctx, unblockInstance, domain)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+// Lift an instance block (idempotent). RETURNS THE MOMENT THE BLOCK BEGAN, and
+// pgx.ErrNoRows when the domain was not blocked at all.
+//
+// The timestamp is not decoration: outbound deliveries refused while the block
+// stood are re-enqueued on unblock (A29-F4), and the set of rows that qualifies
+// is exactly the ones cancelled INSIDE this window. Returning it from the DELETE
+// rather than reading it first is what makes the window belong to the admin who
+// actually lifted the block — two simultaneous unblocks, one row, one winner.
+func (q *Queries) UnblockInstance(ctx context.Context, domain string) (time.Time, error) {
+	row := q.db.QueryRow(ctx, unblockInstance, domain)
+	var created_at time.Time
+	err := row.Scan(&created_at)
+	return created_at, err
 }
 
 const unmuteInstance = `-- name: UnmuteInstance :execrows

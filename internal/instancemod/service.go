@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -39,7 +40,7 @@ type Repository interface {
 	ListMutedInstances(ctx context.Context, arg sqlcgen.ListMutedInstancesParams) ([]sqlcgen.ListMutedInstancesRow, error)
 	CountMutedInstances(ctx context.Context, muterID uuid.UUID) (int64, error)
 	BlockInstance(ctx context.Context, arg sqlcgen.BlockInstanceParams) (int64, error)
-	UnblockInstance(ctx context.Context, domain string) (int64, error)
+	UnblockInstance(ctx context.Context, domain string) (time.Time, error)
 	ListBlockedInstances(ctx context.Context, arg sqlcgen.ListBlockedInstancesParams) ([]sqlcgen.BlockedInstance, error)
 	CountBlockedInstances(ctx context.Context) (int64, error)
 }
@@ -145,14 +146,27 @@ func (s *Service) BlockInstance(ctx context.Context, blockedBy uuid.UUID, domain
 	return err
 }
 
-// UnblockInstance removes a domain from the blocklist (idempotent).
-func (s *Service) UnblockInstance(ctx context.Context, domain string) error {
+// UnblockInstance removes a domain from the blocklist (idempotent) and reports
+// WHEN THE BLOCK BEGAN, so the caller can resume what the block cancelled.
+//
+// The second return is false when the domain was not blocked at all, which is a
+// success (this is idempotent) and not an outcome with a window. The timestamp
+// comes back from the DELETE itself rather than from a read before it: two
+// admins lifting the same block concurrently must produce one window belonging
+// to one of them, not two overlapping resumptions of the same rows.
+func (s *Service) UnblockInstance(ctx context.Context, domain string) (time.Time, bool, error) {
 	d, err := NormalizeDomain(domain)
 	if err != nil {
-		return err
+		return time.Time{}, false, err
 	}
-	_, err = s.repo.UnblockInstance(ctx, d)
-	return err
+	blockedAt, err := s.repo.UnblockInstance(ctx, d)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return time.Time{}, false, nil
+		}
+		return time.Time{}, false, err
+	}
+	return blockedAt, true, nil
 }
 
 // ListBlockedInstances returns the admin blocklist, newest block first. The

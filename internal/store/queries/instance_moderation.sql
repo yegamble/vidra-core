@@ -31,9 +31,17 @@ INSERT INTO blocked_instances (domain, reason, blocked_by)
 VALUES ($1, $2, $3)
 ON CONFLICT (domain) DO UPDATE SET reason = EXCLUDED.reason, blocked_by = EXCLUDED.blocked_by;
 
--- name: UnblockInstance :execrows
--- Lift an instance block (idempotent). Returns rows deleted (0 = not blocked).
-DELETE FROM blocked_instances WHERE domain = $1;
+-- name: UnblockInstance :one
+-- Lift an instance block (idempotent). RETURNS THE MOMENT THE BLOCK BEGAN, and
+-- pgx.ErrNoRows when the domain was not blocked at all.
+--
+-- The timestamp is not decoration: outbound deliveries refused while the block
+-- stood are re-enqueued on unblock (A29-F4), and the set of rows that qualifies
+-- is exactly the ones cancelled INSIDE this window. Returning it from the DELETE
+-- rather than reading it first is what makes the window belong to the admin who
+-- actually lifted the block — two simultaneous unblocks, one row, one winner.
+DELETE FROM blocked_instances WHERE domain = $1
+RETURNING created_at;
 
 -- name: ListBlockedInstances :many
 -- The admin blocklist, newest block first.

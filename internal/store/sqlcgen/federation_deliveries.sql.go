@@ -172,6 +172,67 @@ func (q *Queries) FailDelivery(ctx context.Context, arg FailDeliveryParams) erro
 	return err
 }
 
+const listCancelledDeliveriesForRedelivery = `-- name: ListCancelledDeliveriesForRedelivery :many
+SELECT id, inbox_url, payload
+FROM federation_deliveries
+WHERE state = 'failed'
+  AND last_error = $1
+  AND updated_at >= $2
+ORDER BY created_at, id
+LIMIT $3
+`
+
+type ListCancelledDeliveriesForRedeliveryParams struct {
+	CancelReason string    `json:"cancel_reason"`
+	Since        time.Time `json:"since"`
+	ResultLimit  int32     `json:"result_limit"`
+}
+
+type ListCancelledDeliveriesForRedeliveryRow struct {
+	ID       uuid.UUID `json:"id"`
+	InboxUrl string    `json:"inbox_url"`
+	Payload  []byte    `json:"payload"`
+}
+
+// Deliveries this instance CANCELLED — never sent — because their destination
+// was on the admin blocklist, since a given moment.
+//
+// A29 measured the gap this closes: a block cancels outbound activities as well
+// as refusing inbound ones, and lifting the block resumed nothing. The refused
+// INBOUND activities are gone for good (the remote was answered 202 and will
+// not resend), but this instance's own outbound rows are still here with their
+// payloads intact, so the half that CAN be repaired is repaired.
+//
+// The cancel marker is passed in rather than spelled here so the string lives
+// once, next to the code that writes it (internal/federation's
+// deliveryCancelledBlocked). `since` is the moment the block began, which is
+// what bounds this to the block's own window: a delivery that failed for any
+// other reason, or was cancelled by an EARLIER block that was already lifted,
+// is not this unblock's to resume.
+//
+// Rows are capped by the caller; a block window with more cancellations than
+// the cap leaves the remainder where they are rather than unbounding an admin
+// request.
+func (q *Queries) ListCancelledDeliveriesForRedelivery(ctx context.Context, arg ListCancelledDeliveriesForRedeliveryParams) ([]ListCancelledDeliveriesForRedeliveryRow, error) {
+	rows, err := q.db.Query(ctx, listCancelledDeliveriesForRedelivery, arg.CancelReason, arg.Since, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCancelledDeliveriesForRedeliveryRow
+	for rows.Next() {
+		var i ListCancelledDeliveriesForRedeliveryRow
+		if err := rows.Scan(&i.ID, &i.InboxUrl, &i.Payload); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markDeliveryDelivered = `-- name: MarkDeliveryDelivered :exec
 UPDATE federation_deliveries
 SET state = 'delivered', updated_at = now()
@@ -181,6 +242,31 @@ WHERE id = $1
 func (q *Queries) MarkDeliveryDelivered(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, markDeliveryDelivered, id)
 	return err
+}
+
+const requeueCancelledDelivery = `-- name: RequeueCancelledDelivery :execrows
+UPDATE federation_deliveries
+SET state = 'pending', attempts = 0, next_attempt_at = now(),
+    last_error = '', updated_at = now()
+WHERE id = $1 AND state = 'failed'
+`
+
+// Put ONE cancelled delivery back on the queue: pending, due now, attempts
+// reset, the cancellation note cleared.
+//
+// Attempts are reset because a cancellation is not an attempt — the activity
+// was never sent, so the row's attempt budget was never spent on the remote
+// side, and carrying the cancelled row's count forward would dead-letter it
+// early for reasons that have nothing to do with the destination's health.
+//
+// The state guard makes this idempotent under a double unblock: the second
+// caller matches nothing because the first already moved the row to pending.
+func (q *Queries) RequeueCancelledDelivery(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, requeueCancelledDelivery, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const rescheduleDelivery = `-- name: RescheduleDelivery :exec

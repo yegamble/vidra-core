@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,6 +43,17 @@ const (
 	maxDeliveryBackoff = 6 * time.Hour
 	// maxLastErrorLen bounds the stored last_error string.
 	maxLastErrorLen = 500
+	// deliveryCancelledBlocked is the last_error a delivery carries when it was
+	// never sent because its destination was on the admin blocklist. It is an
+	// EXACT MATCH KEY, not just a message: RedeliverAfterUnblock finds the rows
+	// to resume by it, so the two must be the same string and it must not drift
+	// into something formatted per row.
+	deliveryCancelledBlocked = "cancelled: destination instance is blocked"
+	// maxRedeliverAfterUnblock caps one unblock's resumption. A block window
+	// can be arbitrarily long, and an admin's DELETE must not turn into an
+	// unbounded scan-and-update; the remainder stays cancelled rather than the
+	// request stalling, which the log line says.
+	maxRedeliverAfterUnblock = 500
 )
 
 // DrainDeliveries claims up to limit due deliveries and attempts each: on success
@@ -73,7 +85,7 @@ func (s *Service) DrainDeliveries(ctx context.Context, limit int) (int, error) {
 		if blocked, err := s.repo.IsInstanceBlocked(ctx, hostOf(row.InboxUrl)); err == nil && blocked && !severingActivity(row.Payload) {
 			_ = s.repo.FailDelivery(ctx, sqlcgen.FailDeliveryParams{
 				ID:        row.ID,
-				LastError: "cancelled: destination instance is blocked",
+				LastError: deliveryCancelledBlocked,
 			})
 			continue
 		}
@@ -343,4 +355,144 @@ func severingActivity(payload []byte) bool {
 		return false
 	}
 	return env.Type == "Undo" || env.Type == "Reject"
+}
+
+// RedeliverAfterUnblock re-enqueues the outbound activities this instance
+// CANCELLED while domain was blocked, so lifting a block resumes the half of the
+// conversation this instance is still holding (A29-F4).
+//
+// WHAT A BLOCK ACTUALLY DID, AND WHICH HALF IS REPAIRABLE. A block is symmetric
+// in effect and asymmetric in recoverability. Inbound activities from the
+// blocked instance were answered 202 and dropped: the remote considers them
+// delivered and will never resend, so they are gone for good and no amount of
+// unblocking brings them back — A29 recorded that, and it stays true. But this
+// instance's OWN outbound deliveries were cancelled with their payloads intact
+// in federation_deliveries, marked failed with deliveryCancelledBlocked. Those
+// rows are still here. Leaving them where they are means a remote follower
+// silently misses every video published during the block, forever, with no
+// reconciliation path — the same shape of permanent divergence A29-F5 closed for
+// severing activities.
+//
+// WHAT IS RESUMED, AND WHY NOT EVERYTHING:
+//
+//   - Delete is always resumed. It can only reduce what the remote holds, and a
+//     Delete that never arrived is the worst thing to drop: the remote keeps
+//     serving a copy of something this instance has removed.
+//   - Accept is always resumed. It carries no content and its absence strands
+//     the remote in a pending follow this instance already granted.
+//   - Create and Update are resumed ONLY IF the object still exists and is
+//     still public. Their payload is a SNAPSHOT taken when the activity was
+//     queued, and a video that went private, was unpublished, was deleted, or
+//     whose channel has since opted out of ActivityPub must not be published to
+//     a remote server by a message the block happened to delay. This is the
+//     whole reason redelivery is not a bulk UPDATE.
+//   - Anything else is left cancelled. Undo and Reject were never cancelled in
+//     the first place (severingActivity), and an unrecognised type is not
+//     something to replay on a guess.
+//
+// The window is the BLOCK's: blockedAt is the moment the block began (the
+// timestamp UnblockInstance returns as it deletes the row), so a delivery that
+// failed for an unrelated reason, or was cancelled by an earlier block already
+// lifted and dealt with, is not this unblock's to resume.
+//
+// It returns how many rows were re-enqueued. It is best-effort by construction:
+// a row that cannot be requeued is left cancelled, which is exactly where it
+// already was.
+func (s *Service) RedeliverAfterUnblock(ctx context.Context, domain string, blockedAt time.Time) (int, error) {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if s == nil || domain == "" {
+		return 0, nil
+	}
+	rows, err := s.repo.ListCancelledDeliveriesForRedelivery(ctx, sqlcgen.ListCancelledDeliveriesForRedeliveryParams{
+		CancelReason: deliveryCancelledBlocked,
+		Since:        blockedAt,
+		ResultLimit:  maxRedeliverAfterUnblock,
+	})
+	if err != nil {
+		return 0, err
+	}
+	requeued := 0
+	for _, row := range rows {
+		// The destination is matched with the SAME function that decided to
+		// cancel it (hostOf, used by DrainDeliveries against the blocklist), so
+		// the two cannot disagree about what host an inbox URL belongs to.
+		if hostOf(row.InboxUrl) != domain {
+			continue
+		}
+		ok, err := s.redeliverable(ctx, row.Payload)
+		if err != nil {
+			return requeued, err
+		}
+		if !ok {
+			continue
+		}
+		if _, err := s.repo.RequeueCancelledDelivery(ctx, row.ID); err != nil {
+			return requeued, err
+		}
+		requeued++
+	}
+	return requeued, nil
+}
+
+// redeliverable decides whether one cancelled payload may be sent now. See
+// RedeliverAfterUnblock for the reasoning; the conservative answer (do not
+// resend) is the default for every shape this does not recognise.
+func (s *Service) redeliverable(ctx context.Context, payload []byte) (bool, error) {
+	var env struct {
+		Type   string          `json:"type"`
+		Object json.RawMessage `json:"object"`
+	}
+	if err := json.Unmarshal(payload, &env); err != nil {
+		return false, nil
+	}
+	switch env.Type {
+	case "Delete", "Accept":
+		return true, nil
+	case "Create", "Update":
+	default:
+		return false, nil
+	}
+	videoID, ok := s.localVideoIDFromObject(env.Object)
+	if !ok {
+		// A Create/Update whose object this instance cannot resolve to one of
+		// its own videos cannot be checked, and an unverifiable snapshot is not
+		// worth publishing late.
+		return false, nil
+	}
+	v, ch, found, err := s.loadVideoAndChannel(ctx, videoID)
+	if err != nil || !found {
+		return false, err
+	}
+	return ch.ActivitypubEnabled && v.Privacy == "public" && v.State == "published", nil
+}
+
+// localVideoIDFromObject extracts THIS instance's video id from an activity's
+// object, which is either an embedded AS object with an "id" (Create/Update) or
+// a bare id string (Delete). The id must be this instance's own
+// <baseURL>/videos/<uuid>: an object belonging to anywhere else is not ours to
+// re-publish, and matching on the suffix alone would accept a remote id that
+// happened to end in a uuid we also have.
+func (s *Service) localVideoIDFromObject(raw json.RawMessage) (uuid.UUID, bool) {
+	if len(raw) == 0 {
+		return uuid.Nil, false
+	}
+	var id string
+	if err := json.Unmarshal(raw, &id); err != nil {
+		var obj struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			return uuid.Nil, false
+		}
+		id = obj.ID
+	}
+	prefix := s.baseURL + "/videos/"
+	if s.baseURL == "" || !strings.HasPrefix(id, prefix) {
+		return uuid.Nil, false
+	}
+	parsed, err := uuid.Parse(strings.TrimPrefix(id, prefix))
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return parsed, true
 }
