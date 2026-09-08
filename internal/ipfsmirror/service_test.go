@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/ipfs"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -471,6 +472,11 @@ type fakeLookups struct {
 	playlistHasCover         bool
 	ownerImages              []ImageRef
 	ownerVideoIDs            []uuid.UUID
+	// hlsTree is the promoted generation's directory (no trailing slash), as
+	// path.Dir(streaming_playlists.master_key) would give it. Empty means "no
+	// promoted tree" — the mirror must then refuse to pin rather than wrap
+	// whatever the stable prefix holds.
+	hlsTree string
 }
 
 func (l *fakeLookups) VideoVisibility(ctx context.Context, videoID uuid.UUID) (string, string, uuid.UUID, bool, error) {
@@ -496,6 +502,9 @@ func (l *fakeLookups) OwnerImageRefs(ctx context.Context, userID uuid.UUID) ([]I
 }
 func (l *fakeLookups) OwnerVideoIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
 	return l.ownerVideoIDs, nil
+}
+func (l *fakeLookups) VideoHLSTree(ctx context.Context, videoID uuid.UUID) (string, bool, error) {
+	return l.hlsTree, l.hlsTree != "", nil
 }
 
 // ---- helpers --------------------------------------------------------------
@@ -523,6 +532,14 @@ func putBlob(t *testing.T, b storage.Backend, key, data string) {
 
 func seedPending(r *fakeRepo, key, class string) {
 	r.rows[key] = &sqlcgen.MediaIpfsPin{ObjectKey: key, MediaClass: class, State: "pending", NextAttemptAt: time.Now().UTC().Add(-time.Second)}
+}
+
+// seedPendingVideo is seedPending with the video provenance a real row always
+// carries — which for an HLS directory intent is what lets the worker resolve
+// the promoted generation underneath the stable key.
+func seedPendingVideo(r *fakeRepo, key, class string, videoID uuid.UUID) {
+	seedPending(r, key, class)
+	r.rows[key].VideoID = pgtype.UUID{Bytes: videoID, Valid: true}
 }
 
 // seedPinned inserts an already-pinned ledger row (state=pinned, valid CID) tied
@@ -1200,23 +1217,30 @@ func TestOnTranscodeCompleteEnqueuesHLS(t *testing.T) {
 }
 
 // TestHLSPinLifecycle (P19.4) exercises the full HLS pin state machine end to end:
-// first transcode → pinned car_root; re-transcode (wholesale-replaced content) →
+// first transcode → pinned car_root; re-transcode (a new generation promoted) →
 // forced re-claim, new car_root, superseded root swap-unpinned; delete → the tree
 // is unpinned (reference-checked) and the row goes terminal.
+//
+// The ledger key is the STABLE directory intent throughout — that is the property
+// this test guards: a generation moving underneath it must never mint a second
+// row, or the swap below stops happening and the superseded root leaks. Which
+// directory each generation is, and the VP9/WebM alternate that does NOT keep a
+// stable key, are TestReTranscodeMovesGenerationAndReleasesTheOld's subject.
 func TestHLSPinLifecycle(t *testing.T) {
 	repo := newFakeRepo()
 	blobs := newBlobs(t)
 	client := ipfs.NewFakeIPFSClient()
 	vid := uuid.New()
-	prefix := "streaming-playlists/" + vid.String() + "/"
-	lk := &fakeLookups{videoPrivacy: "public", videoState: "published", videoOK: true, userOK: true}
+	prefix := media.HLSKeyPrefix(vid) + "/"
+	gen1, gen2 := media.HLSPrefixForGeneration(vid, 1), media.HLSPrefixForGeneration(vid, 2)
+	lk := &fakeLookups{videoPrivacy: "public", videoState: "published", videoOK: true, userOK: true, hlsTree: gen1}
 	svc := New(repo, lk, blobs, client, testConfig())
 	ctx := context.Background()
 
 	// --- first transcode ---
-	putBlob(t, blobs, prefix+"master.m3u8", "v1-master")
-	putBlob(t, blobs, prefix+"720p/playlist.m3u8", "v1-playlist")
-	putBlob(t, blobs, prefix+"720p/seg_00000.ts", "v1-seg")
+	putBlob(t, blobs, gen1+"/master.m3u8", "v1-master")
+	putBlob(t, blobs, gen1+"/720p/playlist.m3u8", "v1-playlist")
+	putBlob(t, blobs, gen1+"/720p/seg_00000.ts", "v1-seg")
 	if err := svc.OnTranscodeComplete(ctx, vid); err != nil {
 		t.Fatalf("first OnTranscodeComplete: %v", err)
 	}
@@ -1234,9 +1258,11 @@ func TestHLSPinLifecycle(t *testing.T) {
 		t.Fatal("old car_root not pinned on the node after first transcode")
 	}
 
-	// --- re-transcode: replace the tree content wholesale (new bytes ⇒ new root) ---
-	putBlob(t, blobs, prefix+"master.m3u8", "v2-master-DIFFERENT")
-	putBlob(t, blobs, prefix+"720p/seg_00000.ts", "v2-seg-DIFFERENT")
+	// --- re-transcode: a NEW generation is written and promoted (new bytes ⇒ new
+	// root), while the ledger key stays put ---
+	putBlob(t, blobs, gen2+"/master.m3u8", "v2-master-DIFFERENT")
+	putBlob(t, blobs, gen2+"/720p/seg_00000.ts", "v2-seg-DIFFERENT")
+	lk.hlsTree = gen2
 	if err := svc.OnTranscodeComplete(ctx, vid); err != nil {
 		t.Fatalf("re-transcode OnTranscodeComplete: %v", err)
 	}
@@ -1543,9 +1569,12 @@ func TestPinDirectoryLosesRaceToPrivacyFlip(t *testing.T) {
 	blobs := newBlobs(t)
 	client := ipfs.NewFakeIPFSClient()
 	vid := uuid.New()
-	prefix := "streaming-playlists/" + vid.String() + "/"
-	putBlob(t, blobs, prefix+"master.m3u8", "#EXTM3U\n720p/playlist.m3u8\n")
-	putBlob(t, blobs, prefix+"720p/seg_00000.ts", "ts-bytes")
+	// The ledger key is the stable directory intent; the bytes are in the
+	// promoted generation's directory beneath it.
+	prefix := media.HLSKeyPrefix(vid) + "/"
+	tree := media.HLSPrefixForGeneration(vid, 1)
+	putBlob(t, blobs, tree+"/master.m3u8", "#EXTM3U\n720p/playlist.m3u8\n")
+	putBlob(t, blobs, tree+"/720p/seg_00000.ts", "ts-bytes")
 	repo.rows[prefix] = &sqlcgen.MediaIpfsPin{
 		ObjectKey: prefix, MediaClass: string(ClassHLS), State: "pending",
 		VideoID: pgUUID(vid), NextAttemptAt: time.Now().UTC().Add(-time.Second),
@@ -1559,7 +1588,7 @@ func TestPinDirectoryLosesRaceToPrivacyFlip(t *testing.T) {
 		_ = repo.EnqueueIPFSUnpin(context.Background(), prefix)
 	}
 
-	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+	svc := New(repo, &fakeLookups{hlsTree: tree}, blobs, client, testConfig())
 	if _, err := svc.DrainDue(context.Background(), 10); err != nil {
 		t.Fatalf("DrainDue: %v", err)
 	}

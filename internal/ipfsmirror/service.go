@@ -25,13 +25,6 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// webmAlternateName is the base name of the VP9/WebM progressive alternate, which
-// lives under the same streaming-playlists/<id>/ prefix as the HLS tree but is a
-// SEPARATE media class pinned on its own — so the HLS directory add excludes it
-// (keeping the car_root a clean playlists+segments tree). Kept in lock-step with
-// media.VP9WebMKey.
-const webmAlternateName = "vp9.webm"
-
 const (
 	// defaultMaxAttempts dead-letters a pin/unpin after this many tries (matches
 	// transcode_jobs' bounded-retry shape).
@@ -161,6 +154,20 @@ type Lookups interface {
 	// unlisted-toggle re-evaluation (ReevaluateUser) can re-run the per-video fence
 	// on each; SyncVideo decides pin vs unpin from committed state.
 	OwnerVideoIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
+	// VideoHLSTree resolves the storage-key directory of the video's PROMOTED
+	// transcode generation — path.Dir of the DB-recorded
+	// streaming_playlists.master_key, which is the same derivation the media
+	// routes serve HLS children from (httpapi.serveHLSChild) and the CDN purge
+	// lists its tree with. Since 0136 that is streaming-playlists/<id>/rN, one
+	// level below the mirror's stable ledger key, and it is the ONLY generation
+	// whose master.m3u8 a viewer is being pointed at.
+	//
+	// ok=false means there is no promoted tree to mirror: no playlist row, an
+	// empty master key (a dead-lettered transcode), or a master key with no
+	// directory. The mirror fails such a pin rather than falling back to a
+	// prefix, because "wrap whatever the prefix happens to hold" is exactly how
+	// the generation regression shipped.
+	VideoHLSTree(ctx context.Context, videoID uuid.UUID) (prefix string, ok bool, err error)
 }
 
 // Config is the mirror service's tunables (from internal/config).
@@ -507,14 +514,17 @@ func (s *Service) ownerUnlistedForVideo(ctx context.Context, ownerID uuid.UUID) 
 // (public+published) VOD it force-(re)pins:
 //   - the finalized HLS tree as ONE directory row (media_class='hls', object_key
 //     streaming-playlists/<id>/ with a trailing slash marking a directory intent
-//     the worker resolves via the storage ObjectLister + AddDirectory into one
-//     car_root CID); and
+//     the worker resolves — to the PROMOTED generation's directory, hlsTreePrefix
+//     — via the storage ObjectLister + AddDirectory into one car_root CID); and
 //   - the VP9/WebM alternate, which does NOT exist at publish time (it is produced
 //     here), so the publish-hook SyncVideo could not pin it.
 //
-// Both keep a STABLE object_key across re-transcodes while their content — and
-// therefore their CID — changes, so RepinIPFSObject forces a re-claim (the no-op-
-// on-pinned UpsertIPFSPinIntent would not) and the worker swaps the superseded CID.
+// The HLS row keeps a STABLE object_key across re-transcodes while its content —
+// and therefore its CID — changes, so RepinIPFSObject forces a re-claim (the
+// no-op-on-pinned UpsertIPFSPinIntent would not) and the worker swaps the
+// superseded CID. The VP9/WebM alternate does NOT: since 0136 it is recorded at
+// the generation's own key, so a re-transcode arms a NEW row and the previous
+// generation's is released explicitly (releaseSupersededTranscodePins).
 //
 // For an INELIGIBLE video this is a no-op: the privacy transition (SyncVideo /
 // UnpinVideo) owns unpinning. LIVE HLS never flows here — only a finalized VOD
@@ -541,7 +551,13 @@ func (s *Service) OnTranscodeComplete(ctx context.Context, videoID uuid.UUID) er
 	if net == NetworkNone {
 		return nil
 	}
+	// The HLS row's key is the STABLE per-video directory intent even though the
+	// bytes now live in the run's generation directory: the worker resolves the
+	// promoted generation at pin time (hlsTreePrefix), so one row survives every
+	// re-transcode and the superseded car_root is swap-unpinned rather than
+	// stranded under a second key.
 	hlsKey := media.HLSKeyPrefix(videoID) + "/"
+	current := map[string]bool{hlsKey: true}
 	if err := s.repo.RepinIPFSObject(ctx, sqlcgen.RepinIPFSObjectParams{
 		ObjectKey:     hlsKey,
 		MediaClass:    string(ClassHLS),
@@ -556,6 +572,7 @@ func (s *Service) OnTranscodeComplete(ctx context.Context, videoID uuid.UUID) er
 	}
 	for _, f := range files {
 		if f.Kind == "webm" {
+			current[f.StorageKey] = true
 			if err := s.repo.RepinIPFSObject(ctx, sqlcgen.RepinIPFSObjectParams{
 				ObjectKey:     f.StorageKey,
 				MediaClass:    string(ClassWebM),
@@ -564,6 +581,45 @@ func (s *Service) OnTranscodeComplete(ctx context.Context, videoID uuid.UUID) er
 			}); err != nil {
 				return err
 			}
+		}
+	}
+	return s.releaseSupersededTranscodePins(ctx, videoID, current)
+}
+
+// releaseSupersededTranscodePins unpins the transcode-output rows of a video that
+// the run just completed has left behind.
+//
+// It exists because ONE of the two outputs is addressed by a key that moves. The
+// HLS tree keeps the stable directory-intent key, so a re-transcode re-claims the
+// same row — but the VP9/WebM alternate is recorded in video_files at the
+// generation's own key (media.VP9WebMKey under
+// media.HLSPrefixForGeneration since 0136), so a re-transcode writes a DIFFERENT
+// key, storeResult replaces the video_files row, and the loop above force-repins
+// only the new one. Nothing else would ever touch the previous generation's
+// ledger row: SyncVideo only moves rows across swarms, the eligibility sweep only
+// looks at rows whose video is now ineligible, and the delete path only runs on
+// delete. It would sit 'pinned' for the life of the instance, holding bytes
+// mediagc has already collected from the object store.
+//
+// Only the transcode's OWN classes are considered. A thumbnail, caption or the
+// original keeps its key across re-transcodes and is owned by SyncVideo; a row
+// already heading for removal is left to converge.
+func (s *Service) releaseSupersededTranscodePins(ctx context.Context, videoID uuid.UUID, current map[string]bool) error {
+	rows, err := s.repo.ListIPFSPinsByVideo(ctx, pgUUID(videoID))
+	if err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if current[r.ObjectKey] || r.State == "unpinned" || r.State == "unpinning" {
+			continue
+		}
+		switch MediaClass(r.MediaClass) {
+		case ClassHLS, ClassWebM:
+		default:
+			continue
+		}
+		if err := s.repo.EnqueueIPFSUnpin(ctx, r.ObjectKey); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -1107,14 +1163,62 @@ func (s *Service) pin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPF
 	return true
 }
 
+// hlsTreePrefix resolves WHICH directory a trailing-slash (directory-intent) row
+// actually wraps, listed at pin time rather than baked into the ledger key.
+//
+// THE REGRESSION THIS CLOSES (core#199, A33 slice 1). The ledger key is the
+// STABLE per-video directory intent streaming-playlists/<id>/, but since
+// migration 0136 every transcode RUN writes into its own generation directory
+// one level down — streaming-playlists/<id>/rN/ — and more than one generation
+// is in the store at a time: the superseded one until mediagc collects it, the
+// in-flight one from the moment a re-transcode starts writing. Listing the
+// stable prefix therefore wrapped EVERY generation into a single root whose top
+// level holds "r1/", "r2/" … and no master.m3u8 at all. The pin still succeeded
+// with a valid CID, so nothing failed and nothing logged — it just published a
+// tree no player can enter ({gateway}/ipfs/{car_root}/master.m3u8 → 404).
+//
+// The tree to mirror is the PROMOTED generation's: the directory holding the
+// master manifest the database currently points at, which is precisely what the
+// media routes serve children from. Resolving it HERE, and not at enqueue time,
+// is what keeps the ledger key stable across generations — so a re-transcode
+// re-claims the SAME row, MarkIPFSPinned records the new car_root against it and
+// swapUnpin releases the superseded root, all unchanged.
+//
+// Returns ok=false having already recorded the failure on the row.
+func (s *Service) hlsTreePrefix(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPFSPinsRow) (string, bool) {
+	if MediaClass(row.MediaClass) != ClassHLS || !row.VideoID.Valid {
+		// No video provenance to resolve a generation with. Unreachable for any
+		// row this build arms — both arming paths (OnTranscodeComplete and the
+		// backfill catalog) record video_id — so this is the pre-provenance
+		// legacy shape, whose layout is the in-place one anyway.
+		return row.ObjectKey, true
+	}
+	tree, ok, err := s.lookups.VideoHLSTree(ctx, uuid.UUID(row.VideoID.Bytes))
+	if err != nil {
+		s.recordFailure(ctx, row, "resolve promoted hls tree failed")
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
+			"attempts", row.Attempts+1, "reason", "resolve_tree", "error", err)
+		return "", false
+	}
+	if !ok {
+		s.recordFailure(ctx, row, "no promoted hls tree")
+		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
+			"attempts", row.Attempts+1, "reason", "no_promoted_tree")
+		return "", false
+	}
+	return tree + "/", true
+}
+
 // pinDirectory add+pins a finalized VOD HLS tree as ONE UnixFS directory (P19.4).
-// The trailing-slash object key (streaming-playlists/<id>/) is listed via the
-// storage ObjectLister; every playlist + segment is wrapped with-directory into a
-// single car_root CID, so the relative playlist URIs resolve unchanged under
-// {gateway}/ipfs/{car_root}/…. The VP9/WebM alternate that shares the prefix is
-// EXCLUDED (it is a separate class pinned on its own). On a re-transcode the tree
-// is replaced wholesale under the same key, yielding a new car_root; the superseded
-// root is swap-unpinned (reference-checked).
+// The trailing-slash object key is a directory INTENT, not the directory itself:
+// hlsTreePrefix above resolves it to the promoted generation's own prefix, which
+// is then listed via the storage ObjectLister. Every playlist + segment is wrapped
+// with-directory into a single car_root CID, so the relative playlist URIs resolve
+// unchanged under {gateway}/ipfs/{car_root}/…. The VP9/WebM alternate that shares
+// the generation directory is EXCLUDED (it is a separate class pinned on its own).
+// On a re-transcode the promoted generation moves and the same ledger row is
+// re-claimed, yielding a new car_root; the superseded root is swap-unpinned
+// (reference-checked).
 func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPFSPinsRow) bool {
 	lister, ok := s.blobs.(storage.ObjectLister)
 	if !ok {
@@ -1123,7 +1227,10 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 			"attempts", row.Attempts+1, "reason", "no_object_lister")
 		return false
 	}
-	prefix := row.ObjectKey
+	prefix, ok := s.hlsTreePrefix(ctx, nc, row)
+	if !ok {
+		return false
+	}
 	keys, err := lister.ListKeys(ctx, prefix)
 	if err != nil {
 		s.recordFailure(ctx, row, "list directory tree failed")
@@ -1134,8 +1241,13 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 	var entries []ipfs.DirEntry
 	var openers []*lazyBlob
 	for _, key := range keys {
-		if path.Base(key) == webmAlternateName {
-			continue // separate media class, pinned on its own
+		if path.Base(key) == media.VP9WebMFilename {
+			// The VP9/WebM alternate shares the generation directory with the
+			// ladder but is a SEPARATE media class pinned on its own, so it is
+			// excluded here to keep the car_root a clean playlists+segments
+			// tree. The name comes from media rather than a local literal so
+			// the two cannot drift.
+			continue
 		}
 		lb := &lazyBlob{ctx: ctx, blobs: s.blobs, key: key}
 		openers = append(openers, lb)

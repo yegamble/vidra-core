@@ -36,11 +36,22 @@ func TestVP9WebMArgs(t *testing.T) {
 	}
 }
 
-func TestVP9WebMKey(t *testing.T) {
+// TestVP9WebMKeyIsGenerationAddressed: the alternate sits inside the tree it was
+// produced with, so it moves with every transcode generation (0136). Generation 0
+// is the legacy in-place layout; anything later is under its own rN directory,
+// which is what encodeVP9 actually writes.
+func TestVP9WebMKeyIsGenerationAddressed(t *testing.T) {
 	id := uuid.New()
-	want := "streaming-playlists/" + id.String() + "/vp9.webm"
-	if got := VP9WebMKey(id); got != want {
-		t.Errorf("VP9WebMKey = %q, want %q", got, want)
+	legacy := "streaming-playlists/" + id.String()
+	if got, want := VP9WebMKey(legacy), legacy+"/vp9.webm"; got != want {
+		t.Errorf("VP9WebMKey(generation 0) = %q, want %q", got, want)
+	}
+	gen := HLSPrefixForGeneration(id, 3)
+	if got, want := VP9WebMKey(gen), legacy+"/r3/vp9.webm"; got != want {
+		t.Errorf("VP9WebMKey(generation 3) = %q, want %q", got, want)
+	}
+	if VP9WebMFilename != "vp9.webm" {
+		t.Errorf("VP9WebMFilename = %q, want vp9.webm (the ipfs mirror excludes by this name)", VP9WebMFilename)
 	}
 }
 

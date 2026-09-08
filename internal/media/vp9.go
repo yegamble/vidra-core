@@ -55,11 +55,24 @@ func vp9WebMArgs(src source, dst string, r HLSRung) []string {
 	)
 }
 
-// VP9WebMKey is the storage key for a video's progressive VP9/WebM alternate,
-// kept under the same per-video HLS tree so media GC treats it at the video-id
-// level like the rest of the ladder.
-func VP9WebMKey(videoID uuid.UUID) string {
-	return HLSKeyPrefix(videoID) + "/vp9.webm"
+// VP9WebMFilename is the base name of the progressive VP9/WebM alternate inside
+// the transcode generation's directory. Exported because the IPFS mirror has to
+// recognise it to EXCLUDE it while wrapping the HLS tree (it is pinned on its own
+// as a separate media class), and a second literal over there would drift.
+const VP9WebMFilename = "vp9.webm"
+
+// VP9WebMKey is the storage key for the progressive VP9/WebM alternate that
+// accompanies the HLS tree written at hlsPrefix. It stays under that tree so
+// media GC treats it at the video-id level like the rest of the ladder.
+//
+// It takes the tree's PREFIX rather than a video id because since 0136 the
+// alternate is GENERATION-addressed like the ladder it is derived from:
+// streaming-playlists/<id>/rN/vp9.webm, the directory
+// HLSPrefixForGeneration minted for that run (encodeVP9's caller passes exactly
+// that). A per-video form could only ever name generation 0's key, which no
+// transcode has written since 0136 — it would be a trap for the next caller.
+func VP9WebMKey(hlsPrefix string) string {
+	return hlsPrefix + "/" + VP9WebMFilename
 }
 
 // SetVP9 turns on (or off) the progressive VP9/WebM alternate produced alongside
@@ -104,7 +117,7 @@ func (t *HLSTranscoder) encodeVP9(ctx context.Context, videoID uuid.UUID, hlsPre
 		return "", 0, "", err
 	}
 	defer func() { _ = f.Close() }()
-	key = hlsPrefix + "/vp9.webm"
+	key = VP9WebMKey(hlsPrefix)
 	n, sum, err := storage.PutSizedHashed(ctx, t.blobs, key, f, storage.SizeUnknown)
 	if err != nil {
 		return "", 0, "", err
