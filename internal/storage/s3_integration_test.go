@@ -362,7 +362,12 @@ func TestEnsureBucketReportsCreation(t *testing.T) {
 func TestS3PresignGetAsPinsResponseHeaders(t *testing.T) {
 	b := newS3TestBackend(t)
 	ctx := context.Background()
-	key := testKey(t, b, "delivery.mp4")
+	// A suffix OUTSIDE ContentTypeForKey's table, deliberately: the PUT now
+	// records a type for every extension Vidra mints, and an object that
+	// already answers video/mp4 of its own accord would leave the
+	// response-override machinery below untested. The guard a few lines down
+	// is what enforces that, and this key is what keeps it satisfiable.
+	key := testKey(t, b, "delivery.presigned-fixture")
 	content := []byte("presigned-delivery-bytes")
 	if _, err := b.Put(ctx, key, bytes.NewReader(content)); err != nil {
 		t.Fatalf("Put: %v", err)
