@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -120,6 +121,20 @@ func (f *fakeMFARepo) BurnPendingTOTPStep(_ context.Context, a sqlcgen.BurnPendi
 	step := a.Step
 	row.LastTotpStep = &step
 	return 1, nil
+}
+
+// ListRecentUserMFASecrets mirrors the SQL's newest-first LIMIT so the KEK
+// check reads a bounded sample here too.
+func (f *fakeMFARepo) ListRecentUserMFASecrets(_ context.Context, rowLimit int32) ([]sqlcgen.ListRecentUserMFASecretsRow, error) {
+	rows := make([]sqlcgen.ListRecentUserMFASecretsRow, 0, len(f.rows))
+	for id, row := range f.rows {
+		rows = append(rows, sqlcgen.ListRecentUserMFASecretsRow{UserID: id, TotpSecretSealed: row.TotpSecretSealed})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].UserID.String() < rows[j].UserID.String() })
+	if rowLimit > 0 && len(rows) > int(rowLimit) {
+		rows = rows[:rowLimit]
+	}
+	return rows, nil
 }
 
 func (f *fakeMFARepo) CountUnusedRecoveryCodes(_ context.Context, userID uuid.UUID) (int64, error) {
@@ -555,5 +570,146 @@ func TestBurnedTOTPStepLeavesRecoveryCodesAlone(t *testing.T) {
 	// A recovery code still completes the challenge in the same window.
 	if _, tokens, method, err := svc.CompleteMFAChallenge(ctx, login(), codes[0], "ua"); err != nil || tokens.AccessToken == "" || method != MFAMethodRecovery {
 		t.Fatalf("recovery code after a burned TOTP step = %v (method %q), want a session", err, method)
+	}
+}
+
+// testKEK builds a throwaway 32-byte cipher from a single filler byte. Not a
+// credential: it exists so a test can seal under one key and open under another.
+func testKEK(t *testing.T, filler byte) *secretbox.Cipher {
+	t.Helper()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = filler + byte(i)
+	}
+	c, err := secretbox.NewCipher(kek)
+	if err != nil {
+		t.Fatalf("NewCipher: %v", err)
+	}
+	return c
+}
+
+// TestUndecryptableTOTPSecretIsClassified pins A37-1's contract at the service
+// seam: a secret this KEK cannot open is a NAMED failure carrying the account,
+// not an anonymous error, and it says nothing that could reconstruct the secret.
+func TestUndecryptableTOTPSecretIsClassified(t *testing.T) {
+	ctx := context.Background()
+	svc, _, mfaRepo := newMFAService(t, testKEK(t, 1))
+	user, _ := register(t, svc, "ada", "ada@example.test")
+
+	enr, err := svc.BeginTOTPEnrollment(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("BeginTOTPEnrollment: %v", err)
+	}
+	if _, err := svc.VerifyTOTPEnrollment(ctx, user.ID, totpCode(t, enr.Secret, time.Now())); err != nil {
+		t.Fatalf("VerifyTOTPEnrollment: %v", err)
+	}
+
+	// The restore: the row now carries ciphertext sealed under a KEK this
+	// process does not have.
+	sealed, err := testKEK(t, 200).Seal([]byte(enr.Secret))
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	mfaRepo.rows[user.ID].TotpSecretSealed = sealed
+
+	_, err = svc.openTOTPSecret(user.ID, sealed)
+	if !errors.Is(err, ErrMFASecretUndecryptable) {
+		t.Fatalf("openTOTPSecret error = %v, want ErrMFASecretUndecryptable", err)
+	}
+	var ue *MFASecretUndecryptableError
+	if !errors.As(err, &ue) || ue.UserID != user.ID {
+		t.Fatalf("error does not name the account: %v", err)
+	}
+	if strings.Contains(err.Error(), sealed) || strings.Contains(err.Error(), enr.Secret) {
+		t.Fatalf("error leaks secret material: %v", err)
+	}
+
+	// A sealed value with no KEK at all is the same class — the "restored the
+	// dump, forgot the config archive" case.
+	noKEK, _, noKEKRepo := newMFAService(t, nil)
+	noKEKRepo.rows[user.ID] = &sqlcgen.UserMfa{UserID: user.ID, TotpSecretSealed: sealed, Enabled: true}
+	if _, err := noKEK.openTOTPSecret(user.ID, sealed); !errors.Is(err, ErrMFASecretUndecryptable) {
+		t.Fatalf("no-KEK error = %v, want ErrMFASecretUndecryptable", err)
+	}
+
+	// Recovery codes are SHA-256 hashes of high-entropy random values, never
+	// KEK-sealed, so the same broken row still admits a recovery code. This is
+	// what keeps an operator fault from locking every second-factor account out.
+	if _, err := svc.mfaRepo.CountUnusedRecoveryCodes(ctx, user.ID); err != nil {
+		t.Fatalf("CountUnusedRecoveryCodes: %v", err)
+	}
+}
+
+// TestCheckMFAKEKSamplesRatherThanScans pins A37-2: the boot check reads a
+// bounded sample and counts, in that sample, how many sealed secrets the
+// configured KEK cannot open.
+func TestCheckMFAKEKSamplesRatherThanScans(t *testing.T) {
+	ctx := context.Background()
+	ours := testKEK(t, 1)
+	theirs := testKEK(t, 200)
+	svc, _, mfaRepo := newMFAService(t, ours)
+
+	seal := func(cipher *secretbox.Cipher, plain string) string {
+		t.Helper()
+		v, err := cipher.Seal([]byte(plain))
+		if err != nil {
+			t.Fatalf("Seal: %v", err)
+		}
+		return v
+	}
+	put := func(stored string) {
+		id := uuid.New()
+		mfaRepo.rows[id] = &sqlcgen.UserMfa{UserID: id, TotpSecretSealed: stored, Enabled: true}
+	}
+
+	// An install nobody has enrolled on has nothing to say.
+	rep, err := svc.CheckMFAKEK(ctx, MFAKEKSample)
+	if err != nil {
+		t.Fatalf("CheckMFAKEK: %v", err)
+	}
+	if rep.Sampled != 0 || rep.Mismatch() {
+		t.Fatalf("empty install report = %+v, want nothing sampled and no mismatch", rep)
+	}
+
+	put(seal(ours, "JBSWY3DPEHPK3PXP"))
+	put(seal(theirs, "JBSWY3DPEHPK3PXP"))
+	put("JBSWY3DPEHPK3PXP") // a dev-era RAW secret: not a KEK question at all
+	rep, err = svc.CheckMFAKEK(ctx, MFAKEKSample)
+	if err != nil {
+		t.Fatalf("CheckMFAKEK: %v", err)
+	}
+	if rep.Sampled != 3 || rep.Sealed != 2 || rep.Undecryptable != 1 || !rep.Mismatch() {
+		t.Fatalf("report = %+v, want sampled 3 / sealed 2 / undecryptable 1", rep)
+	}
+
+	// The sample is BOUNDED — the check must stay cheap on an instance with
+	// thousands of enrolled accounts.
+	rep, err = svc.CheckMFAKEK(ctx, 1)
+	if err != nil {
+		t.Fatalf("CheckMFAKEK: %v", err)
+	}
+	if rep.Sampled != 1 {
+		t.Fatalf("sampled = %d with a limit of 1, want 1", rep.Sampled)
+	}
+}
+
+// With no KEK configured at all, every sealed row is undecryptable — the
+// "restored the dump, forgot the config archive" shape.
+func TestCheckMFAKEKWithNoKEKCountsEverySealedRow(t *testing.T) {
+	ctx := context.Background()
+	sealed, err := testKEK(t, 7).Seal([]byte("JBSWY3DPEHPK3PXP"))
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	svc, _, mfaRepo := newMFAService(t, nil)
+	id := uuid.New()
+	mfaRepo.rows[id] = &sqlcgen.UserMfa{UserID: id, TotpSecretSealed: sealed, Enabled: true}
+
+	rep, err := svc.CheckMFAKEK(ctx, MFAKEKSample)
+	if err != nil {
+		t.Fatalf("CheckMFAKEK: %v", err)
+	}
+	if rep.Sealed != 1 || rep.Undecryptable != 1 {
+		t.Fatalf("report = %+v, want the sealed row counted as undecryptable", rep)
 	}
 }

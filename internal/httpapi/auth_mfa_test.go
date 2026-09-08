@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/ratelimit"
+	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -122,6 +124,19 @@ func burnStep(row *sqlcgen.UserMfa, step int64) int64 {
 	}
 	row.LastTotpStep = &step
 	return 1
+}
+
+// ListRecentUserMFASecrets mirrors the SQL's newest-first LIMIT.
+func (f *mfaFakeRepo) ListRecentUserMFASecrets(_ context.Context, rowLimit int32) ([]sqlcgen.ListRecentUserMFASecretsRow, error) {
+	rows := make([]sqlcgen.ListRecentUserMFASecretsRow, 0, len(f.rows))
+	for id, row := range f.rows {
+		rows = append(rows, sqlcgen.ListRecentUserMFASecretsRow{UserID: id, TotpSecretSealed: row.TotpSecretSealed})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].UserID.String() < rows[j].UserID.String() })
+	if rowLimit > 0 && len(rows) > int(rowLimit) {
+		rows = rows[:rowLimit]
+	}
+	return rows, nil
 }
 
 func (f *mfaFakeRepo) CountUnusedRecoveryCodes(_ context.Context, userID uuid.UUID) (int64, error) {
@@ -574,4 +589,153 @@ func TestMFAChallengeIsAuthRateLimited(t *testing.T) {
 	if findAudit(auditEvents(t, &buf), observability.ActionRateLimited, observability.ResultFailure) == nil {
 		t.Error("expected an auth.rate_limited audit event")
 	}
+}
+
+// --- an MFA secret the configured KEK cannot open (A37-1) ---------------------
+
+// mfaTestKEK and mfaTestOtherKEK are throwaway 32-byte fixture keys, not
+// credentials: they exist only so a test can seal a secret under one and ask the
+// server to open it with the other, which is exactly what restoring a dump
+// without its config archive does to a live instance.
+var (
+	mfaTestKEK      = []byte("vidra-test-kek-A-not-a-real-key!")
+	mfaTestOtherKEK = []byte("vidra-test-kek-B-not-a-real-key!")
+)
+
+// mfaSealedServer builds a server whose TOTP secrets are sealed under cipher and
+// hands back the fake repo, so a test can replace a stored secret with one this
+// server's KEK cannot open.
+func mfaSealedServer(t *testing.T, buf *bytes.Buffer, cipher *secretbox.Cipher) (*Server, *mfaFakeRepo) {
+	t.Helper()
+	repo := newAuthFakeRepo()
+	mfaRepo := newMFAFakeRepo()
+	issuer := auth.NewTokenIssuer(mfaTestSecret, "vidra", "vidra", 15*time.Minute)
+	svc := auth.NewService(repo, issuer, 720*time.Hour, auth.WithMFA(mfaRepo, cipher, "Vidra Test"))
+	opts := []Option{WithAuthService(svc, 15*time.Minute)}
+	if buf != nil {
+		opts = append(opts, WithLogger(slog.New(slog.NewJSONHandler(buf, nil))))
+	}
+	return New(testConfig(), nil, nil, opts...), mfaRepo
+}
+
+// reseal replaces the single stored TOTP secret with one sealed under other,
+// and returns the account's id and the ciphertext now on the row.
+func reseal(t *testing.T, repo *mfaFakeRepo, other *secretbox.Cipher, plaintext string) (uuid.UUID, string) {
+	t.Helper()
+	if len(repo.rows) != 1 {
+		t.Fatalf("expected exactly one user_mfa row, got %d", len(repo.rows))
+	}
+	for id, row := range repo.rows {
+		sealed, err := other.Seal([]byte(plaintext))
+		if err != nil {
+			t.Fatalf("Seal: %v", err)
+		}
+		row.TotpSecretSealed = sealed
+		return id, sealed
+	}
+	return uuid.Nil, ""
+}
+
+func TestMFAChallengeWithAnUndecryptableSecretIsIndistinguishableFromAWrongCode(t *testing.T) {
+	kek, err := secretbox.NewCipher(mfaTestKEK)
+	if err != nil {
+		t.Fatalf("NewCipher: %v", err)
+	}
+	other, err := secretbox.NewCipher(mfaTestOtherKEK)
+	if err != nil {
+		t.Fatalf("NewCipher: %v", err)
+	}
+
+	// The baseline: what a WRONG CODE looks like on a healthy instance.
+	var wrongBuf bytes.Buffer
+	healthy, _ := mfaSealedServer(t, &wrongBuf, kek)
+	_, _, _ = enrollAndEnable(t, healthy)
+	wrongRec := postTo(healthy, "/api/v1/auth/mfa/challenge",
+		`{"mfa_token":"`+mfaLogin(t, healthy)+`","code":"000000"}`)
+	if wrongRec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong-code status = %d, want 401; body=%s", wrongRec.Code, wrongRec.Body.String())
+	}
+
+	// The restore-with-the-wrong-KEK instance: the secret on the row was sealed
+	// under a key this server does not have.
+	var buf bytes.Buffer
+	srv, repo := mfaSealedServer(t, &buf, kek)
+	_, secret, recovery := enrollAndEnable(t, srv)
+	userID, ciphertext := reseal(t, repo, other, secret)
+
+	rec := postTo(srv, "/api/v1/auth/mfa/challenge",
+		`{"mfa_token":"`+mfaLogin(t, srv)+`","code":"`+challengeCode(t, secret)+`"}`)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("undecryptable-secret status = %d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+	// Byte-identical apart from request_id, which is per-request by design and
+	// is the ONLY field a caller may legitimately see differ.
+	if got, want := withoutRequestID(t, rec.Body.Bytes()), withoutRequestID(t, wrongRec.Body.Bytes()); got != want {
+		t.Errorf("body = %s, want identical to the wrong-code body %s", got, want)
+	}
+
+	// ONE structured line at error level, naming the failure class and the
+	// account — and neither the ciphertext nor any key material.
+	logs := buf.String()
+	if n := strings.Count(logs, "mfa_secret_undecryptable"); n != 1 {
+		t.Errorf("mfa_secret_undecryptable appears %d times in the log, want exactly 1:\n%s", n, logs)
+	}
+	if !strings.Contains(logs, `"level":"ERROR"`) {
+		t.Errorf("no ERROR-level line in the log:\n%s", logs)
+	}
+	if !strings.Contains(logs, userID.String()) {
+		t.Errorf("log does not name the account %s:\n%s", userID, logs)
+	}
+	for _, leaked := range []string{ciphertext, secret, base64.StdEncoding.EncodeToString(mfaTestKEK)} {
+		if strings.Contains(logs, leaked) {
+			t.Fatalf("log leaked secret material:\n%s", logs)
+		}
+	}
+
+	// Recovery codes are hashed, not KEK-sealed, so the account is not locked
+	// out: the operator-facing failure must not become a user-facing one.
+	rec = postTo(srv, "/api/v1/auth/mfa/challenge",
+		`{"mfa_token":"`+mfaLogin(t, srv)+`","code":"`+recovery[0]+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("recovery-code challenge status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMFAChallengeWithASealedSecretAndNoKEKFailsClosed(t *testing.T) {
+	// The other half of A37-1: a dump restored with MFA_KEY_KEK unset entirely.
+	// The row still carries `enc:` ciphertext and there is no cipher to open it.
+	other, err := secretbox.NewCipher(mfaTestOtherKEK)
+	if err != nil {
+		t.Fatalf("NewCipher: %v", err)
+	}
+	var buf bytes.Buffer
+	srv, repo := mfaSealedServer(t, &buf, nil)
+	_, secret, _ := enrollAndEnable(t, srv)
+	reseal(t, repo, other, secret)
+	rec := postTo(srv, "/api/v1/auth/mfa/challenge",
+		`{"mfa_token":"`+mfaLogin(t, srv)+`","code":"`+challengeCode(t, secret)+`"}`)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(buf.String(), "mfa_secret_undecryptable") {
+		t.Errorf("log does not name the failure class:\n%s", buf.String())
+	}
+}
+
+// withoutRequestID renders an error body with the per-request id dropped, so a
+// test can assert that two refusals are otherwise indistinguishable.
+func withoutRequestID(t *testing.T, body []byte) string {
+	t.Helper()
+	var envelope struct {
+		Error map[string]any `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("unmarshal error body %s: %v", body, err)
+	}
+	delete(envelope.Error, "request_id")
+	out, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(out)
 }

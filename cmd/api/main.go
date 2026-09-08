@@ -556,6 +556,36 @@ func run() error {
 	authsvc := auth.NewService(db.Queries(), issuer, cfg.JWTRefreshTTL, authOpts...)
 	opts = append(opts, httpapi.WithAuthService(authsvc, cfg.JWTAccessTTL))
 
+	// A37-2: ask the configured KEK, ONCE, whether it can open anything this
+	// database actually holds. The KEK is validated for shape when the cipher is
+	// built above and never against a stored ciphertext, so an api restored with
+	// the wrong one — or with none, next to a dump full of `enc:` secrets — boots
+	// clean and probes healthy, and the first symptom is a second-factor login
+	// failing days later.
+	//
+	// A bounded SAMPLE of the newest rows, on a bounded context, because this
+	// sits on the boot path: the question is whether this KEK belongs to this
+	// database, which one row answers. A read failure is logged and dropped —
+	// the check is a diagnostic, and a database that cannot answer it has a
+	// louder problem that /readyz is already reporting.
+	kekCtx, cancelKEK := context.WithTimeout(context.Background(), 5*time.Second)
+	kekReport, kekErr := authsvc.CheckMFAKEK(kekCtx, auth.MFAKEKSample)
+	cancelKEK()
+	switch {
+	case kekErr != nil:
+		logger.Warn("could not sample stored TOTP secrets to check MFA_KEY_KEK; the status page will report the check as not run", "error", kekErr)
+	default:
+		opts = append(opts, httpapi.WithMFAKEKReport(kekReport))
+		if kekReport.Mismatch() {
+			// Counts only — never a user id, never a ciphertext, never the key.
+			logger.Warn("stored TOTP secrets cannot be decrypted with the configured MFA_KEY_KEK, so those accounts' second factor can never verify; this is what a database restored without its config archive looks like. Password logins are unaffected and recovery codes still work",
+				"check", "mfa_kek_mismatch",
+				"sampled", kekReport.Sampled,
+				"sealed", kekReport.Sealed,
+				"undecryptable", kekReport.Undecryptable)
+		}
+	}
+
 	// First-run owner bootstrap (0104): the admin account is claimed with a
 	// one-time setup token — never by winning the registration race. A fresh
 	// token is minted on every boot while a claim is outstanding (only its

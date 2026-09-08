@@ -84,6 +84,14 @@ func (s *Server) handleVerifyTOTPEnrollment(c echo.Context) error {
 		case errors.Is(err, auth.ErrInvalidMFACode):
 			s.audit(c, observability.ActionMFAEnable, observability.ResultFailure, userID.String(), "invalid_code")
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid code")
+		case errors.Is(err, auth.ErrMFASecretUndecryptable):
+			// The same fault reached through the enrollment half: a KEK that
+			// changed between starting an enrollment and confirming it. Same
+			// treatment — the wrong-code answer for this endpoint, and the one
+			// operator line — for the same reason.
+			s.logMFASecretUndecryptable(c, err)
+			s.audit(c, observability.ActionMFAEnable, observability.ResultFailure, userID.String(), "secret_undecryptable")
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid code")
 		case errors.Is(err, auth.ErrMFANotEnrolled):
 			s.audit(c, observability.ActionMFAEnable, observability.ResultFailure, userID.String(), "not_enrolled")
 			return echo.NewHTTPError(http.StatusBadRequest, "no TOTP enrollment in progress")
@@ -209,6 +217,18 @@ func (s *Server) handleMFAChallenge(c echo.Context) error {
 		case errors.Is(err, auth.ErrInvalidMFACode):
 			s.audit(c, observability.ActionMFAChallenge, observability.ResultFailure, "", "invalid_code")
 			return echo.NewHTTPError(http.StatusUnauthorized, "invalid code")
+		case errors.Is(err, auth.ErrMFASecretUndecryptable):
+			// A37-1. The stored secret cannot be opened with this process's KEK,
+			// so the code can never be checked — and the answer is the wrong-code
+			// answer, verbatim, on purpose: a distinguishable status or message
+			// would let an unauthenticated caller enumerate which accounts an
+			// instance can no longer verify, and it would be a 500 an operator
+			// reads as "an unexpected error occurred" rather than as the
+			// configuration fault it is. The whole signal goes to the log line
+			// below, which names the account and the class.
+			actor := s.logMFASecretUndecryptable(c, err)
+			s.audit(c, observability.ActionMFAChallenge, observability.ResultFailure, actor, "secret_undecryptable")
+			return echo.NewHTTPError(http.StatusUnauthorized, "invalid code")
 		case errors.Is(err, auth.ErrMFAUnavailable):
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "two-factor authentication is not configured on this server")
 		}
@@ -219,4 +239,30 @@ func (s *Server) handleMFAChallenge(c echo.Context) error {
 	s.audit(c, observability.ActionMFAChallenge, observability.ResultSuccess, user.ID.String(), string(method))
 	cookieMode := in.CookieMode || refreshCookieToken(c) != ""
 	return s.authResponse(http.StatusOK, c, user, tokens, cookieMode)
+}
+
+// logMFASecretUndecryptable writes the ONE line an operator gets when a stored
+// TOTP secret cannot be opened with the configured KEK, and returns the account
+// id for the audit row.
+//
+// It is deliberately loud — error level, a sentence that names the CONSEQUENCE
+// and the usual cause, the same discipline the /admin/system probes use —
+// because it is the only place this fault surfaces at all: the client's 401 is
+// indistinguishable from a wrong code by design, so an operator who never reads
+// this line has no way to learn that the second factor is broken instance-wide.
+//
+// It carries the failure class, the account and the cipher's own message. Never
+// the ciphertext, never the key, never the plaintext secret.
+func (s *Server) logMFASecretUndecryptable(c echo.Context, err error) string {
+	attrs := []any{"failure", "mfa_secret_undecryptable"}
+	var ue *auth.MFASecretUndecryptableError
+	actor := ""
+	if errors.As(err, &ue) {
+		actor = ue.UserID.String()
+		attrs = append(attrs, "user_id", actor, "cause", ue.Cause)
+	}
+	s.logger.ErrorContext(c.Request().Context(),
+		"a stored TOTP secret could not be decrypted with the configured MFA_KEY_KEK, so this account's second factor can never verify and its challenge is being refused like a wrong code. The usual cause is a database restored without the config archive that carries the KEK, or with a different one. Recovery codes are hashed rather than sealed and still work; an admin can also reset the account's second factor.",
+		attrs...)
+	return actor
 }

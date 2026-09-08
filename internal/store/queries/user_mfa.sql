@@ -85,3 +85,19 @@ WHERE user_id = sqlc.arg('user_id')
 -- render a single user (the detail response after an edit, and the MFA reset).
 -- A pending enrollment does not count.
 SELECT EXISTS (SELECT 1 FROM user_mfa WHERE user_id = $1 AND enabled);
+
+-- name: ListRecentUserMFASecrets :many
+-- The newest stored TOTP secrets, for the boot-time KEK sanity check (A37-2).
+--
+-- A KEK that can decrypt NOTHING this database holds is invisible until the
+-- first second-factor login — a restore that brought the dump without its
+-- config archive boots clean, answers /readyz 200, and serves every password
+-- login for as long as nobody with TOTP tries to sign in. One row answers the
+-- question ("is this the KEK that sealed this database?") as well as ten
+-- thousand, so this is a bounded SAMPLE and never a scan: newest first, because
+-- those are the rows most likely to have been sealed by the key the operator
+-- believes is configured.
+SELECT user_id, totp_secret_sealed
+FROM user_mfa
+ORDER BY created_at DESC, user_id
+LIMIT sqlc.arg('row_limit');
