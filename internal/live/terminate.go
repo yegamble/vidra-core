@@ -280,8 +280,15 @@ func (s *Service) Terminate(ctx context.Context, id uuid.UUID, in TerminateInput
 	if s.control != nil {
 		n, derr := s.control.DropPublisher(ctx, id.String())
 		res.DroppedCount = n
+		if derr == nil && n <= 0 {
+			// A controller that reports closing nothing and no error at all is
+			// still reporting that nothing was closed. The NUMBER is the
+			// outcome, and a success read off the absence of an error is
+			// exactly the reading A26 caught.
+			derr = ErrIngestNoPublisher
+		}
 		switch {
-		case derr == nil && n > 0:
+		case derr == nil:
 			res.PublisherDropped = true
 		case errors.Is(derr, ErrIngestNoPublisher):
 			// Not an error and not a success: the ingest answered and said it
@@ -293,9 +300,6 @@ func (s *Service) Terminate(ctx context.Context, id uuid.UUID, in TerminateInput
 			s.logger.InfoContext(ctx, "live terminate: the ingest dropped no publisher; nobody was connected under this stream id",
 				"stream_id", id.String())
 		default:
-			if derr == nil {
-				derr = ErrIngestNoPublisher
-			}
 			res.DropError = derr
 			s.logger.WarnContext(ctx, "live terminate: could not disconnect the publisher; the RTMP socket may still be writing segments and a recording",
 				"stream_id", id.String(), "error", derr)
