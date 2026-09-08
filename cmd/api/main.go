@@ -621,20 +621,25 @@ func run() error {
 	// OIDC login providers (P4). Provider discovery is lazy (first use), so a
 	// temporarily unreachable IdP never blocks boot. NB: provider name/issuer
 	// are safe to log; the client secret is NOT (sensitive-key rules).
-	if len(cfg.OAuthProviders) > 0 {
-		providers := make([]auth.OAuthProvider, 0, len(cfg.OAuthProviders))
-		for _, p := range cfg.OAuthProviders {
-			providers = append(providers, auth.OAuthProvider{
-				Name:         p.Name,
-				IssuerURL:    p.IssuerURL,
-				ClientID:     p.ClientID,
-				ClientSecret: p.ClientSecret,
-				Scopes:       p.Scopes,
-			})
-			logger.Info("oauth provider configured", "provider", p.Name, "issuer", p.IssuerURL)
-		}
-		opts = append(opts, httpapi.WithOAuthService(auth.NewOAuthService(db.Queries(), authsvc, providers)))
+	providers := make([]auth.OAuthProvider, 0, len(cfg.OAuthProviders))
+	for _, p := range cfg.OAuthProviders {
+		providers = append(providers, auth.OAuthProvider{
+			Name:         p.Name,
+			IssuerURL:    p.IssuerURL,
+			ClientID:     p.ClientID,
+			ClientSecret: p.ClientSecret,
+			Scopes:       p.Scopes,
+		})
+		logger.Info("oauth provider configured", "provider", p.Name, "issuer", p.IssuerURL)
 	}
+	// Wired UNCONDITIONALLY, even with zero OIDC providers. The service also owns
+	// /me/oauth-identities, and ATProto identity login writes its DID into the same
+	// oauth_identities table — so gating this on OIDC providers left an
+	// ATProto-only instance with no route to list or unlink an identity, on
+	// accounts that are passwordless and whose DID is their ONLY credential. With
+	// no providers configured /auth/oauth/:provider still answers 404 (unknown
+	// provider), which is what it answered before.
+	opts = append(opts, httpapi.WithOAuthService(auth.NewOAuthService(db.Queries(), authsvc, providers)))
 
 	// The per-user channel cap (max_channels_per_user, config-parity W8) is
 	// resolved per create from the settings overlay; 0 (the default) = unlimited.
@@ -2044,9 +2049,16 @@ func run() error {
 	// gates start/callback at request time (503 when off). It keeps NO PDS tokens,
 	// so it needs no KEK. Reuses the outbound-fetch dev knob (ImportAllowPrivateURLs)
 	// so backed e2e can reach a loopback PDS/auth server; production stays https+public.
-	atprotoLoginClient := atproto.NewOAuthClient(
+	atprotoLoginClientOpts := []atproto.OAuthClientOption{
 		atproto.WithOAuthClientAllowPrivate(cfg.ImportAllowPrivateURLs),
-	)
+	}
+	// DEV/TEST-ONLY did:plc directory override, already gated on the loopback
+	// declaration by Config.ATProtoDevPLCURL (production keeps plc.directory).
+	if plcURL := cfg.ATProtoDevPLCURL(); plcURL != "" {
+		logger.Warn("ATPROTO_PLC_URL is set — ATProto identity login resolves DID documents from a NON-DEFAULT directory; this is a development/test setting", "plc_url", plcURL)
+		atprotoLoginClientOpts = append(atprotoLoginClientOpts, atproto.WithPLCURL(plcURL))
+	}
+	atprotoLoginClient := atproto.NewOAuthClient(atprotoLoginClientOpts...)
 	atprotoLoginSvc := auth.NewATProtoOAuthService(db.Queries(), authsvc, atprotoLoginClient,
 		auth.WithATProtoEnabled(cfg.ATProtoLoginEnabled),
 		auth.WithATProtoPublicBaseURL(cfg.PublicBaseURL),

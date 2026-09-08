@@ -155,15 +155,11 @@ func (c *OAuthClient) resolveHandleDNS(ctx context.Context, handle string) strin
 	return found
 }
 
-// resolveHandleHTTP fetches https://<handle>/.well-known/atproto-did (SSRF
-// guarded; the host is attacker-controlled) and returns the bare DID body, or ""
-// on any failure.
+// resolveHandleHTTP fetches <handle>/.well-known/atproto-did (SSRF guarded; the
+// host is attacker-controlled) and returns the bare DID body, or "" on any
+// failure.
 func (c *OAuthClient) resolveHandleHTTP(ctx context.Context, handle string) string {
-	base := c.wellKnownBase
-	if base == "" {
-		base = "https://" + handle
-	}
-	body, err := c.getGuarded(ctx, "atproto-did", base+"/.well-known/atproto-did", maxWellKnownDID)
+	body, err := c.getGuarded(ctx, "atproto-did", c.handleWellKnownURL(handle), maxWellKnownDID)
 	if err != nil {
 		return ""
 	}
@@ -172,6 +168,25 @@ func (c *OAuthClient) resolveHandleHTTP(ctx context.Context, handle string) stri
 		return ""
 	}
 	return did
+}
+
+// handleWellKnownURL builds the handle→DID well-known URL. Production uses the
+// handle's own https origin. The allowPrivate dev/test knob relaxes it to http,
+// exactly as the did:web branch of resolveDIDDoc already does: a handle carries
+// no port, so https://<handle> can only ever mean port 443, and a loopback PDS
+// on a high port is unreachable on this hop otherwise — which made the knob's
+// documented purpose ("backed e2e can reach a loopback PDS/auth server")
+// impossible to satisfy. An explicit WithHandleWellKnownBase still wins.
+func (c *OAuthClient) handleWellKnownURL(handle string) string {
+	base := c.wellKnownBase
+	if base == "" {
+		scheme := "https"
+		if c.allowPrivate {
+			scheme = "http"
+		}
+		base = scheme + "://" + handle
+	}
+	return base + "/.well-known/atproto-did"
 }
 
 // ResolveDID resolves a DID to its document and returns the atproto PDS origin.

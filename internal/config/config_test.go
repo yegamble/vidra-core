@@ -2067,3 +2067,44 @@ func TestCDNPurgeRetryDefaultsAgree(t *testing.T) {
 		t.Errorf("config attempts = %d, cdnpurge.DefaultMaxAttempts = %d", defaultCDNPurgeMaxAttempts, cdnpurge.DefaultMaxAttempts)
 	}
 }
+
+// ATPROTO_PLC_URL is a DEV/TEST-ONLY override of the did:plc directory. It must
+// be inert unless the instance has already declared itself a loopback lab with
+// HTTP_IMPORT_ALLOW_PRIVATE_URLS, so a production misconfiguration can never
+// point identity resolution at a directory an attacker controls.
+func TestATProtoDevPLCURLRequiresAllowPrivate(t *testing.T) {
+	t.Run("ignored without the private-URL knob", func(t *testing.T) {
+		t.Setenv("ATPROTO_PLC_URL", "http://127.0.0.1:2582")
+		t.Setenv("HTTP_IMPORT_ALLOW_PRIVATE_URLS", "false")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if got := cfg.ATProtoDevPLCURL(); got != "" {
+			t.Fatalf("ATProtoDevPLCURL() = %q, want empty without HTTP_IMPORT_ALLOW_PRIVATE_URLS", got)
+		}
+	})
+
+	t.Run("honoured with the private-URL knob", func(t *testing.T) {
+		t.Setenv("ATPROTO_PLC_URL", "http://127.0.0.1:2582/")
+		t.Setenv("HTTP_IMPORT_ALLOW_PRIVATE_URLS", "true")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if got := cfg.ATProtoDevPLCURL(); got != "http://127.0.0.1:2582" {
+			t.Fatalf("ATProtoDevPLCURL() = %q, want the trimmed override", got)
+		}
+	})
+
+	t.Run("empty by default", func(t *testing.T) {
+		t.Setenv("HTTP_IMPORT_ALLOW_PRIVATE_URLS", "true")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if got := cfg.ATProtoDevPLCURL(); got != "" {
+			t.Fatalf("ATProtoDevPLCURL() = %q, want empty by default", got)
+		}
+	})
+}
