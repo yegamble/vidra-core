@@ -39,6 +39,13 @@
 # resolves. Only ONE application declares the stop hook, because two would end
 # the session twice and republish the recording twice.
 #
+# The control surface: this same http server also exposes nginx-rtmp's control
+# and stat modules on /control and /stat, gated on the same shared secret. They
+# are the reverse direction — api to ingest — and they exist because ending a
+# broadcast in the api's database does not disconnect the publisher, who
+# otherwise stays connected writing segments and a recording after a moderator
+# has taken the stream off the air. See the location blocks at the bottom.
+#
 # The cost of that choice, stated plainly: the end-of-session signal now depends
 # on the loopback push having been established. If the push never starts, the
 # stream stays "live" with no HLS behind it until the live_max_duration_secs
@@ -132,6 +139,46 @@ http {
             proxy_set_header X-Ingest-Secret "__LIVE_INGEST_SECRET__";
             proxy_redirect off;
             proxy_pass http://api:8080/api/v1/live/ingest/stop;
+        }
+
+        # THE CONTROL SURFACE — the reverse direction, api -> ingest, and the
+        # only way a moderator's termination reaches the PUBLISHER.
+        #
+        # Ending a broadcast in the database is a server-side close: HLS 404s and
+        # the stream leaves every listing, but the RTMP socket stays open and
+        # keeps writing segments and a recording to the operator's disk. The
+        # api calls
+        #
+        #   GET /control/drop/publisher?app=live&name=<stream-id>
+        #
+        # to close it. `name` is the STREAM ID and not the stream key, because
+        # the on-publish hook has already renamed the session to the id — which
+        # is exactly why the raw key never has to leave the database.
+        #
+        # AUTHENTICATION. This endpoint can disconnect any publisher on the
+        # instance, so it is gated on the SAME shared secret the hooks use, in a
+        # header. `if` here is the rewrite module and runs before the content
+        # phase, so a wrong or absent secret never reaches rtmp_control. The
+        # port is not published to the host by the compose service, so on a
+        # default deployment only the compose network can reach it at all —
+        # the secret is what stands between two layers, not the only layer.
+        location /control {
+            if ($http_x_ingest_secret != "__LIVE_INGEST_SECRET__") {
+                return 401;
+            }
+            rtmp_control all;
+        }
+
+        # The health probe behind the api's `live_ingest` component. It is
+        # deliberately the STAT page and not a control command with a dummy
+        # name: a probe that runs on every readiness tick must have no side
+        # effect, and a drop request — even one that matches nothing — is a
+        # mutation aimed at whatever happens to be named that way.
+        location /stat {
+            if ($http_x_ingest_secret != "__LIVE_INGEST_SECRET__") {
+                return 401;
+            }
+            rtmp_stat all;
         }
     }
 }

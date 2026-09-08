@@ -148,6 +148,15 @@ const (
 	// force-closing an over-limit live session (config-parity W11). Reason
 	// carries the safe stream id only — never the stream key.
 	ActionLiveForceClose = "content.live.force_close"
+	// ActionLiveTerminate records a MODERATOR (or the stream's own owner)
+	// deliberately ending a live broadcast. ResourceID carries the stream id —
+	// unlike the two live actions above, which A26 measured leaving it empty and
+	// burying the id in free-text Reason, so the audit filter could not target a
+	// stream. Reason carries the allow-listed reason CODE only (the moderator's
+	// free text lives on the live_streams row, where a video block's reason
+	// lives) plus, when they occurred, the partial-outcome markers
+	// `publisher_not_dropped` / `key_not_rotated` — never the stream key.
+	ActionLiveTerminate = "content.live.terminate"
 	// ActionUploadMalwareRejected records that the malware scanner (ClamAV,
 	// UPLOAD-13) kept an uploaded original out of the published state — an
 	// infection, or an unscannable file under a non-publishing policy. Reason

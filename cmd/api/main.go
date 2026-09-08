@@ -66,6 +66,7 @@ import (
 	"github.com/vidra/vidra-core/internal/playlist"
 	"github.com/vidra/vidra-core/internal/processheartbeat"
 	"github.com/vidra/vidra-core/internal/profileimage"
+	"github.com/vidra/vidra-core/internal/pseudonym"
 	"github.com/vidra/vidra-core/internal/qoe"
 	"github.com/vidra/vidra-core/internal/quota"
 	"github.com/vidra/vidra-core/internal/ratelimit"
@@ -1576,16 +1577,48 @@ func run() error {
 		// recording store, but the duration watchdog audits force-closes on
 		// every deployment.
 		live.WithAuditor(auditsvc),
+		// Session-recording retention. A plain config read rather than a
+		// settings-overlay knob: it governs bytes on the operator's disk, not
+		// instance policy, and an admin changing it from a web form is how a
+		// "the only copy" recording disappears between a failed replay and a
+		// re-transcode.
+		live.WithRecordingRetention(func() time.Duration { return cfg.LiveRecordingRetention }),
+		// The concurrent-viewer count. Redis-only and TTL'd — no count on an
+		// instance without Redis, which the projections report as ABSENT rather
+		// than as zero.
+		live.WithViewerCounter(live.NewViewerCounter(rdb.Client)),
+	}
+	// The ingest control surface: the only path by which a moderator's
+	// termination reaches the PUBLISHER rather than just the audience, and the
+	// probe behind the `live_ingest` health component. Wired only when both the
+	// URL and the shared secret are set — an unauthenticated control surface is
+	// refused at config validation, so reaching here with one means neither.
+	if ingestControl := live.NewHTTPIngestController(cfg.LiveIngestControlURL, cfg.LiveIngestSecret); ingestControl != nil {
+		liveOpts = append(liveOpts, live.WithIngestController(ingestControl))
+		opts = append(opts, httpapi.WithLiveIngestProber(ingestControl))
+		logger.Info("live ingest control surface enabled", "control_url", cfg.LiveIngestControlURL)
+	} else if cfg.LiveRTMPURL != "" {
+		// Loud, because the consequence is invisible until a moderator needs it:
+		// terminations will end the broadcast and rotate the key and leave the
+		// publisher connected, and /admin/system cannot tell whether the ingest
+		// is alive.
+		logger.Warn("live is configured but LIVE_INGEST_CONTROL_URL is not: a moderator termination cannot disconnect the publisher, and the live_ingest health component cannot be probed")
 	}
 	if cfg.LiveHLSRoot != "" {
 		liveOpts = append(liveOpts,
 			live.WithReplayPipeline(videosvc),
 			live.WithRecordingStore(live.NewDirRecordingStore(cfg.LiveHLSRoot)),
 		)
-		logger.Info("live HLS serving + replay-to-VOD enabled", "hls_root", cfg.LiveHLSRoot)
+		logger.Info("live HLS serving + replay-to-VOD enabled",
+			"hls_root", cfg.LiveHLSRoot, "recording_retention", cfg.LiveRecordingRetention.String())
 	}
 	livesvc := live.NewService(db.Queries(), liveOpts...)
 	opts = append(opts, httpapi.WithLiveService(livesvc))
+	// The live viewer digest gets its OWN domain label off the same secret every
+	// other pseudonym here is derived from, so a live viewer digest and a QoE
+	// viewer digest for the same person on the same day cannot be joined.
+	opts = append(opts, httpapi.WithLiveViewerDigester(
+		pseudonym.New([]byte(cfg.JWTSecret), live.ViewerDigestDomain)))
 
 	imagesvc := profileimage.NewService(db.Queries(), blobs,
 		profileimage.WithMirror(ipfsMirror),
@@ -2235,6 +2268,13 @@ func run() error {
 		defer workerCancel()
 		go runLiveDurationWatchdog(workerCtx, logger, livesvc, cronLeader)
 		logger.Info("live duration watchdog started")
+		// Session-recording retention rides the same leader-elected cadence the
+		// QoE and audit prunes do (runTelemetryRetentionWorker's hourly tick), in
+		// its own pass so a failure here cannot stop those. A no-op tick when
+		// LIVE_RECORDING_RETENTION is 0 — see internal/live/retention.go for why
+		// 0 sweeps nothing rather than inventing a window.
+		go runLiveRecordingRetentionWorker(workerCtx, logger, livesvc, cfg.LiveRecordingRetention, cronLeader)
+		logger.Info("live recording retention worker started", "retention", cfg.LiveRecordingRetention.String())
 	}
 
 	// Drain the upload-finalize queue in the background: assemble an accepted
@@ -2945,6 +2985,37 @@ func runLiveDurationWatchdog(ctx context.Context, logger *slog.Logger, svc *live
 			DoneMsg: "live duration watchdog force-closed over-limit sessions",
 			Run: func(ctx context.Context, _ time.Time) (int, error) {
 				return svc.SweepOverdueLive(ctx)
+			},
+		}},
+	}.Run(ctx, logger)
+}
+
+// runLiveRecordingRetentionWorker deletes session recordings that have outlived
+// LIVE_RECORDING_RETENTION.
+//
+// Hourly and leader-gated, modelled on runTelemetryRetentionWorker: these are
+// files on a shared volume, so N replicas each unlinking the same batch would be
+// N-1 wasted passes racing each other's ENOENT. It is a SEPARATE loop from the
+// telemetry one rather than a third pass inside it because it touches a
+// filesystem and not a table — a stalled NFS mount must not be able to hold up
+// the audit trail's retention.
+//
+// Every tick is a free no-op while the retention is 0, which is the default: see
+// internal/live/retention.go for why 0 deletes on publish and sweeps nothing.
+func runLiveRecordingRetentionWorker(ctx context.Context, logger *slog.Logger, svc *live.Service, retention time.Duration, leader *leaderlock.Elector) {
+	const interval = time.Hour
+	jobloop.Loop{
+		Interval: interval,
+		Leader:   leader,
+		Passes: []jobloop.Pass{{
+			FailMsg: "live recording retention failed",
+			Run: func(ctx context.Context, tick time.Time) (int, error) {
+				removed, err := svc.PruneRecordings(ctx, tick.UTC())
+				if removed > 0 {
+					logger.Info("live recording retention deleted session recordings",
+						"count", removed, "retention", retention.String())
+				}
+				return 0, err
 			},
 		}},
 	}.Run(ctx, logger)

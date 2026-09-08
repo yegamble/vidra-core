@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -143,6 +144,7 @@ func (s *Server) handleGetLiveHLSMaster(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	s.countLiveViewer(c, id)
 	return s.serveLiveHLSFile(c, liveHLSPlaylistName(id), publicLiveStream(stream))
 }
 
@@ -161,6 +163,13 @@ func (s *Server) handleGetLiveHLSFile(c echo.Context) error {
 	stream, err := s.liveStreamForHLS(c, id)
 	if err != nil {
 		return err
+	}
+	// The same playlist the master route serves, reached by its on-disk name —
+	// a player that followed the master's own URI lands here, so counting only
+	// the master route would miss every one of them. Segments are deliberately
+	// not counted; see countLiveViewer.
+	if strings.HasSuffix(name, ".m3u8") {
+		s.countLiveViewer(c, id)
 	}
 	return s.serveLiveHLSFile(c, name, publicLiveStream(stream))
 }
@@ -253,4 +262,67 @@ func (s *Server) serveLiveHLSPlaylist(c echo.Context, file *os.File, eligible bo
 	setMediaCacheControl(c, delivery.ClassHLSPlaylist, eligible)
 	return c.Blob(http.StatusOK, contentTypeM3U8,
 		rewritePlaylistToken(data, c.QueryParam(playbackTokenParam)))
+}
+
+// liveViewerDigest resolves the pseudonym one live viewer is counted under.
+//
+// It reuses qoeViewerDigest's consent question — searchConsent, the SAME
+// predicate the settings page's promise is made of — but NOT its answer for an
+// opted-out viewer. QoE stores the EMPTY digest for them, which is right for a
+// persisted telemetry row: the row still lands, and the field that identifies
+// anybody is simply blank.
+//
+// Blank cannot work here, because this digest is a SET MEMBER. Every opted-out
+// viewer on the instance would collapse into one member and the count would
+// under-report them — and A35's rule for this surface is that opted-out viewers
+// COUNT. So they are digested as the anonymous visitor A13 says they asked to be
+// treated as: no account-derived value, a distinct member, an honest count.
+//
+// What that costs them is bounded and much smaller than the QoE row's: the
+// digest lives in Redis for the rolling window (90 s), is keyed and day-scoped
+// like every other pseudonym here, is never persisted, never logged, and is
+// never read back as anything but a cardinality.
+func (s *Server) liveViewerDigest(c echo.Context, now time.Time) string {
+	if s.liveViewers == nil {
+		return ""
+	}
+	viewerID, prefs, authed := s.searchUserPrefs(c)
+	if authed {
+		if allowHistory, allowPersonalization := s.searchConsent(prefs, authed); !allowHistory && !allowPersonalization {
+			authed = false
+		}
+	}
+	principal := "ip:" + strings.TrimSpace(c.RealIP())
+	if authed && viewerID != uuid.Nil {
+		principal = "u:" + viewerID.String()
+	}
+	return s.liveViewers.Of(now, principal)
+}
+
+// countLiveViewer records that whoever made this request is watching.
+//
+// It runs on the PLAYLIST fetch only — a live player refetches the playlist
+// every couple of seconds for exactly as long as it is watching, which is the
+// only request in the live path that means "still here". Segment fetches would
+// measure bandwidth and GET /live/{id} would measure page views.
+//
+// It is fire-and-forget: a Redis failure degrades the count, never the
+// playback, so the error is logged at debug and the playlist is served
+// regardless. Nothing downstream waits on it.
+func (s *Server) countLiveViewer(c echo.Context, streamID uuid.UUID) {
+	if s.livesvc == nil {
+		return
+	}
+	counter := s.livesvc.Viewers()
+	if counter == nil {
+		return
+	}
+	digest := s.liveViewerDigest(c, time.Now())
+	if digest == "" {
+		return
+	}
+	if err := counter.Touch(c.Request().Context(), streamID, digest); err != nil {
+		s.logger.DebugContext(c.Request().Context(), "live viewer count: could not record a viewer",
+			"stream_id", streamID.String(), "error", err)
+	}
 }

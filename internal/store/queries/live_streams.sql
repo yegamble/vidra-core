@@ -10,6 +10,7 @@ RETURNING id, channel_id, title, description, privacy, state, permanent, replay_
 -- display name for display). Never returns the stream key hash.
 SELECT ls.id, ls.channel_id, ls.title, ls.description, ls.privacy, ls.state, ls.permanent,
        ls.replay_enabled, ls.started_at, ls.created_at, ls.updated_at,
+       ls.terminated_at, ls.terminated_by, ls.termination_reason_code, ls.termination_reason,
        ch.owner_id, ch.handle AS channel_handle, ch.display_name AS channel_display_name
 FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
@@ -17,7 +18,8 @@ WHERE ls.id = $1;
 
 -- name: ListLiveStreamsByChannel :many
 -- A channel's live streams, newest first (owner management list). No key hash.
-SELECT id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at
+SELECT id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at,
+       terminated_at, terminated_by, termination_reason_code, termination_reason
 FROM live_streams
 WHERE channel_id = sqlc.arg('channel_id')
 ORDER BY created_at DESC, id
@@ -130,6 +132,14 @@ ORDER BY started_at, id;
 -- start, surfaced by the public "Live now" listing); an idempotent re-assert of
 -- 'live' (e.g. the post-rename re-invocation) preserves the original start;
 -- leaving live (offline/ended) clears it.
+--
+-- Going live also CLEARS any moderator termination (migration 0141). A
+-- terminated PERMANENT stream is not destroyed — its key is rotated and the
+-- moderator's reason is shown to the creator — so if it is allowed to broadcast
+-- again, carrying last month's takedown notice on its page forever would be a
+-- lie about the current session. The audit trail keeps the history; the row
+-- describes only what is true now. Leaving live does NOT clear it, because that
+-- is precisely when the creator needs to read it.
 UPDATE live_streams
 SET state = $2,
     started_at = CASE
@@ -137,8 +147,35 @@ SET state = $2,
         WHEN $2 = 'live' THEN started_at
         ELSE NULL
     END,
+    terminated_at = CASE WHEN $2 = 'live' THEN NULL ELSE terminated_at END,
+    terminated_by = CASE WHEN $2 = 'live' THEN NULL ELSE terminated_by END,
+    termination_reason_code = CASE WHEN $2 = 'live' THEN NULL ELSE termination_reason_code END,
+    termination_reason = CASE WHEN $2 = 'live' THEN '' ELSE termination_reason END,
     updated_at = now()
 WHERE id = $1;
 
 -- name: DeleteLiveStream :execrows
 DELETE FROM live_streams WHERE id = $1;
+
+-- name: TerminateLiveStream :exec
+-- End a live session and record WHY, in one statement (migration 0141).
+--
+-- One statement rather than a state flip plus an update, because the two must
+-- not be separable: a crash between them would leave a stream ended with no
+-- reason — indistinguishable from an ordinary publisher disconnect — and the
+-- creator would be told nothing at all, which is the exact gap this closes.
+--
+-- The state is the caller's ($2): 'ended' for a one-shot stream, 'offline' for
+-- a permanent one, mirroring what the duration watchdog and the stop hook
+-- already decide. started_at is cleared exactly as leaving live always clears
+-- it. reason_code may be NULL and reason may be '' — that combination is the
+-- OWNER ending their own broadcast, which is not a moderation action.
+UPDATE live_streams
+SET state = $2,
+    started_at = NULL,
+    terminated_at = now(),
+    terminated_by = sqlc.narg('terminated_by'),
+    termination_reason_code = sqlc.narg('termination_reason_code'),
+    termination_reason = sqlc.arg('termination_reason'),
+    updated_at = now()
+WHERE id = $1;

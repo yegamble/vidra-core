@@ -81,11 +81,38 @@ type liveStreamView struct {
 	// HLSURL is the live playlist path, present only while the stream is live and
 	// a media server (LIVE_HLS_ROOT) is configured to serve it.
 	HLSURL string `json:"hls_url,omitempty"`
+	// ViewerCount is how many distinct viewers fetched this stream's live
+	// playlist in the last rolling window (internal/live/viewers.go).
+	//
+	// A POINTER, and omitted when nil, because "nobody is watching" and "this
+	// instance cannot tell" are different statements and a creator mid-broadcast
+	// must not be shown a confident 0 for the second one. It is nil for a stream
+	// that is not live, and on an instance with no Redis.
+	ViewerCount *int64 `json:"viewer_count,omitempty"`
+	// Termination describes a broadcast that a PERSON ended (migration 0141).
+	// Present only for a viewer entitled to read it — the creator, a channel
+	// content manager, or staff — never on the public projection.
+	Termination *liveTerminationView `json:"termination,omitempty"`
 }
 
-// newLiveStreamView projects a stream. The server is passed so the view can add
-// the live HLS URL when the stream is live and HLS serving is configured.
-func (s *Server) newLiveStreamView(st live.Stream) liveStreamView {
+// liveTerminationView is the creator-facing answer to "why did my stream stop".
+//
+// Before this a terminated stream was indistinguishable from one whose publisher
+// dropped off: the row simply read `ended`. The code is what the UI turns into a
+// sentence; Reason is the moderator's own words, and is absent when they left
+// none. ByModerator separates a takedown from the creator's own End stream,
+// which stores a timestamp and nothing else.
+type liveTerminationView struct {
+	TerminatedAt time.Time `json:"terminated_at"`
+	ByModerator  bool      `json:"by_moderator"`
+	ReasonCode   string    `json:"reason_code,omitempty"`
+	Reason       string    `json:"reason,omitempty"`
+}
+
+// newLiveStreamView projects a stream. The request is passed because two of the
+// fields depend on WHO is asking (the termination reason) or on a lookup (the
+// viewer count), not only on the row.
+func (s *Server) newLiveStreamView(c echo.Context, st live.Stream) liveStreamView {
 	v := liveStreamView{
 		ID: st.ID.String(), ChannelID: st.ChannelID.String(), Title: st.Title,
 		Description: st.Description, Privacy: st.Privacy, State: st.State, Permanent: st.Permanent,
@@ -95,8 +122,54 @@ func (s *Server) newLiveStreamView(st live.Stream) liveStreamView {
 	}
 	if st.State == live.StateLive && s.cfg.LiveHLSRoot != "" {
 		v.HLSURL = liveHLSMasterURL(st.ID)
+		if n, ok := s.livesvc.Viewers().Count(c.Request().Context(), st.ID); ok {
+			v.ViewerCount = &n
+		}
+	}
+	if s.mayReadLiveTermination(c, st) {
+		v.Termination = newLiveTerminationView(st)
 	}
 	return v
+}
+
+// newLiveTerminationView renders the termination block, or nil when the stream
+// simply is not terminated.
+func newLiveTerminationView(st live.Stream) *liveTerminationView {
+	if !st.Terminated() {
+		return nil
+	}
+	return &liveTerminationView{
+		TerminatedAt: *st.TerminatedAt,
+		ByModerator:  st.TerminatedByModerator(),
+		ReasonCode:   st.TerminationReasonCode,
+		Reason:       st.TerminationReason,
+	}
+}
+
+// mayReadLiveTermination decides who is told that a stream was ended by a
+// person, and why.
+//
+// The creator and their channel's content managers, because the whole point is
+// that the person it was aimed at finds out (the loop A16 closed for a blocked
+// video, which was invisible to its own creator). Staff, because they act on it.
+// NOT the public: a takedown notice on a public page is a punishment nobody
+// ruled on, and the moderator's free text is written for the creator, not for an
+// audience.
+//
+// canManageChannelContent is only consulted for a caller who is not already the
+// owner or staff, so an anonymous read costs no query at all.
+func (s *Server) mayReadLiveTermination(c echo.Context, st live.Stream) bool {
+	if !st.Terminated() {
+		return false
+	}
+	userID, role, ok := principalFromContext(c)
+	if !ok {
+		return false
+	}
+	if userID == st.OwnerID || isStaff(role) {
+		return true
+	}
+	return s.canManageChannelContent(c.Request().Context(), userID, st.ChannelID)
 }
 
 // Public "Live now" listing pagination bounds (mirrors the video-feed convention).
@@ -108,8 +181,9 @@ const (
 // liveStreamCardView is one entry of the public "Live now" listing — the minimal,
 // truthful projection of a currently-live PUBLIC stream for a discovery rail. It
 // deliberately omits fields the rail cannot honestly use: no privacy/state (every
-// entry is public+live), no stream key, and no viewer/concurrent count (no
-// server-side counter exists yet — a W4 live-completion dependency). is_live is
+// entry is public+live) and no stream key. It DOES carry a concurrent-viewer
+// count now that one exists (internal/live/viewers.go), omitted rather than
+// zeroed on an instance that cannot measure it. is_live is
 // always true here (this is the card contract that can cheaply carry it; the video
 // feed card intentionally does NOT, since live streams are a disjoint table from
 // videos). A thumbnail/preview is omitted because live streams have no
@@ -125,6 +199,10 @@ type liveStreamCardView struct {
 	// HLSURL is the live playlist path, present only when a media server
 	// (LIVE_HLS_ROOT) is configured to serve it (every listed stream is live).
 	HLSURL string `json:"hls_url,omitempty"`
+	// ViewerCount is the concurrent-viewer count. Nil (omitted) when this
+	// instance cannot tell — see liveStreamView.ViewerCount for why that is not
+	// rendered as 0.
+	ViewerCount *int64 `json:"viewer_count,omitempty"`
 }
 
 // liveStreamPublicListResponse is the public "Live now" listing envelope.
@@ -162,6 +240,9 @@ func (s *Server) handleListLivePublicStreams(c echo.Context) error {
 		}
 		if s.cfg.LiveHLSRoot != "" {
 			v.HLSURL = liveHLSMasterURL(cd.ID)
+		}
+		if n, ok := s.livesvc.Viewers().Count(c.Request().Context(), cd.ID); ok {
+			v.ViewerCount = &n
 		}
 		views = append(views, v)
 	}
@@ -238,7 +319,7 @@ func (s *Server) handleCreateLiveStream(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusCreated, createLiveStreamResponse{
-		LiveStream: s.newLiveStreamView(stream),
+		LiveStream: s.newLiveStreamView(c, stream),
 		StreamKey:  key,
 		RTMPURL:    s.cfg.LiveRTMPURL,
 	})
@@ -276,7 +357,7 @@ func (s *Server) handleUpdateLiveStream(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
 	}
-	return c.JSON(http.StatusOK, s.newLiveStreamView(updated))
+	return c.JSON(http.StatusOK, s.newLiveStreamView(c, updated))
 }
 
 // handleListLiveStreams lists the caller's live streams for a channel they own.
@@ -302,7 +383,7 @@ func (s *Server) handleListLiveStreams(c echo.Context) error {
 	}
 	views := make([]liveStreamView, 0, len(streams))
 	for _, st := range streams {
-		views = append(views, s.newLiveStreamView(st))
+		views = append(views, s.newLiveStreamView(c, st))
 	}
 	return c.JSON(http.StatusOK, liveStreamListResponse{LiveStreams: views, pageMeta: page.meta(total)})
 }
@@ -325,7 +406,7 @@ func (s *Server) handleGetLiveStream(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusNotFound, "live stream not found")
 		}
 	}
-	return c.JSON(http.StatusOK, s.newLiveStreamView(stream))
+	return c.JSON(http.StatusOK, s.newLiveStreamView(c, stream))
 }
 
 // handleRegenerateLiveStreamKey rotates a live stream's key and returns the new
@@ -467,6 +548,12 @@ func (s *Server) handleLiveIngestStop(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "no live stream for that key")
 	}
+	// The session is over, so its viewer set is meaningless. Dropping it here
+	// rather than letting the 90-second TTL do it matters for a PERMANENT stream:
+	// one that goes live again within the window would otherwise open on the last
+	// session's tail — phantom viewers on a brand-new broadcast, which is exactly
+	// the number nobody can explain afterwards.
+	s.livesvc.Viewers().Reset(c.Request().Context(), stream.ID)
 	if stream.ReplayEnabled {
 		// Detached: the recording ingest + transcode outlive this request, and a
 		// replay must never delay or fail the stop hook.

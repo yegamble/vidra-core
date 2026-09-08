@@ -279,6 +279,17 @@ type Server struct {
 	// on behavioural search events. Nil (no JWT secret) yields no subject rather
 	// than an unkeyed hash — see search_subject.go for why the field exists.
 	searchSubjects *pseudonym.Digester
+	// liveViewers derives the keyed, day-scoped digest that distinguishes one
+	// live viewer from another in the concurrent-viewer count. Its OWN domain
+	// label, so a live digest and a QoE digest for the same person on the same
+	// day are unrelated values and the two datasets cannot be joined. Nil yields
+	// no digest, which makes the count degrade to absent rather than to a count
+	// of unkeyed hashes.
+	liveViewers *pseudonym.Digester
+	// liveIngest is the cached RTMP-ingest probe behind the `live_ingest`
+	// component. Nil on an install with no ingest control surface, which the
+	// component reports as not_configured rather than ok — see system_live.go.
+	liveIngest *liveIngestHealth
 	// qoeClassifier maps the origin a client reports having fetched from onto
 	// the closed delivery-source vocabulary. Nil classifies everything as
 	// 'other', which is honest for an instance that configured no origins.
@@ -645,6 +656,25 @@ func WithQoEService(svc qoeRecorder, digester *qoe.Digester, classifier *qoe.Cla
 		}
 		s.qoeDigester = digester
 		s.qoeClassifier = classifier
+	}
+}
+
+// WithLiveViewerDigester wires the live concurrent-viewer digester. Without it
+// the viewer count is simply absent from every projection — see
+// internal/live/viewers.go for why absent and not zero.
+func WithLiveViewerDigester(d *pseudonym.Digester) Option {
+	return func(s *Server) { s.liveViewers = d }
+}
+
+// WithLiveIngestProber wires the RTMP ingest probe behind the `live_ingest`
+// health component. A nil prober leaves the component reporting
+// not_configured — see system_live.go for why that is not "ok".
+func WithLiveIngestProber(p liveIngestProber) Option {
+	return func(s *Server) {
+		if p == nil {
+			return
+		}
+		s.liveIngest = &liveIngestHealth{prober: p}
 	}
 }
 
@@ -1904,6 +1934,11 @@ func (s *Server) routes() {
 		api.DELETE("/admin/videos/:id/block", s.handleUnblockVideo, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		// Upload quarantine review (§11): the queue plus approve (→ published,
 		// hooks fire) / reject (→ failed, owner notified).
+		// Live termination (admin + moderator). The A16 role model, the same
+		// pair every other content-moderation route above takes: a moderator
+		// exists to stop content, and a broadcast is the one kind of content
+		// they could not stop.
+		api.POST("/admin/live/:id/terminate", s.handleTerminateLiveStream, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.GET("/admin/videos/quarantined", s.handleListQuarantinedVideos, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.POST("/admin/videos/:id/approve", s.handleApproveQuarantinedVideo, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 		api.POST("/admin/videos/:id/reject", s.handleRejectQuarantinedVideo, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
@@ -2183,6 +2218,13 @@ func (s *Server) routes() {
 		api.PATCH("/live/:id", s.handleUpdateLiveStream, s.requireAuth)
 		api.POST("/live/:id/key", s.handleRegenerateLiveStreamKey, s.requireAuth)
 		api.DELETE("/live/:id", s.handleDeleteLiveStream, s.requireAuth)
+		// The CREATOR's own "end stream". There was no way to end a broadcast in
+		// progress at all before this: the only exits were stopping the encoder
+		// (which leaves the row live until the stop hook or the duration
+		// watchdog catches up) or DELETE, which takes the stream and its replay
+		// with it. Owner-scoped like every route above it, so a stranger gets
+		// 404, not 403.
+		api.POST("/live/:id/end", s.handleEndOwnLiveStream, s.requireAuth)
 		// Live playback session (phase-4 item 7): the one call a player makes
 		// before it plays a live stream, answering with the same session object
 		// the VOD endpoint does — and, for a PRIVATE stream, the expiring

@@ -467,6 +467,25 @@ x-api-env: &api-env
   # /live-hls (the shared live_hls volume mount below). Empty (default) leaves
   # live HLS serving + replay off.
   LIVE_HLS_ROOT: ${LIVE_HLS_ROOT:-}
+  # LIVE_INGEST_CONTROL_URL is the base URL of the ingest's HTTP control surface
+  # (nginx-rtmp's rtmp_control + rtmp_stat). It is the ONLY outbound path core
+  # has to the media server, and it does two things a state flip in Postgres
+  # cannot: DISCONNECT a publisher when a moderator terminates a broadcast (the
+  # api's own close stops HLS but leaves the RTMP socket writing segments and a
+  # recording), and PROBE the ingest for the `live_ingest` health component.
+  # For the `media` profile it is http://rtmp:8082 — the shim port, which is NOT
+  # published to the host, so only the compose network can reach it. Empty
+  # (default) leaves both dormant, which is the documented degrade rather than a
+  # failure. Requires LIVE_INGEST_SECRET (the calls are authenticated with it,
+  # exactly as the hooks are); the api refuses to boot with one and not the other.
+  LIVE_INGEST_CONTROL_URL: ${LIVE_INGEST_CONTROL_URL:-}
+  # LIVE_RECORDING_RETENTION is how long a finished session's RECORDING (the
+  # nginx-rtmp .flv under LIVE_HLS_ROOT/rec) is kept. 0 (default) deletes it as
+  # soon as its replay VOD is published — the replay is then the copy. A
+  # duration (e.g. 168h) keeps every recording that long so a replay can be
+  # re-transcoded from source, and the retention worker deletes it after.
+  # Before this key, recordings were never deleted by anything.
+  LIVE_RECORDING_RETENTION: ${LIVE_RECORDING_RETENTION:-}
   # ActivityPub federation. Off by default; when FEDERATION_ENABLED=true, set
   # PUBLIC_BASE_URL to this instance's canonical origin. See .ralph/specs/federation.md.
   FEDERATION_ENABLED: ${FEDERATION_ENABLED:-false}
@@ -1083,7 +1102,17 @@ services:
   # to both: the HLS cleanup only deletes `.m3u8`/`.ts`, and the api's recording
   # store only accepts `<stream-id>*.flv|.mp4`.
   rtmp:
-    image: alfg/nginx-rtmp:latest
+    # PINNED BY DIGEST. Every other image here carries a version tag; this one
+    # carried `latest`, which for a component the owner has just made
+    # launch-required means "whatever Docker Hub served the last time anybody
+    # pulled". The tag's current build is from 2022, so the pin costs nothing
+    # today and buys the thing that matters: the ingest an operator deploys is
+    # the ingest the A26 lab measured, and a NEW `latest` arrives as a Dependabot
+    # PR to be looked at rather than as a silent change under a running
+    # instance. The tag is kept alongside the digest deliberately — Dependabot's
+    # docker-compose ecosystem (.github/dependabot.yml) needs it to know what to
+    # follow; a bare `repo@sha256:...` is unbumpable.
+    image: alfg/nginx-rtmp:latest@sha256:780831ae1c4116d22a287ce43f9e1befb84ccaad0b6933de041bb29b6427b513
     profiles: ["media"]
     depends_on:
       api:
