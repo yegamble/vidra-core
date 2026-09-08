@@ -95,12 +95,45 @@ func (f *fakeRecordingStore) PruneRecordings(cutoff time.Time, _ int) (int, erro
 	return f.pruned, nil
 }
 
-// fakeAuditor collects audit events.
-type fakeAuditor struct{ events []audit.Event }
+// fakeAuditor collects audit events AND checks each one survives the real audit
+// envelope.
+//
+// Collecting alone is not enough, and A26 measured why. internal/audit's
+// normalizeEvent rejects an event that sets ResourceID with no ResourceType, and
+// every caller here discards Record's error (the trail must never fail a
+// moderation action) — so a rejected event vanishes with no row and no log. The
+// termination audit shipped exactly that way: `content.live.terminate` set
+// resource_id, set no resource_type, and never once reached the table, while
+// this fake happily reported it recorded. Pushing the event through a real
+// audit.Service closes the gap without a database.
+type fakeAuditor struct {
+	events   []audit.Event
+	rejected []error
+}
 
-func (f *fakeAuditor) Record(_ context.Context, ev audit.Event) error {
+func (f *fakeAuditor) Record(ctx context.Context, ev audit.Event) error {
 	f.events = append(f.events, ev)
+	if err := audit.NewService(auditRepoStub{}).Record(ctx, ev); err != nil {
+		f.rejected = append(f.rejected, err)
+	}
 	return nil
+}
+
+// auditRepoStub satisfies audit.Repository so the envelope can be exercised with
+// no store behind it. It deliberately keeps nothing: the assertion is that
+// normalization ACCEPTED the event, not what was written.
+type auditRepoStub struct{}
+
+func (auditRepoStub) InsertAuditLog(context.Context, sqlcgen.InsertAuditLogParams) error { return nil }
+
+func (auditRepoStub) ListAuditLog(context.Context, sqlcgen.ListAuditLogParams) ([]sqlcgen.ListAuditLogRow, error) {
+	return nil, nil
+}
+
+func (auditRepoStub) CountAuditLog(context.Context, *string) (int64, error) { return 0, nil }
+
+func (auditRepoStub) PruneAuditLog(context.Context, sqlcgen.PruneAuditLogParams) (int64, error) {
+	return 0, nil
 }
 
 // replayStream creates a stream with the given replay flag and returns svc + id.

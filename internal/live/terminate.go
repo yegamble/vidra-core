@@ -46,6 +46,12 @@ import (
 // creator's replay with it, and an account action is a separate A16 decision
 // with its own audit action and its own appeal.
 
+// auditResourceLiveStream is the audit trail's resource type for a live stream,
+// in the snake_case singular convention the rest of the trail uses ("video",
+// "user", "watched_word_match"). The envelope validates it against
+// ^[a-z][a-z0-9_.-]{0,63}$ and requires it whenever a resource id is present.
+const auditResourceLiveStream = "live_stream"
+
 // TerminationReason is a moderator's reason code — a closed set, mirrored by the
 // CHECK constraint in migration 0141.
 //
@@ -239,9 +245,17 @@ func (s *Service) auditTerminate(ctx context.Context, id, actorID uuid.UUID, cod
 		return
 	}
 	ev := audit.Event{
-		Action:     observability.ActionLiveTerminate,
-		Result:     observability.ResultSuccess,
-		ResourceID: id.String(),
+		Action: observability.ActionLiveTerminate,
+		Result: observability.ResultSuccess,
+		// ResourceType is not decoration: internal/audit's envelope REFUSES an
+		// event that carries a resource id with no type, and Record's error is
+		// discarded here on purpose (a moderation action must never fail because
+		// the trail did). Without it this row was rejected before it reached the
+		// table and vanished with no log line — the A26 rehearsal terminated a
+		// real broadcast and found `content.live.terminate` absent from
+		// audit_log while every other part of the termination had landed.
+		ResourceType: auditResourceLiveStream,
+		ResourceID:   id.String(),
 	}
 	if actorID != uuid.Nil {
 		ev.Actor = audit.ActorSnapshot{Kind: "user", ID: actorID.String()}
