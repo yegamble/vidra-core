@@ -95,3 +95,28 @@ FROM account_exports
 WHERE state = 'failed'
 ORDER BY updated_at DESC
 LIMIT $1;
+
+-- name: CDNPurgeJobStats :one
+-- The CDN purge queue (0137). Its depth is what an operator reads after a
+-- takedown: pending means the edge may still be serving something, and a
+-- 'running' row is a claimed job rather than a stuck one until its lease passes.
+-- Note the oldest-age filter admits 'running' as well as 'pending', which the
+-- other queues here do not need: this queue's lease IS next_attempt_at, so a
+-- resumable catalogue walk spends most of its life 'running' and an age that
+-- ignored it would read 0 while the walk was hours behind.
+SELECT
+    count(*) FILTER (WHERE state = 'pending')::bigint AS pending,
+    count(*) FILTER (WHERE state = 'running')::bigint AS running,
+    count(*) FILTER (WHERE state = 'done')::bigint    AS done,
+    count(*) FILTER (WHERE state = 'failed')::bigint  AS failed,
+    COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE state IN ('pending', 'running'))))::bigint, 0)::bigint AS oldest_pending_age_seconds
+FROM cdn_purge_jobs;
+
+-- name: CDNPurgeRecentFailures :many
+-- Dead-lettered invalidations. No URL is selected, for the same reason no other
+-- queue's failure feed carries its arguments.
+SELECT id, last_error AS error, attempts, updated_at
+FROM cdn_purge_jobs
+WHERE state = 'failed'
+ORDER BY updated_at DESC
+LIMIT $1;

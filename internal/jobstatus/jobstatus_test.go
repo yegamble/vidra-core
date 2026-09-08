@@ -24,6 +24,7 @@ type fakeQuerier struct {
 	export    sqlcgen.AccountExportStatsRow
 	upload    sqlcgen.UploadSessionStatsRow
 	storagemi sqlcgen.StorageMigrationStatsRow
+	cdnpurge  sqlcgen.CDNPurgeJobStatsRow
 
 	transcodeFails []sqlcgen.TranscodeRecentFailuresRow
 	fedFails       []sqlcgen.FederationRecentFailuresRow
@@ -31,6 +32,7 @@ type fakeQuerier struct {
 	captionFails   []sqlcgen.CaptionRecentFailuresRow
 	exportFails    []sqlcgen.AccountExportRecentFailuresRow
 	storagemiFails []sqlcgen.StorageMigrationRecentFailuresRow
+	cdnpurgeFails  []sqlcgen.CDNPurgeRecentFailuresRow
 }
 
 type fakeOperationalQuerier struct {
@@ -157,6 +159,12 @@ func (f *fakeQuerier) StorageMigrationStats(context.Context) (sqlcgen.StorageMig
 func (f *fakeQuerier) StorageMigrationRecentFailures(context.Context, int32) ([]sqlcgen.StorageMigrationRecentFailuresRow, error) {
 	return f.storagemiFails, nil
 }
+func (f *fakeQuerier) CDNPurgeJobStats(context.Context) (sqlcgen.CDNPurgeJobStatsRow, error) {
+	return f.cdnpurge, nil
+}
+func (f *fakeQuerier) CDNPurgeRecentFailures(context.Context, int32) ([]sqlcgen.CDNPurgeRecentFailuresRow, error) {
+	return f.cdnpurgeFails, nil
+}
 
 func TestOverviewNormalisesAndMergesFailures(t *testing.T) {
 	now := time.Now()
@@ -185,8 +193,8 @@ func TestOverviewNormalisesAndMergesFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Overview: %v", err)
 	}
-	if len(ov.Queues) != 7 {
-		t.Fatalf("want 7 queues, got %d", len(ov.Queues))
+	if len(ov.Queues) != 8 {
+		t.Fatalf("want 8 queues, got %d", len(ov.Queues))
 	}
 	if ov.Queues[0].Queue != QueueTranscode || ov.Queues[0].Pending != 2 || ov.Queues[0].OldestPendingAgeSeconds != 42 {
 		t.Errorf("transcode queue = %+v", ov.Queues[0])
@@ -238,9 +246,9 @@ func TestDepthsFlattensAllStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Depths: %v", err)
 	}
-	// 7 queues x 4 states.
-	if len(depths) != 28 {
-		t.Fatalf("want 28 depth samples, got %d", len(depths))
+	// 8 queues x 4 states.
+	if len(depths) != 32 {
+		t.Fatalf("want 32 depth samples, got %d", len(depths))
 	}
 	seen := map[string]int64{}
 	for _, d := range depths {

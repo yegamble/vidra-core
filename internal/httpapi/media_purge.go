@@ -7,7 +7,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/cdnpurge"
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/profileimage"
 	"github.com/vidra/vidra-core/internal/storage"
 )
 
@@ -46,28 +48,50 @@ import (
 //   - public playlist cover replacement/deletion, playlist deletion, and a
 //     visibility flip away from public (playlists.go).
 //
-// STILL UNPURGED — the ledger that gates header promotion; nothing may become
-// shared-cacheable while any of these can leave wrong bytes at the edge:
-//   - video thumbnail and storyboard replacement: both overwrite their stable
-//     key in place with no invalidation;
+// Queued purges — the families that cannot finish inside the request that
+// caused them, and therefore run through the durable queue (internal/cdnpurge,
+// migration 0137) instead of a detached goroutine:
+//   - ACCOUNT DELETION (internal/account, fired from account.go): the cascade
+//     removes channels, videos and images without visiting any handler above,
+//     so the URLs are snapshotted BEFORE it — the channel cascade's pattern —
+//     and enqueued. A queue rather than a goroutine because an account with a
+//     large catalogue is a long fan-out that a restart must not silently
+//     abandon, and because the run then shows on the admin jobs page.
+//   - THE INSTANCE-WIDE downloads_enabled TOGGLE (admin_instance_settings.go):
+//     publicDownload is the AND of it and the per-video flag, so closing it
+//     globally revokes the same objects on EVERY public video at once. That is
+//     a walk over the whole catalogue, and it runs as a LEASED, RESUMABLE job
+//     with a persisted cursor: one page of videos at a time, resuming where it
+//     stopped after a restart, with per-video URL sets built from the same
+//     route grammar this file uses (internal/mediaroute).
+//
+// STILL UNPURGED — the ledger that gated header promotion. IT IS EMPTY. Every
+// family that could leave wrong bytes at the edge is now wired; the two entries
+// that used to sit here are recorded above and below rather than deleted,
+// because a reader arriving from an older revision of this file needs to know
+// where they went:
+//   - (CLOSED) video thumbnail and storyboard replacement. Both still overwrite
+//     a stable key in place — that is what makes them the interesting case —
+//     and both now purge the URL they are served at, through
+//     video.Service's WithMediaReplacedHook. The hook is on the SERVICE and not
+//     on the handler because the storyboard's write sites include the publish
+//     path, a source replacement and the backfill worker, and that last one runs
+//     in a process with no HTTP server. The URL is NOT versioned and
+//     deliberately so: see purgeEdgePath.
 //   - (CLOSED) the same-generation admin re-transcode. It needed no purge in
 //     the end: every transcode run now mints its own generation prefix
 //     (media.HLSPrefixForGeneration) and the promotion moves the ?v= tag with
 //     it, so the new generation's URLs are new URLs and the edge cannot answer
 //     one of them from an old entry. The superseded generation's objects are
-//     mediagc's, exactly as a source replacement's already were;
-//   - account deletion (internal/account): cascades channels, videos and
-//     images away without visiting any of the handlers above;
-//   - the INSTANCE-WIDE downloads_enabled toggle: publicDownload is the AND of
-//     it and the per-video flag, so closing it globally revokes the same
-//     objects on EVERY public video at once. Deliberately not wired: the
-//     per-video flip purges four keys, and this would fan out four keys times
-//     the whole public catalogue from a single settings write — thousands of
-//     third-party HTTP calls off one admin click, with no batching, no
-//     progress and no way to stop it. It needs a job with a lease and a
-//     resumable cursor (the videoimport/mediagc shape), not a detached
-//     goroutine. Until then an operator closing downloads globally must treat
-//     the edge as still serving them until TTL.
+//     mediagc's, exactly as a source replacement's already were.
+//
+// What survives is not a family but two URLs that cannot be NAMED, both
+// reported through url_set_complete rather than silently: a superseded
+// generation's children (their ?v= tag is the promoted playlist's own
+// updated_at, which nothing records once the row moves on — see
+// expandEdgePurgePaths) and a renamed channel's old avatar/banner URL (see
+// channelImageEdgePath).
+//
 // (Instance branding images need no entry: they are served through
 // serveStoredObjectNamed, never through the resolver, so they cannot be at
 // the edge at all.)
@@ -101,11 +125,15 @@ import (
 //   - after, because a purge that raced the commit could evict a copy and then
 //     have the origin repopulate it from a row that had not changed yet.
 //
-// BEST-EFFORT, ALWAYS. A purge failure is a logged warning and never a failed
-// request: nothing is shared-cacheable yet, so a surviving edge copy of a
-// deleted object is exactly the state the instance was already in before this
-// file existed. Turning a successful deletion into a 5xx would be strictly
-// worse than the stale copy it is reporting.
+// BEST-EFFORT, ALWAYS — BUT NO LONGER SINGLE-SHOT. A purge failure is still a
+// logged warning and never a failed request: turning a successful deletion into
+// a 5xx because a third-party cache might be stale would be strictly worse than
+// the stale copy it is reporting. What changed is what happens after the
+// warning. Every URL the edge refused is handed to the durable queue, which
+// retries it on an exponential backoff and dead-letters it with its URL list
+// intact if the edge is still refusing hours later (internal/cdnpurge states
+// the schedule). Before that queue, "best-effort" meant one pass and no second
+// attempt, which an edge answering 500 turned into a permanent stale copy.
 
 // maxVideoPurgePaths bounds one video's fan-out.
 //
@@ -374,23 +402,33 @@ func (s *Server) purgeVideoEdgeCopies(ctx context.Context, videoID uuid.UUID, sn
 // of the ladder cached.
 func (s *Server) runVideoEdgePurge(ctx context.Context, videoID uuid.UUID, snap edgePurgeSnapshot) {
 	paths, complete := s.expandEdgePurgePaths(ctx, snap)
-	failed := 0
+	var unpurged []string
 	for _, mediaPath := range paths {
 		if err := s.deliverysvc.Purge(ctx, mediaPath); err != nil {
-			failed++
+			unpurged = append(unpurged, mediaPath)
 		}
 	}
+	failed := len(unpurged)
 	// The counters (media_purge_metrics.go) are the observable record of this
 	// run — the admin page's answer to "has purge been exercised".
 	recordVideoEdgePurgeRun(len(paths)-failed, failed, complete)
 	if failed == 0 && complete {
 		return
 	}
+	// THE REFUSED URLS SURVIVE THIS PROCESS. An edge answering 500 to a
+	// takedown is an outage, not a verdict, and one pass with one warning left
+	// the stale copy in place until a TTL Vidra does not set. They go to the
+	// durable queue with attemptsSpent=1 — this pass was attempt one — so the
+	// backoff ladder continues rather than restarting (internal/cdnpurge).
+	// With no queue wired (no CDN, or a unit-test server) this is a no-op and
+	// the behaviour is exactly what it was.
+	s.cdnpurgesvc.EnqueueRetry(ctx, unpurged, complete, 1)
 	s.logger.WarnContext(ctx, "cdn purge incomplete; the edge may still be serving this video",
 		"video_id", videoID.String(),
 		"purged", len(paths)-failed,
 		"failed", failed,
-		"url_set_complete", complete)
+		"url_set_complete", complete,
+		"retry_queued", failed > 0 && s.cdnpurgesvc != nil)
 }
 
 // purgeEdgePath invalidates ONE media URL at the edge — the single-URL sibling
@@ -407,6 +445,21 @@ func (s *Server) runVideoEdgePurge(ctx context.Context, videoID uuid.UUID, snap 
 // asset/resourceID label the failure log; the PATH is never logged (the purge
 // URL template is operator-supplied and may carry the credential, and log lines
 // must not become the place media URLs leak from either).
+//
+// WHY THE STABLE URL IS PURGED RATHER THAN VERSIONED. Every asset this handles
+// — avatar, banner, playlist cover, and now the video poster and storyboard
+// sprite — is served at one URL that does not change when its bytes do, and the
+// alternative to invalidating it would be to stamp a ?v= tag on the URL so a
+// replacement is a NEW URL the edge has never seen. That is the right answer
+// for an HLS child and the wrong one here, for three reasons. The cache window
+// is 300 seconds with must-revalidate on both sides of the edge (see
+// internal/delivery's table), so a purge closes the whole gap and there is no
+// year-long immutable entry to strand. A version tag would be a CONTRACT
+// change: /videos/{id}/thumbnail is the URL the frontend, the feeds, oEmbed,
+// ActivityPub and every share link already name, so the untagged URL would keep
+// being requested and would still need purging — the tag buys nothing and costs
+// compatibility. And three families here already work this way; a fourth with a
+// different mechanism would be two answers to one question.
 func (s *Server) purgeEdgePath(ctx context.Context, asset string, resourceID uuid.UUID, mediaPath string) {
 	if !s.cdnConfigured() || mediaPath == "" {
 		return
@@ -418,9 +471,13 @@ func (s *Server) purgeEdgePath(ctx context.Context, asset string, resourceID uui
 		// shape — an install that only ever replaces images still purges.
 		if err := s.deliverysvc.Purge(ctx, mediaPath); err != nil {
 			recordVideoEdgePurgeRun(0, 1, true)
+			// Same durable retry as the fan-out: one refused image is exactly
+			// the case where the edge keeps serving a face the user replaced.
+			s.cdnpurgesvc.EnqueueRetry(ctx, []string{mediaPath}, true, 1)
 			s.logger.WarnContext(ctx, "cdn purge failed; the edge may still be serving this object",
 				"asset", asset,
-				"resource_id", resourceID.String())
+				"resource_id", resourceID.String(),
+				"retry_queued", s.cdnpurgesvc != nil)
 			return
 		}
 		recordVideoEdgePurgeRun(1, 0, true)
@@ -573,4 +630,91 @@ func (s *Server) expandEdgePurgePaths(ctx context.Context, snap edgePurgeSnapsho
 		}
 	}
 	return out, complete
+}
+
+// accountEdgePurgePaths is the whole media URL set an account could have at the
+// edge, flattened to exact paths: every video of every channel it owns
+// (playlists' children, images, originals and the download derivatives — the
+// same per-video snapshot a deletion uses), each channel's avatar and banner,
+// and the account's own avatar and banner.
+//
+// IT IS TAKEN BEFORE THE CASCADE, for the reason the whole two-phase discipline
+// in this file exists: account.Service.Delete removes the channels, the videos
+// and the image rows, and after it there is nothing left to ask "what could an
+// anonymous visitor have fetched?" — which is exactly the question the edge's
+// contents are the answer to.
+//
+// complete=false means the set is knowably short of what the edge holds: a
+// channel listing failed, a video listing failed, or a per-video expansion was
+// itself incomplete. It rides along to the queue so a run that purged
+// everything it could name still says it might not have been enough.
+//
+// BOUNDED BY CONSTRUCTION: one snapshot per video, each already capped at
+// maxVideoPurgePaths, and the whole set capped again when it is enqueued. The
+// reads are gated on a CDN being configured, so a default install pays nothing
+// for this on every account deletion.
+func (s *Server) accountEdgePurgePaths(ctx context.Context, userID uuid.UUID) ([]string, bool) {
+	if !s.cdnConfigured() || s.channelsvc == nil {
+		return nil, true
+	}
+	complete := true
+	var paths []string
+
+	channels, err := s.channelsvc.ListOwn(ctx, userID)
+	if err != nil {
+		// Best-effort like every purge: the deletion must not fail. But a
+		// listing failure means edge copies knowingly survive, so the caller is
+		// told rather than left to assume a clean run. (No handle in the log —
+		// a channel handle is a public name, but the purge seam's rule is that
+		// its log lines carry ids and counts only.)
+		s.logger.WarnContext(ctx, "cdn purge incomplete: the account's channels could not be enumerated before deletion",
+			"user_id", userID.String())
+		complete = false
+	}
+	for _, ch := range channels {
+		if s.videosvc != nil {
+			ids, verr := s.videosvc.VideoIDsByChannel(ctx, ch.ID)
+			if verr != nil {
+				complete = false
+			}
+			for _, vid := range ids {
+				snap := s.videoEdgePurgeSnapshot(ctx, vid)
+				if snap.empty() {
+					continue
+				}
+				expanded, ok := s.expandEdgePurgePaths(ctx, snap)
+				if !ok {
+					complete = false
+				}
+				paths = append(paths, expanded...)
+			}
+		}
+		for _, kind := range [...]string{profileimage.KindAvatar, profileimage.KindBanner} {
+			if p := s.channelImageEdgePath(ctx, ch.ID, ch.Handle, kind); p != "" {
+				paths = append(paths, p)
+			}
+		}
+	}
+	for _, kind := range [...]string{profileimage.KindAvatar, profileimage.KindBanner} {
+		if p := s.userImageEdgePath(ctx, userID, kind); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, complete
+}
+
+// purgeAccountEdgeCopies enqueues an account's snapshot for invalidation AFTER
+// the cascade commits.
+//
+// A QUEUE RATHER THAN A DETACHED GOROUTINE, which is the one thing that differs
+// from the channel cascade next door. An account with a large catalogue is
+// thousands of third-party calls; a goroutine holding that list loses all of it
+// to a restart, and there is nowhere for an operator to see that it is running.
+// The queue survives the process, shows on the admin jobs page, and carries the
+// same retry ladder every other purge now has.
+func (s *Server) purgeAccountEdgeCopies(ctx context.Context, paths []string, complete bool) {
+	if len(paths) == 0 {
+		return
+	}
+	s.cdnpurgesvc.EnqueueSnapshot(ctx, cdnpurge.ReasonAccountDelete, paths, complete)
 }

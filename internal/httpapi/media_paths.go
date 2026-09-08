@@ -1,87 +1,35 @@
 package httpapi
 
 import (
-	"net/url"
 	"path"
-	"strconv"
 	"strings"
 
-	"github.com/google/uuid"
+	"github.com/vidra/vidra-core/internal/mediaroute"
 )
 
-// This file is the ONE place a media route's PATH is written down as a value
-// rather than as a route registration.
+// The media route PATH grammar lives in internal/mediaroute, because the purge
+// queue's worker builds these paths in a process where httpapi.Server does not
+// exist (cmd/api skips constructing it at VIDRA_ROLE=worker). What stays here
+// is the half that is genuinely this package's: the aliases below, so no call
+// site had to change, and hlsTreeRelForKey, which is the HLS route's OWN
+// admission test and is written in this package's route regexes.
 //
-// It exists because the CDN's origin is this API (internal/cdn): the edge holds
-// its entries under the api's own media URLs, so an invalidation has to name a
-// URL, and the code that fires an invalidation runs outside any request — after
-// a deletion, a privacy flip, an image replacement — with no echo.Context to
-// read a path from. Every builder below is a pure function of ids the caller
-// already holds, and each is asserted against its route registration by
-// TestMediaPathsMatchTheirRoutes so the two cannot drift.
-//
-// WHAT A PATH IS HERE: rooted, already URL-safe, and carrying whatever query
-// makes it the URL a viewer would actually request (the ?v= generation tag on
-// an HLS child, ?audio=false on the video-only rendition download). It is NOT
-// escaped again downstream — see cdn.edgeSuffix — so anything that could need
-// escaping is escaped here.
+// TestMediaPathsMatchTheirRoutes still lives here and still asserts every
+// builder against its route registration — the assertion has to run where the
+// router is.
 
 // apiBasePath is the prefix every REST route is registered under (server.go's
-// api group). It lives here so the path builders and the router share one
-// definition.
-const apiBasePath = "/api/v1"
+// api group).
+const apiBasePath = mediaroute.APIBase
 
-// videoMediaPath builds /api/v1/videos/<id><suffix>. suffix starts with "/".
-func videoMediaPath(videoID uuid.UUID, suffix string) string {
-	return apiBasePath + "/videos/" + videoID.String() + suffix
-}
-
-// videoHLSChildPath is the route path for one file under a video's streaming
-// tree: /api/v1/videos/<id>/hls/<rendition>/<file>, carrying the generation
-// version that makes it immutable.
-//
-// version is the ?v= tag (hlsCacheVersion); empty omits the query, which is the
-// unversioned compatibility URL. rel is the tree-relative "<rendition>/<file>",
-// which is exactly how handleGetHLSFile composes the storage key back from the
-// route — the ladder's on-disk layout and its URL layout are the same shape,
-// and that is what makes this mapping a rename rather than a translation.
-func videoHLSChildPath(videoID uuid.UUID, rel, version string) string {
-	p := videoMediaPath(videoID, "/hls/"+rel)
-	if version == "" {
-		return p
-	}
-	return p + "?" + hlsVersionParam + "=" + url.QueryEscape(version)
-}
-
-// videoRenditionDownloadPath is /api/v1/videos/<id>/download/hls/<height>, with
-// includeAudio=false adding the ?audio=false the handler selects on. Both forms
-// are separately reachable and therefore separately cached.
-func videoRenditionDownloadPath(videoID uuid.UUID, height int, includeAudio bool) string {
-	p := videoMediaPath(videoID, "/download/hls/"+strconv.Itoa(height))
-	if includeAudio {
-		return p
-	}
-	return p + "?audio=false"
-}
-
-// userImagePath and channelImagePath are the identity-image routes. A channel
-// is addressed by HANDLE, not id, so the handle is escaped: it is the one path
-// component here that is not a uuid or a fixed word.
-func userImagePath(userID uuid.UUID, kind string) string {
-	return apiBasePath + "/users/" + userID.String() + "/" + kind
-}
-
-func channelImagePath(handle, kind string) string {
-	if handle == "" {
-		return ""
-	}
-	return apiBasePath + "/channels/" + url.PathEscape(handle) + "/" + kind
-}
-
-// playlistCoverPath is the playlist cover route.
-func playlistCoverPath(playlistID uuid.UUID) string {
-	return apiBasePath + "/playlists/" + playlistID.String() + "/thumbnail"
-}
+var (
+	videoMediaPath             = mediaroute.Video
+	videoHLSChildPath          = mediaroute.HLSChild
+	videoRenditionDownloadPath = mediaroute.RenditionDownload
+	userImagePath              = mediaroute.UserImage
+	channelImagePath           = mediaroute.ChannelImage
+	playlistCoverPath          = mediaroute.PlaylistCover
+)
 
 // hlsTreeRelForKey maps a storage key under a video's streaming prefix back to
 // the "<rendition>/<file>" the HLS route serves it at. ok=false means the edge

@@ -68,12 +68,18 @@ func (s *Server) handleDeleteAccount(c echo.Context) error {
 	if err := s.ensureOwnerHasTransferred(c, userID, observability.ActionAccountDelete); err != nil {
 		return err
 	}
+	// BEFORE the cascade: it removes the channels, the videos and the image rows
+	// that name every object a CDN edge could be holding for this account
+	// (media_purge.go). Free on an install with no CDN.
+	edgePaths, edgeComplete := s.accountEdgePurgePaths(c.Request().Context(), userID)
 	if err := s.accountsvc.Delete(c.Request().Context(), userID); err != nil {
 		if errors.Is(err, account.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
 		}
 		return err
 	}
+	// ...and after it commits, exactly like the per-video and channel handlers.
+	s.purgeAccountEdgeCopies(c.Request().Context(), edgePaths, edgeComplete)
 	s.audit(c, observability.ActionAccountDelete, observability.ResultSuccess, userID.String(), "")
 	s.purgeUserFromSearch(c.Request().Context(), userID)
 	return c.NoContent(http.StatusNoContent)
@@ -112,12 +118,16 @@ func (s *Server) handleAdminDeleteUser(c echo.Context) error {
 			return err
 		}
 	}
+	// Same before/after edge snapshot as the self-service delete: the admin
+	// variant runs the identical cascade, so it must invalidate identically.
+	edgePaths, edgeComplete := s.accountEdgePurgePaths(c.Request().Context(), targetID)
 	if err := s.accountsvc.Delete(c.Request().Context(), targetID); err != nil {
 		if errors.Is(err, account.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "user not found")
 		}
 		return err
 	}
+	s.purgeAccountEdgeCopies(c.Request().Context(), edgePaths, edgeComplete)
 	// Reason carries only the target's id — safe, no PII.
 	s.audit(c, observability.ActionAdminUserDelete, observability.ResultSuccess, adminID.String(), "target="+targetID.String())
 	s.purgeUserFromSearch(c.Request().Context(), targetID)

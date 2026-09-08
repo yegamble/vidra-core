@@ -24,6 +24,7 @@ package httpapi
 // history, when one exists.
 
 import (
+	"context"
 	"sync/atomic"
 	"time"
 )
@@ -72,10 +73,33 @@ func videoEdgePurgeCounters() (runs, keysPurged, keysFailed int64, lastIncomplet
 	return runs, keysPurged, keysFailed, lastIncomplete
 }
 
-// systemCDNPurge is the admin status page's view of the counters. Absent —
+// RecordEdgePurgeRun files one purge run's outcome from OUTSIDE this package.
+//
+// It exists for exactly one caller: internal/cdnpurge, which performs the
+// immediate pass for the media-replacement hook and therefore has to reach the
+// same counters this file owns. It is a package-level function rather than a
+// method because those counters are process-wide (see WHY PACKAGE-LEVEL ATOMICS
+// above) and because the caller is wired in cmd/api in EVERY role, including
+// the worker-only one where no Server is constructed at all — there the counters
+// simply accumulate unread, which is correct: a worker has no status page.
+func RecordEdgePurgeRun(purged, failed int, complete bool) {
+	recordVideoEdgePurgeRun(purged, failed, complete)
+}
+
+// systemCDNPurge is the admin status page's view of the purge seam. Absent —
 // not zeroed — when no CDN is wired: "0 purge runs" on an install with no edge
 // reads as a purge system that never works, when the truth is there is nothing
 // to purge.
+//
+// TWO HALVES WITH DIFFERENT LIFETIMES, and the field names say which is which.
+// runs/keys_purged/keys_failed/last_incomplete_run_at are this PROCESS's
+// in-memory counters, reset by a restart — they answer "has purge been
+// exercised, and is it failing now". pending_retries/oldest_pending_seconds/
+// dead_letters are read from the durable queue (migration 0137) and answer a
+// different question that a restart must not erase: "is the edge still serving
+// something this instance has stopped serving". A takedown whose purge the edge
+// refused shows up in the second half for hours, long after the log line that
+// reported it has scrolled away.
 type systemCDNPurge struct {
 	Runs       int64 `json:"runs"`
 	KeysPurged int64 `json:"keys_purged"`
@@ -84,19 +108,40 @@ type systemCDNPurge struct {
 	// present iff some run since boot may have left the edge serving. Omitted
 	// when clean, so "field absent" is the good news it reads as.
 	LastIncompleteRunAt *time.Time `json:"last_incomplete_run_at,omitempty"`
+	// PendingRetries is how many queued invalidations are still outstanding —
+	// claimed or waiting on their backoff. Zero is the healthy reading.
+	PendingRetries int64 `json:"pending_retries"`
+	// OldestPendingSeconds is how long the oldest outstanding one has been
+	// waiting. It is the STALENESS signal: a number that keeps growing means
+	// the edge is refusing, and `vidra doctor` warns on it.
+	OldestPendingSeconds int64 `json:"oldest_pending_seconds"`
+	// DeadLetters is how many gave up after the attempt cap. Each one is an
+	// edge still serving an object this instance no longer serves, and only a
+	// manual invalidation at the provider clears it.
+	DeadLetters int64 `json:"dead_letters"`
 }
 
 // cdnPurgeSnapshot returns the block, or nil when no CDN is wired — the same
 // omitted-not-zeroed contract as databasePoolSnapshot, for the same reason.
-func (s *Server) cdnPurgeSnapshot() *systemCDNPurge {
+//
+// A queue read that FAILS leaves the durable half at zero rather than failing
+// the status page: the page's job is to report what it can see, and a database
+// that cannot answer is already the loudest component on it.
+func (s *Server) cdnPurgeSnapshot(ctx context.Context) *systemCDNPurge {
 	if !s.cdnConfigured() {
 		return nil
 	}
 	runs, purged, failed, lastIncomplete := videoEdgePurgeCounters()
-	return &systemCDNPurge{
+	block := &systemCDNPurge{
 		Runs:                runs,
 		KeysPurged:          purged,
 		KeysFailed:          failed,
 		LastIncompleteRunAt: lastIncomplete,
 	}
+	if queued, err := s.cdnpurgesvc.Stats(ctx); err == nil {
+		block.PendingRetries = queued.Pending + queued.Running
+		block.OldestPendingSeconds = int64(queued.OldestPendingAge / time.Second)
+		block.DeadLetters = queued.DeadLettered
+	}
+	return block
 }

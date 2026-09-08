@@ -939,13 +939,16 @@ media leaked, also make the object non-public (delete it, or change its privacy;
 the API refuses to sign it again immediately) and rotate the store credentials if
 the leak was of the signing key itself.
 
-**Cache headers.** Every media response is `private`. Nothing Vidra serves as
-bytes is shared-cacheable, because a shared cache entry can outlive the
-authorization decision that produced it. `delivery.Resolver.Purge` now has a
-real implementation behind it (see the CDN section below), but nothing calls it
-automatically yet, and header promotion is gated on a purge path that has been
-*exercised* rather than merely built — so the promotion is still deliberately
-unmade. Current policy: whole-file media (originals, downloads, webm, audio)
+**Cache headers.** Every media response a VIEWER can receive is `private`,
+because a shared cache entry can outlive the authorization decision that
+produced it and Vidra cannot invalidate a cache it does not know about. The one
+exception is the CDN edge's own origin fetch — a request the API can recognise,
+because the marker is one it minted itself — which is answered `public` with the
+same max-age. That promotion was gated on purge being *exercised* rather than
+merely built; it is, at every call site listed under **What fires a purge**
+below, with a persisted retry behind each one. Current policy (the viewer's
+side; the edge's is the same window with `public` swapped in): whole-file media
+(originals, downloads, webm, audio)
 `private, max-age=3600, must-revalidate`; per-video assets (thumbnails,
 storyboards, captions) and identity images `private, max-age=300,
 must-revalidate`; HLS `private, max-age=31536000, immutable` on a
@@ -1096,17 +1099,46 @@ it. The API warns about that once at boot rather than at the moment you need it.
 
 **What fires a purge.** A video's deletion (directly, through its channel, or
 through an admin block), a privacy flip away from public, a per-video download
-flip that closes, and the replacement or deletion of an avatar, banner or public
-playlist cover. Each is best-effort and detached: a purge failure is a logged
-warning with a `purged`/`failed`/`url_set_complete` count and never a failed
-request, and `GET /api/v1/admin/system` carries the running `cdn_purge` totals.
+flip that closes, the replacement of a video's poster or storyboard sprite, the
+replacement or deletion of an avatar, banner or public playlist cover, an
+account deletion, and the instance-wide `downloads_enabled` toggle closing. Each
+is best-effort: a purge failure is a logged warning with a
+`purged`/`failed`/`url_set_complete` count and never a failed request.
 
-**What does not, and is named rather than hidden.** A same-source re-transcode
-needs none — every transcode generation writes its own prefix and moves the
-`?v=` tag, so the new generation is a new URL — but thumbnail/storyboard
-replacement, account deletion and the instance-wide `downloads_enabled` toggle
-are still unwired, and a failed purge is not retried. Until those land, treat
-the edge as still serving those objects until its own TTL.
+The last two are **queued jobs** rather than detached fan-outs, because both are
+too big to lose to a restart: an account deletion carries a snapshot of every
+URL of every video it is about to cascade away, and closing downloads globally
+starts a **leased, resumable walk** over the whole public catalogue that resumes
+from a persisted cursor after a restart. Both appear on the admin jobs page as
+the `cdn_purge_jobs` queue.
+
+**A refused purge is retried.** An edge that answers 500 is an outage, not a
+verdict. Every URL a purge attempt could not invalidate is persisted and retried
+on an exponential backoff — **1, 2, 4, 8, 16, 32 and 60 minutes** after the
+immediate pass, so roughly **two hours** of trying — and then dead-lettered with
+its URL list kept. What you see:
+
+* `GET /api/v1/admin/system` → `cdn_purge` carries `pending_retries`,
+  `oldest_pending_seconds` and `dead_letters` alongside this process's counters.
+  The first three survive a restart; the counters do not.
+* the admin jobs page → the `cdn_purge_jobs` queue's depth and its dead letters.
+* `vidra doctor` → a **cdn purge backlog** line: ⚠ when anything has
+  dead-lettered (nothing will try again — invalidate it by hand at the provider
+  and check `DELIVERY_CDN_PURGE_URL`/`_METHOD`/`_TOKEN`), ⚠ when the backlog is
+  older than three hours, ✓ otherwise.
+
+Until a purge lands, the edge keeps serving the object. There is no upper bound
+on that once a job has dead-lettered: Vidra sets no TTL at the edge, so the
+provider's own default is the only other limit.
+
+**What still cannot be named.** Two URL sets exist that no purge can address,
+and both are reported through `url_set_complete` rather than passed over. A
+**superseded transcode generation's** children were served under a `?v=` tag
+that is the promoted playlist's own `updated_at`, which nothing records once the
+row moves on — they stop existing when media GC collects the generation. And a
+**channel handle rename** strands `/api/v1/channels/<old>/avatar` and
+`/banner` at the edge under a name the new row cannot reconstruct; if you rename
+a channel on a CDN-fronted instance, invalidate those two URLs by hand.
 
 **Verifying it.** As with direct delivery these are GET requests with the body
 discarded — the media routes are GET-only and a `curl -I` answers `405`.

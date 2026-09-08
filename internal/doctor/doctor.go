@@ -184,6 +184,7 @@ var checks = []check{
 	{"disk space", SectionState, checkDiskSpace},
 	{"media GC posture", SectionState, checkMediaGCPosture},
 	{"storage migration", SectionState, checkStorageMigration},
+	{"cdn purge backlog", SectionState, checkCDNPurgeBacklog},
 	{"instance owner", SectionState, checkInstanceOwner},
 
 	{"object storage", SectionReach, checkObjectStorage},

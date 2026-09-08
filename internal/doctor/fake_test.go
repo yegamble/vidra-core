@@ -102,6 +102,10 @@ type fakeProber struct {
 	ledgerErr error
 
 	storageMigrationActive bool
+	purgePending           int64
+	purgeDead              int64
+	purgeOldestSeconds     int64
+	purgeErr               error
 	// The 0131 owner marker and the live-admin count doctor's "instance owner"
 	// check reads.
 	owners              int64
@@ -173,6 +177,10 @@ func (p *fakeProber) MigrationStatus(_ context.Context, _, table string) (dbmigr
 
 func (p *fakeProber) ActiveStorageMigration(_ context.Context, _ string) (bool, error) {
 	return p.storageMigrationActive, p.storageMigrationErr
+}
+
+func (p *fakeProber) CDNPurgeBacklog(_ context.Context, _ string) (int64, int64, int64, error) {
+	return p.purgePending, p.purgeDead, p.purgeOldestSeconds, p.purgeErr
 }
 
 func (p *fakeProber) OwnerAndAdminCounts(_ context.Context, _ string) (int64, int64, error) {

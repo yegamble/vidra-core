@@ -111,6 +111,22 @@ type CaptionJob struct {
 	ProgressPercent int16     `json:"progress_percent"`
 }
 
+type CdnPurgeJob struct {
+	ID             uuid.UUID   `json:"id"`
+	Kind           string      `json:"kind"`
+	State          string      `json:"state"`
+	Reason         string      `json:"reason"`
+	Urls           []byte      `json:"urls"`
+	CursorVideoID  pgtype.UUID `json:"cursor_video_id"`
+	UrlSetComplete bool        `json:"url_set_complete"`
+	Purged         int32       `json:"purged"`
+	Attempts       int32       `json:"attempts"`
+	NextAttemptAt  time.Time   `json:"next_attempt_at"`
+	LastError      string      `json:"last_error"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
+}
+
 type Channel struct {
 	ID                 uuid.UUID `json:"id"`
 	OwnerID            uuid.UUID `json:"owner_id"`

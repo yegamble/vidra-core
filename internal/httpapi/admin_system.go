@@ -139,7 +139,7 @@ func (s *Server) handleSystemStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, systemStatusResponse{
 		Status:              status,
 		Database:            s.databasePoolSnapshot(),
-		CDNPurge:            s.cdnPurgeSnapshot(),
+		CDNPurge:            s.cdnPurgeSnapshot(c.Request().Context()),
 		Processes:           processes,
 		ProcessStaleSeconds: staleSeconds,
 		Software: systemSoftware{

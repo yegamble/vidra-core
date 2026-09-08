@@ -372,6 +372,11 @@ func (s *Server) handleUpdateInstanceSettings(c echo.Context) error {
 		return &ValidationError{Fields: fields}
 	}
 
+	// Read BEFORE the write: the downloads-revocation purge below needs to know
+	// whether this PATCH is what closed the gate, and a restated
+	// downloads_enabled:false must not re-run a walk over the whole catalogue.
+	downloadsWereOpen := s.downloadsEnabled()
+
 	if err := s.settingssvc.Apply(c.Request().Context(), updates, callerID); err != nil {
 		if bad := settingsFieldErrors(err); len(bad) > 0 {
 			// KEY NAMES only, never values — the same rule the success event
@@ -386,6 +391,7 @@ func (s *Server) handleUpdateInstanceSettings(c echo.Context) error {
 	// Search: push the effective config to vidra-search when a search key changed
 	// (search-service W4). Best-effort.
 	s.emitSearchConfigChangedIfNeeded(c.Request().Context(), changed)
+	s.purgeEdgeDownloadsIfRevoked(c.Request().Context(), changed, downloadsWereOpen)
 	return c.JSON(http.StatusOK, s.instanceSettingsResponse())
 }
 
@@ -588,4 +594,33 @@ func fieldNames(fields []FieldError) []string {
 // isJSONNull reports whether a raw JSON value is the literal null.
 func isJSONNull(raw json.RawMessage) bool {
 	return strings.TrimSpace(string(raw)) == "null"
+}
+
+// purgeEdgeDownloadsIfRevoked starts the catalogue walk when this PATCH is what
+// SHUT the instance-wide download gate.
+//
+// publicDownload (downloads.go) is the AND of this setting and each video's own
+// flag, so closing it globally revokes the official-download URLs of EVERY
+// public video at once — which the A32/A33 edge run measured as zero purges and
+// an edge still serving the original on a HIT after the api had begun answering
+// 403. Wiring it as a detached fan-out was refused then and is still refused
+// now: it is four-plus URLs times the whole public catalogue off one admin
+// click, with no batching, no progress and no way to stop it. It runs as a
+// leased, resumable queue job instead (internal/cdnpurge).
+//
+// THREE FENCES, each closing a different way to spend a catalogue walk for
+// nothing: no CDN configured (there is no shared copy), the key was not in this
+// PATCH at all, and the gate was ALREADY shut before the write — a re-stated
+// downloads_enabled:false revokes nothing, exactly as the per-video snapshot
+// returns empty for a video whose downloads were already off.
+func (s *Server) purgeEdgeDownloadsIfRevoked(ctx context.Context, changed []string, wereOpen bool) {
+	if s.cdnpurgesvc == nil || !wereOpen || s.downloadsEnabled() {
+		return
+	}
+	for _, key := range changed {
+		if key == instancesettings.KeyDownloadsEnabled {
+			s.cdnpurgesvc.EnqueueDownloadsRevoked(ctx)
+			return
+		}
+	}
 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/mediaroute"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -32,8 +33,11 @@ const (
 	contentTypeTS   = "video/mp2t"
 	contentTypeMP4  = "video/mp4"
 	// contentTypeMPD is the MPEG-DASH manifest type (ISO/IEC 23009-1).
-	contentTypeMPD  = "application/dash+xml"
-	hlsVersionParam = "v"
+	contentTypeMPD = "application/dash+xml"
+	// One definition, shared with the path builders in internal/mediaroute: the
+	// tag a request is READ with and the tag a purge URL is BUILT with must be
+	// the same parameter name or an invalidation names a URL nothing holds.
+	hlsVersionParam = mediaroute.HLSVersionParam
 
 	// HLS routes remain authorization gates, so their immutable cache entries
 	// are browser-private. A deployment may promote these to shared-CDN entries
