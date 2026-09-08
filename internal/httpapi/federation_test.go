@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,9 @@ type fakeFedRepo struct {
 	// remoteBlocks are per-viewer blocks of a remote ACTOR (migration 0138),
 	// keyed blockerID|actorURL.
 	remoteBlocks map[string]bool
+	// remoteVideoComments are MIRRORED threads on remote videos (0140), keyed
+	// by the origin's object url.
+	remoteVideoComments map[string]sqlcgen.UpsertRemoteVideoCommentParams
 }
 
 func (f fakeFedRepo) CountUsers(context.Context) (int64, error)        { return f.users, nil }
@@ -371,19 +375,20 @@ func newFedRepoFor(_ *config.Config) fakeFedRepo {
 			{ID: uuid.New(), Title: "One", Description: "a"},
 			{ID: uuid.New(), Title: "Two", Description: "b"},
 		},
-		userID:         uuid.New(),
-		channelID:      uuid.New(),
-		acctKeys:       map[uuid.UUID]sqlcgen.GetAccountActorKeyRow{},
-		chanKeys:       map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
-		remoteActors:   map[string]sqlcgen.RemoteActor{},
-		processed:      map[string]bool{},
-		remoteFollows:  map[string]sqlcgen.InsertRemoteFollowParams{},
-		deliveries:     map[string]sqlcgen.EnqueueDeliveryParams{},
-		videosByID:     map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
-		commentsBy:     map[uuid.UUID]sqlcgen.Comment{},
-		tombstones:     map[uuid.UUID]time.Time{},
-		blockedDomains: map[string]bool{},
-		remoteBlocks:   map[string]bool{},
+		userID:              uuid.New(),
+		channelID:           uuid.New(),
+		acctKeys:            map[uuid.UUID]sqlcgen.GetAccountActorKeyRow{},
+		chanKeys:            map[uuid.UUID]sqlcgen.GetChannelActorKeyRow{},
+		remoteActors:        map[string]sqlcgen.RemoteActor{},
+		processed:           map[string]bool{},
+		remoteFollows:       map[string]sqlcgen.InsertRemoteFollowParams{},
+		deliveries:          map[string]sqlcgen.EnqueueDeliveryParams{},
+		videosByID:          map[uuid.UUID]sqlcgen.GetVideoByIDRow{},
+		commentsBy:          map[uuid.UUID]sqlcgen.Comment{},
+		tombstones:          map[uuid.UUID]time.Time{},
+		blockedDomains:      map[string]bool{},
+		remoteBlocks:        map[string]bool{},
+		remoteVideoComments: map[string]sqlcgen.UpsertRemoteVideoCommentParams{},
 	}
 	return repo
 }
@@ -700,4 +705,57 @@ func (fakeFedRepo) CountPendingRemoteFollows(context.Context) (int64, error) { r
 
 func (fakeFedRepo) CountRemoteChannelFollows(context.Context, uuid.UUID) (int64, error) {
 	return 0, nil
+}
+
+// --- mirrored remote-video comments (A29-F8, migration 0140) ----------------
+
+func (f fakeFedRepo) UpsertRemoteVideoComment(_ context.Context, arg sqlcgen.UpsertRemoteVideoCommentParams) (sqlcgen.UpsertRemoteVideoCommentRow, error) {
+	if f.remoteVideoComments != nil {
+		f.remoteVideoComments[arg.ObjectUrl] = arg
+	}
+	return sqlcgen.UpsertRemoteVideoCommentRow{ObjectUrl: arg.ObjectUrl, Body: arg.Body}, nil
+}
+
+func (f fakeFedRepo) GetRemoteVideoCommentByObjectURL(_ context.Context, objectURL string) (sqlcgen.GetRemoteVideoCommentByObjectURLRow, error) {
+	if c, ok := f.remoteVideoComments[objectURL]; ok {
+		return sqlcgen.GetRemoteVideoCommentByObjectURLRow{
+			RemoteVideoID: c.RemoteVideoID, RemoteActorUrl: c.RemoteActorUrl, ObjectUrl: objectURL,
+		}, nil
+	}
+	return sqlcgen.GetRemoteVideoCommentByObjectURLRow{}, pgx.ErrNoRows
+}
+
+func (f fakeFedRepo) DeleteRemoteVideoCommentByObjectURL(_ context.Context, objectURL string) (int64, error) {
+	if _, ok := f.remoteVideoComments[objectURL]; ok {
+		delete(f.remoteVideoComments, objectURL)
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (f fakeFedRepo) ListRemoteVideoComments(_ context.Context, arg sqlcgen.ListRemoteVideoCommentsParams) ([]sqlcgen.ListRemoteVideoCommentsRow, error) {
+	var out []sqlcgen.ListRemoteVideoCommentsRow
+	for objectURL, c := range f.remoteVideoComments {
+		if c.RemoteVideoID != arg.RemoteVideoID {
+			continue
+		}
+		out = append(out, sqlcgen.ListRemoteVideoCommentsRow{
+			RemoteActorUrl:   c.RemoteActorUrl,
+			RemoteAuthorName: c.RemoteAuthorName,
+			ObjectUrl:        objectURL,
+			Body:             c.Body,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ObjectUrl < out[j].ObjectUrl })
+	return out, nil
+}
+
+func (f fakeFedRepo) CountRemoteVideoComments(_ context.Context, arg sqlcgen.CountRemoteVideoCommentsParams) (int64, error) {
+	var n int64
+	for _, c := range f.remoteVideoComments {
+		if c.RemoteVideoID == arg.RemoteVideoID {
+			n++
+		}
+	}
+	return n, nil
 }

@@ -770,6 +770,19 @@ type RemoteVideoBlock struct {
 	CreatedAt     time.Time   `json:"created_at"`
 }
 
+type RemoteVideoComment struct {
+	ID               uuid.UUID          `json:"id"`
+	RemoteVideoID    uuid.UUID          `json:"remote_video_id"`
+	RemoteActorUrl   string             `json:"remote_actor_url"`
+	RemoteAuthorName string             `json:"remote_author_name"`
+	ObjectUrl        string             `json:"object_url"`
+	Body             string             `json:"body"`
+	Edited           bool               `json:"edited"`
+	PublishedAt      pgtype.Timestamptz `json:"published_at"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+}
+
 type Report struct {
 	ID                  uuid.UUID          `json:"id"`
 	ReporterID          uuid.UUID          `json:"reporter_id"`

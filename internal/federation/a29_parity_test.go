@@ -446,3 +446,178 @@ func countRemoteComments(repo fakeRepo) int {
 	}
 	return n
 }
+
+// --- F8: a follower keeps the thread it is already being sent --------------
+
+// remoteThreadRepo seeds a follower's world: one mirrored remote video from
+// peer.example, and the actor cache entry inbound signature verification would
+// already have written.
+func remoteThreadRepo(t *testing.T) (fakeRepo, uuid.UUID) {
+	t.Helper()
+	repo := newContractRepo()
+	repo.remoteVideoComments = map[string]*sqlcgen.UpsertRemoteVideoCommentParams{}
+	const (
+		objectURL = "https://peer.example/videos/2f8a1c3e-0000-4000-8000-000000000009"
+		owner     = "https://peer.example/video-channels/films"
+	)
+	stored := uuid.New()
+	repo.remoteVideos[objectURL] = &fakeRemoteVideo{
+		id:     stored,
+		params: sqlcgen.UpsertRemoteVideoParams{ObjectUrl: objectURL, RemoteActorUrl: owner},
+	}
+	cacheContractActor(repo, owner, "Group", "films", "peer.example")
+	return repo, stored
+}
+
+const remoteVideoObjectURL = "https://peer.example/videos/2f8a1c3e-0000-4000-8000-000000000009"
+
+func remoteNote(id, actor, body string) inboxActivity {
+	return inboxActivity{
+		ID: "https://peer.example/act/" + id, Type: "Create", Actor: actor,
+		Object: json.RawMessage(`{"id":"https://peer.example/notes/` + id + `","type":"Note",` +
+			`"content":"` + body + `","attributedTo":"` + actor + `",` +
+			`"published":"2026-09-05T10:00:00Z",` +
+			`"inReplyTo":"` + remoteVideoObjectURL + `"}`),
+	}
+}
+
+func TestFollowerStoresFederatedCommentsOnARemoteVideo(t *testing.T) {
+	repo, videoID := remoteThreadRepo(t)
+	const author = "https://peer.example/accounts/ada"
+	cacheContractActor(repo, author, "Person", "ada", "peer.example")
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	ctx := context.Background()
+
+	if err := svc.handleCreateNote(ctx, remoteNote("1", author, "Beautiful grade."), author); err != nil {
+		t.Fatalf("handleCreateNote: %v", err)
+	}
+	got, total, err := svc.ListRemoteVideoComments(ctx, videoID, uuid.Nil, 20, 0)
+	if err != nil {
+		t.Fatalf("ListRemoteVideoComments: %v", err)
+	}
+	if total != 1 || len(got) != 1 {
+		t.Fatalf("thread = %d rows (total %d), want 1 — the follower dropped the comment it was sent", len(got), total)
+	}
+	if got[0].Body != "Beautiful grade." {
+		t.Errorf("body = %q", got[0].Body)
+	}
+	if got[0].AuthorName != "ada" {
+		t.Errorf("author = %q, want the origin's preferredUsername snapshot", got[0].AuthorName)
+	}
+
+	// A redelivery of the same activity must not double the thread.
+	if err := svc.handleCreateNote(ctx, remoteNote("1", author, "Beautiful grade."), author); err != nil {
+		t.Fatalf("redelivery: %v", err)
+	}
+	if _, total, _ := svc.ListRemoteVideoComments(ctx, videoID, uuid.Nil, 20, 0); total != 1 {
+		t.Errorf("total after redelivery = %d, want 1", total)
+	}
+}
+
+// The authority rule that is specific to this path: a comment must come from the
+// VIDEO's origin. Without it, any instance in our follow graph could post onto
+// any mirrored video from any other instance.
+func TestAThirdPartyCannotCommentOnAnotherOriginsVideo(t *testing.T) {
+	repo, videoID := remoteThreadRepo(t)
+	const outsider = "https://elsewhere.example/accounts/mallory"
+	cacheContractActor(repo, outsider, "Person", "mallory", "elsewhere.example")
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	ctx := context.Background()
+
+	act := inboxActivity{
+		ID: "https://elsewhere.example/act/9", Type: "Create", Actor: outsider,
+		Object: json.RawMessage(`{"id":"https://elsewhere.example/notes/9","type":"Note",` +
+			`"content":"buy pills","attributedTo":"` + outsider + `",` +
+			`"inReplyTo":"` + remoteVideoObjectURL + `"}`),
+	}
+	if err := svc.handleCreateNote(ctx, act, outsider); err != nil {
+		t.Fatalf("handleCreateNote: %v", err)
+	}
+	if _, total, _ := svc.ListRemoteVideoComments(ctx, videoID, uuid.Nil, 20, 0); total != 0 {
+		t.Errorf("a third-party instance wrote onto another origin's mirrored thread (total %d)", total)
+	}
+}
+
+func TestMirroredCommentIsEditedAndRetractedByItsOrigin(t *testing.T) {
+	repo, videoID := remoteThreadRepo(t)
+	const author = "https://peer.example/accounts/ada"
+	cacheContractActor(repo, author, "Person", "ada", "peer.example")
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	ctx := context.Background()
+
+	if err := svc.handleCreateNote(ctx, remoteNote("2", author, "first"), author); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	edit := remoteNote("2", author, "second")
+	edit.Type = "Update"
+	if err := svc.handleUpdateNote(ctx, edit, author); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	got, _, _ := svc.ListRemoteVideoComments(ctx, videoID, uuid.Nil, 20, 0)
+	if len(got) != 1 || got[0].Body != "second" {
+		t.Fatalf("after edit = %+v, want the edited body", got)
+	}
+
+	del := inboxActivity{
+		ID: "https://peer.example/act/d2", Type: "Delete", Actor: author,
+		Object: json.RawMessage(`"https://peer.example/notes/2"`),
+	}
+	if err := svc.handleDelete(ctx, del, author); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, total, _ := svc.ListRemoteVideoComments(ctx, videoID, uuid.Nil, 20, 0); total != 0 {
+		t.Errorf("total after retraction = %d, want 0", total)
+	}
+}
+
+// A stranger cannot retract someone else's mirrored comment.
+func TestAStrangerCannotRetractAMirroredComment(t *testing.T) {
+	repo, videoID := remoteThreadRepo(t)
+	const author = "https://peer.example/accounts/ada"
+	const stranger = "https://elsewhere.example/accounts/mallory"
+	cacheContractActor(repo, author, "Person", "ada", "peer.example")
+	cacheContractActor(repo, stranger, "Person", "mallory", "elsewhere.example")
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	ctx := context.Background()
+
+	if err := svc.handleCreateNote(ctx, remoteNote("3", author, "hello"), author); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	del := inboxActivity{
+		ID: "https://elsewhere.example/act/d3", Type: "Delete", Actor: stranger,
+		Object: json.RawMessage(`"https://peer.example/notes/3"`),
+	}
+	if err := svc.handleDelete(ctx, del, stranger); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, total, _ := svc.ListRemoteVideoComments(ctx, videoID, uuid.Nil, 20, 0); total != 1 {
+		t.Errorf("a stranger retracted another actor's mirrored comment (total %d)", total)
+	}
+}
+
+// A local video's own thread is untouched: the two paths are disjoint, and the
+// remote arm must not swallow an inReplyTo that names one of our own videos.
+func TestLocalVideoCommentsStillLandInTheLocalTable(t *testing.T) {
+	repo := newContractRepo()
+	repo.remoteVideoComments = map[string]*sqlcgen.UpsertRemoteVideoCommentParams{}
+	const kaisa = "https://peer.example/accounts/kaisa"
+	cacheContractActor(repo, kaisa, "Person", "kaisa", "peer.example")
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	ctx := context.Background()
+
+	act := inboxActivity{
+		ID: "https://peer.example/act/local", Type: "Create", Actor: kaisa,
+		Object: json.RawMessage(`{"id":"https://peer.example/notes/local","type":"Note",` +
+			`"content":"on your own video","attributedTo":"` + kaisa + `",` +
+			`"inReplyTo":"https://videos.example/videos/` + ctVideoID.String() + `"}`),
+	}
+	if err := svc.handleCreateNote(ctx, act, kaisa); err != nil {
+		t.Fatalf("handleCreateNote: %v", err)
+	}
+	if got := countRemoteComments(repo); got != 1 {
+		t.Errorf("local-video comments = %d, want the reply in the LOCAL table", got)
+	}
+	if len(repo.remoteVideoComments) != 0 {
+		t.Errorf("a comment on a LOCAL video landed in the mirrored table: %+v", repo.remoteVideoComments)
+	}
+}

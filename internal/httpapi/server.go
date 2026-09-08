@@ -1944,6 +1944,13 @@ func (s *Server) routes() {
 	if s.remotevideosvc != nil {
 		api.GET("/remote-videos/:id", s.handleGetRemoteVideo)
 		api.GET("/remote-videos/:id/thumbnail", s.handleGetRemoteVideoThumbnail)
+		// The MIRRORED comment thread (A29-F8). Read-only by design — see
+		// remote_video_comments.go — and mounted with the federation service
+		// because that is what stores it. optionalAuth so a signed-in viewer's
+		// instance mutes and remote-account blocks filter the thread.
+		if s.fedsvc != nil {
+			api.GET("/remote-videos/:id/comments", s.handleListRemoteVideoComments, s.optionalAuth)
+		}
 	}
 
 	// Remote-video moderation (remote-content §8): local reports of federated

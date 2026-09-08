@@ -93,6 +93,12 @@ type Repository interface {
 	// videos and deleted remote actors (whose content cascades away).
 	GetRemoteVideoByObjectURL(ctx context.Context, objectURL string) (sqlcgen.GetRemoteVideoByObjectURLRow, error)
 	GetRemoteVideoByURL(ctx context.Context, url string) (sqlcgen.GetRemoteVideoByURLRow, error)
+	// Mirrored comment threads on remote videos (A29-F8, migration 0140).
+	UpsertRemoteVideoComment(ctx context.Context, arg sqlcgen.UpsertRemoteVideoCommentParams) (sqlcgen.UpsertRemoteVideoCommentRow, error)
+	GetRemoteVideoCommentByObjectURL(ctx context.Context, objectURL string) (sqlcgen.GetRemoteVideoCommentByObjectURLRow, error)
+	DeleteRemoteVideoCommentByObjectURL(ctx context.Context, objectURL string) (int64, error)
+	ListRemoteVideoComments(ctx context.Context, arg sqlcgen.ListRemoteVideoCommentsParams) ([]sqlcgen.ListRemoteVideoCommentsRow, error)
+	CountRemoteVideoComments(ctx context.Context, arg sqlcgen.CountRemoteVideoCommentsParams) (int64, error)
 	// Dereferenceable ids + per-remote-account blocks (A29 remediation,
 	// migration 0138).
 	InsertFederatedVideoTombstone(ctx context.Context, videoID uuid.UUID) error
