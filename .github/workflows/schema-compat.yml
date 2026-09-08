@@ -149,10 +149,59 @@ jobs:
       # against the schema the step above left behind. Every service the N-1
       # suite knows about is provided, and DATABASE_URL is set, so nothing
       # self-skips its way to a false green.
+      #
+      # A green suite is still the only unqualified pass. The one qualification —
+      # a TIGHTENING, which cannot satisfy an additive-only policy by
+      # construction — goes through the same shape rollback-floor.yml already
+      # uses for its own known break: a CAPABILITY PROBE of the N-1 tree decides
+      # whether the accepted-break register applies at all, and
+      # scripts/ci/assert-prev-release-failures.sh does the asserting. An
+      # unregistered failure is still a hard failure, a registered one that
+      # passed is a hard failure, and the whole arrangement self-clears the
+      # moment N-1 carries the migration.
+      #
+      # The probe is the MIGRATION, not a version string: a tag comparison would
+      # need editing on every release and would lie on a backport.
       - name: Run the previous release's integration suite against the new schema
         working-directory: ${{ github.workspace }}/../n-1
         env:
           DATABASE_URL: postgres://vidra:vidra@localhost:5432/vidra?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
           CLAMAV_TEST_ADDR: localhost:3310
-        run: make test-integration
+        run: |
+          set -euo pipefail
+          rc=0
+          make test-integration 2>&1 | tee /tmp/prev-release.log || rc=${PIPESTATUS[0]}
+
+          if ls migrations/*actor_handles* >/dev/null 2>&1 \
+             || grep -rqs 'actor_handles' migrations/; then
+            # N-1 carries migration 0142, so it shares the handle namespace and
+            # the accepted break cannot apply. Nothing is tolerated here.
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::${{ steps.prev.outputs.tag }} carries the one-handle-namespace migration, so its suite must pass against this schema with no expectations. Delete the stale entries in scripts/ci/expected-prev-release-failures.txt only after reading the failures above." >&2
+              exit 1
+            fi
+            echo "::notice::${{ steps.prev.outputs.tag }} carries migration 0142 — the accepted-break register does not apply, and the suite passed clean."
+            exit 0
+          fi
+
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::${{ steps.prev.outputs.tag }} predates migration 0142 but its suite PASSED — the probe above is wrong, or the register in scripts/ci/expected-prev-release-failures.txt is stale. Fix that before trusting this lane." >&2
+            exit 1
+          fi
+
+          echo "::notice::${{ steps.prev.outputs.tag }} predates migration 0142 (one handle namespace, A29 parity), an ACCEPTED tightening. Auditing which tests failed against the written register."
+          "${{ github.workspace }}/scripts/ci/assert-prev-release-failures.sh" \
+            /tmp/prev-release.log \
+            "${{ github.workspace }}/scripts/ci/expected-prev-release-failures.txt"
+
+      # The log is the evidence for the audit above, and for anyone re-reading a
+      # tolerated break months later.
+      - name: Upload the previous release's integration log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: prev-release-integration-log
+          path: /tmp/prev-release.log
+          retention-days: 14
+          if-no-files-found: ignore
