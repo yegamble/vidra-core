@@ -23,7 +23,12 @@ import (
 //
 // (`compose run` REPLACES the service command, hence the repeated word in the
 // second form.)
-const migrateUsage = "migrate <up|version|force <version> " + forceConfirmFlag + ">"
+//
+// `embedded-max` is the odd one out: it never opens a database, so it answers
+// from a bare `docker run --rm <image> migrate embedded-max` with no env at all.
+// deploy/restore.sh asks the PINNED image that question before it drops
+// anything, to refuse a dump whose schema the pinned migrator cannot reach.
+const migrateUsage = "migrate <up|version|embedded-max|force <version> " + forceConfirmFlag + ">"
 
 // forceConfirmFlag guards `migrate force`. Forcing rewrites the ledger without
 // running any SQL, so an operator who reaches for it after a half-applied
@@ -43,6 +48,17 @@ func runMigrate(args []string) error {
 	}
 	if len(args) != 1 {
 		return errors.New("usage: api " + migrateUsage)
+	}
+	// Answered before the DSN is resolved, and printed as a BARE integer on
+	// stdout with nothing else: deploy/restore.sh reads it with $(...) from an
+	// image that may have no database in front of it at all.
+	if args[0] == "embedded-max" {
+		max, err := dbmigrate.EmbeddedMax()
+		if err != nil {
+			return err
+		}
+		fmt.Println(max)
+		return nil
 	}
 	dsn := migrateDatabaseURL()
 

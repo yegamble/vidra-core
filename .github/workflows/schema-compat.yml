@@ -20,6 +20,14 @@ name: schema-compat
 # stopped depending on whatever release N removes. Staged drops still need the
 # reviewer to confirm the write path went away in the prior release.
 #
+# SECOND BLIND SPOT, found by A38's rehearsal on 2026-09-07 and closed
+# elsewhere: this lane runs N-1's TESTS, never N-1's MIGRATOR — which is the
+# process `deploy/rollback.sh` actually starts first, and the one that used to
+# die on a ledger newer than anything it embeds, taking the site down. That is
+# rollback-floor.yml's job. The two are complementary and deliberately separate:
+# this one is expensive and path-filtered to migrations/, that one is cheap and
+# also watches internal/dbmigrate/.
+#
 # `make migrate-lint` (in the canonical `make ci` gate) is the cheap static half
 # of the same policy; this job is the expensive dynamic half, so it is
 # path-filtered to migration changes only.
