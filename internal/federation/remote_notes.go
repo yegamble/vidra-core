@@ -62,7 +62,16 @@ func (s *Service) storeRemoteVideoNote(ctx context.Context, note apNoteObject, s
 	if body == "" {
 		return true, nil
 	}
-	name := s.remoteAuthorName(ctx, signerActorURL)
+	// The row's actor FK must exist. Signature verification resolved and cached
+	// the signer moments ago, so in practice it does — but a Delete of that
+	// actor racing this dispatch would leave the insert violating the foreign
+	// key, and an inbox POST that 422s because of a race is worse than one that
+	// drops a comment. Absent → accept-and-ignore, like every other
+	// unresolvable reference on this path.
+	name, ok, err := s.remoteAuthorName(ctx, signerActorURL)
+	if err != nil || !ok {
+		return true, err
+	}
 	var published pgtype.Timestamptz
 	if t, perr := time.Parse(time.RFC3339, note.Published); perr == nil {
 		published = pgtype.Timestamptz{Time: t, Valid: true}
@@ -95,10 +104,14 @@ func (s *Service) updateRemoteVideoNote(ctx context.Context, note apNoteObject, 
 	if body == "" {
 		return true, nil
 	}
+	name, ok, err := s.remoteAuthorName(ctx, signerActorURL)
+	if err != nil || !ok {
+		return true, err
+	}
 	_, err = s.repo.UpsertRemoteVideoComment(ctx, sqlcgen.UpsertRemoteVideoCommentParams{
 		RemoteVideoID:    row.RemoteVideoID,
 		RemoteActorUrl:   row.RemoteActorUrl,
-		RemoteAuthorName: s.remoteAuthorName(ctx, signerActorURL),
+		RemoteAuthorName: name,
 		ObjectUrl:        note.ID,
 		Body:             body,
 	})
@@ -124,14 +137,25 @@ func (s *Service) deleteRemoteVideoNote(ctx context.Context, objectURL, signerAc
 }
 
 // remoteAuthorName is the display-name snapshot a mirrored row keeps, so the
-// thread still renders when the actor row is later evicted. It falls back to the
-// origin host rather than to an empty string: "peer.example said" is a worse
-// answer than a username and a better one than a blank line.
-func (s *Service) remoteAuthorName(ctx context.Context, actorURL string) string {
-	if ra, err := s.repo.GetRemoteActor(ctx, actorURL); err == nil && ra.PreferredUsername != "" {
-		return ra.PreferredUsername
+// thread still renders when the actor row is later evicted. ok is false when the
+// actor is not cached at all — the row's foreign key would not hold, so the
+// caller accepts and ignores rather than failing the whole inbox POST.
+//
+// A cached actor with no preferredUsername falls back to the origin host rather
+// than an empty string: "peer.example" is a worse answer than a username and a
+// better one than a blank line.
+func (s *Service) remoteAuthorName(ctx context.Context, actorURL string) (string, bool, error) {
+	ra, err := s.repo.GetRemoteActor(ctx, actorURL)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, err
 	}
-	return hostOf(actorURL)
+	if ra.PreferredUsername != "" {
+		return ra.PreferredUsername, true, nil
+	}
+	return hostOf(actorURL), true, nil
 }
 
 // RemoteVideoComment is one mirrored comment, as the read surface sees it.

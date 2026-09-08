@@ -621,3 +621,21 @@ func TestLocalVideoCommentsStillLandInTheLocalTable(t *testing.T) {
 		t.Errorf("a comment on a LOCAL video landed in the mirrored table: %+v", repo.remoteVideoComments)
 	}
 }
+
+// The row's actor FK must hold. Signature verification caches the signer moments
+// before dispatch, so in practice it does — but a Delete of that actor racing
+// this dispatch would make the insert violate the key, and an inbox POST that
+// 422s because of a race is worse than one that drops a comment.
+func TestMirroredCommentFromAnUncachedActorIsIgnoredNotFailed(t *testing.T) {
+	repo, videoID := remoteThreadRepo(t)
+	const ghost = "https://peer.example/accounts/ghost" // deliberately NOT cached
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	ctx := context.Background()
+
+	if err := svc.handleCreateNote(ctx, remoteNote("4", ghost, "hello"), ghost); err != nil {
+		t.Fatalf("handleCreateNote = %v; an uncached actor must be ignored, not fail the POST", err)
+	}
+	if _, total, _ := svc.ListRemoteVideoComments(ctx, videoID, uuid.Nil, 20, 0); total != 0 {
+		t.Errorf("total = %d, want 0", total)
+	}
+}
