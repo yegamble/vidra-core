@@ -178,13 +178,15 @@ FROM federation_deliveries
 WHERE state = 'failed'
   AND last_error = $1
   AND updated_at >= $2
+  AND inbox_url ILIKE '%' || $3::text || '%'
 ORDER BY created_at, id
-LIMIT $3
+LIMIT $4
 `
 
 type ListCancelledDeliveriesForRedeliveryParams struct {
 	CancelReason string    `json:"cancel_reason"`
 	Since        time.Time `json:"since"`
+	HostLike     string    `json:"host_like"`
 	ResultLimit  int32     `json:"result_limit"`
 }
 
@@ -213,8 +215,25 @@ type ListCancelledDeliveriesForRedeliveryRow struct {
 // Rows are capped by the caller; a block window with more cancellations than
 // the cap leaves the remainder where they are rather than unbounding an admin
 // request.
+//
+// host_like is a PREFILTER, not the answer. The caller decides which rows
+// belong to the unblocked domain with the same hostOf() that decided to cancel
+// them, so the two cannot disagree about what host an inbox URL has; this
+// clause only keeps the LIMIT from being spent on OTHER domains' cancelled
+// rows. Without it, an instance with three blocked domains and more than
+// `result_limit` cancellations in the window could unblock one domain and
+// resume none of its deliveries, because the page came back full of the two
+// that are still blocked. It can only ever widen the candidate set relative to
+// the real answer: hostOf(inbox_url) = <domain> implies the domain appears
+// literally in the URL, and LIKE's own metacharacters in a hostname (an
+// underscore) match more rather than fewer.
 func (q *Queries) ListCancelledDeliveriesForRedelivery(ctx context.Context, arg ListCancelledDeliveriesForRedeliveryParams) ([]ListCancelledDeliveriesForRedeliveryRow, error) {
-	rows, err := q.db.Query(ctx, listCancelledDeliveriesForRedelivery, arg.CancelReason, arg.Since, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listCancelledDeliveriesForRedelivery,
+		arg.CancelReason,
+		arg.Since,
+		arg.HostLike,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

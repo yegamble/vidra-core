@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -423,5 +424,68 @@ func TestRedeliverAfterUnblock(t *testing.T) {
 	// the rows it would have matched are no longer cancelled.
 	if n, err := svc.RedeliverAfterUnblock(context.Background(), blockedHost, blockedAt); err != nil || n != 0 {
 		t.Errorf("second RedeliverAfterUnblock = (%d, %v), want (0, nil)", n, err)
+	}
+}
+
+// TestRedeliverAfterUnblockIsNotStarvedByOtherDomains: the cap on one unblock's
+// work is spent on THAT domain's rows.
+//
+// An instance with several blocked domains accumulates cancelled deliveries for
+// all of them in the same table. If the page were filtered to the unblocked
+// domain only in Go, a window holding more than the cap for the OTHER domains
+// would come back full of rows this unblock must not touch — and the one
+// delivery that should resume would never be looked at. The failure is silent
+// and looks exactly like "there was nothing to resume".
+//
+// The row ids here are chosen so the still-blocked domain's rows sort FIRST,
+// which is what makes the assertion deterministic rather than a coin flip on
+// random uuids.
+func TestRedeliverAfterUnblockIsNotStarvedByOtherDomains(t *testing.T) {
+	const unblocked = "lifted.example"
+	const stillBlocked = "other.example"
+	channelID := uuid.New()
+	ch := sqlcgen.Channel{ID: channelID, Handle: "films", ActivitypubEnabled: true}
+	v := sqlcgen.GetVideoByIDRow{ID: uuid.New(), ChannelID: channelID, Privacy: "public", State: "published"}
+
+	repo := fakeRepo{
+		channels:     map[string]sqlcgen.Channel{"films": ch},
+		channelsByID: map[uuid.UUID]sqlcgen.Channel{channelID: ch},
+		videosByID:   map[uuid.UUID]sqlcgen.GetVideoByIDRow{v.ID: v},
+		deliveries:   map[uuid.UUID]*fakeDelivery{},
+	}
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	payload, err := svc.buildVideoActivity("Create", "films", v)
+	if err != nil {
+		t.Fatalf("buildVideoActivity: %v", err)
+	}
+	blockedAt := time.Now().Add(-time.Minute)
+
+	cancelled := func(id uuid.UUID, host string) {
+		repo.deliveries[id] = &fakeDelivery{
+			row:       sqlcgen.ClaimDueDeliveriesRow{ID: id, InboxUrl: "https://" + host + "/inbox", Payload: payload},
+			state:     "failed",
+			lastError: deliveryCancelledBlocked,
+			updatedAt: time.Now(),
+		}
+	}
+	// One more than the cap, all sorting ahead of the target.
+	for i := 0; i <= maxRedeliverAfterUnblock; i++ {
+		cancelled(uuid.MustParse(fmt.Sprintf("00000000-0000-4000-8000-%012d", i)), stillBlocked)
+	}
+	target := uuid.MustParse("ffffffff-ffff-4fff-8fff-ffffffffffff")
+	cancelled(target, unblocked)
+
+	n, err := svc.RedeliverAfterUnblock(context.Background(), unblocked, blockedAt)
+	if err != nil {
+		t.Fatalf("RedeliverAfterUnblock: %v", err)
+	}
+	if n != 1 || repo.deliveries[target].state != "pending" {
+		t.Fatalf("requeued %d and the target is %q; the cap was spent on another domain's rows",
+			n, repo.deliveries[target].state)
+	}
+	for id, d := range repo.deliveries {
+		if id != target && d.state != "failed" {
+			t.Fatalf("delivery %s to a still-blocked domain was resumed", id)
+		}
 	}
 }

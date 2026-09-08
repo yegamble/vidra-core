@@ -406,7 +406,11 @@ func (s *Service) RedeliverAfterUnblock(ctx context.Context, domain string, bloc
 	rows, err := s.repo.ListCancelledDeliveriesForRedelivery(ctx, sqlcgen.ListCancelledDeliveriesForRedeliveryParams{
 		CancelReason: deliveryCancelledBlocked,
 		Since:        blockedAt,
-		ResultLimit:  maxRedeliverAfterUnblock,
+		// A prefilter only, so the cap below is spent on THIS domain's rows
+		// rather than on other still-blocked domains'. hostOf below is still
+		// what decides.
+		HostLike:    domain,
+		ResultLimit: maxRedeliverAfterUnblock,
 	})
 	if err != nil {
 		return 0, err

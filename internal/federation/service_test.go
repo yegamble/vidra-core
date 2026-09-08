@@ -413,6 +413,11 @@ func (f fakeRepo) ListCancelledDeliveriesForRedelivery(_ context.Context, arg sq
 		if d.state != "failed" || d.lastError != arg.CancelReason || d.updatedAt.Before(arg.Since) {
 			continue
 		}
+		// The SQL prefilter, mirrored: a fake that ignored it would hide the
+		// starvation the clause exists to prevent.
+		if arg.HostLike != "" && !strings.Contains(strings.ToLower(d.row.InboxUrl), strings.ToLower(arg.HostLike)) {
+			continue
+		}
 		out = append(out, sqlcgen.ListCancelledDeliveriesForRedeliveryRow{
 			ID: id, InboxUrl: d.row.InboxUrl, Payload: d.row.Payload,
 		})

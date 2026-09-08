@@ -104,11 +104,24 @@ WHERE id = $1;
 -- Rows are capped by the caller; a block window with more cancellations than
 -- the cap leaves the remainder where they are rather than unbounding an admin
 -- request.
+--
+-- host_like is a PREFILTER, not the answer. The caller decides which rows
+-- belong to the unblocked domain with the same hostOf() that decided to cancel
+-- them, so the two cannot disagree about what host an inbox URL has; this
+-- clause only keeps the LIMIT from being spent on OTHER domains' cancelled
+-- rows. Without it, an instance with three blocked domains and more than
+-- `result_limit` cancellations in the window could unblock one domain and
+-- resume none of its deliveries, because the page came back full of the two
+-- that are still blocked. It can only ever widen the candidate set relative to
+-- the real answer: hostOf(inbox_url) = <domain> implies the domain appears
+-- literally in the URL, and LIKE's own metacharacters in a hostname (an
+-- underscore) match more rather than fewer.
 SELECT id, inbox_url, payload
 FROM federation_deliveries
 WHERE state = 'failed'
   AND last_error = sqlc.arg(cancel_reason)
   AND updated_at >= sqlc.arg(since)
+  AND inbox_url ILIKE '%' || sqlc.arg(host_like)::text || '%'
 ORDER BY created_at, id
 LIMIT sqlc.arg(result_limit);
 
