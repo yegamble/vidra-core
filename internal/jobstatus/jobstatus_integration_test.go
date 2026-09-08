@@ -39,8 +39,8 @@ func TestJobStatusOverviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Overview against live schema: %v", err)
 	}
-	if len(ov.Queues) != 7 {
-		t.Fatalf("want 7 queues, got %d", len(ov.Queues))
+	if len(ov.Queues) != 8 {
+		t.Fatalf("want 8 queues, got %d", len(ov.Queues))
 	}
 	// Every queue reports non-negative counts; on an empty DB oldest age is 0.
 	for _, q := range ov.Queues {
@@ -52,8 +52,8 @@ func TestJobStatusOverviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Depths: %v", err)
 	}
-	if len(depths) != 28 {
-		t.Errorf("want 28 depth samples, got %d", len(depths))
+	if len(depths) != 32 {
+		t.Errorf("want 32 depth samples, got %d", len(depths))
 	}
 }
 
