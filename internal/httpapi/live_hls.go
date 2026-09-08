@@ -116,8 +116,17 @@ func liveStreamRequiresPlaybackToken(stream live.Stream) bool {
 }
 
 // liveViewerAuthorized reports whether the caller may watch a private live
-// stream: its owner (by account identity, which a media element carries in the
-// session cookie), or the bearer of a live-scoped playback token for this exact
+// stream: its owner, by the account identity on the request, or the bearer of a
+// live-scoped playback token for this exact stream.
+//
+// In practice it is almost always the TOKEN, including for the owner. The
+// account identity arrives only as a bearer Authorization header — the only
+// cookie this instance sets for auth is the refresh cookie, which is not an
+// access credential — and hls.js sets that header only when a playback token
+// exists. A media element sets no headers at all, which is the whole reason
+// ?pt= exists. The comment here used to claim the owner is recognised "by the
+// session cookie"; nothing has ever read one on this path, and that belief is
+// why the signed-in branch of liveViewerDigest below is unreachable on a public
 // stream.
 //
 // The token is what gives live a private-but-shareable tier. Live has no
