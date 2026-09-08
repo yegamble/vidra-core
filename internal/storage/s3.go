@@ -212,6 +212,16 @@ func (s *S3) PutSized(ctx context.Context, key string, r io.Reader, size int64) 
 		return 0, err
 	}
 	opts := minio.PutObjectOptions{}
+	// RECORD THE CONTENT TYPE AT STORE TIME. Without this minio-go defaults to
+	// application/octet-stream, which the API proxy hides (it sets the type
+	// from the database, or sniffs) and every other delivery path cannot: a
+	// presigned URL only carries the headers it was asked to pin, and a CDN
+	// edge pulling this object at its own key forwards whatever the origin
+	// says. See ContentTypeForKey — an extension outside Vidra's own key
+	// grammar leaves this empty, which is exactly the previous behaviour.
+	if ct := ContentTypeForKey(key); ct != "" {
+		opts.ContentType = ct
+	}
 	if size < 0 {
 		// Normalise any negative value to the SDK's "unknown" sentinel and bound
 		// the streaming buffer (see unknownSizePartSize).
