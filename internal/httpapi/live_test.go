@@ -38,10 +38,18 @@ type liveFakeRepo struct {
 	// ownerBlocked mirrors owner_active on GetLiveStreamByKeyHash: the SQL joins
 	// users, so a deactivated owner is visible at the RTMP publish boundary.
 	ownerBlocked bool
+	// termination mirrors the migration-0141 columns. Kept beside `rows` rather
+	// than inside them because the fake stores CreateLiveStreamRow, which the
+	// generated create projection does not carry the termination fields on.
+	termination  map[uuid.UUID]sqlcgen.TerminateLiveStreamParams
+	terminatedAt map[uuid.UUID]time.Time
 }
 
 func newLiveFakeRepo(channels *channelFakeRepo) *liveFakeRepo {
-	return &liveFakeRepo{channels: channels, rows: map[uuid.UUID]sqlcgen.CreateLiveStreamRow{}, hashes: map[uuid.UUID]string{}}
+	return &liveFakeRepo{
+		channels: channels, rows: map[uuid.UUID]sqlcgen.CreateLiveStreamRow{}, hashes: map[uuid.UUID]string{},
+		termination: map[uuid.UUID]sqlcgen.TerminateLiveStreamParams{}, terminatedAt: map[uuid.UUID]time.Time{},
+	}
 }
 
 // hiddenFromViewer mirrors the two NOT EXISTS clauses on ListLivePublicStreams /
@@ -89,12 +97,20 @@ func (f *liveFakeRepo) GetLiveStreamByID(_ context.Context, id uuid.UUID) (sqlcg
 		return sqlcgen.GetLiveStreamByIDRow{}, errors.New("not found")
 	}
 	ch, _ := f.channelByID(r.ChannelID)
-	return sqlcgen.GetLiveStreamByIDRow{
+	out := sqlcgen.GetLiveStreamByIDRow{
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
 		StartedAt: r.StartedAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		OwnerID: ch.OwnerID, ChannelHandle: ch.Handle, ChannelDisplayName: ch.DisplayName,
-	}, nil
+	}
+	if t, ok := f.terminatedAt[id]; ok {
+		p := f.termination[id]
+		out.TerminatedAt = pgtype.Timestamptz{Time: t, Valid: true}
+		out.TerminatedBy = p.TerminatedBy
+		out.TerminationReasonCode = p.TerminationReasonCode
+		out.TerminationReason = p.TerminationReason
+	}
+	return out, nil
 }
 
 func (f *liveFakeRepo) ListLiveStreamsByChannel(_ context.Context, a sqlcgen.ListLiveStreamsByChannelParams) ([]sqlcgen.ListLiveStreamsByChannelRow, error) {
@@ -216,9 +232,28 @@ func (f *liveFakeRepo) SetLiveStreamState(_ context.Context, a sqlcgen.SetLiveSt
 		case a.State != "live":
 			r.StartedAt = pgtype.Timestamptz{}
 		}
+		// Migration 0141: going live clears a previous termination; leaving live
+		// does not, because that is exactly when the creator needs to read it.
+		if a.State == "live" {
+			delete(f.terminatedAt, a.ID)
+			delete(f.termination, a.ID)
+		}
 		r.State = a.State
 		f.rows[a.ID] = r
 	}
+	return nil
+}
+
+func (f *liveFakeRepo) TerminateLiveStream(_ context.Context, a sqlcgen.TerminateLiveStreamParams) error {
+	r, ok := f.rows[a.ID]
+	if !ok {
+		return errors.New("not found")
+	}
+	r.State = a.State
+	r.StartedAt = pgtype.Timestamptz{}
+	f.rows[a.ID] = r
+	f.terminatedAt[a.ID] = time.Now()
+	f.termination[a.ID] = a
 	return nil
 }
 

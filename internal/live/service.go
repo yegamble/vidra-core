@@ -70,6 +70,8 @@ type Repository interface {
 	CountLiveStreamsLive(ctx context.Context) (int64, error)
 	CountLiveStreamsLiveByOwner(ctx context.Context, ownerID uuid.UUID) (int64, error)
 	ListOverdueLiveStreams(ctx context.Context, startedBefore pgtype.Timestamptz) ([]sqlcgen.ListOverdueLiveStreamsRow, error)
+	// Moderator/owner termination (migration 0141) — see terminate.go.
+	TerminateLiveStream(ctx context.Context, arg sqlcgen.TerminateLiveStreamParams) error
 }
 
 // VideoPipeline is the on-demand ingest seam the replay conversion drives: create
@@ -101,6 +103,7 @@ type Service struct {
 	pipeline   VideoPipeline
 	recordings RecordingStore
 	auditor    Auditor
+	control    IngestController
 	logger     *slog.Logger
 
 	// Runtime enforcement seams (config-parity W11): provider funcs read the
@@ -112,7 +115,14 @@ type Service struct {
 	maxInstanceLivesFunc func() int64
 	maxUserLivesFunc     func() int64
 	maxDurationSecsFunc  func() int64
-	now                  func() time.Time
+	// recordingRetention is LIVE_RECORDING_RETENTION. 0 (the default) means
+	// "delete a recording as soon as its replay is published"; > 0 means keep
+	// every recording that long and let the retention sweep take it. Read
+	// through a func so it is a plain config read here and a pinned value in
+	// tests. See retention.go.
+	recordingRetentionFunc func() time.Duration
+	viewers                *ViewerCounter
+	now                    func() time.Time
 }
 
 // Option customises the Service.
@@ -128,6 +138,23 @@ func WithReplayPipeline(p VideoPipeline) Option {
 // media server. Without it (and a pipeline) replay is a no-op.
 func WithRecordingStore(r RecordingStore) Option {
 	return func(s *Service) { s.recordings = r }
+}
+
+// WithIngestController wires the RTMP ingest's control surface, the only path
+// by which a termination can reach the PUBLISHER rather than just the audience.
+// Without it (no LIVE_INGEST_CONTROL_URL) termination still ends the broadcast
+// and rotates the key, and says plainly that the socket was left alone.
+func WithIngestController(c IngestController) Option {
+	return func(s *Service) {
+		// A typed-nil *HTTPIngestController would make `s.control != nil` true
+		// and every drop a wrapped error instead of the honest "not configured"
+		// degrade, so the nil case is unwrapped here rather than at four call
+		// sites.
+		if hc, ok := c.(*HTTPIngestController); ok && hc == nil {
+			return
+		}
+		s.control = c
+	}
 }
 
 // WithAuditor wires the audit trail for replay outcomes.
@@ -168,6 +195,34 @@ func WithMaxUserLivesFunc(f func() int64) Option {
 // SweepOverdueLive watchdog enforces; 0 = no limit.
 func WithMaxDurationSecsFunc(f func() int64) Option {
 	return func(s *Service) { s.maxDurationSecsFunc = f }
+}
+
+// WithRecordingRetention wires the LIVE_RECORDING_RETENTION seam. A nil func
+// (the default) reads as 0 — delete on publish.
+func WithRecordingRetention(f func() time.Duration) Option {
+	return func(s *Service) { s.recordingRetentionFunc = f }
+}
+
+// WithViewerCounter wires the concurrent-viewer counter (viewers.go). Without
+// it every stream reports no count rather than zero.
+func WithViewerCounter(v *ViewerCounter) Option {
+	return func(s *Service) { s.viewers = v }
+}
+
+// Viewers exposes the wired counter so the HTTP layer can touch it on the
+// playlist path and read it on the stream projections. Nil when unwired.
+func (s *Service) Viewers() *ViewerCounter { return s.viewers }
+
+// recordingRetention reads the effective retention window.
+func (s *Service) recordingRetention() time.Duration {
+	if s.recordingRetentionFunc == nil {
+		return 0
+	}
+	d := s.recordingRetentionFunc()
+	if d < 0 {
+		return 0
+	}
+	return d
 }
 
 // WithNowFunc overrides the clock (the duration watchdog's cutoff math);
@@ -237,6 +292,28 @@ type Stream struct {
 	OwnerID            uuid.UUID
 	ChannelHandle      string
 	ChannelDisplayName string
+
+	// Termination (migration 0141). Set when a moderator — or the owner — ended
+	// the broadcast rather than the publisher simply disconnecting; cleared on
+	// the next go-live. TerminatedAt nil means "not terminated"; a moderator
+	// termination additionally carries a code, and usually the moderator's own
+	// words. An OWNER's end has a TerminatedAt and nothing else, which is how
+	// the two are told apart without a fifth column.
+	TerminatedAt          *time.Time
+	TerminatedBy          *uuid.UUID
+	TerminationReasonCode string
+	TerminationReason     string
+}
+
+// Terminated reports whether this stream was ended by a person rather than by a
+// publisher disconnect.
+func (st Stream) Terminated() bool { return st.TerminatedAt != nil }
+
+// TerminatedByModerator reports whether the termination was a MODERATION action
+// (it carries a reason code) rather than the owner ending their own broadcast.
+// It is the predicate that decides whether the creator is shown a reason.
+func (st Stream) TerminatedByModerator() bool {
+	return st.TerminatedAt != nil && st.TerminationReasonCode != ""
 }
 
 // LiveCard is one entry of the public "Live now" listing: the minimal, truthful
@@ -338,12 +415,30 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Stream, error) {
 	if err != nil {
 		return Stream{}, ErrNotFound
 	}
-	return Stream{
+	st := Stream{
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
 		StartedAt: pgconv.TimeOrNil(r.StartedAt), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		OwnerID: r.OwnerID, ChannelHandle: r.ChannelHandle, ChannelDisplayName: r.ChannelDisplayName,
-	}, nil
+	}
+	applyTermination(&st, r.TerminatedAt, r.TerminatedBy, r.TerminationReasonCode, r.TerminationReason)
+	return st, nil
+}
+
+// applyTermination copies the migration-0141 columns onto a Stream. One function
+// for the two projections that carry them (Get and the channel list) so a
+// creator reading their Studio and a creator reading the watch page can never be
+// told different things about the same termination.
+func applyTermination(st *Stream, at pgtype.Timestamptz, by pgtype.UUID, code *string, reason string) {
+	st.TerminatedAt = pgconv.TimeOrNil(at)
+	if by.Valid {
+		id := uuid.UUID(by.Bytes)
+		st.TerminatedBy = &id
+	}
+	if code != nil {
+		st.TerminationReasonCode = *code
+	}
+	st.TerminationReason = reason
 }
 
 // ListByChannel returns one page of a channel's live streams, newest first,
@@ -364,11 +459,13 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID, limit,
 	}
 	out := make([]Stream, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Stream{
+		st := Stream{
 			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
 			StartedAt: pgconv.TimeOrNil(r.StartedAt), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-		})
+		}
+		applyTermination(&st, r.TerminatedAt, r.TerminatedBy, r.TerminationReasonCode, r.TerminationReason)
+		out = append(out, st)
 	}
 	return out, total, nil
 }
@@ -646,12 +743,39 @@ func (s *Service) RunReplay(ctx context.Context, streamID uuid.UUID) {
 	}
 	s.logger.InfoContext(ctx, "live replay published", "stream_id", streamID.String(), "video_id", draft.ID.String())
 	s.audit(ctx, observability.ResultSuccess, "stream="+streamID.String()+" video="+draft.ID.String())
+
+	// LIVE_RECORDING_RETENTION = 0: the replay is now the copy, so the
+	// intermediate goes. Before this key, recordings were never deleted at all —
+	// A26 measured six `.flv` files still on the volume after one lab session,
+	// on a volume the operations doc says is not backed up.
+	//
+	// Deliberately only on the SUCCESS path, and only after Process returned:
+	// every failure above returns early, so a replay whose transcode failed
+	// keeps its recording, which is the only copy that broadcast will ever have.
+	// The failure log says so, in replayFailed.
+	//
+	// The reader is closed FIRST — the deferred Close above has not run yet, and
+	// on a platform that refuses to unlink an open file this would otherwise
+	// leave the recording behind with no second attempt.
+	if s.recordingRetention() == 0 {
+		_ = rc.Close()
+		if rerr := s.recordings.RemoveRecording(streamID, filename); rerr != nil {
+			s.logger.WarnContext(ctx, "live replay: could not delete the session recording after publishing its replay",
+				"stream_id", streamID.String(), "error", rerr)
+		}
+	}
 }
 
 // replayFailed logs and audits a replay-stage failure without leaking the error
 // detail into the audit reason (kept to a stable stage label) or the stream key.
 func (s *Service) replayFailed(ctx context.Context, streamID uuid.UUID, stage string, cause error) {
-	s.logger.WarnContext(ctx, "live replay failed", "stream_id", streamID.String(), "stage", stage, "error", cause)
+	// The retention note is part of the failure, not an aside: an operator
+	// reading this line needs to know the bytes are still recoverable and where
+	// they are, because a failed replay's recording is the ONLY copy of that
+	// broadcast and LIVE_RECORDING_RETENTION decides how long they have.
+	s.logger.WarnContext(ctx, "live replay failed; the session recording is KEPT under LIVE_HLS_ROOT/rec (it is the only copy of this broadcast) — re-transcode it before LIVE_RECORDING_RETENTION expires",
+		"stream_id", streamID.String(), "stage", stage,
+		"recording_retention", s.recordingRetention().String(), "error", cause)
 	s.audit(ctx, observability.ResultFailure, "stream="+streamID.String()+" stage="+stage)
 }
 

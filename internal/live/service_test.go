@@ -25,6 +25,16 @@ type fakeRepo struct {
 	// reports owner_active, so a deactivated owner is visible at the publish
 	// boundary. Default false = the owner is active.
 	ownerBlocked bool
+	// terminateErr pins a failure of the one write that, if it fails, leaves the
+	// broadcast ON AIR — the only termination failure that is the caller's error
+	// rather than a partial result.
+	terminateErr error
+	// keyRotateErr pins a stream-key rotation failure, the partial outcome in
+	// which the broadcast is off the air but the publisher's credential still
+	// works.
+	keyRotateErr error
+	// onKeyRotate observes the ORDER of the termination's steps.
+	onKeyRotate func()
 }
 
 func newFakeRepo(owner uuid.UUID) *fakeRepo {
@@ -86,6 +96,12 @@ func (f *fakeRepo) ListLiveStreamsByChannel(_ context.Context, a sqlcgen.ListLiv
 }
 
 func (f *fakeRepo) UpdateLiveStreamKey(_ context.Context, a sqlcgen.UpdateLiveStreamKeyParams) error {
+	if f.onKeyRotate != nil {
+		f.onKeyRotate()
+	}
+	if f.keyRotateErr != nil {
+		return f.keyRotateErr
+	}
 	f.hashes[a.ID] = a.StreamKeyHash
 	return nil
 }
@@ -141,9 +157,39 @@ func (f *fakeRepo) SetLiveStreamState(_ context.Context, a sqlcgen.SetLiveStream
 		case a.State != "live":
 			r.StartedAt = pgtype.Timestamptz{}
 		}
+		// Mirrors the CASE arms migration 0141 added to the query: going live
+		// CLEARS a previous termination, leaving live does not. A fake that
+		// skipped this would let a test pass while a permanent stream carried
+		// last month's takedown notice into a new broadcast.
+		if a.State == "live" {
+			r.TerminatedAt = pgtype.Timestamptz{}
+			r.TerminatedBy = pgtype.UUID{}
+			r.TerminationReasonCode = nil
+			r.TerminationReason = ""
+		}
 		r.State = a.State
 		f.rows[a.ID] = r
 	}
+	return nil
+}
+
+// TerminateLiveStream mirrors the single statement migration 0141 added: the
+// state flip and the reason land together or not at all.
+func (f *fakeRepo) TerminateLiveStream(_ context.Context, a sqlcgen.TerminateLiveStreamParams) error {
+	if f.terminateErr != nil {
+		return f.terminateErr
+	}
+	r, ok := f.rows[a.ID]
+	if !ok {
+		return errors.New("no such stream")
+	}
+	r.State = a.State
+	r.StartedAt = pgtype.Timestamptz{}
+	r.TerminatedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	r.TerminatedBy = a.TerminatedBy
+	r.TerminationReasonCode = a.TerminationReasonCode
+	r.TerminationReason = a.TerminationReason
+	f.rows[a.ID] = r
 	return nil
 }
 

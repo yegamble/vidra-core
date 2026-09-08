@@ -156,6 +156,7 @@ func (q *Queries) DeleteLiveStream(ctx context.Context, id uuid.UUID) (int64, er
 const getLiveStreamByID = `-- name: GetLiveStreamByID :one
 SELECT ls.id, ls.channel_id, ls.title, ls.description, ls.privacy, ls.state, ls.permanent,
        ls.replay_enabled, ls.started_at, ls.created_at, ls.updated_at,
+       ls.terminated_at, ls.terminated_by, ls.termination_reason_code, ls.termination_reason,
        ch.owner_id, ch.handle AS channel_handle, ch.display_name AS channel_display_name
 FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
@@ -163,20 +164,24 @@ WHERE ls.id = $1
 `
 
 type GetLiveStreamByIDRow struct {
-	ID                 uuid.UUID          `json:"id"`
-	ChannelID          uuid.UUID          `json:"channel_id"`
-	Title              string             `json:"title"`
-	Description        string             `json:"description"`
-	Privacy            string             `json:"privacy"`
-	State              string             `json:"state"`
-	Permanent          bool               `json:"permanent"`
-	ReplayEnabled      bool               `json:"replay_enabled"`
-	StartedAt          pgtype.Timestamptz `json:"started_at"`
-	CreatedAt          time.Time          `json:"created_at"`
-	UpdatedAt          time.Time          `json:"updated_at"`
-	OwnerID            uuid.UUID          `json:"owner_id"`
-	ChannelHandle      string             `json:"channel_handle"`
-	ChannelDisplayName string             `json:"channel_display_name"`
+	ID                    uuid.UUID          `json:"id"`
+	ChannelID             uuid.UUID          `json:"channel_id"`
+	Title                 string             `json:"title"`
+	Description           string             `json:"description"`
+	Privacy               string             `json:"privacy"`
+	State                 string             `json:"state"`
+	Permanent             bool               `json:"permanent"`
+	ReplayEnabled         bool               `json:"replay_enabled"`
+	StartedAt             pgtype.Timestamptz `json:"started_at"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
+	TerminatedAt          pgtype.Timestamptz `json:"terminated_at"`
+	TerminatedBy          pgtype.UUID        `json:"terminated_by"`
+	TerminationReasonCode *string            `json:"termination_reason_code"`
+	TerminationReason     string             `json:"termination_reason"`
+	OwnerID               uuid.UUID          `json:"owner_id"`
+	ChannelHandle         string             `json:"channel_handle"`
+	ChannelDisplayName    string             `json:"channel_display_name"`
 }
 
 // One live stream joined with its owning channel (owner_id for authz, handle +
@@ -196,6 +201,10 @@ func (q *Queries) GetLiveStreamByID(ctx context.Context, id uuid.UUID) (GetLiveS
 		&i.StartedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TerminatedAt,
+		&i.TerminatedBy,
+		&i.TerminationReasonCode,
+		&i.TerminationReason,
 		&i.OwnerID,
 		&i.ChannelHandle,
 		&i.ChannelDisplayName,
@@ -311,7 +320,8 @@ func (q *Queries) ListLivePublicStreams(ctx context.Context, arg ListLivePublicS
 }
 
 const listLiveStreamsByChannel = `-- name: ListLiveStreamsByChannel :many
-SELECT id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at
+SELECT id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at,
+       terminated_at, terminated_by, termination_reason_code, termination_reason
 FROM live_streams
 WHERE channel_id = $1
 ORDER BY created_at DESC, id
@@ -325,17 +335,21 @@ type ListLiveStreamsByChannelParams struct {
 }
 
 type ListLiveStreamsByChannelRow struct {
-	ID            uuid.UUID          `json:"id"`
-	ChannelID     uuid.UUID          `json:"channel_id"`
-	Title         string             `json:"title"`
-	Description   string             `json:"description"`
-	Privacy       string             `json:"privacy"`
-	State         string             `json:"state"`
-	Permanent     bool               `json:"permanent"`
-	ReplayEnabled bool               `json:"replay_enabled"`
-	StartedAt     pgtype.Timestamptz `json:"started_at"`
-	CreatedAt     time.Time          `json:"created_at"`
-	UpdatedAt     time.Time          `json:"updated_at"`
+	ID                    uuid.UUID          `json:"id"`
+	ChannelID             uuid.UUID          `json:"channel_id"`
+	Title                 string             `json:"title"`
+	Description           string             `json:"description"`
+	Privacy               string             `json:"privacy"`
+	State                 string             `json:"state"`
+	Permanent             bool               `json:"permanent"`
+	ReplayEnabled         bool               `json:"replay_enabled"`
+	StartedAt             pgtype.Timestamptz `json:"started_at"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
+	TerminatedAt          pgtype.Timestamptz `json:"terminated_at"`
+	TerminatedBy          pgtype.UUID        `json:"terminated_by"`
+	TerminationReasonCode *string            `json:"termination_reason_code"`
+	TerminationReason     string             `json:"termination_reason"`
 }
 
 // A channel's live streams, newest first (owner management list). No key hash.
@@ -360,6 +374,10 @@ func (q *Queries) ListLiveStreamsByChannel(ctx context.Context, arg ListLiveStre
 			&i.StartedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.TerminatedAt,
+			&i.TerminatedBy,
+			&i.TerminationReasonCode,
+			&i.TerminationReason,
 		); err != nil {
 			return nil, err
 		}
@@ -417,6 +435,10 @@ SET state = $2,
         WHEN $2 = 'live' THEN started_at
         ELSE NULL
     END,
+    terminated_at = CASE WHEN $2 = 'live' THEN NULL ELSE terminated_at END,
+    terminated_by = CASE WHEN $2 = 'live' THEN NULL ELSE terminated_by END,
+    termination_reason_code = CASE WHEN $2 = 'live' THEN NULL ELSE termination_reason_code END,
+    termination_reason = CASE WHEN $2 = 'live' THEN '' ELSE termination_reason END,
     updated_at = now()
 WHERE id = $1
 `
@@ -431,8 +453,59 @@ type SetLiveStreamStateParams struct {
 // start, surfaced by the public "Live now" listing); an idempotent re-assert of
 // 'live' (e.g. the post-rename re-invocation) preserves the original start;
 // leaving live (offline/ended) clears it.
+//
+// Going live also CLEARS any moderator termination (migration 0141). A
+// terminated PERMANENT stream is not destroyed — its key is rotated and the
+// moderator's reason is shown to the creator — so if it is allowed to broadcast
+// again, carrying last month's takedown notice on its page forever would be a
+// lie about the current session. The audit trail keeps the history; the row
+// describes only what is true now. Leaving live does NOT clear it, because that
+// is precisely when the creator needs to read it.
 func (q *Queries) SetLiveStreamState(ctx context.Context, arg SetLiveStreamStateParams) error {
 	_, err := q.db.Exec(ctx, setLiveStreamState, arg.ID, arg.State)
+	return err
+}
+
+const terminateLiveStream = `-- name: TerminateLiveStream :exec
+UPDATE live_streams
+SET state = $2,
+    started_at = NULL,
+    terminated_at = now(),
+    terminated_by = $3,
+    termination_reason_code = $4,
+    termination_reason = $5,
+    updated_at = now()
+WHERE id = $1
+`
+
+type TerminateLiveStreamParams struct {
+	ID                    uuid.UUID   `json:"id"`
+	State                 string      `json:"state"`
+	TerminatedBy          pgtype.UUID `json:"terminated_by"`
+	TerminationReasonCode *string     `json:"termination_reason_code"`
+	TerminationReason     string      `json:"termination_reason"`
+}
+
+// End a live session and record WHY, in one statement (migration 0141).
+//
+// One statement rather than a state flip plus an update, because the two must
+// not be separable: a crash between them would leave a stream ended with no
+// reason — indistinguishable from an ordinary publisher disconnect — and the
+// creator would be told nothing at all, which is the exact gap this closes.
+//
+// The state is the caller's ($2): 'ended' for a one-shot stream, 'offline' for
+// a permanent one, mirroring what the duration watchdog and the stop hook
+// already decide. started_at is cleared exactly as leaving live always clears
+// it. reason_code may be NULL and reason may be ” — that combination is the
+// OWNER ending their own broadcast, which is not a moderation action.
+func (q *Queries) TerminateLiveStream(ctx context.Context, arg TerminateLiveStreamParams) error {
+	_, err := q.db.Exec(ctx, terminateLiveStream,
+		arg.ID,
+		arg.State,
+		arg.TerminatedBy,
+		arg.TerminationReasonCode,
+		arg.TerminationReason,
+	)
 	return err
 }
 

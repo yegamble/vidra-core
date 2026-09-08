@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -64,6 +65,13 @@ type fakeRecordingStore struct {
 	data     []byte
 	filename string
 	err      error
+	// removed records the filenames RemoveRecording was asked for — the
+	// LIVE_RECORDING_RETENTION = 0 delete-on-publish assertion.
+	removed []string
+	// pruned/prunedCutoff record the retention sweep's arguments.
+	pruned       int
+	prunedCutoff time.Time
+	prunedCalls  int
 }
 
 func (f *fakeRecordingStore) OpenRecording(uuid.UUID) (io.ReadCloser, string, error) {
@@ -74,6 +82,17 @@ func (f *fakeRecordingStore) OpenRecording(uuid.UUID) (io.ReadCloser, string, er
 		return nil, "", ErrNoRecording
 	}
 	return io.NopCloser(bytes.NewReader(f.data)), f.filename, nil
+}
+
+func (f *fakeRecordingStore) RemoveRecording(_ uuid.UUID, name string) error {
+	f.removed = append(f.removed, name)
+	return nil
+}
+
+func (f *fakeRecordingStore) PruneRecordings(cutoff time.Time, _ int) (int, error) {
+	f.prunedCalls++
+	f.prunedCutoff = cutoff
+	return f.pruned, nil
 }
 
 // fakeAuditor collects audit events.
@@ -223,5 +242,63 @@ func TestRunReplayGatedByLiveAllowReplay(t *testing.T) {
 	svc.RunReplay(context.Background(), id)
 	if pipe.createCalls != 1 {
 		t.Errorf("CreateDraft called %d times after re-enabling, want 1", pipe.createCalls)
+	}
+}
+
+// TestReplayDeletesTheRecordingAtRetentionZero: the default. Once the replay is
+// published the replay IS the copy, so the intermediate goes — recordings were
+// never deleted at all before this (A26 measured six `.flv` files still on the
+// volume after one lab session, on a volume the operations doc says is not
+// backed up).
+func TestReplayDeletesTheRecordingAtRetentionZero(t *testing.T) {
+	repo := newFakeRepo(uuid.New())
+	store := &fakeRecordingStore{data: []byte("SESSION"), filename: "session.flv"}
+	svc, id, _ := replayStream(t, repo, []Option{
+		WithReplayPipeline(&fakePipeline{}), WithRecordingStore(store),
+		WithAuditor(&fakeAuditor{}),
+		WithRecordingRetention(func() time.Duration { return 0 }),
+	}, true)
+
+	svc.RunReplay(context.Background(), id)
+
+	if len(store.removed) != 1 || store.removed[0] != "session.flv" {
+		t.Errorf("removed = %v, want [session.flv] — at retention 0 the recording goes as soon as its replay publishes", store.removed)
+	}
+}
+
+// TestReplayKeepsTheRecordingWhenRetentionIsSet: the operator asked for a window
+// so they can re-transcode from source. Nothing may delete it early.
+func TestReplayKeepsTheRecordingWhenRetentionIsSet(t *testing.T) {
+	repo := newFakeRepo(uuid.New())
+	store := &fakeRecordingStore{data: []byte("SESSION"), filename: "session.flv"}
+	svc, id, _ := replayStream(t, repo, []Option{
+		WithReplayPipeline(&fakePipeline{}), WithRecordingStore(store),
+		WithAuditor(&fakeAuditor{}),
+		WithRecordingRetention(func() time.Duration { return 7 * 24 * time.Hour }),
+	}, true)
+
+	svc.RunReplay(context.Background(), id)
+
+	if len(store.removed) != 0 {
+		t.Errorf("removed %v with a 7-day retention configured; the operator asked to keep the source for re-transcoding", store.removed)
+	}
+}
+
+// TestFailedReplayKeepsTheRecording is the ruling, in a test: a replay whose
+// transcode failed keeps its recording REGARDLESS, because it is the only copy
+// that broadcast will ever have.
+func TestFailedReplayKeepsTheRecording(t *testing.T) {
+	repo := newFakeRepo(uuid.New())
+	store := &fakeRecordingStore{data: []byte("SESSION"), filename: "session.flv"}
+	svc, id, _ := replayStream(t, repo, []Option{
+		WithReplayPipeline(&fakePipeline{processErr: errors.New("ffmpeg died")}),
+		WithRecordingStore(store), WithAuditor(&fakeAuditor{}),
+		WithRecordingRetention(func() time.Duration { return 0 }),
+	}, true)
+
+	svc.RunReplay(context.Background(), id)
+
+	if len(store.removed) != 0 {
+		t.Errorf("removed %v after a FAILED transcode; that file is the only copy of the broadcast", store.removed)
 	}
 }

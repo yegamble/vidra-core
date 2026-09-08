@@ -431,18 +431,22 @@ type LinkPreview struct {
 }
 
 type LiveStream struct {
-	ID            uuid.UUID          `json:"id"`
-	ChannelID     uuid.UUID          `json:"channel_id"`
-	Title         string             `json:"title"`
-	Description   string             `json:"description"`
-	Privacy       string             `json:"privacy"`
-	State         string             `json:"state"`
-	Permanent     bool               `json:"permanent"`
-	StreamKeyHash string             `json:"stream_key_hash"`
-	CreatedAt     time.Time          `json:"created_at"`
-	UpdatedAt     time.Time          `json:"updated_at"`
-	ReplayEnabled bool               `json:"replay_enabled"`
-	StartedAt     pgtype.Timestamptz `json:"started_at"`
+	ID                    uuid.UUID          `json:"id"`
+	ChannelID             uuid.UUID          `json:"channel_id"`
+	Title                 string             `json:"title"`
+	Description           string             `json:"description"`
+	Privacy               string             `json:"privacy"`
+	State                 string             `json:"state"`
+	Permanent             bool               `json:"permanent"`
+	StreamKeyHash         string             `json:"stream_key_hash"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
+	ReplayEnabled         bool               `json:"replay_enabled"`
+	StartedAt             pgtype.Timestamptz `json:"started_at"`
+	TerminatedAt          pgtype.Timestamptz `json:"terminated_at"`
+	TerminatedBy          pgtype.UUID        `json:"terminated_by"`
+	TerminationReasonCode *string            `json:"termination_reason_code"`
+	TerminationReason     string             `json:"termination_reason"`
 }
 
 type MediaIpfsPin struct {

@@ -18,6 +18,11 @@ updates:
     schedule:
       interval: "weekly"
 
+  # Covers docker-compose.yml, including the digest-pinned `rtmp` ingest
+  # (alfg/nginx-rtmp). The tag is kept beside the digest there precisely so this
+  # ecosystem can follow it — a bare `repo@sha256:...` has nothing to bump, and
+  # an unpinned `:latest` on a launch-required component is a silent change
+  # under a running instance.
   - package-ecosystem: "docker-compose"
     directory: "/"
     schedule:

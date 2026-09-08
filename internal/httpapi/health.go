@@ -91,6 +91,21 @@ func (s *Server) componentHealth(ctx context.Context) (map[string]componentStatu
 	if components["storage"].Status == "down" {
 		healthy = false
 	}
+	// The RTMP ingest (A26 — nothing here watched the live plane at all). It is
+	// on the CHEAP probe rather than the admin page's expensive one because a
+	// live instance whose ingest died is serving a dead player to every viewer
+	// and refusing every publish, which is a thing an operator's dashboard must
+	// see without anyone opening a page. Its own 30-second cache keeps the cost
+	// to at most two round trips a minute however often /readyz is polled.
+	//
+	// It sets `healthy = false` so the readiness body reads "degraded" — and
+	// deliberately does NOT change the status CODE: handleReady 503s for
+	// PostgreSQL alone, and one shared ingest must never be able to empty every
+	// replica out of rotation at once.
+	components["live_ingest"] = s.liveIngestStatus(ctx)
+	if components["live_ingest"].Status == "down" {
+		healthy = false
+	}
 	return components, healthy
 }
 

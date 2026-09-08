@@ -1836,6 +1836,103 @@ repackager inside Vidra that writes segments through the storage backend. That i
 a rewrite of the live plane, it is not planned, and no amount of delivery or
 storage configuration substitutes for it.
 
+### The supported publisher profile: 720p30 H.264 + AAC-LC, passed through
+
+**The ingest transcodes nothing.** Whatever the encoder pushes is what every
+viewer receives, on one bitrate, with no quality ladder: `master.m3u8` for a live
+stream contains zero `EXT-X-STREAM-INF` lines — it *is* the media playlist. A
+creator pushing 4K has not made the stream better for anyone with the bandwidth
+for it; they have made it unplayable for everyone without.
+
+So the profile to publish, and the one the Studio's "Go live" form states:
+
+| | |
+| --- | --- |
+| Video | H.264, **1280x720**, **30 fps** |
+| Audio | **AAC-LC**, 48 kHz |
+| Container | FLV over RTMP |
+
+Anything a browser can decode will *work* — nothing rejects a different profile —
+but nothing adapts it either. Live ABR is tracked separately (SCP-05); until it
+lands, the ladder for live is whatever the streamer's encoder emits.
+
+### Ending a broadcast, and what it takes to reach the publisher
+
+`POST /api/v1/admin/live/{id}/terminate` (admin or moderator) and `POST
+/api/v1/live/{id}/end` (the stream's owner) end a broadcast. They run the same
+four steps:
+
+1. **The session ends.** Live HLS 404s immediately, the stream leaves every
+   listing, and every playback token outstanding against it dies with it.
+2. **The stream key is rotated.** The RTMP boundary authenticates a KEY, not a
+   session — without this the publisher's encoder simply reconnects.
+3. **The publisher is disconnected**, through the media server's control module.
+4. **The recording is finalised into the replay** by the ordinary disconnect
+   path, because the recording is still open while the publisher holds the
+   socket.
+
+Step 3 is the one with a prerequisite. It needs **`LIVE_INGEST_CONTROL_URL`** —
+the base URL of the ingest's HTTP control surface (`http://rtmp:8082` for the
+bundled `media` profile), authenticated with the same `LIVE_INGEST_SECRET` the
+hooks use. The api refuses to boot with a control URL and no secret: anything
+that can reach an unauthenticated control surface can disconnect every publisher
+on the instance.
+
+Without it, ending a broadcast still takes it off the air and still kills the
+credential — **but the publisher's RTMP socket stays open**, and they keep
+uploading segments and a recording to this server's disk until they stop on their
+own. The API response says so in its `detail` field rather than reporting a clean
+success, and the same is true of the global `live_max_duration_secs` watchdog,
+which has always worked this way.
+
+`/admin/system` and `/readyz` carry a **`live_ingest`** component:
+`not_configured` with no `LIVE_RTMP_URL` (an install that does no live is not a
+broken one), `not_configured` *with an explanation* when live is configured and
+the control URL is not (an instance that cannot probe its ingest must not report
+`ok` for it), `ok` when the ingest's stat page answers, and `down` when it does
+not. A dead ingest reads **degraded** in the readiness body with a **200**: only
+PostgreSQL takes an api out of rotation, and one shared ingest must never be able
+to empty every replica out at once.
+
+### Session recordings — `LIVE_RECORDING_RETENTION`
+
+The media server records every session to `<LIVE_HLS_ROOT>/rec/<id>-<unix>.flv`,
+whether or not the stream has replay enabled. That volume is **not covered by the
+media backup** (see *Media backup* above), and before this key nothing ever
+deleted the files.
+
+| `LIVE_RECORDING_RETENTION` | What happens |
+| --- | --- |
+| `0` (default) | The recording is deleted as soon as its replay VOD is published. The replay is then the copy — which is what the recording was an intermediate for. |
+| a duration, e.g. `168h` | Nothing is deleted on publish. The retention worker (hourly, leader-elected, beside the QoE and audit prunes) deletes recordings older than the window, 200 per pass, oldest first. |
+
+Two things about the default you should know before leaving it there:
+
+- **A failed replay keeps its recording, always.** It is the only copy of that
+  broadcast. The failure log says so and names the retention window, so an
+  operator reading it knows how long they have to re-transcode.
+- **A replay-DISABLED stream's recordings accumulate.** The media server records
+  them, no replay is ever published, and so nothing triggers the delete-on-publish
+  path. If you run replay-disabled live streams, set a non-zero retention or the
+  volume grows without bound.
+
+The sweep never touches `<LIVE_HLS_ROOT>/rec/.keep`. That file is load-bearing:
+`record_path` sits inside `hls_path`, and nginx-rtmp's HLS cleanup `rmdir()`s
+empty subdirectories of it — which is why replay-to-VOD had never once run on any
+deployment before the directory was planted with a `.keep`.
+
+### Concurrent viewers
+
+A live stream's `viewer_count` is the number of distinct viewers who fetched its
+HLS **playlist** in the last 90 seconds — the only request in the live path that
+means "someone is still watching right now". Viewers are deduped by a keyed,
+day-scoped digest held in Redis with a TTL, never persisted and never read back
+as anything but a count. The number is refreshed at most every 10 seconds.
+
+**No Redis, no count**: the field is *omitted* rather than reported as zero,
+because "nobody is watching" and "this instance cannot tell" are different
+statements and only one of them should reach a creator mid-broadcast.
+
 ## Splitting the api and the workers
 
 A default install runs one process that does everything: it serves HTTP *and* runs
