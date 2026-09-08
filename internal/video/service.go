@@ -995,6 +995,28 @@ func (s *Service) auditMalwareRejected(ctx context.Context, videoID uuid.UUID, o
 	})
 }
 
+// dropRejectedOriginal removes the stored original of a video the scanner
+// declared infected: first the video_files row (which is what every download
+// surface reads), then the object. Best-effort in both halves — the video is
+// already 'failed', and a storage hiccup must not turn a rejection into an
+// error the caller would retry.
+func (s *Service) dropRejectedOriginal(ctx context.Context, videoID uuid.UUID, originalKey string) {
+	if err := s.repo.DeleteVideoFilesByVideoAndKind(ctx, sqlcgen.DeleteVideoFilesByVideoAndKindParams{
+		VideoID: videoID,
+		Kind:    "original",
+	}); err != nil {
+		slog.WarnContext(ctx, "could not drop the file row of a malware-rejected original",
+			"video_id", videoID.String(), "error", err.Error())
+	}
+	if s.blobs == nil {
+		return
+	}
+	if err := s.blobs.Delete(ctx, originalKey); err != nil {
+		slog.WarnContext(ctx, "could not delete the stored bytes of a malware-rejected original",
+			"video_id", videoID.String(), "error", err.Error())
+	}
+}
+
 // Process finalises a processing video: it probes the stored original and moves
 // the video to published on success or failed on a probe error. When no prober
 // is configured the original is trusted (the extension allow-list already
@@ -1033,6 +1055,18 @@ func (s *Service) Process(ctx context.Context, videoID uuid.UUID, originalKey st
 			// Infected media ALWAYS fails, regardless of mode.
 			state = "failed"
 			s.auditMalwareRejected(ctx, videoID, "infected")
+			// …and its bytes go with it. Failing the state alone left the
+			// video_files row and the stored object in place, so the owner's
+			// download listing still advertised the infected original and
+			// GET /videos/{id}/download/original still served it (to a
+			// moderator/admin too) — "never publish or link rejected bytes"
+			// with the link still live. ReplaceSource has always dropped the
+			// rejected candidate; this is the same posture on first upload.
+			//
+			// Only for INFECTED. An unscannable file is not proven bad, and
+			// under quarantine mode a moderator has to be able to review it,
+			// so both of those keep their bytes.
+			s.dropRejectedOriginal(ctx, videoID, originalKey)
 		}
 	}
 	if state == "published" && s.prober != nil {

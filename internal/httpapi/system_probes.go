@@ -3,12 +3,16 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"net"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/preflight"
 	"github.com/vidra/vidra-core/internal/processheartbeat"
 	"github.com/vidra/vidra-core/internal/storage"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 // systemProbeTimeout bounds EACH dependency probe on the admin status page. The
@@ -82,6 +86,7 @@ func (s *Server) systemComponents(ctx context.Context) (map[string]componentStat
 		"smtp":   s.probeSMTP,
 		"search": s.probeSearch,
 		"ffmpeg": s.probeFFmpeg,
+		"clamav": s.probeMalwareScanner,
 	}
 	var (
 		mu sync.Mutex
@@ -273,6 +278,70 @@ func (s *Server) probeSearch(ctx context.Context) componentStatus {
 		return componentStatus{Status: "down", Error: err.Error()}
 	}
 	return componentStatus{Status: "ok"}
+}
+
+// probeMalwareScanner asks the configured clamd whether it is alive. It is the
+// one dependency on this page whose failure is INVISIBLE everywhere else: with
+// MALWARE_SCAN_MODE=fail-closed (the default) an unreachable daemon makes every
+// upload and every URL import land in 'failed', while the api keeps answering
+// 200 and /healthz keeps saying ok. /admin/infrastructure's malware_scan row is
+// static config — it reports "enabled and configured" for a daemon that has
+// been dead for a week.
+//
+// MALWARE_SCAN_ENABLED=false is a supported deployment (nothing is scanned; the
+// infrastructure page says so in prose), so it is not_configured and never
+// degrades the instance.
+//
+// The sentence names the consequence and the policy in force, never the
+// address: an internal host on an admin page is free reconnaissance, and
+// admin_infra_test pins that rule for CLAMAV_ADDR specifically.
+func (s *Server) probeMalwareScanner(ctx context.Context) componentStatus {
+	if !s.cfg.MalwareScanEnabled || strings.TrimSpace(s.cfg.ClamAVAddr) == "" {
+		return componentStatus{Status: "not_configured"}
+	}
+	if err := media.Ping(ctx, s.cfg.ClamAVAddr, s.cfg.ClamAVTimeout); err != nil {
+		return componentStatus{
+			Status: "down",
+			Error:  scannerProbeReason(s.cfg.MalwareScanMode, s.cfg.ClamAVAddr, err),
+		}
+	}
+	return componentStatus{Status: "ok"}
+}
+
+// scannerProbeReason spells out what an unreachable scanner is doing to
+// ingestion RIGHT NOW, which is entirely decided by MALWARE_SCAN_MODE — the
+// same failure publishes unscanned media under fail-open and rejects every
+// upload under fail-closed, and an operator cannot infer which from a dial
+// error.
+func scannerProbeReason(mode, addr string, err error) string {
+	// net.Dialer puts the dialed address verbatim into its error ("dial tcp
+	// 10.0.0.4:3310: connect: connection refused"), so passing the cause through
+	// would put CLAMAV_ADDR on an admin page — which admin_infra_test forbids by
+	// name for exactly this value. The operator already knows what they
+	// configured; the reachability verdict is the new information.
+	cause := redactAddr(err.Error(), addr)
+	switch video.ScanMode(mode) {
+	case video.ScanModeFailOpen:
+		return "the malware scanner is unreachable and MALWARE_SCAN_MODE=fail-open, so every upload and every URL import is being published WITHOUT being scanned: " + cause
+	case video.ScanModeQuarantine:
+		return "the malware scanner is unreachable and MALWARE_SCAN_MODE=quarantine, so every upload and every URL import is being parked in the moderation queue instead of published: " + cause
+	default:
+		return "the malware scanner is unreachable and MALWARE_SCAN_MODE=fail-closed, so every upload and every URL import is failing: " + cause
+	}
+}
+
+// redactAddr removes a configured host:port — and the bare host, which is what a
+// DNS failure reports on its own — from a dial error before it is shown.
+func redactAddr(cause, addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return cause
+	}
+	cause = strings.ReplaceAll(cause, addr, "the configured address")
+	if host, _, err := net.SplitHostPort(addr); err == nil && host != "" {
+		cause = strings.ReplaceAll(cause, host, "the configured address")
+	}
+	return cause
 }
 
 // probeFFmpeg answers "is the binary on the PATH", and nothing more. ffmpeg is
