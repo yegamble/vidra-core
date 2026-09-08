@@ -230,14 +230,18 @@ const (
 // flag time, so a moderator never mistakes one for the other. TermActive is
 // false once the watched word itself was deleted — the match survives that now.
 type Match struct {
-	ID                 uuid.UUID
-	Word               string
-	Type               string
-	CommentID          uuid.UUID
-	CommentBody        string
-	VideoID            uuid.UUID
-	VideoTitle         string
-	AuthorUsername     string
+	ID             uuid.UUID
+	Word           string
+	Type           string
+	CommentID      uuid.UUID
+	CommentBody    string
+	VideoID        uuid.UUID
+	VideoTitle     string
+	AuthorUsername string
+	// AuthorDomain is the origin instance of a FEDERATED comment's author,
+	// empty for anything local. Without it a moderator cannot tell a remote
+	// actor's snapshotted name from a local username (A29).
+	AuthorDomain       string
 	CreatedAt          time.Time
 	MatchedText        string
 	MatchOffset        int32
@@ -278,7 +282,8 @@ func (s *Service) ListMatches(ctx context.Context, status string, limit, offset 
 	for _, r := range rows {
 		m := Match{
 			ID: r.ID, Word: r.Word, Type: MatchTargetVideo,
-			VideoID: r.VideoID, AuthorUsername: r.AuthorUsername, CreatedAt: r.CreatedAt,
+			VideoID: r.VideoID, AuthorUsername: r.AuthorUsername, AuthorDomain: r.AuthorDomain,
+			CreatedAt:   r.CreatedAt,
 			MatchedText: r.MatchedText, MatchOffset: r.MatchOffset, MatchLength: r.MatchLength,
 			SnapshotBackfilled: r.SnapshotBackfilled, TermActive: r.TermActive,
 			TargetStatus: r.TargetStatus, Status: r.Status, ModeratorNote: r.ModeratorNote,

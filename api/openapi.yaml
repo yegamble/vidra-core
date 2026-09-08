@@ -18667,7 +18667,9 @@ components:
         comment (type "comment"; comment_id/comment_body present, video_id is
         the video it is on) or a video (type "video"; comment fields absent,
         video_id/video_title are the flagged video). author_username is the
-        comment's author or the video's owner respectively.
+        comment's author or the video's owner respectively; for a FEDERATED
+        comment it is the remote actor's name as it was cached, and
+        author_domain names its origin instance.
       required:
         - id
         - word
@@ -18715,6 +18717,12 @@ components:
           description: The video's title (a link target for the review queue).
         author_username:
           type: string
+        author_domain:
+          type: string
+          description: >-
+            The origin instance of a FEDERATED comment's author. Absent (or
+            empty) for anything local, which is what distinguishes a remote
+            actor's name from a local username in the queue.
         created_at:
           type: string
           format: date-time

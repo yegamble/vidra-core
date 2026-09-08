@@ -43,6 +43,17 @@ func TestWatchedWordMatchesFlow(t *testing.T) {
 	if len(body.Matches) != 1 || body.Matches[0].Word != "spam" || body.Matches[0].CommentID != cv.ID {
 		t.Fatalf("matches = %+v, want one spam match for comment %s", body.Matches, cv.ID)
 	}
+	// A LOCAL comment carries no author_domain — the field exists to mark a
+	// FEDERATED author (A29), so a wiring that stamped every row with this
+	// instance's domain would make every local flag look remote. The remote
+	// half of the contract is held where it can be: the real-PostgreSQL
+	// TestWatchedWordMatchNamesTheRemoteAuthorOnRealPG.
+	if got := body.Matches[0].AuthorDomain; got != "" {
+		t.Errorf("local match author_domain = %q, want empty", got)
+	}
+	if got := body.Matches[0].AuthorUsername; got != "bob" {
+		t.Errorf("local match author = %q, want bob", got)
+	}
 
 	// A clean comment adds no new match.
 	if rec := postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"nice video"}`, bob); rec.Code != http.StatusCreated {

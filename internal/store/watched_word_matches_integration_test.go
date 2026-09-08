@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -373,5 +374,174 @@ func TestWatchedWordVideoMatchSnapshotOnRealPG(t *testing.T) {
 	}
 	if got.VideoTitle == nil || *got.VideoTitle != "wholesome cooking" {
 		t.Errorf("live title = %v, want the new one beside the snapshot", got.VideoTitle)
+	}
+}
+
+// TestWatchedWordMatchNamesTheRemoteAuthorOnRealPG holds the A29 finding: the
+// moderation queue must name whose text it flagged, and for a FEDERATED comment
+// that author is a remote actor, not anyone on this instance.
+//
+// A29's two-instance lab flagged an inbound Create{Note} on a local video and
+// the queue reported author_username = the LOCAL VIDEO OWNER — because
+// ListWatchedWordMatches read COALESCE(cu.username, vu.username), and a remote
+// comment has user_id NULL, so cu.username was NULL and the row fell through to
+// the video's owner. A moderator reviewing federated abuse was shown an
+// innocent local creator as its author, with nothing on the row to say the
+// comment was remote at all. This asserts, on real PostgreSQL:
+//
+//   - a remote comment's match names the REMOTE author and carries its domain;
+//   - a LOCAL comment's match still names the commenter (unchanged);
+//   - a VIDEO match still names the video's owner (the vu fallback is right
+//     there and must survive the fix).
+func TestWatchedWordMatchNamesTheRemoteAuthorOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suffix := uuid.NewString()[:8]
+	var ownerID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+		"wwrem-owner-"+suffix, "wwrem-owner-"+suffix+"@example.test",
+	).Scan(&ownerID); err != nil {
+		t.Fatalf("seed owner: %v", err)
+	}
+	t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, ownerID) })
+
+	var localCommenterID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+		"wwrem-local-"+suffix, "wwrem-local-"+suffix+"@example.test",
+	).Scan(&localCommenterID); err != nil {
+		t.Fatalf("seed local commenter: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, localCommenterID)
+	})
+
+	var channelID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'WW Remote') RETURNING id`,
+		ownerID, "wwrem-"+suffix,
+	).Scan(&channelID); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	var videoID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO videos (channel_id, title, privacy, state) VALUES ($1, 'Remote Flag Clip', 'public', 'published') RETURNING id`,
+		channelID,
+	).Scan(&videoID); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+
+	// The federated commenter: a cached remote actor, exactly as the inbox
+	// caches it during signature verification.
+	actorURL := "https://remote-" + suffix + ".example/accounts/farhad"
+	if err := q.UpsertRemoteActor(ctx, sqlcgen.UpsertRemoteActorParams{
+		ActorUrl: actorURL, ActorType: "Person", PreferredUsername: "farhad",
+		Domain:   "remote-" + suffix + ".example",
+		InboxUrl: actorURL + "/inbox", PublicKeyPem: "-----BEGIN PUBLIC KEY-----\nnot-a-key\n-----END PUBLIC KEY-----\n",
+	}); err != nil {
+		t.Fatalf("UpsertRemoteActor: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM remote_actors WHERE actor_url = $1`, actorURL)
+	})
+
+	word, err := q.CreateWatchedWord(ctx, sqlcgen.CreateWatchedWordParams{
+		Word: "kumquat-" + suffix, CreatedBy: pgtype.UUID{Bytes: ownerID, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("CreateWatchedWord: %v", err)
+	}
+
+	remoteBody := "a federated " + word.Word + " comment"
+	remoteName := "farhad"
+	remoteObject := actorURL + "/notes/1"
+	remoteComment, err := q.CreateRemoteComment(ctx, sqlcgen.CreateRemoteCommentParams{
+		VideoID: videoID, Body: remoteBody,
+		RemoteActorUrl: &actorURL, RemoteAuthorName: &remoteName, RemoteObjectUrl: &remoteObject,
+	})
+	if err != nil {
+		t.Fatalf("CreateRemoteComment: %v", err)
+	}
+	localBody := "a local " + word.Word + " comment"
+	var localCommentID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO comments (video_id, user_id, body) VALUES ($1, $2, $3) RETURNING id`,
+		videoID, localCommenterID, localBody,
+	).Scan(&localCommentID); err != nil {
+		t.Fatalf("seed local comment: %v", err)
+	}
+
+	offsetOf := func(text string) int32 {
+		return int32(len([]rune(text[:strings.Index(text, word.Word)])))
+	}
+	flagComment := func(commentID uuid.UUID, text string) {
+		t.Helper()
+		if err := q.RecordWatchedWordMatch(ctx, sqlcgen.RecordWatchedWordMatchParams{
+			WatchedWordID: pgtype.UUID{Bytes: word.ID, Valid: true},
+			CommentID:     pgtype.UUID{Bytes: commentID, Valid: true},
+			MatchedText:   text, MatchedTerm: word.Word,
+			MatchOffset: offsetOf(text), MatchLength: int32(len([]rune(word.Word))),
+		}); err != nil {
+			t.Fatalf("RecordWatchedWordMatch: %v", err)
+		}
+	}
+	flagComment(remoteComment.ID, remoteBody)
+	flagComment(localCommentID, localBody)
+	videoText := "Remote Flag Clip " + word.Word
+	if err := q.RecordWatchedWordVideoMatch(ctx, sqlcgen.RecordWatchedWordVideoMatchParams{
+		WatchedWordID: pgtype.UUID{Bytes: word.ID, Valid: true},
+		VideoID:       pgtype.UUID{Bytes: videoID, Valid: true},
+		MatchedText:   videoText, MatchedTerm: word.Word,
+		MatchOffset: offsetOf(videoText), MatchLength: int32(len([]rune(word.Word))),
+	}); err != nil {
+		t.Fatalf("RecordWatchedWordVideoMatch: %v", err)
+	}
+
+	rows, err := q.ListWatchedWordMatches(ctx, sqlcgen.ListWatchedWordMatchesParams{ResultLimit: 200})
+	if err != nil {
+		t.Fatalf("ListWatchedWordMatches: %v", err)
+	}
+	byTarget := map[string]sqlcgen.ListWatchedWordMatchesRow{}
+	for _, r := range rows {
+		switch {
+		case r.CommentID.Valid && uuid.UUID(r.CommentID.Bytes) == remoteComment.ID:
+			byTarget["remote"] = r
+		case r.CommentID.Valid && uuid.UUID(r.CommentID.Bytes) == localCommentID:
+			byTarget["local"] = r
+		case !r.CommentID.Valid && r.VideoID == videoID:
+			byTarget["video"] = r
+		}
+	}
+	if len(byTarget) != 3 {
+		t.Fatalf("found %d of the 3 seeded matches: %v", len(byTarget), byTarget)
+	}
+
+	if got := byTarget["remote"].AuthorUsername; got != "farhad" {
+		t.Errorf("remote comment match author = %q, want farhad — the queue must name the REMOTE author, not %q (the video owner)",
+			got, "wwrem-owner-"+suffix)
+	}
+	if got := byTarget["remote"].AuthorDomain; got != "remote-"+suffix+".example" {
+		t.Errorf("remote comment match author_domain = %q, want the origin domain", got)
+	}
+	if got := byTarget["local"].AuthorUsername; got != "wwrem-local-"+suffix {
+		t.Errorf("local comment match author = %q, want the local commenter", got)
+	}
+	if got := byTarget["local"].AuthorDomain; got != "" {
+		t.Errorf("local comment match author_domain = %q, want empty (it is not federated)", got)
+	}
+	if got := byTarget["video"].AuthorUsername; got != "wwrem-owner-"+suffix {
+		t.Errorf("video match author = %q, want the video owner (the existing fallback must survive)", got)
+	}
+	if got := byTarget["video"].AuthorDomain; got != "" {
+		t.Errorf("video match author_domain = %q, want empty", got)
 	}
 }
