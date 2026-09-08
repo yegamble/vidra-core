@@ -278,6 +278,14 @@ type Config struct {
 	// passwords are stored raw with a loud boot warning. NEVER commit a real value.
 	ATProtoKeyKEK string
 
+	// ATProtoPLCURL overrides the did:plc directory identity login resolves DID
+	// documents from. DEV/TEST-ONLY: it is honoured ONLY when the instance has
+	// already declared itself a loopback lab with HTTP_IMPORT_ALLOW_PRIVATE_URLS
+	// (see ATProtoDevPLCURL), so a production misconfiguration can never point
+	// identity resolution at a directory someone else controls. Empty (default)
+	// keeps the fixed plc.directory host.
+	ATProtoPLCURL string
+
 	// ATProtoLoginEnabled is the master switch for ATProto IDENTITY LOGIN (sign in
 	// with a Bluesky / any-PDS handle). Independent of ATProtoEnabled (which gates
 	// outbound cross-posting): an instance may enable either, both, or neither.
@@ -1181,6 +1189,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		ATProtoEnabled:                         p.Bool("ATPROTO_ENABLED", false),
 		ATProtoKeyKEK:                          getEnv("ATPROTO_KEY_KEK", ""),
 		ATProtoLoginEnabled:                    p.Bool("ATPROTO_LOGIN_ENABLED", false),
+		ATProtoPLCURL:                          getEnv("ATPROTO_PLC_URL", ""),
 		MFAKeyKEK:                              getEnv("MFA_KEY_KEK", ""),
 		TOTPIssuer:                             getEnv("TOTP_ISSUER", ""),
 		MalwareScanEnabled:                     strings.TrimSpace(getEnv("CLAMAV_ADDR", "")) != "",
@@ -2714,6 +2723,19 @@ func (c *Config) ATProtoKEK() string {
 		return c.ATProtoKeyKEK
 	}
 	return c.FederationKeyKEK
+}
+
+// ATProtoDevPLCURL returns the DEV/TEST-ONLY did:plc directory override, or ""
+// when identity resolution must use the fixed plc.directory host. The override
+// is gated on ImportAllowPrivateURLs — the same knob that relaxes the outbound
+// SSRF guard to loopback — because pointing DID resolution at an attacker's
+// directory is an identity-spoofing primitive, and one dev-only declaration
+// should unlock the whole loopback lab rather than each hop separately.
+func (c *Config) ATProtoDevPLCURL() string {
+	if !c.ImportAllowPrivateURLs {
+		return ""
+	}
+	return strings.TrimRight(strings.TrimSpace(c.ATProtoPLCURL), "/")
 }
 
 // MFAKEK returns the key-encryption key that seals TOTP secrets at rest:

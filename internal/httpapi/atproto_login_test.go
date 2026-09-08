@@ -146,6 +146,11 @@ func newATProtoLoginEnv(t *testing.T, enabled bool) *atprotoLoginEnv {
 	srv := New(cfg, nil, nil,
 		WithAuthService(authsvc, 15*time.Minute),
 		WithATProtoLoginService(loginsvc),
+		// An instance may enable ATProto login with NO OIDC provider configured.
+		// The identity list/unlink routes still have to be there — an ATProto
+		// account is passwordless, so that unlink guard is the only thing
+		// standing between the user and an account they cannot sign in to.
+		WithOAuthService(auth.NewOAuthService(repo, authsvc, nil)),
 		WithLogger(slog.New(slog.NewJSONHandler(buf, nil))),
 	)
 	return &atprotoLoginEnv{srv: srv, backend: backend, repo: repo}
@@ -413,7 +418,9 @@ func atprotoSessionCookie(rec *httptest.ResponseRecorder) *http.Cookie {
 }
 
 // meViaRefresh exchanges the session cookie for an access token and loads /me.
-func (e *atprotoLoginEnv) meViaRefresh(t *testing.T, session *http.Cookie) userView {
+// accessToken exchanges the cookie-mode refresh cookie for a bearer token, the
+// same hop the SPA makes after the callback redirect.
+func (e *atprotoLoginEnv) accessToken(t *testing.T, session *http.Cookie) string {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader(`{}`))
@@ -427,9 +434,15 @@ func (e *atprotoLoginEnv) meViaRefresh(t *testing.T, session *http.Cookie) userV
 	if err := json.Unmarshal(rec.Body.Bytes(), &ar); err != nil {
 		t.Fatal(err)
 	}
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
-	req.Header.Set(echo.HeaderAuthorization, "Bearer "+ar.Token)
+	return ar.Token
+}
+
+func (e *atprotoLoginEnv) meViaRefresh(t *testing.T, session *http.Cookie) userView {
+	t.Helper()
+	token := e.accessToken(t, session)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.Header.Set(echo.HeaderAuthorization, "Bearer "+token)
 	e.srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("me = %d, body=%s", rec.Code, rec.Body.String())
@@ -439,4 +452,66 @@ func (e *atprotoLoginEnv) meViaRefresh(t *testing.T, session *http.Cookie) userV
 		t.Fatal(err)
 	}
 	return u
+}
+
+// An ATProto account is passwordless: the DID is its only credential. The
+// identity routes must therefore (a) exist on an instance with no OIDC provider
+// configured, (b) show the linked handle, and (c) refuse to remove the account's
+// last sign-in method.
+func TestATProtoIdentityListingAndUnlinkGuard(t *testing.T) {
+	env := newATProtoLoginEnv(t, true)
+
+	_, cookie := env.start(t, `{"handle":"alice.example","return_to":"/"}`)
+	cb := env.callback(t, "?code=the-code&state="+url.QueryEscape(env.backend.parState)+"&iss="+url.QueryEscape(env.backend.srv.URL), cookie)
+	session := atprotoSessionCookie(cb)
+	if session == nil {
+		t.Fatal("callback must set a session cookie")
+	}
+	token := env.accessToken(t, session)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me/oauth-identities", nil)
+	req.Header.Set(echo.HeaderAuthorization, "Bearer "+token)
+	env.srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list identities = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var list struct {
+		Identities []struct {
+			Provider string  `json:"provider"`
+			Handle   *string `json:"handle"`
+		} `json:"identities"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Identities) != 1 || list.Identities[0].Provider != "atproto" {
+		t.Fatalf("identities = %+v, want one atproto identity", list.Identities)
+	}
+	if list.Identities[0].Handle == nil || *list.Identities[0].Handle != "alice.example" {
+		t.Errorf("identity handle = %v, want alice.example", list.Identities[0].Handle)
+	}
+
+	// The DID is the account's only credential — unlinking it would strand the
+	// user, so it is refused with the set-a-password-first remedy.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/me/oauth-identities/atproto", nil)
+	req.Header.Set(echo.HeaderAuthorization, "Bearer "+token)
+	env.srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unlink last method = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Shipped order of checks, pinned so a refactor cannot quietly invert it:
+	// the last-credential guard runs BEFORE the "is this provider even linked"
+	// lookup, so a passwordless account asking to unlink a provider it never
+	// linked also gets the 422 remedy rather than a 404. Nothing is removed
+	// either way; the answer is merely less specific than it could be.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/me/oauth-identities/google", nil)
+	req.Header.Set(echo.HeaderAuthorization, "Bearer "+token)
+	env.srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unlink unlinked provider on a passwordless account = %d, want 422", rec.Code)
+	}
 }

@@ -319,3 +319,34 @@ func TestValidDIDSyntax(t *testing.T) {
 		}
 	}
 }
+
+// The handle→DID well-known hop must honour the allowPrivate dev knob the same
+// way the did:web hop does. Production (allowPrivate=false) stays https; a
+// loopback dev/test instance gets http, which is the ONLY way the documented
+// "backed e2e can reach a loopback PDS" promise can hold — a handle carries no
+// port, so a loopback PDS can never be reached over https on this hop.
+func TestHandleWellKnownURLFollowsAllowPrivate(t *testing.T) {
+	t.Run("production stays https", func(t *testing.T) {
+		c := NewOAuthClient()
+		got := c.handleWellKnownURL("alice.example")
+		if got != "https://alice.example/.well-known/atproto-did" {
+			t.Fatalf("handleWellKnownURL = %q, want the https form", got)
+		}
+	})
+
+	t.Run("allowPrivate relaxes to http", func(t *testing.T) {
+		c := NewOAuthClient(WithOAuthClientAllowPrivate(true))
+		got := c.handleWellKnownURL("alice.example")
+		if got != "http://alice.example/.well-known/atproto-did" {
+			t.Fatalf("handleWellKnownURL = %q, want the http form under allowPrivate", got)
+		}
+	})
+
+	t.Run("explicit base still wins", func(t *testing.T) {
+		c := NewOAuthClient(WithHandleWellKnownBase("http://127.0.0.1:9999"))
+		got := c.handleWellKnownURL("alice.example")
+		if got != "http://127.0.0.1:9999/.well-known/atproto-did" {
+			t.Fatalf("handleWellKnownURL = %q, want the explicit base", got)
+		}
+	})
+}
