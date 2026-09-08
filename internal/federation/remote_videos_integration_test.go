@@ -125,8 +125,13 @@ func TestRemoteVideoIngestionPersists(t *testing.T) {
 	droppedID := "https://" + domain + "/act/2"
 	dropped := `{"id":"` + droppedID + `","type":"Create","actor":"` + actorURL + `","object":{` +
 		`"id":"https://` + domain + `/videos/watch/2","type":"Video","name":"Dropped","attributedTo":"` + actorURL + `"}}`
-	if err := svc.HandleInbox(ctx, actorURL, []byte(dropped)); err != nil {
-		t.Fatalf("HandleInbox (blocked): %v", err)
+	// Since A29-F4 the refusal is a TYPED error rather than a silent nil, so the
+	// caller can write the audit row that makes an instance block visible to the
+	// admin who set it. The WIRE answer is still 202 (httpapi maps it), and the
+	// two properties this test is about are unchanged: nothing is dispatched and
+	// nothing is marked processed, so a redelivery after an unblock is accepted.
+	if err := svc.HandleInbox(ctx, actorURL, []byte(dropped)); !errors.Is(err, federation.ErrSenderBlocked) {
+		t.Fatalf("HandleInbox (blocked) = %v, want ErrSenderBlocked", err)
 	}
 	if seen, _ := q.IsActivityProcessed(ctx, droppedID); seen {
 		t.Error("activity from a blocked domain was marked processed")
