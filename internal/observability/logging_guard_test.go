@@ -235,7 +235,6 @@ func isAnyType(e ast.Expr) bool {
 	return false
 }
 
-
 // keyShapedLogKeys are the structured-log field names whose VALUE is a storage
 // object key.
 //
