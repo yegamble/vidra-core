@@ -45,6 +45,10 @@ var (
 // maxWebFingerBytes bounds a WebFinger JRD response.
 const maxWebFingerBytes = 64 << 10 // 64 KiB
 
+// actorTypeGroup is the ActivityStreams type a video channel actor carries, on
+// this instance and on PeerTube alike.
+const actorTypeGroup = "Group"
+
 // RemoteFollow is the read model of one outbound remote-channel follow.
 type RemoteFollow struct {
 	ID        uuid.UUID
@@ -70,14 +74,16 @@ func (s *Service) FollowRemoteChannel(ctx context.Context, userID uuid.UUID, tar
 		return RemoteFollow{}, err
 	}
 
-	actorURL, err := s.resolveFollowTarget(ctx, target)
+	candidates, err := s.resolveFollowTarget(ctx, target)
 	if err != nil {
 		return RemoteFollow{}, err
 	}
-	if strings.EqualFold(hostOf(actorURL), s.domain()) {
-		return RemoteFollow{}, ErrLocalFollowTarget
+	for _, actorURL := range candidates {
+		if strings.EqualFold(hostOf(actorURL), s.domain()) {
+			return RemoteFollow{}, ErrLocalFollowTarget
+		}
 	}
-	ra, err := s.resolveRemoteActor(ctx, actorURL)
+	ra, err := s.resolveFollowActor(ctx, candidates)
 	if err != nil {
 		return RemoteFollow{}, fmt.Errorf("%w: %w", ErrRemoteUnresolvable, err)
 	}
@@ -201,27 +207,70 @@ func (s *Service) ListRemoteFollows(ctx context.Context, userID uuid.UUID, limit
 
 // resolveFollowTarget turns the submitted target (a full actor URL, or a
 // name@domain handle resolved via WebFinger) into an actor URL.
-func (s *Service) resolveFollowTarget(ctx context.Context, target string) (string, error) {
+func (s *Service) resolveFollowTarget(ctx context.Context, target string) ([]string, error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
-		return "", ErrBadFollowTarget
+		return nil, ErrBadFollowTarget
 	}
 	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
 		u, err := url.Parse(target)
 		if err != nil || u.Host == "" {
-			return "", ErrBadFollowTarget
+			return nil, ErrBadFollowTarget
 		}
-		return target, nil
+		// An explicit actor URL is the caller naming the actor themselves;
+		// there is nothing to choose between.
+		return []string{target}, nil
 	}
 	name, domain, ok := strings.Cut(strings.TrimPrefix(target, "@"), "@")
 	if !ok || name == "" || domain == "" || strings.ContainsAny(domain, "/@ ") {
-		return "", ErrBadFollowTarget
+		return nil, ErrBadFollowTarget
 	}
-	actorURL, err := s.webFingerRemote(ctx, name, domain)
+	hrefs, err := s.webFingerCandidates(ctx, name, domain)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrRemoteUnresolvable, err)
+		return nil, fmt.Errorf("%w: %w", ErrRemoteUnresolvable, err)
 	}
-	return actorURL, nil
+	return hrefs, nil
+}
+
+// resolveFollowActor picks WHICH of a handle's actors this follow is for, and
+// caches it.
+//
+// A handle resolves to more than one actor only where an account and a channel
+// have shared it (migration 0142 gives them one namespace and WebFinger answers
+// with both). Following is a channel operation: a Group is what a Follow of a
+// handle means, and a Person's inbox has no arm that accepts one — the A29
+// rehearsal 3 lab watched exactly that request sit `pending` forever.
+//
+// So: resolve candidates in the order the remote listed them and take the first
+// GROUP; with no Group among them, keep the first, which is the rel=self actor
+// and therefore the answer this instance has always given. Cost is bounded by
+// the number of links the remote returned, all on the host that just answered
+// WebFinger — nothing a caller could not already make this server fetch.
+func (s *Service) resolveFollowActor(ctx context.Context, candidates []string) (sqlcgen.RemoteActor, error) {
+	var first sqlcgen.RemoteActor
+	var firstErr error
+	for i, actorURL := range candidates {
+		ra, err := s.resolveRemoteActor(ctx, actorURL)
+		if err != nil {
+			if i == 0 {
+				firstErr = err
+			}
+			continue
+		}
+		if ra.ActorType == actorTypeGroup {
+			return ra, nil
+		}
+		if first.ActorUrl == "" {
+			first = ra
+		}
+	}
+	if first.ActorUrl != "" {
+		return first, nil
+	}
+	if firstErr != nil {
+		return sqlcgen.RemoteActor{}, firstErr
+	}
+	return sqlcgen.RemoteActor{}, ErrRemoteUnresolvable
 }
 
 // webFingerRemote resolves acct:name@domain on the REMOTE domain to its actor
@@ -229,23 +278,43 @@ func (s *Service) resolveFollowTarget(ctx context.Context, target string) (strin
 // are allowed (dev/e2e against loopback origins) a failed https attempt falls
 // back to plain http.
 func (s *Service) webFingerRemote(ctx context.Context, name, domain string) (string, error) {
-	query := "/.well-known/webfinger?resource=" + url.QueryEscape("acct:"+name+"@"+domain)
-	actorURL, err := s.fetchWebFinger(ctx, "https://"+domain+query)
-	if err != nil && s.allowPrivateFetch {
-		if httpURL, herr := s.fetchWebFinger(ctx, "http://"+domain+query); herr == nil {
-			return httpURL, nil
-		}
+	hrefs, err := s.webFingerCandidates(ctx, name, domain)
+	if err != nil {
+		return "", err
 	}
-	return actorURL, err
+	return hrefs[0], nil
 }
 
-// fetchWebFinger GETs and parses one WebFinger JRD document, returning the
-// rel=self ActivityPub actor URL.
-func (s *Service) fetchWebFinger(ctx context.Context, jrdURL string) (string, error) {
+// webFingerCandidates is webFingerRemote's every-answer form: the rel=self
+// actor first, then any rel=alternate ones. Callers that know WHICH KIND of
+// actor they want (following wants a channel) use this and pick by type; callers
+// that want the subject itself (a per-account block climbs from the Person) keep
+// webFingerRemote.
+func (s *Service) webFingerCandidates(ctx context.Context, name, domain string) ([]string, error) {
+	query := "/.well-known/webfinger?resource=" + url.QueryEscape("acct:"+name+"@"+domain)
+	hrefs, err := s.fetchWebFinger(ctx, "https://"+domain+query)
+	if err != nil && s.allowPrivateFetch {
+		if httpHrefs, herr := s.fetchWebFinger(ctx, "http://"+domain+query); herr == nil {
+			return httpHrefs, nil
+		}
+	}
+	return hrefs, err
+}
+
+// fetchWebFinger GETs and parses one WebFinger JRD document, returning every
+// ActivityPub actor it names for the subject: the rel=self actor FIRST, then any
+// rel=alternate ones.
+//
+// More than one is what a shared handle namespace (migration 0142) produces: a
+// name an account and a channel have both held answers with the Person at
+// rel=self and the Group at rel=alternate, so a peer can pick BY TYPE instead of
+// taking whichever link the server happened to put first. A name only one kind
+// holds still answers with exactly one link, and that path is unchanged.
+func (s *Service) fetchWebFinger(ctx context.Context, jrdURL string) ([]string, error) {
 	guard := urlsafety.Guard{AllowPrivate: s.allowPrivateFetch}
 	target, err := guard.ValidateURL(jrdURL)
 	if err != nil {
-		return "", fmt.Errorf("federation: unsafe webfinger URL: %w", err)
+		return nil, fmt.Errorf("federation: unsafe webfinger URL: %w", err)
 	}
 	client := s.fetchClient
 	if client == nil {
@@ -253,31 +322,44 @@ func (s *Service) fetchWebFinger(ctx context.Context, jrdURL string) (string, er
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/jrd+json, application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("federation: webfinger fetch: %w", err)
+		return nil, fmt.Errorf("federation: webfinger fetch: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("federation: webfinger returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("federation: webfinger returned status %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxWebFingerBytes))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var jrd JRD
 	if err := json.Unmarshal(body, &jrd); err != nil {
-		return "", fmt.Errorf("federation: parse webfinger: %w", err)
+		return nil, fmt.Errorf("federation: parse webfinger: %w", err)
 	}
+	var self, alternates []string
 	for _, l := range jrd.Links {
-		if l.Rel == "self" && strings.Contains(l.Type, "activity+json") && l.Href != "" {
-			return l.Href, nil
+		if l.Href == "" || !strings.Contains(l.Type, "activity+json") {
+			continue
+		}
+		switch l.Rel {
+		case "self":
+			self = append(self, l.Href)
+		case "alternate":
+			alternates = append(alternates, l.Href)
 		}
 	}
-	return "", errors.New("federation: webfinger has no ActivityPub self link")
+	if len(self) == 0 {
+		// An answer with only alternates is not one we know how to read: RFC
+		// 7033 makes self the subject's own link, and a document without one is
+		// refused exactly as it always was.
+		return nil, errors.New("federation: webfinger has no ActivityPub self link")
+	}
+	return append(self[:1:1], alternates...), nil
 }
 
 // buildFollow renders the Follow activity the user's account actor sends to the

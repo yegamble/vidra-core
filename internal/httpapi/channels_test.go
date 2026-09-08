@@ -37,6 +37,19 @@ type channelFakeRepo struct {
 	// to a channel's OWNER. Nil means nobody has muted or blocked anyone.
 	mutes      *muteFakeRepo
 	userBlocks *blockFakeRepo
+	// aliases are the handles a channel was RENAMED AWAY FROM (migration 0142),
+	// keyed lower-cased exactly as channel_handle_aliases holds them.
+	aliases map[string]sqlcgen.GetChannelHandleAliasRow
+}
+
+// GetChannelHandleAlias mirrors the 0142 alias lookup. Unset map → nothing was
+// ever renamed, which is every harness that does not care.
+func (f *channelFakeRepo) GetChannelHandleAlias(_ context.Context, handle string) (sqlcgen.GetChannelHandleAliasRow, error) {
+	row, ok := f.aliases[strings.ToLower(strings.TrimSpace(handle))]
+	if !ok {
+		return sqlcgen.GetChannelHandleAliasRow{}, pgx.ErrNoRows
+	}
+	return row, nil
 }
 
 // channelOwnerVisible mirrors SearchPublicChannels' owner gate: the owning
@@ -131,6 +144,7 @@ func newChannelFakeRepo() *channelFakeRepo {
 		bells:      map[string]string{},
 		followedAt: map[string]time.Time{},
 		members:    map[string]sqlcgen.ChannelMember{},
+		aliases:    map[string]sqlcgen.GetChannelHandleAliasRow{},
 	}
 }
 
@@ -404,6 +418,68 @@ func (f *channelFakeRepo) DeleteChannel(_ context.Context, id uuid.UUID) error {
 		}
 	}
 	return nil
+}
+
+// channelAliasServer is channelServer plus a channel that migration 0142's
+// backfill renamed, so the human 301 at the old handle can be exercised.
+func channelAliasServer(t *testing.T) (*Server, *channelFakeRepo) {
+	t.Helper()
+	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
+	authRepo := newAuthFakeRepo()
+	authsvc := auth.NewService(authRepo, issuer, 720*time.Hour)
+	chRepo := newChannelFakeRepo()
+	chRepo.users = authRepo
+	chansvc := channel.NewService(chRepo)
+	srv := New(testConfig(), nil, nil,
+		WithAuthService(authsvc, 15*time.Minute),
+		WithChannelService(chansvc),
+	)
+	return srv, chRepo
+}
+
+// A29 rehearsal 3. Migration 0142 renames a channel that collided with an
+// account's username and promises `/channels/<old>` answers 301 to the new
+// handle until expires_at. The third two-instance run followed that redirect
+// against merged main and got 404: the alias was read by the ActivityPub actor
+// route and by nothing else. These are the HTTP half.
+func TestGetChannelRedirectsARenamedHandle(t *testing.T) {
+	srv, repo := channelAliasServer(t)
+	live := uuid.New()
+	repo.byHandle["ownera-channel-2"] = sqlcgen.Channel{ID: live, Handle: "ownera-channel-2", DisplayName: "Owner A"}
+	repo.aliases["ownera"] = sqlcgen.GetChannelHandleAliasRow{
+		HandleLower: "ownera", ChannelID: live, IsActorID: true,
+		ExpiresAt: time.Now().Add(365 * 24 * time.Hour), CurrentHandle: "ownera-channel-2",
+	}
+	repo.byHandle["stale-2"] = sqlcgen.Channel{ID: uuid.New(), Handle: "stale-2"}
+	repo.aliases["stale"] = sqlcgen.GetChannelHandleAliasRow{
+		HandleLower: "stale", ChannelID: uuid.New(), IsActorID: true,
+		ExpiresAt: time.Now().Add(-time.Hour), CurrentHandle: "stale-2",
+	}
+
+	t.Run("the old handle answers 301 to the new one", func(t *testing.T) {
+		rec := getWithHeaders(srv, "/api/v1/channels/ownera", nil)
+		if rec.Code != http.StatusMovedPermanently {
+			t.Fatalf("status = %d, want 301; body %s", rec.Code, rec.Body.String())
+		}
+		if got := rec.Header().Get("Location"); got != "/api/v1/channels/ownera-channel-2" {
+			t.Fatalf("Location = %q, want /api/v1/channels/ownera-channel-2", got)
+		}
+	})
+	t.Run("the current handle is untouched", func(t *testing.T) {
+		if rec := getWithHeaders(srv, "/api/v1/channels/ownera-channel-2", nil); rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+	})
+	t.Run("an expired alias is a 404, not a redirect", func(t *testing.T) {
+		if rec := getWithHeaders(srv, "/api/v1/channels/stale", nil); rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404 once the alias has expired", rec.Code)
+		}
+	})
+	t.Run("an unknown handle is still a 404", func(t *testing.T) {
+		if rec := getWithHeaders(srv, "/api/v1/channels/never-existed", nil); rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", rec.Code)
+		}
+	})
 }
 
 // channelServer wires real auth + channel services over in-memory fakes.

@@ -14,6 +14,30 @@ import (
 // names. The actor URL IS the identity here — there is no local row to point at.
 const auditResourceRemoteActor = "remote_actor"
 
+// remoteActorAuditEvent builds the trail row for an instance-wide per-actor
+// block or unblock.
+//
+// The identity goes in REASON, not in resource_id, and that is a correction the
+// A29 rehearsal 3 lab forced. resource_id is validated as "a bounded opaque
+// identifier, not a URL or payload" — an actor URL fails that check, Record
+// returned an error, and the persist is best-effort by design, so both admin
+// actions answered 204 while writing NOTHING to the durable trail. Reason
+// carries no such restriction and already holds machine-written identity on the
+// sibling control: moderation.instance.block writes "domain=<host>". This is the
+// same shape one level down, so the two moderation actions an admin chooses
+// between read the same way in the log.
+//
+// A moderator's own note is still deliberately absent: it is prose, it lives on
+// blocked_remote_actors, and audit_log does not carry prose.
+func remoteActorAuditEvent(action, actorID, actorURL string) audit.Event {
+	return audit.Event{
+		Action: action, Result: observability.ResultSuccess,
+		ActorID:      actorID,
+		ResourceType: auditResourceRemoteActor,
+		Reason:       "actor=" + actorURL,
+	}
+}
+
 // Instance-wide per-remote-ACCOUNT blocks: the admin surface (A29 parity).
 //
 // It sits beside /admin/instances/blocked rather than inside it because the two
@@ -84,14 +108,7 @@ func (s *Server) handleAdminBlockRemoteActor(c echo.Context) error {
 	if err := s.fedsvc.BlockRemoteActorInstanceWide(c.Request().Context(), actorURL, userID, strings.TrimSpace(in.Reason)); err != nil {
 		return err
 	}
-	// The actor URL is the resource, not the reason: a moderator's note is prose
-	// and audit_log does not carry prose, while the identity is what an auditor
-	// needs in order to ask "who was silenced here, and is it still standing?".
-	s.auditEvent(c, audit.Event{
-		Action: observability.ActionRemoteActorBlock, Result: observability.ResultSuccess,
-		ActorID:      userID.String(),
-		ResourceType: auditResourceRemoteActor, ResourceID: actorURL,
-	})
+	s.auditEvent(c, remoteActorAuditEvent(observability.ActionRemoteActorBlock, userID.String(), actorURL))
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -114,11 +131,7 @@ func (s *Server) handleAdminUnblockRemoteActor(c echo.Context) error {
 	if _, err := s.fedsvc.UnblockRemoteActorInstanceWide(c.Request().Context(), actor); err != nil {
 		return err
 	}
-	s.auditEvent(c, audit.Event{
-		Action: observability.ActionRemoteActorUnblock, Result: observability.ResultSuccess,
-		ActorID:      userID.String(),
-		ResourceType: auditResourceRemoteActor, ResourceID: actor,
-	})
+	s.auditEvent(c, remoteActorAuditEvent(observability.ActionRemoteActorUnblock, userID.String(), actor))
 	return c.NoContent(http.StatusNoContent)
 }
 
