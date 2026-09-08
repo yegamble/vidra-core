@@ -1002,6 +1002,25 @@ public, published, uncredentialed media. **CDN-fronted private playback is not
 this feature** — it needs signed-URLs-at-the-edge, which is a different
 mechanism and a later decision.
 
+**That bound is about the redirect, not about your bucket.** It says what Vidra
+*hands* the edge. It cannot say what the edge is able to *fetch*, and the two
+are only the same if you fence the origin. A key-addressed origin has to be
+readable by the CDN; grant that with a public-read bucket policy and **every
+object in the bucket becomes world-readable at the origin** — a private video's
+original and its poster included, because public and private media share
+`web-videos/`, `thumbnails/` and `streaming-playlists/`, and no key prefix
+separates them. The consequence is worse than an exposure: purging the edge
+after a privacy flip sends the next request straight back to an origin that
+still serves the object, so the edge simply re-caches it. Measured on a lab
+bucket during the A32/A33 acceptance run — a private video's poster and original
+both answered 200 to an unauthenticated fetch, and a correct 18-key purge was
+undone by the very next request.
+
+Use your CDN's origin-access mechanism instead — a signed origin request, an
+origin-access identity, an allow-list of the edge's egress addresses, whatever
+your provider calls it — and read a public-read media bucket as a decision to
+publish every video on the instance.
+
 **Purge.**
 
 ```bash
