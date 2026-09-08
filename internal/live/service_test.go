@@ -21,6 +21,10 @@ type fakeRepo struct {
 	rows   map[uuid.UUID]sqlcgen.GetLiveStreamByIDRow
 	hashes map[uuid.UUID]string
 	owner  uuid.UUID
+	// ownerBlocked mirrors the SQL: GetLiveStreamByKeyHash joins users and
+	// reports owner_active, so a deactivated owner is visible at the publish
+	// boundary. Default false = the owner is active.
+	ownerBlocked bool
 }
 
 func newFakeRepo(owner uuid.UUID) *fakeRepo {
@@ -90,7 +94,7 @@ func (f *fakeRepo) GetLiveStreamByKeyHash(_ context.Context, h string) (sqlcgen.
 	for id, hash := range f.hashes {
 		if hash == h {
 			r := f.rows[id]
-			return sqlcgen.GetLiveStreamByKeyHashRow{ID: id, ChannelID: r.ChannelID, Permanent: r.Permanent, State: r.State, OwnerID: r.OwnerID}, nil
+			return sqlcgen.GetLiveStreamByKeyHashRow{ID: id, ChannelID: r.ChannelID, Permanent: r.Permanent, State: r.State, OwnerID: r.OwnerID, OwnerActive: !f.ownerBlocked}, nil
 		}
 	}
 	return sqlcgen.GetLiveStreamByKeyHashRow{}, errors.New("not found")
@@ -624,4 +628,84 @@ func (f *fakeRepo) CountLiveStreamsByChannel(ctx context.Context, channelID uuid
 func (f *fakeRepo) CountLivePublicStreams(ctx context.Context, viewerID pgtype.UUID) (int64, error) {
 	rows, err := f.ListLivePublicStreams(ctx, sqlcgen.ListLivePublicStreamsParams{ViewerID: viewerID, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
+}
+
+// TestStartByIdentityRefusesStreamIDForAnOfflineStream: the stream ID is PUBLIC
+// (GET /live/{id} and the "Live now" rail both hand it out), so accepting it as
+// a publish identity would make the stream key decorative — anyone who knows a
+// creator's stream id could publish to rtmp://host/live/<id> and broadcast to
+// that creator's viewers. The id is accepted ONLY as a re-assert of a session
+// that is ALREADY live (the no-redirect-loop case the ingest hook documents);
+// starting a stream is the key's job and nothing else's.
+func TestStartByIdentityRefusesStreamIDForAnOfflineStream(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	svc := NewService(repo)
+	st, _, err := svc.Create(context.Background(), uuid.New(), CreateInput{Title: "Show"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if _, _, err := svc.StartByIdentity(context.Background(), st.ID.String()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("start by id on an offline stream = %v, want ErrNotFound (deny the publish)", err)
+	}
+	got, err := svc.Get(context.Background(), st.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.State != StateOffline {
+		t.Errorf("state = %q after a refused id publish, want it untouched (%q)", got.State, StateOffline)
+	}
+
+	// The key still starts it, and once live the id is accepted as an
+	// idempotent re-assert without a second rename.
+	if _, needsRename, err := svc.StartByIdentity(context.Background(), rawKeyFor(t, repo, st.ID)); err != nil || !needsRename {
+		t.Fatalf("start by key = (%v, rename=%v), want (nil, true)", err, needsRename)
+	}
+	id, needsRename, err := svc.StartByIdentity(context.Background(), st.ID.String())
+	if err != nil || needsRename || id != st.ID {
+		t.Fatalf("re-assert by id on a LIVE stream = (%v, %v, rename=%v), want the id with no rename", id, err, needsRename)
+	}
+}
+
+// TestStartByIdentityRefusesABlockedOwner: deactivating an account (the A16
+// block) revokes every HTTP route, but the RTMP publish boundary authenticates
+// a KEY, not a session — so without this the blocked creator kept broadcasting,
+// and the instance kept listing them on the public "Live now" rail.
+func TestStartByIdentityRefusesABlockedOwner(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo(owner)
+	svc := NewService(repo)
+	st, key, err := svc.Create(context.Background(), uuid.New(), CreateInput{Title: "Show"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	repo.ownerBlocked = true
+
+	if _, _, err := svc.StartByIdentity(context.Background(), key); !errors.Is(err, ErrOwnerBlocked) {
+		t.Fatalf("start with a blocked owner = %v, want ErrOwnerBlocked", err)
+	}
+	got, err := svc.Get(context.Background(), st.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.State != StateOffline {
+		t.Errorf("state = %q after a refused publish, want it untouched (%q)", got.State, StateOffline)
+	}
+
+	repo.ownerBlocked = false
+	if _, _, err := svc.StartByIdentity(context.Background(), key); err != nil {
+		t.Fatalf("start after the block is lifted = %v, want nil", err)
+	}
+}
+
+// rawKeyFor is a test helper: rotate the stream to a known key and return it.
+func rawKeyFor(t *testing.T, repo *fakeRepo, id uuid.UUID) string {
+	t.Helper()
+	svc := NewService(repo)
+	key, err := svc.RegenerateKey(context.Background(), id)
+	if err != nil {
+		t.Fatalf("regenerate key: %v", err)
+	}
+	return key
 }

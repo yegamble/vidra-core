@@ -42,6 +42,11 @@ var (
 	// ErrUserLiveLimit means the publish was refused because the stream's owner
 	// already has live_max_user_lives sessions live (config-parity W11).
 	ErrUserLiveLimit = errors.New("live: user simultaneous-live limit reached")
+	// ErrOwnerBlocked means the publish was refused because the stream's owner
+	// is deactivated (the A16 account block). The RTMP boundary authenticates a
+	// KEY, not a session, so a blocked creator keeps a working credential and
+	// nothing else in the request path would notice.
+	ErrOwnerBlocked = errors.New("live: stream owner is blocked")
 )
 
 // streamKeyBytes is the entropy of a raw stream key (256 bits).
@@ -445,27 +450,33 @@ func (s *Service) StartIngest(ctx context.Context, rawKey string) (uuid.UUID, er
 // post-rename re-invocation is simply allowed without redirecting again (avoiding
 // a redirect loop). An unmatched identity → ErrNotFound (deny the publish).
 func (s *Service) StartByIdentity(ctx context.Context, ident string) (id uuid.UUID, needsRename bool, err error) {
-	// A UUID identity is a post-rename re-invocation: already bound, just ensure
-	// live and allow (no further rename).
+	// A UUID identity is a post-rename re-invocation of a session that is
+	// ALREADY live: re-assert and allow, with no further rename.
+	//
+	// It is deliberately NOT an authentication. A stream's id is public — the
+	// anonymous GET /live/{id} and the public "Live now" rail both hand it out —
+	// so treating it as a publish credential made the stream key decorative:
+	// anyone could publish to rtmp://host/live/<id> and broadcast to that
+	// creator's viewers without ever holding the key. Starting a stream is the
+	// key's job; the id only keeps an in-flight session from looping.
 	if parsed, perr := uuid.Parse(ident); perr == nil {
-		if got, gerr := s.repo.GetLiveStreamByID(ctx, parsed); gerr == nil {
-			// Only a transition INTO live counts against the simultaneous-live
-			// caps — a re-assert of an already-live session (the post-rename
-			// re-invocation) is neither re-counted nor rejectable.
-			if got.State != StateLive {
-				if cerr := s.checkLiveCaps(ctx, got.OwnerID); cerr != nil {
-					return uuid.Nil, false, cerr
-				}
-			}
-			if serr := s.repo.SetLiveStreamState(ctx, sqlcgen.SetLiveStreamStateParams{ID: parsed, State: StateLive}); serr != nil {
-				return uuid.Nil, false, serr
-			}
+		if got, gerr := s.repo.GetLiveStreamByID(ctx, parsed); gerr == nil && got.State == StateLive {
+			// A re-assert of an already-live session is neither re-counted
+			// against the simultaneous-live caps nor rejectable.
 			return parsed, false, nil
 		}
+		// A well-formed id that is not currently live is refused outright rather
+		// than falling through to the key lookup: an id is never a valid key.
+		return uuid.Nil, false, ErrNotFound
 	}
 	row, err := s.repo.GetLiveStreamByKeyHash(ctx, hashStreamKey(ident))
 	if err != nil {
 		return uuid.Nil, false, ErrNotFound
+	}
+	// A deactivated owner keeps their stream key, and no HTTP middleware runs on
+	// this path, so the block has to be enforced here or not at all.
+	if !row.OwnerActive {
+		return uuid.Nil, false, ErrOwnerBlocked
 	}
 	if row.State != StateLive {
 		if cerr := s.checkLiveCaps(ctx, row.OwnerID); cerr != nil {

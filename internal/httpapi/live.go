@@ -359,11 +359,6 @@ type liveIngestRequest struct {
 
 const ingestSecretHeader = "X-Ingest-Secret"
 
-// liveRTMPApp is the RTMP application name the media server publishes into; it is
-// the constant path segment of the on-publish redirect target used to rename a
-// session to its stream ID (so the raw key never lands in HLS/recording paths).
-const liveRTMPApp = "live"
-
 // ingestAuthorized gates the ingest hooks: they are disabled (404) unless an
 // ingest secret is configured, and require the media server to present it
 // (constant-time compared). Returns an *echo.HTTPError to send, or nil to proceed.
@@ -412,14 +407,19 @@ func (s *Server) handleLiveIngestStart(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "stream_key is required")
 	}
 	id, needsRename, err := s.livesvc.StartByIdentity(c.Request().Context(), ident)
-	if errors.Is(err, live.ErrInstanceLiveLimit) || errors.Is(err, live.ErrUserLiveLimit) {
-		// Simultaneous-live cap reached (config-parity W11): deny the publish.
-		// nginx-rtmp treats any non-2xx/3xx on_publish response as a deny, so a
-		// 403 closes the publisher's session; the JSON body serves harness/log
-		// diagnostics.
+	if errors.Is(err, live.ErrInstanceLiveLimit) || errors.Is(err, live.ErrUserLiveLimit) || errors.Is(err, live.ErrOwnerBlocked) {
+		// Policy refusals of an otherwise well-formed publish: the
+		// simultaneous-live caps (config-parity W11) and a deactivated owner
+		// (the A16 account block, which nothing else on this path can see —
+		// there is no session here, only a stream key). nginx-rtmp treats any
+		// non-2xx/3xx on_publish response as a deny, so a 403 closes the
+		// publisher's session; the JSON body serves harness/log diagnostics.
 		msg := "instance simultaneous-live limit reached"
-		if errors.Is(err, live.ErrUserLiveLimit) {
+		switch {
+		case errors.Is(err, live.ErrUserLiveLimit):
 			msg = "user simultaneous-live limit reached"
+		case errors.Is(err, live.ErrOwnerBlocked):
+			msg = "stream owner is blocked"
 		}
 		return echo.NewHTTPError(http.StatusForbidden, msg)
 	}
@@ -427,11 +427,22 @@ func (s *Server) handleLiveIngestStart(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "no live stream for that key")
 	}
 	if isForm && needsRename {
-		// Rename the nginx-rtmp session to the stream ID (only the last path
-		// segment is significant to the module); keeps the key out of paths. A
-		// post-rename re-invocation (needsRename=false) is allowed without
-		// redirecting again, so the module does not loop.
-		return c.Redirect(http.StatusFound, "rtmp://localhost/"+liveRTMPApp+"/"+id.String())
+		// Rename the nginx-rtmp session to the stream ID, so every downstream
+		// path (HLS segments, the recording) is keyed by the id and the raw key
+		// never touches the filesystem. A post-rename re-invocation
+		// (needsRename=false) is allowed without redirecting again, so the
+		// module does not loop.
+		//
+		// The Location is the BARE id and must stay that way. nginx-rtmp-module
+		// branches on the header value itself in
+		// ngx_rtmp_notify_publish_handle: a value that does not start with
+		// "rtmp://" becomes the session's new name, while one that does is
+		// treated as a PUSH RELAY target and the session keeps its ORIGINAL
+		// name. This used to send "rtmp://localhost/live/<id>", so the module
+		// renamed nothing, tried to dial itself ("relay: no address"), and wrote
+		// every segment and every recording under the raw stream key — which the
+		// api, serving "<id>.m3u8", then 404d for the whole broadcast (A26).
+		return c.Redirect(http.StatusFound, id.String())
 	}
 	if isForm {
 		return c.NoContent(http.StatusOK) // allow the (already-renamed) publish

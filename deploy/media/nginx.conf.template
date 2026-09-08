@@ -13,9 +13,36 @@
 # (see the compose `media` service command) — never commit a real secret here.
 #
 # Key privacy: OBS publishes to rtmp://host/live/<stream-key>. The api's
-# on-publish hook returns a 302 whose last path segment is the stream ID, so
-# nginx-rtmp renames the session to the ID. Every on-disk path (HLS + recording)
-# is then keyed by the stream ID and the raw stream key never touches the volume.
+# on-publish hook returns a 302 whose Location is the BARE stream ID, and
+# nginx-rtmp renames the session to it — an `rtmp://…` Location would instead be
+# read as a PUSH RELAY target and rename nothing. Every on-disk path (HLS +
+# recording) is then keyed by the stream ID and the raw stream key never touches
+# the volume.
+#
+# Why HLS is packaged in a SECOND application rather than in `live`: the rename
+# only reaches the modules whose publish handler runs AFTER the notify module's,
+# and nginx-rtmp's handler chain runs in reverse module order — so the record
+# module (declared before notify) sees the renamed name while the HLS module
+# (declared after it) still sees the raw stream key. Packaging in `live`
+# therefore wrote every segment and playlist under the stream KEY, which put the
+# credential on disk and made the api's `<id>.m3u8` route 404 the whole
+# broadcast. `live` instead PUSHES the already-renamed session into `hls`, which
+# does nothing but package, so the HLS module sees the stream ID like everything
+# else. The push is loopback-only and `hls` refuses a publish from anywhere else.
+#
+# Why the STOP hook is declared on `hls` and not on `live`: nginx-rtmp caches the
+# publish name for on_publish_done at publish time, BEFORE the rename, so a stop
+# hook on `live` always presents the RAW STREAM KEY. If the creator rotates the
+# key mid-broadcast that key no longer resolves, the api answers 404, and the
+# stream is stuck "live" forever with no replay ever produced. The pushed session
+# in `hls` is named by the stream ID from the start, so its stop hook always
+# resolves. Only ONE application declares the stop hook, because two would end
+# the session twice and republish the recording twice.
+#
+# The cost of that choice, stated plainly: the end-of-session signal now depends
+# on the loopback push having been established. If the push never starts, the
+# stream stays "live" with no HLS behind it until the live_max_duration_secs
+# watchdog closes it.
 
 worker_processes auto;
 error_log /dev/stderr info;
@@ -28,34 +55,62 @@ rtmp {
         listen 1935;
         chunk_size 4096;
 
+        # Ingest application: this is what a streamer publishes to. It
+        # authenticates the publish, records the session for replay, and hands
+        # the renamed stream to the packaging application.
         application live {
             live on;
             # Viewers watch via HLS served by the api, not RTMP playback.
             deny play all;
 
-            # Authenticate + register the publish with the api, which redirects to
-            # rename the session to the stream ID. on-publish-done drives the
-            # offline/ended transition and (for replay-enabled streams) the VOD.
+            # Authenticate + register the publish with the api, which redirects
+            # to rename the session to the stream ID. The matching STOP hook is
+            # deliberately declared on the `hls` application below, not here —
+            # see the header note on why it cannot live in this block.
             on_publish http://127.0.0.1:8082/ingest/start;
-            on_publish_done http://127.0.0.1:8082/ingest/stop;
 
-            # HLS output, keyed by the (renamed) stream name = stream ID:
-            #   /data/hls/<id>.m3u8 + /data/hls/<id>-<n>.ts
-            hls on;
-            hls_path /data/hls;
-            hls_nested off;
-            hls_fragment 2s;
-            hls_playlist_length 12s;
+            # Hand the (renamed) session to the packaging application. The relay
+            # module runs after notify in the publish chain, so this pushes under
+            # the stream ID rather than the raw key — see the header note.
+            push rtmp://127.0.0.1:1935/hls;
 
             # Record each session for replay-to-VOD:
             #   /data/hls/rec/<id>-<unixtime>.flv
             # The api reads the newest recording for the stream on ingest-stop.
+            # The directory must EXIST and be non-empty before nginx starts: the
+            # module never creates a missing record_path, and the HLS cleanup
+            # below rmdir()s empty subdirectories of hls_path. The compose
+            # `media` service plants it with a .keep file.
             recorder replay {
                 record all;
                 record_path /data/hls/rec;
                 record_suffix -%s.flv;
                 record_unique off;
             }
+        }
+
+        # Packaging application: HLS output only, keyed by the stream ID:
+        #   /data/hls/<id>.m3u8 + /data/hls/<id>-<n>.ts
+        # It is fed exclusively by the loopback push from `live` above, so it
+        # accepts a publish from nowhere else and no streamer can reach it (a
+        # publish straight into `hls` would bypass the api hooks entirely).
+        application hls {
+            live on;
+            deny play all;
+            allow publish 127.0.0.1;
+            deny publish all;
+
+            # The end-of-session hook: this session is named by the stream ID,
+            # so the api resolves it as a UUID. Declaring it here rather than on
+            # `live` is what makes a mid-broadcast key rotation survivable — see
+            # the header note.
+            on_publish_done http://127.0.0.1:8082/ingest/stop;
+
+            hls on;
+            hls_path /data/hls;
+            hls_nested off;
+            hls_fragment 2s;
+            hls_playlist_length 12s;
         }
     }
 }
