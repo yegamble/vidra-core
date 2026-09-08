@@ -57,7 +57,9 @@ func TestWatchedWordMatchSnapshotOnRealPG(t *testing.T) {
 	var channelID uuid.UUID
 	if err := st.Pool.QueryRow(ctx,
 		`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'WW Snap') RETURNING id`,
-		authorID, "wwsnap-"+suffix,
+		// A channel handle cannot equal a username (migration 0142's one shared
+		// handle namespace), so the fixture derives one.
+		authorID, "wwsnap-ch-"+suffix,
 	).Scan(&channelID); err != nil {
 		t.Fatalf("seed channel: %v", err)
 	}
@@ -302,7 +304,7 @@ func TestWatchedWordVideoMatchSnapshotOnRealPG(t *testing.T) {
 	var channelID uuid.UUID
 	if err := st.Pool.QueryRow(ctx,
 		`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'WW Vid') RETURNING id`,
-		ownerID, "wwvid-"+suffix,
+		ownerID, "wwvid-ch-"+suffix,
 	).Scan(&channelID); err != nil {
 		t.Fatalf("seed channel: %v", err)
 	}
