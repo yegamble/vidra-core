@@ -255,6 +255,15 @@ FROM (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $1 AND mi.domain = ra.domain
       )
+      -- The per-remote-ACCOUNT block (A29-F7, migration 0138). Before it, the
+      -- only control a viewer had against one remote person was blocking their
+      -- whole instance — one troll costing them every creator on that server.
+      -- One-directional like every other viewer control: it hides them from the
+      -- blocker, not the blocker from them.
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_blocks rab
+          WHERE rab.blocker_id = $1 AND rab.remote_actor_url = rv.remote_actor_url
+      )
 ) AS feed
 `
 
@@ -415,6 +424,15 @@ FROM (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $2 AND mi.domain = ra.domain
       )
+      -- The per-remote-ACCOUNT block (A29-F7, migration 0138). Before it, the
+      -- only control a viewer had against one remote person was blocking their
+      -- whole instance — one troll costing them every creator on that server.
+      -- One-directional like every other viewer control: it hides them from the
+      -- blocker, not the blocker from them.
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_blocks rab
+          WHERE rab.blocker_id = $2 AND rab.remote_actor_url = rv.remote_actor_url
+      )
 ) AS feed
 WHERE ($10::int IS NULL OR feed.duration_seconds >= $10::int)
   AND ($11::int IS NULL OR feed.duration_seconds <= $11::int)
@@ -533,6 +551,15 @@ FROM (
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $1 AND mi.domain = ra.domain
+      )
+      -- The per-remote-ACCOUNT block (A29-F7, migration 0138). Before it, the
+      -- only control a viewer had against one remote person was blocking their
+      -- whole instance — one troll costing them every creator on that server.
+      -- One-directional like every other viewer control: it hides them from the
+      -- blocker, not the blocker from them.
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_blocks rab
+          WHERE rab.blocker_id = $1 AND rab.remote_actor_url = rv.remote_actor_url
       )
 ) AS feed
 `
@@ -1413,6 +1440,15 @@ FROM (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $1 AND mi.domain = ra.domain
       )
+      -- The per-remote-ACCOUNT block (A29-F7, migration 0138). Before it, the
+      -- only control a viewer had against one remote person was blocking their
+      -- whole instance — one troll costing them every creator on that server.
+      -- One-directional like every other viewer control: it hides them from the
+      -- blocker, not the blocker from them.
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_blocks rab
+          WHERE rab.blocker_id = $1 AND rab.remote_actor_url = rv.remote_actor_url
+      )
 ) AS feed
 ORDER BY
     CASE WHEN $7::text = 'popular' THEN feed.views END DESC,
@@ -1821,6 +1857,15 @@ FROM (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $1 AND mi.domain = ra.domain
       )
+      -- The per-remote-ACCOUNT block (A29-F7, migration 0138). Before it, the
+      -- only control a viewer had against one remote person was blocking their
+      -- whole instance — one troll costing them every creator on that server.
+      -- One-directional like every other viewer control: it hides them from the
+      -- blocker, not the blocker from them.
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_blocks rab
+          WHERE rab.blocker_id = $1 AND rab.remote_actor_url = rv.remote_actor_url
+      )
 ) AS feed
 ORDER BY feed.created_at DESC, feed.id DESC
 LIMIT $3 OFFSET $2
@@ -2222,6 +2267,15 @@ FROM (
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $2 AND mi.domain = ra.domain
+      )
+      -- The per-remote-ACCOUNT block (A29-F7, migration 0138). Before it, the
+      -- only control a viewer had against one remote person was blocking their
+      -- whole instance — one troll costing them every creator on that server.
+      -- One-directional like every other viewer control: it hides them from the
+      -- blocker, not the blocker from them.
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_blocks rab
+          WHERE rab.blocker_id = $2 AND rab.remote_actor_url = rv.remote_actor_url
       )
 ) AS feed
 WHERE ($10::int IS NULL OR feed.duration_seconds >= $10::int)

@@ -176,6 +176,15 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 	if !ch.ActivitypubEnabled {
 		return nil
 	}
+	// The channel OWNER's per-remote-account block (A29-F7). Dropped rather
+	// than Rejected, on the same reasoning as the instance blocklist: a Reject
+	// would tell the blocked actor exactly what happened, and a follow that is
+	// never recorded delivers nothing to them either way.
+	if blocked, err := s.remoteActorBlockedBy(ctx, ch.OwnerID, signerActorURL); err != nil {
+		return err
+	} else if blocked {
+		return nil
+	}
 	// federation_allow_channel_followers off: answer with a Reject and record
 	// nothing. Existing followers are untouched (the gate is not retroactive).
 	if !s.channelFollowersAllowed() {

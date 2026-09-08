@@ -3,6 +3,7 @@ package federation
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -447,6 +448,49 @@ func (f fakeRepo) IsRemoteActorBlockedByAnyone(_ context.Context, actorURL strin
 
 func (f fakeRepo) IsRemoteActorBlockedBy(_ context.Context, arg sqlcgen.IsRemoteActorBlockedByParams) (bool, error) {
 	return f.remoteBlocks[arg.BlockerID.String()+"|"+arg.RemoteActorUrl], nil
+}
+
+func (f fakeRepo) BlockRemoteActor(_ context.Context, arg sqlcgen.BlockRemoteActorParams) error {
+	if f.remoteBlocks != nil {
+		f.remoteBlocks[arg.BlockerID.String()+"|"+arg.RemoteActorUrl] = true
+	}
+	return nil
+}
+
+func (f fakeRepo) UnblockRemoteActor(_ context.Context, arg sqlcgen.UnblockRemoteActorParams) (int64, error) {
+	key := arg.BlockerID.String() + "|" + arg.RemoteActorUrl
+	if f.remoteBlocks[key] {
+		delete(f.remoteBlocks, key)
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (f fakeRepo) ListRemoteActorBlocks(_ context.Context, arg sqlcgen.ListRemoteActorBlocksParams) ([]sqlcgen.ListRemoteActorBlocksRow, error) {
+	var out []sqlcgen.ListRemoteActorBlocksRow
+	for key := range f.remoteBlocks {
+		blocker, actorURL, _ := strings.Cut(key, "|")
+		if blocker != arg.BlockerID.String() {
+			continue
+		}
+		row := sqlcgen.ListRemoteActorBlocksRow{RemoteActorUrl: actorURL, CreatedAt: fakeTombstoneAt}
+		if ra, ok := f.remoteActors[actorURL]; ok {
+			row.PreferredUsername, row.Domain = ra.PreferredUsername, ra.Domain
+		}
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RemoteActorUrl < out[j].RemoteActorUrl })
+	return out, nil
+}
+
+func (f fakeRepo) CountRemoteActorBlocks(_ context.Context, blockerID uuid.UUID) (int64, error) {
+	var n int64
+	for key := range f.remoteBlocks {
+		if blocker, _, _ := strings.Cut(key, "|"); blocker == blockerID.String() {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // fakeTombstoneAt is the fixed deletion time every fake tombstone carries, so a

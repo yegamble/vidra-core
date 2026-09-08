@@ -1929,6 +1929,15 @@ func (s *Server) routes() {
 		api.DELETE("/admin/instances/blocked/:domain", s.handleUnblockInstance, s.requireAuth, s.requireRole(admin.RoleAdmin, admin.RoleModerator))
 	}
 
+	// Per-remote-account blocks (A29-F7). Mounted with the federation service,
+	// because the identity a viewer supplies is resolved through the same
+	// WebFinger + SSRF-guarded machinery the follow flow uses.
+	if s.fedsvc != nil {
+		api.GET("/me/blocks/remote", s.handleListRemoteBlocks, s.requireAuth)
+		api.POST("/me/blocks/remote", s.handleBlockRemoteActor, s.requireAuth)
+		api.DELETE("/me/blocks/remote", s.handleUnblockRemoteActor, s.requireAuth)
+	}
+
 	// Remote videos (federated, metadata-only): the remote-watch surface + the
 	// locally cached thumbnail. Public reads; content from blocked instances or
 	// the per-video remote block-list is excluded at the query.

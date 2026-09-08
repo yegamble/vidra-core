@@ -59,6 +59,15 @@ func (s *Service) handleCreateNote(ctx context.Context, act inboxActivity, signe
 	if err != nil || !ok {
 		return err
 	}
+	// The per-remote-account block (A29-F7): a blocked actor's reply is not
+	// stored under the blocker's own video. Accept-and-ignore, not a refusal —
+	// telling the sender would make the block a probe target, exactly as with
+	// the instance blocklist.
+	if blocked, err := s.videoOwnerBlocksRemoteActor(ctx, videoID, signerActorURL); err != nil {
+		return err
+	} else if blocked {
+		return nil
+	}
 	body := truncate(stripHTMLTags(note.Content), maxRemoteCommentLen)
 	if body == "" {
 		return nil

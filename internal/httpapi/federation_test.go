@@ -44,6 +44,9 @@ type fakeFedRepo struct {
 	tombstones map[uuid.UUID]time.Time
 	// blockedDomains is the admin instance blocklist the inbox consults.
 	blockedDomains map[string]bool
+	// remoteBlocks are per-viewer blocks of a remote ACTOR (migration 0138),
+	// keyed blockerID|actorURL.
+	remoteBlocks map[string]bool
 }
 
 func (f fakeFedRepo) CountUsers(context.Context) (int64, error)        { return f.users, nil }
@@ -203,12 +206,55 @@ func (f fakeFedRepo) GetFederatedVideoTombstone(_ context.Context, id uuid.UUID)
 // fedFakeDeletedAt is the fixed deletion time the fake tombstones carry.
 var fedFakeDeletedAt = time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 
-func (fakeFedRepo) IsRemoteActorBlockedByAnyone(context.Context, string) (bool, error) {
+func (f fakeFedRepo) IsRemoteActorBlockedByAnyone(_ context.Context, actorURL string) (bool, error) {
+	for key := range f.remoteBlocks {
+		if _, url, ok := strings.Cut(key, "|"); ok && url == actorURL {
+			return true, nil
+		}
+	}
 	return false, nil
 }
 
-func (fakeFedRepo) IsRemoteActorBlockedBy(context.Context, sqlcgen.IsRemoteActorBlockedByParams) (bool, error) {
-	return false, nil
+func (f fakeFedRepo) IsRemoteActorBlockedBy(_ context.Context, arg sqlcgen.IsRemoteActorBlockedByParams) (bool, error) {
+	return f.remoteBlocks[arg.BlockerID.String()+"|"+arg.RemoteActorUrl], nil
+}
+
+func (f fakeFedRepo) BlockRemoteActor(_ context.Context, arg sqlcgen.BlockRemoteActorParams) error {
+	if f.remoteBlocks != nil {
+		f.remoteBlocks[arg.BlockerID.String()+"|"+arg.RemoteActorUrl] = true
+	}
+	return nil
+}
+
+func (f fakeFedRepo) UnblockRemoteActor(_ context.Context, arg sqlcgen.UnblockRemoteActorParams) (int64, error) {
+	key := arg.BlockerID.String() + "|" + arg.RemoteActorUrl
+	if f.remoteBlocks[key] {
+		delete(f.remoteBlocks, key)
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (f fakeFedRepo) ListRemoteActorBlocks(_ context.Context, arg sqlcgen.ListRemoteActorBlocksParams) ([]sqlcgen.ListRemoteActorBlocksRow, error) {
+	var out []sqlcgen.ListRemoteActorBlocksRow
+	for key := range f.remoteBlocks {
+		blocker, actorURL, _ := strings.Cut(key, "|")
+		if blocker != arg.BlockerID.String() {
+			continue
+		}
+		out = append(out, sqlcgen.ListRemoteActorBlocksRow{RemoteActorUrl: actorURL, CreatedAt: fedFakeDeletedAt})
+	}
+	return out, nil
+}
+
+func (f fakeFedRepo) CountRemoteActorBlocks(_ context.Context, blockerID uuid.UUID) (int64, error) {
+	var n int64
+	for key := range f.remoteBlocks {
+		if blocker, _, _ := strings.Cut(key, "|"); blocker == blockerID.String() {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (fakeFedRepo) GetRemoteVideoByURL(context.Context, string) (sqlcgen.GetRemoteVideoByURLRow, error) {
@@ -337,6 +383,7 @@ func newFedRepoFor(_ *config.Config) fakeFedRepo {
 		commentsBy:     map[uuid.UUID]sqlcgen.Comment{},
 		tombstones:     map[uuid.UUID]time.Time{},
 		blockedDomains: map[string]bool{},
+		remoteBlocks:   map[string]bool{},
 	}
 	return repo
 }

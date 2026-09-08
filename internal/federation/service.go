@@ -99,6 +99,10 @@ type Repository interface {
 	GetFederatedVideoTombstone(ctx context.Context, videoID uuid.UUID) (sqlcgen.FederatedVideoTombstone, error)
 	IsRemoteActorBlockedByAnyone(ctx context.Context, remoteActorURL string) (bool, error)
 	IsRemoteActorBlockedBy(ctx context.Context, arg sqlcgen.IsRemoteActorBlockedByParams) (bool, error)
+	BlockRemoteActor(ctx context.Context, arg sqlcgen.BlockRemoteActorParams) error
+	UnblockRemoteActor(ctx context.Context, arg sqlcgen.UnblockRemoteActorParams) (int64, error)
+	ListRemoteActorBlocks(ctx context.Context, arg sqlcgen.ListRemoteActorBlocksParams) ([]sqlcgen.ListRemoteActorBlocksRow, error)
+	CountRemoteActorBlocks(ctx context.Context, blockerID uuid.UUID) (int64, error)
 	DeleteRemoteVideoByObjectURL(ctx context.Context, objectURL string) (int64, error)
 	DeleteRemoteActor(ctx context.Context, actorURL string) (int64, error)
 }

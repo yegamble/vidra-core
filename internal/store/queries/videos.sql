@@ -307,6 +307,15 @@ FROM (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
       )
+      -- The per-remote-ACCOUNT block (A29-F7, migration 0138). Before it, the
+      -- only control a viewer had against one remote person was blocking their
+      -- whole instance — one troll costing them every creator on that server.
+      -- One-directional like every other viewer control: it hides them from the
+      -- blocker, not the blocker from them.
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_blocks rab
+          WHERE rab.blocker_id = sqlc.narg('viewer_id') AND rab.remote_actor_url = rv.remote_actor_url
+      )
 ) AS feed
 ORDER BY
     CASE WHEN sqlc.arg('sort')::text = 'popular' THEN feed.views END DESC,
@@ -399,6 +408,15 @@ FROM (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
       )
+      -- The per-remote-ACCOUNT block (A29-F7, migration 0138). Before it, the
+      -- only control a viewer had against one remote person was blocking their
+      -- whole instance — one troll costing them every creator on that server.
+      -- One-directional like every other viewer control: it hides them from the
+      -- blocker, not the blocker from them.
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_blocks rab
+          WHERE rab.blocker_id = sqlc.narg('viewer_id') AND rab.remote_actor_url = rv.remote_actor_url
+      )
 ) AS feed;
 
 -- name: ListSubscriptionVideos :many
@@ -485,6 +503,15 @@ FROM (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.arg('follower_id') AND mi.domain = ra.domain
       )
+      -- The per-remote-ACCOUNT block (A29-F7, migration 0138). Before it, the
+      -- only control a viewer had against one remote person was blocking their
+      -- whole instance — one troll costing them every creator on that server.
+      -- One-directional like every other viewer control: it hides them from the
+      -- blocker, not the blocker from them.
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_blocks rab
+          WHERE rab.blocker_id = sqlc.arg('follower_id') AND rab.remote_actor_url = rv.remote_actor_url
+      )
 ) AS feed
 ORDER BY feed.created_at DESC, feed.id DESC
 LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
@@ -562,6 +589,15 @@ FROM (
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.arg('follower_id') AND mi.domain = ra.domain
+      )
+      -- The per-remote-ACCOUNT block (A29-F7, migration 0138). Before it, the
+      -- only control a viewer had against one remote person was blocking their
+      -- whole instance — one troll costing them every creator on that server.
+      -- One-directional like every other viewer control: it hides them from the
+      -- blocker, not the blocker from them.
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_blocks rab
+          WHERE rab.blocker_id = sqlc.arg('follower_id') AND rab.remote_actor_url = rv.remote_actor_url
       )
 ) AS feed;
 
@@ -705,6 +741,15 @@ FROM (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
       )
+      -- The per-remote-ACCOUNT block (A29-F7, migration 0138). Before it, the
+      -- only control a viewer had against one remote person was blocking their
+      -- whole instance — one troll costing them every creator on that server.
+      -- One-directional like every other viewer control: it hides them from the
+      -- blocker, not the blocker from them.
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_blocks rab
+          WHERE rab.blocker_id = sqlc.narg('viewer_id') AND rab.remote_actor_url = rv.remote_actor_url
+      )
 ) AS feed
 WHERE (sqlc.narg('duration_min')::int IS NULL OR feed.duration_seconds >= sqlc.narg('duration_min')::int)
   AND (sqlc.narg('duration_max')::int IS NULL OR feed.duration_seconds <= sqlc.narg('duration_max')::int)
@@ -832,6 +877,15 @@ FROM (
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = sqlc.narg('viewer_id') AND mi.domain = ra.domain
+      )
+      -- The per-remote-ACCOUNT block (A29-F7, migration 0138). Before it, the
+      -- only control a viewer had against one remote person was blocking their
+      -- whole instance — one troll costing them every creator on that server.
+      -- One-directional like every other viewer control: it hides them from the
+      -- blocker, not the blocker from them.
+      AND NOT EXISTS (
+          SELECT 1 FROM remote_actor_blocks rab
+          WHERE rab.blocker_id = sqlc.narg('viewer_id') AND rab.remote_actor_url = rv.remote_actor_url
       )
 ) AS feed
 WHERE (sqlc.narg('duration_min')::int IS NULL OR feed.duration_seconds >= sqlc.narg('duration_min')::int)

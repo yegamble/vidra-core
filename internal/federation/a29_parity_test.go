@@ -333,3 +333,116 @@ func publicPEM(t *testing.T, k *rsa.PrivateKey) string {
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
 }
+
+// --- F7: a per-remote-account block, and what it actually stops -------------
+
+func TestRemoteBlockRefusesTheBlockedActorsNoteAndFollow(t *testing.T) {
+	repo := newContractRepo()
+	repo.remoteBlocks = map[string]bool{}
+	const kaisa = "https://peer.example/accounts/kaisa"
+	cacheContractActor(repo, kaisa, "Person", "kaisa", "peer.example")
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	ctx := context.Background()
+
+	note := func(id string) inboxActivity {
+		return inboxActivity{
+			ID: id, Type: "Create", Actor: kaisa,
+			Object: json.RawMessage(`{"id":"https://peer.example/notes/` + id + `","type":"Note",` +
+				`"content":"hi","attributedTo":"` + kaisa + `",` +
+				`"inReplyTo":"https://videos.example/videos/` + ctVideoID.String() + `"}`),
+		}
+	}
+	// Before the block the reply is stored…
+	if err := svc.handleCreateNote(ctx, note("n1"), kaisa); err != nil {
+		t.Fatalf("handleCreateNote: %v", err)
+	}
+	if got := countRemoteComments(repo); got != 1 {
+		t.Fatalf("remote comments = %d, want the reply stored before the block", got)
+	}
+
+	// …and after the video OWNER blocks the actor, it is not.
+	if err := svc.BlockRemoteActor(ctx, ctUserID, kaisa); err != nil {
+		t.Fatalf("BlockRemoteActor: %v", err)
+	}
+	if err := svc.handleCreateNote(ctx, note("n2"), kaisa); err != nil {
+		t.Fatalf("handleCreateNote after block: %v", err)
+	}
+	if got := countRemoteComments(repo); got != 1 {
+		t.Errorf("remote comments = %d; a blocked actor's reply was stored under the blocker's own video", got)
+	}
+
+	// A Follow of the blocker's channel records nothing and answers nothing —
+	// a Reject would tell the blocked actor exactly what happened.
+	follow := inboxActivity{
+		ID: "https://peer.example/act/f1", Type: "Follow", Actor: kaisa,
+		Object: json.RawMessage(`"https://videos.example/video-channels/films"`),
+	}
+	if err := svc.handleFollow(ctx, follow, kaisa); err != nil {
+		t.Fatalf("handleFollow: %v", err)
+	}
+	if len(repo.remoteFollows) != 0 {
+		t.Errorf("a blocked actor's follow was recorded: %+v", repo.remoteFollows)
+	}
+	if len(repo.deliveries) != 0 {
+		t.Errorf("a blocked actor's follow produced an outbound activity: %+v", repo.deliveries)
+	}
+}
+
+// Another viewer's block is not this viewer's: the control is per-account and
+// one-directional, like every other viewer control.
+func TestRemoteBlockIsPerViewer(t *testing.T) {
+	repo := newContractRepo()
+	repo.remoteBlocks = map[string]bool{}
+	const kaisa = "https://peer.example/accounts/kaisa"
+	cacheContractActor(repo, kaisa, "Person", "kaisa", "peer.example")
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	ctx := context.Background()
+
+	stranger := uuid.New()
+	if err := svc.BlockRemoteActor(ctx, stranger, kaisa); err != nil {
+		t.Fatalf("BlockRemoteActor: %v", err)
+	}
+	blocked, err := svc.remoteActorBlockedBy(ctx, ctUserID, kaisa)
+	if err != nil {
+		t.Fatalf("remoteActorBlockedBy: %v", err)
+	}
+	if blocked {
+		t.Error("one viewer's block applied to another viewer")
+	}
+}
+
+func TestResolveRemoteActorIdentityRefusesLocalAndPlainText(t *testing.T) {
+	repo := newContractRepo()
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	ctx := context.Background()
+
+	if _, err := svc.ResolveRemoteActorIdentity(ctx, "@ada@videos.example"); !errors.Is(err, ErrLocalFollowTarget) {
+		t.Errorf("local handle = %v, want ErrLocalFollowTarget", err)
+	}
+	if _, err := svc.ResolveRemoteActorIdentity(ctx, "https://videos.example/accounts/ada"); !errors.Is(err, ErrLocalFollowTarget) {
+		t.Errorf("local URL = %v, want ErrLocalFollowTarget", err)
+	}
+	if _, err := svc.ResolveRemoteActorIdentity(ctx, "kaisa"); !errors.Is(err, ErrRemoteActorRequired) {
+		t.Errorf("plain text = %v, want ErrRemoteActorRequired", err)
+	}
+	// A URL is accepted WITHOUT being dereferenced: blocking must work against
+	// an actor that is offline, gone, or refusing us.
+	got, err := svc.ResolveRemoteActorIdentity(ctx, "https://gone.example/accounts/ghost")
+	if err != nil {
+		t.Fatalf("offline actor URL: %v", err)
+	}
+	if got != "https://gone.example/accounts/ghost" {
+		t.Errorf("actor = %q, want the URL verbatim", got)
+	}
+}
+
+// countRemoteComments counts the stored comments that came from a remote actor.
+func countRemoteComments(repo fakeRepo) int {
+	var n int
+	for _, c := range repo.commentsByID {
+		if c.RemoteActorUrl != nil {
+			n++
+		}
+	}
+	return n
+}
