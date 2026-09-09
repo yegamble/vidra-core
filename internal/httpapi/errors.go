@@ -52,6 +52,13 @@ type ErrorBody struct {
 	// the unlock prompt on a /v/{code} page has nowhere to post.
 	VideoID   string `json:"video_id,omitempty"`
 	ShortCode string `json:"short_code,omitempty"`
+	// StepUpProviders names the sign-in providers that can satisfy a
+	// `step_up_required` 403, and is present ONLY on that code. It is the
+	// caller's OWN linked identities — the same list GET /me/oauth-identities
+	// already returns to them — so it discloses nothing new, and without it the
+	// client would have to guess which button to offer on a refusal whose whole
+	// purpose is to name the remedy.
+	StepUpProviders []string `json:"step_up_providers,omitempty"`
 }
 
 // httpErrorHandler is Echo's central error handler. It converts any error
@@ -88,6 +95,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var ssr *SafetyScanRejectedError
 	var fml *ForeignMediaLayoutError
 	var videoID, shortCode string
+	var stepUpProviders []string
 	var pr *PasswordRequiredError
 	var tma *TooManyActiveUploadsError
 	var cfd *ContactFormDisabledError
@@ -105,7 +113,23 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var ot *OwnerTargetError
 	var otc *OwnerTransferConflictError
 	var omt *OwnerMustTransferError
+	var sur *StepUpRequiredError
+	var snl *StepUpNotLinkedError
+	var pas *PasswordAlreadySetError
 	switch {
+	case errors.As(err, &sur):
+		status = http.StatusForbidden
+		message = "confirm it is you with the account you sign in with, then try again"
+		code = "step_up_required"
+		stepUpProviders = sur.Providers
+	case errors.As(err, &snl):
+		status = http.StatusUnprocessableEntity
+		message = "that sign-in provider is not linked to this account, so signing in with it would prove nothing about this one"
+		code = "step_up_provider_not_linked"
+	case errors.As(err, &pas):
+		status = http.StatusUnprocessableEntity
+		message = "this account already has a password — change it with your current one instead of setting a new first password"
+		code = "password_already_set"
 	case errors.As(err, &oo):
 		status = http.StatusForbidden
 		message = "only the instance owner can transfer ownership of this instance"
@@ -306,6 +330,8 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		Fields:    fields,
 		VideoID:   videoID,
 		ShortCode: shortCode,
+
+		StepUpProviders: stepUpProviders,
 	}}
 
 	var writeErr error
@@ -696,3 +722,34 @@ func codeForStatus(status int) string {
 		return "error"
 	}
 }
+
+// StepUpRequiredError renders as 403 with the stable code "step_up_required":
+// the request needs a fresh provider re-authentication and did not carry a
+// usable one (none supplied, or spent, expired, or issued to another session or
+// account — deliberately one answer for all of them, so a caller cannot probe
+// which). Providers names which sign-ins can satisfy it, so the client can
+// offer the right button instead of a dead refusal.
+type StepUpRequiredError struct {
+	Providers []string
+}
+
+func (e *StepUpRequiredError) Error() string { return "step_up_required" }
+
+// StepUpNotLinkedError renders as 422 "step_up_provider_not_linked": a step-up
+// was started with a provider this account has no identity for. Refused at the
+// START rather than after the round trip, so the user is not walked through a
+// consent screen for an assertion that could never authorise anything.
+type StepUpNotLinkedError struct {
+	Provider string
+}
+
+func (e *StepUpNotLinkedError) Error() string { return "step_up_provider_not_linked" }
+
+// PasswordAlreadySetError renders as 422 "password_already_set": the
+// set-a-first-password route was used on an account that has one. It is a
+// routing answer, not an authorisation failure — the change route, which
+// re-verifies the current password, is the correct door, and letting a step-up
+// bypass a password the user DOES have would be a takeover primitive.
+type PasswordAlreadySetError struct{}
+
+func (e *PasswordAlreadySetError) Error() string { return "password_already_set" }

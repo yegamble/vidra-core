@@ -156,7 +156,20 @@ type oauthHTTPFakeRepo struct {
 }
 
 func newOAuthHTTPFakeRepo() *oauthHTTPFakeRepo {
-	return &oauthHTTPFakeRepo{authFakeRepo: newAuthFakeRepo(), identities: map[string]sqlcgen.OauthIdentity{}}
+	f := &oauthHTTPFakeRepo{authFakeRepo: newAuthFakeRepo(), identities: map[string]sqlcgen.OauthIdentity{}}
+	// The auth service is constructed over the EMBEDDED authFakeRepo, so it
+	// would otherwise read a different (empty) identity store than the one the
+	// login flows write into. Point it here.
+	f.authFakeRepo.identitiesOf = func(userID uuid.UUID) []sqlcgen.OauthIdentity {
+		var out []sqlcgen.OauthIdentity
+		for _, id := range f.identities {
+			if id.UserID == userID {
+				out = append(out, id)
+			}
+		}
+		return out
+	}
+	return f
 }
 
 func (f *oauthHTTPFakeRepo) GetOAuthIdentity(_ context.Context, a sqlcgen.GetOAuthIdentityParams) (sqlcgen.OauthIdentity, error) {

@@ -1523,6 +1523,16 @@ func (s *Server) routes() {
 		// per IP so an attacker holding one stolen access token cannot brute
 		// force the current password from it.
 		authGroup.POST("/me/password", s.handleChangePassword, append(append([]echo.MiddlewareFunc{}, authMW...), s.requireAuth)...)
+		// Set a FIRST password on a password-less (provider-created) account,
+		// authorised by a step-up assertion instead of a current password
+		// (auth_step_up.go). Same middleware as the change above: authenticated
+		// and behind the strict auth limiter, because the assertion is a
+		// guessing surface even though a thin one.
+		authGroup.POST("/me/password/set", s.handleSetPassword, append(append([]echo.MiddlewareFunc{}, authMW...), s.requireAuth)...)
+		// Start a step-up challenge. Authenticated (the assertion binds to the
+		// caller's session) AND behind the strict auth limiter, like every other
+		// route in the credential family.
+		authGroup.POST("/step-up/start", s.handleStepUpStart, append(append([]echo.MiddlewareFunc{}, authMW...), s.requireAuth)...)
 		// Two-step email change (AUTH-05). The three write steps that either
 		// take a password or spend a token sit behind the SAME strict auth
 		// limiter as login and the password change — the request re-verifies the

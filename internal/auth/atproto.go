@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
 	"github.com/vidra/vidra-core/internal/atproto"
@@ -269,13 +270,32 @@ func (s *ATProtoOAuthService) Begin(ctx context.Context, handle, returnTo string
 // session (login an existing linked account, or create a new one). It discards
 // the PDS tokens.
 func (s *ATProtoOAuthService) Complete(ctx context.Context, st ATProtoState, code, iss, userAgent string) (sqlcgen.User, Tokens, OAuthOutcome, error) {
+	did, err := s.VerifyAssertion(ctx, st, code, iss)
+	if err != nil {
+		return sqlcgen.User{}, Tokens{}, "", err
+	}
+	return s.resolveATProtoIdentity(ctx, st, did, userAgent)
+}
+
+// VerifyAssertion runs everything Complete does EXCEPT turning the verified DID
+// into a session: the enabled check, the RFC 9207 iss invariant, the code
+// exchange, and the sub / scope invariants. It returns the DID the auth server
+// actually attested.
+//
+// It exists so the step-up flow can reuse the login round trip verbatim. A
+// step-up must be exactly as strong as a login and not one check weaker, and
+// the only way to guarantee that is for both to run the same code — a
+// re-implementation would be one refactor away from dropping the iss check on
+// the step-up path alone, which is the difference between "the user proved who
+// they are" and "some authorization server did".
+func (s *ATProtoOAuthService) VerifyAssertion(ctx context.Context, st ATProtoState, code, iss string) (string, error) {
 	if !s.enabled {
-		return sqlcgen.User{}, Tokens{}, "", ErrATProtoDisabled
+		return "", ErrATProtoDisabled
 	}
 	// Invariant (iss, RFC 9207): the callback issuer MUST match the one bound at
 	// Begin, exactly and present.
 	if iss == "" || iss != st.Issuer {
-		return sqlcgen.User{}, Tokens{}, "", ErrATProtoIdentityMismatch
+		return "", ErrATProtoIdentityMismatch
 	}
 
 	res, err := s.flow.ExchangeCode(ctx, atproto.AuthServerMeta{
@@ -291,23 +311,36 @@ func (s *ATProtoOAuthService) Complete(ctx context.Context, st ATProtoState, cod
 	})
 	if err != nil {
 		if errors.Is(err, atproto.ErrOAuthScope) {
-			return sqlcgen.User{}, Tokens{}, "", ErrATProtoIdentityMismatch
+			return "", ErrATProtoIdentityMismatch
 		}
-		return sqlcgen.User{}, Tokens{}, "", ErrATProtoUpstream
+		return "", ErrATProtoUpstream
 	}
 
 	// Invariant (sub): the token subject MUST equal the DID resolved at Begin.
 	if res.DID == "" || res.DID != st.DID {
-		return sqlcgen.User{}, Tokens{}, "", ErrATProtoIdentityMismatch
+		return "", ErrATProtoIdentityMismatch
 	}
 	// Invariant (scope): the grant MUST include atproto (belt-and-braces with the
 	// atproto client's own check, so a faked flow cannot skip it).
 	if !scopeHasAtproto(res.Scope) {
-		return sqlcgen.User{}, Tokens{}, "", ErrATProtoIdentityMismatch
+		return "", ErrATProtoIdentityMismatch
 	}
-
-	return s.resolveATProtoIdentity(ctx, st, res.DID, userAgent)
+	return res.DID, nil
 }
+
+// SubjectLinkedTo reports whether a verified provider subject belongs to the
+// account holding a session — the check that turns "somebody signed in with
+// Bluesky" into "THIS account's owner just proved themselves". Without it a
+// completed round trip with ANY account of the provider would satisfy the
+// step-up, which is not a step-up at all.
+func (s *ATProtoOAuthService) SubjectLinkedTo(ctx context.Context, did string, userID uuid.UUID) bool {
+	ident, err := s.repo.GetOAuthIdentity(ctx, sqlcgen.GetOAuthIdentityParams{Provider: atprotoProvider, Subject: did})
+	return err == nil && ident.UserID == userID
+}
+
+// ATProtoProviderName is the oauth_identities.provider value ATProto logins
+// use, exported so the HTTP layer can name it in a step-up refusal.
+const ATProtoProviderName = atprotoProvider
 
 // resolveATProtoIdentity maps a verified DID to a Vidra session: an already-linked
 // identity logs its account in; an unknown DID creates a fresh account. There is

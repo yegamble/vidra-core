@@ -153,6 +153,22 @@ type Repository interface {
 	// account's.
 	ConfirmEmailChange(ctx context.Context, arg sqlcgen.ConfirmEmailChangeParams) (sqlcgen.ConfirmEmailChangeRow, error)
 
+	// Step-up assertions (0143): the server-side record that a provider
+	// re-authentication happened, for accounts whose only credential is an
+	// external provider. See stepup.go for why these are rows and not a
+	// stateless token.
+	CreateStepUpToken(ctx context.Context, arg sqlcgen.CreateStepUpTokenParams) (sqlcgen.StepUpToken, error)
+	// ConsumeStepUpToken spends one assertion in ONE statement, so a token
+	// cannot be spent twice by two concurrent requests. No rows = every
+	// invalid case, indistinguishably.
+	ConsumeStepUpToken(ctx context.Context, arg sqlcgen.ConsumeStepUpTokenParams) (sqlcgen.ConsumeStepUpTokenRow, error)
+	DeleteUnusedStepUpTokensForSession(ctx context.Context, sessionID uuid.UUID) (int64, error)
+	DeleteExpiredStepUpTokens(ctx context.Context) (int64, error)
+	// ListOAuthIdentitiesByUser is how the auth service answers "which
+	// providers could satisfy a step-up for this account" — the list the 403
+	// names so a client can offer the right button.
+	ListOAuthIdentitiesByUser(ctx context.Context, userID uuid.UUID) ([]sqlcgen.OauthIdentity, error)
+
 	CreateRegistrationRequest(ctx context.Context, arg sqlcgen.CreateRegistrationRequestParams) (sqlcgen.CreateRegistrationRequestRow, error)
 	ListRegistrationRequests(ctx context.Context, arg sqlcgen.ListRegistrationRequestsParams) ([]sqlcgen.ListRegistrationRequestsRow, error)
 	CountRegistrationRequests(ctx context.Context, status *string) (int64, error)

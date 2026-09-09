@@ -291,39 +291,69 @@ type oidcClaims struct {
 //	                                          derived + deduped; email_verified
 //	                                          inherited from the claim)
 func (s *OAuthService) CompleteAuth(ctx context.Context, provider, redirectURI, code string, st OAuthState, userAgent string) (sqlcgen.User, Tokens, OAuthOutcome, error) {
-	p, cl, err := s.lookup(provider)
+	name, subject, claims, err := s.verifyAssertion(ctx, provider, redirectURI, code, st)
 	if err != nil {
 		return sqlcgen.User{}, Tokens{}, "", err
 	}
+	return s.resolveIdentity(ctx, name, subject, claims, userAgent)
+}
+
+// VerifyAssertion runs everything CompleteAuth does EXCEPT turning the verified
+// identity into a session, returning the provider subject the id_token attested.
+// It is the OIDC half of the step-up flow, and it shares CompleteAuth's body for
+// the same reason the ATProto one does: a step-up must be exactly as strong as
+// the login it stands in for, and the only way to keep it so is for both to run
+// the same exchange, the same JWKS verification and the same nonce check.
+func (s *OAuthService) VerifyAssertion(ctx context.Context, provider, redirectURI, code string, st OAuthState) (string, error) {
+	_, subject, _, err := s.verifyAssertion(ctx, provider, redirectURI, code, st)
+	return subject, err
+}
+
+// verifyAssertion exchanges the code and verifies the id_token (signature,
+// issuer, audience, expiry) and the attempt nonce, returning the canonical
+// provider name, the subject and the consumed claims.
+func (s *OAuthService) verifyAssertion(ctx context.Context, provider, redirectURI, code string, st OAuthState) (string, string, oidcClaims, error) {
+	var claims oidcClaims
+	p, cl, err := s.lookup(provider)
+	if err != nil {
+		return "", "", claims, err
+	}
 	op, err := cl.get(ctx, s.httpClient, p.IssuerURL)
 	if err != nil {
-		return sqlcgen.User{}, Tokens{}, "", err
+		return "", "", claims, err
 	}
 
 	octx := oidc.ClientContext(ctx, s.httpClient)
 	tok, err := oauthConfig(p, op, redirectURI).Exchange(octx, code, oauth2.VerifierOption(st.Verifier))
 	if err != nil {
-		return sqlcgen.User{}, Tokens{}, "", fmt.Errorf("%w: %v", ErrOAuthExchange, err)
+		return "", "", claims, fmt.Errorf("%w: %v", ErrOAuthExchange, err)
 	}
 	rawIDToken, ok := tok.Extra("id_token").(string)
 	if !ok || rawIDToken == "" {
-		return sqlcgen.User{}, Tokens{}, "", fmt.Errorf("%w: token response carried no id_token", ErrOAuthExchange)
+		return "", "", claims, fmt.Errorf("%w: token response carried no id_token", ErrOAuthExchange)
 	}
 	idToken, err := op.Verifier(&oidc.Config{ClientID: p.ClientID}).Verify(octx, rawIDToken)
 	if err != nil {
-		return sqlcgen.User{}, Tokens{}, "", fmt.Errorf("%w: id_token verification: %v", ErrOAuthExchange, err)
+		return "", "", claims, fmt.Errorf("%w: id_token verification: %v", ErrOAuthExchange, err)
 	}
 	if st.Nonce == "" || idToken.Nonce != st.Nonce {
-		return sqlcgen.User{}, Tokens{}, "", ErrOAuthNonceMismatch
+		return "", "", claims, ErrOAuthNonceMismatch
 	}
 	if idToken.Subject == "" {
-		return sqlcgen.User{}, Tokens{}, "", fmt.Errorf("%w: id_token carried no subject", ErrOAuthExchange)
+		return "", "", claims, fmt.Errorf("%w: id_token carried no subject", ErrOAuthExchange)
 	}
-	var claims oidcClaims
 	if err := idToken.Claims(&claims); err != nil {
-		return sqlcgen.User{}, Tokens{}, "", fmt.Errorf("%w: id_token claims: %v", ErrOAuthExchange, err)
+		return "", "", claims, fmt.Errorf("%w: id_token claims: %v", ErrOAuthExchange, err)
 	}
-	return s.resolveIdentity(ctx, p.Name, idToken.Subject, claims, userAgent)
+	return p.Name, idToken.Subject, claims, nil
+}
+
+// SubjectLinkedTo reports whether a verified provider subject belongs to the
+// account holding a session. See the ATProto twin: without it, a completed
+// round trip with ANY account at the provider would satisfy the step-up.
+func (s *OAuthService) SubjectLinkedTo(ctx context.Context, provider, subject string, userID uuid.UUID) bool {
+	ident, err := s.repo.GetOAuthIdentity(ctx, sqlcgen.GetOAuthIdentityParams{Provider: provider, Subject: subject})
+	return err == nil && ident.UserID == userID
 }
 
 // resolveIdentity maps a verified (provider, subject, claims) to a local

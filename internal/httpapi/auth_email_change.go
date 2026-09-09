@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/auth"
@@ -19,12 +20,28 @@ import (
 type emailChangeRequest struct {
 	CurrentPassword string `json:"current_password"`
 	NewEmail        string `json:"new_email"`
+	// StepUpToken is the alternative proof, for the accounts that cannot supply
+	// the one above. A provider-created account is passwordless AND holds a
+	// synthetic …@atproto.invalid address, so it can neither prove a password
+	// nor receive a reset — and a real address is exactly what it needs to
+	// become recoverable at all. A completed round trip through the provider
+	// that IS its credential stands in (auth_step_up.go).
+	StepUpToken string `json:"step_up_token"`
 }
 
 func (r emailChangeRequest) Validate() []FieldError {
 	var fes []FieldError
-	if r.CurrentPassword == "" {
-		fes = append(fes, FieldError{Field: "current_password", Message: "is required"})
+	// EXACTLY one proof. Requiring one keeps the route from becoming an
+	// unauthenticated address-mover; refusing both keeps a caller from
+	// presenting a step-up alongside a password and leaving it ambiguous which
+	// one authorised the change (and which one gets spent).
+	hasPassword := r.CurrentPassword != ""
+	hasStepUp := strings.TrimSpace(r.StepUpToken) != ""
+	switch {
+	case !hasPassword && !hasStepUp:
+		fes = append(fes, FieldError{Field: "current_password", Message: "is required (or step_up_token, for an account with no password)"})
+	case hasPassword && hasStepUp:
+		fes = append(fes, FieldError{Field: "step_up_token", Message: "must not be supplied with current_password"})
 	}
 	if !looksLikeEmail(r.NewEmail) {
 		fes = append(fes, FieldError{Field: "new_email", Message: "must be a valid email"})
@@ -73,6 +90,18 @@ type emailChangeConfirmedView struct {
 // The two 409s are deliberately distinct in wording: "no password" points at
 // the flow that can set one, "already in use" is exactly what registration
 // discloses today for a taken address.
+// emailChangeErrorFor is emailChangeError plus the two step-up answers, which
+// need the server to name the caller's linked providers.
+func (s *Server) emailChangeErrorFor(c echo.Context, userID uuid.UUID, err error) error {
+	switch {
+	case errors.Is(err, auth.ErrStepUpRequired):
+		return &StepUpRequiredError{Providers: s.authsvc.StepUpProvidersFor(c.Request().Context(), userID)}
+	case errors.Is(err, auth.ErrPasswordAlreadySet):
+		return &PasswordAlreadySetError{}
+	}
+	return emailChangeError(err)
+}
+
 func emailChangeError(err error) error {
 	switch {
 	case errors.Is(err, auth.ErrInvalidPassword):
@@ -125,10 +154,17 @@ func (s *Server) handleRequestEmailChange(c echo.Context) error {
 			Consequence: "it cannot deliver the confirmation this change needs. The token goes to the new address and nowhere else, so starting the change would leave it pending forever",
 		}
 	}
-	pending, err := s.authsvc.RequestEmailChange(c.Request().Context(), userID, in.CurrentPassword, in.NewEmail)
-	if err != nil {
-		s.audit(c, observability.ActionEmailChangeRequest, observability.ResultFailure, userID.String(), emailChangeReason(err))
-		return emailChangeError(err)
+	var pending auth.PendingEmailChange
+	var err2 error
+	if strings.TrimSpace(in.StepUpToken) != "" {
+		pending, err2 = s.authsvc.RequestEmailChangeWithStepUp(c.Request().Context(), userID,
+			sessionIDFromContext(c), in.StepUpToken, in.NewEmail)
+	} else {
+		pending, err2 = s.authsvc.RequestEmailChange(c.Request().Context(), userID, in.CurrentPassword, in.NewEmail)
+	}
+	if err2 != nil {
+		s.audit(c, observability.ActionEmailChangeRequest, observability.ResultFailure, userID.String(), emailChangeReason(err2))
+		return s.emailChangeErrorFor(c, userID, err2)
 	}
 	s.audit(c, observability.ActionEmailChangeRequest, observability.ResultSuccess, userID.String(), "")
 	return c.JSON(http.StatusAccepted, pendingView(pending))
@@ -225,6 +261,10 @@ func emailChangeReason(err error) string {
 		return "email_taken"
 	case errors.Is(err, auth.ErrInvalidEmailChangeToken):
 		return "invalid_token"
+	case errors.Is(err, auth.ErrStepUpRequired):
+		return "step_up_required"
+	case errors.Is(err, auth.ErrPasswordAlreadySet):
+		return "password_already_set"
 	}
 	return "error"
 }

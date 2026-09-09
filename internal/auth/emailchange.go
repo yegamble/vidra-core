@@ -108,6 +108,44 @@ func (s *Service) RequestEmailChange(ctx context.Context, userID uuid.UUID, curr
 	if err := CheckPassword(user.PasswordHash, currentPassword); err != nil {
 		return PendingEmailChange{}, ErrInvalidPassword
 	}
+	return s.requestEmailChangeFor(ctx, user, newEmail)
+}
+
+// RequestEmailChangeWithStepUp is the same two-step change authorised by a
+// step-up assertion instead of a current password, for the accounts that have
+// none.
+//
+// This is the half of A30's dead end that the set-password route does not
+// close. A provider-created account's address is a synthetic …@atproto.invalid
+// name: it cannot receive the reset mail, so even WITH a password the account
+// stays unrecoverable until a real mailbox is on it. The confirmation still
+// goes to the NEW address and nowhere else — possession of that mailbox is the
+// proof being collected, and no assertion substitutes for it — so what the
+// step-up replaces is only the "prove you are the account holder" half.
+//
+// An account that HAS a password is refused with ErrPasswordAlreadySet BEFORE
+// the assertion is spent: it belongs on the password path, and a step-up must
+// never become a way around a password the user does have.
+func (s *Service) RequestEmailChangeWithStepUp(ctx context.Context, userID uuid.UUID, currentSessionID, stepUpToken, newEmail string) (PendingEmailChange, error) {
+	user, err := s.UserByID(ctx, userID)
+	if err != nil {
+		return PendingEmailChange{}, err
+	}
+	if user.PasswordHash != "" {
+		return PendingEmailChange{}, ErrPasswordAlreadySet
+	}
+	if _, err := s.ConsumeStepUp(ctx, user.ID, currentSessionID, stepUpToken); err != nil {
+		return PendingEmailChange{}, err
+	}
+	return s.requestEmailChangeFor(ctx, user, newEmail)
+}
+
+// requestEmailChangeFor is the shared body of both request paths: everything
+// after the caller has proven they are the account holder. Keeping it in one
+// place is what stops the two doors drifting apart on the rules that matter —
+// uniqueness, the '@'-ban's sign-in shadowing check, the supersede-before-mint
+// ordering, and the must-deliver confirmation.
+func (s *Service) requestEmailChangeFor(ctx context.Context, user sqlcgen.User, newEmail string) (PendingEmailChange, error) {
 	addr := strings.TrimSpace(newEmail)
 	if strings.EqualFold(addr, user.Email) {
 		return PendingEmailChange{}, ErrEmailUnchanged
@@ -235,7 +273,16 @@ func (s *Service) ConfirmEmailChange(ctx context.Context, userID uuid.UUID, rawT
 	// Best-effort from here: the address has already moved, and a failure to
 	// tidy up or to mail must not be reported as "your address did not change".
 	_, _ = s.repo.DeleteUnusedEmailChangeRequests(ctx, userID)
-	_ = s.mailer.SendEmailChanged(ctx, user.Email, row.Email)
+	// The notice to the OLD address is the signal that reaches a user whose
+	// address was taken from them — but a provider-created account's old
+	// address is a synthetic …@atproto.invalid name in an RFC 2606 reserved
+	// domain, which cannot resolve and therefore cannot receive anything.
+	// Sending it would produce a guaranteed bounce and, worse, a UI that
+	// believes a warning went somewhere. Skipped explicitly rather than left to
+	// fail: the honest statement is "there was no old mailbox to warn".
+	if !IsPlaceholderEmail(user.Email) {
+		_ = s.mailer.SendEmailChanged(ctx, user.Email, row.Email)
+	}
 	return user.Email, row.Email, nil
 }
 
