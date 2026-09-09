@@ -99,6 +99,31 @@ WHERE m.id = $1
   AND (m.objects_total, m.objects_done, m.objects_failed)
       IS DISTINCT FROM (c.total, c.done, c.failed);
 
+-- name: DeleteTerminalStorageMigrationObjects :execrows
+-- Clear the object ledger of every campaign that is OVER, so the next campaign
+-- enumerates the source from scratch.
+--
+-- It exists because storage_migration_objects is primary-keyed on the STORAGE
+-- KEY alone -- object keys are never rewritten by a move, so one row per key is
+-- the right shape while a campaign runs -- and those rows outlive the campaign
+-- that created them. Without this, the next campaign's enumeration (an ON
+-- CONFLICT DO NOTHING upsert whose rowcount IS the answer to "did anything
+-- appear since?") inserts NOTHING, the new campaign starts with an empty
+-- ledger, and an empty ledger reads as "nothing left to copy": one sweep later
+-- it announces that every object in the source is verified in the target with
+-- objects_total 0. That is the sentence an operator cuts over on. It bites a
+-- retry after a cancel AND the second move an instance ever makes, which re-uses
+-- the same keys.
+--
+-- The predicate is on the CAMPAIGN's state, never on a row id, so it can never
+-- touch a live campaign's ledger however this races with a concurrent start.
+-- The campaign row keeps its own objects_total/done/failed counters, which are
+-- the durable record of what that move did.
+DELETE FROM storage_migration_objects o
+USING storage_migrations m
+WHERE m.id = o.campaign_id
+  AND m.state IN ('done', 'cancelled', 'failed');
+
 -- name: UpsertStorageMigrationObjects :execrows
 -- Record a batch of enumerated keys. DO NOTHING on conflict is what makes the
 -- delta pass cheap and idempotent: a re-enumeration re-offers every key it saw

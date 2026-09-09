@@ -190,6 +190,23 @@ func (f *fakeRepo) UpsertStorageMigrationObjects(_ context.Context, arg sqlcgen.
 	return added, nil
 }
 
+// DeleteTerminalStorageMigrationObjects mirrors the real statement: it clears
+// the object rows of every campaign that is OVER, and never touches a live
+// campaign's ledger.
+func (f *fakeRepo) DeleteTerminalStorageMigrationObjects(context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var deleted int64
+	for key, obj := range f.objects {
+		c := f.find(obj.CampaignID)
+		if c == nil || terminalCampaign(c.State) {
+			delete(f.objects, key)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
 func (f *fakeRepo) ClaimDueStorageMigrationObjects(_ context.Context, limit int32) ([]sqlcgen.ClaimDueStorageMigrationObjectsRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

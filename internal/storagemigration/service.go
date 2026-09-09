@@ -167,6 +167,7 @@ type Repository interface {
 	CancelStorageMigration(ctx context.Context, id uuid.UUID) (int64, error)
 	RefreshStorageMigrationCounters(ctx context.Context, id uuid.UUID) error
 	UpsertStorageMigrationObjects(ctx context.Context, arg sqlcgen.UpsertStorageMigrationObjectsParams) (int64, error)
+	DeleteTerminalStorageMigrationObjects(ctx context.Context) (int64, error)
 	ClaimDueStorageMigrationObjects(ctx context.Context, limit int32) ([]sqlcgen.ClaimDueStorageMigrationObjectsRow, error)
 	RenewStorageMigrationObjectLease(ctx context.Context, objectKey string) error
 	MarkStorageMigrationObjectVerified(ctx context.Context, arg sqlcgen.MarkStorageMigrationObjectVerifiedParams) error
@@ -289,6 +290,28 @@ func (s *Service) Start(ctx context.Context) (Campaign, error) {
 			return Campaign{}, ErrAlreadyActive
 		}
 		return Campaign{}, err
+	}
+	// Clear out the ledger of every campaign that is over. The object rows are
+	// keyed on the STORAGE KEY alone and outlive their campaign, and the
+	// enumeration below is an ON CONFLICT DO NOTHING upsert — so without this the
+	// new campaign inserts nothing, starts with an empty ledger, and an empty
+	// ledger reads as "nothing left to copy". One sweep later it would announce
+	// that every object in the source is verified in the target with
+	// objects_total 0, which is the sentence an operator cuts over on. It is done
+	// HERE, after the create, so a refused start changes nothing, and the
+	// statement's predicate is on the campaign's own state, so it can never touch
+	// a live ledger.
+	//
+	// Not fatal. A campaign whose ledger could not be cleared is one that will
+	// enumerate nothing and sit at zero — visible, stuck and cancellable —
+	// whereas refusing to start here would leave an operator with a campaign row
+	// they did not ask for and no way to retry.
+	if cleared, cerr := s.repo.DeleteTerminalStorageMigrationObjects(ctx); cerr != nil {
+		s.logger.ErrorContext(ctx, "storage migration could not clear the finished campaigns' object ledger; this campaign may enumerate nothing",
+			"campaign", row.ID.String(), "error", cerr.Error())
+	} else if cleared > 0 {
+		s.logger.InfoContext(ctx, "storage migration cleared the finished campaigns' object ledger",
+			"campaign", row.ID.String(), "rows", cleared)
 	}
 	s.logger.InfoContext(ctx, "storage migration started",
 		"campaign", row.ID.String(), "source", source, "target", dest,
