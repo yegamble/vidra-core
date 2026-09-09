@@ -48,6 +48,24 @@ type Client interface {
 	Unpin(ctx context.Context, cid string) error
 	// IsPinned reports whether the node currently pins the CID.
 	IsPinned(ctx context.Context, cid string) (bool, error)
+	// ListPins enumerates every RECURSIVE pin the node currently holds, capped at
+	// max entries. It is the node half of the ledger↔node reconciliation
+	// (Service.VerifyPins): one call answers BOTH directions — a ledger row whose
+	// CID is absent from the set has lost its pin, and a CID in the set that no
+	// ledger row claims is a stray.
+	//
+	// It is a LIST rather than N × IsPinned deliberately. IsPinned reports a
+	// transport failure as "not pinned" (kubo answers a non-2xx for an unpinned
+	// CID and the two are indistinguishable at that endpoint), so a reconcile
+	// built on it would re-add and re-pin the entire ledger every time the node
+	// was unreachable — the exact opposite of what a repair pass should do when
+	// it cannot see the node. An error here means "the node did not answer", and
+	// the sweep declines to act on it.
+	//
+	// A node holding MORE than max pins returns an error rather than a truncated
+	// set: a partial list is indistinguishable from a node that has lost pins,
+	// and acting on it would re-add live content and under-report strays.
+	ListPins(ctx context.Context, max int) (map[string]struct{}, error)
 }
 
 // KuboClient is a hand-rolled HTTP client for the Kubo RPC API (/api/v0/*). No
@@ -210,6 +228,53 @@ func (c *KuboClient) IsPinned(ctx context.Context, cid string) (bool, error) {
 	}
 	_ = body.Close()
 	return true, nil
+}
+
+// pinLsResponse is /api/v0/pin/ls in its default (non-streaming) shape:
+// {"Keys":{"<cid>":{"Type":"recursive"}}}. The streaming shape is deliberately
+// NOT requested — the map form has been stable across every kubo generation this
+// project has run against, and one JSON object is easier to bound than a line
+// protocol.
+type pinLsResponse struct {
+	Keys map[string]struct {
+		Type string `json:"Type"`
+	} `json:"Keys"`
+}
+
+// pinLsMaxBytes bounds the pin/ls body this client will read. A recursive pin
+// entry is roughly 70 bytes of JSON, so 16 MiB is on the order of 200k pins —
+// far past any ledger this mirror writes, and small enough that a node with a
+// pathological pinset cannot exhaust the api's memory on a five-minute timer.
+const pinLsMaxBytes = 16 << 20
+
+func (c *KuboClient) ListPins(ctx context.Context, max int) (map[string]struct{}, error) {
+	body, err := c.post(ctx, "/api/v0/pin/ls?type=recursive", nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	// LimitReader with ONE spare byte: reading exactly the cap cannot be
+	// distinguished from a body that ended there, so the extra byte is what turns
+	// "we filled the buffer" into a definite "there was more".
+	raw, err := io.ReadAll(io.LimitReader(body, pinLsMaxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("ipfs: read pin list: %w", err)
+	}
+	if len(raw) > pinLsMaxBytes {
+		return nil, fmt.Errorf("ipfs: pin list exceeds %d bytes; refusing to reconcile against a truncated pinset", pinLsMaxBytes)
+	}
+	var resp pinLsResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("ipfs: decode pin list: %w", err)
+	}
+	if max > 0 && len(resp.Keys) > max {
+		return nil, fmt.Errorf("ipfs: node holds %d recursive pins, more than the %d this sweep will compare", len(resp.Keys), max)
+	}
+	out := make(map[string]struct{}, len(resp.Keys))
+	for cid := range resp.Keys {
+		out[cid] = struct{}{}
+	}
+	return out, nil
 }
 
 // post issues a POST to the Kubo RPC API (the API is POST-only). The caller owns
