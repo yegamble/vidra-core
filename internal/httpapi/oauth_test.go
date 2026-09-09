@@ -750,3 +750,49 @@ func TestInstanceExposesOAuthProvidersAndFederation(t *testing.T) {
 		t.Errorf("default federation_enabled should be false: %s", rec.Body.String())
 	}
 }
+
+// TestOAuthUnreachableProviderIsTyped pins the two upstream failures an
+// operator actually hits — the IdP is down when the login starts, and the IdP
+// fails the code exchange — to STABLE codes. Both are 502, and a 502 has its
+// message scrubbed by the central handler, so without a typed error the only
+// thing the operator (or the frontend) sees is "an unexpected error occurred":
+// indistinguishable from a panic, and useless for "is our IdP reachable?".
+func TestOAuthUnreachableProviderIsTyped(t *testing.T) {
+	t.Run("discovery failure at begin", func(t *testing.T) {
+		e := newOAuthEnv(t)
+		e.fake.srv.Close() // the IdP is down before anything was discovered
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/fake", nil)
+		e.srv.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadGateway {
+			t.Fatalf("status = %d, want 502; body=%s", rec.Code, rec.Body.String())
+		}
+		if got := errorCode(t, rec); got != "oauth_provider_unavailable" {
+			t.Errorf("code = %q, want oauth_provider_unavailable", got)
+		}
+		for _, ck := range rec.Result().Cookies() {
+			if ck.Name == oauthStateCookieName && ck.Value != "" {
+				t.Error("a failed begin must not seal an attempt cookie")
+			}
+		}
+	})
+
+	t.Run("token exchange failure at callback", func(t *testing.T) {
+		e := newOAuthEnv(t)
+		loc, stateCookie := e.begin(t, "") // discovery succeeds and is cached
+		e.fake.srv.Close()                 // the IdP goes down before the exchange
+
+		rec := e.callback(t, "?code=fake-code&state="+url.QueryEscape(loc.Query().Get("state")), stateCookie)
+		if rec.Code != http.StatusBadGateway {
+			t.Fatalf("status = %d, want 502; body=%s", rec.Code, rec.Body.String())
+		}
+		if got := errorCode(t, rec); got != "oauth_exchange_failed" {
+			t.Errorf("code = %q, want oauth_exchange_failed", got)
+		}
+		if sessionCookieFrom(rec) != nil {
+			t.Error("a failed exchange must not issue a session")
+		}
+	})
+}
