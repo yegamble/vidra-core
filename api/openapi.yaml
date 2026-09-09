@@ -909,8 +909,8 @@ paths:
         reset mail can never arrive. The proof accepted here instead is a
         completed OAuth round trip through the provider that already IS the
         account's credential — started at
-        `POST /api/v1/auth/step-up/start`, which redirects back with
-        `?step_up=<token>`.
+        `POST /api/v1/auth/step-up/start`, whose callback parks the assertion
+        in the httpOnly `vidra_step_up` cookie.
 
 
         The consequences are the password change's, exactly: every OTHER session
@@ -985,10 +985,21 @@ paths:
         `GET /api/v1/auth/atproto/callback` or
         `GET /api/v1/auth/oauth/{provider}/callback` — runs every invariant a
         login runs, checks the attested subject belongs to the bound account,
-        and then, instead of minting a session, redirects to `return_to` with
-        `?step_up=<token>` (or `?step_up_error=<code>`). That token is
-        single-use, expires in ten minutes, and is bound to the session that
-        started the challenge.
+        and then, instead of minting a session, parks a single-use assertion in
+        the httpOnly `vidra_step_up` cookie (`Path=/api/v1/auth/me`,
+        SameSite=Lax) and redirects to `return_to` UNCHANGED — no token and no
+        flag, so the landing URL carries only what the caller put in its own
+        `return_to` (typically `?secure=password`). A FAILURE still redirects
+        with `?step_up_error=<code>`, which is a machine code and not a secret.
+        The assertion is single-use, expires in ten minutes, and is bound to the
+        session that started the challenge.
+
+
+        It moved off the query string because the auth rehearsal measured what
+        the query cost: `step_up=<32 bytes>` in a reverse proxy's access log and
+        in the `Referer` of every subresource the landing page then fetched,
+        while the identically-shaped `vidra_mfa_pending` cookie appeared in
+        neither.
 
 
         The provider must already be LINKED to the caller: a round trip through
@@ -20478,9 +20489,11 @@ components:
     SetPasswordRequest:
       type: object
       description: >-
-        A first password plus the step-up assertion that authorises it. Neither
-        value is ever echoed back or logged.
-      required: [new_password, step_up_token]
+        A first password. The step-up assertion that authorises it normally
+        arrives on the httpOnly `vidra_step_up` COOKIE the callback set, so a
+        browser sends this body with `new_password` alone. Neither value is ever
+        echoed back or logged.
+      required: [new_password]
       properties:
         new_password:
           type: string
@@ -20493,9 +20506,24 @@ components:
         step_up_token:
           type: string
           description: >-
-            The single-use token from a completed step-up round trip, delivered
-            as `?step_up=` on the callback's redirect. Bound to the session that
-            started the challenge and dead after ten minutes.
+            The single-use token from a completed step-up round trip. OPTIONAL,
+            and normally absent: the callback parks it in the httpOnly
+            `vidra_step_up` cookie (`Path=/api/v1/auth/me`, SameSite=Lax, ten
+            minutes) and a browser simply sends the cookie. The field survives
+            for an API client with no cookie jar, which can read the token off
+            the Set-Cookie header; when both are present the COOKIE wins, so a
+            stale token in a body cannot outrank a fresh grant.
+
+
+            It moved off the query string because the auth rehearsal measured
+            what the query cost: `step_up=<32 bytes>` in a reverse proxy's
+            access log and in the `Referer` of every subresource the landing
+            page fetched, while the identically-shaped `vidra_mfa_pending`
+            cookie appeared in neither.
+
+
+            With neither cookie nor field the answer is 403 `step_up_required`,
+            the same answer a spent or expired assertion gets.
     StepUpStartRequest:
       type: object
       description: >-
@@ -20518,8 +20546,10 @@ components:
         return_to:
           type: string
           description: >-
-            A same-origin relative path to land on afterwards. The callback
-            appends `?step_up=<token>` or `?step_up_error=<code>` itself.
+            A same-origin relative path to land on afterwards. On success the
+            callback lands here UNCHANGED and the assertion rides the httpOnly
+            `vidra_step_up` cookie; on failure it appends
+            `?step_up_error=<code>`.
           example: /settings/security
     LinkStartResponse:
       type: object
@@ -20554,8 +20584,10 @@ components:
           type: string
           format: password
           description: >-
-            The account's current password, for confirmation. Required unless
-            `step_up_token` is supplied.
+            The account's current password, for confirmation. Required unless a
+            step-up assertion is supplied — either on the httpOnly
+            `vidra_step_up` cookie (what a browser sends) or as
+            `step_up_token`.
         step_up_token:
           type: string
           description: >-
@@ -20566,6 +20598,13 @@ components:
             recoverable at all — and it can prove neither a password nor a
             mailbox. An account that HAS a password is refused 422
             `password_already_set`.
+
+
+            OPTIONAL, and normally absent: the assertion arrives on the
+            httpOnly `vidra_step_up` cookie the callback set, so a browser sends
+            `new_email` alone. The EXACTLY-ONE-PROOF rule counts the cookie:
+            supplying `current_password` while that cookie is present is the
+            422, and supplying neither is the 422 that names the password.
         new_email:
           type: string
           format: email
