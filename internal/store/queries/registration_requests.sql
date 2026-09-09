@@ -6,6 +6,34 @@ INSERT INTO registration_requests (username, email, password_hash, note)
 VALUES ($1, $2, $3, $4)
 RETURNING id, username, email, note, status, moderator_note, reviewed_at, created_at;
 
+-- name: CreateProviderRegistrationRequest :one
+-- File a pending registration request for a VERIFIED provider identity (OIDC or
+-- ATProto). password_hash is '' by the same convention users.password_hash uses
+-- for provider-created accounts — an empty hash bcrypt can never verify — so the
+-- approved account's only credential is the identity attached at approval.
+-- A duplicate PENDING request for the same identity, username or email raises a
+-- unique violation (23505).
+INSERT INTO registration_requests (
+    username, email, password_hash, note,
+    oauth_provider, oauth_subject, oauth_handle, oauth_email, oauth_email_verified
+)
+VALUES (
+    sqlc.arg('username'), sqlc.arg('email'), '', '',
+    sqlc.arg('oauth_provider'), sqlc.arg('oauth_subject'), sqlc.narg('oauth_handle'),
+    sqlc.arg('oauth_email'), sqlc.arg('oauth_email_verified')
+)
+RETURNING id, username, email, note, status, moderator_note, reviewed_at, created_at;
+
+-- name: GetPendingProviderRegistrationRequest :one
+-- The unresolved request for a provider identity, if any. Lets a repeat sign-in
+-- answer "still pending" instead of filing a duplicate or, worse, reporting a
+-- conflict the applicant cannot act on.
+SELECT id, username, email, status, created_at
+FROM registration_requests
+WHERE oauth_provider = sqlc.arg('oauth_provider')
+  AND oauth_subject = sqlc.arg('oauth_subject')
+  AND status = 'pending';
+
 -- name: ListRegistrationRequests :many
 -- The approval queue, newest first, with the reviewing admin's username resolved.
 -- status is the exact lifecycle state to show, or NULL for all of them. It used
@@ -39,16 +67,35 @@ WHERE (sqlc.narg('status')::text IS NULL OR r.status = sqlc.narg('status')::text
 -- rolls back, leaving the request pending.
 WITH req AS (
     SELECT registration_requests.id, registration_requests.username,
-           registration_requests.email, registration_requests.password_hash
+           registration_requests.email, registration_requests.password_hash,
+           registration_requests.oauth_provider, registration_requests.oauth_subject,
+           registration_requests.oauth_handle, registration_requests.oauth_email,
+           registration_requests.oauth_email_verified
     FROM registration_requests
     WHERE registration_requests.id = sqlc.arg('id') AND registration_requests.status = 'pending'
 ),
 ins AS (
-    INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
+    INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled, email_verified)
     SELECT req.username, req.email, req.password_hash, 'user',
-           sqlc.arg('pending_email_verification')::bool, sqlc.arg('history_enabled')::bool
+           -- A provider request is never held for email verification: the IdP
+           -- attested the address, exactly as the direct provider create path
+           -- reasons (internal/auth/oauth.go).
+           sqlc.arg('pending_email_verification')::bool AND req.oauth_provider IS NULL,
+           sqlc.arg('history_enabled')::bool,
+           req.oauth_email_verified
     FROM req
     RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, pending_email_verification
+),
+-- Attach the identity the applicant applied WITH, so the approved account signs
+-- in through the same subject rather than merely one asserting the same address.
+-- In the same statement as the user insert: an account with no credential is
+-- exactly the state a second query could leave behind if it failed.
+ident AS (
+    INSERT INTO oauth_identities (provider, subject, user_id, email, handle)
+    SELECT req.oauth_provider, req.oauth_subject, ins.id, req.oauth_email, req.oauth_handle
+    FROM req, ins
+    WHERE req.oauth_provider IS NOT NULL
+    RETURNING oauth_identities.id
 ),
 upd AS (
     UPDATE registration_requests

@@ -593,6 +593,21 @@ func (s *OAuthService) resolveIdentity(ctx context.Context, provider, subject st
 	if err := s.auth.refuseIfOwnerUnclaimed(ctx); err != nil {
 		return OAuthSession{}, err
 	}
+	// Signup parity continued: the instance's registration policy applies to a
+	// provider signup exactly as it does to a password one. This is reached only
+	// on the CREATE branch — an already-linked identity logged in above — so
+	// closing registration never locks out the accounts that already exist.
+	requireApproval, err := s.auth.refuseSignupByPolicy()
+	if err != nil {
+		return OAuthSession{}, err
+	}
+	if requireApproval {
+		return OAuthSession{}, s.auth.RequestProviderRegistration(ctx, ProviderRegistrationInput{
+			Username: username, Email: email,
+			Provider: provider, Subject: subject,
+			IdentityEmail: email, EmailVerified: claims.EmailVerified,
+		})
+	}
 	user, err := s.repo.CreateUser(ctx, sqlcgen.CreateUserParams{
 		Username: username,
 		Email:    email,

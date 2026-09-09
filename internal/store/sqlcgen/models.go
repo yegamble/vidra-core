@@ -724,17 +724,22 @@ type QoeRollup struct {
 }
 
 type RegistrationRequest struct {
-	ID            uuid.UUID          `json:"id"`
-	Username      string             `json:"username"`
-	Email         string             `json:"email"`
-	PasswordHash  string             `json:"password_hash"`
-	Note          string             `json:"note"`
-	Status        string             `json:"status"`
-	ModeratorNote string             `json:"moderator_note"`
-	ReviewedBy    pgtype.UUID        `json:"reviewed_by"`
-	ReviewedAt    pgtype.Timestamptz `json:"reviewed_at"`
-	CreatedAt     time.Time          `json:"created_at"`
-	UpdatedAt     time.Time          `json:"updated_at"`
+	ID                 uuid.UUID          `json:"id"`
+	Username           string             `json:"username"`
+	Email              string             `json:"email"`
+	PasswordHash       string             `json:"password_hash"`
+	Note               string             `json:"note"`
+	Status             string             `json:"status"`
+	ModeratorNote      string             `json:"moderator_note"`
+	ReviewedBy         pgtype.UUID        `json:"reviewed_by"`
+	ReviewedAt         pgtype.Timestamptz `json:"reviewed_at"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	OauthProvider      *string            `json:"oauth_provider"`
+	OauthSubject       *string            `json:"oauth_subject"`
+	OauthHandle        *string            `json:"oauth_handle"`
+	OauthEmail         string             `json:"oauth_email"`
+	OauthEmailVerified bool               `json:"oauth_email_verified"`
 }
 
 type RemoteActor struct {

@@ -27,6 +27,33 @@ func newOAuthFakeRepo() *oauthFakeRepo {
 
 func identKey(provider, subject string) string { return provider + "\x00" + subject }
 
+// ApproveRegistrationRequest mirrors the SQL's `ident` CTE: approving a PROVIDER
+// request creates the account AND attaches the identity it applied with, in one
+// all-or-nothing step. Without this the fake would approve accounts nobody can
+// sign into, and the test that proves the next sign-in is a LOGIN would pass for
+// the wrong reason.
+func (f *oauthFakeRepo) ApproveRegistrationRequest(ctx context.Context, a sqlcgen.ApproveRegistrationRequestParams) (sqlcgen.ApproveRegistrationRequestRow, error) {
+	var pending *fakeRegReq
+	for _, r := range f.regReqs {
+		if r.id == a.ID && r.status == "pending" {
+			pending = r
+			break
+		}
+	}
+	row, err := f.fakeRepo.ApproveRegistrationRequest(ctx, a)
+	if err != nil || pending == nil || pending.oauthProvider == "" {
+		return row, err
+	}
+	f.identities[identKey(pending.oauthProvider, pending.oauthSubject)] = sqlcgen.OauthIdentity{
+		ID: uuid.New(), Provider: pending.oauthProvider, Subject: pending.oauthSubject,
+		UserID: row.ID, Email: pending.oauthEmail, Handle: pending.oauthHandle,
+	}
+	if pending.oauthEmailVerified {
+		_ = f.SetUserEmailVerified(ctx, row.ID)
+	}
+	return row, nil
+}
+
 func (f *oauthFakeRepo) GetOAuthIdentity(_ context.Context, a sqlcgen.GetOAuthIdentityParams) (sqlcgen.OauthIdentity, error) {
 	if id, ok := f.identities[identKey(a.Provider, a.Subject)]; ok {
 		return id, nil

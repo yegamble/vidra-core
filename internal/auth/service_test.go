@@ -27,6 +27,13 @@ type fakeRegReq struct {
 	moderatorNote string
 	reviewedAt    pgtype.Timestamptz
 	createdAt     time.Time
+	// Provider requests (0146): the identity attached at approval. Empty
+	// provider = an ordinary password request.
+	oauthProvider      string
+	oauthSubject       string
+	oauthHandle        *string
+	oauthEmail         string
+	oauthEmailVerified bool
 }
 
 // fakeRepo is an in-memory auth.Repository keyed by lowercased email/username.
@@ -102,6 +109,49 @@ func (f *fakeRepo) CreateRegistrationRequest(_ context.Context, a sqlcgen.Create
 		ID: rr.id, Username: rr.username, Email: rr.email, Note: rr.note,
 		Status: rr.status, ModeratorNote: rr.moderatorNote, CreatedAt: rr.createdAt,
 	}, nil
+}
+
+func (f *fakeRepo) CreateProviderRegistrationRequest(_ context.Context, a sqlcgen.CreateProviderRegistrationRequestParams) (sqlcgen.CreateProviderRegistrationRequestRow, error) {
+	for _, r := range f.regReqs {
+		if r.status != "pending" {
+			continue
+		}
+		if lower(r.email) == lower(a.Email) || lower(r.username) == lower(a.Username) {
+			return sqlcgen.CreateProviderRegistrationRequestRow{}, &pgconn.PgError{Code: "23505"}
+		}
+		if a.OauthProvider != nil && a.OauthSubject != nil &&
+			r.oauthProvider == *a.OauthProvider && r.oauthSubject == *a.OauthSubject {
+			return sqlcgen.CreateProviderRegistrationRequestRow{}, &pgconn.PgError{Code: "23505"}
+		}
+	}
+	rr := &fakeRegReq{
+		id: uuid.New(), username: a.Username, email: a.Email, status: "pending", createdAt: time.Now(),
+		oauthHandle: a.OauthHandle, oauthEmail: a.OauthEmail, oauthEmailVerified: a.OauthEmailVerified,
+	}
+	if a.OauthProvider != nil {
+		rr.oauthProvider = *a.OauthProvider
+	}
+	if a.OauthSubject != nil {
+		rr.oauthSubject = *a.OauthSubject
+	}
+	f.regReqs = append(f.regReqs, rr)
+	return sqlcgen.CreateProviderRegistrationRequestRow{
+		ID: rr.id, Username: rr.username, Email: rr.email, Status: rr.status, CreatedAt: rr.createdAt,
+	}, nil
+}
+
+func (f *fakeRepo) GetPendingProviderRegistrationRequest(_ context.Context, a sqlcgen.GetPendingProviderRegistrationRequestParams) (sqlcgen.GetPendingProviderRegistrationRequestRow, error) {
+	if a.OauthProvider == nil || a.OauthSubject == nil {
+		return sqlcgen.GetPendingProviderRegistrationRequestRow{}, pgx.ErrNoRows
+	}
+	for _, r := range f.regReqs {
+		if r.status == "pending" && r.oauthProvider == *a.OauthProvider && r.oauthSubject == *a.OauthSubject {
+			return sqlcgen.GetPendingProviderRegistrationRequestRow{
+				ID: r.id, Username: r.username, Email: r.email, Status: r.status, CreatedAt: r.createdAt,
+			}, nil
+		}
+	}
+	return sqlcgen.GetPendingProviderRegistrationRequestRow{}, pgx.ErrNoRows
 }
 
 func (f *fakeRepo) ListRegistrationRequests(_ context.Context, a sqlcgen.ListRegistrationRequestsParams) ([]sqlcgen.ListRegistrationRequestsRow, error) {

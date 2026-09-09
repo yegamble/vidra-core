@@ -55,6 +55,17 @@ var (
 	// table is empty and an unclaimed owner-claim token exists, so every normal
 	// signup path refuses until POST /setup/claim-owner creates the admin.
 	ErrOwnerClaimRequired = errors.New("auth: owner claim required")
+	// ErrRegistrationClosed means the instance is not accepting new accounts
+	// (registration_enabled off). The password path has answered this since W7
+	// from the HTTP layer; the provider paths reach it through the service
+	// because only they know whether an assertion is a LOGIN for an existing
+	// identity — which stays allowed — or a signup.
+	ErrRegistrationClosed = errors.New("auth: registration is closed")
+	// ErrRegistrationPending means the signup was filed for review instead of
+	// creating an account (registration_require_approval). It is returned for
+	// the attempt that files the request AND for every later attempt while the
+	// request is unresolved, so the applicant is told the same thing each time.
+	ErrRegistrationPending = errors.New("auth: registration awaiting approval")
 	// ErrSessionRevoked means the access token's session no longer authorizes
 	// anything: it was revoked or has expired, the account was deactivated or
 	// hard-deleted, or the token names no session at all. Deliberately one error
@@ -173,6 +184,8 @@ type Repository interface {
 	ListOAuthIdentitiesByUser(ctx context.Context, userID uuid.UUID) ([]sqlcgen.OauthIdentity, error)
 
 	CreateRegistrationRequest(ctx context.Context, arg sqlcgen.CreateRegistrationRequestParams) (sqlcgen.CreateRegistrationRequestRow, error)
+	CreateProviderRegistrationRequest(ctx context.Context, arg sqlcgen.CreateProviderRegistrationRequestParams) (sqlcgen.CreateProviderRegistrationRequestRow, error)
+	GetPendingProviderRegistrationRequest(ctx context.Context, arg sqlcgen.GetPendingProviderRegistrationRequestParams) (sqlcgen.GetPendingProviderRegistrationRequestRow, error)
 	ListRegistrationRequests(ctx context.Context, arg sqlcgen.ListRegistrationRequestsParams) ([]sqlcgen.ListRegistrationRequestsRow, error)
 	CountRegistrationRequests(ctx context.Context, status *string) (int64, error)
 	ApproveRegistrationRequest(ctx context.Context, arg sqlcgen.ApproveRegistrationRequestParams) (sqlcgen.ApproveRegistrationRequestRow, error)
@@ -229,6 +242,11 @@ type Service struct {
 	// was off are never retroactively locked (their pending flag is false —
 	// the grandfather clause).
 	verificationGateFn func() bool
+	// registrationPolicyFn resolves the live registration policy (enabled,
+	// requireApproval) for the paths that create accounts INSIDE the service —
+	// the OIDC and ATProto signups. nil leaves both paths unpoliced, which is
+	// what every caller that does not wire it (tests, the importer) expects.
+	registrationPolicyFn func() (bool, bool)
 
 	// fixedOwnerClaimToken pins owner-claim mints to a deterministic value
 	// (WithFixedOwnerClaimToken — dev/test-only). "" = random mint.
@@ -336,12 +354,43 @@ func WithEmailVerificationGateFunc(f func() bool) Option {
 	}
 }
 
+// WithRegistrationPolicyFunc wires the live registration policy —
+// (registration_enabled, registration_require_approval) — for the provider
+// signup paths. The password path reads the same two settings in the HTTP
+// layer; the provider paths cannot, because the decision depends on whether
+// the verified assertion resolves to an existing identity, which only the
+// service knows. nil is ignored (unpoliced, the pre-slice behaviour).
+func WithRegistrationPolicyFunc(f func() (bool, bool)) Option {
+	return func(s *Service) {
+		if f != nil {
+			s.registrationPolicyFn = f
+		}
+	}
+}
+
 // newUserHistoryEnabled resolves the history-preference seed for a new account.
 func (s *Service) newUserHistoryEnabled() bool {
 	if s.newUserHistoryFn != nil {
 		return s.newUserHistoryFn()
 	}
 	return true
+}
+
+// refuseSignupByPolicy is the provider-path twin of the HTTP layer's
+// registration gate: it errors ErrRegistrationClosed when the instance is not
+// accepting accounts, and reports requireApproval so the caller can file a
+// request instead of creating one. Callers reach it only on the CREATE branch,
+// after an existing identity has been ruled out — a closed instance must keep
+// signing in the accounts it already has.
+func (s *Service) refuseSignupByPolicy() (requireApproval bool, err error) {
+	if s.registrationPolicyFn == nil {
+		return false, nil
+	}
+	enabled, approval := s.registrationPolicyFn()
+	if !enabled {
+		return false, ErrRegistrationClosed
+	}
+	return approval, nil
 }
 
 // EmailVerificationGateActive reports whether the registration
