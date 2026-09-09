@@ -454,9 +454,26 @@ func TestMFAChallengeRejectsTamperedAndExpiredTokens(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("garbage token status = %d, want 401", rec.Code)
 	}
-	// A signature-tampered variant of a real token.
+	// A signature-tampered variant of a real token. Flip a character at the
+	// START of the signature, not at its tail: golang-jwt v5 decodes without
+	// WithStrictDecoding, so the FINAL base64url character of a 43-char (32
+	// byte) signature carries only four significant bits. Replacing the last
+	// two characters with "xx" therefore decodes to the very same signature
+	// whenever the real one ended "xw" — the token stays valid, the challenge
+	// answers 200, and this test fails. Measured at 293 in 300000 (~0.1%, one
+	// run in a thousand), and it flaked a required CI lane on 2026-09-09. The
+	// first signature character carries a full six bits, so any change to it
+	// is a real change.
 	real := mfaLogin(t, srv)
-	tampered := real[:len(real)-2] + "xx"
+	sigAt := strings.LastIndex(real, ".") + 1
+	flipped := "A"
+	if strings.HasPrefix(real[sigAt:], "A") {
+		flipped = "B"
+	}
+	tampered := real[:sigAt] + flipped + real[sigAt+1:]
+	if tampered == real {
+		t.Fatal("the tamper did not change the token")
+	}
 	rec = postTo(srv, "/api/v1/auth/mfa/challenge", `{"mfa_token":"`+tampered+`","code":"`+code+`"}`)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("tampered token status = %d, want 401", rec.Code)
