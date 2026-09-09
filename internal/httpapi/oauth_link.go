@@ -124,10 +124,14 @@ func mfaChallengeRedirect(c echo.Context, returnTo string) error {
 }
 
 // oauthLinkRedirect hands the browser back with the outcome of a link attempt:
-// `?link=<provider>` on success, `?link_error=<code>` otherwise. A link is not a
-// sign-in, so it never borrows the login's `oauth_error` codes — the page that
-// receives this is the settings page, not the login page (the same reasoning
-// step-up applies to its own `step_up_error`).
+// `?link=<provider>` on success, and the failure under the key its ORIGIN page
+// renders. A link started from settings answers `?link_error=<code>` — a link
+// is not a sign-in and the settings page is not the login page, the same
+// reasoning step-up applies to its own `step_up_error`. But a LOGIN-purpose
+// callback that turned into a link because a session was already here lands
+// back on the login page, which renders `oauth_error`; sending it a key that
+// page does not read would refuse the account switch silently, which is the
+// one thing worse than making it.
 func oauthLinkRedirect(c echo.Context, returnTo, key, value string) error {
 	u, err := url.Parse(returnTo)
 	if err != nil {
@@ -287,7 +291,7 @@ func (s *Server) handleATProtoLinkStart(c echo.Context) error {
 // boundUserID comes from the SIGNED state cookie on a link-purpose attempt, and
 // from the live refresh session on a login-purpose attempt that arrived inside
 // one. Both are the browser's own account; neither is a request parameter.
-func (s *Server) completeOAuthLink(c echo.Context, returnTo string, boundUserID uuid.UUID, as auth.OAuthAssertion, handle *string) error {
+func (s *Server) completeOAuthLink(c echo.Context, returnTo string, boundUserID uuid.UUID, as auth.OAuthAssertion, handle *string, errorKey string) error {
 	outcome, err := s.oauthsvc.LinkIdentity(c.Request().Context(), boundUserID, as, handle)
 	if err != nil {
 		code := "link_failed"
@@ -302,7 +306,7 @@ func (s *Server) completeOAuthLink(c echo.Context, returnTo string, boundUserID 
 			code = "account_not_found"
 		}
 		s.audit(c, observability.ActionOAuthLink, observability.ResultFailure, boundUserID.String(), code)
-		return oauthLinkRedirect(c, returnTo, "link_error", code)
+		return oauthLinkRedirect(c, returnTo, errorKey, code)
 	}
 	if outcome == auth.OAuthLinked {
 		s.audit(c, observability.ActionOAuthLink, observability.ResultSuccess, boundUserID.String(), "oauth:"+as.Provider)

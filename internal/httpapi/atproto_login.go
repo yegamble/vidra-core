@@ -232,14 +232,15 @@ func (s *Server) handleATProtoLoginCallback(c echo.Context) error {
 			return oauthLinkRedirect(c, returnTo, "link_error", "link_failed")
 		}
 		outcome, lerr := s.atprotologinsvc.LinkIdentity(c.Request().Context(), uid, p.ATProtoState, did)
-		return s.finishATProtoLink(c, returnTo, uid, outcome, lerr)
+		return s.finishATProtoLink(c, returnTo, uid, outcome, lerr, "link_error")
 	}
 
 	// A login-purpose callback inside a live session links rather than switches
 	// — the OIDC twin's ruling, applied here so the bypass cannot simply move.
+	// The failure key is the login page's, because that is where this lands.
 	if uid, ok := s.linkedAccountForCallback(c); ok {
 		outcome, lerr := s.atprotologinsvc.LinkIdentity(c.Request().Context(), uid, p.ATProtoState, did)
-		return s.finishATProtoLink(c, returnTo, uid, outcome, lerr)
+		return s.finishATProtoLink(c, returnTo, uid, outcome, lerr, "oauth_error")
 	}
 
 	sess, err := s.atprotologinsvc.ResolveVerified(c.Request().Context(), p.ATProtoState, did, c.Request().UserAgent())
@@ -284,7 +285,7 @@ func (s *Server) handleATProtoLoginCallback(c echo.Context) error {
 
 // finishATProtoLink renders the outcome of an ATProto link attempt with the
 // same codes the OIDC twin uses, so a client renders one vocabulary.
-func (s *Server) finishATProtoLink(c echo.Context, returnTo string, userID uuid.UUID, outcome auth.OAuthOutcome, err error) error {
+func (s *Server) finishATProtoLink(c echo.Context, returnTo string, userID uuid.UUID, outcome auth.OAuthOutcome, err error, errorKey string) error {
 	if err != nil {
 		code := "link_failed"
 		switch {
@@ -298,7 +299,7 @@ func (s *Server) finishATProtoLink(c echo.Context, returnTo string, userID uuid.
 			code = "atproto_disabled"
 		}
 		s.audit(c, observability.ActionOAuthLink, observability.ResultFailure, userID.String(), code)
-		return oauthLinkRedirect(c, returnTo, "link_error", code)
+		return oauthLinkRedirect(c, returnTo, errorKey, code)
 	}
 	if outcome == auth.OAuthLinked {
 		s.audit(c, observability.ActionOAuthLink, observability.ResultSuccess, userID.String(), "oauth:"+auth.ATProtoProviderName)

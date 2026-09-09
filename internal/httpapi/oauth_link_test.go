@@ -248,8 +248,11 @@ func TestOAuthLoginCallbackInsideASessionLinksRatherThanSwitches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loc.Query().Get("link_error") != "identity_belongs_to_another_account" {
-		t.Fatalf("Location = %q, want ?link_error=identity_belongs_to_another_account", cb.Header().Get("Location"))
+	// The failure key is the LOGIN page's, because that is where this attempt
+	// lands: a refusal the landing page does not render is a silent one, which
+	// is the only thing worse than the switch it prevents.
+	if loc.Query().Get("oauth_error") != "identity_belongs_to_another_account" {
+		t.Fatalf("Location = %q, want ?oauth_error=identity_belongs_to_another_account", cb.Header().Get("Location"))
 	}
 	if sessionCookieFrom(cb) != nil {
 		t.Fatal("the account switch minted a session")

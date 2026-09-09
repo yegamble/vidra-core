@@ -266,7 +266,7 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 			s.audit(c, observability.ActionOAuthLink, observability.ResultFailure, "", "unbound_state")
 			return oauthLinkRedirect(c, returnTo, "link_error", "link_failed")
 		}
-		return s.completeOAuthLink(c, returnTo, uid, as, nil)
+		return s.completeOAuthLink(c, returnTo, uid, as, nil, "link_error")
 	}
 
 	// A LOGIN-purpose callback arriving inside a live session is not a login
@@ -276,7 +276,7 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 	// here: attach an unlinked subject, refuse one that belongs elsewhere, and
 	// in neither case mint a session or change which account is signed in.
 	if uid, ok := s.linkedAccountForCallback(c); ok {
-		return s.completeOAuthLink(c, returnTo, uid, as, nil)
+		return s.completeOAuthLink(c, returnTo, uid, as, nil, "oauth_error")
 	}
 
 	sess, err := s.oauthsvc.ResolveAssertion(c.Request().Context(), as, c.Request().UserAgent())

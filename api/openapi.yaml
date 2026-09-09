@@ -1865,8 +1865,10 @@ paths:
         when a session is ALREADY signed in in this browser, the callback is
         treated as a request to connect that identity to THAT account
         (`?link=<provider>`), or refused with
-        `?link_error=identity_belongs_to_another_account` — never an account
-        switch.
+        `?oauth_error=identity_belongs_to_another_account` — never an account
+        switch. (A callback started from `/link/start` uses `?link_error=`
+        instead: the failure key is the one the ORIGIN page renders, and a
+        refusal the landing page cannot show is a silent one.)
 
 
         User-actionable failures redirect with an `oauth_error` query code
