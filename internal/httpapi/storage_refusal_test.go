@@ -172,3 +172,108 @@ func TestStorageComponentStatesThatAreNotFaults(t *testing.T) {
 		})
 	}
 }
+
+// THE RULING, on the surface it has to reach. A34 found that a migration TARGET
+// this process could not write to was a FATAL BOOT REFUSAL — the api and the
+// workers alike exited before the listener opened, so a rotated target
+// credential took the whole instance offline over a store it needs only in
+// order to finish a move.
+//
+// It degrades instead, and the three things asserted here are the three that
+// make the degrade honest rather than a softening:
+//
+//   - readiness stays 200 (this file's convention: only PostgreSQL takes an
+//     instance out of rotation);
+//   - the component is `degraded` and NOT `down`, because the store this
+//     instance SERVES from is fine — reporting it down would replace one lie
+//     with another;
+//   - and it is not silent, because a campaign that has quietly stopped making
+//     progress is the other finding in the same list.
+func TestAWriteDeniedMigrationTargetDegradesRatherThanDowningStorage(t *testing.T) {
+	srv := New(testConfig(), nil, nil,
+		// The store this instance serves from is healthy.
+		WithStorageWriteHealth(fakeStorageWrite{st: storage.WriteStatus{Probed: true, OK: true}}),
+		// The migration TARGET is not.
+		WithStorageMigrationTargetWriteHealth(fakeStorageWrite{st: storage.WriteStatus{
+			Probed: true,
+			Class:  storage.ClassWriteDenied,
+		}}))
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — a move that cannot proceed must not take the instance out of rotation", rec.Code)
+	}
+	var body readinessResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	comp := body.Components["storage"]
+	if comp.Status != "degraded" {
+		t.Fatalf("storage component = %q, want degraded — `down` would say this instance cannot store a byte, which is false", comp.Status)
+	}
+	if !strings.Contains(comp.Error, string(storage.ClassWriteDenied)) {
+		t.Errorf("the degraded component does not name the refusal class: %q", comp.Error)
+	}
+	// The sentence must get the two facts the right way round, because an
+	// operator reading it at 3am decides whether to restart a healthy api.
+	if !strings.Contains(comp.Error, "can store and serve media normally") {
+		t.Errorf("the component does not say the INSTANCE is fine: %q", comp.Error)
+	}
+	if !strings.Contains(comp.Error, "migration is paused") {
+		t.Errorf("the component does not say what actually stopped: %q", comp.Error)
+	}
+}
+
+// And the authoritative store keeps its say. A store this instance serves from
+// that will not take a write is `down` however healthy the migration target is
+// — the target's verdict is reported only when there is no bigger fact.
+func TestTheAuthoritativeStoreOutranksTheMigrationTarget(t *testing.T) {
+	srv := New(testConfig(), nil, nil,
+		WithStorageWriteHealth(fakeStorageWrite{st: storage.WriteStatus{
+			Probed: true, Class: storage.ClassWriteDenied,
+		}}),
+		WithStorageMigrationTargetWriteHealth(fakeStorageWrite{st: storage.WriteStatus{
+			Probed: true, OK: true,
+		}}))
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	var body readinessResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	if got := body.Components["storage"].Status; got != "down" {
+		t.Errorf("storage component = %q, want down — the store this instance serves from refusing a write is the bigger fact", got)
+	}
+}
+
+// With no migration configured at all — the ordinary instance — nothing about
+// the component changes. A wired-but-never-probed monitor is the same answer.
+func TestNoMigrationTargetLeavesTheStorageComponentAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		target storageWriteHealth
+	}{
+		{"no target configured", nil},
+		{"target wired but never probed", fakeStorageWrite{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := []Option{WithStorageWriteHealth(fakeStorageWrite{st: storage.WriteStatus{Probed: true, OK: true}})}
+			if tc.target != nil {
+				opts = append(opts, WithStorageMigrationTargetWriteHealth(tc.target))
+			}
+			srv := New(testConfig(), nil, nil, opts...)
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+			var body readinessResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+			}
+			if got := body.Components["storage"].Status; got != "ok" {
+				t.Errorf("storage component = %q, want ok", got)
+			}
+		})
+	}
+}
