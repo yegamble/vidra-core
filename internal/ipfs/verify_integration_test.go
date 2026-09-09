@@ -108,3 +108,70 @@ func TestIntegrationGatewayProbeReportsAnUnreachableGateway(t *testing.T) {
 		t.Fatal("the probe reported a gateway nothing is listening on as healthy")
 	}
 }
+
+// UNPINNING IS NOT FORGETTING, against a real node and a real gateway.
+//
+// A31's rehearsal measured this by hand: after a moderator block unpinned a
+// video's CIDs, the instance's own gateway kept serving all of them, and only
+// `ipfs repo gc` turned them into 404 while a still-pinned control stayed 200.
+// This is that measurement as a test, and it is the only thing that proves the
+// repo/gc wire format — the half a hand-written client gets wrong.
+//
+// It needs a node started WITHOUT --enable-gc (the local proof lane's node is),
+// or the daemon's own collector may win the race and the "still retrievable"
+// assertion becomes flaky. That assertion is therefore a t.Log rather than a
+// failure: what this test is here to prove is that RepoGC runs, parses, and
+// removes — not that some other node's GC schedule stayed out of the way.
+func TestIntegrationRepoGCRemovesUnpinnedBlocksOnly(t *testing.T) {
+	c, gateway := testClient(t)
+	if gateway == "" {
+		t.Skip("IPFS_TEST_GATEWAY_URL not set; skipping the repo-gc proof")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	probe := NewGatewayProbe(gateway, nil)
+
+	marker := time.Now().UTC().Format(time.RFC3339Nano)
+	withdrawn, err := c.Add(ctx, "withdrawn.txt", strings.NewReader("vidra takedown "+marker))
+	if err != nil {
+		t.Fatalf("Add (withdrawn): %v", err)
+	}
+	kept, err := c.Add(ctx, "kept.txt", strings.NewReader("vidra kept "+marker))
+	if err != nil {
+		t.Fatalf("Add (kept): %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = c.Unpin(ctx, kept.CID)
+	})
+
+	if err := probe.Fetch(ctx, withdrawn.CID); err != nil {
+		t.Fatalf("fixture: the gateway does not serve a freshly pinned CID: %v", err)
+	}
+
+	// The takedown: the pin goes, and the bytes do not.
+	if err := c.Unpin(ctx, withdrawn.CID); err != nil {
+		t.Fatalf("Unpin: %v", err)
+	}
+	if err := probe.Fetch(ctx, withdrawn.CID); err != nil {
+		t.Logf("the gateway stopped serving the unpinned CID before any GC ran (%v); a node started with --enable-gc will do that, and it does not affect what follows", err)
+	} else {
+		t.Log("the unpinned CID is STILL served by this node's own gateway — the fact IPFS_GC_AFTER_UNPIN exists for")
+	}
+
+	removed, err := c.RepoGC(ctx)
+	if err != nil {
+		t.Fatalf("RepoGC: %v", err)
+	}
+	t.Logf("repo gc removed %d blocks", removed)
+
+	if err := probe.Fetch(ctx, withdrawn.CID); err == nil {
+		t.Error("the gateway still serves the withdrawn CID after a collection; the takedown did not complete")
+	}
+	// The control: GC must never touch a pinned CID. Without this the test would
+	// pass just as well against a client that wiped the datastore.
+	if err := probe.Fetch(ctx, kept.CID); err != nil {
+		t.Errorf("the collection took a CID that is still pinned: %v", err)
+	}
+}
