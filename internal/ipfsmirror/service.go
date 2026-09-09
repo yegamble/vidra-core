@@ -501,15 +501,47 @@ func (s *Service) SyncVideoCounted(ctx context.Context, videoID uuid.UUID) (Sync
 	}
 	// Transition any EXISTING ledger row the single-file refs don't enumerate —
 	// notably the HLS tree (armed by OnTranscodeComplete) and any orphan — so a
-	// privacy flip moves the WHOLE video across swarms, not just its single files. A
-	// terminal 'unpinned' row is left alone (nothing to move; the transcode hook
-	// re-arms HLS on the new swarm when it next runs, matching the P19 HLS lifecycle).
+	// privacy flip moves the WHOLE video across swarms, not just its single files.
+	//
+	// A terminal 'unpinned' row is left alone, with ONE exception. The rule exists so
+	// a superseded generation's key — put there by releaseSupersededTranscodePins —
+	// is never resurrected, and that is still what it does. But it also swallowed the
+	// HLS tree: the tree's key is stable, it is absent from videoMirrorRefs by design
+	// (it is a directory intent, not a video_files row), and the only other path that
+	// arms it is a transcode completion. So once an unpin had DRAINED to 'unpinned' —
+	// a block held for more than a few seconds, a video left private overnight — no
+	// later unblock, re-publish or private→public flip ever brought it back, and the
+	// one class the watch page's IPFS playback uses stayed off the mirror for the life
+	// of the instance while its four single-file siblings returned. Measured in the
+	// A31 rehearsal: an unblock re-pinned 4 of 5 rows and the video was unplayable
+	// from the gateway afterwards.
+	//
+	// The exception is the video's CURRENT HLS directory-intent key only, force
+	// re-claimed exactly the way OnTranscodeComplete arms it (RepinIPFSObject resolves
+	// the promoted generation at pin time), and only when the ledger already carries
+	// that row — so this can never invent an HLS tree for a video that has none.
+	hlsKey := media.HLSKeyPrefix(videoID) + "/"
 	rows, err := s.repo.ListIPFSPinsByVideo(ctx, pgUUID(videoID))
 	if err != nil {
 		return res, err
 	}
 	for _, r := range rows {
-		if seen[r.ObjectKey] || r.State == "unpinned" {
+		if seen[r.ObjectKey] {
+			continue
+		}
+		if r.State == "unpinned" {
+			if r.ObjectKey != hlsKey || MediaClass(r.MediaClass) != ClassHLS {
+				continue
+			}
+			if rerr := s.repo.RepinIPFSObject(ctx, sqlcgen.RepinIPFSObjectParams{
+				ObjectKey:     hlsKey,
+				MediaClass:    string(ClassHLS),
+				VideoID:       pgUUID(videoID),
+				TargetNetwork: net,
+			}); rerr != nil {
+				return res, rerr
+			}
+			res.Rearmed++
 			continue
 		}
 		if perr := s.routePin(ctx, r.ObjectKey, MediaClass(r.MediaClass), videoID, uuid.Nil, net); perr != nil {

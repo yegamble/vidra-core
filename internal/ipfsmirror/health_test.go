@@ -8,6 +8,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vidra/vidra-core/internal/ipfs"
+	"github.com/vidra/vidra-core/internal/media"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 // fakeGateway stands in for a real gateway's answer about one CID. It records
@@ -196,5 +198,102 @@ func TestRouteRefusesABlockedVideoOnBothSwarms(t *testing.T) {
 		if got != NetworkNone {
 			t.Errorf("Route(privacy=%s, blocked) = %q, want NetworkNone", privacy, got)
 		}
+	}
+}
+
+// The HLS TREE must come back too, and A31's rehearsal measured that it does not.
+//
+// A block unpins every row; the worker drains each to the terminal 'unpinned'.
+// The single-file classes are re-armed on the unblock because videoMirrorRefs
+// enumerates them from video_files and routePin re-claims whatever state the row
+// is in. The HLS tree is not in that enumeration by design — it is a directory
+// intent armed by OnTranscodeComplete — so it fell to the "leave a terminal row
+// alone" rule and stayed unpinned for the life of the instance. The class the
+// watch page's IPFS playback actually uses was the one class an unblock did not
+// restore: 4 of 5 rows re-pinned, the video still unplayable from the gateway.
+func TestSyncVideoRearmsTheHLSTreeAfterAnUnblock(t *testing.T) {
+	repo, client := newFakeRepo(), ipfs.NewFakeIPFSClient()
+	videoID := uuid.New()
+	hlsKey := media.HLSKeyPrefix(videoID) + "/"
+	lk := &fakeLookups{
+		videoPrivacy: "public", videoState: "published", videoOK: true,
+		userActive: true, userOK: true,
+		videoFiles: []VideoFileRef{{Kind: "original", StorageKey: "web-videos/v.mp4"}},
+	}
+	svc := New(repo, lk, newBlobs(t), client, testConfig())
+
+	// A finished transcode is what arms the tree; there is no other path.
+	if err := svc.OnTranscodeComplete(context.Background(), videoID); err != nil {
+		t.Fatalf("OnTranscodeComplete: %v", err)
+	}
+	if got := repo.state(hlsKey); got != "pending" {
+		t.Fatalf("fixture: the HLS row is %q, want pending", got)
+	}
+
+	lk.videoBlocked = true
+	if _, err := svc.SyncVideoCounted(context.Background(), videoID); err != nil {
+		t.Fatalf("SyncVideoCounted (blocked): %v", err)
+	}
+	// The worker finishes the unpin — the state the live lab was in when the
+	// moderator lifted the block a minute later.
+	if err := repo.MarkIPFSPinUnpinned(context.Background(), hlsKey); err != nil {
+		t.Fatalf("MarkIPFSPinUnpinned: %v", err)
+	}
+	if err := repo.MarkIPFSPinUnpinned(context.Background(), "web-videos/v.mp4"); err != nil {
+		t.Fatalf("MarkIPFSPinUnpinned (original): %v", err)
+	}
+	if got := repo.state(hlsKey); got != "unpinned" {
+		t.Fatalf("fixture: the HLS row is %q, want the terminal unpinned", got)
+	}
+
+	lk.videoBlocked = false
+	res, err := svc.SyncVideoCounted(context.Background(), videoID)
+	if err != nil {
+		t.Fatalf("SyncVideoCounted (unblocked): %v", err)
+	}
+	if got := repo.state(hlsKey); got != "pending" {
+		t.Errorf("after the unblock the HLS tree is %q, want pending — without it the video is unplayable from the gateway", got)
+	}
+	if got := repo.network(hlsKey); got != networkPublic {
+		t.Errorf("the HLS tree was re-armed on the %q swarm, want public", got)
+	}
+	if res.Rearmed != 2 {
+		t.Errorf("rearmed = %d, want 2 (the original and the HLS tree) for the audit row", res.Rearmed)
+	}
+}
+
+// A superseded generation's row must NOT be resurrected by the same rule. Only
+// the video's CURRENT transcode-output keys come back; an orphan key left by an
+// earlier run stays terminal, which is what releaseSupersededTranscodePins put
+// it there for.
+func TestSyncVideoLeavesASupersededTranscodeRowTerminal(t *testing.T) {
+	repo, client := newFakeRepo(), ipfs.NewFakeIPFSClient()
+	videoID := uuid.New()
+	lk := &fakeLookups{
+		videoPrivacy: "public", videoState: "published", videoOK: true, videoBlocked: true,
+		userActive: true, userOK: true,
+		videoFiles: []VideoFileRef{{Kind: "original", StorageKey: "web-videos/v.mp4"}},
+	}
+	svc := New(repo, lk, newBlobs(t), client, testConfig())
+
+	stale := media.HLSPrefixForGeneration(videoID, 1) + "/vp9.webm"
+	if _, err := repo.UpsertIPFSPinIntent(context.Background(), sqlcgen.UpsertIPFSPinIntentParams{
+		ObjectKey: stale, MediaClass: string(ClassWebM), VideoID: pgUUID(videoID),
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := repo.EnqueueIPFSUnpin(context.Background(), stale); err != nil {
+		t.Fatalf("seed unpin: %v", err)
+	}
+	if err := repo.MarkIPFSPinUnpinned(context.Background(), stale); err != nil {
+		t.Fatalf("seed terminal: %v", err)
+	}
+
+	lk.videoBlocked = false
+	if _, err := svc.SyncVideoCounted(context.Background(), videoID); err != nil {
+		t.Fatalf("SyncVideoCounted: %v", err)
+	}
+	if got := repo.state(stale); got != "unpinned" {
+		t.Errorf("the superseded generation's row is %q, want it left at the terminal unpinned", got)
 	}
 }
