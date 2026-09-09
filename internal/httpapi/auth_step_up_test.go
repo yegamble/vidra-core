@@ -400,3 +400,65 @@ func TestStepUpEmailChangeFromPlaceholder(t *testing.T) {
 		t.Errorf("%d change notices were sent; the old address was unroutable", env.mailer.changeNotices)
 	}
 }
+
+// refreshOnce redeems the refresh cookie the way a page load does and returns
+// the bearer plus the ROTATED cookie, which is the part accessToken drops.
+func (e *atprotoLoginEnv) refreshOnce(t *testing.T, session *http.Cookie) (string, *http.Cookie) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader(`{}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.AddCookie(&http.Cookie{Name: session.Name, Value: session.Value})
+	e.srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refresh = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var ar authResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &ar); err != nil {
+		t.Fatal(err)
+	}
+	next := atprotoSessionCookie(rec)
+	if next == nil {
+		t.Fatal("refresh did not set a rotated session cookie")
+	}
+	return ar.Token, next
+}
+
+// TestStepUpSurvivesTheLandingPageRefresh is the browser's version of
+// TestStepUpSetPasswordEndToEnd, and the difference is the whole point.
+//
+// A step-up can only complete as a TOP-LEVEL redirect back from the provider.
+// That navigation discards the SPA's in-memory access token, so the landing
+// page redeems a new one from the refresh cookie before it can submit anything
+// — and a refresh ROTATES: it revokes the session row and creates a new one.
+// The assertion is bound to (user, session), so until the rotation carried it
+// forward the binding was destroyed by the very page load that received the
+// token, and the form answered 403 with the row still sitting unspent in
+// step_up_tokens. Measured in a real browser against a real PDS.
+//
+// The end-to-end test above cannot see this, because it holds one bearer from
+// sign-in and never refreshes in the middle — which no browser can do.
+func TestStepUpSurvivesTheLandingPageRefresh(t *testing.T) {
+	env := newATProtoLoginEnv(t, true)
+	_, cb := env.start(t, `{"handle":"alice.example","return_to":"/"}`)
+	login := env.callback(t, env.callbackQuery(), cb)
+	session := atprotoSessionCookie(login)
+	if session == nil {
+		t.Fatal("login did not set a session cookie")
+	}
+	bearer, session := env.refreshOnce(t, session)
+
+	token := env.stepUpToken(t, bearer)
+
+	// The landing page load, exactly once, exactly as the browser does it.
+	landedBearer, _ := env.refreshOnce(t, session)
+
+	rec := env.postJSON(t, "/api/v1/auth/me/password/set", landedBearer,
+		`{"new_password":"a-brand-new-password","step_up_token":"`+token+`"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("set password after the landing page's refresh = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if me := env.meWithBearer(t, landedBearer); !me.HasPassword {
+		t.Error("has_password still false after the password was set")
+	}
+}
