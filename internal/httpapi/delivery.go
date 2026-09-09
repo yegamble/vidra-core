@@ -62,7 +62,7 @@ func (s *Server) newDeliveryResolver() delivery.Resolver {
 				return "", false, nil
 			}
 			return s.ipfsmirrorsvc.PublicAssetURL(ctx, objectKey, ipfsmirror.MediaClass(class))
-		}, s.ipfsMirrorEnabled),
+		}, s.ipfsDeliveryEnabled),
 	}
 	// No CDN configured (no DELIVERY_CDN_BASE_URL — the default) means the CDN
 	// source simply does not exist. The purge hook rides along with the edge

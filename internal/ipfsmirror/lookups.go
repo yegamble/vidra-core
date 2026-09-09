@@ -25,6 +25,7 @@ type sqlQueries interface {
 	GetUserByID(ctx context.Context, id uuid.UUID) (sqlcgen.User, error)
 	GetChannelByID(ctx context.Context, id uuid.UUID) (sqlcgen.Channel, error)
 	GetVideoByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetVideoByIDRow, error)
+	IsVideoBlocked(ctx context.Context, videoID uuid.UUID) (bool, error)
 	GetStreamingPlaylist(ctx context.Context, videoID uuid.UUID) (sqlcgen.StreamingPlaylist, error)
 	ListVideoIDsByOwner(ctx context.Context, ownerID uuid.UUID) ([]uuid.UUID, error)
 	ListVideoFiles(ctx context.Context, videoID uuid.UUID) ([]sqlcgen.VideoFile, error)
@@ -61,6 +62,22 @@ func (l *SQLLookups) VideoVisibility(ctx context.Context, videoID uuid.UUID) (pr
 		return "", "", uuid.Nil, false, err
 	}
 	return v.Privacy, v.State, v.OwnerID, true, nil
+}
+
+// VideoBlocked reports whether a moderator block currently stands on the video.
+//
+// A missing video is NOT blocked rather than an error: the caller has already
+// established the video exists (VideoVisibility ran first), and a race that
+// deletes it in between is the delete path's business, not the fence's.
+func (l *SQLLookups) VideoBlocked(ctx context.Context, videoID uuid.UUID) (bool, error) {
+	blocked, err := l.q.IsVideoBlocked(ctx, videoID)
+	if err != nil {
+		if missing(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return blocked, nil
 }
 
 // OwnerVideoIDs lists every video (any privacy/state) owned by the user, resolved

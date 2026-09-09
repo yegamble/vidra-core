@@ -59,6 +59,26 @@ const (
 	// a CORRECTNESS problem rather than a latency one — nothing is slow because
 	// of it; something is wrong.
 	QueueCDNPurge = "cdn_purge_jobs"
+	// QueueIPFSPins is the peer-mirror pin ledger (migration 0071). A31 measured
+	// the gap it closes: the mirror is a real durable queue — claim, lease,
+	// attempts, next_attempt_at, dead letters — and it appeared on NO operational
+	// surface at all, so a stalled drain or a pile of dead-lettered pins was
+	// visible only by reading the table.
+	//
+	// It is a DEPTH row and nothing more, exactly as storage_migrations and
+	// cdn_purge_jobs are. The run-level projection (job_runs, with request/
+	// correlation/trace ids and per-run events) is maintained by per-queue AFTER
+	// triggers added in migration 0083, and media_ipfs_pins has none — so a mirror
+	// retry still cannot be followed through the correlation chain A17 and A35
+	// built. Closing THAT needs a migration; this does not, and it is the
+	// difference between an operator seeing the backlog and not.
+	//
+	// It contributes no RECENT FAILURES either, and that is a type fact rather than
+	// an omission: Failure.ID is a uuid.UUID and this queue is keyed by object_key,
+	// a storage path. Widening the shared feed to carry media paths is precisely
+	// what RedactDetail exists to prevent, so the dead-letter COUNT rides on this
+	// row and on the `ipfs` component's detail instead.
+	QueueIPFSPins = "media_ipfs_pins"
 )
 
 // QueueStatus is one queue's normalised depth snapshot. For upload_sessions —
@@ -99,6 +119,7 @@ type Querier interface {
 	UploadSessionStats(ctx context.Context) (sqlcgen.UploadSessionStatsRow, error)
 	StorageMigrationStats(ctx context.Context) (sqlcgen.StorageMigrationStatsRow, error)
 	CDNPurgeJobStats(ctx context.Context) (sqlcgen.CDNPurgeJobStatsRow, error)
+	IPFSPinJobStats(ctx context.Context) (sqlcgen.IPFSPinJobStatsRow, error)
 	TranscodeRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.TranscodeRecentFailuresRow, error)
 	FederationRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.FederationRecentFailuresRow, error)
 	ImportRecentFailures(ctx context.Context, limit int32) ([]sqlcgen.ImportRecentFailuresRow, error)
@@ -159,6 +180,10 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return ov, err
 	}
+	ip, err := s.q.IPFSPinJobStats(ctx)
+	if err != nil {
+		return ov, err
+	}
 	ov.Queues = []QueueStatus{
 		{QueueTranscode, tj.Pending, tj.Running, tj.Done, tj.Failed, tj.OldestPendingAgeSeconds},
 		{QueueFederation, fd.Pending, fd.Running, fd.Done, fd.Failed, fd.OldestPendingAgeSeconds},
@@ -168,6 +193,7 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 		{QueueUploadSessions, us.Pending, us.Running, us.Done, us.Failed, us.OldestPendingAgeSeconds},
 		{QueueStorageMigration, sm.Pending, sm.Running, sm.Done, sm.Failed, sm.OldestPendingAgeSeconds},
 		{QueueCDNPurge, cp.Pending, cp.Running, cp.Done, cp.Failed, cp.OldestPendingAgeSeconds},
+		{QueueIPFSPins, ip.Pending, ip.Running, ip.Done, ip.Failed, ip.OldestPendingAgeSeconds},
 	}
 
 	failures := make([]Failure, 0, maxRecentFailures)

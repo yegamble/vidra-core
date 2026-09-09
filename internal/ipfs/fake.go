@@ -204,6 +204,47 @@ func (f *FakeIPFSClient) IsPinned(ctx context.Context, cid string) (bool, error)
 	return f.pins[cid], nil
 }
 
+// ListPins enumerates the fake node's recursive pins, honouring Down and the max
+// cap exactly as the real client does — so a test can drive both reconcile
+// directions (a hand-removed pin, a hand-added stray) without a node.
+func (f *FakeIPFSClient) ListPins(ctx context.Context, max int) (map[string]struct{}, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ensure()
+	if f.Down {
+		return nil, errNodeDown
+	}
+	if max > 0 && len(f.pins) > max {
+		return nil, errors.New("ipfs: fake node holds more pins than the sweep will compare")
+	}
+	out := make(map[string]struct{}, len(f.pins))
+	for cid, pinned := range f.pins {
+		if pinned {
+			out[cid] = struct{}{}
+		}
+	}
+	return out, nil
+}
+
+// AddStrayPin marks a CID pinned on the fake node WITHOUT any ledger row — the
+// operator's own pin, or a Vidra pin whose ledger row was lost. Test helper for
+// the stray half of VerifyPins.
+func (f *FakeIPFSClient) AddStrayPin(cid string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ensure()
+	f.pins[cid] = true
+}
+
+// DropPin removes a pin behind the ledger's back — "the node lost a CID", the
+// direction A31 measured as not implemented. Test helper.
+func (f *FakeIPFSClient) DropPin(cid string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ensure()
+	delete(f.pins, cid)
+}
+
 // Content returns the bytes stored under a CID (test helper), and whether present.
 func (f *FakeIPFSClient) Content(cid string) ([]byte, bool) {
 	f.mu.Lock()

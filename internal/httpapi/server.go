@@ -211,8 +211,14 @@ type Server struct {
 	jobOperationsSvc    jobOperationsProvider
 	peertubeimportsvc   peerTubeImportProvider
 	ipfsmirrorsvc       ipfsMirrorProvider
-	metrics             *observability.Metrics
-	media               storage.Backend
+	// ipfsHealth is the mirror's cached gateway/node probe record (system_ipfs.go).
+	// It is set from the SAME option that wires ipfsmirrorsvc, by type assertion,
+	// so the page and the redirect decision can never be answered from different
+	// sources — and so every existing fake that predates the probe keeps compiling
+	// and keeps its pre-probe behaviour.
+	ipfsHealth ipfsHealthReader
+	metrics    *observability.Metrics
+	media      storage.Backend
 	// mediaPresigner is the RAW primary storage backend when it can mint signed
 	// URLs, and nil otherwise — including, deliberately, whenever a storage
 	// migration is in flight (see WithDeliveryPresigner). It is NOT `media`:
@@ -694,7 +700,23 @@ func WithPeerTubeImportService(svc peerTubeImportProvider) Option {
 // unset but IPFS_ENABLED, status answers an honest 501. When unset, the re-eval
 // hook is skipped.
 func WithIPFSMirrorService(svc ipfsMirrorProvider) Option {
-	return func(s *Server) { s.ipfsmirrorsvc = svc }
+	return func(s *Server) {
+		s.ipfsmirrorsvc = svc
+		// The real *ipfsmirror.Service carries the probe record; a fake need not.
+		// Asserting rather than widening the provider interface keeps the delivery
+		// gate honest (health and redirect read one object) without making every
+		// existing test fake implement a probe it has nothing to say about.
+		if h, ok := svc.(ipfsHealthReader); ok {
+			s.ipfsHealth = h
+		}
+	}
+}
+
+// WithIPFSHealth wires ONLY the mirror's probe record. It exists for the tests
+// that assert the component and the redirect gate against a staged gateway
+// verdict, without standing up a whole mirror service to do it.
+func WithIPFSHealth(h ipfsHealthReader) Option {
+	return func(s *Server) { s.ipfsHealth = h }
 }
 
 // WithDeliveryPresigner wires the backend that mints signed object URLs for

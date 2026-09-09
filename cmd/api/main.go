@@ -333,6 +333,7 @@ func run() error {
 		// setting defaults to the boot env; the ffmpeg/ffprobe boot capability
 		// is ANDed in at the enqueue/pickup seams.
 		TranscodingEnabled: cfg.TranscodingEnabled,
+		IPFSEnabled:        cfg.IPFSEnabled,
 	}, instancesettings.WithVersionBump(bumpSettingsVersion))
 	if err := settingssvc.Load(startCtx); err != nil {
 		return err
@@ -790,6 +791,13 @@ func run() error {
 	}
 	// One SQLLookups value serves both the per-entity Lookups (enqueue hooks) and
 	// the bulk Catalog (the one-shot admin backfill, P19.6).
+	// The gateway probe reuses no client: its timeouts are a health check's, not a
+	// media transfer's, and it must never be able to hold a connection long enough
+	// to stack probes on the five-minute ticker.
+	var ipfsGatewayProbe *ipfs.GatewayProbe
+	if cfg.IPFSGatewayURL != "" {
+		ipfsGatewayProbe = ipfs.NewGatewayProbe(cfg.IPFSGatewayURL, &http.Client{Timeout: 15 * time.Second})
+	}
 	ipfsLookups := ipfsmirror.NewSQLLookups(db.Queries())
 	ipfsMirror := ipfsmirror.New(
 		db.Queries(),
@@ -805,6 +813,12 @@ func run() error {
 			Logger:         logger,
 			Cluster:        ipfsCluster,
 			Catalog:        ipfsLookups,
+			// The gateway health probe (A31, INT-07 clause b). It is built whenever a
+			// gateway URL exists, in EVERY role, because the thing it gates —
+			// server-side 307s to that gateway — is issued by the api, not by the
+			// worker. Nil with no URL, which the component reports as not_configured
+			// and the delivery gate reads as "do not redirect".
+			Gateway: ipfsGatewayProbe,
 			// Private tier (P19.P1) — a dedicated private-swarm node client the worker
 			// routes network='private' rows to (and ONLY those rows).
 			PrivateEnabled:     privateEnabled,
@@ -2459,6 +2473,19 @@ func run() error {
 		go runIPFSMirrorWorker(workerCtx, logger, ipfsMirror, cfg.IPFSReconcileInterval, cronLeader)
 		logger.Info("ipfs mirror worker started")
 	}
+	// The gateway/node health probe, DELIBERATELY NOT gated on runWorkers (A31,
+	// INT-07 clause b). The verdict it takes decides whether THIS process answers a
+	// thumbnail with a 307 to the gateway, and an api-role process runs no workers
+	// at all — so gating it the way the drain loop is gated would leave the one role
+	// that issues redirects with no evidence to gate them on. It is also not
+	// leader-elected: every process needs its own answer, and the probe is one HTTP
+	// HEAD every five minutes.
+	if ipfsMirror.Enabled() {
+		probeCtx, probeCancel := context.WithCancel(context.Background())
+		defer probeCancel()
+		go runIPFSHealthProbe(probeCtx, logger, ipfsMirror)
+		logger.Info("ipfs health probe started", "interval", ipfsHealthProbeInterval.String())
+	}
 
 	// Admin operations: the durable-queue depth snapshot + recent-failures
 	// endpoint (P17.4) and the queue-depth Prometheus gauge both read from here.
@@ -3334,11 +3361,63 @@ func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirr
 			if _, err := svc.Reconcile(ctx); err != nil {
 				logger.Warn("ipfs mirror reconcile failed", "error", err)
 			}
+			// Compare the ledger with what the node ACTUALLY holds, in both
+			// directions (A31: "Neither ever asks the node what it actually holds,
+			// so the ledger and the node can disagree indefinitely"). Bounded per
+			// sweep and per swarm; it reports rather than returns, because a
+			// reconciliation pass must never be able to fail the tick that also runs
+			// Reconcile and SweepIneligible. Leader-only, with those two: the repair
+			// writes are idempotent but there is no reason for every replica to walk
+			// the same page of the ledger and list the same node's pins.
+			for _, vr := range svc.VerifyPins(ctx) {
+				if vr.Rearmed > 0 || vr.Strays > 0 {
+					logger.Info("ipfs mirror verified pins against the node",
+						"network", vr.Network, "checked", vr.Checked,
+						"rearmed", vr.Rearmed, "unaccounted_node_pins", vr.Strays)
+				}
+			}
 			// Eligibility backstop: re-arm any pinned-but-now-ineligible row (missed
 			// toggle, crashed re-eval, or a future rule change) toward removal.
 			if _, err := svc.SweepIneligible(ctx); err != nil {
 				logger.Warn("ipfs mirror eligibility sweep failed", "error", err)
 			}
+		}
+	}
+}
+
+// ipfsHealthProbeInterval is how often each process re-asks the gateway whether it
+// is serving. It is the cadence internal/storage.WriteHealth already established
+// for the object store's write probe, and the reason is the same: this is a
+// question whose answer gates a request path, so it must be a cached record rather
+// than a hop on the request itself — and five minutes is the interval an operator
+// already reasons about for that class of check.
+//
+// The cost of caching is stated rather than hidden: after a gateway dies, up to one
+// interval of 307s are still minted, and each carries max-age=300 of its own. This
+// bounds how wrong the gate can be; it does not make it never wrong.
+const ipfsHealthProbeInterval = 5 * time.Minute
+
+// runIPFSHealthProbe takes the mirror's gateway/node verdict on boot and every
+// interval thereafter, until ctx is canceled.
+//
+// It probes IMMEDIATELY rather than waiting out the first tick. Until a probe
+// completes the delivery gate answers "not redirectable" — an unprobed gateway is
+// not evidence a viewer sent there gets bytes — so a five-minute wait would mean
+// five minutes of api-proxied thumbnails after every restart on a perfectly healthy
+// instance.
+func runIPFSHealthProbe(ctx context.Context, logger *slog.Logger, svc *ipfsmirror.Service) {
+	tick := time.NewTicker(ipfsHealthProbeInterval)
+	defer tick.Stop()
+	svc.ProbeHealth(ctx)
+	if h := svc.GatewayHealth(); h.Probed && h.State != ipfsmirror.HealthOK {
+		logger.Warn("ipfs gateway probe failed at boot", "reason", h.Reason)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			svc.ProbeHealth(ctx)
 		}
 	}
 }

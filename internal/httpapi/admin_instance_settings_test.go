@@ -85,6 +85,7 @@ func settingsDefaultsFromConfig(cfg *config.Config) instancesettings.Defaults {
 		TranscriptionEnabled:  cfg.WhisperEnabled,
 
 		TranscodingEnabled: cfg.TranscodingEnabled,
+		IPFSEnabled:        cfg.IPFSEnabled,
 	}
 }
 
@@ -191,8 +192,8 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// switches for direct messaging and its end-to-end-encrypted variant; both
 	// default ON, so an upgraded instance behaves exactly as before).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 116 {
-		t.Fatalf("settings count = %d, want 116", len(got.Settings))
+	if len(got.Settings) != 117 {
+		t.Fatalf("settings count = %d, want 117", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

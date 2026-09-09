@@ -32,6 +32,21 @@ type Subject struct {
 	VideoPrivacy string
 	VideoState   string
 
+	// VideoBlocked is the moderator block (video_blocks), and it gates every
+	// video-derived class on BOTH swarms — the owner's 2026-09-09 ruling: a block
+	// unpins the video's CIDs exactly as a privacy flip does, and lifting the block
+	// re-arms the mirror so they are re-published.
+	//
+	// It is a SEPARATE fact rather than something derivable from the two above
+	// because BlockVideo changes neither: it writes a video_blocks row and leaves
+	// videos.privacy 'public' and videos.state 'published'. A31 measured the
+	// consequence — a blocked video 404'd on every Vidra surface while its bytes
+	// stayed retrievable from the public gateway, which is the disclosure boundary
+	// INT-07 is about. It routes to NetworkNone rather than NetworkPrivate because a
+	// block is a removal decision, not a visibility one: replicating blocked content
+	// onto the private swarm would keep publishing what a moderator withdrew.
+	VideoBlocked bool
+
 	// OwnerActive / OwnerUnlisted are the owning account's flags. For identity
 	// images (user/channel avatar+banner) BOTH gate: a non-active
 	// (deactivated/deleted) or unlisted account's images are not mirrored — a
@@ -66,6 +81,8 @@ type Subject struct {
 //     permanent public CID would defeat URL-unguessability, spec §7)
 //   - quarantined / draft / processing / scheduled / failed video → NONE (unvetted or
 //     not-yet-live content stays out of EVERY mirror until it is published)
+//   - a video under a moderator BLOCK → NONE on both swarms, whatever its privacy
+//     and state say (2026-09-09 ruling; see Subject.VideoBlocked)
 //   - avatar/banner of an active+listed account → public; of an unlisted OR
 //     deactivated account → private
 //   - playlist cover: public playlist → public; non-public playlist → private
@@ -80,7 +97,7 @@ func Route(s Subject) string {
 	case isVideoDerived(s.Class):
 		// Only a PUBLISHED video is mirrored at all; quarantined/draft/processing/
 		// scheduled/failed route nowhere (picked up on the eventual publish transition).
-		if s.VideoState != statePublished {
+		if s.VideoState != statePublished || s.VideoBlocked {
 			return NetworkNone
 		}
 		if s.VideoPrivacy == privacyPublic && !s.OwnerUnlisted {

@@ -9,12 +9,14 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/delivery"
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
 	"github.com/vidra/vidra-core/internal/moderation"
@@ -432,6 +434,25 @@ func (s *Server) ipfsMirrorEnabled() bool {
 	return s.cfg.IPFSEnabled && s.ipfsmirrorsvc != nil
 }
 
+// ipfsWatchSurfaceEnabled additionally consults the runtime delivery toggle
+// (delivery_ipfs_enabled), and gates the `ipfs` object on GET /videos/{id} — the
+// object the watch page draws its "Use IPFS" control from, and the ONLY thing it
+// draws it from (A31 confirmed the toggle gates on this object rather than on the
+// card-only ipfs_pinned flag, which is the distinction the old unreachable-toggle
+// defect turned on).
+//
+// It deliberately does NOT consult the gateway HEALTH probe, which the
+// server-side redirect does. A dead gateway is already handled correctly on the
+// client: the watch page probes the master playlist before switching hls.js and
+// reports "IPFS · unavailable — playing from server" without interrupting
+// playback (measured in the A31 lab, 120 frames, 0 dropped). Hiding the control
+// on a probe that is up to five minutes old would take a working choice away from
+// a viewer on the strength of a stale verdict. The redirect has no such client to
+// fall back on, which is exactly why it is gated harder.
+func (s *Server) ipfsWatchSurfaceEnabled() bool {
+	return s.ipfsMirrorEnabled() && s.ipfsDeliverySettingOn()
+}
+
 // attachVideoIPFS populates the detail `ipfs` object for a PUBLIC+PUBLISHED video
 // from the pin ledger (fix_plan P19.3). It is the CID-emission gate: CIDs are
 // NEVER exposed for a non-public/non-published video regardless of caller, and
@@ -439,7 +460,7 @@ func (s *Server) ipfsMirrorEnabled() bool {
 // CIDs (inside the mirror service). Best-effort — a lookup failure leaves the
 // field absent rather than failing the read (IPFS is non-authoritative).
 func (s *Server) attachVideoIPFS(ctx context.Context, view *videoView, videoID uuid.UUID, privacy, state string) {
-	if !s.ipfsMirrorEnabled() || privacy != "public" || state != "published" {
+	if !s.ipfsWatchSurfaceEnabled() || privacy != "public" || state != "published" {
 		return
 	}
 	pins, ok, err := s.ipfsmirrorsvc.VideoPins(ctx, videoID)
@@ -1850,7 +1871,22 @@ func (s *Server) handleBlockVideo(c echo.Context) error {
 		}
 		return err
 	}
-	s.audit(c, observability.ActionVideoBlock, observability.ResultSuccess, userID.String(), "")
+	// THE MIRROR (2026-09-09 ruling; A31 clause 5). A block makes a video 404 on
+	// every Vidra surface, but it changes neither privacy nor state, so nothing the
+	// mirror's eligibility fence reads could see one: the video's ledger rows stayed
+	// 'pinned' and its CIDs stayed retrievable from the public gateway — measured.
+	// The ruling is that a block unpins exactly as a privacy flip does, so this is
+	// the SAME seam a privacy flip uses (SyncVideoCounted → Route → unpin all),
+	// reference-count-guarded in the worker like every other unpin. Best-effort: the
+	// block itself has already landed, the eligibility sweep converges the ledger on
+	// the next reconcile tick regardless, and a mirror hiccup must not fail a
+	// takedown.
+	unpinned := s.syncVideoMirror(c.Request().Context(), id, "block")
+	s.auditEvent(c, audit.Event{
+		Action: observability.ActionVideoBlock, Result: observability.ResultSuccess,
+		ActorID: userID.String(), ResourceType: "video", ResourceID: id.String(),
+		Metadata: []audit.MetadataField{{Key: "ipfs_unpinned", Value: strconv.Itoa(unpinned.Unpinned)}},
+	})
 	// Tell the creator. Before this, a block was invisible to the person it was
 	// aimed at: the video 404'd for them too, it left every public surface, and
 	// their own management listing still read "published". The notification is
@@ -1884,7 +1920,24 @@ func (s *Server) handleUnblockVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	s.audit(c, observability.ActionVideoUnblock, observability.ResultSuccess, userID.String(), "")
+	// Re-arm the mirror. This is the half A31 said "needs a path that does not
+	// exist today": the ledger rows a block flipped to 'unpinning' end up
+	// 'unpinned', which is terminal, so nothing would ever re-publish the video
+	// without an explicit re-arm. SyncVideoCounted is that path — the same routing
+	// call the publish hook makes — and it is the dead-letter re-arm route A31 did
+	// verify works, reached from a different trigger.
+	//
+	// Guarded on `lifted` for the same reason the notification is: this route is
+	// idempotent, and a second DELETE must not re-arm a mirror nothing changed.
+	var rearmed ipfsmirror.SyncResult
+	if lifted {
+		rearmed = s.syncVideoMirror(c.Request().Context(), id, "unblock")
+	}
+	s.auditEvent(c, audit.Event{
+		Action: observability.ActionVideoUnblock, Result: observability.ResultSuccess,
+		ActorID: userID.String(), ResourceType: "video", ResourceID: id.String(),
+		Metadata: []audit.MetadataField{{Key: "ipfs_rearmed", Value: strconv.Itoa(rearmed.Rearmed)}},
+	})
 	// Tell the creator their video is back. The block notice opened a loop this
 	// closes: they were told their video had been taken down and then nothing at
 	// all when it returned, so the only way to find out was to keep checking.
@@ -1906,6 +1959,32 @@ func (s *Server) handleUnblockVideo(c echo.Context) error {
 	// (search-service W4). Best-effort.
 	s.searchEvents.EnqueueVideoUpsert(c.Request().Context(), id)
 	return c.NoContent(http.StatusNoContent)
+}
+
+// ipfsVideoSyncer is the mirror's re-evaluate-one-video seam, with the tally the
+// moderation audit rows carry. *ipfsmirror.Service satisfies it; asserted rather
+// than added to ipfsMirrorProvider so every existing fake keeps compiling and an
+// install with no mirror is a clean no-op.
+type ipfsVideoSyncer interface {
+	SyncVideoCounted(ctx context.Context, videoID uuid.UUID) (ipfsmirror.SyncResult, error)
+}
+
+// syncVideoMirror re-runs the mirror's eligibility fence for one video and
+// reports what it did. Best-effort by design: every caller has already committed
+// the moderation decision, and the periodic eligibility sweep converges the ledger
+// on the same facts whether or not this call lands, so a mirror error is logged
+// and swallowed rather than failing a takedown or a release.
+func (s *Server) syncVideoMirror(ctx context.Context, videoID uuid.UUID, trigger string) ipfsmirror.SyncResult {
+	syncer, ok := s.ipfsmirrorsvc.(ipfsVideoSyncer)
+	if !ok || s.ipfsmirrorsvc == nil {
+		return ipfsmirror.SyncResult{}
+	}
+	res, err := syncer.SyncVideoCounted(ctx, videoID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "ipfs mirror moderation sync failed",
+			"error", err, "video_id", videoID, "trigger", trigger)
+	}
+	return res
 }
 
 // blockedVideoView is the moderation block-list projection of a blocked video.

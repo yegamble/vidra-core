@@ -379,6 +379,16 @@ func (s *Server) handleRejectQuarantinedVideo(c echo.Context) error {
 	// W4). Best-effort suppression (it was likely never indexed, but this is the
 	// safe backstop).
 	s.searchEvents.EnqueueVideoSuppress(ctx, id, searchevents.SuppressModerated)
+	// The peer mirror, on the same backstop reasoning. A video in quarantine has
+	// never been published, so the eligibility fence has never routed it anywhere
+	// and there is normally nothing pinned to remove — that is why ENTERING
+	// quarantine needs no hook of its own: 'quarantined' is not 'published', Route
+	// refuses it on both swarms, and the periodic sweep converges anything that
+	// somehow got there. Rejecting is nonetheless a terminal WITHDRAWAL, and the
+	// one transition in this file that ends a video's life without going through
+	// the publish/update/delete hooks, so it says so explicitly rather than relying
+	// on a sweep to notice in five minutes.
+	s.syncVideoMirror(ctx, id, "quarantine_reject")
 	// The moderator's prose lives in video_rejections (0130) and reaches the
 	// creator on their notification; the security ledger stores only a stable
 	// classification and whether prose was supplied. Free-form content can

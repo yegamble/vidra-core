@@ -105,10 +105,28 @@ type chain struct {
 // Option configures New.
 type Option func(*chain)
 
-// WithMirror wires the peer-mirror (IPFS gateway) source. enabled is consulted
-// per request — it is the master switch, and reading it here rather than at
-// construction is what lets an operator turn the mirror off without a restart.
-// A nil enabled means always on.
+// WithMirror wires the peer-mirror (IPFS gateway) source.
+//
+// enabled is consulted PER REQUEST, and what it now reads is three things ANDed:
+// the master env switch (IPFS_ENABLED), the runtime admin toggle
+// (delivery_ipfs_enabled) and the cached gateway health probe. A nil enabled
+// means always on.
+//
+// THE COMMENT THIS REPLACES WAS FALSE, and A31 caught it. It said the per-request
+// read "lets an operator turn the mirror off without a restart" — but the switch
+// it read was cfg.IPFSEnabled, an environment variable, which no instance setting
+// overrode and which nothing could change while the process lived. Reading an
+// immutable value once per request buys exactly nothing. The claim is true now
+// because there is finally something behind it: presign and the CDN each had a
+// runtime kill switch and the mirror, the source that shipped first, had none,
+// so an operator whose gateway was serving nothing had one response available —
+// a restart — while every `max-age=300` redirect already minted kept pointing
+// viewers at it.
+//
+// The health term is the other half, and it closes the failure the toggle cannot:
+// a gateway does not usually die at a moment an operator is watching. See
+// httpapi.ipfsDeliveryEnabled and internal/ipfsmirror/health.go for the probe and
+// for the window it narrows rather than closes.
 func WithMirror(lookup MirrorLookup, enabled func() bool) Option {
 	return func(c *chain) {
 		c.mirror = lookup

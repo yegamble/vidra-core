@@ -117,6 +117,32 @@ func (s *Server) componentHealth(ctx context.Context) (map[string]componentStatu
 	if components["live_ingest"].Status == "down" {
 		healthy = false
 	}
+	// The IPFS mirror (A31 — /admin/system had no `ipfs` component at all, so an
+	// unreachable node or gateway degraded nothing and the only honest signal was
+	// one endpoint away on /ipfs/status). It is on the CHEAP probe, the one /readyz
+	// runs several times a minute, for exactly the reason mfa_kek and storage are:
+	// it costs no round trip. The probe itself runs on its own five-minute ticker
+	// (ipfsmirror.Service.ProbeHealth, the cadence storage.WriteHealth established)
+	// and this is a read of the record it keeps — a readiness check that fetched
+	// from a gateway as often as the balancer asks would be the opposite trade.
+	//
+	// It sets `healthy = false` so the readiness body reads "degraded", and
+	// deliberately does NOT change the status CODE: handleReady 503s for PostgreSQL
+	// alone, and a gateway outage costs an instance nothing a viewer can see — the
+	// api simply serves the bytes itself, which is the whole point of the gate the
+	// same probe now feeds.
+	if st, ok := s.ipfsStatus(); ok {
+		components["ipfs"] = st
+		if st.Status == "down" || st.Status == "degraded" {
+			healthy = false
+		}
+	}
+	if st, ok := s.privateIPFSStatus(); ok {
+		components["private_ipfs"] = st
+		if st.Status == "down" || st.Status == "degraded" {
+			healthy = false
+		}
+	}
 	return components, healthy
 }
 
