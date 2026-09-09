@@ -104,6 +104,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var ssu *SessionStoreUnavailableError
 	var stg *storage.Error
 	var ale *ATProtoLoginError
+	var oue *OAuthUpstreamError
 	var mtf *MailTestFailedError
 	var mnc *MailNotConfiguredError
 	var hr *HandleReservedError
@@ -171,6 +172,10 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = ale.Status
 		message = ale.Message
 		code = ale.Code
+	case errors.As(err, &oue):
+		status = oue.Status
+		message = oue.Message
+		code = oue.Code
 	case errors.As(err, &ssu):
 		status = http.StatusServiceUnavailable
 		message = "this server cannot reach its session store right now, so it cannot tell whether you are signed in. Your session is unaffected — retry shortly"
@@ -594,6 +599,30 @@ type ATProtoLoginError struct {
 }
 
 func (e *ATProtoLoginError) Error() string { return e.Code }
+
+// OAuthUpstreamError renders an OIDC login failure that is the PROVIDER's
+// fault, not the caller's, with a stable snake_case code at 502:
+// "oauth_provider_unavailable" (discovery could not reach the issuer, so the
+// login never started) and "oauth_exchange_failed" (the code exchange or
+// id_token verification failed upstream).
+//
+// It exists because both are 5xx, and the central handler scrubs 5xx messages
+// to "an unexpected error occurred" — correct for a panic, useless here. Without
+// a typed code an operator whose IdP is down, whose client secret is wrong, or
+// whose clock has drifted past the id_token's expiry sees the same opaque
+// answer as a crash, and the frontend cannot tell "your provider is
+// unreachable" from "this instance is broken". ATProto identity login already
+// carries typed upstream codes (ATProtoLoginError); this is the OIDC half.
+//
+// It carries only safe machine codes and a generic sentence — never an upstream
+// body, a token, the PKCE verifier, or the client secret.
+type OAuthUpstreamError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+func (e *OAuthUpstreamError) Error() string { return e.Code }
 
 // ForeignMediaLayoutError renders as 409 with the stable code
 // "foreign_media_layout": the bucket adoption was refused because this install

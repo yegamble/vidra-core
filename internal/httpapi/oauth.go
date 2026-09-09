@@ -156,7 +156,14 @@ func (s *Server) handleOAuthBegin(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusNotFound, "unknown oauth provider")
 		}
 		// Discovery failed — the provider is down/misconfigured, not the client.
-		return echo.NewHTTPError(http.StatusBadGateway, "oauth provider is unavailable")
+		// Typed so the answer survives the 5xx message scrub (see
+		// OAuthUpstreamError): "an unexpected error occurred" is indistinguishable
+		// from a crash to the operator whose IdP is simply unreachable.
+		return &OAuthUpstreamError{
+			Status:  http.StatusBadGateway,
+			Code:    "oauth_provider_unavailable",
+			Message: "this instance could not reach its sign-in provider, so the sign-in could not start — try again shortly, or ask the administrator to check the provider configuration",
+		}
 	}
 	sealed, err := s.sealOAuthState(oauthStatePayload{
 		Provider: name,
@@ -255,7 +262,11 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 			return oauthErrorRedirect(c, returnTo, "conflict")
 		case errors.Is(err, auth.ErrOAuthExchange):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "oauth_exchange_failed")
-			return echo.NewHTTPError(http.StatusBadGateway, "oauth code exchange failed")
+			return &OAuthUpstreamError{
+				Status:  http.StatusBadGateway,
+				Code:    "oauth_exchange_failed",
+				Message: "the sign-in provider did not complete the exchange, so no session was issued — try signing in again",
+			}
 		}
 		return err
 	}
