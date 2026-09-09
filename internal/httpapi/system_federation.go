@@ -32,8 +32,18 @@ import (
 
 // FederationHealth is the delivery queue's operator-facing state.
 type FederationHealth struct {
-	Pending                 int64
-	DeadLettered            int64
+	Pending      int64
+	DeadLettered int64
+	// CancelledByPolicy is outbound deliveries this instance never sent because
+	// their destination was blocked at the moment they came due. They share the
+	// `failed` state with dead letters and mean the opposite thing, so they are
+	// counted apart: a dead letter is a peer this instance could not reach after
+	// the whole ladder, while one of these is the blocklist working, and
+	// lifting the block resumes it (RedeliverAfterUnblock). Reporting them
+	// together — which is what the A29 rehearsal-3 lab saw, six of them under
+	// "one or more peers did not accept what it sent" — sends an operator
+	// looking for a broken peer that does not exist.
+	CancelledByPolicy       int64
 	OldestPendingAgeSeconds int64
 	// LastDeliveredAt is zero when nothing has ever been delivered — a brand
 	// new instance, or one whose peers have never been reachable.
@@ -77,6 +87,12 @@ func federationComponent(h FederationHealth, err error) componentStatus {
 			Detail: detail,
 		}
 	}
+	// Cancellations alone are not a degradation. Nothing is wrong with an
+	// instance whose blocklist is doing exactly what an admin asked for, and a
+	// page that went yellow for it would train operators to ignore yellow. The
+	// count still rides in `detail`, because "we are holding 6 activities for a
+	// domain you blocked, and they go out if you unblock it" is a fact an
+	// operator should be able to see without reading the database.
 	return componentStatus{Status: "ok", Detail: detail}
 }
 
@@ -92,6 +108,11 @@ func federationDetail(h FederationHealth) map[string]string {
 	detail := map[string]string{
 		"pending":       strconv.FormatInt(h.Pending, 10),
 		"dead_lettered": strconv.FormatInt(h.DeadLettered, 10),
+	}
+	// Absent rather than "0", on the same doctrine as last_delivered_at: an
+	// instance that has blocked nobody should not carry a line about blocks.
+	if h.CancelledByPolicy > 0 {
+		detail["cancelled_by_policy"] = strconv.FormatInt(h.CancelledByPolicy, 10)
 	}
 	if !h.LastDeliveredAt.IsZero() {
 		detail["last_delivered_at"] = h.LastDeliveredAt.UTC().Format(time.RFC3339)

@@ -2470,13 +2470,17 @@ func run() error {
 	if cfg.FederationEnabled {
 		queries := db.Queries()
 		opts = append(opts, httpapi.WithFederationHealth(func(ctx context.Context) (httpapi.FederationHealth, error) {
-			row, err := queries.FederationDeliveryHealth(ctx)
+			// The cancel marker comes from the package that WRITES it, so
+			// the split between "a peer would not take this" and "we chose
+			// not to send it" cannot drift into two strings.
+			row, err := queries.FederationDeliveryHealth(ctx, federation.DeliveryCancelledByPolicy)
 			if err != nil {
 				return httpapi.FederationHealth{}, err
 			}
 			h := httpapi.FederationHealth{
 				Pending:                 row.Pending,
 				DeadLettered:            row.DeadLettered,
+				CancelledByPolicy:       row.CancelledByPolicy,
 				OldestPendingAgeSeconds: row.OldestPendingAgeSeconds,
 			}
 			// interface{} because max() over a filtered set is nullable; a

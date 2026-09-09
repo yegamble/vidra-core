@@ -284,8 +284,10 @@ func TestInboxAcceptFlipsFollowAccepted(t *testing.T) {
 // A Reject marks the row REJECTED rather than deleting it, so the person who
 // asked can see that their request was refused rather than watching it vanish.
 // Re-following the same actor re-arms it to 'pending' with a fresh Follow — the
-// one deliberate retry, and the only path back for a follow refused during an
-// instance block, which gets no Reject at all.
+// one deliberate retry. Since the A29 follow-ups a Follow refused by an INSTANCE
+// BLOCK arrives here as a Reject too (TestAnInstanceBlocksRejectEndsTheSendersRow
+// below), so this is now the only terminal state a refusal has, whatever refused
+// it.
 func TestInboxRejectMarksTheFollowRejected(t *testing.T) {
 	userID := uuid.New()
 	repo := newFollowRepo(userID)

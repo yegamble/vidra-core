@@ -35,9 +35,20 @@ FROM federation_deliveries;
 -- last_delivered_at is the liveness half and the reason this is not just the
 -- stats query above: a drained queue and a queue nothing is draining look
 -- identical by depth alone, and only differ by when something last succeeded.
+--
+-- dead_lettered EXCLUDES the deliveries this instance cancelled on purpose,
+-- and cancelled_by_policy counts them instead (A29 follow-ups). Both are
+-- state='failed' rows and the rehearsal-3 lab watched six cancelled ones
+-- reported to an operator as dead letters, under the sentence "one or more
+-- peers did not accept what it sent" — which named a peer failure for something
+-- this instance did deliberately and will undo on its own the moment the block
+-- is lifted. The marker is passed in rather than spelled here, so it stays one
+-- string living next to the code that writes it
+-- (internal/federation.DeliveryCancelledByPolicy).
 SELECT
     count(*) FILTER (WHERE state = 'pending')::bigint AS pending,
-    count(*) FILTER (WHERE state = 'failed')::bigint  AS dead_lettered,
+    count(*) FILTER (WHERE state = 'failed' AND last_error IS DISTINCT FROM sqlc.arg('cancel_reason')::text)::bigint AS dead_lettered,
+    count(*) FILTER (WHERE state = 'failed' AND last_error = sqlc.arg('cancel_reason')::text)::bigint AS cancelled_by_policy,
     COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE state = 'pending')))::bigint, 0)::bigint AS oldest_pending_age_seconds,
     -- NULLABLE on purpose: an instance that has never delivered anything has
     -- no answer here, and 'never' is exactly the fact the component reports.

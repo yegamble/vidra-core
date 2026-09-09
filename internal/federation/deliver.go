@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vidra/vidra-core/internal/httpsig"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -33,6 +34,20 @@ import (
 // alive.
 const deliveryLeaseSeconds = 300
 
+// DeliveryCancelledByPolicy is the last_error stamped on an outbound delivery
+// this instance CHOSE not to send, because its destination was on the admin
+// blocklist when the row came due.
+//
+// It is exported because /admin/system has to be able to tell those rows from
+// dead letters, and the difference is not cosmetic: a dead letter is a delivery
+// that walked the whole retry ladder and never landed — a peer this instance
+// wanted to reach and could not — while one of these never left on purpose and
+// is waiting for an unblock to resume it (RedeliverAfterUnblock). The A29
+// rehearsal-3 lab watched six of them counted as dead letters and reported to
+// the operator as "peers did not accept what it sent", which is the exact
+// opposite of what happened.
+const DeliveryCancelledByPolicy = "cancelled: destination instance is blocked"
+
 const (
 	// maxDeliveryAttempts is how many times a delivery is retried before it is
 	// dead-lettered (state 'failed').
@@ -46,9 +61,10 @@ const (
 	// deliveryCancelledBlocked is the last_error a delivery carries when it was
 	// never sent because its destination was on the admin blocklist. It is an
 	// EXACT MATCH KEY, not just a message: RedeliverAfterUnblock finds the rows
-	// to resume by it, so the two must be the same string and it must not drift
-	// into something formatted per row.
-	deliveryCancelledBlocked = "cancelled: destination instance is blocked"
+	// to resume by it, and /admin/system counts them apart from real dead
+	// letters by it, so every reader must use the same string and it must not
+	// drift into something formatted per row.
+	deliveryCancelledBlocked = DeliveryCancelledByPolicy
 	// maxRedeliverAfterUnblock caps one unblock's resumption. A block window
 	// can be arbitrarily long, and an admin's DELETE must not turn into an
 	// unbounded scan-and-update; the remainder stays cancelled rather than the
@@ -386,6 +402,12 @@ func severingActivity(payload []byte) bool {
 //     whose channel has since opted out of ActivityPub must not be published to
 //     a remote server by a message the block happened to delay. This is the
 //     whole reason redelivery is not a bulk UPDATE.
+//   - That object is a VIDEO or a COMMENT. The rehearsal-3 lab measured the
+//     comment half missing: a Create{Note} cancelled inside a clean block
+//     window was left cancelled on unblock, because the object id is
+//     `…/comments/<uuid>` and the resolver only knew `…/videos/<uuid>`, so a
+//     follower's mirrored thread stayed permanently short every comment written
+//     while the block stood — the same permanent divergence one level down.
 //   - Anything else is left cancelled. Undo and Reject were never cancelled in
 //     the first place (severingActivity), and an unrecognised type is not
 //     something to replay on a guess.
@@ -456,18 +478,77 @@ func (s *Service) redeliverable(ctx context.Context, payload []byte) (bool, erro
 	default:
 		return false, nil
 	}
-	videoID, ok := s.localVideoIDFromObject(env.Object)
-	if !ok {
-		// A Create/Update whose object this instance cannot resolve to one of
-		// its own videos cannot be checked, and an unverifiable snapshot is not
-		// worth publishing late.
-		return false, nil
+	if videoID, ok := s.localVideoIDFromObject(env.Object); ok {
+		return s.videoStillPublishable(ctx, videoID)
 	}
+	if commentID, ok := s.localCommentIDFromObject(env.Object); ok {
+		return s.commentStillPublishable(ctx, commentID)
+	}
+	// A Create/Update whose object this instance cannot resolve to one of its
+	// own videos or comments cannot be checked, and an unverifiable snapshot is
+	// not worth publishing late.
+	return false, nil
+}
+
+// videoStillPublishable is the video arm of redeliverable: the snapshot may go
+// out only if the thing it describes is still the thing a stranger may see.
+func (s *Service) videoStillPublishable(ctx context.Context, videoID uuid.UUID) (bool, error) {
 	v, ch, found, err := s.loadVideoAndChannel(ctx, videoID)
 	if err != nil || !found {
 		return false, err
 	}
 	return ch.ActivitypubEnabled && v.Privacy == "public" && v.State == "published", nil
+}
+
+// commentStillPublishable is the comment arm, and it is deliberately the video
+// predicate with the comment's own existence clause in front of it.
+//
+// THE PREDICATE, clause by clause, each of which means "leave it cancelled":
+//
+//   - the comment is GONE. A comment deleted by its author or removed by a
+//     moderator is a hard DELETE here, so the row simply is not found. Sending
+//     a Create for it would plant, on every follower instance, a comment this
+//     instance no longer holds and can no longer retract — the Delete that
+//     would have retracted it was cancelled by the same block and is not
+//     resumable, because its object no longer resolves.
+//   - the comment is TOMBSTONED (`deleted_at`). An account deletion empties the
+//     body and stamps the row rather than removing it, so that reply threads
+//     survive; every reader here sees "[deleted]". Broadcasting the original
+//     body afterwards would un-delete it on someone else's server.
+//   - the comment is REMOTE-AUTHORED. `federateComment` never fans those out —
+//     this instance does not re-broadcast content signed by another server —
+//     and a resume path that did would be a re-broadcast by the back door.
+//   - the VIDEO is no longer public+published on an AP-enabled channel. Same
+//     clause, same reasoning and the same helper as the video arm: a comment is
+//     only ever federated as part of a public video's conversation, so a video
+//     that went private takes its whole thread out of the fediverse with it.
+//
+// What it deliberately does NOT consult is a per-VIEWER block or mute. Those are
+// read filters evaluated against one reader, and a fan-out to a remote inbox has
+// no reader to evaluate them for; the receiving instance applies its own
+// readers' filters to what it stores, which is the same division of labour every
+// other outbound activity here follows.
+func (s *Service) commentStillPublishable(ctx context.Context, commentID uuid.UUID) (bool, error) {
+	c, err := s.repo.GetComment(ctx, commentID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if c.DeletedAt.Valid || !c.UserID.Valid {
+		return false, nil
+	}
+	return s.videoStillPublishable(ctx, c.VideoID)
+}
+
+// localCommentIDFromObject extracts THIS instance's comment id from an
+// activity's object, on exactly the same terms localVideoIDFromObject applies to
+// videos: the id must be this instance's own <baseURL>/comments/<uuid>, because
+// a remote id that happens to end in a uuid we also hold is not ours to
+// re-publish.
+func (s *Service) localCommentIDFromObject(raw json.RawMessage) (uuid.UUID, bool) {
+	return s.localIDFromObject(raw, "/comments/")
 }
 
 // localVideoIDFromObject extracts THIS instance's video id from an activity's
@@ -477,6 +558,14 @@ func (s *Service) redeliverable(ctx context.Context, payload []byte) (bool, erro
 // re-publish, and matching on the suffix alone would accept a remote id that
 // happened to end in a uuid we also have.
 func (s *Service) localVideoIDFromObject(raw json.RawMessage) (uuid.UUID, bool) {
+	return s.localIDFromObject(raw, "/videos/")
+}
+
+// localIDFromObject is the shared parser both resolvers use: an activity's
+// object is either an embedded AS object with an "id" (Create/Update) or a bare
+// id string (Delete), and the id must sit under this instance's own baseURL +
+// path.
+func (s *Service) localIDFromObject(raw json.RawMessage, path string) (uuid.UUID, bool) {
 	if len(raw) == 0 {
 		return uuid.Nil, false
 	}
@@ -490,7 +579,7 @@ func (s *Service) localVideoIDFromObject(raw json.RawMessage) (uuid.UUID, bool) 
 		}
 		id = obj.ID
 	}
-	prefix := s.baseURL + "/videos/"
+	prefix := s.baseURL + path
 	if s.baseURL == "" || !strings.HasPrefix(id, prefix) {
 		return uuid.Nil, false
 	}

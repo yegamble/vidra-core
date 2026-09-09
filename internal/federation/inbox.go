@@ -55,6 +55,10 @@ func (s *Service) HandleInbox(ctx context.Context, signerActorURL string, body [
 	if blocked, err := s.signerDomainBlocked(ctx, signerActorURL); err != nil {
 		return err
 	} else if blocked {
+		// A block SPEAKS, for exactly one activity (A29 follow-ups). Everything
+		// else from a blocked instance stays 202-and-dropped with the audit row;
+		// a Follow gets a signed Reject back. See rejectFollowFromBlockedSender.
+		s.rejectFollowFromBlockedSender(ctx, act, signerActorURL)
 		return ErrSenderBlocked
 	}
 	// Idempotency: process each activity id at most once. Dispatch first, then mark,
@@ -224,6 +228,65 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 		return err
 	}
 	return s.maybeAutoFollowBack(ctx, ch.ID, handle, signerActorURL)
+}
+
+// rejectFollowFromBlockedSender answers a Follow this instance refused because
+// the sender's INSTANCE is blocked with a signed Reject — the one thing a block
+// says out loud.
+//
+// WHY A BLOCK SPEAKS HERE AND NOWHERE ELSE. The rehearsal-3 lab measured the
+// cost of total silence: B's user followed A's channel while A had B's domain
+// blocked, A answered 202 and dropped it by design, B's own delivery read
+// `delivered`, and nothing on either side re-attempted or expired the row — so
+// B's creator was left staring at a follow request that could never resolve, on
+// a screen with no way to clear it. The owner's ruling is that a refusal a
+// requester can SEE beats a refusal that strands them: the sender ends
+// `rejected`, which is terminal, creator-visible, and re-armable by one
+// deliberate re-follow.
+//
+// It does not turn the blocklist into a probe target the way a distinguishable
+// STATUS would. The wire answer is still 202 for every activity; what the sender
+// learns is that this channel will not have them as a follower — the same thing
+// a creator's manual rejection tells them, in the same Reject shape
+// (buildRejectFollow), signed by the same channel actor. A Note, a Create, an
+// Announce or an Undo from a blocked instance still produces no outbound speech
+// at all, so the block reveals nothing about content and nothing about anyone
+// else's activity.
+//
+// GUARDS, in order, each of which means "send nothing":
+//
+//   - not a Follow. This is the whole exception; nothing else gets an answer.
+//   - the signer is not the Follow's actor. A spoofed actor gets no speech from
+//     this instance, blocked or not — answering one would let anybody make this
+//     server sign a Reject at a third party by naming them as the follower.
+//   - the object is not one of our channel actors, or names no channel we hold.
+//   - the channel opted out of ActivityPub (0096). Such a channel emits no
+//     outbound activity at all, which is exactly what handleFollow does for the
+//     same case.
+//
+// It is BEST-EFFORT by construction and returns nothing: HandleInbox must answer
+// ErrSenderBlocked (and so 202 + the audit row) whatever happens here. A queue
+// error that propagated would turn the refusal into a 422, which is precisely
+// the distinguishable answer the silence exists to avoid.
+func (s *Service) rejectFollowFromBlockedSender(ctx context.Context, act inboxActivity, signerActorURL string) {
+	if act.Type != "Follow" || act.Actor != signerActorURL {
+		return
+	}
+	handle, ok := s.localChannelHandle(objectID(act.Object))
+	if !ok {
+		return
+	}
+	ch, err := s.resolveLocalChannel(ctx, handle)
+	if err != nil || !ch.ActivitypubEnabled {
+		return
+	}
+	// Signed as the id this instance PUBLISHES, which for a renamed channel is
+	// the frozen one (0142) — the same spelling handleFollow uses, so a Reject
+	// and an Accept for the same channel are never signed by two actors.
+	if err := s.enqueueRejectFollow(ctx, ch.ID, s.channelActorHandle(ctx, ch), signerActorURL, act.ID); err != nil && s.logger != nil {
+		s.logger.Warn("federation: could not queue the Reject for a Follow refused by an instance block",
+			"activity_id", act.ID, "actor", signerActorURL, "error", err)
+	}
 }
 
 // enqueueAcceptFollow queues an Accept back to the follower's inbox (a durable,
