@@ -271,7 +271,7 @@ var keyShapedLogKeys = map[string]bool{
 // shape a real key arrives in.
 func TestObjectKeyLogValuesAreRedacted(t *testing.T) {
 	report := func(fset *token.FileSet, pos token.Pos, key string) {
-		t.Errorf("%s: object-key field %q is logged unredacted — wrap the value in jobstatus.RedactDetail (see .ralph/specs/observability.md)",
+		t.Errorf("%s: field %q carries an unredacted value in a log call that names a storage key — wrap it in jobstatus.RedactDetail (a string) or jobstatus.RedactError (an error); see .ralph/specs/observability.md",
 			fset.Position(pos), key)
 	}
 	forEachSourceFile(t, func(_ string, fset *token.FileSet, file *ast.File) {
@@ -306,13 +306,64 @@ func isRedactedValue(e ast.Expr) bool {
 	return false
 }
 
+// proseLogKeys are the free-form fields that must be redacted WHEN THEY SHARE A
+// LOG CALL with a key-shaped field.
+//
+// They are conditional, not absolute, and the condition is the whole point. An
+// `error` on a line about a mail relay names a host, not an object key, and
+// redacting it would cost an operator the sentence they need. An `error` on a
+// line that ALSO carries `object_key` is, almost by construction, the store's
+// own complaint about that same key — A34 caught exactly that: `object_key` was
+// `[redacted-key]` while `error` beside it read `storage: s3: put
+// "thumbnails/<uuid>.jpg": Access Denied`. Redacting one half of a line and not
+// the other is not a partial fix, it is no fix: whatever ships the log off the
+// box gets the key from the half that was left.
+var proseLogKeys = map[string]bool{
+	"error":  true,
+	"reason": true,
+	"detail": true,
+	"cause":  true,
+	"path":   true,
+}
+
+// keyValuePairs walks a structured-log call's key/value arguments, reporting
+// every key-shaped field whose value is unredacted, and — only when the call
+// carries such a field — every prose field whose value is unredacted too.
+func keyValuePairs(args []ast.Expr, start int, fset *token.FileSet, report func(*token.FileSet, token.Pos, string)) {
+	carriesKey := false
+	for i := start; i+1 < len(args); i += 2 {
+		if k, ok := litString(args[i]); ok && keyShapedLogKeys[strings.ToLower(k)] {
+			carriesKey = true
+			break
+		}
+	}
+	for i := start; i+1 < len(args); i += 2 {
+		k, ok := litString(args[i])
+		if !ok {
+			continue
+		}
+		lower := strings.ToLower(k)
+		switch {
+		case keyShapedLogKeys[lower]:
+			if !isRedactedValue(args[i+1]) {
+				report(fset, args[i+1].Pos(), k)
+			}
+		case carriesKey && proseLogKeys[lower]:
+			if !isRedactedValue(args[i+1]) {
+				report(fset, args[i+1].Pos(), k)
+			}
+		}
+	}
+}
+
 func checkLogCallKeyValues(call *ast.CallExpr, fset *token.FileSet, report func(*token.FileSet, token.Pos, string)) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return
 	}
 	name := sel.Sel.Name
-	// slog attribute constructors: slog.String("object_key", v).
+	// slog attribute constructors: slog.String("object_key", v). One pair per
+	// call, so there is no sibling field to make a prose value conditional on.
 	if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "slog" && slogAttrCtor[name] {
 		if len(call.Args) >= 2 {
 			if k, ok := litString(call.Args[0]); ok && keyShapedLogKeys[strings.ToLower(k)] && !isRedactedValue(call.Args[1]) {
@@ -325,11 +376,7 @@ func checkLogCallKeyValues(call *ast.CallExpr, fset *token.FileSet, report func(
 	if !ok {
 		return
 	}
-	for i := start; i+1 < len(call.Args); i += 2 {
-		if k, ok := litString(call.Args[i]); ok && keyShapedLogKeys[strings.ToLower(k)] && !isRedactedValue(call.Args[i+1]) {
-			report(fset, call.Args[i+1].Pos(), k)
-		}
-	}
+	keyValuePairs(call.Args, start, fset, report)
 }
 
 func checkArgSliceKeyValues(cl *ast.CompositeLit, fset *token.FileSet, report func(*token.FileSet, token.Pos, string)) {
@@ -337,9 +384,5 @@ func checkArgSliceKeyValues(cl *ast.CompositeLit, fset *token.FileSet, report fu
 	if !ok || at.Len != nil || !isAnyType(at.Elt) {
 		return
 	}
-	for i := 0; i+1 < len(cl.Elts); i += 2 {
-		if k, ok := litString(cl.Elts[i]); ok && keyShapedLogKeys[strings.ToLower(k)] && !isRedactedValue(cl.Elts[i+1]) {
-			report(fset, cl.Elts[i+1].Pos(), k)
-		}
-	}
+	keyValuePairs(cl.Elts, 0, fset, report)
 }

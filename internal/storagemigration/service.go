@@ -165,6 +165,14 @@ type Repository interface {
 	SetStorageMigrationError(ctx context.Context, arg sqlcgen.SetStorageMigrationErrorParams) error
 	MarkStorageMigrationCutover(ctx context.Context, id uuid.UUID) error
 	CancelStorageMigration(ctx context.Context, id uuid.UUID) (int64, error)
+	PauseStorageMigration(ctx context.Context, arg sqlcgen.PauseStorageMigrationParams) (int64, error)
+	ResumeStorageMigration(ctx context.Context, id uuid.UUID) (int64, error)
+	AbortStorageMigrationWithCleanup(ctx context.Context, arg sqlcgen.AbortStorageMigrationWithCleanupParams) (int64, error)
+	ReleaseStorageMigrationSource(ctx context.Context, id uuid.UUID) (int64, error)
+	SetStorageMigrationWorker(ctx context.Context, arg sqlcgen.SetStorageMigrationWorkerParams) error
+	CountStorageMigrationObjectFailuresByCategory(ctx context.Context, campaignID uuid.UUID) ([]sqlcgen.CountStorageMigrationObjectFailuresByCategoryRow, error)
+	ListDestinationCopiesToRemove(ctx context.Context, arg sqlcgen.ListDestinationCopiesToRemoveParams) ([]string, error)
+	DeleteStorageMigrationObject(ctx context.Context, objectKey string) error
 	RefreshStorageMigrationCounters(ctx context.Context, id uuid.UUID) error
 	UpsertStorageMigrationObjects(ctx context.Context, arg sqlcgen.UpsertStorageMigrationObjectsParams) (int64, error)
 	DeleteTerminalStorageMigrationObjects(ctx context.Context) (int64, error)
@@ -193,6 +201,18 @@ type Config struct {
 	Grace time.Duration
 	// Logger receives every state change. A nil logger falls back to the default.
 	Logger *slog.Logger
+	// TargetWrite is the write-probe monitor for the migration TARGET. It is
+	// what turned a fatal boot refusal into a paused campaign: a target that
+	// stops accepting writes now parks the move instead of taking the instance
+	// down with it, and un-parks it when the probe recovers. A nil monitor
+	// reports "never probed", which reads as writable — no test or embedder has
+	// to wire one.
+	TargetWrite *storage.WriteHealth
+	// WorkerID is this process's heartbeat key. It is stamped on the campaign a
+	// worker is driving, so the operational run names a process as well as the
+	// request that started it. Empty in the api, which starts campaigns rather
+	// than running them.
+	WorkerID string
 }
 
 // Service runs storage migration campaigns over a pair of backends.
@@ -202,11 +222,13 @@ type Config struct {
 // the campaign's source and which its destination is decided per campaign by
 // comparing identities — see the package comment.
 type Service struct {
-	repo    Repository
-	primary storage.Backend
-	target  storage.Backend
-	grace   time.Duration
-	logger  *slog.Logger
+	repo        Repository
+	primary     storage.Backend
+	target      storage.Backend
+	targetWrite *storage.WriteHealth
+	workerID    string
+	grace       time.Duration
+	logger      *slog.Logger
 }
 
 // NewService builds the service. target may be nil, which is the feature-off
@@ -222,7 +244,11 @@ func NewService(repo Repository, primary, target storage.Backend, cfg Config) *S
 	if grace < 0 {
 		grace = 0
 	}
-	return &Service{repo: repo, primary: primary, target: target, grace: grace, logger: logger}
+	return &Service{
+		repo: repo, primary: primary, target: target,
+		targetWrite: cfg.TargetWrite, workerID: cfg.WorkerID,
+		grace: grace, logger: logger,
+	}
 }
 
 // Enabled reports whether a migration target is configured.
@@ -230,14 +256,21 @@ func (s *Service) Enabled() bool { return s.target != nil }
 
 // Campaign is the operator-facing projection of one migration.
 type Campaign struct {
-	ID                uuid.UUID  `json:"id"`
-	State             string     `json:"state"`
-	SourceDesc        string     `json:"source_desc"`
-	TargetDesc        string     `json:"target_desc"`
-	ObjectsTotal      int64      `json:"objects_total"`
-	ObjectsDone       int64      `json:"objects_done"`
-	ObjectsFailed     int64      `json:"objects_failed"`
-	LastError         string     `json:"last_error"`
+	ID            uuid.UUID `json:"id"`
+	State         string    `json:"state"`
+	SourceDesc    string    `json:"source_desc"`
+	TargetDesc    string    `json:"target_desc"`
+	ObjectsTotal  int64     `json:"objects_total"`
+	ObjectsDone   int64     `json:"objects_done"`
+	ObjectsFailed int64     `json:"objects_failed"`
+	LastError     string    `json:"last_error"`
+	// PausedReason is why a paused campaign is paused, "" otherwise. One of the
+	// PauseReason* constants — a short fixed vocabulary, never prose.
+	PausedReason string `json:"paused_reason,omitempty"`
+	// ResumeState is the phase a paused campaign will return to, so an operator
+	// can see whether resuming re-opens a copy or lands on a ready-to-cut-over
+	// campaign.
+	ResumeState       string     `json:"resume_state,omitempty"`
 	ObservedCutoverAt *time.Time `json:"observed_cutover_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
@@ -247,7 +280,8 @@ func campaignFrom(row sqlcgen.StorageMigration) Campaign {
 	c := Campaign{
 		ID: row.ID, State: row.State, SourceDesc: row.SourceDesc, TargetDesc: row.TargetDesc,
 		ObjectsTotal: row.ObjectsTotal, ObjectsDone: row.ObjectsDone, ObjectsFailed: row.ObjectsFailed,
-		LastError: row.LastError, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		LastError: row.LastError, PausedReason: row.PausedReason, ResumeState: row.ResumeState,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 	if row.ObservedCutoverAt.Valid {
 		t := row.ObservedCutoverAt.Time
@@ -275,13 +309,22 @@ func (s *Service) Start(ctx context.Context) (Campaign, error) {
 	if _, ok := s.primary.(storage.RootLister); !ok {
 		return Campaign{}, ErrListingUnsupported
 	}
+	// Refused at the START rather than started and paused on the first tick. A
+	// campaign that exists only to sit in 'paused' is a row an operator did not
+	// ask for and now has to reason about; being told "the target will not
+	// accept a write" is the same information with nothing to clean up.
+	if ok, _ := s.targetWritable(); !ok {
+		return Campaign{}, ErrTargetWriteDenied
+	}
 	if _, err := s.repo.GetActiveStorageMigration(ctx); err == nil {
 		return Campaign{}, ErrAlreadyActive
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return Campaign{}, err
 	}
+	requestID, correlationID := correlationFor(ctx)
 	row, err := s.repo.CreateStorageMigration(ctx, sqlcgen.CreateStorageMigrationParams{
 		SourceDesc: source, TargetDesc: dest,
+		RequestID: requestID, CorrelationID: correlationID,
 	})
 	if err != nil {
 		// The single-active partial unique index is the real guard; the check
@@ -340,20 +383,32 @@ func (s *Service) Cancel(ctx context.Context, id uuid.UUID) (Campaign, error) {
 	return campaignFrom(row), nil
 }
 
-// Get returns one campaign and its per-state object breakdown.
-func (s *Service) Get(ctx context.Context, id uuid.UUID) (Campaign, map[string]int64, error) {
+// Get returns one campaign, its per-state object breakdown, and the per-CATEGORY
+// failure breakdown.
+//
+// The third return is the one A34 asked for. objects_failed counts only rows
+// whose whole attempt budget is spent, so a campaign every one of whose objects
+// is being refused reports 0 failed and no last_error for as long as an hour of
+// backoff takes — the operator watches progress stall and is told nothing. The
+// categories have existed since 0107 precisely to be shown, and nothing showed
+// them.
+func (s *Service) Get(ctx context.Context, id uuid.UUID) (Campaign, map[string]int64, []Failure, error) {
 	row, err := s.repo.GetStorageMigration(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Campaign{}, nil, ErrNotFound
+		return Campaign{}, nil, nil, ErrNotFound
 	}
 	if err != nil {
-		return Campaign{}, nil, err
+		return Campaign{}, nil, nil, err
 	}
 	counts, err := s.objectCounts(ctx, id)
 	if err != nil {
-		return Campaign{}, nil, err
+		return Campaign{}, nil, nil, err
 	}
-	return campaignFrom(row), counts, nil
+	fails, err := s.failures(ctx, id)
+	if err != nil {
+		return Campaign{}, nil, nil, err
+	}
+	return campaignFrom(row), counts, fails, nil
 }
 
 // List returns the most recent campaigns, newest first.
@@ -438,9 +493,21 @@ func (s *Service) SweepOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	s.stampWorker(ctx, camp.ID)
 
 	switch s.topologyFor(camp) {
 	case topologyForward:
+		// The pause rail, and it lives HERE — inside the forward topology —
+		// rather than above the switch, because that is the only reading in
+		// which s.target is the store the campaign COPIES INTO. After the
+		// operator's env swap the same handle points at the OLD SOURCE, the
+		// store being decommissioned, and whether that one accepts a write
+		// probe says nothing about whether the campaign may finish deleting it.
+		// Above the switch, a refusing old store would have paused a campaign
+		// mid-cutover and stalled the delete-source phase indefinitely.
+		if s.reconcileTargetWritability(ctx, camp) {
+			return nil
+		}
 		return s.sweepForward(ctx, camp)
 	case topologySwapped:
 		return s.sweepSwapped(ctx, camp)
@@ -471,6 +538,13 @@ func (s *Service) sweepForward(ctx context.Context, camp sqlcgen.StorageMigratio
 
 	case StateCopying, StateSynced:
 		return s.reconcile(ctx, camp)
+
+	case StateAborting:
+		// The mirror of deleting_source, at the other end of the move: remove
+		// the copies this campaign put on the DESTINATION. Forward topology, so
+		// s.target is the destination — which is the whole reason this branch
+		// lives here and not in sweepSwapped.
+		return s.abortCleanupBatch(ctx, camp)
 
 	case StateCutover, StateDeletingSource:
 		// The campaign believes cutover happened, but this process is still
@@ -543,6 +617,23 @@ func (s *Service) sweepSwapped(ctx context.Context, camp sqlcgen.StorageMigratio
 			"source_deleted_after", s.grace.String())
 		return nil
 
+	case StatePaused:
+		// The operator swapped the environment while the campaign was parked.
+		// Nothing here is wrong or dangerous — the copy is where it was and the
+		// source is untouched — but the cutover CANNOT be recorded from
+		// 'paused', so without this line the campaign would sit silent in a
+		// topology it has no branch for, which is precisely the shape of stall
+		// this slice exists to end.
+		return s.note(ctx, camp.ID,
+			"the storage environment was swapped while this migration was paused, so the cutover cannot be recorded yet; resume it first")
+
+	case StateAborting:
+		// The destination is now the store the api SERVES from. Clearing it
+		// would empty the live library, so the clean-up does not run here and
+		// says why rather than looking finished.
+		return s.note(ctx, camp.ID,
+			"the storage environment was swapped while this migration was aborting, so the copies on the new store were NOT removed — they are what this instance now serves from; restore the previous values to finish the abort, or cancel this migration to keep them")
+
 	case StateCutover:
 		return s.maybeBeginDeletingSource(ctx, camp)
 
@@ -604,7 +695,7 @@ func (s *Service) deleteSourceBatch(ctx context.Context, camp sqlcgen.StorageMig
 			// Best-effort per object: one unreachable object must not stall the
 			// rest, and the row stays 'verified' so the next pass retries it.
 			s.logger.WarnContext(ctx, "storage migration could not delete a source object",
-				"campaign", camp.ID.String(), "object_key", jobstatus.RedactDetail(key), "error", derr.Error())
+				"campaign", camp.ID.String(), "object_key", jobstatus.RedactDetail(key), "error", jobstatus.RedactError(derr))
 			continue
 		}
 		if err := s.repo.MarkStorageMigrationObjectSourceDeleted(ctx, key); err != nil {
@@ -809,7 +900,7 @@ func (s *Service) copyOne(ctx context.Context, row sqlcgen.ClaimDueStorageMigrat
 			ObjectKey: row.ObjectKey, Sha256: sum, ByteSize: size,
 		}); uerr != nil {
 			s.logger.WarnContext(ctx, "storage migration could not record a verified object",
-				"object_key", jobstatus.RedactDetail(row.ObjectKey), "error", uerr.Error())
+				"object_key", jobstatus.RedactDetail(row.ObjectKey), "error", jobstatus.RedactError(uerr))
 		}
 		return
 	}
@@ -817,7 +908,7 @@ func (s *Service) copyOne(ctx context.Context, row sqlcgen.ClaimDueStorageMigrat
 	var term *terminalError
 	if errors.As(err, &term) {
 		s.logger.ErrorContext(ctx, "storage migration gave up on an object",
-			"object_key", jobstatus.RedactDetail(row.ObjectKey), "reason", term.category, "error", term.Error())
+			"object_key", jobstatus.RedactDetail(row.ObjectKey), "reason", jobstatus.RedactDetail(term.category), "error", jobstatus.RedactError(term))
 		s.fail(ctx, row.ObjectKey, term.category)
 		return
 	}
@@ -825,7 +916,7 @@ func (s *Service) copyOne(ctx context.Context, row sqlcgen.ClaimDueStorageMigrat
 	// Transient: a timeout, a 5xx, a store restarting. Retry with backoff until
 	// the attempt budget is spent, then dead-letter through the normal path.
 	s.logger.WarnContext(ctx, "storage migration could not copy an object; will retry",
-		"object_key", jobstatus.RedactDetail(row.ObjectKey), "attempts", row.Attempts+1, "error", err.Error())
+		"object_key", jobstatus.RedactDetail(row.ObjectKey), "attempts", row.Attempts+1, "error", jobstatus.RedactError(err))
 	if row.Attempts+1 >= maxAttempts {
 		s.fail(ctx, row.ObjectKey, failAttemptsSpent)
 		return
@@ -836,7 +927,7 @@ func (s *Service) copyOne(ctx context.Context, row sqlcgen.ClaimDueStorageMigrat
 		LastError:     failTransientCopy,
 	}); rerr != nil {
 		s.logger.WarnContext(ctx, "storage migration could not reschedule an object",
-			"object_key", jobstatus.RedactDetail(row.ObjectKey), "error", rerr.Error())
+			"object_key", jobstatus.RedactDetail(row.ObjectKey), "error", jobstatus.RedactError(rerr))
 	}
 }
 
@@ -845,7 +936,7 @@ func (s *Service) fail(ctx context.Context, key, category string) {
 		ObjectKey: key, LastError: category,
 	}); err != nil {
 		s.logger.WarnContext(ctx, "storage migration could not dead-letter an object",
-			"object_key", jobstatus.RedactDetail(key), "error", err.Error())
+			"object_key", jobstatus.RedactDetail(key), "error", jobstatus.RedactError(err))
 	}
 }
 

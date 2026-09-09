@@ -909,8 +909,8 @@ paths:
         reset mail can never arrive. The proof accepted here instead is a
         completed OAuth round trip through the provider that already IS the
         account's credential — started at
-        `POST /api/v1/auth/step-up/start`, which redirects back with
-        `?step_up=<token>`.
+        `POST /api/v1/auth/step-up/start`, whose callback parks the assertion
+        in the httpOnly `vidra_step_up` cookie.
 
 
         The consequences are the password change's, exactly: every OTHER session
@@ -985,10 +985,21 @@ paths:
         `GET /api/v1/auth/atproto/callback` or
         `GET /api/v1/auth/oauth/{provider}/callback` — runs every invariant a
         login runs, checks the attested subject belongs to the bound account,
-        and then, instead of minting a session, redirects to `return_to` with
-        `?step_up=<token>` (or `?step_up_error=<code>`). That token is
-        single-use, expires in ten minutes, and is bound to the session that
-        started the challenge.
+        and then, instead of minting a session, parks a single-use assertion in
+        the httpOnly `vidra_step_up` cookie (`Path=/api/v1/auth/me`,
+        SameSite=Lax) and redirects to `return_to` UNCHANGED — no token and no
+        flag, so the landing URL carries only what the caller put in its own
+        `return_to` (typically `?secure=password`). A FAILURE still redirects
+        with `?step_up_error=<code>`, which is a machine code and not a secret.
+        The assertion is single-use, expires in ten minutes, and is bound to the
+        session that started the challenge.
+
+
+        It moved off the query string because the auth rehearsal measured what
+        the query cost: `step_up=<32 bytes>` in a reverse proxy's access log and
+        in the `Referer` of every subresource the landing page then fetched,
+        while the identically-shaped `vidra_mfa_pending` cookie appeared in
+        neither.
 
 
         The provider must already be LINKED to the caller: a round trip through
@@ -14897,10 +14908,31 @@ paths:
         collection is forced to dry-run (MediaGCResponse.forced_dry_run_reason =
         storage_migration_active). At most one campaign runs at a time.
         Restricted to admins; audited (admin.storage.migration.start).
+
+
+        With `dry_run: true` this creates NOTHING and answers 200 with a
+        preview: the two store identities, the object count and the byte total a
+        campaign would copy. It is the answer a confirmation dialog needs before
+        an operator agrees to move a whole media library, and it is audited too
+        (admin.storage.migration.preview), because enumerating the store is an
+        expensive read somebody should be able to attribute.
       tags: [admin]
       security:
         - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartStorageMigrationRequest"
       responses:
+        "200":
+          description: >-
+            The dry-run preview (`dry_run: true` only). Nothing was created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageMigrationPreview"
         "201":
           description: The campaign was opened.
           content:
@@ -14920,7 +14952,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: A storage migration is already in progress.
+          description: >-
+            A storage migration is already in progress, or the migration target
+            is not currently accepting writes — a campaign started into a store
+            that refuses writes would pause on its first tick, so it is refused
+            here instead.
           content:
             application/json:
               schema:
@@ -15065,6 +15101,377 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such storage migration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/storage/migrations/{id}/pause:
+    post:
+      operationId: pauseStorageMigration
+      summary: Pause a storage migration (admin)
+      description: >-
+        Parks a live campaign: the copy workers stop claiming objects and the
+        ledger stands exactly where it is. Nothing is undone and nothing is
+        deleted, and the media-GC interlock stays engaged — a half-finished move
+        is precisely the state in which "no database row references this object"
+        stops being evidence about either store.
+
+
+        The phase the campaign came out of is remembered, so a resume never has
+        to guess: a campaign paused out of `synced` is ready to cut over and one
+        paused out of `copying` is not. Legal from `enumerating`, `copying` and
+        `synced` only; anything else is a 409 naming the state it is actually
+        in. Restricted to admins; audited (admin.storage.migration.pause).
+
+
+        A campaign is ALSO paused automatically, with paused_reason
+        `target_write_denied`, when the migration target stops accepting write
+        probes — and resumed automatically when it starts again.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The campaign after the pause.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageMigration"
+        "400":
+          description: The id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such storage migration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The campaign is in a state this action is not legal from. The
+            message names that state, because the commonest cause is a stale
+            page and an operator driving a move has to know what changed under
+            them.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/storage/migrations/{id}/resume:
+    post:
+      operationId: resumeStorageMigration
+      summary: Resume a paused storage migration (admin)
+      description: >-
+        Puts a paused campaign back in the phase it came out of. It is refused
+        (409) while the migration target is still not accepting writes, rather
+        than resuming a campaign the next sweep would pause again within the
+        minute. Restricted to admins; audited (admin.storage.migration.resume).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The campaign after the resume.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageMigration"
+        "400":
+          description: The id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such storage migration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The campaign is in a state this action is not legal from. The
+            message names that state, because the commonest cause is a stale
+            page and an operator driving a move has to know what changed under
+            them.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/storage/migrations/{id}/abort:
+    post:
+      operationId: abortStorageMigration
+      summary: Abort a storage migration, optionally cleaning the destination (admin)
+      description: >-
+        Cancels a campaign and, when asked for it explicitly, REMOVES the partial
+        copies that campaign wrote to the destination.
+
+
+        Without `clean_destination` this is exactly the cancel: the copies stay,
+        byte-identical objects under identical keys, inert until some future
+        campaign re-verifies them. That is the default and the safe answer.
+
+
+        With `clean_destination: true` the campaign enters `aborting` and the
+        leader-gated sweep removes those copies batch by batch before it reaches
+        `cancelled`. Only objects the campaign PROVED it wrote to the
+        destination are removed; the source is untouched throughout. Because
+        this is the only thing in the product that deletes from the destination,
+        and it is being asked for on the way out of a destructive operation, the
+        body must also carry `confirm: "PURGE"` — the same typed confirmation the
+        media-GC page's destructive sweep uses.
+
+
+        Legal from `enumerating`, `copying`, `synced` and `paused`. After
+        cutover the destination is the store the instance SERVES FROM, so
+        cleaning it would empty the live library, and the request is a 409.
+        Restricted to admins; audited (admin.storage.migration.abort).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AbortStorageMigrationRequest"
+      responses:
+        "200":
+          description: The campaign after the abort.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageMigration"
+        "400":
+          description: The id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such storage migration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The campaign is in a state this action is not legal from. The
+            message names that state, because the commonest cause is a stale
+            page and an operator driving a move has to know what changed under
+            them.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            `clean_destination` was set without `confirm: "PURGE"`. Nothing was
+            deleted and the campaign is unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/storage/migrations/{id}/switch:
+    post:
+      operationId: switchStorageMigrationAuthority
+      summary: Record a storage-migration cutover (admin)
+      description: >-
+        Records that this instance is now serving from the migration TARGET,
+        without waiting up to a minute for the leader sweep to notice.
+
+
+        It cannot PERFORM a cutover. Which store a process serves from is decided
+        by the environment it was started with, and the campaign reads that off
+        the two backends it holds rather than being told. So this endpoint is the
+        second half of a two-step action whose first half is an operator's: swap
+        BOTH environment sets (STORAGE_* to the new store,
+        STORAGE_MIGRATION_TARGET_* to the old one) and restart, then record it
+        here. When the swap has not taken effect in this process, the answer is a
+        409 saying exactly that — which is the point: waiting and hoping is
+        replaced by being told.
+
+
+        Recording the cutover starts the grace clock. Legal from `copying` and
+        `synced`. Restricted to admins; audited (admin.storage.migration.switch).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The campaign after the cutover was recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageMigration"
+        "400":
+          description: The id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such storage migration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The campaign is not in `copying` or `synced`, or this process is
+            still serving from the migration SOURCE so there is no cutover to
+            record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/storage/migrations/{id}/release:
+    post:
+      operationId: releaseStorageMigrationSource
+      summary: Release the old store and start deleting it (admin)
+      description: >-
+        Ends the grace window early and opens the delete-source phase.
+
+
+        The grace window is an UNDO window: while it runs, reverting the
+        environment swap is a restart rather than a restore. Ending it is
+        therefore an operator decision, and this is the act that makes a move
+        irreversible — the second, explicit step after the authority switch,
+        never a consequence of it.
+
+
+        The precondition that cannot be waived is re-checked here rather than
+        trusted from the counters: every object must be accounted for. A campaign
+        whose environment was swapped before the copy finished still has objects
+        the new store does not hold, and releasing then would delete their only
+        remaining copy — that is a 409, and nothing is deleted.
+
+
+        Legal from `cutover` only. Restricted to admins; audited
+        (admin.storage.migration.release).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The campaign after the delete-source phase opened.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageMigration"
+        "400":
+          description: The id is not a UUID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such storage migration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The campaign is not in `cutover`, or objects have not all been
+            copied out of the source yet. Nothing was deleted.
           content:
             application/json:
               schema:
@@ -20082,9 +20489,11 @@ components:
     SetPasswordRequest:
       type: object
       description: >-
-        A first password plus the step-up assertion that authorises it. Neither
-        value is ever echoed back or logged.
-      required: [new_password, step_up_token]
+        A first password. The step-up assertion that authorises it normally
+        arrives on the httpOnly `vidra_step_up` COOKIE the callback set, so a
+        browser sends this body with `new_password` alone. Neither value is ever
+        echoed back or logged.
+      required: [new_password]
       properties:
         new_password:
           type: string
@@ -20097,9 +20506,24 @@ components:
         step_up_token:
           type: string
           description: >-
-            The single-use token from a completed step-up round trip, delivered
-            as `?step_up=` on the callback's redirect. Bound to the session that
-            started the challenge and dead after ten minutes.
+            The single-use token from a completed step-up round trip. OPTIONAL,
+            and normally absent: the callback parks it in the httpOnly
+            `vidra_step_up` cookie (`Path=/api/v1/auth/me`, SameSite=Lax, ten
+            minutes) and a browser simply sends the cookie. The field survives
+            for an API client with no cookie jar, which can read the token off
+            the Set-Cookie header; when both are present the COOKIE wins, so a
+            stale token in a body cannot outrank a fresh grant.
+
+
+            It moved off the query string because the auth rehearsal measured
+            what the query cost: `step_up=<32 bytes>` in a reverse proxy's
+            access log and in the `Referer` of every subresource the landing
+            page fetched, while the identically-shaped `vidra_mfa_pending`
+            cookie appeared in neither.
+
+
+            With neither cookie nor field the answer is 403 `step_up_required`,
+            the same answer a spent or expired assertion gets.
     StepUpStartRequest:
       type: object
       description: >-
@@ -20122,8 +20546,10 @@ components:
         return_to:
           type: string
           description: >-
-            A same-origin relative path to land on afterwards. The callback
-            appends `?step_up=<token>` or `?step_up_error=<code>` itself.
+            A same-origin relative path to land on afterwards. On success the
+            callback lands here UNCHANGED and the assertion rides the httpOnly
+            `vidra_step_up` cookie; on failure it appends
+            `?step_up_error=<code>`.
           example: /settings/security
     LinkStartResponse:
       type: object
@@ -20158,8 +20584,10 @@ components:
           type: string
           format: password
           description: >-
-            The account's current password, for confirmation. Required unless
-            `step_up_token` is supplied.
+            The account's current password, for confirmation. Required unless a
+            step-up assertion is supplied — either on the httpOnly
+            `vidra_step_up` cookie (what a browser sends) or as
+            `step_up_token`.
         step_up_token:
           type: string
           description: >-
@@ -20170,6 +20598,13 @@ components:
             recoverable at all — and it can prove neither a password nor a
             mailbox. An account that HAS a password is refused 422
             `password_already_set`.
+
+
+            OPTIONAL, and normally absent: the assertion arrives on the
+            httpOnly `vidra_step_up` cookie the callback set, so a browser sends
+            `new_email` alone. The EXACTLY-ONE-PROOF rule counts the cookie:
+            supplying `current_password` while that cookie is present is the
+            422, and supplying neither is the 422 that names the password.
         new_email:
           type: string
           format: email
@@ -21513,6 +21948,8 @@ components:
               enumerating,
               copying,
               synced,
+              paused,
+              aborting,
               cutover,
               deleting_source,
               done,
@@ -21524,6 +21961,10 @@ components:
             `copying` — objects are being copied and verified.
             `synced` — every object is verified in the target and a delta pass
             found nothing new; this is the state to cut over from.
+            `paused` — live but not claiming objects; `paused_reason` says why
+            and `resume_state` says where a resume lands.
+            `aborting` — cancelled, and removing the partial copies the campaign
+            wrote to the destination before it reaches `cancelled`.
             `cutover` — the api is serving from the target and the grace clock
             is running.
             `deleting_source` — removing the old store's copies.
@@ -21553,6 +21994,23 @@ components:
             never a raw backend error, endpoint or object key. Typically set when
             a campaign is STUCK waiting for an operator (for example, the
             environment was swapped before every object had been copied).
+        paused_reason:
+          type: string
+          enum: [target_write_denied, operator]
+          description: >-
+            Why a `paused` campaign is paused; absent otherwise.
+            `target_write_denied` — the migration target refused a write probe.
+            The instance itself is unaffected and keeps serving from whichever
+            store holds authority, and copying resumes on its own once the
+            target accepts writes again. `operator` — an admin pressed pause,
+            and only an admin resumes it.
+        resume_state:
+          type: string
+          enum: [enumerating, copying, synced]
+          description: >-
+            The phase a resume returns this paused campaign to. It is shown
+            because it is the difference between resuming into more copying and
+            resuming onto a campaign that is ready to cut over.
         observed_cutover_at:
           type: string
           format: date-time
@@ -21576,6 +22034,100 @@ components:
             format: int64
           example:
             { pending: 0, copying: 0, verified: 412, failed: 0, source_deleted: 0 }
+        failures:
+          type: array
+          description: >-
+            Per-CATEGORY failure counts, single-campaign view only. It exists
+            because `objects_failed` counts only objects whose whole attempt
+            budget is spent, so a campaign every object of which is being
+            refused reports `objects_failed: 0` and an empty `last_error` for as
+            long as the retry ladder takes — the operator watches progress stall
+            and is told nothing. `retrying` is that invisible half.
+          items:
+            $ref: "#/components/schemas/StorageMigrationFailure"
+    StorageMigrationFailure:
+      type: object
+      description: >-
+        One failure category and how many objects are in it. The category is one
+        of a short fixed set this instance writes — never a storage key, an
+        endpoint, or a raw backend error.
+      required: [category, terminal, retrying]
+      properties:
+        category:
+          type: string
+          example: "copy failed; retrying"
+        terminal:
+          type: integer
+          format: int64
+          description: Objects that have spent their whole attempt budget and dead-lettered.
+        retrying:
+          type: integer
+          format: int64
+          description: Objects that have failed at least once and are still being retried.
+    StartStorageMigrationRequest:
+      type: object
+      description: >-
+        Optional body for the start. Omit it entirely for a real campaign, which
+        is what every client before the preview existed sends.
+      properties:
+        dry_run:
+          type: boolean
+          default: false
+          description: >-
+            Answer 200 with a preview of what a campaign WOULD copy instead of
+            creating one. Nothing is written and there is nothing to cancel.
+    StorageMigrationPreview:
+      type: object
+      description: >-
+        What a campaign would copy, computed without creating a campaign row,
+        writing a ledger entry, or touching the target.
+      required: [dry_run, source_desc, target_desc, objects, bytes, bytes_known]
+      properties:
+        dry_run:
+          type: boolean
+          description: Always true. It is here so a client cannot mistake a preview for a campaign.
+        source_desc:
+          type: string
+          example: local:/var/lib/vidra/media
+        target_desc:
+          type: string
+          example: s3://nyc3.digitaloceanspaces.com/example-video-media
+        objects:
+          type: integer
+          format: int64
+          description: Objects in the source store. Exact.
+        bytes:
+          type: integer
+          format: int64
+          description: >-
+            Total size of those objects. Zero and meaningless unless
+            `bytes_known` is true.
+        bytes_known:
+          type: boolean
+          description: >-
+            False when the source cannot report sizes without a per-object round
+            trip. The COUNT is still exact; the byte total is simply absent
+            rather than a number an operator would take for a fact.
+    AbortStorageMigrationRequest:
+      type: object
+      description: >-
+        Optional body for the abort. Omit it entirely for a plain cancel, which
+        leaves the destination's copies in place.
+      properties:
+        clean_destination:
+          type: boolean
+          default: false
+          description: >-
+            Also remove the partial copies this campaign wrote to the
+            destination. Only objects the campaign PROVED it wrote are removed;
+            the source is untouched.
+        confirm:
+          type: string
+          description: >-
+            Must be the literal `PURGE` when `clean_destination` is true, and is
+            ignored otherwise. The same typed confirmation the media-GC page's
+            destructive sweep uses.
+          example: PURGE
     StorageMigrationList:
       type: object
       required: [migrations]

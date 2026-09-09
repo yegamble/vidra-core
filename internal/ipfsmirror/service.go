@@ -793,11 +793,11 @@ func (s *Service) ReevaluateUser(ctx context.Context, userID uuid.UUID) error {
 			// unlisting an owner moves their identity assets public→private, re-listing
 			// moves them back — both through the ledger transition, no cross-pin.
 			if perr := s.routePin(ctx, ref.ObjectKey, ref.Class, uuid.Nil, userID, net); perr != nil {
-				s.logger.Warn("ipfs_reeval_image_repin_failed", "object_key", jobstatus.RedactDetail(ref.ObjectKey), "error", perr)
+				s.logger.Warn("ipfs_reeval_image_repin_failed", "object_key", jobstatus.RedactDetail(ref.ObjectKey), "error", jobstatus.RedactError(perr))
 				failures++
 			}
 		} else if uerr := s.repo.EnqueueIPFSUnpin(ctx, ref.ObjectKey); uerr != nil {
-			s.logger.Warn("ipfs_reeval_image_unpin_failed", "object_key", jobstatus.RedactDetail(ref.ObjectKey), "error", uerr)
+			s.logger.Warn("ipfs_reeval_image_unpin_failed", "object_key", jobstatus.RedactDetail(ref.ObjectKey), "error", jobstatus.RedactError(uerr))
 			failures++
 		}
 	}
@@ -1309,7 +1309,7 @@ func (s *Service) pin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPF
 	if err != nil {
 		s.recordFailure(ctx, row, "open source object failed")
 		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
-			"attempts", row.Attempts+1, "reason", "open_source", "error", err)
+			"attempts", row.Attempts+1, "reason", "open_source", "error", jobstatus.RedactError(err))
 		return false
 	}
 	res, err := nc.client.Add(ctx, path.Base(row.ObjectKey), rc)
@@ -1317,14 +1317,14 @@ func (s *Service) pin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueIPF
 	if err != nil {
 		s.recordFailure(ctx, row, "add+pin rpc failed")
 		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
-			"attempts", row.Attempts+1, "reason", "add_pin", "error", err)
+			"attempts", row.Attempts+1, "reason", "add_pin", "error", jobstatus.RedactError(err))
 		return false
 	}
 	state, err := s.repo.MarkIPFSPinned(ctx, sqlcgen.MarkIPFSPinnedParams{
 		ObjectKey: row.ObjectKey, Cid: res.CID, CarRoot: "", ByteSize: res.Size,
 	})
 	if err != nil {
-		s.logger.Warn("ipfs mark pinned failed", "object_key", jobstatus.RedactDetail(row.ObjectKey), "error", err)
+		s.logger.Warn("ipfs mark pinned failed", "object_key", jobstatus.RedactDetail(row.ObjectKey), "error", jobstatus.RedactError(err))
 		return false
 	}
 	if state != "pinned" {
@@ -1380,7 +1380,7 @@ func (s *Service) hlsTreePrefix(ctx context.Context, nc netClient, row sqlcgen.C
 	if err != nil {
 		s.recordFailure(ctx, row, "resolve promoted hls tree failed")
 		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
-			"attempts", row.Attempts+1, "reason", "resolve_tree", "error", err)
+			"attempts", row.Attempts+1, "reason", "resolve_tree", "error", jobstatus.RedactError(err))
 		return "", false
 	}
 	if !ok {
@@ -1418,7 +1418,7 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 	if err != nil {
 		s.recordFailure(ctx, row, "list directory tree failed")
 		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
-			"attempts", row.Attempts+1, "reason", "list_tree", "error", err)
+			"attempts", row.Attempts+1, "reason", "list_tree", "error", jobstatus.RedactError(err))
 		return false
 	}
 	var entries []ipfs.DirEntry
@@ -1453,14 +1453,14 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 	if err != nil {
 		s.recordFailure(ctx, row, "directory add+pin rpc failed")
 		s.logger.Warn("ipfs_pin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
-			"attempts", row.Attempts+1, "reason", "add_dir", "error", err)
+			"attempts", row.Attempts+1, "reason", "add_dir", "error", jobstatus.RedactError(err))
 		return false
 	}
 	state, err := s.repo.MarkIPFSPinned(ctx, sqlcgen.MarkIPFSPinnedParams{
 		ObjectKey: row.ObjectKey, Cid: res.CID, CarRoot: res.CID, ByteSize: res.Size,
 	})
 	if err != nil {
-		s.logger.Warn("ipfs mark pinned failed", "object_key", jobstatus.RedactDetail(row.ObjectKey), "error", err)
+		s.logger.Warn("ipfs mark pinned failed", "object_key", jobstatus.RedactDetail(row.ObjectKey), "error", jobstatus.RedactError(err))
 		return false
 	}
 	if state != "pinned" {
@@ -1519,7 +1519,7 @@ func (s *Service) swapUnpin(ctx context.Context, nc netClient, oldCID, newCID, o
 		return
 	}
 	if err := nc.client.Unpin(ctx, oldCID); err != nil {
-		s.logger.Warn("ipfs_unpin_failed", "network", nc.network, "object_key", jobstatus.RedactDetail(objectKey), "reason", "swap_superseded", "error", err)
+		s.logger.Warn("ipfs_unpin_failed", "network", nc.network, "object_key", jobstatus.RedactDetail(objectKey), "reason", "swap_superseded", "error", jobstatus.RedactError(err))
 		return
 	}
 	// Mirror the node unpin to the cluster (best-effort) so a superseded CID does
@@ -1624,7 +1624,7 @@ func (s *Service) unpin(ctx context.Context, nc netClient, row sqlcgen.ClaimDueI
 		if err := nc.client.Unpin(ctx, row.Cid); err != nil {
 			s.recordFailure(ctx, row, "unpin rpc failed")
 			s.logger.Warn("ipfs_unpin_failed", "network", nc.network, "media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey),
-				"attempts", row.Attempts+1, "error", err)
+				"attempts", row.Attempts+1, "error", jobstatus.RedactError(err))
 			return false
 		}
 		// Mirror the node unpin to the cluster (best-effort).

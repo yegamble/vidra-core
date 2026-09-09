@@ -148,3 +148,59 @@ const ConstraintActorHandles = "actor_handles_pkey"
 func IsHandleReserved(err error) bool {
 	return IsUniqueViolation(err) && ConstraintName(err) == ConstraintActorHandles
 }
+
+// IsUnavailable reports whether err means the DATABASE could not be asked, as
+// opposed to a query that ran and answered something the caller did not like.
+//
+// A34 measured the gap it closes: with PostgreSQL stopped, an AUTHENTICATED
+// request answered a typed 503 `session_store_unavailable` — requireAuth knows
+// the difference between "the store said no" and "the store did not answer" —
+// while an ANONYMOUS read answered a bare 500 `internal_error`, because nothing
+// on that path classified the driver's error at all. Same outage, same cause,
+// two different sentences, and the one an ordinary visitor gets is the
+// uninformative one.
+//
+// The predicate is deliberately narrow. It answers true only for failures that
+// are unambiguously about the CONNECTION or the server's willingness to accept
+// one:
+//
+//   - *pgconn.ConnectError — the pool could not open a connection at all
+//     (refused, DNS, TLS, timeout while dialling).
+//   - SQLSTATE class 08 — connection_exception and its family, which is what a
+//     server that went away mid-query reports.
+//   - 57P01/57P02/57P03 — admin shutdown, crash shutdown, cannot connect now:
+//     the server is there and is refusing to serve, which for a caller is the
+//     same fact.
+//   - 53300 — too_many_connections. A pool that cannot get a slot has not been
+//     told anything about the caller's data.
+//   - a closed pool (the process is shutting down).
+//
+// It deliberately does NOT include statement timeouts, deadlocks, or
+// serialization failures. Those mean the database DID answer, and calling them
+// "unavailable" would turn a slow query into a dependency outage on the status
+// page.
+func IsUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ce *pgconn.ConnectError
+	if errors.As(err, &ce) {
+		return true
+	}
+	// puddle's closed-pool error is not exported through pgxpool, and matching
+	// its text is the only handle on it. It is a shutdown-time answer, so a
+	// false negative here costs nothing.
+	if strings.Contains(err.Error(), "closed pool") {
+		return true
+	}
+	state := SQLState(err)
+	switch {
+	case strings.HasPrefix(state, "08"):
+		return true
+	case state == "57P01", state == "57P02", state == "57P03":
+		return true
+	case state == "53300":
+		return true
+	}
+	return false
+}

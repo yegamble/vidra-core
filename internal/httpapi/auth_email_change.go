@@ -29,24 +29,38 @@ type emailChangeRequest struct {
 	StepUpToken string `json:"step_up_token"`
 }
 
+// Validate checks only the address. WHICH proof authorises the change is
+// decided in the handler, because one of the two proofs is no longer in the
+// body: since the assertion moved onto the httpOnly `vidra_step_up` cookie a
+// browser's request carries a password OR nothing at all, and a Validate that
+// cannot see the cookie would refuse the cookie-only case with a 422 naming a
+// field the page cannot fill in.
 func (r emailChangeRequest) Validate() []FieldError {
 	var fes []FieldError
-	// EXACTLY one proof. Requiring one keeps the route from becoming an
-	// unauthenticated address-mover; refusing both keeps a caller from
-	// presenting a step-up alongside a password and leaving it ambiguous which
-	// one authorised the change (and which one gets spent).
-	hasPassword := r.CurrentPassword != ""
-	hasStepUp := strings.TrimSpace(r.StepUpToken) != ""
-	switch {
-	case !hasPassword && !hasStepUp:
-		fes = append(fes, FieldError{Field: "current_password", Message: "is required (or step_up_token, for an account with no password)"})
-	case hasPassword && hasStepUp:
-		fes = append(fes, FieldError{Field: "step_up_token", Message: "must not be supplied with current_password"})
-	}
 	if !looksLikeEmail(r.NewEmail) {
 		fes = append(fes, FieldError{Field: "new_email", Message: "must be a valid email"})
 	}
 	return fes
+}
+
+// exactlyOneProof enforces what Validate used to: requiring one keeps the route
+// from becoming an unauthenticated address-mover, and refusing both keeps a
+// caller from presenting a step-up alongside a password and leaving it
+// ambiguous which one authorised the change (and which one gets spent).
+func exactlyOneProof(password, stepUp string) error {
+	switch {
+	case password == "" && stepUp == "":
+		return &ValidationError{Fields: []FieldError{{
+			Field:   "current_password",
+			Message: "is required (or a step-up: complete a provider round trip first, for an account with no password)",
+		}}}
+	case password != "" && stepUp != "":
+		return &ValidationError{Fields: []FieldError{{
+			Field:   "current_password",
+			Message: "must not be supplied together with a step-up assertion — exactly one proof authorises this change",
+		}}}
+	}
+	return nil
 }
 
 // emailChangeConfirmRequest is the POST /api/v1/auth/me/email-change/confirm body.
@@ -156,17 +170,28 @@ func (s *Server) handleRequestEmailChange(c echo.Context) error {
 			Consequence: "it cannot deliver the confirmation this change needs. The token goes to the new address and nowhere else, so starting the change would leave it pending forever",
 		}
 	}
+	stepUp := stepUpTokenFor(c, in.StepUpToken)
+	if perr := exactlyOneProof(in.CurrentPassword, stepUp); perr != nil {
+		return perr
+	}
 	var pending auth.PendingEmailChange
 	var err2 error
-	if strings.TrimSpace(in.StepUpToken) != "" {
+	if stepUp != "" {
 		pending, err2 = s.authsvc.RequestEmailChangeWithStepUp(c.Request().Context(), userID,
-			sessionIDFromContext(c), in.StepUpToken, in.NewEmail)
+			sessionIDFromContext(c), stepUp, in.NewEmail)
 	} else {
 		pending, err2 = s.authsvc.RequestEmailChange(c.Request().Context(), userID, in.CurrentPassword, in.NewEmail)
 	}
 	if err2 != nil {
+		if errors.Is(err2, auth.ErrStepUpRequired) {
+			// Nothing in that cookie will ever work again; see handleSetPassword.
+			s.clearStepUpCookie(c)
+		}
 		s.audit(c, observability.ActionEmailChangeRequest, observability.ResultFailure, userID.String(), emailChangeReason(err2))
 		return s.emailChangeErrorFor(c, userID, err2)
+	}
+	if stepUp != "" {
+		s.clearStepUpCookie(c)
 	}
 	s.audit(c, observability.ActionEmailChangeRequest, observability.ResultSuccess, userID.String(), "")
 	return c.JSON(http.StatusAccepted, pendingView(pending))

@@ -757,3 +757,25 @@ func RedactDetail(s string) string {
 	}
 	return s
 }
+
+// RedactError is RedactDetail for an error value, and it exists because of
+// where the leak actually was.
+//
+// A34 measured a storage-migration WARN that redacted `object_key` to
+// `[redacted-key]` and then, in the very same line, printed the same key
+// verbatim inside `"error", err.Error()` — `storage: s3: put
+// "thumbnails/<uuid>.jpg": Access Denied`. The field was redacted; the sentence
+// beside it was not, so the redaction bought nothing at all. A backend error
+// names the key it failed on almost by definition, which makes "the error
+// string beside a redacted key" the DEFAULT shape of the leak rather than an
+// unlucky one.
+//
+// A nil error answers "" rather than panicking, so a caller may wrap without
+// first proving the error is non-nil — the log line for a nil error is a bug,
+// but it must not be a crash.
+func RedactError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return RedactDetail(err.Error())
+}

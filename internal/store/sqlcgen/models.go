@@ -894,6 +894,11 @@ type StorageMigration struct {
 	ObservedCutoverAt pgtype.Timestamptz `json:"observed_cutover_at"`
 	CreatedAt         time.Time          `json:"created_at"`
 	UpdatedAt         time.Time          `json:"updated_at"`
+	PausedReason      string             `json:"paused_reason"`
+	ResumeState       string             `json:"resume_state"`
+	RequestID         string             `json:"request_id"`
+	CorrelationID     string             `json:"correlation_id"`
+	WorkerID          string             `json:"worker_id"`
 }
 
 type StorageMigrationObject struct {

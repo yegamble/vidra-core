@@ -210,18 +210,89 @@ func (s *Server) completeStepUp(c echo.Context, returnTo, provider, boundUserID,
 		return stepUpErrorRedirect(c, returnTo, "step_up_failed")
 	}
 	s.audit(c, observability.ActionStepUpGrant, observability.ResultSuccess, userID.String(), provider)
-	return stepUpSuccessRedirect(c, returnTo, grant.Token)
+	return s.stepUpSuccessRedirect(c, returnTo, grant.Token)
 }
 
-// stepUpSuccessRedirect hands the browser back with the raw token, preserving
-// any query the validated path already carried.
-func stepUpSuccessRedirect(c echo.Context, returnTo, token string) error {
+// THE STEP-UP TRANSPORT, AND WHY IT IS A COOKIE
+//
+// The assertion used to ride back as `?step_up=<token>` on the landing URL, and
+// the argument for that was that a step-up token is worthless without the
+// session it is bound to — whoever can read the URL already holds the session.
+// The auth rehearsal put a real logging proxy in front of the flow and measured
+// what the argument costs: `step_up=<32 bytes>` appears in the proxy's access
+// log and in the `Referer` header of every same-origin subresource the landing
+// page then fetches, while `vidra_mfa_pending` — the same shape of secret, one
+// route away — appears in none of them, because the proxy logs
+// `"Cookie":["REDACTED"]`.
+//
+// "Bound to a session" is a bound on the blast radius, not a reason to write a
+// credential into three log files. The two transports were visible side by side
+// in one access log, and only one of them wrote anything down. So the assertion
+// travels the way the mfa_token already does: `vidra_step_up`, httpOnly (no
+// script reads it, and the frontend now reads nothing from the URL), SameSite
+// Lax (it must survive the top-level GET back from the provider), scoped to the
+// two routes that can spend it, and dead in the same ten minutes the row is.
+//
+// The landing URL carries only the `?secure=password` the caller put in its own
+// return_to. There is no flag beside it: the page shows the form it was asked
+// for, and an absent or spent assertion is answered by the route, as 403
+// `step_up_required` — which the page already renders.
+const stepUpCookieName = "vidra_step_up"
+
+// stepUpCookiePath is the narrowest prefix BOTH consumers share:
+// POST /api/v1/auth/me/password/set and POST /api/v1/auth/me/email-change. It
+// is deliberately not "/" — a cookie that rides requests it cannot authorise is
+// a cookie in more logs than necessary, which is the whole finding.
+const stepUpCookiePath = "/api/v1/auth/me"
+
+// setStepUpCookie parks the granted assertion for the redirect back.
+func (s *Server) setStepUpCookie(c echo.Context, token string) {
+	s.writeStateCookie(c, stepUpCookieName, stepUpCookiePath, token, auth.StepUpTTL)
+}
+
+func (s *Server) clearStepUpCookie(c echo.Context) {
+	s.clearStateCookie(c, stepUpCookieName, stepUpCookiePath)
+}
+
+// stepUpCookieToken returns the assertion the request's cookie carries, or ""
+// when there is none.
+func stepUpCookieToken(c echo.Context) string {
+	ck, err := c.Cookie(stepUpCookieName)
+	if err != nil || ck == nil {
+		return ""
+	}
+	return ck.Value
+}
+
+// stepUpTokenFor resolves the assertion a credential-writing request presents:
+// the cookie first, then the body field.
+//
+// The body field survives for the API client that has no browser — it starts
+// the step-up itself and reads the token off the Set-Cookie header — and
+// because a client that already sends it must not break on the day the cookie
+// arrives. The COOKIE wins when both are present: it is the one this instance
+// just issued, and preferring the caller's copy would let a stale token in a
+// body silently outrank a fresh grant.
+func stepUpTokenFor(c echo.Context, fromBody string) string {
+	if ck := stepUpCookieToken(c); ck != "" {
+		return ck
+	}
+	return strings.TrimSpace(fromBody)
+}
+
+// stepUpSuccessRedirect parks the assertion in the cookie and hands the browser
+// back to the validated return_to UNCHANGED — no token, and no flag either.
+func (s *Server) stepUpSuccessRedirect(c echo.Context, returnTo, token string) error {
+	s.setStepUpCookie(c, token)
 	u, err := url.Parse(returnTo)
 	if err != nil {
 		u = &url.URL{Path: "/"}
 	}
+	// A failed attempt earlier in this browser may have left step_up_error on
+	// the URL the caller round-tripped; a success must not land carrying it.
 	q := u.Query()
-	q.Set("step_up", token)
+	q.Del("step_up")
+	q.Del("step_up_error")
 	u.RawQuery = q.Encode()
 	return c.Redirect(http.StatusFound, u.String())
 }
@@ -250,11 +321,13 @@ type setPasswordRequest struct {
 	StepUpToken string `json:"step_up_token"`
 }
 
+// Validate does NOT require step_up_token: since the assertion moved onto the
+// httpOnly `vidra_step_up` cookie the browser's request carries no such field,
+// and a 422 naming one would be an instruction the page cannot follow. A
+// request with no assertion at all is answered where the assertion is checked,
+// as 403 `step_up_required` — the same answer a spent or expired one gets.
 func (r setPasswordRequest) Validate() []FieldError {
 	var fes []FieldError
-	if strings.TrimSpace(r.StepUpToken) == "" {
-		fes = append(fes, FieldError{Field: "step_up_token", Message: "is required"})
-	}
 	// The SAME policy registration, the reset and the password change enforce —
 	// one rule for what a vidra password may be, wherever it is set.
 	switch {
@@ -286,10 +359,15 @@ func (s *Server) handleSetPassword(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
+	token := stepUpTokenFor(c, in.StepUpToken)
 	if err := s.authsvc.SetPassword(c.Request().Context(), userID,
-		in.NewPassword, in.StepUpToken, sessionIDFromContext(c)); err != nil {
+		in.NewPassword, token, sessionIDFromContext(c)); err != nil {
 		return s.setPasswordError(c, userID, err)
 	}
+	// Single use, enforced where it can be seen. The ROW is spent by the
+	// statement that read it; clearing the cookie is what stops the browser
+	// sending a token this instance would now refuse.
+	s.clearStepUpCookie(c)
 	s.audit(c, observability.ActionPasswordSet, observability.ResultSuccess, userID.String(), "")
 	return c.NoContent(http.StatusNoContent)
 }
@@ -302,6 +380,11 @@ func (s *Server) setPasswordError(c echo.Context, userID uuid.UUID, err error) e
 		s.audit(c, observability.ActionPasswordSet, observability.ResultFailure, userID.String(), "password_already_set")
 		return &PasswordAlreadySetError{}
 	case errors.Is(err, auth.ErrStepUpRequired):
+		// Missing, spent, expired, or another session's. In every one of those
+		// the cookie holds nothing that will ever work again, so it goes — the
+		// alternative is a browser that re-presents a dead token on every
+		// attempt for the next ten minutes.
+		s.clearStepUpCookie(c)
 		s.audit(c, observability.ActionPasswordSet, observability.ResultFailure, userID.String(), "step_up_required")
 		return &StepUpRequiredError{Providers: s.authsvc.StepUpProvidersFor(c.Request().Context(), userID)}
 	case errors.Is(err, auth.ErrAccountNotFound):

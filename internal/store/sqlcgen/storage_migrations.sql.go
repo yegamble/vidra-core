@@ -12,9 +12,40 @@ import (
 	"github.com/google/uuid"
 )
 
+const abortStorageMigrationWithCleanup = `-- name: AbortStorageMigrationWithCleanup :execrows
+UPDATE storage_migrations
+SET state = 'aborting', paused_reason = '', resume_state = '', last_error = $2, updated_at = now()
+WHERE id = $1 AND state IN ('enumerating', 'copying', 'synced', 'paused')
+`
+
+type AbortStorageMigrationWithCleanupParams struct {
+	ID        uuid.UUID `json:"id"`
+	LastError string    `json:"last_error"`
+}
+
+// Cancel AND remove the partial copies this campaign put on the destination.
+//
+// It is a STATE rather than a synchronous delete because the work is unbounded:
+// a campaign aborted at 90% has hundreds of thousands of objects to remove, and
+// an admin request must not hold a connection open for them. The leader-gated
+// sweep drains it in batches, exactly as the delete-source phase does at the
+// other end of a successful move -- same reason, too: it is destructive, so
+// exactly one process may do it.
+//
+// Guarded on the PRE-cutover phases. After cutover the destination is the store
+// the api SERVES FROM, and "clean up the destination" would mean emptying the
+// live library.
+func (q *Queries) AbortStorageMigrationWithCleanup(ctx context.Context, arg AbortStorageMigrationWithCleanupParams) (int64, error) {
+	result, err := q.db.Exec(ctx, abortStorageMigrationWithCleanup, arg.ID, arg.LastError)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const cancelStorageMigration = `-- name: CancelStorageMigration :execrows
 UPDATE storage_migrations
-SET state = 'cancelled', updated_at = now()
+SET state = 'cancelled', paused_reason = '', resume_state = '', updated_at = now()
 WHERE id = $1 AND state NOT IN ('done', 'cancelled', 'failed')
 `
 
@@ -73,6 +104,56 @@ func (q *Queries) ClaimDueStorageMigrationObjects(ctx context.Context, limit int
 	for rows.Next() {
 		var i ClaimDueStorageMigrationObjectsRow
 		if err := rows.Scan(&i.ObjectKey, &i.CampaignID, &i.Attempts); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const countStorageMigrationObjectFailuresByCategory = `-- name: CountStorageMigrationObjectFailuresByCategory :many
+SELECT
+    last_error AS category,
+    count(*) FILTER (WHERE state = 'failed')::bigint AS terminal,
+    count(*) FILTER (WHERE state <> 'failed')::bigint AS retrying
+FROM storage_migration_objects
+WHERE campaign_id = $1 AND last_error <> ''
+GROUP BY last_error
+ORDER BY last_error
+`
+
+type CountStorageMigrationObjectFailuresByCategoryRow struct {
+	Category string `json:"category"`
+	Terminal int64  `json:"terminal"`
+	Retrying int64  `json:"retrying"`
+}
+
+// The failure breakdown a stalling campaign needs, and the reason it exists.
+//
+// objects_failed counts rows in state 'failed', and a row only reaches 'failed'
+// once its whole five-attempt budget is spent -- so a campaign whose every
+// object is being refused shows objects_failed 0 and last_error ” for as long
+// as an hour of backoff takes. The operator sees progress stall and is told
+// nothing. The short fixed categories exist precisely to be projected into an
+// operator surface, and until now no surface projected them.
+//
+// RETRYING and TERMINAL are counted separately because they are different
+// questions: "this is still being retried" and "this object has been given up
+// on" call for different operator actions, and collapsing them would let a
+// finished campaign's dead letters look like work in progress.
+func (q *Queries) CountStorageMigrationObjectFailuresByCategory(ctx context.Context, campaignID uuid.UUID) ([]CountStorageMigrationObjectFailuresByCategoryRow, error) {
+	rows, err := q.db.Query(ctx, countStorageMigrationObjectFailuresByCategory, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountStorageMigrationObjectFailuresByCategoryRow
+	for rows.Next() {
+		var i CountStorageMigrationObjectFailuresByCategoryRow
+		if err := rows.Scan(&i.Category, &i.Terminal, &i.Retrying); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -148,14 +229,16 @@ func (q *Queries) CountUnfinishedStorageMigrationObjects(ctx context.Context, ca
 
 const createStorageMigration = `-- name: CreateStorageMigration :one
 
-INSERT INTO storage_migrations (source_desc, target_desc)
-VALUES ($1, $2)
-RETURNING id, source_desc, target_desc, state, objects_total, objects_done, objects_failed, last_error, observed_cutover_at, created_at, updated_at
+INSERT INTO storage_migrations (source_desc, target_desc, request_id, correlation_id)
+VALUES ($1, $2, $3, $4)
+RETURNING id, source_desc, target_desc, state, objects_total, objects_done, objects_failed, last_error, observed_cutover_at, created_at, updated_at, paused_reason, resume_state, request_id, correlation_id, worker_id
 `
 
 type CreateStorageMigrationParams struct {
-	SourceDesc string `json:"source_desc"`
-	TargetDesc string `json:"target_desc"`
+	SourceDesc    string `json:"source_desc"`
+	TargetDesc    string `json:"target_desc"`
+	RequestID     string `json:"request_id"`
+	CorrelationID string `json:"correlation_id"`
 }
 
 // Storage migration campaigns + the per-object location record (migration 0107,
@@ -172,8 +255,18 @@ type CreateStorageMigrationParams struct {
 // media_ipfs_pins (whose primary key IS a storage key) or video_files.storage_key.
 // Start a campaign. The partial unique index storage_migrations_single_active_idx
 // makes a second live campaign a constraint violation rather than a race.
+//
+// The identity columns (0145) are written HERE, by the admin request that starts
+// the move, and the second trigger carries them onto the job_runs row the
+// projection creates. A campaign is the one queue whose enqueue is always an
+// operator act, so there is always a request to name.
 func (q *Queries) CreateStorageMigration(ctx context.Context, arg CreateStorageMigrationParams) (StorageMigration, error) {
-	row := q.db.QueryRow(ctx, createStorageMigration, arg.SourceDesc, arg.TargetDesc)
+	row := q.db.QueryRow(ctx, createStorageMigration,
+		arg.SourceDesc,
+		arg.TargetDesc,
+		arg.RequestID,
+		arg.CorrelationID,
+	)
 	var i StorageMigration
 	err := row.Scan(
 		&i.ID,
@@ -187,8 +280,25 @@ func (q *Queries) CreateStorageMigration(ctx context.Context, arg CreateStorageM
 		&i.ObservedCutoverAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PausedReason,
+		&i.ResumeState,
+		&i.RequestID,
+		&i.CorrelationID,
+		&i.WorkerID,
 	)
 	return i, err
+}
+
+const deleteStorageMigrationObject = `-- name: DeleteStorageMigrationObject :exec
+DELETE FROM storage_migration_objects WHERE object_key = $1
+`
+
+// Forget one object after its destination copy has been removed. The row is
+// deleted rather than marked, because there is no honest state left for it: the
+// bytes are on neither side of the ledger the row describes.
+func (q *Queries) DeleteStorageMigrationObject(ctx context.Context, objectKey string) error {
+	_, err := q.db.Exec(ctx, deleteStorageMigrationObject, objectKey)
+	return err
 }
 
 const deleteTerminalStorageMigrationObjects = `-- name: DeleteTerminalStorageMigrationObjects :execrows
@@ -244,7 +354,7 @@ func (q *Queries) FailStorageMigrationObject(ctx context.Context, arg FailStorag
 }
 
 const getActiveStorageMigration = `-- name: GetActiveStorageMigration :one
-SELECT id, source_desc, target_desc, state, objects_total, objects_done, objects_failed, last_error, observed_cutover_at, created_at, updated_at FROM storage_migrations
+SELECT id, source_desc, target_desc, state, objects_total, objects_done, objects_failed, last_error, observed_cutover_at, created_at, updated_at, paused_reason, resume_state, request_id, correlation_id, worker_id FROM storage_migrations
 WHERE state NOT IN ('done', 'cancelled', 'failed')
 ORDER BY created_at DESC, id
 LIMIT 1
@@ -267,12 +377,17 @@ func (q *Queries) GetActiveStorageMigration(ctx context.Context) (StorageMigrati
 		&i.ObservedCutoverAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PausedReason,
+		&i.ResumeState,
+		&i.RequestID,
+		&i.CorrelationID,
+		&i.WorkerID,
 	)
 	return i, err
 }
 
 const getStorageMigration = `-- name: GetStorageMigration :one
-SELECT id, source_desc, target_desc, state, objects_total, objects_done, objects_failed, last_error, observed_cutover_at, created_at, updated_at FROM storage_migrations WHERE id = $1
+SELECT id, source_desc, target_desc, state, objects_total, objects_done, objects_failed, last_error, observed_cutover_at, created_at, updated_at, paused_reason, resume_state, request_id, correlation_id, worker_id FROM storage_migrations WHERE id = $1
 `
 
 func (q *Queries) GetStorageMigration(ctx context.Context, id uuid.UUID) (StorageMigration, error) {
@@ -290,6 +405,11 @@ func (q *Queries) GetStorageMigration(ctx context.Context, id uuid.UUID) (Storag
 		&i.ObservedCutoverAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PausedReason,
+		&i.ResumeState,
+		&i.RequestID,
+		&i.CorrelationID,
+		&i.WorkerID,
 	)
 	return i, err
 }
@@ -312,8 +432,45 @@ func (q *Queries) HasActiveStorageMigration(ctx context.Context) (bool, error) {
 	return exists, err
 }
 
+const listDestinationCopiesToRemove = `-- name: ListDestinationCopiesToRemove :many
+SELECT object_key FROM storage_migration_objects
+WHERE campaign_id = $1 AND state = 'verified'
+ORDER BY object_key
+LIMIT $2
+`
+
+type ListDestinationCopiesToRemoveParams struct {
+	CampaignID uuid.UUID `json:"campaign_id"`
+	Limit      int32     `json:"limit"`
+}
+
+// The abort clean-up batch: objects this campaign PROVED it wrote to the
+// destination. Only 'verified' rows qualify -- a row that never reached that
+// state was never confirmed to be on the destination, and issuing a delete for
+// a key that may be the SOURCE's is the one mistake this whole package is built
+// to make impossible.
+func (q *Queries) ListDestinationCopiesToRemove(ctx context.Context, arg ListDestinationCopiesToRemoveParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listDestinationCopiesToRemove, arg.CampaignID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var object_key string
+		if err := rows.Scan(&object_key); err != nil {
+			return nil, err
+		}
+		items = append(items, object_key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStorageMigrations = `-- name: ListStorageMigrations :many
-SELECT id, source_desc, target_desc, state, objects_total, objects_done, objects_failed, last_error, observed_cutover_at, created_at, updated_at FROM storage_migrations ORDER BY created_at DESC, id LIMIT $1
+SELECT id, source_desc, target_desc, state, objects_total, objects_done, objects_failed, last_error, observed_cutover_at, created_at, updated_at, paused_reason, resume_state, request_id, correlation_id, worker_id FROM storage_migrations ORDER BY created_at DESC, id LIMIT $1
 `
 
 func (q *Queries) ListStorageMigrations(ctx context.Context, limit int32) ([]StorageMigration, error) {
@@ -337,6 +494,11 @@ func (q *Queries) ListStorageMigrations(ctx context.Context, limit int32) ([]Sto
 			&i.ObservedCutoverAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PausedReason,
+			&i.ResumeState,
+			&i.RequestID,
+			&i.CorrelationID,
+			&i.WorkerID,
 		); err != nil {
 			return nil, err
 		}
@@ -434,6 +596,36 @@ func (q *Queries) MarkStorageMigrationObjectVerified(ctx context.Context, arg Ma
 	return err
 }
 
+const pauseStorageMigration = `-- name: PauseStorageMigration :execrows
+UPDATE storage_migrations
+SET state = 'paused', resume_state = state, paused_reason = $2, last_error = $3, updated_at = now()
+WHERE id = $1 AND state IN ('enumerating', 'copying', 'synced')
+`
+
+type PauseStorageMigrationParams struct {
+	ID           uuid.UUID `json:"id"`
+	PausedReason string    `json:"paused_reason"`
+	LastError    string    `json:"last_error"`
+}
+
+// Park a live campaign. resume_state remembers the phase it came out of, so a
+// resume never has to guess: a campaign paused out of 'synced' is ready to cut
+// over and one paused out of 'copying' is not.
+//
+// Only the PRE-cutover phases can be paused. Past cutover the api is already
+// serving from the target and the only work left is deleting the old store's
+// copies -- pausing that is what the grace window is for, and 'paused' there
+// would mean "stop deleting", which STORAGE_MIGRATION_GRACE_HOURS already says
+// better. The guard is also what makes pause idempotent: pausing a paused
+// campaign matches nothing and reports zero rows.
+func (q *Queries) PauseStorageMigration(ctx context.Context, arg PauseStorageMigrationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pauseStorageMigration, arg.ID, arg.PausedReason, arg.LastError)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const refreshStorageMigrationCounters = `-- name: RefreshStorageMigrationCounters :exec
 UPDATE storage_migrations m
 SET objects_total  = c.total,
@@ -461,6 +653,27 @@ WHERE m.id = $1
 func (q *Queries) RefreshStorageMigrationCounters(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, refreshStorageMigrationCounters, id)
 	return err
+}
+
+const releaseStorageMigrationSource = `-- name: ReleaseStorageMigrationSource :execrows
+UPDATE storage_migrations
+SET state = 'deleting_source', last_error = '', updated_at = now()
+WHERE id = $1 AND state = 'cutover'
+`
+
+// Open the delete-source phase NOW, without waiting out the grace window.
+//
+// The grace window is an undo window: while it runs, reverting the environment
+// swap is a restart rather than a restore. Ending it early is therefore an
+// operator decision and nothing else -- which is why it is a route and a
+// confirmation rather than a timer an operator races. The precondition that
+// CANNOT be waived is in the service: every object must be accounted for first.
+func (q *Queries) ReleaseStorageMigrationSource(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, releaseStorageMigrationSource, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const renewStorageMigrationObjectLease = `-- name: RenewStorageMigrationObjectLease :exec
@@ -502,6 +715,24 @@ func (q *Queries) RescheduleStorageMigrationObject(ctx context.Context, arg Resc
 	return err
 }
 
+const resumeStorageMigration = `-- name: ResumeStorageMigration :execrows
+UPDATE storage_migrations
+SET state = CASE WHEN resume_state <> '' THEN resume_state ELSE 'copying' END,
+    resume_state = '', paused_reason = '', last_error = '', updated_at = now()
+WHERE id = $1 AND state = 'paused'
+`
+
+// Put a paused campaign back in the phase it came out of. COALESCE-shaped
+// fallback for a row written before 0145 or by hand: a campaign with work left
+// in its ledger belongs in 'copying', and the next sweep re-derives the rest.
+func (q *Queries) ResumeStorageMigration(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, resumeStorageMigration, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setStorageMigrationError = `-- name: SetStorageMigrationError :exec
 UPDATE storage_migrations
 SET last_error = $2, updated_at = now()
@@ -537,6 +768,26 @@ type SetStorageMigrationStateParams struct {
 // between a sweep's read and its write is never overwritten.
 func (q *Queries) SetStorageMigrationState(ctx context.Context, arg SetStorageMigrationStateParams) error {
 	_, err := q.db.Exec(ctx, setStorageMigrationState, arg.ID, arg.State, arg.LastError)
+	return err
+}
+
+const setStorageMigrationWorker = `-- name: SetStorageMigrationWorker :exec
+UPDATE storage_migrations
+SET worker_id = $2
+WHERE id = $1 AND worker_id IS DISTINCT FROM $2
+`
+
+type SetStorageMigrationWorkerParams struct {
+	ID       uuid.UUID `json:"id"`
+	WorkerID string    `json:"worker_id"`
+}
+
+// Stamp the worker that is currently driving this campaign, so an operator
+// reading the job run can tell WHICH process is copying. Written on every state
+// advance a worker makes; the trigger only carries it onto the run if the run
+// has none yet, so the first worker to touch a campaign is the one named.
+func (q *Queries) SetStorageMigrationWorker(ctx context.Context, arg SetStorageMigrationWorkerParams) error {
+	_, err := q.db.Exec(ctx, setStorageMigrationWorker, arg.ID, arg.WorkerID)
 	return err
 }
 

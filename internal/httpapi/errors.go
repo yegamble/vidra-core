@@ -9,6 +9,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/jobstatus"
+	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/video"
 )
@@ -310,6 +311,26 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusServiceUnavailable
 		message = "the request timed out"
 		code = "request_timeout"
+	case pgconv.IsUnavailable(err):
+		// LAST, and after every typed case above, deliberately. A driver error
+		// that some service already turned into a domain answer must keep that
+		// answer; this branch is only for the raw one nothing classified.
+		//
+		// A34 measured the asymmetry it removes. With PostgreSQL stopped, an
+		// AUTHENTICATED request answered a typed 503 session_store_unavailable —
+		// requireAuth knows the difference between a refused token and a store
+		// that could not be asked — while an ANONYMOUS read of the same instance
+		// answered a bare 500 internal_error, because no anonymous path
+		// classified the driver's error at all. One outage, two sentences, and
+		// the uninformative one is what an ordinary visitor gets.
+		//
+		// 503 is the honest code for both: the request is refused, the cause is
+		// this server's dependency rather than the caller's request, and a client
+		// may retry. The message names the cause without the driver's error,
+		// which can carry a DSN and would be reaching an unauthenticated caller.
+		status = http.StatusServiceUnavailable
+		message = "this server cannot reach its database right now, so it cannot answer this request. Nothing is wrong with what you asked for — retry shortly"
+		code = "database_unavailable"
 	}
 
 	reqID := c.Response().Header().Get(echo.HeaderXRequestID)

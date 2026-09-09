@@ -174,7 +174,7 @@ func (s *Service) verifyNetwork(ctx context.Context, reader verifyReader, nc net
 		})
 		if err != nil {
 			s.logger.Warn("ipfs_verify_rearm_failed", "network", nc.network,
-				"media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey), "error", err)
+				"media_class", row.MediaClass, "object_key", jobstatus.RedactDetail(row.ObjectKey), "error", jobstatus.RedactError(err))
 			continue
 		}
 		if n == 0 {

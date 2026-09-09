@@ -113,11 +113,47 @@ func (e *atprotoLoginEnv) stepUpToken(t *testing.T, bearer string) string {
 	if atprotoSessionCookie(cb) != nil {
 		t.Error("the step-up callback issued a session cookie; it must only mint an assertion")
 	}
-	tok := loc.Query().Get("step_up")
-	if tok == "" {
-		t.Fatalf("callback carried no step_up token: %q", cb.Header().Get("Location"))
+	// THE TRANSPORT. The auth rehearsal put a real logging proxy in front of
+	// this flow and found `step_up=<32 bytes>` in its access log and in the
+	// `Referer` of every subresource the landing page fetched, while
+	// `vidra_mfa_pending` — the same shape of secret, one route away — appeared
+	// in none of them. So the landing URL must carry NO token, and the
+	// assertion must come back on the cookie instead.
+	if raw := cb.Header().Get("Location"); strings.Contains(raw, "step_up=") {
+		t.Fatalf("the landing URL carries the assertion: %q", raw)
 	}
-	return tok
+	for k, v := range loc.Query() {
+		if k != "secure" {
+			t.Errorf("the landing URL carries an unexpected parameter %q=%v", k, v)
+		}
+	}
+	ck := stepUpCookieFrom(cb)
+	if ck == nil {
+		t.Fatalf("the callback set no %s cookie: %v", stepUpCookieName, cb.Result().Cookies())
+	}
+	if !ck.HttpOnly {
+		t.Error("the step-up cookie is readable by script")
+	}
+	if ck.SameSite != http.SameSiteLaxMode {
+		t.Errorf("the step-up cookie SameSite = %v, want Lax (it must survive the top-level GET back)", ck.SameSite)
+	}
+	if ck.Path != stepUpCookiePath {
+		t.Errorf("the step-up cookie path = %q, want %q", ck.Path, stepUpCookiePath)
+	}
+	if ck.Value == "" {
+		t.Fatal("the step-up cookie carries no assertion")
+	}
+	return ck.Value
+}
+
+// stepUpCookieFrom returns the vidra_step_up cookie a response set, or nil.
+func stepUpCookieFrom(rec *httptest.ResponseRecorder) *http.Cookie {
+	for _, ck := range rec.Result().Cookies() {
+		if ck.Name == stepUpCookieName && ck.Value != "" {
+			return ck
+		}
+	}
+	return nil
 }
 
 func (e *atprotoLoginEnv) postJSON(t *testing.T, path, bearer, body string) *httptest.ResponseRecorder {
@@ -128,6 +164,21 @@ func (e *atprotoLoginEnv) postJSON(t *testing.T, path, bearer, body string) *htt
 	if bearer != "" {
 		req.Header.Set(echo.HeaderAuthorization, "Bearer "+bearer)
 	}
+	e.srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+// postJSONWithStepUpCookie is the BROWSER's shape of the request: the assertion
+// arrives on the cookie and the body names no token at all.
+func (e *atprotoLoginEnv) postJSONWithStepUpCookie(t *testing.T, path, bearer, token, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	if bearer != "" {
+		req.Header.Set(echo.HeaderAuthorization, "Bearer "+bearer)
+	}
+	req.AddCookie(&http.Cookie{Name: stepUpCookieName, Value: token, Path: stepUpCookiePath})
 	e.srv.Handler().ServeHTTP(rec, req)
 	return rec
 }
@@ -159,10 +210,18 @@ func TestStepUpSetPasswordEndToEnd(t *testing.T) {
 		t.Errorf("email_placeholder false for %q", me.Email)
 	}
 
-	// Without an assertion the route refuses, and NAMES the remedy.
+	// Without an assertion the route refuses, and NAMES the remedy. It is 403
+	// rather than the 422 it used to be: the assertion now rides a cookie, so a
+	// browser's request carries no `step_up_token` field and a validation error
+	// naming one would be an instruction the page cannot follow. Missing, spent
+	// and expired all get the same answer, which is the answer that says what
+	// to do about it.
 	rec := env.postJSON(t, "/api/v1/auth/me/password/set", bearer, `{"new_password":"a-brand-new-password"}`)
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("set with no token = %d, want 422 (missing field); body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("set with no assertion = %d, want 403 step_up_required; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := decodeError(t, rec).Error.Code; got != "step_up_required" {
+		t.Errorf("code = %q, want step_up_required", got)
 	}
 	rec = env.postJSON(t, "/api/v1/auth/me/password/set", bearer, `{"new_password":"a-brand-new-password","step_up_token":"not-a-real-token"}`)
 	if rec.Code != http.StatusForbidden {
@@ -460,5 +519,44 @@ func TestStepUpSurvivesTheLandingPageRefresh(t *testing.T) {
 	}
 	if me := env.meWithBearer(t, landedBearer); !me.HasPassword {
 		t.Error("has_password still false after the password was set")
+	}
+}
+
+// TestStepUpCookieAloneAuthorises is the transport change proved end to end: a
+// request whose body names NO token, carrying only the httpOnly cookie the
+// callback set, sets the password — and the response clears the cookie, so the
+// browser stops presenting an assertion this instance has already spent.
+//
+// The frontend reads nothing from the URL now, so this is the ONLY shape a
+// browser can make the request in. If it did not work, the whole flow would be
+// unreachable from a browser exactly as the rehearsal found the previous one to
+// be.
+func TestStepUpCookieAloneAuthorises(t *testing.T) {
+	env := newATProtoLoginEnv(t, true)
+	_, bearer := env.signIn(t)
+	token := env.stepUpToken(t, bearer)
+
+	rec := env.postJSONWithStepUpCookie(t, "/api/v1/auth/me/password/set", bearer, token,
+		`{"new_password":"a-brand-new-password"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("set with the cookie alone = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	// Single use, visible in the transport: the response must expire the cookie.
+	cleared := false
+	for _, ck := range rec.Result().Cookies() {
+		if ck.Name == stepUpCookieName && (ck.Value == "" || ck.MaxAge < 0) {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Errorf("the spent assertion was not cleared from the browser: %v", rec.Result().Cookies())
+	}
+
+	// And it is spent: the same cookie again is refused with the same answer a
+	// missing one gets.
+	again := env.postJSONWithStepUpCookie(t, "/api/v1/auth/me/password/set", bearer, token,
+		`{"new_password":"a-third-password"}`)
+	if again.Code == http.StatusNoContent {
+		t.Fatal("the assertion was spendable twice")
 	}
 }

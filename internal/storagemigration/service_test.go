@@ -107,7 +107,7 @@ func TestMigrationCopiesVerifiesAndSyncs(t *testing.T) {
 
 	drain(t, svc)
 
-	got, counts, err := svc.Get(ctx, camp.ID)
+	got, counts, _, err := svc.Get(ctx, camp.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestDeltaPassPicksUpAnObjectWrittenAfterEnumeration(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	drain(t, svc)
-	if got, _, _ := svc.Get(ctx, camp.ID); got.State != StateSynced {
+	if got, _, _, _ := svc.Get(ctx, camp.ID); got.State != StateSynced {
 		t.Fatalf("state before the new upload = %q, want synced", got.State)
 	}
 
@@ -162,7 +162,7 @@ func TestDeltaPassPicksUpAnObjectWrittenAfterEnumeration(t *testing.T) {
 	if s := repo.state("web-videos/second.mp4"); s != ObjectVerified {
 		t.Errorf("late object state = %q, want %q", s, ObjectVerified)
 	}
-	if got, _, _ := svc.Get(ctx, camp.ID); got.State != StateSynced || got.ObjectsTotal != 2 {
+	if got, _, _, _ := svc.Get(ctx, camp.ID); got.State != StateSynced || got.ObjectsTotal != 2 {
 		t.Errorf("after the delta pass: state %q total %d, want synced/2", got.State, got.ObjectsTotal)
 	}
 }
@@ -215,7 +215,7 @@ func TestSourceHashMismatchIsTerminal(t *testing.T) {
 	}
 	// A dead-lettered object is a reported fact, not unfinished work: the
 	// campaign still reaches synced so an operator can decide about it.
-	if camp, _, _ := svc.Get(ctx, mustActive(t, repo)); camp.State != StateSynced || camp.ObjectsFailed != 1 {
+	if camp, _, _, _ := svc.Get(ctx, mustActive(t, repo)); camp.State != StateSynced || camp.ObjectsFailed != 1 {
 		t.Errorf("campaign = %q failed=%d, want synced/1", camp.State, camp.ObjectsFailed)
 	}
 }
@@ -305,7 +305,7 @@ func TestCutoverGraceAndSourceDeletion(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	drain(t, forward)
-	if got, _, _ := forward.Get(ctx, camp.ID); got.State != StateSynced {
+	if got, _, _, _ := forward.Get(ctx, camp.ID); got.State != StateSynced {
 		t.Fatalf("state = %q, want synced", got.State)
 	}
 
@@ -316,7 +316,7 @@ func TestCutoverGraceAndSourceDeletion(t *testing.T) {
 	if err := swapped.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce after swap: %v", err)
 	}
-	got, _, _ := swapped.Get(ctx, camp.ID)
+	got, _, _, _ := swapped.Get(ctx, camp.ID)
 	if got.State != StateCutover {
 		t.Fatalf("state after the env swap = %q, want %q", got.State, StateCutover)
 	}
@@ -328,7 +328,7 @@ func TestCutoverGraceAndSourceDeletion(t *testing.T) {
 	if err := swapped.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce in grace: %v", err)
 	}
-	if got, _, _ := swapped.Get(ctx, camp.ID); got.State != StateCutover {
+	if got, _, _, _ := swapped.Get(ctx, camp.ID); got.State != StateCutover {
 		t.Errorf("state during grace = %q, want it to stay at cutover", got.State)
 	}
 	if ok, _ := src.Exists(ctx, "web-videos/a.mp4"); !ok {
@@ -340,7 +340,7 @@ func TestCutoverGraceAndSourceDeletion(t *testing.T) {
 	if err := elapsed.SweepOnce(ctx); err != nil { // cutover -> deleting_source
 		t.Fatalf("SweepOnce: %v", err)
 	}
-	if got, _, _ := elapsed.Get(ctx, camp.ID); got.State != StateDeletingSource {
+	if got, _, _, _ := elapsed.Get(ctx, camp.ID); got.State != StateDeletingSource {
 		t.Fatalf("state after grace = %q, want %q", got.State, StateDeletingSource)
 	}
 	if err := elapsed.SweepOnce(ctx); err != nil { // delete the batch, then finish
@@ -350,7 +350,7 @@ func TestCutoverGraceAndSourceDeletion(t *testing.T) {
 		t.Fatalf("SweepOnce: %v", err)
 	}
 
-	final, counts, err := elapsed.Get(ctx, camp.ID)
+	final, counts, _, err := elapsed.Get(ctx, camp.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +385,7 @@ func completeCampaign(t *testing.T, repo *fakeRepo, src, dst *storage.Local) (Ca
 		t.Fatalf("Start: %v", err)
 	}
 	drain(t, forward)
-	if got, _, _ := forward.Get(ctx, camp.ID); got.State != StateSynced {
+	if got, _, _, _ := forward.Get(ctx, camp.ID); got.State != StateSynced {
 		t.Fatalf("state before the swap = %q (last_error %q), want synced", got.State, got.LastError)
 	}
 
@@ -397,7 +397,7 @@ func completeCampaign(t *testing.T, repo *fakeRepo, src, dst *storage.Local) (Ca
 			t.Fatalf("SweepOnce after the swap: %v", err)
 		}
 	}
-	got, _, err := swapped.Get(ctx, camp.ID)
+	got, _, _, err := swapped.Get(ctx, camp.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -542,7 +542,7 @@ func TestSweepRefusesUnknownStores(t *testing.T) {
 	if err := stranger.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce: %v", err)
 	}
-	got, _, _ := stranger.Get(ctx, camp.ID)
+	got, _, _, _ := stranger.Get(ctx, camp.ID)
 	if got.State != StateEnumerating {
 		t.Errorf("state = %q; a process holding unknown stores must not advance the campaign", got.State)
 	}
@@ -630,7 +630,7 @@ func TestCancelStopsClaimingAndLeavesCopiesInPlace(t *testing.T) {
 	if ok, _ := dst.Exists(ctx, "web-videos/a.mp4"); !ok {
 		t.Error("the already-copied object was removed from the target by a cancel")
 	}
-	if got, _, _ := svc.Get(ctx, camp.ID); got.State != StateCancelled {
+	if got, _, _, _ := svc.Get(ctx, camp.ID); got.State != StateCancelled {
 		t.Errorf("state = %q, want %q", got.State, StateCancelled)
 	}
 	if s := repo.state("web-videos/b.mp4"); s != ObjectPending {
@@ -735,7 +735,7 @@ func TestASecondCampaignEnumeratesTheWholeSourceAgain(t *testing.T) {
 	}
 	drain(t, svc)
 
-	got, counts, err := svc.Get(ctx, second.ID)
+	got, counts, _, err := svc.Get(ctx, second.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}

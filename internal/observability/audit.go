@@ -147,6 +147,27 @@ const (
 	// authorise a store rather than name it.
 	ActionStorageMigrationStart  = "admin.storage.migration.start"
 	ActionStorageMigrationCancel = "admin.storage.migration.cancel"
+	// The rest of the controls (A34): pause/resume park and un-park a campaign,
+	// abort cancels and may REMOVE the partial copies from the destination,
+	// switch records a cutover the operator has already performed in the
+	// environment, and release ends the grace window early so the old store's
+	// copies start being deleted.
+	//
+	// The last two are the destructive ones and they are audited for that
+	// reason: release is the act that makes a move irreversible, and abort with
+	// clean-up is the only thing in the product that deletes from the
+	// DESTINATION. Reason carries the campaign id, the transition and COUNTS
+	// only — the same rule the start and cancel rows follow.
+	ActionStorageMigrationPause   = "admin.storage.migration.pause"
+	ActionStorageMigrationResume  = "admin.storage.migration.resume"
+	ActionStorageMigrationAbort   = "admin.storage.migration.abort"
+	ActionStorageMigrationSwitch  = "admin.storage.migration.switch"
+	ActionStorageMigrationRelease = "admin.storage.migration.release"
+	// ActionStorageMigrationPreview records an admin asking what a move WOULD
+	// copy. It writes nothing and changes nothing, and it is audited anyway
+	// because it enumerates the whole store — an expensive read somebody should
+	// be able to attribute when a store's list bill goes up.
+	ActionStorageMigrationPreview = "admin.storage.migration.preview"
 	// ActionIPFSReconcile records an admin kicking the one-shot IPFS mirror
 	// reconcile/backfill (P19.6): re-arm dead-lettered pins + seed pin intents for
 	// eligible pre-existing public objects. Reason carries only safe counts
