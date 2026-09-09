@@ -12,22 +12,28 @@ import (
 
 // A STOPPED postgres produces *pgconn.ConnectError, whose cause field is
 // unexported — so the only honest way to pin it is to make a connection that
-// really is refused. Port 1 on the loopback is closed on every machine this
-// runs on, and the dial fails immediately, so the test costs nothing and
-// touches no network beyond the loopback.
-func TestARefusedConnectionIsUnavailable(t *testing.T) {
+// really does fail.
+//
+// It dials a UNIX SOCKET DIRECTORY that cannot exist rather than a closed TCP
+// port. Both produce the same *pgconn.ConnectError, but only this one is
+// unconditional: "port 1 is closed" is an assumption about the machine, and a
+// test that has to skip itself when the assumption breaks is a test that can
+// silently stop running. This touches no network at all and cannot be raced by
+// anything on the host.
+func TestAFailedConnectionIsUnavailable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	_, err := pgconn.Connect(ctx, "postgres://vidra:not-a-real-password@127.0.0.1:1/vidra?sslmode=disable")
+	_, err := pgconn.Connect(ctx,
+		"postgres://vidra@/vidra?host=/nonexistent-vidra-socket-dir&sslmode=disable")
 	if err == nil {
-		t.Skip("something is listening on 127.0.0.1:1, so a refused dial cannot be produced here")
+		t.Fatal("connecting through a socket directory that does not exist succeeded")
 	}
 	var ce *pgconn.ConnectError
 	if !errors.As(err, &ce) {
-		t.Fatalf("a refused dial produced %T, not *pgconn.ConnectError: %v", err, err)
+		t.Fatalf("a failed dial produced %T, not *pgconn.ConnectError: %v", err, err)
 	}
 	if !IsUnavailable(fmt.Errorf("query videos: %w", err)) {
-		t.Errorf("a refused dial is not classified unavailable: %v", err)
+		t.Errorf("a failed dial is not classified unavailable: %v", err)
 	}
 }
 
