@@ -114,3 +114,36 @@ func (q *Queries) DeleteUnusedStepUpTokensForSession(ctx context.Context, sessio
 	}
 	return result.RowsAffected(), nil
 }
+
+const moveStepUpTokensToSession = `-- name: MoveStepUpTokensToSession :execrows
+UPDATE step_up_tokens
+SET session_id = $1
+WHERE session_id = $2
+  AND used_at IS NULL
+  AND expires_at > now()
+`
+
+type MoveStepUpTokensToSessionParams struct {
+	ToSessionID   uuid.UUID `json:"to_session_id"`
+	FromSessionID uuid.UUID `json:"from_session_id"`
+}
+
+// Carry a live assertion across a refresh ROTATION.
+//
+// A step-up can only complete as a top-level redirect back from the provider,
+// and a top-level navigation discards the in-memory access token — so the
+// landing page redeems a new one from the refresh cookie, and that rotation
+// revokes the session row the assertion was bound to and creates a new one.
+// Without this the binding is destroyed by the very page load that receives the
+// token, and the form it unlocks answers 403 with the row still sitting unspent.
+//
+// It grants nothing new: a rotation requires the previous refresh token, which
+// only the browser that earned the assertion held. Spent and expired rows are
+// excluded so nothing dead is resurrected by moving it.
+func (q *Queries) MoveStepUpTokensToSession(ctx context.Context, arg MoveStepUpTokensToSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, moveStepUpTokensToSession, arg.ToSessionID, arg.FromSessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

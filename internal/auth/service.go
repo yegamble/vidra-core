@@ -164,6 +164,9 @@ type Repository interface {
 	ConsumeStepUpToken(ctx context.Context, arg sqlcgen.ConsumeStepUpTokenParams) (sqlcgen.ConsumeStepUpTokenRow, error)
 	DeleteUnusedStepUpTokensForSession(ctx context.Context, sessionID uuid.UUID) (int64, error)
 	DeleteExpiredStepUpTokens(ctx context.Context) (int64, error)
+	// MoveStepUpTokensToSession carries a live assertion across a refresh
+	// rotation — see Refresh, where the reason lives.
+	MoveStepUpTokensToSession(ctx context.Context, arg sqlcgen.MoveStepUpTokensToSessionParams) (int64, error)
 	// ListOAuthIdentitiesByUser is how the auth service answers "which
 	// providers could satisfy a step-up for this account" — the list the 403
 	// names so a client can offer the right button.
@@ -360,9 +363,18 @@ type Tokens struct {
 // binding is what lets a later revocation invalidate the access token, not just
 // the refresh token (see Claims.SessionID).
 func (s *Service) issueTokens(ctx context.Context, user sqlcgen.User, userAgent string) (Tokens, error) {
+	tokens, _, err := s.issueTokensForSession(ctx, user, userAgent)
+	return tokens, err
+}
+
+// issueTokensForSession is issueTokens plus the id of the session row it just
+// created. Only Refresh needs the id — to carry a live step-up assertion onto
+// the session that replaces the one it was bound to — so the plain form stays
+// the one every other caller uses.
+func (s *Service) issueTokensForSession(ctx context.Context, user sqlcgen.User, userAgent string) (Tokens, uuid.UUID, error) {
 	raw, hash, err := generateRefreshToken()
 	if err != nil {
-		return Tokens{}, err
+		return Tokens{}, uuid.Nil, err
 	}
 	sess, err := s.repo.CreateSession(ctx, sqlcgen.CreateSessionParams{
 		UserID:      user.ID,
@@ -371,13 +383,13 @@ func (s *Service) issueTokens(ctx context.Context, user sqlcgen.User, userAgent 
 		ExpiresAt:   s.now().Add(s.refreshTTL),
 	})
 	if err != nil {
-		return Tokens{}, err
+		return Tokens{}, uuid.Nil, err
 	}
 	access, err := s.issuer.IssueForSession(user.ID, user.Role, sess.ID.String())
 	if err != nil {
-		return Tokens{}, err
+		return Tokens{}, uuid.Nil, err
 	}
-	return Tokens{AccessToken: access, RefreshToken: raw}, nil
+	return Tokens{AccessToken: access, RefreshToken: raw}, sess.ID, nil
 }
 
 // RegisterInput is validated, normalized registration data.
@@ -617,10 +629,28 @@ func (s *Service) Refresh(ctx context.Context, rawRefresh, userAgent string) (sq
 	if err := s.repo.RotateSession(ctx, sess.ID); err != nil {
 		return sqlcgen.User{}, Tokens{}, err
 	}
-	tokens, err := s.issueTokens(ctx, user, userAgent)
+	tokens, newSessionID, err := s.issueTokensForSession(ctx, user, userAgent)
 	if err != nil {
 		return sqlcgen.User{}, Tokens{}, err
 	}
+	// A live step-up assertion moves onto the session that replaces the one it
+	// was bound to. Without this the capability cannot work in a browser at
+	// all: a step-up completes as a TOP-LEVEL redirect, the landing page load
+	// discards the in-memory access token and redeems a new one here, and that
+	// rotation destroys the binding before the form it unlocks can be
+	// submitted — the row is still unspent and the answer is still 403.
+	//
+	// It grants nothing: rotating required the previous refresh token, which
+	// only the browser that earned the assertion held, so this is the same
+	// browser continuing. Another browser's rotation moves only ITS OWN rows,
+	// and a spent or expired row is excluded by the statement itself.
+	//
+	// Best-effort on purpose: a failure here costs the user one repeated
+	// challenge, while failing the refresh would sign them out.
+	_, _ = s.repo.MoveStepUpTokensToSession(ctx, sqlcgen.MoveStepUpTokensToSessionParams{
+		FromSessionID: sess.ID,
+		ToSessionID:   newSessionID,
+	})
 	return user, tokens, nil
 }
 

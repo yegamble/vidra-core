@@ -401,3 +401,85 @@ func TestStepUpProvidersFor(t *testing.T) {
 
 // used to keep the pgtype import honest in the fake's UsedAt handling.
 var _ = pgtype.Timestamptz{}
+
+// TestStepUpSurvivesTheRotationTheRedirectCauses is the test the lab wrote.
+//
+// A step-up can only ever complete as a TOP-LEVEL redirect back from the
+// provider — that is the whole transport. A top-level navigation discards the
+// in-memory access token, so the landing page redeems a new one from the
+// refresh cookie, and `Refresh` ROTATES: it revokes the session row and creates
+// a new one with a new id. The assertion is bound to (user, session), so the
+// binding it was minted against is destroyed by the very page load that
+// receives it, and the form it unlocks then answers 403 step_up_required —
+// measured in a real browser, every time, with the token's own row sitting
+// unspent in step_up_tokens.
+//
+// The binding still means what it says. A rotation is not a different browser:
+// it required the previous refresh token, which only this browser held, and
+// a token lifted out of somebody else's redirect still has no session here to
+// spend against. So the assertion moves with the rotation rather than dying on
+// it.
+func TestStepUpSurvivesTheRotationTheRedirectCauses(t *testing.T) {
+	repo := newFakeRepo()
+	svc := newChangeService(repo, &captureMailer{})
+	user, _ := register(t, svc, "alice", "did-plc-alice@atproto.invalid")
+	if err := repo.UpdateUserPassword(context.Background(), sqlcgen.UpdateUserPasswordParams{ID: user.ID}); err != nil {
+		t.Fatal(err)
+	}
+	browser, err := svc.issueTokens(context.Background(), user, "this-browser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := sessionIDOfRefresh(t, repo, browser.RefreshToken)
+	token := grant(t, svc, user.ID, started)
+
+	// The landing page load: one ordinary refresh, exactly what the browser
+	// does with the redirect it was just handed.
+	_, rotated, err := svc.Refresh(context.Background(), browser.RefreshToken, "this-browser")
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	landed := sessionIDOfRefresh(t, repo, rotated.RefreshToken)
+	if landed == started {
+		t.Fatal("Refresh did not rotate the session — this test would prove nothing")
+	}
+
+	if err := svc.SetPassword(context.Background(), user.ID, "a-brand-new-password", token, landed.String()); err != nil {
+		t.Fatalf("the assertion did not survive the rotation the redirect causes: %v", err)
+	}
+	// And it is still single-use afterwards: carrying it forward must not
+	// resurrect it for a second spend.
+	if _, err := svc.ConsumeStepUp(context.Background(), user.ID, landed.String(), token); !errors.Is(err, ErrStepUpRequired) {
+		t.Fatalf("the carried assertion spent twice = %v, want ErrStepUpRequired", err)
+	}
+}
+
+// TestStepUpDoesNotFollowAnotherBrowsersRotation holds the other half down: the
+// carry is keyed on the rotating session, so one browser refreshing must never
+// hand a second browser's assertion to itself.
+func TestStepUpDoesNotFollowAnotherBrowsersRotation(t *testing.T) {
+	repo := newFakeRepo()
+	svc := newChangeService(repo, &captureMailer{})
+	user, _ := register(t, svc, "alice", "did-plc-alice@atproto.invalid")
+	if err := repo.UpdateUserPassword(context.Background(), sqlcgen.UpdateUserPasswordParams{ID: user.ID}); err != nil {
+		t.Fatal(err)
+	}
+	earner, err := svc.issueTokens(context.Background(), user, "the-browser-that-earned-it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := svc.issueTokens(context.Background(), user, "another-browser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := grant(t, svc, user.ID, sessionIDOfRefresh(t, repo, earner.RefreshToken))
+
+	_, rotated, err := svc.Refresh(context.Background(), other.RefreshToken, "another-browser")
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	otherLanded := sessionIDOfRefresh(t, repo, rotated.RefreshToken)
+	if _, err := svc.ConsumeStepUp(context.Background(), user.ID, otherLanded.String(), token); !errors.Is(err, ErrStepUpRequired) {
+		t.Fatalf("another browser's rotation collected the assertion = %v, want ErrStepUpRequired", err)
+	}
+}

@@ -92,3 +92,17 @@ func (f *authFakeRepo) linkIdentity(userID uuid.UUID, provider, subject string) 
 		ID: uuid.New(), Provider: provider, Subject: subject, UserID: userID, CreatedAt: time.Now(),
 	})
 }
+
+// MoveStepUpTokensToSession mirrors the SQL that carries a live assertion onto
+// the session a refresh rotation creates — the reason the step-up works in a
+// browser at all, where the landing page load rotates before the form submits.
+func (f *authFakeRepo) MoveStepUpTokensToSession(_ context.Context, a sqlcgen.MoveStepUpTokensToSessionParams) (int64, error) {
+	var n int64
+	for _, r := range f.stepUpStore() {
+		if r.SessionID == a.FromSessionID && !r.UsedAt.Valid && r.ExpiresAt.After(time.Now()) {
+			r.SessionID = a.ToSessionID
+			n++
+		}
+	}
+	return n, nil
+}

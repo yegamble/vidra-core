@@ -83,3 +83,17 @@ func (f *fakeRepo) linkIdentity(userID uuid.UUID, provider, subject string) {
 		ID: uuid.New(), Provider: provider, Subject: subject, UserID: userID, CreatedAt: time.Now(),
 	})
 }
+
+func (f *fakeRepo) MoveStepUpTokensToSession(_ context.Context, a sqlcgen.MoveStepUpTokensToSessionParams) (int64, error) {
+	var n int64
+	for _, r := range f.stepUpStore() {
+		// The same predicate the SQL carries: only this session's rows, only
+		// live ones. A spent or expired assertion must not be resurrected by
+		// being moved.
+		if r.SessionID == a.FromSessionID && !r.UsedAt.Valid && r.ExpiresAt.After(time.Now()) {
+			r.SessionID = a.ToSessionID
+			n++
+		}
+	}
+	return n, nil
+}
