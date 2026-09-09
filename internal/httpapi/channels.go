@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -18,10 +17,6 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// handleRe constrains channel handles to a URL-safe, federation-friendly shape:
-// 3–30 chars of letters, digits, underscore.
-var handleRe = regexp.MustCompile(`^[A-Za-z0-9_]{3,30}$`)
-
 // createChannelRequest is the POST /api/v1/channels body.
 type createChannelRequest struct {
 	Handle      string `json:"handle"`
@@ -31,7 +26,10 @@ type createChannelRequest struct {
 
 func (r createChannelRequest) Validate() []FieldError {
 	var fes []FieldError
-	if !handleRe.MatchString(strings.TrimSpace(r.Handle)) {
+	// The alphabet lives in internal/channel, next to the rule migration 0143
+	// mints renamed handles with — one definition, so a name the database
+	// invents is a name this form would accept.
+	if !channel.ValidateChannelHandle(strings.TrimSpace(r.Handle)) {
 		fes = append(fes, FieldError{Field: "handle", Message: "must be 3–30 chars: letters, digits, or underscore"})
 	}
 	switch n := len(strings.TrimSpace(r.DisplayName)); {

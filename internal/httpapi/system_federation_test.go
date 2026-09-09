@@ -113,3 +113,37 @@ func TestFederationComponentRendersTheLastDelivery(t *testing.T) {
 		t.Errorf("a brand-new instance must not claim a last delivery: %+v", fresh.Detail)
 	}
 }
+
+// A29 follow-ups: a delivery this instance cancelled because its destination was
+// blocked is NOT a dead letter, and reporting it as one sent the rehearsal-3
+// operator hunting a peer failure that never happened. The lab watched six of
+// them under "one or more peers did not accept what it sent"; every one of them
+// went out intact the moment the block was lifted.
+func TestBlockCancelledDeliveriesAreNotReportedAsDeadLetters(t *testing.T) {
+	got := federationComponent(FederationHealth{
+		Pending:           1,
+		CancelledByPolicy: 6,
+		LastDeliveredAt:   time.Now(),
+	}, nil)
+	if got.Status != "ok" {
+		t.Fatalf("status = %q, want ok — a blocklist doing its job is not a degradation", got.Status)
+	}
+	if strings.Contains(got.Error, "dead-lettered") || strings.Contains(got.Error, "did not accept") {
+		t.Errorf("cancelled deliveries were reported as a peer failure: %q", got.Error)
+	}
+	if got.Detail["cancelled_by_policy"] != "6" {
+		t.Errorf("detail = %v, want the cancellations stated as their own fact", got.Detail)
+	}
+	if got.Detail["dead_lettered"] != "0" {
+		t.Errorf("dead_lettered = %q, want 0 — none of these exhausted anything", got.Detail["dead_lettered"])
+	}
+}
+
+// And an instance that has blocked nobody carries no line about blocks, on the
+// same doctrine as last_delivered_at: a zero that is always there is noise.
+func TestNoCancellationsMeansNoCancellationLine(t *testing.T) {
+	got := federationComponent(FederationHealth{Pending: 1}, nil)
+	if _, ok := got.Detail["cancelled_by_policy"]; ok {
+		t.Errorf("detail = %v, want no cancellation line at all", got.Detail)
+	}
+}

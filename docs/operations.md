@@ -1589,6 +1589,113 @@ recursive self-logging, and independent retention/pruning. Never expose current
 raw `slog` values through a database, file reader, or process-local ring buffer.
 See `docs/operational-observability-phase1.md` for the staged design.
 
+## Federation — what an instance block does, and what an unblock undoes
+
+An instance block (`POST /api/v1/admin/instances/blocked`) is a refusal to
+receive **and** a refusal to send, and the two halves recover differently. Know
+which is which before you lift one and expect the conversation to be whole.
+
+**Inbound is gone for good.** An activity from a blocked domain is answered
+`202` and dropped. The remote considers it delivered and will never resend it,
+so no unblock brings it back. The refusal is not silent on THIS side: each one
+writes an audit row `federation.inbox.rejected` carrying the domain and nothing
+else, which is how you tell a block that is working from a peer that stopped
+talking.
+
+**One inbound activity gets an answer: a `Follow`.** A follow request refused
+because the sender's instance is blocked is answered with a signed `Reject` —
+the same activity, in the same shape, that a creator's manual rejection sends —
+so the person who asked ends in a terminal, visible `rejected` state instead of
+watching a request sit at "pending" forever. That `Reject` is delivered **while
+the block still stands**; a block must not swallow the message that says "no",
+for the same reason it does not swallow an `Undo`. Nothing else from a blocked
+instance produces any outbound activity, so the block still tells a peer nothing
+about your content, your users, or who else you federate with. A blocked sender
+may re-follow after you lift the block; that is one deliberate act on their
+side, and it mints a fresh Follow.
+
+**Outbound is held, not lost.** A delivery whose destination is blocked when it
+comes due is CANCELLED with its payload intact — never sent, never retried,
+`last_error = cancelled: destination instance is blocked`. Cancellation is
+**lazy**: it happens when a delivery next comes due, not at the moment you block,
+so expect a short tail of rows moving after the block lands.
+
+`GET /admin/system`'s `federation` component counts these apart from dead
+letters, and the distinction is the whole point:
+
+| detail field | what it means | what to do |
+|---|---|---|
+| `dead_lettered` | walked the entire retry ladder and never landed | a peer you WANTED to reach is unreachable — investigate it |
+| `cancelled_by_policy` | never sent, because you blocked the destination | nothing; they go out if you unblock |
+
+`cancelled_by_policy` does not degrade the component and is absent entirely when
+it is zero. If you see the count and do NOT recognise the block, list it with
+`GET /admin/instances/blocked`.
+
+**Unblocking resumes the outbound half, selectively.** `DELETE
+/api/v1/admin/instances/blocked/{domain}` re-enqueues the deliveries cancelled
+inside that block's own window (up to 500 per unblock; the remainder stays
+cancelled, and the log line says how many were requeued). What comes back:
+
+- **`Delete` and `Accept`, always.** A `Delete` can only reduce what a remote
+  holds, and its absence leaves them serving something you removed; an `Accept`
+  strands a follow you already granted.
+- **`Create`/`Update` of a VIDEO, only if that video is still public, still
+  published, and its channel still has ActivityPub enabled.** The payload is a
+  snapshot taken when it was queued; a video that went private in the meantime
+  must not be published to a remote server by a message the block delayed.
+- **`Create`/`Update` of a COMMENT, on the same terms plus the comment's own.**
+  The comment must still exist, must not be a tombstone (an account deletion
+  empties the body and keeps the row), and must be locally authored — this
+  instance never re-broadcasts a comment signed by another server.
+- **Nothing else.** An unrecognised activity type is not replayed on a guess.
+
+A percent-encoded host works in the path, which matters for a `host:port`
+domain: `DELETE /admin/instances/blocked/peer.example%3A8080`.
+
+### Channel handles the one-namespace migration renamed
+
+Accounts and channels share one handle namespace (migration 0142). On an
+instance that predates it, a channel whose handle collided with an account's
+username was RENAMED by the migration — the account keeps the name, because a
+username is a sign-in identifier and renaming it would lock someone out.
+
+The renamed channel is called **`<name>_channel`**, then `<name>_channel2`,
+`<name>_channel3` and so on if that is taken. Migration 0143 moved this rule
+onto the same alphabet `POST /api/v1/channels` accepts (letters, digits and
+underscore, 3–30 characters), and re-renamed anything 0142 had already minted as
+`<name>-channel[-N]`: a hyphen made a handle the instance's own create form
+would refuse, so an operator could not retype or re-create the name their own
+migration had given them.
+
+What that means for you, per audience:
+
+- **Humans**: every previous name — the original, and the interim `-channel`
+  one if your instance passed through 0142 before 0143 — answers `301` to the
+  current handle for a year from the rename. After that it stops resolving.
+- **Peers**: the ActivityPub actor `id` does **not** move, ever. It is frozen on
+  the name the channel held when 0142 ran, because peers hold that id in their
+  follow rows and their cached actors, and an id that changes underneath them is
+  an actor that silently ceases to exist. `preferredUsername`, the profile URL
+  and the `301` follow the rename; `id`, `inbox`, `outbox`, `followers` and
+  `publicKey.id` do not.
+- **Your ledger**: each rename writes `content.channel.handle_renamed` with both
+  names, and a `cause` in the metadata (`handle_namespace_backfill` for 0142's,
+  `handle_validator_alphabet` for 0143's).
+
+To find out whether any of your channels were renamed:
+
+```sql
+SELECT resource_id, reason, metadata ->> 'cause'
+FROM audit_log
+WHERE action = 'content.channel.handle_renamed'
+ORDER BY occurred_at DESC;
+```
+
+Tell the affected creators. Their old links keep working for a year and their
+federated identity is untouched, but the handle they publish to their audience
+has changed.
+
 ## Production deployment notes
 
 The reference deployment is one host per environment behind a TLS proxy — see
