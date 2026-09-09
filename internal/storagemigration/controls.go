@@ -387,6 +387,17 @@ func (s *Service) targetWritable() (bool, storage.ErrorClass) {
 // set, or an admin who paused a move to take a maintenance window would find it
 // running again five minutes later.
 func (s *Service) reconcileTargetWritability(ctx context.Context, camp sqlcgen.StorageMigration) bool {
+	// Its CALLER guarantees the forward topology — see SweepOnce, where that is
+	// the whole reason this lives inside the switch. Here the remaining guard is
+	// on state: StateAborting DELETES from the destination, its deletes are
+	// already best-effort per object, and it cannot be paused anyway (the
+	// guarded UPDATE would match nothing while this function logged that it had
+	// paused something and told the sweep to stop).
+	switch camp.State {
+	case StateEnumerating, StateCopying, StateSynced, StatePaused:
+	default:
+		return false
+	}
 	writable, class := s.targetWritable()
 	switch {
 	case !writable && camp.State == StatePaused:
@@ -462,8 +473,20 @@ func (s *Service) abortCleanupBatch(ctx context.Context, camp sqlcgen.StorageMig
 		s.logger.InfoContext(ctx, "storage migration removed destination copies",
 			"campaign", camp.ID.String(), "removed", removed)
 	}
-	if len(keys) == int(deleteBatch) {
-		return nil // more to do next tick
+	// Finish ONLY when the batch was short AND every key in it went. A short
+	// batch alone is not enough: some of its deletes may have failed, those rows
+	// stay 'verified' for the next pass to retry, and cancelling on top of them
+	// would mark the campaign over with objects still on the destination — the
+	// exact silence this clean-up exists to end. deleteSourceBatch has the same
+	// property at the other end of a successful move: a permanently unreachable
+	// object keeps the phase open, visibly, rather than being quietly forgotten.
+	//
+	// The campaign's own counters are deliberately NOT refreshed here. They are
+	// computed from the ledger, and these rows are being deleted out of it, so
+	// refreshing would walk objects_done back to zero and erase the record of
+	// what this campaign actually copied before it was aborted.
+	if len(keys) == int(deleteBatch) || removed < len(keys) {
+		return nil // more to do, or some failed and will be retried
 	}
 	if _, err := s.repo.CancelStorageMigration(ctx, camp.ID); err != nil {
 		return err

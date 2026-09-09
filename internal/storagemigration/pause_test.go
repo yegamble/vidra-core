@@ -248,3 +248,51 @@ func asIllegal(err error, target **IllegalTransitionError) bool {
 	}
 	return ok
 }
+
+// A write-denied "target" must NOT stall the delete-source phase, and this is
+// the test for a bug the pause rail introduced and review caught.
+//
+// After the operator's env swap the handle the target monitor probes is the OLD
+// SOURCE — the store being decommissioned — not the one the api serves from. Its
+// refusing a write probe says nothing about whether the campaign may finish
+// deleting it. Worse, pausing is not legal from `cutover` or `deleting_source`
+// at all, so the guarded UPDATE matched no row while the rail logged that it had
+// paused something and told the sweep to stop: a delete-source phase would have
+// stalled for as long as a store nobody writes to kept refusing writes, on a lie
+// in the log.
+func TestAWriteDeniedTargetDoesNotStallTheDeleteSourcePhase(t *testing.T) {
+	ctx := context.Background()
+	src, dst := localAt(t, "source"), localAt(t, "target")
+	repo := newFakeRepo()
+	forward := NewService(repo, src, dst, Config{})
+
+	put(t, src, "web-videos/a.mp4", "bytes a")
+	put(t, src, "thumbnails/a.jpg", "bytes b")
+	camp, err := forward.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	drain(t, forward)
+
+	// THE ENV SWAP, plus a monitor that says the handle now pointing at the OLD
+	// SOURCE will not accept a write. Which is true, and irrelevant.
+	health := storage.NewWriteHealth(src, storage.WriteProbeInterval)
+	health.RecordDenied(storage.ClassWriteDenied)
+	swapped := NewService(repo, dst, src, Config{Grace: 0, TargetWrite: health})
+
+	drain(t, swapped)
+
+	got, _, _, err := swapped.Get(ctx, camp.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.State == StatePaused {
+		t.Fatalf("a post-cutover campaign was paused by the OLD store's write probe: %+v", got)
+	}
+	if got.State != StateDone {
+		t.Fatalf("state = %q, want %q — the delete-source phase stalled", got.State, StateDone)
+	}
+	if ok, _ := src.Exists(ctx, "web-videos/a.mp4"); ok {
+		t.Error("the source copies were never deleted")
+	}
+}

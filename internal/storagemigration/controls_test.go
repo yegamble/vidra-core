@@ -306,3 +306,71 @@ func (r refusingBackend) Put(context.Context, string, io.Reader) (int64, error) 
 // storage.Backend promotes only that interface's methods, and a target whose
 // identity cannot be established is refused before a campaign starts.
 func (r refusingBackend) Describe() string { return storage.Describe(r.Backend) }
+
+// A clean-up that could not remove everything must NOT report itself finished.
+//
+// The batch-size test alone was not enough: a SHORT batch some of whose deletes
+// failed would have fallen through to "cancelled" with objects still on the
+// destination — the exact silence this clean-up exists to end. The failed rows
+// stay 'verified' for the next pass, so the campaign sits visibly in `aborting`
+// instead, which is what deleteSourceBatch does at the other end of a
+// successful move.
+func TestAbortWithCleanupStaysOpenWhileADeleteKeepsFailing(t *testing.T) {
+	ctx := context.Background()
+	src := localAt(t, "source")
+	dst := localAt(t, "target")
+	repo := newFakeRepo()
+	svc := NewService(repo, src, dst, Config{})
+
+	put(t, src, "web-videos/a.mp4", "the original bytes")
+	put(t, src, "thumbnails/a.jpg", "poster")
+	camp, err := svc.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	drain(t, svc)
+
+	// One object the destination will never let go of.
+	stubborn := &undeletableBackend{Backend: dst, key: "thumbnails/a.jpg"}
+	aborting := NewService(repo, src, stubborn, Config{})
+	if _, err := aborting.Abort(ctx, camp.ID, true); err != nil {
+		t.Fatalf("Abort: %v", err)
+	}
+	drain(t, aborting)
+
+	got, _, _, err := aborting.Get(ctx, camp.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.State == StateCancelled {
+		t.Fatal("the campaign reported itself cancelled with an object still on the destination")
+	}
+	if got.State != StateAborting {
+		t.Fatalf("state = %q, want %q — the phase must stay open and visible", got.State, StateAborting)
+	}
+	// The one it COULD remove is gone, so a stuck object does not strand the rest.
+	if ok, _ := dst.Exists(ctx, "web-videos/a.mp4"); ok {
+		t.Error("one stuck object stalled the whole clean-up")
+	}
+	// And the source is untouched throughout, which is the invariant that makes
+	// sitting in this state indefinitely safe.
+	if ok, _ := src.Exists(ctx, "thumbnails/a.jpg"); !ok {
+		t.Error("the source lost an object during a failing clean-up")
+	}
+}
+
+// undeletableBackend refuses to delete one nominated key, the way a store with
+// a retention lock or a half-granted credential does.
+type undeletableBackend struct {
+	storage.Backend
+	key string
+}
+
+func (u *undeletableBackend) Delete(ctx context.Context, key string) error {
+	if key == u.key {
+		return &storage.Error{Class: storage.ClassWriteDenied, Op: "delete"}
+	}
+	return u.Backend.Delete(ctx, key)
+}
+
+func (u *undeletableBackend) Describe() string { return storage.Describe(u.Backend) }

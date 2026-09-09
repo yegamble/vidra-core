@@ -494,15 +494,20 @@ func (s *Service) SweepOnce(ctx context.Context) error {
 		return err
 	}
 	s.stampWorker(ctx, camp.ID)
-	// The pause rail, before anything reads a store. It both parks a campaign
-	// whose target stopped accepting writes and un-parks one whose target
-	// recovered, and it reports "stop" for this tick either way.
-	if s.reconcileTargetWritability(ctx, camp) {
-		return nil
-	}
 
 	switch s.topologyFor(camp) {
 	case topologyForward:
+		// The pause rail, and it lives HERE — inside the forward topology —
+		// rather than above the switch, because that is the only reading in
+		// which s.target is the store the campaign COPIES INTO. After the
+		// operator's env swap the same handle points at the OLD SOURCE, the
+		// store being decommissioned, and whether that one accepts a write
+		// probe says nothing about whether the campaign may finish deleting it.
+		// Above the switch, a refusing old store would have paused a campaign
+		// mid-cutover and stalled the delete-source phase indefinitely.
+		if s.reconcileTargetWritability(ctx, camp) {
+			return nil
+		}
 		return s.sweepForward(ctx, camp)
 	case topologySwapped:
 		return s.sweepSwapped(ctx, camp)
