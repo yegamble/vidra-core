@@ -41,7 +41,7 @@ type fakeRepo struct {
 	verifs         map[string]*sqlcgen.EmailVerificationToken // keyed by token hash
 	// emailChanges mirrors email_change_requests (0129), keyed by token hash.
 	emailChanges map[string]*sqlcgen.EmailChangeRequest
-	// stepUps mirrors step_up_tokens (0143), keyed by token hash, and
+	// stepUps mirrors step_up_tokens (0144), keyed by token hash, and
 	// oauthIdents mirrors oauth_identities for the provider list a step-up
 	// refusal names. See stepup_fake_test.go for the methods over them.
 	stepUps     map[string]*sqlcgen.StepUpToken

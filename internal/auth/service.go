@@ -153,7 +153,7 @@ type Repository interface {
 	// account's.
 	ConfirmEmailChange(ctx context.Context, arg sqlcgen.ConfirmEmailChangeParams) (sqlcgen.ConfirmEmailChangeRow, error)
 
-	// Step-up assertions (0143): the server-side record that a provider
+	// Step-up assertions (0144): the server-side record that a provider
 	// re-authentication happened, for accounts whose only credential is an
 	// external provider. See stepup.go for why these are rows and not a
 	// stateless token.

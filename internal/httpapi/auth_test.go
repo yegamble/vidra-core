@@ -47,7 +47,7 @@ type authFakeRepo struct {
 	// emailChanges mirrors email_change_requests (0129), keyed by token hash.
 	// See auth_email_change_fake_test.go for the methods over it.
 	emailChanges map[string]*sqlcgen.EmailChangeRequest
-	// stepUps mirrors step_up_tokens (0143), keyed by token hash;
+	// stepUps mirrors step_up_tokens (0144), keyed by token hash;
 	// oauthIdents mirrors oauth_identities. See auth_step_up_fake_test.go.
 	stepUps     map[string]*sqlcgen.StepUpToken
 	oauthIdents []sqlcgen.OauthIdentity

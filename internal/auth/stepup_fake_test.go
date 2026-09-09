@@ -11,7 +11,7 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// The in-memory half of step_up_tokens (migration 0143). It mirrors the SQL's
+// The in-memory half of step_up_tokens (migration 0144). It mirrors the SQL's
 // SEMANTICS rather than merely satisfying the interface: the consume predicate
 // includes the owning account AND the owning session AND used_at IS NULL AND
 // an unexpired expires_at, because those four are exactly what the negatives
