@@ -596,3 +596,101 @@ func TestASecondCampaignReEnumeratesAgainstTheRealLedger(t *testing.T) {
 		}
 	}
 }
+
+// TestAbortWithCleanupRemovesTheDestinationCopiesFromARealObjectStore is the
+// one NEW destructive path this package gained, proved against a real object
+// store rather than a local directory.
+//
+// A34's eighth finding was that an aborted campaign's partial copies stay on
+// the destination forever: nothing in the product removed them, and emptying
+// the bucket was the operator's job — on a store they may not have console
+// access to. The clean-up is the answer, and it is exactly the shape of change
+// that must not be trusted to a fake: it issues DELETEs against a bucket, and
+// the two handles it could issue them against are the source and the
+// destination.
+//
+// So both halves are asserted here, out of the real stores: the destination is
+// empty of this campaign's objects afterwards, and the SOURCE still holds every
+// byte, unchanged. Getting that backwards would delete the library.
+func TestAbortWithCleanupRemovesTheDestinationCopiesFromARealObjectStore(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	f := newCampaignFixture(t, "abort")
+
+	original := fmt.Sprintf("web-videos/%s.mp4", uuid.New())
+	bodies := map[string]string{
+		original:                              "pretend this is an mp4 original",
+		"thumbnails/poster.jpg":               "poster bytes",
+		"streaming-playlists/hls/master.m3u8": "#EXTM3U",
+		"streaming-playlists/hls/0.ts":        "segment zero",
+	}
+	for key, body := range bodies {
+		if _, err := f.source.Put(ctx, key, strings.NewReader(body)); err != nil {
+			t.Fatalf("seed %q: %v", key, err)
+		}
+	}
+
+	svc := NewService(f.q, f.source, f.target, Config{})
+	camp, err := svc.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	runToSynced(t, ctx, svc)
+
+	// The copies really are on the destination before the abort, or the
+	// clean-up would prove nothing at all.
+	for key := range bodies {
+		if ok, err := f.target.Exists(ctx, key); err != nil || !ok {
+			t.Fatalf("%q never reached the object store (ok=%v err=%v)", key, ok, err)
+		}
+	}
+
+	got, err := svc.Abort(ctx, camp.ID, true)
+	if err != nil {
+		t.Fatalf("Abort: %v", err)
+	}
+	if got.State != StateAborting {
+		t.Fatalf("state after abort = %q, want %q", got.State, StateAborting)
+	}
+
+	// The leader-gated sweep drains it, exactly as the delete-source phase is
+	// drained at the other end of a successful move.
+	for i := 0; i < 30; i++ {
+		if err := svc.SweepOnce(ctx); err != nil {
+			t.Fatalf("SweepOnce during clean-up: %v", err)
+		}
+	}
+	final, _, _, err := svc.Get(ctx, camp.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if final.State != StateCancelled {
+		t.Fatalf("state after the clean-up drained = %q, want %q", final.State, StateCancelled)
+	}
+
+	for key, body := range bodies {
+		if ok, err := f.target.Exists(ctx, key); err != nil {
+			t.Fatalf("stat %q on the destination: %v", key, err)
+		} else if ok {
+			t.Errorf("%q is still in the object store after an abort with clean-up", key)
+		}
+		// THE HALF THAT MATTERS MOST. The source is what the instance is still
+		// serving from, and an abort that emptied it would be the worst outcome
+		// this package can produce.
+		if ok, err := f.source.Exists(ctx, key); err != nil || !ok {
+			t.Fatalf("%q was deleted from the SOURCE by an abort (ok=%v err=%v)", key, ok, err)
+		}
+		rc, err := f.source.Open(ctx, key)
+		if err != nil {
+			t.Fatalf("open source %q: %v", key, err)
+		}
+		data, rerr := io.ReadAll(rc)
+		_ = rc.Close()
+		if rerr != nil {
+			t.Fatalf("read source %q: %v", key, rerr)
+		}
+		if string(data) != body {
+			t.Errorf("the source copy of %q changed: %q", key, string(data))
+		}
+	}
+}
