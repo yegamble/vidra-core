@@ -604,7 +604,7 @@ func (s *Service) deleteSourceBatch(ctx context.Context, camp sqlcgen.StorageMig
 			// Best-effort per object: one unreachable object must not stall the
 			// rest, and the row stays 'verified' so the next pass retries it.
 			s.logger.WarnContext(ctx, "storage migration could not delete a source object",
-				"campaign", camp.ID.String(), "object_key", jobstatus.RedactDetail(key), "error", derr.Error())
+				"campaign", camp.ID.String(), "object_key", jobstatus.RedactDetail(key), "error", jobstatus.RedactError(derr))
 			continue
 		}
 		if err := s.repo.MarkStorageMigrationObjectSourceDeleted(ctx, key); err != nil {
@@ -809,7 +809,7 @@ func (s *Service) copyOne(ctx context.Context, row sqlcgen.ClaimDueStorageMigrat
 			ObjectKey: row.ObjectKey, Sha256: sum, ByteSize: size,
 		}); uerr != nil {
 			s.logger.WarnContext(ctx, "storage migration could not record a verified object",
-				"object_key", jobstatus.RedactDetail(row.ObjectKey), "error", uerr.Error())
+				"object_key", jobstatus.RedactDetail(row.ObjectKey), "error", jobstatus.RedactError(uerr))
 		}
 		return
 	}
@@ -817,7 +817,7 @@ func (s *Service) copyOne(ctx context.Context, row sqlcgen.ClaimDueStorageMigrat
 	var term *terminalError
 	if errors.As(err, &term) {
 		s.logger.ErrorContext(ctx, "storage migration gave up on an object",
-			"object_key", jobstatus.RedactDetail(row.ObjectKey), "reason", term.category, "error", term.Error())
+			"object_key", jobstatus.RedactDetail(row.ObjectKey), "reason", jobstatus.RedactDetail(term.category), "error", jobstatus.RedactError(term))
 		s.fail(ctx, row.ObjectKey, term.category)
 		return
 	}
@@ -825,7 +825,7 @@ func (s *Service) copyOne(ctx context.Context, row sqlcgen.ClaimDueStorageMigrat
 	// Transient: a timeout, a 5xx, a store restarting. Retry with backoff until
 	// the attempt budget is spent, then dead-letter through the normal path.
 	s.logger.WarnContext(ctx, "storage migration could not copy an object; will retry",
-		"object_key", jobstatus.RedactDetail(row.ObjectKey), "attempts", row.Attempts+1, "error", err.Error())
+		"object_key", jobstatus.RedactDetail(row.ObjectKey), "attempts", row.Attempts+1, "error", jobstatus.RedactError(err))
 	if row.Attempts+1 >= maxAttempts {
 		s.fail(ctx, row.ObjectKey, failAttemptsSpent)
 		return
@@ -836,7 +836,7 @@ func (s *Service) copyOne(ctx context.Context, row sqlcgen.ClaimDueStorageMigrat
 		LastError:     failTransientCopy,
 	}); rerr != nil {
 		s.logger.WarnContext(ctx, "storage migration could not reschedule an object",
-			"object_key", jobstatus.RedactDetail(row.ObjectKey), "error", rerr.Error())
+			"object_key", jobstatus.RedactDetail(row.ObjectKey), "error", jobstatus.RedactError(rerr))
 	}
 }
 
@@ -845,7 +845,7 @@ func (s *Service) fail(ctx context.Context, key, category string) {
 		ObjectKey: key, LastError: category,
 	}); err != nil {
 		s.logger.WarnContext(ctx, "storage migration could not dead-letter an object",
-			"object_key", jobstatus.RedactDetail(key), "error", err.Error())
+			"object_key", jobstatus.RedactDetail(key), "error", jobstatus.RedactError(err))
 	}
 }
 

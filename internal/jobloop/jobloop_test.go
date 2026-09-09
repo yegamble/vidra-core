@@ -346,12 +346,17 @@ func TestErrorIsLoggedAndTheLoopContinues(t *testing.T) {
 // TestDrainStopsOnErrorButStillLogsProgress pins the transcode worker's exact
 // behaviour: a failing claim query ends the inner loop, and the batches that
 // DID complete before it are still reported.
+//
+// The failure REACHES the caller rather than being logged here, because the
+// WARN moved up to Loop.Run when the backoff ladder arrived: only the loop
+// knows how many consecutive failures this one is, and that count is half the
+// line.
 func TestDrainStopsOnErrorButStillLogsProgress(t *testing.T) {
 	rec, logger := newRecorder()
 	var calls counter
 	// One pass is the whole behaviour under test, so it is driven directly
 	// rather than waited for through a ticker.
-	Pass{
+	err := Pass{
 		FailMsg: "widget drain failed",
 		DoneMsg: "widget drain completed",
 		Drain:   true,
@@ -366,8 +371,8 @@ func TestDrainStopsOnErrorButStillLogsProgress(t *testing.T) {
 	if got := calls.get(); got != 2 {
 		t.Fatalf("drain made %d calls, want 2 (one batch, then the failing claim)", got)
 	}
-	if rec.find("widget drain failed") == nil {
-		t.Error("the drain error was not logged")
+	if err == nil {
+		t.Error("the drain error was not returned to the loop")
 	}
 	done := rec.find("widget drain completed")
 	if done == nil {
@@ -524,5 +529,133 @@ func TestJitterStartWaitsWithinTheInterval(t *testing.T) {
 	// timing measurement, so scheduling slack must not make it flaky.
 	if elapsed := time.Since(start); elapsed > 20*interval {
 		t.Errorf("JitterStart held for %v, want well under %v", elapsed, 20*interval)
+	}
+}
+
+// TestBackoffLadderThinsRepeatedFailures is A34's finding, mechanised. With
+// PostgreSQL down every loop retried at its fixed tick for the whole outage —
+// measured at exactly 10.000 s apart — so N workers × M loops produced a
+// constant flood of identical WARNs for as long as the dependency was gone.
+//
+// What is asserted is the SHAPE and not a wall-clock schedule: over a window
+// that would have allowed dozens of fixed-interval attempts, a permanently
+// failing pass must make far fewer, and each WARN must name where on the ladder
+// it is so an operator can tell a blip from an outage.
+func TestBackoffLadderThinsRepeatedFailures(t *testing.T) {
+	rec, logger := newRecorder()
+	var calls counter
+	_, stop := runLoop(t, Loop{
+		Interval: tickInterval,
+		Passes: []Pass{{
+			FailMsg: "widget sweep failed",
+			Run: func(context.Context, time.Time) (int, error) {
+				calls.inc()
+				return 0, errors.New("postgres is down")
+			},
+		}},
+	}, logger)
+	defer stop()
+
+	// Long enough for ~40 un-backed-off ticks; the ladder should allow ~6.
+	waitFor(t, "the failing pass to climb its ladder", func() bool { return calls.get() >= 4 })
+	time.Sleep(40 * tickInterval)
+	if got := calls.get(); got > 12 {
+		t.Errorf("failing pass ran %d times in a window that fits ~40 fixed-interval ticks; the ladder is not thinning anything", got)
+	}
+
+	got := rec.find("widget sweep failed")
+	if got == nil {
+		t.Fatal("the pass error was not logged")
+	}
+	if got["consecutive_failures"] == nil {
+		t.Error("the WARN does not say how far up the ladder this failure is")
+	}
+	if got["retry_in"] == nil {
+		t.Error("the WARN does not say when the pass will be tried again")
+	}
+}
+
+// TestFirstFailureCostsNoDelay pins the low end of the ladder. Backoff(1, …) is
+// the interval itself, so one bad tick must not push the next attempt out — a
+// single blip and a real outage are different things, and only the second one
+// should slow down.
+func TestFirstFailureCostsNoDelay(t *testing.T) {
+	_, logger := newRecorder()
+	var calls counter
+	_, stop := runLoop(t, Loop{
+		Interval: tickInterval,
+		Passes: []Pass{{
+			FailMsg: "widget sweep failed",
+			Run: func(context.Context, time.Time) (int, error) {
+				if calls.inc() == 1 {
+					return 0, errors.New("one blip")
+				}
+				return 1, nil
+			},
+		}},
+	}, logger)
+	defer stop()
+
+	waitFor(t, "the tick after a single failure to run on schedule", func() bool { return calls.get() >= 4 })
+}
+
+// TestRecoveryIsNeverSilent: a ladder that climbed and then recovered says so.
+// Without the line the last thing in the log is a failure, and an operator
+// cannot tell a fixed dependency from a forgotten one.
+func TestRecoveryIsNeverSilent(t *testing.T) {
+	rec, logger := newRecorder()
+	var calls counter
+	_, stop := runLoop(t, Loop{
+		Interval: tickInterval,
+		Passes: []Pass{{
+			FailMsg: "widget sweep failed",
+			Run: func(context.Context, time.Time) (int, error) {
+				if calls.inc() <= 2 {
+					return 0, errors.New("still down")
+				}
+				return 1, nil
+			},
+		}},
+	}, logger)
+	defer stop()
+
+	waitFor(t, "the recovery line", func() bool { return rec.find("job loop pass recovered") != nil })
+	got := rec.find("job loop pass recovered")
+	if got["after_failures"] == nil {
+		t.Error("the recovery line does not say how many failures preceded it")
+	}
+}
+
+// TestOneFailingPassDoesNotSilenceItsSibling: the ladder is PER PASS. A worker
+// that pairs a drain with a sweep must not lose the drain because the sweep is
+// failing — they are different queries against different tables and only one of
+// them is broken.
+func TestOneFailingPassDoesNotSilenceItsSibling(t *testing.T) {
+	_, logger := newRecorder()
+	var bad, good counter
+	_, stop := runLoop(t, Loop{
+		Interval: tickInterval,
+		Passes: []Pass{
+			{
+				FailMsg: "bad pass failed",
+				Run: func(context.Context, time.Time) (int, error) {
+					bad.inc()
+					return 0, errors.New("down")
+				},
+			},
+			{
+				FailMsg: "good pass failed",
+				Run: func(context.Context, time.Time) (int, error) {
+					good.inc()
+					return 1, nil
+				},
+			},
+		},
+	}, logger)
+	defer stop()
+
+	waitFor(t, "the healthy pass to keep its own cadence", func() bool { return good.get() >= 12 })
+	if b := bad.get(); b >= good.get() {
+		t.Errorf("the failing pass ran %d times and the healthy one %d; the ladder is not per-pass", b, good.get())
 	}
 }

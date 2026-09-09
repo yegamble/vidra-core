@@ -326,7 +326,7 @@ func (c *chain) mirrorSource(ctx context.Context, req Request) (Source, bool) {
 	u, ok, err := c.mirror(ctx, req.ObjectKey, req.MirrorClass)
 	if err != nil {
 		c.logger.WarnContext(ctx, "ipfs asset lookup failed; serving authoritative storage",
-			"error", err, "media_class", req.MirrorClass, "object_key", jobstatus.RedactDetail(req.ObjectKey))
+			"error", jobstatus.RedactError(err), "media_class", req.MirrorClass, "object_key", jobstatus.RedactDetail(req.ObjectKey))
 		return Source{}, false
 	}
 	if !ok {

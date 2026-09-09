@@ -447,11 +447,32 @@ func (s *Service) Sweep(ctx context.Context, dryRun bool) (Result, error) {
 	}
 
 	// Both gates come first: they are decisions about the store and about the
-	// world, made before a single key is listed. Ownership is checked first
-	// because it is free, and because a store that is not ours is the more
-	// alarming of the two answers.
+	// world, made before a single key is listed.
+	//
+	// THE MIGRATION INTERLOCK IS EVALUATED FIRST, and the order is the finding
+	// rather than a preference. A34 ran a destructive sweep DURING cutover and
+	// was told `bucket_ownership`: the campaign had not yet stamped the
+	// destination's ownership marker (that is its last act), so the ownership
+	// gate fired first and named a reason whose remedy — adopt the bucket — is
+	// beside the point while a move is in flight. Both rails refuse the same
+	// sweep, so the outcome never differed; what differed is where the sentence
+	// sends the operator. "A migration is running" is the CAUSE, and an
+	// unadopted destination mid-move is one of its symptoms, so the cause is
+	// what an operator must read. Ownership still answers whenever no campaign
+	// is in flight, which is every ordinary sweep.
 	ownership := s.Ownership()
 	forced, forcedReason := false, ""
+	if !dryRun && s.migrationActive != nil {
+		active, merr := s.migrationActive(ctx)
+		if merr != nil {
+			// Fail safe. An unanswerable "is a migration running?" is the case the
+			// interlock exists for, not an excuse to skip it.
+			active = true
+		}
+		if active {
+			dryRun, forced, forcedReason = true, true, ReasonMigrationActive
+		}
+	}
 	if !dryRun && !ownership.AllowsDelete() {
 		// The in-memory state is a boot-time cache of the marker, and adoption
 		// only flips it in the ONE process that served the admin's request. In a
@@ -469,18 +490,6 @@ func (s *Service) Sweep(ctx context.Context, dryRun bool) (Result, error) {
 			dryRun, forced, forcedReason = true, true, ReasonBucketOwnership
 		}
 	}
-	if !dryRun && s.migrationActive != nil {
-		active, merr := s.migrationActive(ctx)
-		if merr != nil {
-			// Fail safe. An unanswerable "is a migration running?" is the case the
-			// interlock exists for, not an excuse to skip it.
-			active = true
-		}
-		if active {
-			dryRun, forced, forcedReason = true, true, ReasonMigrationActive
-		}
-	}
-
 	refs, err := referenceSet(ctx, s.repo)
 	if err != nil {
 		return Result{}, err

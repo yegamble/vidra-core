@@ -24,7 +24,27 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"time"
+
+	"github.com/vidra/vidra-core/internal/retry"
 )
+
+// DefaultBackoffMax is how far a repeatedly failing pass may push its next
+// attempt out. Ten minutes, and the number comes from what an operator needs to
+// see rather than from what the database needs to survive.
+//
+// A34 measured the shape this fixes: with PostgreSQL down, every loop retried at
+// its fixed tick for the whole outage — samples exactly 10.000 s apart — so the
+// WARN rate is constant and scales with workers × loops. Two workers running
+// twenty loops each turn a five-minute outage into six hundred identical lines,
+// which is not a log, it is a denial of service against the operator reading it.
+//
+// The cap is what keeps the ladder honest in the other direction. An unbounded
+// doubling would eventually put a recovered dependency an hour away from being
+// noticed; ten minutes is short enough that nothing waits long for a recovery
+// and long enough that a whole outage costs a handful of lines instead of
+// hundreds. With a 10 s interval the ladder is 10 s, 20 s, 40 s, 80 s, 160 s,
+// 320 s, then 600 s forever: seven lines in the first ten minutes.
+const DefaultBackoffMax = 10 * time.Minute
 
 // Leader gates a loop to a single instance. It is satisfied by
 // *leaderlock.Elector, including a nil one — which reports itself leader,
@@ -73,6 +93,24 @@ type Loop struct {
 	// Passes run in order, every tick. A pass that fails does not skip the ones
 	// after it.
 	Passes []Pass
+	// BackoffMax caps the ladder a repeatedly failing pass climbs. Zero means
+	// DefaultBackoffMax; a loop whose Interval is already longer than the cap
+	// never backs off at all, which is the right answer — it is not the loop
+	// filling the log.
+	BackoffMax time.Duration
+}
+
+// passState is one pass's failure ladder. It lives in Run rather than on Pass
+// because Passes is a value slice an author writes down once at the top of a
+// worker: the schedule is configuration, and how many times it has failed since
+// is not.
+type passState struct {
+	// failures is consecutive failures. It resets on the first success, so a
+	// flaky dependency that works one tick in three never climbs the ladder.
+	failures int
+	// skipUntil is when this pass may next run. Ticks before it are skipped for
+	// THIS pass only — a failing sweep must not silence the drain beside it.
+	skipUntil time.Time
 }
 
 // Run drives the loop until ctx is canceled. It blocks; call it in a goroutine.
@@ -80,6 +118,11 @@ func (l Loop) Run(ctx context.Context, logger *slog.Logger) {
 	if l.Jitter && !JitterStart(ctx, l.Interval) {
 		return
 	}
+	backoffMax := l.BackoffMax
+	if backoffMax <= 0 {
+		backoffMax = DefaultBackoffMax
+	}
+	state := make([]passState, len(l.Passes))
 	ticker := time.NewTicker(l.Interval)
 	defer ticker.Stop()
 	for {
@@ -93,19 +136,45 @@ func (l Loop) Run(ctx context.Context, logger *slog.Logger) {
 			if l.Leader != nil && !l.Leader.IsLeader() {
 				continue
 			}
-			for _, p := range l.Passes {
-				p.run(ctx, logger, tick)
+			for i, p := range l.Passes {
+				if tick.Before(state[i].skipUntil) {
+					continue
+				}
+				if err := p.run(ctx, logger, tick); err != nil {
+					state[i].failures++
+					// Backoff(1, …) is the interval itself, so the FIRST failure costs
+					// no extra delay: the next ordinary tick still runs. Only a second
+					// consecutive failure starts doubling, which is what keeps a single
+					// blip from looking like an outage.
+					delay := retry.Backoff(state[i].failures, l.Interval, backoffMax)
+					state[i].skipUntil = tick.Add(delay)
+					logger.Warn(p.FailMsg, "error", err,
+						"consecutive_failures", state[i].failures, "retry_in", delay.String())
+					continue
+				}
+				if state[i].failures > 0 {
+					// Never silent. A ladder that climbed to ten minutes and then
+					// recovered must say so, or the last thing in the log is a
+					// failure and an operator has no way to tell a fixed dependency
+					// from a forgotten one.
+					logger.Info("job loop pass recovered", "pass", p.FailMsg,
+						"after_failures", state[i].failures)
+					state[i] = passState{}
+				}
 			}
 		}
 	}
 }
 
-func (p Pass) run(ctx context.Context, logger *slog.Logger, tick time.Time) {
+// run performs one pass and reports whether it failed. The WARN is the caller's
+// because only the caller knows how far up the ladder this failure is.
+func (p Pass) run(ctx context.Context, logger *slog.Logger, tick time.Time) error {
 	total := 0
+	var failure error
 	for {
 		n, err := p.Run(ctx, tick)
 		if err != nil {
-			logger.Warn(p.FailMsg, "error", err)
+			failure = err
 			break
 		}
 		total += n
@@ -116,6 +185,7 @@ func (p Pass) run(ctx context.Context, logger *slog.Logger, tick time.Time) {
 	if total > 0 && p.DoneMsg != "" {
 		logger.Log(ctx, p.DoneLevel, p.DoneMsg, "count", total)
 	}
+	return failure
 }
 
 // JitterStart holds the caller for a uniformly random slice of interval, so the
