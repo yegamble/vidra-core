@@ -402,12 +402,48 @@ instances copy faster. The phases:
 | `enumerating` | Listing every object in the source |
 | `copying` | Objects are being copied and verified |
 | `synced` | Everything is verified in the destination and a delta pass found nothing new — **cut over from here** |
+| `paused` | Not claiming objects. `paused_reason` says why and `resume_state` says where a resume lands |
+| `aborting` | Cancelled, and removing the copies it had already written to the destination |
 | `cutover` | You swapped the environment; the grace clock is running |
 | `deleting_source` | Removing the old store's copies |
 | `done` | Finished |
 
 Uploads that land **during** the move are picked up by the delta pass, so
 `synced` keeps meaning "the two stores match" on a live instance.
+
+### 2a. Driving it — Admin → Infrastructure, or the API
+
+Everything below is on the **Storage** panel of Admin → Infrastructure, and each
+one is an `admin`-only, audited `POST` under
+`/api/v1/admin/storage/migrations/{id}/…`. Every one answers a **409 naming the
+campaign's actual state** when the transition is not legal, because the
+commonest cause of pressing the wrong one is a page that has gone stale.
+
+| | What it does |
+|---|---|
+| `POST /admin/storage/migrations` with `{"dry_run": true}` | Answers what a move **would** copy — both store identities, the object count, the byte total — and creates nothing. There is nothing to cancel if you decide against it |
+| `…/{id}/pause` · `…/{id}/resume` | Stops and restarts the copy workers. Nothing is undone and nothing is deleted; the ledger stands where it is. Legal from `enumerating`/`copying`/`synced` |
+| `…/{id}/abort` | Cancels. By default the copies already on the destination **stay** — they are byte-identical objects under identical keys, inert until a later campaign re-verifies them |
+| `…/{id}/abort` with `{"clean_destination": true, "confirm": "PURGE"}` | Cancels **and removes** those copies, batch by batch, before the campaign reaches `cancelled`. The source is untouched throughout. Refused after cutover, where the destination is the store you are serving from |
+| `…/{id}/switch` | Records a cutover you have **already performed** in the environment (see step 3), instead of waiting up to a minute for the sweep to notice. It cannot perform one; when the swap has not taken effect in the process you asked, it says so |
+| `…/{id}/release` | Ends the grace window early and starts deleting the old store. This is the act that makes the move irreversible, so it is a **separate** step from the switch, and it is refused while any object is still only in the source |
+
+**A destination that stops accepting writes pauses the campaign — it does not
+take the instance down.** If the target bucket's credential is rotated or
+narrowed mid-move, the api and the workers keep running and keep serving every
+read; the `storage` component of `/readyz` and the admin status page report
+`degraded` with the refusal class, and the campaign parks in `paused` with
+`paused_reason: target_write_denied`. It **resumes on its own** within five
+minutes of the target accepting writes again — the write probe's interval — so
+there is usually nothing to press. (An instance that cannot write to the store
+it *serves from* is a different matter and still refuses to boot.)
+
+**Objects that are failing are visible before they dead-letter.**
+`objects_failed` counts only objects whose whole retry budget is spent, so it
+stays at zero for a while even when everything is being refused. The
+single-campaign view carries a `failures` breakdown by category, splitting
+**retrying** from **given up on**; the admin page renders it as a table. A
+campaign whose progress has stalled will say why there.
 
 ### 3. Cut over — swap BOTH environment sets
 
@@ -427,6 +463,11 @@ While the campaign is not `done`/`cancelled`, serving reads go through a
 dual-read view: an object missing from the new store is fetched from the old
 one. Writes only ever go to the store you are configured to serve from.
 
+You can also record the swap explicitly rather than waiting for the sweep to
+observe it — `POST …/{id}/switch`, which either stamps `observed_cutover_at` at
+once or tells you the process you asked is still serving from the source, which
+means the swap did not take or only half of it did.
+
 ### 4. Grace, then automatic deletion
 
 `observed_cutover_at` is stamped the first time the api sees itself serving from
@@ -437,6 +478,11 @@ environment back and the old store is still complete.
 
 Deletion refuses to run unless every object is accounted for, and refuses unless
 the handle it is about to delete through is the campaign's recorded source.
+
+To end the grace window **early**, use `POST …/{id}/release` rather than editing
+`STORAGE_MIGRATION_GRACE_HOURS` and restarting: it is one operator decision
+rather than a config change made to express one, and it re-checks that every
+object is accounted for before it opens the delete phase.
 
 **`cutover` → `done` takes about three minutes, even at
 `STORAGE_MIGRATION_GRACE_HOURS=0`.** The state machine advances one step per

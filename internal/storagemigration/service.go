@@ -617,6 +617,23 @@ func (s *Service) sweepSwapped(ctx context.Context, camp sqlcgen.StorageMigratio
 			"source_deleted_after", s.grace.String())
 		return nil
 
+	case StatePaused:
+		// The operator swapped the environment while the campaign was parked.
+		// Nothing here is wrong or dangerous — the copy is where it was and the
+		// source is untouched — but the cutover CANNOT be recorded from
+		// 'paused', so without this line the campaign would sit silent in a
+		// topology it has no branch for, which is precisely the shape of stall
+		// this slice exists to end.
+		return s.note(ctx, camp.ID,
+			"the storage environment was swapped while this migration was paused, so the cutover cannot be recorded yet; resume it first")
+
+	case StateAborting:
+		// The destination is now the store the api SERVES from. Clearing it
+		// would empty the live library, so the clean-up does not run here and
+		// says why rather than looking finished.
+		return s.note(ctx, camp.ID,
+			"the storage environment was swapped while this migration was aborting, so the copies on the new store were NOT removed — they are what this instance now serves from; restore the previous values to finish the abort, or cancel this migration to keep them")
+
 	case StateCutover:
 		return s.maybeBeginDeletingSource(ctx, camp)
 

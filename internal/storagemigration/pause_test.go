@@ -296,3 +296,55 @@ func TestAWriteDeniedTargetDoesNotStallTheDeleteSourcePhase(t *testing.T) {
 		t.Error("the source copies were never deleted")
 	}
 }
+
+// A campaign that is PAUSED when the operator swaps the environment must not go
+// silent. Nothing is wrong or dangerous — the copy is where it was and the
+// source is untouched — but the cutover cannot be recorded from `paused`, so
+// without a diagnostic the campaign would sit in a topology its sweep has no
+// branch for, saying nothing. That is precisely the shape of stall this slice
+// exists to end, so it is not allowed to be the shape the slice ships.
+func TestASwappedEnvironmentTellsAPausedCampaignWhatToDo(t *testing.T) {
+	ctx := context.Background()
+	src, dst := localAt(t, "source"), localAt(t, "target")
+	repo := newFakeRepo()
+	forward := NewService(repo, src, dst, Config{})
+
+	put(t, src, "web-videos/a.mp4", "bytes a")
+	camp, err := forward.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	drain(t, forward)
+	if _, err := forward.Pause(ctx, camp.ID, PauseReasonOperator); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+
+	// The env swap, with the campaign still parked.
+	swapped := NewService(repo, dst, src, Config{Grace: 0})
+	if err := swapped.SweepOnce(ctx); err != nil {
+		t.Fatalf("SweepOnce after the swap: %v", err)
+	}
+
+	got, _, _, err := swapped.Get(ctx, camp.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.State != StatePaused {
+		t.Fatalf("state = %q, want it to stay %q", got.State, StatePaused)
+	}
+	if !strings.Contains(got.LastError, "resume it first") {
+		t.Errorf("the campaign says nothing about how to get out of this: %q", got.LastError)
+	}
+
+	// And the remedy it names actually works: resume, then the cutover is
+	// observed on the next sweep.
+	if _, err := swapped.Resume(ctx, camp.ID); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if err := swapped.SweepOnce(ctx); err != nil {
+		t.Fatalf("SweepOnce after the resume: %v", err)
+	}
+	if got, _, _, _ := swapped.Get(ctx, camp.ID); got.State != StateCutover {
+		t.Errorf("state after the named remedy = %q, want %q", got.State, StateCutover)
+	}
+}
