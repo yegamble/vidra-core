@@ -167,7 +167,9 @@ func TestSearchHistoryContractDocumentsEveryStatus(t *testing.T) {
 // deliberately absent: the spec documents no internal-error responses.
 var contractStatusVocabulary = []string{
 	"200", "201", "202", "204", "206",
-	"302", "304", "307",
+	// 301 is the channel-handle alias (migration 0142): a channel renamed out
+	// of a namespace collision answers permanently at its old handle for a year.
+	"301", "302", "304", "307",
 	"400", "401", "403", "404", "409", "410", "413", "415", "422", "429",
 	"501", "502", "503",
 }

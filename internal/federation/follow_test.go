@@ -351,3 +351,113 @@ func TestIngestGateConsultsRepoEdges(t *testing.T) {
 		t.Error("video not ingested despite an accepted follow edge")
 	}
 }
+
+// A29 rehearsal 3, SC1. Migration 0142 made accounts and channels share one
+// handle namespace, and WebFinger answers a name that BOTH kinds have held with
+// two links: the Person at rel=self and the Group at rel=alternate, "so a peer
+// picks by type instead of taking whichever this server happened to try first".
+//
+// The serving half shipped; the CLIENT half did not. The third two-instance run
+// followed `creatora@A` — a username whose channel the backfill had renamed —
+// and this instance took rel=self, queued a Follow at the PERSON, and the row
+// sat `pending` forever because a Person's inbox has no arm that accepts a
+// Follow of a channel. Picking by type is what closes it.
+func TestFollowRemoteChannelPrefersTheGroupOnACollidingHandle(t *testing.T) {
+	userID := uuid.New()
+	repo := newFollowRepo(userID)
+
+	mux := http.NewServeMux()
+	var srv *httptest.Server
+	actorFetches := 0
+	mux.HandleFunc("/.well-known/webfinger", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(JRD{
+			Subject: "acct:ownera@remote.example",
+			Links: []JRDLink{
+				{Rel: "self", Type: "application/activity+json", Href: srv.URL + "/accounts/ownera"},
+				{Rel: "alternate", Type: "application/activity+json", Href: srv.URL + "/video-channels/ownera"},
+			},
+		})
+	})
+	mux.HandleFunc("/accounts/ownera", func(w http.ResponseWriter, _ *http.Request) {
+		actorFetches++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": srv.URL + "/accounts/ownera", "type": "Person",
+			"preferredUsername": "ownera",
+			"inbox":             srv.URL + "/accounts/ownera/inbox",
+			"publicKey":         map[string]string{"publicKeyPem": "PEM"},
+		})
+	})
+	mux.HandleFunc("/video-channels/ownera", func(w http.ResponseWriter, _ *http.Request) {
+		actorFetches++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": srv.URL + "/video-channels/ownera", "type": "Group",
+			"preferredUsername": "ownera-channel-2",
+			"inbox":             srv.URL + "/video-channels/ownera/inbox",
+			"publicKey":         map[string]string{"publicKeyPem": "PEM"},
+		})
+	})
+	srv = httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	svc := NewService(repo, WithBaseURL("https://videos.example"), WithAllowPrivateFetch(true))
+	follow, err := svc.FollowRemoteChannel(context.Background(), userID, "ownera@"+host)
+	if err != nil {
+		t.Fatalf("FollowRemoteChannel: %v", err)
+	}
+	if want := srv.URL + "/video-channels/ownera"; follow.ActorURL != want {
+		t.Fatalf("followed %q, want the GROUP %q", follow.ActorURL, want)
+	}
+	if len(repo.deliveries) != 1 {
+		t.Fatalf("deliveries = %d, want one queued Follow", len(repo.deliveries))
+	}
+	for _, d := range repo.deliveries {
+		if got := d.row.InboxUrl; got != srv.URL+"/video-channels/ownera/inbox" {
+			t.Errorf("Follow queued to %q, want the group inbox", got)
+		}
+	}
+	// Two candidates, at most two fetches — both to the host that just answered
+	// WebFinger, so this costs nothing a caller could not already make us do.
+	if actorFetches > 2 {
+		t.Errorf("actor fetches = %d, want at most one per candidate", actorFetches)
+	}
+}
+
+// A name only ONE kind holds still answers with a single rel=self link, and
+// nothing about that path may change — including when the single link is a
+// Person, which is what following an account-only handle has always resolved to.
+func TestFollowRemoteChannelKeepsTheSingleSelfLink(t *testing.T) {
+	userID := uuid.New()
+	repo := newFollowRepo(userID)
+
+	mux := http.NewServeMux()
+	var srv *httptest.Server
+	mux.HandleFunc("/.well-known/webfinger", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(JRD{
+			Subject: "acct:solo@remote.example",
+			Links: []JRDLink{
+				{Rel: "self", Type: "application/activity+json", Href: srv.URL + "/accounts/solo"},
+			},
+		})
+	})
+	mux.HandleFunc("/accounts/solo", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": srv.URL + "/accounts/solo", "type": "Person",
+			"preferredUsername": "solo",
+			"inbox":             srv.URL + "/accounts/solo/inbox",
+			"publicKey":         map[string]string{"publicKeyPem": "PEM"},
+		})
+	})
+	srv = httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	svc := NewService(repo, WithBaseURL("https://videos.example"), WithAllowPrivateFetch(true))
+	follow, err := svc.FollowRemoteChannel(context.Background(), userID, "solo@"+host)
+	if err != nil {
+		t.Fatalf("FollowRemoteChannel: %v", err)
+	}
+	if want := srv.URL + "/accounts/solo"; follow.ActorURL != want {
+		t.Fatalf("followed %q, want %q", follow.ActorURL, want)
+	}
+}

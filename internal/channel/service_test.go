@@ -29,6 +29,17 @@ type fakeRepo struct {
 	// actor_handles_pkey, which is a different refusal from a duplicate channel
 	// handle and reaches the caller as a different error.
 	accountHandles map[string]bool
+	// aliases are the handles a channel was RENAMED AWAY FROM (migration 0142),
+	// keyed lower-cased, exactly as channel_handle_aliases holds them.
+	aliases map[string]sqlcgen.GetChannelHandleAliasRow
+}
+
+func (f *fakeRepo) GetChannelHandleAlias(_ context.Context, handle string) (sqlcgen.GetChannelHandleAliasRow, error) {
+	row, ok := f.aliases[strings.ToLower(strings.TrimSpace(handle))]
+	if !ok {
+		return sqlcgen.GetChannelHandleAliasRow{}, pgx.ErrNoRows
+	}
+	return row, nil
 }
 
 func newFakeRepo() *fakeRepo {
@@ -40,6 +51,7 @@ func newFakeRepo() *fakeRepo {
 		followedAt:     map[string]time.Time{},
 		members:        map[string]sqlcgen.ChannelMember{},
 		usersByName:    map[string]sqlcgen.User{},
+		aliases:        map[string]sqlcgen.GetChannelHandleAliasRow{},
 	}
 }
 
@@ -891,4 +903,51 @@ func TestCreatingAChannelNamedAfterAnAccountIsRefused(t *testing.T) {
 	if _, err := svc.Create(context.Background(), owner, CreateInput{Handle: "Films", DisplayName: "Films again"}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate handle: err = %v, want ErrConflict", err)
 	}
+}
+
+// A29 rehearsal 3. Migration 0142 promises two different things for a channel
+// renamed out of a namespace collision: a federated actor id that NEVER moves,
+// and a HUMAN redirect at the old handle that expires a year later. The actor
+// half shipped and was measured live; the human half was written into the
+// migration's comment and into the register, and nothing implemented it — the
+// third two-instance run followed the redirect and got a 404. These are the
+// service half of closing that.
+func TestRenamedHandleRedirect(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeRepo()
+	live := uuid.New()
+	repo.byHandle["ownera-channel-2"] = sqlcgen.Channel{ID: live, Handle: "ownera-channel-2"}
+	repo.aliases["ownera"] = sqlcgen.GetChannelHandleAliasRow{
+		HandleLower: "ownera", ChannelID: live, IsActorID: true,
+		ExpiresAt: time.Now().Add(24 * time.Hour), CurrentHandle: "ownera-channel-2",
+	}
+	repo.byHandle["gone-2"] = sqlcgen.Channel{ID: uuid.New(), Handle: "gone-2"}
+	repo.aliases["gone"] = sqlcgen.GetChannelHandleAliasRow{
+		HandleLower: "gone", ChannelID: uuid.New(), IsActorID: true,
+		ExpiresAt: time.Now().Add(-time.Minute), CurrentHandle: "gone-2",
+	}
+	svc := NewService(repo)
+
+	t.Run("live alias redirects to the current handle", func(t *testing.T) {
+		to, ok := svc.RenamedHandleRedirect(context.Background(), "ownera")
+		if !ok || to != "ownera-channel-2" {
+			t.Fatalf("RenamedHandleRedirect(ownera) = %q,%v; want ownera-channel-2,true", to, ok)
+		}
+	})
+	t.Run("case-insensitive, like every other handle lookup", func(t *testing.T) {
+		if to, ok := svc.RenamedHandleRedirect(context.Background(), "OwnerA"); !ok || to != "ownera-channel-2" {
+			t.Fatalf("RenamedHandleRedirect(OwnerA) = %q,%v; want ownera-channel-2,true", to, ok)
+		}
+	})
+	t.Run("an EXPIRED alias does not redirect — the name is free again", func(t *testing.T) {
+		if to, ok := svc.RenamedHandleRedirect(context.Background(), "gone"); ok {
+			t.Fatalf("RenamedHandleRedirect(gone) = %q,true; want no redirect after expires_at", to)
+		}
+	})
+	t.Run("a handle nothing was renamed away from does not redirect", func(t *testing.T) {
+		if to, ok := svc.RenamedHandleRedirect(context.Background(), "never-existed"); ok {
+			t.Fatalf("RenamedHandleRedirect(never-existed) = %q,true; want false", to)
+		}
+	})
 }

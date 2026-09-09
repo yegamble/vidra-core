@@ -136,9 +136,14 @@ func (s *Service) handleUndo(ctx context.Context, act inboxActivity, signerActor
 	if !ok {
 		return nil // not one of our channels → nothing to undo
 	}
-	ch, err := s.repo.GetChannelByHandle(ctx, handle)
+	// resolveLocalChannel, not GetChannelByHandle: after migration 0142 renames
+	// a channel out of a namespace collision, the FROZEN handle is the address
+	// every peer that already federated with it holds, and it is the one this
+	// instance still advertises as the actor id. An inbound activity aimed at
+	// that id must find the channel.
+	ch, err := s.resolveLocalChannel(ctx, handle)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		return err
@@ -163,13 +168,21 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 	if !ok {
 		return nil // not a Follow of one of our channels (e.g. an account) → ignore for now
 	}
-	ch, err := s.repo.GetChannelByHandle(ctx, handle)
+	// Same as handleUndo: a Follow addressed at the frozen actor id of a
+	// renamed channel is the ordinary case for every peer that followed before
+	// the rename, and the A29 rehearsal 3 lab watched one answered 202 and
+	// dropped because this lookup could not see the alias.
+	ch, err := s.resolveLocalChannel(ctx, handle)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
 			return nil // unknown local channel → ignore
 		}
 		return err
 	}
+	// Everything this instance SIGNS for the channel — the Accept, a Reject, an
+	// auto follow-back — is signed as the actor id it publishes, whichever
+	// spelling the peer used to reach us.
+	handle = s.channelActorHandle(ctx, ch)
 	// activitypub_enabled off (migration 0096): the channel does not federate.
 	// Drop the inbound Follow — record nothing and send nothing (an AP-disabled
 	// channel emits no outbound activity, so no Reject either).

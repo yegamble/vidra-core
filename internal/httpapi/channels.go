@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -368,9 +369,21 @@ func channelError(err error) error {
 // handleGetChannel returns a channel by its public handle. No auth required.
 func (s *Server) handleGetChannel(c echo.Context) error {
 	ctx := c.Request().Context()
-	ch, err := s.channelsvc.GetByHandle(ctx, c.Param("handle"))
+	handle := c.Param("handle")
+	ch, err := s.channelsvc.GetByHandle(ctx, handle)
 	if err != nil {
 		if errors.Is(err, channel.ErrNotFound) {
+			// Migration 0142's HUMAN promise. A channel renamed out of a
+			// namespace collision keeps answering at its old handle for a year:
+			// links, bookmarks and anything a person wrote down still land on
+			// the channel instead of on a 404 that says nothing. 301 rather
+			// than 302 because the rename is permanent — only the courtesy
+			// expires. The FEDERATED half of the same alias is a different
+			// promise with a different lifetime and lives on the actor route,
+			// where it is deliberately not bounded by expires_at.
+			if to, ok := s.channelsvc.RenamedHandleRedirect(ctx, handle); ok {
+				return c.Redirect(http.StatusMovedPermanently, "/api/v1/channels/"+url.PathEscape(to))
+			}
 			return echo.NewHTTPError(http.StatusNotFound, "channel not found")
 		}
 		return err

@@ -72,6 +72,9 @@ const (
 type Repository interface {
 	CreateChannel(ctx context.Context, arg sqlcgen.CreateChannelParams) (sqlcgen.Channel, error)
 	GetChannelByHandle(ctx context.Context, lowerHandle string) (sqlcgen.Channel, error)
+	// GetChannelHandleAlias resolves a handle a channel was RENAMED AWAY FROM
+	// (migration 0142). pgx.ErrNoRows when the name was never a channel's.
+	GetChannelHandleAlias(ctx context.Context, handle string) (sqlcgen.GetChannelHandleAliasRow, error)
 	ListChannelsByOwner(ctx context.Context, ownerID uuid.UUID) ([]sqlcgen.Channel, error)
 	UpdateChannel(ctx context.Context, arg sqlcgen.UpdateChannelParams) (sqlcgen.Channel, error)
 	DeleteChannel(ctx context.Context, id uuid.UUID) error
@@ -179,6 +182,46 @@ func (s *Service) GetByHandle(ctx context.Context, handle string) (sqlcgen.Chann
 		return sqlcgen.Channel{}, ErrNotFound
 	}
 	return ch, nil
+}
+
+// RenamedHandleRedirect answers "was this handle renamed away from, and is the
+// HUMAN redirect still live?" — returning the channel's current handle when it
+// is, and false otherwise.
+//
+// Migration 0142 renames a channel out of a namespace collision and leaves an
+// alias behind that keeps TWO different promises with two different lifetimes.
+// The ActivityPub actor id is frozen at the old handle FOREVER (a federated id
+// is a promise to other servers) and is resolved elsewhere, deliberately
+// unbounded by expires_at. This is the other promise: a person or a link that
+// still holds the old address gets a 301 to the new one until expires_at, one
+// year after the rename, after which the name is genuinely free and answering
+// for it would be a lie.
+//
+// The A29 rehearsal 3 lab is why this exists as code rather than as prose: the
+// migration's own comment and the register both said `/channels/<old>` answers
+// 301, no HTTP client had ever followed one, and the first that did got a 404.
+//
+// Errors are folded into ok=false on purpose. This runs only after an ordinary
+// lookup has already missed, and a redirect that cannot be computed must land
+// on the 404 the caller was about to return, never on a 500.
+func (s *Service) RenamedHandleRedirect(ctx context.Context, handle string) (string, bool) {
+	handle = strings.TrimSpace(handle)
+	if handle == "" {
+		return "", false
+	}
+	alias, err := s.repo.GetChannelHandleAlias(ctx, handle)
+	if err != nil || alias.CurrentHandle == "" {
+		return "", false
+	}
+	if !time.Now().Before(alias.ExpiresAt) {
+		return "", false
+	}
+	// A rename that landed back on its own name is not a redirect; sending one
+	// would be a loop.
+	if strings.EqualFold(alias.CurrentHandle, handle) {
+		return "", false
+	}
+	return alias.CurrentHandle, true
 }
 
 // ListOwn returns all channels owned by the given user, oldest first.
