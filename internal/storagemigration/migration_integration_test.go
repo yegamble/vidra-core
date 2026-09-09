@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strconv"
@@ -521,5 +522,77 @@ func assertJobRun(t *testing.T, ctx context.Context, f *campaignFixture, id uuid
 	}
 	if events == 0 {
 		t.Error("no job_events were recorded for the campaign; the executions timeline would be empty")
+	}
+}
+
+// TestASecondCampaignReEnumeratesAgainstTheRealLedger is the SQL half of the
+// unit regression in service_test.go, and the half that matters: the defect was
+// a property of the STATEMENT — storage_migration_objects is primary-keyed on
+// the object key alone, so a finished campaign's rows stay in the table and the
+// next campaign's ON CONFLICT DO NOTHING upsert inserts nothing.
+//
+// A fake can only reproduce what its author believed the table did. This runs
+// the real DELETE and the real upsert against the real primary key.
+func TestASecondCampaignReEnumeratesAgainstTheRealLedger(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	f := newCampaignFixture(t, "reenum")
+
+	for _, key := range []string{"web-videos/one.mp4", "web-videos/two.mp4"} {
+		if _, err := f.source.Put(ctx, key, strings.NewReader(key)); err != nil {
+			t.Fatalf("seed %q: %v", key, err)
+		}
+	}
+	svc := NewService(f.q, f.source, f.target, Config{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+
+	first, err := svc.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := svc.SweepOnce(ctx); err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if _, err := svc.CopyOnce(ctx, 1); err != nil {
+		t.Fatalf("CopyOnce: %v", err)
+	}
+	if _, err := svc.Cancel(ctx, first.ID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	var leftover int64
+	if err := f.st.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM storage_migration_objects WHERE campaign_id = $1`, first.ID).Scan(&leftover); err != nil {
+		t.Fatalf("count leftover: %v", err)
+	}
+	if leftover != 2 {
+		t.Fatalf("cancelled campaign left %d object rows, want 2 — the premise of this test", leftover)
+	}
+
+	second, err := svc.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start second: %v", err)
+	}
+	runToSynced(t, ctx, svc)
+
+	camp, counts, err := svc.Get(ctx, second.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if camp.ObjectsTotal != 2 || counts[ObjectVerified] != 2 {
+		t.Errorf("second campaign total=%d verified=%d, want 2 and 2 (counts %v)", camp.ObjectsTotal, counts[ObjectVerified], counts)
+	}
+	if camp.State != StateSynced {
+		t.Errorf("state = %q, want %q", camp.State, StateSynced)
+	}
+	if err := f.st.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM storage_migration_objects WHERE campaign_id = $1`, first.ID).Scan(&leftover); err != nil {
+		t.Fatalf("count leftover after: %v", err)
+	}
+	if leftover != 0 {
+		t.Errorf("the cancelled campaign still owns %d object rows after a new campaign started; want 0", leftover)
+	}
+	for _, key := range []string{"web-videos/one.mp4", "web-videos/two.mp4"} {
+		if ok, err := f.target.Exists(ctx, key); err != nil || !ok {
+			t.Errorf("%s not in the destination bucket (err %v)", key, err)
+		}
 	}
 }

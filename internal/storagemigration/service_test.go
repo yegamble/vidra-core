@@ -694,3 +694,68 @@ func (unlistableBackend) Open(context.Context, string) (io.ReadCloser, error) {
 func (unlistableBackend) Delete(context.Context, string) error         { return nil }
 func (unlistableBackend) Exists(context.Context, string) (bool, error) { return false, nil }
 func (unlistableBackend) Describe() string                             { return "test:unlistable" }
+
+// TestASecondCampaignEnumeratesTheWholeSourceAgain is the regression for the
+// defect A25's lab found: the object ledger is keyed on the STORAGE KEY alone,
+// so a finished campaign's rows outlive it, and the next campaign's
+// enumeration — an ON CONFLICT DO NOTHING upsert whose rowcount is read as "did
+// anything appear since?" — silently inserted NOTHING.
+//
+// The second campaign therefore started with an EMPTY ledger, and an empty
+// ledger reads as "nothing left to copy": one sweep later it announced "every
+// object in the source is verified in the target" with objects_total 0. That is
+// the sentence an operator cuts over on, and cutting over there serves from a
+// store holding whatever the abandoned campaign happened to have copied.
+//
+// It applies just as much to a COMPLETED campaign — the second move an instance
+// ever makes re-uses the same keys, so it would have found them all present too.
+func TestASecondCampaignEnumeratesTheWholeSourceAgain(t *testing.T) {
+	ctx := context.Background()
+	svc, repo, src, dst := newTestService(t)
+	put(t, src, "web-videos/a.mp4", "one")
+	put(t, src, "web-videos/b.mp4", "two")
+
+	first, err := svc.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := svc.SweepOnce(ctx); err != nil { // enumerate -> copying
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if _, err := svc.CopyOnce(ctx, 1); err != nil { // copy exactly one of the two
+		t.Fatalf("CopyOnce: %v", err)
+	}
+	if _, err := svc.Cancel(ctx, first.ID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+
+	second, err := svc.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start second: %v", err)
+	}
+	drain(t, svc)
+
+	got, counts, err := svc.Get(ctx, second.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ObjectsTotal != 2 {
+		t.Errorf("second campaign objects_total = %d, want 2 (it must enumerate the whole source, not inherit the first campaign's rows)", got.ObjectsTotal)
+	}
+	if counts[ObjectVerified] != 2 {
+		t.Errorf("second campaign verified objects = %d, want 2; per-state counts %v", counts[ObjectVerified], counts)
+	}
+	if got.State != StateSynced {
+		t.Errorf("state = %q, want %q", got.State, StateSynced)
+	}
+	for _, key := range []string{"web-videos/a.mp4", "web-videos/b.mp4"} {
+		if ok, _ := dst.Exists(ctx, key); !ok {
+			t.Errorf("%s never reached the target", key)
+		}
+	}
+	// The first campaign's counters are its own record and must not be recomputed
+	// from a ledger it no longer owns.
+	if row, _ := repo.GetStorageMigration(ctx, first.ID); row.State != StateCancelled {
+		t.Errorf("first campaign state = %q, want %q", row.State, StateCancelled)
+	}
+}
