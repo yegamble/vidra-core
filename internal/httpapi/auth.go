@@ -898,7 +898,9 @@ func (r changePasswordRequest) Validate() []FieldError {
 // tokens included, because access tokens are session-bound. Behind requireAuth
 // AND the strict auth limiter: it is a password-guessing surface exactly like
 // login. 204 on success; a wrong current password is 403; an account with no
-// password at all (OAuth/ATProto-only) is 409 and is pointed at the reset flow.
+// password at all (OAuth/ATProto-only) is 409 and is pointed at the set-password
+// route, which a step-up authorises — the reset flow it used to name can never
+// complete for that account shape.
 // The passwords are never logged, echoed, or included in the audit event.
 func (s *Server) handleChangePassword(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
@@ -918,7 +920,7 @@ func (s *Server) handleChangePassword(c echo.Context) error {
 		case errors.Is(err, auth.ErrPasswordNotSet):
 			s.audit(c, observability.ActionPasswordChange, observability.ResultFailure, userID.String(), "password_not_set")
 			return echo.NewHTTPError(http.StatusConflict,
-				"this account has no password: use the password reset flow to set one")
+				"this account has no password: set one with POST /api/v1/auth/me/password/set, which confirms you by re-signing in with the provider this account uses")
 		case errors.Is(err, auth.ErrAccountNotFound):
 			return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
 		}

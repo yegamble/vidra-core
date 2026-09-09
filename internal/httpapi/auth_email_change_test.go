@@ -346,8 +346,11 @@ func TestRequestEmailChangeRefusesPasswordlessAccount(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("passwordless account = %d, want 409; body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "reset") {
-		t.Errorf("the 409 does not point at the reset flow: %s", rec.Body.String())
+	// The remedy has to be REACHABLE. It used to name the password-reset flow,
+	// which for this exact account shape can never complete — its address is a
+	// synthetic .invalid name that cannot receive the mail. A30's whole finding.
+	if !strings.Contains(rec.Body.String(), "/api/v1/auth/me/password/set") {
+		t.Errorf("the 409 does not point at a reachable remedy: %s", rec.Body.String())
 	}
 }
 

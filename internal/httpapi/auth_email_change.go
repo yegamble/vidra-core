@@ -87,9 +87,11 @@ type emailChangeConfirmedView struct {
 }
 
 // emailChangeError maps the service's sentinels onto the shipped status codes.
-// The two 409s are deliberately distinct in wording: "no password" points at
-// the flow that can set one, "already in use" is exactly what registration
-// discloses today for a taken address.
+// The two 409s are deliberately distinct in wording: "no password" names the
+// route that can set one — the STEP-UP route, because the reset flow it used to
+// name can never complete for this account shape (its address is a generated
+// one that cannot receive mail) — and "already in use" is exactly what
+// registration discloses today for a taken address.
 // emailChangeErrorFor is emailChangeError plus the two step-up answers, which
 // need the server to name the caller's linked providers.
 func (s *Server) emailChangeErrorFor(c echo.Context, userID uuid.UUID, err error) error {
@@ -108,7 +110,7 @@ func emailChangeError(err error) error {
 		return echo.NewHTTPError(http.StatusForbidden, "incorrect password")
 	case errors.Is(err, auth.ErrPasswordNotSet):
 		return echo.NewHTTPError(http.StatusConflict,
-			"this account has no password: use the password reset flow to set one")
+			"this account has no password: set one with POST /api/v1/auth/me/password/set, which confirms you by re-signing in with the provider this account uses")
 	case errors.Is(err, auth.ErrEmailUnchanged):
 		return echo.NewHTTPError(http.StatusUnprocessableEntity,
 			"that is already the address on this account")
