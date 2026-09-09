@@ -162,8 +162,12 @@ func TestVerifyPinsReportsStraysAndRemovesNothing(t *testing.T) {
 	if _, still := pins[stray.CID]; !still {
 		t.Fatal("the sweep unpinned a stray; it must only ever report one")
 	}
-	if got := svc.GatewayHealth().Strays; got != -1 && got != 1 {
-		t.Errorf("stray count did not reach the health record: %d", got)
+	// The health record no longer INHERITS this number from the sweep — the probe
+	// recomputes it through the same countStrays, in whatever process is running.
+	// Asserting both here is what keeps the two callers from drifting apart.
+	svc.ProbeHealth(context.Background())
+	if got := svc.GatewayHealth().Strays; got != 1 {
+		t.Errorf("the probe's own comparison = %d, want the 1 the sweep reported", got)
 	}
 }
 

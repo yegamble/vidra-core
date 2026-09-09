@@ -917,6 +917,29 @@ type Config struct {
 	IPFSAddTimeout        time.Duration
 	IPFSPinConcurrency    int
 	IPFSReconcileInterval time.Duration
+	// IPFSHealthProbeInterval is how often EVERY role re-asks the gateway whether
+	// it is serving, and re-compares the pin ledger against the node. It is the
+	// bound on how long this instance keeps minting 307s to a gateway that stopped
+	// answering: A31's rehearsal measured 3m34s of dead redirects inside the
+	// hard-coded five minutes and recorded that "an operator cannot trade probe
+	// cost for a tighter bound, and a lab cannot shorten it either". Now they can.
+	// Floor of MinIPFSHealthProbeInterval — the probe costs a gateway fetch plus a
+	// pin/ls per active swarm per process, and a one-second interval would turn a
+	// health check into a load generator.
+	IPFSHealthProbeInterval time.Duration
+	// IPFSGCAfterUnpin runs the node's garbage collector after any drain batch that
+	// completed at least one unpin. DEFAULT FALSE, and that default is a cost
+	// decision, not a safety one: `repo gc` sweeps the WHOLE datastore, so on a
+	// large repo it is minutes of I/O for a handful of freed blocks.
+	//
+	// It exists because unpinning is not forgetting. A moderator's takedown, a
+	// privacy flip and a delete all end with the CID unpinned and the blocks still
+	// in the datastore, and this instance's own gateway keeps serving them at the
+	// same URL until the collector runs — measured in A31's rehearsal, where four
+	// CIDs answered 200 after the unpin and only `ipfs repo gc` turned them into
+	// 404. An operator who needs a takedown to complete on their own gateway
+	// promptly turns this on, or runs the node with --enable-gc.
+	IPFSGCAfterUnpin bool
 	// IPFSMirrorPrivate is the master opt-in for the PRIVATE mirroring tier
 	// (fix_plan P19.P, .ralph/specs/ipfs-media-private.md). It defaults false and,
 	// when true, REQUIRES a dedicated private-swarm kubo at IPFSPrivateAPIURL —
@@ -1300,6 +1323,8 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		IPFSGatewayURL:                         strings.TrimRight(getEnv("IPFS_GATEWAY_URL", ""), "/"),
 		IPFSAddTimeout:                         p.Duration("IPFS_ADD_TIMEOUT", 60*time.Second),
 		IPFSReconcileInterval:                  p.Duration("IPFS_RECONCILE_INTERVAL", 5*time.Minute),
+		IPFSHealthProbeInterval:                p.Duration("IPFS_HEALTH_PROBE_INTERVAL", DefaultIPFSHealthProbeInterval),
+		IPFSGCAfterUnpin:                       p.Bool("IPFS_GC_AFTER_UNPIN", false),
 		IPFSMirrorPrivate:                      p.Bool("IPFS_MIRROR_PRIVATE", false),
 		IPFSClusterAPIURL:                      strings.TrimRight(getEnv("IPFS_CLUSTER_API_URL", ""), "/"),
 		IPFSClusterToken:                       getEnv("IPFS_CLUSTER_TOKEN", ""),
@@ -2144,6 +2169,17 @@ func (c *Config) validateDRM() error {
 	return errors.Join(errs...)
 }
 
+// DefaultIPFSHealthProbeInterval / MinIPFSHealthProbeInterval bound
+// IPFS_HEALTH_PROBE_INTERVAL. Five minutes is the cadence
+// internal/storage.WriteHealth already established for the object store's write
+// probe and what the mirror shipped hard-coded; ten seconds is the floor a lab
+// (or an operator who wants a tight redirect bound and has the node headroom)
+// may go to.
+const (
+	DefaultIPFSHealthProbeInterval = 5 * time.Minute
+	MinIPFSHealthProbeInterval     = 10 * time.Second
+)
+
 // validateIPFS checks the hybrid IPFS media-mirroring (P19 + P19.P) configuration.
 // Every value is OFF/inert by default; the PUBLIC-tier checks only bite once
 // IPFS_ENABLED is set, but the PRIVATE-tier guard fires whenever IPFS_MIRROR_PRIVATE
@@ -2155,6 +2191,16 @@ func (c *Config) validateIPFS() error {
 	var errs []error
 	if err := c.validateIPFSPrivate(); err != nil {
 		errs = append(errs, err)
+	}
+	// The probe runs on EITHER tier (it is not gated on runWorkers and not gated on
+	// the public switch alone), so its floor is checked before the public-only
+	// early return below. A value under the floor is refused rather than clamped:
+	// clamping would leave an operator reading `IPFS_HEALTH_PROBE_INTERVAL=1s` in
+	// their env file and a process quietly doing something else.
+	if (c.IPFSEnabled || c.IPFSMirrorPrivate) && c.IPFSHealthProbeInterval < MinIPFSHealthProbeInterval {
+		errs = append(errs, varErrorf("IPFS_HEALTH_PROBE_INTERVAL",
+			"config: IPFS_HEALTH_PROBE_INTERVAL must be at least %s (got %s): each probe is a gateway fetch plus one pin/ls per swarm, in every process, so a shorter interval is a load generator rather than a health check; the default is %s",
+			MinIPFSHealthProbeInterval, c.IPFSHealthProbeInterval, DefaultIPFSHealthProbeInterval))
 	}
 	if !c.IPFSEnabled {
 		return errors.Join(errs...)

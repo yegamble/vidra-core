@@ -46,6 +46,11 @@ const (
 	// eligibilitySweepBatch bounds how many ineligible live rows one backstop sweep
 	// re-arms toward removal.
 	eligibilitySweepBatch = 500
+	// repoGCTimeout bounds ONE post-unpin garbage collection. Generous because the
+	// sweep is proportional to the datastore and a big repo legitimately takes
+	// minutes; bounded at all because this runs inside the drain loop and a wedged
+	// node must not stop the queue from draining forever.
+	repoGCTimeout = 10 * time.Minute
 )
 
 // Network identifiers for the pin ledger's routing column (P19.P1). Each row lives
@@ -198,6 +203,11 @@ type Config struct {
 	// probe, which reports not_configured and therefore refuses to redirect: an
 	// unprobed gateway is not evidence that a viewer sent there gets bytes.
 	Gateway GatewayFetcher
+	// GCAfterUnpin runs the node's garbage collector after any drain batch that
+	// completed at least one unpin (IPFS_GC_AFTER_UNPIN, default false). See
+	// Service.collectGarbage for why this is off by default and what leaving it off
+	// costs a moderator.
+	GCAfterUnpin bool
 	// Catalog is the read-only source the one-shot admin backfill (P19.6) scans to
 	// seed pin intents for pre-existing eligible objects. Nil except in the wiring
 	// that serves POST /admin/ipfs/reconcile; Backfill errors cleanly when it is nil.
@@ -247,6 +257,7 @@ type Service struct {
 	publicEnabled bool
 
 	enabled        bool
+	gcAfterUnpin   bool
 	gatewayURL     string
 	clusterEnabled bool
 	addTimeout     time.Duration
@@ -265,10 +276,17 @@ type Service struct {
 	// side is hot and never needs to see two fields agree with each other.
 	publicHealth  healthSlot
 	privateHealth healthSlot
-	// verifyCursors and strays are the ledger<->node comparison's per-swarm state
-	// (verify.go): where the last page stopped, and what the last stray count was.
+	// verifyCursors is the ledger<->node comparison's per-swarm keyset cursor
+	// (verify.go): where the last sweep's page stopped.
+	//
+	// THERE IS DELIBERATELY NO CACHED STRAY COUNT HERE ANY MORE. It used to be a
+	// second sync.Map written only by the leader-gated sweep and read by this
+	// process's health probe, which meant the api role — the one serving /readyz and
+	// /admin/system — rendered `unaccounted_node_pins` absent forever on any
+	// deployment that separates the roles (A31 rehearsal, INT-07 clause (e)). The
+	// probe now computes the comparison itself (strayPins), so the number exists
+	// wherever it is read instead of only where it was written.
 	verifyCursors sync.Map
-	strays        sync.Map
 }
 
 // New builds the mirror service. repo is required; lookups/blobs/client may be
@@ -290,6 +308,7 @@ func New(repo Repository, lookups Lookups, blobs storage.Backend, client ipfs.Cl
 		// The worker runs whenever EITHER tier is active; the enqueue helpers stay
 		// no-ops only when both are off.
 		enabled:        cfg.Enabled || cfg.PrivateEnabled,
+		gcAfterUnpin:   cfg.GCAfterUnpin,
 		gatewayURL:     cfg.GatewayURL,
 		clusterEnabled: cfg.ClusterEnabled,
 		addTimeout:     cfg.AddTimeout,
@@ -1149,6 +1168,21 @@ func (s *Service) activeNetworks() []netClient {
 	return ncs
 }
 
+// networkClient resolves ONE swarm's client bundle by name, or reports that the
+// swarm is not active on this instance. The health probe needs it because it asks
+// about a named tier rather than iterating whatever is configured, and going
+// through activeNetworks keeps the cardinal invariant in one place: there is no
+// other way to get hold of a client, so a "private" lookup can never hand back the
+// public node.
+func (s *Service) networkClient(network string) (netClient, bool) {
+	for _, nc := range s.activeNetworks() {
+		if nc.network == network {
+			return nc, true
+		}
+	}
+	return netClient{}, false
+}
+
 // drainNetwork claims and processes up to batch due rows for ONE network, using that
 // network's client exclusively. ClaimDue's @network filter returns only this
 // network's rows, so process() only ever touches nc's client — the public client is
@@ -1168,19 +1202,71 @@ func (s *Service) drainNetwork(ctx context.Context, nc netClient, batch int) (in
 	sem := make(chan struct{}, nc.concurrency)
 	var wg sync.WaitGroup
 	var done int64
+	var unpinned int64
 	for _, row := range rows {
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(row sqlcgen.ClaimDueIPFSPinsRow) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if s.process(ctx, nc, row) {
-				atomic.AddInt64(&done, 1)
+			if !s.process(ctx, nc, row) {
+				return
+			}
+			atomic.AddInt64(&done, 1)
+			if row.State == "unpinning" {
+				atomic.AddInt64(&unpinned, 1)
 			}
 		}(row)
 	}
 	wg.Wait()
+	// ONE collection per batch, not one per unpin: `repo gc` is a whole-datastore
+	// sweep, so N unpins in a batch cost exactly the same as one.
+	if unpinned > 0 {
+		s.collectGarbage(ctx, nc, unpinned)
+	}
 	return int(done), nil
+}
+
+// collectGarbage runs the node's GC after a batch that actually removed pins, and
+// only when the operator asked for it.
+//
+// WHAT IT CLOSES. Unpinning is not forgetting. `pin rm` withdraws this node's
+// obligation to keep the blocks; it does not delete them, and the node's own
+// gateway keeps serving the CID at exactly the URL it always did. A31's rehearsal
+// measured that end to end: a moderator block unpinned all five of a video's
+// classes, the audit row said so, and all four of the video's unique CIDs still
+// answered 200 from the instance's gateway until `ipfs repo gc` was run by hand —
+// at which point they became 404 while a still-pinned control CID stayed 200. On
+// an instance whose gateway is the takedown surface, the takedown is not complete
+// until this runs.
+//
+// WHY IT IS OFF BY DEFAULT. The cost is proportional to the DATASTORE, not to
+// what was just unpinned: kubo walks every block and every pin root to decide what
+// is collectable. On a large repo that is minutes of I/O for a handful of freed
+// blocks, and it would run after every batch that unpins anything. An operator who
+// wants prompt removal turns this on (small repos, moderation-sensitive
+// instances); an operator who wants throughput leaves it off and runs the node
+// with --enable-gc or a cron, which is what docs/operations.md tells them.
+//
+// It NEVER fails the batch. Every row is already durably marked; a GC error means
+// blocks stayed on disk, which is precisely the state the knob was off in.
+func (s *Service) collectGarbage(ctx context.Context, nc netClient, unpinned int64) {
+	if !s.gcAfterUnpin {
+		return
+	}
+	gctx, cancel := context.WithTimeout(ctx, repoGCTimeout)
+	defer cancel()
+	removed, err := nc.client.RepoGC(gctx)
+	if err != nil {
+		s.logger.Warn("ipfs_repo_gc_failed", "network", nc.network, "unpinned", unpinned,
+			"reason", "the node's garbage collector did not complete, so the CIDs just unpinned are still retrievable from this instance's own gateway until a later GC runs", "error", err)
+		return
+	}
+	// Info, and loud about the fact rather than the number: "blocks_removed: 0" is
+	// a perfectly normal answer when another live row still shares the CID (the
+	// reference-count guard) and an operator must not read it as a failed takedown.
+	s.logger.Info("ipfs_repo_gc", "network", nc.network, "unpinned", unpinned, "blocks_removed", removed,
+		"reason", "IPFS_GC_AFTER_UNPIN is on, so the node collected after this batch's unpins; blocks still held by another live pin are correctly kept")
 }
 
 // process handles one claimed row through nc's client within a per-RPC timeout.

@@ -2,6 +2,7 @@ package ipfsmirror
 
 import (
 	"context"
+	"time"
 
 	"github.com/vidra/vidra-core/internal/jobstatus"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -34,6 +35,12 @@ import (
 //  3. Read every CID the ledger has a LIVE claim on, and report any node pin that
 //     appears in none of them.
 //
+// STEP 3 IS ALSO THE HEALTH PROBE'S, and that is the point of countStrays being a
+// free function with no logging: the leader's sweep and every process's five-
+// minute probe run the SAME comparison, so the number an operator reads on
+// /admin/system is computed by the code that logs the remedy, in the process that
+// is rendering it. See strayPins for the cost and for the failure this closes.
+//
 // WHY A STRAY IS REPORTED AND NEVER REMOVED. There is no way to tell a Vidra pin
 // from an operator's. Kubo pins are bare CIDs: `add` attaches no marker, no
 // namespace and no name that survives into `pin/ls`, and this instance's node is
@@ -63,6 +70,12 @@ const (
 	// the sweep declines the stray half rather than reporting from a partial list —
 	// the same rule ipfs.ListPins applies to a truncated pinset.
 	verifyMaxLedgerCIDs = 100_000
+	// strayCompareTimeout bounds ONE probe-side comparison (the pin/ls plus the
+	// live-CID read). Generous relative to gatewayProbeTimeout because listing a
+	// large pinset is legitimately slower than fetching one CID, and short enough
+	// that a hung node cannot stack comparisons behind each other on the probe
+	// ticker (whose floor, IPFS_HEALTH_PROBE_INTERVAL, is 10s).
+	strayCompareTimeout = 30 * time.Second
 )
 
 // verifyReader is the ledger read side the comparison needs. *sqlcgen.Queries
@@ -178,8 +191,24 @@ func (s *Service) verifyNetwork(ctx context.Context, reader verifyReader, nc net
 	}
 
 	// --- direction 2: the node holds a pin no live ledger row accounts for ------
-	res.Strays = s.countStrays(ctx, reader, nc, nodePins)
-	s.strays.Store(nc.network, res.Strays)
+	// The count itself is countStrays' — the SAME function the health probe calls,
+	// so the number an operator reads on /admin/system and the number this sweep
+	// logs can never be two different computations that drifted apart. What is
+	// leader-only is the LOGGING: one WARN naming the remedy, on the tick that also
+	// repairs, rather than one per process per probe interval forever.
+	var skipped string
+	res.Strays, skipped = countStrays(ctx, reader, nc.network, nodePins)
+	if skipped != "" {
+		s.logger.Warn("ipfs_verify_strays_skipped", "network", nc.network, "reason", skipped)
+	}
+	if res.Strays > 0 {
+		// One line for the whole set, not one per CID: a node that also serves an
+		// operator's own pins would otherwise fill the log every five minutes forever.
+		// It says explicitly that nothing was removed, because the obvious reading of
+		// "stray pin" is that something dealt with it.
+		s.logger.Warn("ipfs_stray_pins", "network", nc.network, "count", res.Strays,
+			"reason", "the node holds recursive pins no live ledger row accounts for. NOTHING WAS REMOVED: a kubo pin carries no marker distinguishing a Vidra pin from one an operator made themselves, so unpinning here would be deleting data on a guess. Compare 'ipfs pin ls --type=recursive' against the pin ledger and remove by hand what is yours")
+	}
 
 	if res.Rearmed > 0 || res.Strays > 0 {
 		s.logger.Info("ipfs_verify_done", "network", nc.network,
@@ -188,21 +217,24 @@ func (s *Service) verifyNetwork(ctx context.Context, reader verifyReader, nc net
 	return res
 }
 
-// countStrays reports how many node pins the ledger cannot account for, or -1 when
-// the comparison could not be made safely.
-func (s *Service) countStrays(ctx context.Context, reader verifyReader, nc netClient, nodePins map[string]struct{}) int64 {
+// countStrays reports how many node pins the ledger cannot account for, or -1
+// with a reason when the comparison could not be made safely.
+//
+// A FREE FUNCTION, and deliberately silent. It has two callers — the leader's
+// VerifyPins sweep and every process's health probe (health.go) — and only the
+// sweep may log: an operator gets one actionable WARN per reconcile tick, not one
+// per role per probe. Returning the skip reason rather than logging it is what
+// lets the same comparison serve both without either caller inheriting the
+// other's verbosity.
+func countStrays(ctx context.Context, reader verifyReader, network string, nodePins map[string]struct{}) (int64, string) {
 	cids, err := reader.ListLiveIPFSPinCIDs(ctx, sqlcgen.ListLiveIPFSPinCIDsParams{
-		Network: nc.network, MaxRows: verifyMaxLedgerCIDs + 1,
+		Network: network, MaxRows: verifyMaxLedgerCIDs + 1,
 	})
 	if err != nil {
-		s.logger.Warn("ipfs_verify_strays_skipped", "network", nc.network,
-			"reason", "the live CID set could not be read", "error", err)
-		return -1
+		return -1, "the live CID set could not be read: " + err.Error()
 	}
 	if len(cids) > verifyMaxLedgerCIDs {
-		s.logger.Warn("ipfs_verify_strays_skipped", "network", nc.network,
-			"reason", "the ledger holds more live CIDs than one sweep compares, so every node pin would be reported as a stray")
-		return -1
+		return -1, "the ledger holds more live CIDs than one sweep compares, so every node pin would be reported as a stray"
 	}
 	live := make(map[string]struct{}, len(cids))
 	for _, cid := range cids {
@@ -214,15 +246,67 @@ func (s *Service) countStrays(ctx context.Context, reader verifyReader, nc netCl
 			strays++
 		}
 	}
-	if strays > 0 {
-		// One line for the whole set, not one per CID: a node that also serves an
-		// operator's own pins would otherwise fill the log every five minutes forever.
-		// It says explicitly that nothing was removed, because the obvious reading of
-		// "stray pin" is that something dealt with it.
-		s.logger.Warn("ipfs_stray_pins", "network", nc.network, "count", strays,
-			"reason", "the node holds recursive pins no live ledger row accounts for. NOTHING WAS REMOVED: a kubo pin carries no marker distinguishing a Vidra pin from one an operator made themselves, so unpinning here would be deleting data on a guess. Compare 'ipfs pin ls --type=recursive' against the pin ledger and remove by hand what is yours")
+	return strays, ""
+}
+
+// strayPins runs the WHOLE comparison for one swarm from scratch — one
+// `pin/ls?type=recursive` plus one bounded live-CID read — and returns the count,
+// or -1 when it could not be completed. It is the health probe's entry point
+// (health.go), and it is why the number exists in an api-role process at all.
+//
+// WHY THE PROBE RECOMPUTES INSTEAD OF READING WHAT THE SWEEP FOUND. It used to
+// read a per-process sync.Map that only VerifyPins wrote, and VerifyPins runs
+// under runWorkers behind the leader lock. A31's rehearsal measured the
+// consequence on the topology docker-compose.prod.yml actually renders: the api
+// role — the one process serving /readyz and /admin/system — never wrote that map,
+// so `unaccounted_node_pins` was absent on every deployment that separates the
+// roles, and present only in a single-process positive control. A number computed
+// in one process and read in another is not a component; it is a coincidence.
+//
+// THE COST, stated rather than hidden. Per process, per IPFS_HEALTH_PROBE_INTERVAL
+// (5m default), per active swarm: ONE pin/ls RPC (bounded to a 16 MiB body and
+// verifyMaxLedgerCIDs entries by ipfs.Client.ListPins — a node holding more errors
+// out and the count reports absent rather than a lie) and ONE indexed
+// `SELECT DISTINCT cid` capped at verifyMaxLedgerCIDs+1 rows. At the 100k-CID cap
+// that is roughly 6 MB of transient strings per probe. Two roles on the shipped
+// topology means the node is listed twice per interval instead of once — that is
+// the whole price of the api role having its own answer, and it is the same order
+// as the gateway fetch already on this ticker.
+//
+// NO WRITES. The repair half (re-arming a pin the node lost) stays leader-only in
+// VerifyPins, so nothing changed about who may act on the comparison — only about
+// who may SEE it.
+//
+// THE CAPPED CASE IS REPORTED AS ABSENT, NOT AS A FLOOR. A ledger read that ran
+// short would leave live CIDs out of the accounted set, so every one of their node
+// pins would be counted as a stray: the error runs UPWARD, and "N+" would be a
+// false floor under a number that is already too high. Silence is the honest
+// answer, and it is the rule verify.go already applied to a truncated pinset.
+func (s *Service) strayPins(ctx context.Context, network string) int64 {
+	reader, ok := s.repo.(verifyReader)
+	if !ok {
+		return -1
 	}
-	return strays
+	nc, ok := s.networkClient(network)
+	if !ok {
+		return -1
+	}
+	lctx, cancel := context.WithTimeout(ctx, strayCompareTimeout)
+	defer cancel()
+	nodePins, err := nc.client.ListPins(lctx, verifyMaxLedgerCIDs)
+	if err != nil {
+		// Absent, never 0. "The node would not list its pins" and "the node holds
+		// nothing unaccounted for" are the two answers A31 caught the old reconcile
+		// conflating by silence, and the renderer distinguishes them only if this does.
+		s.logger.Debug("ipfs_stray_probe_skipped", "network", network,
+			"reason", "the node did not list its pins, so the ledger was not compared against it", "error", err)
+		return -1
+	}
+	n, skipped := countStrays(lctx, reader, network, nodePins)
+	if skipped != "" {
+		s.logger.Debug("ipfs_stray_probe_skipped", "network", network, "reason", skipped)
+	}
+	return n
 }
 
 // verifyCursor reads this swarm's keyset cursor. In memory on purpose: it is a

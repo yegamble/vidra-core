@@ -1953,3 +1953,130 @@ func TestSweepReArmsIneligiblePinnedRow(t *testing.T) {
 
 // compile-time: sqlcgen.Queries satisfies Repository (production wiring).
 var _ Repository = (*sqlcgen.Queries)(nil)
+
+// ---- unpinning is not forgetting (IPFS_GC_AFTER_UNPIN) --------------------
+//
+// A31's rehearsal measured this by hand: after a moderator block unpinned every
+// class of a video, all four of its unique CIDs still answered 200 from the
+// instance's OWN gateway, and only `ipfs repo gc` turned them into 404. `pin rm`
+// withdraws the obligation to keep the blocks; it does not remove them. These two
+// tests pin both halves of the knob that closes it.
+
+// seedPinnedForUnpin puts one object on the node through the real pin path and
+// then arms its removal, which is the state every takedown reaches.
+func seedPinnedForUnpin(t *testing.T, repo *fakeRepo, blobs storage.Backend, client *ipfs.FakeIPFSClient, svc *Service, key string) string {
+	t.Helper()
+	putBlob(t, blobs, key, "takedown-bytes")
+	seedPending(repo, key, string(ClassThumbnail))
+	if n, err := svc.DrainDue(context.Background(), 10); err != nil || n != 1 {
+		t.Fatalf("pin drain = %d, %v; want 1 pinned", n, err)
+	}
+	cid := repo.rows[key].Cid
+	if _, ok := client.Content(cid); !ok {
+		t.Fatalf("fixture: the node does not hold %s", cid)
+	}
+	if err := repo.EnqueueIPFSUnpin(context.Background(), key); err != nil {
+		t.Fatalf("EnqueueIPFSUnpin: %v", err)
+	}
+	return cid
+}
+
+// THE DEFAULT, and the warning docs/operations.md now states plainly: the row is
+// unpinned, the ledger is right, and the bytes are still on the node — so this
+// instance's own gateway still serves the CID a moderator just withdrew.
+func TestUnpinLeavesTheBytesRetrievableUntilGC(t *testing.T) {
+	repo, blobs, client := newFakeRepo(), newBlobs(t), ipfs.NewFakeIPFSClient()
+	svc := New(repo, &fakeLookups{}, blobs, client, testConfig())
+	key := "thumbnails/" + uuid.NewString() + ".jpg"
+	cid := seedPinnedForUnpin(t, repo, blobs, client, svc, key)
+
+	if n, err := svc.DrainDue(context.Background(), 10); err != nil || n != 1 {
+		t.Fatalf("unpin drain = %d, %v; want 1", n, err)
+	}
+	if got := repo.state(key); got != "unpinned" {
+		t.Fatalf("state = %q, want unpinned", got)
+	}
+	pins, err := client.ListPins(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("ListPins: %v", err)
+	}
+	if _, still := pins[cid]; still {
+		t.Fatal("the pin was not removed")
+	}
+	if _, held := client.Content(cid); !held {
+		t.Error("the BYTES were removed without a GC; this test is asserting the opposite and the doc warning would be wrong")
+	}
+	if client.GCCount != 0 {
+		t.Errorf("gc ran %d times with IPFS_GC_AFTER_UNPIN off", client.GCCount)
+	}
+}
+
+// With the knob on, the batch that unpins also collects, so the CID stops
+// resolving on this instance's gateway within the drain rather than whenever the
+// node's own collector next runs.
+func TestGCAfterUnpinRemovesTheBytesInTheSameBatch(t *testing.T) {
+	repo, blobs, client := newFakeRepo(), newBlobs(t), ipfs.NewFakeIPFSClient()
+	cfg := testConfig()
+	cfg.GCAfterUnpin = true
+	svc := New(repo, &fakeLookups{}, blobs, client, cfg)
+	key := "thumbnails/" + uuid.NewString() + ".jpg"
+	cid := seedPinnedForUnpin(t, repo, blobs, client, svc, key)
+
+	if n, err := svc.DrainDue(context.Background(), 10); err != nil || n != 1 {
+		t.Fatalf("unpin drain = %d, %v; want 1", n, err)
+	}
+	if _, held := client.Content(cid); held {
+		t.Error("the bytes survived a collecting drain; the gateway would still serve the withdrawn CID")
+	}
+	if client.GCCount != 1 {
+		t.Errorf("gc ran %d times, want exactly 1 for the batch (it is a whole-datastore sweep, not a per-row cost)", client.GCCount)
+	}
+}
+
+// A pin-only batch must not collect. GC is proportional to the datastore, so
+// paying it on every drain that pinned something would make an idle instance with
+// a busy uploader spend its life garbage collecting.
+func TestGCAfterUnpinDoesNotRunOnAPinOnlyBatch(t *testing.T) {
+	repo, blobs, client := newFakeRepo(), newBlobs(t), ipfs.NewFakeIPFSClient()
+	cfg := testConfig()
+	cfg.GCAfterUnpin = true
+	svc := New(repo, &fakeLookups{}, blobs, client, cfg)
+	key := "thumbnails/" + uuid.NewString() + ".jpg"
+	putBlob(t, blobs, key, "bytes")
+	seedPending(repo, key, string(ClassThumbnail))
+
+	if n, err := svc.DrainDue(context.Background(), 10); err != nil || n != 1 {
+		t.Fatalf("pin drain = %d, %v; want 1", n, err)
+	}
+	if client.GCCount != 0 {
+		t.Errorf("gc ran %d times after a batch that unpinned nothing", client.GCCount)
+	}
+}
+
+// A failed collection never fails the batch: the rows are already durably marked,
+// and a GC error leaves exactly the state the knob was off in — the bytes on disk
+// and the CID still served by this instance's gateway. It is logged, loudly,
+// because that is the difference between a takedown and a takedown that looks
+// like one.
+func TestGCFailureDoesNotFailTheUnpinBatch(t *testing.T) {
+	repo, blobs, client := newFakeRepo(), newBlobs(t), ipfs.NewFakeIPFSClient()
+	cfg := testConfig()
+	cfg.GCAfterUnpin = true
+	svc := New(repo, &fakeLookups{}, blobs, client, cfg)
+	key := "thumbnails/" + uuid.NewString() + ".jpg"
+	cid := seedPinnedForUnpin(t, repo, blobs, client, svc, key)
+
+	// The node answers every RPC except the collection — a locked repo, not an
+	// outage.
+	client.GCErr = errors.New("repo lock held")
+
+	if n, err := svc.DrainDue(context.Background(), 10); err != nil || n != 1 {
+		t.Fatalf("unpin drain = %d, %v; want the batch to succeed anyway", n, err)
+	}
+	if got := repo.state(key); got != "unpinned" {
+		t.Errorf("state = %q, want unpinned — a GC outcome must never move a ledger row", got)
+	}
+	if _, held := client.Content(cid); !held {
+		t.Error("the bytes went away despite the collection failing; the fixture is not testing what it claims")
+	}
+}
