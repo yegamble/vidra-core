@@ -542,6 +542,36 @@ func (s *Service) CompleteMFAChallenge(ctx context.Context, mfaToken, code, user
 	return user, tokens, method, nil
 }
 
+// providerSession is the shared tail of every provider sign-in (OIDC and
+// ATProto): it issues the session, UNLESS the account has a second factor — in
+// which case it withholds the session and mints the same single-purpose
+// mfa_token `Login` does.
+//
+// It exists because A05 and A30 measured the same hole from two directions: the
+// MFA gate lived inside `Login`, so an account whose password could not make a
+// session without a code handed one over on a provider redirect, in the same
+// minute, with no challenge at all. Five call sites reached issueTokens
+// directly; a gate written at each of them is a gate one refactor away from
+// being written at four. There is exactly one door now, and this is it.
+//
+// The withheld case is not distinguishable from the issued case by anything the
+// caller does: both return a resolved account and an outcome to audit, and the
+// HTTP layer decides the transport (see the mfa-pending cookie in httpapi).
+func (s *Service) providerSession(ctx context.Context, user sqlcgen.User, outcome OAuthOutcome, userAgent string) (OAuthSession, error) {
+	if s.mfaEnabled(ctx, user.ID) {
+		mfaToken, err := s.mfaTokens.Issue(user.ID, user.Role)
+		if err != nil {
+			return OAuthSession{}, err
+		}
+		return OAuthSession{User: user, Outcome: outcome, MFARequired: true, MFAToken: mfaToken}, nil
+	}
+	tokens, err := s.issueTokens(ctx, user, userAgent)
+	if err != nil {
+		return OAuthSession{}, err
+	}
+	return OAuthSession{User: user, Outcome: outcome, Tokens: tokens}, nil
+}
+
 // mfaEnabled reports whether the account has verified TOTP on. False whenever
 // MFA is not wired, unknown, or still pending.
 func (s *Service) mfaEnabled(ctx context.Context, userID uuid.UUID) bool {

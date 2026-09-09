@@ -135,7 +135,15 @@ func oauthErrorRedirect(c echo.Context, returnTo, code string) error {
 // authorization endpoint. 404 for a provider that is not configured.
 func (s *Server) handleOAuthBegin(c echo.Context) error {
 	name := c.Param("provider")
-	if s.oauthsvc == nil || !s.oauthsvc.Enabled(name) {
+	// An instance with NO providers answers a typed 503, like ATProto's
+	// disabled path: "this instance does not do single sign-on" and "you named
+	// a provider that does not exist here" are different facts, and A05
+	// recorded them collapsed into one 404. An unknown name on an instance that
+	// HAS providers is still a 404.
+	if s.oauthsvc == nil || len(s.oauthsvc.ProviderNames()) == 0 {
+		return &OAuthNotConfiguredError{}
+	}
+	if !s.oauthsvc.Enabled(name) {
 		return echo.NewHTTPError(http.StatusNotFound, "unknown oauth provider")
 	}
 	returnTo, ok := safeReturnPath(c.QueryParam("return_to"))
@@ -188,7 +196,10 @@ func (s *Server) handleOAuthBegin(c echo.Context) error {
 // email conflict, disabled account) redirect with ?oauth_error=<code>.
 func (s *Server) handleOAuthCallback(c echo.Context) error {
 	name := c.Param("provider")
-	if s.oauthsvc == nil || !s.oauthsvc.Enabled(name) {
+	if s.oauthsvc == nil || len(s.oauthsvc.ProviderNames()) == 0 {
+		return &OAuthNotConfiguredError{}
+	}
+	if !s.oauthsvc.Enabled(name) {
 		return echo.NewHTTPError(http.StatusNotFound, "unknown oauth provider")
 	}
 	ck, err := c.Cookie(oauthStateCookieName)
@@ -235,16 +246,42 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 		return s.completeStepUp(c, returnTo, name, st.UserID, st.SessionID, linked)
 	}
 
-	user, tokens, outcome, err := s.oauthsvc.CompleteAuth(
+	// ONE verification, then the decision. The authorization code is single-use,
+	// so the callback gets exactly one exchange and must dispatch on what it
+	// finds: what the attempt was FOR (the signed purpose), and whether a
+	// session is already signed in in this browser.
+	as, err := s.oauthsvc.VerifyIdentity(
 		c.Request().Context(), name, s.oauthRedirectURI(name), code,
 		auth.OAuthState{State: st.State, Nonce: st.Nonce, Verifier: st.Verifier},
-		c.Request().UserAgent(),
 	)
 	if err != nil {
+		return s.oauthVerifyFailure(c, returnTo, st.Purpose, err)
+	}
+
+	// The link branch: connect this identity to the account that STARTED the
+	// attempt (sealed uid), never to whichever account the provider names.
+	if st.Purpose == oauthLinkPurpose {
+		uid, uerr := uuid.Parse(st.UserID)
+		if uerr != nil {
+			s.audit(c, observability.ActionOAuthLink, observability.ResultFailure, "", "unbound_state")
+			return oauthLinkRedirect(c, returnTo, "link_error", "link_failed")
+		}
+		return s.completeOAuthLink(c, returnTo, uid, as, nil)
+	}
+
+	// A LOGIN-purpose callback arriving inside a live session is not a login
+	// (A05 ruling 3). Before this, it silently switched the browser to whichever
+	// account the provider authenticated — measured, from `newcomer` to a
+	// freshly created `mfauser`. Treat it as a link for the session that is
+	// here: attach an unlinked subject, refuse one that belongs elsewhere, and
+	// in neither case mint a session or change which account is signed in.
+	if uid, ok := s.linkedAccountForCallback(c); ok {
+		return s.completeOAuthLink(c, returnTo, uid, as, nil)
+	}
+
+	sess, err := s.oauthsvc.ResolveAssertion(c.Request().Context(), as, c.Request().UserAgent())
+	if err != nil {
 		switch {
-		case errors.Is(err, auth.ErrOAuthNonceMismatch):
-			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "oauth_nonce_mismatch")
-			return echo.NewHTTPError(http.StatusBadRequest, "oauth nonce mismatch")
 		case errors.Is(err, auth.ErrOAuthEmailConflict):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "oauth_email_conflict")
 			return oauthErrorRedirect(c, returnTo, "email_conflict")
@@ -260,33 +297,58 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 		case errors.Is(err, auth.ErrConflict), errors.Is(err, auth.ErrHandleReserved):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "oauth_conflict")
 			return oauthErrorRedirect(c, returnTo, "conflict")
-		case errors.Is(err, auth.ErrOAuthExchange):
-			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "oauth_exchange_failed")
-			return &OAuthUpstreamError{
-				Status:  http.StatusBadGateway,
-				Code:    "oauth_exchange_failed",
-				Message: "the sign-in provider did not complete the exchange, so no session was issued — try signing in again",
-			}
 		}
 		return err
 	}
 
+	// The second factor applies to a provider sign-in exactly as it does to a
+	// password one: no session, the same mfa_token, the same challenge endpoint.
+	// The token goes into the httpOnly cookie and the URL carries only the flag
+	// (see oauth_link.go for why the token is not in the query).
+	if sess.MFARequired {
+		s.audit(c, observability.ActionLogin, observability.ResultFailure, sess.User.ID.String(), "mfa_required")
+		s.setMFAPendingCookie(c, sess.MFAToken)
+		return mfaChallengeRedirect(c, returnTo)
+	}
+
 	// Audit the concrete outcome; every path is also a login. The reason names
 	// the provider, never a token or email.
-	switch outcome {
-	case auth.OAuthCreated:
-		s.audit(c, observability.ActionRegister, observability.ResultSuccess, user.ID.String(), "oauth:"+name)
-	case auth.OAuthLinked:
-		s.audit(c, observability.ActionOAuthLink, observability.ResultSuccess, user.ID.String(), "oauth:"+name)
+	if sess.Outcome == auth.OAuthCreated {
+		s.audit(c, observability.ActionRegister, observability.ResultSuccess, sess.User.ID.String(), "oauth:"+name)
 	}
-	s.audit(c, observability.ActionLogin, observability.ResultSuccess, user.ID.String(), "oauth:"+name)
+	s.audit(c, observability.ActionLogin, observability.ResultSuccess, sess.User.ID.String(), "oauth:"+name)
 
 	// A top-level navigation cannot safely receive a bearer token, so OAuth
 	// sessions are always cookie-mode: the rotating refresh token travels in
 	// the httpOnly vidra_refresh cookie and the SPA obtains its access token
 	// via POST /auth/refresh (credentials included).
-	s.setRefreshCookie(c, tokens.RefreshToken)
+	s.setRefreshCookie(c, sess.Tokens.RefreshToken)
 	return c.Redirect(http.StatusFound, returnTo)
+}
+
+// oauthVerifyFailure maps a failed id_token verification. A nonce mismatch is a
+// protocol violation and stays a 400 for every purpose; an upstream exchange
+// failure is a typed 502 for a login and a redirect code for a link, because
+// the browser mid-link is on a settings page that can render an answer, while a
+// login lands on a page whose whole job is to show one.
+func (s *Server) oauthVerifyFailure(c echo.Context, returnTo, purpose string, err error) error {
+	if errors.Is(err, auth.ErrOAuthNonceMismatch) {
+		s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "oauth_nonce_mismatch")
+		return echo.NewHTTPError(http.StatusBadRequest, "oauth nonce mismatch")
+	}
+	if !errors.Is(err, auth.ErrOAuthExchange) {
+		return err
+	}
+	if purpose == oauthLinkPurpose {
+		s.audit(c, observability.ActionOAuthLink, observability.ResultFailure, "", "oauth_exchange_failed")
+		return oauthLinkRedirect(c, returnTo, "link_error", "oauth_exchange_failed")
+	}
+	s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "oauth_exchange_failed")
+	return &OAuthUpstreamError{
+		Status:  http.StatusBadGateway,
+		Code:    "oauth_exchange_failed",
+		Message: "the sign-in provider did not complete the exchange, so no session was issued — try signing in again",
+	}
 }
 
 // oauthIdentityView is the public projection of a linked identity. The

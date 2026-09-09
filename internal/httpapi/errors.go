@@ -117,7 +117,22 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var sur *StepUpRequiredError
 	var snl *StepUpNotLinkedError
 	var pas *PasswordAlreadySetError
+	var oic *OAuthIdentityClaimedError
+	var opl *OAuthProviderLinkedError
+	var onc *OAuthNotConfiguredError
 	switch {
+	case errors.As(err, &oic):
+		status = http.StatusConflict
+		message = "that provider account is already connected to a different account here — sign in as that one, or disconnect it there first"
+		code = "identity_belongs_to_another_account"
+	case errors.As(err, &opl):
+		status = http.StatusUnprocessableEntity
+		message = "that provider is already connected to this account — disconnect it before connecting a different one"
+		code = "provider_already_linked"
+	case errors.As(err, &onc):
+		status = http.StatusServiceUnavailable
+		message = "single sign-on is not configured on this instance"
+		code = "oauth_not_configured"
 	case errors.As(err, &sur):
 		status = http.StatusForbidden
 		message = "confirm it is you with the account you sign in with, then try again"
@@ -782,3 +797,37 @@ func (e *StepUpNotLinkedError) Error() string { return "step_up_provider_not_lin
 type PasswordAlreadySetError struct{}
 
 func (e *PasswordAlreadySetError) Error() string { return "password_already_set" }
+
+// OAuthIdentityClaimedError renders as 409 "identity_belongs_to_another_account":
+// the verified provider subject is already linked to a DIFFERENT local account.
+//
+// It is a REFUSAL and never a move. A05 measured the alternative: the callback
+// was session-blind, so a signed-in user who authenticated as another provider
+// user was silently switched to that other account. Re-pointing an identity is
+// the same act with the pieces in the other order, and neither is something a
+// person asked for by clicking "Connect".
+type OAuthIdentityClaimedError struct{}
+
+func (e *OAuthIdentityClaimedError) Error() string { return "identity_belongs_to_another_account" }
+
+// OAuthProviderLinkedError renders as 422 "provider_already_linked": this
+// account already holds an identity for this provider (the (user_id, provider)
+// unique index). Answered at the link START where it can be, so a person is not
+// walked through a consent screen to be refused at the end of it.
+type OAuthProviderLinkedError struct{}
+
+func (e *OAuthProviderLinkedError) Error() string { return "provider_already_linked" }
+
+// OAuthNotConfiguredError renders as 503 "oauth_not_configured": this instance
+// has no OIDC providers at all (OAUTH_PROVIDERS unset).
+//
+// A05 recorded the begin route answering 404 here, which is coherent — the
+// provider genuinely does not exist — but it is the wrong SHAPE: 404 is what a
+// typo in a provider name deserves, and a client cannot tell "you asked for a
+// provider this instance does not have" from "this instance does single sign-on
+// not at all". ATProto's disabled path already answers a typed 503; this is the
+// OIDC half of the same posture. An unknown name on an instance that HAS
+// providers stays 404.
+type OAuthNotConfiguredError struct{}
+
+func (e *OAuthNotConfiguredError) Error() string { return "oauth_not_configured" }

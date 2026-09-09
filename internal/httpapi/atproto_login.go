@@ -200,19 +200,51 @@ func (s *Server) handleATProtoLoginCallback(c echo.Context) error {
 		return s.completeStepUp(c, returnTo, auth.ATProtoProviderName, p.UserID, p.SessionID, linked)
 	}
 
-	user, tokens, outcome, err := s.atprotologinsvc.Complete(
-		c.Request().Context(), p.ATProtoState, code, c.QueryParam("iss"), c.Request().UserAgent(),
-	)
+	// ONE verification, then the decision — the OIDC twin's structure, for the
+	// same reason: the authorization code is single-use, so the callback cannot
+	// verify a second time after learning what the attempt was for.
+	did, err := s.atprotologinsvc.VerifyAssertion(c.Request().Context(), p.ATProtoState, code, c.QueryParam("iss"))
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrATProtoDisabled):
 			return atprotoLoginError(err)
 		case errors.Is(err, auth.ErrATProtoIdentityMismatch):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "atproto_identity_mismatch")
+			if p.Purpose == oauthLinkPurpose {
+				return oauthLinkRedirect(c, returnTo, "link_error", "atproto_identity_mismatch")
+			}
 			return oauthErrorRedirect(c, returnTo, "atproto_identity_mismatch")
 		case errors.Is(err, auth.ErrATProtoUpstream):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "atproto_upstream")
+			if p.Purpose == oauthLinkPurpose {
+				return oauthLinkRedirect(c, returnTo, "link_error", "atproto_upstream")
+			}
 			return oauthErrorRedirect(c, returnTo, "atproto_upstream")
+		}
+		return err
+	}
+
+	// The link branch: attach this DID to the account that STARTED the attempt.
+	if p.Purpose == oauthLinkPurpose {
+		uid, uerr := uuid.Parse(p.UserID)
+		if uerr != nil {
+			s.audit(c, observability.ActionOAuthLink, observability.ResultFailure, "", "unbound_state")
+			return oauthLinkRedirect(c, returnTo, "link_error", "link_failed")
+		}
+		outcome, lerr := s.atprotologinsvc.LinkIdentity(c.Request().Context(), uid, p.ATProtoState, did)
+		return s.finishATProtoLink(c, returnTo, uid, outcome, lerr)
+	}
+
+	// A login-purpose callback inside a live session links rather than switches
+	// — the OIDC twin's ruling, applied here so the bypass cannot simply move.
+	if uid, ok := s.linkedAccountForCallback(c); ok {
+		outcome, lerr := s.atprotologinsvc.LinkIdentity(c.Request().Context(), uid, p.ATProtoState, did)
+		return s.finishATProtoLink(c, returnTo, uid, outcome, lerr)
+	}
+
+	sess, err := s.atprotologinsvc.ResolveVerified(c.Request().Context(), p.ATProtoState, did, c.Request().UserAgent())
+	if err != nil {
+		switch {
 		case errors.Is(err, auth.ErrAccountDisabled):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "account_disabled")
 			return oauthErrorRedirect(c, returnTo, "account_disabled")
@@ -226,19 +258,52 @@ func (s *Server) handleATProtoLoginCallback(c echo.Context) error {
 		return err
 	}
 
+	// The second factor applies to a Bluesky sign-in too. A30 recorded the gate
+	// living in the password path alone; refusing it here and not for OIDC would
+	// only move the bypass one provider over.
+	if sess.MFARequired {
+		s.audit(c, observability.ActionLogin, observability.ResultFailure, sess.User.ID.String(), "mfa_required")
+		s.setMFAPendingCookie(c, sess.MFAToken)
+		return mfaChallengeRedirect(c, returnTo)
+	}
+
 	// Audit the concrete outcome; every path is also a login. The reason names the
 	// provider, never a DID, token, or handle.
-	if outcome == auth.OAuthCreated {
-		s.audit(c, observability.ActionRegister, observability.ResultSuccess, user.ID.String(), "atproto")
+	if sess.Outcome == auth.OAuthCreated {
+		s.audit(c, observability.ActionRegister, observability.ResultSuccess, sess.User.ID.String(), "atproto")
 	}
-	s.audit(c, observability.ActionLogin, observability.ResultSuccess, user.ID.String(), "atproto")
+	s.audit(c, observability.ActionLogin, observability.ResultSuccess, sess.User.ID.String(), "atproto")
 
 	// A top-level navigation cannot safely receive a bearer token, so the session
 	// is cookie-mode: the rotating refresh token travels in the httpOnly
 	// vidra_refresh cookie and the SPA obtains its access token via
 	// POST /auth/refresh (credentials included).
-	s.setRefreshCookie(c, tokens.RefreshToken)
+	s.setRefreshCookie(c, sess.Tokens.RefreshToken)
 	return atprotoLoginSuccessRedirect(c, returnTo)
+}
+
+// finishATProtoLink renders the outcome of an ATProto link attempt with the
+// same codes the OIDC twin uses, so a client renders one vocabulary.
+func (s *Server) finishATProtoLink(c echo.Context, returnTo string, userID uuid.UUID, outcome auth.OAuthOutcome, err error) error {
+	if err != nil {
+		code := "link_failed"
+		switch {
+		case errors.Is(err, auth.ErrOAuthIdentityClaimed):
+			code = "identity_belongs_to_another_account"
+		case errors.Is(err, auth.ErrOAuthProviderAlreadyLinked):
+			code = "provider_already_linked"
+		case errors.Is(err, auth.ErrAccountDisabled):
+			code = "account_disabled"
+		case errors.Is(err, auth.ErrATProtoDisabled):
+			code = "atproto_disabled"
+		}
+		s.audit(c, observability.ActionOAuthLink, observability.ResultFailure, userID.String(), code)
+		return oauthLinkRedirect(c, returnTo, "link_error", code)
+	}
+	if outcome == auth.OAuthLinked {
+		s.audit(c, observability.ActionOAuthLink, observability.ResultSuccess, userID.String(), "oauth:"+auth.ATProtoProviderName)
+	}
+	return oauthLinkRedirect(c, returnTo, "link", auth.ATProtoProviderName)
 }
 
 // handleATProtoClientMetadata serves the public OAuth client-metadata document

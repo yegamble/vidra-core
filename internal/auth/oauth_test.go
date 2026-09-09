@@ -154,69 +154,182 @@ func TestDeriveUsernamePrefersClaimsAndDedupes(t *testing.T) {
 	}
 }
 
-func TestResolveIdentityLoginLinkCreate(t *testing.T) {
+// TestOAuthCollisionMatrix is the A05 ruling in one table: a provider-asserted
+// email NEVER matches an account, verified or not, and a subject only ever
+// matches the account it is linked to.
+//
+// The row that made this necessary is "second provider, owner's address": A05
+// signed in as the instance OWNER through a second configured provider that
+// merely asserted the owner's address email_verified, with no local credential
+// and no consent. Under the old rule it linked and logged in; here it is a
+// refusal, and the account it could not take is a PROVIDER-created one, which
+// is the case the old rule made most vulnerable (no password to compare, and an
+// address the first provider put there).
+func TestOAuthCollisionMatrix(t *testing.T) {
 	repo := newOAuthFakeRepo()
 	s := newOAuthTestService(repo)
 	ctx := context.Background()
 
-	// CREATE: unknown identity, no matching account. Always a plain user —
-	// the admin exists only via the owner-claim flow (parity with password
-	// registration, 0104) — and inherits email_verified.
-	user, tokens, outcome, err := s.resolveIdentity(ctx, "fake", "sub-1", oidcClaims{
+	// CREATE: unknown identity, no local account with that address. Always a
+	// plain user — the admin exists only via the owner-claim flow (parity with
+	// password registration, 0104) — and inherits email_verified.
+	sess, err := s.resolveIdentity(ctx, "fake", "sub-1", oidcClaims{
 		Email: "new@example.com", EmailVerified: true, Name: "New Person",
 	}, "ua")
-	if err != nil || outcome != OAuthCreated {
-		t.Fatalf("create: outcome=%v err=%v", outcome, err)
+	if err != nil || sess.Outcome != OAuthCreated {
+		t.Fatalf("create: outcome=%v err=%v", sess.Outcome, err)
 	}
-	if user.Username != "new-person" || !user.EmailVerified || user.Role != "user" {
-		t.Errorf("created user = %+v; want username new-person, verified, user", user)
+	created := sess.User
+	if created.Username != "new-person" || !created.EmailVerified || created.Role != "user" {
+		t.Errorf("created user = %+v; want username new-person, verified, user", created)
 	}
-	if user.PasswordHash != "" {
+	if created.PasswordHash != "" {
 		t.Errorf("oauth-created account must have no password hash")
 	}
-	if tokens.AccessToken == "" || tokens.RefreshToken == "" {
+	if sess.Tokens.AccessToken == "" || sess.Tokens.RefreshToken == "" {
 		t.Errorf("create must issue a full session")
 	}
 
-	// LOGIN: the same identity comes back → same account, no duplicate.
-	user2, _, outcome, err := s.resolveIdentity(ctx, "fake", "sub-1", oidcClaims{Email: "new@example.com", EmailVerified: true}, "ua")
-	if err != nil || outcome != OAuthLogin || user2.ID != user.ID {
-		t.Fatalf("login: outcome=%v err=%v id match=%v", outcome, err, user2.ID == user.ID)
+	// LOGIN BY SUBJECT: the same identity comes back → the same account, no
+	// duplicate. This is the ONLY matching rule there is.
+	again, err := s.resolveIdentity(ctx, "fake", "sub-1", oidcClaims{Email: "new@example.com", EmailVerified: true}, "ua")
+	if err != nil || again.Outcome != OAuthLogin || again.User.ID != created.ID {
+		t.Fatalf("login: outcome=%v err=%v id match=%v", again.Outcome, err, again.User.ID == created.ID)
 	}
 
-	// LINK: a different identity whose VERIFIED email matches an existing
-	// password account links to it.
+	// A DIFFERENT PROVIDER asserting the SAME address as the provider-created
+	// account above is refused. Subject, never email — and the account with no
+	// password is exactly the one an email rule could not protect.
+	if _, err := s.resolveIdentity(ctx, "other", "other-sub", oidcClaims{
+		Email: "new@example.com", EmailVerified: true,
+	}, "ua"); !errors.Is(err, ErrOAuthEmailConflict) {
+		t.Errorf("second provider claiming a provider account's address: err = %v, want ErrOAuthEmailConflict", err)
+	}
+	if n, _ := repo.CountOAuthIdentitiesByUser(ctx, created.ID); n != 1 {
+		t.Errorf("identities on the provider-created account = %d, want 1 (nothing was attached)", n)
+	}
+
 	existing, err := repo.CreateUser(ctx, sqlcgen.CreateUserParams{
 		Username: "existing", Email: "linked@example.com", PasswordHash: "x", Role: "user",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	user3, _, outcome, err := s.resolveIdentity(ctx, "fake", "sub-2", oidcClaims{Email: "Linked@example.com", EmailVerified: true}, "ua")
-	if err != nil || outcome != OAuthLinked || user3.ID != existing.ID {
-		t.Fatalf("link: outcome=%v err=%v linked to existing=%v", outcome, err, user3.ID == existing.ID)
-	}
-	if n, _ := repo.CountOAuthIdentitiesByUser(ctx, existing.ID); n != 1 {
-		t.Errorf("identities for existing = %d, want 1", n)
-	}
 
-	// CONFLICT: an UNVERIFIED matching email must not link (takeover vector)
-	// and cannot create a duplicate → ErrOAuthEmailConflict.
-	if _, _, _, err := s.resolveIdentity(ctx, "fake", "sub-3", oidcClaims{Email: "linked@example.com", EmailVerified: false}, "ua"); !errors.Is(err, ErrOAuthEmailConflict) {
+	// A PASSWORD ACCOUNT's address, asserted VERIFIED, is a refusal. This is the
+	// case that used to link, and the one the owner takeover rode in on.
+	if _, err := s.resolveIdentity(ctx, "fake", "sub-2", oidcClaims{
+		Email: "Linked@example.com", EmailVerified: true,
+	}, "ua"); !errors.Is(err, ErrOAuthEmailConflict) {
+		t.Errorf("verified email match: err = %v, want ErrOAuthEmailConflict", err)
+	}
+	// …and UNVERIFIED is the same refusal, so the answer cannot be probed for
+	// whether the provider verified the address.
+	if _, err := s.resolveIdentity(ctx, "fake", "sub-3", oidcClaims{
+		Email: "linked@example.com", EmailVerified: false,
+	}, "ua"); !errors.Is(err, ErrOAuthEmailConflict) {
 		t.Errorf("unverified email match: err = %v, want ErrOAuthEmailConflict", err)
+	}
+	// NOTHING was written by either refusal: no identity, no session, and the
+	// account's own verification state untouched.
+	if n, _ := repo.CountOAuthIdentitiesByUser(ctx, existing.ID); n != 0 {
+		t.Errorf("identities for the refused account = %d, want 0", n)
+	}
+	if u, _ := repo.GetUserByID(ctx, existing.ID); u.EmailVerified {
+		t.Error("a refused sign-in marked the local address verified")
 	}
 
 	// EMAIL REQUIRED: a new identity without an email cannot create an account.
-	if _, _, _, err := s.resolveIdentity(ctx, "fake", "sub-4", oidcClaims{}, "ua"); !errors.Is(err, ErrOAuthEmailMissing) {
+	if _, err := s.resolveIdentity(ctx, "fake", "sub-4", oidcClaims{}, "ua"); !errors.Is(err, ErrOAuthEmailMissing) {
 		t.Errorf("no email: err = %v, want ErrOAuthEmailMissing", err)
 	}
 
-	// DISABLED: a deactivated linked account cannot log in via OAuth.
-	if err := repo.DeactivateUser(ctx, existing.ID); err != nil {
+	// DISABLED: a deactivated LINKED account cannot log in via its provider.
+	if err := repo.DeactivateUser(ctx, created.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := s.resolveIdentity(ctx, "fake", "sub-2", oidcClaims{Email: "linked@example.com", EmailVerified: true}, "ua"); !errors.Is(err, ErrAccountDisabled) {
+	if _, err := s.resolveIdentity(ctx, "fake", "sub-1", oidcClaims{Email: "new@example.com", EmailVerified: true}, "ua"); !errors.Is(err, ErrAccountDisabled) {
 		t.Errorf("disabled account login: err = %v, want ErrAccountDisabled", err)
+	}
+}
+
+// TestOAuthLinkIdentity covers the flow that replaces the email match: the
+// account holder connects a provider from settings, inside a session.
+func TestOAuthLinkIdentity(t *testing.T) {
+	repo := newOAuthFakeRepo()
+	s := newOAuthTestService(repo)
+	ctx := context.Background()
+
+	alice, err := repo.CreateUser(ctx, sqlcgen.CreateUserParams{
+		Username: "alice", Email: "alice@example.com", PasswordHash: "x", Role: "user",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := repo.CreateUser(ctx, sqlcgen.CreateUserParams{
+		Username: "bob", Email: "bob@example.com", PasswordHash: "x", Role: "user",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// HAPPY PATH: a provider address that is the account's OWN, asserted
+	// verified, both links and settles the local email_verified fact — the one
+	// thing a link legitimately proves, and the one A05 recorded being thrown
+	// away.
+	as := OAuthAssertion{Provider: "fake", Subject: "alice-sub", Email: "Alice@example.com", EmailVerified: true}
+	outcome, err := s.LinkIdentity(ctx, alice.ID, as, nil)
+	if err != nil || outcome != OAuthLinked {
+		t.Fatalf("link: outcome=%v err=%v", outcome, err)
+	}
+	if u, _ := repo.GetUserByID(ctx, alice.ID); !u.EmailVerified {
+		t.Error("a provider-verified link on the account's OWN address left email_verified false")
+	}
+
+	// IDEMPOTENT: the same subject to the same account again is not an error —
+	// a second click on Connect is not a mistake worth refusing.
+	if outcome, err := s.LinkIdentity(ctx, alice.ID, as, nil); err != nil || outcome != OAuthLogin {
+		t.Fatalf("re-link same subject: outcome=%v err=%v", outcome, err)
+	}
+
+	// CLAIMED: bob cannot take a subject linked to alice. Refused, and alice
+	// keeps it.
+	if _, err := s.LinkIdentity(ctx, bob.ID, as, nil); !errors.Is(err, ErrOAuthIdentityClaimed) {
+		t.Fatalf("cross-account link: err = %v, want ErrOAuthIdentityClaimed", err)
+	}
+	ident, err := repo.GetOAuthIdentity(ctx, sqlcgen.GetOAuthIdentityParams{Provider: "fake", Subject: "alice-sub"})
+	if err != nil || ident.UserID != alice.ID {
+		t.Fatalf("identity moved: owner=%v err=%v", ident.UserID, err)
+	}
+
+	// ALREADY LINKED: a SECOND subject at the same provider is refused by the
+	// (user_id, provider) unique index, with its own code.
+	if _, err := s.LinkIdentity(ctx, alice.ID, OAuthAssertion{
+		Provider: "fake", Subject: "alice-other-sub", Email: "alice@example.com",
+	}, nil); !errors.Is(err, ErrOAuthProviderAlreadyLinked) {
+		t.Fatalf("second subject for a linked provider: err = %v, want ErrOAuthProviderAlreadyLinked", err)
+	}
+
+	// A provider address that is NOT the account's own does not touch
+	// email_verified, however loudly the provider asserts it.
+	if _, err := s.LinkIdentity(ctx, bob.ID, OAuthAssertion{
+		Provider: "other", Subject: "bob-sub", Email: "someone.else@example.com", EmailVerified: true,
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := repo.GetUserByID(ctx, bob.ID); u.EmailVerified {
+		t.Error("a verified claim about a DIFFERENT address marked the account's own address verified")
+	}
+
+	// The pre-round-trip probes the link START uses.
+	if !s.SubjectClaimedByOther(ctx, "fake", "alice-sub", bob.ID) {
+		t.Error("SubjectClaimedByOther said no for a subject bob does not own")
+	}
+	if s.SubjectClaimedByOther(ctx, "fake", "alice-sub", alice.ID) {
+		t.Error("SubjectClaimedByOther said yes for the owner")
+	}
+	if !s.HasProviderLinked(ctx, alice.ID, "fake") || s.HasProviderLinked(ctx, alice.ID, "other") {
+		t.Error("HasProviderLinked disagrees with the stored identities")
 	}
 }
 
@@ -226,10 +339,11 @@ func TestOAuthUnlinkLastCredentialGuard(t *testing.T) {
 	ctx := context.Background()
 
 	// A passwordless (OAuth-created) account with one identity cannot drop it.
-	user, _, _, err := s.resolveIdentity(ctx, "fake", "solo", oidcClaims{Email: "solo@example.com", EmailVerified: true}, "ua")
+	soloSess, err := s.resolveIdentity(ctx, "fake", "solo", oidcClaims{Email: "solo@example.com", EmailVerified: true}, "ua")
 	if err != nil {
 		t.Fatal(err)
 	}
+	user := soloSess.User
 	if err := s.Unlink(ctx, user.ID, "fake"); !errors.Is(err, ErrOAuthLastCredential) {
 		t.Fatalf("unlink last credential: err = %v, want ErrOAuthLastCredential", err)
 	}

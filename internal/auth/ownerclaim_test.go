@@ -178,7 +178,7 @@ func TestOAuthSignupRefusedWhileOwnerUnclaimed(t *testing.T) {
 	repo := newOAuthFakeRepo()
 	s := newOAuthTestService(repo)
 	mintOwnerClaim(t, s.auth)
-	_, _, _, err := s.resolveIdentity(context.Background(), "fake", "sub-1", oidcClaims{
+	_, err := s.resolveIdentity(context.Background(), "fake", "sub-1", oidcClaims{
 		Email: "new@example.com", EmailVerified: true, Name: "New Person",
 	}, "ua")
 	if !errors.Is(err, ErrOwnerClaimRequired) {
@@ -198,7 +198,7 @@ func TestATProtoSignupRefusedWhileOwnerUnclaimed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := s.Complete(ctx, st, "code", st.Issuer, "ua"); !errors.Is(err, ErrOwnerClaimRequired) {
+	if _, err := s.Complete(ctx, st, "code", st.Issuer, "ua"); !errors.Is(err, ErrOwnerClaimRequired) {
 		t.Fatalf("err = %v, want ErrOwnerClaimRequired", err)
 	}
 	if n, _ := repo.CountUsers(ctx); n != 0 {

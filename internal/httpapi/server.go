@@ -1587,6 +1587,13 @@ func (s *Server) routes() {
 		if s.oauthsvc != nil {
 			authGroup.GET("/oauth/:provider", s.handleOAuthBegin, authMW...)
 			authGroup.GET("/oauth/:provider/callback", s.handleOAuthCallback, authMW...)
+			// Connect a provider to the account you are already signed in to
+			// (A05 ruling 3). Authenticated — the attempt binds to the caller's
+			// session — and behind the strict auth limiter like every other
+			// route in the credential family, because it starts a flow whose
+			// callback writes a sign-in method.
+			authGroup.POST("/oauth/:provider/link/start", s.handleOAuthLinkStart,
+				append(append([]echo.MiddlewareFunc{}, authMW...), s.requireAuth)...)
 			api.GET("/me/oauth-identities", s.handleListOAuthIdentities, s.requireAuth)
 			api.DELETE("/me/oauth-identities/:provider", s.handleUnlinkOAuthIdentity, s.requireAuth)
 		}
@@ -1599,6 +1606,10 @@ func (s *Server) routes() {
 		if s.atprotologinsvc != nil {
 			authGroup.POST("/atproto/start", s.handleATProtoLoginStart, authMW...)
 			authGroup.GET("/atproto/callback", s.handleATProtoLoginCallback, authMW...)
+			// The link twin of /oauth/:provider/link/start, same middleware and
+			// same reasons.
+			authGroup.POST("/atproto/link/start", s.handleATProtoLinkStart,
+				append(append([]echo.MiddlewareFunc{}, authMW...), s.requireAuth)...)
 			authGroup.GET("/atproto/client-metadata.json", s.handleATProtoClientMetadata)
 		}
 
