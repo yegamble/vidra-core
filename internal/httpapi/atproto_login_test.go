@@ -24,6 +24,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/atproto"
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/config"
 )
 
 // fakeATProtoBackend is the combined PDS + auth server for the login flow.
@@ -114,6 +115,18 @@ type atprotoLoginEnv struct {
 	srv     *Server
 	backend *fakeATProtoBackend
 	repo    *oauthHTTPFakeRepo
+	// authsvc and cfg are kept so a test can stand a SECOND server over the
+	// same accounts and sessions with a different feature flag — the only way
+	// to exercise "this instance turned ATProto login off after I signed in",
+	// which is exactly the step-up start's typed 503.
+	authsvc *auth.Service
+	cfg     *config.Config
+	// mailer is wired as BOTH the auth mailer and the contact mailer, which is
+	// this deployment's mail-capability signal. The email-change route refuses
+	// to start a change it could never confirm, so an ATProto harness with no
+	// mail path could not exercise the one recovery step that matters most for
+	// a placeholder address.
+	mailer *captureResetMailer
 }
 
 func newATProtoLoginEnv(t *testing.T, enabled bool) *atprotoLoginEnv {
@@ -137,7 +150,8 @@ func newATProtoLoginEnv(t *testing.T, enabled bool) *atprotoLoginEnv {
 	)
 
 	issuer := auth.NewTokenIssuer(cfg.JWTSecret, "vidra", "vidra", 15*time.Minute)
-	authsvc := auth.NewService(repo.authFakeRepo, issuer, 720*time.Hour)
+	mailer := &captureResetMailer{}
+	authsvc := auth.NewService(repo.authFakeRepo, issuer, 720*time.Hour, auth.WithMailer(mailer))
 	loginsvc := auth.NewATProtoOAuthService(repo, authsvc, client,
 		auth.WithATProtoEnabled(enabled),
 		auth.WithATProtoPublicBaseURL(cfg.PublicBaseURL),
@@ -151,9 +165,10 @@ func newATProtoLoginEnv(t *testing.T, enabled bool) *atprotoLoginEnv {
 		// account is passwordless, so that unlink guard is the only thing
 		// standing between the user and an account they cannot sign in to.
 		WithOAuthService(auth.NewOAuthService(repo, authsvc, nil)),
+		WithContactMailer(mailer),
 		WithLogger(slog.New(slog.NewJSONHandler(buf, nil))),
 	)
-	return &atprotoLoginEnv{srv: srv, backend: backend, repo: repo}
+	return &atprotoLoginEnv{srv: srv, backend: backend, repo: repo, authsvc: authsvc, cfg: cfg, mailer: mailer}
 }
 
 // start POSTs /auth/atproto/start and returns the state cookie the server sealed.

@@ -254,6 +254,19 @@ type userView struct {
 	// when true the image is served at GET /users/{id}/avatar | /banner.
 	HasAvatar *bool `json:"has_avatar,omitempty"`
 	HasBanner *bool `json:"has_banner,omitempty"`
+	// HasPassword and EmailPlaceholder are the two facts a provider-created
+	// account needs told about itself, and neither was previously knowable from
+	// the API. An account created by ATProto/OIDC login is passwordless and
+	// carries a synthetic …@atproto.invalid address, which together mean it has
+	// exactly ONE sign-in method and no recovery path — A30's finding. The
+	// settings page uses them to prompt for both, so "your account is one lost
+	// Bluesky login away from gone" stops being something only the audit knew.
+	//
+	// Neither is a secret: it is the caller's own account, and the placeholder
+	// address is already in Email on this same view. HasPassword says only
+	// whether a hash exists — never its value, cost or age.
+	HasPassword      bool `json:"has_password"`
+	EmailPlaceholder bool `json:"email_placeholder"`
 }
 
 func newUserView(u sqlcgen.User) userView {
@@ -275,6 +288,11 @@ func newUserView(u sqlcgen.User) userView {
 		ShowBluesky:                        u.ShowBluesky,
 		SensitiveContentPolicy:             u.SensitiveContentPolicy,
 		CreatedAt:                          u.CreatedAt,
+		// An empty stored hash is the password-less shape: bcrypt can never
+		// verify one, so "has a hash" and "can sign in with a password" are the
+		// same statement.
+		HasPassword:      u.PasswordHash != "",
+		EmailPlaceholder: auth.IsPlaceholderEmail(u.Email),
 	}
 }
 
@@ -880,7 +898,9 @@ func (r changePasswordRequest) Validate() []FieldError {
 // tokens included, because access tokens are session-bound. Behind requireAuth
 // AND the strict auth limiter: it is a password-guessing surface exactly like
 // login. 204 on success; a wrong current password is 403; an account with no
-// password at all (OAuth/ATProto-only) is 409 and is pointed at the reset flow.
+// password at all (OAuth/ATProto-only) is 409 and is pointed at the set-password
+// route, which a step-up authorises — the reset flow it used to name can never
+// complete for that account shape.
 // The passwords are never logged, echoed, or included in the audit event.
 func (s *Server) handleChangePassword(c echo.Context) error {
 	userID, _, err := mustPrincipal(c)
@@ -900,7 +920,7 @@ func (s *Server) handleChangePassword(c echo.Context) error {
 		case errors.Is(err, auth.ErrPasswordNotSet):
 			s.audit(c, observability.ActionPasswordChange, observability.ResultFailure, userID.String(), "password_not_set")
 			return echo.NewHTTPError(http.StatusConflict,
-				"this account has no password: use the password reset flow to set one")
+				"this account has no password: set one with POST /api/v1/auth/me/password/set, which confirms you by re-signing in with the provider this account uses")
 		case errors.Is(err, auth.ErrAccountNotFound):
 			return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
 		}

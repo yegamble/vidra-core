@@ -47,6 +47,13 @@ type authFakeRepo struct {
 	// emailChanges mirrors email_change_requests (0129), keyed by token hash.
 	// See auth_email_change_fake_test.go for the methods over it.
 	emailChanges map[string]*sqlcgen.EmailChangeRequest
+	// stepUps mirrors step_up_tokens (0144), keyed by token hash;
+	// oauthIdents mirrors oauth_identities. See auth_step_up_fake_test.go.
+	stepUps     map[string]*sqlcgen.StepUpToken
+	oauthIdents []sqlcgen.OauthIdentity
+	// identitiesOf, when set, replaces the slice above as the source of the
+	// account's linked identities — see auth_step_up_fake_test.go.
+	identitiesOf func(uuid.UUID) []sqlcgen.OauthIdentity
 	regReqs      []*regReqRow
 	// usage mirrors SumUserStorageUsage: a user's total stored video-file bytes.
 	// Nil (pure-auth harnesses) means 0; videoServerEnv wires it to sum the

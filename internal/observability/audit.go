@@ -29,8 +29,18 @@ const (
 	ActionPasswordResetRequest  = "auth.password_reset.request"
 	ActionPasswordResetComplete = "auth.password_reset.complete"
 	ActionPasswordChange        = "auth.password.change"
-	ActionEmailVerifyRequest    = "auth.email_verify.request"
-	ActionEmailVerifyConfirm    = "auth.email_verify.confirm"
+	// ActionPasswordSet records a PASSWORD-LESS account acquiring its first
+	// password, authorised by a step-up assertion rather than a current
+	// password (see auth/stepup.go). Distinct from auth.password.change: the
+	// authorisation is different, and "this account gained a second sign-in
+	// method" is the event an operator reading the trail wants to find.
+	ActionPasswordSet = "auth.password.set"
+	// ActionStepUpGrant records a completed (or refused) provider
+	// re-authentication. The reason names the provider or the rule that
+	// refused — never a DID, handle, subject or token.
+	ActionStepUpGrant        = "auth.step_up.grant"
+	ActionEmailVerifyRequest = "auth.email_verify.request"
+	ActionEmailVerifyConfirm = "auth.email_verify.confirm"
 	// Two-step email change (AUTH-05). No event carries either address — the
 	// sensitive-key discipline keeps email addresses out of the audit trail, so
 	// the actor id is the whole record.

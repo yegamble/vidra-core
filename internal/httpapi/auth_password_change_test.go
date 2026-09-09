@@ -145,9 +145,11 @@ func TestChangePasswordMailsTheOwnerBestEffort(t *testing.T) {
 }
 
 // TestChangePasswordRefusesPasswordlessAccount pins the shipped rule for
-// OAuth/ATProto-only accounts (empty stored hash): they are told to use the
-// reset flow rather than being given an unfalsifiable "incorrect password"
-// they could never satisfy.
+// OAuth/ATProto-only accounts (empty stored hash): they are told where to go
+// rather than being given an unfalsifiable "incorrect password" they could
+// never satisfy — and, since A30, that destination has to be one that WORKS.
+// The reset flow it used to name cannot: such an account's address is a
+// synthetic .invalid name the mail can never reach.
 func TestChangePasswordRefusesPasswordlessAccount(t *testing.T) {
 	srv, repo := authServerWithFakeRepo(t)
 	reg := registerTokens(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
@@ -158,7 +160,7 @@ func TestChangePasswordRefusesPasswordlessAccount(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("passwordless change = %d, want 409; body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(strings.ToLower(rec.Body.String()), "reset") {
-		t.Errorf("the refusal does not point at the reset flow: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "/api/v1/auth/me/password/set") {
+		t.Errorf("the refusal does not point at a reachable remedy: %s", rec.Body.String())
 	}
 }

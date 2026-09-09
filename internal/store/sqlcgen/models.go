@@ -871,6 +871,17 @@ type SettingsVersion struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type StepUpToken struct {
+	ID        uuid.UUID          `json:"id"`
+	UserID    uuid.UUID          `json:"user_id"`
+	SessionID uuid.UUID          `json:"session_id"`
+	Provider  string             `json:"provider"`
+	TokenHash string             `json:"token_hash"`
+	ExpiresAt time.Time          `json:"expires_at"`
+	UsedAt    pgtype.Timestamptz `json:"used_at"`
+	CreatedAt time.Time          `json:"created_at"`
+}
+
 type StorageMigration struct {
 	ID                uuid.UUID          `json:"id"`
 	SourceDesc        string             `json:"source_desc"`

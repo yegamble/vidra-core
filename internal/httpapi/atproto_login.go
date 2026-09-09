@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/auth"
@@ -59,6 +60,15 @@ const atprotoStateTTL = 10 * time.Minute
 type atprotoStatePayload struct {
 	auth.ATProtoState
 	IssuedAt int64 `json:"iat"`
+	// Purpose is "" for a login and "step_up" for a re-authentication started
+	// from an existing session (auth_step_up.go). The empty value is the login,
+	// so every cookie sealed before step-up existed keeps its meaning.
+	Purpose string `json:"purpose,omitempty"`
+	// UserID and SessionID bind a step_up attempt to the browser that started
+	// it. They are inside the SIGNED payload, so a caller cannot re-point
+	// somebody else's completed round trip at their own account.
+	UserID    string `json:"uid,omitempty"`
+	SessionID string `json:"sid,omitempty"`
 }
 
 func (p atprotoStatePayload) stateToken() string { return p.State }
@@ -175,6 +185,21 @@ func (s *Server) handleATProtoLoginCallback(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "missing authorization code")
 	}
 
+	// A step-up attempt runs the SAME verification and then stops short of a
+	// session: it mints an assertion for the account that is already signed in
+	// (auth_step_up.go). Branching here — after the state, error and code
+	// checks — is what keeps the two flows sharing every protocol invariant.
+	if p.Purpose == stepUpPurpose {
+		did, err := s.atprotologinsvc.VerifyAssertion(c.Request().Context(), p.ATProtoState, code, c.QueryParam("iss"))
+		if err != nil {
+			s.audit(c, observability.ActionStepUpGrant, observability.ResultFailure, p.UserID, atprotoStepUpReason(err))
+			return stepUpErrorRedirect(c, returnTo, atprotoStepUpCode(err))
+		}
+		uid, uerr := uuid.Parse(p.UserID)
+		linked := uerr == nil && s.atprotologinsvc.SubjectLinkedTo(c.Request().Context(), did, uid)
+		return s.completeStepUp(c, returnTo, auth.ATProtoProviderName, p.UserID, p.SessionID, linked)
+	}
+
 	user, tokens, outcome, err := s.atprotologinsvc.Complete(
 		c.Request().Context(), p.ATProtoState, code, c.QueryParam("iss"), c.Request().UserAgent(),
 	)
@@ -253,3 +278,23 @@ func atprotoLoginError(err error) error {
 		return err
 	}
 }
+
+// atprotoStepUpCode maps a verification failure on the STEP-UP branch to the
+// stable ?step_up_error= code the settings page renders. A step-up never
+// redirects with an oauth_error: it is not a sign-in, and the page that
+// receives it is not the login page.
+func atprotoStepUpCode(err error) string {
+	switch {
+	case errors.Is(err, auth.ErrATProtoDisabled):
+		return "atproto_disabled"
+	case errors.Is(err, auth.ErrATProtoIdentityMismatch):
+		return "step_up_identity_mismatch"
+	case errors.Is(err, auth.ErrATProtoUpstream), errors.Is(err, auth.ErrATProtoResolution):
+		return "atproto_upstream"
+	}
+	return "step_up_failed"
+}
+
+// atprotoStepUpReason is the audit reason for the same failure. It names the
+// rule and never a DID, handle, token or upstream URL.
+func atprotoStepUpReason(err error) string { return atprotoStepUpCode(err) }

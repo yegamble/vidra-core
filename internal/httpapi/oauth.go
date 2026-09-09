@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/auth"
@@ -54,6 +55,13 @@ type oauthStatePayload struct {
 	Verifier string `json:"verifier"`
 	ReturnTo string `json:"return_to"`
 	IssuedAt int64  `json:"iat"`
+	// Purpose is "" for a login and "step_up" for a re-authentication started
+	// from an existing session (auth_step_up.go); UserID and SessionID bind
+	// that attempt to the browser that started it. All three are inside the
+	// SIGNED payload.
+	Purpose   string `json:"purpose,omitempty"`
+	UserID    string `json:"uid,omitempty"`
+	SessionID string `json:"sid,omitempty"`
 }
 
 func (p oauthStatePayload) stateToken() string { return p.State }
@@ -207,6 +215,19 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "missing authorization code")
 	}
 
+	// The step-up branch: same verification, no session. See the ATProto twin.
+	if st.Purpose == stepUpPurpose {
+		subject, err := s.oauthsvc.VerifyAssertion(c.Request().Context(), name, s.oauthRedirectURI(name), code,
+			auth.OAuthState{State: st.State, Nonce: st.Nonce, Verifier: st.Verifier})
+		if err != nil {
+			s.audit(c, observability.ActionStepUpGrant, observability.ResultFailure, st.UserID, "oauth_verify_failed")
+			return stepUpErrorRedirect(c, returnTo, "step_up_failed")
+		}
+		uid, uerr := uuid.Parse(st.UserID)
+		linked := uerr == nil && s.oauthsvc.SubjectLinkedTo(c.Request().Context(), name, subject, uid)
+		return s.completeStepUp(c, returnTo, name, st.UserID, st.SessionID, linked)
+	}
+
 	user, tokens, outcome, err := s.oauthsvc.CompleteAuth(
 		c.Request().Context(), name, s.oauthRedirectURI(name), code,
 		auth.OAuthState{State: st.State, Nonce: st.Nonce, Verifier: st.Verifier},
@@ -305,7 +326,13 @@ func (s *Server) handleUnlinkOAuthIdentity(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusNotFound, "identity not linked")
 		case errors.Is(err, auth.ErrOAuthLastCredential):
 			s.audit(c, observability.ActionOAuthUnlink, observability.ResultFailure, userID.String(), "last_credential")
-			return echo.NewHTTPError(http.StatusUnprocessableEntity, "cannot remove the last sign-in method — set a password first")
+			// The remedy has to be one the caller can actually reach. Until
+			// A30's step-up shipped it was not: this account is passwordless
+			// AND holds an unroutable placeholder address, so "use the password
+			// reset" pointed at a mailbox that cannot receive. Name the route
+			// that works instead.
+			return echo.NewHTTPError(http.StatusUnprocessableEntity,
+				"cannot remove the last sign-in method — set a password first with POST /api/v1/auth/me/password/set, which authorises you by re-signing in with this same provider")
 		case errors.Is(err, auth.ErrAccountNotFound):
 			return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
 		}

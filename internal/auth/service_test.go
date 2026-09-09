@@ -41,7 +41,12 @@ type fakeRepo struct {
 	verifs         map[string]*sqlcgen.EmailVerificationToken // keyed by token hash
 	// emailChanges mirrors email_change_requests (0129), keyed by token hash.
 	emailChanges map[string]*sqlcgen.EmailChangeRequest
-	regReqs      []*fakeRegReq
+	// stepUps mirrors step_up_tokens (0144), keyed by token hash, and
+	// oauthIdents mirrors oauth_identities for the provider list a step-up
+	// refusal names. See stepup_fake_test.go for the methods over them.
+	stepUps     map[string]*sqlcgen.StepUpToken
+	oauthIdents []sqlcgen.OauthIdentity
+	regReqs     []*fakeRegReq
 	// ownerClaim mirrors the single-row owner_claim_tokens table (0104). Nil =
 	// never minted, so most tests register freely, exactly like a database
 	// that predates the owner-claim flow.
