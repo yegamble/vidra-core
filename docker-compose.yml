@@ -51,8 +51,20 @@
 #
 # `x-` keys are ignored by Compose; both services pull this in with a YAML merge
 # (`<<: *api-env`) and override per-service keys AFTER it. Still an explicit
-# allow-list, and still NO env_file: anywhere in the stack — see the JWT_SECRET note
-# inside for why that is deliberate.
+# allow-list — see the JWT_SECRET note inside for why that is deliberate.
+#
+# THE ONE EXCEPTION IS `env/oauth.env`, and it is an exception for a reason no
+# other key has. An allow-list can only name keys that exist at the time it is
+# written, and the per-provider OAuth variables do not: their names are DERIVED
+# from the operator's own provider list (`OAUTH_PROVIDERS=okta` makes
+# `OAUTH_OKTA_ISSUER`, `OAUTH_OKTA_CLIENT_ID`, `OAUTH_OKTA_CLIENT_SECRET`,
+# `OAUTH_OKTA_SCOPES`). A05 measured what that costs: a filled env file
+# delivered exactly ONE OAuth variable to the container — `OAUTH_PROVIDERS` —
+# and the api then refused to boot because the other three never arrived. The
+# only fix inside an allow-list is to hand-edit this tracked file, in a nested
+# checkout that is pinned DETACHED at a release tag, which is not a thing an
+# operator should be asked to do. Both services therefore take an OPTIONAL
+# env_file (see api/worker below), scoped to that one family.
 #
 # ADDING A KEY: add it here, not on a service, unless it is genuinely role-specific.
 x-api-env: &api-env
@@ -273,11 +285,14 @@ x-api-env: &api-env
   # default: config falls back to INSTANCE_NAME in Go, after this literal is
   # read, and that fallback cannot be expressed in compose substitution.
   TOTP_ISSUER: ${TOTP_ISSUER:-}
-  # OAuth/OIDC login providers (comma list; disabled when empty). Compose has
-  # no wildcard passthrough, so each named provider's OAUTH_<NAME>_ISSUER /
-  # _CLIENT_ID / _CLIENT_SECRET (+ optional _SCOPES) must also be added here
-  # for your provider names. PUBLIC_BASE_URL is required when any provider
-  # is set. The client secret is a secret: never commit a real value.
+  # OAuth/OIDC login providers (comma list; disabled when empty). This one key
+  # is settable from the ordinary env file; each named provider's
+  # OAUTH_<NAME>_ISSUER / _CLIENT_ID / _CLIENT_SECRET (+ optional _SCOPES) is
+  # NOT — their names depend on the list, so no allow-list can name them.
+  # Put those in `env/oauth.env` (copy env/oauth.env.example), which the api and
+  # worker services read as an OPTIONAL env_file. PUBLIC_BASE_URL is required
+  # when any provider is set, and an INCOMPLETE provider is a boot failure, not
+  # a degraded login. The client secret is a secret: never commit a real value.
   OAUTH_PROVIDERS: ${OAUTH_PROVIDERS:-}
   # Real outbound email over SMTP (password reset / email verification).
   # SMTP_HOST + SMTP_FROM are required when enabled; SMTP_PASSWORD is a
@@ -977,6 +992,18 @@ services:
       kubo-private:
         condition: service_healthy
         required: false
+    # The per-provider OAuth variables, and ONLY those — see the x-api-env note.
+    # `required: false` (Compose >= 2.24 long syntax) is what makes this safe to
+    # ship unconditionally: with no such file, the render and the boot are
+    # exactly as they were. Values here are read as literal KEY=VALUE and are
+    # NOT compose substitution, so they never need quoting for `$`.
+    #
+    # `environment:` WINS over `env_file:` in Compose, which is the right way
+    # round: nothing in this file can be silently overridden by dropping a file
+    # next to it.
+    env_file:
+      - path: ./env/oauth.env
+        required: false
     environment:
       # Every key comes from the x-api-env anchor at the top of this file, shared
       # verbatim with the `worker` service. Overrides go BELOW the merge.
@@ -1074,6 +1101,13 @@ services:
         required: false
       kubo-private:
         condition: service_healthy
+        required: false
+    # Same optional OAuth env_file as api. A worker runs the same binary through
+    # the same config.Load, so a provider that is complete for api and
+    # incomplete for worker is a worker that refuses to boot — half a split
+    # deployment, down, for a reason nothing else reports.
+    env_file:
+      - path: ./env/oauth.env
         required: false
     environment:
       <<: *api-env

@@ -1715,6 +1715,68 @@ Health/readiness for orchestrators: `GET /healthz` (liveness) and `GET /readyz`
 (503 until PostgreSQL + Redis are reachable). See the top-level
 [`README.md`](../README.md) for the full env-var and endpoint reference.
 
+## Single sign-on (OIDC) — the one family of settings compose cannot allow-list
+
+`vidra-core`'s compose `environment:` map is an explicit allow-list: a key it
+does not name cannot reach the container, however faithfully `--env-file`
+carries it. That is deliberate — an unsettable key is a bug somebody notices —
+and it works for every setting except this one, because the names of the
+per-provider OAuth variables are **derived from your own provider list**:
+
+```
+OAUTH_PROVIDERS=okta        →  OAUTH_OKTA_ISSUER, OAUTH_OKTA_CLIENT_ID,
+                               OAUTH_OKTA_CLIENT_SECRET, OAUTH_OKTA_SCOPES
+OAUTH_PROVIDERS=corp-sso    →  OAUTH_CORP_SSO_*   (dashes → underscores, uppercased)
+```
+
+No allow-list can name a key whose name it does not yet know. The A05
+acceptance run measured what that cost: with all four variables in a filled env
+file, `docker compose config` delivered exactly **one** of them —
+`OAUTH_PROVIDERS` — and the api then refused to boot for the missing three. The
+only fix inside the allow-list was to hand-edit a tracked compose file inside a
+checkout pinned **detached** at a release tag.
+
+So the `api` and `worker` services read one **optional** env file, scoped to
+that family and nothing else:
+
+```
+cp vidra-core/env/oauth.env.example vidra-core/env/oauth.env
+# fill in the per-provider values, then set OAUTH_PROVIDERS in your MAIN env
+# file (env/production.env) — that key still goes through the allow-list
+```
+
+`required: false` (Compose ≥ 2.24 long syntax, the same floor the production
+overlay's merge tags already assume) is what makes it safe to ship
+unconditionally: **with no such file the render and the boot are byte-for-byte
+what they were.** `environment:` wins over `env_file:`, so nothing in the
+compose file can be silently overridden by dropping a file beside it, and the
+values are read as literal `KEY=VALUE` — not compose substitution — so a `$` in
+a client secret needs no escaping.
+
+`env/oauth.env` holds client secrets. It is gitignored (`env/*.env`); only the
+`.example` is tracked. Never commit a filled one.
+
+Two things worth stating because an operator would otherwise learn them the
+hard way:
+
+- **An incomplete provider is a boot failure, not a degraded login.** A name in
+  `OAUTH_PROVIDERS` with no issuer, client id or client secret refuses to start
+  and reports every missing variable at once. `PUBLIC_BASE_URL` becomes required
+  (https in production) as soon as the list is non-empty, because the redirect
+  URI is derived from it server-side and never from a request parameter. Register
+  `<PUBLIC_BASE_URL>/api/v1/auth/oauth/<name>/callback` with each provider.
+- **A provider's word about an email address does not link an account.** An
+  id_token whose address matches an existing local account is refused with
+  `email_conflict`, verified or not; accounts are matched by the issuer-scoped
+  subject, and connecting a provider is something the account holder does from
+  Settings › Connected logins while signed in. Configuring two providers
+  therefore does not make either one a route into the other's accounts — which
+  it was, including into the owner's, before this rule. A provider sign-in also
+  goes through the account's second factor, exactly as a password sign-in does.
+
+With `OAUTH_PROVIDERS` unset the login routes answer a typed **503
+`oauth_not_configured`**; a name that is not in a non-empty list is a 404.
+
 ## Running more than one api instance
 
 Several `vidra-core` api instances can share one PostgreSQL. What makes that safe
