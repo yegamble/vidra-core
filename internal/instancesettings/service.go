@@ -336,6 +336,34 @@ const (
 	// as delivery_presign_enabled is on a local-filesystem install.
 	KeyDeliveryCDNEnabled = "delivery_cdn_enabled"
 
+	// KeyDeliveryIPFSEnabled is the peer-mirror delivery toggle: when on, a media
+	// request that is already servable to an anonymous public visitor may be
+	// answered with a 307 to the configured IPFS gateway, and the watch page is
+	// offered the `ipfs` object that draws its "Use IPFS" control.
+	//
+	// It is the third of three siblings and the last to arrive, which is the whole
+	// point. A31 measured the asymmetry: presign and the CDN each had a runtime
+	// kill switch, and the mirror — the source that shipped FIRST — had none. Its
+	// only lever was cfg.IPFSEnabled, an env var, so an operator whose gateway was
+	// serving nothing had exactly one response available to them, a restart, while
+	// every `Cache-Control: public, max-age=300` redirect already minted kept
+	// pointing viewers at it for another five minutes. "Stop sending viewers there,
+	// keep serving" is the same 30-second response the other two exist for.
+	//
+	// Its DEFAULT is the difference from those two, and it is deliberate. They
+	// default OFF because each was a new capability that changed where bytes come
+	// from. This one defaults to whatever IPFS_ENABLED says, because redirecting to
+	// the gateway is ALREADY the shipped behaviour of an instance with the mirror
+	// on: defaulting it off would silently turn the mirror off for every existing
+	// deployment on upgrade, which is a behaviour change disguised as a safety
+	// default.
+	//
+	// EFFECTIVE availability is this AND the master env switch AND a healthy
+	// gateway — see httpapi.ipfsDeliveryEnabled. On an install with IPFS_ENABLED
+	// false the setting is inert rather than broken, exactly as
+	// delivery_presign_enabled is on a local-filesystem install.
+	KeyDeliveryIPFSEnabled = "delivery_ipfs_enabled"
+
 	// KeyQoECollectionEnabled is the playback-telemetry collection switch
 	// (phase-4 delivery item 4): when on, the batched QoE beacon records TTFF,
 	// rebuffering, bitrate switches and playback errors per delivery source.
@@ -567,6 +595,12 @@ type Defaults struct {
 	// runtime master toggle's default. The boot capability (ffmpeg/ffprobe on
 	// PATH) stays env-side — effective availability is settingAND(boot).
 	TranscodingEnabled bool
+
+	// IPFSEnabled mirrors IPFS_ENABLED and is delivery_ipfs_enabled's default. The
+	// boot capability — a configured node, a configured gateway, a worker that can
+	// reach them — stays env-side and is probed at runtime, so effective
+	// availability is settingAND(boot)AND(the gateway answers).
+	IPFSEnabled bool
 }
 
 // spec describes one setting: its key, value kind, how to resolve its default
@@ -962,6 +996,14 @@ var specs = []spec{
 	{key: KeyDeliveryCDNEnabled, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageAdvanced, section: "delivery"},
 
+	// Peer-mirror (IPFS gateway) delivery. Same page and section as its two
+	// siblings — an operator triaging "where are my bytes coming from" finds all
+	// three levers together — but its default is DERIVED from IPFS_ENABLED rather
+	// than hardcoded false, because gateway redirects are already what an
+	// IPFS-enabled instance does. See the key's comment.
+	{key: KeyDeliveryIPFSEnabled, kind: KindBool, defBool: func(d Defaults) bool { return d.IPFSEnabled }, validate: validateBool,
+		page: PageAdvanced, section: "delivery"},
+
 	// Playback quality telemetry (phase-4 delivery item 4). Same page and same
 	// section as the two delivery toggles: an operator asking "where are my
 	// bytes coming from" and an operator asking "and is it any good" are the
@@ -1093,6 +1135,26 @@ func (s *Service) override(key string) (string, bool) {
 	v, ok := s.cache[key]
 	s.mu.RUnlock()
 	return v, ok
+}
+
+// Overridden reports whether an admin has SET this key, as opposed to it
+// resolving to its config-derived default.
+//
+// It exists for the keys whose default is derived from an env var, where "the
+// admin has not touched this" and "the admin set it to the same value the env
+// says" must be told apart by the caller. delivery_ipfs_enabled is the case that
+// forced it: its default is IPFS_ENABLED, and that default is resolved from a
+// Defaults struct EVERY caller of NewService has to populate by hand — cmd/api
+// and the httpapi test overlay each build their own. One of them forgetting a
+// field silently turns a feature off, which is the same shape as a compose
+// `:-` fallback shadowing a Go default. Reading this instead lets the caller
+// fall back to ITS OWN config, which it cannot forget to have.
+func (s *Service) Overridden(key string) bool {
+	if _, ok := specByKey[key]; !ok {
+		return false
+	}
+	_, set := s.override(key)
+	return set
 }
 
 // Bool returns the effective boolean value for a bool-kind key: the DB override

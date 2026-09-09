@@ -477,10 +477,16 @@ type fakeLookups struct {
 	// promoted tree" — the mirror must then refuse to pin rather than wrap
 	// whatever the stable prefix holds.
 	hlsTree string
+	// videoBlocked stages a moderator block — the fact BlockVideo writes into
+	// video_blocks and that neither privacy nor state can express.
+	videoBlocked bool
 }
 
 func (l *fakeLookups) VideoVisibility(ctx context.Context, videoID uuid.UUID) (string, string, uuid.UUID, bool, error) {
 	return l.videoPrivacy, l.videoState, uuid.Nil, l.videoOK, nil
+}
+func (l *fakeLookups) VideoBlocked(ctx context.Context, videoID uuid.UUID) (bool, error) {
+	return l.videoBlocked, nil
 }
 func (l *fakeLookups) VideoFiles(ctx context.Context, videoID uuid.UUID) ([]VideoFileRef, error) {
 	return l.videoFiles, nil

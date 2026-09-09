@@ -48,9 +48,17 @@ var (
 	// counts (internal/cdnpurge). They are counts of URLs, never URLs: a purge
 	// path is built from an operator-supplied template that may carry a
 	// credential, so the path itself is refused from logs and from here alike.
+	//
+	// ipfs_unpinned/ipfs_rearmed are the moderation block's effect on the peer
+	// mirror: how many pin-ledger rows a block flipped toward removal, and how many
+	// an unblock re-armed toward publication. Counts of ROWS, never CIDs or object
+	// keys — a CID is a public capability handle and an object key is a media path,
+	// and neither belongs in the security ledger, on exactly the reasoning that
+	// keeps purge URLs out of it.
 	allowedMetadataKeys = stringSet(
 		"attempt", "attempts", "auth_method", "breaker_tripped", "changed_key",
-		"changed_keys", "count", "dry_run", "failed", "mode", "network",
+		"changed_keys", "count", "dry_run", "failed", "ipfs_rearmed",
+		"ipfs_unpinned", "mode", "network",
 		"outcome", "policy", "provider", "purged", "reason_code",
 		"reason_provided", "resolver", "source_version", "stage", "url_count",
 	)

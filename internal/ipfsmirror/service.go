@@ -144,6 +144,12 @@ type ImageRef struct {
 // bool return distinguishes "missing row" (skip, not an error) from a real error.
 type Lookups interface {
 	VideoVisibility(ctx context.Context, videoID uuid.UUID) (privacy, state string, ownerID uuid.UUID, ok bool, err error)
+	// VideoBlocked reports a moderator block (video_blocks). It is a SECOND lookup
+	// rather than a sixth return of VideoVisibility because a block lives in its own
+	// table and is asked about far less often than privacy and state — and because
+	// widening a signature every caller and fake implements, to carry a fact only
+	// the video fence uses, is how that fence ends up with facts nobody checks.
+	VideoBlocked(ctx context.Context, videoID uuid.UUID) (bool, error)
 	VideoFiles(ctx context.Context, videoID uuid.UUID) ([]VideoFileRef, error)
 	VideoCaptionKeys(ctx context.Context, videoID uuid.UUID) ([]string, error)
 	UserFlags(ctx context.Context, userID uuid.UUID) (active, unlisted bool, ok bool, err error)
@@ -187,6 +193,11 @@ type Config struct {
 	// mirror action. In v1 it only ever carries already-node-pinned (public) media
 	// (spec §7); private-media mirroring is out of scope.
 	Cluster ipfs.ClusterClient
+	// Gateway probes IPFS_GATEWAY_URL for a CID this instance publishes — the
+	// health check the server-side redirect is gated on (health.go). Nil means no
+	// probe, which reports not_configured and therefore refuses to redirect: an
+	// unprobed gateway is not evidence that a viewer sent there gets bytes.
+	Gateway GatewayFetcher
 	// Catalog is the read-only source the one-shot admin backfill (P19.6) scans to
 	// seed pin intents for pre-existing eligible objects. Nil except in the wiring
 	// that serves POST /admin/ipfs/reconcile; Backfill errors cleanly when it is nil.
@@ -244,6 +255,20 @@ type Service struct {
 	baseBackoff    time.Duration
 	reconcileBatch int
 	logger         *slog.Logger
+
+	// gateway is the public gateway probe (health.go). Nil on an install with no
+	// IPFS_GATEWAY_URL, which reports not_configured rather than down.
+	gateway GatewayFetcher
+	// publicHealth / privateHealth are the last probe verdicts, written by the
+	// five-minute probe loop and read on every media request's redirect decision
+	// and on every /readyz. Atomic pointers rather than a mutex because the read
+	// side is hot and never needs to see two fields agree with each other.
+	publicHealth  healthSlot
+	privateHealth healthSlot
+	// verifyCursors and strays are the ledger<->node comparison's per-swarm state
+	// (verify.go): where the last page stopped, and what the last stray count was.
+	verifyCursors sync.Map
+	strays        sync.Map
 }
 
 // New builds the mirror service. repo is required; lookups/blobs/client may be
@@ -273,6 +298,7 @@ func New(repo Repository, lookups Lookups, blobs storage.Backend, client ipfs.Cl
 		baseBackoff:    cfg.BaseBackoff,
 		reconcileBatch: cfg.ReconcileBatch,
 		logger:         cfg.Logger,
+		gateway:        cfg.Gateway,
 	}
 	if s.addTimeout <= 0 {
 		s.addTimeout = 60 * time.Second
@@ -412,37 +438,66 @@ func (s *Service) EnqueueChannelImage(ctx context.Context, channelID uuid.UUID, 
 // The HLS directory add itself is enqueued on transcode completion in P19.4; the
 // unpin-all path here already covers its removal. No-op when disabled.
 func (s *Service) SyncVideo(ctx context.Context, videoID uuid.UUID) error {
+	_, err := s.SyncVideoCounted(ctx, videoID)
+	return err
+}
+
+// SyncResult is what one SyncVideo pass DID, for the callers that have to say so
+// on an audit row: how many ledger rows it flipped toward removal, and how many it
+// (re-)armed toward a pin. The moderation handlers are those callers — a block and
+// an unblock are exactly the two transitions whose effect on published bytes an
+// operator must be able to read back later, and "the mirror was told" is not the
+// same claim as "n rows were unpinned".
+type SyncResult struct {
+	Unpinned int
+	Rearmed  int
+}
+
+// SyncVideoCounted is SyncVideo with the tally. See SyncVideo for the semantics.
+func (s *Service) SyncVideoCounted(ctx context.Context, videoID uuid.UUID) (SyncResult, error) {
+	var res SyncResult
 	if !s.enabled {
-		return nil
+		return res, nil
 	}
 	privacy, state, ownerID, ok, err := s.lookups.VideoVisibility(ctx, videoID)
 	if err != nil || !ok {
-		return err
+		return res, err
 	}
 	ownerUnlisted, err := s.ownerUnlistedForVideo(ctx, ownerID)
 	if err != nil {
-		return err
+		return res, err
+	}
+	// The moderator block, which neither privacy nor state can express (2026-09-09
+	// ruling — see Subject.VideoBlocked). Read here, with the other two visibility
+	// facts, so every caller of this one seam gets the same answer: the publish and
+	// update hooks, the moderation handlers, and the re-eval fan-out.
+	blocked, err := s.lookups.VideoBlocked(ctx, videoID)
+	if err != nil {
+		return res, err
 	}
 	// A representative video-derived class decides the WHOLE video's swarm (every
 	// derivative shares one routing gate). effectiveNetwork tier-gates the result, so
 	// with the private tier off a private/unlisted video routes to NONE (unpin all) —
 	// identical to pre-P19.P.
-	net := s.effectiveNetwork(Subject{Class: ClassVideoOriginal, VideoPrivacy: privacy, VideoState: state, OwnerUnlisted: ownerUnlisted})
+	net := s.effectiveNetwork(Subject{Class: ClassVideoOriginal, VideoPrivacy: privacy, VideoState: state, OwnerUnlisted: ownerUnlisted, VideoBlocked: blocked})
 	if net == NetworkNone {
-		return s.unpinAllForVideo(ctx, videoID)
+		n, uerr := s.unpinAllForVideoCounted(ctx, videoID)
+		res.Unpinned = n
+		return res, uerr
 	}
 	// Route every currently-stored single-file ref to net (RouteIPFSPinIntent
 	// transitions an existing row across swarms on a privacy flip).
 	refs, err := s.videoMirrorRefs(ctx, videoID)
 	if err != nil {
-		return err
+		return res, err
 	}
 	seen := make(map[string]bool, len(refs))
 	for _, ref := range refs {
 		seen[ref.ObjectKey] = true
 		if perr := s.routePin(ctx, ref.ObjectKey, ref.Class, videoID, uuid.Nil, net); perr != nil {
-			return perr
+			return res, perr
 		}
+		res.Rearmed++
 	}
 	// Transition any EXISTING ledger row the single-file refs don't enumerate —
 	// notably the HLS tree (armed by OnTranscodeComplete) and any orphan — so a
@@ -451,17 +506,18 @@ func (s *Service) SyncVideo(ctx context.Context, videoID uuid.UUID) error {
 	// re-arms HLS on the new swarm when it next runs, matching the P19 HLS lifecycle).
 	rows, err := s.repo.ListIPFSPinsByVideo(ctx, pgUUID(videoID))
 	if err != nil {
-		return err
+		return res, err
 	}
 	for _, r := range rows {
 		if seen[r.ObjectKey] || r.State == "unpinned" {
 			continue
 		}
 		if perr := s.routePin(ctx, r.ObjectKey, MediaClass(r.MediaClass), videoID, uuid.Nil, net); perr != nil {
-			return perr
+			return res, perr
 		}
+		res.Rearmed++
 	}
-	return nil
+	return res, nil
 }
 
 // UnpinVideo enqueues an unpin for EVERY ledger row of a video — the delete path.
@@ -479,16 +535,25 @@ func (s *Service) UnpinVideo(ctx context.Context, videoID uuid.UUID) error {
 // listing by video_id catches every class — original, VP9, image derivatives and
 // the HLS tree — plus any orphan row whose object key is no longer a current file.
 func (s *Service) unpinAllForVideo(ctx context.Context, videoID uuid.UUID) error {
+	_, err := s.unpinAllForVideoCounted(ctx, videoID)
+	return err
+}
+
+// unpinAllForVideoCounted is unpinAllForVideo with the tally the moderation
+// handlers put on their audit rows.
+func (s *Service) unpinAllForVideoCounted(ctx context.Context, videoID uuid.UUID) (int, error) {
 	rows, err := s.repo.ListIPFSPinsByVideo(ctx, pgUUID(videoID))
 	if err != nil {
-		return err
+		return 0, err
 	}
+	n := 0
 	for _, r := range rows {
 		if err := s.repo.EnqueueIPFSUnpin(ctx, r.ObjectKey); err != nil {
-			return err
+			return n, err
 		}
+		n++
 	}
-	return nil
+	return n, nil
 }
 
 // ownerUnlistedForVideo resolves whether a video's owner currently bars mirroring

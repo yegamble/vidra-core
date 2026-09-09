@@ -322,8 +322,19 @@ WHERE object_key IN (
 -- eligibility-rule change), mirroring the backfill catalog join (ipfs_backfill.sql)
 -- in reverse. This closes the whole class rather than any single trigger.
 --   * video-derived rows (video_id set): ineligible when the parent video is not
---     public+published OR its owner is unlisted (unlisted is private for mirroring,
---     spec §7).
+--     public+published, its owner is unlisted (unlisted is private for mirroring,
+--     spec §7), OR the video is under a MODERATOR BLOCK.
+--
+--     The block clause is the owner's 2026-09-09 ruling, and it needs its own branch
+--     because a block is invisible to every other fact this join reads: BlockVideo
+--     writes a video_blocks row and changes neither videos.privacy nor videos.state,
+--     so a blocked video's rows stayed 'pinned' and its CIDs stayed retrievable from
+--     the public gateway while every Vidra surface 404'd it — measured in the A31 lab.
+--     A block now unpins on BOTH swarms, exactly as a privacy flip does; lifting the
+--     block makes the video eligible again and the unblock handler re-arms it.
+--     Deliberately EXISTS rather than a LEFT JOIN: video_blocks is keyed by video_id
+--     and a join would multiply nothing, but the semi-join says "is there a block"
+--     rather than "fetch the block", which is the whole question.
 --   * video-derived rows ORPHANED BY A DELETE (video_id NULL, branch 4): see below.
 --   * identity-image rows (owner_user_id set, video_id NULL): ineligible when the
 --     owner is inactive (deactivated/soft-deleted) OR unlisted.
@@ -356,7 +367,8 @@ WITH ineligible AS (
     WHERE p.video_id IS NOT NULL
       AND p.network = 'public'
       AND p.state IN ('pinned', 'pending')
-      AND (v.privacy <> 'public' OR v.state <> 'published' OR u.unlisted)
+      AND (v.privacy <> 'public' OR v.state <> 'published' OR u.unlisted
+           OR EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id))
 
     UNION
 
@@ -377,7 +389,8 @@ WITH ineligible AS (
     WHERE p.video_id IS NOT NULL
       AND p.network = 'private'
       AND p.state IN ('pinned', 'pending')
-      AND v.state <> 'published'
+      AND (v.state <> 'published'
+           OR EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id))
 
     UNION
 
@@ -434,3 +447,117 @@ WHERE state = 'pinned'
   AND network = 'public'
   AND video_id IS NOT NULL
   AND video_id = ANY(sqlc.arg('video_ids')::uuid[]);
+
+-- name: ListIPFSPinsForVerify :many
+-- The LEDGER half of the ledger<->node reconciliation (A31 follow-up): one page of
+-- rows this instance believes are pinned on `network`, so the sweep can ask the node
+-- whether they actually are.
+--
+-- KEYSET, not OFFSET, and not "oldest first". A31 measured that reconcile never
+-- compares in either direction; the fix has to compare the WHOLE ledger eventually
+-- without ever scanning it all at once. Ordering by updated_at would re-verify the
+-- same oldest rows on every tick forever, because verifying a healthy row does not
+-- touch it — the cursor has to advance on something the sweep does not mutate.
+-- object_key is the primary key, so paging on it is index-ordered, stable under
+-- concurrent writes, and needs no new column (the alternative, a last_verified_at,
+-- would be a migration for a cursor the process can just hold in memory: a restart
+-- costs at most one restarted cycle).
+--
+-- Only 'pinned' rows with a real CID are verifiable. A 'pending' row is not yet
+-- claimed to be on the node and an 'unpinning' row is on its way off it; asserting
+-- either against the node would fight the worker.
+SELECT object_key, media_class, cid, network, video_id
+FROM media_ipfs_pins
+WHERE network = sqlc.arg(network)
+  AND state = 'pinned'
+  AND cid <> ''
+  AND object_key > sqlc.arg(after_object_key)
+ORDER BY object_key
+LIMIT sqlc.arg(batch_size);
+
+-- name: ListLiveIPFSPinCIDs :many
+-- The other half of the same comparison: every CID this instance has a LIVE claim on
+-- for `network`, so a pin on the node that appears in none of them is a stray.
+--
+-- The state filter is deliberately WIDER than the verify page's. A stray verdict is
+-- an accusation about a pin nothing accounts for, so it must be checked against every
+-- row that could legitimately be holding that CID right now — including a 'pending'
+-- row whose add already pinned the bytes and a row mid-'unpinning'. Narrowing this to
+-- 'pinned' would report a pin as unaccounted-for during the exact window in which the
+-- worker is accounting for it.
+--
+-- DISTINCT because content addressing means several object keys legitimately share
+-- one CID (the reference-count guard exists for precisely that).
+SELECT DISTINCT cid
+FROM media_ipfs_pins
+WHERE network = sqlc.arg(network)
+  AND cid <> ''
+  AND state IN ('pinned', 'pending', 'unpinning')
+LIMIT sqlc.arg(max_rows);
+
+-- name: RearmLostIPFSPin :execrows
+-- Re-arm ONE row whose CID the node no longer pins (the direction A31 staged by
+-- hand and measured as "nothing — the ledger still says pinned, the node still does
+-- not have it"). Back to 'pending' so the next drain re-adds and re-pins it.
+--
+-- The CID is PRESERVED rather than cleared, exactly as RepinIPFSObject preserves it:
+-- the worker compares the freshly-added CID against it and swapUnpin no-ops when
+-- they match, which for a lost single-file pin they always will (content addressing).
+-- Clearing it would only lose the record of what this row used to publish.
+--
+-- Guarded on BOTH the state and the CID the sweep actually verified. Between the
+-- node listing its pins and this statement a privacy flip, a delete or a re-transcode
+-- may have moved the row; every one of those is a better-informed writer than a
+-- reconciliation pass, and each of them wins by making this update match nothing.
+UPDATE media_ipfs_pins
+SET state = 'pending', attempts = 0, next_attempt_at = now(), last_error = '', updated_at = now()
+WHERE object_key = sqlc.arg(object_key)
+  AND state = 'pinned'
+  AND cid = sqlc.arg(cid);
+
+-- name: IPFSPinLedgerHealth :one
+-- The three facts the `ipfs` admin component states behind its verdict, on the
+-- federation-health pattern: how much work is queued, how much has given up, and
+-- when this instance last actually published something. Scoped per swarm — the public
+-- tier's backlog says nothing about the private tier's.
+--
+-- last_pinned_age_seconds is the one that separates a drained queue from a queue
+-- nothing is draining: both read zero backlog. It is derived from the row's
+-- updated_at rather than a dedicated column — exact for a row that reached 'pinned'
+-- and never moved again, and the only reading available without a migration. It is
+-- returned as an AGE rather than a timestamp so the column is never NULL: an empty
+-- ledger would scan a NULL into time.Time and fail the whole component read, and the
+-- caller already knows the age means nothing when pinned = 0.
+SELECT
+    count(*) FILTER (WHERE state IN ('pending', 'unpinning'))::bigint AS backlog,
+    count(*) FILTER (WHERE state = 'failed')::bigint                  AS dead_lettered,
+    count(*) FILTER (WHERE state = 'pinned')::bigint                  AS pinned,
+    COALESCE(EXTRACT(EPOCH FROM (now() - min(next_attempt_at) FILTER (WHERE state IN ('pending', 'unpinning'))))::bigint, 0)::bigint AS oldest_backlog_age_seconds,
+    COALESCE(EXTRACT(EPOCH FROM (now() - max(updated_at) FILTER (WHERE state = 'pinned')))::bigint, 0)::bigint AS last_pinned_age_seconds
+FROM media_ipfs_pins
+WHERE network = sqlc.arg(network);
+
+-- name: IPFSPinJobStats :one
+-- The pin ledger's depth row on /admin/jobs (A31: "the mirror runs are invisible to
+-- the job surface"). media_ipfs_pins is a real durable queue — claim, lease, attempts,
+-- next_attempt_at — so it belongs in the same overview as the other eight, and it gets
+-- the same treatment storage_migrations and cdn_purge_jobs got: a depth snapshot.
+--
+-- The state mapping is the ledger's, stated once: 'pending' and 'unpinning' are both
+-- claimable work, so they are the queue's PENDING; there is no separate running state
+-- (a claimed row keeps its state and moves next_attempt_at out by the lease), so
+-- running is structurally 0 rather than unknown; 'pinned' and 'unpinned' are both
+-- terminal successes and count as DONE; 'failed' is the dead letter.
+--
+-- oldest_pending_age is measured from next_attempt_at, not created_at, because this
+-- queue's backoff is expressed there: a row walking its retry ladder honestly has a
+-- future next_attempt_at and contributes a negative age, which COALESCE/GREATEST
+-- floors at 0 — so the number an operator reads is "how overdue is the oldest due
+-- row", which is the question that distinguishes a busy drain from a stopped one.
+SELECT
+    count(*) FILTER (WHERE state IN ('pending', 'unpinning'))::bigint  AS pending,
+    0::bigint                                                          AS running,
+    count(*) FILTER (WHERE state IN ('pinned', 'unpinned'))::bigint    AS done,
+    count(*) FILTER (WHERE state = 'failed')::bigint                   AS failed,
+    GREATEST(COALESCE(EXTRACT(EPOCH FROM (now() - min(next_attempt_at) FILTER (WHERE state IN ('pending', 'unpinning'))))::bigint, 0), 0)::bigint AS oldest_pending_age_seconds
+FROM media_ipfs_pins;

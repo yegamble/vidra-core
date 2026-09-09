@@ -25,6 +25,7 @@ type fakeQuerier struct {
 	upload    sqlcgen.UploadSessionStatsRow
 	storagemi sqlcgen.StorageMigrationStatsRow
 	cdnpurge  sqlcgen.CDNPurgeJobStatsRow
+	ipfspins  sqlcgen.IPFSPinJobStatsRow
 
 	transcodeFails []sqlcgen.TranscodeRecentFailuresRow
 	fedFails       []sqlcgen.FederationRecentFailuresRow
@@ -165,6 +166,9 @@ func (f *fakeQuerier) CDNPurgeJobStats(context.Context) (sqlcgen.CDNPurgeJobStat
 func (f *fakeQuerier) CDNPurgeRecentFailures(context.Context, int32) ([]sqlcgen.CDNPurgeRecentFailuresRow, error) {
 	return f.cdnpurgeFails, nil
 }
+func (f *fakeQuerier) IPFSPinJobStats(context.Context) (sqlcgen.IPFSPinJobStatsRow, error) {
+	return f.ipfspins, nil
+}
 
 func TestOverviewNormalisesAndMergesFailures(t *testing.T) {
 	now := time.Now()
@@ -193,8 +197,8 @@ func TestOverviewNormalisesAndMergesFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Overview: %v", err)
 	}
-	if len(ov.Queues) != 8 {
-		t.Fatalf("want 8 queues, got %d", len(ov.Queues))
+	if len(ov.Queues) != 9 {
+		t.Fatalf("want 9 queues, got %d", len(ov.Queues))
 	}
 	if ov.Queues[0].Queue != QueueTranscode || ov.Queues[0].Pending != 2 || ov.Queues[0].OldestPendingAgeSeconds != 42 {
 		t.Errorf("transcode queue = %+v", ov.Queues[0])
@@ -246,9 +250,9 @@ func TestDepthsFlattensAllStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Depths: %v", err)
 	}
-	// 8 queues x 4 states.
-	if len(depths) != 32 {
-		t.Fatalf("want 32 depth samples, got %d", len(depths))
+	// 9 queues x 4 states.
+	if len(depths) != 36 {
+		t.Fatalf("want 36 depth samples, got %d", len(depths))
 	}
 	seen := map[string]int64{}
 	for _, d := range depths {
