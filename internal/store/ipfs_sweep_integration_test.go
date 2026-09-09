@@ -176,3 +176,140 @@ func TestSweepIneligibleIPFSPinsJoin(t *testing.T) {
 		t.Errorf("case 5: private-swarm row state = %q, want unpinning (quarantined ⇒ off every swarm)", got)
 	}
 }
+
+// TestSweepIneligibleIPFSPinsOrphanedByDelete is the A31 regression: hard-deleting a
+// video must not leave its bytes pinned.
+//
+// THE DEFECT THIS CLOSES (measured in the A31 lab, docs/release-readiness.md).
+// media_ipfs_pins.video_id references videos(id) ON DELETE SET NULL, and the video
+// service fires its delete hooks AFTER the row is gone. So by the time the mirror's
+// hook calls UnpinVideo(id) the FK has already NULLed video_id on every one of that
+// video's ledger rows; ListIPFSPinsByVideo returns nothing, the unpin is a silent
+// no-op, and the rows stay 'pinned' with no provenance left. Nothing could then reach
+// them: branch 1 requires video_id, branch 2 requires owner_user_id, and the pins
+// survive on the node — on the PUBLIC swarm, that is deleted content left permanently
+// retrievable from any gateway that ever cached the CID.
+//
+// A video-derived row (the classes ipfsmirror.isVideoDerived accepts) always carries
+// video_id at enqueue, so such a row with video_id NULL can ONLY be one of these
+// orphans, on either swarm. Identity images are video_id-NULL by design but carry
+// owner_user_id (branch 2); playlist covers carry neither and stay out of scope.
+func TestSweepIneligibleIPFSPinsOrphanedByDelete(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suffix := uuid.NewString()[:8]
+	var owner uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+		"orphan-"+suffix, "orphan-"+suffix+"@example.test",
+	).Scan(&owner); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	defer func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, owner) }()
+
+	var chID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'Orphan') RETURNING id`,
+		owner, "orphan_"+suffix,
+	).Scan(&chID); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	var vidID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO videos (channel_id, title, description, privacy, state, category)
+		 VALUES ($1, 'Orphan Probe', '', 'public', 'published', 'science') RETURNING id`,
+		chID,
+	).Scan(&vidID); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+
+	const cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+	pubKey := "web-videos/" + vidID.String() + ".mp4"
+	hlsKey := "streaming-playlists/" + vidID.String() + "/"
+	privKey := "private-videos/" + vidID.String() + ".mp4"
+	imgKey := "avatars/users/" + owner.String() + ".png"
+	coverKey := "playlist-thumbnails/" + uuid.NewString() + ".jpg"
+	keys := []string{pubKey, hlsKey, privKey, imgKey, coverKey}
+	defer func() {
+		_, _ = st.Pool.Exec(context.Background(),
+			`DELETE FROM media_ipfs_pins WHERE object_key = ANY($1)`, keys)
+	}()
+	seedPin := func(key, class, network string, videoID, ownerID *uuid.UUID) {
+		if _, err := st.Pool.Exec(ctx,
+			`INSERT INTO media_ipfs_pins (object_key, media_class, cid, state, network, video_id, owner_user_id)
+			 VALUES ($1, $2, $3, 'pinned', $4, $5, $6)`,
+			key, class, cid, network, videoID, ownerID,
+		); err != nil {
+			t.Fatalf("seed pin %s: %v", key, err)
+		}
+	}
+	seedPin(pubKey, "video_original", "public", &vidID, nil)
+	seedPin(hlsKey, "hls", "public", &vidID, nil)
+	seedPin(privKey, "video_original", "private", &vidID, nil)
+	seedPin(imgKey, "user_avatar", "public", nil, &owner) // identity image: branch 2's, not ours
+	seedPin(coverKey, "playlist_cover", "public", nil, nil)
+
+	state := func(key string) string {
+		var s string
+		if err := st.Pool.QueryRow(ctx, `SELECT state FROM media_ipfs_pins WHERE object_key = $1`, key).Scan(&s); err != nil {
+			t.Fatalf("read state %s: %v", key, err)
+		}
+		return s
+	}
+
+	// Nothing is ineligible yet: the video is public+published and the owner is
+	// listed+active, so the sweep must not touch a single row.
+	if n, err := q.SweepIneligibleIPFSPins(ctx, 100); err != nil || n != 0 {
+		t.Fatalf("pre-delete sweep = (%d, %v), want (0, nil)", n, err)
+	}
+
+	// THE DELETE. This is the real FK behaviour, not a simulation: the rows keep
+	// their keys and CIDs and lose their provenance.
+	if _, err := st.Pool.Exec(ctx, `DELETE FROM videos WHERE id = $1`, vidID); err != nil {
+		t.Fatalf("delete video: %v", err)
+	}
+	for _, key := range []string{pubKey, hlsKey, privKey} {
+		var videoID *uuid.UUID
+		if err := st.Pool.QueryRow(ctx, `SELECT video_id FROM media_ipfs_pins WHERE object_key = $1`, key).Scan(&videoID); err != nil {
+			t.Fatalf("read video_id %s: %v", key, err)
+		}
+		if videoID != nil {
+			t.Fatalf("%s kept video_id %v after the video was deleted; this test's premise is wrong", key, *videoID)
+		}
+	}
+
+	// The sweep must now re-arm exactly the three orphans — on BOTH swarms, since a
+	// deleted video is eligible nowhere — and leave the identity image and the
+	// provenance-less playlist cover alone.
+	n, err := q.SweepIneligibleIPFSPins(ctx, 100)
+	if err != nil {
+		t.Fatalf("SweepIneligibleIPFSPins: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("post-delete sweep re-armed %d rows, want 3 (the deleted video's orphans)", n)
+	}
+	for _, key := range []string{pubKey, hlsKey, privKey} {
+		if got := state(key); got != "unpinning" {
+			t.Errorf("orphan %s state = %q, want unpinning", key, got)
+		}
+	}
+	if got := state(imgKey); got != "pinned" {
+		t.Errorf("identity image state = %q, want pinned (owner still listed+active)", got)
+	}
+	if got := state(coverKey); got != "pinned" {
+		t.Errorf("playlist cover state = %q, want pinned (out of sweep scope)", got)
+	}
+
+	// Idempotent: a second sweep finds nothing left to re-arm.
+	if n, err := q.SweepIneligibleIPFSPins(ctx, 100); err != nil || n != 0 {
+		t.Fatalf("second sweep = (%d, %v), want (0, nil)", n, err)
+	}
+}

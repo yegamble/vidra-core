@@ -1,6 +1,12 @@
 package ipfsmirror
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
 
 // TestRouteTable is THE privacy fence (spec §4, eligibility matrix v2): every media
 // class is asserted across visibility states AND the expected SWARM it routes to —
@@ -112,5 +118,55 @@ func TestRouteTable(t *testing.T) {
 			t.Errorf("never-mirror class %q: Route=%q even with permissive facts, want %q (privacy fence breach)",
 				cls, got, NetworkNone)
 		}
+	}
+}
+
+// TestSweepVideoDerivedClassesMatchQuery keeps the eligibility backstop's SQL in step
+// with this package's class model.
+//
+// SweepIneligibleIPFSPins branch 4 (A31) re-arms a video-derived ledger row whose
+// video_id the delete FK nulled. It cannot JOIN its way to that judgement — the
+// provenance is gone — so it names the video-derived classes literally, and a class
+// added to isVideoDerived but not to that list would be an orphan the sweep silently
+// walks past: bytes left pinned for a deleted video. This asserts the two lists are
+// the same set, in the only place that knows both.
+func TestSweepVideoDerivedClassesMatchQuery(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "store", "queries", "media_ipfs_pins.sql"))
+	if err != nil {
+		t.Fatalf("read query file: %v", err)
+	}
+	_, after, ok := strings.Cut(string(raw), "-- Branch 4 — THE DELETED VIDEO'S ORPHANS")
+	if !ok {
+		t.Fatal("branch 4 (the delete-orphan sweep) is gone from media_ipfs_pins.sql")
+	}
+	_, after, ok = strings.Cut(after, "p.media_class IN (")
+	if !ok {
+		t.Fatal("branch 4 no longer names the media classes it sweeps")
+	}
+	list, _, ok := strings.Cut(after, ")")
+	if !ok {
+		t.Fatal("branch 4's media_class IN (...) list is unreadable")
+	}
+	inQuery := map[MediaClass]bool{}
+	for _, m := range regexp.MustCompile(`'([a-z_]+)'`).FindAllStringSubmatch(list, -1) {
+		inQuery[MediaClass(m[1])] = true
+	}
+
+	// Every class this package knows, so a NEW constant is covered by construction.
+	all := []MediaClass{
+		ClassVideoOriginal, ClassHLS, ClassWebM, ClassThumbnail, ClassStoryboard,
+		ClassStoryboardVTT, ClassCaption, ClassUserAvatar, ClassUserBanner,
+		ClassChannelAvatar, ClassChannelBanner, ClassPlaylistCover,
+		ClassDMAttachment, ClassAccountExport, ClassUploadChunk, ClassLiveEdge,
+		ClassRemoteThumbnail,
+	}
+	for _, c := range all {
+		if want, got := isVideoDerived(c), inQuery[c]; want != got {
+			t.Errorf("class %q: isVideoDerived=%v but present in the sweep's branch-4 list=%v", c, want, got)
+		}
+		delete(inQuery, c)
+	}
+	for c := range inQuery {
+		t.Errorf("the sweep's branch-4 list names %q, which is not a media class this package declares", c)
 	}
 }

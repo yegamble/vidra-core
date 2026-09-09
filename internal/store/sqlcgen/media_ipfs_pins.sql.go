@@ -671,6 +671,32 @@ WITH ineligible AS (
       AND p.state IN ('pinned', 'pending')
       AND v.state <> 'published'
 
+    UNION
+
+    -- Branch 4 — THE DELETED VIDEO'S ORPHANS, on EITHER swarm (A31).
+    -- video_id references videos(id) ON DELETE SET NULL and the video service fires
+    -- its delete hooks AFTER the row is gone, so the FK has already NULLed video_id
+    -- by the time the mirror's hook calls UnpinVideo(id): ListIPFSPinsByVideo returns
+    -- nothing, the unpin is a silent no-op, and the rows stay 'pinned' with no
+    -- provenance left for branch 1 (needs video_id) or branch 2 (needs owner_user_id)
+    -- to reach. On the public swarm that is deleted content left permanently
+    -- retrievable from any gateway — measured in the A31 lab.
+    -- Every video-derived row carries video_id at enqueue (routePin), so a row of one
+    -- of THOSE classes with video_id NULL can only be such an orphan. Identity images
+    -- are video_id-NULL by design but carry owner_user_id and stay branch 2's;
+    -- playlist covers carry neither and stay out of this sweep's scope, unchanged.
+    -- The class list mirrors ipfsmirror.isVideoDerived and is asserted to stay in step
+    -- with it by TestSweepVideoDerivedClassesMatchQuery.
+    SELECT p.object_key
+    FROM media_ipfs_pins p
+    WHERE p.video_id IS NULL
+      AND p.owner_user_id IS NULL
+      AND p.media_class IN (
+          'video_original', 'hls', 'webm', 'thumbnail',
+          'storyboard', 'storyboard_vtt', 'caption'
+      )
+      AND p.state IN ('pinned', 'pending')
+
     LIMIT $1
 )
 UPDATE media_ipfs_pins
@@ -686,7 +712,8 @@ WHERE object_key IN (SELECT object_key FROM ineligible)
 // in reverse. This closes the whole class rather than any single trigger.
 //   - video-derived rows (video_id set): ineligible when the parent video is not
 //     public+published OR its owner is unlisted (unlisted is private for mirroring,
-//     spec §7). A deleted video/owner FK-nulls video_id (handled by the delete path).
+//     spec §7).
+//   - video-derived rows ORPHANED BY A DELETE (video_id NULL, branch 4): see below.
 //   - identity-image rows (owner_user_id set, video_id NULL): ineligible when the
 //     owner is inactive (deactivated/soft-deleted) OR unlisted.
 //
