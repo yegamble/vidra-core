@@ -294,6 +294,15 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 		case errors.Is(err, auth.ErrOwnerClaimRequired):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "owner_claim_required")
 			return oauthErrorRedirect(c, returnTo, "owner_claim_required")
+		// The instance's registration policy, for a first sign-in only: an
+		// already-linked identity never reaches these (it logged in above), so
+		// closing signups does not sign anyone out.
+		case errors.Is(err, auth.ErrRegistrationClosed):
+			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "registration_closed")
+			return oauthErrorRedirect(c, returnTo, "registration_closed")
+		case errors.Is(err, auth.ErrRegistrationPending):
+			s.audit(c, observability.ActionRegistrationRequest, observability.ResultSuccess, "", "pending_approval")
+			return oauthErrorRedirect(c, returnTo, "registration_pending")
 		case errors.Is(err, auth.ErrConflict), errors.Is(err, auth.ErrHandleReserved):
 			s.audit(c, observability.ActionLogin, observability.ResultFailure, "", "oauth_conflict")
 			return oauthErrorRedirect(c, returnTo, "conflict")

@@ -545,6 +545,14 @@ func run() error {
 		auth.WithEmailVerificationGateFunc(func() bool {
 			return mailWired && settingssvc.Bool(instancesettings.KeyRegistrationRequireEmailVerification)
 		}),
+		// The registration policy the PROVIDER signup paths must honour. The
+		// password path reads these two settings in the HTTP layer; OIDC and
+		// ATProto cannot, because whether an assertion is a signup or a login
+		// for an existing identity is only known inside the service.
+		auth.WithRegistrationPolicyFunc(func() (bool, bool) {
+			return settingssvc.Bool(instancesettings.KeyRegistrationEnabled),
+				settingssvc.Bool(instancesettings.KeyRegistrationRequireApproval)
+		}),
 		// The signup-decision notices (A16) put the sign-in page in the approval
 		// mail. Empty when the operator configured no canonical origin, in which
 		// case the message carries no link rather than a guessed host.

@@ -203,3 +203,59 @@ func (s *Service) RejectRegistration(ctx context.Context, adminID, requestID uui
 	}
 	return nil
 }
+
+// ProviderRegistrationInput is a verified provider identity awaiting review:
+// the account it would create, plus the identity to attach on approval.
+type ProviderRegistrationInput struct {
+	Username string
+	Email    string
+	// Provider is an OAUTH_PROVIDERS name or atprotoProvider; Subject is the
+	// OIDC `sub` or the ATProto DID.
+	Provider string
+	Subject  string
+	// Handle is the ATProto display handle (nil for OIDC).
+	Handle *string
+	// IdentityEmail is what goes on the oauth_identities row, which is NOT
+	// always the account address — an ATProto identity deliberately stores ''
+	// while the account carries a synthetic placeholder (A30).
+	IdentityEmail string
+	EmailVerified bool
+}
+
+// RequestProviderRegistration files (or re-reports) a pending registration
+// request for a verified provider identity, and always errors: the caller must
+// not mint a session for an applicant who has not been approved.
+//
+// It returns ErrRegistrationPending both for the attempt that files the request
+// and for every later attempt while it is unresolved, so a returning applicant
+// is told the same thing rather than a conflict they cannot act on. A request
+// that was REJECTED does not block a new one — the partial unique index covers
+// pending rows only — which keeps a rejection a decision about an application
+// rather than a permanent ban the queue cannot express.
+func (s *Service) RequestProviderRegistration(ctx context.Context, in ProviderRegistrationInput) error {
+	if _, err := s.repo.GetPendingProviderRegistrationRequest(ctx, sqlcgen.GetPendingProviderRegistrationRequestParams{
+		OauthProvider: &in.Provider, OauthSubject: &in.Subject,
+	}); err == nil {
+		return ErrRegistrationPending
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if _, err := s.repo.CreateProviderRegistrationRequest(ctx, sqlcgen.CreateProviderRegistrationRequestParams{
+		Username:           in.Username,
+		Email:              in.Email,
+		OauthProvider:      &in.Provider,
+		OauthSubject:       &in.Subject,
+		OauthHandle:        in.Handle,
+		OauthEmail:         in.IdentityEmail,
+		OauthEmailVerified: in.EmailVerified,
+	}); err != nil {
+		if pgconv.IsUniqueViolation(err) {
+			// A pending request already claims this username or address. The
+			// applicant cannot rename themselves here, so this is still
+			// "awaiting approval" from where they stand.
+			return ErrRegistrationPending
+		}
+		return err
+	}
+	return ErrRegistrationPending
+}

@@ -16,16 +16,31 @@ import (
 const approveRegistrationRequest = `-- name: ApproveRegistrationRequest :one
 WITH req AS (
     SELECT registration_requests.id, registration_requests.username,
-           registration_requests.email, registration_requests.password_hash
+           registration_requests.email, registration_requests.password_hash,
+           registration_requests.oauth_provider, registration_requests.oauth_subject,
+           registration_requests.oauth_handle, registration_requests.oauth_email,
+           registration_requests.oauth_email_verified
     FROM registration_requests
     WHERE registration_requests.id = $1 AND registration_requests.status = 'pending'
 ),
 ins AS (
-    INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled)
+    INSERT INTO users (username, email, password_hash, role, pending_email_verification, history_enabled, email_verified)
     SELECT req.username, req.email, req.password_hash, 'user',
-           $2::bool, $3::bool
+           -- A provider request is never held for email verification: the IdP
+           -- attested the address, exactly as the direct provider create path
+           -- reasons (internal/auth/oauth.go).
+           $2::bool AND req.oauth_provider IS NULL,
+           $3::bool,
+           req.oauth_email_verified
     FROM req
     RETURNING id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, pending_email_verification
+),
+ident AS (
+    INSERT INTO oauth_identities (provider, subject, user_id, email, handle)
+    SELECT req.oauth_provider, req.oauth_subject, ins.id, req.oauth_email, req.oauth_handle
+    FROM req, ins
+    WHERE req.oauth_provider IS NOT NULL
+    RETURNING oauth_identities.id
 ),
 upd AS (
     UPDATE registration_requests
@@ -68,6 +83,10 @@ type ApproveRegistrationRequestRow struct {
 // row is returned (the service maps that to not-found). If the username/email is
 // now taken, the users insert raises a unique violation and the whole statement
 // rolls back, leaving the request pending.
+// Attach the identity the applicant applied WITH, so the approved account signs
+// in through the same subject rather than merely one asserting the same address.
+// In the same statement as the user insert: an account with no credential is
+// exactly the state a second query could leave behind if it failed.
 func (q *Queries) ApproveRegistrationRequest(ctx context.Context, arg ApproveRegistrationRequestParams) (ApproveRegistrationRequestRow, error) {
 	row := q.db.QueryRow(ctx, approveRegistrationRequest,
 		arg.ID,
@@ -106,6 +125,70 @@ func (q *Queries) CountRegistrationRequests(ctx context.Context, status *string)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const createProviderRegistrationRequest = `-- name: CreateProviderRegistrationRequest :one
+INSERT INTO registration_requests (
+    username, email, password_hash, note,
+    oauth_provider, oauth_subject, oauth_handle, oauth_email, oauth_email_verified
+)
+VALUES (
+    $1, $2, '', '',
+    $3, $4, $5,
+    $6, $7
+)
+RETURNING id, username, email, note, status, moderator_note, reviewed_at, created_at
+`
+
+type CreateProviderRegistrationRequestParams struct {
+	Username           string  `json:"username"`
+	Email              string  `json:"email"`
+	OauthProvider      *string `json:"oauth_provider"`
+	OauthSubject       *string `json:"oauth_subject"`
+	OauthHandle        *string `json:"oauth_handle"`
+	OauthEmail         string  `json:"oauth_email"`
+	OauthEmailVerified bool    `json:"oauth_email_verified"`
+}
+
+type CreateProviderRegistrationRequestRow struct {
+	ID            uuid.UUID          `json:"id"`
+	Username      string             `json:"username"`
+	Email         string             `json:"email"`
+	Note          string             `json:"note"`
+	Status        string             `json:"status"`
+	ModeratorNote string             `json:"moderator_note"`
+	ReviewedAt    pgtype.Timestamptz `json:"reviewed_at"`
+	CreatedAt     time.Time          `json:"created_at"`
+}
+
+// File a pending registration request for a VERIFIED provider identity (OIDC or
+// ATProto). password_hash is ” by the same convention users.password_hash uses
+// for provider-created accounts — an empty hash bcrypt can never verify — so the
+// approved account's only credential is the identity attached at approval.
+// A duplicate PENDING request for the same identity, username or email raises a
+// unique violation (23505).
+func (q *Queries) CreateProviderRegistrationRequest(ctx context.Context, arg CreateProviderRegistrationRequestParams) (CreateProviderRegistrationRequestRow, error) {
+	row := q.db.QueryRow(ctx, createProviderRegistrationRequest,
+		arg.Username,
+		arg.Email,
+		arg.OauthProvider,
+		arg.OauthSubject,
+		arg.OauthHandle,
+		arg.OauthEmail,
+		arg.OauthEmailVerified,
+	)
+	var i CreateProviderRegistrationRequestRow
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.Note,
+		&i.Status,
+		&i.ModeratorNote,
+		&i.ReviewedAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const createRegistrationRequest = `-- name: CreateRegistrationRequest :one
@@ -151,6 +234,43 @@ func (q *Queries) CreateRegistrationRequest(ctx context.Context, arg CreateRegis
 		&i.Status,
 		&i.ModeratorNote,
 		&i.ReviewedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getPendingProviderRegistrationRequest = `-- name: GetPendingProviderRegistrationRequest :one
+SELECT id, username, email, status, created_at
+FROM registration_requests
+WHERE oauth_provider = $1
+  AND oauth_subject = $2
+  AND status = 'pending'
+`
+
+type GetPendingProviderRegistrationRequestParams struct {
+	OauthProvider *string `json:"oauth_provider"`
+	OauthSubject  *string `json:"oauth_subject"`
+}
+
+type GetPendingProviderRegistrationRequestRow struct {
+	ID        uuid.UUID `json:"id"`
+	Username  string    `json:"username"`
+	Email     string    `json:"email"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// The unresolved request for a provider identity, if any. Lets a repeat sign-in
+// answer "still pending" instead of filing a duplicate or, worse, reporting a
+// conflict the applicant cannot act on.
+func (q *Queries) GetPendingProviderRegistrationRequest(ctx context.Context, arg GetPendingProviderRegistrationRequestParams) (GetPendingProviderRegistrationRequestRow, error) {
+	row := q.db.QueryRow(ctx, getPendingProviderRegistrationRequest, arg.OauthProvider, arg.OauthSubject)
+	var i GetPendingProviderRegistrationRequestRow
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.Status,
 		&i.CreatedAt,
 	)
 	return i, err

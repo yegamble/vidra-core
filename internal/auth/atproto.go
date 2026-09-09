@@ -417,6 +417,23 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 	if err := s.auth.refuseIfOwnerUnclaimed(ctx); err != nil {
 		return OAuthSession{}, err
 	}
+	// And the registration policy, for the reason the OIDC twin states: an
+	// instance with signups closed or behind approval must not mint accounts
+	// through a provider either. Reached only on the CREATE branch.
+	requireApproval, err := s.auth.refuseSignupByPolicy()
+	if err != nil {
+		return OAuthSession{}, err
+	}
+	if requireApproval {
+		return OAuthSession{}, s.auth.RequestProviderRegistration(ctx, ProviderRegistrationInput{
+			Username: username,
+			Email:    sanitizeDIDForEmail(did) + atprotoEmailDomain,
+			Provider: atprotoProvider, Subject: did, Handle: handle,
+			// The identity row stores '' and the account keeps the synthetic
+			// address, exactly as the direct create path below does.
+			IdentityEmail: "", EmailVerified: false,
+		})
+	}
 	user, err := s.repo.CreateUser(ctx, sqlcgen.CreateUserParams{
 		Username: username,
 		// Synthetic, RFC 2606-reserved, never-routable email (ATProto login has no
