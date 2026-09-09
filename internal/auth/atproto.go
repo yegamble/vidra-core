@@ -269,12 +269,47 @@ func (s *ATProtoOAuthService) Begin(ctx context.Context, handle, returnTo string
 // the iss / sub / scope invariants, then resolves the verified DID to a Vidra
 // session (login an existing linked account, or create a new one). It discards
 // the PDS tokens.
-func (s *ATProtoOAuthService) Complete(ctx context.Context, st ATProtoState, code, iss, userAgent string) (sqlcgen.User, Tokens, OAuthOutcome, error) {
+func (s *ATProtoOAuthService) Complete(ctx context.Context, st ATProtoState, code, iss, userAgent string) (OAuthSession, error) {
 	did, err := s.VerifyAssertion(ctx, st, code, iss)
 	if err != nil {
-		return sqlcgen.User{}, Tokens{}, "", err
+		return OAuthSession{}, err
 	}
 	return s.resolveATProtoIdentity(ctx, st, did, userAgent)
+}
+
+// ResolveVerified turns an ALREADY-verified DID into a session, following the
+// login-or-create ladder. The authorization code is single-use, so the HTTP
+// layer verifies once (VerifyAssertion) and then decides — login, link, or
+// refuse — which is what this seam exists for.
+func (s *ATProtoOAuthService) ResolveVerified(ctx context.Context, st ATProtoState, did, userAgent string) (OAuthSession, error) {
+	return s.resolveATProtoIdentity(ctx, st, did, userAgent)
+}
+
+// LinkIdentity attaches a verified DID to the account the caller is signed in
+// to (the settings link flow). It is the OIDC twin, and it delegates to it so
+// the two cannot drift: ATProto identities live in the same oauth_identities
+// table under provider="atproto", so the same subject-claimed and
+// provider-already-linked refusals apply verbatim. There is no email to reason
+// about — an ATProto login carries none.
+func (s *ATProtoOAuthService) LinkIdentity(ctx context.Context, userID uuid.UUID, st ATProtoState, did string) (OAuthOutcome, error) {
+	if !s.enabled {
+		return "", ErrATProtoDisabled
+	}
+	linker := &OAuthService{repo: s.repo, auth: s.auth}
+	return linker.LinkIdentity(ctx,
+		userID,
+		OAuthAssertion{Provider: atprotoProvider, Subject: did},
+		atprotoHandlePtr(st.Handle),
+	)
+}
+
+// SubjectClaimedByOther reports whether a DID is already linked to an account
+// other than userID, so the link START can refuse before the consent screen.
+// Unlike OIDC, ATProto resolves its subject at Begin, so this check is
+// available before the round trip rather than only after it.
+func (s *ATProtoOAuthService) SubjectClaimedByOther(ctx context.Context, did string, userID uuid.UUID) bool {
+	ident, err := s.repo.GetOAuthIdentity(ctx, sqlcgen.GetOAuthIdentityParams{Provider: atprotoProvider, Subject: did})
+	return err == nil && ident.UserID != userID
 }
 
 // VerifyAssertion runs everything Complete does EXCEPT turning the verified DID
@@ -345,17 +380,17 @@ const ATProtoProviderName = atprotoProvider
 // resolveATProtoIdentity maps a verified DID to a Vidra session: an already-linked
 // identity logs its account in; an unknown DID creates a fresh account. There is
 // no email-linking branch (ATProto login carries no verified email — unlike OIDC).
-func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATProtoState, did, userAgent string) (sqlcgen.User, Tokens, OAuthOutcome, error) {
+func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATProtoState, did, userAgent string) (OAuthSession, error) {
 	handle := atprotoHandlePtr(st.Handle)
 
 	// Known identity → login.
 	if ident, err := s.repo.GetOAuthIdentity(ctx, sqlcgen.GetOAuthIdentityParams{Provider: atprotoProvider, Subject: did}); err == nil {
 		user, err := s.repo.GetUserByID(ctx, ident.UserID)
 		if err != nil {
-			return sqlcgen.User{}, Tokens{}, "", ErrAccountNotFound
+			return OAuthSession{}, ErrAccountNotFound
 		}
 		if !user.IsActive {
-			return sqlcgen.User{}, Tokens{}, "", ErrAccountDisabled
+			return OAuthSession{}, ErrAccountDisabled
 		}
 		// Refresh the stored display handle: ATProto handles are mutable, so keep
 		// it current on every re-login. Display-only, so a failure here never
@@ -365,11 +400,7 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 				Provider: atprotoProvider, Subject: did, Handle: handle,
 			})
 		}
-		tokens, err := s.auth.issueTokens(ctx, user, userAgent)
-		if err != nil {
-			return sqlcgen.User{}, Tokens{}, "", err
-		}
-		return user, tokens, OAuthLogin, nil
+		return s.auth.providerSession(ctx, user, OAuthLogin, userAgent)
 	}
 
 	// Unknown identity → create an account. The username derives from the handle
@@ -378,13 +409,13 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 	firstLabel, _, _ := strings.Cut(st.Handle, ".")
 	username, err := deriveUsername(ctx, s.repo, firstLabel, st.Handle, "")
 	if err != nil {
-		return sqlcgen.User{}, Tokens{}, "", err
+		return OAuthSession{}, err
 	}
 	// Signup parity with password registration: while the instance awaits its
 	// owner (ownerclaim.go), no path may create an account — least of all one
 	// that used to mint the admin.
 	if err := s.auth.refuseIfOwnerUnclaimed(ctx); err != nil {
-		return sqlcgen.User{}, Tokens{}, "", err
+		return OAuthSession{}, err
 	}
 	user, err := s.repo.CreateUser(ctx, sqlcgen.CreateUserParams{
 		Username: username,
@@ -400,9 +431,9 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 	})
 	if err != nil {
 		if pgconv.IsUniqueViolation(err) {
-			return sqlcgen.User{}, Tokens{}, "", nameConflict(err)
+			return OAuthSession{}, nameConflict(err)
 		}
-		return sqlcgen.User{}, Tokens{}, "", err
+		return OAuthSession{}, err
 	}
 	// Deliberately NOT SetUserEmailVerified: the synthetic address is unverifiable
 	// by design and the DID — not the email — is the account's identity.
@@ -410,15 +441,11 @@ func (s *ATProtoOAuthService) resolveATProtoIdentity(ctx context.Context, st ATP
 		Provider: atprotoProvider, Subject: did, UserID: user.ID, Email: "", Handle: handle,
 	}); err != nil {
 		if pgconv.IsUniqueViolation(err) {
-			return sqlcgen.User{}, Tokens{}, "", nameConflict(err)
+			return OAuthSession{}, nameConflict(err)
 		}
-		return sqlcgen.User{}, Tokens{}, "", err
+		return OAuthSession{}, err
 	}
-	tokens, err := s.auth.issueTokens(ctx, user, userAgent)
-	if err != nil {
-		return sqlcgen.User{}, Tokens{}, "", err
-	}
-	return user, tokens, OAuthCreated, nil
+	return s.auth.providerSession(ctx, user, OAuthCreated, userAgent)
 }
 
 // mapResolveError maps an atproto client error to a login-service sentinel: bad

@@ -121,9 +121,10 @@ func TestATProtoCompleteCreatesThenLogsIn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	user, tokens, outcome, err := s.Complete(ctx, st, "auth-code", st.Issuer, "ua")
+	sess, err := s.Complete(ctx, st, "auth-code", st.Issuer, "ua")
+	user, tokens, outcome := sess.User, sess.Tokens, sess.Outcome
 	if err != nil || outcome != OAuthCreated {
-		t.Fatalf("create: outcome=%v err=%v", outcome, err)
+		t.Fatalf("create: outcome=%v err=%v", sess.Outcome, err)
 	}
 	// Username derives from the handle's first label; always a plain user
 	// (0104: the admin exists only via the owner-claim flow).
@@ -145,7 +146,8 @@ func TestATProtoCompleteCreatesThenLogsIn(t *testing.T) {
 	}
 
 	// The same DID coming back logs into the same account (no duplicate).
-	user2, _, outcome, err := s.Complete(ctx, st, "auth-code-2", st.Issuer, "ua")
+	sess2, err := s.Complete(ctx, st, "auth-code-2", st.Issuer, "ua")
+	user2, outcome := sess2.User, sess2.Outcome
 	if err != nil || outcome != OAuthLogin || user2.ID != user.ID {
 		t.Fatalf("login: outcome=%v err=%v same-id=%v", outcome, err, user2.ID == user.ID)
 	}
@@ -167,8 +169,8 @@ func TestATProtoCompleteCapturesAndRefreshesHandle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, outcome, err := s.Complete(ctx, st, "code", st.Issuer, "ua"); err != nil || outcome != OAuthCreated {
-		t.Fatalf("create: outcome=%v err=%v", outcome, err)
+	if sess, err := s.Complete(ctx, st, "code", st.Issuer, "ua"); err != nil || sess.Outcome != OAuthCreated {
+		t.Fatalf("create: outcome=%v err=%v", sess.Outcome, err)
 	}
 	ident, err := repo.GetOAuthIdentity(ctx, sqlcgen.GetOAuthIdentityParams{Provider: "atproto", Subject: "did:plc:alice"})
 	if err != nil {
@@ -184,8 +186,8 @@ func TestATProtoCompleteCapturesAndRefreshesHandle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, outcome, err := s.Complete(ctx, st2, "code2", st2.Issuer, "ua"); err != nil || outcome != OAuthLogin {
-		t.Fatalf("re-login: outcome=%v err=%v", outcome, err)
+	if sess, err := s.Complete(ctx, st2, "code2", st2.Issuer, "ua"); err != nil || sess.Outcome != OAuthLogin {
+		t.Fatalf("re-login: outcome=%v err=%v", sess.Outcome, err)
 	}
 	ident2, _ := repo.GetOAuthIdentity(ctx, sqlcgen.GetOAuthIdentityParams{Provider: "atproto", Subject: "did:plc:alice"})
 	if ident2.Handle == nil || *ident2.Handle != "alice.moved.example" {
@@ -204,7 +206,8 @@ func TestATProtoCompleteUsernameDedupe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, _, outcome, err := s.Complete(ctx, st, "code", st.Issuer, "ua")
+	sess, err := s.Complete(ctx, st, "code", st.Issuer, "ua")
+	user, outcome := sess.User, sess.Outcome
 	if err != nil || outcome != OAuthCreated {
 		t.Fatalf("outcome=%v err=%v", outcome, err)
 	}
@@ -220,11 +223,11 @@ func TestATProtoCompleteRejectsInvariantFailures(t *testing.T) {
 		repo := newOAuthFakeRepo()
 		s := newATProtoTestService(repo, defaultFlow(), true)
 		_, st, _ := s.Begin(ctx, "alice.example", "")
-		if _, _, _, err := s.Complete(ctx, st, "code", "https://evil.example", "ua"); !errors.Is(err, ErrATProtoIdentityMismatch) {
+		if _, err := s.Complete(ctx, st, "code", "https://evil.example", "ua"); !errors.Is(err, ErrATProtoIdentityMismatch) {
 			t.Fatalf("err = %v, want ErrATProtoIdentityMismatch", err)
 		}
 		// An absent iss is equally fatal.
-		if _, _, _, err := s.Complete(ctx, st, "code", "", "ua"); !errors.Is(err, ErrATProtoIdentityMismatch) {
+		if _, err := s.Complete(ctx, st, "code", "", "ua"); !errors.Is(err, ErrATProtoIdentityMismatch) {
 			t.Fatalf("absent iss err = %v, want ErrATProtoIdentityMismatch", err)
 		}
 		if n, _ := repo.CountUsers(ctx); n != 0 {
@@ -238,7 +241,7 @@ func TestATProtoCompleteRejectsInvariantFailures(t *testing.T) {
 		flow.exchange = atproto.ExchangeResult{DID: "did:plc:someoneelse", Scope: "atproto"}
 		s := newATProtoTestService(repo, flow, true)
 		_, st, _ := s.Begin(ctx, "alice.example", "")
-		if _, _, _, err := s.Complete(ctx, st, "code", st.Issuer, "ua"); !errors.Is(err, ErrATProtoIdentityMismatch) {
+		if _, err := s.Complete(ctx, st, "code", st.Issuer, "ua"); !errors.Is(err, ErrATProtoIdentityMismatch) {
 			t.Fatalf("err = %v, want ErrATProtoIdentityMismatch", err)
 		}
 	})
@@ -249,7 +252,7 @@ func TestATProtoCompleteRejectsInvariantFailures(t *testing.T) {
 		flow.exchange = atproto.ExchangeResult{DID: "did:plc:alice", Scope: "transition:generic"}
 		s := newATProtoTestService(repo, flow, true)
 		_, st, _ := s.Begin(ctx, "alice.example", "")
-		if _, _, _, err := s.Complete(ctx, st, "code", st.Issuer, "ua"); !errors.Is(err, ErrATProtoIdentityMismatch) {
+		if _, err := s.Complete(ctx, st, "code", st.Issuer, "ua"); !errors.Is(err, ErrATProtoIdentityMismatch) {
 			t.Fatalf("err = %v, want ErrATProtoIdentityMismatch", err)
 		}
 	})
@@ -260,7 +263,7 @@ func TestATProtoCompleteRejectsInvariantFailures(t *testing.T) {
 		flow.exchangeErr = atproto.ErrOAuthUpstream
 		s := newATProtoTestService(repo, flow, true)
 		_, st, _ := s.Begin(ctx, "alice.example", "")
-		if _, _, _, err := s.Complete(ctx, st, "code", st.Issuer, "ua"); !errors.Is(err, ErrATProtoUpstream) {
+		if _, err := s.Complete(ctx, st, "code", st.Issuer, "ua"); !errors.Is(err, ErrATProtoUpstream) {
 			t.Fatalf("err = %v, want ErrATProtoUpstream", err)
 		}
 	})
@@ -296,7 +299,7 @@ func TestATProtoDisabled(t *testing.T) {
 	if _, _, err := s.Begin(context.Background(), "alice.example", ""); !errors.Is(err, ErrATProtoDisabled) {
 		t.Fatalf("Begin disabled err = %v, want ErrATProtoDisabled", err)
 	}
-	if _, _, _, err := s.Complete(context.Background(), ATProtoState{}, "c", "i", "ua"); !errors.Is(err, ErrATProtoDisabled) {
+	if _, err := s.Complete(context.Background(), ATProtoState{}, "c", "i", "ua"); !errors.Is(err, ErrATProtoDisabled) {
 		t.Fatalf("Complete disabled err = %v, want ErrATProtoDisabled", err)
 	}
 	if s.Enabled() {

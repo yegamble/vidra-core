@@ -555,6 +555,32 @@ func (s *Service) Login(ctx context.Context, in LoginInput, userAgent string) (L
 	return LoginResult{User: user, Tokens: tokens}, nil
 }
 
+// SessionAccount resolves an ACTIVE refresh-cookie session to its account and
+// session id WITHOUT rotating or revoking anything — a read, not a use.
+//
+// It exists for exactly one question, asked by the provider callbacks: "is a
+// session already signed in here?" (A05 ruling 3). A callback that answered it
+// with Refresh would rotate the caller's refresh token as a side effect of
+// looking, and a callback that answered it with the bearer token could not:
+// a top-level navigation from an identity provider carries cookies and no
+// Authorization header. A revoked or expired session is not a session, and is
+// reported as absent rather than as an error — the caller's next move is the
+// same either way.
+func (s *Service) SessionAccount(ctx context.Context, rawRefresh string) (sqlcgen.User, uuid.UUID, bool) {
+	if rawRefresh == "" {
+		return sqlcgen.User{}, uuid.Nil, false
+	}
+	sess, err := s.repo.GetSessionByRefreshHash(ctx, hashRefreshToken(rawRefresh))
+	if err != nil || sess.RevokedAt.Valid || !sess.ExpiresAt.After(s.now()) {
+		return sqlcgen.User{}, uuid.Nil, false
+	}
+	user, err := s.UserByID(ctx, sess.UserID)
+	if err != nil || !user.IsActive {
+		return sqlcgen.User{}, uuid.Nil, false
+	}
+	return user, sess.ID, true
+}
+
 // Refresh rotates a refresh token: it validates the presented token, revokes the
 // old session, and issues a new access + refresh pair. Presenting an
 // already-revoked token is treated as theft — all of that user's sessions are

@@ -263,14 +263,18 @@ func (f *oauthHTTPFakeRepo) UsernameExists(_ context.Context, name string) (bool
 
 // oauthEnv is a fully wired OAuth test harness.
 type oauthEnv struct {
-	srv  *Server
-	fake *fakeOIDC
-	repo *oauthHTTPFakeRepo
-	cfg  *config.Config
-	buf  *bytes.Buffer
+	srv     *Server
+	fake    *fakeOIDC
+	repo    *oauthHTTPFakeRepo
+	cfg     *config.Config
+	buf     *bytes.Buffer
+	authsvc *auth.Service
 }
 
-func newOAuthEnv(t *testing.T) *oauthEnv {
+// newOAuthEnv wires one configured provider ("fake"). Extra auth options let a
+// test add capabilities the base harness does not need — MFA, above all, which
+// is what makes "a provider sign-in is challenged too" testable at this layer.
+func newOAuthEnv(t *testing.T, authOpts ...auth.Option) *oauthEnv {
 	t.Helper()
 	fake := newFakeOIDC(t)
 	repo := newOAuthHTTPFakeRepo()
@@ -280,7 +284,7 @@ func newOAuthEnv(t *testing.T) *oauthEnv {
 	cfg.OAuthProviders = []config.OAuthProviderConfig{{Name: "fake", IssuerURL: fake.srv.URL}}
 
 	issuer := auth.NewTokenIssuer(cfg.JWTSecret, "vidra", "vidra", 15*time.Minute)
-	authsvc := auth.NewService(repo.authFakeRepo, issuer, 720*time.Hour)
+	authsvc := auth.NewService(repo.authFakeRepo, issuer, 720*time.Hour, authOpts...)
 	oauthsvc := auth.NewOAuthService(repo, authsvc, []auth.OAuthProvider{{
 		Name: "fake", IssuerURL: fake.srv.URL, ClientID: "test-client", ClientSecret: "test-client-secret",
 	}})
@@ -290,7 +294,7 @@ func newOAuthEnv(t *testing.T) *oauthEnv {
 		WithOAuthService(oauthsvc),
 		WithLogger(slog.New(slog.NewJSONHandler(buf, nil))),
 	)
-	return &oauthEnv{srv: srv, fake: fake, repo: repo, cfg: cfg, buf: buf}
+	return &oauthEnv{srv: srv, fake: fake, repo: repo, cfg: cfg, buf: buf, authsvc: authsvc}
 }
 
 // begin performs GET /auth/oauth/fake and returns the parsed authorization
@@ -555,7 +559,10 @@ func TestOAuthCallbackTamperRejected(t *testing.T) {
 	}
 }
 
-func TestOAuthLinksVerifiedEmailToExistingAccount(t *testing.T) {
+// TestOAuthRefusesToClaimAnExistingAccountByEmail is the A05 takeover, run as
+// the lab ran it and expected to FAIL now: a configured provider asserts an
+// existing account's address `email_verified: true` and gets nothing.
+func TestOAuthRefusesToClaimAnExistingAccountByEmail(t *testing.T) {
 	env := newOAuthEnv(t)
 	// An existing password account…
 	rec := postTo(env.srv, "/api/v1/auth/register", `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
@@ -563,26 +570,36 @@ func TestOAuthLinksVerifiedEmailToExistingAccount(t *testing.T) {
 		t.Fatalf("register = %d", rec.Code)
 	}
 
-	// …logs in via a NEW oauth identity whose verified email matches → linked.
+	// …which a provider now claims, verified and in the right case-insensitive
+	// shape. Refused, with the typed code the landing page turns into
+	// "sign in with your password and connect this provider from settings".
 	cb := env.completeFlow(t, map[string]any{
 		"sub": "sub-ada", "email": "ADA@example.test", "email_verified": true,
-	}, "")
-	if cb.Code != http.StatusFound || cb.Header().Get("Location") != "/" {
-		t.Fatalf("callback = %d → %q", cb.Code, cb.Header().Get("Location"))
+	}, "/login")
+	if cb.Code != http.StatusFound {
+		t.Fatalf("callback = %d, want 302 (body=%s)", cb.Code, cb.Body.String())
 	}
-	session := sessionCookieFrom(cb)
-	if session == nil {
-		t.Fatal("link flow must mint a session")
+	loc, err := url.Parse(cb.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	me := env.meViaRefresh(t, session)
-	if me.Username != "ada" {
-		t.Errorf("linked into %q, want the existing ada account", me.Username)
+	if loc.Query().Get("oauth_error") != "email_conflict" {
+		t.Errorf("Location = %q, want ?oauth_error=email_conflict", cb.Header().Get("Location"))
+	}
+	if sessionCookieFrom(cb) != nil {
+		t.Fatal("a refused email collision must not mint a session")
 	}
 	if n, _ := env.repo.CountUsers(context.Background()); n != 1 {
-		t.Errorf("users = %d, want 1 (link must not create)", n)
+		t.Errorf("users = %d, want 1 (nothing created)", n)
 	}
-	if link := findAudit(auditEvents(t, env.buf), observability.ActionOAuthLink, observability.ResultSuccess); link == nil || link["reason"] != "oauth:fake" {
-		t.Errorf("link audit = %v, want auth.oauth.link success", link)
+	if len(env.repo.identities) != 0 {
+		t.Errorf("identities = %d, want 0 (nothing linked)", len(env.repo.identities))
+	}
+	if fail := findAudit(auditEvents(t, env.buf), observability.ActionLogin, observability.ResultFailure); fail == nil {
+		t.Error("a refused collision must be audited as a login failure")
+	}
+	if link := findAudit(auditEvents(t, env.buf), observability.ActionOAuthLink, observability.ResultSuccess); link != nil {
+		t.Errorf("a refused collision emitted a LINK SUCCESS audit row: %v", link)
 	}
 }
 
@@ -670,23 +687,12 @@ func TestOAuthIdentityListAndUnlink(t *testing.T) {
 		t.Fatalf("unlink last credential = %d, want 422 (body=%s)", rec.Code, rec.Body.String())
 	}
 
-	// A password account that LINKED an identity may unlink it; then 404.
-	if rec := postTo(env.srv, "/api/v1/auth/register", `{"username":"carol","email":"carol@example.test","password":"supersecret"}`); rec.Code != http.StatusCreated {
-		t.Fatalf("register = %d", rec.Code)
-	}
-	cb2 := env.completeFlow(t, map[string]any{
-		"sub": "sub-carol", "email": "carol@example.test", "email_verified": true,
-	}, "")
-	session2 := sessionCookieFrom(cb2)
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader(`{}`))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	req.AddCookie(&http.Cookie{Name: session2.Name, Value: session2.Value})
-	env.srv.Handler().ServeHTTP(rec, req)
-	var ar2 authResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &ar2); err != nil {
-		t.Fatal(err)
-	}
+	// A password account that CONNECTED an identity from settings may unlink it;
+	// then 404. The connection is the link flow, because an email match no
+	// longer makes one (A05 ruling 1).
+	carol := registerAndToken(t, env.srv, `{"username":"carol","email":"carol@example.test","password":"supersecret"}`)
+	env.linkFromSettings(t, carol, "sub-carol", "carol@example.test", "/settings")
+	ar2 := authResponse{Token: carol}
 	for i, want := range []int{http.StatusNoContent, http.StatusNotFound} {
 		rec = httptest.NewRecorder()
 		req = httptest.NewRequest(http.MethodDelete, "/api/v1/me/oauth-identities/fake", nil)

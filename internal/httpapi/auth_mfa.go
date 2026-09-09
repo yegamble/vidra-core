@@ -182,6 +182,12 @@ func (s *Server) handleGetMFAStatus(c echo.Context) error {
 // code. cookie_mode matches login (the resulting session's refresh token is
 // delivered as the httpOnly vidra_refresh cookie).
 type mfaChallengeRequest struct {
+	// MFAToken is OPTIONAL since the provider paths gained a second factor: a
+	// sign-in that ended in a browser redirect could not hand the client a JSON
+	// token, so the callback parks it in the httpOnly `vidra_mfa_pending`
+	// cookie instead and the URL carries only a flag (oauth_link.go explains
+	// why the token is not in the query). The body still wins when both are
+	// present — the password path is unchanged and does not read the cookie.
 	MFAToken string `json:"mfa_token"`
 	Code     string `json:"code"`
 	// CookieMode opts the new session into cookie mode, like login/register.
@@ -190,9 +196,9 @@ type mfaChallengeRequest struct {
 
 func (r mfaChallengeRequest) Validate() []FieldError {
 	var fes []FieldError
-	if strings.TrimSpace(r.MFAToken) == "" {
-		fes = append(fes, FieldError{Field: "mfa_token", Message: "is required"})
-	}
+	// mfa_token is not asserted here: it may arrive in the pending cookie
+	// instead, which Validate cannot see. The handler refuses when NEITHER is
+	// present, with the same field error this used to raise.
 	if strings.TrimSpace(r.Code) == "" {
 		fes = append(fes, FieldError{Field: "code", Message: "is required"})
 	}
@@ -207,11 +213,27 @@ func (s *Server) handleMFAChallenge(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
-	user, tokens, method, err := s.authsvc.CompleteMFAChallenge(c.Request().Context(), in.MFAToken, in.Code, c.Request().UserAgent())
+	// The body first, then the pending cookie a provider callback parked. A
+	// caller that supplies neither gets the field error the schema promises.
+	token := strings.TrimSpace(in.MFAToken)
+	fromCookie := false
+	if token == "" {
+		if token = mfaPendingToken(c); token != "" {
+			fromCookie = true
+		}
+	}
+	if token == "" {
+		return &ValidationError{Fields: []FieldError{{Field: "mfa_token", Message: "is required"}}}
+	}
+	user, tokens, method, err := s.authsvc.CompleteMFAChallenge(c.Request().Context(), token, in.Code, c.Request().UserAgent())
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrInvalidMFAToken):
 			// No actor_id: the token did not resolve to a trusted principal.
+			// Drop the pending cookie with it: a token that cannot resolve has
+			// nothing left to spend, and leaving it would make every later
+			// attempt in this browser fail the same way with no way to clear it.
+			s.clearMFAPendingCookie(c)
 			s.audit(c, observability.ActionMFAChallenge, observability.ResultFailure, "", "invalid_mfa_token")
 			return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired mfa token")
 		case errors.Is(err, auth.ErrInvalidMFACode):
@@ -234,10 +256,18 @@ func (s *Server) handleMFAChallenge(c echo.Context) error {
 		}
 		return err
 	}
+	// SINGLE USE, enforced where it means something: the pending cookie is gone
+	// the instant it authorises a session. A wrong code deliberately does NOT
+	// clear it — a typo is not a use, and the password path lets you type the
+	// code again too.
+	s.clearMFAPendingCookie(c)
 	// The reason records which factor completed the login (totp/recovery_code)
 	// — never the code itself.
 	s.audit(c, observability.ActionMFAChallenge, observability.ResultSuccess, user.ID.String(), string(method))
-	cookieMode := in.CookieMode || refreshCookieToken(c) != ""
+	// A challenge that came from a provider redirect is always cookie-mode: the
+	// browser has no session to hold a bearer token, and the flow it is finishing
+	// is the cookie-mode one the callback would have completed itself.
+	cookieMode := in.CookieMode || fromCookie || refreshCookieToken(c) != ""
 	return s.authResponse(http.StatusOK, c, user, tokens, cookieMode)
 }
 

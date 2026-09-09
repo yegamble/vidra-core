@@ -71,3 +71,9 @@ tmp/
 
 # A39: CI evidence bundles (uploaded as artifacts, never committed)
 /ci-report/
+
+# Provider secrets for OIDC login. `env/oauth.env` is read by the api and worker
+# services as an OPTIONAL env_file (see docker-compose.yml) and holds client
+# secrets; only the .example is tracked, exactly as in the meta repo.
+env/*.env
+!env/*.env.example
