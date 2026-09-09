@@ -746,16 +746,38 @@ func run() error {
 	//
 	// NB: same rule as the primary — endpoint/bucket are safe to log, the
 	// credentials are NOT. storage.Describe returns exactly the safe half.
-	migrationTarget, err := newMigrationTargetBackend(startCtx, cfg, blobs)
+	migrationTarget, targetWriteDenied, err := newMigrationTargetBackend(startCtx, cfg, blobs)
 	if err != nil {
 		return err
 	}
+	// The target's OWN write probe, on the same five-minute clock the primary's
+	// runs on. It is what makes "degrade instead of refuse" more than a phrase:
+	// the workers read this verdict at the top of every sweep, park the campaign
+	// with paused_reason=target_write_denied when it is negative, and un-park it
+	// when it turns positive again — nobody has to notice, and nobody has to
+	// press anything.
+	migrationTargetWrite := storage.NewWriteHealth(migrationTarget, storage.WriteProbeInterval)
 	if migrationTarget != nil {
+		if targetWriteDenied {
+			// Skip the probe: the bucket check already answered, and a PUT to a
+			// store that would not confirm its own bucket only costs a round trip
+			// to learn the same thing. Record the verdict directly.
+			migrationTargetWrite.RecordDenied(storage.ClassWriteDenied)
+		} else {
+			_ = migrationTargetWrite.Probe(startCtx)
+		}
+		st := migrationTargetWrite.Status()
 		logger.Info("storage migration target configured",
 			"backend", cfg.StorageMigrationTargetBackend,
 			"target", storage.Describe(migrationTarget),
 			"serving_from", storage.Describe(blobs),
-			"grace_hours", cfg.StorageMigrationGraceHours)
+			"grace_hours", cfg.StorageMigrationGraceHours,
+			"target_writable", st.OK)
+		if !st.OK {
+			logger.Warn("the storage migration target is not accepting writes; the migration is paused and this instance is otherwise unaffected",
+				"class", string(st.Class),
+				"consequence", "no objects are copied and nothing is deleted; reads are still served from the store that holds authority, and copying resumes on its own once the target accepts writes again")
+		}
 	}
 
 	// Hybrid IPFS media mirror (fix_plan P19, .ralph/specs/ipfs-media.md). A MIRROR
@@ -1542,8 +1564,14 @@ func run() error {
 	// be stopped, and the media-GC interlock would hold destructive sweeps off
 	// forever with no way out.
 	storagemigrationsvc := storagemigration.NewService(db.Queries(), blobs, migrationTarget, storagemigration.Config{
-		Grace:  time.Duration(cfg.StorageMigrationGraceHours) * time.Hour,
-		Logger: logger,
+		Grace:       time.Duration(cfg.StorageMigrationGraceHours) * time.Hour,
+		Logger:      logger,
+		TargetWrite: migrationTargetWrite,
+		// SelfID rather than the heartbeat writer's own accessor, because that
+		// writer is built two hundred lines below this one and both must stamp
+		// the SAME string — a campaign whose worker_id named a process the
+		// status page's list does not contain would be worse than an empty one.
+		WorkerID: processheartbeat.SelfID(),
 	})
 	opts = append(opts, httpapi.WithStorageMigrationService(storagemigrationsvc))
 
@@ -1761,6 +1789,10 @@ func run() error {
 	// must not go unwatched — a transcode can run for minutes before its first
 	// PUT discovers a key that was revoked while it worked.
 	go storageWrite.Run(pollCtx, logger)
+	// And the migration target's, on the same clock, in every role. This is the
+	// probe whose recovery UN-PAUSES a campaign, so a worker-only process must
+	// run it too: the worker is the process that acts on the verdict.
+	go migrationTargetWrite.Run(pollCtx, logger)
 	// The role is on the line because the operator question this answers is
 	// "which halves of my fleet pick up an admin change?", and a log aggregator
 	// sees one copy of this message per process.
@@ -1778,6 +1810,13 @@ func run() error {
 		// component is an HTTP surface. Every role still PROBES, above — the
 		// worker acts on its own verdict through the job-admission gate.
 		opts = append(opts, httpapi.WithStorageWriteHealth(storageWrite))
+		// The TARGET's verdict feeds the same `storage` component, as a DEGRADE
+		// rather than a down: an instance whose migration target went read-only
+		// is fully able to do its job, and it is the MOVE that has stopped. The
+		// operator has to be told, because a campaign that quietly stops making
+		// progress is the thing A34 spent a paragraph on; they must not be told
+		// their storage is broken, because it is not.
+		opts = append(opts, httpapi.WithStorageMigrationTargetWriteHealth(migrationTargetWrite))
 		// And the FLEET half, which is what makes settings_sync a report on the
 		// deployment rather than on this process. The reader is api-side only
 		// because the page is; every role WRITES its row above.
@@ -3975,22 +4014,69 @@ func newStorageBackend(ctx context.Context, cfg *config.Config) (storage.Backend
 // already compares the configured values; this compares the IDENTITIES the built
 // handles actually report, which is the version that cannot be fooled by two
 // different spellings of one bucket.
-func newMigrationTargetBackend(ctx context.Context, cfg *config.Config, primary storage.Backend) (storage.Backend, error) {
+//
+// A WRITE-DENIED TARGET IS NOT A BOOT REFUSAL, and that is the change A34's
+// first finding bought. Booting against a read-only target credential used to
+// produce `fatal error="storage migration target: … Access Denied.
+// [write_denied]"` and the process exited BEFORE the listener opened, for the
+// api as well as the workers — so an operator who rotated or narrowed the target
+// bucket's key lost the whole instance: every video, every page, and the admin
+// console they would have fixed it from. Over a store the instance needs only in
+// order to FINISH A MOVE.
+//
+// So a refusal that names a write denial keeps the handle and reports itself:
+// the caller degrades the `storage` component, pauses the campaign with a typed
+// reason, and keeps serving reads from whichever store holds authority. The
+// second return says a denial happened. Anything ELSE — a bad endpoint, DNS, a
+// malformed config — is still fatal, because those are configuration this
+// process cannot be right about, and it has not been asked to serve from that
+// store either way. And the AUTHORITATIVE store's own probe is untouched: an
+// instance that cannot write to the store it serves from is a different fact,
+// handled by the boot write probe on `blobs`.
+func newMigrationTargetBackend(ctx context.Context, cfg *config.Config, primary storage.Backend) (storage.Backend, bool, error) {
 	if !cfg.StorageMigrationConfigured() {
-		return nil, nil
+		return nil, false, nil
 	}
-	target, _, err := buildStorageBackend(ctx, migrationTargetStorageSpec(cfg))
+	spec := migrationTargetStorageSpec(cfg)
+	target, _, err := buildStorageBackend(ctx, spec)
+	writeDenied := false
 	if err != nil {
-		return nil, fmt.Errorf("storage migration target: %w", err)
+		if class, ok := storage.ClassOf(err); !ok || class != storage.ClassWriteDenied {
+			return nil, false, fmt.Errorf("storage migration target: %w", err)
+		}
+		// The bucket check was REFUSED rather than answered. Build the handle
+		// without it: a store that will not confirm its own bucket to this
+		// credential is exactly the store the campaign must pause on, and
+		// nothing this process does next writes to it until the probe recovers.
+		target, err = buildStorageBackendUnchecked(spec)
+		if err != nil {
+			return nil, false, fmt.Errorf("storage migration target: %w", err)
+		}
+		writeDenied = true
 	}
 	src, dst := storage.Describe(primary), storage.Describe(target)
 	if src == "" || dst == "" {
-		return nil, fmt.Errorf("storage migration target: a configured storage backend does not report its identity")
+		return nil, false, fmt.Errorf("storage migration target: a configured storage backend does not report its identity")
 	}
 	if src == dst {
-		return nil, fmt.Errorf("storage migration target: STORAGE_MIGRATION_TARGET_* names the same store as STORAGE_* (%s)", src)
+		return nil, false, fmt.Errorf("storage migration target: STORAGE_MIGRATION_TARGET_* names the same store as STORAGE_* (%s)", src)
 	}
-	return target, nil
+	return target, writeDenied, nil
+}
+
+// buildStorageBackendUnchecked builds a backend handle WITHOUT the bucket check.
+// It exists for exactly one caller — a migration target whose bucket check was
+// refused with write_denied — and is deliberately not used for the
+// authoritative store, where EnsureBucket failing is a reason not to start.
+func buildStorageBackendUnchecked(spec storageSpec) (storage.Backend, error) {
+	switch spec.backend {
+	case "local":
+		return storage.NewLocal(spec.localRoot)
+	case "s3":
+		return storage.NewS3(spec.s3)
+	default:
+		return nil, fmt.Errorf("unsupported storage backend %q", spec.backend)
+	}
 }
 
 // resolveBucketOwnership answers, once per boot, whether the object store media

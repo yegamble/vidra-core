@@ -220,7 +220,7 @@ func TestLocalToObjectStoreEndToEnd(t *testing.T) {
 
 	runToSynced(t, ctx, svc)
 
-	got, counts, err := svc.Get(ctx, camp.ID)
+	got, counts, _, err := svc.Get(ctx, camp.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestLocalToObjectStoreEndToEnd(t *testing.T) {
 		if state != ObjectVerified {
 			t.Errorf("late object state = %q, want %q", state, ObjectVerified)
 		}
-		if got, _, _ := svc.Get(ctx, camp.ID); got.State != StateSynced || got.ObjectsTotal != int64(len(bodies))+1 {
+		if got, _, _, _ := svc.Get(ctx, camp.ID); got.State != StateSynced || got.ObjectsTotal != int64(len(bodies))+1 {
 			t.Errorf("after the delta pass: state %q total %d", got.State, got.ObjectsTotal)
 		}
 	})
@@ -396,7 +396,7 @@ func runCampaignToDone(t *testing.T, ctx context.Context, f *campaignFixture) st
 		t.Fatalf("Start: %v", err)
 	}
 	runToSynced(t, ctx, forward)
-	if got, _, _ := forward.Get(ctx, camp.ID); got.State != StateSynced {
+	if got, _, _, _ := forward.Get(ctx, camp.ID); got.State != StateSynced {
 		t.Fatalf("state before the swap = %q (last_error %q), want synced", got.State, got.LastError)
 	}
 
@@ -408,7 +408,7 @@ func runCampaignToDone(t *testing.T, ctx context.Context, f *campaignFixture) st
 			t.Fatalf("SweepOnce after the swap: %v", err)
 		}
 	}
-	got, _, err := swapped.Get(ctx, camp.ID)
+	got, _, _, err := swapped.Get(ctx, camp.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -573,7 +573,7 @@ func TestASecondCampaignReEnumeratesAgainstTheRealLedger(t *testing.T) {
 	}
 	runToSynced(t, ctx, svc)
 
-	camp, counts, err := svc.Get(ctx, second.ID)
+	camp, counts, _, err := svc.Get(ctx, second.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}

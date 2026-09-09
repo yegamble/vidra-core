@@ -125,6 +125,30 @@ func (h *WriteHealth) Probe(ctx context.Context) error {
 	return err
 }
 
+// RecordDenied records a refusal this monitor did not have to probe for.
+//
+// Boot uses it for the migration target: EnsureBucket has already been refused
+// with write_denied, and a PUT to a store that would not confirm its own bucket
+// to this credential only spends a round trip learning the same thing. Recording
+// it directly is what lets the process come up degraded — with the campaign
+// paused and a class to show an operator — instead of exiting before the
+// listener opens, which is what it used to do.
+//
+// The recorded verdict is not sticky: the next Probe on the ticker overwrites
+// it, which is exactly how a repaired credential un-pauses the campaign without
+// anybody restarting anything.
+func (h *WriteHealth) RecordDenied(class ErrorClass) {
+	if h == nil {
+		return
+	}
+	if class == "" {
+		class = ClassWriteDenied
+	}
+	h.mu.Lock()
+	h.status = WriteStatus{Probed: true, At: time.Now().UTC(), Class: class}
+	h.mu.Unlock()
+}
+
 // Run probes on the monitor's interval until ctx is cancelled. It does NOT probe
 // immediately: boot has already taken the first sample synchronously (see
 // cmd/api), and a second one a millisecond later would only cost the store a

@@ -179,9 +179,39 @@ func (s *Server) storageWriteStatus() componentStatus {
 			Error:  "the object store accepts writes but would not let this instance delete its own scratch object, so media garbage collection and video deletion will leave objects behind. On Backblaze B2 deleteFiles is granted separately from writeFiles; grant the delete permission to the configured key.",
 		}
 	case st.OK:
-		return componentStatus{Status: "ok"}
+		return s.storageMigrationTargetStatus()
 	default:
 		return componentStatus{Status: "down", Error: storageUnavailableMessage(st.Class)}
+	}
+}
+
+// storageMigrationTargetStatus is the second half of the storage component: the
+// MIGRATION TARGET's write verdict, reported only when the authoritative store
+// is itself fine (a down store is the bigger fact and keeps the component).
+//
+// It is `degraded`, never `down`, and the distinction is the ruling. A34 found
+// that a target this process could not write to was a FATAL BOOT REFUSAL — a
+// rotated target credential took the whole instance offline, api and workers
+// alike, over a store the instance needs only in order to finish a move. It now
+// degrades instead: the campaign pauses, reads keep being served from whichever
+// store holds authority, readiness stays 200 (this file's convention: only
+// PostgreSQL takes an instance out of rotation), and the operator gets a
+// sentence saying which of the two facts is true — the instance is working, the
+// MOVE has stopped.
+func (s *Server) storageMigrationTargetStatus() componentStatus {
+	if s.storageMigrationTargetWrite == nil {
+		return componentStatus{Status: "ok"}
+	}
+	st := s.storageMigrationTargetWrite.Status()
+	if !st.Probed || st.OK {
+		return componentStatus{Status: "ok"}
+	}
+	return componentStatus{
+		Status: "degraded",
+		Error: "this instance can store and serve media normally, but the STORAGE MIGRATION TARGET is not accepting writes (" +
+			string(st.Class) + "), so the migration is paused: no objects are being copied and nothing is being deleted. " +
+			"Fix the target store's credential or permissions; copying resumes on its own within five minutes of it accepting writes again, " +
+			"or immediately if an admin resumes the campaign. Cancel the campaign if the move is no longer wanted.",
 	}
 }
 

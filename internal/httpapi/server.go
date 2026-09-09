@@ -180,6 +180,11 @@ type Server struct {
 	// against the store, so the monitor refreshes it on its own five-minute
 	// ticker and this is a memory read.
 	storageWrite storageWriteHealth
+	// storageMigrationTargetWrite is the MIGRATION TARGET's write verdict. It
+	// degrades the same `storage` component rather than downing it: an instance
+	// whose migration target went read-only is fully able to do its job, and it
+	// is the MOVE that has stopped.
+	storageMigrationTargetWrite storageWriteHealth
 	// mfaKEK is the boot-time MFA-KEK sample (A37-2), or nil when the check was
 	// not run — unit tests, embedders, any process without an auth service. A
 	// SNAPSHOT on purpose: the question it answers ("is the configured KEK the
@@ -954,6 +959,21 @@ func WithProcessFleet(f processFleetReader) Option {
 // every page and failing every upload with a bare 500.
 func WithStorageWriteHealth(h storageWriteHealth) Option {
 	return func(s *Server) { s.storageWrite = h }
+}
+
+// WithStorageMigrationTargetWriteHealth wires the MIGRATION TARGET's write
+// verdict into the same storage component.
+//
+// It is a DEGRADE and never a down, and the distinction is the whole ruling A34
+// produced. A target that stops accepting writes used to take the process down
+// at boot; now it pauses the campaign, and the instance carries on serving every
+// read and every page. Reporting that as `down` would replace one lie with
+// another — the storage this instance serves from is fine — while reporting it
+// as nothing at all would leave an operator watching a campaign that has quietly
+// stopped making progress, which is the shape of the other finding in the same
+// list.
+func WithStorageMigrationTargetWriteHealth(h storageWriteHealth) Option {
+	return func(s *Server) { s.storageMigrationTargetWrite = h }
 }
 
 // WithMFAKEKReport records the boot-time MFA-KEK sample (A37-2) so /readyz and
@@ -1962,6 +1982,17 @@ func (s *Server) routes() {
 		api.GET("/admin/storage/migrations", s.handleAdminListStorageMigrations, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.GET("/admin/storage/migrations/:id", s.handleAdminGetStorageMigration, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.POST("/admin/storage/migrations/:id/cancel", s.handleAdminCancelStorageMigration, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		// The rest of the controls (A34: the admin surface was a read-only
+		// campaign list, so both writes were API-only). Every one is admin-only
+		// and audited, and every one answers a typed 409 naming the campaign's
+		// actual state when the transition is not legal — the commonest cause is
+		// a stale page, and an operator driving a move must be told what changed
+		// under them rather than getting a silent no-op.
+		api.POST("/admin/storage/migrations/:id/pause", s.handleAdminPauseStorageMigration, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/storage/migrations/:id/resume", s.handleAdminResumeStorageMigration, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/storage/migrations/:id/abort", s.handleAdminAbortStorageMigration, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/storage/migrations/:id/switch", s.handleAdminSwitchStorageMigration, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.POST("/admin/storage/migrations/:id/release", s.handleAdminReleaseStorageMigrationSource, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	if s.videosvc != nil && s.transcodesvc != nil {

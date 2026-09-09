@@ -121,3 +121,79 @@ func (s *S3) ListAllKeys(ctx context.Context) ([]string, error) {
 	}
 	return keys, nil
 }
+
+// SizedRootLister is RootLister plus the one number an operator needs before
+// they agree to a move: how many bytes are about to cross the wire.
+//
+// It is a separate capability rather than a wider RootLister because not every
+// backend can answer cheaply, and a preview that silently STATted a quarter of a
+// million objects one at a time would be a denial of service dressed as a
+// confirmation dialog. Both shipped backends can: the local walk already holds a
+// DirEntry it can Info(), and an S3 list response already carries every object's
+// size, so the count and the bytes come out of exactly the same round trips the
+// key list already costs.
+type SizedRootLister interface {
+	RootLister
+	// ListAllObjects returns every object with its byte size. The keys are the
+	// same set, in the same order, ListAllKeys returns.
+	ListAllObjects(ctx context.Context) ([]ObjectStat, error)
+}
+
+// ObjectStat is one object's key and size.
+type ObjectStat struct {
+	Key  string
+	Size int64
+}
+
+// ListAllObjects walks the storage root, implementing SizedRootLister. A file
+// that vanishes between the walk and the Info() is skipped rather than failing
+// the whole enumeration: this is a PREVIEW, and a store being written to while
+// an operator reads a confirmation dialog is the normal case, not an error.
+func (l *Local) ListAllObjects(_ context.Context) ([]ObjectStat, error) {
+	var out []ObjectStat
+	err := filepath.WalkDir(l.root, func(p string, d os.DirEntry, werr error) error {
+		if werr != nil {
+			if os.IsNotExist(werr) {
+				return nil
+			}
+			return werr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(l.root, p)
+		if rerr != nil {
+			return rerr
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			if os.IsNotExist(ierr) {
+				return nil
+			}
+			return ierr
+		}
+		out = append(out, ObjectStat{Key: filepath.ToSlash(rel), Size: info.Size()})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListAllObjects lists the whole bucket with sizes, implementing
+// SizedRootLister. The size is already in the list response, so this costs
+// exactly what ListAllKeys costs.
+func (s *S3) ListAllObjects(ctx context.Context) ([]ObjectStat, error) {
+	var out []ObjectStat
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{Recursive: true}) {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("storage: s3: list bucket: %w", obj.Err)
+		}
+		if obj.Key == "" || strings.HasSuffix(obj.Key, "/") {
+			continue
+		}
+		out = append(out, ObjectStat{Key: obj.Key, Size: obj.Size})
+	}
+	return out, nil
+}

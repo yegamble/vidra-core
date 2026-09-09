@@ -66,6 +66,7 @@ func (f *fakeRepo) CreateStorageMigration(_ context.Context, arg sqlcgen.CreateS
 	row := sqlcgen.StorageMigration{
 		ID: uuid.New(), SourceDesc: arg.SourceDesc, TargetDesc: arg.TargetDesc,
 		State: StateEnumerating, CreatedAt: now, UpdatedAt: now,
+		RequestID: arg.RequestID, CorrelationID: arg.CorrelationID,
 	}
 	f.campaigns = append(f.campaigns, row)
 	return row, nil
@@ -146,6 +147,114 @@ func (f *fakeRepo) CancelStorageMigration(_ context.Context, id uuid.UUID) (int6
 	}
 	c.State, c.UpdatedAt = StateCancelled, f.now()
 	return 1, nil
+}
+
+// The 0145 control surface, mirroring each guarded UPDATE's predicate exactly.
+// The predicates ARE the safety property — a fake that guarded more loosely
+// than the statement would let a test pass on behaviour production refuses.
+
+func (f *fakeRepo) PauseStorageMigration(_ context.Context, arg sqlcgen.PauseStorageMigrationParams) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c := f.find(arg.ID)
+	if c == nil || (c.State != StateEnumerating && c.State != StateCopying && c.State != StateSynced) {
+		return 0, nil
+	}
+	c.ResumeState = c.State
+	c.State, c.PausedReason, c.LastError, c.UpdatedAt = StatePaused, arg.PausedReason, arg.LastError, f.now()
+	return 1, nil
+}
+
+func (f *fakeRepo) ResumeStorageMigration(_ context.Context, id uuid.UUID) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c := f.find(id)
+	if c == nil || c.State != StatePaused {
+		return 0, nil
+	}
+	back := c.ResumeState
+	if back == "" {
+		back = StateCopying
+	}
+	c.State, c.ResumeState, c.PausedReason, c.LastError, c.UpdatedAt = back, "", "", "", f.now()
+	return 1, nil
+}
+
+func (f *fakeRepo) AbortStorageMigrationWithCleanup(_ context.Context, arg sqlcgen.AbortStorageMigrationWithCleanupParams) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c := f.find(arg.ID)
+	if c == nil || (c.State != StateEnumerating && c.State != StateCopying &&
+		c.State != StateSynced && c.State != StatePaused) {
+		return 0, nil
+	}
+	c.State, c.PausedReason, c.ResumeState, c.LastError, c.UpdatedAt =
+		StateAborting, "", "", arg.LastError, f.now()
+	return 1, nil
+}
+
+func (f *fakeRepo) ReleaseStorageMigrationSource(_ context.Context, id uuid.UUID) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c := f.find(id)
+	if c == nil || c.State != StateCutover {
+		return 0, nil
+	}
+	c.State, c.LastError, c.UpdatedAt = StateDeletingSource, "", f.now()
+	return 1, nil
+}
+
+func (f *fakeRepo) SetStorageMigrationWorker(_ context.Context, arg sqlcgen.SetStorageMigrationWorkerParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c := f.find(arg.ID); c != nil {
+		c.WorkerID = arg.WorkerID
+	}
+	return nil
+}
+
+func (f *fakeRepo) CountStorageMigrationObjectFailuresByCategory(_ context.Context, id uuid.UUID) ([]sqlcgen.CountStorageMigrationObjectFailuresByCategoryRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	byCat := map[string]*sqlcgen.CountStorageMigrationObjectFailuresByCategoryRow{}
+	for _, o := range f.objects {
+		if o.CampaignID != id || o.LastError == "" {
+			continue
+		}
+		r, ok := byCat[o.LastError]
+		if !ok {
+			r = &sqlcgen.CountStorageMigrationObjectFailuresByCategoryRow{Category: o.LastError}
+			byCat[o.LastError] = r
+		}
+		if o.State == ObjectFailed {
+			r.Terminal++
+		} else {
+			r.Retrying++
+		}
+	}
+	cats := make([]string, 0, len(byCat))
+	for k := range byCat {
+		cats = append(cats, k)
+	}
+	sort.Strings(cats)
+	out := make([]sqlcgen.CountStorageMigrationObjectFailuresByCategoryRow, 0, len(cats))
+	for _, k := range cats {
+		out = append(out, *byCat[k])
+	}
+	return out, nil
+}
+
+func (f *fakeRepo) ListDestinationCopiesToRemove(ctx context.Context, arg sqlcgen.ListDestinationCopiesToRemoveParams) ([]string, error) {
+	return f.ListVerifiedStorageMigrationObjects(ctx, sqlcgen.ListVerifiedStorageMigrationObjectsParams{
+		CampaignID: arg.CampaignID, Limit: arg.Limit,
+	})
+}
+
+func (f *fakeRepo) DeleteStorageMigrationObject(_ context.Context, objectKey string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.objects, objectKey)
+	return nil
 }
 
 func (f *fakeRepo) RefreshStorageMigrationCounters(_ context.Context, id uuid.UUID) error {
