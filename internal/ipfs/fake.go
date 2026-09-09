@@ -43,14 +43,21 @@ type FakeIPFSClient struct {
 	// leaking the pin. Nil in production/normal tests.
 	UnpinHook func(cid string) error
 
+	// GCErr, when set, makes RepoGC fail while every other RPC keeps working — the
+	// shape a collector that cannot complete has (a locked repo, a node under
+	// memory pressure), which is NOT the same as an unreachable node. Tests use it
+	// to assert that a failed collection never moves a ledger row.
+	GCErr error
+
 	// content maps CID → stored bytes; pins is the set of currently-pinned CIDs.
 	content map[string][]byte
 	pins    map[string]bool
 
-	// AddCount / PinCount / UnpinCount are call counters for assertions.
+	// AddCount / PinCount / UnpinCount / GCCount are call counters for assertions.
 	AddCount   int
 	PinCount   int
 	UnpinCount int
+	GCCount    int
 }
 
 var _ Client = (*FakeIPFSClient)(nil)
@@ -224,6 +231,33 @@ func (f *FakeIPFSClient) ListPins(ctx context.Context, max int) (map[string]stru
 		}
 	}
 	return out, nil
+}
+
+// RepoGC drops every stored block no pin holds, exactly as kubo's collector
+// does, and reports how many it removed. It is what lets a unit test assert the
+// half of a takedown that A31 measured by hand: after an unpin the bytes are
+// STILL there (Content still answers, a gateway would still serve them) until
+// this runs.
+func (f *FakeIPFSClient) RepoGC(ctx context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ensure()
+	if f.Down {
+		return 0, errNodeDown
+	}
+	if f.GCErr != nil {
+		return 0, f.GCErr
+	}
+	var removed int64
+	for cid := range f.content {
+		if f.pins[cid] {
+			continue
+		}
+		delete(f.content, cid)
+		removed++
+	}
+	f.GCCount++
+	return removed, nil
 }
 
 // AddStrayPin marks a CID pinned on the fake node WITHOUT any ledger row — the

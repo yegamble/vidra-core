@@ -3,6 +3,7 @@ package ipfsmirror
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -295,5 +296,125 @@ func TestSyncVideoLeavesASupersededTranscodeRowTerminal(t *testing.T) {
 	}
 	if got := repo.state(stale); got != "unpinned" {
 		t.Errorf("the superseded generation's row is %q, want it left at the terminal unpinned", got)
+	}
+}
+
+// ---- the stray count, in the process that RENDERS it ----------------------
+//
+// A31's rehearsal, INT-07 clause (e). `unaccounted_node_pins` was a per-process
+// sync.Map written only by VerifyPins — which runs under runWorkers behind the
+// leader lock — and read by this process's probe. On the topology
+// docker-compose.prod.yml renders, the api role serves /readyz and /admin/system
+// and runs no workers, so its map was never written and the detail was absent
+// forever; a single-process positive control rendered it, which is how the role
+// split was identified as the cause. These tests pin the fix at the seam that
+// broke: a process that never sweeps must still produce the number.
+
+// THE REGRESSION. Nothing here ever calls VerifyPins — this Service is the api
+// role — and the count still reaches the health record.
+func TestProbeHealthCountsStraysInAProcessThatNeverSweeps(t *testing.T) {
+	repo, client := newFakeRepo(), ipfs.NewFakeIPFSClient()
+	cfg := testConfig()
+	cfg.Gateway = &fakeGateway{}
+	svc := New(repo, &fakeLookups{}, newBlobs(t), client, cfg)
+	seedPinnedOnNode(t, repo, client, "thumbnails/ours.jpg", "ours")
+	if _, err := client.Add(context.Background(), "operators-own.bin", strings.NewReader("not ours")); err != nil {
+		t.Fatalf("fake Add: %v", err)
+	}
+
+	svc.ProbeHealth(context.Background())
+
+	if got := svc.GatewayHealth().Strays; got != 1 {
+		t.Fatalf("unaccounted_node_pins = %d, want 1 from the probe's own comparison", got)
+	}
+	// The proof that no sweep ran: VerifyPins is the only thing that moves the
+	// keyset cursor, and it is still where New left it.
+	if c := svc.verifyCursor(networkPublic); c != "" {
+		t.Errorf("verify cursor = %q; this fixture must not have swept", c)
+	}
+}
+
+// The node refusing to list its pins is ABSENT (-1), never 0. "We could not look"
+// and "there is nothing unaccounted for" are the two answers A31 caught the old
+// reconcile conflating by silence, and the renderer can only distinguish them if
+// the probe does.
+func TestProbeHealthReportsStraysAbsentWhenTheNodeWillNotList(t *testing.T) {
+	repo, client := newFakeRepo(), ipfs.NewFakeIPFSClient()
+	cfg := testConfig()
+	cfg.Gateway = &fakeGateway{}
+	svc := New(repo, &fakeLookups{}, newBlobs(t), client, cfg)
+	seedPinnedOnNode(t, repo, client, "thumbnails/ours.jpg", "ours")
+
+	client.Down = true
+	svc.ProbeHealth(context.Background())
+
+	if got := svc.GatewayHealth().Strays; got != -1 {
+		t.Fatalf("unaccounted_node_pins = %d with the node refusing pin/ls, want -1 (absent)", got)
+	}
+}
+
+// A Vidra pin is never a stray — not while it is pinned, and not during the
+// windows in which the worker is mid-flight on it. Reporting one would fire on
+// every drain and teach an operator to ignore the number.
+func TestProbeHealthNeverCountsAVidraPinAsAStray(t *testing.T) {
+	repo, client := newFakeRepo(), ipfs.NewFakeIPFSClient()
+	cfg := testConfig()
+	cfg.Gateway = &fakeGateway{}
+	svc := New(repo, &fakeLookups{}, newBlobs(t), client, cfg)
+
+	seedPinnedOnNode(t, repo, client, "thumbnails/pinned.jpg", "pinned-bytes")
+	seedPinnedOnNode(t, repo, client, "thumbnails/pending.jpg", "pending-bytes")
+	repo.rows["thumbnails/pending.jpg"].State = "pending"
+	seedPinnedOnNode(t, repo, client, "thumbnails/leaving.jpg", "leaving-bytes")
+	repo.rows["thumbnails/leaving.jpg"].State = "unpinning"
+
+	svc.ProbeHealth(context.Background())
+	if got := svc.GatewayHealth().Strays; got != 0 {
+		t.Fatalf("unaccounted_node_pins = %d with only Vidra pins on the node, want 0", got)
+	}
+
+	// And it does find a real one, so the 0 above is a verdict rather than a
+	// comparison that silently did nothing.
+	if _, err := client.Add(context.Background(), "operators-own.bin", strings.NewReader("not ours")); err != nil {
+		t.Fatalf("fake Add: %v", err)
+	}
+	svc.ProbeHealth(context.Background())
+	if got := svc.GatewayHealth().Strays; got != 1 {
+		t.Errorf("unaccounted_node_pins = %d after a real stray appeared, want 1", got)
+	}
+}
+
+// The private tier gets its own comparison against its OWN node. A count taken
+// from the public node would be a privacy-relevant lie about a swarm that never
+// serves viewers.
+func TestProbeHealthCountsPrivateStraysAgainstThePrivateNode(t *testing.T) {
+	repo := newFakeRepo()
+	pub, priv := ipfs.NewFakeIPFSClient(), ipfs.NewFakeIPFSClient()
+	cfg := testConfig()
+	cfg.Gateway = &fakeGateway{}
+	cfg.PrivateEnabled = true
+	cfg.PrivateClient = priv
+	svc := New(repo, &fakeLookups{}, newBlobs(t), pub, cfg)
+
+	// One accounted-for private pin, one stray on the private node, nothing on the
+	// public one.
+	res, err := priv.Add(context.Background(), "web-videos/p.mp4", strings.NewReader("private-bytes"))
+	if err != nil {
+		t.Fatalf("fake Add: %v", err)
+	}
+	repo.rows["web-videos/p.mp4"] = &sqlcgen.MediaIpfsPin{
+		ObjectKey: "web-videos/p.mp4", MediaClass: string(ClassVideoOriginal),
+		Cid: res.CID, State: "pinned", Network: networkPrivate,
+	}
+	if _, err := priv.Add(context.Background(), "outsider.bin", strings.NewReader("not ours")); err != nil {
+		t.Fatalf("fake Add: %v", err)
+	}
+
+	svc.ProbeHealth(context.Background())
+	if got := svc.PrivateHealth().Strays; got != 1 {
+		t.Errorf("private unaccounted_node_pins = %d, want 1", got)
+	}
+	if got := svc.GatewayHealth().Strays; got != 0 {
+		t.Errorf("public unaccounted_node_pins = %d, want 0 — the private node's pins are not the public node's", got)
 	}
 }

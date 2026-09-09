@@ -1311,11 +1311,34 @@ bytes:
   has no ledger row; the mirror worker then re-adds+pins them from the authoritative
   store. It is idempotent — a second run enqueues zero. Watch progress and node
   health with `GET /api/v1/ipfs/status` (counts per state/class + `node_reachable`).
-- **Node GC.** Unpinning (on delete, or when a video goes private / a user goes
-  unlisted) only marks a CID's blocks collectable — actual disk is reclaimed by the
-  node's own garbage collector, `ipfs repo gc` (run it on a schedule or when the
-  datastore grows). A CID is unpinned only after a reference check confirms no other
-  live pin shares it (content-address dedupe).
+- **Node GC — and unpinning is not forgetting, even on your OWN gateway.**
+  Unpinning (on delete, on a moderator block, or when a video goes private / a user
+  goes unlisted) only marks a CID's blocks collectable. **The blocks stay in the
+  datastore and this instance's own gateway keeps serving the CID, at the same URL,
+  until a garbage collection runs.** Measured, not assumed: after a block unpinned
+  every class of a video, all four of its unique CIDs still answered `200` from the
+  local gateway, and only a collection turned them into `404` (a still-pinned
+  control CID stayed `200` through the same pass). So a takedown is not complete on
+  your gateway until the collector has run. Two remedies, pick one:
+  - `IPFS_GC_AFTER_UNPIN=true` — the mirror runs `repo gc` itself after any pin-queue
+    batch that completed at least one unpin, and logs `ipfs_repo_gc` with the number
+    of unpins and blocks removed. **Off by default**: the collector sweeps the whole
+    datastore, so it costs minutes of I/O on a large repo for a handful of freed
+    blocks. `blocks_removed: 0` is normal when another live pin still shares the CID.
+  - run the node with GC enabled (`ipfs daemon --enable-gc`, or a `repo gc` cron) —
+    cheaper per takedown, but removal happens on the node's schedule, not on the
+    moderator's.
+
+  A CID is unpinned only after a reference check confirms no other live pin shares
+  it (content-address dedupe), so neither remedy can collect bytes another object
+  still publishes.
+- **Probe cadence.** `IPFS_HEALTH_PROBE_INTERVAL` (default `5m`, minimum `10s`) is
+  how often **every** role re-asks the gateway whether it is serving and re-compares
+  the pin ledger against the node's pinset. It is the bound on how long the api
+  keeps redirecting viewers to a gateway that stopped answering — a lab measured
+  3m34s of dead `307`s inside the default — and on how stale
+  `unaccounted_node_pins` on `/admin/system` can be. Shorter is a tighter bound and
+  more probes: one gateway fetch plus one `pin/ls` per active swarm, per process.
 - **⚠️ Unpin ≠ erasure on a public network.** Once a CID is public it may have been
   fetched, cached, or re-pinned by other nodes and the DHT; unpinning removes *our*
   obligation to serve it but cannot guarantee erasure elsewhere. Treat every public

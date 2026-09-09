@@ -66,6 +66,27 @@ type Client interface {
 	// set: a partial list is indistinguishable from a node that has lost pins,
 	// and acting on it would re-add live content and under-report strays.
 	ListPins(ctx context.Context, max int) (map[string]struct{}, error)
+	// RepoGC runs the node's garbage collector (/api/v0/repo/gc) and reports how
+	// many blocks it removed.
+	//
+	// UNPINNING IS NOT FORGETTING, and this is the only call that closes the gap.
+	// Unpin drops this node's obligation to KEEP a CID; the blocks stay in the
+	// datastore and the node's own gateway keeps serving them — verbatim, at the
+	// same URL — until the collector runs. A31's rehearsal measured exactly that:
+	// after a moderator block unpinned all five of a video's classes, every CID
+	// still answered 200 on the instance's own gateway, and only `ipfs repo gc`
+	// turned them into 404. So a takedown that must be complete on THIS instance
+	// needs a GC, which is why IPFS_GC_AFTER_UNPIN exists.
+	//
+	// It is EXPENSIVE — a full sweep of the datastore, proportional to repo size,
+	// not to what was just unpinned — which is why nothing calls it on a timer and
+	// the knob defaults off. It is safe for pinned content by construction: GC
+	// collects only blocks no pin (and no MFS/filestore reference) holds.
+	//
+	// The count is best-effort: kubo streams one NDJSON line per removed key and a
+	// line this client cannot decode is skipped rather than failing a collection
+	// that has already happened.
+	RepoGC(ctx context.Context) (int64, error)
 }
 
 // KuboClient is a hand-rolled HTTP client for the Kubo RPC API (/api/v0/*). No
@@ -275,6 +296,47 @@ func (c *KuboClient) ListPins(ctx context.Context, max int) (map[string]struct{}
 		out[cid] = struct{}{}
 	}
 	return out, nil
+}
+
+// gcResponse is one NDJSON object from /api/v0/repo/gc: the key it removed, or
+// an error for one key. The Key object is {"/":"<cid>"}.
+type gcResponse struct {
+	Key struct {
+		Slash string `json:"/"`
+	} `json:"Key"`
+	Error string `json:"Error"`
+}
+
+func (c *KuboClient) RepoGC(ctx context.Context) (int64, error) {
+	body, err := c.post(ctx, "/api/v0/repo/gc", nil, "")
+	if err != nil {
+		return 0, err
+	}
+	defer body.Close()
+	var removed int64
+	sc := bufio.NewScanner(body)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		var g gcResponse
+		if err := json.Unmarshal([]byte(line), &g); err != nil {
+			// The collection already ran; a line this client cannot read costs a
+			// number, not correctness. Counting it as removed would be worse.
+			continue
+		}
+		if g.Error == "" && g.Key.Slash != "" {
+			removed++
+		}
+	}
+	if err := sc.Err(); err != nil {
+		// The GC itself is server-side and does not unwind: report what was counted
+		// alongside the read failure rather than pretending nothing happened.
+		return removed, fmt.Errorf("ipfs: read repo gc response: %w", err)
+	}
+	return removed, nil
 }
 
 // post issues a POST to the Kubo RPC API (the API is POST-only). The caller owns

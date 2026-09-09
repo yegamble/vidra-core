@@ -657,6 +657,18 @@ x-api-env: &api-env
   IPFS_ADD_TIMEOUT: ${IPFS_ADD_TIMEOUT:-60s}
   IPFS_PIN_CONCURRENCY: ${IPFS_PIN_CONCURRENCY:-2}
   IPFS_RECONCILE_INTERVAL: ${IPFS_RECONCILE_INTERVAL:-5m}
+  # How often EVERY role re-probes the gateway and re-compares the pin ledger with
+  # the node. It is the bound on how long this instance keeps redirecting viewers
+  # to a gateway that has stopped answering (a rehearsal measured 3m34s of dead
+  # 307s inside the old hard-coded 5m). Floor 10s — each probe is a gateway fetch
+  # plus one pin/ls per swarm, per process.
+  IPFS_HEALTH_PROBE_INTERVAL: ${IPFS_HEALTH_PROBE_INTERVAL:-5m}
+  # Run `ipfs repo gc` after any drain batch that unpinned something. OFF by
+  # default because the collector sweeps the WHOLE datastore. Leaving it off means
+  # a CID this instance unpinned — on a delete, a privacy flip or a moderator
+  # block — is still served by this node's own gateway until some later GC; turn it
+  # on (or run the node with --enable-gc) if a takedown must complete promptly.
+  IPFS_GC_AFTER_UNPIN: ${IPFS_GC_AFTER_UNPIN:-false}
   # Optional IPFS Cluster replication of the PUBLIC tier (STOR-05). IPFS_CLUSTER_TOKEN
   # is a SECRET (Bearer) — never commit a real value.
   IPFS_CLUSTER_API_URL: ${IPFS_CLUSTER_API_URL:-}

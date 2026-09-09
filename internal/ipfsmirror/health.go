@@ -85,9 +85,16 @@ type Health struct {
 	Pinned                  int64
 	OldestBacklogAgeSeconds int64
 	LastPinnedAgeSeconds    int64
-	// Strays is the count the last ledger<->node comparison could not account for
-	// (see verify.go). -1 means no comparison has run or the last one could not
-	// complete, which is deliberately different from 0.
+	// Strays is how many of the node's recursive pins no live ledger row accounts
+	// for (see verify.go). -1 means the comparison could not be completed — the
+	// node would not list its pins, the ledger is larger than one sweep compares,
+	// or this tier has no node at all — which is deliberately different from 0.
+	//
+	// IT IS COMPUTED BY THIS PROBE, in whatever process is running it. It used to
+	// be read out of a per-process map written only by the worker role's
+	// leader-gated sweep, so the api role rendered it absent forever (A31
+	// rehearsal, INT-07 clause (e)). A component's facts have to be produced where
+	// they are read.
 	Strays int64
 }
 
@@ -139,13 +146,18 @@ func (s *Service) ProbeHealth(ctx context.Context) {
 
 // probePublic asks the public gateway for a CID this instance publishes.
 func (s *Service) probePublic(ctx context.Context) Health {
-	h := Health{At: time.Now(), Strays: s.lastStrays(networkPublic)}
+	h := Health{At: time.Now(), Strays: -1}
 	if !s.publicEnabled {
 		h.State = HealthNotConfigured
 		h.Reason = "the public IPFS mirror is off (IPFS_ENABLED=false), so nothing is published and no media request is redirected to a gateway"
 		return h
 	}
 	s.fillLedger(ctx, networkPublic, &h)
+	// The ledger<->node comparison, taken here rather than inherited from the
+	// leader's sweep. It runs BEFORE the gateway arms so the count rides with every
+	// verdict this probe can return — a gateway that is down does not stop the node
+	// from answering what it holds, and an operator diagnosing one wants the other.
+	h.Strays = s.strayPins(ctx, networkPublic)
 	if s.gateway == nil || s.gatewayURL == "" {
 		// The mirror pins, but no gateway is configured to serve what it pins. That
 		// is a real posture (a private-only publisher, or a gateway added later),
@@ -190,13 +202,14 @@ func (s *Service) probePublic(ctx context.Context) Health {
 // probePrivate reports the private replication tier: node reachability plus its
 // ledger facts. No gateway, by design.
 func (s *Service) probePrivate(ctx context.Context) Health {
-	h := Health{At: time.Now(), Strays: s.lastStrays(networkPrivate)}
+	h := Health{At: time.Now(), Strays: -1}
 	if !s.privateEnabled || s.privateClient == nil {
 		h.State = HealthNotConfigured
 		h.Reason = "the private replication tier is off (IPFS_MIRROR_PRIVATE=false)"
 		return h
 	}
 	s.fillLedger(ctx, networkPrivate, &h)
+	h.Strays = s.strayPins(ctx, networkPrivate)
 	pctx, cancel := context.WithTimeout(ctx, gatewayProbeTimeout)
 	defer cancel()
 	h.Probed = true
@@ -248,17 +261,6 @@ func (s *Service) probeCID(ctx context.Context, network string) (string, bool, e
 		return "", false, nil
 	}
 	return rows[0].Cid, true, nil
-}
-
-// lastStrays reports the stray count the last verify sweep recorded for a swarm,
-// or -1 when none has completed.
-func (s *Service) lastStrays(network string) int64 {
-	v, ok := s.strays.Load(network)
-	if !ok {
-		return -1
-	}
-	n, _ := v.(int64)
-	return n
 }
 
 // ptr is the one-liner atomic.Pointer stores need.

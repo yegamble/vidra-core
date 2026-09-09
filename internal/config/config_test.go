@@ -867,6 +867,43 @@ func TestLoadIPFSValidation(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			// The probe interval is the operator's lever on how long the api may keep
+			// redirecting to a gateway that stopped answering. Under the floor it is a
+			// load generator: a gateway fetch plus one pin/ls per swarm, per process.
+			// REFUSED rather than clamped — a clamp leaves the env file saying one
+			// thing and the process doing another.
+			name: "health probe interval below the floor errors",
+			env: map[string]string{
+				"IPFS_ENABLED":               "true",
+				"IPFS_API_URL":               "http://ipfs:5001",
+				"IPFS_GATEWAY_URL":           "https://gw.example.org",
+				"IPFS_HEALTH_PROBE_INTERVAL": "1s",
+			},
+			wantErr: true,
+		},
+		{
+			name: "health probe interval at the floor ok",
+			env: map[string]string{
+				"IPFS_ENABLED":               "true",
+				"IPFS_API_URL":               "http://ipfs:5001",
+				"IPFS_GATEWAY_URL":           "https://gw.example.org",
+				"IPFS_HEALTH_PROBE_INTERVAL": "10s",
+			},
+			wantErr: false,
+		},
+		{
+			// The probe is not gated on the public tier: a private-only instance runs
+			// it too, so its floor has to bite there as well.
+			name: "health probe floor bites on a private-only tier",
+			env: map[string]string{
+				"IPFS_ENABLED":               "false",
+				"IPFS_MIRROR_PRIVATE":        "true",
+				"IPFS_PRIVATE_API_URL":       "http://ipfs-private:5001",
+				"IPFS_HEALTH_PROBE_INTERVAL": "2s",
+			},
+			wantErr: true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -881,6 +918,35 @@ func TestLoadIPFSValidation(t *testing.T) {
 				t.Fatalf("Load() = %v, want nil error for %s", err, tc.name)
 			}
 		})
+	}
+}
+
+// The two knobs A31's rehearsal asked for, and their defaults: unchanged
+// behaviour for every operator who does not set them.
+func TestIPFSProbeIntervalAndGCDefaults(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load default: %v", err)
+	}
+	if cfg.IPFSHealthProbeInterval != DefaultIPFSHealthProbeInterval {
+		t.Errorf("IPFSHealthProbeInterval default = %s, want %s (the interval the mirror shipped hard-coded)",
+			cfg.IPFSHealthProbeInterval, DefaultIPFSHealthProbeInterval)
+	}
+	if cfg.IPFSGCAfterUnpin {
+		t.Error("IPFS_GC_AFTER_UNPIN defaults on; `repo gc` is a whole-datastore sweep and must be opt-in")
+	}
+
+	t.Setenv("IPFS_HEALTH_PROBE_INTERVAL", "20s")
+	t.Setenv("IPFS_GC_AFTER_UNPIN", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load overridden: %v", err)
+	}
+	if cfg.IPFSHealthProbeInterval != 20*time.Second {
+		t.Errorf("IPFSHealthProbeInterval = %s, want 20s", cfg.IPFSHealthProbeInterval)
+	}
+	if !cfg.IPFSGCAfterUnpin {
+		t.Error("IPFS_GC_AFTER_UNPIN=true did not take")
 	}
 }
 

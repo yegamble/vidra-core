@@ -819,6 +819,11 @@ func run() error {
 			// worker. Nil with no URL, which the component reports as not_configured
 			// and the delivery gate reads as "do not redirect".
 			Gateway: ipfsGatewayProbe,
+			// Run the node's collector after a batch that unpinned something
+			// (IPFS_GC_AFTER_UNPIN, default false). Unpinning is not forgetting: without
+			// it the instance's own gateway keeps serving a withdrawn CID until some
+			// later GC, which A31's rehearsal measured directly.
+			GCAfterUnpin: cfg.IPFSGCAfterUnpin,
 			// Private tier (P19.P1) — a dedicated private-swarm node client the worker
 			// routes network='private' rows to (and ONLY those rows).
 			PrivateEnabled:     privateEnabled,
@@ -2483,8 +2488,8 @@ func run() error {
 	if ipfsMirror.Enabled() {
 		probeCtx, probeCancel := context.WithCancel(context.Background())
 		defer probeCancel()
-		go runIPFSHealthProbe(probeCtx, logger, ipfsMirror)
-		logger.Info("ipfs health probe started", "interval", ipfsHealthProbeInterval.String())
+		go runIPFSHealthProbe(probeCtx, logger, ipfsMirror, cfg.IPFSHealthProbeInterval)
+		logger.Info("ipfs health probe started", "interval", cfg.IPFSHealthProbeInterval.String())
 	}
 
 	// Admin operations: the durable-queue depth snapshot + recent-failures
@@ -3385,28 +3390,33 @@ func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirr
 	}
 }
 
-// ipfsHealthProbeInterval is how often each process re-asks the gateway whether it
-// is serving. It is the cadence internal/storage.WriteHealth already established
-// for the object store's write probe, and the reason is the same: this is a
-// question whose answer gates a request path, so it must be a cached record rather
-// than a hop on the request itself — and five minutes is the interval an operator
-// already reasons about for that class of check.
-//
-// The cost of caching is stated rather than hidden: after a gateway dies, up to one
-// interval of 307s are still minted, and each carries max-age=300 of its own. This
-// bounds how wrong the gate can be; it does not make it never wrong.
-const ipfsHealthProbeInterval = 5 * time.Minute
-
 // runIPFSHealthProbe takes the mirror's gateway/node verdict on boot and every
 // interval thereafter, until ctx is canceled.
+//
+// THE INTERVAL IS THE BOUND ON HOW WRONG THE REDIRECT GATE CAN BE, which is why it
+// is a knob (IPFS_HEALTH_PROBE_INTERVAL, default 5m, floored at 10s) rather than
+// the constant it shipped as. This is a question whose answer gates a request
+// path, so it must be a cached record and not a hop on the request itself; the
+// cost of caching is that after a gateway dies, up to one interval of 307s are
+// still minted and each carries max-age=300 of its own. A31's rehearsal measured
+// 3m34s of exactly that inside the hard-coded five minutes, and recorded that an
+// operator could neither tighten the bound nor a lab shorten it. The trade is now
+// theirs to make: shorter means a tighter bound and more probes (one gateway fetch
+// plus one pin/ls per active swarm, per process).
 //
 // It probes IMMEDIATELY rather than waiting out the first tick. Until a probe
 // completes the delivery gate answers "not redirectable" — an unprobed gateway is
 // not evidence a viewer sent there gets bytes — so a five-minute wait would mean
 // five minutes of api-proxied thumbnails after every restart on a perfectly healthy
 // instance.
-func runIPFSHealthProbe(ctx context.Context, logger *slog.Logger, svc *ipfsmirror.Service) {
-	tick := time.NewTicker(ipfsHealthProbeInterval)
+func runIPFSHealthProbe(ctx context.Context, logger *slog.Logger, svc *ipfsmirror.Service, interval time.Duration) {
+	if interval < config.MinIPFSHealthProbeInterval {
+		// Boot validation refuses anything under the floor, so this is unreachable in
+		// production; it is here so an embedder or a test that builds the loop by hand
+		// cannot spin a ticker at a rate that hammers the node.
+		interval = config.DefaultIPFSHealthProbeInterval
+	}
+	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	svc.ProbeHealth(ctx)
 	if h := svc.GatewayHealth(); h.Probed && h.State != ipfsmirror.HealthOK {
