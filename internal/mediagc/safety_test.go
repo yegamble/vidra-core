@@ -589,10 +589,23 @@ func TestActiveMigrationForcesADryRun(t *testing.T) {
 	}
 }
 
-// TestOwnershipReasonWinsOverTheMigrationCheck: ownership is the cheaper and more
-// alarming answer, and it is reported rather than being masked by whichever rail
-// happens to run second.
-func TestOwnershipReasonWinsOverTheMigrationCheck(t *testing.T) {
+// TestMigrationReasonWinsOverTheOwnershipCheck: when BOTH rails would refuse,
+// the migration is the one named.
+//
+// This test used to assert the opposite, and A34 is why it was inverted. A
+// destructive sweep run DURING cutover reported `bucket_ownership`, because a
+// campaign stamps the destination's ownership marker as its LAST act — so mid-
+// move the destination legitimately carries no marker, the ownership gate fires
+// first, and the operator is sent to adopt a bucket while a move is in flight.
+// Both rails refuse the same sweep and `deleted` is 0 either way; only the
+// sentence changes. "A migration is running" is the CAUSE and an unadopted
+// destination mid-move is one of its symptoms, so the cause is what an operator
+// must read.
+//
+// It also saves the round trip the old order spent: the ownership branch
+// re-reads the marker OUT OF THE STORE before it forces a dry run, and a sweep
+// already blocked by a live campaign has no reason to pay for that.
+func TestMigrationReasonWinsOverTheOwnershipCheck(t *testing.T) {
 	ctx := context.Background()
 	blobs, err := storage.NewLocal(t.TempDir())
 	if err != nil {
@@ -610,14 +623,47 @@ func TestOwnershipReasonWinsOverTheMigrationCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
+	if res.ForcedDryRunReason != ReasonMigrationActive {
+		t.Errorf("ForcedDryRunReason = %q, want %q", res.ForcedDryRunReason, ReasonMigrationActive)
+	}
+	if !migrationChecked {
+		t.Error("the migration interlock was never asked; it is the gate that now decides the reason")
+	}
+	// The refusal itself is unchanged — that is what makes reordering safe.
+	if res.Deleted != 0 || res.Mode != ModeDryRun {
+		t.Errorf("deleted %d in mode %q, want 0/dry-run — reordering must change the REASON, never the outcome", res.Deleted, res.Mode)
+	}
+	// Ownership is still reported as the state the sweep ran under, so the
+	// operator does not lose the fact, only its top billing.
+	if res.BucketOwnership != string(OwnershipConflict) {
+		t.Errorf("BucketOwnership = %q, want %q", res.BucketOwnership, OwnershipConflict)
+	}
+	if !strings.Contains(res.Summary(), "forced_reason="+ReasonMigrationActive) {
+		t.Errorf("Summary() = %q, want it to carry the forced reason", res.Summary())
+	}
+}
+
+// The other order still holds: with NO campaign in flight, an unowned store is
+// still the reason. Reordering must not have turned the ownership rail off.
+func TestOwnershipStillNamesItselfWithNoMigration(t *testing.T) {
+	ctx := context.Background()
+	blobs, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := seedOrphans(t, blobs, 2, 0)
+	svc := NewService(repo, blobs,
+		WithBucketOwnership(OwnershipConflict),
+		WithActiveMigrationCheck(func(context.Context) (bool, error) { return false, nil }))
+	res, err := svc.Sweep(ctx, false)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
 	if res.ForcedDryRunReason != ReasonBucketOwnership {
 		t.Errorf("ForcedDryRunReason = %q, want %q", res.ForcedDryRunReason, ReasonBucketOwnership)
 	}
-	if migrationChecked {
-		t.Error("the migration check ran even though ownership had already forced a dry run; it costs a database round trip")
-	}
-	if !strings.Contains(res.Summary(), "forced_reason="+ReasonBucketOwnership) {
-		t.Errorf("Summary() = %q, want it to carry the forced reason", res.Summary())
+	if res.Deleted != 0 {
+		t.Errorf("deleted %d objects from a store this install does not own", res.Deleted)
 	}
 }
 

@@ -52,6 +52,12 @@ import (
 // standing authorisation to change the account's credentials.
 const stepUpTTL = 10 * time.Minute
 
+// StepUpTTL is stepUpTTL for the transport that carries the token. The cookie
+// the assertion now rides in must die when the row does — a browser still
+// sending a token this package would refuse is a cookie in more logs than
+// necessary, and two constants that could drift is how that happens.
+const StepUpTTL = stepUpTTL
+
 // stepUpTokenBytes is the entropy of a raw step-up token (256 bits), matching
 // the refresh, reset, verification and owner-claim tokens.
 const stepUpTokenBytes = 32
