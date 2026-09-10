@@ -313,6 +313,14 @@ func (s *Service) unlockPrivateKey(stored string) (*rsa.PrivateKey, error) {
 	if block == nil {
 		return nil, errors.New("federation: invalid private key PEM")
 	}
+	// PeerTube actor keys use PKCS#1; retain their identity after import.
+	if block.Type == "RSA PRIVATE KEY" {
+		key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("federation: parse private key: %w", err)
+		}
+		return key, nil
+	}
 	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
 		return nil, fmt.Errorf("federation: parse private key: %w", err)
