@@ -114,12 +114,9 @@ func TestPeerTubeImportEndToEnd(t *testing.T) {
 	if got := plan.Entities[KindVideo].Planned; got != 2 {
 		t.Errorf("plan videos planned = %d, want 2", got)
 	}
-	// This run is in COPY mode (the shipped default), and copy mode writes no
-	// streaming_playlists row for anything — only reference mode records the
-	// source's HLS objects. The plan used to count one here anyway, promising the
-	// operator media the run was structurally unable to carry.
-	if got := plan.Entities[KindHLSPlaylist].Planned; got != 0 {
-		t.Errorf("plan hls playlists planned = %d, want 0 in copy mode", got)
+	// Copy mode carries the source HLS tree as well as the progressive file.
+	if got := plan.Entities[KindHLSPlaylist].Planned; got != 1 {
+		t.Errorf("plan hls playlists planned = %d, want 1 in copy mode", got)
 	}
 	// Video 2 has no videoFile row and no playlist, so it lands with nothing to
 	// play. Video 1 does have a progressive original — the control that keeps this
@@ -431,10 +428,9 @@ func TestPeerTubeImportEndToEnd(t *testing.T) {
 	if report.Entities[KindRating].Unsupported != 1 {
 		t.Errorf("ratings unsupported = %d, want 1 (a cleared 'none' rating)", report.Entities[KindRating].Unsupported)
 	}
-	// Copy mode re-transcodes through Vidra, which writes its own ladder — so the
-	// source's rungs are NOT claimed here. Only the audio-only rung is terminal.
-	if n := countRows(t, ctx, dest, "video_renditions"); n != 0 {
-		t.Errorf("video_renditions = %d, want 0 in copy mode (Vidra's transcode owns the ladder)", n)
+	// Copy mode carries the source ladder; audio-only is not a quality rung.
+	if n := countRows(t, ctx, dest, "video_renditions"); n != 2 {
+		t.Errorf("video_renditions = %d, want 2 copied source rungs", n)
 	}
 
 	// ── idempotency: a re-run creates nothing new ──
@@ -3817,17 +3813,7 @@ func seedHLSOnlyVideo(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 }
 
-// TestPeerTubeImportCopyModeOnAnHLSOnlySource pins the defect that made the
-// SHIPPED DEFAULT able to import a catalogue with nothing playable in it:
-//
-//   - the plan promised an HLS playlist copy mode structurally cannot carry (the
-//     importer writes a streaming_playlists row in reference mode only), so the
-//     plan an operator approved was not the plan that ran;
-//   - a video with no progressive file lands with no media of any kind, is
-//     counted Imported, and nothing on the report says so.
-//
-// Both are checked in copy AND reference mode against the same source, because a
-// counter that is right in one mode and blind in the other is worse than none.
+// The HLS-only copy and the repair of an older empty import use real DB ledgers.
 func TestPeerTubeImportCopyModeOnAnHLSOnlySource(t *testing.T) {
 	base := os.Getenv("DATABASE_URL")
 	if base == "" {
@@ -3848,6 +3834,16 @@ func TestPeerTubeImportCopyModeOnAnHLSOnlySource(t *testing.T) {
 
 	srcMediaDir := t.TempDir()
 	seedSourceMedia(t, srcMediaDir)
+	p := filepath.Join(srcMediaDir, "streaming-playlists/hls/33333333-3333-3333-3333-333333333333")
+	if err := os.MkdirAll(p, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p, "v3-master.m3u8"), []byte("#EXTM3U\n#EXTINF:4,\nclip.mp4\n#EXT-X-ENDLIST\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p, "clip.mp4"), []byte("synthetic HLS-only bytes"), 0o640); err != nil {
+		t.Fatal(err)
+	}
 	srcMedia, err := storage.NewLocal(srcMediaDir)
 	if err != nil {
 		t.Fatal(err)
@@ -3880,16 +3876,16 @@ func TestPeerTubeImportCopyModeOnAnHLSOnlySource(t *testing.T) {
 	if got := copyPlan.Entities[KindVideo].Planned; got != 3 {
 		t.Fatalf("copy plan videos planned = %d, want 3 (the control, the empty one, the HLS-only one)", got)
 	}
-	if got := copyPlan.Entities[KindHLSPlaylist].Planned; got != 0 {
-		t.Errorf("copy plan hls playlists planned = %d, want 0 — copy mode writes no streaming_playlists row, so planning one advertises media the run cannot deliver", got)
+	if got := copyPlan.Entities[KindHLSPlaylist].Planned; got != 2 {
+		t.Errorf("copy plan hls playlists planned = %d, want 2 independently copied trees", got)
 	}
 	// The control still has its progressive original planned: this is what proves
 	// the zero above is about HLS and not about the media pass being switched off.
 	if got := copyPlan.Entities[KindVideoFile].Planned; got != 1 {
 		t.Errorf("copy plan video files planned = %d, want 1 (video 1's progressive original)", got)
 	}
-	if got := copyPlan.Entities[KindVideoNoMedia].Planned; got != 2 {
-		t.Errorf("copy plan videos with no media = %d, want 2 (the HLS-only video and the file-less one) — an operator has to see this before approving the plan", got)
+	if got := copyPlan.Entities[KindVideoNoMedia].Planned; got != 1 {
+		t.Errorf("copy plan videos with no media = %d, want 1 (only the file-less video)", got)
 	}
 
 	// ── the same source in reference mode, which CAN carry the playlists ──
@@ -3916,15 +3912,14 @@ func TestPeerTubeImportCopyModeOnAnHLSOnlySource(t *testing.T) {
 	if got := report.Entities[KindVideo].Imported; got != 3 {
 		t.Fatalf("videos imported = %d, want 3", got)
 	}
-	if got := report.Entities[KindHLSPlaylist].Imported; got != 0 {
-		t.Errorf("hls playlists imported in copy mode = %d, want 0", got)
+	if got := report.Entities[KindHLSPlaylist].Imported; got != 2 {
+		t.Errorf("hls playlists imported in copy mode = %d, want 2", got)
 	}
-	if got := report.Entities[KindVideoNoMedia].Imported; got != 2 {
-		t.Errorf("videos imported with no media = %d, want 2", got)
+	if got := report.Entities[KindVideoNoMedia].Imported; got != 1 {
+		t.Errorf("videos imported with no media = %d, want 1", got)
 	}
 
-	// The control PLAYS and the HLS-only video does not — the fact the counter
-	// exists to make visible, read straight off the destination.
+	// Both videos play; the HLS-only one has a playlist instead of an original.
 	countFiles := func(title string) int {
 		t.Helper()
 		var n int
@@ -3939,7 +3934,7 @@ func TestPeerTubeImportCopyModeOnAnHLSOnlySource(t *testing.T) {
 		t.Errorf("control video original files = %d, want 1 — the assertion below would pass for the wrong reason", got)
 	}
 	if got := countFiles("HLS Only Video"); got != 0 {
-		t.Errorf("hls-only video original files = %d, want 0 (copy mode carries no HLS tree)", got)
+		t.Errorf("hls-only video original files = %d, want 0 (HLS playback needs no progressive file)", got)
 	}
 	var playlists int
 	if err := dest.QueryRow(ctx,
@@ -3947,8 +3942,41 @@ func TestPeerTubeImportCopyModeOnAnHLSOnlySource(t *testing.T) {
 		 WHERE v.title='HLS Only Video'`).Scan(&playlists); err != nil {
 		t.Fatalf("count playlists: %v", err)
 	}
-	if playlists != 0 {
-		t.Errorf("hls-only video streaming playlists = %d, want 0 in copy mode", playlists)
+	if playlists != 1 {
+		t.Errorf("hls-only video streaming playlists = %d, want 1 in copy mode", playlists)
+	}
+
+	// Simulate a catalogue imported by an older release: the video ledger is
+	// complete, but it has no HLS playlist. Retry first fails on a missing file.
+	if _, err := dest.Exec(ctx, `DELETE FROM streaming_playlists WHERE video_id=(SELECT id FROM videos WHERE title='HLS Only Video')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(p, "clip.mp4")); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Entities[KindHLSPlaylist].Failed != 1 {
+		t.Fatal("incomplete tree must fail")
+	}
+	if err := os.WriteFile(filepath.Join(p, "clip.mp4"), []byte("synthetic HLS-only bytes"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	repaired, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repaired.Entities[KindHLSPlaylist].Imported != 1 || repaired.Entities[KindVideoNoMedia].Imported != 1 {
+		t.Fatal("old import was not repaired")
+	}
+	again, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Entities[KindHLSPlaylist].Imported != 0 {
+		t.Fatal("ready playlist recopied")
 	}
 
 	// The deferred note an operator reads next must not tell them the transcoder
