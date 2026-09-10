@@ -763,6 +763,11 @@ func (im *Importer) copyMedia(ctx context.Context, srcKey, destKey string) (int6
 		return 0, "", fmt.Errorf("peertubeimport: media copy requested without source+destination storage")
 	}
 	rc, err := im.srcMedia.Open(ctx, srcKey)
+	// PeerTube keeps restricted local web videos below private/. Only absence
+	// permits this fallback; permission and transport failures must stay visible.
+	if errors.Is(err, storage.ErrNotFound) && strings.HasPrefix(srcKey, ptWebVideosDir+"/") {
+		rc, err = im.srcMedia.Open(ctx, strings.Replace(srcKey, ptWebVideosDir+"/", ptWebVideosDir+"/private/", 1))
+	}
 	if err != nil {
 		return 0, "", err
 	}

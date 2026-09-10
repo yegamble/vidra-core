@@ -86,3 +86,21 @@ func TestCopyMediaPassesTheSourceLength(t *testing.T) {
 		t.Errorf("stored bytes = %q, want %q", dest.written["thumbnails/y.jpg"], body)
 	}
 }
+
+func TestCopyMediaReadsPeerTubePrivateWebVideo(t *testing.T) {
+	src, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.Put(context.Background(), "web-videos/private/fixture.mp4", bytes.NewBufferString("private fixture")); err != nil {
+		t.Fatal(err)
+	}
+	dest := newSizeRecordingBackend(t)
+	im := &Importer{srcMedia: src, destMedia: dest}
+	if _, _, err := im.copyMedia(context.Background(), "web-videos/fixture.mp4", "web-videos/copied.mp4"); err != nil {
+		t.Fatal(err)
+	}
+	if string(dest.written["web-videos/copied.mp4"]) != "private fixture" {
+		t.Fatal("private source bytes were not copied")
+	}
+}
