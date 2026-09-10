@@ -51,10 +51,14 @@ tool *moves content in*, once.
 
 **Deferred / mode-dependent** (reconcile or regenerate afterwards):
 
-- **HLS streaming playlists in copy mode** — reference mode reuses PeerTube's
-  existing HLS objects; copy mode still relies on Vidra's own transcoding
-  pipeline (`TRANSCODING_ENABLED`) after import. Ladder rungs follow the tree:
-  in copy mode Vidra's own transcode writes them.
+- **HLS copy mode** copies flat, local playlist dependencies (including audio,
+  init segments and byte-range files), then publishes the completed tree. A
+  separate pass repairs older imports with no ready playlist; completed Vidra
+  playlists are preserved. Reruns retry incomplete copies with stable keys.
+  Each tree is limited to 10,000 objects, 64 GiB and 30 minutes, with 1 MiB
+  manifests and the existing 16 GiB object cap. External/nested references
+  require conversion; failures remain visible in `hls_playlist.failed` and
+  `video_no_media`. No automatic re-transcode is scheduled.
 - **Per-day view history** — see §1.1.
 - **Moderation state** (video blacklist, account/server blocklists, abuse reports).
 - **User notification settings and watch history.**

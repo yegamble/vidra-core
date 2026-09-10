@@ -403,11 +403,8 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Only REFERENCE mode carries a playlist — importOneVideo writes a
-		// streaming_playlists row nowhere else. Counting one in copy mode made the
-		// plan advertise media the run was structurally unable to deliver, and the
-		// plan an operator approves has to be the plan that runs.
-		carriesHLS := hasHLS && im.mediaMode == MediaModeReference
+		// Both media modes carry HLS; copy mode publishes after full acquisition.
+		carriesHLS := hasHLS && im.carriesMedia()
 		if carriesHLS {
 			r.count(KindHLSPlaylist).Planned++
 		}
@@ -491,12 +488,7 @@ func playableFile(files []SourceVideoFile) bool {
 // version, surfaced in every report + the docs so operators reconcile them.
 func deferredFamilies() []string {
 	return []string{
-		// This used to say copy mode "regenerates via Vidra transcoding". Nothing
-		// in this package enqueues a transcode: the only trigger is an operator
-		// posting to /admin/videos/{id}/transcoding, one video at a time. An
-		// operator who read the old note had no reason to check, which is the worst
-		// case on an HLS-only source, where copy mode carries no media at all.
-		"HLS in copy mode: reference mode records the source's existing HLS objects, copy mode carries only the progressive original and no HLS tree. Nothing re-transcodes those videos automatically — an operator has to ask per video (POST /admin/videos/{id}/transcoding) — so until they do, an imported video plays from its original file, and a video whose source had ONLY HLS (see the video_no_media count) has nothing to play at all",
+		"HLS copy mode carries flat local playlist dependencies independently and backfills missing playlists on rerun; external or nested references require an explicit conversion. Existing ready Vidra playlists are preserved; no automatic re-transcode is scheduled",
 		"moderation state (account/server blocklists, abuse reports; the video blacklist IS carried, into video_blocks)",
 		"user notification settings and watch history",
 		"live sessions, plugins, themes, runners, redundancy config",
@@ -547,6 +539,7 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 		// accounts an earlier release already imported. See entities_actorimages.go.
 		{"actor images", im.importActorImages},
 		{"videos", im.importVideos},
+		{"HLS copies", im.importHLSCopies},
 		// Posters and storyboards run after videos, as passes of their own, for
 		// exactly the reason the per-video families do — and because the posters
 		// the old in-video path wrote point at objects PeerTube never stored, so
@@ -565,6 +558,7 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 		{"comments", im.importComments},
 		{"playlists", im.importPlaylists},
 		{"follows", im.importFollows},
+		{"missing media", im.countMissingMedia},
 	}
 	for _, step := range steps {
 		if err := step.fn(ctx, r); err != nil {
