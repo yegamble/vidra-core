@@ -489,3 +489,28 @@ func TestRedeliverAfterUnblockIsNotStarvedByOtherDomains(t *testing.T) {
 		}
 	}
 }
+
+// PeerTube exports RSA PRIVATE KEY (PKCS#1); Vidra's own keys are PKCS#8.
+// Both formats must sign with the same imported public identity after sealing.
+func TestUnlockImportedPeerTubePKCS1Key(t *testing.T) {
+	key, _ := testPrivatePEM(t)
+	cipher, err := secretbox.NewCipher(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+	sealed, err := cipher.Seal([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stored := range []string{raw, sealed} {
+		svc := NewService(fakeRepo{}, WithCipher(cipher))
+		got, err := svc.unlockPrivateKey(stored)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.PublicKey.Equal(&key.PublicKey) {
+			t.Fatal("imported actor identity changed")
+		}
+	}
+}
