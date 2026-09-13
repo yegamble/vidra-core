@@ -28,7 +28,9 @@ on a third party's availability, so it cannot decide whether a PR merges).
 image's Go line: it fails when this module's code reaches a known Go
 vulnerability, and when the scan cannot run. The fix is upgrading the named
 module or the Go toolchain — the one exception to "Dependabot owns bumps"
-below. Never skip or narrow the scan to get green.
+below. Never skip or narrow the scan to get green. A red DAILY run on main
+blocks nothing by itself and emails only whoever last edited the cron line —
+whoever sees it opens the fix PR.
 
 **No silent skips.** Nearly every integration test here self-skips when its
 dependency is absent — right on a laptop, wrong in the lane whose job is to
