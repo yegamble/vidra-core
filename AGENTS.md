@@ -16,8 +16,9 @@ timed out, or **never ran** (a `paths:` filter that grew too narrow, or a
 renamed job, otherwise produces a PR with fewer proofs and no signal at all).
 
 Required today: `build-test`, `integration`, `openapi`, `ipfs-integration`,
-`ipfs-private-integration`, plus `guard`, `prev-migrator-against-new-schema`
-and `prev-release-against-new-schema` when their path filters fire.
+`ipfs-private-integration`, `govulncheck`, plus `guard`,
+`prev-migrator-against-new-schema` and `prev-release-against-new-schema` when
+their path filters fire.
 Deliberately NOT required, each for a stated reason in its own workflow header:
 `bench`/`fuzz` (scheduled exploratory signal) and `ipfs-public-gateway` (depends
 on a third party's availability, so it cannot decide whether a PR merges).
@@ -25,6 +26,22 @@ Removing an entry from the manifest fails `ci-guard`
 (`scripts/ci/check-required-manifest-removals.sh`, compared against the base
 branch) unless the same file carries `# retired: <name> — <reason>` for it:
 retiring a lane is a deliberate, diff-visible act, never a quiet deletion.
+
+**`govulncheck` can go red with no change in this repo.** `vuln.yml` runs
+`make vuln` (govulncheck, pinned) on every PR, on main and daily, on the release
+image's Go line. Its scope is exact: it fails when this module's code REACHES a
+vulnerable symbol in an advisory curated by vuln.go.dev, and when the scan
+cannot run. Module-level "required but not called" findings are printed
+(`-show verbose`) but informational, and an advisory that exists only as a
+GitHub GHSA is invisible to it — those are Dependabot alerts' job. Green means
+"no reachable vuln.go.dev advisory", not "no known vulnerability". The fix is
+upgrading the named module or the Go toolchain — the one exception to
+"Dependabot owns bumps" below. Never skip or narrow the scan to get green. The
+scanner pin (`GOVULNCHECK_VERSION` in the Makefile) is one Dependabot cannot
+see; review it whenever you touch the lane. A red DAILY run on main blocks
+nothing by itself; it opens (or comments on) one tracking issue titled
+"govulncheck: the scheduled scan of main is red" — whoever picks it up opens
+the fix PR and closes the issue when main is green.
 
 **No silent skips.** Nearly every integration test here self-skips when its
 dependency is absent — right on a laptop, wrong in the lane whose job is to
@@ -97,7 +114,8 @@ If docker is unavailable, say so plainly in the PR — and ALWAYS run
    middleware is mandatory: admin routes `requireRole`, user routes
    `requireAuth`/`optionalAuth` plus ownership checks in the handler.
    Shared-secret comparisons use `subtle.ConstantTimeCompare`.
-7. **Do not bump dependencies** (Dependabot owns bumps), do not touch
+7. **Do not bump dependencies** (Dependabot owns bumps — except the smallest
+   upgrade that clears a `govulncheck` finding), do not touch
    `.github/workflows`, never commit secrets or `.env` files.
 
 ## Git hygiene — finished means merged (all agents / AI tools)
