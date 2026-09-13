@@ -57,11 +57,25 @@ RUN apk upgrade --no-cache && \
 # stays lean. The version is PINNED at build time — the runtime never
 # self-updates (the app also forbids --update). The app opt-in is separate
 # (YTDLP_IMPORT_ENABLED=true). yt-dlp is a python zipapp, so it needs python3.
+#
+# YTDLP_SHA256 is REQUIRED whenever YTDLP_VERSION is set: the build fails if it
+# is missing or does not match. A version pin names a release, not bytes — a
+# tampered or re-uploaded GitHub asset (or anything in the download path)
+# would otherwise be baked into a signed, attested release image and executed
+# by the importer with no check at all. Take the value from the `yt-dlp` line
+# of that release's SHA2-256SUMS asset (signed by SHA2-256SUMS.sig), and bump
+# both args together.
 ARG YTDLP_VERSION=""
+ARG YTDLP_SHA256=""
 RUN if [ -n "$YTDLP_VERSION" ]; then \
+        if [ -z "$YTDLP_SHA256" ]; then \
+            echo "YTDLP_VERSION=${YTDLP_VERSION} needs --build-arg YTDLP_SHA256 (see SHA2-256SUMS of that release)" >&2; \
+            exit 1; \
+        fi && \
         apk add --no-cache python3 && \
         wget -O /usr/local/bin/yt-dlp \
             "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp" && \
+        echo "${YTDLP_SHA256}  /usr/local/bin/yt-dlp" | sha256sum -c - && \
         chmod 0755 /usr/local/bin/yt-dlp && \
         /usr/local/bin/yt-dlp --version ; \
     fi
