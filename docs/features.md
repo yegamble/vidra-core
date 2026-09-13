@@ -369,7 +369,9 @@ it to internal addresses. Mitigate, in order: (1) it is off by default; (2) set
 `YTDLP_PROXY` to a forward proxy that denies RFC1918/loopback/link-local (see the
 `ytdlp-egress` sketch in `docker-compose.yml`); (3) run the api/worker with no
 route to internal networks. Pin the yt-dlp binary in the image
-(`--build-arg YTDLP_VERSION=…`); it is never self-updated at runtime.
+(`--build-arg YTDLP_VERSION=…` plus the matching `--build-arg YTDLP_SHA256=…`
+from that release's `SHA2-256SUMS`; the build refuses a version without a
+verified hash); it is never self-updated at runtime.
 
 ### Finalisation & probing
 

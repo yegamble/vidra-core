@@ -1,0 +1,79 @@
+name: docker-build
+
+# Builds the production Dockerfile the way publish-container.yml does — same
+# action, same pin, same build-args, same `no-cache-filters` — WITHOUT pushing,
+# on every change to the Dockerfile or to that workflow. Until this lane
+# existed nothing in CI built the Dockerfile: backend-ci tests the Go tree, the
+# compose files build a local image only on an operator's machine, and the
+# first time GitHub compiled a Dockerfile edit was the release publish itself —
+# so a bad apk command, a stage rename that orphans a COPY --from, or a yt-dlp
+# asset that no longer downloads surfaced as a failed RELEASE, not a failed PR.
+#
+# No cache on purpose: a fresh runner builds every layer, so a green run means
+# the Dockerfile builds from nothing today, not that some earlier layer was
+# replayed. Path-filtered, so it is listed as `?docker-build` in
+# .github/required-checks.txt (required exactly when it ran).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - ".github/workflows/publish-container.yml"
+      - ".github/workflows/docker-build.yml"
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".github/workflows/publish-container.yml"
+      - ".github/workflows/docker-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      # The release passes YTDLP_VERSION + YTDLP_SHA256 (the pinned, checksummed
+      # yt-dlp). Read them out of publish-container.yml instead of copying the
+      # pin here: a copy drifts, and then this lane proves a different image
+      # than the one released. Fails closed if the release no longer passes
+      # exactly those two — that is a deliberate change this lane must follow.
+      - name: Read the yt-dlp pin the release build passes
+        id: pins
+        run: |
+          set -eu
+          args=$(grep -oE '^[[:space:]]+YTDLP_(VERSION|SHA256)=[^[:space:]]+' .github/workflows/publish-container.yml | sed 's/^[[:space:]]*//')
+          if [ "$(printf '%s\n' "${args}" | grep -c .)" -ne 2 ]; then
+            echo "::error::publish-container.yml does not pass exactly YTDLP_VERSION and YTDLP_SHA256 as build-args; change this lane with it"
+            exit 1
+          fi
+          printf '%s\n' "${args}"
+          {
+            echo "args<<EOF"
+            printf '%s\n' "${args}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build the production image (linux/amd64, no push)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          build-args: ${{ steps.pins.outputs.args }}
+          # Same filter as the release, so the stage-name guard in
+          # scripts/ci/check-workflow-yaml.py covers this lane too.
+          no-cache-filters: runtime
