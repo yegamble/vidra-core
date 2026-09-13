@@ -22,6 +22,10 @@ their path filters fire.
 Deliberately NOT required, each for a stated reason in its own workflow header:
 `bench`/`fuzz` (scheduled exploratory signal) and `ipfs-public-gateway` (depends
 on a third party's availability, so it cannot decide whether a PR merges).
+Removing an entry from the manifest fails `ci-guard`
+(`scripts/ci/check-required-manifest-removals.sh`, compared against the base
+branch) unless the same file carries `# retired: <name> — <reason>` for it:
+retiring a lane is a deliberate, diff-visible act, never a quiet deletion.
 
 **`govulncheck` can go red with no change in this repo.** `vuln.yml` runs
 `make vuln` (govulncheck, pinned) on every PR, on main and daily, on the release
