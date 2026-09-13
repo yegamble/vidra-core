@@ -120,6 +120,12 @@ jobs:
       # the one the dev stack runs is testing something nobody deploys against.
       # The test helpers default to exactly these credentials and call
       # EnsureBucket themselves, so there is nothing to seed.
+      # The image comes from MinIO's own registry, pinned by digest. Docker Hub's
+      # minio/minio repository stopped resolving ("pull access denied ...
+      # repository does not exist", first seen 2026-09-13 on core#233), which
+      # turned this required lane red on every commit with no code change. Same
+      # release tag as before; the digest makes the bytes, not a registry's
+      # continued goodwill, the pin. Keep in lock-step with docker-compose.yml.
       - name: Start MinIO (the S3 integration tests need a real bucket)
         run: |
           docker run -d --name minio \
@@ -130,7 +136,7 @@ jobs:
             --health-interval 5s \
             --health-timeout 5s \
             --health-retries 10 \
-            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e server /data
 
       # Embedded-migration path (`api migrate up`), same as the published image —
       # no golang-migrate CLI download, nothing to keep pinned in lock-step.
