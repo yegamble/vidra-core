@@ -35,8 +35,21 @@ RUN set -eu; \
 
 # ---- runtime stage ----
 FROM alpine:3.24
+# `apk upgrade` FIRST: the base image lags the package repository. Official
+# alpine:3.24 is rebuilt for Alpine point releases, not for each package fix,
+# and `apk add` never upgrades a package the base already carries — so a plain
+# rebuild re-ships the base's copy. v0.6.4 shipped libssl3/libcrypto3 3.5.7-r0
+# (ten OpenSSL CVEs, CVSS up to 9.8) while 3.5.8-r0 was already in v3.24 main.
+# Here that library is live: ffmpeg, wget and python3/yt-dlp use it for
+# outbound TLS to import URLs.
+# Trade-off, stated honestly: the image now takes whatever v3.24 main serves
+# at build time, so two builds of one commit can differ in patch-level
+# packages; the scan of the pushed digest is the record of what shipped. A
+# builder that reuses a cached layer for this RUN (e.g. publish-container's
+# GHA cache, same base digest) also reuses its package set.
 # ffmpeg provides ffprobe, used to extract media metadata on upload.
-RUN apk add --no-cache ca-certificates wget ffmpeg && adduser -D -u 10001 vidra
+RUN apk upgrade --no-cache && \
+    apk add --no-cache ca-certificates wget ffmpeg && adduser -D -u 10001 vidra
 
 # Optional yt-dlp platform-URL import (W2.C1, UPLOAD-09), OFF by default. Build
 # with --build-arg YTDLP_VERSION=<pinned release> to bake in a PINNED yt-dlp
