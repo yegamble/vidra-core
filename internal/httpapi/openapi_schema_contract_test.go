@@ -37,27 +37,54 @@ import (
 //     where a wrong default silently becomes product behaviour.
 func TestInstanceFeaturesSchemaContract(t *testing.T) {
 	specPath := filepath.Join("..", "..", "api", "openapi.yaml")
-	props, required := instanceFeaturesSchema(t, specPath)
-	fields := jsonFieldNames(t, instanceFeatures{})
+	props, required := instanceObjectSchema(t, specPath, "features")
+	assertObjectSchemaContract(t, "features", "instanceFeatures", props, required, jsonFieldNames(t, instanceFeatures{}))
+}
 
+// TestInstanceBrandingSchemaContract applies the same three-way check to
+// InstanceResponse's `branding` object, for the same reason and one more.
+//
+// branding is the second hand-maintained pair of lists in this document (the Go
+// struct and the schema), and it is now the white-label surface: the frontend
+// decides whether to render the software's name at all from
+// branding.hide_software_name. A branding field the server sends but the spec
+// omits is a gate the generated client cannot see, which shows the name on an
+// instance that asked for it to be hidden — the exact failure this guard exists
+// to make impossible for the NEXT field as well.
+//
+// It reuses the features guard's parser rather than copying it; the parser reads
+// `required` in both the dash-list form features uses and the inline
+// `[a, b]` form branding uses, so neither can go vacuous by being reformatted.
+func TestInstanceBrandingSchemaContract(t *testing.T) {
+	specPath := filepath.Join("..", "..", "api", "openapi.yaml")
+	props, required := instanceObjectSchema(t, specPath, "branding")
+	assertObjectSchemaContract(t, "branding", "instanceBranding", props, required, jsonFieldNames(t, instanceBranding{}))
+}
+
+// assertObjectSchemaContract is the three-way comparison both guards above make:
+// schema properties <-> Go fields <-> `required`. object is the InstanceResponse
+// key being checked and goType the struct that populates it, so a failure names
+// the two files that have drifted.
+func assertObjectSchemaContract(t *testing.T, object, goType string, props, required, fields map[string]bool) {
+	t.Helper()
 	for name := range props {
 		if !fields[name] {
-			t.Errorf("api/openapi.yaml documents instance feature %q but instanceFeatures has no such field — the server never sends it; remove it from the schema or add the field", name)
+			t.Errorf("api/openapi.yaml documents %s.%s but %s has no such field — the server never sends it; remove it from the schema or add the field", object, name, goType)
 		}
 	}
 	for name := range fields {
 		if !props[name] {
-			t.Errorf("instanceFeatures sends %q but the InstanceResponse `features` schema does not declare it — document it in the same change, or the frontend's generated client cannot see the flag at all", name)
+			t.Errorf("%s sends %q but the InstanceResponse `%s` schema does not declare it — document it in the same change, or the frontend's generated client cannot see it at all", goType, name, object)
 		}
 	}
 	for name := range props {
 		if !required[name] {
-			t.Errorf("the `features` schema declares %q but omits it from `required` — instanceFeatures has no omitempty, so the server ALWAYS sends it and a generated client would wrongly type it optional", name)
+			t.Errorf("the `%s` schema declares %q but omits it from `required` — %s has no omitempty, so the server ALWAYS sends it and a generated client would wrongly type it optional", object, name, goType)
 		}
 	}
 	for name := range required {
 		if !props[name] {
-			t.Errorf("the `features` schema lists %q in `required` but declares no such property", name)
+			t.Errorf("the `%s` schema lists %q in `required` but declares no such property", object, name)
 		}
 	}
 }
@@ -84,17 +111,19 @@ func jsonFieldNames(t *testing.T, v any) map[string]bool {
 	return names
 }
 
-// instanceFeaturesSchema parses the `features` object of the InstanceResponse
-// schema out of api/openapi.yaml by indentation — the same dependency-free
-// approach declaredOperations uses on the paths block, applied to the half of
-// the document it never reads. It returns the declared property names and the
-// `required` entries.
+// instanceObjectSchema parses one named object of the InstanceResponse schema
+// (`features`, `branding`, …) out of api/openapi.yaml by indentation — the same
+// dependency-free approach declaredOperations uses on the paths block, applied to
+// the half of the document it never reads. It returns that object's declared
+// property names and its `required` entries, ignoring anything nested deeper
+// (branding.logos and its own required list, for one).
 //
-// The indents are read from the file rather than hardcoded, but the shape is
-// assumed: `required` as a dash list, not the inline `[a, b]` form some other
-// schemas in this spec use. Reformatting it that way empties the result and
-// trips the fatal below rather than passing vacuously.
-func instanceFeaturesSchema(t *testing.T, specPath string) (props, required map[string]bool) {
+// The indents are read from the file rather than hardcoded, and BOTH spellings of
+// `required` are understood: the dash list `features` uses and the inline
+// `[a, b]` flow sequence `branding` uses. Anything else — the block moved,
+// renamed or reshaped — empties the result and trips the fatal below rather than
+// passing vacuously.
+func instanceObjectSchema(t *testing.T, specPath, object string) (props, required map[string]bool) {
 	t.Helper()
 	data, err := os.ReadFile(specPath)
 	if err != nil {
@@ -122,16 +151,26 @@ func instanceFeaturesSchema(t *testing.T, specPath string) (props, required map[
 			continue
 		}
 		if base < 0 {
-			if trimmed == "features:" {
+			if trimmed == object+":" {
 				base = indent
 			}
 			continue
 		}
 		switch {
 		case indent <= base:
-			base, section = -1, "" // the features block ended
+			base, section = -1, "" // the object's block ended
 		case indent == base+2:
-			section = strings.TrimSuffix(trimmed, ":")
+			key, rest, _ := strings.Cut(trimmed, ":")
+			section = key
+			// The inline form: `required: [avatar, banner, …]`. The dash-list
+			// form leaves rest empty and is collected by the case below.
+			if key == "required" {
+				for name := range strings.SplitSeq(strings.Trim(strings.TrimSpace(rest), "[]"), ",") {
+					if name = strings.TrimSpace(name); name != "" {
+						required[name] = true
+					}
+				}
+			}
 		case indent == base+4 && section == "required":
 			required[strings.TrimPrefix(trimmed, "- ")] = true
 		case indent == base+4 && section == "properties" && strings.HasSuffix(trimmed, ":"):
@@ -139,7 +178,7 @@ func instanceFeaturesSchema(t *testing.T, specPath string) (props, required map[
 		}
 	}
 	if len(props) == 0 || len(required) == 0 {
-		t.Fatalf("parsed %d properties and %d required entries from the InstanceResponse `features` schema in %s — the block moved or was reshaped (an inline `required: [a, b]` list, for one); fix this parser rather than leaving the guard vacuous", len(props), len(required), specPath)
+		t.Fatalf("parsed %d properties and %d required entries from the InstanceResponse `%s` schema in %s — the block moved or was reshaped; fix this parser rather than leaving the guard vacuous", len(props), len(required), object, specPath)
 	}
 	return props, required
 }
