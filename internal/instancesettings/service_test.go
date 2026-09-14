@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/branding"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -559,6 +560,42 @@ func TestMessagingTogglesDefaultOnForAnUpgradedInstance(t *testing.T) {
 	}
 	if !svc.Bool(KeyMessagingE2EEEnabled) {
 		t.Error("messaging_e2ee_enabled must keep its own stored value regardless of the master switch")
+	}
+}
+
+// TestBrandingHideSoftwareNameDefaultsOffForAnUpgradedInstance proves the
+// DEFAULT, not merely that the key exists. An instance upgrading past the change
+// that added it has NO override rows at all — exactly the empty store below — so
+// the flag must read false and every surface keeps naming the software precisely
+// as it did before the operator gained the switch. It also pins the two
+// AttributionName answers, which is the whole reason a white-labelled consent
+// screen still names somebody.
+func TestBrandingHideSoftwareNameDefaultsOffForAnUpgradedInstance(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := NewService(repo, testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if svc.Bool(KeyBrandingHideSoftwareName) {
+		t.Error("branding_hide_software_name = true on an instance with no override rows, want false")
+	}
+	if got := svc.AttributionName(); got != branding.SoftwareName {
+		t.Errorf("AttributionName() = %q, want the software name %q", got, branding.SoftwareName)
+	}
+
+	// Hidden: the flag flips and an outward-facing surface names the INSTANCE
+	// instead — it has to name somebody, and the operator asked for it not to be
+	// the software.
+	_ = repo.UpsertInstanceSetting(ctx, sqlcgen.UpsertInstanceSettingParams{Key: KeyBrandingHideSoftwareName, Value: "true"})
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !svc.Bool(KeyBrandingHideSoftwareName) {
+		t.Error("branding_hide_software_name still false after an explicit true override")
+	}
+	if got, want := svc.AttributionName(), testDefaults().InstanceName; got != want {
+		t.Errorf("AttributionName() with the software name hidden = %q, want the instance name %q", got, want)
 	}
 }
 

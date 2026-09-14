@@ -65,6 +65,19 @@ func (s *Server) registrationRequiresApproval() bool {
 	return s.settingBool(instancesettings.KeyRegistrationRequireApproval, s.cfg.RegistrationRequireApproval)
 }
 
+// --- white-label branding ---
+
+// hideSoftwareName is the EFFECTIVE white-label gate: when true no surface a
+// visitor, a signed-in user or a mail recipient reads may name the software or
+// attribute itself to it. It is the ONE seam every gated consumer reads (the
+// GET /instance branding block, the account-archive filename and its parse
+// error, the ATProto consent-screen client_name, the donation challenge
+// message), so the flag can never be honoured in one place and missed in
+// another. Nothing machine-readable consults it — see the key's own comment.
+func (s *Server) hideSoftwareName() bool {
+	return s.settingBool(instancesettings.KeyBrandingHideSoftwareName, false)
+}
+
 // --- sign-up & new users (config-parity W7) ---
 
 // registrationRequiresEmailVerification is the EFFECTIVE verification gate:

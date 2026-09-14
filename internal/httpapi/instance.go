@@ -117,6 +117,13 @@ type instanceBranding struct {
 	// HideInstanceName hides the textual instance name in the header (only
 	// meaningful once a header logo is set; header_hide_instance_name).
 	HideInstanceName bool `json:"hide_instance_name"`
+	// HideSoftwareName white-labels the client: when true the frontend renders
+	// neither the software's name nor any "Powered by" attribution
+	// (branding_hide_software_name). The `software` block of this same document
+	// still carries the machine-readable name/version — the client gates its
+	// RENDERING, and federation peers, deploy probes and API clients keep
+	// reading it exactly as before.
+	HideSoftwareName bool `json:"hide_software_name"`
 }
 
 // instancePublishDefaults seeds the studio publish form (W9 wires enforcement).
@@ -497,6 +504,7 @@ func (s *Server) instanceBrandingBlock() instanceBranding {
 			Opengraph:    s.instanceAsset(profileimage.KindLogoOpengraph, "/api/v1/instance/logo/opengraph"),
 		},
 		HideInstanceName: s.settingBool(instancesettings.KeyHeaderHideInstanceName, false),
+		HideSoftwareName: s.hideSoftwareName(),
 	}
 }
 

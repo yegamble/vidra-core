@@ -171,6 +171,11 @@ func TestInstanceConfigBlocksDefaults(t *testing.T) {
 	if body.Branding.HideInstanceName {
 		t.Error("branding.hide_instance_name = true, want false")
 	}
+	// White-label is OFF by default: a fresh instance still names the software
+	// it runs, which is what every instance did before the switch existed.
+	if body.Branding.HideSoftwareName {
+		t.Error("branding.hide_software_name = true, want false")
+	}
 	// defaults (contract fallback values).
 	d := body.Defaults
 	if d.FeedSort != "recent" || d.FeedScope != "local" || d.LandingPage != "home-recent" ||
@@ -238,7 +243,8 @@ func TestInstanceConfigBlocksReflectOverrides(t *testing.T) {
 		"default_video_licence": 2,
 		"theme_primary_color": "#0f62fe",
 		"social_meta_twitter_username": "@vidra",
-		"header_hide_instance_name": true
+		"header_hide_instance_name": true,
+		"branding_hide_software_name": true
 	}`, adminTok)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch = %d; body=%s", rec.Code, rec.Body.String())
@@ -270,6 +276,9 @@ func TestInstanceConfigBlocksReflectOverrides(t *testing.T) {
 	}
 	if !body.Branding.HideInstanceName {
 		t.Error("branding.hide_instance_name = false after enabling")
+	}
+	if !body.Branding.HideSoftwareName {
+		t.Error("branding.hide_software_name = false after enabling branding_hide_software_name")
 	}
 	if etagAfter := after.Header().Get("ETag"); etagAfter == etagBefore {
 		t.Error("ETag unchanged after settings change")

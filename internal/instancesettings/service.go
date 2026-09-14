@@ -35,6 +35,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/branding"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
@@ -167,8 +168,21 @@ const (
 	KeyThemePrimaryColor         = "theme_primary_color" // "#rrggbb" or "" (no override)
 	KeySocialMetaTwitterUsername = "social_meta_twitter_username"
 	KeyHeaderHideInstanceName    = "header_hide_instance_name"
-	KeyEmailSubjectPrefix        = "email_subject_prefix" // supports {instance_name} substitution at the mail seam (W6)
-	KeyEmailBodySignature        = "email_body_signature"
+	// KeyBrandingHideSoftwareName white-labels the instance: it hides the
+	// software's name (branding.SoftwareName) and every "Powered by"
+	// attribution on PUBLIC and SIGNED-IN surfaces, so an operator can present
+	// the deployment as their own product rather than as somebody else's
+	// software they happen to run. It hides a NAME, nothing more: the
+	// machine-readable identifiers that also spell it — NodeInfo
+	// software.name, GET /version, /schemaz, the vidra_* cookies, the
+	// X-Vidra-* headers, the JWT iss/aud defaults — are protocol, not
+	// presentation, and stay exactly as they are (renaming them breaks
+	// federation interop, deploy probes and live sessions). Default FALSE
+	// because that is what every existing instance already does: an upgrade
+	// past this key changes nothing until an admin asks for it.
+	KeyBrandingHideSoftwareName = "branding_hide_software_name"
+	KeyEmailSubjectPrefix       = "email_subject_prefix" // supports {instance_name} substitution at the mail seam (W6)
+	KeyEmailBodySignature       = "email_body_signature"
 
 	// Shipped-feature toggle batch (config-parity W8): runtime knobs over
 	// features that already exist, applied through provider-func seams (or
@@ -809,6 +823,15 @@ var specs = []spec{
 		page: PageCustomization, section: "theme"},
 	{key: KeyHeaderHideInstanceName, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageCustomization, section: "header"},
+	// The white-label switch (what it hides, and what it deliberately leaves
+	// alone, is spelled out on the key itself). It sits on the GENERAL page
+	// under "branding", not beside header_hide_instance_name in
+	// Customization/header: an operator hunting for "how do I put my own name
+	// on this" looks at branding, and the section id MIRRORS the frontend's
+	// existing client-only "branding" section so the metadata-driven admin UI
+	// auto-places the toggle alongside the logo/asset panel.
+	{key: KeyBrandingHideSoftwareName, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageGeneral, section: "branding"},
 	{key: KeyDefaultPlayerAutoplay, kind: KindBool, defBool: func(Defaults) bool { return defaultPlayerAutoplay }, validate: validateBool,
 		page: PageCustomization, section: "player"},
 	{key: KeyEmailSubjectPrefix, kind: KindString, defString: hardcoded(""), validate: maxLen(128),
@@ -1200,6 +1223,27 @@ func (s *Service) Int(key string) int64 {
 		}
 	}
 	return sp.defInt(s.defaults)
+}
+
+// AttributionName is the name to show a reader who has to be told WHOSE
+// software or service they are dealing with — today the client_name on the
+// ATProto/Bluesky consent screen, which a third party renders for a user who is
+// about to grant this deployment access to their account.
+//
+// Normally that is the software's own name. When the operator white-labels the
+// instance (KeyBrandingHideSoftwareName) the EFFECTIVE instance name stands in:
+// such a surface has to name somebody, and the instance is who the user is
+// actually authorising. The final fallback is unreachable in practice
+// (instance_name validates non-empty and defaults to INSTANCE_NAME) and only
+// guards against naming nobody at all.
+func (s *Service) AttributionName() string {
+	if !s.Bool(KeyBrandingHideSoftwareName) {
+		return branding.SoftwareName
+	}
+	if name := strings.TrimSpace(s.String(KeyInstanceName)); name != "" {
+		return name
+	}
+	return branding.SoftwareName
 }
 
 // Strings returns the effective value for a list-kind key: the DB override

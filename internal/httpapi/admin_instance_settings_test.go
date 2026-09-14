@@ -191,9 +191,13 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// + messaging_enabled and messaging_e2ee_enabled (the instance owner's off
 	// switches for direct messaging and its end-to-end-encrypted variant; both
 	// default ON, so an upgraded instance behaves exactly as before).
+	// + branding_hide_software_name (white-label: hides the software name and
+	// every "Powered by" attribution on public and signed-in surfaces; default
+	// OFF, and it never touches the machine-readable identifiers — NodeInfo
+	// software.name, /version, the vidra_* cookies and X-Vidra-* headers).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 117 {
-		t.Fatalf("settings count = %d, want 117", len(got.Settings))
+	if len(got.Settings) != 118 {
+		t.Fatalf("settings count = %d, want 118", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {
