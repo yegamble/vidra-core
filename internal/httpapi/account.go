@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +13,7 @@ import (
 	"github.com/vidra/vidra-core/internal/account"
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/branding"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -293,7 +295,8 @@ func (s *Server) handleDownloadAccountExport(c echo.Context) error {
 		return err
 	}
 	defer func() { _ = rc.Close() }()
-	c.Response().Header().Set(echo.HeaderContentDisposition, `attachment; filename="vidra-export-`+row.ID.String()+`.json"`)
+	c.Response().Header().Set(echo.HeaderContentDisposition,
+		`attachment; filename="`+s.accountArchiveFilename(row.ID.String())+`"`)
 	return c.Stream(http.StatusOK, echo.MIMEApplicationJSON, rc)
 }
 
@@ -325,11 +328,35 @@ func (s *Server) handleImportAccount(c echo.Context) error {
 	}
 	archive, err := account.ParseArchive(raw)
 	if err != nil {
-		return &ValidationError{Fields: []FieldError{{Field: "archive", Message: "not a valid vidra account archive"}}}
+		return &ValidationError{Fields: []FieldError{{Field: "archive", Message: s.invalidArchiveMessage()}}}
 	}
 	summary, err := s.accountsvc.ImportArchive(c.Request().Context(), userID, archive)
 	if err != nil {
 		return err
 	}
 	return c.JSON(http.StatusOK, summary)
+}
+
+// accountArchiveFilename is the download's suggested filename — a string that
+// lands in the user's Downloads folder, which is why it names the software by
+// default: someone holding exports from several platforms can tell them apart.
+// A white-labelled instance (branding_hide_software_name) uses the neutral
+// spelling instead. Only the NAME changes: the archive's JSON envelope key
+// (vidra_export) is the machine format every instance identifies an archive by,
+// and renaming it would make a white-labelled instance's export unimportable
+// elsewhere.
+func (s *Server) accountArchiveFilename(id string) string {
+	if s.hideSoftwareName() {
+		return "account-export-" + id + ".json"
+	}
+	return strings.ToLower(branding.SoftwareName) + "-export-" + id + ".json"
+}
+
+// invalidArchiveMessage is what a user sees when the file they handed to
+// /me/import is not an archive at all. Same rule as the filename above.
+func (s *Server) invalidArchiveMessage() string {
+	if s.hideSoftwareName() {
+		return "not a valid account archive"
+	}
+	return "not a valid " + strings.ToLower(branding.SoftwareName) + " account archive"
 }

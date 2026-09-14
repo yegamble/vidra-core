@@ -16592,8 +16592,12 @@ components:
             frontend consumers). Each slot carries its public serving URL
             ("" when unset) and an is_fallback flag telling the client to use
             its built-in default imagery. The response also gains an ETag and
-            Cache-Control s-maxage=60.
-          required: [avatar, banner, logos, hide_instance_name]
+            Cache-Control s-maxage=60. Alongside the imagery slots, this object
+            carries the two display gates the client applies to the chrome:
+            hide_instance_name (the instance's own name in the header) and
+            hide_software_name (the software's name and every "Powered by"
+            attribution, anywhere).
+          required: [avatar, banner, logos, hide_instance_name, hide_software_name]
           properties:
             avatar:
               $ref: "#/components/schemas/InstanceAssetRef"
@@ -16616,6 +16620,13 @@ components:
               description: >-
                 Hide the textual instance name in the header (meaningful once
                 a header logo is set).
+            hide_software_name:
+              type: boolean
+              description: >-
+                White-label: hide the software name ("Vidra") and every
+                "Powered by" attribution from public and signed-in surfaces
+                (branding_hide_software_name). Machine-readable identifiers
+                (NodeInfo, /version, cookie and header names) are unchanged.
         defaults:
           type: object
           description: >-

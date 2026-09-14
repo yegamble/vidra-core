@@ -191,9 +191,13 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// + messaging_enabled and messaging_e2ee_enabled (the instance owner's off
 	// switches for direct messaging and its end-to-end-encrypted variant; both
 	// default ON, so an upgraded instance behaves exactly as before).
+	// + branding_hide_software_name (white-label: hides the software name and
+	// every "Powered by" attribution on public and signed-in surfaces; default
+	// OFF, and it never touches the machine-readable identifiers — NodeInfo
+	// software.name, /version, the vidra_* cookies and X-Vidra-* headers).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 117 {
-		t.Fatalf("settings count = %d, want 117", len(got.Settings))
+	if len(got.Settings) != 118 {
+		t.Fatalf("settings count = %d, want 118", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {
@@ -308,6 +312,16 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 		{"wrong type", `{"uploads_enabled":"yes"}`},
 		{"bad url", `{"terms_url":"not a url"}`},
 		{"empty name", `{"instance_name":"   "}`},
+		// The instance name now reaches a third party's consent UI on a
+		// white-labelled instance, so the PATCH refuses the invisible and
+		// text-reordering characters end to end, not only in the validator's
+		// unit table. JSON escapes, because these are exactly the bytes an
+		// attacker would send over the wire.
+		{"name with an embedded newline", `{"instance_name":"Example\nTube"}`},
+		{"name with a NUL", `{"instance_name":"Example\u0000Tube"}`},
+		{"name with a zero-width space", `{"instance_name":"Example\u200bTube"}`},
+		{"name with a bidi override", `{"instance_name":"Example\u202eTube"}`},
+		{"name with a bidi isolate", `{"instance_name":"Example\u2066Tube"}`},
 		{"bad enum", `{"sensitive_content_policy":"surprise"}`},
 		{"list wrong type", `{"instance_categories":"1"}`},
 		{"bad category id", `{"instance_categories":["999"]}`},

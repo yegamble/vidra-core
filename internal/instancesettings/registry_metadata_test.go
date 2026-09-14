@@ -48,6 +48,11 @@ func TestRegistryPageSectionMetadata(t *testing.T) {
 		KeyDefaultTheme:              {PageCustomization, "theme"},
 		KeyEmailSubjectPrefix:        {PageCustomization, "email"},
 		KeySocialMetaTwitterUsername: {PageGeneral, "social"},
+		// Cross-repo contract: the frontend's General page hosts a client-only
+		// "branding" section (the logo/asset panel) and the metadata-driven admin
+		// UI auto-places this key into it by section id. Moving either side
+		// silently strands the toggle, so the placement is pinned here.
+		KeyBrandingHideSoftwareName: {PageGeneral, "branding"},
 		// VOD transcoding knobs (config-parity W10).
 		KeyTranscodingEnabled:                {PageVOD, "transcoding"},
 		KeyTranscodingResolutions:            {PageVOD, "transcoding"},

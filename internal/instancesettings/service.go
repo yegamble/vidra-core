@@ -35,6 +35,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/branding"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
@@ -167,8 +168,21 @@ const (
 	KeyThemePrimaryColor         = "theme_primary_color" // "#rrggbb" or "" (no override)
 	KeySocialMetaTwitterUsername = "social_meta_twitter_username"
 	KeyHeaderHideInstanceName    = "header_hide_instance_name"
-	KeyEmailSubjectPrefix        = "email_subject_prefix" // supports {instance_name} substitution at the mail seam (W6)
-	KeyEmailBodySignature        = "email_body_signature"
+	// KeyBrandingHideSoftwareName white-labels the instance: it hides the
+	// software's name (branding.SoftwareName) and every "Powered by"
+	// attribution on PUBLIC and SIGNED-IN surfaces, so an operator can present
+	// the deployment as their own product rather than as somebody else's
+	// software they happen to run. It hides a NAME, nothing more: the
+	// machine-readable identifiers that also spell it — NodeInfo
+	// software.name, GET /version, /schemaz, the vidra_* cookies, the
+	// X-Vidra-* headers, the JWT iss/aud defaults — are protocol, not
+	// presentation, and stay exactly as they are (renaming them breaks
+	// federation interop, deploy probes and live sessions). Default FALSE
+	// because that is what every existing instance already does: an upgrade
+	// past this key changes nothing until an admin asks for it.
+	KeyBrandingHideSoftwareName = "branding_hide_software_name"
+	KeyEmailSubjectPrefix       = "email_subject_prefix" // supports {instance_name} substitution at the mail seam (W6)
+	KeyEmailBodySignature       = "email_body_signature"
 
 	// Shipped-feature toggle batch (config-parity W8): runtime knobs over
 	// features that already exist, applied through provider-func seams (or
@@ -809,6 +823,15 @@ var specs = []spec{
 		page: PageCustomization, section: "theme"},
 	{key: KeyHeaderHideInstanceName, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
 		page: PageCustomization, section: "header"},
+	// The white-label switch (what it hides, and what it deliberately leaves
+	// alone, is spelled out on the key itself). It sits on the GENERAL page
+	// under "branding", not beside header_hide_instance_name in
+	// Customization/header: an operator hunting for "how do I put my own name
+	// on this" looks at branding, and the section id MIRRORS the frontend's
+	// existing client-only "branding" section so the metadata-driven admin UI
+	// auto-places the toggle alongside the logo/asset panel.
+	{key: KeyBrandingHideSoftwareName, kind: KindBool, defBool: func(Defaults) bool { return false }, validate: validateBool,
+		page: PageGeneral, section: "branding"},
 	{key: KeyDefaultPlayerAutoplay, kind: KindBool, defBool: func(Defaults) bool { return defaultPlayerAutoplay }, validate: validateBool,
 		page: PageCustomization, section: "player"},
 	{key: KeyEmailSubjectPrefix, kind: KindString, defString: hardcoded(""), validate: maxLen(128),
@@ -1202,6 +1225,37 @@ func (s *Service) Int(key string) int64 {
 	return sp.defInt(s.defaults)
 }
 
+// SoftwareNameHidden reports the white-label gate
+// (KeyBrandingHideSoftwareName): true when no surface a visitor, a signed-in
+// user or a mail recipient reads may name the software or attribute itself to
+// it. It is the single place that key is spelled outside the registry, so every
+// gate — the HTTP layer's effective accessor and the donation service's seam —
+// asks the same question of the same overlay.
+func (s *Service) SoftwareNameHidden() bool {
+	return s.Bool(KeyBrandingHideSoftwareName)
+}
+
+// AttributionName is the name to show a reader who has to be told WHOSE
+// software or service they are dealing with — today the client_name on the
+// ATProto/Bluesky consent screen, which a third party renders for a user who is
+// about to grant this deployment access to their account.
+//
+// Normally that is the software's own name. When the operator white-labels the
+// instance (KeyBrandingHideSoftwareName) the EFFECTIVE instance name stands in:
+// such a surface has to name somebody, and the instance is who the user is
+// actually authorising. The final fallback is unreachable in practice
+// (instance_name validates non-empty and defaults to INSTANCE_NAME) and only
+// guards against naming nobody at all.
+func (s *Service) AttributionName() string {
+	if !s.SoftwareNameHidden() {
+		return branding.SoftwareName
+	}
+	if name := strings.TrimSpace(s.String(KeyInstanceName)); name != "" {
+		return name
+	}
+	return branding.SoftwareName
+}
+
 // Strings returns the effective value for a list-kind key: the DB override
 // (stored as a canonical JSON array) if present, else the default. An unknown
 // or non-list key — or an unparseable stored value — returns an empty list.
@@ -1430,6 +1484,18 @@ func intZeroOrRange(min, max int64) func(string) error {
 	}
 }
 
+// validateInstanceName bounds the instance name and rejects the invisible
+// characters that turn a display name into a spoofing tool.
+//
+// This matters more than it did: the name now reaches surfaces this instance does
+// not render. A white-labelled instance puts it in the ATProto/Bluesky consent
+// screen's client_name (see Service.AttributionName), i.e. a THIRD PARTY's
+// security-relevant UI, where a bidi override or a zero-width joiner can make one
+// name read as another and a control character can break the layout around it.
+// Rejecting them at the write is the only place the whole system agrees on.
+//
+// Internal whitespace is deliberately NOT collapsed — "My   Tube" is a legal, if
+// odd, choice — and the 100-BYTE cap is kept as-is.
 func validateInstanceName(v string) error {
 	v = strings.TrimSpace(v)
 	if v == "" {
@@ -1437,6 +1503,23 @@ func validateInstanceName(v string) error {
 	}
 	if len(v) > 100 {
 		return errors.New("must be at most 100 characters")
+	}
+	for _, r := range v {
+		switch {
+		// C0 and C1 controls. Trim already removed the leading/trailing ones;
+		// these are the embedded newlines, NULs and escapes.
+		case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
+			return errors.New("must not contain control characters")
+		// Zero-width and directional-marker characters: invisible, so two
+		// different names can render identically.
+		case r >= 0x200b && r <= 0x200f:
+			return errors.New("must not contain zero-width or direction-marking characters")
+		// Bidi embedding/override controls (LRE…RLO, PDF) and the isolates
+		// (LRI…PDI): these reorder the text around them, which is how a name is
+		// made to read as something else entirely.
+		case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+			return errors.New("must not contain bidirectional formatting characters")
+		}
 	}
 	return nil
 }

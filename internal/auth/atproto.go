@@ -33,6 +33,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/vidra/vidra-core/internal/atproto"
+	"github.com/vidra/vidra-core/internal/branding"
 	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -110,6 +111,9 @@ type ATProtoOAuthService struct {
 	flow          ATProtoFlow
 	enabled       bool
 	publicBaseURL string
+	// clientName provides the client_name the PDS shows on its consent screen.
+	// nil (the unit-test / pre-wiring case) means the software's own name.
+	clientName func() string
 }
 
 // ATProtoOAuthOption configures the service.
@@ -120,6 +124,17 @@ type ATProtoOAuthOption func(*ATProtoOAuthService)
 // (stable contract) but answer 503.
 func WithATProtoEnabled(enabled bool) ATProtoOAuthOption {
 	return func(s *ATProtoOAuthService) { s.enabled = enabled }
+}
+
+// WithATProtoClientNameFunc wires the provider of the client_name a third-party
+// PDS renders on its consent screen — the one string in this flow a human reads
+// before handing over their account. It is a FUNC, not a value, because the
+// client-metadata document is built per request (see ClientMetadata), so the
+// white-label instance setting branding_hide_software_name applies without a
+// restart: hidden, the screen names the instance instead of the software. Unset,
+// or returning blank, keeps the software's own name exactly as it always was.
+func WithATProtoClientNameFunc(f func() string) ATProtoOAuthOption {
+	return func(s *ATProtoOAuthService) { s.clientName = f }
 }
 
 // WithATProtoPublicBaseURL sets the public origin from which the OAuth client_id
@@ -186,12 +201,24 @@ type ClientMetadata struct {
 	DPoPBoundAccessTokens   bool     `json:"dpop_bound_access_tokens"`
 }
 
+// clientNameForConsent is the effective client_name (see
+// WithATProtoClientNameFunc). Resolved on every call so an admin toggle applies
+// to the next request, not the next restart.
+func (s *ATProtoOAuthService) clientNameForConsent() string {
+	if s.clientName != nil {
+		if name := strings.TrimSpace(s.clientName()); name != "" {
+			return name
+		}
+	}
+	return branding.SoftwareName
+}
+
 // ClientMetadata returns the hosted client-metadata document, kept in lock-step
 // with the client_id/redirect_uri the flow actually sends.
 func (s *ATProtoOAuthService) ClientMetadata() ClientMetadata {
 	return ClientMetadata{
 		ClientID:                s.ClientID(),
-		ClientName:              "Vidra",
+		ClientName:              s.clientNameForConsent(),
 		ClientURI:               s.publicBaseURL,
 		RedirectURIs:            []string{s.RedirectURI()},
 		GrantTypes:              []string{"authorization_code"},

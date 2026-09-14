@@ -318,7 +318,14 @@ func (s *Server) finishATProtoLink(c echo.Context, returnTo string, userID uuid.
 
 // handleATProtoClientMetadata serves the public OAuth client-metadata document
 // (production hosted-client mode). No auth; always mounted.
+//
+// The document is no longer a boot constant: client_name tracks the white-label
+// setting (branding_hide_software_name), so it must say how long a cache may hold
+// it rather than leave every proxy and PDS to guess. 60s is short enough that an
+// admin's flip shows up promptly and long enough that a PDS re-fetching during a
+// login burst does not hit the API once per authorization.
 func (s *Server) handleATProtoClientMetadata(c echo.Context) error {
+	c.Response().Header().Set("Cache-Control", "public, max-age=60")
 	return c.JSON(http.StatusOK, s.atprotologinsvc.ClientMetadata())
 }
 

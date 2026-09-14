@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/branding"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -562,6 +563,75 @@ func TestMessagingTogglesDefaultOnForAnUpgradedInstance(t *testing.T) {
 	}
 }
 
+// TestInstanceNameAcceptsRealWorldNames guards the other direction of the
+// charset rule added for the white-label consent screen: it refuses invisible
+// and bidi-reordering characters, and it must NOT refuse the names operators
+// actually pick — accented Latin, CJK, emoji, RTL script written plainly
+// (Hebrew/Arabic letters are not the bidi CONTROLS), or odd internal spacing,
+// which is deliberately left alone rather than collapsed.
+func TestInstanceNameAcceptsRealWorldNames(t *testing.T) {
+	ctx := context.Background()
+	for _, name := range []string{
+		"ExampleTube",
+		"Vidéothèque Côté Ouest",
+		"動画サイト",
+		"МойВидеоХостинг",
+		"קהילת הווידאו",
+		"قناة الفيديو",
+		"Tube 🎬",
+		"My   Tube",
+		"O'Brien & Sons: Video",
+	} {
+		svc := NewService(newFakeRepo(), testDefaults())
+		if err := svc.Load(ctx); err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if err := svc.Apply(ctx, map[string]Update{KeyInstanceName: {Value: name}}, uuid.New()); err != nil {
+			t.Errorf("instance_name %q rejected: %v", name, err)
+			continue
+		}
+		if got := svc.String(KeyInstanceName); got != name {
+			t.Errorf("instance_name stored as %q, want %q (the validator must not rewrite the value)", got, name)
+		}
+	}
+}
+
+// TestBrandingHideSoftwareNameDefaultsOffForAnUpgradedInstance proves the
+// DEFAULT, not merely that the key exists. An instance upgrading past the change
+// that added it has NO override rows at all — exactly the empty store below — so
+// the flag must read false and every surface keeps naming the software precisely
+// as it did before the operator gained the switch. It also pins the two
+// AttributionName answers, which is the whole reason a white-labelled consent
+// screen still names somebody.
+func TestBrandingHideSoftwareNameDefaultsOffForAnUpgradedInstance(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeRepo()
+	svc := NewService(repo, testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if svc.Bool(KeyBrandingHideSoftwareName) {
+		t.Error("branding_hide_software_name = true on an instance with no override rows, want false")
+	}
+	if got := svc.AttributionName(); got != branding.SoftwareName {
+		t.Errorf("AttributionName() = %q, want the software name %q", got, branding.SoftwareName)
+	}
+
+	// Hidden: the flag flips and an outward-facing surface names the INSTANCE
+	// instead — it has to name somebody, and the operator asked for it not to be
+	// the software.
+	_ = repo.UpsertInstanceSetting(ctx, sqlcgen.UpsertInstanceSettingParams{Key: KeyBrandingHideSoftwareName, Value: "true"})
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !svc.Bool(KeyBrandingHideSoftwareName) {
+		t.Error("branding_hide_software_name still false after an explicit true override")
+	}
+	if got, want := svc.AttributionName(), testDefaults().InstanceName; got != want {
+		t.Errorf("AttributionName() with the software name hidden = %q, want the instance name %q", got, want)
+	}
+}
+
 func TestApplyValidation(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(newFakeRepo(), testDefaults())
@@ -577,6 +647,16 @@ func TestApplyValidation(t *testing.T) {
 		{"unknown key", map[string]Update{"nope": {Value: "x"}}, "nope"},
 		{"non-bool value", map[string]Update{KeyUploadsEnabled: {Value: "maybe"}}, KeyUploadsEnabled},
 		{"empty instance_name", map[string]Update{KeyInstanceName: {Value: "  "}}, KeyInstanceName},
+		// The instance name reaches a third party's consent UI on a
+		// white-labelled instance, so the invisible characters that let one name
+		// render as another are refused at the write.
+		{"instance_name with an embedded newline", map[string]Update{KeyInstanceName: {Value: "Example\nTube"}}, KeyInstanceName},
+		{"instance_name with a NUL", map[string]Update{KeyInstanceName: {Value: "Example\x00Tube"}}, KeyInstanceName},
+		{"instance_name with a C1 control", map[string]Update{KeyInstanceName: {Value: "Example\u0085Tube"}}, KeyInstanceName},
+		{"instance_name with a zero-width space", map[string]Update{KeyInstanceName: {Value: "Example\u200bTube"}}, KeyInstanceName},
+		{"instance_name with an RTL mark", map[string]Update{KeyInstanceName: {Value: "Example\u200fTube"}}, KeyInstanceName},
+		{"instance_name with a bidi override", map[string]Update{KeyInstanceName: {Value: "Example\u202eTube"}}, KeyInstanceName},
+		{"instance_name with a bidi isolate", map[string]Update{KeyInstanceName: {Value: "Example\u2066Tube"}}, KeyInstanceName},
 		{"bad url", map[string]Update{KeyTermsURL: {Value: "not-a-url"}}, KeyTermsURL},
 		{"bad email", map[string]Update{KeyContactEmail: {Value: "nope"}}, KeyContactEmail},
 	}
