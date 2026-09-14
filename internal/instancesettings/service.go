@@ -1225,6 +1225,16 @@ func (s *Service) Int(key string) int64 {
 	return sp.defInt(s.defaults)
 }
 
+// SoftwareNameHidden reports the white-label gate
+// (KeyBrandingHideSoftwareName): true when no surface a visitor, a signed-in
+// user or a mail recipient reads may name the software or attribute itself to
+// it. It is the single place that key is spelled outside the registry, so every
+// gate — the HTTP layer's effective accessor and the donation service's seam —
+// asks the same question of the same overlay.
+func (s *Service) SoftwareNameHidden() bool {
+	return s.Bool(KeyBrandingHideSoftwareName)
+}
+
 // AttributionName is the name to show a reader who has to be told WHOSE
 // software or service they are dealing with — today the client_name on the
 // ATProto/Bluesky consent screen, which a third party renders for a user who is
@@ -1237,7 +1247,7 @@ func (s *Service) Int(key string) int64 {
 // (instance_name validates non-empty and defaults to INSTANCE_NAME) and only
 // guards against naming nobody at all.
 func (s *Service) AttributionName() string {
-	if !s.Bool(KeyBrandingHideSoftwareName) {
+	if !s.SoftwareNameHidden() {
 		return branding.SoftwareName
 	}
 	if name := strings.TrimSpace(s.String(KeyInstanceName)); name != "" {
@@ -1474,6 +1484,18 @@ func intZeroOrRange(min, max int64) func(string) error {
 	}
 }
 
+// validateInstanceName bounds the instance name and rejects the invisible
+// characters that turn a display name into a spoofing tool.
+//
+// This matters more than it did: the name now reaches surfaces this instance does
+// not render. A white-labelled instance puts it in the ATProto/Bluesky consent
+// screen's client_name (see Service.AttributionName), i.e. a THIRD PARTY's
+// security-relevant UI, where a bidi override or a zero-width joiner can make one
+// name read as another and a control character can break the layout around it.
+// Rejecting them at the write is the only place the whole system agrees on.
+//
+// Internal whitespace is deliberately NOT collapsed — "My   Tube" is a legal, if
+// odd, choice — and the 100-BYTE cap is kept as-is.
 func validateInstanceName(v string) error {
 	v = strings.TrimSpace(v)
 	if v == "" {
@@ -1481,6 +1503,23 @@ func validateInstanceName(v string) error {
 	}
 	if len(v) > 100 {
 		return errors.New("must be at most 100 characters")
+	}
+	for _, r := range v {
+		switch {
+		// C0 and C1 controls. Trim already removed the leading/trailing ones;
+		// these are the embedded newlines, NULs and escapes.
+		case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
+			return errors.New("must not contain control characters")
+		// Zero-width and directional-marker characters: invisible, so two
+		// different names can render identically.
+		case r >= 0x200b && r <= 0x200f:
+			return errors.New("must not contain zero-width or direction-marking characters")
+		// Bidi embedding/override controls (LRE…RLO, PDF) and the isolates
+		// (LRI…PDI): these reorder the text around them, which is how a name is
+		// made to read as something else entirely.
+		case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+			return errors.New("must not contain bidirectional formatting characters")
+		}
 	}
 	return nil
 }

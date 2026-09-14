@@ -670,9 +670,7 @@ func run() error {
 		// signs is text a human reads, so its heading stops naming the software.
 		// Resolved per message; see the option's comment for why that cannot
 		// invalidate an address that is already verified.
-		donation.WithHideSoftwareNameFunc(func() bool {
-			return settingssvc.Bool(instancesettings.KeyBrandingHideSoftwareName)
-		}))
+		donation.WithHideSoftwareNameFunc(settingssvc.SoftwareNameHidden))
 	opts = append(opts, httpapi.WithDonationService(donationsvc))
 
 	blobs, createdBucket, err := newStorageBackend(startCtx, cfg)

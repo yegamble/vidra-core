@@ -851,7 +851,11 @@ account-archive download and its parse error, the ATProto consent screen's
 heading. It hides a NAME only: NodeInfo `software.name`, `GET /version`, `/schemaz`,
 the `vidra_*` cookie and `X-Vidra-*` header names, the JWT `iss`/`aud` defaults and the
 `software` block of `GET /instance` are protocol identifiers, not presentation, and are
-left exactly as they are. Boot-time-only settings — the database DSN, the KEKs, the JWT secret, the
+left exactly as they are. A flip takes up to ~70 seconds to reach a visitor (the
+settings-version poller refreshes each replica within 10s, and `GET /instance` is served
+with `Cache-Control: s-maxage=60`; the ATProto client-metadata document caches for 60s
+too), so "I turned it off and the name is still there" is expected briefly and is not a
+bug. Boot-time-only settings — the database DSN, the KEKs, the JWT secret, the
 storage backend — deliberately STAY config-only (unsafe to hot-swap and/or secret) and
 are never represented in the overlay table.
 

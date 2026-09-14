@@ -280,6 +280,31 @@ func TestInstanceConfigBlocksReflectOverrides(t *testing.T) {
 	if !body.Branding.HideSoftwareName {
 		t.Error("branding.hide_software_name = false after enabling branding_hide_software_name")
 	}
+	// Machine-identifier regression guard. The white-label flag is ON at this
+	// point, which is exactly the state in which a future "finish the
+	// white-label" change would be tempted to rename the protocol identifiers
+	// too. software.name on GET /instance and on nodeinfo is what federation
+	// peers, deploy probes and API clients match on: it must read "vidra"
+	// whatever the branding settings say.
+	if body.Software.Name != "vidra" {
+		t.Errorf("software.name = %q with the software name hidden, want \"vidra\" — that identifier is protocol, not presentation", body.Software.Name)
+	}
+	niRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(niRec, httptest.NewRequest(http.MethodGet, "/api/v1/nodeinfo", nil))
+	if niRec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/nodeinfo = %d, want 200", niRec.Code)
+	}
+	var ni struct {
+		Software struct {
+			Name string `json:"name"`
+		} `json:"software"`
+	}
+	if err := json.Unmarshal(niRec.Body.Bytes(), &ni); err != nil {
+		t.Fatalf("unmarshal nodeinfo: %v", err)
+	}
+	if ni.Software.Name != "vidra" {
+		t.Errorf("nodeinfo software.name = %q with the software name hidden, want \"vidra\"", ni.Software.Name)
+	}
 	if etagAfter := after.Header().Get("ETag"); etagAfter == etagBefore {
 		t.Error("ETag unchanged after settings change")
 	}

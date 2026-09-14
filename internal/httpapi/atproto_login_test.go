@@ -444,6 +444,12 @@ func TestATProtoClientMetadataServed(t *testing.T) {
 	if meta.ClientName != branding.SoftwareName {
 		t.Errorf("client_name = %q, want %q (the white-label toggle is off here)", meta.ClientName, branding.SoftwareName)
 	}
+	// The document is no longer a boot constant — client_name tracks the
+	// white-label toggle — so it must carry a bounded cache directive rather
+	// than none at all, which leaves caches to guess.
+	if cc := rec.Header().Get("Cache-Control"); cc != "public, max-age=60" {
+		t.Errorf("Cache-Control = %q, want \"public, max-age=60\"", cc)
+	}
 	if meta.TokenEndpointAuthMethod != "none" || !meta.DPoPBoundAccessTokens || meta.Scope != "atproto" {
 		t.Errorf("metadata = %+v", meta)
 	}
@@ -465,15 +471,25 @@ func TestATProtoClientMetadataHonoursTheWhiteLabelToggle(t *testing.T) {
 
 	// Hidden, with no instance_name override: the effective name is the config
 	// default (INSTANCE_NAME), which is what an instance that never edited it has.
+	// Note this cannot prove the NAME is gone — testConfig's INSTANCE_NAME is
+	// "Vidra Test", which contains the substring by the operator's own choice.
+	// That is what the next step is for.
 	env.setSetting(t, instancesettings.KeyBrandingHideSoftwareName, "true")
 	if got, want := env.clientName(t), env.cfg.InstanceName; got != want {
 		t.Errorf("client_name with the software name hidden = %q, want the config instance name %q", got, want)
 	}
 
-	// Hidden, with the DB overlay set: the overlay wins.
+	// Hidden, with an instance name that does NOT contain the software's name:
+	// the DB overlay wins AND the consent screen no longer says it anywhere.
+	// Asserting the absence is the point — a want/got against a fixture that
+	// happens to embed "Vidra" would pass even if nothing were gated.
 	env.setSetting(t, instancesettings.KeyInstanceName, "ExampleTube")
-	if got := env.clientName(t); got != "ExampleTube" {
+	got := env.clientName(t)
+	if got != "ExampleTube" {
 		t.Errorf("client_name = %q, want the overridden instance name ExampleTube", got)
+	}
+	if strings.Contains(strings.ToLower(got), strings.ToLower(branding.SoftwareName)) {
+		t.Errorf("client_name %q still names the software with the toggle on", got)
 	}
 
 	// And turning the toggle back off restores the software name, so this is a

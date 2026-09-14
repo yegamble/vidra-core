@@ -67,15 +67,31 @@ func (s *Server) registrationRequiresApproval() bool {
 
 // --- white-label branding ---
 
-// hideSoftwareName is the EFFECTIVE white-label gate: when true no surface a
-// visitor, a signed-in user or a mail recipient reads may name the software or
-// attribute itself to it. It is the ONE seam every gated consumer reads (the
-// GET /instance branding block, the account-archive filename and its parse
-// error, the ATProto consent-screen client_name, the donation challenge
-// message), so the flag can never be honoured in one place and missed in
-// another. Nothing machine-readable consults it — see the key's own comment.
+// hideSoftwareName is the EFFECTIVE white-label gate for everything the HTTP
+// layer renders: the GET /instance branding block, the account-archive filename
+// and its parse error. When true, none of them may name the software or
+// attribute itself to it. Nothing machine-readable consults it — see the key's
+// own comment in internal/instancesettings.
+//
+// It delegates to instancesettings.Service.SoftwareNameHidden rather than
+// naming the key again. There are exactly TWO seams over that one predicate,
+// and this is one of them:
+//
+//   - this accessor, for the surfaces the HTTP handlers own;
+//   - instancesettings.Service.AttributionName, for a surface that must still
+//     name SOMEBODY and therefore needs the instance name too (the ATProto
+//     consent screen's client_name).
+//
+// The donation service reads the predicate through its own provider-func seam
+// wired to the same method in cmd/api/main.go, because it is HTTP-agnostic and
+// has no Server. A server built without a settings service (unit tests, and any
+// wiring predating the key) is NOT white-labelled, which preserves the
+// shipped behaviour.
 func (s *Server) hideSoftwareName() bool {
-	return s.settingBool(instancesettings.KeyBrandingHideSoftwareName, false)
+	if s.settingssvc == nil {
+		return false
+	}
+	return s.settingssvc.SoftwareNameHidden()
 }
 
 // --- sign-up & new users (config-parity W7) ---

@@ -89,6 +89,80 @@ func assertObjectSchemaContract(t *testing.T, object, goType string, props, requ
 	}
 }
 
+// addInlineRequired collects the names out of one line of an inline
+// `required: [a, b]` flow sequence, or out of a fragment of a wrapped one.
+// Brackets, commas and surrounding space are stripped; an empty fragment (what
+// the dash-list form leaves behind) adds nothing.
+func addInlineRequired(required map[string]bool, fragment string) {
+	for name := range strings.SplitSeq(strings.TrimSpace(fragment), ",") {
+		if name = strings.TrimSpace(strings.Trim(strings.TrimSpace(name), "[]")); name != "" {
+			required[name] = true
+		}
+	}
+}
+
+// TestInstanceObjectSchemaReadsWrappedRequiredLists pins the parser against the
+// third spelling this document uses: an inline `required` list WRAPPED over
+// several lines, which the `defaults` object already does. Before this the
+// reader consumed only the first physical line, so a wrapped list parsed as
+// partially declared and a CORRECT spec would have failed loud — the worst
+// failure mode for a guard, because the fix then looks like "reformat the spec
+// to please the test".
+//
+// Driven off a fixture rather than the real file so it keeps proving the parser
+// even after someone reformats api/openapi.yaml.
+func TestInstanceObjectSchemaReadsWrappedRequiredLists(t *testing.T) {
+	const spec = `components:
+  schemas:
+    InstanceResponse:
+      type: object
+      properties:
+        wrapped:
+          type: object
+          required: [alpha, beta,
+                     gamma, delta]
+          properties:
+            alpha:
+              type: boolean
+            beta:
+              type: boolean
+            gamma:
+              type: boolean
+            delta:
+              type: boolean
+        after:
+          type: object
+          required: [epsilon]
+          properties:
+            epsilon:
+              type: boolean
+`
+	path := filepath.Join(t.TempDir(), "wrapped.yaml")
+	if err := os.WriteFile(path, []byte(spec), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	props, required := instanceObjectSchema(t, path, "wrapped")
+	want := []string{"alpha", "beta", "gamma", "delta"}
+	for _, name := range want {
+		if !props[name] {
+			t.Errorf("property %q not parsed", name)
+		}
+		if !required[name] {
+			t.Errorf("%q not read out of the WRAPPED required list — the continuation line was dropped", name)
+		}
+	}
+	if len(required) != len(want) {
+		t.Errorf("required = %v, want exactly %v (a wrapped list must not leak into the next object)", required, want)
+	}
+
+	// The sibling object parses independently: a wrapped list must not swallow
+	// whatever follows it.
+	if _, req := instanceObjectSchema(t, path, "after"); len(req) != 1 || !req["epsilon"] {
+		t.Errorf("sibling object required = %v, want just epsilon", req)
+	}
+}
+
 // jsonFieldNames returns the JSON names a struct marshals, and fails if any
 // field carries omitempty — the whole "required must equal properties" rule
 // above rests on every field being unconditionally present on the wire, so a
@@ -131,9 +205,10 @@ func instanceObjectSchema(t *testing.T, specPath, object string) (props, require
 	}
 
 	props, required = map[string]bool{}, map[string]bool{}
-	inSchema := false // inside components.schemas.InstanceResponse
-	base := -1        // indent of the `features:` key; -1 until found
-	section := ""     // which of its child keys we are under
+	inSchema := false       // inside components.schemas.InstanceResponse
+	inlineRequired := false // mid-way through a wrapped inline `required: [...]`
+	base := -1              // indent of the `features:` key; -1 until found
+	section := ""           // which of its child keys we are under
 	for raw := range strings.SplitSeq(string(data), "\n") {
 		line := strings.TrimRight(raw, " \t\r")
 		trimmed := strings.TrimSpace(line)
@@ -144,7 +219,7 @@ func instanceObjectSchema(t *testing.T, specPath, object string) (props, require
 		if indent <= 4 && strings.HasSuffix(trimmed, ":") {
 			// A schema name (indent 4) or a top-level key: either way the
 			// InstanceResponse block, and any features block inside it, ends here.
-			inSchema, base, section = trimmed == "InstanceResponse:", -1, ""
+			inSchema, base, section, inlineRequired = trimmed == "InstanceResponse:", -1, "", false
 			continue
 		}
 		if !inSchema {
@@ -158,18 +233,22 @@ func instanceObjectSchema(t *testing.T, specPath, object string) (props, require
 		}
 		switch {
 		case indent <= base:
-			base, section = -1, "" // the object's block ended
+			base, section, inlineRequired = -1, "", false // the object's block ended
+		case inlineRequired && !strings.HasPrefix(trimmed, "- "):
+			// Continuation of a WRAPPED inline list (`defaults` wraps its own).
+			// A correct spec must not fail loud here just because the list grew
+			// past one line, so keep consuming until the closing bracket.
+			addInlineRequired(required, trimmed)
+			inlineRequired = !strings.Contains(trimmed, "]")
 		case indent == base+2:
 			key, rest, _ := strings.Cut(trimmed, ":")
 			section = key
-			// The inline form: `required: [avatar, banner, …]`. The dash-list
-			// form leaves rest empty and is collected by the case below.
+			// The inline form: `required: [avatar, banner, …]`, possibly wrapped
+			// over several lines. The dash-list form leaves rest empty, adds
+			// nothing here, and is collected by the case below.
 			if key == "required" {
-				for name := range strings.SplitSeq(strings.Trim(strings.TrimSpace(rest), "[]"), ",") {
-					if name = strings.TrimSpace(name); name != "" {
-						required[name] = true
-					}
-				}
+				addInlineRequired(required, rest)
+				inlineRequired = strings.Contains(rest, "[") && !strings.Contains(rest, "]")
 			}
 		case indent == base+4 && section == "required":
 			required[strings.TrimPrefix(trimmed, "- ")] = true

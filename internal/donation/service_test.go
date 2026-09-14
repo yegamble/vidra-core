@@ -332,18 +332,56 @@ func TestChallengeMessageHonoursTheWhiteLabelToggle(t *testing.T) {
 		t.Error("flipping the toggle un-verified an address that was already verified")
 	}
 
-	// A challenge issued BEFORE a flip no longer verifies afterwards — the
-	// documented, self-healing cost of gating this message.
-	hidden = false
-	row3, _ := svc.Add(context.Background(), owner, AddInput{Network: "ethereum", Address: "0x8617E340B3D01FA5F11F306F4090FD50E238070D"})
-	pre, _, err := svc.Challenge(context.Background(), owner, row3.ID)
-	if err != nil {
-		t.Fatalf("challenge third: %v", err)
+	// A challenge issued BEFORE a flip still verifies after it, in BOTH
+	// directions. This is not a nicety: the flag reaches each replica through
+	// the settings-version poller, so replica A can issue a challenge under one
+	// heading while replica B verifies it under the other, with no admin action
+	// in between. Verify therefore tries the current spelling and then the
+	// other one (one extra ecrecover, only on the failure path).
+	// Each case owns a FRESH key, so the address under test is genuinely the
+	// signer's: a fixture address belonging to nobody would fail the recovery
+	// check and prove nothing about the heading.
+	for _, tc := range []struct {
+		name         string
+		issue, check bool
+	}{
+		{"named at issue, hidden at verify", false, true},
+		{"hidden at issue, named at verify", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key, _ := secp256k1.GeneratePrivateKey()
+			r, err := svc.Add(context.Background(), owner,
+				AddInput{Network: "ethereum", Address: ethereumAddressFromPubKey(key.PubKey())})
+			if err != nil {
+				t.Fatalf("add: %v", err)
+			}
+			hidden = tc.issue
+			pre, _, err := svc.Challenge(context.Background(), owner, r.ID)
+			if err != nil {
+				t.Fatalf("challenge: %v", err)
+			}
+			sig := signEthPersonal(t, key, pre)
+			hidden = tc.check
+			if _, err := svc.Verify(context.Background(), owner, r.ID, sig); err != nil {
+				t.Fatalf("verify across a flip = %v, want success: a toggle between issue and verify must not cost the owner their proof", err)
+			}
+		})
 	}
-	sig := signEthPersonal(t, priv, pre)
-	hidden = true
-	if _, err := svc.Verify(context.Background(), owner, row3.ID, sig); !errors.Is(err, ErrSignatureMismatch) {
-		t.Fatalf("verify across a flip = %v, want ErrSignatureMismatch (re-issue the challenge)", err)
+
+	// Accepting two spellings must not accept anything else: the owner's own key
+	// signing some OTHER message still fails, so the nonce binding holds.
+	hidden = false
+	key, _ := secp256k1.GeneratePrivateKey()
+	bogus, err := svc.Add(context.Background(), owner,
+		AddInput{Network: "ethereum", Address: ethereumAddressFromPubKey(key.PubKey())})
+	if err != nil {
+		t.Fatalf("add bogus: %v", err)
+	}
+	if _, _, err := svc.Challenge(context.Background(), owner, bogus.ID); err != nil {
+		t.Fatalf("challenge bogus: %v", err)
+	}
+	if _, err := svc.Verify(context.Background(), owner, bogus.ID, signEthPersonal(t, key, "some other message entirely")); !errors.Is(err, ErrSignatureMismatch) {
+		t.Fatalf("wrong-message signature = %v, want ErrSignatureMismatch", err)
 	}
 }
 

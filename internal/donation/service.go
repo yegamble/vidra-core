@@ -253,14 +253,27 @@ func (s *Service) Verify(ctx context.Context, ownerID, id uuid.UUID, signature s
 	if !row.VerificationExpiresAt.Valid || s.now().After(row.VerificationExpiresAt.Time) {
 		return sqlcgen.DonationAddress{}, ErrChallengeExpired
 	}
-	ok, err := verifySignature(row.Network, row.Address, s.challengeMessage(row), signature)
-	if err != nil {
-		return sqlcgen.DonationAddress{}, err
+	// Check the CURRENT spelling of the heading first, then the other one.
+	//
+	// The white-label flag reaches each replica through the settings-version
+	// poller, so replica A can issue a challenge under one heading while replica
+	// B verifies the signature under the other, with no admin action in between
+	// and nothing the owner could have done differently. Accepting both
+	// spellings costs one extra ecrecover on the failure path and gives up
+	// nothing: every binding that makes the proof a proof — instance, network,
+	// address, one-shot nonce — is identical in the two messages, so a signature
+	// valid for one is valid for the same address and challenge either way.
+	hidden := s.softwareNameHidden()
+	for _, spelling := range [2]bool{hidden, !hidden} {
+		ok, err := verifySignature(row.Network, row.Address, s.challengeMessageFor(row, spelling), signature)
+		if err != nil {
+			return sqlcgen.DonationAddress{}, err
+		}
+		if ok {
+			return s.repo.MarkDonationAddressVerified(ctx, id)
+		}
 	}
-	if !ok {
-		return sqlcgen.DonationAddress{}, ErrSignatureMismatch
-	}
-	return s.repo.MarkDonationAddressVerified(ctx, id)
+	return sqlcgen.DonationAddress{}, ErrSignatureMismatch
 }
 
 // owned fetches an address and requires the caller to own it.
@@ -280,12 +293,19 @@ func (s *Service) owned(ctx context.Context, ownerID, id uuid.UUID) (sqlcgen.Don
 // nonce, so a signature cannot be replayed for a different address, network, or
 // instance. The nonce is a PUBLIC random challenge, never key material.
 func (s *Service) challengeMessage(row sqlcgen.DonationAddress) string {
+	return s.challengeMessageFor(row, s.softwareNameHidden())
+}
+
+// challengeMessageFor builds the message with the heading spelled EXPLICITLY
+// either way. Verify needs both spellings (see the loop there), so the choice is
+// a parameter rather than a read of the live setting.
+func (s *Service) challengeMessageFor(row sqlcgen.DonationAddress, hideSoftwareName bool) string {
 	nonce := ""
 	if row.VerificationNonce != nil {
 		nonce = *row.VerificationNonce
 	}
 	heading := branding.SoftwareName + " donation address verification"
-	if s.softwareNameHidden() {
+	if hideSoftwareName {
 		// White-labelled: the heading still says what the signature is FOR, it
 		// just does not name the software (branding_hide_software_name).
 		heading = "Donation address verification"
@@ -308,6 +328,12 @@ func (s *Service) softwareNameHidden() bool {
 // software on a white-labelled instance either, which is why it is resolved here
 // rather than baked in at construction. With no seam wired the fallback is
 // byte-identical to what it always was.
+// The blank-identifier branch is unreachable in the shipped wiring:
+// cmd/api/main.go passes PublicBaseURL and falls back to InstanceName, and
+// config gives InstanceName a non-blank default, so `instance` is always set.
+// It is kept because a caller could still construct the service with "" and the
+// Instance: line must never be empty — and, if it ever is reached, must not
+// re-introduce the name the operator asked to hide.
 func (s *Service) instanceLabel() string {
 	if v := strings.TrimSpace(s.instance); v != "" {
 		return v
