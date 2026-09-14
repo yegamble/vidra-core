@@ -21,6 +21,7 @@ import (
 	"github.com/vidra/vidra-core/internal/account"
 	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/branding"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/quota"
@@ -646,6 +647,90 @@ func TestAccountExportFlowAndImportRoundTrip(t *testing.T) {
 	}
 	if len(env.repo.upsertedPrefs) != 1 || env.repo.upsertedPrefs[0].Type != "follow" {
 		t.Fatalf("prefs not re-applied: %+v", env.repo.upsertedPrefs)
+	}
+}
+
+// TestAccountArchiveNamingHonoursTheWhiteLabelToggle covers the two places the
+// account-archive flow says the software's name to a USER: the download's
+// suggested filename, which lands in their Downloads folder, and the message
+// they get back when the file they hand to /me/import is not an archive at all.
+// The JSON envelope key (vidra_export) is deliberately NOT gated — it is the
+// machine format an archive from any instance is identified by, and renaming it
+// would make an export from a white-labelled instance unimportable elsewhere.
+func TestAccountArchiveNamingHonoursTheWhiteLabelToggle(t *testing.T) {
+	env := newAccountEnv(t)
+	token := registerAndToken(t, env.srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	// Produce one downloadable archive; the same archive is re-downloaded below.
+	if rec := doJSON(env.srv, http.MethodPost, "/api/v1/me/export", token, ""); rec.Code != http.StatusAccepted {
+		t.Fatalf("request export = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	if n, err := env.accountsvc.DrainExports(context.Background(), 5); err != nil || n != 1 {
+		t.Fatalf("DrainExports = %d, %v; want 1", n, err)
+	}
+
+	download := func(t *testing.T) string {
+		t.Helper()
+		rec := getWithAuth(env.srv, "/api/v1/me/export/download", token)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("download = %d; body=%s", rec.Code, rec.Body.String())
+		}
+		return rec.Header().Get(echo.HeaderContentDisposition)
+	}
+	importError := func(t *testing.T) string {
+		t.Helper()
+		rec := doJSON(env.srv, http.MethodPost, "/api/v1/me/import", token, `{"nope":true}`)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("invalid archive = %d, want 422; body=%s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Error struct {
+				Fields []struct {
+					Field   string `json:"field"`
+					Message string `json:"message"`
+				} `json:"fields"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal 422: %v", err)
+		}
+		if len(body.Error.Fields) != 1 || body.Error.Fields[0].Field != "archive" {
+			t.Fatalf("422 fields = %+v, want one entry for `archive`", body.Error.Fields)
+		}
+		return body.Error.Fields[0].Message
+	}
+
+	// Default: the software names its own archive format, so a user with exports
+	// from several platforms can tell which file came from where.
+	lower := strings.ToLower(branding.SoftwareName)
+	if cd := download(t); !strings.Contains(cd, `filename="`+lower+`-export-`) {
+		t.Errorf("Content-Disposition = %q, want a %s-export-<id>.json filename", cd, lower)
+	}
+	if msg := importError(t); msg != "not a valid "+lower+" account archive" {
+		t.Errorf("import error = %q, want it to name the software", msg)
+	}
+
+	// White-labelled: both strings drop the name and stay useful.
+	env.setSetting(t, instancesettings.KeyBrandingHideSoftwareName, "true")
+	cd := download(t)
+	if !strings.Contains(cd, `filename="account-export-`) {
+		t.Errorf("Content-Disposition = %q, want an account-export-<id>.json filename", cd)
+	}
+	if strings.Contains(strings.ToLower(cd), lower) {
+		t.Errorf("Content-Disposition = %q still names the software", cd)
+	}
+	if msg := importError(t); msg != "not a valid account archive" {
+		t.Errorf("import error = %q, want %q", msg, "not a valid account archive")
+	}
+
+	// The archive CONTENT is untouched: vidra_export is the machine format key
+	// and an export from a white-labelled instance must still import anywhere.
+	rec := getWithAuth(env.srv, "/api/v1/me/export/download", token)
+	if !strings.Contains(rec.Body.String(), `"vidra_export"`) {
+		t.Error("the archive envelope key vidra_export was renamed; that breaks import compatibility")
+	}
+	if rec := doJSON(env.srv, http.MethodPost, "/api/v1/me/import", token, rec.Body.String()); rec.Code != http.StatusOK {
+		t.Errorf("re-import of a white-labelled instance's own archive = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 }
 

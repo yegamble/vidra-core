@@ -665,7 +665,14 @@ func run() error {
 	if donationInstance == "" {
 		donationInstance = cfg.InstanceName
 	}
-	donationsvc := donation.NewService(db.Queries(), donationInstance)
+	donationsvc := donation.NewService(db.Queries(), donationInstance,
+		// White-label (branding_hide_software_name): the challenge the owner
+		// signs is text a human reads, so its heading stops naming the software.
+		// Resolved per message; see the option's comment for why that cannot
+		// invalidate an address that is already verified.
+		donation.WithHideSoftwareNameFunc(func() bool {
+			return settingssvc.Bool(instancesettings.KeyBrandingHideSoftwareName)
+		}))
 	opts = append(opts, httpapi.WithDonationService(donationsvc))
 
 	blobs, createdBucket, err := newStorageBackend(startCtx, cfg)
@@ -2128,6 +2135,11 @@ func run() error {
 	atprotoLoginSvc := auth.NewATProtoOAuthService(db.Queries(), authsvc, atprotoLoginClient,
 		auth.WithATProtoEnabled(cfg.ATProtoLoginEnabled),
 		auth.WithATProtoPublicBaseURL(cfg.PublicBaseURL),
+		// The client_name a third-party PDS shows on its consent screen: the
+		// software normally, the effective instance name once the operator
+		// white-labels the instance (branding_hide_software_name). Resolved per
+		// request, because the metadata document is built in the handler.
+		auth.WithATProtoClientNameFunc(settingssvc.AttributionName),
 	)
 	opts = append(opts, httpapi.WithATProtoLoginService(atprotoLoginSvc))
 

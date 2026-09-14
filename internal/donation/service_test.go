@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/branding"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -257,6 +259,119 @@ func TestVerifyChallengeExpiry(t *testing.T) {
 	now = now.Add(11 * time.Minute)
 	if _, err := svc.Verify(context.Background(), owner, row.ID, sig); !errors.Is(err, ErrChallengeExpired) {
 		t.Fatalf("expired err = %v, want ErrChallengeExpired", err)
+	}
+}
+
+// TestChallengeMessageHonoursTheWhiteLabelToggle covers the challenge text the
+// address owner reads and pastes into their wallet to sign. By default its first
+// line names the software; on a white-labelled instance
+// (branding_hide_software_name) it must not.
+//
+// Gating this is only safe because the message is reconstructed exactly twice
+// per challenge — once to hand the owner (Challenge) and once to check their
+// signature (Verify) — and never afterwards: MarkDonationAddressVerified stores
+// a boolean, not the text, so flipping the toggle cannot invalidate an address
+// that is already verified. The signature check below proves the round trip
+// still works in BOTH states, and the second half proves a flip mid-challenge
+// voids only that challenge (the owner asks for a new one, exactly as after an
+// expiry) rather than anything stored.
+func TestChallengeMessageHonoursTheWhiteLabelToggle(t *testing.T) {
+	priv, _ := secp256k1.GeneratePrivateKey()
+	addr := ethereumAddressFromPubKey(priv.PubKey())
+	hidden := false
+	repo := newDonationFakeRepo()
+	svc := NewService(repo, "vidra.test", WithHideSoftwareNameFunc(func() bool { return hidden }))
+	owner := uuid.New()
+	row, err := svc.Add(context.Background(), owner, AddInput{Network: "ethereum", Address: addr})
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	// Default: the heading names the software, and a signature over it verifies.
+	message, _, err := svc.Challenge(context.Background(), owner, row.ID)
+	if err != nil {
+		t.Fatalf("challenge: %v", err)
+	}
+	if want := branding.SoftwareName + " donation address verification\n"; !strings.HasPrefix(message, want) {
+		t.Errorf("challenge message = %q, want it to start with %q", message, want)
+	}
+	if !strings.Contains(message, "Instance: vidra.test") {
+		t.Errorf("challenge message lost its instance binding: %q", message)
+	}
+	if _, err := svc.Verify(context.Background(), owner, row.ID, signEthPersonal(t, priv, message)); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+
+	// White-labelled: the heading drops the name, keeps every binding, and the
+	// signing round trip still works.
+	hidden = true
+	row2, err := svc.Add(context.Background(), owner, AddInput{Network: "ethereum", Address: "0x52908400098527886E0F7030069857D2E4169EE7"})
+	if err != nil {
+		t.Fatalf("add second: %v", err)
+	}
+	hiddenMsg, _, err := svc.Challenge(context.Background(), owner, row2.ID)
+	if err != nil {
+		t.Fatalf("challenge hidden: %v", err)
+	}
+	if !strings.HasPrefix(hiddenMsg, "Donation address verification\n") {
+		t.Errorf("hidden challenge message = %q, want the software name dropped from the heading", hiddenMsg)
+	}
+	if head, _, _ := strings.Cut(hiddenMsg, "\n"); strings.Contains(strings.ToLower(head), strings.ToLower(branding.SoftwareName)) {
+		t.Errorf("hidden challenge heading still names the software: %q", head)
+	}
+	for _, want := range []string{"Instance: vidra.test", "Network: ethereum", "Nonce: "} {
+		if !strings.Contains(hiddenMsg, want) {
+			t.Errorf("hidden challenge message lost %q: %q", want, hiddenMsg)
+		}
+	}
+
+	// The already-verified address stays verified while the toggle is on: the
+	// text is never rebuilt for it again.
+	stored := repo.rows[row.ID]
+	if !stored.Verified {
+		t.Error("flipping the toggle un-verified an address that was already verified")
+	}
+
+	// A challenge issued BEFORE a flip no longer verifies afterwards — the
+	// documented, self-healing cost of gating this message.
+	hidden = false
+	row3, _ := svc.Add(context.Background(), owner, AddInput{Network: "ethereum", Address: "0x8617E340B3D01FA5F11F306F4090FD50E238070D"})
+	pre, _, err := svc.Challenge(context.Background(), owner, row3.ID)
+	if err != nil {
+		t.Fatalf("challenge third: %v", err)
+	}
+	sig := signEthPersonal(t, priv, pre)
+	hidden = true
+	if _, err := svc.Verify(context.Background(), owner, row3.ID, sig); !errors.Is(err, ErrSignatureMismatch) {
+		t.Fatalf("verify across a flip = %v, want ErrSignatureMismatch (re-issue the challenge)", err)
+	}
+}
+
+// TestChallengeInstanceFallback pins the Instance: line when the service is
+// built with no instance identifier at all: today's spelling by default, and no
+// software name once the instance is white-labelled.
+func TestChallengeInstanceFallback(t *testing.T) {
+	hidden := false
+	svc := NewService(newDonationFakeRepo(), "  ", WithHideSoftwareNameFunc(func() bool { return hidden }))
+	owner := uuid.New()
+	row, err := svc.Add(context.Background(), owner, AddInput{Network: "ethereum", Address: "0x52908400098527886E0F7030069857D2E4169EE7"})
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	message, _, err := svc.Challenge(context.Background(), owner, row.ID)
+	if err != nil {
+		t.Fatalf("challenge: %v", err)
+	}
+	if want := "Instance: " + strings.ToLower(branding.SoftwareName) + "\n"; !strings.Contains(message, want) {
+		t.Errorf("fallback message = %q, want %q", message, want)
+	}
+	hidden = true
+	hiddenMsg, _, err := svc.Challenge(context.Background(), owner, row.ID)
+	if err != nil {
+		t.Fatalf("challenge hidden: %v", err)
+	}
+	if strings.Contains(strings.ToLower(hiddenMsg), strings.ToLower(branding.SoftwareName)) {
+		t.Errorf("white-labelled fallback still names the software: %q", hiddenMsg)
 	}
 }
 

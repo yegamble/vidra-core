@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/branding"
 	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -69,6 +70,9 @@ type Service struct {
 	instance string
 	now      func() time.Time
 	newNonce func() (string, error)
+	// hideSoftwareName reports the white-label gate for the challenge text.
+	// nil (the unit-test / pre-wiring case) means "not hidden".
+	hideSoftwareName func() bool
 }
 
 // Option customises the Service.
@@ -93,14 +97,31 @@ func WithNonceFunc(fn func() (string, error)) Option {
 	}
 }
 
-// NewService builds the donation service. instance is a stable identifier for
-// this Vidra deployment (its public origin/host); it is embedded verbatim in
-// the verification challenge message so a signature captured on one instance
-// cannot be replayed to verify the same address on another.
-func NewService(repo Repository, instance string, opts ...Option) *Service {
-	if strings.TrimSpace(instance) == "" {
-		instance = "vidra"
+// WithHideSoftwareNameFunc wires the white-label gate
+// (branding_hide_software_name) into the challenge message: when it reports
+// true the message's heading no longer names the software.
+//
+// Resolving it when the message is BUILT is safe here, and it is worth saying
+// why. The text is reconstructed exactly twice for one challenge — once to hand
+// the owner (Challenge) and once to check their signature (Verify) — and never
+// again: a verified address stores a boolean, not the text, so flipping the
+// toggle cannot invalidate a verification that already happened. What a flip
+// can void is a challenge issued inside its 10-minute TTL, whose signature then
+// fails as ErrSignatureMismatch; the owner asks for a new challenge, exactly as
+// they would after an expiry.
+func WithHideSoftwareNameFunc(f func() bool) Option {
+	return func(s *Service) {
+		if f != nil {
+			s.hideSoftwareName = f
+		}
 	}
+}
+
+// NewService builds the donation service. instance is a stable identifier for
+// this deployment (its public origin/host); it is embedded verbatim in the
+// verification challenge message so a signature captured on one instance cannot
+// be replayed to verify the same address on another.
+func NewService(repo Repository, instance string, opts ...Option) *Service {
 	s := &Service{repo: repo, instance: instance, now: time.Now, newNonce: randomNonce}
 	for _, o := range opts {
 		o(s)
@@ -263,10 +284,38 @@ func (s *Service) challengeMessage(row sqlcgen.DonationAddress) string {
 	if row.VerificationNonce != nil {
 		nonce = *row.VerificationNonce
 	}
+	heading := branding.SoftwareName + " donation address verification"
+	if s.softwareNameHidden() {
+		// White-labelled: the heading still says what the signature is FOR, it
+		// just does not name the software (branding_hide_software_name).
+		heading = "Donation address verification"
+	}
 	return fmt.Sprintf(
-		"Vidra donation address verification\nInstance: %s\nNetwork: %s\nAddress: %s\nNonce: %s",
-		s.instance, row.Network, row.Address, nonce,
+		"%s\nInstance: %s\nNetwork: %s\nAddress: %s\nNonce: %s",
+		heading, s.instanceLabel(), row.Network, row.Address, nonce,
 	)
+}
+
+// softwareNameHidden reports the white-label gate, defaulting to "not hidden"
+// when no seam is wired.
+func (s *Service) softwareNameHidden() bool {
+	return s.hideSoftwareName != nil && s.hideSoftwareName()
+}
+
+// instanceLabel is the challenge's Instance: line. NewService is handed the
+// canonical public origin (else the instance name), so the fallback below only
+// matters for a deployment that supplied neither — and it must not name the
+// software on a white-labelled instance either, which is why it is resolved here
+// rather than baked in at construction. With no seam wired the fallback is
+// byte-identical to what it always was.
+func (s *Service) instanceLabel() string {
+	if v := strings.TrimSpace(s.instance); v != "" {
+		return v
+	}
+	if s.softwareNameHidden() {
+		return "instance"
+	}
+	return strings.ToLower(branding.SoftwareName)
 }
 
 // randomNonce returns a 128-bit crypto-random hex challenge nonce.

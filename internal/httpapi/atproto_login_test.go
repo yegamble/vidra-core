@@ -20,11 +20,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/atproto"
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/branding"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/instancesettings"
 )
 
 // fakeATProtoBackend is the combined PDS + auth server for the login flow.
@@ -115,6 +118,9 @@ type atprotoLoginEnv struct {
 	srv     *Server
 	backend *fakeATProtoBackend
 	repo    *oauthHTTPFakeRepo
+	// settingssvc is the overlay the client-metadata document reads its
+	// client_name through, so a test can flip the white-label toggle at runtime.
+	settingssvc *instancesettings.Service
 	// authsvc and cfg are kept so a test can stand a SECOND server over the
 	// same accounts and sessions with a different feature flag — the only way
 	// to exercise "this instance turned ATProto login off after I signed in",
@@ -152,9 +158,16 @@ func newATProtoLoginEnv(t *testing.T, enabled bool) *atprotoLoginEnv {
 	issuer := auth.NewTokenIssuer(cfg.JWTSecret, "vidra", "vidra", 15*time.Minute)
 	mailer := &captureResetMailer{}
 	authsvc := auth.NewService(repo.authFakeRepo, issuer, 720*time.Hour, auth.WithMailer(mailer))
+	settingssvc := instancesettings.NewService(newInstanceSettingsFakeRepo(), settingsDefaultsFromConfig(cfg))
+	if err := settingssvc.Load(context.Background()); err != nil {
+		t.Fatalf("settings load: %v", err)
+	}
 	loginsvc := auth.NewATProtoOAuthService(repo, authsvc, client,
 		auth.WithATProtoEnabled(enabled),
 		auth.WithATProtoPublicBaseURL(cfg.PublicBaseURL),
+		// The same wiring cmd/api uses: the consent screen's client_name is
+		// resolved per request from the settings overlay (see AttributionName).
+		auth.WithATProtoClientNameFunc(settingssvc.AttributionName),
 	)
 	buf := &bytes.Buffer{}
 	srv := New(cfg, nil, nil,
@@ -166,9 +179,38 @@ func newATProtoLoginEnv(t *testing.T, enabled bool) *atprotoLoginEnv {
 		// standing between the user and an account they cannot sign in to.
 		WithOAuthService(auth.NewOAuthService(repo, authsvc, nil)),
 		WithContactMailer(mailer),
+		WithSettingsService(settingssvc),
 		WithLogger(slog.New(slog.NewJSONHandler(buf, nil))),
 	)
-	return &atprotoLoginEnv{srv: srv, backend: backend, repo: repo, authsvc: authsvc, cfg: cfg, mailer: mailer}
+	return &atprotoLoginEnv{srv: srv, backend: backend, repo: repo, settingssvc: settingssvc,
+		authsvc: authsvc, cfg: cfg, mailer: mailer}
+}
+
+// clientName fetches the public client-metadata document and returns the
+// client_name a PDS would render on its consent screen.
+func (e *atprotoLoginEnv) clientName(t *testing.T) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	e.srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/atproto/client-metadata.json", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("client-metadata = %d, want 200", rec.Code)
+	}
+	var meta struct {
+		ClientName string `json:"client_name"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &meta); err != nil {
+		t.Fatalf("unmarshal client-metadata: %v", err)
+	}
+	return meta.ClientName
+}
+
+// setSetting applies one runtime-setting override through the settings service.
+func (e *atprotoLoginEnv) setSetting(t *testing.T, key, value string) {
+	t.Helper()
+	if err := e.settingssvc.Apply(context.Background(),
+		map[string]instancesettings.Update{key: {Value: value}}, uuid.New()); err != nil {
+		t.Fatalf("set %s=%s: %v", key, value, err)
+	}
 }
 
 // start POSTs /auth/atproto/start and returns the state cookie the server sealed.
@@ -384,6 +426,7 @@ func TestATProtoClientMetadataServed(t *testing.T) {
 	}
 	var meta struct {
 		ClientID                string   `json:"client_id"`
+		ClientName              string   `json:"client_name"`
 		RedirectURIs            []string `json:"redirect_uris"`
 		TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
 		DPoPBoundAccessTokens   bool     `json:"dpop_bound_access_tokens"`
@@ -398,8 +441,46 @@ func TestATProtoClientMetadataServed(t *testing.T) {
 	if len(meta.RedirectURIs) != 1 || meta.RedirectURIs[0] != "https://vidra.test/api/v1/auth/atproto/callback" {
 		t.Errorf("redirect_uris = %v", meta.RedirectURIs)
 	}
+	if meta.ClientName != branding.SoftwareName {
+		t.Errorf("client_name = %q, want %q (the white-label toggle is off here)", meta.ClientName, branding.SoftwareName)
+	}
 	if meta.TokenEndpointAuthMethod != "none" || !meta.DPoPBoundAccessTokens || meta.Scope != "atproto" {
 		t.Errorf("metadata = %+v", meta)
+	}
+}
+
+// TestATProtoClientMetadataHonoursTheWhiteLabelToggle covers the one surface of
+// this flow a human actually reads: the consent screen a third-party PDS
+// (Bluesky) renders from client_name before handing over an account. By default
+// it names the software. Once the operator white-labels the instance
+// (branding_hide_software_name) it must name the INSTANCE instead — the screen
+// has to name somebody, and the instance is who the user is authorising. The
+// document is built in the handler, so the flip applies with no restart.
+func TestATProtoClientMetadataHonoursTheWhiteLabelToggle(t *testing.T) {
+	env := newATProtoLoginEnv(t, true)
+
+	if got := env.clientName(t); got != branding.SoftwareName {
+		t.Errorf("client_name = %q, want the software name %q", got, branding.SoftwareName)
+	}
+
+	// Hidden, with no instance_name override: the effective name is the config
+	// default (INSTANCE_NAME), which is what an instance that never edited it has.
+	env.setSetting(t, instancesettings.KeyBrandingHideSoftwareName, "true")
+	if got, want := env.clientName(t), env.cfg.InstanceName; got != want {
+		t.Errorf("client_name with the software name hidden = %q, want the config instance name %q", got, want)
+	}
+
+	// Hidden, with the DB overlay set: the overlay wins.
+	env.setSetting(t, instancesettings.KeyInstanceName, "ExampleTube")
+	if got := env.clientName(t); got != "ExampleTube" {
+		t.Errorf("client_name = %q, want the overridden instance name ExampleTube", got)
+	}
+
+	// And turning the toggle back off restores the software name, so this is a
+	// switch and not a one-way door.
+	env.setSetting(t, instancesettings.KeyBrandingHideSoftwareName, "false")
+	if got := env.clientName(t); got != branding.SoftwareName {
+		t.Errorf("client_name after un-hiding = %q, want %q", got, branding.SoftwareName)
 	}
 }
 
