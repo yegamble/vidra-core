@@ -221,8 +221,17 @@ func (s *Server) handleSearchSuggestions(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusOK, resp) // silent degrade to empty
 	}
-	views := make([]suggestionView, 0, len(out.Suggestions))
-	for _, sg := range out.Suggestions {
+	// Per-video authorization re-check (H1). The search index carries a STATIC
+	// `eligible` flag and no per-viewer state, so a suggestion box that trusts it
+	// leaks a private/unlisted/blocked title the moment a documents row is stale
+	// or corrupted (eligible forced true). /videos/search never trusts the index:
+	// it hydrates the returned ids through the canonical DB predicate
+	// (HydrateByIDs) and drops whatever this viewer cannot actually see. Bring
+	// suggestions to the SAME predicate — one batched DB read, not per-row — so
+	// autocomplete can never surface a title public search would have hidden.
+	suggestions := s.filterSuggestionsByVisibility(c.Request().Context(), out.Suggestions, userID, authed, s.effectiveHideSensitive(c))
+	views := make([]suggestionView, 0, len(suggestions))
+	for _, sg := range suggestions {
 		views = append(views, suggestionView{
 			Text:          sg.Text,
 			Type:          sg.Type,
@@ -233,6 +242,65 @@ func (s *Server) handleSearchSuggestions(c echo.Context) error {
 	}
 	resp.Suggestions = views
 	return c.JSON(http.StatusOK, resp)
+}
+
+// filterSuggestionsByVisibility drops any suggestion carrying a video id this
+// viewer cannot actually see, re-verified against the DB under the SAME canonical
+// visibility predicate /videos/search hydrates with (video.Service.HydrateByIDs:
+// public+published, not blocked, owner not unlisted, per-viewer mutes/blocks, and
+// the hide-sensitive policy) — never the search index's static `eligible` flag.
+// This is what keeps a stale or corrupted documents row (e.g. eligible forced
+// true on a private/unlisted/blocked video) from leaking that video's title into
+// autocomplete (H1). Suggestions that carry no video id (query/tag/history and
+// channel rows) pass through unchanged — they name no per-video-authorized title.
+//
+// It re-checks in a SINGLE batched query over the distinct video ids in the
+// response, so aligning suggestions with public search does not turn autocomplete
+// into a per-row N+1. Fail closed: if the re-check query errors, every
+// video-carrying row is dropped rather than passed through unverified — a suggest
+// box that shows fewer rows is correct; one that leaks a private title is not.
+func (s *Server) filterSuggestionsByVisibility(ctx context.Context, in []searchclient.Suggestion, viewerID uuid.UUID, viewerAuthed, hideSensitive bool) []searchclient.Suggestion {
+	// Collect the distinct, parseable video ids the service attached to any row.
+	ids := make([]uuid.UUID, 0, len(in))
+	seen := make(map[uuid.UUID]bool, len(in))
+	for _, sg := range in {
+		if sg.VideoID == nil {
+			continue
+		}
+		id, perr := uuid.Parse(*sg.VideoID)
+		if perr != nil {
+			continue // unparseable → cannot be verified → dropped below
+		}
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return in // no video-bearing rows: nothing to re-check
+	}
+	visible := make(map[uuid.UUID]bool, len(ids))
+	// HydrateByIDs applies the full per-viewer canonical predicate and returns
+	// only the rows this viewer may see. On error `visible` stays empty, so the
+	// filter below drops every video-carrying row (fail closed).
+	if feed, herr := s.videosvc.HydrateByIDs(ctx, ids, viewerID, viewerAuthed, hideSensitive); herr == nil {
+		for _, it := range feed {
+			visible[it.Video.ID] = true
+		}
+	}
+	out := make([]searchclient.Suggestion, 0, len(in))
+	for _, sg := range in {
+		if sg.VideoID == nil {
+			out = append(out, sg)
+			continue
+		}
+		id, perr := uuid.Parse(*sg.VideoID)
+		if perr != nil || !visible[id] {
+			continue // unverifiable or not visible to this viewer → drop
+		}
+		out = append(out, sg)
+	}
+	return out
 }
 
 // --- recommendations (home + related) ---
