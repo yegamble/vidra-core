@@ -96,6 +96,11 @@ type Repository interface {
 	// videos and deleted remote actors (whose content cascades away).
 	GetRemoteVideoByObjectURL(ctx context.Context, objectURL string) (sqlcgen.GetRemoteVideoByObjectURLRow, error)
 	GetRemoteVideoByURL(ctx context.Context, url string) (sqlcgen.GetRemoteVideoByURLRow, error)
+	// Locally-authored comments on remote videos (migration 0147): the
+	// home-instance-hosts-and-federates path reads the comment to build its
+	// Create/Update/Delete{Note} and reflects the delivery result onto its status.
+	GetAuthoredRemoteComment(ctx context.Context, id uuid.UUID) (sqlcgen.AuthoredRemoteComment, error)
+	SetAuthoredRemoteCommentDeliveryState(ctx context.Context, arg sqlcgen.SetAuthoredRemoteCommentDeliveryStateParams) error
 	// Mirrored comment threads on remote videos (A29-F8, migration 0140).
 	UpsertRemoteVideoComment(ctx context.Context, arg sqlcgen.UpsertRemoteVideoCommentParams) (sqlcgen.UpsertRemoteVideoCommentRow, error)
 	GetRemoteVideoCommentByObjectURL(ctx context.Context, objectURL string) (sqlcgen.GetRemoteVideoCommentByObjectURLRow, error)

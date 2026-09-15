@@ -51,6 +51,17 @@ INSERT INTO watched_word_matches (
           sqlc.arg('match_offset'), sqlc.arg('match_length'))
 ON CONFLICT (watched_word_id, video_id) WHERE video_id IS NOT NULL DO NOTHING;
 
+-- name: RecordWatchedWordAuthoredRemoteCommentMatch :exec
+-- Record that a locally-authored comment on a remote video matched a watched term
+-- (idempotent per word+comment; migration 0147). Same flag-time snapshot as the
+-- other two arms: moderation is the home instance's job for these rows, so they
+-- flow through the same review queue as local comments.
+INSERT INTO watched_word_matches (
+    watched_word_id, authored_remote_comment_id, matched_text, matched_term, match_offset, match_length
+) VALUES ($1, $2, sqlc.arg('matched_text'), sqlc.arg('matched_term'),
+          sqlc.arg('match_offset'), sqlc.arg('match_length'))
+ON CONFLICT (watched_word_id, authored_remote_comment_id) WHERE authored_remote_comment_id IS NOT NULL DO NOTHING;
+
 -- name: ResolveWatchedWordMatch :execrows
 -- Triage one match: 'resolved' (a moderator acted) or 'dismissed' (false
 -- positive), with the moderator's note. Shaped like ResolveReport — the same
@@ -98,13 +109,20 @@ SELECT m.id, m.created_at,
        ru.username AS resolved_by_username,
        (m.watched_word_id IS NOT NULL)::bool AS term_active,
        m.comment_id, c.body AS comment_body,
-       COALESCE(m.video_id, c.video_id)::uuid AS video_id,
+       -- video_id names the video the flagged content is about: a local video for a
+       -- comment/video match, or the REMOTE video for an authored-remote-comment
+       -- match (migration 0147). Kept non-null so the existing struct mapping holds.
+       COALESCE(m.video_id, c.video_id, arc.remote_video_id)::uuid AS video_id,
        v.title AS video_title,
-       COALESCE(cu.username, c.remote_author_name, vu.username)::text AS author_username,
+       -- The authored-remote-comment arm (0147): its id (the discriminator), its
+       -- body (the live-target check), and the remote video's title for context.
+       m.authored_remote_comment_id, arc.body AS authored_remote_comment_body,
+       rv.title AS remote_video_title,
+       COALESCE(cu.username, c.remote_author_name, arcu.username, vu.username)::text AS author_username,
        COALESCE(ra.domain, '')::text AS author_domain,
        (CASE
             WHEN strpos(
-                     lower(COALESCE(c.body, v.title || E'\n' || v.description, '')),
+                     lower(COALESCE(c.body, arc.body, v.title || E'\n' || v.description, '')),
                      lower(COALESCE(NULLIF(m.matched_term, ''), w.word, ''))
                  ) > 0 THEN 'present'
             ELSE 'edited_away'
@@ -114,6 +132,9 @@ LEFT JOIN watched_words w ON w.id = m.watched_word_id
 LEFT JOIN comments c ON c.id = m.comment_id
 LEFT JOIN users cu ON cu.id = c.user_id
 LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
+LEFT JOIN authored_remote_comments arc ON arc.id = m.authored_remote_comment_id
+LEFT JOIN users arcu ON arcu.id = arc.user_id
+LEFT JOIN remote_videos rv ON rv.id = arc.remote_video_id
 LEFT JOIN videos v ON v.id = COALESCE(m.video_id, c.video_id)
 LEFT JOIN channels ch ON ch.id = v.channel_id
 LEFT JOIN users vu ON vu.id = ch.owner_id

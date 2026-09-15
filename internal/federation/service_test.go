@@ -43,6 +43,9 @@ type fakeRepo struct {
 	usersByID       map[uuid.UUID]sqlcgen.GetUserActorByIDRow
 	rcFollows       map[uuid.UUID]*sqlcgen.RemoteChannelFollow // keyed by row id
 	commentsByID    map[uuid.UUID]sqlcgen.Comment              // federated-comment rows (§6)
+	// authoredRemoteComments are locally-authored comments ON remote videos
+	// (migration 0147), keyed by id.
+	authoredRemoteComments map[uuid.UUID]sqlcgen.AuthoredRemoteComment
 	// apDisabled marks channels whose activitypub_enabled is false (migration
 	// 0096). Nil-safe: a channel not listed here reads back AP-ENABLED, matching
 	// the DB column default (TRUE) so existing fixtures federate as before.
@@ -71,7 +74,11 @@ type fakeRepo struct {
 func (f fakeRepo) GetRemoteVideoByID(_ context.Context, id uuid.UUID) (sqlcgen.GetRemoteVideoByIDRow, error) {
 	for _, rv := range f.remoteVideos {
 		if rv.id == id {
-			return sqlcgen.GetRemoteVideoByIDRow{ID: rv.id, ObjectUrl: rv.params.ObjectUrl}, nil
+			return sqlcgen.GetRemoteVideoByIDRow{
+				ID:             rv.id,
+				ObjectUrl:      rv.params.ObjectUrl,
+				RemoteActorUrl: rv.params.RemoteActorUrl,
+			}, nil
 		}
 	}
 	return sqlcgen.GetRemoteVideoByIDRow{}, pgx.ErrNoRows
@@ -449,8 +456,9 @@ func (f fakeRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDelivery
 			Payload:              arg.Payload,
 			SigningChannelID:     arg.SigningChannelID,
 			SigningChannelHandle: arg.SigningChannelHandle,
-			SigningUserID:        arg.SigningUserID,
-			SigningUsername:      arg.SigningUsername,
+			SigningUserID:           arg.SigningUserID,
+			SigningUsername:         arg.SigningUsername,
+			AuthoredRemoteCommentID: arg.AuthoredRemoteCommentID,
 		},
 		state:    "pending",
 		enqueued: arg,
@@ -756,6 +764,23 @@ func (f fakeRepo) GetComment(_ context.Context, id uuid.UUID) (sqlcgen.Comment, 
 		return c, nil
 	}
 	return sqlcgen.Comment{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) GetAuthoredRemoteComment(_ context.Context, id uuid.UUID) (sqlcgen.AuthoredRemoteComment, error) {
+	if c, ok := f.authoredRemoteComments[id]; ok {
+		return c, nil
+	}
+	return sqlcgen.AuthoredRemoteComment{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) SetAuthoredRemoteCommentDeliveryState(_ context.Context, arg sqlcgen.SetAuthoredRemoteCommentDeliveryStateParams) error {
+	if c, ok := f.authoredRemoteComments[arg.ID]; ok {
+		c.DeliveryState = arg.DeliveryState
+		c.LastError = arg.LastError
+		c.Attempts = arg.Attempts
+		f.authoredRemoteComments[arg.ID] = c
+	}
+	return nil
 }
 
 func (f fakeRepo) GetCommentByRemoteObjectURL(_ context.Context, u string) (sqlcgen.Comment, error) {

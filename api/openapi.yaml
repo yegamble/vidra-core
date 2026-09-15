@@ -10879,24 +10879,30 @@ paths:
   /api/v1/remote-videos/{id}/comments:
     get:
       operationId: listRemoteVideoComments
-      summary: The mirrored comment thread on a federated video
+      summary: The comment thread on a federated video (mirrored + locally authored)
       description: >-
-        Returns the comments this instance has MIRRORED for one remote video —
-        the thread the origin fans out to its followers — oldest first. Public;
-        paginated via limit (1–100, default 20) and offset.
+        Returns BOTH halves of the thread on one remote video. `comments` is the
+        MIRRORED origin thread — the comments the origin fans out to its
+        followers — oldest first and paginated (limit 1–100, default 20; offset;
+        total/limit/offset describe THIS array). `authored` is the complete set
+        of comments a LOCAL user has authored on this remote video (the
+        home-instance-hosts-and-federates model, migration 0147), not paginated.
+        Public.
 
-        READ-ONLY BY DESIGN. There is no POST: these rows are a mirror of
-        somebody else's thread and nothing on this instance writes one.
-        Comments, ratings and saving live on the origin instance; each comment
-        carries its `object_url` on the origin so a reader can follow the thread
-        back to where it is actually hosted.
+        The two arrays are disjoint by construction (this instance never mirrors
+        a comment it authored), so a client can concatenate them. Each item
+        carries a `local` boolean: mirrored comments (local=false) carry a remote
+        actor + the origin `object_url`; locally-authored comments (local=true)
+        carry a local author id and a `delivery_state` (the federation status of
+        the reply sent to the origin).
 
-        Filtering matches the remote-video card exactly, so a thread can never
-        show what the card would have hidden: comments from an admin-blocked
-        instance are excluded for everyone, and a signed-in caller additionally
-        loses comments from an instance they mute and from a remote account they
-        block. An unknown remote video — or one hidden because its origin is
-        admin-blocked — is 404, the same answer its detail route gives.
+        Filtering matches the remote-video card: mirrored comments from an
+        admin-blocked instance are excluded for everyone, and a signed-in caller
+        additionally loses mirrored comments from an instance they mute / a
+        remote account they block, and locally-authored comments by a local
+        account they mute or block. An unknown remote video — or one hidden
+        because its origin is admin-blocked — is 404, the same answer its detail
+        route gives.
       tags: [federation]
       parameters:
         - name: id
@@ -10909,13 +10915,168 @@ paths:
         - $ref: "#/components/parameters/PageOffset"
       responses:
         "200":
-          description: A page of mirrored comments (possibly empty).
+          description: The mirrored page plus the locally-authored comments (either may be empty).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/RemoteVideoCommentListResponse"
         "404":
           description: No such remote video, or its origin instance is blocked here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createRemoteVideoComment
+      summary: Author a comment on a federated video
+      description: >-
+        Authors a comment on a remote (federated) video. The comment is stored
+        and displayed on THIS instance (the home instance hosts and moderates it,
+        the owner's ruling — migration 0147) and federated to the origin as a
+        Create{Note} inReplyTo the remote video. The response's `delivery_state`
+        reports the federation leg (`pending` at first); the comment is shown
+        locally regardless. Requires authentication. Gated by the instance
+        comment toggle. An unknown or origin-blocked remote video is 404.
+      tags: [federation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthoredRemoteCommentRequest"
+      responses:
+        "201":
+          description: The stored, locally-authored comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthoredRemoteComment"
+        "401":
+          description: Authentication required, or the account is no longer available.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: New comments are disabled on this instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such remote video, or its origin instance is blocked here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (empty or over-long body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/remote-video-comments/{id}:
+    patch:
+      operationId: updateRemoteVideoComment
+      summary: Edit your own comment on a federated video
+      description: >-
+        Edits the caller's OWN locally-authored comment on a remote video. Only
+        the author may edit (a moderator removes, not edits). The edit
+        re-federates as an Update{Note} to the origin and resets delivery_state to
+        pending. Requires authentication. Another user's comment is 403, an
+        unknown id is 404.
+      tags: [federation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthoredRemoteCommentRequest"
+      responses:
+        "200":
+          description: The updated comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthoredRemoteComment"
+        "401":
+          description: Authentication required, or the account is no longer available.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not the author of this comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such authored comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation failed (empty or over-long body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteRemoteVideoComment
+      summary: Delete a comment on a federated video
+      description: >-
+        Deletes a locally-authored comment on a remote video. The author may
+        always delete their own; a moderator/admin may delete anyone's (the home
+        instance owns moderation — the ruling). The deletion re-federates as a
+        Delete of the local Note to the origin. Requires authentication. A
+        non-author non-moderator is 403, an unknown id is 404.
+      tags: [federation]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not allowed to delete this comment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such authored comment.
           content:
             application/json:
               schema:
@@ -19000,12 +19161,20 @@ components:
             null.
     RemoteVideoComment:
       type: object
-      required: [id, author_name, author_domain, actor_url, object_url, body, edited, created_at]
+      required: [id, local, author_name, author_domain, actor_url, object_url, body, edited, created_at]
       properties:
         id:
           type: string
           format: uuid
           description: This instance's id for the mirrored row, not the origin's.
+        local:
+          type: boolean
+          description: >-
+            Always false — the discriminator a client uses to tell a MIRRORED
+            comment (this schema) from a LOCALLY-AUTHORED one
+            (AuthoredRemoteComment, in the response's `authored` array). Mirrored
+            comments carry a remote actor; locally-authored ones carry a local
+            author id and a delivery_state.
         author_name:
           type: string
           description: >-
@@ -19043,14 +19212,85 @@ components:
           type: string
           format: date-time
           description: When this instance first stored the comment.
+    AuthoredRemoteComment:
+      type: object
+      required: [id, remote_video_id, local, author_id, author_username, author_display_name, body, object_url, in_reply_to, delivery_state, edited, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: This instance's id for the locally-authored comment.
+        remote_video_id:
+          type: string
+          format: uuid
+        local:
+          type: boolean
+          description: Always true — the discriminator against a mirrored comment.
+        author_id:
+          type: string
+          format: uuid
+          description: The LOCAL author's account id (so a viewer can mute them).
+        author_username:
+          type: string
+        author_display_name:
+          type: string
+        body:
+          type: string
+        object_url:
+          type: string
+          description: The LOCAL ActivityPub object id this instance minted for the comment.
+        in_reply_to:
+          type: string
+          description: The origin video's object id the federated reply threads onto.
+        delivery_state:
+          type: string
+          enum: [pending, delivered, failed]
+          description: >-
+            The federation status of the reply delivered to the origin. The
+            comment is HOSTED + DISPLAYED locally regardless of this value (the
+            home instance hosts it); this only reports whether the Create/Update/
+            Delete{Note} to the origin landed. 'pending' until the delivery queue
+            sends it, 'delivered' once the origin inbox answered 2xx, 'failed'
+            when it dead-lettered or was cancelled (destination blocked).
+        last_error:
+          type: string
+          description: The last delivery error; present only when delivery_state=failed.
+        edited:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AuthoredRemoteCommentRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          maxLength: 2000
+          description: The comment text (1–2000 characters after trimming).
     RemoteVideoCommentListResponse:
       type: object
-      required: [comments, total, limit, offset]
+      required: [comments, authored, total, limit, offset]
       properties:
         comments:
           type: array
+          description: The paginated MIRRORED origin thread (total/limit/offset describe it).
           items:
             $ref: "#/components/schemas/RemoteVideoComment"
+        authored:
+          type: array
+          description: >-
+            The complete set of comments a LOCAL user has authored on this remote
+            video (migration 0147, the home-instance-hosts-and-federates ruling),
+            subject to the viewer's own mutes/blocks. NOT paginated — it is this
+            instance's own content and is small — and disjoint from `comments`
+            (this instance never mirrors a comment it authored), so a client can
+            concatenate the two without deduping.
+          items:
+            $ref: "#/components/schemas/AuthoredRemoteComment"
         total:
           type: integer
           format: int64

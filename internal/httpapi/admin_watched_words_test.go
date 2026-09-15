@@ -37,19 +37,20 @@ type watchwordFakeRepo struct {
 
 // watchwordFakeMatch is one stored watched_word_matches row.
 type watchwordFakeMatch struct {
-	id            uuid.UUID
-	watchedWordID pgtype.UUID // NULL once the word is deleted (0132: ON DELETE SET NULL)
-	commentID     pgtype.UUID
-	videoID       uuid.UUID
-	matchedText   string
-	matchedTerm   string
-	matchOffset   int32
-	matchLength   int32
-	status        string
-	moderatorNote string
-	resolvedBy    pgtype.UUID
-	resolvedAt    pgtype.Timestamptz
-	createdAt     time.Time
+	id                      uuid.UUID
+	watchedWordID           pgtype.UUID // NULL once the word is deleted (0132: ON DELETE SET NULL)
+	commentID               pgtype.UUID
+	authoredRemoteCommentID pgtype.UUID
+	videoID                 uuid.UUID
+	matchedText             string
+	matchedTerm             string
+	matchOffset             int32
+	matchLength             int32
+	status                  string
+	moderatorNote           string
+	resolvedBy              pgtype.UUID
+	resolvedAt              pgtype.Timestamptz
+	createdAt               time.Time
 }
 
 func (f *watchwordFakeRepo) CreateWatchedWord(_ context.Context, a sqlcgen.CreateWatchedWordParams) (sqlcgen.WatchedWord, error) {
@@ -144,6 +145,21 @@ func (f *watchwordFakeRepo) RecordWatchedWordVideoMatch(_ context.Context, a sql
 	return nil
 }
 
+func (f *watchwordFakeRepo) RecordWatchedWordAuthoredRemoteCommentMatch(_ context.Context, a sqlcgen.RecordWatchedWordAuthoredRemoteCommentMatchParams) error {
+	for _, m := range f.matches {
+		if m.authoredRemoteCommentID == a.AuthoredRemoteCommentID && m.watchedWordID == a.WatchedWordID {
+			return nil // idempotent (mirrors the partial unique index)
+		}
+	}
+	f.matches = append(f.matches, watchwordFakeMatch{
+		id: uuid.New(), watchedWordID: a.WatchedWordID, authoredRemoteCommentID: a.AuthoredRemoteCommentID,
+		matchedText: a.MatchedText, matchedTerm: a.MatchedTerm,
+		matchOffset: a.MatchOffset, matchLength: a.MatchLength,
+		status: watchword.StatusOpen, createdAt: time.Now(),
+	})
+	return nil
+}
+
 func (f *watchwordFakeRepo) ResolveWatchedWordMatch(_ context.Context, a sqlcgen.ResolveWatchedWordMatchParams) (int64, error) {
 	for i := range f.matches {
 		if f.matches[i].id == a.ID {
@@ -214,11 +230,16 @@ func (f *watchwordFakeRepo) ListWatchedWordMatches(_ context.Context, a sqlcgen.
 			MatchedText: m.matchedText, MatchOffset: m.matchOffset, MatchLength: m.matchLength,
 			Status: m.status, ModeratorNote: m.moderatorNote, ResolvedAt: m.resolvedAt,
 			TermActive: m.watchedWordID.Valid, TargetStatus: targetStatus,
-			CommentID: m.commentID, VideoID: videoID, AuthorUsername: author,
+			CommentID: m.commentID, AuthoredRemoteCommentID: m.authoredRemoteCommentID,
+			VideoID: videoID, AuthorUsername: author,
 		}
 		if m.commentID.Valid {
 			body := text
 			row.CommentBody = &body
+		}
+		if m.authoredRemoteCommentID.Valid {
+			body := m.matchedText
+			row.AuthoredRemoteCommentBody = &body
 		}
 		if title != "" {
 			row.VideoTitle = &title
