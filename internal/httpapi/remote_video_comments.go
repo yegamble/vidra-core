@@ -293,6 +293,12 @@ func (s *Server) handleUpdateRemoteVideoComment(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	// Same instance comment toggle as authoring: while comments are disabled an
+	// edit must not slip through and re-federate an Update. (Delete stays ungated —
+	// removing content while disabled is desirable.)
+	if !s.commentsEnabled() {
+		return &FeatureDisabledError{Feature: "comments"}
+	}
 	id, err := pathUUID(c, "id", "comment not found")
 	if err != nil {
 		return err
