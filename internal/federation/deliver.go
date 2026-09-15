@@ -103,6 +103,9 @@ func (s *Service) DrainDeliveries(ctx context.Context, limit int) (int, error) {
 				ID:        row.ID,
 				LastError: deliveryCancelledBlocked,
 			})
+			// An authored remote comment whose delivery is cancelled by a block is
+			// hosted here regardless; its badge says the federation leg did not land.
+			s.reflectAuthoredCommentDelivery(ctx, row, authoredCommentFailed, deliveryCancelledBlocked, row.Attempts)
 			continue
 		}
 		if err := s.attemptDelivery(ctx, row); err != nil {
@@ -110,6 +113,8 @@ func (s *Service) DrainDeliveries(ctx context.Context, limit int) (int, error) {
 			continue
 		}
 		_ = s.repo.MarkDeliveryDelivered(ctx, row.ID)
+		// The origin accepted the reply: move the author's badge to delivered.
+		s.reflectAuthoredCommentDelivery(ctx, row, authoredCommentDelivered, "", row.Attempts+1)
 		delivered++
 	}
 	return delivered, nil
@@ -145,12 +150,31 @@ func (s *Service) recordDeliveryFailure(ctx context.Context, row sqlcgen.ClaimDu
 	}
 	if attempts >= maxDeliveryAttempts {
 		_ = s.repo.FailDelivery(ctx, sqlcgen.FailDeliveryParams{ID: row.ID, LastError: msg})
+		// A dead-lettered delivery for an authored remote comment stamps its badge
+		// 'failed' so the author knows the origin never accepted it.
+		s.reflectAuthoredCommentDelivery(ctx, row, authoredCommentFailed, msg, int32(attempts))
 		return
 	}
 	_ = s.repo.RescheduleDelivery(ctx, sqlcgen.RescheduleDeliveryParams{
 		ID:            row.ID,
 		NextAttemptAt: time.Now().UTC().Add(deliveryBackoff(attempts)),
 		LastError:     msg,
+	})
+}
+
+// reflectAuthoredCommentDelivery moves an authored remote comment's delivery_state
+// badge (migration 0147) to match the queue result, when a delivery carries one.
+// A no-op for every other delivery (video/comment fan-out, follows), and
+// best-effort: a badge update failing must not fail the drain.
+func (s *Service) reflectAuthoredCommentDelivery(ctx context.Context, row sqlcgen.ClaimDueDeliveriesRow, state, lastErr string, attempts int32) {
+	if !row.AuthoredRemoteCommentID.Valid {
+		return
+	}
+	_ = s.repo.SetAuthoredRemoteCommentDeliveryState(ctx, sqlcgen.SetAuthoredRemoteCommentDeliveryStateParams{
+		ID:            uuid.UUID(row.AuthoredRemoteCommentID.Bytes),
+		DeliveryState: state,
+		LastError:     lastErr,
+		Attempts:      attempts,
 	})
 }
 
@@ -492,6 +516,9 @@ func (s *Service) redeliverable(ctx context.Context, payload []byte) (bool, erro
 	if commentID, ok := s.localCommentIDFromObject(env.Object); ok {
 		return s.commentStillPublishable(ctx, commentID)
 	}
+	if authoredID, ok := s.localAuthoredRemoteCommentIDFromObject(env.Object); ok {
+		return s.authoredRemoteCommentStillPublishable(ctx, authoredID)
+	}
 	// A Create/Update whose object this instance cannot resolve to one of its
 	// own videos or comments cannot be checked, and an unverifiable snapshot is
 	// not worth publishing late.
@@ -557,6 +584,28 @@ func (s *Service) commentStillPublishable(ctx context.Context, commentID uuid.UU
 // re-publish.
 func (s *Service) localCommentIDFromObject(raw json.RawMessage) (uuid.UUID, bool) {
 	return s.localIDFromObject(raw, "/comments/")
+}
+
+// localAuthoredRemoteCommentIDFromObject extracts THIS instance's authored-remote-
+// comment id (migration 0147) from an activity's object — the id we mint at
+// <baseURL>/remote-comments/<uuid>. Same suffix-plus-baseURL rule as the others.
+func (s *Service) localAuthoredRemoteCommentIDFromObject(raw json.RawMessage) (uuid.UUID, bool) {
+	return s.localIDFromObject(raw, "/remote-comments/")
+}
+
+// authoredRemoteCommentStillPublishable is the authored-remote-comment arm of
+// redeliverable: a Create/Update cancelled inside a block window may be resumed
+// only if the comment still exists here (an author delete hard-removes it, and a
+// Create for a comment we no longer hold would plant one on the origin we can no
+// longer retract).
+func (s *Service) authoredRemoteCommentStillPublishable(ctx context.Context, commentID uuid.UUID) (bool, error) {
+	if _, err := s.repo.GetAuthoredRemoteComment(ctx, commentID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // localVideoIDFromObject extracts THIS instance's video id from an activity's

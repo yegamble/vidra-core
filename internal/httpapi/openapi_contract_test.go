@@ -14,6 +14,7 @@ import (
 	"github.com/vidra/vidra-core/internal/atproto"
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/authoredremotecomment"
 	"github.com/vidra/vidra-core/internal/block"
 	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/channel"
@@ -94,6 +95,10 @@ func fullRouteOptions() []Option {
 		WithSettingsService(instancesettings.NewService(nil, instancesettings.Defaults{})),
 		WithInstanceDocumentsService(instancedocs.NewService(nil)),
 		WithRemoteVideoService(remotevideo.NewService(nil, nil)),
+		// Mounts the WRITE side of comments on remote videos (migration 0147). The
+		// REST routes are contract surface; the AP object id (/remote-comments/{id})
+		// additionally requires cfg.FederationEnabled and stays out of the contract.
+		WithAuthoredRemoteCommentService(authoredremotecomment.NewService(nil)),
 		WithMediaGCService(mediagc.NewService(nil, nil)),
 		// Storage migration: always part of the contract. cmd/api wires it even
 		// without a target backend so the read/cancel surface always exists;
@@ -279,6 +284,10 @@ var knownNonContractRoutes = map[string]string{
 	// representations of /videos/{id} in one generated client.
 	"GET /videos/{id}":   "ActivityPub object id",
 	"GET /comments/{id}": "ActivityPub object id",
+	// The object id for a locally-authored comment on a remote video (0147). AP
+	// JSON only (406 otherwise), on a frontend-owned path reached here only via the
+	// proxy's content negotiation — the same reasoning as /comments/{id}.
+	"GET /remote-comments/{id}": "ActivityPub object id",
 
 	// PUBLIC_BASE_URL (+ wired video/channel services). Syndication formats
 	// answering XML/oEmbed JSON to feed readers, crawlers and embed resolvers,

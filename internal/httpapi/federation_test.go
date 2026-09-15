@@ -343,6 +343,12 @@ func (f fakeFedRepo) GetComment(_ context.Context, id uuid.UUID) (sqlcgen.Commen
 func (fakeFedRepo) GetCommentByRemoteObjectURL(context.Context, string) (sqlcgen.Comment, error) {
 	return sqlcgen.Comment{}, pgx.ErrNoRows
 }
+func (fakeFedRepo) GetAuthoredRemoteComment(context.Context, uuid.UUID) (sqlcgen.AuthoredRemoteComment, error) {
+	return sqlcgen.AuthoredRemoteComment{}, pgx.ErrNoRows
+}
+func (fakeFedRepo) SetAuthoredRemoteCommentDeliveryState(context.Context, sqlcgen.SetAuthoredRemoteCommentDeliveryStateParams) error {
+	return nil
+}
 func (fakeFedRepo) CreateRemoteComment(context.Context, sqlcgen.CreateRemoteCommentParams) (sqlcgen.Comment, error) {
 	return sqlcgen.Comment{}, pgx.ErrNoRows
 }

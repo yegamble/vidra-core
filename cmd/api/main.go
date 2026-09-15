@@ -25,6 +25,7 @@ import (
 	"github.com/vidra/vidra-core/internal/atproto"
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/authoredremotecomment"
 	"github.com/vidra/vidra-core/internal/block"
 	"github.com/vidra/vidra-core/internal/cache"
 	"github.com/vidra/vidra-core/internal/captionjob"
@@ -2147,6 +2148,45 @@ func run() error {
 	// ingests content.
 	remotevideosvc := remotevideo.NewService(db.Queries(), blobs)
 	opts = append(opts, httpapi.WithRemoteVideoService(remotevideosvc))
+
+	// WRITE side of comments on remote videos (migration 0147, the
+	// home-instance-hosts-and-federates ruling): the home instance stores +
+	// moderates the comment and, when federation is on, federates a
+	// Create/Update/Delete{Note} to the origin via the durable delivery queue.
+	// Wired unconditionally (like the remote-video reads); the federation hooks
+	// are attached only when FEDERATION_ENABLED — same deferred-fedsvc seam as the
+	// local comment hooks. fedsvc is always constructed by here.
+	authoredRCOpts := []authoredremotecomment.Option{
+		authoredremotecomment.WithBaseURL(cfg.PublicBaseURL),
+	}
+	if cfg.FederationEnabled {
+		authoredRCOpts = append(authoredRCOpts,
+			authoredremotecomment.WithCreateHook(func(ctx context.Context, commentID uuid.UUID) {
+				if fedsvc != nil {
+					if err := fedsvc.AnnounceAuthoredRemoteComment(ctx, commentID); err != nil {
+						logger.Warn("federation authored remote comment announce failed", "comment_id", commentID, "error", err)
+					}
+				}
+			}),
+			authoredremotecomment.WithUpdateHook(func(ctx context.Context, commentID uuid.UUID) {
+				if fedsvc != nil {
+					if err := fedsvc.UpdateAuthoredRemoteComment(ctx, commentID); err != nil {
+						logger.Warn("federation authored remote comment update failed", "comment_id", commentID, "error", err)
+					}
+				}
+			}),
+			authoredremotecomment.WithDeleteHook(func(ctx context.Context, commentID, remoteVideoID, userID uuid.UUID, objectURL string) {
+				if fedsvc != nil {
+					if err := fedsvc.DeleteAuthoredRemoteComment(ctx, commentID, remoteVideoID, userID, objectURL); err != nil {
+						logger.Warn("federation authored remote comment delete failed", "comment_id", commentID, "error", err)
+					}
+				}
+			}),
+		)
+	}
+	authoredrcsvc := authoredremotecomment.NewService(db.Queries(), authoredRCOpts...)
+	opts = append(opts, httpapi.WithAuthoredRemoteCommentService(authoredrcsvc))
+
 	instancemodsvc := instancemod.NewService(db.Queries())
 	opts = append(opts, httpapi.WithInstanceModerationService(instancemodsvc))
 

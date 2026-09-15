@@ -119,6 +119,20 @@ func (f *fakeRepo) RecordWatchedWordVideoMatch(_ context.Context, a sqlcgen.Reco
 	return nil
 }
 
+func (f *fakeRepo) RecordWatchedWordAuthoredRemoteCommentMatch(_ context.Context, a sqlcgen.RecordWatchedWordAuthoredRemoteCommentMatchParams) error {
+	for _, m := range f.matches {
+		if m.AuthoredRemoteCommentID == a.AuthoredRemoteCommentID && m.Word == f.wordOf(a.WatchedWordID) {
+			return nil // idempotent (mirrors the partial unique index)
+		}
+	}
+	f.matches = append(f.matches, sqlcgen.ListWatchedWordMatchesRow{
+		ID: uuid.New(), Word: a.MatchedTerm, AuthoredRemoteCommentID: a.AuthoredRemoteCommentID, CreatedAt: time.Now(),
+		MatchedText: a.MatchedText, MatchOffset: a.MatchOffset, MatchLength: a.MatchLength,
+		Status: StatusOpen, TermActive: true,
+	})
+	return nil
+}
+
 func (f *fakeRepo) ResolveWatchedWordMatch(_ context.Context, a sqlcgen.ResolveWatchedWordMatchParams) (int64, error) {
 	for i := range f.matches {
 		if f.matches[i].ID == a.ID {

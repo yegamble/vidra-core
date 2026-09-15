@@ -125,3 +125,14 @@ func (s *Server) handleNoteObject(c echo.Context) error {
 		nil,
 	)
 }
+
+// handleRemoteCommentObject serves GET /remote-comments/{uuid} as ActivityPub —
+// the dereferenceable Note behind a locally-authored comment on a remote video
+// (migration 0147). A distinct path from /comments/ so the id spaces never collide.
+func (s *Server) handleRemoteCommentObject(c echo.Context) error {
+	ctx := c.Request().Context()
+	return s.serveAPObject(c,
+		func(id uuid.UUID) (map[string]any, error) { return s.fedsvc.AuthoredRemoteCommentObject(ctx, id) },
+		nil,
+	)
+}

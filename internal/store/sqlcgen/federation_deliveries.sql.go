@@ -26,10 +26,11 @@ WITH claimed AS (
         FOR UPDATE SKIP LOCKED
     )
     RETURNING id, inbox_url, payload, signing_channel_id, signing_channel_handle,
-              signing_user_id, signing_username, attempts, created_at
+              signing_user_id, signing_username, attempts, created_at,
+              authored_remote_comment_id
 )
 SELECT id, inbox_url, payload, signing_channel_id, signing_channel_handle,
-       signing_user_id, signing_username, attempts
+       signing_user_id, signing_username, attempts, authored_remote_comment_id
 FROM claimed
 ORDER BY created_at, id
 `
@@ -40,14 +41,15 @@ type ClaimDueDeliveriesParams struct {
 }
 
 type ClaimDueDeliveriesRow struct {
-	ID                   uuid.UUID   `json:"id"`
-	InboxUrl             string      `json:"inbox_url"`
-	Payload              []byte      `json:"payload"`
-	SigningChannelID     pgtype.UUID `json:"signing_channel_id"`
-	SigningChannelHandle string      `json:"signing_channel_handle"`
-	SigningUserID        pgtype.UUID `json:"signing_user_id"`
-	SigningUsername      string      `json:"signing_username"`
-	Attempts             int32       `json:"attempts"`
+	ID                      uuid.UUID   `json:"id"`
+	InboxUrl                string      `json:"inbox_url"`
+	Payload                 []byte      `json:"payload"`
+	SigningChannelID        pgtype.UUID `json:"signing_channel_id"`
+	SigningChannelHandle    string      `json:"signing_channel_handle"`
+	SigningUserID           pgtype.UUID `json:"signing_user_id"`
+	SigningUsername         string      `json:"signing_username"`
+	Attempts                int32       `json:"attempts"`
+	AuthoredRemoteCommentID pgtype.UUID `json:"authored_remote_comment_id"`
 }
 
 // LEASES pending deliveries whose backoff has elapsed, oldest first.
@@ -103,6 +105,7 @@ func (q *Queries) ClaimDueDeliveries(ctx context.Context, arg ClaimDueDeliveries
 			&i.SigningUserID,
 			&i.SigningUsername,
 			&i.Attempts,
+			&i.AuthoredRemoteCommentID,
 		); err != nil {
 			return nil, err
 		}
@@ -118,20 +121,22 @@ const enqueueDelivery = `-- name: EnqueueDelivery :exec
 
 INSERT INTO federation_deliveries (
     inbox_url, payload, signing_channel_id, signing_channel_handle,
-    signing_user_id, signing_username, request_id, correlation_id
+    signing_user_id, signing_username, request_id, correlation_id,
+    authored_remote_comment_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 `
 
 type EnqueueDeliveryParams struct {
-	InboxUrl             string      `json:"inbox_url"`
-	Payload              []byte      `json:"payload"`
-	SigningChannelID     pgtype.UUID `json:"signing_channel_id"`
-	SigningChannelHandle string      `json:"signing_channel_handle"`
-	SigningUserID        pgtype.UUID `json:"signing_user_id"`
-	SigningUsername      string      `json:"signing_username"`
-	RequestID            string      `json:"request_id"`
-	CorrelationID        string      `json:"correlation_id"`
+	InboxUrl                string      `json:"inbox_url"`
+	Payload                 []byte      `json:"payload"`
+	SigningChannelID        pgtype.UUID `json:"signing_channel_id"`
+	SigningChannelHandle    string      `json:"signing_channel_handle"`
+	SigningUserID           pgtype.UUID `json:"signing_user_id"`
+	SigningUsername         string      `json:"signing_username"`
+	RequestID               string      `json:"request_id"`
+	CorrelationID           string      `json:"correlation_id"`
+	AuthoredRemoteCommentID pgtype.UUID `json:"authored_remote_comment_id"`
 }
 
 // Outbound federation delivery queue (migration 0038, .ralph/specs/federation.md §8).
@@ -142,6 +147,10 @@ type EnqueueDeliveryParams struct {
 // request_id/correlation_id come from the REQUEST that produced the fan-out
 // (migration 0139), so twelve deliveries from one publish are recognisably one
 // act — and so a stuck inbox can be traced back to what queued for it.
+// authored_remote_comment_id ($9) links a delivery back to the authored remote
+// comment it carries (migration 0147), so the drain can reflect the delivery
+// result onto that comment's delivery_state. NULL for every other delivery
+// (video/comment fan-out, follows).
 func (q *Queries) EnqueueDelivery(ctx context.Context, arg EnqueueDeliveryParams) error {
 	_, err := q.db.Exec(ctx, enqueueDelivery,
 		arg.InboxUrl,
@@ -152,6 +161,7 @@ func (q *Queries) EnqueueDelivery(ctx context.Context, arg EnqueueDeliveryParams
 		arg.SigningUsername,
 		arg.RequestID,
 		arg.CorrelationID,
+		arg.AuthoredRemoteCommentID,
 	)
 	return err
 }

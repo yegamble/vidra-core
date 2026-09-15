@@ -88,13 +88,20 @@ SELECT m.id, m.created_at,
        ru.username AS resolved_by_username,
        (m.watched_word_id IS NOT NULL)::bool AS term_active,
        m.comment_id, c.body AS comment_body,
-       COALESCE(m.video_id, c.video_id)::uuid AS video_id,
+       -- video_id names the video the flagged content is about: a local video for a
+       -- comment/video match, or the REMOTE video for an authored-remote-comment
+       -- match (migration 0147). Kept non-null so the existing struct mapping holds.
+       COALESCE(m.video_id, c.video_id, arc.remote_video_id)::uuid AS video_id,
        v.title AS video_title,
-       COALESCE(cu.username, c.remote_author_name, vu.username)::text AS author_username,
+       -- The authored-remote-comment arm (0147): its id (the discriminator), its
+       -- body (the live-target check), and the remote video's title for context.
+       m.authored_remote_comment_id, arc.body AS authored_remote_comment_body,
+       rv.title AS remote_video_title,
+       COALESCE(cu.username, c.remote_author_name, arcu.username, vu.username)::text AS author_username,
        COALESCE(ra.domain, '')::text AS author_domain,
        (CASE
             WHEN strpos(
-                     lower(COALESCE(c.body, v.title || E'\n' || v.description, '')),
+                     lower(COALESCE(c.body, arc.body, v.title || E'\n' || v.description, '')),
                      lower(COALESCE(NULLIF(m.matched_term, ''), w.word, ''))
                  ) > 0 THEN 'present'
             ELSE 'edited_away'
@@ -104,6 +111,9 @@ LEFT JOIN watched_words w ON w.id = m.watched_word_id
 LEFT JOIN comments c ON c.id = m.comment_id
 LEFT JOIN users cu ON cu.id = c.user_id
 LEFT JOIN remote_actors ra ON ra.actor_url = c.remote_actor_url
+LEFT JOIN authored_remote_comments arc ON arc.id = m.authored_remote_comment_id
+LEFT JOIN users arcu ON arcu.id = arc.user_id
+LEFT JOIN remote_videos rv ON rv.id = arc.remote_video_id
 LEFT JOIN videos v ON v.id = COALESCE(m.video_id, c.video_id)
 LEFT JOIN channels ch ON ch.id = v.channel_id
 LEFT JOIN users vu ON vu.id = ch.owner_id
@@ -120,25 +130,28 @@ type ListWatchedWordMatchesParams struct {
 }
 
 type ListWatchedWordMatchesRow struct {
-	ID                 uuid.UUID          `json:"id"`
-	CreatedAt          time.Time          `json:"created_at"`
-	Word               string             `json:"word"`
-	MatchedText        string             `json:"matched_text"`
-	MatchOffset        int32              `json:"match_offset"`
-	MatchLength        int32              `json:"match_length"`
-	SnapshotBackfilled bool               `json:"snapshot_backfilled"`
-	Status             string             `json:"status"`
-	ModeratorNote      string             `json:"moderator_note"`
-	ResolvedAt         pgtype.Timestamptz `json:"resolved_at"`
-	ResolvedByUsername *string            `json:"resolved_by_username"`
-	TermActive         bool               `json:"term_active"`
-	CommentID          pgtype.UUID        `json:"comment_id"`
-	CommentBody        *string            `json:"comment_body"`
-	VideoID            uuid.UUID          `json:"video_id"`
-	VideoTitle         *string            `json:"video_title"`
-	AuthorUsername     string             `json:"author_username"`
-	AuthorDomain       string             `json:"author_domain"`
-	TargetStatus       string             `json:"target_status"`
+	ID                        uuid.UUID          `json:"id"`
+	CreatedAt                 time.Time          `json:"created_at"`
+	Word                      string             `json:"word"`
+	MatchedText               string             `json:"matched_text"`
+	MatchOffset               int32              `json:"match_offset"`
+	MatchLength               int32              `json:"match_length"`
+	SnapshotBackfilled        bool               `json:"snapshot_backfilled"`
+	Status                    string             `json:"status"`
+	ModeratorNote             string             `json:"moderator_note"`
+	ResolvedAt                pgtype.Timestamptz `json:"resolved_at"`
+	ResolvedByUsername        *string            `json:"resolved_by_username"`
+	TermActive                bool               `json:"term_active"`
+	CommentID                 pgtype.UUID        `json:"comment_id"`
+	CommentBody               *string            `json:"comment_body"`
+	VideoID                   uuid.UUID          `json:"video_id"`
+	VideoTitle                *string            `json:"video_title"`
+	AuthoredRemoteCommentID   pgtype.UUID        `json:"authored_remote_comment_id"`
+	AuthoredRemoteCommentBody *string            `json:"authored_remote_comment_body"`
+	RemoteVideoTitle          *string            `json:"remote_video_title"`
+	AuthorUsername            string             `json:"author_username"`
+	AuthorDomain              string             `json:"author_domain"`
+	TargetStatus              string             `json:"target_status"`
 }
 
 // The moderation review queue for flagged content (comments AND videos), newest
@@ -194,6 +207,9 @@ func (q *Queries) ListWatchedWordMatches(ctx context.Context, arg ListWatchedWor
 			&i.CommentBody,
 			&i.VideoID,
 			&i.VideoTitle,
+			&i.AuthoredRemoteCommentID,
+			&i.AuthoredRemoteCommentBody,
+			&i.RemoteVideoTitle,
 			&i.AuthorUsername,
 			&i.AuthorDomain,
 			&i.TargetStatus,
@@ -284,6 +300,39 @@ func (q *Queries) MatchWatchedWords(ctx context.Context, text string) ([]MatchWa
 		return nil, err
 	}
 	return items, nil
+}
+
+const recordWatchedWordAuthoredRemoteCommentMatch = `-- name: RecordWatchedWordAuthoredRemoteCommentMatch :exec
+INSERT INTO watched_word_matches (
+    watched_word_id, authored_remote_comment_id, matched_text, matched_term, match_offset, match_length
+) VALUES ($1, $2, $3, $4,
+          $5, $6)
+ON CONFLICT (watched_word_id, authored_remote_comment_id) WHERE authored_remote_comment_id IS NOT NULL DO NOTHING
+`
+
+type RecordWatchedWordAuthoredRemoteCommentMatchParams struct {
+	WatchedWordID           pgtype.UUID `json:"watched_word_id"`
+	AuthoredRemoteCommentID pgtype.UUID `json:"authored_remote_comment_id"`
+	MatchedText             string      `json:"matched_text"`
+	MatchedTerm             string      `json:"matched_term"`
+	MatchOffset             int32       `json:"match_offset"`
+	MatchLength             int32       `json:"match_length"`
+}
+
+// Record that a locally-authored comment on a remote video matched a watched term
+// (idempotent per word+comment; migration 0147). Same flag-time snapshot as the
+// other two arms: moderation is the home instance's job for these rows, so they
+// flow through the same review queue as local comments.
+func (q *Queries) RecordWatchedWordAuthoredRemoteCommentMatch(ctx context.Context, arg RecordWatchedWordAuthoredRemoteCommentMatchParams) error {
+	_, err := q.db.Exec(ctx, recordWatchedWordAuthoredRemoteCommentMatch,
+		arg.WatchedWordID,
+		arg.AuthoredRemoteCommentID,
+		arg.MatchedText,
+		arg.MatchedTerm,
+		arg.MatchOffset,
+		arg.MatchLength,
+	)
+	return err
 }
 
 const recordWatchedWordMatch = `-- name: RecordWatchedWordMatch :exec

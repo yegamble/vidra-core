@@ -87,6 +87,21 @@ type AuditLog struct {
 	Changes []byte `json:"changes"`
 }
 
+type AuthoredRemoteComment struct {
+	ID            uuid.UUID `json:"id"`
+	RemoteVideoID uuid.UUID `json:"remote_video_id"`
+	UserID        uuid.UUID `json:"user_id"`
+	Body          string    `json:"body"`
+	ObjectUrl     string    `json:"object_url"`
+	InReplyTo     string    `json:"in_reply_to"`
+	DeliveryState string    `json:"delivery_state"`
+	LastError     string    `json:"last_error"`
+	Attempts      int32     `json:"attempts"`
+	Edited        bool      `json:"edited"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type BlockedInstance struct {
 	Domain    string      `json:"domain"`
 	Reason    string      `json:"reason"`
@@ -318,21 +333,22 @@ type FederatedVideoTombstone struct {
 }
 
 type FederationDelivery struct {
-	ID                   uuid.UUID   `json:"id"`
-	InboxUrl             string      `json:"inbox_url"`
-	Payload              []byte      `json:"payload"`
-	SigningChannelID     pgtype.UUID `json:"signing_channel_id"`
-	SigningChannelHandle string      `json:"signing_channel_handle"`
-	State                string      `json:"state"`
-	Attempts             int32       `json:"attempts"`
-	NextAttemptAt        time.Time   `json:"next_attempt_at"`
-	LastError            string      `json:"last_error"`
-	CreatedAt            time.Time   `json:"created_at"`
-	UpdatedAt            time.Time   `json:"updated_at"`
-	SigningUserID        pgtype.UUID `json:"signing_user_id"`
-	SigningUsername      string      `json:"signing_username"`
-	RequestID            string      `json:"request_id"`
-	CorrelationID        string      `json:"correlation_id"`
+	ID                      uuid.UUID   `json:"id"`
+	InboxUrl                string      `json:"inbox_url"`
+	Payload                 []byte      `json:"payload"`
+	SigningChannelID        pgtype.UUID `json:"signing_channel_id"`
+	SigningChannelHandle    string      `json:"signing_channel_handle"`
+	State                   string      `json:"state"`
+	Attempts                int32       `json:"attempts"`
+	NextAttemptAt           time.Time   `json:"next_attempt_at"`
+	LastError               string      `json:"last_error"`
+	CreatedAt               time.Time   `json:"created_at"`
+	UpdatedAt               time.Time   `json:"updated_at"`
+	SigningUserID           pgtype.UUID `json:"signing_user_id"`
+	SigningUsername         string      `json:"signing_username"`
+	RequestID               string      `json:"request_id"`
+	CorrelationID           string      `json:"correlation_id"`
+	AuthoredRemoteCommentID pgtype.UUID `json:"authored_remote_comment_id"`
 }
 
 type FederationInboxActivity struct {
@@ -1211,18 +1227,19 @@ type WatchedWord struct {
 }
 
 type WatchedWordMatch struct {
-	ID                 uuid.UUID          `json:"id"`
-	WatchedWordID      pgtype.UUID        `json:"watched_word_id"`
-	CommentID          pgtype.UUID        `json:"comment_id"`
-	CreatedAt          time.Time          `json:"created_at"`
-	VideoID            pgtype.UUID        `json:"video_id"`
-	MatchedText        string             `json:"matched_text"`
-	MatchedTerm        string             `json:"matched_term"`
-	MatchOffset        int32              `json:"match_offset"`
-	MatchLength        int32              `json:"match_length"`
-	SnapshotBackfilled bool               `json:"snapshot_backfilled"`
-	Status             string             `json:"status"`
-	ModeratorNote      string             `json:"moderator_note"`
-	ResolvedBy         pgtype.UUID        `json:"resolved_by"`
-	ResolvedAt         pgtype.Timestamptz `json:"resolved_at"`
+	ID                      uuid.UUID          `json:"id"`
+	WatchedWordID           pgtype.UUID        `json:"watched_word_id"`
+	CommentID               pgtype.UUID        `json:"comment_id"`
+	CreatedAt               time.Time          `json:"created_at"`
+	VideoID                 pgtype.UUID        `json:"video_id"`
+	MatchedText             string             `json:"matched_text"`
+	MatchedTerm             string             `json:"matched_term"`
+	MatchOffset             int32              `json:"match_offset"`
+	MatchLength             int32              `json:"match_length"`
+	SnapshotBackfilled      bool               `json:"snapshot_backfilled"`
+	Status                  string             `json:"status"`
+	ModeratorNote           string             `json:"moderator_note"`
+	ResolvedBy              pgtype.UUID        `json:"resolved_by"`
+	ResolvedAt              pgtype.Timestamptz `json:"resolved_at"`
+	AuthoredRemoteCommentID pgtype.UUID        `json:"authored_remote_comment_id"`
 }

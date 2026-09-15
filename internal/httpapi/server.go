@@ -22,6 +22,7 @@ import (
 	"github.com/vidra/vidra-core/internal/atproto"
 	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/auth"
+	"github.com/vidra/vidra-core/internal/authoredremotecomment"
 	"github.com/vidra/vidra-core/internal/block"
 	"github.com/vidra/vidra-core/internal/captionjob"
 	"github.com/vidra/vidra-core/internal/cdnpurge"
@@ -159,6 +160,7 @@ type Server struct {
 	fedsvc            *federation.Service
 	atprotosvc        *atproto.Service
 	remotevideosvc    *remotevideo.Service
+	authoredrcsvc     *authoredremotecomment.Service
 	instancemodsvc    *instancemod.Service
 	settingssvc       *instancesettings.Service
 	// settingsSync is the settings-version poller's health record (core#115),
@@ -904,6 +906,14 @@ func WithRemoteVideoService(svc *remotevideo.Service) Option {
 	return func(s *Server) { s.remotevideosvc = svc }
 }
 
+// WithAuthoredRemoteCommentService mounts the WRITE side of comments on remote
+// videos (migration 0147): POST /remote-videos/{id}/comments plus PATCH/DELETE of
+// the author's own comment. REST contract surface. When unset, only the read/
+// mirror thread is served and authoring is unavailable.
+func WithAuthoredRemoteCommentService(svc *authoredremotecomment.Service) Option {
+	return func(s *Server) { s.authoredrcsvc = svc }
+}
+
 // WithInstanceModerationService mounts instance-level moderation: the caller's
 // per-user instance mutes and the admin instance blocklist. When unset, the
 // routes are not registered.
@@ -1470,6 +1480,12 @@ func (s *Server) routes() {
 		// other document in this block.
 		s.echo.GET("/videos/:id", s.handleVideoObject)
 		s.echo.GET("/comments/:id", s.handleNoteObject)
+		// The object id for a locally-authored comment ON A REMOTE video
+		// (migration 0147). Distinct path from /comments/ so the two id spaces
+		// never collide; same AP-only negotiation as the other object ids.
+		if s.authoredrcsvc != nil {
+			s.echo.GET("/remote-comments/:id", s.handleRemoteCommentObject)
+		}
 	}
 
 	// Distribution surfaces (audit Wave E): RSS 2.0 feed, oEmbed provider, and an
@@ -2075,6 +2091,15 @@ func (s *Server) routes() {
 		// instance mutes and remote-account blocks filter the thread.
 		if s.fedsvc != nil {
 			api.GET("/remote-videos/:id/comments", s.handleListRemoteVideoComments, s.optionalAuth)
+		}
+		// The WRITE side (migration 0147, the home-instance-hosts-and-federates
+		// ruling): a signed-in local user authors a comment ON a remote video, and
+		// edits/deletes their own. The home instance hosts + moderates it and
+		// federates a Create/Update/Delete{Note} to the origin.
+		if s.authoredrcsvc != nil {
+			api.POST("/remote-videos/:id/comments", s.handleCreateRemoteVideoComment, s.requireAuth)
+			api.PATCH("/remote-video-comments/:id", s.handleUpdateRemoteVideoComment, s.requireAuth)
+			api.DELETE("/remote-video-comments/:id", s.handleDeleteRemoteVideoComment, s.requireAuth)
 		}
 	}
 

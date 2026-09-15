@@ -73,6 +73,7 @@ type Repository interface {
 	MatchWatchedWords(ctx context.Context, text string) ([]sqlcgen.MatchWatchedWordsRow, error)
 	RecordWatchedWordMatch(ctx context.Context, arg sqlcgen.RecordWatchedWordMatchParams) error
 	RecordWatchedWordVideoMatch(ctx context.Context, arg sqlcgen.RecordWatchedWordVideoMatchParams) error
+	RecordWatchedWordAuthoredRemoteCommentMatch(ctx context.Context, arg sqlcgen.RecordWatchedWordAuthoredRemoteCommentMatchParams) error
 	ListWatchedWordMatches(ctx context.Context, arg sqlcgen.ListWatchedWordMatchesParams) ([]sqlcgen.ListWatchedWordMatchesRow, error)
 	CountWatchedWordMatches(ctx context.Context, status *string) (int64, error)
 	ResolveWatchedWordMatch(ctx context.Context, arg sqlcgen.ResolveWatchedWordMatchParams) (int64, error)
@@ -202,10 +203,41 @@ func (s *Service) FlagVideo(ctx context.Context, videoID uuid.UUID, text string)
 	return len(matches), nil
 }
 
+// FlagAuthoredRemoteComment checks a locally-authored comment ON A REMOTE VIDEO
+// (migration 0147) against the watched-words list and records a match row for each
+// term found (idempotent per word+comment), snapshotting the body at flag time —
+// exactly as FlagComment does for a local comment. Moderation of these rows is the
+// home instance's job (the ruling), so they flow through the same review queue.
+// Best-effort: callers invoke it as a side effect of authoring and must not fail
+// the write on error.
+func (s *Service) FlagAuthoredRemoteComment(ctx context.Context, commentID uuid.UUID, body string) (int, error) {
+	matches, err := s.repo.MatchWatchedWords(ctx, body)
+	if err != nil {
+		return 0, err
+	}
+	for _, m := range matches {
+		off, length := locate(body, m.Word)
+		if err := s.repo.RecordWatchedWordAuthoredRemoteCommentMatch(ctx, sqlcgen.RecordWatchedWordAuthoredRemoteCommentMatchParams{
+			WatchedWordID:           pgconv.UUID(m.ID),
+			AuthoredRemoteCommentID: pgconv.UUID(commentID),
+			MatchedText:             body,
+			MatchedTerm:             m.Word,
+			MatchOffset:             off,
+			MatchLength:             length,
+		}); err != nil {
+			return 0, err
+		}
+	}
+	return len(matches), nil
+}
+
 // Match target discriminators for the review queue.
 const (
 	MatchTargetComment = "comment"
 	MatchTargetVideo   = "video"
+	// MatchTargetAuthoredRemoteComment is a locally-authored comment on a remote
+	// video (migration 0147) — moderated here, like a local comment.
+	MatchTargetAuthoredRemoteComment = "authored_remote_comment"
 )
 
 // Target-status values for a match's LIVE target, as opposed to its snapshot.
@@ -230,14 +262,18 @@ const (
 // flag time, so a moderator never mistakes one for the other. TermActive is
 // false once the watched word itself was deleted — the match survives that now.
 type Match struct {
-	ID             uuid.UUID
-	Word           string
-	Type           string
-	CommentID      uuid.UUID
-	CommentBody    string
-	VideoID        uuid.UUID
-	VideoTitle     string
-	AuthorUsername string
+	ID          uuid.UUID
+	Word        string
+	Type        string
+	CommentID   uuid.UUID
+	CommentBody string
+	// AuthoredRemoteCommentID is set (with Type MatchTargetAuthoredRemoteComment)
+	// for a locally-authored comment on a remote video (0147); VideoID/VideoTitle
+	// then name the REMOTE video it is about, and the author is a local user.
+	AuthoredRemoteCommentID uuid.UUID
+	VideoID                 uuid.UUID
+	VideoTitle              string
+	AuthorUsername          string
 	// AuthorDomain is the origin instance of a FEDERATED comment's author,
 	// empty for anything local. Without it a moderator cannot tell a remote
 	// actor's snapshotted name from a local username (A29).
@@ -295,11 +331,22 @@ func (s *Service) ListMatches(ctx context.Context, status string, limit, offset 
 		if r.VideoTitle != nil {
 			m.VideoTitle = *r.VideoTitle
 		}
-		if r.CommentID.Valid {
+		switch {
+		case r.CommentID.Valid:
 			m.Type = MatchTargetComment
 			m.CommentID = uuid.UUID(r.CommentID.Bytes)
 			if r.CommentBody != nil {
 				m.CommentBody = *r.CommentBody
+			}
+		case r.AuthoredRemoteCommentID.Valid:
+			m.Type = MatchTargetAuthoredRemoteComment
+			m.AuthoredRemoteCommentID = uuid.UUID(r.AuthoredRemoteCommentID.Bytes)
+			if r.AuthoredRemoteCommentBody != nil {
+				m.CommentBody = *r.AuthoredRemoteCommentBody
+			}
+			// The video context for these rows is the REMOTE video, not a local one.
+			if r.RemoteVideoTitle != nil {
+				m.VideoTitle = *r.RemoteVideoTitle
 			}
 		}
 		out = append(out, m)

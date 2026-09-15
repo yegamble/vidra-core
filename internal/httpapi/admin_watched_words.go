@@ -108,8 +108,11 @@ func (s *Server) handleDeleteWatchedWord(c echo.Context) error {
 
 // watchedWordMatchView is flagged content for the moderation review queue: the
 // matched term plus the target's context. Type is "comment" (comment_id/
-// comment_body set; video_id is the video the comment is on) or "video"
-// (comment fields omitted; video_id/video_title are the flagged video — §12).
+// comment_body set; video_id is the video the comment is on), "video" (comment
+// fields omitted; video_id/video_title are the flagged video — §12), or
+// "authored_remote_comment" (authored_remote_comment_id/comment_body set;
+// video_id/video_title name the REMOTE video the comment is about — migration
+// 0147, moderated by the home instance).
 //
 // MatchedText is the SNAPSHOT captured when the flag was raised, which is what
 // a moderator reviews: comment_body/video_title are the LIVE target and may
@@ -117,26 +120,27 @@ func (s *Server) handleDeleteWatchedWord(c echo.Context) error {
 // match_length locate the term inside the snapshot in RUNES; -1 means it could
 // not be located and the client falls back to searching for `word`.
 type watchedWordMatchView struct {
-	ID                 string     `json:"id"`
-	Word               string     `json:"word"`
-	Type               string     `json:"type"`
-	CommentID          string     `json:"comment_id,omitempty"`
-	CommentBody        string     `json:"comment_body,omitempty"`
-	VideoID            string     `json:"video_id"`
-	VideoTitle         string     `json:"video_title"`
-	AuthorUsername     string     `json:"author_username"`
-	AuthorDomain       string     `json:"author_domain,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	MatchedText        string     `json:"matched_text"`
-	MatchOffset        int32      `json:"match_offset"`
-	MatchLength        int32      `json:"match_length"`
-	SnapshotBackfilled bool       `json:"snapshot_backfilled"`
-	TermActive         bool       `json:"term_active"`
-	TargetStatus       string     `json:"target_status"`
-	Status             string     `json:"status"`
-	ModeratorNote      string     `json:"moderator_note"`
-	ResolvedAt         *time.Time `json:"resolved_at,omitempty"`
-	ResolvedByUsername string     `json:"resolved_by_username,omitempty"`
+	ID                      string     `json:"id"`
+	Word                    string     `json:"word"`
+	Type                    string     `json:"type"`
+	CommentID               string     `json:"comment_id,omitempty"`
+	AuthoredRemoteCommentID string     `json:"authored_remote_comment_id,omitempty"`
+	CommentBody             string     `json:"comment_body,omitempty"`
+	VideoID                 string     `json:"video_id"`
+	VideoTitle              string     `json:"video_title"`
+	AuthorUsername          string     `json:"author_username"`
+	AuthorDomain            string     `json:"author_domain,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
+	MatchedText             string     `json:"matched_text"`
+	MatchOffset             int32      `json:"match_offset"`
+	MatchLength             int32      `json:"match_length"`
+	SnapshotBackfilled      bool       `json:"snapshot_backfilled"`
+	TermActive              bool       `json:"term_active"`
+	TargetStatus            string     `json:"target_status"`
+	Status                  string     `json:"status"`
+	ModeratorNote           string     `json:"moderator_note"`
+	ResolvedAt              *time.Time `json:"resolved_at,omitempty"`
+	ResolvedByUsername      string     `json:"resolved_by_username,omitempty"`
 }
 
 // watchedWordMatchListResponse is the paginated flagged-content queue.
@@ -188,8 +192,12 @@ func (s *Server) handleListWatchedWordMatches(c echo.Context) error {
 			ResolvedAt:         m.ResolvedAt,
 			ResolvedByUsername: m.ResolvedByUsername,
 		}
-		if m.Type == watchword.MatchTargetComment {
+		switch m.Type {
+		case watchword.MatchTargetComment:
 			view.CommentID = m.CommentID.String()
+			view.CommentBody = m.CommentBody
+		case watchword.MatchTargetAuthoredRemoteComment:
+			view.AuthoredRemoteCommentID = m.AuthoredRemoteCommentID.String()
 			view.CommentBody = m.CommentBody
 		}
 		views = append(views, view)
