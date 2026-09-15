@@ -132,6 +132,7 @@ func (r *fakeRepo) MarkATProtoPostDone(_ context.Context, arg sqlcgen.MarkATProt
 	if p, ok := r.posts[arg.ID]; ok {
 		p.State = "posted"
 		p.PostUri = arg.PostUri
+		p.Error = "" // mirror MarkATProtoPostDone: success clears any stale error
 	}
 	return nil
 }

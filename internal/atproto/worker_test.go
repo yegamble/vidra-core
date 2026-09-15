@@ -69,6 +69,32 @@ func TestDrainPostsSuccess(t *testing.T) {
 	}
 }
 
+// TestDrainPostsClearsStaleErrorOnSuccess is the Issue #9 regression: a row that
+// failed a previous attempt (error text set) and then succeeds must not keep the
+// stale error — the 'posted' state and a non-empty error would otherwise
+// contradict each other in the queue view.
+func TestDrainPostsClearsStaleErrorOnSuccess(t *testing.T) {
+	repo := newFakeRepo()
+	pds := newFakePDS()
+	_, vid := seedPublishable(t, repo)
+	// Simulate an earlier transient failure that stamped an error on the row.
+	post := repo.postForVideo(vid)
+	post.Error = "atproto: XRPC com.atproto.server.createSession failed: status 500"
+	post.Attempts = 1
+
+	s := NewService(repo, WithEnabled(true), WithPDSClient(pds), WithBaseURL("https://x"))
+	if _, err := s.DrainPosts(context.Background(), 10); err != nil {
+		t.Fatalf("DrainPosts: %v", err)
+	}
+	post = repo.postForVideo(vid)
+	if post.State != "posted" {
+		t.Fatalf("state = %q, want posted", post.State)
+	}
+	if post.Error != "" {
+		t.Errorf("stale error not cleared on success: %q", post.Error)
+	}
+}
+
 func TestDrainPostsWithThumbnail(t *testing.T) {
 	repo := newFakeRepo()
 	pds := newFakePDS()

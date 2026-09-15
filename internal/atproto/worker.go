@@ -153,7 +153,18 @@ func (s *Service) uploadThumbnail(ctx context.Context, sess Session, pdsURL stri
 			"video_id", videoID.String(), "error", err)
 		return nil
 	}
-	return blob
+	// Normalize before embedding: a spec-compliant PDS already returns a canonical
+	// blob ref (passed through unchanged), but a non-compliant PDS may nest the
+	// typed blob (e.g. under "original"). Embedding that verbatim makes
+	// createRecord reject the write ("embed/external/thumb should be a blob ref").
+	// If no canonical blob can be found, skip the card image rather than fail.
+	canonical, err := normalizeBlob(blob)
+	if err != nil {
+		s.logger.Warn("atproto uploadBlob returned a non-canonical blob; posting without a card image",
+			"video_id", videoID.String(), "error", err)
+		return nil
+	}
+	return canonical
 }
 
 // recordPostFailure dead-letters a permanent failure (or one that exhausted the
