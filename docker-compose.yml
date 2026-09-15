@@ -1169,6 +1169,24 @@ services:
   # start, before any streamer could ever publish into it. `.keep` is invisible
   # to both: the HLS cleanup only deletes `.m3u8`/`.ts`, and the api's recording
   # store only accepts `<stream-id>*.flv|.mp4`.
+  #
+  # The command ALSO chowns `rec`, and that half is just as load-bearing on a
+  # native-Linux host (issues #3/#4). This command runs as ROOT (the image
+  # default), so `mkdir` leaves `rec` root:root 0755. nginx chowns its `hls_path`
+  # to the worker on init but does NOT touch `record_path`, so two writers are
+  # then locked out of a directory neither owns:
+  #   * the nginx WORKER runs as uid 65534 (`nobody`) and writes each session's
+  #     `.flv` — EACCES on root-owned `rec`, so it records nothing and the api
+  #     logs "no recording for finished session" and produces no replay VOD;
+  #   * the api runs as uid 10001 and, after building the replay VOD, UNLINKS the
+  #     recording (on publish at LIVE_RECORDING_RETENTION=0, and via the sweep at
+  #     >0) — which needs WRITE on `rec`, not just on the file.
+  # So `rec` is chowned to owner 65534 (the writer) and group 10001 (the api's
+  # gid, the reader+deleter) with mode 2775: owner and group both get write, so
+  # each can create AND unlink; the setgid bit makes every recorded `.flv`
+  # inherit gid 10001 so the api can read it too. Numeric ids on purpose — the
+  # names need not exist in this image. Docker Desktop on macOS does not enforce
+  # volume ownership, which is why this was invisible until a native-Linux host.
   rtmp:
     # PINNED BY DIGEST. Every other image here carries a version tag; this one
     # carried `latest`, which for a component the owner has just made
@@ -1196,6 +1214,11 @@ services:
         sed "s|__LIVE_INGEST_SECRET__|$$LIVE_INGEST_SECRET|g" \
           /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
         mkdir -p /data/hls/rec && : > /data/hls/rec/.keep
+        # Owner 65534 (nobody: the nginx worker that writes each .flv), group
+        # 10001 (the api's gid: it reads the recording then unlinks it), setgid
+        # so new recordings inherit gid 10001. Without this, root-owned `rec`
+        # locks out both writers — see the header note (issues #3/#4).
+        chown 65534:10001 /data/hls/rec && chmod 2775 /data/hls/rec
         exec nginx -g 'daemon off;'
     volumes:
       - ./deploy/media/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
