@@ -84,8 +84,12 @@ FROM claimed
 ORDER BY created_at, id;
 
 -- name: MarkATProtoPostDone :exec
+-- On the success transition, clear any error left by an earlier failed attempt:
+-- a row that failed once and then posted must not keep stale error text (the
+-- 'posted' state and the error column would otherwise disagree). The error
+-- column is NOT NULL with an empty-string default, so clearing sets it empty.
 UPDATE atproto_posts
-SET state = 'posted', post_uri = $2, updated_at = now()
+SET state = 'posted', post_uri = $2, error = '', updated_at = now()
 WHERE id = $1;
 
 -- name: RescheduleATProtoPost :exec
