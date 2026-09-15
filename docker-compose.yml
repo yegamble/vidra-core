@@ -865,12 +865,10 @@ services:
   #    DigitalOcean "Regular" is AVX2/FMA with no AVX-512 — so the captions
   #    profile could look configured yet never transcribe. Ours targets an AVX2
   #    baseline that runs on those hosts.
-  #    Pinned by TAG for now. It CANNOT be digest-pinned until the first CI
-  #    publish exists — the digest is only known once publish-whisper.yml has run
-  #    on main. TODO(post-merge): after the owner merges and CI publishes, pin as
-  #    `image@sha256:<digest>` (keep the tag beside it — Dependabot's
-  #    docker-compose ecosystem follows the tag; a bare digest is unbumpable),
-  #    exactly like the rtmp/alfg image below.
+  #    Pinned by TAG + DIGEST — the digest published by the first
+  #    publish-whisper.yml run on main for :v0.1.0. The tag stays beside the
+  #    digest (Dependabot's docker-compose ecosystem follows the tag; a bare
+  #    digest is unbumpable), exactly like the rtmp/alfg image below.
   #
   # 2. COMMAND. entrypoint is ["bash","-c"] and the command is a SINGLE STRING.
   #    The image ENTRYPOINT is ["bash","-c"]; a LIST-form command is swallowed as
@@ -879,8 +877,7 @@ services:
   #    single string is run as one shell line with its flags intact. The explicit
   #    entrypoint keeps this correct even if the image is ever repointed.
   whisper:
-    # TODO(post-merge): append @sha256:<digest> from the first publish-whisper.yml run.
-    image: ghcr.io/yegamble/vidra-whisper:v0.1.0
+    image: ghcr.io/yegamble/vidra-whisper:v0.1.0@sha256:f2715799cb31c515b160d2a2463cc3bafaaec7d64678325f768655784734f29a
     profiles: ["captions"]
     ports:
       - "${WHISPER_PORT:-8090}:8080"
