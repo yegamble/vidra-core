@@ -451,11 +451,11 @@ func (f fakeRepo) EnqueueDelivery(_ context.Context, arg sqlcgen.EnqueueDelivery
 	id := uuid.New()
 	f.deliveries[id] = &fakeDelivery{
 		row: sqlcgen.ClaimDueDeliveriesRow{
-			ID:                   id,
-			InboxUrl:             arg.InboxUrl,
-			Payload:              arg.Payload,
-			SigningChannelID:     arg.SigningChannelID,
-			SigningChannelHandle: arg.SigningChannelHandle,
+			ID:                      id,
+			InboxUrl:                arg.InboxUrl,
+			Payload:                 arg.Payload,
+			SigningChannelID:        arg.SigningChannelID,
+			SigningChannelHandle:    arg.SigningChannelHandle,
 			SigningUserID:           arg.SigningUserID,
 			SigningUsername:         arg.SigningUsername,
 			AuthoredRemoteCommentID: arg.AuthoredRemoteCommentID,
