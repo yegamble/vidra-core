@@ -1,0 +1,142 @@
+name: publish-whisper
+
+# Builds Vidra's OWN portable whisper.cpp server image (deploy/whisper/Dockerfile)
+# and publishes it to ghcr.io/<owner>/vidra-whisper.
+#
+# WHY THIS IMAGE IS OURS: the upstream ghcr.io/ggml-org/whisper.cpp:main is
+# compiled with AVX-512 and SIGILLs (exit 132) on model load on common cloud CPUs
+# (DigitalOcean "Regular" = AVX2/FMA, no AVX-512), so the "captions" profile could
+# never start there. deploy/whisper/Dockerfile builds a portable AVX2 baseline.
+#
+# Mirrors publish-container.yml (this repo's release-image lane): same action
+# pins, GHCR login, buildx, metadata-action, digest record, and provenance
+# attestation. Two differences, both deliberate:
+#   * It builds on push to main / on demand (not on release-published): the image
+#     is infrastructure the captions profile pins, versioned on its own IMAGE_VERSION
+#     rather than a repo release tag.
+#   * On pull_request it BUILDS but does not push (validation only), like
+#     docker-build.yml does for the production Dockerfile.
+#
+# linux/amd64 only, matching this repo's other images (docker-build.yml and the
+# release publish both build amd64) and the x86-64 hosts the captions profile runs on.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/whisper/Dockerfile"
+      - ".github/workflows/publish-whisper.yml"
+  pull_request:
+    paths:
+      - "deploy/whisper/Dockerfile"
+      - ".github/workflows/publish-whisper.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  # A vidra-owned GHCR repo, separate from the vidra-core release image.
+  IMAGE_NAME: ${{ github.repository_owner }}/vidra-whisper
+  # The version the compose whisper service pins (docker-compose.yml). Bump this
+  # one line to cut a new image version; the compose tag must move with it.
+  IMAGE_VERSION: v0.1.0
+  # Pinned build inputs — kept here AND defaulted identically in the Dockerfile so
+  # a local `docker build` and this lane produce the same image. Bump deliberately.
+  WHISPER_CPP_REF: v1.9.4
+  WHISPER_MODEL_URL: https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+  WHISPER_MODEL_SHA256: 60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe
+
+jobs:
+  publish-whisper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      # No credentials on a pull_request: a fork PR cannot be granted packages:write,
+      # and PRs only validate the build (push: false below). Same-repo PRs skip it too.
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ env.IMAGE_VERSION }}
+            type=sha,format=long
+
+      - name: Build the portable whisper image (push only off a pull_request)
+        id: push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: deploy/whisper
+          file: deploy/whisper/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            WHISPER_CPP_REF=${{ env.WHISPER_CPP_REF }}
+            WHISPER_MODEL_URL=${{ env.WHISPER_MODEL_URL }}
+            WHISPER_MODEL_SHA256=${{ env.WHISPER_MODEL_SHA256 }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The compose pin is TAG-only until this exists: a digest is knowable only
+      # after the first push. This line is the post-merge follow-up's input —
+      # copy the digest into docker-compose.yml as `...:v0.1.0@sha256:<digest>`.
+      - name: Record the pushed digest
+        if: github.event_name != 'pull_request'
+        env:
+          TAG: ${{ env.IMAGE_VERSION }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        run: |
+          set -eu
+          if [ -z "${DIGEST}" ]; then
+            echo "::error::build-push-action reported no digest, so nothing is known to be pushed under ${TAG}"
+            exit 1
+          fi
+          echo "pushed ${IMAGE}:${TAG} as ${IMAGE}@${DIGEST}"
+          {
+            echo "## Published whisper image"
+            echo
+            echo "| tag | digest |"
+            echo "| --- | --- |"
+            echo "| \`${TAG}\` | \`${DIGEST}\` |"
+            echo
+            echo "Pin docker-compose.yml's whisper service to \`${IMAGE}:${TAG}@${DIGEST}\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false

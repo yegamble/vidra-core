@@ -850,28 +850,45 @@ services:
   # "captions" profile and point the api at it:
   #   WHISPER_ENABLED=true WHISPER_ENDPOINT=http://whisper:8080 \
   #     docker compose --profile core --profile captions up
-  # This uses the whisper.cpp server image, which exposes the /inference endpoint
-  # the WhisperClient POSTs audio to. It needs a GGML model file: on first run,
-  # download one into the whisper_models volume, e.g.
-  #   docker compose run --rm --entrypoint sh whisper -c \
-  #     "wget -O /models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
-  # then start the profile. The command below serves that ggml-base model on :8080.
-  # The profile is OPTIONAL and not required by any default test.
+  # It exposes the /inference endpoint the WhisperClient POSTs audio to. The
+  # ggml-base model is BAKED into the image at /models/ggml-base.bin; on first
+  # start Docker copies it into the empty whisper_models volume, so no manual
+  # model download is needed. The profile is OPTIONAL and not required by any
+  # default test.
+  #
+  # Two things this block gets right that the shipped default did not:
+  #
+  # 1. IMAGE. This is Vidra's OWN portable build (deploy/whisper/Dockerfile,
+  #    published by .github/workflows/publish-whisper.yml), NOT
+  #    ghcr.io/ggml-org/whisper.cpp:main. That upstream image is compiled with
+  #    AVX-512 and SIGILLs (exit 132) on load on common cloud CPUs — e.g.
+  #    DigitalOcean "Regular" is AVX2/FMA with no AVX-512 — so the captions
+  #    profile could look configured yet never transcribe. Ours targets an AVX2
+  #    baseline that runs on those hosts.
+  #    Pinned by TAG for now. It CANNOT be digest-pinned until the first CI
+  #    publish exists — the digest is only known once publish-whisper.yml has run
+  #    on main. TODO(post-merge): after the owner merges and CI publishes, pin as
+  #    `image@sha256:<digest>` (keep the tag beside it — Dependabot's
+  #    docker-compose ecosystem follows the tag; a bare digest is unbumpable),
+  #    exactly like the rtmp/alfg image below.
+  #
+  # 2. COMMAND. entrypoint is ["bash","-c"] and the command is a SINGLE STRING.
+  #    The image ENTRYPOINT is ["bash","-c"]; a LIST-form command is swallowed as
+  #    positional args to bash, so only `whisper-server` ran (argless: built-in
+  #    default model, bound to 127.0.0.1) and the service never went healthy. A
+  #    single string is run as one shell line with its flags intact. The explicit
+  #    entrypoint keeps this correct even if the image is ever repointed.
   whisper:
-    image: ghcr.io/ggml-org/whisper.cpp:main
+    # TODO(post-merge): append @sha256:<digest> from the first publish-whisper.yml run.
+    image: ghcr.io/yegamble/vidra-whisper:v0.1.0
     profiles: ["captions"]
     ports:
       - "${WHISPER_PORT:-8090}:8080"
     volumes:
       - whisper_models:/models
+    entrypoint: ["bash", "-c"]
     command:
-      - "whisper-server"
-      - "--host"
-      - "0.0.0.0"
-      - "--port"
-      - "8080"
-      - "--model"
-      - "/models/ggml-base.bin"
+      - "whisper-server --host 0.0.0.0 --port 8080 --model /models/ggml-base.bin"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/"]
       interval: 15s
