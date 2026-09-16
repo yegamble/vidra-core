@@ -77,7 +77,8 @@ version — regenerate/reconcile post-import). Only LOCAL entities are imported
 | `tag` + `videoTag` | `video_tags` | supported | Lowercased/trimmed; tags > 50 chars dropped (Vidra CHECK). |
 | `actorFollow` (local→local) | `channel_follows` | supported | Accepted local user → local channel subscriptions. |
 | `videoCategory`/`videoLicence`/`videoLanguage` | `videos.category/license/language` | supported | Numeric ids carried as text (PeerTube-compatible, migration 0025). |
-| `userNotificationSetting`, `userVideoHistory` | — | deferred | Preferences/history not migrated (defaults applied). |
+| `userVideoHistory` | `watch_history` | partial | Local-video positions and timestamps copied in batches. Remote-video history is reported unsupported. Existing positions and cleared history remain untouched on every rerun. New accounts retain `videosHistoryEnabled` when available (otherwise true); existing preferences are preserved. |
+| `userNotificationSetting` | — | deferred | Notification preferences require separate reconciliation. |
 | `videoBlacklist`, `accountBlocklist`/`serverBlocklist`, `abuse` | — | deferred | Moderation state not migrated this version. |
 | `plugin` (`categories`) settings | `instance_settings.instance_custom_categories` | supported | The instance's category TAXONOMY is read (`json-categories-as-text`, JSON inside JSON; `add` + `delete` folded onto the built-in list) so the category ids the videos carry still mean something. No plugin is installed or enabled. Never written over an operator's own taxonomy — the ledger's `applied_value` (0113) is what tells the two apart. |
 | plugins, themes, runners/jobs, redundancy, live sessions, premium/payment | — | unsupported | Out of scope (the categories plugin's taxonomy excepted — see above). |

@@ -23391,7 +23391,11 @@ components:
             video_sensitive, video_block, video_file, hls_playlist,
             video_no_media, thumbnail,
             storyboard, caption, tag, view_count, video_original_date, chapter,
-            rating, rendition, comment, playlist, playlist_item, follow).
+            rating, rendition, comment, playlist, playlist_item, follow, watch_history).
+            watch_history restores local-video resume positions and timestamps in
+            batches; remote history is unsupported. Existing or cleared destination
+            history is preserved even in source-authoritative mode. New accounts
+            retain the source history-enabled preference when available.
             video_no_media counts VIDEOS that land with NOTHING to play — no
             web-video file and no streaming playlist. It is the only count here
             that reports an absence, and it exists because the absence is

@@ -613,20 +613,21 @@ func (q *Queries) ImportInsertPlaylistItem(ctx context.Context, arg ImportInsert
 
 const importInsertUser = `-- name: ImportInsertUser :one
 
-INSERT INTO users (username, email, password_hash, role, email_verified, is_active, display_name, created_at, storage_quota_bytes)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0)
+INSERT INTO users (username, email, password_hash, role, email_verified, is_active, display_name, created_at, storage_quota_bytes, history_enabled)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9)
 RETURNING id
 `
 
 type ImportInsertUserParams struct {
-	Username      string    `json:"username"`
-	Email         string    `json:"email"`
-	PasswordHash  string    `json:"password_hash"`
-	Role          string    `json:"role"`
-	EmailVerified bool      `json:"email_verified"`
-	IsActive      bool      `json:"is_active"`
-	DisplayName   string    `json:"display_name"`
-	CreatedAt     time.Time `json:"created_at"`
+	Username       string    `json:"username"`
+	Email          string    `json:"email"`
+	PasswordHash   string    `json:"password_hash"`
+	Role           string    `json:"role"`
+	EmailVerified  bool      `json:"email_verified"`
+	IsActive       bool      `json:"is_active"`
+	DisplayName    string    `json:"display_name"`
+	CreatedAt      time.Time `json:"created_at"`
+	HistoryEnabled bool      `json:"history_enabled"`
 }
 
 // ─────────────────── idempotent entity inserts ───────────────────
@@ -661,6 +662,7 @@ func (q *Queries) ImportInsertUser(ctx context.Context, arg ImportInsertUserPara
 		arg.IsActive,
 		arg.DisplayName,
 		arg.CreatedAt,
+		arg.HistoryEnabled,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -1628,6 +1630,43 @@ func (q *Queries) ImportVideoHasReadyPlaylist(ctx context.Context, videoID uuid.
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const importWatchHistoryBatch = `-- name: ImportWatchHistoryBatch :one
+WITH data AS (
+ SELECT e.value->>'source_user_id' AS source_user_id, e.value->>'source_video_id' AS source_video_id,
+ (e.value->>'position_seconds')::integer AS position_seconds,
+ (e.value->>'created_at')::timestamptz AS created_at, (e.value->>'updated_at')::timestamptz AS updated_at
+ FROM jsonb_array_elements($1::jsonb) AS e(value)
+), eligible AS (
+ SELECT d.position_seconds,d.created_at,d.updated_at, u.id AS user_id, v.id AS video_id, d.source_user_id||':'||d.source_video_id AS source_id
+ FROM data d
+ JOIN peertube_import_ledger ul ON ul.entity_kind='user' AND ul.source_id=d.source_user_id AND ul.status IN ('done','skipped')
+ JOIN users u ON u.id=ul.vidra_id AND u.deleted_at IS NULL
+ JOIN peertube_import_ledger vl ON vl.entity_kind='video' AND vl.source_id=d.source_video_id AND vl.status IN ('done','skipped')
+ JOIN videos v ON v.id=vl.vidra_id
+ WHERE NOT EXISTS (SELECT 1 FROM peertube_import_ledger l WHERE l.entity_kind='watch_history'
+ AND l.source_id=d.source_user_id||':'||d.source_video_id AND l.status IN ('done','skipped','unsupported'))
+), inserted AS (
+ INSERT INTO watch_history(user_id,video_id,position_seconds,created_at,updated_at)
+ SELECT user_id,video_id,position_seconds,created_at,updated_at FROM eligible
+ ON CONFLICT(user_id,video_id) DO NOTHING RETURNING user_id
+), checkpoint AS (
+ INSERT INTO peertube_import_ledger(entity_kind,source_id,vidra_id,status,created_by_import)
+ SELECT DISTINCT 'watch_history',source_id,video_id,'done',false FROM eligible
+ ON CONFLICT(entity_kind,source_id) DO UPDATE SET status='done',vidra_id=EXCLUDED.vidra_id,updated_at=now()
+)
+SELECT count(*)::bigint FROM inserted
+`
+
+// A checkpoint survives ClearWatchHistory. Key it by logical pair, not the
+// source row ID (PeerTube can clear and recreate that row too). This ledger
+// owns no mutable entity: source-authoritative imports never rewrite history.
+func (q *Queries) ImportWatchHistoryBatch(ctx context.Context, dollar_1 []byte) (int64, error) {
+	row := q.db.QueryRow(ctx, importWatchHistoryBatch, dollar_1)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const listImportLedgerConflicts = `-- name: ListImportLedgerConflicts :many

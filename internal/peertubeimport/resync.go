@@ -79,6 +79,9 @@ import (
 //     function that spends a fetch only where the two sides actually differ —
 //     see decideActorImage.)
 //
+// History positions, cleared history and history preferences are also preserved;
+// they are never rewritten by source-authoritative runs (see history.go).
+//
 // ── how an unchanged entity stays free ──
 //
 // A no-op re-run of this importer costs ~21 seconds on a 155k-entity catalogue,

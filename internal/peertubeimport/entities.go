@@ -228,11 +228,12 @@ func (im *Importer) importOneUser(ctx context.Context, u SourceUser, r *Report, 
 	}
 	err = im.withTx(ctx, func(q *sqlcgen.Queries) error {
 		id, err := q.ImportInsertUser(ctx, sqlcgen.ImportInsertUserParams{
-			Username:      plan.username,
-			Email:         plan.email,
-			PasswordHash:  u.PasswordHash,
-			Role:          mapRole(u.Role),
-			EmailVerified: u.EmailVerified,
+			Username:       plan.username,
+			Email:          plan.email,
+			PasswordHash:   u.PasswordHash,
+			Role:           mapRole(u.Role),
+			EmailVerified:  u.EmailVerified,
+			HistoryEnabled: u.HistoryEnabled,
 			// The source's SUSPENSION, carried (see ImportInsertUser). This was a
 			// hardcoded true, so a blocked account arrived active with the source's
 			// working bcrypt hash beside it.
