@@ -464,6 +464,9 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 		return nil, err
 	}
 	r.count(KindFollow).Planned = len(follows)
+	if err := im.importWatchHistory(ctx, r); err != nil {
+		return nil, err
+	}
 
 	return r, nil
 }
@@ -490,7 +493,7 @@ func deferredFamilies() []string {
 	return []string{
 		"HLS copy mode carries flat local playlist dependencies independently and backfills missing playlists on rerun; external or nested references require an explicit conversion. Existing ready Vidra playlists are preserved; no automatic re-transcode is scheduled",
 		"moderation state (account/server blocklists, abuse reports; the video blacklist IS carried, into video_blocks)",
-		"user notification settings and watch history",
+		"user notification settings; remote-video watch history has no native equivalent",
 		"live sessions, plugins, themes, runners, redundancy config",
 		"original-file provenance records (videoSource)",
 		"per-day view history: the source records one lifetime total per video and no daily breakdown, so the total is carried and video_view_days is left empty rather than inventing buckets",
@@ -558,6 +561,7 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 		{"comments", im.importComments},
 		{"playlists", im.importPlaylists},
 		{"follows", im.importFollows},
+		{"watch history", im.importWatchHistory},
 		{"missing media", im.countMissingMedia},
 	}
 	for _, step := range steps {

@@ -239,6 +239,8 @@ func (im *Importer) importOneUser(ctx context.Context, u SourceUser, r *Report, 
 			IsActive:    !u.Blocked,
 			DisplayName: u.DisplayName,
 			CreatedAt:   u.CreatedAt,
+			// Copy this preference only on creation; later changes belong to the user.
+			HistoryEnabled: u.HistoryEnabled,
 		})
 		if err != nil {
 			return err

@@ -228,7 +228,8 @@ type SourceUser struct {
 	// Blocked is the source's user.blocked — its account SUSPENSION, and the one
 	// column that says this person must not be able to sign in. It is carried
 	// INVERTED into users.is_active; false when the source schema predates it.
-	Blocked bool
+	Blocked        bool
+	HistoryEnabled bool // Initial preference only; reruns preserve destination choices.
 }
 
 // SourceChannel is a LOCAL PeerTube video channel. OwnerUserID is the source
@@ -368,12 +369,18 @@ func (s *Source) Users(ctx context.Context) ([]SourceUser, error) {
 	} else if has {
 		blockedExpr = `COALESCE(u.blocked, false)`
 	}
+	historyExpr := `true`
+	if has, err := s.columnExists(ctx, "user", "videosHistoryEnabled"); err != nil {
+		return nil, err
+	} else if has {
+		historyExpr = `COALESCE(u."videosHistoryEnabled", true)`
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT u.id, u.username, u.email, COALESCE(u.password, ''),
 		       u.role, COALESCE(u."emailVerified", false),
 		       COALESCE(acc.name, u.username), u."createdAt",
 		       COALESCE(act."publicKey", ''), COALESCE(act."privateKey", ''),
-		       `+blockedExpr+`
+		       `+blockedExpr+`, `+historyExpr+`
 		FROM "user" u
 		JOIN account acc ON acc."userId" = u.id
 		JOIN actor act ON `+actorJoin+`
@@ -388,7 +395,7 @@ func (s *Source) Users(ctx context.Context) ([]SourceUser, error) {
 		var u SourceUser
 		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Role,
 			&u.EmailVerified, &u.DisplayName, &u.CreatedAt, &u.PublicKeyPEM, &u.PrivateKeyPEM,
-			&u.Blocked); err != nil {
+			&u.Blocked, &u.HistoryEnabled); err != nil {
 			return nil, fmt.Errorf("peertubeimport: scan user: %w", err)
 		}
 		out = append(out, u)
