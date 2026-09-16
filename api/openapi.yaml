@@ -23400,10 +23400,10 @@ components:
             web-video file and no streaming playlist. It is the only count here
             that reports an absence, and it exists because the absence is
             otherwise invisible: such a video is inserted, counted as an imported
-            video, and discovered when somebody presses play. It is common rather
-            than exotic — on an HLS-only source (progressive downloads disabled,
-            an ordinary PeerTube configuration) copy mode carries no media for any
-            video, because only reference mode carries the HLS tree. It stays 0
+            video, and discovered when somebody presses play. Copy mode carries
+            flat local HLS dependencies; nested/external references need conversion.
+            Reference-mode counts do not verify that referenced objects exist.
+            It stays 0
             for a metadata-only run (media_mode none, or no destination store),
             where nothing to play is what was asked for.
             user_suspension counts USERS whose source suspension (user.blocked)
