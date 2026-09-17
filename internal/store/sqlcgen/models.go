@@ -400,10 +400,15 @@ type InstanceSetting struct {
 }
 
 type IpfsCapacity struct {
-	Singleton     bool      `json:"singleton"`
-	ReservedBytes int64     `json:"reserved_bytes"`
-	ActiveClaims  int32     `json:"active_claims"`
-	MeasureAfter  time.Time `json:"measure_after"`
+	Singleton                 bool               `json:"singleton"`
+	ReservedBytes             int64              `json:"reserved_bytes"`
+	ActiveClaims              int32              `json:"active_claims"`
+	MeasureAfter              time.Time          `json:"measure_after"`
+	CleanupPending            int64              `json:"cleanup_pending"`
+	MaintenanceToken          pgtype.UUID        `json:"maintenance_token"`
+	MaintenanceUntil          pgtype.Timestamptz `json:"maintenance_until"`
+	MaintenanceHostSequence   int64              `json:"maintenance_host_sequence"`
+	MaintenanceConfigRevision int64              `json:"maintenance_config_revision"`
 }
 
 type IpfsControlConfig struct {
@@ -428,6 +433,13 @@ type IpfsControlOperation struct {
 	RequestedBy    pgtype.UUID `json:"requested_by"`
 	CreatedAt      time.Time   `json:"created_at"`
 	UpdatedAt      time.Time   `json:"updated_at"`
+}
+
+type IpfsCopyCleanup struct {
+	ClaimToken uuid.UUID `json:"claim_token"`
+	Cid        string    `json:"cid"`
+	ObjectKey  string    `json:"object_key"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type JobEvent struct {

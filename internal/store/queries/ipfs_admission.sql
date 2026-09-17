@@ -26,6 +26,7 @@ WITH candidate AS MATERIALIZED (
         active_claims = b.active_claims + 1
     FROM policy c
     WHERE b.singleton AND EXISTS (SELECT 1 FROM candidate)
+      AND b.cleanup_pending = 0 AND b.maintenance_token IS NULL
       AND sqlc.arg(reservation_bytes)::bigint > 0
       AND sqlc.arg(repo_used_bytes)::bigint >= 0 AND sqlc.arg(filesystem_free_bytes)::bigint >= 0
       AND sqlc.arg(observed_at)::timestamptz >= b.measure_after

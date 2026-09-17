@@ -9,14 +9,21 @@ SELECT * FROM ipfs_control_config WHERE singleton;
 -- name: UpdateIPFSControlConfig :one
 -- UPDATE itself provides the CAS predicate recheck after a concurrent writer.
 -- The complete config and its apply operation commit together.
-WITH changed AS (
+WITH locked AS MATERIALIZED (
+    SELECT * FROM ipfs_control_config WHERE singleton FOR UPDATE
+), capacity AS MATERIALIZED (
+    SELECT b.* FROM ipfs_capacity b WHERE b.singleton AND EXISTS (SELECT 1 FROM locked) FOR SHARE
+), changed AS (
     UPDATE ipfs_control_config AS saved
     SET config = sqlc.arg(config), revision = saved.revision + 1, policy_active = true,
         updated_by = sqlc.narg(actor), updated_at = now()
     WHERE saved.singleton AND saved.revision = sqlc.arg(expected_revision)
+      AND EXISTS (SELECT 1 FROM locked)
       AND (saved.config <> sqlc.arg(config) OR NOT saved.policy_active)
-      AND (saved.config->>'provider' = sqlc.arg(config)::jsonb->>'provider' OR NOT EXISTS
-          (SELECT 1 FROM media_ipfs_pins p WHERE p.claim_token IS NOT NULL))
+      AND (saved.config->>'provider' = sqlc.arg(config)::jsonb->>'provider' OR (
+          NOT EXISTS (SELECT 1 FROM media_ipfs_pins p WHERE p.claim_token IS NOT NULL)
+          AND NOT EXISTS (SELECT 1 FROM capacity WHERE active_claims > 0
+              OR cleanup_pending > 0 OR maintenance_token IS NOT NULL)))
     RETURNING saved.*
 ), queued AS (
     INSERT INTO ipfs_control_operations (id, config_revision, action, config, requested_by)
