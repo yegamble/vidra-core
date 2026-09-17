@@ -145,7 +145,9 @@ func TestSearchSortAndFilterBehaviourAgainstPostgres(t *testing.T) {
 	_, channelID := seedOwnerChannel(ctx, t, st, "srchsort")
 	// A unique token in every title keeps a shared database from polluting the
 	// assertions: the search matches on it and nothing else can.
-	token := "zq" + uuid.NewString()[:8]
+	// A fixed final q avoids sharing a word-final trigram with aa/bb/cc/dd.
+	// A random token ending cc made that title rank higher despite equal lengths.
+	token := "zq" + uuid.NewString()[:8] + "q"
 
 	for _, sd := range []struct {
 		title    string
