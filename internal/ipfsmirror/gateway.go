@@ -84,7 +84,23 @@ func (s *Service) gatewayRowEligible(ctx context.Context, row sqlcgen.MediaIpfsP
 				return false, nil
 			}
 			master, found, err := reader.VideoHLSMasterKey(ctx, id)
-			return found && row.CommittedGeneration == master && row.ObjectKey == media.HLSKeyPrefix(id)+"/" && row.CarRoot == row.Cid, err
+			if err != nil || !found || master == "" || row.ObjectKey != media.HLSKeyPrefix(id)+"/" || row.CarRoot != row.Cid {
+				return false, err
+			}
+			if row.CommittedGeneration == master {
+				return true, nil
+			}
+			// Legacy writers predate committed generations. Preserve their explicit
+			// gateway URLs only until policy adoption; managed playback still requires
+			// a proven generation in PublicPlaybackHLS, including for these rows.
+			if row.CommittedGeneration != "" || row.PolicyReason != "legacy" {
+				return false, nil
+			}
+			if s.control == nil {
+				return true, nil
+			}
+			doc, err := s.control.Config(ctx)
+			return err == nil && !doc.PolicyActive, err
 		}
 		refs, err := s.videoMirrorRefs(ctx, id)
 		if err != nil {
