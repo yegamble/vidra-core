@@ -2,7 +2,11 @@
 // It never gives web processes access to the Docker daemon.
 package ipfscontrol
 
-import "fmt"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+)
 
 // Config is one atomic policy document. Delivery remains independently gated by
 // delivery_ipfs_enabled. Disabled admission must not stop privacy withdrawals.
@@ -53,5 +57,29 @@ func (c HostConfig) Validate() error {
 			return fmt.Errorf("%s must be between %d and %d", f.name, f.min, f.max)
 		}
 	}
+	return nil
+}
+
+// UnmarshalJSON keeps an atomic replacement from silently clearing an omitted
+// boolean or accepting null as an integer zero. The same shape is stored in DB.
+func (c *Config) UnmarshalJSON(b []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return err
+	}
+	for _, key := range []string{"provider", "enabled", "auto_pin_new", "demand_pin", "backfill_enabled", "budget_bytes", "min_free_bytes", "copy_bytes_per_second", "workers"} {
+		v, ok := fields[key]
+		if !ok || bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
+			return fmt.Errorf("%s is required", key)
+		}
+	}
+	type plain Config
+	var out plain
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&out); err != nil {
+		return err
+	}
+	*c = Config(out)
 	return nil
 }

@@ -667,6 +667,7 @@ x-api-env: &api-env
   # ever pinned (private/unlisted/quarantined videos, DM attachments, exports,
   # upload chunks, the live edge, and remote thumbnails are all excluded).
   IPFS_ENABLED: ${IPFS_ENABLED:-false}
+  IPFS_MANAGER_SOCKET: ${IPFS_MANAGER_SOCKET:-}
   IPFS_API_URL: ${IPFS_API_URL:-http://ipfs:5001}
   IPFS_GATEWAY_URL: ${IPFS_GATEWAY_URL:-http://localhost:9090}
   IPFS_ADD_TIMEOUT: ${IPFS_ADD_TIMEOUT:-60s}

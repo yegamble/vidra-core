@@ -2174,3 +2174,26 @@ func TestATProtoDevPLCURLRequiresAllowPrivate(t *testing.T) {
 		}
 	})
 }
+
+func TestIPFSManagerRequiresOperatorSocketAndMediaURLs(t *testing.T) {
+	t.Setenv("IPFS_ENABLED", "false")
+	t.Setenv("IPFS_MANAGER_SOCKET", "relative.sock")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "IPFS_MANAGER_SOCKET") {
+		t.Fatal("relative manager socket accepted", err)
+	}
+	t.Setenv("IPFS_MANAGER_SOCKET", "/run/vidra-ipfs-control/manager.sock")
+	t.Setenv("IPFS_API_URL", "")
+	t.Setenv("IPFS_GATEWAY_URL", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("managed lifecycle accepted without eventual media endpoints")
+	}
+	t.Setenv("IPFS_API_URL", "http://ipfs:5001")
+	t.Setenv("IPFS_GATEWAY_URL", "https://ipfs.example.test")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.IPFSManagerSocket != "/run/vidra-ipfs-control/manager.sock" || c.IPFSEnabled {
+		t.Fatal("manager opt-in changed publication state")
+	}
+}

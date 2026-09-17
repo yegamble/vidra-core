@@ -905,6 +905,8 @@ type Config struct {
 	// IPFSEnabled is the master switch: off ⇒ no worker, no enqueue, the admin
 	// endpoints answer 503 ipfs_disabled.
 	IPFSEnabled bool
+	// IPFSManagerSocket opts into the fixed host manager; it does not enable publication.
+	IPFSManagerSocket string
 	// IPFSAPIURL is the Kubo RPC address (e.g. http://ipfs:5001). Required when
 	// enabled. IPFSGatewayURL is the public-facing gateway base emitted in API
 	// responses (e.g. https://ipfs.example.org) — required when enabled so we never
@@ -1319,6 +1321,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		DRMProvider:                            strings.ToLower(strings.TrimSpace(getEnv("DRM_PROVIDER", drmProviderNone))),
 		DRMKeyKEK:                              strings.TrimSpace(getEnv("DRM_KEY_KEK", "")),
 		IPFSEnabled:                            p.Bool("IPFS_ENABLED", false),
+		IPFSManagerSocket:                      strings.TrimSpace(getEnv("IPFS_MANAGER_SOCKET", "")),
 		IPFSAPIURL:                             strings.TrimRight(getEnv("IPFS_API_URL", ""), "/"),
 		IPFSGatewayURL:                         strings.TrimRight(getEnv("IPFS_GATEWAY_URL", ""), "/"),
 		IPFSAddTimeout:                         p.Duration("IPFS_ADD_TIMEOUT", 60*time.Second),
@@ -2189,6 +2192,9 @@ const (
 // dedicated, separate private-swarm node — never the public node, never dual-homed.
 func (c *Config) validateIPFS() error {
 	var errs []error
+	if c.IPFSManagerSocket != "" && (!filepath.IsAbs(c.IPFSManagerSocket) || strings.ContainsRune(c.IPFSManagerSocket, 0)) {
+		errs = append(errs, varErrorf("IPFS_MANAGER_SOCKET", "config: IPFS_MANAGER_SOCKET must be an absolute Unix socket path"))
+	}
 	if err := c.validateIPFSPrivate(); err != nil {
 		errs = append(errs, err)
 	}
@@ -2202,7 +2208,7 @@ func (c *Config) validateIPFS() error {
 			"config: IPFS_HEALTH_PROBE_INTERVAL must be at least %s (got %s): each probe is a gateway fetch plus one pin/ls per swarm, in every process, so a shorter interval is a load generator rather than a health check; the default is %s",
 			MinIPFSHealthProbeInterval, c.IPFSHealthProbeInterval, DefaultIPFSHealthProbeInterval))
 	}
-	if !c.IPFSEnabled {
+	if !c.IPFSEnabled && c.IPFSManagerSocket == "" {
 		return errors.Join(errs...)
 	}
 	// "Both are required" is the GUARD for the shape checks: with one missing
@@ -2210,7 +2216,11 @@ func (c *Config) validateIPFS() error {
 	// stacked under "IPFS_API_URL is required" says the same thing twice. It is
 	// also a MULTI-VARIABLE rule, so it stays unattributed by design.
 	if strings.TrimSpace(c.IPFSAPIURL) == "" || strings.TrimSpace(c.IPFSGatewayURL) == "" {
-		errs = append(errs, fmt.Errorf("config: IPFS_API_URL and IPFS_GATEWAY_URL are required when IPFS_ENABLED"))
+		trigger := "IPFS_ENABLED"
+		if !c.IPFSEnabled {
+			trigger = "IPFS_MANAGER_SOCKET is configured"
+		}
+		errs = append(errs, fmt.Errorf("config: IPFS_API_URL and IPFS_GATEWAY_URL are required when %s", trigger))
 	} else {
 		for label, raw := range map[string]string{"IPFS_API_URL": c.IPFSAPIURL, "IPFS_GATEWAY_URL": c.IPFSGatewayURL} {
 			u, err := url.Parse(raw)

@@ -54,3 +54,26 @@ func TestHostConfigDoesNotExposeApplicationPolicy(t *testing.T) {
 		t.Fatalf("unexpected host fields: %s", b)
 	}
 }
+
+func TestConfigJSONRequiresCompleteTypedDocument(t *testing.T) {
+	valid, _ := json.Marshal(Config{Provider: "internal", BudgetBytes: 1 << 30, CopyBytesPerSecond: 1 << 20, Workers: 1})
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(valid, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"enabled", "workers", "provider"} {
+		original := fields[key]
+		delete(fields, key)
+		b, _ := json.Marshal(fields)
+		var c Config
+		if json.Unmarshal(b, &c) == nil {
+			t.Fatalf("missing %s accepted", key)
+		}
+		fields[key] = json.RawMessage("null")
+		b, _ = json.Marshal(fields)
+		if json.Unmarshal(b, &c) == nil {
+			t.Fatalf("null %s accepted", key)
+		}
+		fields[key] = original
+	}
+}

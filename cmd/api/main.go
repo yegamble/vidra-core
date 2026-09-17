@@ -45,6 +45,7 @@ import (
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/ipfs"
+	"github.com/vidra/vidra-core/internal/ipfscontrol"
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
 	"github.com/vidra/vidra-core/internal/jobloop"
 	"github.com/vidra/vidra-core/internal/jobrecovery"
@@ -870,6 +871,27 @@ func run() error {
 		},
 	)
 	opts = append(opts, httpapi.WithIPFSMirrorService(ipfsMirror))
+	// Install control even when publication starts disabled. Only an explicit save
+	// activates the new policy; reading it preserves legacy external behavior.
+	var ipfsHost ipfscontrol.Host
+	if cfg.IPFSManagerSocket != "" {
+		client, err := ipfscontrol.NewHostClient(cfg.IPFSManagerSocket)
+		if err != nil {
+			logger.Error("ipfs manager client configuration invalid")
+			os.Exit(1)
+		}
+		defer client.Close()
+		ipfsHost = client
+	}
+	ipfsDefaults := ipfscontrol.Config{Provider: "external", Enabled: cfg.IPFSEnabled, AutoPinNew: true, BudgetBytes: 20 << 30, CopyBytesPerSecond: 2 << 20, Workers: 1}
+	if ipfsHost != nil {
+		ipfsDefaults.Provider = "internal"
+		ipfsDefaults.MinFreeBytes = 20 << 30
+		ipfsDefaults.DemandPin = true
+	}
+	ipfsControl := ipfscontrol.NewService(db.Queries(), ipfsHost, ipfsDefaults)
+	opts = append(opts, httpapi.WithIPFSControl(ipfsControl))
+
 	if cfg.IPFSEnabled {
 		logger.Info("ipfs media mirror enabled", "gateway", cfg.IPFSGatewayURL, "cluster", cfg.IPFSClusterAPIURL != "")
 	}
@@ -2566,6 +2588,11 @@ func run() error {
 		logger.Info("search outbox retention worker started")
 	}
 
+	if runWorkers && ipfsHost != nil {
+		controlCtx, controlCancel := context.WithCancel(context.Background())
+		defer controlCancel()
+		go runIPFSControlWorker(controlCtx, logger, ipfsControl, cronLeader)
+	}
 	// Drain the IPFS mirror pin/unpin queue and periodically re-arm dead-letters
 	// (fix_plan P19). Only when IPFS_ENABLED — the mirror is a sidecar, so this
 	// never affects the authoritative write/serve paths.

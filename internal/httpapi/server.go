@@ -217,6 +217,7 @@ type Server struct {
 	jobStatusSvc        jobStatusProvider
 	jobOperationsSvc    jobOperationsProvider
 	peertubeimportsvc   peerTubeImportProvider
+	ipfscontrolsvc      ipfsControlProvider
 	ipfsmirrorsvc       ipfsMirrorProvider
 	// ipfsHealth is the mirror's cached gateway/node probe record (system_ipfs.go).
 	// It is set from the SAME option that wires ipfsmirrorsvc, by type assertion,
@@ -2271,6 +2272,10 @@ func (s *Server) routes() {
 	// when neither the public nor private tier is enabled. Config-gated inside the
 	// handler, so no service wiring is needed when both tiers are off.
 	api.GET("/ipfs/status", s.handleIPFSStatus, s.requireAuth, s.requireRole(admin.RoleAdmin))
+	api.GET("/admin/ipfs/config", s.handleGetIPFSConfig, s.requireAuth, s.requireRole(admin.RoleAdmin))
+	api.PATCH("/admin/ipfs/config", s.handleUpdateIPFSConfig, s.requireAuth, s.requireRole(admin.RoleAdmin))
+	api.POST("/admin/ipfs/apply", s.handleApplyIPFS, s.requireAuth, s.requireRole(admin.RoleAdmin))
+	api.POST("/admin/ipfs/restart", s.handleRestartIPFS, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	api.POST("/admin/ipfs/reconcile", s.handleIPFSReconcile, s.requireAuth, s.requireRole(admin.RoleAdmin))
 
 	// Direct messaging (1:1 conversations + messages). All behind requireAuth;

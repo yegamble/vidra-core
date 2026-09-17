@@ -14760,10 +14760,10 @@ paths:
         public gateway URL in use, whether an IPFS Cluster is configured, and pin
         counts overall and per media class. IPFS is a MIRROR SIDECAR — local/S3
         stays authoritative — so this never reflects on the readiness of media
-        serving. Returns 503 ipfs_disabled when both IPFS_ENABLED=false and
-        IPFS_MIRROR_PRIVATE=false. Restricted to admins. (Status aggregation is
-        delivered in P19.2; until then an enabled
-        instance answers 501 not_implemented.)
+        serving. Managed installations also report desired/applied configuration,
+        host operations and nullable capacity measurements, including while
+        publication is disabled. Legacy installations without the control service
+        return 503 ipfs_disabled when both IPFS tiers are disabled. Restricted to admins.
       tags: [admin]
       security:
         - bearerAuth: []
@@ -14794,6 +14794,211 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: IPFS mirroring is not enabled on this instance (ipfs_disabled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/ipfs/config:
+    get:
+      operationId: getIPFSConfig
+      summary: Read atomic IPFS desired configuration
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current desired configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSConfigDocument"
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Administrator role required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: Control service is not installed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateIPFSConfig
+      summary: Save atomic IPFS configuration with revision conflict protection
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IPFSConfigUpdate"
+      responses:
+        "200":
+          description: Current desired configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSConfigDocument"
+        "202":
+          description: Desired configuration saved and internal apply queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSConfigDocument"
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Administrator role required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: Control service is not installed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "400":
+          description: Malformed or incomplete document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Configuration revision conflict or external-provider lifecycle request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Configuration is outside the supported limits.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/ipfs/apply:
+    post:
+      operationId: applyIPFSConfig
+      summary: Apply saved internal node configuration
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IPFSOperationRequest"
+      responses:
+        "202":
+          description: Idempotent node operation accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSOperationResult"
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Administrator role required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: Control service is not installed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "400":
+          description: Malformed or incomplete document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Configuration revision conflict or external-provider lifecycle request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Host manager integration is not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/ipfs/restart:
+    post:
+      operationId: restartIPFS
+      summary: Start or restart the configured internal node
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IPFSOperationRequest"
+      responses:
+        "202":
+          description: Idempotent node operation accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSOperationResult"
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Administrator role required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: Control service is not installed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "400":
+          description: Malformed or incomplete document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Configuration revision conflict or external-provider lifecycle request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Host manager integration is not configured.
           content:
             application/json:
               schema:
@@ -23537,6 +23742,163 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PeerTubeImportRun"
+    IPFSConfig:
+      type: object
+      additionalProperties: false
+      required: [provider, enabled, auto_pin_new, demand_pin, backfill_enabled, budget_bytes, min_free_bytes, copy_bytes_per_second, workers]
+      properties:
+        provider:
+          type: string
+          enum: [internal, external]
+          description: Fixed managed internal node or operator-configured external node; no arbitrary URL is accepted.
+        enabled:
+          type: boolean
+          description: Permit new publication admissions. Pausing keeps privacy withdrawals running.
+        auto_pin_new:
+          type: boolean
+        demand_pin:
+          type: boolean
+        backfill_enabled:
+          type: boolean
+          description: Explicit old-catalogue fill; enabling or reading configuration never implicitly enables it.
+        budget_bytes:
+          type: integer
+          format: int64
+          minimum: 1048576
+          maximum: 1125899906842624
+        min_free_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1125899906842624
+        copy_bytes_per_second:
+          type: integer
+          format: int64
+          minimum: 65536
+          maximum: 1073741824
+          description: Background copy into Kubo; does not limit all public swarm traffic.
+        workers:
+          type: integer
+          minimum: 1
+          maximum: 8
+    IPFSConfigDocument:
+      type: object
+      required: [revision, config, policy_active]
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        config:
+          $ref: "#/components/schemas/IPFSConfig"
+        policy_active:
+          type: boolean
+          description: False until an explicit save adopts managed policy; reading status preserves legacy behavior.
+        operation:
+          $ref: "#/components/schemas/IPFSControlOperation"
+    IPFSConfigUpdate:
+      type: object
+      additionalProperties: false
+      required: [expected_revision, config]
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        config:
+          $ref: "#/components/schemas/IPFSConfig"
+    IPFSOperationRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_revision, request_id]
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        request_id:
+          type: string
+          format: uuid
+          description: Retain this id when retrying an uncertain response.
+    IPFSControlOperation:
+      type: object
+      required: [id, sequence, config_revision, state]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+        config_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        state:
+          type: string
+          enum: [pending, running, succeeded, failed]
+    IPFSOperationResult:
+      type: object
+      required: [operation, revision]
+      properties:
+        operation:
+          $ref: "#/components/schemas/IPFSControlOperation"
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+    IPFSManagementStatus:
+      type: object
+      required: [mode, available, desired_state, observed_state, applied_config_revision, operation, last_error_code, observed_at]
+      properties:
+        mode:
+          type: string
+          enum: [internal, external, unavailable]
+        available:
+          type: boolean
+        desired_state:
+          type: string
+          enum: [running, external]
+        observed_state:
+          type: string
+          enum: [absent, starting, running, unhealthy, stopped, unknown]
+        applied_config_revision:
+          type: integer
+          format: int64
+          minimum: 0
+        operation:
+          anyOf:
+            - $ref: "#/components/schemas/IPFSControlOperation"
+            - type: "null"
+        last_error_code:
+          type: [string, "null"]
+        observed_at:
+          type: [string, "null"]
+          format: date-time
+    IPFSCapacityStatus:
+      type: object
+      required: [budget_bytes, repo_used_bytes, reserved_bytes, filesystem_free_bytes, min_free_bytes, admission_paused_reason]
+      properties:
+        budget_bytes:
+          type: integer
+          format: int64
+        repo_used_bytes:
+          type: [integer, "null"]
+          format: int64
+          description: Actual node repository usage; null when unavailable.
+        reserved_bytes:
+          type: integer
+          format: int64
+        filesystem_free_bytes:
+          type: [integer, "null"]
+          format: int64
+        min_free_bytes:
+          type: integer
+          format: int64
+        admission_paused_reason:
+          type: [string, "null"]
+          description: Server-computed reason, including stale_capacity, node_unavailable, configuration_pending, capacity_unknown, budget_exhausted or filesystem_headroom.
     IPFSStatus:
       type: object
       description: >-
@@ -23544,6 +23906,14 @@ components:
         sidecar; these fields are informational and never gate media serving.
       required: [enabled, node_reachable, gateway_url, cluster_enabled, cluster_reachable, pins, by_class, networks]
       properties:
+        config_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        management:
+          $ref: "#/components/schemas/IPFSManagementStatus"
+        capacity:
+          $ref: "#/components/schemas/IPFSCapacityStatus"
         enabled:
           type: boolean
           description: Whether IPFS_ENABLED is set on this instance.
