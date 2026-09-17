@@ -123,6 +123,17 @@ func (s *Service) drainManaged(ctx context.Context, nc netClient, batch int, doc
 	for _, row := range removals {
 		if s.process(ctx, nc, sqlcgen.ClaimDueIPFSPinsRow(row)) {
 			done++
+			if row.MediaClass == string(ClassHLS) && row.VideoID.Valid {
+				removed, e := s.repo.GetIPFSPinByObjectKey(ctx, row.ObjectKey)
+				if e != nil {
+					return done, e
+				}
+				if removed.State == "unpinned" {
+					if e = s.rearmLatestHLS(ctx, uuid.UUID(row.VideoID.Bytes), removed.CommittedGeneration); e != nil {
+						return done, e
+					}
+				}
+			}
 		}
 	}
 	if done > 0 {
@@ -386,12 +397,7 @@ func (s *Service) copyAdmission(ctx context.Context, nc netClient, r admissionRe
 		// ran while the old lease existed; preserve that intent after retiring the
 		// losing root instead of leaving the latest generation permanently unpinned.
 		if claim.MediaClass == string(ClassHLS) && claim.VideoID.Valid {
-			if reader, available := s.lookups.(masterKeyReader); available {
-				master, ready, e := reader.VideoHLSMasterKey(cleanup, uuid.UUID(claim.VideoID.Bytes))
-				if e == nil && ready && master != claim.SourceGeneration {
-					_ = s.OnTranscodeComplete(cleanup, uuid.UUID(claim.VideoID.Bytes))
-				}
-			}
+			_ = s.rearmLatestHLS(cleanup, uuid.UUID(claim.VideoID.Bytes), claim.SourceGeneration)
 		}
 	} else {
 		// A transport failure is an unknown server outcome. Retain capacity until
@@ -399,6 +405,24 @@ func (s *Service) copyAdmission(ctx context.Context, nc netClient, r admissionRe
 		// means Kubo has finished writing its last buffered blocks.
 		_ = r.ExpireIPFSReservation(cleanup, sqlcgen.ExpireIPFSReservationParams{ObjectKey: claim.ObjectKey, ClaimToken: claim.ClaimToken})
 	}
+}
+
+// Both immediate and retried removal must preserve a transcode hook that ran
+// while the old generation held its lease. Equal generations stay unpinned, so
+// ordinary capacity eviction cannot requeue its own just-retired content.
+func (s *Service) rearmLatestHLS(ctx context.Context, id uuid.UUID, removedGeneration string) error {
+	reader, ok := s.lookups.(masterKeyReader)
+	if !ok {
+		return nil
+	}
+	master, ready, err := reader.VideoHLSMasterKey(ctx, id)
+	if err != nil {
+		return err
+	}
+	if ready && master != removedGeneration {
+		return s.OnTranscodeComplete(ctx, id)
+	}
+	return nil
 }
 
 // DemandPublicVideo coalesces lower-priority demand only from an authorized

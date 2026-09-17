@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -28,7 +29,16 @@ type managedTestHost struct {
 
 type managedTestNode struct {
 	ipfs.Client
-	after func(string)
+	after        func(string)
+	failUnpin    *atomic.Bool
+	returnedRoot *atomic.Value
+}
+
+func (n managedTestNode) Unpin(ctx context.Context, cid string) error {
+	if n.failUnpin != nil && n.returnedRoot.Load() == cid && n.failUnpin.Swap(false) {
+		return errors.New("transient unpin failure")
+	}
+	return n.Client.Unpin(ctx, cid)
 }
 
 func (n managedTestNode) Add(ctx context.Context, name string, r io.Reader) (ipfs.AddResult, error) {
@@ -129,15 +139,19 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 	}
 	var changeDuringCopy atomic.Int32
 	var returnedRoot atomic.Value
+	var failUnpin atomic.Bool
 	hookResult := make(chan error, 1)
-	node := managedTestNode{Client: nodeClient, after: func(cid string) {
+	node := managedTestNode{Client: nodeClient, failUnpin: &failUnpin, returnedRoot: &returnedRoot, after: func(cid string) {
 		returnedRoot.Store(cid)
 		switch changeDuringCopy.Load() {
 		case 1:
 			_, e := st.Pool.Exec(ctx, "UPDATE videos SET privacy='private' WHERE id=$1", id)
 			hookResult <- e
-		case 2:
+		case 2, 4:
 			_, e := st.Pool.Exec(ctx, "UPDATE streaming_playlists SET master_key=$2 WHERE video_id=$1", id, master+"-new")
+			if changeDuringCopy.Load() == 4 {
+				failUnpin.Store(true)
+			}
 			hookResult <- e
 		case 3:
 			_, e := st.Pool.Exec(ctx, "UPDATE media_ipfs_pins SET lease_until=now()-interval '1 second' WHERE object_key=$1", key)
@@ -210,7 +224,7 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 	if err != nil || row.State != "unpinned" {
 		t.Fatalf("paused withdrawal %+v %v", row, err)
 	}
-	for _, change := range []int32{1, 2, 3} {
+	for _, change := range []int32{1, 2, 3, 4} {
 		// A missed enqueue cannot let a completion overwrite newly private facts.
 		// This interleaves the visibility commit AFTER the node returned its CID.
 		_, err = st.Pool.Exec(ctx, "UPDATE videos SET privacy='public' WHERE id=$1", id)
@@ -251,7 +265,7 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (((change == 1 && row.State == "unpinned") || (change == 2 && row.State == "pending")) && !row.ClaimToken.Valid) || (change == 3 && row.ClaimToken.Valid && row.CapacityReason == "copy_failed") {
+			if (((change == 1 && row.State == "unpinned") || (change == 2 && row.State == "pending")) && !row.ClaimToken.Valid) || (change >= 3 && row.ClaimToken.Valid && row.CapacityReason == "copy_failed") {
 				break
 			}
 			select {
@@ -262,7 +276,13 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 		}
 		// Lost-lease completion retains its returned CID durably until a proven
 		// restart releases capacity, then exclusive cleanup can safely retire it.
-		for range 4 {
+		for range 6 {
+			if change == 4 {
+				// Advance the ordinary removal retry without sleeping for its backoff.
+				if _, err = st.Pool.Exec(ctx, "UPDATE media_ipfs_pins SET next_attempt_at=now() WHERE object_key=$1 AND state='unpinning'", key); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if _, err = mirror.DrainDue(ctx, 8); err != nil {
 				t.Fatal(err)
 			}
@@ -270,6 +290,12 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 		capacity, e := q.GetIPFSCapacity(ctx)
 		if e != nil || capacity.ActiveClaims != 0 || capacity.CleanupPending != 0 || capacity.MaintenanceToken.Valid {
 			t.Fatalf("copy cleanup did not settle: %+v %v", capacity, e)
+		}
+		if change == 4 {
+			row, err = q.GetIPFSPinByObjectKey(ctx, key)
+			if err != nil || row.State != "pending" {
+				t.Fatalf("successful removal lost latest HLS intent: %+v %v", row, err)
+			}
 		}
 		if pinned, e := node.IsPinned(ctx, returnedRoot.Load().(string)); e != nil || pinned {
 			t.Fatalf("losing copy pin retained: %v %v", pinned, e)
