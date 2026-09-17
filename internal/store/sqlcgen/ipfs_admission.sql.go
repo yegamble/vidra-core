@@ -398,6 +398,11 @@ const listIPFSAdmissionCandidates = `-- name: ListIPFSAdmissionCandidates :many
 SELECT object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network, target_network, claim_token, lease_until, reservation_bytes, copied_bytes, source_generation, committed_generation, admitted_host_sequence, admitted_config_revision, policy_reason, demand_at, capacity_reason FROM media_ipfs_pins
 WHERE network = 'public' AND state = 'pending' AND claim_token IS NULL
   AND next_attempt_at <= now() AND capacity_reason <> 'evicted_capacity'
+  AND EXISTS (SELECT 1 FROM ipfs_control_config c WHERE c.singleton AND c.policy_active
+      AND (c.config->>'enabled')::boolean
+      AND ((policy_reason = 'new' AND ((c.config->>'auto_pin_new')::boolean OR (demand_at IS NOT NULL AND (c.config->>'demand_pin')::boolean)))
+          OR (policy_reason = 'demand' AND (c.config->>'demand_pin')::boolean)
+          OR (policy_reason IN ('legacy','backfill') AND (c.config->>'backfill_enabled')::boolean)))
 ORDER BY CASE policy_reason WHEN 'new' THEN 0 WHEN 'demand' THEN 1 WHEN 'backfill' THEN 2 ELSE 3 END,
     CASE WHEN media_class = 'hls' THEN 0 WHEN media_class = 'video_original' THEN 1 ELSE 2 END,
     demand_at DESC NULLS LAST, next_attempt_at

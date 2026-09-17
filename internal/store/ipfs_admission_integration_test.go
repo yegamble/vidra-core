@@ -163,6 +163,25 @@ func TestIPFSAdmissionConcurrentBudgetAndFencedRelease(t *testing.T) {
 			t.Fatalf("%s admitted: %v", name, err)
 		}
 	}
+	// Disabled classes must be filtered before LIMIT; otherwise a large new
+	// upload backlog can indefinitely hide explicitly enabled playback demand.
+	_, err = st.Pool.Exec(ctx, "UPDATE ipfs_control_config SET config=jsonb_set(jsonb_set(config,'{auto_pin_new}','false'),'{demand_pin}','true') WHERE singleton")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.Pool.Exec(ctx, "UPDATE media_ipfs_pins SET policy_reason='new' WHERE object_key LIKE $1", prefix+"%")
+	if err != nil {
+		t.Fatal(err)
+	}
+	demandKey := prefix + "demand"
+	_, err = st.Pool.Exec(ctx, "INSERT INTO media_ipfs_pins(object_key,media_class,policy_reason) VALUES($1,'thumbnail','demand')", demandKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := q.ListIPFSAdmissionCandidates(ctx, 1)
+	if err != nil || len(candidates) != 1 || candidates[0].ObjectKey != demandKey {
+		t.Fatalf("disabled jobs hid demand: %+v %v", candidates, err)
+	}
 }
 
 func TestIPFSEvictionKeepsLegacySharedAndRecentPins(t *testing.T) {
