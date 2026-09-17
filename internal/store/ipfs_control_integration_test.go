@@ -24,12 +24,12 @@ func TestIPFSControlConfigAtomicCASAndOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	_, err = st.Pool.Exec(ctx, "TRUNCATE ipfs_control_operations, ipfs_control_config")
+	_, err = st.Pool.Exec(ctx, "TRUNCATE ipfs_copy_cleanup, ipfs_control_operations, ipfs_control_config")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		_, _ = st.Pool.Exec(context.Background(), "TRUNCATE ipfs_control_operations, ipfs_control_config")
+		_, _ = st.Pool.Exec(context.Background(), "TRUNCATE ipfs_copy_cleanup, ipfs_control_operations, ipfs_control_config")
 	}()
 	q := st.Queries()
 	c := ipfscontrol.Config{Provider: "internal", BudgetBytes: 20 << 30, MinFreeBytes: 20 << 30, CopyBytesPerSecond: 2 << 20, Workers: 1}

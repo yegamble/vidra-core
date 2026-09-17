@@ -10,7 +10,7 @@ import (
 )
 
 const listPublicIPFSRootPins = `-- name: ListPublicIPFSRootPins :many
-SELECT object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network, target_network FROM media_ipfs_pins
+SELECT object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network, target_network, claim_token, lease_until, reservation_bytes, copied_bytes, source_generation, committed_generation, admitted_host_sequence, admitted_config_revision, policy_reason, demand_at, capacity_reason FROM media_ipfs_pins
 WHERE cid = $1 AND network = 'public' AND state = 'pinned'
 ORDER BY object_key LIMIT 129
 `
@@ -42,6 +42,17 @@ func (q *Queries) ListPublicIPFSRootPins(ctx context.Context, cid string) ([]Med
 			&i.UpdatedAt,
 			&i.Network,
 			&i.TargetNetwork,
+			&i.ClaimToken,
+			&i.LeaseUntil,
+			&i.ReservationBytes,
+			&i.CopiedBytes,
+			&i.SourceGeneration,
+			&i.CommittedGeneration,
+			&i.AdmittedHostSequence,
+			&i.AdmittedConfigRevision,
+			&i.PolicyReason,
+			&i.DemandAt,
+			&i.CapacityReason,
 		); err != nil {
 			return nil, err
 		}

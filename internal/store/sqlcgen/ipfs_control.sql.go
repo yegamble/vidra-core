@@ -223,12 +223,21 @@ func (q *Queries) RequestIPFSControlOperation(ctx context.Context, arg RequestIP
 }
 
 const updateIPFSControlConfig = `-- name: UpdateIPFSControlConfig :one
-WITH changed AS (
+WITH locked AS MATERIALIZED (
+    SELECT singleton, revision, config, policy_active, updated_by, updated_at FROM ipfs_control_config WHERE singleton FOR UPDATE
+), capacity AS MATERIALIZED (
+    SELECT b.singleton, b.reserved_bytes, b.active_claims, b.measure_after, b.cleanup_pending, b.maintenance_token, b.maintenance_until, b.maintenance_host_sequence, b.maintenance_config_revision FROM ipfs_capacity b WHERE b.singleton AND EXISTS (SELECT 1 FROM locked) FOR SHARE
+), changed AS (
     UPDATE ipfs_control_config AS saved
     SET config = $1, revision = saved.revision + 1, policy_active = true,
         updated_by = $2, updated_at = now()
     WHERE saved.singleton AND saved.revision = $3
+      AND EXISTS (SELECT 1 FROM locked)
       AND (saved.config <> $1 OR NOT saved.policy_active)
+      AND (saved.config->>'provider' = $1::jsonb->>'provider' OR (
+          NOT EXISTS (SELECT 1 FROM media_ipfs_pins p WHERE p.claim_token IS NOT NULL)
+          AND NOT EXISTS (SELECT 1 FROM capacity WHERE active_claims > 0
+              OR cleanup_pending > 0 OR maintenance_token IS NOT NULL)))
     RETURNING saved.singleton, saved.revision, saved.config, saved.policy_active, saved.updated_by, saved.updated_at
 ), queued AS (
     INSERT INTO ipfs_control_operations (id, config_revision, action, config, requested_by)

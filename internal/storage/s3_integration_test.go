@@ -298,6 +298,15 @@ func TestS3ListKeys(t *testing.T) {
 			t.Errorf("listed key %q from a sibling prefix", k)
 		}
 	}
+	objects, err := b.ListObjects(ctx, prefix)
+	if err != nil || len(objects) != len(inside) {
+		t.Fatalf("sized inventory: %+v %v", objects, err)
+	}
+	for _, object := range objects {
+		if object.Size != 1 || !strings.HasPrefix(object.Key, prefix+"/") {
+			t.Fatalf("wrong inventory length or scope: %+v", object)
+		}
+	}
 	// A missing prefix returns no keys, not an error.
 	empty, err := b.ListKeys(ctx, root+"/absent-prefix")
 	if err != nil {

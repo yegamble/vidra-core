@@ -1316,6 +1316,62 @@ correct. If a pin is absent, pending, failed, private-network, invalid, or the l
 fails, the same request transparently serves the authoritative local/S3 object.
 Private-swarm CIDs are never used in a redirect or exposed to clients.
 
+### Managed public cache
+
+Administrators can explicitly adopt the managed policy through
+`GET/PATCH /admin/ipfs/config`. Save the complete configuration with its current
+revision; a stale revision returns `409` without partially changing settings.
+`internal` means the host integration owns the configured public Kubo service;
+`external` means the operator owns it. These values do not move existing pins
+or accept arbitrary RPC endpoints. Existing external behavior continues until
+the first policy save. In this release, adopted external policy pauses new copies
+with `capacity_unknown` because trusted host capacity is unavailable.
+
+Internal operation requires the meta-repository's fixed-service manager socket
+at `IPFS_MANAGER_SOCKET`. The API never receives the Docker socket. Desired
+configuration and observed/applied state are reported separately; saving settings
+does not prove that Docker started successfully. Apply/restart requests carry an
+idempotency UUID and expected revision. Preserve the host manager's durable
+operation ledger when restoring: an older database must not overwrite a newer
+host operation sequence.
+
+Publication pause stops new admissions, while valid existing delivery, privacy
+withdrawals, and interrupted-copy recovery continue. The independent
+`delivery_ipfs_enabled` setting controls viewer delivery. With `IPFS_ENABLED=false`,
+delivery requires an explicit true setting even when a public node is configured.
+Use the authorized, non-caching public gateway route from the meta deployment;
+raw Kubo gateways can serve withdrawn cached blocks. Global peers may retain
+copies of anything previously published.
+
+The cache prioritizes new public media, then coalesced authorized playback demand,
+then optional old-media backfill. Backfill stays off by default. A ready HLS tree
+is preferred over redundant originals/WebM.
+An original admitted before its HLS tree becomes ready may finish; existing
+copies are not preempted solely to change representations.
+Inventory records exact object sizes before copying; admission reserves
+conservative overhead, enforces the configured
+worker/rate limits, and requires fresh measured node usage and disk headroom.
+An oversized object or a copy requiring more than 24 hours stays deferred.
+Lowering the budget retires cold managed pins gradually; recently watched,
+shared, legacy, and unrelated manual pins remain protected. The budget can remain
+exceeded when only protected pins remain, so inspect the reported pause reason.
+
+The source rate limits bytes copied into Kubo, not viewer bandwidth or an ETA.
+Concurrent copies share the configured rate. Unknown/stale capacity blocks new
+admissions. An expired copy retains its reservation until a confirmed later node
+restart proves its request stopped. Known returned roots are recorded durably
+and retired under exclusive cleanup before new admissions resume. Failed cleanup
+keeps this fence until recovery; `recovering_copy_cleanup` reports that state.
+An Add transport failure may hide a successfully pinned root whose CID never
+reached the application. Such unaccounted pins remain measured in actual usage
+and visible to pinset verification; they are not swept automatically because an
+unknown pin may belong to an operator. Investigate them before manual removal.
+
+Playback sessions expose the current authorized IPFS HLS URL only for a complete,
+eligible generation, alongside the exact authoritative HLS URL. Clients can fall
+back from IPFS to authoritative/CDN HLS and then the original without triggering
+re-encoding. Later pin completion does not require interrupting working playback.
+
 ### Local-only vs live public mode
 
 The compose `ipfs` service is local-only unless the operator explicitly sets

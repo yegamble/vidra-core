@@ -399,6 +399,18 @@ type InstanceSetting struct {
 	UpdatedAt time.Time   `json:"updated_at"`
 }
 
+type IpfsCapacity struct {
+	Singleton                 bool               `json:"singleton"`
+	ReservedBytes             int64              `json:"reserved_bytes"`
+	ActiveClaims              int32              `json:"active_claims"`
+	MeasureAfter              time.Time          `json:"measure_after"`
+	CleanupPending            int64              `json:"cleanup_pending"`
+	MaintenanceToken          pgtype.UUID        `json:"maintenance_token"`
+	MaintenanceUntil          pgtype.Timestamptz `json:"maintenance_until"`
+	MaintenanceHostSequence   int64              `json:"maintenance_host_sequence"`
+	MaintenanceConfigRevision int64              `json:"maintenance_config_revision"`
+}
+
 type IpfsControlConfig struct {
 	Singleton    bool        `json:"singleton"`
 	Revision     int64       `json:"revision"`
@@ -421,6 +433,13 @@ type IpfsControlOperation struct {
 	RequestedBy    pgtype.UUID `json:"requested_by"`
 	CreatedAt      time.Time   `json:"created_at"`
 	UpdatedAt      time.Time   `json:"updated_at"`
+}
+
+type IpfsCopyCleanup struct {
+	ClaimToken uuid.UUID `json:"claim_token"`
+	Cid        string    `json:"cid"`
+	ObjectKey  string    `json:"object_key"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type JobEvent struct {
@@ -512,21 +531,32 @@ type LiveStream struct {
 }
 
 type MediaIpfsPin struct {
-	ObjectKey     string      `json:"object_key"`
-	MediaClass    string      `json:"media_class"`
-	Cid           string      `json:"cid"`
-	CarRoot       string      `json:"car_root"`
-	ByteSize      int64       `json:"byte_size"`
-	State         string      `json:"state"`
-	Attempts      int32       `json:"attempts"`
-	NextAttemptAt time.Time   `json:"next_attempt_at"`
-	LastError     string      `json:"last_error"`
-	VideoID       pgtype.UUID `json:"video_id"`
-	OwnerUserID   pgtype.UUID `json:"owner_user_id"`
-	CreatedAt     time.Time   `json:"created_at"`
-	UpdatedAt     time.Time   `json:"updated_at"`
-	Network       string      `json:"network"`
-	TargetNetwork *string     `json:"target_network"`
+	ObjectKey              string             `json:"object_key"`
+	MediaClass             string             `json:"media_class"`
+	Cid                    string             `json:"cid"`
+	CarRoot                string             `json:"car_root"`
+	ByteSize               int64              `json:"byte_size"`
+	State                  string             `json:"state"`
+	Attempts               int32              `json:"attempts"`
+	NextAttemptAt          time.Time          `json:"next_attempt_at"`
+	LastError              string             `json:"last_error"`
+	VideoID                pgtype.UUID        `json:"video_id"`
+	OwnerUserID            pgtype.UUID        `json:"owner_user_id"`
+	CreatedAt              time.Time          `json:"created_at"`
+	UpdatedAt              time.Time          `json:"updated_at"`
+	Network                string             `json:"network"`
+	TargetNetwork          *string            `json:"target_network"`
+	ClaimToken             pgtype.UUID        `json:"claim_token"`
+	LeaseUntil             pgtype.Timestamptz `json:"lease_until"`
+	ReservationBytes       int64              `json:"reservation_bytes"`
+	CopiedBytes            int64              `json:"copied_bytes"`
+	SourceGeneration       string             `json:"source_generation"`
+	CommittedGeneration    string             `json:"committed_generation"`
+	AdmittedHostSequence   int64              `json:"admitted_host_sequence"`
+	AdmittedConfigRevision int64              `json:"admitted_config_revision"`
+	PolicyReason           string             `json:"policy_reason"`
+	DemandAt               pgtype.Timestamptz `json:"demand_at"`
+	CapacityReason         string             `json:"capacity_reason"`
 }
 
 type MediaIpfsUserReeval struct {

@@ -803,8 +803,10 @@ func run() error {
 	// — nothing non-public is ever enqueued.
 	var ipfsClient ipfs.Client
 	var ipfsCluster ipfs.ClusterClient
-	if cfg.IPFSEnabled {
-		ipfsClient = ipfs.NewKuboClient(cfg.IPFSAPIURL, &http.Client{Timeout: cfg.IPFSAddTimeout})
+	if cfg.IPFSAPIURL != "" {
+		// Managed copies can take hours at the selected background rate. Each RPC
+		// has its own bounded context; an HTTP-wide minute timeout aborts them.
+		ipfsClient = ipfs.NewKuboClient(cfg.IPFSAPIURL, &http.Client{})
 		// Optional IPFS Cluster replication (STOR-05). Best-effort — the local node
 		// pin is the authoritative mirror action; the cluster replicates it. The
 		// token is a SECRET (Bearer), never logged.
@@ -890,6 +892,7 @@ func run() error {
 		ipfsDefaults.DemandPin = true
 	}
 	ipfsControl := ipfscontrol.NewService(db.Queries(), ipfsHost, ipfsDefaults)
+	ipfsMirror.ConfigureControl(ipfsControl)
 	opts = append(opts, httpapi.WithIPFSControl(ipfsControl))
 
 	if cfg.IPFSEnabled {
@@ -3454,17 +3457,11 @@ func runIPFSMirrorWorker(ctx context.Context, logger *slog.Logger, svc *ipfsmirr
 			return
 		case <-drain.C:
 			total := 0
-			for {
-				n, err := svc.DrainDue(ctx, batch)
-				if err != nil {
-					logger.Warn("ipfs mirror drain failed", "error", err)
-					break
-				}
-				total += n
-				if n == 0 {
-					break
-				}
+			n, err := svc.DrainDue(ctx, batch)
+			if err != nil {
+				logger.Warn("ipfs mirror drain failed", "error", err)
 			}
+			total += n
 			if total > 0 {
 				logger.Info("ipfs mirror drained pins", "count", total)
 			}

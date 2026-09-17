@@ -69,6 +69,19 @@ type ObjectLister interface {
 	ListKeys(ctx context.Context, prefix string) ([]string, error)
 }
 
+// ObjectInfo is the authoritative byte length of an object, obtained without
+// reading its payload. Unknown lengths must be reported as an error by inventory.
+type ObjectInfo struct {
+	Key  string
+	Size int64
+}
+
+// ObjectInventory permits capacity admission for a complete media tree using a
+// single listing, rather than one HEAD request for every HLS segment.
+type ObjectInventory interface {
+	ListObjects(ctx context.Context, prefix string) ([]ObjectInfo, error)
+}
+
 // PathProvider is an optional capability implemented by backends that can expose
 // a local filesystem path for an object (the local backend does). Tools that
 // need a seekable file on disk — e.g. ffprobe — use it; backends without it

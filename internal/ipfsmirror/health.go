@@ -252,15 +252,26 @@ func (s *Service) probeCID(ctx context.Context, network string) (string, bool, e
 		return "", false, nil
 	}
 	rows, err := reader.ListIPFSPinsForVerify(ctx, sqlcgen.ListIPFSPinsForVerifyParams{
-		Network: network, AfterObjectKey: "", BatchSize: 1,
+		Network: network, AfterObjectKey: "", BatchSize: 32,
 	})
 	if err != nil {
 		return "", false, err
 	}
-	if len(rows) == 0 {
-		return "", false, nil
+	for _, row := range rows {
+		if network == networkPublic {
+			if _, gated := s.repo.(gatewayRootReader); gated {
+				allowed, e := s.PublicGatewayRootAllowed(ctx, row.Cid)
+				if e != nil {
+					return "", false, e
+				}
+				if !allowed {
+					continue
+				}
+			}
+		}
+		return row.Cid, true, nil
 	}
-	return rows[0].Cid, true, nil
+	return "", false, nil
 }
 
 // ptr is the one-liner atomic.Pointer stores need.

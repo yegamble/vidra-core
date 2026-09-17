@@ -59,6 +59,9 @@ SET next_attempt_at = now() + ($1::int * interval '1 second'),
 WHERE object_key IN (
     SELECT p.object_key FROM media_ipfs_pins p
     WHERE p.network = $2 AND p.state IN ('pending', 'unpinning') AND p.next_attempt_at <= now()
+      AND p.claim_token IS NULL
+      AND (p.network <> 'public' OR p.state = 'unpinning' OR NOT EXISTS
+          (SELECT 1 FROM ipfs_control_config c WHERE c.singleton AND c.policy_active))
     ORDER BY p.next_attempt_at
     LIMIT $3
     FOR UPDATE SKIP LOCKED
@@ -215,7 +218,7 @@ func (q *Queries) EnqueueIPFSUnpin(ctx context.Context, objectKey string) error 
 }
 
 const getIPFSPinByObjectKey = `-- name: GetIPFSPinByObjectKey :one
-SELECT object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network, target_network FROM media_ipfs_pins WHERE object_key = $1
+SELECT object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network, target_network, claim_token, lease_until, reservation_bytes, copied_bytes, source_generation, committed_generation, admitted_host_sequence, admitted_config_revision, policy_reason, demand_at, capacity_reason FROM media_ipfs_pins WHERE object_key = $1
 `
 
 func (q *Queries) GetIPFSPinByObjectKey(ctx context.Context, objectKey string) (MediaIpfsPin, error) {
@@ -237,6 +240,17 @@ func (q *Queries) GetIPFSPinByObjectKey(ctx context.Context, objectKey string) (
 		&i.UpdatedAt,
 		&i.Network,
 		&i.TargetNetwork,
+		&i.ClaimToken,
+		&i.LeaseUntil,
+		&i.ReservationBytes,
+		&i.CopiedBytes,
+		&i.SourceGeneration,
+		&i.CommittedGeneration,
+		&i.AdmittedHostSequence,
+		&i.AdmittedConfigRevision,
+		&i.PolicyReason,
+		&i.DemandAt,
+		&i.CapacityReason,
 	)
 	return i, err
 }
@@ -333,7 +347,7 @@ func (q *Queries) IPFSPinLedgerHealth(ctx context.Context, network string) (IPFS
 }
 
 const listIPFSPinsByVideo = `-- name: ListIPFSPinsByVideo :many
-SELECT object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network, target_network FROM media_ipfs_pins WHERE video_id = $1 ORDER BY media_class, object_key
+SELECT object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network, target_network, claim_token, lease_until, reservation_bytes, copied_bytes, source_generation, committed_generation, admitted_host_sequence, admitted_config_revision, policy_reason, demand_at, capacity_reason FROM media_ipfs_pins WHERE video_id = $1 ORDER BY media_class, object_key
 `
 
 // Every ledger row for a video (privacy re-evaluation + cascade unpin, P19.3),
@@ -363,6 +377,17 @@ func (q *Queries) ListIPFSPinsByVideo(ctx context.Context, videoID pgtype.UUID) 
 			&i.UpdatedAt,
 			&i.Network,
 			&i.TargetNetwork,
+			&i.ClaimToken,
+			&i.LeaseUntil,
+			&i.ReservationBytes,
+			&i.CopiedBytes,
+			&i.SourceGeneration,
+			&i.CommittedGeneration,
+			&i.AdmittedHostSequence,
+			&i.AdmittedConfigRevision,
+			&i.PolicyReason,
+			&i.DemandAt,
+			&i.CapacityReason,
 		); err != nil {
 			return nil, err
 		}
@@ -705,12 +730,15 @@ func (q *Queries) RearmLostIPFSPin(ctx context.Context, arg RearmLostIPFSPinPara
 }
 
 const repinIPFSObject = `-- name: RepinIPFSObject :exec
-INSERT INTO media_ipfs_pins (object_key, media_class, video_id, network)
-VALUES ($1, $2, $3, $4)
+INSERT INTO media_ipfs_pins (object_key, media_class, video_id, network, policy_reason)
+VALUES ($1, $2, $3, $4,
+    CASE WHEN EXISTS (SELECT 1 FROM ipfs_control_config WHERE singleton AND policy_active) THEN 'new' ELSE 'legacy' END)
 ON CONFLICT (object_key) DO UPDATE
 SET media_class     = EXCLUDED.media_class,
     video_id        = EXCLUDED.video_id,
     state           = 'pending',
+    policy_reason = CASE WHEN EXISTS (SELECT 1 FROM ipfs_control_config WHERE singleton AND policy_active) THEN 'new' ELSE media_ipfs_pins.policy_reason END,
+    capacity_reason = '',
     target_network  = NULL,
     attempts        = 0,
     next_attempt_at = now(),
@@ -785,8 +813,9 @@ func (q *Queries) RescheduleIPFSPin(ctx context.Context, arg RescheduleIPFSPinPa
 }
 
 const routeIPFSPinIntent = `-- name: RouteIPFSPinIntent :one
-INSERT INTO media_ipfs_pins (object_key, media_class, video_id, owner_user_id, network)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO media_ipfs_pins (object_key, media_class, video_id, owner_user_id, network, policy_reason)
+VALUES ($1, $2, $3, $4, $5,
+    CASE WHEN EXISTS (SELECT 1 FROM ipfs_control_config WHERE singleton AND policy_active) THEN 'new' ELSE 'legacy' END)
 ON CONFLICT (object_key) DO UPDATE
 SET media_class   = EXCLUDED.media_class,
     video_id      = EXCLUDED.video_id,
@@ -796,6 +825,7 @@ SET media_class   = EXCLUDED.media_class,
         ELSE $5
     END,
     state = CASE
+        WHEN media_ipfs_pins.capacity_reason = 'evicted_capacity' THEN media_ipfs_pins.state
         WHEN media_ipfs_pins.network = $5 THEN
             CASE WHEN media_ipfs_pins.state IN ('failed', 'unpinned', 'unpinning') THEN 'pending'
                  ELSE media_ipfs_pins.state END
@@ -817,7 +847,7 @@ SET media_class   = EXCLUDED.media_class,
         ELSE ''
     END,
     updated_at = now()
-RETURNING object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network, target_network
+RETURNING object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network, target_network, claim_token, lease_until, reservation_bytes, copied_bytes, source_generation, committed_generation, admitted_host_sequence, admitted_config_revision, policy_reason, demand_at, capacity_reason
 `
 
 type RouteIPFSPinIntentParams struct {
@@ -873,6 +903,17 @@ func (q *Queries) RouteIPFSPinIntent(ctx context.Context, arg RouteIPFSPinIntent
 		&i.UpdatedAt,
 		&i.Network,
 		&i.TargetNetwork,
+		&i.ClaimToken,
+		&i.LeaseUntil,
+		&i.ReservationBytes,
+		&i.CopiedBytes,
+		&i.SourceGeneration,
+		&i.CommittedGeneration,
+		&i.AdmittedHostSequence,
+		&i.AdmittedConfigRevision,
+		&i.PolicyReason,
+		&i.DemandAt,
+		&i.CapacityReason,
 	)
 	return i, err
 }
@@ -1010,6 +1051,7 @@ SET media_class   = EXCLUDED.media_class,
     video_id      = EXCLUDED.video_id,
     owner_user_id = EXCLUDED.owner_user_id,
     state = CASE
+        WHEN media_ipfs_pins.capacity_reason = 'evicted_capacity' THEN media_ipfs_pins.state
         WHEN media_ipfs_pins.state IN ('failed', 'unpinned', 'unpinning') THEN 'pending'
         ELSE media_ipfs_pins.state
     END,
@@ -1026,7 +1068,7 @@ SET media_class   = EXCLUDED.media_class,
         ELSE media_ipfs_pins.last_error
     END,
     updated_at = now()
-RETURNING object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network, target_network
+RETURNING object_key, media_class, cid, car_root, byte_size, state, attempts, next_attempt_at, last_error, video_id, owner_user_id, created_at, updated_at, network, target_network, claim_token, lease_until, reservation_bytes, copied_bytes, source_generation, committed_generation, admitted_host_sequence, admitted_config_revision, policy_reason, demand_at, capacity_reason
 `
 
 type UpsertIPFSPinIntentParams struct {
@@ -1070,6 +1112,17 @@ func (q *Queries) UpsertIPFSPinIntent(ctx context.Context, arg UpsertIPFSPinInte
 		&i.UpdatedAt,
 		&i.Network,
 		&i.TargetNetwork,
+		&i.ClaimToken,
+		&i.LeaseUntil,
+		&i.ReservationBytes,
+		&i.CopiedBytes,
+		&i.SourceGeneration,
+		&i.CommittedGeneration,
+		&i.AdmittedHostSequence,
+		&i.AdmittedConfigRevision,
+		&i.PolicyReason,
+		&i.DemandAt,
+		&i.CapacityReason,
 	)
 	return i, err
 }

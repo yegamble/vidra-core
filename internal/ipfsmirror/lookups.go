@@ -132,6 +132,27 @@ func (l *SQLLookups) VideoHLSTree(ctx context.Context, videoID uuid.UUID) (strin
 	return dir, true, nil
 }
 
+func (l *SQLLookups) VideoHLSMasterKey(ctx context.Context, videoID uuid.UUID) (string, bool, error) {
+	sp, err := l.q.GetStreamingPlaylist(ctx, videoID)
+	if missing(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return sp.MasterKey, sp.State == "ready" && sp.MasterKey != "" && strings.Contains(sp.MasterKey, "/"), nil
+}
+
+func (l *SQLLookups) VideoMirrorProtected(ctx context.Context, id uuid.UUID) (bool, error) {
+	reader, ok := l.q.(interface {
+		IPFSMediaProtected(context.Context, uuid.UUID) (bool, error)
+	})
+	if !ok {
+		return true, nil
+	}
+	return reader.IPFSMediaProtected(ctx, id)
+}
+
 func (l *SQLLookups) VideoFiles(ctx context.Context, videoID uuid.UUID) ([]VideoFileRef, error) {
 	files, err := l.q.ListVideoFiles(ctx, videoID)
 	if err != nil {
