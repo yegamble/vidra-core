@@ -27,7 +27,7 @@ const (
 	MinSupportedSchemaVersion = 700
 	// MaxSupportedSchemaVersion is the highest verified migrationVersion. A source
 	// newer than this is refused without --force (its schema may have diverged).
-	MaxSupportedSchemaVersion = 1000
+	MaxSupportedSchemaVersion = 1040
 )
 
 // VersionSupport classifies a detected source schema version.

@@ -23616,6 +23616,14 @@ components:
           type: integer
         failed:
           type: integer
+        missing_source:
+          type: integer
+          minimum: 0
+          description: >-
+            Subset of failed artwork rows whose source HTTP fallback returned
+            404 or 410 after source storage could not supply the image. Restore
+            the source file or backup before retrying. These remain retryable;
+            do not add this count to failed. Absent in older reports.
         unsupported:
           type: integer
     PeerTubeImportReport:
