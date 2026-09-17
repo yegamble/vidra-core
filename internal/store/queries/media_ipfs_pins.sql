@@ -17,6 +17,7 @@ SET media_class   = EXCLUDED.media_class,
     video_id      = EXCLUDED.video_id,
     owner_user_id = EXCLUDED.owner_user_id,
     state = CASE
+        WHEN media_ipfs_pins.capacity_reason = 'evicted_capacity' THEN media_ipfs_pins.state
         WHEN media_ipfs_pins.state IN ('failed', 'unpinned', 'unpinning') THEN 'pending'
         ELSE media_ipfs_pins.state
     END,
@@ -56,8 +57,9 @@ RETURNING *;
 --     the other network: the cardinal invariant (never "private content pinned public").
 --     A live pin's cid/car_root are PRESERVED so the worker can reference-check and
 --     unpin them on the current node before the row moves.
-INSERT INTO media_ipfs_pins (object_key, media_class, video_id, owner_user_id, network)
-VALUES ($1, $2, $3, $4, sqlc.arg(target_network))
+INSERT INTO media_ipfs_pins (object_key, media_class, video_id, owner_user_id, network, policy_reason)
+VALUES ($1, $2, $3, $4, sqlc.arg(target_network),
+    CASE WHEN EXISTS (SELECT 1 FROM ipfs_control_config WHERE singleton AND policy_active) THEN 'new' ELSE 'legacy' END)
 ON CONFLICT (object_key) DO UPDATE
 SET media_class   = EXCLUDED.media_class,
     video_id      = EXCLUDED.video_id,
@@ -67,6 +69,7 @@ SET media_class   = EXCLUDED.media_class,
         ELSE sqlc.arg(target_network)
     END,
     state = CASE
+        WHEN media_ipfs_pins.capacity_reason = 'evicted_capacity' THEN media_ipfs_pins.state
         WHEN media_ipfs_pins.network = sqlc.arg(target_network) THEN
             CASE WHEN media_ipfs_pins.state IN ('failed', 'unpinned', 'unpinning') THEN 'pending'
                  ELSE media_ipfs_pins.state END
@@ -132,12 +135,15 @@ ON CONFLICT (object_key) DO NOTHING;
 -- RouteIPFSPinIntent's same-swarm branch does. Leaving it set would strand dead
 -- transition metadata: MarkIPFSPinUnpinned would later read the stale target and try to
 -- re-arm the row onto the wrong swarm on the next unpin.
-INSERT INTO media_ipfs_pins (object_key, media_class, video_id, network)
-VALUES ($1, $2, $3, sqlc.arg(target_network))
+INSERT INTO media_ipfs_pins (object_key, media_class, video_id, network, policy_reason)
+VALUES ($1, $2, $3, sqlc.arg(target_network),
+    CASE WHEN EXISTS (SELECT 1 FROM ipfs_control_config WHERE singleton AND policy_active) THEN 'new' ELSE 'legacy' END)
 ON CONFLICT (object_key) DO UPDATE
 SET media_class     = EXCLUDED.media_class,
     video_id        = EXCLUDED.video_id,
     state           = 'pending',
+    policy_reason = CASE WHEN EXISTS (SELECT 1 FROM ipfs_control_config WHERE singleton AND policy_active) THEN 'new' ELSE media_ipfs_pins.policy_reason END,
+    capacity_reason = '',
     target_network  = NULL,
     attempts        = 0,
     next_attempt_at = now(),
@@ -175,6 +181,9 @@ SET next_attempt_at = now() + (sqlc.arg(lease_seconds)::int * interval '1 second
 WHERE object_key IN (
     SELECT p.object_key FROM media_ipfs_pins p
     WHERE p.network = sqlc.arg(network) AND p.state IN ('pending', 'unpinning') AND p.next_attempt_at <= now()
+      AND p.claim_token IS NULL
+      AND (p.network <> 'public' OR p.state = 'unpinning' OR NOT EXISTS
+          (SELECT 1 FROM ipfs_control_config c WHERE c.singleton AND c.policy_active))
     ORDER BY p.next_attempt_at
     LIMIT sqlc.arg(batch_size)
     FOR UPDATE SKIP LOCKED

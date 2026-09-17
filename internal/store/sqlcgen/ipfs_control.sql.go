@@ -229,6 +229,8 @@ WITH changed AS (
         updated_by = $2, updated_at = now()
     WHERE saved.singleton AND saved.revision = $3
       AND (saved.config <> $1 OR NOT saved.policy_active)
+      AND (saved.config->>'provider' = $1::jsonb->>'provider' OR NOT EXISTS
+          (SELECT 1 FROM media_ipfs_pins p WHERE p.claim_token IS NOT NULL))
     RETURNING saved.singleton, saved.revision, saved.config, saved.policy_active, saved.updated_by, saved.updated_at
 ), queued AS (
     INSERT INTO ipfs_control_operations (id, config_revision, action, config, requested_by)

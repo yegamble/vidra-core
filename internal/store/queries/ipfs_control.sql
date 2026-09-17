@@ -15,6 +15,8 @@ WITH changed AS (
         updated_by = sqlc.narg(actor), updated_at = now()
     WHERE saved.singleton AND saved.revision = sqlc.arg(expected_revision)
       AND (saved.config <> sqlc.arg(config) OR NOT saved.policy_active)
+      AND (saved.config->>'provider' = sqlc.arg(config)::jsonb->>'provider' OR NOT EXISTS
+          (SELECT 1 FROM media_ipfs_pins p WHERE p.claim_token IS NOT NULL))
     RETURNING saved.*
 ), queued AS (
     INSERT INTO ipfs_control_operations (id, config_revision, action, config, requested_by)
