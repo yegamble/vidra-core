@@ -556,6 +556,28 @@ func (s *S3) ListKeys(ctx context.Context, prefix string) ([]string, error) {
 	return keys, nil
 }
 
+func (s *S3) ListObjects(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	if err := validateKey(prefix); err != nil {
+		return nil, err
+	}
+	var objects []ObjectInfo
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix: strings.TrimSuffix(prefix, "/") + "/", Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return nil, classifyS3("list", obj.Err)
+		}
+		if obj.Size < 0 {
+			return nil, fmt.Errorf("storage: inventory object size unknown")
+		}
+		objects = append(objects, ObjectInfo{Key: obj.Key, Size: obj.Size})
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return objects, nil
+}
+
 // Exists reports whether an object is stored at key.
 func (s *S3) Exists(ctx context.Context, key string) (bool, error) {
 	if err := validateKey(key); err != nil {

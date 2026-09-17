@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +13,45 @@ import (
 // development/single-node default.
 type Local struct {
 	root string
+}
+
+func (l *Local) ListObjects(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	full, err := l.resolve(prefix)
+	if err != nil {
+		return nil, err
+	}
+	var objects []ObjectInfo
+	err = filepath.WalkDir(full, func(p string, d os.DirEntry, werr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if werr != nil {
+			if os.IsNotExist(werr) {
+				return nil
+			}
+			return werr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("storage: inventory contains a nonregular file")
+		}
+		rel, err := filepath.Rel(l.root, p)
+		if err != nil {
+			return err
+		}
+		objects = append(objects, ObjectInfo{Key: filepath.ToSlash(rel), Size: info.Size()})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return objects, nil
 }
 
 // NewLocal creates a Local backend rooted at dir, creating it if needed.
