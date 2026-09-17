@@ -83,6 +83,15 @@ func reconcileCopyCleanup(ctx context.Context, r copyCleanupRepo, control copyCl
 		// sweep arbitrary node pins, including manual pins absent from our ledger.
 		rpcctx, cancel := context.WithTimeout(ctx, 11*time.Minute)
 		err = client.Unpin(rpcctx, row.Cid)
+		if err != nil {
+			// Kubo pin/rm reports an error for a root withdrawn by another
+			// completed path. Only a successful bounded listing proves absence;
+			// IsPinned cannot distinguish an unreachable node from no pin.
+			pins, listErr := client.ListPins(rpcctx, 10000)
+			if _, stillPinned := pins[row.Cid]; listErr == nil && !stillPinned {
+				err = nil
+			}
+		}
 		if err == nil {
 			_, err = client.RepoGC(rpcctx)
 		}

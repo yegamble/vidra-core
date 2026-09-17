@@ -50,6 +50,7 @@ type cleanupClient struct {
 	ipfs.Client
 	unpins, gcs int
 	fail        bool
+	absent      bool
 }
 
 func (c *cleanupClient) Unpin(context.Context, string) error {
@@ -60,6 +61,12 @@ func (c *cleanupClient) Unpin(context.Context, string) error {
 	return nil
 }
 func (c *cleanupClient) RepoGC(context.Context) (int64, error) { c.gcs++; return 1, nil }
+func (c *cleanupClient) ListPins(context.Context, int) (map[string]struct{}, error) {
+	if c.absent {
+		return map[string]struct{}{}, nil
+	}
+	return nil, errors.New("node unavailable")
+}
 
 type cleanupControl struct {
 	requested int
@@ -74,18 +81,18 @@ func (c *cleanupControl) Request(_ context.Context, action string, _ int64, id, 
 
 func TestReturnedCopyCleanupProtectsLedgerAndRetainsFailedRPC(t *testing.T) {
 	for _, tc := range []struct {
-		name             string
-		referenced, fail bool
-		unpins, gcs      int
-		finish           bool
-	}{{"shared-or-newer-ledger-root", true, false, 0, 0, true}, {"orphan", false, false, 1, 1, true}, {"unknown-outcome", false, true, 1, 0, false}} {
+		name                     string
+		referenced, fail, absent bool
+		unpins, gcs              int
+		finish                   bool
+	}{{"shared-or-newer-ledger-root", true, false, false, 0, 0, true}, {"orphan", false, false, false, 1, 1, true}, {"unknown-outcome", false, true, false, 1, 0, false}, {"already-unpinned", false, true, true, 1, 1, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &cleanupFake{capacity: sqlcgen.IpfsCapacity{CleanupPending: 1}, referenced: tc.referenced}
-			c := &cleanupClient{fail: tc.fail}
+			c := &cleanupClient{fail: tc.fail, absent: tc.absent}
 			doc := ipfscontrol.Document{Revision: 2, PolicyActive: true, Config: ipfscontrol.Config{Provider: "internal"}}
 			host := ipfscontrol.HostStatus{ObservedState: "running", AppliedConfigRevision: 2, ObservedAt: time.Now()}
 			pending, err := reconcileCopyCleanup(context.Background(), r, &cleanupControl{}, c, doc, host)
-			if !pending || (err != nil) != tc.fail || c.unpins != tc.unpins || c.gcs != tc.gcs || r.finished != tc.finish || !r.capacity.MaintenanceToken.Valid {
+			if !pending || (err != nil) != (tc.fail && !tc.absent) || c.unpins != tc.unpins || c.gcs != tc.gcs || r.finished != tc.finish || !r.capacity.MaintenanceToken.Valid {
 				t.Fatalf("pending=%v err=%v calls=%+v repo=%+v", pending, err, c, r)
 			}
 		})
