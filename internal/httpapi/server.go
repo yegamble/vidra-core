@@ -2270,6 +2270,7 @@ func (s *Server) routes() {
 	// (stable contract): status + kick a reconcile. Both answer 503 ipfs_disabled
 	// when neither the public nor private tier is enabled. Config-gated inside the
 	// handler, so no service wiring is needed when both tiers are off.
+	api.GET("/ipfs/gateway/authorize", s.handleIPFSGatewayAuthorize)
 	api.GET("/ipfs/status", s.handleIPFSStatus, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	api.POST("/admin/ipfs/reconcile", s.handleIPFSReconcile, s.requireAuth, s.requireRole(admin.RoleAdmin))
 

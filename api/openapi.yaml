@@ -14750,6 +14750,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/ipfs/gateway/authorize:
+    get:
+      operationId: authorizeIPFSGateway
+      tags: [system]
+      summary: Check current public gateway root eligibility
+      description: |
+        Read-only reverse proxy precheck. The proxy must overwrite X-Forwarded-Uri
+        and X-Forwarded-Method with the original request and must not cache this
+        result or the media response. This endpoint issues no access credential.
+      security: []
+      parameters:
+        - in: header
+          name: X-Forwarded-Uri
+          required: true
+          schema: {type: string, maxLength: 2048}
+        - in: header
+          name: X-Forwarded-Method
+          required: true
+          schema: {type: string, enum: [GET, HEAD]}
+      responses:
+        '204':
+          description: The root has a currently eligible public pin
+        '404':
+          description: Unknown, withdrawn, malformed, or unavailable root
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/ipfs/status:
     get:
       operationId: getIPFSStatus
