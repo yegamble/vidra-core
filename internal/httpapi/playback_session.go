@@ -138,6 +138,17 @@ func (s *Server) handleCreatePlaybackSession(c echo.Context) error {
 		resp.ExpiresIn = int(ttl / time.Second)
 	}
 	resp.DRM = s.sessionDRM(c, id, sessionID)
+	if v.Privacy == "public" && v.State == "published" && resp.DRM == nil {
+		if demand, ok := s.ipfsmirrorsvc.(interface {
+			DemandPublicVideo(context.Context, uuid.UUID) error
+		}); ok {
+			// Admission stays off the request path. This only coalesces one intent;
+			// a slow queue must not delay authoritative playback beyond this bound.
+			ctx, cancel := context.WithTimeout(c.Request().Context(), 100*time.Millisecond)
+			_ = demand.DemandPublicVideo(ctx, id)
+			cancel()
+		}
+	}
 	if ready && resp.DRM == nil && v.Privacy == "public" && v.State == "published" {
 		resp.IPFSHLSURL = s.sessionIPFSHLS(c.Request().Context(), id, tree.masterKey)
 	}

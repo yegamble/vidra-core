@@ -4,7 +4,11 @@ package store
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +22,26 @@ import (
 )
 
 type managedTestHost struct{ q *sqlcgen.Queries }
+
+type managedTestNode struct {
+	ipfs.Client
+	after func()
+}
+
+func (n managedTestNode) Add(ctx context.Context, name string, r io.Reader) (ipfs.AddResult, error) {
+	result, err := n.Client.Add(ctx, name, r)
+	if err == nil {
+		n.after()
+	}
+	return result, err
+}
+func (n managedTestNode) AddDirectory(ctx context.Context, entries []ipfs.DirEntry) (ipfs.AddResult, error) {
+	result, err := n.Client.AddDirectory(ctx, entries)
+	if err == nil {
+		n.after()
+	}
+	return result, err
+}
 
 func (h managedTestHost) Status(ctx context.Context) (ipfscontrol.HostStatus, error) {
 	c, err := h.q.GetIPFSControlConfig(ctx)
@@ -65,9 +89,21 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blobs, err := storage.NewLocal(t.TempDir())
+	local, err := storage.NewLocal(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
+	}
+	var blobs storage.Backend = local
+	if endpoint := os.Getenv("S3_TEST_ENDPOINT"); endpoint != "" {
+		s3, e := storage.NewS3(storage.S3Config{Endpoint: endpoint, Bucket: "vidra-ipfs-managed-test", AccessKey: "vidra", SecretKey: "vidra-dev-secret", ForcePathStyle: true})
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = s3.EnsureBucket(ctx); e != nil {
+			t.Fatal(e)
+		}
+		blobs = s3
+		defer s3.DeletePrefix(context.Background(), "streaming-playlists/hls/"+id.String())
 	}
 	for object, data := range map[string]string{master: "#EXTM3U\n720/seg.ts", strings.TrimSuffix(master, "imported-master.m3u8") + "720/seg.ts": "media"} {
 		if _, err = blobs.Put(ctx, object, strings.NewReader(data)); err != nil {
@@ -84,7 +120,18 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	node := ipfs.NewFakeIPFSClient()
+	var nodeClient ipfs.Client = ipfs.NewFakeIPFSClient()
+	if endpoint := os.Getenv("IPFS_TEST_API_URL"); endpoint != "" {
+		nodeClient = ipfs.NewKuboClient(endpoint, &http.Client{Timeout: 5 * time.Second})
+	}
+	var withdraw atomic.Bool
+	hookResult := make(chan error, 1)
+	node := managedTestNode{Client: nodeClient, after: func() {
+		if withdraw.Load() {
+			_, e := st.Pool.Exec(ctx, "UPDATE videos SET privacy='private' WHERE id=$1", id)
+			hookResult <- e
+		}
+	}}
 	mirror := ipfsmirror.New(q, ipfsmirror.NewSQLLookups(q), blobs, node, ipfsmirror.Config{GatewayURL: "https://gateway.test", AddTimeout: time.Second})
 	mirror.ConfigureControl(control)
 	if err = mirror.DemandPublicVideo(ctx, id); err != nil {
@@ -144,6 +191,54 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 	row, err = q.GetIPFSPinByObjectKey(ctx, key)
 	if err != nil || row.State != "unpinned" {
 		t.Fatalf("paused withdrawal %+v %v", row, err)
+	}
+	// A missed enqueue cannot let a completion overwrite newly private facts.
+	// This interleaves the visibility commit AFTER the node returned its CID.
+	_, err = st.Pool.Exec(ctx, "UPDATE videos SET privacy='public' WHERE id=$1", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Enabled = true
+	doc, err = control.Save(ctx, doc.Revision, c, uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withdraw.Store(true)
+	if err = mirror.OnTranscodeComplete(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = mirror.DrainDue(ctx, 8); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err = <-hookResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("copy callback not reached")
+	}
+	for {
+		row, err = q.GetIPFSPinByObjectKey(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row.State == "unpinned" && !row.ClaimToken.Valid {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("losing privacy completion did not clean up: %+v", row)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if pinned, e := node.IsPinned(ctx, row.Cid); e != nil || pinned {
+		t.Fatalf("private race pin retained: %v %v", pinned, e)
+	}
+	c.Enabled = false
+	doc, err = control.Save(ctx, doc.Revision, c, uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 	// A crashed copy retains its reservation until a later confirmed restart.
 	_, err = st.Pool.Exec(ctx, "UPDATE media_ipfs_pins SET claim_token=$2, lease_until=now()-interval '1 second', reservation_bytes=100,admitted_host_sequence=$3 WHERE object_key=$1", key, uuid.New(), int64(0))
