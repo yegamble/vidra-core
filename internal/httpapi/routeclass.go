@@ -43,6 +43,9 @@ var mediaRouteTemplates = map[string]struct{}{
 	"/api/v1/instance/banner":             {},
 	"/api/v1/instance/logo/:type":         {},
 
+	// Gateway checks occur once per media request and share the media budget.
+	"/api/v1/ipfs/gateway/authorize": {},
+
 	// Playback. HLS adds roughly ten segment GETs a minute per viewer on top of
 	// the playlist reads, and the player prefetches in bursts.
 	"/api/v1/videos/:id/hls/master.m3u8":      {},

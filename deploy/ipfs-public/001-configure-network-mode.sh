@@ -49,7 +49,8 @@ case "${IPFS_PUBLIC_NETWORK:-false}" in
 		ipfs bootstrap add auto >/dev/null
 		ipfs config Routing.Type auto
 		ipfs config profile apply announce-on >/dev/null
-		ipfs config --json Gateway.NoFetch false
+		# Public swarm participation does not make this an arbitrary fetch proxy.
+		ipfs config --json Gateway.NoFetch true
 		ipfs config --json Swarm.RelayClient.Enabled true
 		ipfs config --json Swarm.EnableHolePunching true
 		ipfs config --json Swarm.RelayService.Enabled true
