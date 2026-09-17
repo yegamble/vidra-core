@@ -24,20 +24,29 @@ column and REFUSES to run outside the verified range unless a human passes
 `--force`. Ralph/agents MUST NEVER self-pass `--force` — an unverified version is
 a hard stop requiring operator sign-off.
 
-- Supported `migrationVersion` range: **700 – 1000** (constants
+- Supported `migrationVersion` range: **700 – 1040** (constants
   `MinSupportedSchemaVersion` / `MaxSupportedSchemaVersion` in
   `internal/peertubeimport/version.go`).
-- This range approximately covers PeerTube's **5.x – 8.x** schema line
-  (2023–2026). It is deliberately conservative and APPROXIMATE: the exact
-  version↔release mapping is not authoritatively pinned here, so an operator
-  migrating from a version near the edges should verify column compatibility by
-  hand before `--force`.
-- The importer reads a documented SUBSET of PeerTube's schema (user/account/
-  actor, videoChannel, video/videoFile/thumbnail/videoCaption, videoComment,
-  videoStreamingPlaylist, videoPlaylist/element, tag/videoTag, actorFollow) plus
-  `application`. HLS streaming playlists are supported in media reference mode;
-  HLS copying, moderation state, notification settings, and watch history remain
-  intentionally deferred (regenerate/reconcile post-import).
+- The upper bound is pinned to **PeerTube v8.2.4**, commit
+  `30eb3cc4f8701198ec1c785aedd2fbb5db401a2f`: its
+  [LAST_MIGRATION_VERSION](https://github.com/Chocobozzz/PeerTube/blob/30eb3cc4f8701198ec1c785aedd2fbb5db401a2f/server/core/initializers/constants.ts)
+  is 1040. Verified on 2026-09-17. The older lower bound remains unchanged.
+- Reviewed upstream migrations 1005–1040: download statistics rename videoView
+  to videoStat (neither is imported); live DVR and ownership notifications add
+  or rename unimported fields; playlist thumbnails lose their unique index
+  (video artwork selection excludes playlist-only rows); varchar widening
+  preserves reader types; 1040 expires OAuth tokens (never imported).
+- PostgreSQL end-to-end coverage runs both schema 800 and 1040, including
+  current actor-side account/channel links, unified thumbnails, duplicate
+  playlist thumbnail variants, dry-run, import, media copying, and idempotent
+  reruns. Unknown, older, and newer-than-1040 schemas remain gated.
+- The importer reads a subset of the source, not every PeerTube feature. HLS
+  copy/reference, local-video watch history and artwork are supported. Missing
+  source artwork is distinct from schema incompatibility: HTTP 404/410 after
+  storage fallback is reported as missing_source within failed counts and
+  remains retryable after the source file is restored. Moderation/notification
+  settings, remote watch history, live sessions and plugin runtime state still
+  have coverage gaps listed in each import report.
 - When the reference release is bumped, re-verify this range against a known
   PeerTube dump and update the constants + this note in the same change.
 

@@ -451,7 +451,12 @@ func (im *Importer) runVideoImageTargets(
 					continue
 				}
 				im.markVideoImageFailed(ctx, t, safeErr(err))
-				im.videoImageCount(r, t.kind, func(c *Counts) { c.Failed++ })
+				im.videoImageCount(r, t.kind, func(c *Counts) {
+					c.Failed++
+					if errors.Is(err, errSourceImageMissing) {
+						c.MissingSource++
+					}
+				})
 				im.logger.WarnContext(ctx, "peertube import: video image failed",
 					"kind", t.kind, "source_id", t.sourceID, "error", err)
 			}

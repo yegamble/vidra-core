@@ -116,6 +116,9 @@ type Counts struct {
 	Skipped     int `json:"skipped"`
 	Failed      int `json:"failed"`
 	Unsupported int `json:"unsupported"`
+	// MissingSource is a subset of Failed: artwork absent from the source
+	// filesystem whose HTTP fallback returned 404/410. It remains retryable.
+	MissingSource int `json:"missing_source,omitempty"`
 }
 
 // Report is the machine-readable summary of a plan (dry-run) or a run. It is the

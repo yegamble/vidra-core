@@ -56,6 +56,12 @@ const secretPrivKeyAlice = "PRIVKEY-ALICE-DO-NOT-LOG"
 const sourceCategorySettings = `{"json-categories-as-text": "{\"add\":[{\"key\":51,\"label\":\"Giantess\"},{\"key\":52,\"label\":\"Shrunken\"}],\"delete\":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]}"}`
 
 func TestPeerTubeImportEndToEnd(t *testing.T) {
+	for _, version := range []int{800, 1040} {
+		t.Run(strconv.Itoa(version), func(t *testing.T) { testPeerTubeImportEndToEnd(t, version) })
+	}
+}
+
+func testPeerTubeImportEndToEnd(t *testing.T, sourceVersion int) {
 	base := os.Getenv("DATABASE_URL")
 	if base == "" {
 		t.Skip("DATABASE_URL not set; skipping integration test")
@@ -72,6 +78,23 @@ func TestPeerTubeImportEndToEnd(t *testing.T) {
 	dest, _ := newScratchDB(t, ctx, base)
 	applyMigrations(t, ctx, dest)
 	seedPeerTube(t, ctx, src, string(testHash), secretPrivKeyAlice)
+	if sourceVersion == 1040 {
+		// Current actor-side links and unified, multi-size thumbnails. Playlist
+		// thumbnails may now repeat; they must not enter the video artwork pass.
+		for _, query := range []string{
+			`ALTER TABLE actor ADD COLUMN "accountId" integer, ADD COLUMN "videoChannelId" integer`,
+			`UPDATE actor SET "accountId"=a.id FROM account a WHERE a."actorId"=actor.id`,
+			`UPDATE actor SET "videoChannelId"=c.id FROM "videoChannel" c WHERE c."actorId"=actor.id`,
+			`ALTER TABLE account DROP COLUMN "actorId"`,
+			`ALTER TABLE "videoChannel" DROP COLUMN "actorId"`,
+			`ALTER TABLE thumbnail DROP COLUMN type, ADD COLUMN "videoPlaylistId" integer`,
+			`INSERT INTO thumbnail (id,filename,"videoPlaylistId",width,height) VALUES (200,'playlist-small.jpg',1,280,157),(201,'playlist-large.jpg',1,850,480)`,
+			`ALTER TABLE video ADD COLUMN downloads integer NOT NULL DEFAULT 0`,
+		} {
+			mustExec(t, ctx, src, query)
+		}
+	}
+	mustExec(t, ctx, src, `UPDATE application SET "migrationVersion"=$1`, sourceVersion)
 
 	srcMediaDir := t.TempDir()
 	destMediaDir := t.TempDir()
@@ -99,8 +122,8 @@ func TestPeerTubeImportEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
-	if version != 800 {
-		t.Fatalf("detected version = %d, want 800", version)
+	if version != sourceVersion {
+		t.Fatalf("detected version = %d, want %d", version, sourceVersion)
 	}
 
 	// ── dry-run BEFORE the real run: reports the plan and writes nothing ──

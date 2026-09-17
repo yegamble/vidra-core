@@ -79,6 +79,10 @@ var errNotAnImage = errors.New("peertubeimport: response is not a supported imag
 // is terminal.
 var errImageTooLarge = errors.New("peertubeimport: source image exceeds the size cap")
 
+// Missing artwork is not an unsupported format: an operator can restore it on
+// the source, so retain the failed ledger state and retry it on the next run.
+var errSourceImageMissing = errors.New("peertubeimport: source image is missing; restore the source file or its backup before retrying")
+
 // lazyStaticFetcher pulls one family's bytes from the source instance's public
 // origin. Both the origin and the route prefix are PINNED for the whole run: one
 // host is contacted, and a filename from the source database can only ever
@@ -126,6 +130,9 @@ func (f *lazyStaticFetcher) fetch(ctx context.Context, filename string) ([]byte,
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+			return nil, "", fmt.Errorf("%w (HTTP %d)", errSourceImageMissing, resp.StatusCode)
+		}
 		return nil, "", fmt.Errorf("peertubeimport: source answered %d for %s", resp.StatusCode, strings.Trim(f.prefix, "/"))
 	}
 	// First gate, before a single byte of body is read: the SPA fallback answers
