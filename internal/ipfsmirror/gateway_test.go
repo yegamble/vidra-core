@@ -2,13 +2,74 @@ package ipfsmirror
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/vidra/vidra-core/internal/ipfs"
+	"github.com/vidra/vidra-core/internal/ipfscontrol"
+	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
+
+type gatewayControlRepo struct {
+	ipfscontrol.Repository
+	active bool
+	err    error
+}
+
+func (r gatewayControlRepo) GetIPFSControlConfig(context.Context) (sqlcgen.IpfsControlConfig, error) {
+	b, _ := json.Marshal(ipfscontrol.Config{Provider: "internal", BudgetBytes: 20 << 30, MinFreeBytes: 20 << 30, CopyBytesPerSecond: 2 << 20, Workers: 1})
+	return sqlcgen.IpfsControlConfig{Config: b, Revision: 1, PolicyActive: r.active}, r.err
+}
+
+func TestPublicGatewayLegacyHLSBeforePolicyAdoption(t *testing.T) {
+	id := uuid.New()
+	cid := ipfs.RawLeafCIDv1([]byte("legacy HLS"))
+	master := "streaming-playlists/hls/imported/hash-master.m3u8"
+	for _, tc := range []struct {
+		name    string
+		control *gatewayControlRepo
+		change  func(*sqlcgen.MediaIpfsPin, *masterLookups)
+		want    bool
+	}{
+		{name: "legacy without control", want: true},
+		{name: "policy not adopted", control: &gatewayControlRepo{}, want: true},
+		{name: "adopted policy", control: &gatewayControlRepo{active: true}},
+		{name: "unavailable policy", control: &gatewayControlRepo{err: errors.New("unavailable")}},
+		{name: "managed intent", change: func(r *sqlcgen.MediaIpfsPin, _ *masterLookups) { r.PolicyReason = "demand" }},
+		{name: "superseded generation", change: func(r *sqlcgen.MediaIpfsPin, _ *masterLookups) { r.CommittedGeneration = "old/master.m3u8" }},
+		{name: "wrong root", change: func(r *sqlcgen.MediaIpfsPin, _ *masterLookups) { r.CarRoot = "different" }},
+		{name: "wrong key", change: func(r *sqlcgen.MediaIpfsPin, _ *masterLookups) { r.ObjectKey = "different/" }},
+		{name: "no current master", change: func(_ *sqlcgen.MediaIpfsPin, l *masterLookups) { l.master = "" }},
+		{name: "private", change: func(_ *sqlcgen.MediaIpfsPin, l *masterLookups) { l.videoPrivacy = "private" }},
+		{name: "current managed generation", control: &gatewayControlRepo{active: true}, change: func(r *sqlcgen.MediaIpfsPin, _ *masterLookups) { r.CommittedGeneration = master }, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := sqlcgen.MediaIpfsPin{ObjectKey: media.HLSKeyPrefix(id) + "/", Cid: cid, CarRoot: cid, State: "pinned", Network: "public", MediaClass: string(ClassHLS), VideoID: pgUUID(id), PolicyReason: "legacy"}
+			l := &masterLookups{fakeLookups: &fakeLookups{videoOK: true, videoPrivacy: "public", videoState: "published", userOK: true, userActive: true}, master: master}
+			if tc.change != nil {
+				tc.change(&row, l)
+			}
+			r := &gatewayRepo{fakeRepo: newFakeRepo(), roots: []sqlcgen.MediaIpfsPin{row}}
+			r.rows[row.ObjectKey] = &row
+			s := New(r, l, newBlobs(t), ipfs.NewFakeIPFSClient(), testConfig())
+			if tc.control != nil {
+				s.ConfigureControl(ipfscontrol.NewService(tc.control, nil, ipfscontrol.Config{}))
+			}
+			got, err := s.PublicGatewayRootAllowed(context.Background(), cid)
+			if got != tc.want {
+				t.Fatalf("allowed=%v error=%v want=%v", got, err, tc.want)
+			}
+			if row.CommittedGeneration == "" {
+				if _, allowed, _ := s.PublicPlaybackHLS(context.Background(), id, master); allowed {
+					t.Fatal("legacy exception must not enable automatic IPFS preference")
+				}
+			}
+		})
+	}
+}
 
 type gatewayRepo struct {
 	*fakeRepo
