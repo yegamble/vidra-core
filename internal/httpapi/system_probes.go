@@ -115,6 +115,16 @@ func (s *Server) systemComponents(ctx context.Context) (map[string]componentStat
 		}()
 	}
 	wg.Wait()
+	// Managed node state is an admin-only bounded probe; the gateway-only
+	// readiness and playback gates above remain unchanged.
+	ipfsCtx, cancelIPFS := context.WithTimeout(ctx, systemProbeTimeout)
+	if status, ok := s.managedIPFSStatus(ipfsCtx, components["ipfs"]); ok {
+		components["ipfs"] = status
+		if status.Status == "down" || status.Status == "degraded" {
+			healthy = false
+		}
+	}
+	cancelIPFS()
 
 	// The settings poller is a fifth component but NOT a fifth probe: its
 	// health is an in-memory read of the record the poll loop already keeps, so
