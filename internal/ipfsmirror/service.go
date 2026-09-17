@@ -1464,6 +1464,7 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 			"attempts", row.Attempts+1, "reason", "empty_tree")
 		return false
 	}
+	generation := s.legacyCopyGeneration(ctx, nc, row, prefix, keys)
 	res, err := nc.client.AddDirectory(ctx, entries)
 	if err != nil {
 		s.recordFailure(ctx, row, "directory add+pin rpc failed")
@@ -1483,6 +1484,15 @@ func (s *Service) pinDirectory(ctx context.Context, nc netClient, row sqlcgen.Cl
 		// the tree is pinned on this network's node for a now-non-public video. Remove
 		// the new car_root now (row.CarRoot carries any superseded prior root to GC too).
 		return s.pinRacedUnpin(ctx, nc, row, res.CID, row.CarRoot, state)
+	}
+	if generation != "" {
+		writer := s.repo.(legacyGenerationWriter) // capability checked before copying
+		if _, err := writer.RecordLegacyIPFSGeneration(ctx, sqlcgen.RecordLegacyIPFSGenerationParams{
+			ObjectKey: row.ObjectKey, Cid: res.CID, Generation: generation,
+		}); err != nil {
+			// The pin remains valid, but playback cannot prefer an uncertified tree.
+			s.logger.Warn("ipfs generation receipt failed", "error", jobstatus.RedactError(err))
+		}
 	}
 	// Best-effort cluster replication (STOR-05) of the now-node-pinned car_root.
 	s.clusterPin(ctx, nc, res.CID)
