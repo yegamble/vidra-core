@@ -18196,6 +18196,24 @@ components:
             the live playlist path and carries no version: live segments are
             ephemeral, are never stored, and have no generation to fence.
           example: /api/v1/videos/6ba7b810-9dad-11d1-80b4-00c04fd430c8/hls/master.m3u8?v=ctw5ps0e8w00
+        authoritative_hls_url:
+          type: string
+          description: >-
+            The ordinary generation-versioned HLS URL, equal to hls_url for
+            ready VOD. Use this after a bounded IPFS startup or stall failure.
+            Its segments use normal origin/CDN delivery and never redirect to
+            IPFS. Omitted without a ready tree and on live sessions.
+        ipfs_hls_url:
+          type: string
+          format: uri
+          description: >-
+            Optional public IPFS gateway master playlist URL for the exact
+            current promoted generation, including its actual imported filename.
+            Present only for clear public published media with a complete,
+            eligible public pin, delivery enabled, and an affirmative gateway
+            health observation. Never append credentials or playback tokens.
+            Try with a bounded startup/stall deadline, then fall back to
+            authoritative_hls_url. Omission never blocks ordinary playback.
         dash_url:
           type: string
           description: >-

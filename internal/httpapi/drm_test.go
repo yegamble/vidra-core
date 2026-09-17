@@ -118,7 +118,8 @@ func postClearKeyLicense(srv *Server, videoID, bearer, body string) *httptest.Re
 // that would be a silent contract change: clients would start seeing a
 // protection block for media that is not protected, and the ones that act on it
 // would try to negotiate a CDM for clear bytes. So this asserts on the RAW BODY
-// that the key set is exactly what it was before internal/drm existed, rather
+// that the key set matches the current clear-media contract (including the
+// authoritative HLS fallback), rather
 // than on a decoded struct (which cannot tell an absent field from a zero one).
 func TestPlaybackSessionJSONUnchangedByDefault(t *testing.T) {
 	cases := []struct {
@@ -133,7 +134,7 @@ func TestPlaybackSessionJSONUnchangedByDefault(t *testing.T) {
 				seedReadyHLS(t, env.tc, env.blobs, id)
 				return id, "", ""
 			},
-			wantKeys: []string{"hls_url", "packaging_format", "renditions", "session_id", "video_id"},
+			wantKeys: []string{"authoritative_hls_url", "hls_url", "packaging_format", "renditions", "session_id", "video_id"},
 		},
 		{
 			name: "cmaf video advertises dash and nothing else",
@@ -142,7 +143,7 @@ func TestPlaybackSessionJSONUnchangedByDefault(t *testing.T) {
 				seedReadyCMAF(t, env.tc, env.blobs, id)
 				return id, "", ""
 			},
-			wantKeys: []string{"dash_url", "hls_url", "packaging_format", "renditions", "session_id", "video_id"},
+			wantKeys: []string{"authoritative_hls_url", "dash_url", "hls_url", "packaging_format", "renditions", "session_id", "video_id"},
 		},
 		{
 			name: "no ready tree yet",
@@ -160,7 +161,7 @@ func TestPlaybackSessionJSONUnchangedByDefault(t *testing.T) {
 				seedReadyHLS(t, env.tc, env.blobs, id)
 				return id, "", unlockToken(t, env.srv, id, "hunter2secret")
 			},
-			wantKeys: []string{"expires_in", "hls_url", "packaging_format", "playback_token", "renditions", "session_id", "video_id"},
+			wantKeys: []string{"authoritative_hls_url", "expires_in", "hls_url", "packaging_format", "playback_token", "renditions", "session_id", "video_id"},
 		},
 	}
 
@@ -188,7 +189,7 @@ func TestPlaybackSessionJSONUnchangedByDefault(t *testing.T) {
 			}
 			sort.Strings(got)
 			if strings.Join(got, ",") != strings.Join(tc.wantKeys, ",") {
-				t.Fatalf("session keys = %v, want %v — the default session response must be byte-identical to the one that shipped before the DRM seam existed", got, tc.wantKeys)
+				t.Fatalf("session keys = %v, want %v — the default session must match the clear-media contract without a DRM block", got, tc.wantKeys)
 			}
 		})
 	}
