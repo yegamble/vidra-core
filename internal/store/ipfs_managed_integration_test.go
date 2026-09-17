@@ -21,24 +21,27 @@ import (
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-type managedTestHost struct{ q *sqlcgen.Queries }
+type managedTestHost struct {
+	q    *sqlcgen.Queries
+	used int64
+}
 
 type managedTestNode struct {
 	ipfs.Client
-	after func()
+	after func(string)
 }
 
 func (n managedTestNode) Add(ctx context.Context, name string, r io.Reader) (ipfs.AddResult, error) {
 	result, err := n.Client.Add(ctx, name, r)
 	if err == nil {
-		n.after()
+		n.after(result.CID)
 	}
 	return result, err
 }
 func (n managedTestNode) AddDirectory(ctx context.Context, entries []ipfs.DirEntry) (ipfs.AddResult, error) {
 	result, err := n.Client.AddDirectory(ctx, entries)
 	if err == nil {
-		n.after()
+		n.after(result.CID)
 	}
 	return result, err
 }
@@ -52,7 +55,7 @@ func (h managedTestHost) Status(ctx context.Context) (ipfscontrol.HostStatus, er
 	if err != nil {
 		return ipfscontrol.HostStatus{}, err
 	}
-	used, free := int64(0), int64(100<<20)
+	used, free := h.used, int64(100<<20)
 	id := op.ID.String()
 	return ipfscontrol.HostStatus{ProtocolVersion: 1, ObservedState: "running", AppliedConfigRevision: c.Revision, LastOperationID: &id, LastOperationSequence: op.Sequence, Operation: &ipfscontrol.HostOperation{ID: id, Sequence: op.Sequence, ConfigRevision: op.ConfigRevision, State: "succeeded"}, RepoUsedBytes: &used, FilesystemFreeBytes: &free, ObservedAt: time.Now()}, nil
 }
@@ -69,12 +72,12 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 	}
 	defer st.Close()
 	q := st.Queries()
-	_, err = st.Pool.Exec(ctx, "TRUNCATE ipfs_control_operations,ipfs_control_config,ipfs_capacity")
+	_, err = st.Pool.Exec(ctx, "TRUNCATE ipfs_copy_cleanup, ipfs_control_operations,ipfs_control_config,ipfs_capacity")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		_, _ = st.Pool.Exec(context.Background(), "TRUNCATE ipfs_control_operations,ipfs_control_config,ipfs_capacity")
+		_, _ = st.Pool.Exec(context.Background(), "TRUNCATE ipfs_copy_cleanup, ipfs_control_operations,ipfs_control_config,ipfs_capacity")
 	}()
 	id, cleanup := seedVideoRow(t, st)
 	defer cleanup()
@@ -111,7 +114,7 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 		}
 	}
 	c := ipfscontrol.Config{Provider: "internal", Enabled: true, AutoPinNew: true, DemandPin: true, BudgetBytes: 8 << 20, MinFreeBytes: 2 << 20, CopyBytesPerSecond: 1 << 20, Workers: 1}
-	control := ipfscontrol.NewService(q, managedTestHost{q}, c)
+	control := ipfscontrol.NewService(q, managedTestHost{q: q}, c)
 	doc, err := control.Config(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -125,14 +128,19 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 		nodeClient = ipfs.NewKuboClient(endpoint, &http.Client{Timeout: 5 * time.Second})
 	}
 	var changeDuringCopy atomic.Int32
+	var returnedRoot atomic.Value
 	hookResult := make(chan error, 1)
-	node := managedTestNode{Client: nodeClient, after: func() {
+	node := managedTestNode{Client: nodeClient, after: func(cid string) {
+		returnedRoot.Store(cid)
 		switch changeDuringCopy.Load() {
 		case 1:
 			_, e := st.Pool.Exec(ctx, "UPDATE videos SET privacy='private' WHERE id=$1", id)
 			hookResult <- e
 		case 2:
 			_, e := st.Pool.Exec(ctx, "UPDATE streaming_playlists SET master_key=$2 WHERE video_id=$1", id, master+"-new")
+			hookResult <- e
+		case 3:
+			_, e := st.Pool.Exec(ctx, "UPDATE media_ipfs_pins SET lease_until=now()-interval '1 second' WHERE object_key=$1", key)
 			hookResult <- e
 		}
 	}}
@@ -169,6 +177,12 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 	if err != nil || !ok || !strings.HasSuffix(url, "/imported-master.m3u8") {
 		t.Fatalf("playback %q %v %v", url, ok, err)
 	}
+	if _, err = mirror.DrainDue(ctx, 8); err != nil {
+		t.Fatal(err)
+	}
+	if pinned, e := node.IsPinned(ctx, row.Cid); e != nil || !pinned {
+		t.Fatalf("cleanup removed committed root: %v %v", pinned, e)
+	}
 	// Publication pause retains valid pins, but a withdrawal still drains and GC
 	// releases bytes. The gateway gate denies immediately, before the drain.
 	c.Enabled = false
@@ -196,10 +210,14 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 	if err != nil || row.State != "unpinned" {
 		t.Fatalf("paused withdrawal %+v %v", row, err)
 	}
-	for _, change := range []int32{1, 2} {
+	for _, change := range []int32{1, 2, 3} {
 		// A missed enqueue cannot let a completion overwrite newly private facts.
 		// This interleaves the visibility commit AFTER the node returned its CID.
 		_, err = st.Pool.Exec(ctx, "UPDATE videos SET privacy='public' WHERE id=$1", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = st.Pool.Exec(ctx, "UPDATE streaming_playlists SET master_key=$2 WHERE video_id=$1", id, master)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -209,6 +227,11 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 		changeDuringCopy.Store(change)
+		if change == 3 {
+			if _, err = blobs.Put(ctx, strings.TrimSuffix(master, "imported-master.m3u8")+"720/seg.ts", strings.NewReader("different payload")); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if err = mirror.OnTranscodeComplete(ctx, id); err != nil {
 			t.Fatal(err)
 		}
@@ -228,7 +251,7 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if ((change == 1 && row.State == "unpinned") || (change == 2 && row.State == "pending")) && !row.ClaimToken.Valid {
+			if (((change == 1 && row.State == "unpinned") || (change == 2 && row.State == "pending")) && !row.ClaimToken.Valid) || (change == 3 && row.ClaimToken.Valid && row.CapacityReason == "copy_failed") {
 				break
 			}
 			select {
@@ -237,7 +260,18 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 			case <-time.After(10 * time.Millisecond):
 			}
 		}
-		if pinned, e := node.IsPinned(ctx, row.Cid); e != nil || pinned {
+		// Lost-lease completion retains its returned CID durably until a proven
+		// restart releases capacity, then exclusive cleanup can safely retire it.
+		for range 4 {
+			if _, err = mirror.DrainDue(ctx, 8); err != nil {
+				t.Fatal(err)
+			}
+		}
+		capacity, e := q.GetIPFSCapacity(ctx)
+		if e != nil || capacity.ActiveClaims != 0 || capacity.CleanupPending != 0 || capacity.MaintenanceToken.Valid {
+			t.Fatalf("copy cleanup did not settle: %+v %v", capacity, e)
+		}
+		if pinned, e := node.IsPinned(ctx, returnedRoot.Load().(string)); e != nil || pinned {
 			t.Fatalf("losing copy pin retained: %v %v", pinned, e)
 		}
 	}
@@ -273,5 +307,47 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 	row, err = q.GetIPFSPinByObjectKey(ctx, key)
 	if err != nil || row.ClaimToken.Valid {
 		t.Fatalf("confirmed restart did not release %+v %v", row, err)
+	}
+}
+
+func TestIPFSManagedLoweredBudgetRetiresColdPinWithoutNewJobs(t *testing.T) {
+	ctx := context.Background()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	reset := func() {
+		_, e := st.Pool.Exec(ctx, "TRUNCATE ipfs_copy_cleanup,ipfs_control_operations,ipfs_control_config,ipfs_capacity")
+		if e != nil {
+			t.Fatal(e)
+		}
+	}
+	reset()
+	defer reset()
+	q := st.Queries()
+	key := "budget-test/" + uuid.NewString()
+	defer func() { _, _ = st.Pool.Exec(ctx, "DELETE FROM media_ipfs_pins WHERE object_key=$1", key) }()
+	_, err = st.Pool.Exec(ctx, "INSERT INTO media_ipfs_pins(object_key,media_class,cid,state,policy_reason,created_at) VALUES($1,'thumbnail',$1,'pinned','new',now()-interval '2 hours')", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := ipfscontrol.Config{Provider: "internal", Enabled: true, BudgetBytes: 1 << 20, CopyBytesPerSecond: 1 << 20, Workers: 1}
+	control := ipfscontrol.NewService(q, managedTestHost{q: q, used: 2 << 20}, c)
+	doc, err := control.Config(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = control.Save(ctx, doc.Revision, c, uuid.Nil); err != nil {
+		t.Fatal(err)
+	}
+	mirror := ipfsmirror.New(q, ipfsmirror.NewSQLLookups(q), nil, ipfs.NewFakeIPFSClient(), ipfsmirror.Config{GatewayURL: "https://gateway.test"})
+	mirror.ConfigureControl(control)
+	if _, err = mirror.DrainDue(ctx, 8); err != nil {
+		t.Fatal(err)
+	}
+	row, err := q.GetIPFSPinByObjectKey(ctx, key)
+	if err != nil || row.State != "unpinning" || row.CapacityReason != "evicted_capacity" {
+		t.Fatalf("lowered budget did not retire cold pin: %+v %v", row, err)
 	}
 }

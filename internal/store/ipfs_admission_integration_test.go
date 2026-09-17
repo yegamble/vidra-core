@@ -24,14 +24,14 @@ func TestIPFSAdmissionConcurrentBudgetAndFencedRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	_, err = st.Pool.Exec(ctx, "TRUNCATE ipfs_control_operations, ipfs_control_config, ipfs_capacity")
+	_, err = st.Pool.Exec(ctx, "TRUNCATE ipfs_copy_cleanup, ipfs_control_operations, ipfs_control_config, ipfs_capacity")
 	if err != nil {
 		t.Fatal(err)
 	}
 	prefix := "admission-test/" + uuid.NewString() + "/"
 	defer func() {
 		_, _ = st.Pool.Exec(ctx, "DELETE FROM media_ipfs_pins WHERE object_key LIKE $1", prefix+"%")
-		_, _ = st.Pool.Exec(ctx, "TRUNCATE ipfs_control_operations, ipfs_control_config, ipfs_capacity")
+		_, _ = st.Pool.Exec(ctx, "TRUNCATE ipfs_copy_cleanup, ipfs_control_operations, ipfs_control_config, ipfs_capacity")
 	}()
 	q := st.Queries()
 	c := ipfscontrol.Config{Provider: "internal", Enabled: true, AutoPinNew: true, BudgetBytes: 10 << 20, MinFreeBytes: 2 << 20, CopyBytesPerSecond: 1 << 20, Workers: 8}

@@ -17,6 +17,8 @@ import (
 )
 
 type admissionRepo interface {
+	copyCleanupRepo
+	RecordIPFSReturnedCopy(context.Context, sqlcgen.RecordIPFSReturnedCopyParams) error
 	EnsureIPFSCapacity(context.Context) (sqlcgen.IpfsCapacity, error)
 	GetIPFSCapacity(context.Context) (sqlcgen.IpfsCapacity, error)
 	AdmitIPFSPin(context.Context, sqlcgen.AdmitIPFSPinParams) (sqlcgen.MediaIpfsPin, error)
@@ -144,7 +146,25 @@ func (s *Service) drainManaged(ctx context.Context, nc netClient, batch int, doc
 	if pending, err := s.recoverClaims(ctx, r, doc, host); err != nil || pending {
 		return done, err
 	}
+	if pending, err := reconcileCopyCleanup(ctx, r, s.control, nc.client, doc, host); err != nil || pending {
+		return done, err
+	}
 	if !doc.Config.Enabled {
+		return done, nil
+	}
+	if *host.RepoUsedBytes > doc.Config.BudgetBytes || *host.FilesystemFreeBytes < doc.Config.MinFreeBytes {
+		capacity, e := r.GetIPFSCapacity(ctx)
+		if e != nil {
+			return done, e
+		}
+		// A lower quota can require retirement even with no queued uploads. Wait
+		// for copies and fresh accounting; never count an estimate as reclaimed.
+		if capacity.ActiveClaims == 0 && !host.ObservedAt.Before(capacity.MeasureAfter) {
+			_, e = r.EvictColdIPFSPin(ctx)
+			if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+				return done, e
+			}
+		}
 		return done, nil
 	}
 	if doc.Config.BackfillEnabled {
@@ -277,6 +297,17 @@ func (l frozenTreeLookups) VideoHLSTree(ctx context.Context, id uuid.UUID) (stri
 }
 
 func (r *fencedPinRepo) MarkIPFSPinned(ctx context.Context, p sqlcgen.MarkIPFSPinnedParams) (string, error) {
+	// Persist every known result before checking the lease or source consumption.
+	// A losing completion must not discard the only evidence that owns this pin.
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	for _, cid := range []string{p.Cid, r.token.Cid, r.token.CarRoot} {
+		if cid != "" {
+			if err := r.admission.RecordIPFSReturnedCopy(cleanup, sqlcgen.RecordIPFSReturnedCopyParams{ClaimToken: uuid.UUID(r.token.ClaimToken.Bytes), Cid: cid, ObjectKey: p.ObjectKey}); err != nil {
+				return "", err
+			}
+		}
+	}
 	if r.progress.Load() != r.expected {
 		return "", errors.New("ipfs copy ended before complete source consumption")
 	}

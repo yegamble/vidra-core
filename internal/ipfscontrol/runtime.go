@@ -54,12 +54,14 @@ func (s *Service) Runtime(ctx context.Context) (Runtime, error) {
 		return Runtime{}, err
 	}
 	out := Runtime{ConfigRevision: doc.Revision, Management: Management{Mode: doc.Config.Provider, DesiredState: "running", ObservedState: "unknown"}, Capacity: Capacity{BudgetBytes: doc.Config.BudgetBytes, MinFreeBytes: doc.Config.MinFreeBytes}}
+	cleanupPending := false
 	if r, ok := s.repo.(capacityReader); ok {
 		capacity, e := r.GetIPFSCapacity(ctx)
 		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
 			return out, e
 		}
 		out.Capacity.ReservedBytes = capacity.ReservedBytes
+		cleanupPending = capacity.CleanupPending > 0 || capacity.MaintenanceToken.Valid
 		stats, e := r.IPFSAdmissionStats(ctx)
 		if e != nil {
 			return out, e
@@ -115,6 +117,8 @@ func (s *Service) Runtime(ctx context.Context) (Runtime, error) {
 		reason = "publication_paused"
 	case out.Queue.ExpiredClaims > 0:
 		reason = "recovering_interrupted_copy"
+	case cleanupPending:
+		reason = "recovering_copy_cleanup"
 	case host.ObservedState != "running":
 		reason = "node_unavailable"
 	case time.Since(host.ObservedAt) > 30*time.Second || time.Until(host.ObservedAt) > 5*time.Second:
