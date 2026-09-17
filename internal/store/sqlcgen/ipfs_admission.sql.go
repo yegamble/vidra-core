@@ -32,6 +32,7 @@ WITH candidate AS MATERIALIZED (
         active_claims = b.active_claims + 1
     FROM policy c
     WHERE b.singleton AND EXISTS (SELECT 1 FROM candidate)
+      AND b.cleanup_pending = 0 AND b.maintenance_token IS NULL
       AND $2::bigint > 0
       AND $7::bigint >= 0 AND $8::bigint >= 0
       AND $9::timestamptz >= b.measure_after
@@ -220,7 +221,7 @@ func (q *Queries) DeferIPFSAdmission(ctx context.Context, arg DeferIPFSAdmission
 
 const ensureIPFSCapacity = `-- name: EnsureIPFSCapacity :one
 INSERT INTO ipfs_capacity DEFAULT VALUES
-ON CONFLICT (singleton) DO UPDATE SET singleton = true RETURNING singleton, reserved_bytes, active_claims, measure_after
+ON CONFLICT (singleton) DO UPDATE SET singleton = true RETURNING singleton, reserved_bytes, active_claims, measure_after, cleanup_pending, maintenance_token, maintenance_until, maintenance_host_sequence, maintenance_config_revision
 `
 
 func (q *Queries) EnsureIPFSCapacity(ctx context.Context) (IpfsCapacity, error) {
@@ -231,6 +232,11 @@ func (q *Queries) EnsureIPFSCapacity(ctx context.Context) (IpfsCapacity, error) 
 		&i.ReservedBytes,
 		&i.ActiveClaims,
 		&i.MeasureAfter,
+		&i.CleanupPending,
+		&i.MaintenanceToken,
+		&i.MaintenanceUntil,
+		&i.MaintenanceHostSequence,
+		&i.MaintenanceConfigRevision,
 	)
 	return i, err
 }
@@ -279,7 +285,7 @@ func (q *Queries) ExpireIPFSReservation(ctx context.Context, arg ExpireIPFSReser
 }
 
 const getIPFSCapacity = `-- name: GetIPFSCapacity :one
-SELECT singleton, reserved_bytes, active_claims, measure_after FROM ipfs_capacity WHERE singleton
+SELECT singleton, reserved_bytes, active_claims, measure_after, cleanup_pending, maintenance_token, maintenance_until, maintenance_host_sequence, maintenance_config_revision FROM ipfs_capacity WHERE singleton
 `
 
 func (q *Queries) GetIPFSCapacity(ctx context.Context) (IpfsCapacity, error) {
@@ -290,6 +296,11 @@ func (q *Queries) GetIPFSCapacity(ctx context.Context) (IpfsCapacity, error) {
 		&i.ReservedBytes,
 		&i.ActiveClaims,
 		&i.MeasureAfter,
+		&i.CleanupPending,
+		&i.MaintenanceToken,
+		&i.MaintenanceUntil,
+		&i.MaintenanceHostSequence,
+		&i.MaintenanceConfigRevision,
 	)
 	return i, err
 }
