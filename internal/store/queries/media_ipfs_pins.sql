@@ -220,6 +220,7 @@ UPDATE media_ipfs_pins
 SET cid = $2,
     car_root = $3,
     byte_size = $4,
+    committed_generation = '', -- a replacement copy needs its own receipt
     state = CASE
         WHEN state IN ('pending', 'pinned') THEN 'pinned'
         WHEN state = 'unpinned' THEN 'unpinning'
