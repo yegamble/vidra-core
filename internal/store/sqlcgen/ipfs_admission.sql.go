@@ -169,6 +169,18 @@ SET cid = $1, car_root = $2, byte_size = $3,
     committed_generation = p.source_generation,
     state = CASE WHEN p.state = 'pending' AND p.network = 'public'
        AND NOT EXISTS (SELECT 1 FROM video_drm_keys k WHERE k.video_id = p.video_id)
+       AND CASE
+         WHEN p.media_class IN ('hls','video_original','webm','thumbnail','storyboard','storyboard_vtt','caption') THEN true
+         WHEN p.media_class IN ('user_avatar','user_banner','channel_avatar','channel_banner') THEN EXISTS (
+           SELECT 1 FROM users u WHERE u.id=p.owner_user_id AND u.is_active AND NOT u.unlisted AND u.deleted_at IS NULL
+             AND (EXISTS (SELECT 1 FROM user_images i WHERE i.user_id=u.id AND i.storage_key=p.object_key
+                    AND 'user_'||i.kind=p.media_class)
+               OR EXISTS (SELECT 1 FROM channel_images i JOIN channels ch ON ch.id=i.channel_id
+                    WHERE ch.owner_id=u.id AND i.storage_key=p.object_key AND 'channel_'||i.kind=p.media_class)))
+         WHEN p.media_class='playlist_cover' THEN EXISTS (
+           SELECT 1 FROM playlists pl WHERE pl.visibility='public' AND pl.thumbnail_ext IS NOT NULL AND pl.thumbnail_ext<>''
+             AND 'playlist-thumbnails/'||pl.id::text||'.'||pl.thumbnail_ext=p.object_key)
+         ELSE false END
        AND (p.media_class NOT IN ('hls','video_original','webm','thumbnail','storyboard','storyboard_vtt','caption') OR EXISTS (
            SELECT 1 FROM videos v JOIN channels ch ON ch.id=v.channel_id JOIN users u ON u.id=ch.owner_id
            WHERE v.id=p.video_id AND v.privacy='public' AND v.state='published' AND u.is_active AND NOT u.unlisted
