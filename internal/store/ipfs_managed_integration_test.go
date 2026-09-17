@@ -124,11 +124,15 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 	if endpoint := os.Getenv("IPFS_TEST_API_URL"); endpoint != "" {
 		nodeClient = ipfs.NewKuboClient(endpoint, &http.Client{Timeout: 5 * time.Second})
 	}
-	var withdraw atomic.Bool
+	var changeDuringCopy atomic.Int32
 	hookResult := make(chan error, 1)
 	node := managedTestNode{Client: nodeClient, after: func() {
-		if withdraw.Load() {
+		switch changeDuringCopy.Load() {
+		case 1:
 			_, e := st.Pool.Exec(ctx, "UPDATE videos SET privacy='private' WHERE id=$1", id)
+			hookResult <- e
+		case 2:
+			_, e := st.Pool.Exec(ctx, "UPDATE streaming_playlists SET master_key=$2 WHERE video_id=$1", id, master+"-new")
 			hookResult <- e
 		}
 	}}
@@ -192,49 +196,52 @@ func TestIPFSManagedCopyDemandWithdrawalAndCrashRecovery(t *testing.T) {
 	if err != nil || row.State != "unpinned" {
 		t.Fatalf("paused withdrawal %+v %v", row, err)
 	}
-	// A missed enqueue cannot let a completion overwrite newly private facts.
-	// This interleaves the visibility commit AFTER the node returned its CID.
-	_, err = st.Pool.Exec(ctx, "UPDATE videos SET privacy='public' WHERE id=$1", id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.Enabled = true
-	doc, err = control.Save(ctx, doc.Revision, c, uuid.Nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	withdraw.Store(true)
-	if err = mirror.OnTranscodeComplete(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = mirror.DrainDue(ctx, 8); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err = <-hookResult:
+	for _, change := range []int32{1, 2} {
+		// A missed enqueue cannot let a completion overwrite newly private facts.
+		// This interleaves the visibility commit AFTER the node returned its CID.
+		_, err = st.Pool.Exec(ctx, "UPDATE videos SET privacy='public' WHERE id=$1", id)
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-ctx.Done():
-		t.Fatal("copy callback not reached")
-	}
-	for {
-		row, err = q.GetIPFSPinByObjectKey(ctx, key)
+		c.Enabled = true
+		doc, err = control.Save(ctx, doc.Revision, c, uuid.Nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if row.State == "unpinned" && !row.ClaimToken.Valid {
-			break
+		changeDuringCopy.Store(change)
+		if err = mirror.OnTranscodeComplete(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = mirror.DrainDue(ctx, 8); err != nil {
+			t.Fatal(err)
 		}
 		select {
+		case err = <-hookResult:
+			if err != nil {
+				t.Fatal(err)
+			}
 		case <-ctx.Done():
-			t.Fatalf("losing privacy completion did not clean up: %+v", row)
-		case <-time.After(10 * time.Millisecond):
+			t.Fatal("copy callback not reached")
+		}
+		for {
+			row, err = q.GetIPFSPinByObjectKey(ctx, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ((change == 1 && row.State == "unpinned") || (change == 2 && row.State == "pending")) && !row.ClaimToken.Valid {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatalf("losing privacy completion did not clean up: %+v", row)
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+		if pinned, e := node.IsPinned(ctx, row.Cid); e != nil || pinned {
+			t.Fatalf("losing copy pin retained: %v %v", pinned, e)
 		}
 	}
-	if pinned, e := node.IsPinned(ctx, row.Cid); e != nil || pinned {
-		t.Fatalf("private race pin retained: %v %v", pinned, e)
-	}
+
 	c.Enabled = false
 	doc, err = control.Save(ctx, doc.Revision, c, uuid.Nil)
 	if err != nil {

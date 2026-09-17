@@ -264,6 +264,18 @@ type fencedPinRepo struct {
 	expected  int64
 }
 
+type frozenTreeLookups struct {
+	Lookups
+	claim sqlcgen.MediaIpfsPin
+}
+
+func (l frozenTreeLookups) VideoHLSTree(ctx context.Context, id uuid.UUID) (string, bool, error) {
+	if l.claim.MediaClass == string(ClassHLS) && l.claim.VideoID.Valid && id == uuid.UUID(l.claim.VideoID.Bytes) {
+		return path.Dir(l.claim.SourceGeneration), true, nil
+	}
+	return l.Lookups.VideoHLSTree(ctx, id)
+}
+
 func (r *fencedPinRepo) MarkIPFSPinned(ctx context.Context, p sqlcgen.MarkIPFSPinnedParams) (string, error) {
 	if r.progress.Load() != r.expected {
 		return "", errors.New("ipfs copy ended before complete source consumption")
@@ -332,13 +344,24 @@ func (s *Service) copyAdmission(ctx context.Context, nc netClient, r admissionRe
 			}
 		}
 	}()
-	runner := New(&fencedPinRepo{Repository: s.repo, admission: r, token: claim, progress: &progress, expected: maximum}, s.lookups, blobs, nc.client, Config{Enabled: true, GatewayURL: s.gatewayURL, Cluster: nc.cluster, ClusterEnabled: s.clusterEnabled, Logger: s.logger, MaxAttempts: s.maxAttempts, BaseBackoff: s.baseBackoff})
+	runner := New(&fencedPinRepo{Repository: s.repo, admission: r, token: claim, progress: &progress, expected: maximum}, frozenTreeLookups{s.lookups, claim}, blobs, nc.client, Config{Enabled: true, GatewayURL: s.gatewayURL, Cluster: nc.cluster, ClusterEnabled: s.clusterEnabled, Logger: s.logger, MaxAttempts: s.maxAttempts, BaseBackoff: s.baseBackoff})
 	row := sqlcgen.ClaimDueIPFSPinsRow{ObjectKey: claim.ObjectKey, MediaClass: claim.MediaClass, Cid: claim.Cid, CarRoot: claim.CarRoot, State: claim.State, Attempts: claim.Attempts, Network: claim.Network, VideoID: claim.VideoID, OwnerUserID: claim.OwnerUserID}
 	ok := runner.pin(copyctx, nc, row)
 	cleanup, c := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer c()
 	if ok {
 		_, _ = r.ReleaseIPFSReservation(cleanup, sqlcgen.ReleaseIPFSReservationParams{ObjectKey: claim.ObjectKey, ClaimToken: claim.ClaimToken})
+		// A new transcode may have superseded this claimed tree. Its hook already
+		// ran while the old lease existed; preserve that intent after retiring the
+		// losing root instead of leaving the latest generation permanently unpinned.
+		if claim.MediaClass == string(ClassHLS) && claim.VideoID.Valid {
+			if reader, available := s.lookups.(masterKeyReader); available {
+				master, ready, e := reader.VideoHLSMasterKey(cleanup, uuid.UUID(claim.VideoID.Bytes))
+				if e == nil && ready && master != claim.SourceGeneration {
+					_ = s.OnTranscodeComplete(cleanup, uuid.UUID(claim.VideoID.Bytes))
+				}
+			}
+		}
 	} else {
 		// A transport failure is an unknown server outcome. Retain capacity until
 		// the host has definitely stopped that request; never assume cancellation
