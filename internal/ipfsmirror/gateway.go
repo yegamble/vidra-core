@@ -54,6 +54,14 @@ func (s *Service) gatewayRowEligible(ctx context.Context, row sqlcgen.MediaIpfsP
 			return false, nil
 		}
 		id := uuid.UUID(row.VideoID.Bytes)
+		if reader, ok := s.lookups.(interface {
+			VideoMirrorProtected(context.Context, uuid.UUID) (bool, error)
+		}); ok {
+			protected, err := reader.VideoMirrorProtected(ctx, id)
+			if err != nil || protected {
+				return false, err
+			}
+		}
 		privacy, state, owner, found, err := s.lookups.VideoVisibility(ctx, id)
 		if err != nil || !found {
 			return false, err
@@ -71,8 +79,12 @@ func (s *Service) gatewayRowEligible(ctx context.Context, row sqlcgen.MediaIpfsP
 			return false, nil
 		}
 		if subject.Class == ClassHLS {
-			_, found, err := s.lookups.VideoHLSTree(ctx, id)
-			return found && row.ObjectKey == media.HLSKeyPrefix(id)+"/" && row.CarRoot == row.Cid, err
+			reader, ok := s.lookups.(masterKeyReader)
+			if !ok {
+				return false, nil
+			}
+			master, found, err := reader.VideoHLSMasterKey(ctx, id)
+			return found && row.CommittedGeneration == master && row.ObjectKey == media.HLSKeyPrefix(id)+"/" && row.CarRoot == row.Cid, err
 		}
 		refs, err := s.videoMirrorRefs(ctx, id)
 		if err != nil {

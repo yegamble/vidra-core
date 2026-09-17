@@ -199,8 +199,8 @@ func ipfsDetail(h ipfsmirror.Health) map[string]string {
 // settings poller is role-gated: only the api role runs it, so a worker keeps the
 // value it booted with. This switch governs DELIVERY — which route answers a media
 // request — and a worker answers none: it pins and unpins, and that is governed by
-// IPFS_ENABLED, which is env and restart-only on every role. So the one process
-// that cannot see the flip is the one process the flip does not address.
+// the separately persisted IPFS publication policy. The worker never consults
+// this delivery switch.
 func (s *Server) ipfsDeliverySettingOn() bool {
 	// The default is read from THIS PROCESS'S OWN config rather than through the
 	// settings service's Defaults, and only an explicit admin override is taken
@@ -219,7 +219,7 @@ func (s *Server) ipfsDeliverySettingOn() bool {
 // 307 to the gateway. THREE things must hold, and each closes a distinct measured
 // failure:
 //
-//   - the master env switch (cfg.IPFSEnabled), unchanged;
+//   - a configured public node (legacy env switch or managed service capability);
 //   - the runtime toggle, so an operator can stop redirecting without a restart;
 //   - and a gateway that answered its last probe, so the api never redirects a
 //     viewer to something it has evidence is not serving.
@@ -229,7 +229,7 @@ func (s *Server) ipfsDeliverySettingOn() bool {
 // ipfsmirror/health.go: this narrows the window from "forever" to "one interval
 // plus the max-age already minted", it does not close it.
 func (s *Server) ipfsDeliveryEnabled() bool {
-	if !s.cfg.IPFSEnabled || !s.ipfsDeliverySettingOn() {
+	if !s.ipfsPublicConfigured() || !s.ipfsDeliverySettingOn() {
 		return false
 	}
 	if s.ipfsHealth == nil {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 type Management struct {
@@ -30,6 +31,21 @@ type Runtime struct {
 	ConfigRevision int64      `json:"config_revision"`
 	Management     Management `json:"management"`
 	Capacity       Capacity   `json:"capacity"`
+	Queue          Queue      `json:"queue"`
+}
+
+type Queue struct {
+	Copying        int64 `json:"copying"`
+	QueuedNew      int64 `json:"queued_new"`
+	QueuedDemand   int64 `json:"queued_demand"`
+	QueuedCapacity int64 `json:"queued_capacity"`
+	Evicted        int64 `json:"evicted"`
+	ExpiredClaims  int64 `json:"expired_claims"`
+	CopiedBytes    int64 `json:"copied_bytes"`
+}
+type capacityReader interface {
+	GetIPFSCapacity(context.Context) (sqlcgen.IpfsCapacity, error)
+	IPFSAdmissionStats(context.Context) (sqlcgen.IPFSAdmissionStatsRow, error)
 }
 
 func (s *Service) Runtime(ctx context.Context) (Runtime, error) {
@@ -38,6 +54,18 @@ func (s *Service) Runtime(ctx context.Context) (Runtime, error) {
 		return Runtime{}, err
 	}
 	out := Runtime{ConfigRevision: doc.Revision, Management: Management{Mode: doc.Config.Provider, DesiredState: "running", ObservedState: "unknown"}, Capacity: Capacity{BudgetBytes: doc.Config.BudgetBytes, MinFreeBytes: doc.Config.MinFreeBytes}}
+	if r, ok := s.repo.(capacityReader); ok {
+		capacity, e := r.GetIPFSCapacity(ctx)
+		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+			return out, e
+		}
+		out.Capacity.ReservedBytes = capacity.ReservedBytes
+		stats, e := r.IPFSAdmissionStats(ctx)
+		if e != nil {
+			return out, e
+		}
+		out.Queue = Queue{Copying: stats.Copying, QueuedNew: stats.QueuedNew, QueuedDemand: stats.QueuedDemand, QueuedCapacity: stats.QueuedCapacity, Evicted: stats.Evicted, ExpiredClaims: stats.ExpiredClaims, CopiedBytes: stats.CopiedBytes}
+	}
 	op, err := s.repo.LatestIPFSControlOperation(ctx)
 	if err == nil {
 		out.Management.Operation = operationView(op)
@@ -48,6 +76,13 @@ func (s *Service) Runtime(ctx context.Context) (Runtime, error) {
 	// explicitly opting into policy; missing a local manager is not their failure.
 	if doc.Config.Provider == "external" {
 		out.Management.DesiredState = "external"
+		if doc.PolicyActive {
+			reason := "capacity_unknown"
+			if !doc.Config.Enabled {
+				reason = "publication_paused"
+			}
+			out.Capacity.AdmissionPausedReason = &reason
+		}
 		return out, nil
 	}
 	unavailable := "node_unavailable"
@@ -74,6 +109,12 @@ func (s *Service) Runtime(ctx context.Context) (Runtime, error) {
 	out.Capacity.FilesystemFreeBytes = host.FilesystemFreeBytes
 	reason := ""
 	switch {
+	case !doc.PolicyActive:
+		reason = "policy_not_adopted"
+	case !doc.Config.Enabled:
+		reason = "publication_paused"
+	case out.Queue.ExpiredClaims > 0:
+		reason = "recovering_interrupted_copy"
 	case host.ObservedState != "running":
 		reason = "node_unavailable"
 	case time.Since(host.ObservedAt) > 30*time.Second || time.Until(host.ObservedAt) > 5*time.Second:
@@ -82,9 +123,9 @@ func (s *Service) Runtime(ctx context.Context) (Runtime, error) {
 		reason = "configuration_pending"
 	case host.RepoUsedBytes == nil || host.FilesystemFreeBytes == nil:
 		reason = "capacity_unknown"
-	case *host.RepoUsedBytes >= doc.Config.BudgetBytes:
+	case *host.RepoUsedBytes+out.Capacity.ReservedBytes >= doc.Config.BudgetBytes:
 		reason = "budget_exhausted"
-	case *host.FilesystemFreeBytes < doc.Config.MinFreeBytes:
+	case *host.FilesystemFreeBytes-out.Capacity.ReservedBytes < doc.Config.MinFreeBytes:
 		reason = "filesystem_headroom"
 	}
 	out.Capacity.AdmissionPausedReason = nil

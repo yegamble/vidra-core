@@ -236,5 +236,13 @@ func (s *Server) handleIPFSReconcile(c echo.Context) error {
 }
 
 func (s *Server) ipfsConfigured() bool {
-	return s.cfg.IPFSEnabled || s.cfg.IPFSMirrorPrivate
+	return s.ipfsPublicConfigured() || s.cfg.IPFSMirrorPrivate
+}
+
+func (s *Server) ipfsPublicConfigured() bool {
+	if s.cfg.IPFSEnabled {
+		return true
+	}
+	provider, ok := s.ipfsmirrorsvc.(interface{ PublicConfigured() bool })
+	return ok && provider.PublicConfigured()
 }

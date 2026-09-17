@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/vidra/vidra-core/internal/ipfs"
+	"github.com/vidra/vidra-core/internal/ipfscontrol"
 	"github.com/vidra/vidra-core/internal/jobstatus"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/retry"
@@ -234,12 +235,14 @@ type Config struct {
 // When Enabled is false every method is an inert no-op, so producing services can
 // call the enqueue helpers unconditionally.
 type Service struct {
-	repo    Repository
-	lookups Lookups
-	blobs   storage.Backend
-	client  ipfs.Client
-	cluster ipfs.ClusterClient
-	catalog Catalog
+	control             *ipfscontrol.Service
+	legacyPublicEnabled bool
+	repo                Repository
+	lookups             Lookups
+	blobs               storage.Backend
+	client              ipfs.Client
+	cluster             ipfs.ClusterClient
+	catalog             Catalog
 
 	// Private-tier (P19.P1): the second, swarm.key'd node client + its tunables. Nil
 	// / privateEnabled=false ⇒ no private drain (default, no behavior change).
@@ -293,18 +296,19 @@ type Service struct {
 // nil when Enabled is false (the no-op path). All defaults are filled in.
 func New(repo Repository, lookups Lookups, blobs storage.Backend, client ipfs.Client, cfg Config) *Service {
 	s := &Service{
-		repo:               repo,
-		lookups:            lookups,
-		blobs:              blobs,
-		client:             client,
-		cluster:            cfg.Cluster,
-		catalog:            cfg.Catalog,
-		privateEnabled:     cfg.PrivateEnabled,
-		privateClient:      cfg.PrivateClient,
-		privateCluster:     cfg.PrivateCluster,
-		privateAddTimeout:  cfg.PrivateAddTimeout,
-		privateConcurrency: cfg.PrivateConcurrency,
-		publicEnabled:      cfg.Enabled,
+		legacyPublicEnabled: cfg.Enabled,
+		repo:                repo,
+		lookups:             lookups,
+		blobs:               blobs,
+		client:              client,
+		cluster:             cfg.Cluster,
+		catalog:             cfg.Catalog,
+		privateEnabled:      cfg.PrivateEnabled,
+		privateClient:       cfg.PrivateClient,
+		privateCluster:      cfg.PrivateCluster,
+		privateAddTimeout:   cfg.PrivateAddTimeout,
+		privateConcurrency:  cfg.PrivateConcurrency,
+		publicEnabled:       cfg.Enabled,
 		// The worker runs whenever EITHER tier is active; the enqueue helpers stay
 		// no-ops only when both are off.
 		enabled:        cfg.Enabled || cfg.PrivateEnabled,
@@ -352,6 +356,8 @@ func New(repo Repository, lookups Lookups, blobs storage.Backend, client ipfs.Cl
 // Enabled reports whether the mirror is active (used to decide whether to start
 // the background worker).
 func (s *Service) Enabled() bool { return s.enabled }
+
+func (s *Service) PublicConfigured() bool { return s.client != nil && s.gatewayURL != "" }
 
 // ---- eligibility routing (tier-gated) -------------------------------------
 
@@ -1188,6 +1194,15 @@ func (s *Service) networkClient(network string) (netClient, bool) {
 // network's rows, so process() only ever touches nc's client — the public client is
 // not even in scope when nc is the private tier (the cardinal invariant, spec §8).
 func (s *Service) drainNetwork(ctx context.Context, nc netClient, batch int) (int, error) {
+	if nc.network == networkPublic && s.control != nil {
+		doc, err := s.control.Config(ctx)
+		if err != nil {
+			return 0, err
+		}
+		if doc.PolicyActive || !s.legacyPublicEnabled {
+			return s.drainManaged(ctx, nc, batch, doc)
+		}
+	}
 	rows, err := s.repo.ClaimDueIPFSPins(ctx, sqlcgen.ClaimDueIPFSPinsParams{
 		Network:      nc.network,
 		LeaseSeconds: leaseSeconds,

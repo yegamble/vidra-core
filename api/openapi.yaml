@@ -23929,7 +23929,40 @@ components:
           format: int64
         admission_paused_reason:
           type: [string, "null"]
-          description: Server-computed reason, including stale_capacity, node_unavailable, configuration_pending, capacity_unknown, budget_exhausted or filesystem_headroom.
+          description: Server-computed reason, including stale_capacity, node_unavailable, configuration_pending, capacity_unknown, budget_exhausted, filesystem_headroom, policy_not_adopted, publication_paused or recovering_interrupted_copy.
+    IPFSQueueStatus:
+      type: object
+      description: Public managed-copy queue and bytes read by active claims; no estimated completion time.
+      required: [copying, queued_new, queued_demand, queued_capacity, evicted, expired_claims, copied_bytes]
+      properties:
+        copying:
+          type: integer
+          format: int64
+          minimum: 0
+        queued_new:
+          type: integer
+          format: int64
+          minimum: 0
+        queued_demand:
+          type: integer
+          format: int64
+          minimum: 0
+        queued_capacity:
+          type: integer
+          format: int64
+          minimum: 0
+        evicted:
+          type: integer
+          format: int64
+          minimum: 0
+        expired_claims:
+          type: integer
+          format: int64
+          minimum: 0
+        copied_bytes:
+          type: integer
+          format: int64
+          minimum: 0
     IPFSStatus:
       type: object
       description: >-
@@ -23945,6 +23978,8 @@ components:
           $ref: "#/components/schemas/IPFSManagementStatus"
         capacity:
           $ref: "#/components/schemas/IPFSCapacityStatus"
+        queue:
+          $ref: "#/components/schemas/IPFSQueueStatus"
         enabled:
           type: boolean
           description: Whether IPFS_ENABLED is set on this instance.
