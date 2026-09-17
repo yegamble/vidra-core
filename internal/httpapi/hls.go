@@ -490,6 +490,8 @@ type renditionView struct {
 // readiness decision, two responses, so they cannot disagree about whether a
 // video is playable.
 type playbackTree struct {
+	// masterKey identifies the promoted generation, including imported filenames.
+	masterKey string
 	// hlsURL is the versioned master playlist path. Versioned because ?v= fences
 	// a generation: every URI inside an m3u8 is rewritten to carry it, so the
 	// whole HLS tree is immutable within a generation.
@@ -525,8 +527,9 @@ func (s *Server) hlsDetail(c echo.Context, id uuid.UUID) (playbackTree, bool) {
 	}
 	base := "/api/v1/videos/" + id.String()
 	tree := playbackTree{
-		hlsURL: base + "/hls/master.m3u8?" + hlsVersionParam + "=" + hlsCacheVersion(sp),
-		format: packagingFormat(sp),
+		masterKey: sp.MasterKey,
+		hlsURL:    base + "/hls/master.m3u8?" + hlsVersionParam + "=" + hlsCacheVersion(sp),
+		format:    packagingFormat(sp),
 	}
 	if tree.format == media.HLSFormatCMAF {
 		tree.dashURL = base + "/hls/" + hlsCMAFRendition + "/" + hlsCMAFManifestFile

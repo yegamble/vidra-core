@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -67,8 +68,12 @@ type playbackSessionResponse struct {
 	// per-request redirect decision serveMediaAsset already makes at byte-serve
 	// time. Delivery source selection stays where it is; the session says WHAT to
 	// play, not WHERE the bytes come from.
-	HLSURL  string `json:"hls_url,omitempty"`
-	DASHURL string `json:"dash_url,omitempty"`
+	HLSURL string `json:"hls_url,omitempty"`
+	// AuthoritativeHLSURL remains usable after a bounded IPFS failure: HLS
+	// segments use the ordinary delivery path, which never redirects to IPFS.
+	AuthoritativeHLSURL string `json:"authoritative_hls_url,omitempty"`
+	IPFSHLSURL          string `json:"ipfs_hls_url,omitempty"`
+	DASHURL             string `json:"dash_url,omitempty"`
 	// Renditions are the ladder rungs, tallest first — the same list the video
 	// detail carries.
 	Renditions []renditionView `json:"renditions,omitempty"`
@@ -84,7 +89,7 @@ type playbackSessionResponse struct {
 	// media, which is every video on every install — no packaging step writes
 	// content keys yet — so this field changes no shipped response. See
 	// httpapi/drm.go, and TestPlaybackSessionJSONUnchangedByDefault for the
-	// regression test that keeps the default session byte-identical.
+	// regression test that keeps clear media free of a DRM block.
 	//
 	// It lands HERE, on the response the player already calls, which is the
 	// reason this endpoint shipped before any of phase 5 existed (see the file
@@ -120,9 +125,11 @@ func (s *Server) handleCreatePlaybackSession(c echo.Context) error {
 	}
 	sessionID := uuid.New()
 	resp := playbackSessionResponse{SessionID: sessionID.String(), VideoID: id.String()}
-	if tree, ok := s.hlsDetail(c, id); ok {
+	tree, ready := s.hlsDetail(c, id)
+	if ready {
 		resp.PackagingFormat = tree.format
 		resp.HLSURL = tree.hlsURL
+		resp.AuthoritativeHLSURL = tree.hlsURL
 		resp.DASHURL = tree.dashURL
 		resp.Renditions = tree.renditions
 	}
@@ -131,6 +138,9 @@ func (s *Server) handleCreatePlaybackSession(c echo.Context) error {
 		resp.ExpiresIn = int(ttl / time.Second)
 	}
 	resp.DRM = s.sessionDRM(c, id, sessionID)
+	if ready && resp.DRM == nil && v.Privacy == "public" && v.State == "published" {
+		resp.IPFSHLSURL = s.sessionIPFSHLS(c.Request().Context(), id, tree.masterKey)
+	}
 	return c.JSON(http.StatusOK, resp)
 }
 
@@ -164,4 +174,27 @@ func (s *Server) mintSessionToken(v sqlcgen.GetVideoByIDRow, videoID, sessionID 
 // every video it starts matching (see the file comment).
 func videoRequiresPlaybackToken(v sqlcgen.GetVideoByIDRow) bool {
 	return v.Privacy == video.PrivacyPassword
+}
+
+// Optional until a mirror supports generation-fenced playback. Legacy mirrors
+// keep ordinary playback without accidentally advertising a stale tree.
+type ipfsPlaybackProvider interface {
+	PublicPlaybackHLS(context.Context, uuid.UUID, string) (string, bool, error)
+}
+
+func (s *Server) sessionIPFSHLS(ctx context.Context, id uuid.UUID, masterKey string) string {
+	if !s.ipfsDeliveryEnabled() || s.ipfsHealth == nil || !s.ipfsHealth.GatewayHealth().Redirectable() {
+		return ""
+	}
+	mirror, ok := s.ipfsmirrorsvc.(ipfsPlaybackProvider)
+	if !ok {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	target, ready, err := mirror.PublicPlaybackHLS(ctx, id, masterKey)
+	if err != nil || !ready {
+		return ""
+	}
+	return target
 }
