@@ -16465,7 +16465,13 @@ components:
         status:
           type: string
           description: >-
-            One of ok, degraded, down, not_configured. degraded is impaired but
+            One of ok, degraded, down, not_configured, paused, pending. For managed
+            IPFS, paused means the node is running with publication paused; pending
+            means configuration or gateway delivery is not ready. Neither is a
+            fault. Node, publication and gateway facts are separate detail fields;
+            an unavailable or stale managed node reports down even while paused.
+            These live manager observations are admin-only; playback still requires
+            its independent successful gateway probe. degraded is impaired but
             still serving and never takes the instance out of rotation — the
             mfa_kek component reports it when the configured MFA_KEY_KEK cannot
             decrypt the TOTP secrets this database holds, and the storage
