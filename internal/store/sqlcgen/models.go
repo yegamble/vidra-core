@@ -399,6 +399,30 @@ type InstanceSetting struct {
 	UpdatedAt time.Time   `json:"updated_at"`
 }
 
+type IpfsControlConfig struct {
+	Singleton    bool        `json:"singleton"`
+	Revision     int64       `json:"revision"`
+	Config       []byte      `json:"config"`
+	PolicyActive bool        `json:"policy_active"`
+	UpdatedBy    pgtype.UUID `json:"updated_by"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+}
+
+type IpfsControlOperation struct {
+	ID             uuid.UUID   `json:"id"`
+	Sequence       int64       `json:"sequence"`
+	ConfigRevision int64       `json:"config_revision"`
+	Action         string      `json:"action"`
+	Config         []byte      `json:"config"`
+	State          string      `json:"state"`
+	LastErrorCode  *string     `json:"last_error_code"`
+	Attempts       int32       `json:"attempts"`
+	NextAttemptAt  time.Time   `json:"next_attempt_at"`
+	RequestedBy    pgtype.UUID `json:"requested_by"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
+}
+
 type JobEvent struct {
 	Cursor          int64       `json:"cursor"`
 	ID              uuid.UUID   `json:"id"`

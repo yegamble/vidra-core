@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/ipfscontrol"
 	"github.com/vidra/vidra-core/internal/ipfsmirror"
 	"github.com/vidra/vidra-core/internal/observability"
 )
@@ -92,14 +93,15 @@ type ipfsNetworksView struct {
 // ipfsStatusView is the GET /ipfs/status body (schema IPFSStatus). The top-level
 // pins/by_class/node_reachable FOLD across swarms (back-compat); networks splits them.
 type ipfsStatusView struct {
-	Enabled          bool                     `json:"enabled"`
-	NodeReachable    bool                     `json:"node_reachable"`
-	GatewayURL       string                   `json:"gateway_url"`
-	ClusterEnabled   bool                     `json:"cluster_enabled"`
-	ClusterReachable bool                     `json:"cluster_reachable"`
-	Pins             ipfsPinCountsView        `json:"pins"`
-	ByClass          []ipfsClassPinCountsView `json:"by_class"`
-	Networks         ipfsNetworksView         `json:"networks"`
+	*ipfscontrol.Runtime `json:",omitempty"`
+	Enabled              bool                     `json:"enabled"`
+	NodeReachable        bool                     `json:"node_reachable"`
+	GatewayURL           string                   `json:"gateway_url"`
+	ClusterEnabled       bool                     `json:"cluster_enabled"`
+	ClusterReachable     bool                     `json:"cluster_reachable"`
+	Pins                 ipfsPinCountsView        `json:"pins"`
+	ByClass              []ipfsClassPinCountsView `json:"by_class"`
+	Networks             ipfsNetworksView         `json:"networks"`
 }
 
 func toClassPinCountsView(ccs []ipfsmirror.ClassCounts) []ipfsClassPinCountsView {
@@ -143,17 +145,28 @@ func toIPFSStatusView(st ipfsmirror.Status) ipfsStatusView {
 // handleIPFSStatus reports the mirror's status to an admin (P19.2): enabled, node
 // reachability, gateway URL, cluster config, and pin counts overall + per class.
 func (s *Server) handleIPFSStatus(c echo.Context) error {
-	if !s.ipfsConfigured() {
+	if !s.ipfsConfigured() && s.ipfscontrolsvc == nil {
 		return &IPFSDisabledError{}
 	}
-	if s.ipfsmirrorsvc == nil {
+	var st ipfsmirror.Status
+	if s.ipfsmirrorsvc != nil {
+		var err error
+		st, err = s.ipfsmirrorsvc.Status(c.Request().Context())
+		if err != nil {
+			return err
+		}
+	} else if s.ipfscontrolsvc == nil {
 		return echo.NewHTTPError(http.StatusNotImplemented, "ipfs mirror subsystem is not wired on this build")
 	}
-	st, err := s.ipfsmirrorsvc.Status(c.Request().Context())
-	if err != nil {
-		return err
+	out := toIPFSStatusView(st)
+	if s.ipfscontrolsvc != nil {
+		runtime, err := s.ipfscontrolsvc.Runtime(c.Request().Context())
+		if err != nil {
+			return err
+		}
+		out.Runtime = &runtime
 	}
-	return c.JSON(http.StatusOK, toIPFSStatusView(st))
+	return c.JSON(http.StatusOK, out)
 }
 
 // ipfsReconcileResultView is the POST /admin/ipfs/reconcile body (schema

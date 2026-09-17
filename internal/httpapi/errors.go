@@ -8,6 +8,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/ipfscontrol"
 	"github.com/vidra/vidra-core/internal/jobstatus"
 	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/storage"
@@ -258,6 +259,12 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusTooManyRequests
 		message = "you have too many uploads in progress; finish or cancel one and try again"
 		code = "too_many_active_uploads"
+	case errors.Is(err, ipfscontrol.ErrConflict):
+		status, code, message = http.StatusConflict, "ipfs_config_conflict", "IPFS configuration changed; reload before applying"
+	case errors.Is(err, ipfscontrol.ErrExternal):
+		status, code, message = http.StatusConflict, "ipfs_external_provider", "external nodes do not support managed lifecycle operations"
+	case errors.Is(err, ipfscontrol.ErrManagerUnavailable):
+		status, code, message = http.StatusServiceUnavailable, "ipfs_manager_unavailable", "the IPFS host manager is unavailable"
 	case errors.As(err, &id):
 		status = http.StatusServiceUnavailable
 		message = "IPFS mirroring is not enabled on this instance"
