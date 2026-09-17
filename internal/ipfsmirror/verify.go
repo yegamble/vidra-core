@@ -135,6 +135,8 @@ func (s *Service) VerifyPins(ctx context.Context) []VerifyResult {
 // Threading nc rather than s.client keeps the cardinal invariant structural here
 // too: the private ledger is never compared against the public node.
 func (s *Service) verifyNetwork(ctx context.Context, reader verifyReader, nc netClient) VerifyResult {
+	ctx, cancel := context.WithTimeout(ctx, strayCompareTimeout)
+	defer cancel()
 	res := VerifyResult{Network: nc.network, Strays: -1}
 
 	nodePins, err := nc.client.ListPins(ctx, verifyMaxLedgerCIDs)

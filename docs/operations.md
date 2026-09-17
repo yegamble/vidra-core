@@ -1345,8 +1345,11 @@ copies of anything previously published.
 
 The cache prioritizes new public media, then coalesced authorized playback demand,
 then optional old-media backfill. Backfill stays off by default. A ready HLS tree
-is preferred over redundant originals/WebM. Inventory records exact object sizes
-before copying; admission reserves conservative overhead, enforces the configured
+is preferred over redundant originals/WebM.
+An original admitted before its HLS tree becomes ready may finish; existing
+copies are not preempted solely to change representations.
+Inventory records exact object sizes before copying; admission reserves
+conservative overhead, enforces the configured
 worker/rate limits, and requires fresh measured node usage and disk headroom.
 An oversized object or a copy requiring more than 24 hours stays deferred.
 Lowering the budget retires cold managed pins gradually; recently watched,

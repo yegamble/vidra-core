@@ -1756,15 +1756,19 @@ type Status struct {
 // is configured its /id endpoint is probed the same way for cluster_reachable.
 func (s *Service) Status(ctx context.Context) (Status, error) {
 	st := Status{Enabled: s.enabled, GatewayURL: s.gatewayURL, ClusterEnabled: s.clusterEnabled}
+	// The managed Add client permits hour-long transfers; routine probes still
+	// need their own deadline so an unavailable node cannot hang the admin UI.
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	if s.client != nil {
-		if _, err := s.client.Version(ctx); err == nil {
+		if _, err := s.client.Version(probeCtx); err == nil {
 			st.NodeReachable = true
 		} else {
 			s.logger.Debug("ipfs_node_unhealthy", "error", err)
 		}
 	}
 	if s.cluster != nil {
-		if err := s.cluster.ClusterHealth(ctx); err == nil {
+		if err := s.cluster.ClusterHealth(probeCtx); err == nil {
 			st.ClusterReachable = true
 		} else {
 			s.logger.Debug("ipfs_cluster_unhealthy", "error", err)
@@ -1776,7 +1780,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	// swarm's health lives in Networks[private].
 	privateReachable := false
 	if s.privateEnabled && s.privateClient != nil {
-		if _, err := s.privateClient.Version(ctx); err == nil {
+		if _, err := s.privateClient.Version(probeCtx); err == nil {
 			privateReachable = true
 		} else {
 			s.logger.Debug("ipfs_private_node_unhealthy", "error", err)
@@ -1785,7 +1789,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	privateClusterEnabled := s.privateCluster != nil
 	privateClusterReachable := false
 	if privateClusterEnabled {
-		if err := s.privateCluster.ClusterHealth(ctx); err == nil {
+		if err := s.privateCluster.ClusterHealth(probeCtx); err == nil {
 			privateClusterReachable = true
 		} else {
 			s.logger.Debug("ipfs_private_cluster_unhealthy", "error", err)
