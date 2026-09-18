@@ -3804,7 +3804,7 @@ func runStoryboardBackfillWorker(ctx context.Context, logger *slog.Logger, svc *
 						// Deliberately "nothing due" and not "complete": a video parked
 						// behind a retry backoff is not scanned either, so an empty pass
 						// is not proof the catalogue is finished.
-						logger.Info("storyboard backfill has nothing due: every published video either has a seek preview, has no original to build one from, has been given up on, or is waiting out a retry")
+						logger.Info("storyboard backfill has nothing due: every published video either has a seek preview, has no original or ready HLS to build one from, has been given up on, or is waiting out a retry")
 					}
 					return 0, nil
 				}

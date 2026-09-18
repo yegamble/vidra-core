@@ -248,6 +248,15 @@ settled from the database, without contacting the source at all.
 
 See the full entity mapping table in `.ralph/specs/peertube-import.md`.
 
+If source artwork is missing, the storyboard worker can generate a replacement
+from an original or a ready **PeerTube single-file MP4 HLS** playlist. It chooses
+the lowest-bandwidth video rendition, preserving existing storyboards and the
+four-videos-per-five-minutes pace. Enable `storyboards_enabled` and keep ffmpeg
+and ffprobe available. Segmented, encrypted and live HLS layouts are not supported
+by this fallback; missing objects retain bounded retries. Regeneration creates
+new previews, not recovered source artwork, and does not rewrite past import
+reports. Missing thumbnails still need source artwork or usable video media.
+
 ---
 
 ## 2. Prerequisites

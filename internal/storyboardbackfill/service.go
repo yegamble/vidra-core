@@ -23,9 +23,8 @@
 // this package decides only WHICH videos to hand it and WHAT to remember about
 // the ones that fail.
 //
-// Deliberately out of scope: thumbnails. Every video that has ever been
-// published or imported already has a poster (PeerTube writes one for every
-// video, and Process generates one), so there is no comparable backlog to walk.
+// Thumbnail recovery is separate: missing source artwork and missing video
+// objects cannot be restored by this storyboard worker.
 package storyboardbackfill
 
 import (

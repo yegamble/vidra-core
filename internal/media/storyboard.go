@@ -230,6 +230,10 @@ func DetectStoryboarder(blobs storage.Backend) (*Storyboarder, bool) {
 // when unknown the source is probed. Returns an error when it cannot render a
 // usable sheet (empty output, ffmpeg failure).
 func (t *Storyboarder) Storyboard(ctx context.Context, key string, durationSeconds int) (sprite, vtt []byte, err error) {
+	key, err = storyboardInputKey(ctx, t.blobs, key)
+	if err != nil {
+		return nil, nil, err
+	}
 	if durationSeconds <= 0 {
 		if md, perr := t.probe.Probe(ctx, key); perr == nil {
 			durationSeconds = md.DurationSeconds
@@ -258,7 +262,7 @@ func (t *Storyboarder) Storyboard(ctx context.Context, key string, durationSecon
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, nil, fmt.Errorf("media: ffmpeg storyboard %q: %w: %s", key, err, tailOf(stderr.String()))
+		return nil, nil, redactSource(src, fmt.Errorf("media: ffmpeg storyboard %q: %w: %s", key, err, tailOf(stderr.String())))
 	}
 	sprite, err = os.ReadFile(outPath)
 	if err != nil {
