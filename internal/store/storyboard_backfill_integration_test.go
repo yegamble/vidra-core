@@ -85,6 +85,16 @@ func TestListVideosNeedingStoryboardEligibility(t *testing.T) {
 
 	noOriginal := seedVideo("hls only", "published")
 	seedFile(noOriginal, "rendition", "streaming-playlists/"+noOriginal.String()+"/720.m3u8")
+	hlsOnly := seedVideo("ready HLS without original", "published")
+	masterKey := "streaming-playlists/hls/" + hlsOnly.String() + "/master.m3u8"
+	if _, err := q.UpsertStreamingPlaylist(ctx, sqlcgen.UpsertStreamingPlaylistParams{VideoID: hlsOnly, MasterKey: masterKey, State: "ready"}); err != nil {
+		t.Fatal(err)
+	}
+	for id, state := range map[uuid.UUID]string{wanted: "ready", noOriginal: "pending", hasSheet: "ready"} {
+		if _, err := q.UpsertStreamingPlaylist(ctx, sqlcgen.UpsertStreamingPlaylistParams{VideoID: id, MasterKey: masterKey, State: state}); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	draft := seedVideo("not published", "draft")
 	seedFile(draft, "original", "web-videos/"+draft.String()+".mp4")
@@ -126,6 +136,7 @@ func TestListVideosNeedingStoryboardEligibility(t *testing.T) {
 		{wanted, true, "published, has an original, no sheet, no ledger row"},
 		{hasSheet, false, "already carries a kind='storyboard' file"},
 		{noOriginal, false, "has no kind='original' row to decode"},
+		{hlsOnly, true, "ready HLS must repair a migrated video without an original"},
 		{draft, false, "is not published"},
 		{gaveUp, false, "has been permanently given up on"},
 		{backedOff, false, "is waiting out its retry backoff"},
@@ -134,8 +145,11 @@ func TestListVideosNeedingStoryboardEligibility(t *testing.T) {
 			t.Errorf("video %q selected = %v, want %v (%s)", tc.id, in, tc.want, tc.why)
 		}
 	}
-	if r := got[wanted]; r.DurationSeconds != 613 || r.StorageKey == "" || r.Attempts != 0 {
+	if r := got[wanted]; r.DurationSeconds != 613 || r.StorageKey != "web-videos/"+wanted.String()+".mp4" || r.Attempts != 0 {
 		t.Errorf("selected row = %+v, want the recorded duration, the original's key and zero attempts", r)
+	}
+	if got[hlsOnly].StorageKey != masterKey {
+		t.Errorf("HLS source = %q, want %q", got[hlsOnly].StorageKey, masterKey)
 	}
 
 	// The backoff having elapsed makes it a candidate again — the retry actually

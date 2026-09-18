@@ -21,15 +21,10 @@
 --     generated here, carried in by the PeerTube importer, or produced by a
 --     re-transcode. (The WebVTT map is deliberately not tested: the two rows are
 --     written together, and keying on one of them is enough.)
---   * a kind='original' row. generateStoryboard takes an object key and hands it
---     to ffmpeg, so an original is the whole requirement. A video that has ONLY
---     an HLS tree — no original, e.g. one whose original was swept after
---     transcoding — is therefore NOT eligible and is skipped silently rather
---     than booked as a failure: nothing is wrong with it, there is simply no
---     single object to decode. Rendering a sheet from a rendition playlist would
---     be a different code path (concatenating segments) and is not built.
---     LATERAL + LIMIT 1 mirrors GetVideoFileByKind's newest-wins tie-break so a
---     video that somehow carries two originals resolves the same way everywhere.
+--   * a kind='original' row, or a ready HLS master when no original survives.
+--     The renderer resolves PeerTube single-file HLS to its cheapest video MP4;
+--     unsupported layouts and missing objects use the same bounded retry ledger.
+--     Prefer the newest original when both sources are available.
 --   * no ledger row, or a live one that is due. A given-up row is terminal and
 --     drops the video out of this scan for good.
 --
@@ -43,20 +38,22 @@
 -- instance is ever reading it. Ordered oldest-first so an operator watching the
 -- backlog sees it drain in a predictable direction.
 SELECT v.id,
-       orig.storage_key,
+       COALESCE(orig.storage_key, hls.master_key)::text AS storage_key,
        COALESCE(vm.duration_seconds, 0)::int AS duration_seconds,
        COALESCE(a.attempts, 0)::int          AS attempts
 FROM videos v
-JOIN LATERAL (
+LEFT JOIN LATERAL (
     SELECT vf.storage_key
     FROM video_files vf
     WHERE vf.video_id = v.id AND vf.kind = 'original'
     ORDER BY vf.created_at DESC
     LIMIT 1
 ) orig ON true
+LEFT JOIN streaming_playlists hls ON hls.video_id = v.id AND hls.state = 'ready' AND hls.master_key <> ''
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
 LEFT JOIN video_storyboard_attempts a ON a.video_id = v.id
 WHERE v.state = 'published'
+  AND COALESCE(orig.storage_key, hls.master_key) IS NOT NULL
   AND NOT EXISTS (
       SELECT 1 FROM video_files sb
       WHERE sb.video_id = v.id AND sb.kind = 'storyboard'
