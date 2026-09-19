@@ -119,6 +119,10 @@ type Counts struct {
 	// MissingSource is a subset of Failed: artwork absent from the source
 	// filesystem whose HTTP fallback returned 404/410. It remains retryable.
 	MissingSource int `json:"missing_source,omitempty"`
+	// waiting is the subset of Skipped held back by awaitParent this run. It is
+	// unexported on purpose: the counts are an API contract, and this is surfaced
+	// as a report note instead (noteWaiting).
+	waiting int
 }
 
 // Report is the machine-readable summary of a plan (dry-run) or a run. It is the

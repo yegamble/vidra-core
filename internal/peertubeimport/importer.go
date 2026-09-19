@@ -513,6 +513,9 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 	r := NewReport(false, im.policy, im.sourceAuthoritative)
 	r.SourceVersion = version
 	r.Deferred = deferredFamilies()
+	// Deferred, not a last line: a run that ABORTS half-way returns its report
+	// too, and that is the run whose held-back entities most need explaining.
+	defer r.noteWaiting()
 
 	// The destination snapshot is taken ONCE, here, before any pass runs: nine
 	// bulk statements that answer "what does this instance currently hold for the
@@ -723,6 +726,60 @@ func (im *Importer) parentStillLive(ctx context.Context, kind string, id uuid.UU
 	return true, nil
 }
 
+// awaitParent is the outcome for an entity whose parent did not resolve: counted
+// skipped for THIS run, and deliberately given NO ledger row, so the next run
+// asks again.
+//
+// A missing parent is a fact about this run, not about the entity. A per-entity
+// failure is non-terminal — the account that failed on Monday is retried and
+// imported on Tuesday — and the source is live, so an account that signs up
+// between the users read and the channels read is simply not there yet. The
+// older families recorded that as a terminal 'skipped' row, which outlived the
+// condition: the parent arrived on the next run and its channel, the channel's
+// videos and the comments on them never did. The per-video families
+// (entities_pervideo.go) never wrote that row; this is the same rule for the
+// rest.
+//
+// A parent that is gone FOR GOOD still resolves to nothing on every run — a
+// retired mapping is terminal on the PARENT's row (see resolveParent) — so its
+// children cost two indexed reads per run, no write, and are never stood up.
+func awaitParent(c *Counts) error {
+	c.Skipped++
+	c.waiting++
+	return nil
+}
+
+// noteWaiting says on the report what awaitParent no longer says in the ledger.
+// A wait leaves no row, so without this line "skipped" would read as "already
+// imported" and nothing anywhere would say that entities are being held back.
+func (r *Report) noteWaiting() {
+	for _, kind := range orderedKinds {
+		if c, ok := r.Entities[kind]; ok && c.waiting > 0 {
+			r.addConflict(fmt.Sprintf("%d %s row(s) skipped because their parent is not imported here "+
+				"(it failed, has not been read yet, or was deleted on this instance); re-checked on every run", c.waiting, kind))
+		}
+	}
+}
+
+// legacyParentMissingNotes are the notes an older release left on the terminal
+// 'skipped' row described above. A ledger that already holds them — every
+// instance migrated before this fix — would otherwise stay poisoned, so
+// alreadyProcessed reads such a row as unsettled and the entity is re-evaluated:
+// imported when its parent is here now, left exactly as it is when not.
+var legacyParentMissingNotes = map[string]bool{
+	"owner user not imported": true, "owner not imported": true,
+	"channel not imported": true, "video not imported": true,
+	"author not imported": true, "follower not imported": true,
+}
+
+// legacyParentWait reports whether a ledger row is one of those. The boundary
+// matters in both directions: a note outside the list — above all
+// deletedParentNote, and every conflict-policy note — must stay terminal, or a
+// deletion made on this instance is undone by the next run.
+func legacyParentWait(status string, hasTarget bool, note string) bool {
+	return status == "skipped" && !hasTarget && legacyParentMissingNotes[note]
+}
+
 // alreadyProcessed reports whether a source entity has a terminal ledger row
 // (done/skipped/unsupported) — used to make re-runs a no-op.
 func (im *Importer) alreadyProcessed(ctx context.Context, kind, sourceID string) (uuid.UUID, string, bool, error) {
@@ -734,6 +791,9 @@ func (im *Importer) alreadyProcessed(ctx context.Context, kind, sourceID string)
 		return uuid.Nil, "", false, err
 	}
 	terminal := row.Status == "done" || row.Status == "skipped" || row.Status == "unsupported"
+	if legacyParentWait(row.Status, row.VidraID.Valid, row.Note) {
+		terminal = false
+	}
 	var id uuid.UUID
 	if row.VidraID.Valid {
 		id = uuid.UUID(row.VidraID.Bytes)
