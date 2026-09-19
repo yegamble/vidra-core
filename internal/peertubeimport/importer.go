@@ -75,6 +75,10 @@ type Importer struct {
 	// for. Written only from the sequential passes — the video-image fan-out
 	// resolves every parent before its workers start.
 	liveParents map[uuid.UUID]struct{}
+	// captionsThisRun are the source caption ids importOneVideo carried on THIS
+	// run, so the late-caption pass does not also count them skipped: a clean
+	// first migration must not report "imported 3, skipped 3".
+	captionsThisRun map[string]struct{}
 	// resync is the destination's side of a source-authoritative run: what this
 	// instance currently holds for every row the import owns, read in bulk before
 	// the passes start. Nil in the default gap-filling mode, and every resync
@@ -546,6 +550,9 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 		{"actor images", im.importActorImages},
 		{"videos", im.importVideos},
 		{"HLS copies", im.importHLSCopies},
+		// Captions added on the source after a video's first import. See
+		// entities_captions.go.
+		{"captions", im.importCaptions},
 		// Posters and storyboards run after videos, as passes of their own, for
 		// exactly the reason the per-video families do — and because the posters
 		// the old in-video path wrote point at objects PeerTube never stored, so
@@ -588,6 +595,7 @@ func (im *Importer) resetRunCaches() {
 	im.tagsByVideo, im.elementsByPlaylist = nil, nil
 	im.liveParents = nil
 	im.resync = nil
+	im.captionsThisRun = map[string]struct{}{}
 }
 
 // sourceTags returns every local video's tags, read from the source once per run.

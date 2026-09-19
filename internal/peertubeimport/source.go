@@ -304,6 +304,8 @@ type SourceHLSPlaylist struct {
 
 // SourceCaption is one subtitle track.
 type SourceCaption struct {
+	ID       int64
+	VideoID  int64 // set by AllCaptions only
 	Language string
 	Filename string
 }
@@ -808,7 +810,7 @@ func (s *Source) Storyboards(ctx context.Context) ([]SourceStoryboard, bool, err
 // Captions returns a video's caption tracks.
 func (s *Source) Captions(ctx context.Context, videoID int64) ([]SourceCaption, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT language, COALESCE(filename, '')
+		SELECT id, language, COALESCE(filename, '')
 		FROM "videoCaption"
 		WHERE "videoId" = $1
 		ORDER BY language`, videoID)
@@ -819,7 +821,44 @@ func (s *Source) Captions(ctx context.Context, videoID int64) ([]SourceCaption, 
 	var out []SourceCaption
 	for rows.Next() {
 		var c SourceCaption
-		if err := rows.Scan(&c.Language, &c.Filename); err != nil {
+		if err := rows.Scan(&c.ID, &c.Language, &c.Filename); err != nil {
+			return nil, fmt.Errorf("peertubeimport: scan caption: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// AllCaptions returns every LOCAL video's caption rows, with their own ids and
+// their video's numeric id, in one read — the late-caption pass keys its ledger on
+// the row and walks the family once per run. Local only, like every sibling
+// family: a federated source caches a caption row per remote video, and each one
+// would otherwise cost a ledger read on every run and never be carried.
+func (s *Source) AllCaptions(ctx context.Context) ([]SourceCaption, error) {
+	onActor, err := s.actorLinksLiveOnActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	actorJoin := `act.id = vc."actorId"`
+	if onActor {
+		actorJoin = `act."videoChannelId" = vc.id`
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT cap.id, cap."videoId", cap.language, COALESCE(cap.filename, '')
+		FROM "videoCaption" cap
+		JOIN video v ON v.id = cap."videoId"
+		JOIN "videoChannel" vc ON vc.id = v."channelId"
+		JOIN actor act ON `+actorJoin+`
+		WHERE act."serverId" IS NULL
+		ORDER BY cap.id`)
+	if err != nil {
+		return nil, fmt.Errorf("peertubeimport: read all captions: %w", err)
+	}
+	defer rows.Close()
+	var out []SourceCaption
+	for rows.Next() {
+		var c SourceCaption
+		if err := rows.Scan(&c.ID, &c.VideoID, &c.Language, &c.Filename); err != nil {
 			return nil, fmt.Errorf("peertubeimport: scan caption: %w", err)
 		}
 		out = append(out, c)

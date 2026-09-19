@@ -4,7 +4,9 @@ package peertubeimport
 
 import (
 	"context"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +21,7 @@ import (
 // Video 3 is STILL TRANSCODING: a row, state TO_TRANSCODE (2), and nothing to
 // play yet — on a live instance, every video uploaded shortly before a scheduled
 // run. run(authoritative) performs one more run in the given mode.
-func referenceRerunFixture(t *testing.T, ctx context.Context, base string) (src, dest *pgxpool.Pool, run func(authoritative bool) *Report) {
+func referenceRerunFixture(t *testing.T, ctx context.Context, base string) (src, dest *pgxpool.Pool, run func(authoritative bool) *Report, first *Report) {
 	t.Helper()
 	src, _ = newScratchDB(t, ctx, base)
 	dest, _ = newScratchDB(t, ctx, base)
@@ -52,8 +54,8 @@ func referenceRerunFixture(t *testing.T, ctx context.Context, base string) (src,
 		}
 		return report
 	}
-	run(false)
-	return src, dest, run
+	first = run(false)
+	return src, dest, run, first
 }
 
 // A video's ledger row is terminal after its first import, so the playlist the
@@ -68,7 +70,7 @@ func TestPeerTubeImportReferenceRerunCarriesLateHLS(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
-	src, dest, run := referenceRerunFixture(t, ctx, base)
+	src, dest, run, _ := referenceRerunFixture(t, ctx, base)
 
 	// The source finishes every transcode and publishes video 3 — so it now offers
 	// a playlist for all four videos. Only ONE of them is a gap:
@@ -120,5 +122,115 @@ func TestPeerTubeImportReferenceRerunCarriesLateHLS(t *testing.T) {
 	}
 	if got := scanStrings(t, ctx, dest, `SELECT state FROM videos WHERE title='Still Transcoding'`); got[0] != "published" {
 		t.Errorf("state under --source-authoritative = %q, want published (with its playlist)", got[0])
+	}
+}
+
+// Captions were written only inside importOneVideo, so one added on the source
+// after a video's first import never arrived — in either mode.
+func TestPeerTubeImportRerunCarriesLateCaptions(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	src, dest, run, first := referenceRerunFixture(t, ctx, base)
+
+	// The track importOneVideo carried is recorded in the VIDEO's transaction (an
+	// empty note; the pass's own record says "already here"), so a run interrupted
+	// before the caption pass still knows it was handed over — and a clean first
+	// migration counts it once, not imported AND skipped.
+	if got := scanStrings(t, ctx, dest, `SELECT status || ':' || note FROM peertube_import_ledger WHERE entity_kind='caption'`); len(got) != 1 || got[0] != "done:" {
+		t.Errorf("caption ledger after the first run = %q, want the inline record [done:]", got)
+	}
+	if got := first.Entities[KindCaption]; got.Imported != 1 || got.Skipped != 0 {
+		t.Errorf("first-run caption counts = %+v, want 1 imported / 0 skipped", got)
+	}
+	// So a creator's deletion sticks even if the caption pass has never run.
+	mustExec(t, ctx, src, `INSERT INTO "videoCaption" (id,language,filename,"videoId") VALUES (2,'de','v1-de.vtt',1)`)
+	run(false)
+	mustExec(t, ctx, dest, `DELETE FROM captions WHERE language='de'`)
+
+	// A catalogue migrated by an OLDER release has its captions and no caption
+	// ledger rows — and one of them has since been replaced here by the creator.
+	mustExec(t, ctx, dest, `DELETE FROM peertube_import_ledger WHERE entity_kind='caption' AND source_id='1'`)
+	mustExec(t, ctx, dest, `UPDATE captions SET storage_key='captions/replaced-on-vidra.vtt' WHERE language='en'`)
+	mustExec(t, ctx, src, `INSERT INTO "videoCaption" (id,language,filename,"videoId") VALUES (3,'fr','v1-fr.vtt',1)`)
+
+	if got := run(false).Entities[KindCaption].Imported; got != 1 {
+		t.Errorf("re-run carried %d captions, want exactly the late one", got)
+	}
+	captions := func() []string {
+		return scanStrings(t, ctx, dest, `SELECT language || '=' || storage_key FROM captions ORDER BY language`)
+	}
+	if got := captions(); len(got) != 2 || got[0] != "en=captions/replaced-on-vidra.vtt" || got[1] != "fr=captions/v1-fr.vtt" {
+		t.Errorf("captions = %v, want the late 'fr' carried and the creator's 'en' left alone", got)
+	}
+
+	// The creator deletes the carried track here. It stays deleted: the ledger row
+	// is what says this source caption has already been handed over once.
+	mustExec(t, ctx, dest, `DELETE FROM captions WHERE language='fr'`)
+	if got := run(true).Entities[KindCaption].Imported; got != 0 {
+		t.Errorf("a third run carried %d captions, want 0", got)
+	}
+	if got := captions(); len(got) != 1 {
+		t.Errorf("captions after the creator deleted 'fr' = %v, want it to stay deleted", got)
+	}
+}
+
+// The copy-mode half: the late track's BYTES are carried, to a key of its own.
+// captions/<video>/<lang>.vtt is where a caption uploaded HERE lives
+// (video.captionKey), and a copy that raced a creator's upload to that key would
+// replace their object underneath their row.
+func TestPeerTubeImportCopyRerunCarriesLateCaptionBytes(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, "fixture-password-hash", secretPrivKeyAlice)
+	srcDir := t.TempDir()
+	seedSourceMedia(t, srcDir)
+	srcMedia, _ := storage.NewLocal(srcDir)
+	destMedia, _ := storage.NewLocal(t.TempDir())
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip, SrcMedia: srcMedia, DestMedia: destMedia})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	french := []byte("WEBVTT\n\n00:00.000 --> 00:01.000\nsalut\n")
+	if err := os.WriteFile(filepath.Join(srcDir, "captions", "v1-fr.vtt"), french, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, ctx, src, `INSERT INTO "videoCaption" (id,language,filename,"videoId") VALUES (3,'fr','v1-fr.vtt',1)`)
+	report, err := imp.Run(ctx, version, nil)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if got := report.Entities[KindCaption]; got.Imported != 1 || got.Failed != 0 {
+		t.Fatalf("re-run captions = %+v, want exactly the late one imported", got)
+	}
+	var key, videoID string
+	if err := dest.QueryRow(ctx, `SELECT storage_key, video_id::text FROM captions WHERE language='fr'`).Scan(&key, &videoID); err != nil {
+		t.Fatalf("read the late caption: %v", err)
+	}
+	if want := "captions/" + videoID + "/import-3.vtt"; key != want {
+		t.Errorf("late caption key = %q, want %q (never the native captions/<video>/fr.vtt)", key, want)
+	}
+	rc, err := destMedia.Open(ctx, key)
+	if err != nil {
+		t.Fatalf("the late caption's object was not copied: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	if got, _ := io.ReadAll(rc); string(got) != string(french) {
+		t.Errorf("copied caption bytes = %q, want the source's", got)
 	}
 }

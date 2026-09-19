@@ -549,6 +549,16 @@ produced, or one its pipeline is still working on — is left alone. The video's
 `--source-authoritative` (§3), which is the mode to schedule against a source
 that is still live.
 
+**Captions added later** are carried the same way, in either media mode: a
+subtitle track the source gains after a video was imported arrives on the next
+run. A language the video already has a track for is left alone (it may be one
+replaced here), and a carried track that is later deleted here stays deleted —
+the ledger remembers it was handed over, and a track imported with its video is
+recorded in the video's own transaction, so that holds even for a run that was
+interrupted. One caveat: a track carried by a release *older than this one* has
+no such record until the first run of this release writes it, so one deleted here
+before then is carried once more.
+
 ---
 
 ## 5. Via the admin API (optional)

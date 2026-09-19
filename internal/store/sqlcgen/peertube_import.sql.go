@@ -397,6 +397,24 @@ func (q *Queries) ImportApplyVideoViewDelta(ctx context.Context, arg ImportApply
 	return err
 }
 
+const importCaptionExists = `-- name: ImportCaptionExists :one
+SELECT EXISTS (SELECT 1 FROM captions WHERE video_id = $1 AND language = $2)
+`
+
+type ImportCaptionExistsParams struct {
+	VideoID  uuid.UUID `json:"video_id"`
+	Language string    `json:"language"`
+}
+
+// Whether a video already has a caption in this language. Asked BEFORE a
+// copy-mode object is written, so a track that is already here costs no copy.
+func (q *Queries) ImportCaptionExists(ctx context.Context, arg ImportCaptionExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, importCaptionExists, arg.VideoID, arg.Language)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const importDeletePlaylistItemsNotIn = `-- name: ImportDeletePlaylistItemsNotIn :exec
 DELETE FROM playlist_items
 WHERE playlist_id = $1 AND NOT (video_id = ANY($2::uuid[]))
@@ -461,6 +479,29 @@ type ImportDeleteVideoTagsNotInParams struct {
 func (q *Queries) ImportDeleteVideoTagsNotIn(ctx context.Context, arg ImportDeleteVideoTagsNotInParams) error {
 	_, err := q.db.Exec(ctx, importDeleteVideoTagsNotIn, arg.VideoID, arg.Tags)
 	return err
+}
+
+const importFillCaption = `-- name: ImportFillCaption :execrows
+INSERT INTO captions (video_id, language, storage_key)
+VALUES ($1, $2, $3)
+ON CONFLICT (video_id, language) DO NOTHING
+`
+
+type ImportFillCaptionParams struct {
+	VideoID    uuid.UUID `json:"video_id"`
+	Language   string    `json:"language"`
+	StorageKey string    `json:"storage_key"`
+}
+
+// Fill-only, where ImportUpsertCaption overwrites: the late-caption pass must
+// never replace a track that is already here — it may be one the creator
+// uploaded a moment ago. The check above is an optimisation; THIS is the invariant.
+func (q *Queries) ImportFillCaption(ctx context.Context, arg ImportFillCaptionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, importFillCaption, arg.VideoID, arg.Language, arg.StorageKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const importFillStreamingPlaylist = `-- name: ImportFillStreamingPlaylist :execrows
