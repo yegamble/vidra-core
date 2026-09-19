@@ -853,6 +853,45 @@ func (q *Queries) ImportInsertVideoTag(ctx context.Context, arg ImportInsertVide
 	return err
 }
 
+const importListVideosWithoutPlaylist = `-- name: ImportListVideosWithoutPlaylist :many
+SELECT l.source_id, v.id AS video_id
+FROM peertube_import_ledger l
+JOIN videos v ON v.id = l.vidra_id
+WHERE l.entity_kind = 'video' AND l.status = 'done'
+  AND NOT EXISTS (SELECT 1 FROM streaming_playlists sp WHERE sp.video_id = v.id)
+`
+
+type ImportListVideosWithoutPlaylistRow struct {
+	SourceID string    `json:"source_id"`
+	VideoID  uuid.UUID `json:"video_id"`
+}
+
+// The imported videos that have NO streaming-playlist row at all — the ones a
+// reference-mode re-run may still owe a playlist the source finished after their
+// first import. One statement, so a re-run over a healthy catalogue costs one
+// read rather than one per video. The join doubles as the liveness check: a
+// video deleted here drops out. ANY row, ready or not, is Vidra's own pipeline's
+// and is left alone.
+func (q *Queries) ImportListVideosWithoutPlaylist(ctx context.Context) ([]ImportListVideosWithoutPlaylistRow, error) {
+	rows, err := q.db.Query(ctx, importListVideosWithoutPlaylist)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ImportListVideosWithoutPlaylistRow
+	for rows.Next() {
+		var i ImportListVideosWithoutPlaylistRow
+		if err := rows.Scan(&i.SourceID, &i.VideoID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const importParentStillExists = `-- name: ImportParentStillExists :one
 SELECT COALESCE(CASE $1::text
     WHEN 'user'    THEN EXISTS (SELECT 1 FROM users    u WHERE u.id = $2 AND u.deleted_at IS NULL)

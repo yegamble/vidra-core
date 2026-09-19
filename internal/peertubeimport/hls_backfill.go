@@ -2,13 +2,18 @@ package peertubeimport
 
 import (
 	"context"
-	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"path"
+	"sort"
+
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
 // A separate pass repairs old imports too. A ready playlist is the durable
 // checkpoint and is never replaced (including a ladder generated on Vidra).
 func (im *Importer) importHLSCopies(ctx context.Context, r *Report) error {
+	if im.mediaMode == MediaModeReference {
+		return im.importLateHLSReferences(ctx, r)
+	}
 	if im.mediaMode != MediaModeCopy || im.srcMedia == nil || im.destMedia == nil {
 		return nil
 	}
@@ -50,6 +55,64 @@ func (im *Importer) importHLSCopies(ctx context.Context, r *Report) error {
 				return err
 			}
 			return recordLedger(ctx, q, KindHLSPlaylist, v.UUID, id, "done", "")
+		}); err != nil {
+			return err
+		}
+		c.Imported++
+	}
+	return nil
+}
+
+// importLateHLSReferences is the reference-mode half of the same repair. A video
+// read while the source was still transcoding it lands with no playlist, and its
+// ledger row is terminal from then on — importOneVideo never sees it again — so
+// the playlist the source finished an hour later had no way in. Against a live
+// source that is every video uploaded shortly before a scheduled run, and under
+// --source-authoritative its state still followed the source to 'published' with
+// nothing to play.
+//
+// It only ever FILLS: a video with any streaming-playlist row, ready or not, is
+// Vidra's own pipeline's business. The destination is asked once and the source
+// once, so a re-run over a healthy catalogue stays a no-op re-run.
+func (im *Importer) importLateHLSReferences(ctx context.Context, r *Report) error {
+	lacking, err := im.q.ImportListVideosWithoutPlaylist(ctx)
+	if err != nil || len(lacking) == 0 {
+		return err
+	}
+	vidraByUUID := make(map[string]sqlcgen.ImportListVideosWithoutPlaylistRow, len(lacking))
+	for _, row := range lacking {
+		vidraByUUID[row.SourceID] = row
+	}
+	videos, err := im.sourceVideosByID(ctx)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for id, v := range videos {
+		if _, ok := vidraByUUID[v.UUID]; ok {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(a, b int) bool { return ids[a] < ids[b] })
+	playlists, err := im.src.HLSPlaylists(ctx, ids)
+	if err != nil {
+		return err
+	}
+	c := r.count(KindHLSPlaylist)
+	for _, id := range ids {
+		hls, ok := playlists[id]
+		if !ok {
+			continue // still nothing on the source; asked again next run
+		}
+		v := videos[id]
+		videoID := vidraByUUID[v.UUID].VideoID
+		if err := im.withTx(ctx, func(q *sqlcgen.Queries) error {
+			if _, err := q.UpsertStreamingPlaylist(ctx, sqlcgen.UpsertStreamingPlaylistParams{
+				VideoID: videoID, MasterKey: sourceHLSKey(v.UUID, hls.PlaylistFilename), State: "ready",
+			}); err != nil {
+				return err
+			}
+			return recordLedger(ctx, q, KindHLSPlaylist, v.UUID, videoID, "done", "")
 		}); err != nil {
 			return err
 		}

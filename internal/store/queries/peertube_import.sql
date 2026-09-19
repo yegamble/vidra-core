@@ -466,6 +466,19 @@ SELECT EXISTS (
     WHERE video_id = $1 AND state = 'ready' AND master_key <> ''
 );
 
+-- name: ImportListVideosWithoutPlaylist :many
+-- The imported videos that have NO streaming-playlist row at all — the ones a
+-- reference-mode re-run may still owe a playlist the source finished after their
+-- first import. One statement, so a re-run over a healthy catalogue costs one
+-- read rather than one per video. The join doubles as the liveness check: a
+-- video deleted here drops out. ANY row, ready or not, is Vidra's own pipeline's
+-- and is left alone.
+SELECT l.source_id, v.id AS video_id
+FROM peertube_import_ledger l
+JOIN videos v ON v.id = l.vidra_id
+WHERE l.entity_kind = 'video' AND l.status = 'done'
+  AND NOT EXISTS (SELECT 1 FROM streaming_playlists sp WHERE sp.video_id = v.id);
+
 -- ───────────── the instance's own category taxonomy ─────────────
 -- A PeerTube instance can replace the stock 1–18 category list wholesale
 -- (peertube-plugin-categories does exactly that), and the import already carries
