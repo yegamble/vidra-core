@@ -304,6 +304,8 @@ type SourceHLSPlaylist struct {
 
 // SourceCaption is one subtitle track.
 type SourceCaption struct {
+	ID       int64 // set by AllCaptions only
+	VideoID  int64 // set by AllCaptions only
 	Language string
 	Filename string
 }
@@ -820,6 +822,29 @@ func (s *Source) Captions(ctx context.Context, videoID int64) ([]SourceCaption, 
 	for rows.Next() {
 		var c SourceCaption
 		if err := rows.Scan(&c.Language, &c.Filename); err != nil {
+			return nil, fmt.Errorf("peertubeimport: scan caption: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// AllCaptions returns every caption row on the source with its own id and its
+// video's numeric id, in one read — the late-caption pass keys its ledger on the
+// row, and walks the whole family once per run.
+func (s *Source) AllCaptions(ctx context.Context) ([]SourceCaption, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, "videoId", language, COALESCE(filename, '')
+		FROM "videoCaption"
+		ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("peertubeimport: read all captions: %w", err)
+	}
+	defer rows.Close()
+	var out []SourceCaption
+	for rows.Next() {
+		var c SourceCaption
+		if err := rows.Scan(&c.ID, &c.VideoID, &c.Language, &c.Filename); err != nil {
 			return nil, fmt.Errorf("peertubeimport: scan caption: %w", err)
 		}
 		out = append(out, c)

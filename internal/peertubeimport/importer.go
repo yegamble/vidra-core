@@ -543,6 +543,9 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 		{"actor images", im.importActorImages},
 		{"videos", im.importVideos},
 		{"HLS copies", im.importHLSCopies},
+		// Captions added on the source after a video's first import. See
+		// entities_captions.go.
+		{"captions", im.importCaptions},
 		// Posters and storyboards run after videos, as passes of their own, for
 		// exactly the reason the per-video families do — and because the posters
 		// the old in-video path wrote point at objects PeerTube never stored, so

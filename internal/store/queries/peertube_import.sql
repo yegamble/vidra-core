@@ -507,6 +507,19 @@ INSERT INTO streaming_playlists (video_id, master_key, state)
 VALUES ($1, $2, 'ready')
 ON CONFLICT (video_id) DO NOTHING;
 
+-- name: ImportCaptionExists :one
+-- Whether a video already has a caption in this language. Asked BEFORE a
+-- copy-mode object is written, so a track that is already here costs no copy.
+SELECT EXISTS (SELECT 1 FROM captions WHERE video_id = $1 AND language = $2);
+
+-- name: ImportFillCaption :execrows
+-- Fill-only, where ImportUpsertCaption overwrites: the late-caption pass must
+-- never replace a track that is already here — it may be one the creator
+-- uploaded a moment ago. The check above is an optimisation; THIS is the invariant.
+INSERT INTO captions (video_id, language, storage_key)
+VALUES ($1, $2, $3)
+ON CONFLICT (video_id, language) DO NOTHING;
+
 -- ───────────── the instance's own category taxonomy ─────────────
 -- A PeerTube instance can replace the stock 1–18 category list wholesale
 -- (peertube-plugin-categories does exactly that), and the import already carries
