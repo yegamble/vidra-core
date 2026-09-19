@@ -540,7 +540,7 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 	if err != nil {
 		return err
 	}
-	type capCopy struct{ lang, key string }
+	type capCopy struct{ sid, lang, key string }
 	var copiedCaps []capCopy
 	if im.mediaMode == MediaModeCopy && im.srcMedia != nil && im.destMedia != nil {
 		for _, capt := range captions {
@@ -551,7 +551,7 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 			if _, _, cerr := im.copyMedia(ctx, sourceCaptionKey(capt.Filename), key); cerr != nil {
 				return cerr
 			}
-			copiedCaps = append(copiedCaps, capCopy{lang: capt.Language, key: key})
+			copiedCaps = append(copiedCaps, capCopy{sid: strconv.FormatInt(capt.ID, 10), lang: capt.Language, key: key})
 		}
 	}
 	if im.mediaMode == MediaModeReference {
@@ -559,7 +559,7 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 			if !allowedCaptionExt[extOf(capt.Filename)] {
 				continue
 			}
-			copiedCaps = append(copiedCaps, capCopy{lang: capt.Language, key: sourceCaptionKey(capt.Filename)})
+			copiedCaps = append(copiedCaps, capCopy{sid: strconv.FormatInt(capt.ID, 10), lang: capt.Language, key: sourceCaptionKey(capt.Filename)})
 		}
 	}
 
@@ -664,6 +664,14 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 			}); err != nil {
 				return err
 			}
+			// Recorded HERE, in the video's transaction, for the reason the playlist
+			// above is: the late-caption pass must know this track HAS been handed
+			// over. Left to that pass to notice afterwards, a run interrupted between
+			// the two steps leaves no record — and a track a creator then deletes is
+			// carried straight back.
+			if err := recordLedger(ctx, q, KindCaption, cc.sid, id, "done", ""); err != nil {
+				return err
+			}
 		}
 		for _, tag := range tags {
 			t := normalizeTag(tag)
@@ -722,6 +730,12 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 		r.count(KindVideoNoMedia).Imported++
 	}
 	r.count(KindCaption).Imported += len(copiedCaps)
+	if im.captionsThisRun == nil {
+		im.captionsThisRun = map[string]struct{}{}
+	}
+	for _, cc := range copiedCaps {
+		im.captionsThisRun[cc.sid] = struct{}{}
+	}
 	for _, tag := range tags {
 		if normalizeTag(tag) != "" {
 			r.count(KindTag).Imported++

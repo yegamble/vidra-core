@@ -553,9 +553,11 @@ that is still live.
 subtitle track the source gains after a video was imported arrives on the next
 run. A language the video already has a track for is left alone (it may be one
 replaced here), and a carried track that is later deleted here stays deleted —
-the ledger remembers it was handed over. One caveat: a caption deleted here
-*before the first run of this release* has left no such record and is carried
-once more.
+the ledger remembers it was handed over, and a track imported with its video is
+recorded in the video's own transaction, so that holds even for a run that was
+interrupted. One caveat: a track carried by a release *older than this one* has
+no such record until the first run of this release writes it, so one deleted here
+before then is carried once more.
 
 ---
 

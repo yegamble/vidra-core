@@ -22,9 +22,13 @@ import (
 // The ledger row is also what makes a DELETION here stick: once a source caption
 // is recorded, a creator who removes it is never handed it back.
 //
-// Accepted residual: a caption deleted here BEFORE the first run of this pass
-// has left no evidence, and is carried again once. After that the row above
-// stands guard.
+// importOneVideo records the same row for the tracks it carries, in the video's
+// own transaction, so that guarantee does not depend on this pass having run.
+//
+// Accepted residual: a track an OLDER release carried has no ledger row until
+// this pass first records it. One deleted here before that — or whose first
+// recording failed and is being retried — has left no evidence, and is carried
+// once more.
 func (im *Importer) importCaptions(ctx context.Context, r *Report) error {
 	if im.mediaMode == MediaModeNone || (im.mediaMode == MediaModeCopy && (im.srcMedia == nil || im.destMedia == nil)) {
 		return nil
@@ -39,7 +43,9 @@ func (im *Importer) importCaptions(ctx context.Context, r *Report) error {
 		if _, _, done, err := im.alreadyProcessed(ctx, KindCaption, sid); err != nil {
 			return err
 		} else if done {
-			c.Skipped++
+			if _, justCarried := im.captionsThisRun[sid]; !justCarried {
+				c.Skipped++
+			}
 			continue
 		}
 		if err := im.importOneCaption(ctx, capt, sid, c); err != nil {

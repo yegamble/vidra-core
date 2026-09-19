@@ -21,7 +21,7 @@ import (
 // Video 3 is STILL TRANSCODING: a row, state TO_TRANSCODE (2), and nothing to
 // play yet — on a live instance, every video uploaded shortly before a scheduled
 // run. run(authoritative) performs one more run in the given mode.
-func referenceRerunFixture(t *testing.T, ctx context.Context, base string) (src, dest *pgxpool.Pool, run func(authoritative bool) *Report) {
+func referenceRerunFixture(t *testing.T, ctx context.Context, base string) (src, dest *pgxpool.Pool, run func(authoritative bool) *Report, first *Report) {
 	t.Helper()
 	src, _ = newScratchDB(t, ctx, base)
 	dest, _ = newScratchDB(t, ctx, base)
@@ -54,8 +54,8 @@ func referenceRerunFixture(t *testing.T, ctx context.Context, base string) (src,
 		}
 		return report
 	}
-	run(false)
-	return src, dest, run
+	first = run(false)
+	return src, dest, run, first
 }
 
 // A video's ledger row is terminal after its first import, so the playlist the
@@ -70,7 +70,7 @@ func TestPeerTubeImportReferenceRerunCarriesLateHLS(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
-	src, dest, run := referenceRerunFixture(t, ctx, base)
+	src, dest, run, _ := referenceRerunFixture(t, ctx, base)
 
 	// The source finishes every transcode and publishes video 3 — so it now offers
 	// a playlist for all four videos. Only ONE of them is a gap:
@@ -134,11 +134,26 @@ func TestPeerTubeImportRerunCarriesLateCaptions(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
-	src, dest, run := referenceRerunFixture(t, ctx, base)
+	src, dest, run, first := referenceRerunFixture(t, ctx, base)
+
+	// The track importOneVideo carried is recorded in the VIDEO's transaction (an
+	// empty note; the pass's own record says "already here"), so a run interrupted
+	// before the caption pass still knows it was handed over — and a clean first
+	// migration counts it once, not imported AND skipped.
+	if got := scanStrings(t, ctx, dest, `SELECT status || ':' || note FROM peertube_import_ledger WHERE entity_kind='caption'`); len(got) != 1 || got[0] != "done:" {
+		t.Errorf("caption ledger after the first run = %q, want the inline record [done:]", got)
+	}
+	if got := first.Entities[KindCaption]; got.Imported != 1 || got.Skipped != 0 {
+		t.Errorf("first-run caption counts = %+v, want 1 imported / 0 skipped", got)
+	}
+	// So a creator's deletion sticks even if the caption pass has never run.
+	mustExec(t, ctx, src, `INSERT INTO "videoCaption" (id,language,filename,"videoId") VALUES (2,'de','v1-de.vtt',1)`)
+	run(false)
+	mustExec(t, ctx, dest, `DELETE FROM captions WHERE language='de'`)
 
 	// A catalogue migrated by an OLDER release has its captions and no caption
 	// ledger rows — and one of them has since been replaced here by the creator.
-	mustExec(t, ctx, dest, `DELETE FROM peertube_import_ledger WHERE entity_kind='caption'`)
+	mustExec(t, ctx, dest, `DELETE FROM peertube_import_ledger WHERE entity_kind='caption' AND source_id='1'`)
 	mustExec(t, ctx, dest, `UPDATE captions SET storage_key='captions/replaced-on-vidra.vtt' WHERE language='en'`)
 	mustExec(t, ctx, src, `INSERT INTO "videoCaption" (id,language,filename,"videoId") VALUES (3,'fr','v1-fr.vtt',1)`)
 

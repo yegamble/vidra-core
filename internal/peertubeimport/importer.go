@@ -75,6 +75,10 @@ type Importer struct {
 	// for. Written only from the sequential passes — the video-image fan-out
 	// resolves every parent before its workers start.
 	liveParents map[uuid.UUID]struct{}
+	// captionsThisRun are the source caption ids importOneVideo carried on THIS
+	// run, so the late-caption pass does not also count them skipped: a clean
+	// first migration must not report "imported 3, skipped 3".
+	captionsThisRun map[string]struct{}
 	// resync is the destination's side of a source-authoritative run: what this
 	// instance currently holds for every row the import owns, read in bulk before
 	// the passes start. Nil in the default gap-filling mode, and every resync
@@ -591,6 +595,7 @@ func (im *Importer) resetRunCaches() {
 	im.tagsByVideo, im.elementsByPlaylist = nil, nil
 	im.liveParents = nil
 	im.resync = nil
+	im.captionsThisRun = map[string]struct{}{}
 }
 
 // sourceTags returns every local video's tags, read from the source once per run.
