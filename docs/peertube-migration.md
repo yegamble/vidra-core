@@ -525,6 +525,15 @@ again**: already-imported rows are skipped and it continues where it left off.
 Re-running a completed import is a safe no-op. `--resume` is accepted for clarity
 but changes nothing — idempotency is always on.
 
+**Media the source finishes later.** A video read while the source is still
+transcoding it arrives with nothing to play. In `--media-mode=reference` the next
+run carries the playlist the source has since finished, as a pass of its own. It
+only ever **fills**: a video that has any streaming playlist here — one Vidra
+produced, or one its pipeline is still working on — is left alone. The video's
+*state* is metadata: it follows the source from draft to published only under
+`--source-authoritative` (§3), which is the mode to schedule against a source
+that is still live.
+
 ---
 
 ## 5. Via the admin API (optional)
