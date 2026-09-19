@@ -27,7 +27,8 @@ func referenceRerunFixture(t *testing.T, ctx context.Context, base string) (src,
 	seedPeerTube(t, ctx, src, "fixture-password-hash", secretPrivKeyAlice)
 	mustExec(t, ctx, src, `INSERT INTO "video" (id,uuid,"channelId",name,description,privacy,state,duration,views) VALUES
 		(3,'33333333-3333-3333-3333-333333333333',1,'Still Transcoding','',1,2,30,0),
-		(4,'44444444-4444-4444-4444-444444444444',1,'Transcoding Here','',1,1,30,0)`)
+		(4,'44444444-4444-4444-4444-444444444444',1,'Transcoding Here','',1,1,30,0),
+		(5,'55555555-5555-5555-5555-555555555555',1,'Copy Failed Once','',1,1,30,0)`)
 	sharedDir := t.TempDir()
 	seedSourceMedia(t, sharedDir)
 	shared, err := storage.NewLocal(sharedDir)
@@ -73,7 +74,7 @@ func TestPeerTubeImportReferenceRerunCarriesLateHLS(t *testing.T) {
 	// a playlist for all four videos. Only ONE of them is a gap:
 	mustExec(t, ctx, src, `UPDATE "video" SET state=1 WHERE id=3`)
 	mustExec(t, ctx, src, `INSERT INTO "videoStreamingPlaylist" (id,"videoId","playlistFilename") VALUES
-		(2,2,'v2-master.m3u8'),(3,3,'v3-master.m3u8'),(4,4,'v4-master.m3u8')`)
+		(2,2,'v2-master.m3u8'),(3,3,'v3-master.m3u8'),(4,4,'v4-master.m3u8'),(5,5,'v5-master.m3u8')`)
 	// 1 — the import GAVE it a playlist and it has since been deleted here, which
 	//     only transcode.Invalidate does, on purpose. A missing row is not a gap.
 	mustExec(t, ctx, dest, `DELETE FROM streaming_playlists WHERE video_id=(SELECT id FROM videos WHERE title='First Video')`)
@@ -82,17 +83,22 @@ func TestPeerTubeImportReferenceRerunCarriesLateHLS(t *testing.T) {
 	//     only evidence a catalogue imported by an older release carries.
 	mustExec(t, ctx, dest, `INSERT INTO video_files (video_id, kind, storage_key, size_bytes)
 		SELECT id, 'original', 'web-videos/' || id::text || '.r1.mp4', 1 FROM videos WHERE title='Second Video'`)
+	// 5 — an earlier COPY-mode run failed this tree and the operator has since
+	//     switched to reference mode. A 'failed' row is not a playlist: still owed.
+	mustExec(t, ctx, dest, `INSERT INTO peertube_import_ledger (entity_kind, source_id, status, note)
+		VALUES ('hls_playlist','55555555-5555-5555-5555-555555555555','failed','HLS copy incomplete; rerun required')`)
 	// 4 — Vidra's own transcode holds the row.
 	mustExec(t, ctx, dest, `INSERT INTO streaming_playlists (video_id, state) SELECT id, 'pending' FROM videos WHERE title='Transcoding Here'`)
 
 	report := run(false)
-	if got := report.Entities[KindHLSPlaylist].Imported; got != 1 {
-		t.Errorf("re-run carried %d HLS playlists, want exactly the late one", got)
+	if got := report.Entities[KindHLSPlaylist].Imported; got != 2 {
+		t.Errorf("re-run carried %d HLS playlists, want exactly the two that are owed", got)
 	}
 	got := scanStrings(t, ctx, dest, `
 		SELECT v.title || ' = ' || v.state || ' ' || COALESCE(sp.state || ':' || sp.master_key, 'none')
 		FROM videos v LEFT JOIN streaming_playlists sp ON sp.video_id = v.id ORDER BY v.title`)
 	want := []string{
+		"Copy Failed Once = published ready:streaming-playlists/hls/55555555-5555-5555-5555-555555555555/v5-master.m3u8",
 		"First Video = published none",
 		"Second Video = published none",
 		// Playable, and still the draft the first run wrote: the default run never

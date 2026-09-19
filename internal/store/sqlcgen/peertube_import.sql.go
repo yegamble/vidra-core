@@ -883,7 +883,8 @@ JOIN videos v ON v.id = l.vidra_id
 WHERE l.entity_kind = 'video' AND l.status = 'done'
   AND NOT EXISTS (SELECT 1 FROM streaming_playlists sp WHERE sp.video_id = v.id)
   AND NOT EXISTS (SELECT 1 FROM peertube_import_ledger h
-                  WHERE h.entity_kind = 'hls_playlist' AND h.source_id = l.source_id)
+                  WHERE h.entity_kind = 'hls_playlist' AND h.source_id = l.source_id
+                    AND h.status = 'done')
   AND NOT EXISTS (SELECT 1 FROM video_files f
                   WHERE f.video_id = v.id AND f.kind = 'original'
                     AND f.storage_key LIKE 'web-videos/' || v.id::text || '%')
@@ -904,10 +905,16 @@ type ImportListVideosWithoutPlaylistRow struct {
 // purpose when a creator replaces the file while transcoding is unavailable, so
 // that the superseded HLS stops serving; refilling it would put the OLD content
 // back over the replacement on every scheduled run. So a video qualifies only if
-// the import has never given it a playlist (no 'hls_playlist' ledger row — both
-// the inline write and the late pass record one) AND its original is not one this
-// instance wrote (media.OriginalVideoKey names those web-videos/<video id>…,
-// which is also what covers videos an older release filled without a ledger row).
+// the import has never GIVEN it a playlist (no 'done' hls_playlist ledger row —
+// both the inline write and the late pass record one; a 'failed' row is a copy-mode
+// tree that never landed, and an operator who then switches to reference mode is
+// still owed the playlist) AND its original is not one this instance wrote
+// (media.OriginalVideoKey names those web-videos/<video id>…, which is also what
+// covers videos an older release filled without a ledger row).
+//
+// Residual, accepted: ReplaceSource deletes and re-creates the original row in two
+// statements, so a crash exactly between them on an older-release import leaves
+// neither row nor ledger evidence, and that one video would be refilled.
 func (q *Queries) ImportListVideosWithoutPlaylist(ctx context.Context) ([]ImportListVideosWithoutPlaylistRow, error) {
 	rows, err := q.db.Query(ctx, importListVideosWithoutPlaylist)
 	if err != nil {
