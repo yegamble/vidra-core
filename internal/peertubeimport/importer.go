@@ -572,6 +572,7 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 			progress(r)
 		}
 	}
+	r.noteWaiting()
 	return r, nil
 }
 
@@ -742,7 +743,20 @@ func (im *Importer) parentStillLive(ctx context.Context, kind string, id uuid.UU
 // children cost two indexed reads per run, no write, and are never stood up.
 func awaitParent(c *Counts) error {
 	c.Skipped++
+	c.waiting++
 	return nil
+}
+
+// noteWaiting says on the report what awaitParent no longer says in the ledger.
+// A wait leaves no row, so without this line "skipped" would read as "already
+// imported" and nothing anywhere would say that entities are being held back.
+func (r *Report) noteWaiting() {
+	for _, kind := range orderedKinds {
+		if c, ok := r.Entities[kind]; ok && c.waiting > 0 {
+			r.addConflict(fmt.Sprintf("%d %s row(s) skipped because their parent is not imported here "+
+				"(it failed, has not been read yet, or was deleted on this instance); re-checked on every run", c.waiting, kind))
+		}
+	}
 }
 
 // legacyParentMissingNotes are the notes an older release left on the terminal
@@ -756,6 +770,14 @@ var legacyParentMissingNotes = map[string]bool{
 	"author not imported": true, "follower not imported": true,
 }
 
+// legacyParentWait reports whether a ledger row is one of those. The boundary
+// matters in both directions: a note outside the list — above all
+// deletedParentNote, and every conflict-policy note — must stay terminal, or a
+// deletion made on this instance is undone by the next run.
+func legacyParentWait(status string, hasTarget bool, note string) bool {
+	return status == "skipped" && !hasTarget && legacyParentMissingNotes[note]
+}
+
 // alreadyProcessed reports whether a source entity has a terminal ledger row
 // (done/skipped/unsupported) — used to make re-runs a no-op.
 func (im *Importer) alreadyProcessed(ctx context.Context, kind, sourceID string) (uuid.UUID, string, bool, error) {
@@ -767,7 +789,7 @@ func (im *Importer) alreadyProcessed(ctx context.Context, kind, sourceID string)
 		return uuid.Nil, "", false, err
 	}
 	terminal := row.Status == "done" || row.Status == "skipped" || row.Status == "unsupported"
-	if row.Status == "skipped" && !row.VidraID.Valid && legacyParentMissingNotes[row.Note] {
+	if legacyParentWait(row.Status, row.VidraID.Valid, row.Note) {
 		terminal = false
 	}
 	var id uuid.UUID

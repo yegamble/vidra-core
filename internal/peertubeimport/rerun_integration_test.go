@@ -182,6 +182,10 @@ func TestPeerTubeImportRerunRecoversTheChildrenOfAFailedParent(t *testing.T) {
 	if waiting != 0 {
 		t.Errorf("the first run recorded %d 'not imported' ledger rows, want 0", waiting)
 	}
+	// ...so the REPORT has to say it: "skipped" otherwise reads as "already imported".
+	if notes := strings.Join(report.Conflicts, "\n"); !strings.Contains(notes, "1 channel row(s) skipped because their parent") {
+		t.Errorf("nothing in the report says carol's channel is waiting on her: %q", report.Conflicts)
+	}
 	// ...but every instance migrated by an OLDER release already holds them,
 	// terminal, exactly as that release wrote them. They must heal too.
 	mustExec(t, ctx, dest, `INSERT INTO peertube_import_ledger (entity_kind, source_id, status, note) VALUES
