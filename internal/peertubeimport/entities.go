@@ -659,6 +659,11 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 			}); err != nil {
 				return err
 			}
+			// Recorded so the late-playlist pass knows this video HAS been given one:
+			// a row that later goes missing was deleted on purpose (hls_backfill.go).
+			if err := recordLedger(ctx, q, KindHLSPlaylist, v.UUID, id, "done", ""); err != nil {
+				return err
+			}
 		}
 		for _, cc := range copiedCaps {
 			if _, err := q.ImportUpsertCaption(ctx, sqlcgen.ImportUpsertCaptionParams{

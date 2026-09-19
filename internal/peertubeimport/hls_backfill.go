@@ -2,6 +2,7 @@ package peertubeimport
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"sort"
 
@@ -93,30 +94,48 @@ func (im *Importer) importLateHLSReferences(ctx context.Context, r *Report) erro
 			ids = append(ids, id)
 		}
 	}
+	if len(ids) == 0 {
+		return nil
+	}
 	sort.Slice(ids, func(a, b int) bool { return ids[a] < ids[b] })
 	playlists, err := im.src.HLSPlaylists(ctx, ids)
 	if err != nil {
 		return err
 	}
 	c := r.count(KindHLSPlaylist)
+	stillDraft := 0
 	for _, id := range ids {
 		hls, ok := playlists[id]
 		if !ok {
 			continue // still nothing on the source; asked again next run
 		}
 		v := videos[id]
-		videoID := vidraByUUID[v.UUID].VideoID
-		if err := im.withTx(ctx, func(q *sqlcgen.Queries) error {
-			if _, err := q.UpsertStreamingPlaylist(ctx, sqlcgen.UpsertStreamingPlaylistParams{
-				VideoID: videoID, MasterKey: sourceHLSKey(v.UUID, hls.PlaylistFilename), State: "ready",
-			}); err != nil {
+		row := vidraByUUID[v.UUID]
+		var filled int64
+		if err := im.withTx(ctx, func(q *sqlcgen.Queries) (err error) {
+			if filled, err = q.ImportFillStreamingPlaylist(ctx, sqlcgen.ImportFillStreamingPlaylistParams{
+				VideoID: row.VideoID, MasterKey: sourceHLSKey(v.UUID, hls.PlaylistFilename),
+			}); err != nil || filled == 0 {
 				return err
 			}
-			return recordLedger(ctx, q, KindHLSPlaylist, v.UUID, videoID, "done", "")
+			return recordLedger(ctx, q, KindHLSPlaylist, v.UUID, row.VideoID, "done", "")
 		}); err != nil {
 			return err
 		}
+		if filled == 0 {
+			continue
+		}
 		c.Imported++
+		if row.State == "draft" && mapVideoState(v.State) == "published" {
+			stillDraft++
+		}
+	}
+	// State is metadata, and the default run never rewrites what it wrote — so a
+	// video first read mid-transcode is playable now and still a draft. Say so,
+	// with the way out, rather than leave the operator to find it.
+	if stillDraft > 0 {
+		r.addConflict(fmt.Sprintf("%d video(s) received their HLS playlist on this run but are still drafts here: "+
+			"the source had not published them when they were first imported. Run with source_authoritative to follow the source's state", stillDraft))
 	}
 	return nil
 }
