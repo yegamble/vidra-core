@@ -513,6 +513,9 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 	r := NewReport(false, im.policy, im.sourceAuthoritative)
 	r.SourceVersion = version
 	r.Deferred = deferredFamilies()
+	// Deferred, not a last line: a run that ABORTS half-way returns its report
+	// too, and that is the run whose held-back entities most need explaining.
+	defer r.noteWaiting()
 
 	// The destination snapshot is taken ONCE, here, before any pass runs: nine
 	// bulk statements that answer "what does this instance currently hold for the
@@ -572,7 +575,6 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 			progress(r)
 		}
 	}
-	r.noteWaiting()
 	return r, nil
 }
 
