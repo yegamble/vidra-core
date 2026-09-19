@@ -571,6 +571,33 @@ func (s *Source) HLSPlaylist(ctx context.Context, videoID int64) (SourceHLSPlayl
 	return p, true, nil
 }
 
+// HLSPlaylists is HLSPlaylist for a SET of videos in one read, keyed by numeric
+// video id: the late-playlist pass asks about every imported video that still
+// has nothing to stream, and on a source with HLS disabled that is all of them.
+func (s *Source) HLSPlaylists(ctx context.Context, videoIDs []int64) (map[int64]SourceHLSPlaylist, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT ON ("videoId") "videoId", id, COALESCE("playlistFilename", '')
+		FROM "videoStreamingPlaylist"
+		WHERE "videoId" = ANY($1)
+		ORDER BY "videoId", id`, videoIDs)
+	if err != nil {
+		return nil, fmt.Errorf("peertubeimport: read hls playlists: %w", err)
+	}
+	defer rows.Close()
+	out := map[int64]SourceHLSPlaylist{}
+	for rows.Next() {
+		var videoID int64
+		var p SourceHLSPlaylist
+		if err := rows.Scan(&videoID, &p.ID, &p.PlaylistFilename); err != nil {
+			return nil, fmt.Errorf("peertubeimport: scan hls playlist: %w", err)
+		}
+		if p.PlaylistFilename != "" {
+			out[videoID] = p
+		}
+	}
+	return out, rows.Err()
+}
+
 // SourceVideoThumbnail is the ONE thumbnail row chosen for a local video, with
 // the pixel size the source recorded for it (0 when it records none).
 type SourceVideoThumbnail struct {

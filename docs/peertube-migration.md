@@ -537,7 +537,17 @@ arrives. (Releases before this one recorded that wait as a permanent
 `skipped: … not imported` row and the children never arrived; those rows are now
 re-evaluated on every run, so re-running the importer repairs them.) The one
 parent that never comes back is one **deleted on this instance**: its mapping is
-retired, and its children stay skipped.
+retired, and its children stay skipped. Either way the run report says so: its
+`conflicts` carry one line per entity kind naming how many rows were held back.
+
+**Media the source finishes later.** A video read while the source is still
+transcoding it arrives with nothing to play. In `--media-mode=reference` the next
+run carries the playlist the source has since finished, as a pass of its own. It
+only ever **fills**: a video that has any streaming playlist here — one Vidra
+produced, or one its pipeline is still working on — is left alone. The video's
+*state* is metadata: it follows the source from draft to published only under
+`--source-authoritative` (§3), which is the mode to schedule against a source
+that is still live.
 
 ---
 

@@ -466,6 +466,47 @@ SELECT EXISTS (
     WHERE video_id = $1 AND state = 'ready' AND master_key <> ''
 );
 
+-- name: ImportListVideosWithoutPlaylist :many
+-- The imported videos a reference-mode re-run may still owe a playlist: the
+-- source finished it after their first import. One statement, so a re-run over a
+-- healthy catalogue costs one read rather than one per video. The join doubles as
+-- the liveness check — a video deleted here drops out.
+--
+-- A MISSING ROW IS NOT BY ITSELF A GAP. transcode.Invalidate deletes the row on
+-- purpose when a creator replaces the file while transcoding is unavailable, so
+-- that the superseded HLS stops serving; refilling it would put the OLD content
+-- back over the replacement on every scheduled run. So a video qualifies only if
+-- the import has never GIVEN it a playlist (no 'done' hls_playlist ledger row —
+-- both the inline write and the late pass record one; a 'failed' row is a copy-mode
+-- tree that never landed, and an operator who then switches to reference mode is
+-- still owed the playlist) AND its original is not one this instance wrote
+-- (media.OriginalVideoKey names those web-videos/<video id>…, which is also what
+-- covers videos an older release filled without a ledger row).
+--
+-- Residual, accepted: ReplaceSource deletes and re-creates the original row in two
+-- statements, so a crash exactly between them on an older-release import leaves
+-- neither row nor ledger evidence, and that one video would be refilled.
+SELECT l.source_id, v.id AS video_id, v.state
+FROM peertube_import_ledger l
+JOIN videos v ON v.id = l.vidra_id
+WHERE l.entity_kind = 'video' AND l.status = 'done'
+  AND NOT EXISTS (SELECT 1 FROM streaming_playlists sp WHERE sp.video_id = v.id)
+  AND NOT EXISTS (SELECT 1 FROM peertube_import_ledger h
+                  WHERE h.entity_kind = 'hls_playlist' AND h.source_id = l.source_id
+                    AND h.status = 'done')
+  AND NOT EXISTS (SELECT 1 FROM video_files f
+                  WHERE f.video_id = v.id AND f.kind = 'original'
+                    AND f.storage_key LIKE 'web-videos/' || v.id::text || '%');
+
+-- name: ImportFillStreamingPlaylist :execrows
+-- Fill-only: a row that appeared since the list above was read — Vidra's own
+-- transcode promoting a tree — wins. The pre-read is an optimisation; THIS is the
+-- invariant. format is left to the column default, as the inline import write
+-- leaves it ('hls-ts': PeerTube ships no DASH MPD to advertise).
+INSERT INTO streaming_playlists (video_id, master_key, state)
+VALUES ($1, $2, 'ready')
+ON CONFLICT (video_id) DO NOTHING;
+
 -- ───────────── the instance's own category taxonomy ─────────────
 -- A PeerTube instance can replace the stock 1–18 category list wholesale
 -- (peertube-plugin-categories does exactly that), and the import already carries
