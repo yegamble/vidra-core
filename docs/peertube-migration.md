@@ -525,6 +525,20 @@ again**: already-imported rows are skipped and it continues where it left off.
 Re-running a completed import is a safe no-op. `--resume` is accepted for clarity
 but changes nothing — idempotency is always on.
 
+Against a source that is still live, a re-run is also the **sync**: accounts,
+channels, videos, comments, playlists and subscriptions created on the source
+since the last run are imported, and everything already carried is skipped.
+
+A row that **failed** is retried on the next run, and so is everything that was
+waiting on it. An entity whose parent is not here yet — the channel of an account
+that failed, the comments on a video that failed — is counted `skipped` for that
+run and gets no ledger row, so it is imported on the run where its parent
+arrives. (Releases before this one recorded that wait as a permanent
+`skipped: … not imported` row and the children never arrived; those rows are now
+re-evaluated on every run, so re-running the importer repairs them.) The one
+parent that never comes back is one **deleted on this instance**: its mapping is
+retired, and its children stay skipped.
+
 ---
 
 ## 5. Via the admin API (optional)

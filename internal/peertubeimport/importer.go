@@ -723,6 +723,39 @@ func (im *Importer) parentStillLive(ctx context.Context, kind string, id uuid.UU
 	return true, nil
 }
 
+// awaitParent is the outcome for an entity whose parent did not resolve: counted
+// skipped for THIS run, and deliberately given NO ledger row, so the next run
+// asks again.
+//
+// A missing parent is a fact about this run, not about the entity. A per-entity
+// failure is non-terminal — the account that failed on Monday is retried and
+// imported on Tuesday — and the source is live, so an account that signs up
+// between the users read and the channels read is simply not there yet. The
+// older families recorded that as a terminal 'skipped' row, which outlived the
+// condition: the parent arrived on the next run and its channel, the channel's
+// videos and the comments on them never did. The per-video families
+// (entities_pervideo.go) never wrote that row; this is the same rule for the
+// rest.
+//
+// A parent that is gone FOR GOOD still resolves to nothing on every run — a
+// retired mapping is terminal on the PARENT's row (see resolveParent) — so its
+// children cost two indexed reads per run, no write, and are never stood up.
+func awaitParent(c *Counts) error {
+	c.Skipped++
+	return nil
+}
+
+// legacyParentMissingNotes are the notes an older release left on the terminal
+// 'skipped' row described above. A ledger that already holds them — every
+// instance migrated before this fix — would otherwise stay poisoned, so
+// alreadyProcessed reads such a row as unsettled and the entity is re-evaluated:
+// imported when its parent is here now, left exactly as it is when not.
+var legacyParentMissingNotes = map[string]bool{
+	"owner user not imported": true, "owner not imported": true,
+	"channel not imported": true, "video not imported": true,
+	"author not imported": true, "follower not imported": true,
+}
+
 // alreadyProcessed reports whether a source entity has a terminal ledger row
 // (done/skipped/unsupported) — used to make re-runs a no-op.
 func (im *Importer) alreadyProcessed(ctx context.Context, kind, sourceID string) (uuid.UUID, string, bool, error) {
@@ -734,6 +767,9 @@ func (im *Importer) alreadyProcessed(ctx context.Context, kind, sourceID string)
 		return uuid.Nil, "", false, err
 	}
 	terminal := row.Status == "done" || row.Status == "skipped" || row.Status == "unsupported"
+	if row.Status == "skipped" && !row.VidraID.Valid && legacyParentMissingNotes[row.Note] {
+		terminal = false
+	}
 	var id uuid.UUID
 	if row.VidraID.Valid {
 		id = uuid.UUID(row.VidraID.Bytes)

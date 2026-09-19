@@ -321,12 +321,7 @@ func (im *Importer) importOneChannel(ctx context.Context, ch SourceChannel, r *R
 		return err
 	}
 	if !ok {
-		// Owner was not imported (skipped/failed/absent) — cannot attach a channel.
-		if err := im.recordStandalone(ctx, KindChannel, sid, uuid.Nil, "skipped", "owner user not imported"); err != nil {
-			return err
-		}
-		c.Skipped++
-		return nil
+		return awaitParent(c)
 	}
 
 	handle := ch.Handle
@@ -472,11 +467,7 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 		return err
 	}
 	if !ok {
-		if err := im.recordStandalone(ctx, KindVideo, v.UUID, uuid.Nil, "skipped", "channel not imported"); err != nil {
-			return err
-		}
-		c.Skipped++
-		return nil
+		return awaitParent(c)
 	}
 
 	// Copy media OUTSIDE the transaction (blob writes cannot be transactional);
@@ -768,22 +759,14 @@ func (im *Importer) importOneComment(ctx context.Context, cm SourceComment, c *C
 		return err
 	}
 	if !ok {
-		if err := im.recordStandalone(ctx, KindComment, sid, uuid.Nil, "skipped", "video not imported"); err != nil {
-			return err
-		}
-		c.Skipped++
-		return nil
+		return awaitParent(c)
 	}
 	author, ok, err := im.resolveParent(ctx, KindUser, strconv.FormatInt(cm.AuthorUser, 10))
 	if err != nil {
 		return err
 	}
 	if !ok {
-		if err := im.recordStandalone(ctx, KindComment, sid, uuid.Nil, "skipped", "author not imported"); err != nil {
-			return err
-		}
-		c.Skipped++
-		return nil
+		return awaitParent(c)
 	}
 	var parent pgtype.UUID
 	if cm.ParentID != 0 {
@@ -914,11 +897,7 @@ func (im *Importer) importOnePlaylist(ctx context.Context, p SourcePlaylist, r *
 		return err
 	}
 	if !ok {
-		if err := im.recordStandalone(ctx, KindPlaylist, sid, uuid.Nil, "skipped", "owner not imported"); err != nil {
-			return err
-		}
-		c.Skipped++
-		return nil
+		return awaitParent(c)
 	}
 	els, err := im.src.PlaylistElements(ctx, p.ID)
 	if err != nil {
@@ -1004,22 +983,14 @@ func (im *Importer) importOneFollow(ctx context.Context, f SourceFollow, sid str
 		return err
 	}
 	if !ok {
-		if err := im.recordStandalone(ctx, KindFollow, sid, uuid.Nil, "skipped", "follower not imported"); err != nil {
-			return err
-		}
-		c.Skipped++
-		return nil
+		return awaitParent(c)
 	}
 	channel, ok, err := im.resolveParent(ctx, KindChannel, strconv.FormatInt(f.ChannelID, 10))
 	if err != nil {
 		return err
 	}
 	if !ok {
-		if err := im.recordStandalone(ctx, KindFollow, sid, uuid.Nil, "skipped", "channel not imported"); err != nil {
-			return err
-		}
-		c.Skipped++
-		return nil
+		return awaitParent(c)
 	}
 	return im.withTx(ctx, func(q *sqlcgen.Queries) error {
 		if err := q.ImportFollowChannel(ctx, sqlcgen.ImportFollowChannelParams{FollowerID: follower, ChannelID: channel}); err != nil {
