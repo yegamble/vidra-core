@@ -12,6 +12,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/instancesettings"
+	"github.com/vidra/vidra-core/internal/mailconfig"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 )
 
@@ -221,6 +222,44 @@ func TestInstanceContactAvailabilitySendAndRateLimit(t *testing.T) {
 	}
 	if rec.Header().Get("Retry-After") == "" {
 		t.Error("Retry-After missing on rate-limited contact form")
+	}
+}
+
+// "This deployment can send email" and "this Server was built with a mailer"
+// used to be the SAME sentence: mailPathConfigured() was literally
+// `s.contactMailer != nil`, so asking it was the nil check. It now answers from
+// the mail-configuration service, which knows nothing about how this Server was
+// wired — and both call sites dereference s.contactMailer immediately after.
+// The public, unauthenticated contact form is the one that would panic.
+func TestMailAvailabilityDoesNotImplyAMailerIsWired(t *testing.T) {
+	cfg := testConfig()
+	settingssvc := instancesettings.NewService(newInstanceSettingsFakeRepo(), settingsDefaultsFromConfig(cfg))
+	if err := settingssvc.Load(context.Background()); err != nil {
+		t.Fatalf("settings load: %v", err)
+	}
+	if err := settingssvc.Apply(context.Background(), map[string]instancesettings.Update{
+		instancesettings.KeyContactEmail:       {Value: "admin@example.test"},
+		instancesettings.KeyContactFormEnabled: {Value: instancesettings.FormatBool(true)},
+	}, uuid.New()); err != nil {
+		t.Fatalf("enable contact form: %v", err)
+	}
+	// A configured transport and NO WithContactMailer: cmd/api always sets
+	// both, which is exactly why nothing else would catch this.
+	srv := New(cfg, nil, nil,
+		WithSettingsService(settingssvc),
+		WithMailConfigService(&fakeMailConfig{available: true, source: mailconfig.SourceDatabase}),
+	)
+
+	rec := postTo(srv, "/api/v1/instance/contact",
+		`{"from_name":"Ada","from_email":"ada@example.test","subject":"Hello","body":"This is a friendly message."}`)
+	if rec.Code != http.StatusConflict || errorCode(t, rec) != "contact_form_disabled" {
+		t.Fatalf("contact with no mailer wired = %d code=%q, want 409 contact_form_disabled",
+			rec.Code, errorCode(t, rec))
+	}
+	// The report-alert gate is the same shape, and notifyStaffOfReport
+	// dereferences the mailer straight after asking it.
+	if srv.reportEmailAlertsAvailable() {
+		t.Error("report email alerts reported available with no mailer to send them")
 	}
 }
 

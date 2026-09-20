@@ -619,11 +619,21 @@ func (s *Server) effectiveHideSensitive(c echo.Context) bool {
 	return s.effectiveSensitivePolicy(c) == instancesettings.SensitiveContentPolicyHide
 }
 
-// contactFormAvailable is the EFFECTIVE contact-form availability: the admin
-// toggle is on AND an effective contact email is set AND this deployment has
-// an outbound mail path.
+// contactFormAvailable is the EFFECTIVE contact-form availability: a mailer is
+// actually wired AND the admin toggle is on AND an effective contact email is
+// set AND this deployment has an outbound mail path.
+//
+// The nil check is explicit because the predicate beside it stopped being one.
+// mailPathConfigured() USED to be `s.contactMailer != nil` — asking it was the
+// nil guard — and it now answers from the configuration service, which knows
+// nothing about which collaborators this Server was built with. A Server with
+// WithMailConfigService and no WithContactMailer would say "available" and then
+// panic on the public unauthenticated POST /instance/contact. cmd/api wires
+// both, so this is latent rather than reachable; a latent nil dereference on an
+// anonymous route is still not something to leave to the wiring.
 func (s *Server) contactFormAvailable() bool {
-	return s.mailPathConfigured() &&
+	return s.contactMailer != nil &&
+		s.mailPathConfigured() &&
 		s.settingBool(instancesettings.KeyContactFormEnabled, false) &&
 		strings.TrimSpace(s.effectiveContactEmail()) != ""
 }

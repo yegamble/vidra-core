@@ -32,11 +32,15 @@ func (r createReportRequest) Validate() []FieldError {
 	return nil
 }
 
-// reportEmailAlertsAvailable is the EFFECTIVE report-email gate: the runtime
-// setting AND an outbound mail path AND a configured operator contact address
-// (an alert nobody can receive is not "on"). Mirrors contactFormAvailable.
+// reportEmailAlertsAvailable is the EFFECTIVE report-email gate: a mailer is
+// wired AND the runtime setting AND an outbound mail path AND a configured
+// operator contact address (an alert nobody can receive is not "on"). Mirrors
+// contactFormAvailable, including the explicit nil check and why it is there:
+// mailPathConfigured() is no longer the nil guard it once was, and
+// notifyStaffOfReport dereferences s.contactMailer straight after asking this.
 func (s *Server) reportEmailAlertsAvailable() bool {
-	return s.mailPathConfigured() &&
+	return s.contactMailer != nil &&
+		s.mailPathConfigured() &&
 		strings.TrimSpace(s.effectiveContactEmail()) != "" &&
 		s.settingBool(instancesettings.KeyReportEmailAlertsEnabled, true)
 }
