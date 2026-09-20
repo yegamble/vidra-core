@@ -120,7 +120,7 @@ func (t *brevoTransport) Probe(ctx context.Context) ProbeResult {
 	}
 	switch {
 	case status == http.StatusOK:
-		return ProbeResult{Verified: true}
+		return ProbeResult{Verified: true, Encrypted: true}
 	case status >= 500:
 		return ProbeResult{Err: &SendError{Reason: ReasonProviderUnavailable, Err: vendorDetail(KindBrevo, status, body)}}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"net"
 	"net/smtp"
 	"net/textproto"
 	"os"
@@ -160,12 +161,41 @@ func (t *SMTPTransport) Send(ctx context.Context, m Message) error {
 // when credentials exist, QUIT before MAIL FROM. It sends nothing, so it can run
 // on every admin page load without costing the instance a message.
 func (t *SMTPTransport) Probe(ctx context.Context) ProbeResult {
-	if _, err := preflight.CheckSMTPHandshake(ctx, t.handshake()); err != nil {
+	res, err := preflight.CheckSMTPHandshake(ctx, t.handshake())
+	if err != nil {
 		return ProbeResult{Err: t.classify(err)}
 	}
 	// AUTH either succeeded or there were no credentials to prove. Unlike an
 	// HTTP provider there is nothing left that only a real send would show.
-	return ProbeResult{Verified: true}
+	//
+	// The handshake's STARTTLS fact is reported rather than discarded: see
+	// ProbeResult.Encrypted. In EncryptionAuto a relay that offers no STARTTLS
+	// is a successful handshake AND a cleartext send, and throwing this away is
+	// what let the status page answer a confident `ok` on it.
+	return ProbeResult{Verified: true, Encrypted: res.STARTTLS}
+}
+
+// Host is the relay this transport dials. The status page needs it to decide
+// whether an unencrypted session is worth warning about — see IsLoopbackHost.
+func (t *SMTPTransport) Host() string { return t.cfg.Host }
+
+// IsLoopbackHost reports whether host names this machine. It matches literal
+// loopback addresses and the reserved name, and deliberately does NOT resolve:
+// a probe must not turn an operator's hostname into a DNS lookup whose answer
+// decides whether a cleartext warning is shown.
+//
+// Exported because two callers need the SAME line: this package refuses
+// `encryption: none` with credentials against a non-loopback relay, and the
+// configuration service suppresses the cleartext warning for a relay that never
+// leaves the machine. It is the same line net/smtp's PlainAuth draws.
+func IsLoopbackHost(host string) bool {
+	h := strings.ToLower(strings.TrimSpace(host))
+	h = strings.Trim(h, "[]")
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
 }
 
 // classify turns a preflight handshake failure into a *SendError. The stage is

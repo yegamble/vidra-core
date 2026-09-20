@@ -283,7 +283,7 @@ func TestPostmarkSendRequestShape(t *testing.T) {
 }
 
 func TestPostmarkMessageStreamIsConfigurable(t *testing.T) {
-	srv := newProviderServer(t, http.StatusOK, `{"ErrorCode":0}`)
+	srv := newProviderServer(t, http.StatusOK, `{"ErrorCode":0,"MessageID":"b7bc2f4a"}`)
 	tr := newPostmarkTransport("vidra-transactional", "server-token", collectTransportOptions(srv.opts()))
 	if err := tr.Send(context.Background(), providerMessage()); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -616,6 +616,16 @@ func TestEveryTransportRejectsHeaderInjection(t *testing.T) {
 		"from display name": func(m *Message) { m.From.Name = "Ada\r\nBcc: evil@x.test" },
 		"reply-to":          func(m *Message) { m.ReplyTo = "a@b.test\r\nBcc: evil@x.test" },
 		"empty recipient":   func(m *Message) { m.To = "  " },
+		// The LIST separators, not just the line breaks. Postmark's To and
+		// Mailgun's `to` are documented comma-separated lists, so a second
+		// address inside one string field is a second delivery on those two
+		// transports and nothing on the other three — a fan-out that differs by
+		// provider is exactly the kind of invariant that must live here.
+		"comma-separated recipients":       func(m *Message) { m.To = "ada@example.test,evil@x.test" },
+		"semicolon-separated recipients":   func(m *Message) { m.To = "ada@example.test;evil@x.test" },
+		"recipient that is not an address": func(m *Message) { m.To = "not an address" },
+		"comma-separated reply-to":         func(m *Message) { m.ReplyTo = "ops@vidra.test,evil@x.test" },
+		"comma-separated sender":           func(m *Message) { m.From.Address = "no-reply@vidra.test,evil@x.test" },
 	}
 	for _, kind := range Kinds() {
 		for name, mutate := range mutations {
@@ -705,6 +715,49 @@ func TestTextToHTML(t *testing.T) {
 				if strings.Contains(got, deny) {
 					t.Errorf("unescaped %q survived in:\n%s", deny, got)
 				}
+			}
+		})
+	}
+}
+
+// A 3xx from a vendor host is never followed. Two of the four providers
+// authenticate with a BESPOKE header (Brevo's api-key, Postmark's
+// X-Postmark-Server-Token) that Go's stdlib does not strip across a redirect,
+// so an open redirect anywhere under the vendor's domain would hand the live
+// sending credential to the redirect target. These are fixed-host RPC calls:
+// the 3xx is classified as a refusal and nothing is re-issued.
+func TestProviderClientsNeverFollowARedirect(t *testing.T) {
+	for _, kind := range []string{KindResend, KindBrevo, KindMailgun, KindPostmark} {
+		t.Run(kind, func(t *testing.T) {
+			// The host a redirect would send the credential to. It must see
+			// nothing at all.
+			sink := newProviderServer(t, http.StatusOK, `{"id":"pwned","MessageID":"pwned"}`)
+			var redirector *httptest.Server
+			redirector = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, sink.srv.URL+r.URL.Path, http.StatusFound)
+			}))
+			t.Cleanup(redirector.Close)
+			opts := collectTransportOptions([]transportOption{
+				withBaseURL(redirector.URL), withHTTPClient(redirector.Client()),
+			})
+
+			var tr Transport
+			switch kind {
+			case KindResend:
+				tr = newResendTransport("re_test_key", opts)
+			case KindBrevo:
+				tr = newBrevoTransport("xkeysib-test", opts)
+			case KindMailgun:
+				tr = newMailgunTransport("mail.vidra.test", RegionUS, "key-test", opts)
+			case KindPostmark:
+				tr = newPostmarkTransport("", "server-token", opts)
+			}
+			err := tr.Send(context.Background(), providerMessage())
+			if err == nil {
+				t.Fatal("a 302 was treated as a successful send")
+			}
+			if len(sink.got) != 0 {
+				t.Fatalf("the redirect target received %d requests — the sending credential followed the hop", len(sink.got))
 			}
 		})
 	}

@@ -46,11 +46,30 @@ func newHTTPSender(defaultBaseURL string, o transportOptions) httpSender {
 	if client == nil {
 		client = urlsafety.NewClient(httpSendTimeout)
 	}
+	// NEVER follow a redirect. These are fixed-host RPC calls to five pinned
+	// vendor endpoints where a 3xx is not a correct answer, and two of the four
+	// providers authenticate with a BESPOKE header — Brevo's `api-key`, Postmark's
+	// `X-Postmark-Server-Token`. Go's stdlib strips `Authorization` on a
+	// cross-domain hop (which covers Mailgun's basic auth) and strips nothing
+	// else, so an open redirect or a CDN misconfiguration anywhere under the
+	// vendor's own domain would re-issue the request to the redirect target with
+	// the live sending credential attached. ErrUseLastResponse hands the 3xx
+	// back as a status instead, where reasonForStatus classifies it as a
+	// rejection and the credential never leaves the pinned host.
+	//
+	// The client is copied rather than mutated: it may be the caller's (a test's
+	// httptest client), and reaching into a shared *http.Client to change its
+	// redirect policy would be a spooky action at a distance. Copying shares the
+	// Transport, which is what actually holds the connection pool.
+	noRedirect := *client
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 	base := defaultBaseURL
 	if o.baseURL != "" {
 		base = o.baseURL
 	}
-	return httpSender{client: client, baseURL: strings.TrimRight(base, "/")}
+	return httpSender{client: &noRedirect, baseURL: strings.TrimRight(base, "/")}
 }
 
 // do runs one request under the provider budget and returns the status and at

@@ -133,6 +133,17 @@ func newValidatedSMTP(s SMTPSettings, password string, o transportOptions) (Tran
 		// dropped, and the operator would read the send as authenticated.
 		bad = append(bad, FieldError{"smtp.username", "required when a password is set"})
 	}
+	if s.Encryption == EncryptionNone && s.Username != "" && !IsLoopbackHost(host) {
+		// Refuse the combination HERE, where the message names the real problem.
+		// It is already fail-closed at send time — net/smtp's PlainAuth will not
+		// transmit credentials over an unencrypted connection unless the server
+		// is localhost — but it fails as `auth_failed`, so an operator who
+		// pointed `none` + credentials at a LAN relay is told their password is
+		// wrong, re-types a password that was correct, and ends up asking for a
+		// skip-verify knob that does not exist and will not be added.
+		bad = append(bad, FieldError{"smtp.encryption",
+			"credentials require starttls or tls unless the relay is on localhost"})
+	}
 	if len(bad) > 0 {
 		return nil, &ValidationError{Fields: bad}
 	}
@@ -152,9 +163,13 @@ func newValidatedMailgun(s MailgunSettings, apiKey string, o transportOptions) (
 	switch {
 	case domain == "":
 		bad = append(bad, FieldError{"mailgun.domain", "required"})
-	case hasCRLF(domain) || strings.ContainsAny(domain, " \t/?#@"):
-		// The domain is interpolated into the request PATH. Anything that could
-		// steer that path is refused here rather than escaped later.
+	case !isBareDomain(domain):
+		// The domain is interpolated into the request PATH. It is an ALLOWLIST,
+		// not a denylist of delimiters: a denylist stopped `/` and `..` but let
+		// through `%2f` and `%2e%2e`, and Go preserves RawPath, so those bytes
+		// reach the wire verbatim and a path-normalising gateway in front of the
+		// API could route the call to a different Mailgun endpoint. A sending
+		// domain is a hostname; nothing outside a hostname's alphabet belongs.
 		bad = append(bad, FieldError{"mailgun.domain", "must be a bare sending domain, e.g. mail.example.org"})
 	}
 	if s.Region != RegionUS && s.Region != RegionEU {
@@ -201,6 +216,25 @@ func SecretField(kind string) string {
 		return "postmark.server_token"
 	}
 	return ""
+}
+
+// isBareDomain reports whether v is a plain hostname: dot-separated labels of
+// letters, digits and hyphens, nothing else. Percent-encoding, path separators,
+// dot segments, userinfo and ports are all outside the alphabet and therefore
+// all refused by one rule rather than by a list of the tricks known today.
+func isBareDomain(v string) bool {
+	if v == "" || len(v) > 253 || strings.HasPrefix(v, ".") || strings.HasSuffix(v, ".") ||
+		strings.Contains(v, "..") {
+		return false
+	}
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func requireSecret(field, secret string) error {

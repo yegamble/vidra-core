@@ -169,10 +169,52 @@ func TestNewTransportValidation(t *testing.T) {
 			wantFields: []string{"mailgun.api_key", "mailgun.domain", "mailgun.region"},
 		},
 		{
+			name: "smtp cleartext with credentials against a remote relay",
+			kind: KindSMTP,
+			settings: TransportSettings{SMTP: SMTPSettings{
+				Host: "10.0.0.5", Port: 25, Username: "mailer", Encryption: EncryptionNone,
+			}},
+			secret: "relay-pass",
+			// The send would fail anyway (net/smtp refuses to transmit AUTH over
+			// a cleartext non-localhost connection) but as `auth_failed`, which
+			// sends the operator to re-type a password that was correct.
+			wantFields: []string{"smtp.encryption"},
+		},
+		{
 			name: "mailgun domain that could steer the request path",
 			kind: KindMailgun,
 			settings: TransportSettings{Mailgun: MailgunSettings{
 				Domain: "mail.vidra.test/../../v3/other.test", Region: RegionUS,
+			}},
+			secret:     "key",
+			wantFields: []string{"mailgun.domain"},
+		},
+		{
+			// Go preserves RawPath, so a percent-encoded separator reaches the
+			// wire verbatim and a path-normalising gateway in front of the API
+			// could route the call elsewhere. The allowlist has no % in it.
+			name: "mailgun domain with a percent-encoded separator",
+			kind: KindMailgun,
+			settings: TransportSettings{Mailgun: MailgunSettings{
+				Domain: "mail.vidra.test%2f..%2fv3%2fother.test", Region: RegionUS,
+			}},
+			secret:     "key",
+			wantFields: []string{"mailgun.domain"},
+		},
+		{
+			name: "mailgun domain with percent-encoded dot segments",
+			kind: KindMailgun,
+			settings: TransportSettings{Mailgun: MailgunSettings{
+				Domain: "%2e%2e/%2e%2e/domains", Region: RegionUS,
+			}},
+			secret:     "key",
+			wantFields: []string{"mailgun.domain"},
+		},
+		{
+			name: "mailgun domain with bare dot segments",
+			kind: KindMailgun,
+			settings: TransportSettings{Mailgun: MailgunSettings{
+				Domain: "..", Region: RegionUS,
 			}},
 			secret:     "key",
 			wantFields: []string{"mailgun.domain"},

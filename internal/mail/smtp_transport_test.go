@@ -322,3 +322,49 @@ func TestExplicitReplyToBeatsTheResolvedDefault(t *testing.T) {
 type resolverFunc func() (Transport, netmail.Address, string, bool)
 
 func (f resolverFunc) Current() (Transport, netmail.Address, string, bool) { return f() }
+
+// A relay that advertises no STARTTLS in EncryptionAuto is a SUCCESSFUL
+// handshake and a CLEARTEXT send. Reporting only Verified there is what let the
+// admin status page answer a confident `smtp: ok` while password-reset tokens
+// crossed the wire in the clear — which is the shape of both a relay
+// reconfiguration and an on-path STARTTLS strip.
+func TestProbeReportsAnUnencryptedAutoSession(t *testing.T) {
+	// No TLS config on the fake relay ⇒ it never advertises STARTTLS.
+	f := newFakeSMTP(t, nil, false)
+	tr := transportFor(t, f, EncryptionAuto, nil, "", "")
+
+	res := tr.Probe(context.Background())
+	if res.Err != nil || !res.Verified {
+		t.Fatalf("Probe = %+v, want a verified handshake", res)
+	}
+	if res.Encrypted {
+		t.Error("Encrypted = true for a relay that never offered STARTTLS")
+	}
+}
+
+// The same relay in the same mode, once it DOES offer STARTTLS: verified and
+// encrypted. Without this the assertion above would pass on a probe that had
+// simply stopped reporting encryption at all.
+func TestProbeReportsAnEncryptedAutoSession(t *testing.T) {
+	serverTLS, clientTLS := selfSignedTLS(t)
+	f := newFakeSMTP(t, serverTLS, false)
+	tr := transportFor(t, f, EncryptionAuto, clientTLS, "", "")
+
+	res := tr.Probe(context.Background())
+	if res.Err != nil || !res.Verified || !res.Encrypted {
+		t.Fatalf("Probe = %+v, want verified AND encrypted", res)
+	}
+}
+
+func TestIsLoopbackHost(t *testing.T) {
+	for _, h := range []string{"localhost", "LOCALHOST", "127.0.0.1", "127.9.9.9", "::1", "[::1]"} {
+		if !IsLoopbackHost(h) {
+			t.Errorf("IsLoopbackHost(%q) = false, want true", h)
+		}
+	}
+	for _, h := range []string{"", "10.0.0.5", "smtp.example.test", "localhost.evil.test", "192.168.1.1"} {
+		if IsLoopbackHost(h) {
+			t.Errorf("IsLoopbackHost(%q) = true, want false", h)
+		}
+	}
+}

@@ -151,6 +151,23 @@ type Transport interface {
 type ProbeResult struct {
 	Verified bool
 	Err      error
+	// Encrypted reports whether the route this probe exercised is protected in
+	// transit. Always true for the HTTPS providers. For SMTP it is the fact the
+	// handshake observed — and it is a SEPARATE question from Verified, which is
+	// the whole point: in EncryptionAuto (the environment path, and therefore
+	// every install that predates admin-configurable mail) a relay that stops
+	// advertising STARTTLS is silently downgraded to cleartext, the handshake
+	// still succeeds, and `smtp: ok` on the admin status page was the only thing
+	// anybody would ever see while password-reset tokens crossed the wire in the
+	// clear. A relay reconfiguration and a STARTTLS-stripping on-path attacker
+	// produce exactly that shape.
+	//
+	// A relay on loopback reports true: the session never leaves the machine, so
+	// there is no cleartext hop to warn about, and warning anyway would train
+	// operators to ignore the warning on the one deployment where it is
+	// harmless. It is the same line net/smtp's PlainAuth already draws when it
+	// decides where credentials may cross an unencrypted connection.
+	Encrypted bool
 }
 
 // Reason classifies a delivery failure into the small set of things an operator
@@ -280,14 +297,32 @@ func hasCRLF(v string) bool { return strings.ContainsAny(v, "\r\n") }
 // far end.
 func validateMessage(m Message) error {
 	switch {
-	case strings.TrimSpace(m.To) == "" || hasCRLF(m.To):
+	case !isSingleAddress(m.To):
 		return &SendError{Reason: ReasonRejected, Err: errors.New("invalid recipient address")}
-	case strings.TrimSpace(m.From.Address) == "" || hasCRLF(m.From.Address) || hasCRLF(m.From.Name):
+	case hasCRLF(m.From.Name) || !isSingleAddress(m.From.Address):
 		return &SendError{Reason: ReasonSenderRejected, Err: errors.New("invalid sender address")}
-	case hasCRLF(m.ReplyTo):
+	case m.ReplyTo != "" && !isSingleAddress(m.ReplyTo):
 		return &SendError{Reason: ReasonRejected, Err: errors.New("invalid reply-to address")}
 	}
 	return nil
+}
+
+// isSingleAddress reports whether v is exactly ONE parseable address.
+//
+// CRLF is the injection everybody checks for; the list SEPARATORS are the one
+// nobody does. vidra never sends a message to two people (Message.To says so),
+// but Postmark's To and Mailgun's `to` form field are both documented
+// COMMA-SEPARATED LISTS, so "victim@example.test, attacker@evil.test" in a
+// single string field is a second delivery those two transports would perform
+// and the other three would not. The invariant used to rest entirely on an
+// email validator in internal/httpapi with no link to this package; it rests
+// here now, where the fan-out actually happens.
+func isSingleAddress(v string) bool {
+	if strings.TrimSpace(v) == "" || hasCRLF(v) || strings.ContainsAny(v, ",;") {
+		return false
+	}
+	_, err := netmail.ParseAddress(v)
+	return err == nil
 }
 
 // formatAddress renders an address for a From header. With no display name it

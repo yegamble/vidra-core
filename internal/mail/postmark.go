@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // postmarkBaseURL is Postmark's single API host.
@@ -100,7 +101,12 @@ func (t *postmarkTransport) Send(ctx context.Context, m Message) error {
 	}
 	var parsed postmarkResponse
 	_ = json.Unmarshal(respBody, &parsed)
-	if status == http.StatusOK && parsed.ErrorCode == 0 {
+	// A success is 200, ErrorCode 0 AND a MessageID. Without the last condition
+	// any 200 that is not Postmark's documented envelope — an unmarshal that
+	// silently left the zero value, a proxy's courtesy page — reads as a
+	// delivered password reset. "Sent" should mean the vendor named the message
+	// it accepted.
+	if status == http.StatusOK && parsed.ErrorCode == 0 && strings.TrimSpace(parsed.MessageID) != "" {
 		return nil
 	}
 	return &SendError{
@@ -148,7 +154,7 @@ func (t *postmarkTransport) Probe(ctx context.Context) ProbeResult {
 		return ProbeResult{Err: &SendError{Reason: transportReason(err), Err: err}}
 	}
 	if status == http.StatusOK {
-		return ProbeResult{Verified: true}
+		return ProbeResult{Verified: true, Encrypted: true}
 	}
 	var parsed postmarkResponse
 	_ = json.Unmarshal(body, &parsed)

@@ -142,24 +142,33 @@ func NewComposer(cfg ComposerConfig, r Resolver, opts ...Option) *Composer {
 // byte-for-byte what it was before transports existed — same headers, same
 // bare From, same 30 s ceiling, same fail-closed AUTH.
 func NewSMTP(cfg Config, opts ...Option) *SMTP {
+	return NewComposer(
+		ComposerConfig{InstanceName: cfg.InstanceName, PublicBaseURL: cfg.PublicBaseURL},
+		NewStaticResolver(NewEnvironmentTransport(cfg, opts...), netmail.Address{Address: cfg.From}, ""),
+		opts...,
+	)
+}
+
+// NewEnvironmentTransport builds the transport the ENVIRONMENT path has always
+// used (MAIL_ENABLED + SMTP_*), on its own so the configuration service can
+// offer it as the fallback a DELETE reverts to without rebuilding a composer.
+//
+// The mode is EncryptionAuto, not starttls: the env path has always upgraded
+// when the relay offered STARTTLS and continued in the clear when it did not,
+// and tightening that here would break instances on the next deploy rather than
+// when their operator chose a mode. NewTransport refuses Auto precisely because
+// an ADMIN choosing a mode must not get that silent downgrade — this
+// constructor is the one door it stays behind.
+func NewEnvironmentTransport(cfg Config, opts ...Option) Transport {
 	o := collect(opts)
-	t := newSMTPTransport(smtpTransportConfig{
-		Host:     cfg.Host,
-		Port:     cfg.Port,
-		Username: cfg.Username,
-		Password: cfg.Password,
-		// Auto, not starttls: the env path has always upgraded when the relay
-		// offered STARTTLS and continued in the clear when it did not, and
-		// tightening that here would break instances on the next deploy rather
-		// than when their operator chose a mode.
+	return newSMTPTransport(smtpTransportConfig{
+		Host:       cfg.Host,
+		Port:       cfg.Port,
+		Username:   cfg.Username,
+		Password:   cfg.Password,
 		Encryption: EncryptionAuto,
 		TLSConfig:  o.tlsConfig,
 	})
-	return NewComposer(
-		ComposerConfig{InstanceName: cfg.InstanceName, PublicBaseURL: cfg.PublicBaseURL},
-		NewStaticResolver(t, netmail.Address{Address: cfg.From}, ""),
-		opts...,
-	)
 }
 
 // SendContactForm delivers a visitor contact-form message to the operator's

@@ -114,9 +114,9 @@ func (t *resendTransport) Probe(ctx context.Context) ProbeResult {
 	}
 	switch {
 	case status == http.StatusOK:
-		return ProbeResult{Verified: true}
+		return ProbeResult{Verified: true, Encrypted: true}
 	case status == http.StatusUnauthorized && resendErrorName(body) == "restricted_api_key":
-		return ProbeResult{Verified: true}
+		return ProbeResult{Verified: true, Encrypted: true}
 	case status >= 500:
 		return ProbeResult{Err: &SendError{Reason: ReasonProviderUnavailable, Err: vendorDetail(KindResend, status, body)}}
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
@@ -124,7 +124,7 @@ func (t *resendTransport) Probe(ctx context.Context) ProbeResult {
 	}
 	// Anything else: the API answered, so it is reachable, but this did not
 	// prove the key. Not an alarm — only a send proves a send.
-	return ProbeResult{}
+	return ProbeResult{Encrypted: true}
 }
 
 func resendErrorName(body []byte) string {

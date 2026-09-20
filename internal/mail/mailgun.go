@@ -139,7 +139,7 @@ func (t *mailgunTransport) Probe(ctx context.Context) ProbeResult {
 	}
 	switch {
 	case status == http.StatusOK:
-		return ProbeResult{Verified: true}
+		return ProbeResult{Verified: true, Encrypted: true}
 	case status == http.StatusNotFound:
 		return ProbeResult{Err: &SendError{
 			Reason: ReasonSenderRejected,
@@ -148,11 +148,11 @@ func (t *mailgunTransport) Probe(ctx context.Context) ProbeResult {
 		}}
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		// Send-only domain key: reachable, unprovable. Only a test send settles it.
-		return ProbeResult{}
+		return ProbeResult{Encrypted: true}
 	case status >= 500:
 		return ProbeResult{Err: &SendError{Reason: ReasonProviderUnavailable, Err: vendorDetail(KindMailgun, status, body)}}
 	}
-	return ProbeResult{}
+	return ProbeResult{Encrypted: true}
 }
 
 var _ Transport = (*mailgunTransport)(nil)
