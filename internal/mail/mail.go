@@ -297,32 +297,51 @@ func hasCRLF(v string) bool { return strings.ContainsAny(v, "\r\n") }
 // far end.
 func validateMessage(m Message) error {
 	switch {
-	case !isSingleAddress(m.To):
+	case !IsAddrSpec(m.To):
 		return &SendError{Reason: ReasonRejected, Err: errors.New("invalid recipient address")}
-	case hasCRLF(m.From.Name) || !isSingleAddress(m.From.Address):
+	case hasCRLF(m.From.Name) || !IsAddrSpec(m.From.Address):
 		return &SendError{Reason: ReasonSenderRejected, Err: errors.New("invalid sender address")}
-	case m.ReplyTo != "" && !isSingleAddress(m.ReplyTo):
+	case m.ReplyTo != "" && !IsAddrSpec(m.ReplyTo):
 		return &SendError{Reason: ReasonRejected, Err: errors.New("invalid reply-to address")}
 	}
 	return nil
 }
 
-// isSingleAddress reports whether v is exactly ONE parseable address.
+// IsAddrSpec reports whether v is exactly ONE bare addr-spec — "user@host" and
+// nothing else. It is the ONE address rule in this codebase: internal/mailconfig
+// validates an admin's stored identity fields with it, and every transport
+// validates the composed message with it, so a configuration that saves is a
+// configuration that can be put on the wire.
 //
-// CRLF is the injection everybody checks for; the list SEPARATORS are the one
-// nobody does. vidra never sends a message to two people (Message.To says so),
-// but Postmark's To and Mailgun's `to` form field are both documented
-// COMMA-SEPARATED LISTS, so "victim@example.test, attacker@evil.test" in a
-// single string field is a second delivery those two transports would perform
-// and the other three would not. The invariant used to rest entirely on an
-// email validator in internal/httpapi with no link to this package; it rests
-// here now, where the fan-out actually happens.
-func isSingleAddress(v string) bool {
+// Three things make an address unusable here and `net/mail.ParseAddress` alone
+// catches none of them:
+//
+//   - A NAME-ADDR parses. `ParseAddress("Vidra <no-reply@example.org>")` and
+//     `ParseAddress("<no-reply@example.org>")` both succeed, and these fields go
+//     to the wire VERBATIM: `c.Mail(m.From.Address)` emits
+//     `MAIL FROM:<Vidra <no-reply@example.org>>` (a 501 from every relay) and
+//     Brevo's `sender.email` rejects the same string. The probe QUITs before
+//     MAIL FROM, so nothing would surface it: an instance that "saved
+//     successfully" would lose every message silently. Requiring Name=="" and
+//     Address==v is what makes "parses" mean "is the address".
+//   - CRLF turns a header value into extra headers.
+//   - The list SEPARATORS are the injection nobody checks for. vidra never sends
+//     one message to two people (Message.To says so), but Postmark's To and
+//     Mailgun's `to` form field are both documented COMMA-SEPARATED LISTS, so
+//     "victim@example.test, attacker@evil.test" in a single string field is a
+//     second delivery those two transports would perform and the other three
+//     would not.
+//
+// Address==v is deliberately exact rather than normalising: a value that only
+// becomes an addr-spec after the stdlib rewrites it (surrounding whitespace, a
+// quoted local part with a space) is not what reaches MAIL FROM, and accepting
+// it would reopen the same gap in a quieter form.
+func IsAddrSpec(v string) bool {
 	if strings.TrimSpace(v) == "" || hasCRLF(v) || strings.ContainsAny(v, ",;") {
 		return false
 	}
-	_, err := netmail.ParseAddress(v)
-	return err == nil
+	p, err := netmail.ParseAddress(v)
+	return err == nil && p.Name == "" && p.Address == v
 }
 
 // formatAddress renders an address for a From header. With no display name it

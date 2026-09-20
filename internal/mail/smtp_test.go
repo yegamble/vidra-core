@@ -371,6 +371,58 @@ func TestRecipientHeaderInjectionRejected(t *testing.T) {
 	}
 }
 
+// The ENVIRONMENT path is the one that must not move. A bare SMTP_FROM has
+// always been handed to net/smtp verbatim, so it must still produce exactly
+// `MAIL FROM:<addr>` and a bare `From: addr` header after the addr-spec rule
+// arrived — this is the byte-for-byte assertion, not a substring one.
+func TestEnvironmentFromIsSentVerbatim(t *testing.T) {
+	f := newFakeSMTP(t, nil, false)
+	host, port := f.hostPort(t)
+	m := NewSMTP(Config{Host: host, Port: port, From: "no-reply@vidra.test", InstanceName: "Vidra Test"})
+
+	if err := m.SendPasswordReset(context.Background(), "ada@example.test", "tok"); err != nil {
+		t.Fatalf("SendPasswordReset: %v", err)
+	}
+	from, rcpt, data, _, _ := f.snapshot(t)
+	// net/smtp appends BODY=8BITMIME when the relay advertises it; the reverse
+	// path itself is what this pins.
+	if addr, _, _ := strings.Cut(from, " "); addr != "<no-reply@vidra.test>" {
+		t.Errorf("MAIL FROM = %q, want reverse-path %q", from, "<no-reply@vidra.test>")
+	}
+	if len(rcpt) != 1 || rcpt[0] != "<ada@example.test>" {
+		t.Errorf("RCPT TO = %v, want [<ada@example.test>]", rcpt)
+	}
+	if !strings.Contains(data, "From: no-reply@vidra.test\r\n") {
+		t.Errorf("From header is not the bare address; data:\n%s", data)
+	}
+}
+
+// A name-addr in SMTP_FROM was ALREADY broken before the addr-spec rule: on
+// main `c.Mail(s.cfg.From)` emitted `MAIL FROM:<Vidra <no-reply@vidra.test>>`
+// and every relay answered 501, while config.Load only ever checked for an "@".
+// The rule does not take a working install away; it moves the failure off the
+// wire and in front of the admin, and it refuses before the relay is dialled.
+func TestEnvironmentNameAddrFromIsRefusedBeforeDialling(t *testing.T) {
+	f := newFakeSMTP(t, nil, false)
+	host, port := f.hostPort(t)
+	for _, from := range []string{"Vidra <no-reply@vidra.test>", "<no-reply@vidra.test>"} {
+		m := NewSMTP(Config{Host: host, Port: port, From: from, InstanceName: "Vidra Test"})
+		err := m.SendPasswordReset(context.Background(), "ada@example.test", "tok")
+		if err == nil {
+			t.Fatalf("SMTP_FROM %q was accepted, want a local refusal", from)
+		}
+		if got := ReasonOf(err); got != ReasonSenderRejected {
+			t.Errorf("SMTP_FROM %q reason = %q, want %q", from, got, ReasonSenderRejected)
+		}
+	}
+	f.mu.Lock()
+	seen := f.mailFrom
+	f.mu.Unlock()
+	if seen != "" {
+		t.Errorf("relay saw MAIL FROM %q; the refusal must happen before any dial", seen)
+	}
+}
+
 func TestUnreachableRelayHonoursContext(t *testing.T) {
 	// A listener that never accepts: the context deadline must bound the send.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
