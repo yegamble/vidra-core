@@ -26,6 +26,10 @@ type fakeSMTP struct {
 	ln        net.Listener
 	tlsConfig *tls.Config
 	offerAuth bool
+	// implicitTLS makes the listener speak TLS from the first byte (the port-465
+	// shape) instead of advertising STARTTLS. A relay cannot do both: there is
+	// no plaintext phase to upgrade out of.
+	implicitTLS bool
 
 	mu          sync.Mutex
 	sawSTARTTLS bool
@@ -44,6 +48,20 @@ func newFakeSMTP(t *testing.T, tlsConfig *tls.Config, offerAuth bool) *fakeSMTP 
 		t.Fatalf("listen: %v", err)
 	}
 	f := &fakeSMTP{ln: ln, tlsConfig: tlsConfig, offerAuth: offerAuth, done: make(chan struct{})}
+	go f.serveOne(t)
+	t.Cleanup(func() { _ = ln.Close() })
+	return f
+}
+
+// newImplicitTLSFakeSMTP is the same relay behind implicit TLS (port 465): the
+// handshake happens before the greeting and STARTTLS is never advertised.
+func newImplicitTLSFakeSMTP(t *testing.T, tlsConfig *tls.Config, offerAuth bool) *fakeSMTP {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	f := &fakeSMTP{ln: ln, tlsConfig: tlsConfig, offerAuth: offerAuth, implicitTLS: true, done: make(chan struct{})}
 	go f.serveOne(t)
 	t.Cleanup(func() { _ = ln.Close() })
 	return f
@@ -69,11 +87,18 @@ func (f *fakeSMTP) serveOne(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 
+	if f.implicitTLS {
+		tconn := tls.Server(conn, f.tlsConfig)
+		if err := tconn.Handshake(); err != nil {
+			return
+		}
+		conn = tconn
+	}
 	r := bufio.NewReader(conn)
 	write := func(s string) { _, _ = conn.Write([]byte(s + "\r\n")) }
 	ehlo := func() {
 		lines := []string{"250-fake.test"}
-		if f.tlsConfig != nil && !f.sawSTARTTLS {
+		if f.tlsConfig != nil && !f.sawSTARTTLS && !f.implicitTLS {
 			lines = append(lines, "250-STARTTLS")
 		}
 		if f.offerAuth {
