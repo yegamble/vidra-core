@@ -116,6 +116,15 @@ const (
 	// outbound network traffic, which is exactly the shape worth being able to
 	// look back at.
 	ActionAdminMailTest = "admin.mail.test"
+	// ActionAdminMailConfigUpdate / Reset record an admin writing or clearing
+	// the outbound-mail transport document (migration 0151). The metadata
+	// carries the TRANSPORT, the dotted field NAMES that changed and whether the
+	// credential was replaced — never a value, and never the credential's
+	// length or prefix either. That is the whole point of the document living
+	// outside instance_settings: an SMTP password and a provider API key must be
+	// describable in an audit trail without being held by one.
+	ActionAdminMailConfigUpdate = "admin.mail_config.update"
+	ActionAdminMailConfigReset  = "admin.mail_config.reset"
 	// ActionAdminInstanceAssetUpdate / Delete record an admin uploading or
 	// removing an instance branding image (avatar/banner/logo slots,
 	// config-parity W1). Reason carries the asset kind only.
@@ -293,6 +302,25 @@ var sensitiveKeys = map[string]bool{
 	"secret_key":         true,
 	"smtp_password":      true,
 	"client_secret":      true,
+	// Admin-configurable outbound mail (migration 0151). smtp_password above
+	// covered the ONE credential this API had when it was the only transport;
+	// each of the four HTTPS providers adds another, under both the dotted path
+	// the admin API names it by and the leaf name a careless log call would use.
+	// TestMailSecretFieldsAreOnTheDenylist drives this list from
+	// mail.SecretField, so a fifth provider cannot be added without adding it
+	// here — the alternative is a provider key logged in the clear, noticed
+	// years later.
+	"api_key":               true,
+	"server_token":          true,
+	"smtp.password":         true,
+	"mailgun.api_key":       true,
+	"mailgun_api_key":       true,
+	"resend.api_key":        true,
+	"resend_api_key":        true,
+	"brevo.api_key":         true,
+	"brevo_api_key":         true,
+	"postmark.server_token": true,
+	"postmark_server_token": true,
 	// ATProto / Bluesky (P10.2): the linked app password (and its sealed form)
 	// are secrets — never log, span-tag, or return them.
 	"app_password":        true,

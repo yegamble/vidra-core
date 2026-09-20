@@ -8,6 +8,7 @@ import (
 	"github.com/labstack/gommon/bytes"
 
 	"github.com/vidra/vidra-core/internal/drm"
+	"github.com/vidra/vidra-core/internal/mailconfig"
 )
 
 // --- GET /api/v1/admin/infrastructure ---
@@ -33,7 +34,7 @@ import (
 // while no RTMP ingest exists is the sentence this page has to be able to
 // contradict. The runtime toggles live on /admin/config and GET /instance.
 //
-// EXACTLY TWO ROWS BREAK THAT RULE, both for the same underlying reason: a
+// EXACTLY THREE ROWS BREAK THAT RULE, all for the same underlying reason: a
 // delivery posture whose only spelling is a runtime setting.
 //
 //   - cdn, for its ENABLED half. A CDN has no env spelling of "on" —
@@ -49,6 +50,13 @@ import (
 //     note's whole message is "this runtime switch exists and is off" — a
 //     sentence boot config cannot write about a switch whose state lives in the
 //     overlay. Both of the row's COLUMNS stay boot config.
+//   - mail, for BOTH halves. Outbound email is configurable from the admin
+//     panel (migration 0151), and the stored transport OVERRIDES
+//     MAIL_ENABLED/SMTP_* rather than supplementing them — so reading boot
+//     config here would report "not configured" on an instance that has been
+//     sending mail since the admin saved a transport. That is the page
+//     contradicting the product instead of the other way round, which is the
+//     opposite of what the rule is for.
 
 // infraServer is the process's own shape: the environment it believes it is in,
 // the request deadlines and size caps it enforces, and whether the two
@@ -399,15 +407,24 @@ func (s *Server) infraFeatures() []infraFeature {
 		},
 		{
 			Key: "mail",
-			// The mailer is wired whenever ANY outbound path exists (a relay,
-			// or the dev capture seam), which is the deployment's real
-			// capability; Configured is the narrower "a real relay is set".
-			Enabled:    s.contactMailer != nil,
-			Configured: cfg.MailEnabled && strings.TrimSpace(cfg.SMTPHost) != "" && strings.TrimSpace(cfg.SMTPFrom) != "",
+			// THE THIRD ROW THAT BREAKS THE BOOT-CONFIG RULE, and for the same
+			// underlying reason as cdn and the row below it: a posture whose
+			// real spelling is no longer an environment variable. Outbound mail
+			// is configurable from the admin panel now (migration 0151), so
+			// reading cfg.MailEnabled here would report "not configured" on an
+			// instance that has been sending mail happily since the admin saved
+			// a transport — the page would be contradicting the product rather
+			// than the other way round.
+			//
+			// Enabled is the live capability: ANY outbound path (a relay, an
+			// API provider, or the dev capture seam). Configured is the narrower
+			// "a real delivery route is set", which excludes capture.
+			Enabled:    s.mailPathConfigured(),
+			Configured: s.mailDeliveryConfigured(),
 			// Mail is the one feature whose note cannot be written from
-			// (enabled, configured) alone — see mailDevCaptureNote. Empty in
+			// (enabled, configured) alone — see mailSourceNote. Empty in
 			// every ordinary case, which leaves the generic notes in charge.
-			Note: mailDevCaptureNote(s.contactMailer != nil, cfg.MailEnabled),
+			Note: mailSourceNote(s.mailSource()),
 		},
 		{
 			Key:        "search",
@@ -522,22 +539,66 @@ func (s *Server) infraFeatures() []infraFeature {
 	return features
 }
 
-// mailDevCaptureNote covers the one quadrant the generic notes get wrong.
+// mailSourceNote covers the two quadrants the generic notes get wrong, both of
+// which are a consequence of mail having THREE possible origins rather than one
+// environment variable.
 //
 // The dev capture seam is a real outbound path — it is how the local and e2e
-// stacks "send" — so enabled is true while MAIL_ENABLED is unset. That lands in
-// the enabled-but-unconfigured slot, whose note reads "MAIL_ENABLED is set but
-// the relay is not fully configured": both halves false. Reporting enabled=false
-// instead would be the other lie, since messages really are being handled.
+// stacks "send" — so enabled is true while nothing is delivered. That lands in
+// the enabled-but-unconfigured slot, whose generic note reads "MAIL_ENABLED is
+// set but the relay is not fully configured": both halves wrong. Reporting
+// enabled=false instead would be the other lie, since messages really are being
+// handled.
 //
-// So the quadrant gets its own sentence, and returns "" everywhere else — the
-// enabled+MAIL_ENABLED case is a genuinely incomplete relay and the generic
-// misconfigured note is exactly right for it.
-func mailDevCaptureNote(hasMailer, mailEnabled bool) string {
-	if !hasMailer || mailEnabled {
-		return ""
+// A DATABASE-configured transport is the mirror image: enabled and configured
+// are both true while MAIL_ENABLED may well be unset, and an operator reading
+// this page to find out where their mail goes needs to be told it is the panel,
+// not the env file they are about to edit.
+//
+// Every other case returns "" — an environment relay that is half-configured is
+// a genuinely incomplete relay and the generic misconfigured note is exactly
+// right for it.
+func mailSourceNote(source string) string {
+	switch source {
+	case mailconfig.SourceDevCapture:
+		return "Mail is CAPTURED, not delivered: this deployment runs the development mail seam, so password resets and verification links are held in memory for the local test harness and never leave the process. That is correct for a developer machine and wrong everywhere else — configure a transport on the admin email page (or set MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and SMTP_FROM) before anybody outside it relies on email."
+	case mailconfig.SourceDatabase:
+		return "Mail is configured from the ADMIN PANEL, not this deployment's environment: the transport, sender and credential are stored in the database and take effect without a restart, and they override MAIL_ENABLED/SMTP_* whatever those say. Change them on the admin email configuration page; editing the env file will not move them."
 	}
-	return "Mail is CAPTURED, not delivered: this deployment runs the development mail seam with MAIL_ENABLED unset, so password resets and verification links are held in memory for the local test harness and never leave the process. That is correct for a developer machine and wrong everywhere else — set MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and SMTP_FROM before anybody outside it relies on email."
+	return ""
+}
+
+// mailSource is the live origin of the active mail path — database, environment,
+// dev capture or none. It is one read of the mail-configuration service, with a
+// fallback to the boot config for a deployment (or a test) that wires none.
+func (s *Server) mailSource() string {
+	if s.mailconfigsvc != nil {
+		return s.mailconfigsvc.Source()
+	}
+	switch {
+	case s.contactMailer != nil && !s.cfg.MailEnabled:
+		return mailconfig.SourceDevCapture
+	case s.contactMailer != nil:
+		return mailconfig.SourceEnvironment
+	}
+	return mailconfig.SourceNone
+}
+
+// mailDeliveryConfigured is "a real delivery route is STORED", as opposed to
+// mailPathConfigured's "something will handle a message". The two differ on
+// exactly one deployment shape: dev capture, which handles messages and
+// delivers none.
+//
+// It asks about storage rather than about the ACTIVE source on purpose. On a
+// developer machine with both a saved transport and the capture seam on, the
+// active source is capture, and answering "no delivery route is configured"
+// would be false — the operator has one, it is simply not in use here.
+func (s *Server) mailDeliveryConfigured() bool {
+	if s.mailconfigsvc != nil {
+		st := s.mailconfigsvc.Status()
+		return st.Config != nil || st.Environment.Configured
+	}
+	return s.cfg.MailEnabled && strings.TrimSpace(s.cfg.SMTPHost) != "" && strings.TrimSpace(s.cfg.SMTPFrom) != ""
 }
 
 // cdnWiredButOffNote covers the CDN's own wrong quadrant: configured, not

@@ -28,6 +28,7 @@ import (
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/jobstatus"
 	"github.com/vidra/vidra-core/internal/live"
+	"github.com/vidra/vidra-core/internal/mailconfig"
 	"github.com/vidra/vidra-core/internal/mediagc"
 	"github.com/vidra/vidra-core/internal/messaging"
 	"github.com/vidra/vidra-core/internal/moderation"
@@ -93,6 +94,11 @@ func fullRouteOptions() []Option {
 		WithCaptionJobService(captionjob.NewService(nil, nil, nil)),
 		WithInstanceModerationService(instancemod.NewService(nil)),
 		WithSettingsService(instancesettings.NewService(nil, instancesettings.Defaults{})),
+		// Admin-configurable outbound mail: always part of the contract. cmd/api
+		// wires it unconditionally (the document is what decides whether mail is
+		// configured, so the page that edits it cannot be gated on mail being
+		// configured already).
+		WithMailConfigService(mailconfig.NewService(nil, nil, mailconfig.EnvConfig{})),
 		WithInstanceDocumentsService(instancedocs.NewService(nil)),
 		WithRemoteVideoService(remotevideo.NewService(nil, nil)),
 		// Mounts the WRITE side of comments on remote videos (migration 0147). The

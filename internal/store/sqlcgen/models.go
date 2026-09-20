@@ -530,6 +530,18 @@ type LiveStream struct {
 	TerminationReason     string             `json:"termination_reason"`
 }
 
+type MailConfig struct {
+	ID          bool        `json:"id"`
+	Transport   string      `json:"transport"`
+	FromAddress string      `json:"from_address"`
+	FromName    string      `json:"from_name"`
+	ReplyTo     string      `json:"reply_to"`
+	Settings    []byte      `json:"settings"`
+	Secret      string      `json:"secret"`
+	UpdatedBy   pgtype.UUID `json:"updated_by"`
+	UpdatedAt   time.Time   `json:"updated_at"`
+}
+
 type MediaIpfsPin struct {
 	ObjectKey              string             `json:"object_key"`
 	MediaClass             string             `json:"media_class"`

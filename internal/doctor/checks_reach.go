@@ -306,7 +306,13 @@ func checkSMTP(ctx context.Context, s *state) []Finding {
 	}
 	host := s.value("SMTP_HOST")
 	if !setup.IsTrue(s.value("MAIL_ENABLED")) || host == "" {
-		return []Finding{okf("mail is off (MAIL_ENABLED is not true, or SMTP_HOST is blank) — password reset and email verification are unavailable, which is a deliberate configuration and not a fault")}
+		// Not "mail is off": doctor reads the ENV FILE and has no database, and
+		// an instance can now be configured entirely from the admin panel, where
+		// the document beats the environment. Claiming mail is deliberately
+		// disabled on such an instance is a diagnostic contradicting the
+		// product. What this check can honestly say is what it actually looked
+		// at.
+		return []Finding{okf("mail is not configured IN THE ENVIRONMENT (MAIL_ENABLED is not true, or SMTP_HOST is blank), so there is no relay here to check. That is a deliberate configuration and not a fault — and it does not mean mail is off: an admin can configure a relay or an HTTPS provider from the admin email page, which this check cannot see (it reads the env file, not the database). The instance's own admin status page is what answers whether mail works")}
 	}
 	port := s.value("SMTP_PORT")
 	if port == "" {

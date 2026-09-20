@@ -61,6 +61,25 @@ type ErrorBody struct {
 	// client would have to guess which button to offer on a refusal whose whole
 	// purpose is to name the remedy.
 	StepUpProviders []string `json:"step_up_providers,omitempty"`
+	// Reason classifies a `mail_test_failed` 502, and is present ONLY on that
+	// code. It is internal/mail's Reason vocabulary — auth_failed,
+	// sender_rejected, rate_limited, provider_unavailable, timeout,
+	// connect_failed, tls_failed, rejected, secret_undecryptable — which is the
+	// safe half of a delivery failure: the classification, never the relay's or
+	// the vendor's own words (those routinely quote the recipient address back
+	// and go to the server log alone).
+	//
+	// Without it the admin panel could only ever say "the relay refused it",
+	// and the single most common self-hosting failure — a host that blocks
+	// outbound 25/465/587, which is every DigitalOcean droplet — is
+	// indistinguishable from a wrong password.
+	Reason string `json:"reason,omitempty"`
+	// Port is the SMTP port that failed, present only alongside Reason on a
+	// mail_test_failed 502 for the SMTP transport. It is what turns
+	// connect_failed into the sentence that actually helps: "your host blocks
+	// this port; try 2525 or an API provider". It is the port the operator
+	// themselves configured — no disclosure.
+	Port int `json:"port,omitempty"`
 }
 
 // httpErrorHandler is Echo's central error handler. It converts any error
@@ -98,6 +117,10 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var fml *ForeignMediaLayoutError
 	var videoID, shortCode string
 	var stepUpProviders []string
+	// mailReason/mailPort are the safe, machine-readable half of a mail_test_failed
+	// 502 (see ErrorBody.Reason).
+	var mailReason string
+	var mailPort int
 	var pr *PasswordRequiredError
 	var tma *TooManyActiveUploadsError
 	var cfd *ContactFormDisabledError
@@ -108,6 +131,7 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	var ale *ATProtoLoginError
 	var oue *OAuthUpstreamError
 	var mtf *MailTestFailedError
+	var mskm *MailSecretsKeyMissingError
 	var mnc *MailNotConfiguredError
 	var hr *HandleReservedError
 	var op *OwnerProtectedError
@@ -180,10 +204,16 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		status = http.StatusBadGateway
 		message = "the mail relay refused the test message. Check the SMTP host, port and credentials, then the relay's own logs — the server log for this request has its exact answer"
 		code = "mail_test_failed"
+		mailReason, mailPort = mtf.Reason, mtf.Port
+	case errors.As(err, &mskm):
+		status = http.StatusConflict
+		message = "this deployment has no key-encryption key, so a mail password or provider API key cannot be stored sealed — and vidra will not store one in the clear. Set MFA_KEY_KEK (or share FEDERATION_KEY_KEK) and restart the api, then save again. An SMTP relay that needs no password can be saved without one"
+		code = "mail_secrets_key_missing"
 	case errors.As(err, &mnc):
 		status = http.StatusServiceUnavailable
 		message = "this instance has no outbound mail path, so " + mnc.consequence() +
-			". Set MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and SMTP_FROM, then restart the api"
+			". Configure a transport on the admin email page — an SMTP relay or an API provider, which is the option that works on a host that blocks outbound 25/465/587 — and it takes effect without a restart. " +
+			"The deploy-time alternative is still MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and SMTP_FROM, which does need one"
 		code = "mail_not_configured"
 	case errors.As(err, &ale):
 		status = ale.Status
@@ -379,6 +409,8 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 		VideoID:   videoID,
 		ShortCode: shortCode,
 
+		Reason:          mailReason,
+		Port:            mailPort,
 		StepUpProviders: stepUpProviders,
 	}}
 
@@ -600,9 +632,31 @@ func (e *MailNotConfiguredError) consequence() string {
 // central handler logs whatever it is given. The handler logs the real error
 // itself, to the operator's server log, and returns this bare marker so nothing
 // with an address in it can reach a response body or a log line twice.
-type MailTestFailedError struct{}
+//
+// It does carry the machine-readable CLASSIFICATION (mail.Reason) and, for
+// SMTP, the port — neither of which is attacker-influenced prose. That is the
+// difference between a panel that can say "your host blocks port 587, try 2525
+// or an API provider" and one that can only say "it did not work".
+type MailTestFailedError struct {
+	Reason string
+	Port   int
+}
 
 func (e *MailTestFailedError) Error() string { return "mail test failed" }
+
+// MailSecretsKeyMissingError renders as 409 with the stable code
+// "mail_secrets_key_missing": a mail configuration carrying a credential was
+// saved on a deployment with no key-encryption key.
+//
+// Secrets are stored SEALED OR NOT AT ALL. The alternative — writing a relay
+// password or a provider API key in the clear into a queryable table, and into
+// every database dump the operator takes — is the outcome this refusal exists to
+// make impossible, so it is a 409 the admin can act on rather than a silently
+// weaker store. An SMTP relay that needs no password is unaffected and saves
+// normally.
+type MailSecretsKeyMissingError struct{}
+
+func (e *MailSecretsKeyMissingError) Error() string { return "mail secrets key missing" }
 
 // SearchUnavailableError renders as 503 with the stable code "search_unavailable"
 // (search-service W4): a search-history read/delete could not reach vidra-search

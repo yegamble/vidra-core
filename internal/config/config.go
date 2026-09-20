@@ -2805,6 +2805,23 @@ func (c *Config) MFAKEK() string {
 	return c.FederationKeyKEK
 }
 
+// MailKEK returns the key-encryption key that seals the admin-configured mail
+// credential at rest (migration 0151): the MFA chain, i.e. MFA_KEY_KEK when set,
+// otherwise FEDERATION_KEY_KEK.
+//
+// THERE IS DELIBERATELY NO MAIL_KEY_KEK. Every new environment variable this
+// repository adds needs a consumer in docker-compose.yml here AND in the
+// deployment repo's env template, so a key that exists only in Go is a key that
+// is silently unset on every real install — the mail configuration would then
+// refuse every credential in production while working on the developer machine
+// that exported it by hand. Sharing the MFA chain costs nothing in blast radius
+// (the two secrets are already protected by the same key material and the same
+// operator) and its rotation failure mode is benign: a rotated KEK makes the
+// stored credential undecryptable, which is reported as such on the admin page
+// and fixed by re-entering it — not a 500, and not a silent fallback to another
+// relay.
+func (c *Config) MailKEK() string { return c.MFAKEK() }
+
 // envParser reads every environment variable Load needs, from one swappable
 // source. A malformed — non-empty but unparseable — typed value is FATAL at
 // config load, never a silent fall-back to the default: env files may be

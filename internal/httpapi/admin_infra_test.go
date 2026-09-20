@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -13,6 +14,9 @@ import (
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/instancesettings"
+	"github.com/vidra/vidra-core/internal/mail"
+	"github.com/vidra/vidra-core/internal/mailconfig"
+	"github.com/vidra/vidra-core/internal/secretbox"
 )
 
 // infrastructure reads the admin infrastructure document as the instance's
@@ -159,7 +163,40 @@ func TestInfrastructureLeaksNoSecret(t *testing.T) {
 	cfg.DeliveryCDNPurgeURL = "https://api.SENTINEL-cdn-control.internal/purge"
 	cfg.DeliveryCDNPurgeToken = "SECRET-CDN-PURGE-TOKEN"
 
-	srv := authServerWithConfig(t, cfg)
+	// The mail credential no longer lives only in the environment: it is a
+	// SEALED COLUMN an admin writes from the panel, and this page renders a mail
+	// row from the live configuration service. The never-list has to cover that
+	// store too, or it proves nothing about the one secret this deployment can
+	// acquire after boot. The REAL service over a real cipher, so the sentinel
+	// travels the same seal/unseal path production does.
+	kek := make([]byte, 32)
+	if _, err := rand.Read(kek); err != nil {
+		t.Fatalf("kek: %v", err)
+	}
+	cipher, err := secretbox.NewCipher(kek)
+	if err != nil {
+		t.Fatalf("cipher: %v", err)
+	}
+	mailsvc := mailconfig.NewService(newMailConfigMemoryRepo(), cipher, mailconfig.EnvConfig{
+		Enabled: true, Host: cfg.SMTPHost, Port: cfg.SMTPPort, From: cfg.SMTPFrom,
+		Username: cfg.SMTPUsername, Password: cfg.SMTPPassword,
+	})
+	storedPassword := "SECRET-DB-SMTP-PASSWORD"
+	if _, err := mailsvc.Save(context.Background(), mailconfig.Input{
+		Transport: mail.KindSMTP, FromAddress: "no-reply@vidra.test",
+		SMTP: &mailconfig.SMTPInput{
+			Host: "SENTINEL-db-relay.internal", Port: 587, Username: "SECRET-DB-SMTP-USERNAME",
+			Encryption: "starttls", Password: &storedPassword,
+		},
+	}, uuid.New()); err != nil {
+		t.Fatalf("seed the stored mail credential: %v", err)
+	}
+
+	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
+	srv := New(cfg, nil, nil,
+		WithAuthService(auth.NewService(newAuthFakeRepo(), issuer, 720*time.Hour), 15*time.Minute),
+		WithMailConfigService(mailsvc),
+	)
 	body, rawJSON := infrastructure(t, srv)
 
 	// Anything the config calls a secret, plus the internal endpoints that are
@@ -177,6 +214,10 @@ func TestInfrastructureLeaksNoSecret(t *testing.T) {
 		// The internal endpoints. Not credentials, but the struct's doc comment
 		// keeps them out and this is what holds it to that.
 		"SENTINEL-smtp-relay.internal", "SENTINEL-noreply@example.test",
+		// The STORED mail configuration: the relay an admin typed into the
+		// panel and the credential sealed beside it. The credential is the
+		// point; the host is here for the same reason the env relay above is.
+		"SECRET-DB-SMTP-PASSWORD", "SECRET-DB-SMTP-USERNAME", "SENTINEL-db-relay.internal",
 		"SENTINEL-clamav.internal", "SENTINEL-whisper.internal",
 		"SENTINEL-kubo.internal", "SENTINEL-gateway.internal",
 		"SENTINEL-kubo-private.internal", "SENTINEL-cluster.internal",
@@ -184,6 +225,14 @@ func TestInfrastructureLeaksNoSecret(t *testing.T) {
 		if strings.Contains(rawJSON, forbidden) {
 			t.Errorf("the infrastructure response leaks %q:\n%s", forbidden, rawJSON)
 		}
+	}
+
+	// Proof the never-list was exercised against the STORE and not against a
+	// server that happens to have no mail service wired: the mail row must
+	// report the stored configuration, which is the code path that could leak
+	// it. Without this the assertion above would pass vacuously.
+	if row := featureNamed(t, body, "mail"); !row.Configured || !strings.Contains(row.Note, "ADMIN PANEL") {
+		t.Errorf("mail row = %+v, want the stored configuration to have been read", row)
 	}
 
 	// The non-secret coordinates ARE reported: the point of the page is that an

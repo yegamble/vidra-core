@@ -55,6 +55,7 @@ import (
 	"github.com/vidra/vidra-core/internal/linkpreview"
 	"github.com/vidra/vidra-core/internal/live"
 	"github.com/vidra/vidra-core/internal/mail"
+	"github.com/vidra/vidra-core/internal/mailconfig"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/mediagc"
 	"github.com/vidra/vidra-core/internal/mediahash"
@@ -440,44 +441,80 @@ func run() error {
 
 	issuer := auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTAccessTTL)
 	var authOpts []auth.Option
-	var smtpMailer *mail.SMTP
+
+	// Outbound mail configuration (migration 0151). The credential is sealed at
+	// rest with the MFA KEK chain; without a KEK the panel still READS and an
+	// anonymous relay still saves, but a save carrying a credential is refused
+	// with a typed 409 rather than stored in the clear.
+	var mailCipher *secretbox.Cipher
+	if kek := cfg.MailKEK(); kek != "" {
+		mailCipher, err = secretbox.NewCipherFromBase64(kek)
+		if err != nil {
+			return fmt.Errorf("mail KEK: %w", err)
+		}
+	} else {
+		logger.Warn("no KEK for the mail configuration — a relay password or provider API key cannot be saved from the admin panel (set MFA_KEY_KEK, or share FEDERATION_KEY_KEK)")
+	}
+	mailcfgsvc := mailconfig.NewService(db.Queries(), mailCipher, mailconfig.EnvConfig{
+		Enabled:  cfg.MailEnabled,
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		Username: cfg.SMTPUsername,
+		Password: cfg.SMTPPassword,
+		From:     cfg.SMTPFrom,
+		// The origin the three token messages build their redemption links
+		// from. Empty when the operator configured none, in which case those
+		// messages carry the bare code rather than a link to a guessed host.
+		InstanceName:  cfg.InstanceName,
+		PublicBaseURL: cfg.PublicBaseURL,
+	},
+		mailconfig.WithVersionBump(bumpSettingsVersion),
+		// The dev capture seam still wins over everything for DELIVERY (the
+		// option ordering below does that). The service is told so it reports
+		// the truth on the admin surfaces and counts as an outbound path.
+		mailconfig.WithDevCapture(cfg.DevMailCaptureEnabled),
+	)
+	if err := mailcfgsvc.Load(startCtx); err != nil {
+		return fmt.Errorf("load mail configuration: %w", err)
+	}
+	opts = append(opts, httpapi.WithMailConfigService(mailcfgsvc))
+
+	// ONE composer over the service resolver, ALWAYS installed. The mailer used
+	// to exist only when MAIL_ENABLED was set at boot, which is why "can this
+	// instance send email" was a boot fact in three separate places; now the
+	// transport is resolved per send and an admin configuring mail from the
+	// panel needs no restart. With nothing configured the composer behaves
+	// exactly as the historical no-op mailer did — send() returns nil, and every
+	// caller that must not proceed without delivery checks the capability first.
+	smtpMailer := mail.NewComposer(mail.ComposerConfig{
+		InstanceName:  cfg.InstanceName,
+		PublicBaseURL: cfg.PublicBaseURL,
+	}, mailcfgsvc,
+		// Email customization (config-parity W6): the subject prefix (with
+		// {instance_name} substituted from the EFFECTIVE instance name) and
+		// body signature ride the single Send seam, resolved per send from
+		// the settings overlay. Empty values are no-ops.
+		mail.WithSubjectPrefixFunc(func() string {
+			return settingssvc.String(instancesettings.KeyEmailSubjectPrefix)
+		}),
+		mail.WithBodySignatureFunc(func() string {
+			return settingssvc.String(instancesettings.KeyEmailBodySignature)
+		}),
+		mail.WithInstanceNameFunc(func() string {
+			return settingssvc.String(instancesettings.KeyInstanceName)
+		}),
+	)
+	authOpts = append(authOpts, auth.WithMailer(smtpMailer))
 	if cfg.MailEnabled {
-		// Real outbound email over SMTP. NB: host/port/from are safe to log; the
-		// SMTP credentials are NOT (observability sensitive-key rules).
-		smtpMailer = mail.NewSMTP(mail.Config{
-			Host:         cfg.SMTPHost,
-			Port:         cfg.SMTPPort,
-			Username:     cfg.SMTPUsername,
-			Password:     cfg.SMTPPassword,
-			From:         cfg.SMTPFrom,
-			InstanceName: cfg.InstanceName,
-			// The origin the three token messages build their redemption links
-			// from. Empty when the operator configured none, in which case those
-			// messages carry the bare code rather than a link to a guessed host.
-			PublicBaseURL: cfg.PublicBaseURL,
-		},
-			// Email customization (config-parity W6): the subject prefix (with
-			// {instance_name} substituted from the EFFECTIVE instance name) and
-			// body signature ride the single Send seam, resolved per send from
-			// the settings overlay. Empty values are no-ops; with MAIL_ENABLED
-			// off this mailer never exists, so the settings are inert.
-			mail.WithSubjectPrefixFunc(func() string {
-				return settingssvc.String(instancesettings.KeyEmailSubjectPrefix)
-			}),
-			mail.WithBodySignatureFunc(func() string {
-				return settingssvc.String(instancesettings.KeyEmailBodySignature)
-			}),
-			mail.WithInstanceNameFunc(func() string {
-				return settingssvc.String(instancesettings.KeyInstanceName)
-			}),
-		)
-		authOpts = append(authOpts, auth.WithMailer(smtpMailer))
-		logger.Info("smtp mailer enabled",
+		// NB: host/port/from are safe to log; the SMTP credentials are NOT
+		// (observability sensitive-key rules).
+		logger.Info("environment smtp mailer available",
 			"host", cfg.SMTPHost,
 			"port", cfg.SMTPPort,
 			"from", cfg.SMTPFrom,
 		)
 	}
+	logger.Info("outbound mail configuration loaded", "source", mailcfgsvc.Source())
 	var captureMailer *auth.CaptureMailer
 	if cfg.DevMailCaptureEnabled {
 		// The dev capture seam wins over SMTP when both are enabled (WithMailer
@@ -493,10 +530,15 @@ func run() error {
 	// endpoint always carries its own hard budget — 1 request per IP per hour —
 	// on the shared Redis counter when rate limiting is on (multi-node
 	// correctness), else an in-process counter, so it is never unthrottled.
-	switch {
-	case captureMailer != nil:
+	//
+	// The composer is now ALWAYS non-nil, so the precedence is stated as an
+	// if/else rather than a switch over nil-ness: dev capture wins, otherwise
+	// the composer. That is byte-for-byte the old behaviour on every deployment
+	// that had a mailer, and the difference on the rest is the point — an
+	// instance with no mail path at boot can now be given one at runtime.
+	if captureMailer != nil {
 		opts = append(opts, httpapi.WithContactMailer(captureMailer))
-	case smtpMailer != nil:
+	} else {
 		opts = append(opts, httpapi.WithContactMailer(smtpMailer))
 	}
 	var contactCounter ratelimit.Counter = ratelimit.NewMemoryCounter()
@@ -505,11 +547,19 @@ func run() error {
 	}
 	opts = append(opts, httpapi.WithContactRateLimiter(ratelimit.NewLimiter(contactCounter, 1, time.Hour)))
 	// The admin mail probe (POST /admin/mail/test) gets its own budget on the
-	// same counter: 3 per ADMIN per hour. It always mails the instance's own
+	// same counter: 10 per ADMIN per hour. It always mails the instance's own
 	// contact address, so this is not an anti-relay control — it stops a stuck
 	// browser tab from hammering the relay until the domain is throttled, which
 	// is a failure that arrives days later as "password resets stopped working".
-	opts = append(opts, httpapi.WithMailTestRateLimiter(ratelimit.NewLimiter(contactCounter, 3, time.Hour)))
+	//
+	// It was 3, which was right when the only way to change mail settings was to
+	// edit an env file and restart: three tests was three deploys. With the
+	// admin email page an operator legitimately iterates — wrong port, wrong
+	// encryption mode, unverified sending domain — and a budget that runs out
+	// mid-diagnosis makes the product look broken at the exact moment it is
+	// being set up. Ten still bounds a stuck tab to ten messages an hour, which
+	// is the failure the limiter exists for.
+	opts = append(opts, httpapi.WithMailTestRateLimiter(ratelimit.NewLimiter(contactCounter, 10, time.Hour)))
 	// Remote-URI search resolution (config-parity W13) is an outbound-fetch
 	// surface, so it carries its own per-caller budget — 10 resolutions per
 	// minute — on the shared Redis counter when rate limiting is on (multi-node
@@ -539,13 +589,19 @@ func run() error {
 	// email-verification gate — the runtime toggle AND an outbound mail path
 	// (dev capture or SMTP; a runtime toggle can never conjure a mailer the
 	// deployment lacks).
-	mailWired := smtpMailer != nil || captureMailer != nil
+	//
+	// mailAvailable is a LIVE read, not the boot fact it used to be: an admin who
+	// configures a transport from the panel must not have to restart the api
+	// before the verification gate starts working. A05 proved the other half of
+	// the rule and it still holds — a toggle cannot conjure a mailer — but
+	// "configured" is now a question with a changing answer.
+	mailAvailable := func() bool { return captureMailer != nil || mailcfgsvc.Available() }
 	authOpts = append(authOpts,
 		auth.WithNewUserHistoryEnabledFunc(func() bool {
 			return settingssvc.Bool(instancesettings.KeyNewUserHistoryEnabled)
 		}),
 		auth.WithEmailVerificationGateFunc(func() bool {
-			return mailWired && settingssvc.Bool(instancesettings.KeyRegistrationRequireEmailVerification)
+			return mailAvailable() && settingssvc.Bool(instancesettings.KeyRegistrationRequireEmailVerification)
 		}),
 		// The registration policy the PROVIDER signup paths must honour. The
 		// password path reads these two settings in the HTTP layer; OIDC and
@@ -1766,6 +1822,11 @@ func run() error {
 		settingsversion.Cache{Name: "instance settings", Reload: settingssvc.Load},
 		settingsversion.Cache{Name: "instance documents", Reload: instancedocssvc.Load},
 		settingsversion.Cache{Name: "instance branding", Reload: imagesvc.LoadInstanceImages},
+		// The outbound-mail document (migration 0151) rides the same counter for
+		// the same reason: every process holds its own resolved transport, so an
+		// admin switching relay on one replica would otherwise leave the others
+		// sending through the old one — including the workers — until restart.
+		settingsversion.Cache{Name: "mail config", Reload: mailcfgsvc.Load},
 	)
 	// Prime AFTER the three boot loads above so this process starts in agreement
 	// with the database. A failure is not fatal: the token stays at zero and the

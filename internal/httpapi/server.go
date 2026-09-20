@@ -100,7 +100,7 @@ type Server struct {
 	// route unthrottled beyond the general limiter.
 	contactLimit *ratelimit.Limiter
 	// mailTestLimit throttles the admin mail probe (POST /admin/mail/test) per
-	// ADMIN USER — 3 per hour in production wiring (cmd/api). The endpoint
+	// ADMIN USER — 10 per hour in production wiring (cmd/api). The endpoint
 	// cannot be pointed at an arbitrary address, so this is not an anti-relay
 	// control; it protects the instance's own sending reputation, since a stuck
 	// retry loop in a browser tab is enough to get a domain rate-limited by its
@@ -218,7 +218,11 @@ type Server struct {
 	jobOperationsSvc    jobOperationsProvider
 	peertubeimportsvc   peerTubeImportProvider
 	ipfscontrolsvc      ipfsControlProvider
-	ipfsmirrorsvc       ipfsMirrorProvider
+	// mailconfigsvc owns the admin-configurable outbound-mail document
+	// (internal/mailconfig). Nil in tests that predate it, in which case every
+	// mail capability read falls back to the boot facts it replaced.
+	mailconfigsvc mailConfigProvider
+	ipfsmirrorsvc ipfsMirrorProvider
 	// ipfsHealth is the mirror's cached gateway/node probe record (system_ipfs.go).
 	// It is set from the SAME option that wires ipfsmirrorsvc, by type assertion,
 	// so the page and the redirect decision can never be answered from different
@@ -464,7 +468,7 @@ func WithContactRateLimiter(l *ratelimit.Limiter) Option {
 }
 
 // WithMailTestRateLimiter mounts a dedicated per-ADMIN-USER limiter on the mail
-// probe (POST /admin/mail/test): 3 per admin per hour in production wiring. It
+// probe (POST /admin/mail/test): 10 per admin per hour in production wiring. It
 // is keyed by user id rather than IP because the endpoint is admin-only and a
 // shared office address should not make two admins fight over one budget. When
 // nil/unset, the route falls back to the general limiter only.
@@ -2233,6 +2237,16 @@ func (s *Server) routes() {
 		// relay; the extra budget is about the instance's sending reputation.
 		api.POST("/admin/mail/test", s.handleMailTest,
 			s.requireAuth, s.requireRole(admin.RoleAdmin), s.mailTestRateLimit())
+	}
+
+	// Admin-configurable outbound email (migration 0151). A dedicated document
+	// with dedicated endpoints rather than instance-settings keys, because it
+	// holds a CREDENTIAL and that registry's doctrine forbids one — see
+	// internal/mailconfig. Admin-only; the GET never returns a stored secret.
+	if s.mailconfigsvc != nil {
+		api.GET("/admin/mail-config", s.handleGetMailConfig, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.PUT("/admin/mail-config", s.handleUpdateMailConfig, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		api.DELETE("/admin/mail-config", s.handleDeleteMailConfig, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 
 	// Admin operations: durable-queue depth snapshot + recent failures (P17.4).

@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/vidra/vidra-core/internal/mail"
+	"github.com/vidra/vidra-core/internal/mailconfig"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/preflight"
 	"github.com/vidra/vidra-core/internal/processheartbeat"
@@ -241,7 +244,29 @@ func (s *Server) probeObjectStore(ctx context.Context) componentStatus {
 // the steps that break; anything short of that is `down`, with a sentence that
 // names the stage, because "connection refused" and "certificate signed by
 // unknown authority" send an operator to two completely different places.
+// The component id stays `smtp` even when the active transport is an HTTPS API
+// provider: it is the stable name every operator dashboard and every runbook
+// already keys on, and renaming it to `mail` would silently blank that row.
+// What it probes is the ACTIVE route, whatever that is.
 func (s *Server) probeSMTP(ctx context.Context) componentStatus {
+	if s.mailconfigsvc != nil {
+		report := s.mailconfigsvc.Probe(ctx)
+		if report.Result.Err != nil && report.Source == mailconfig.SourceDatabase {
+			// The far side's own words go to the SERVER LOG and no further. For
+			// the environment path the relay was a deploy-time constant, so the
+			// dial error told an admin about a host the admin already chose at
+			// boot; the host is now API-settable, and a dial error rendered into
+			// the page turns this probe into an admin-triggered port scanner
+			// with banner grab (refused vs timed out, and at the greeting stage
+			// whatever the remote service answers with). The classification and
+			// the operator's own port still cross — see mailProbeClassification.
+			s.logger.Warn("mail probe failed",
+				"error", report.Result.Err,
+				"transport", report.Kind,
+			)
+		}
+		return mailProbeStatus(report)
+	}
 	if !s.cfg.MailEnabled || s.cfg.SMTPHost == "" {
 		return componentStatus{Status: "not_configured"}
 	}
@@ -257,6 +282,100 @@ func (s *Server) probeSMTP(ctx context.Context) componentStatus {
 	return componentStatus{Status: "down", Error: smtpProbeReason(err)}
 }
 
+// mailProbeStatus turns the mail service's probe into the page's verdict.
+//
+// Three of the outcomes are ordinary. The fourth is the one this function
+// exists for: a probe that REACHED the provider and could not prove the
+// credentials, which is the normal answer for a send-only API key (Resend's
+// restricted keys, a Mailgun domain sending key). Calling that `down` would
+// condemn the recommended setup and train operators to ignore this page; a bare
+// `ok` would claim proof nobody has. It is `degraded` with a sentence that says
+// precisely what is and is not established — the page's existing vocabulary,
+// and no new status value for one case.
+func mailProbeStatus(r mailconfig.ProbeReport) componentStatus {
+	switch {
+	case r.Source == mailconfig.SourceDevCapture:
+		return componentStatus{
+			Status: "degraded",
+			Error:  "outbound mail is CAPTURED, not delivered: this deployment runs the development mail seam, so nothing reaches a real inbox. Correct on a developer machine, wrong everywhere else.",
+		}
+	case r.Kind == "":
+		return componentStatus{Status: "not_configured"}
+	case r.Result.Err != nil:
+		return componentStatus{Status: "down", Error: mailProbeFailure(r)}
+	case r.Cleartext:
+		// Verified AND unencrypted, against a relay that is not on this machine.
+		// The handshake worked, so `down` would be wrong; every password-reset
+		// token this instance sends crosses the network in the clear, so `ok`
+		// would be worse.
+		return componentStatus{
+			Status: "degraded",
+			Error: "the relay accepted the handshake but the session is NOT ENCRYPTED: it advertises no STARTTLS, so every password reset and verification token crosses the network in the clear. " +
+				"Set the encryption mode to starttls (or tls on port 465) on the admin email page — a relay that then refuses is a relay that was never protecting this traffic.",
+		}
+	case !r.Result.Verified:
+		return componentStatus{
+			Status: "degraded",
+			Error: "the " + r.Kind + " provider is reachable but these credentials cannot be PROVEN without sending: a send-only API key is not allowed to read the account, which is the recommended kind of key and not a fault. " +
+				"Use the test message button to settle it — that is the only check that proves a real send.",
+		}
+	}
+	return componentStatus{Status: "ok"}
+}
+
+// mailProbeFailure renders a failed probe for an operator. For SMTP it keeps
+// the existing stage-by-stage prose, which names the step that broke; for the
+// HTTPS providers there are no stages, so it names the classified reason and,
+// where the classification implies a specific cause, what to do about it.
+func mailProbeFailure(r mailconfig.ProbeReport) string {
+	var he *preflight.SMTPHandshakeError
+	if errors.As(r.Result.Err, &he) {
+		if r.Source == mailconfig.SourceDatabase {
+			// An ADMIN-SETTABLE host changes what this sentence is. The stage
+			// prose is ours; underlying(he) is the far side's, and against an
+			// arbitrary internal address it answers "is anything listening, and
+			// what is it" — admin-gated, 3s-bounded, 60s-cached, but an oracle
+			// the accepted contract (reason + port) does not include. The raw
+			// text is logged instead; the operator owns that log already.
+			sentence, _ := smtpProbeStage(he)
+			return sentence + mailProbeClassification(r.Result.Err)
+		}
+		return smtpProbeReason(r.Result.Err)
+	}
+	reason := mail.ReasonOf(r.Result.Err)
+	if port := mailFailurePort(r.Result.Err); port > 0 && (reason == mail.ReasonConnectFailed || reason == mail.ReasonTimeout) {
+		// The single most common self-hosting failure there is. Every
+		// DigitalOcean droplet blocks 25, 465 and 587 outbound, and the symptom
+		// is indistinguishable from a wrong hostname unless somebody says so.
+		return "the mail relay could not be reached on port " + strconv.Itoa(port) + " (" + string(reason) + "), so every password reset and verification message fails. " +
+			"Many hosts block outbound SMTP on 25, 465 and 587 — DigitalOcean blocks all three — in which case no relay setting will help: use port 2525 if the relay offers it, or switch to an HTTPS API provider on the admin email page."
+	}
+	switch reason {
+	case mail.ReasonSecretUndecryptable:
+		return "the stored mail credential cannot be decrypted, so every message fails before it is sent. The key-encryption key changed (MFA_KEY_KEK / FEDERATION_KEY_KEK): restore it, or re-enter the credential on the admin email page."
+	case mail.ReasonAuthFailed:
+		return "the " + r.Kind + " provider rejected these credentials, so every message fails before it is sent. Re-enter the key on the admin email page."
+	case mail.ReasonSenderRejected:
+		return "the " + r.Kind + " provider will not send for this sender: the domain is unverified, the sender signature is unconfirmed, or (for Mailgun) the domain was created in the other region. Fix it in the provider's own dashboard."
+	case mail.ReasonProviderUnavailable:
+		return "the " + r.Kind + " provider is failing on its own account (5xx), so messages are not going out right now. Nothing here needs changing; check the provider's status page."
+	case mail.ReasonRateLimited:
+		return "the " + r.Kind + " sending allowance is exhausted, so messages are being refused. Top up the plan or wait for the window to reset."
+	}
+	return "the " + r.Kind + " mail transport failed its check (" + string(reason) + "), so outbound mail is not working. The server log for this instance carries the provider's own answer."
+}
+
+// mailFailurePort digs the SMTP port out of a classified failure. It is the
+// operator's own configured port, so it is safe to show — and it is what turns
+// "connect failed" into a diagnosis.
+func mailFailurePort(err error) int {
+	var se *mail.SendError
+	if errors.As(err, &se) {
+		return se.Port
+	}
+	return 0
+}
+
 // smtpProbeReason turns a handshake failure into the sentence an operator can
 // act on. It names the CONSEQUENCE as well as the cause, the same discipline
 // settingsSyncStatus uses: an operator who reads only the cause routinely fixes
@@ -266,22 +385,49 @@ func smtpProbeReason(err error) string {
 	if !errors.As(err, &he) {
 		return err.Error()
 	}
+	sentence, detailed := smtpProbeStage(he)
+	if !detailed {
+		return sentence
+	}
+	return sentence + ": " + underlying(he)
+}
+
+// smtpProbeStage is the half of that sentence this codebase writes itself: the
+// stage that broke and what it costs the instance, with nothing quoted from the
+// far side. detailed reports whether the stage has a cause worth appending when
+// the caller is allowed to show one — an AUTH extension the relay simply does
+// not advertise has no interesting detail, so that branch never had a tail.
+func smtpProbeStage(he *preflight.SMTPHandshakeError) (sentence string, detailed bool) {
 	switch he.Stage {
 	case preflight.SMTPStageDial:
-		return "the mail relay could not be reached, so every password reset and verification message fails: " + underlying(he)
+		return "the mail relay could not be reached, so every password reset and verification message fails", true
 	case preflight.SMTPStageGreeting:
 		// Something answered, but not a mail relay — a proxy or a captive portal
 		// in front of one. Password resets fail exactly as if nothing were there.
-		return "something answered on that port but it did not greet as an SMTP relay (a proxy or captive portal in front of the port answers exactly like this): " + underlying(he)
+		return "something answered on that port but it did not greet as an SMTP relay (a proxy or captive portal in front of the port answers exactly like this)", true
 	case preflight.SMTPStageSTARTTLS:
-		return "the relay advertises STARTTLS but the encrypted session could not be established, so every message fails before it is sent. Vidra verifies the certificate strictly against SMTP_HOST and has no skip-verify knob: use a certificate the host trust store accepts, or add the relay's CA to that store: " + underlying(he)
+		return "the relay advertises STARTTLS but the encrypted session could not be established, so every message fails before it is sent. Vidra verifies the certificate strictly against SMTP_HOST and has no skip-verify knob: use a certificate the host trust store accepts, or add the relay's CA to that store", true
 	case preflight.SMTPStageAuthUnsupported:
-		return "SMTP_USERNAME is set but this relay offers no AUTH, so every send fails closed rather than going out unauthenticated. Either clear the credentials or point at the relay's submission port (587), which is usually the one that advertises AUTH"
+		return "SMTP_USERNAME is set but this relay offers no AUTH, so every send fails closed rather than going out unauthenticated. Either clear the credentials or point at the relay's submission port (587), which is usually the one that advertises AUTH", false
 	case preflight.SMTPStageAuth:
-		return "the relay rejected the configured SMTP credentials, so every message fails before it is sent. Check SMTP_USERNAME and SMTP_PASSWORD: " + underlying(he)
+		return "the relay rejected the configured SMTP credentials, so every message fails before it is sent. Check SMTP_USERNAME and SMTP_PASSWORD", true
 	default:
-		return "the mail relay handshake failed at the " + he.Stage + " step: " + underlying(he)
+		return "the mail relay handshake failed at the " + he.Stage + " step", true
 	}
+}
+
+// mailProbeClassification is the part of a failure that is safe to render for
+// ANY configuration source: mail.Reason is a closed vocabulary this codebase
+// defines, and the port is the one the operator typed themselves. It is what
+// keeps a redacted sentence actionable — "refused" and "timed out" send an
+// operator to different places, and connect_failed on 25/465/587 is the
+// host-blocks-submission-ports signature.
+func mailProbeClassification(err error) string {
+	reason := string(mail.ReasonOf(err))
+	if port := mailFailurePort(err); port > 0 {
+		reason += " on port " + strconv.Itoa(port)
+	}
+	return " (" + reason + "). The server log for this instance carries the relay's own answer."
 }
 
 // underlying renders the wrapped cause, or the whole error when there is none.

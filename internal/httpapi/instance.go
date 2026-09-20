@@ -619,23 +619,42 @@ func (s *Server) effectiveHideSensitive(c echo.Context) bool {
 	return s.effectiveSensitivePolicy(c) == instancesettings.SensitiveContentPolicyHide
 }
 
-// contactFormAvailable is the EFFECTIVE contact-form availability: the admin
-// toggle is on AND an effective contact email is set AND this deployment has
-// an outbound mail path (a contact mailer is wired).
+// contactFormAvailable is the EFFECTIVE contact-form availability: a mailer is
+// actually wired AND the admin toggle is on AND an effective contact email is
+// set AND this deployment has an outbound mail path.
+//
+// The nil check is explicit because the predicate beside it stopped being one.
+// mailPathConfigured() USED to be `s.contactMailer != nil` — asking it was the
+// nil guard — and it now answers from the configuration service, which knows
+// nothing about which collaborators this Server was built with. A Server with
+// WithMailConfigService and no WithContactMailer would say "available" and then
+// panic on the public unauthenticated POST /instance/contact. cmd/api wires
+// both, so this is latent rather than reachable; a latent nil dereference on an
+// anonymous route is still not something to leave to the wiring.
 func (s *Server) contactFormAvailable() bool {
 	return s.contactMailer != nil &&
+		s.mailPathConfigured() &&
 		s.settingBool(instancesettings.KeyContactFormEnabled, false) &&
 		strings.TrimSpace(s.effectiveContactEmail()) != ""
 }
 
-// mailPathConfigured is THE statement of "this deployment can send email": the
-// contact mailer is wired whenever any outbound path exists (SMTP or the dev
-// capture seam). /instance features.mail, the admin infrastructure page's
-// bootDep note and the routes that refuse an action they could never complete
-// all read this one predicate, so a client cannot be told mail works by one
-// surface and refused by another.
+// mailPathConfigured is THE statement of "this deployment can send email".
+// /instance features.mail, the admin infrastructure page's bootDep note, the
+// SMTP probe on the status page and the routes that refuse an action they could
+// never complete all read this one predicate, so a client cannot be told mail
+// works by one surface and refused by another.
 //
-// It is a boot fact, not a runtime setting: a toggle cannot conjure a mailer,
-// which A05 proved by turning registration_require_email_verification on with
-// MAIL_ENABLED=false and watching the gate stay ineffective.
-func (s *Server) mailPathConfigured() bool { return s.contactMailer != nil }
+// It is a LIVE read now, not a boot fact. A toggle still cannot conjure a
+// mailer — the lesson A05 paid for, when
+// registration_require_email_verification was turned on with MAIL_ENABLED=false
+// and the gate stayed ineffective — but an admin CONFIGURING a transport from
+// the panel can, and must not have to restart the api for the product to
+// notice. The mail-configuration service answers it (including the dev capture
+// seam, a real outbound path); a deployment without one falls back to the boot
+// fact this used to be, which is what keeps every pre-existing test honest.
+func (s *Server) mailPathConfigured() bool {
+	if s.mailconfigsvc != nil {
+		return s.mailconfigsvc.Available()
+	}
+	return s.contactMailer != nil
+}
