@@ -289,14 +289,27 @@ func (s *Server) probeSMTP(ctx context.Context) componentStatus {
 // credentials, which is the normal answer for a send-only API key (Resend's
 // restricted keys, a Mailgun domain sending key). Calling that `down` would
 // condemn the recommended setup and train operators to ignore this page; a bare
-// `ok` would claim proof nobody has. It is `degraded` with a sentence that says
-// precisely what is and is not established — the page's existing vocabulary,
-// and no new status value for one case.
+// `ok` would claim proof nobody has. It is `ok` WITH a sentence that says
+// precisely what is and is not established — the page renders a component's
+// note beside any verdict, so the claim is never bare.
+//
+// It is deliberately NOT `degraded`. `degraded` demotes the whole page's top
+// line (see the aggregation in systemStatus), and a send-only key is the
+// RECOMMENDED credential: an instance doing everything right would read
+// "Degraded" forever, which is how operators learn to stop reading this page.
+//
+// Dev capture is `not_configured` for the same reason, and because that is what
+// it always was: before mail became runtime-configurable a capture-only stack
+// reported `not_configured` here, and vidra-user's backed e2e harness — which
+// MUST run with capture on — asserts a healthy stack. Nothing is delivered, so
+// "no delivery route is configured" is also simply true. The loud signals for a
+// production instance that left capture on are unchanged: the boot WARN, the
+// infrastructure page's note, the email page's warning, and this row's sentence.
 func mailProbeStatus(r mailconfig.ProbeReport) componentStatus {
 	switch {
 	case r.Source == mailconfig.SourceDevCapture:
 		return componentStatus{
-			Status: "degraded",
+			Status: "not_configured",
 			Error:  "outbound mail is CAPTURED, not delivered: this deployment runs the development mail seam, so nothing reaches a real inbox. Correct on a developer machine, wrong everywhere else.",
 		}
 	case r.Kind == "":
@@ -315,7 +328,7 @@ func mailProbeStatus(r mailconfig.ProbeReport) componentStatus {
 		}
 	case !r.Result.Verified:
 		return componentStatus{
-			Status: "degraded",
+			Status: "ok",
 			Error: "the " + r.Kind + " provider is reachable but these credentials cannot be PROVEN without sending: a send-only API key is not allowed to read the account, which is the recommended kind of key and not a fault. " +
 				"Use the test message button to settle it — that is the only check that proves a real send.",
 		}
