@@ -26,6 +26,10 @@ type fakeSMTP struct {
 	ln        net.Listener
 	tlsConfig *tls.Config
 	offerAuth bool
+	// implicitTLS makes the listener speak TLS from the first byte (the port-465
+	// shape) instead of advertising STARTTLS. A relay cannot do both: there is
+	// no plaintext phase to upgrade out of.
+	implicitTLS bool
 
 	mu          sync.Mutex
 	sawSTARTTLS bool
@@ -44,6 +48,20 @@ func newFakeSMTP(t *testing.T, tlsConfig *tls.Config, offerAuth bool) *fakeSMTP 
 		t.Fatalf("listen: %v", err)
 	}
 	f := &fakeSMTP{ln: ln, tlsConfig: tlsConfig, offerAuth: offerAuth, done: make(chan struct{})}
+	go f.serveOne(t)
+	t.Cleanup(func() { _ = ln.Close() })
+	return f
+}
+
+// newImplicitTLSFakeSMTP is the same relay behind implicit TLS (port 465): the
+// handshake happens before the greeting and STARTTLS is never advertised.
+func newImplicitTLSFakeSMTP(t *testing.T, tlsConfig *tls.Config, offerAuth bool) *fakeSMTP {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	f := &fakeSMTP{ln: ln, tlsConfig: tlsConfig, offerAuth: offerAuth, implicitTLS: true, done: make(chan struct{})}
 	go f.serveOne(t)
 	t.Cleanup(func() { _ = ln.Close() })
 	return f
@@ -69,11 +87,18 @@ func (f *fakeSMTP) serveOne(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 
+	if f.implicitTLS {
+		tconn := tls.Server(conn, f.tlsConfig)
+		if err := tconn.Handshake(); err != nil {
+			return
+		}
+		conn = tconn
+	}
 	r := bufio.NewReader(conn)
 	write := func(s string) { _, _ = conn.Write([]byte(s + "\r\n")) }
 	ehlo := func() {
 		lines := []string{"250-fake.test"}
-		if f.tlsConfig != nil && !f.sawSTARTTLS {
+		if f.tlsConfig != nil && !f.sawSTARTTLS && !f.implicitTLS {
 			lines = append(lines, "250-STARTTLS")
 		}
 		if f.offerAuth {
@@ -343,6 +368,58 @@ func TestRecipientHeaderInjectionRejected(t *testing.T) {
 		if err := m.SendPasswordReset(context.Background(), to, "tok"); err == nil {
 			t.Errorf("recipient %q accepted, want rejection before any dial", to)
 		}
+	}
+}
+
+// The ENVIRONMENT path is the one that must not move. A bare SMTP_FROM has
+// always been handed to net/smtp verbatim, so it must still produce exactly
+// `MAIL FROM:<addr>` and a bare `From: addr` header after the addr-spec rule
+// arrived — this is the byte-for-byte assertion, not a substring one.
+func TestEnvironmentFromIsSentVerbatim(t *testing.T) {
+	f := newFakeSMTP(t, nil, false)
+	host, port := f.hostPort(t)
+	m := NewSMTP(Config{Host: host, Port: port, From: "no-reply@vidra.test", InstanceName: "Vidra Test"})
+
+	if err := m.SendPasswordReset(context.Background(), "ada@example.test", "tok"); err != nil {
+		t.Fatalf("SendPasswordReset: %v", err)
+	}
+	from, rcpt, data, _, _ := f.snapshot(t)
+	// net/smtp appends BODY=8BITMIME when the relay advertises it; the reverse
+	// path itself is what this pins.
+	if addr, _, _ := strings.Cut(from, " "); addr != "<no-reply@vidra.test>" {
+		t.Errorf("MAIL FROM = %q, want reverse-path %q", from, "<no-reply@vidra.test>")
+	}
+	if len(rcpt) != 1 || rcpt[0] != "<ada@example.test>" {
+		t.Errorf("RCPT TO = %v, want [<ada@example.test>]", rcpt)
+	}
+	if !strings.Contains(data, "From: no-reply@vidra.test\r\n") {
+		t.Errorf("From header is not the bare address; data:\n%s", data)
+	}
+}
+
+// A name-addr in SMTP_FROM was ALREADY broken before the addr-spec rule: on
+// main `c.Mail(s.cfg.From)` emitted `MAIL FROM:<Vidra <no-reply@vidra.test>>`
+// and every relay answered 501, while config.Load only ever checked for an "@".
+// The rule does not take a working install away; it moves the failure off the
+// wire and in front of the admin, and it refuses before the relay is dialled.
+func TestEnvironmentNameAddrFromIsRefusedBeforeDialling(t *testing.T) {
+	f := newFakeSMTP(t, nil, false)
+	host, port := f.hostPort(t)
+	for _, from := range []string{"Vidra <no-reply@vidra.test>", "<no-reply@vidra.test>"} {
+		m := NewSMTP(Config{Host: host, Port: port, From: from, InstanceName: "Vidra Test"})
+		err := m.SendPasswordReset(context.Background(), "ada@example.test", "tok")
+		if err == nil {
+			t.Fatalf("SMTP_FROM %q was accepted, want a local refusal", from)
+		}
+		if got := ReasonOf(err); got != ReasonSenderRejected {
+			t.Errorf("SMTP_FROM %q reason = %q, want %q", from, got, ReasonSenderRejected)
+		}
+	}
+	f.mu.Lock()
+	seen := f.mailFrom
+	f.mu.Unlock()
+	if seen != "" {
+		t.Errorf("relay saw MAIL FROM %q; the refusal must happen before any dial", seen)
 	}
 }
 

@@ -1,0 +1,556 @@
+package mail
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	netmail "net/mail"
+	"net/url"
+	"strings"
+)
+
+// ComposerConfig is what the composer needs that no transport does: the
+// instance's identity in the message text.
+type ComposerConfig struct {
+	// InstanceName labels subject lines. It is the BOOT value; where a message
+	// should read the live (DB-overlaid) name it calls effectiveInstanceName.
+	InstanceName string
+	// PublicBaseURL is the instance's canonical public origin (PUBLIC_BASE_URL),
+	// used to build the redemption links in the three token messages. Empty on
+	// an instance that has not configured one, in which case those messages
+	// carry the bare code alone rather than a link to a guessed host.
+	PublicBaseURL string
+}
+
+// Config holds the ENVIRONMENT-configured SMTP settings (MAIL_ENABLED/SMTP_*).
+// Host+From are required (validated by config.Load when MAIL_ENABLED);
+// Username/Password are optional AUTH PLAIN credentials.
+//
+// It is the env path's shape only. An admin-configured transport is built from
+// TransportSettings through NewTransport and reaches the composer as a Resolver.
+type Config struct {
+	Host         string
+	Port         int
+	Username     string
+	Password     string
+	From         string
+	InstanceName string
+	// PublicBaseURL is the instance's canonical public origin (PUBLIC_BASE_URL),
+	// used to build the redemption links in the three token messages. Empty on
+	// an instance that has not configured one, in which case those messages
+	// carry the bare code alone rather than a link to a guessed host.
+	PublicBaseURL string
+}
+
+// Composer builds every message vidra sends and hands it to the transport its
+// Resolver names. It implements auth.Mailer (plus SendTest).
+type Composer struct {
+	cfg      ComposerConfig
+	resolver Resolver
+
+	// Email customization seam (config-parity W6): provider funcs over the
+	// instance-settings overlay, read per send so an admin change applies
+	// without a restart. Applied at the single send() seam every message
+	// funnels through. Nil funcs (or empty values) are no-ops.
+	subjectPrefix func() string // email_subject_prefix; {instance_name} substituted
+	bodySignature func() string // email_body_signature; appended after a blank line
+	instanceName  func() string // EFFECTIVE instance name for the substitution (else cfg.InstanceName)
+}
+
+// SMTP is the composer under the name the environment-configured path has
+// always used. NewSMTP returns one of these; the type is an alias rather than a
+// wrapper so existing wiring and tests keep compiling unchanged.
+type SMTP = Composer
+
+// options is what the exported Option funcs collect. Splitting the composer
+// from the transport means one option list now feeds two constructors, so the
+// options mutate a plain struct rather than either object.
+type options struct {
+	tlsConfig     *tls.Config
+	subjectPrefix func() string
+	bodySignature func() string
+	instanceName  func() string
+}
+
+// Option customises the mailer.
+type Option func(*options)
+
+func collect(opts []Option) options {
+	var o options
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	return o
+}
+
+// WithTLSConfig overrides the TLS client configuration used by the ENVIRONMENT
+// SMTP transport (default: server-name verification against Config.Host). Used
+// by tests to trust a self-signed test certificate; production wiring should not
+// need it. It has no effect on NewComposer, whose transports carry their own.
+func WithTLSConfig(c *tls.Config) Option {
+	return func(o *options) {
+		if c != nil {
+			o.tlsConfig = c
+		}
+	}
+}
+
+// WithSubjectPrefixFunc wires the email_subject_prefix provider (config-parity
+// W6): a non-empty value is prepended to every outgoing subject, with
+// {instance_name} substituted from the effective instance name.
+func WithSubjectPrefixFunc(f func() string) Option {
+	return func(o *options) { o.subjectPrefix = f }
+}
+
+// WithBodySignatureFunc wires the email_body_signature provider (config-parity
+// W6): a non-empty value is appended to every outgoing plaintext body after a
+// blank line.
+func WithBodySignatureFunc(f func() string) Option {
+	return func(o *options) { o.bodySignature = f }
+}
+
+// WithInstanceNameFunc wires the EFFECTIVE instance-name provider (the
+// DB-overlaid instance_name) used for the {instance_name} substitution. When
+// unset, the boot-time InstanceName is used.
+func WithInstanceNameFunc(f func() string) Option {
+	return func(o *options) { o.instanceName = f }
+}
+
+// NewComposer builds the mailer over a Resolver: the transport, sender and
+// default reply-to are resolved per send, so an instance can be reconfigured at
+// runtime without replacing the mailer (or restarting).
+func NewComposer(cfg ComposerConfig, r Resolver, opts ...Option) *Composer {
+	o := collect(opts)
+	if r == nil {
+		// A composer with no resolver is "mail not configured", not a panic on
+		// the first password reset.
+		r = NewStaticResolver(nil, netmail.Address{}, "")
+	}
+	return &Composer{
+		cfg:           cfg,
+		resolver:      r,
+		subjectPrefix: o.subjectPrefix,
+		bodySignature: o.bodySignature,
+		instanceName:  o.instanceName,
+	}
+}
+
+// NewSMTP builds the environment-configured mailer: the composer over a fixed
+// SMTP transport in the historical opportunistic-STARTTLS mode. Behaviour is
+// byte-for-byte what it was before transports existed — same headers, same
+// bare From, same 30 s ceiling, same fail-closed AUTH.
+func NewSMTP(cfg Config, opts ...Option) *SMTP {
+	return NewComposer(
+		ComposerConfig{InstanceName: cfg.InstanceName, PublicBaseURL: cfg.PublicBaseURL},
+		NewStaticResolver(NewEnvironmentTransport(cfg, opts...), netmail.Address{Address: cfg.From}, ""),
+		opts...,
+	)
+}
+
+// NewEnvironmentTransport builds the transport the ENVIRONMENT path has always
+// used (MAIL_ENABLED + SMTP_*), on its own so the configuration service can
+// offer it as the fallback a DELETE reverts to without rebuilding a composer.
+//
+// The mode is EncryptionAuto, not starttls: the env path has always upgraded
+// when the relay offered STARTTLS and continued in the clear when it did not,
+// and tightening that here would break instances on the next deploy rather than
+// when their operator chose a mode. NewTransport refuses Auto precisely because
+// an ADMIN choosing a mode must not get that silent downgrade — this
+// constructor is the one door it stays behind.
+func NewEnvironmentTransport(cfg Config, opts ...Option) Transport {
+	o := collect(opts)
+	return newSMTPTransport(smtpTransportConfig{
+		Host:       cfg.Host,
+		Port:       cfg.Port,
+		Username:   cfg.Username,
+		Password:   cfg.Password,
+		Encryption: EncryptionAuto,
+		TLSConfig:  o.tlsConfig,
+	})
+}
+
+// SendContactForm delivers a visitor contact-form message to the operator's
+// contact address. The visitor's address rides as Reply-To (never the envelope
+// sender, which stays the configured From), so the operator can answer
+// directly without the relay rejecting a spoofed sender. All header values are
+// sanitized; nothing here is ever logged (visitor + operator addresses and the
+// body are PII).
+func (s *Composer) SendContactForm(ctx context.Context, to, fromName, fromEmail, subject, body string) error {
+	if hasCRLF(fromEmail) || strings.TrimSpace(fromEmail) == "" {
+		return fmt.Errorf("mail: invalid reply-to address")
+	}
+	subj := "[" + s.cfg.InstanceName + " contact] " + subject
+	msg := "New contact-form message on " + s.cfg.InstanceName + ".\n\n" +
+		"From: " + sanitizeHeader(fromName) + " <" + fromEmail + ">\n" +
+		"Subject: " + sanitizeHeader(subject) + "\n\n" +
+		body + "\n"
+	return s.send(ctx, to, fromEmail, subj, msg)
+}
+
+// SendTest delivers the admin "does outbound mail actually work" probe to the
+// instance's own contact address. It is deliberately NOT part of auth.Mailer:
+// the interface has four implementations and a pile of test fakes, and widening
+// it for one admin button would churn all of them. httpapi asserts a narrow
+// optional interface for this method instead.
+//
+// The message goes through the same send() seam every other message does, so it
+// picks up the configured subject prefix and body signature — a test that
+// bypassed the decoration would prove the relay works and prove nothing about
+// what recipients actually see. The instance is named from the EFFECTIVE
+// (DB-overlaid) name rather than the boot config: an admin who just renamed the
+// instance and immediately sends a test should not read the old name back.
+func (s *Composer) SendTest(ctx context.Context, to string) error {
+	name := s.effectiveInstanceName()
+	subject := "Test message from " + name
+	body := "This is a test message, sent from the admin settings of " + name + ".\n\n" +
+		"If you are reading it, this instance's outbound mail works: password resets, " +
+		"email verification and operator alerts can reach the people they are addressed to.\n\n" +
+		"Nobody needs to do anything about this message.\n"
+	return s.send(ctx, to, "", subject, body)
+}
+
+// SendNewReportAlert tells the operator a user filed an abuse report — the
+// push half of the moderation queue (the in-app staff notification is the
+// other half). targetType names what was reported; the reporter's identity is
+// deliberately NOT included (it lives in the queue, and this message may
+// transit third-party relays). The reason is the reporter's free text and
+// rides in the body only, never in a header.
+func (s *Composer) SendNewReportAlert(ctx context.Context, to, targetType, reason, queueURL string) error {
+	subj := "[" + s.cfg.InstanceName + "] New " + sanitizeHeader(targetType) + " report"
+	msg := "A new " + targetType + " abuse report was filed on " + s.cfg.InstanceName + ".\n\n" +
+		"Reason: " + reason + "\n"
+	if queueURL != "" {
+		msg += "\nReview it in the moderation queue: " + queueURL + "\n"
+	}
+	return s.send(ctx, to, "", subj, msg)
+}
+
+// SendRegistrationApproved tells an applicant on an approval-gated instance
+// that their signup was accepted. It carries NO credential: the password is the
+// one they chose when they applied, and this message must never be able to
+// change it. verifyRequired says the instance also holds new accounts for email
+// verification, in which case the message says so rather than promising a
+// sign-in that would be refused.
+func (s *Composer) SendRegistrationApproved(ctx context.Context, email, username, signInURL string, verifyRequired bool) error {
+	name := s.effectiveInstanceName()
+	subject := "Your account on " + name + " was approved"
+	body := "Hi,\n\n" +
+		"Your request for an account on " + name + " was approved, and the account " +
+		"\"" + username + "\" is now active.\n\n" +
+		"Sign in with the username and password you chose when you applied — " +
+		"this message carries no password and no sign-in link that could change one.\n"
+	if signInURL != "" {
+		body += "\nSign in here: " + signInURL + "\n"
+	}
+	if verifyRequired {
+		body += "\nOne more step: this instance also asks new accounts to confirm their " +
+			"email address, so look for a separate message with a confirmation code. " +
+			"Sign-in stays closed until that code is entered.\n"
+	}
+	return s.send(ctx, email, "", subject, body)
+}
+
+// SendRegistrationRejected tells an applicant their signup was declined, and
+// passes on the reviewer's note when one was written — it is prose meant for
+// exactly this reader, which is why it travels here and never into the audit
+// ledger. The note rides in the body only, never in a header.
+func (s *Composer) SendRegistrationRejected(ctx context.Context, email, username, note string) error {
+	name := s.effectiveInstanceName()
+	subject := "Your account request on " + name + " was not approved"
+	body := "Hi,\n\n" +
+		"Your request for an account on " + name + " (username \"" + username + "\") " +
+		"was reviewed and not approved, so no account was created.\n"
+	if strings.TrimSpace(note) != "" {
+		body += "\nThe reviewer left this note:\n\n" + note + "\n"
+	}
+	body += "\nIf you think this was a mistake, contact the people who run " + name + ".\n"
+	return s.send(ctx, email, "", subject, body)
+}
+
+// SendOwnershipTransferred tells one party to an instance-ownership transfer
+// that it happened. Two sends, one per side, because the two sides need
+// different sentences: the new owner is told what they now hold and where the
+// console is, the former owner is told what they gave up and — the part that
+// matters if this was not their idea — that it took their password to do it and
+// who to contact. Neither body carries a credential or a link that could change
+// one, so the message is safe to leave in a mailbox.
+func (s *Composer) SendOwnershipTransferred(ctx context.Context, email, recipientUsername, counterpartUsername, consoleURL string, isNewOwner bool) error {
+	name := s.effectiveInstanceName()
+	var subject, body string
+	if isNewOwner {
+		subject = "You are now the owner of " + name
+		body = "Hi,\n\n" +
+			"\"" + counterpartUsername + "\" transferred ownership of " + name + " to your " +
+			"account, \"" + recipientUsername + "\".\n\n" +
+			"You are now the one administrator this instance protects: other admins " +
+			"cannot change your role, deactivate you or delete your account, and you " +
+			"are the only account that can hand ownership on again.\n"
+		if consoleURL != "" {
+			body += "\nThe admin console is here: " + consoleURL + "\n"
+		}
+		body += "\nThis message carries no password and no sign-in link. " +
+			"Use the credentials you already have.\n"
+	} else {
+		subject = "You are no longer the owner of " + name
+		body = "Hi,\n\n" +
+			"Ownership of " + name + " moved from your account, \"" + recipientUsername +
+			"\", to \"" + counterpartUsername + "\".\n\n" +
+			"You are still an administrator and nothing else about your account changed. " +
+			"What you gave up is the owner protection — another administrator can now " +
+			"change your role, deactivate you or delete your account — and the ability " +
+			"to transfer ownership.\n\n" +
+			"This required your password, so if it was not you, change your password now " +
+			"and contact the people who run " + name + ".\n"
+	}
+	return s.send(ctx, email, "", subject, body)
+}
+
+// SendPasswordReset delivers a password-reset token. The token appears only in
+// the message body; it is never logged.
+func (s *Composer) SendPasswordReset(ctx context.Context, email, token string) error {
+	subject := "Reset your password on " + s.cfg.InstanceName
+	body := "Hi,\n\n" +
+		"Someone (hopefully you) asked to reset the password for the " + s.cfg.InstanceName +
+		" account tied to this address.\n\n"
+	if link := s.redemptionLink(resetPasswordPath, token); link != "" {
+		body += "Choose a new password here:\n\n" + "    " + link + "\n\n" +
+			"If the link does not open, your password reset code is:\n\n"
+	} else {
+		body += "Your password reset code is:\n\n"
+	}
+	body += "    " + token + "\n\n" +
+		"The code can be used once and expires soon.\n\n" +
+		"If you did not ask for this, you can ignore this message — your password is unchanged.\n"
+	return s.send(ctx, email, "", subject, body)
+}
+
+// SendPasswordChanged tells an account its password was just changed. It is the
+// after-the-fact security notice — the one signal that reaches a user whose
+// password was changed by somebody else — so it deliberately carries no token,
+// no link that could change anything, and nothing about the new password.
+func (s *Composer) SendPasswordChanged(ctx context.Context, email string) error {
+	subject := "Your password on " + s.cfg.InstanceName + " was changed"
+	body := "Hi,\n\n" +
+		"The password for your " + s.cfg.InstanceName + " account was just changed, " +
+		"and every other signed-in device was signed out.\n\n" +
+		"If that was you, there is nothing to do.\n\n" +
+		"If it was NOT you, someone else may have access to this account: use " +
+		"\"Forgot password\" to take it back, and check your other accounts that " +
+		"share the same password.\n"
+	return s.send(ctx, email, "", subject, body)
+}
+
+// SendTwoFactorRemoved tells an account that two-factor authentication is no
+// longer protecting it. Like SendPasswordChanged it is an after-the-fact notice
+// with no token and no link that could change anything. byAdmin selects the
+// sentence that matters: a removal the account holder performed needs one line,
+// while a removal an ADMINISTRATOR performed is something the holder did not do
+// and must be able to recognise as wrong — so that copy names the actor and says
+// their sessions were signed out, which is the only reason they might otherwise
+// think the sign-out was a glitch.
+func (s *Composer) SendTwoFactorRemoved(ctx context.Context, email string, byAdmin bool) error {
+	subject := "Two-factor authentication on " + s.cfg.InstanceName + " was turned off"
+	body := "Hi,\n\n"
+	if byAdmin {
+		body += "An administrator of " + s.cfg.InstanceName + " removed the second factor " +
+			"(authenticator app) from your account, and every signed-in device was " +
+			"signed out. Your recovery codes no longer work.\n\n" +
+			"This is what an administrator does when someone has lost their " +
+			"authenticator and asks to be let back in. If you did not ask for it, " +
+			"reply to whoever runs this instance: your account is now protected by " +
+			"its password alone.\n\n" +
+			"You can set two-factor authentication up again from your security settings.\n"
+	} else {
+		body += "Two-factor authentication was just turned off for your " + s.cfg.InstanceName +
+			" account, and every other signed-in device was signed out. Your recovery " +
+			"codes no longer work.\n\n" +
+			"If that was you, there is nothing to do.\n\n" +
+			"If it was NOT you, someone else may have your password: change it now and " +
+			"turn two-factor authentication back on.\n"
+	}
+	return s.send(ctx, email, "", subject, body)
+}
+
+// SendEmailVerification delivers an email-verification token. The token appears
+// only in the message body; it is never logged.
+func (s *Composer) SendEmailVerification(ctx context.Context, email, token string) error {
+	subject := "Confirm your email address on " + s.cfg.InstanceName
+	body := "Hi,\n\n" +
+		"To confirm this address for your " + s.cfg.InstanceName + " account, follow the link below.\n\n"
+	if link := s.redemptionLink(verifyEmailPath, token); link != "" {
+		body += "Confirm your address here:\n\n" + "    " + link + "\n\n" +
+			"If the link does not open, your email verification code is:\n\n"
+	} else {
+		body += "Your email verification code is:\n\n"
+	}
+	body += "    " + token + "\n\n" +
+		"The code can be used once and expires soon.\n\n" +
+		"If you did not create an account, you can ignore this message.\n"
+	return s.send(ctx, email, "", subject, body)
+}
+
+// SendEmailChangeVerification delivers the token that confirms a requested NEW
+// address. It goes to the new address only: it IS the possession proof, so
+// sending it anywhere else would prove nothing. The token appears in the body
+// and is never logged.
+func (s *Composer) SendEmailChangeVerification(ctx context.Context, newEmail, token string) error {
+	name := s.effectiveInstanceName()
+	subject := "Confirm your new email address on " + name
+	body := "Hi,\n\n" +
+		"Someone (hopefully you) asked to change the email address on a " + name +
+		" account to this one.\n\n"
+	if link := s.redemptionLink(emailChangePath, token); link != "" {
+		body += "Confirm the change here, while signed in to that account:\n\n" +
+			"    " + link + "\n\n" +
+			"If the link does not open, your confirmation code is:\n\n"
+	} else {
+		body += "Your confirmation code is:\n\n"
+	}
+	body += "    " + token + "\n\n" +
+		"The code can be used once and expires soon.\n\n" +
+		"Until it is used, the account keeps its current address. " +
+		"If you did not ask for this, you can ignore this message.\n"
+	return s.send(ctx, newEmail, "", subject, body)
+}
+
+// SendEmailChanged tells the OLD address that the account has moved to a new
+// one. It is the after-the-fact security notice and the LAST message that
+// reaches the mailbox the user still controls, so it names the new address —
+// without it the reader cannot tell what happened or prove it to an operator.
+// It carries no token and no link that could change anything.
+func (s *Composer) SendEmailChanged(ctx context.Context, oldEmail, newEmail string) error {
+	name := s.effectiveInstanceName()
+	subject := "The email address on your " + name + " account was changed"
+	body := "Hi,\n\n" +
+		"The email address for your " + name + " account was just changed to " +
+		newEmail + ", after that address was confirmed.\n\n" +
+		"If that was you, there is nothing to do — this message is the last one " +
+		"this address will receive.\n\n" +
+		"If it was NOT you, someone else may have access to this account. " +
+		"Contact the instance operator: the sign-in address has moved, so " +
+		"\"Forgot password\" on this address will no longer reach it.\n"
+	return s.send(ctx, oldEmail, "", subject, body)
+}
+
+// send is the single seam every message funnels through: validate the
+// recipient, decorate, resolve where mail goes RIGHT NOW, deliver.
+//
+// replyTo, when non-empty, is the caller's explicit choice (the contact form's
+// visitor address) and wins over the configured default.
+func (s *Composer) send(ctx context.Context, to, replyTo, subject, body string) error {
+	if hasCRLF(to) || strings.TrimSpace(to) == "" {
+		return fmt.Errorf("mail: invalid recipient address")
+	}
+	// Email customization (config-parity W6), applied at this single seam so
+	// every sender path gets it. Header injection is impossible downstream:
+	// the transports sanitize the subject and the signature is body text.
+	subject = s.decorateSubject(subject)
+	body = s.decorateBody(body)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	transport, from, defaultReplyTo, ok := s.resolver.Current()
+	if !ok {
+		// No mail path configured. Returning nil is the historical noopMailer
+		// contract: callers that must not proceed without delivery check the
+		// capability first, and the rest are best-effort notices.
+		return nil
+	}
+	if replyTo == "" {
+		replyTo = defaultReplyTo
+	}
+	return transport.Send(ctx, Message{
+		From:    from,
+		To:      to,
+		ReplyTo: replyTo,
+		Subject: subject,
+		Text:    body,
+	})
+}
+
+// Configured reports whether this instance has a mail path right now. It is a
+// LIVE read through the resolver, not a boot fact: an admin who configures a
+// transport must not have to restart before email verification turns on.
+func (s *Composer) Configured() bool {
+	_, _, _, ok := s.resolver.Current()
+	return ok
+}
+
+// Transport returns the transport this instance would use for the next send,
+// and whether there is one.
+//
+// It has no production caller: the admin status page probes the ACTIVE route
+// through the configuration service, which holds the resolver itself and does
+// not need the composer to hand it one. What it is for is the assertion that
+// an unconfigured composer resolves to NOTHING rather than to a transport it
+// then declines to use — the difference between the historical noop-mailer
+// contract and a send that silently goes nowhere. Anything that grows a second
+// caller should say so here.
+func (s *Composer) Transport() (Transport, bool) {
+	t, _, _, ok := s.resolver.Current()
+	return t, ok
+}
+
+// Redemption paths on the frontend. Every one of these pages reads its token
+// from the URL query (?token=) and none offers a field to paste a bare code
+// into, so a message that carries only the code hands the recipient a
+// credential they have no way to spend. They live here for the same reason
+// signInURL does in internal/auth: the mailer is the one place that has to
+// name a page.
+const (
+	resetPasswordPath = "/reset-password/confirm"
+	verifyEmailPath   = "/verify-email/confirm"
+	emailChangePath   = "/email-change/confirm"
+)
+
+// redemptionLink builds the URL that spends a token, or "" when the instance
+// has no configured public origin — a link to a guessed host is worse than no
+// link, because it looks redeemable and is not.
+func (s *Composer) redemptionLink(path, token string) string {
+	if s.cfg.PublicBaseURL == "" {
+		return ""
+	}
+	return strings.TrimRight(s.cfg.PublicBaseURL, "/") + path + "?token=" + url.QueryEscape(token)
+}
+
+// effectiveInstanceName is the name substituted for {instance_name}: the
+// runtime provider (DB-overlaid instance_name) when wired, else the boot-time
+// config value.
+func (s *Composer) effectiveInstanceName() string {
+	if s.instanceName != nil {
+		if name := strings.TrimSpace(s.instanceName()); name != "" {
+			return name
+		}
+	}
+	return s.cfg.InstanceName
+}
+
+// decorateSubject prepends the email_subject_prefix (config-parity W6) with
+// {instance_name} substituted. Empty/whitespace prefix (or no provider) is a
+// no-op.
+func (s *Composer) decorateSubject(subject string) string {
+	if s.subjectPrefix == nil {
+		return subject
+	}
+	prefix := strings.TrimSpace(s.subjectPrefix())
+	if prefix == "" {
+		return subject
+	}
+	prefix = strings.ReplaceAll(prefix, "{instance_name}", s.effectiveInstanceName())
+	return prefix + " " + subject
+}
+
+// decorateBody appends the email_body_signature (config-parity W6) after a
+// blank line. Empty/whitespace signature (or no provider) is a no-op.
+func (s *Composer) decorateBody(body string) string {
+	if s.bodySignature == nil {
+		return body
+	}
+	sig := strings.TrimSpace(s.bodySignature())
+	if sig == "" {
+		return body
+	}
+	return strings.TrimRight(body, "\n") + "\n\n" + sig + "\n"
+}

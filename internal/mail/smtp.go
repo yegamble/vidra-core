@@ -1,390 +1,93 @@
-// Package mail delivers account-security email (password reset, email
-// verification) over SMTP. It implements the auth.Mailer adapter boundary with
-// the standard library only: net/smtp with opportunistic STARTTLS (used
-// whenever the relay offers it) and optional AUTH PLAIN credentials.
-//
-// Security rules (see .ralph/specs/observability.md):
-//   - The raw token is a single-use credential. This package never logs — the
-//     token exists only in the message body handed to the relay.
-//   - The SMTP password is a secret; it is never logged either (the
-//     "smtp_password" key is on the observability sensitive-key denylist).
-//   - net/smtp's PlainAuth refuses to send credentials over an unencrypted
-//     connection unless the host is localhost, so AUTH never leaks the
-//     password to a plaintext network path.
 package mail
 
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
+	"errors"
 	"net"
 	"net/smtp"
-	"net/url"
-	"strconv"
+	"net/textproto"
+	"os"
 	"strings"
 	"time"
+
+	"github.com/vidra/vidra-core/internal/preflight"
 )
 
 // defaultSendTimeout bounds one SMTP conversation when the caller's context
 // carries no earlier deadline, so a wedged relay cannot hang a request.
 const defaultSendTimeout = 30 * time.Second
 
-// Config holds SMTP delivery settings. Host+From are required (validated by
-// config.Load when MAIL_ENABLED); Username/Password are optional AUTH PLAIN
-// credentials; InstanceName labels the subject lines.
-type Config struct {
-	Host         string
-	Port         int
-	Username     string
-	Password     string
-	From         string
-	InstanceName string
-	// PublicBaseURL is the instance's canonical public origin (PUBLIC_BASE_URL),
-	// used to build the redemption links in the three token messages. Empty on
-	// an instance that has not configured one, in which case those messages
-	// carry the bare code alone rather than a link to a guessed host.
-	PublicBaseURL string
+// Encryption is how an SMTP session is protected. The values are the ones the
+// admin panel stores; EncryptionAuto is reachable only from the environment
+// path (see preflight.SMTPEncryption for why an admin gets no silent downgrade).
+type Encryption string
+
+const (
+	// EncryptionAuto upgrades with STARTTLS when the relay offers it and
+	// continues in cleartext when it does not. The historical env behaviour.
+	EncryptionAuto Encryption = "auto"
+	// EncryptionSTARTTLS REQUIRES STARTTLS: a relay that does not advertise it
+	// fails tls_failed rather than sending in the clear.
+	EncryptionSTARTTLS Encryption = "starttls"
+	// EncryptionTLS wraps the connection in TLS from the first byte (implicit
+	// TLS, conventionally port 465).
+	EncryptionTLS Encryption = "tls"
+	// EncryptionNone never encrypts — legitimate only for a relay on localhost
+	// or a trusted private network.
+	EncryptionNone Encryption = "none"
+)
+
+// smtpTransportConfig is the SMTP transport's whole input.
+type smtpTransportConfig struct {
+	Host       string
+	Port       int
+	Username   string
+	Password   string
+	Encryption Encryption
+	// TLSConfig overrides the client TLS settings (tests trusting a self-signed
+	// cert). Nil means strict verification against Host; there is no
+	// skip-verify knob and there will not be one.
+	TLSConfig *tls.Config
 }
 
-// SMTP is an auth.Mailer that delivers over an SMTP relay.
-type SMTP struct {
-	cfg       Config
-	tlsConfig *tls.Config
-
-	// Email customization seam (config-parity W6): provider funcs over the
-	// instance-settings overlay, read per send so an admin change applies
-	// without a restart. Applied at the single send() seam every message
-	// funnels through. Nil funcs (or empty values) are no-ops — and when
-	// MAIL_ENABLED is off no SMTP mailer exists at all, so the settings are
-	// trivially inert.
-	subjectPrefix func() string // email_subject_prefix; {instance_name} substituted
-	bodySignature func() string // email_body_signature; appended after a blank line
-	instanceName  func() string // EFFECTIVE instance name for the substitution (else cfg.InstanceName)
+// SMTPTransport delivers over an SMTP relay with the standard library's
+// net/smtp. The dial, the encryption negotiation and the TLS settings are
+// preflight's, not a second copy: the no-send probe on the admin status page
+// and a real send must make identical demands of the relay, or the page
+// answers a question nobody asked.
+type SMTPTransport struct {
+	cfg smtpTransportConfig
 }
 
-// Option customises the SMTP mailer.
-type Option func(*SMTP)
+func newSMTPTransport(cfg smtpTransportConfig) *SMTPTransport {
+	if cfg.Encryption == "" {
+		cfg.Encryption = EncryptionAuto
+	}
+	return &SMTPTransport{cfg: cfg}
+}
 
-// WithTLSConfig overrides the TLS client configuration used for STARTTLS
-// (default: server-name verification against Config.Host). Used by tests to
-// trust a self-signed test certificate; production wiring should not need it.
-func WithTLSConfig(c *tls.Config) Option {
-	return func(s *SMTP) {
-		if c != nil {
-			s.tlsConfig = c
-		}
+// Kind implements Transport.
+func (t *SMTPTransport) Kind() string { return KindSMTP }
+
+func (t *SMTPTransport) handshake() preflight.SMTPHandshake {
+	return preflight.SMTPHandshake{
+		Host:       t.cfg.Host,
+		Port:       t.cfg.Port,
+		Username:   t.cfg.Username,
+		Password:   t.cfg.Password,
+		Encryption: preflight.SMTPEncryption(t.cfg.Encryption),
+		TLSConfig:  t.cfg.TLSConfig,
 	}
 }
 
-// WithSubjectPrefixFunc wires the email_subject_prefix provider (config-parity
-// W6): a non-empty value is prepended to every outgoing subject, with
-// {instance_name} substituted from the effective instance name.
-func WithSubjectPrefixFunc(f func() string) Option {
-	return func(s *SMTP) { s.subjectPrefix = f }
-}
-
-// WithBodySignatureFunc wires the email_body_signature provider (config-parity
-// W6): a non-empty value is appended to every outgoing plaintext body after a
-// blank line.
-func WithBodySignatureFunc(f func() string) Option {
-	return func(s *SMTP) { s.bodySignature = f }
-}
-
-// WithInstanceNameFunc wires the EFFECTIVE instance-name provider (the
-// DB-overlaid instance_name) used for the {instance_name} substitution. When
-// unset, the boot-time Config.InstanceName is used.
-func WithInstanceNameFunc(f func() string) Option {
-	return func(s *SMTP) { s.instanceName = f }
-}
-
-// NewSMTP builds the SMTP mailer.
-func NewSMTP(cfg Config, opts ...Option) *SMTP {
-	s := &SMTP{
-		cfg:       cfg,
-		tlsConfig: &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12},
+// Send runs one SMTP conversation: dial (implicit TLS when configured), EHLO,
+// STARTTLS per the encryption mode, AUTH PLAIN when credentials are configured,
+// then a single-recipient plain-text message.
+func (t *SMTPTransport) Send(ctx context.Context, m Message) error {
+	if err := validateMessage(m); err != nil {
+		return err
 	}
-	for _, opt := range opts {
-		opt(s)
-	}
-	return s
-}
-
-// SendContactForm delivers a visitor contact-form message to the operator's
-// contact address. The visitor's address rides as Reply-To (never the envelope
-// sender, which stays the configured From), so the operator can answer
-// directly without the relay rejecting a spoofed sender. All header values are
-// sanitized; nothing here is ever logged (visitor + operator addresses and the
-// body are PII).
-func (s *SMTP) SendContactForm(ctx context.Context, to, fromName, fromEmail, subject, body string) error {
-	if strings.ContainsAny(fromEmail, "\r\n") || strings.TrimSpace(fromEmail) == "" {
-		return fmt.Errorf("mail: invalid reply-to address")
-	}
-	subj := "[" + s.cfg.InstanceName + " contact] " + subject
-	msg := "New contact-form message on " + s.cfg.InstanceName + ".\n\n" +
-		"From: " + sanitizeHeader(fromName) + " <" + fromEmail + ">\n" +
-		"Subject: " + sanitizeHeader(subject) + "\n\n" +
-		body + "\n"
-	return s.send(ctx, to, fromEmail, subj, msg)
-}
-
-// SendTest delivers the admin "does outbound mail actually work" probe to the
-// instance's own contact address. It is deliberately NOT part of auth.Mailer:
-// the interface has four implementations and a pile of test fakes, and widening
-// it for one admin button would churn all of them. httpapi asserts a narrow
-// optional interface for this method instead.
-//
-// The message goes through the same send() seam every other message does, so it
-// picks up the configured subject prefix and body signature — a test that
-// bypassed the decoration would prove the relay works and prove nothing about
-// what recipients actually see. The instance is named from the EFFECTIVE
-// (DB-overlaid) name rather than the boot config: an admin who just renamed the
-// instance and immediately sends a test should not read the old name back.
-func (s *SMTP) SendTest(ctx context.Context, to string) error {
-	name := s.effectiveInstanceName()
-	subject := "Test message from " + name
-	body := "This is a test message, sent from the admin settings of " + name + ".\n\n" +
-		"If you are reading it, this instance's outbound mail works: password resets, " +
-		"email verification and operator alerts can reach the people they are addressed to.\n\n" +
-		"Nobody needs to do anything about this message.\n"
-	return s.send(ctx, to, "", subject, body)
-}
-
-// SendNewReportAlert tells the operator a user filed an abuse report — the
-// push half of the moderation queue (the in-app staff notification is the
-// other half). targetType names what was reported; the reporter's identity is
-// deliberately NOT included (it lives in the queue, and this message may
-// transit third-party relays). The reason is the reporter's free text and
-// rides in the body only, never in a header.
-func (s *SMTP) SendNewReportAlert(ctx context.Context, to, targetType, reason, queueURL string) error {
-	subj := "[" + s.cfg.InstanceName + "] New " + sanitizeHeader(targetType) + " report"
-	msg := "A new " + targetType + " abuse report was filed on " + s.cfg.InstanceName + ".\n\n" +
-		"Reason: " + reason + "\n"
-	if queueURL != "" {
-		msg += "\nReview it in the moderation queue: " + queueURL + "\n"
-	}
-	return s.send(ctx, to, "", subj, msg)
-}
-
-// SendRegistrationApproved tells an applicant on an approval-gated instance
-// that their signup was accepted. It carries NO credential: the password is the
-// one they chose when they applied, and this message must never be able to
-// change it. verifyRequired says the instance also holds new accounts for email
-// verification, in which case the message says so rather than promising a
-// sign-in that would be refused.
-func (s *SMTP) SendRegistrationApproved(ctx context.Context, email, username, signInURL string, verifyRequired bool) error {
-	name := s.effectiveInstanceName()
-	subject := "Your account on " + name + " was approved"
-	body := "Hi,\n\n" +
-		"Your request for an account on " + name + " was approved, and the account " +
-		"\"" + username + "\" is now active.\n\n" +
-		"Sign in with the username and password you chose when you applied — " +
-		"this message carries no password and no sign-in link that could change one.\n"
-	if signInURL != "" {
-		body += "\nSign in here: " + signInURL + "\n"
-	}
-	if verifyRequired {
-		body += "\nOne more step: this instance also asks new accounts to confirm their " +
-			"email address, so look for a separate message with a confirmation code. " +
-			"Sign-in stays closed until that code is entered.\n"
-	}
-	return s.send(ctx, email, "", subject, body)
-}
-
-// SendRegistrationRejected tells an applicant their signup was declined, and
-// passes on the reviewer's note when one was written — it is prose meant for
-// exactly this reader, which is why it travels here and never into the audit
-// ledger. The note rides in the body only, never in a header.
-func (s *SMTP) SendRegistrationRejected(ctx context.Context, email, username, note string) error {
-	name := s.effectiveInstanceName()
-	subject := "Your account request on " + name + " was not approved"
-	body := "Hi,\n\n" +
-		"Your request for an account on " + name + " (username \"" + username + "\") " +
-		"was reviewed and not approved, so no account was created.\n"
-	if strings.TrimSpace(note) != "" {
-		body += "\nThe reviewer left this note:\n\n" + note + "\n"
-	}
-	body += "\nIf you think this was a mistake, contact the people who run " + name + ".\n"
-	return s.send(ctx, email, "", subject, body)
-}
-
-// SendOwnershipTransferred tells one party to an instance-ownership transfer
-// that it happened. Two sends, one per side, because the two sides need
-// different sentences: the new owner is told what they now hold and where the
-// console is, the former owner is told what they gave up and — the part that
-// matters if this was not their idea — that it took their password to do it and
-// who to contact. Neither body carries a credential or a link that could change
-// one, so the message is safe to leave in a mailbox.
-func (s *SMTP) SendOwnershipTransferred(ctx context.Context, email, recipientUsername, counterpartUsername, consoleURL string, isNewOwner bool) error {
-	name := s.effectiveInstanceName()
-	var subject, body string
-	if isNewOwner {
-		subject = "You are now the owner of " + name
-		body = "Hi,\n\n" +
-			"\"" + counterpartUsername + "\" transferred ownership of " + name + " to your " +
-			"account, \"" + recipientUsername + "\".\n\n" +
-			"You are now the one administrator this instance protects: other admins " +
-			"cannot change your role, deactivate you or delete your account, and you " +
-			"are the only account that can hand ownership on again.\n"
-		if consoleURL != "" {
-			body += "\nThe admin console is here: " + consoleURL + "\n"
-		}
-		body += "\nThis message carries no password and no sign-in link. " +
-			"Use the credentials you already have.\n"
-	} else {
-		subject = "You are no longer the owner of " + name
-		body = "Hi,\n\n" +
-			"Ownership of " + name + " moved from your account, \"" + recipientUsername +
-			"\", to \"" + counterpartUsername + "\".\n\n" +
-			"You are still an administrator and nothing else about your account changed. " +
-			"What you gave up is the owner protection — another administrator can now " +
-			"change your role, deactivate you or delete your account — and the ability " +
-			"to transfer ownership.\n\n" +
-			"This required your password, so if it was not you, change your password now " +
-			"and contact the people who run " + name + ".\n"
-	}
-	return s.send(ctx, email, "", subject, body)
-}
-
-// SendPasswordReset delivers a password-reset token. The token appears only in
-// the message body; it is never logged.
-func (s *SMTP) SendPasswordReset(ctx context.Context, email, token string) error {
-	subject := "Reset your password on " + s.cfg.InstanceName
-	body := "Hi,\n\n" +
-		"Someone (hopefully you) asked to reset the password for the " + s.cfg.InstanceName +
-		" account tied to this address.\n\n"
-	if link := s.redemptionLink(resetPasswordPath, token); link != "" {
-		body += "Choose a new password here:\n\n" + "    " + link + "\n\n" +
-			"If the link does not open, your password reset code is:\n\n"
-	} else {
-		body += "Your password reset code is:\n\n"
-	}
-	body += "    " + token + "\n\n" +
-		"The code can be used once and expires soon.\n\n" +
-		"If you did not ask for this, you can ignore this message — your password is unchanged.\n"
-	return s.send(ctx, email, "", subject, body)
-}
-
-// SendPasswordChanged tells an account its password was just changed. It is the
-// after-the-fact security notice — the one signal that reaches a user whose
-// password was changed by somebody else — so it deliberately carries no token,
-// no link that could change anything, and nothing about the new password.
-func (s *SMTP) SendPasswordChanged(ctx context.Context, email string) error {
-	subject := "Your password on " + s.cfg.InstanceName + " was changed"
-	body := "Hi,\n\n" +
-		"The password for your " + s.cfg.InstanceName + " account was just changed, " +
-		"and every other signed-in device was signed out.\n\n" +
-		"If that was you, there is nothing to do.\n\n" +
-		"If it was NOT you, someone else may have access to this account: use " +
-		"\"Forgot password\" to take it back, and check your other accounts that " +
-		"share the same password.\n"
-	return s.send(ctx, email, "", subject, body)
-}
-
-// SendTwoFactorRemoved tells an account that two-factor authentication is no
-// longer protecting it. Like SendPasswordChanged it is an after-the-fact notice
-// with no token and no link that could change anything. byAdmin selects the
-// sentence that matters: a removal the account holder performed needs one line,
-// while a removal an ADMINISTRATOR performed is something the holder did not do
-// and must be able to recognise as wrong — so that copy names the actor and says
-// their sessions were signed out, which is the only reason they might otherwise
-// think the sign-out was a glitch.
-func (s *SMTP) SendTwoFactorRemoved(ctx context.Context, email string, byAdmin bool) error {
-	subject := "Two-factor authentication on " + s.cfg.InstanceName + " was turned off"
-	body := "Hi,\n\n"
-	if byAdmin {
-		body += "An administrator of " + s.cfg.InstanceName + " removed the second factor " +
-			"(authenticator app) from your account, and every signed-in device was " +
-			"signed out. Your recovery codes no longer work.\n\n" +
-			"This is what an administrator does when someone has lost their " +
-			"authenticator and asks to be let back in. If you did not ask for it, " +
-			"reply to whoever runs this instance: your account is now protected by " +
-			"its password alone.\n\n" +
-			"You can set two-factor authentication up again from your security settings.\n"
-	} else {
-		body += "Two-factor authentication was just turned off for your " + s.cfg.InstanceName +
-			" account, and every other signed-in device was signed out. Your recovery " +
-			"codes no longer work.\n\n" +
-			"If that was you, there is nothing to do.\n\n" +
-			"If it was NOT you, someone else may have your password: change it now and " +
-			"turn two-factor authentication back on.\n"
-	}
-	return s.send(ctx, email, "", subject, body)
-}
-
-// SendEmailVerification delivers an email-verification token. The token appears
-// only in the message body; it is never logged.
-func (s *SMTP) SendEmailVerification(ctx context.Context, email, token string) error {
-	subject := "Confirm your email address on " + s.cfg.InstanceName
-	body := "Hi,\n\n" +
-		"To confirm this address for your " + s.cfg.InstanceName + " account, follow the link below.\n\n"
-	if link := s.redemptionLink(verifyEmailPath, token); link != "" {
-		body += "Confirm your address here:\n\n" + "    " + link + "\n\n" +
-			"If the link does not open, your email verification code is:\n\n"
-	} else {
-		body += "Your email verification code is:\n\n"
-	}
-	body += "    " + token + "\n\n" +
-		"The code can be used once and expires soon.\n\n" +
-		"If you did not create an account, you can ignore this message.\n"
-	return s.send(ctx, email, "", subject, body)
-}
-
-// SendEmailChangeVerification delivers the token that confirms a requested NEW
-// address. It goes to the new address only: it IS the possession proof, so
-// sending it anywhere else would prove nothing. The token appears in the body
-// and is never logged.
-func (s *SMTP) SendEmailChangeVerification(ctx context.Context, newEmail, token string) error {
-	name := s.effectiveInstanceName()
-	subject := "Confirm your new email address on " + name
-	body := "Hi,\n\n" +
-		"Someone (hopefully you) asked to change the email address on a " + name +
-		" account to this one.\n\n"
-	if link := s.redemptionLink(emailChangePath, token); link != "" {
-		body += "Confirm the change here, while signed in to that account:\n\n" +
-			"    " + link + "\n\n" +
-			"If the link does not open, your confirmation code is:\n\n"
-	} else {
-		body += "Your confirmation code is:\n\n"
-	}
-	body += "    " + token + "\n\n" +
-		"The code can be used once and expires soon.\n\n" +
-		"Until it is used, the account keeps its current address. " +
-		"If you did not ask for this, you can ignore this message.\n"
-	return s.send(ctx, newEmail, "", subject, body)
-}
-
-// SendEmailChanged tells the OLD address that the account has moved to a new
-// one. It is the after-the-fact security notice and the LAST message that
-// reaches the mailbox the user still controls, so it names the new address —
-// without it the reader cannot tell what happened or prove it to an operator.
-// It carries no token and no link that could change anything.
-func (s *SMTP) SendEmailChanged(ctx context.Context, oldEmail, newEmail string) error {
-	name := s.effectiveInstanceName()
-	subject := "The email address on your " + name + " account was changed"
-	body := "Hi,\n\n" +
-		"The email address for your " + name + " account was just changed to " +
-		newEmail + ", after that address was confirmed.\n\n" +
-		"If that was you, there is nothing to do — this message is the last one " +
-		"this address will receive.\n\n" +
-		"If it was NOT you, someone else may have access to this account. " +
-		"Contact the instance operator: the sign-in address has moved, so " +
-		"\"Forgot password\" on this address will no longer reach it.\n"
-	return s.send(ctx, oldEmail, "", subject, body)
-}
-
-// send runs one SMTP conversation: EHLO, STARTTLS when offered, AUTH PLAIN when
-// credentials are configured, then a single-recipient plain-text message.
-// replyTo, when non-empty, is stamped as the Reply-To header (validated by the
-// caller).
-func (s *SMTP) send(ctx context.Context, to, replyTo, subject, body string) error {
-	if strings.ContainsAny(to, "\r\n") || strings.TrimSpace(to) == "" {
-		return fmt.Errorf("mail: invalid recipient address")
-	}
-	// Email customization (config-parity W6), applied at this single seam so
-	// every sender path gets it. Header injection is impossible downstream:
-	// message() sanitizes the subject and the signature is body text.
-	subject = s.decorateSubject(subject)
-	body = s.decorateBody(body)
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -394,142 +97,191 @@ func (s *SMTP) send(ctx context.Context, to, replyTo, subject, body string) erro
 		defer cancel()
 	}
 
-	addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(s.cfg.Port))
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", addr)
+	h := t.handshake()
+	conn, err := preflight.DialSMTP(ctx, h)
 	if err != nil {
-		return fmt.Errorf("mail: dial smtp relay: %w", err)
+		return t.classify(err)
 	}
 	// The context deadline bounds the whole conversation, not just the dial.
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
 
-	c, err := smtp.NewClient(conn, s.cfg.Host)
+	c, err := smtp.NewClient(conn, t.cfg.Host)
 	if err != nil {
 		_ = conn.Close()
-		return fmt.Errorf("mail: smtp greeting: %w", err)
+		return t.fail(ReasonConnectFailed, wrap("smtp greeting", err))
 	}
 	defer func() { _ = c.Close() }()
 
-	if ok, _ := c.Extension("STARTTLS"); ok {
-		if err := c.StartTLS(s.tlsConfig); err != nil {
-			return fmt.Errorf("mail: starttls: %w", err)
-		}
+	if _, err := preflight.NegotiateSMTPTLS(c, h); err != nil {
+		return t.classify(err)
 	}
-	if s.cfg.Username != "" {
+	if t.cfg.Username != "" {
 		if ok, _ := c.Extension("AUTH"); !ok {
 			// Credentials are configured but the relay offers no AUTH — fail
 			// closed rather than silently sending unauthenticated.
-			return fmt.Errorf("mail: smtp credentials configured but relay offers no AUTH")
+			return t.fail(ReasonAuthFailed, errors.New("smtp credentials configured but relay offers no AUTH"))
 		}
-		auth := smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)
+		auth := smtp.PlainAuth("", t.cfg.Username, t.cfg.Password, t.cfg.Host)
 		if err := c.Auth(auth); err != nil {
-			return fmt.Errorf("mail: smtp auth: %w", err)
+			return t.fail(ReasonAuthFailed, wrap("smtp auth", err))
 		}
 	}
-	if err := c.Mail(s.cfg.From); err != nil {
-		return fmt.Errorf("mail: MAIL FROM: %w", err)
+	if err := c.Mail(m.From.Address); err != nil {
+		// A relay that refuses MAIL FROM is refusing the SENDER — the usual
+		// cause is a From the relay is not allowed to send for.
+		return t.fail(t.dialogueReason(err, ReasonSenderRejected), wrap("MAIL FROM", err))
 	}
-	if err := c.Rcpt(to); err != nil {
-		return fmt.Errorf("mail: RCPT TO: %w", err)
+	if err := c.Rcpt(m.To); err != nil {
+		return t.fail(t.dialogueReason(err, ReasonRejected), wrap("RCPT TO", err))
 	}
 	w, err := c.Data()
 	if err != nil {
-		return fmt.Errorf("mail: DATA: %w", err)
+		return t.fail(t.dialogueReason(err, ReasonRejected), wrap("DATA", err))
 	}
-	if _, err := w.Write(message(s.cfg.From, to, replyTo, subject, body)); err != nil {
+	if _, err := w.Write(render(m)); err != nil {
 		_ = w.Close()
-		return fmt.Errorf("mail: write message: %w", err)
+		return t.fail(ReasonRejected, wrap("write message", err))
 	}
 	if err := w.Close(); err != nil {
-		return fmt.Errorf("mail: finish message: %w", err)
+		return t.fail(t.dialogueReason(err, ReasonRejected), wrap("finish message", err))
 	}
-	return c.Quit()
+	if err := c.Quit(); err != nil {
+		return t.fail(t.dialogueReason(err, ReasonRejected), wrap("quit", err))
+	}
+	return nil
 }
 
-// message renders a minimal RFC 5322 plain-text message with CRLF line endings.
-// The recipient and optional reply-to are validated by the caller; every other
-// header value is sanitized — nothing can inject headers.
-func message(from, to, replyTo, subject, body string) []byte {
-	var b strings.Builder
-	b.WriteString("From: " + from + "\r\n")
-	b.WriteString("To: " + to + "\r\n")
-	if replyTo != "" {
-		b.WriteString("Reply-To: " + sanitizeHeader(replyTo) + "\r\n")
+// Probe is preflight's no-send handshake: EHLO, the configured encryption, AUTH
+// when credentials exist, QUIT before MAIL FROM. It sends nothing, so it can run
+// on every admin page load without costing the instance a message.
+func (t *SMTPTransport) Probe(ctx context.Context) ProbeResult {
+	res, err := preflight.CheckSMTPHandshake(ctx, t.handshake())
+	if err != nil {
+		return ProbeResult{Err: t.classify(err)}
 	}
-	b.WriteString("Subject: " + sanitizeHeader(subject) + "\r\n")
+	// AUTH either succeeded or there were no credentials to prove. Unlike an
+	// HTTP provider there is nothing left that only a real send would show.
+	//
+	// The handshake's STARTTLS fact is reported rather than discarded: see
+	// ProbeResult.Encrypted. In EncryptionAuto a relay that offers no STARTTLS
+	// is a successful handshake AND a cleartext send, and throwing this away is
+	// what let the status page answer a confident `ok` on it.
+	return ProbeResult{Verified: true, Encrypted: res.STARTTLS}
+}
+
+// IsLoopbackHost reports whether host names this machine. It matches literal
+// loopback addresses and the reserved name, and deliberately does NOT resolve:
+// a probe must not turn an operator's hostname into a DNS lookup whose answer
+// decides whether a cleartext warning is shown.
+//
+// Exported because two callers need the SAME line: this package refuses
+// `encryption: none` with credentials against a non-loopback relay, and the
+// configuration service suppresses the cleartext warning for a relay that never
+// leaves the machine. It is the same line net/smtp's PlainAuth draws.
+func IsLoopbackHost(host string) bool {
+	h := strings.ToLower(strings.TrimSpace(host))
+	h = strings.Trim(h, "[]")
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
+// classify turns a preflight handshake failure into a *SendError. The stage is
+// what makes it actionable, so it maps stage-by-stage rather than sniffing text.
+func (t *SMTPTransport) classify(err error) error {
+	var he *preflight.SMTPHandshakeError
+	if !errors.As(err, &he) {
+		return t.fail(ReasonConnectFailed, err)
+	}
+	switch he.Stage {
+	case preflight.SMTPStageDial:
+		// A dial that ran out of time and one that was refused send an operator
+		// to different places, and on 25/465/587 both are the signature of a
+		// host that blocks outbound submission (DigitalOcean blocks all three).
+		if isTimeout(he.Err) {
+			return t.fail(ReasonTimeout, he)
+		}
+		return t.fail(ReasonConnectFailed, he)
+	case preflight.SMTPStageGreeting:
+		return t.fail(ReasonConnectFailed, he)
+	case preflight.SMTPStageSTARTTLS, preflight.SMTPStageTLSUnsupported:
+		return t.fail(ReasonTLSFailed, he)
+	case preflight.SMTPStageAuthUnsupported, preflight.SMTPStageAuth:
+		return t.fail(ReasonAuthFailed, he)
+	default:
+		return t.fail(ReasonRejected, he)
+	}
+}
+
+// dialogueReason reads the relay's reply code: 4xx is "try later" (the relay
+// says so itself), 5xx is the caller's problem and keeps the stage's own
+// meaning.
+func (t *SMTPTransport) dialogueReason(err error, on5xx Reason) Reason {
+	var pe *textproto.Error
+	if !errors.As(err, &pe) {
+		if isTimeout(err) {
+			return ReasonTimeout
+		}
+		return on5xx
+	}
+	switch {
+	case pe.Code == 421 || pe.Code == 451 || pe.Code == 452:
+		// 421 service not available / 451 local error / 452 insufficient
+		// storage: the relay is asking for later, not telling us we are wrong.
+		return ReasonProviderUnavailable
+	case pe.Code == 450:
+		// Mailbox unavailable, and what relays overwhelmingly use for "you are
+		// sending too fast" (4.7.1 policy throttles).
+		return ReasonRateLimited
+	case pe.Code == 530 || pe.Code == 534 || pe.Code == 535:
+		return ReasonAuthFailed
+	case pe.Code >= 400 && pe.Code < 500:
+		return ReasonProviderUnavailable
+	}
+	return on5xx
+}
+
+func (t *SMTPTransport) fail(r Reason, err error) error {
+	return &SendError{Reason: r, Err: err, Port: t.cfg.Port}
+}
+
+// render produces a minimal RFC 5322 plain-text message with CRLF line endings.
+// The recipient, sender and optional reply-to are validated by the caller; every
+// other header value is sanitized — nothing can inject headers.
+func render(m Message) []byte {
+	var b strings.Builder
+	b.WriteString("From: " + formatAddress(m.From) + "\r\n")
+	b.WriteString("To: " + m.To + "\r\n")
+	if m.ReplyTo != "" {
+		b.WriteString("Reply-To: " + sanitizeHeader(m.ReplyTo) + "\r\n")
+	}
+	b.WriteString("Subject: " + sanitizeHeader(m.Subject) + "\r\n")
 	b.WriteString("Date: " + time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 -0700") + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
 	b.WriteString("\r\n")
-	b.WriteString(strings.ReplaceAll(body, "\n", "\r\n"))
+	b.WriteString(strings.ReplaceAll(m.Text, "\n", "\r\n"))
 	return []byte(b.String())
 }
 
-// sanitizeHeader strips CR/LF so a header value can never break the envelope.
-func sanitizeHeader(v string) string {
-	return strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
+// wrap keeps the stage name in the message the way the pre-transport mailer
+// did, so relay logs and operator reports still line up.
+func wrap(stage string, err error) error {
+	return errors.New(stage + ": " + err.Error())
 }
 
-// Redemption paths on the frontend. Every one of these pages reads its token
-// from the URL query (?token=) and none offers a field to paste a bare code
-// into, so a message that carries only the code hands the recipient a
-// credential they have no way to spend. They live here for the same reason
-// signInURL does in internal/auth: the mailer is the one place that has to
-// name a page.
-const (
-	resetPasswordPath = "/reset-password/confirm"
-	verifyEmailPath   = "/verify-email/confirm"
-	emailChangePath   = "/email-change/confirm"
-)
-
-// redemptionLink builds the URL that spends a token, or "" when the instance
-// has no configured public origin — a link to a guessed host is worse than no
-// link, because it looks redeemable and is not.
-func (s *SMTP) redemptionLink(path, token string) string {
-	if s.cfg.PublicBaseURL == "" {
-		return ""
+// isTimeout reports whether err is a deadline expiry rather than a refusal.
+func isTimeout(err error) bool {
+	if err == nil {
+		return false
 	}
-	return strings.TrimRight(s.cfg.PublicBaseURL, "/") + path + "?token=" + url.QueryEscape(token)
-}
-
-// effectiveInstanceName is the name substituted for {instance_name}: the
-// runtime provider (DB-overlaid instance_name) when wired, else the boot-time
-// config value.
-func (s *SMTP) effectiveInstanceName() string {
-	if s.instanceName != nil {
-		if name := strings.TrimSpace(s.instanceName()); name != "" {
-			return name
-		}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
 	}
-	return s.cfg.InstanceName
-}
-
-// decorateSubject prepends the email_subject_prefix (config-parity W6) with
-// {instance_name} substituted. Empty/whitespace prefix (or no provider) is a
-// no-op.
-func (s *SMTP) decorateSubject(subject string) string {
-	if s.subjectPrefix == nil {
-		return subject
-	}
-	prefix := strings.TrimSpace(s.subjectPrefix())
-	if prefix == "" {
-		return subject
-	}
-	prefix = strings.ReplaceAll(prefix, "{instance_name}", s.effectiveInstanceName())
-	return prefix + " " + subject
-}
-
-// decorateBody appends the email_body_signature (config-parity W6) after a
-// blank line. Empty/whitespace signature (or no provider) is a no-op.
-func (s *SMTP) decorateBody(body string) string {
-	if s.bodySignature == nil {
-		return body
-	}
-	sig := strings.TrimSpace(s.bodySignature())
-	if sig == "" {
-		return body
-	}
-	return strings.TrimRight(body, "\n") + "\n\n" + sig + "\n"
+	var te interface{ Timeout() bool }
+	return errors.As(err, &te) && te.Timeout()
 }
