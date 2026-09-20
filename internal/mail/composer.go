@@ -479,8 +479,15 @@ func (s *Composer) Configured() bool {
 }
 
 // Transport returns the transport this instance would use for the next send,
-// and whether there is one. It exists for the admin status page, which must
-// probe the ACTIVE route rather than the one the environment names.
+// and whether there is one.
+//
+// It has no production caller: the admin status page probes the ACTIVE route
+// through the configuration service, which holds the resolver itself and does
+// not need the composer to hand it one. What it is for is the assertion that
+// an unconfigured composer resolves to NOTHING rather than to a transport it
+// then declines to use — the difference between the historical noop-mailer
+// contract and a send that silently goes nowhere. Anything that grows a second
+// caller should say so here.
 func (s *Composer) Transport() (Transport, bool) {
 	t, _, _, ok := s.resolver.Current()
 	return t, ok

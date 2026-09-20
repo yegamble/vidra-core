@@ -46,10 +46,6 @@ func newMailgunTransport(domain string, region Region, apiKey string, o transpor
 
 func (t *mailgunTransport) Kind() string { return KindMailgun }
 
-// Region reports which of Mailgun's two regions this transport talks to. The
-// admin UI needs it to explain a 404 on the sending domain.
-func (t *mailgunTransport) Region() Region { return t.region }
-
 func (t *mailgunTransport) Send(ctx context.Context, m Message) error {
 	if err := validateMessage(m); err != nil {
 		return err

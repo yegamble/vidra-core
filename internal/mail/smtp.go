@@ -70,10 +70,6 @@ func newSMTPTransport(cfg smtpTransportConfig) *SMTPTransport {
 // Kind implements Transport.
 func (t *SMTPTransport) Kind() string { return KindSMTP }
 
-// Port is the relay port this transport dials. The admin UI needs it to
-// recognise the host-blocks-submission-ports failure.
-func (t *SMTPTransport) Port() int { return t.cfg.Port }
-
 func (t *SMTPTransport) handshake() preflight.SMTPHandshake {
 	return preflight.SMTPHandshake{
 		Host:       t.cfg.Host,
@@ -174,10 +170,6 @@ func (t *SMTPTransport) Probe(ctx context.Context) ProbeResult {
 	// what let the status page answer a confident `ok` on it.
 	return ProbeResult{Verified: true, Encrypted: res.STARTTLS}
 }
-
-// Host is the relay this transport dials. The status page needs it to decide
-// whether an unencrypted session is worth warning about — see IsLoopbackHost.
-func (t *SMTPTransport) Host() string { return t.cfg.Host }
 
 // IsLoopbackHost reports whether host names this machine. It matches literal
 // loopback addresses and the reserved name, and deliberately does NOT resolve:
