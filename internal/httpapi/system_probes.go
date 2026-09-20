@@ -250,7 +250,22 @@ func (s *Server) probeObjectStore(ctx context.Context) componentStatus {
 // What it probes is the ACTIVE route, whatever that is.
 func (s *Server) probeSMTP(ctx context.Context) componentStatus {
 	if s.mailconfigsvc != nil {
-		return mailProbeStatus(s.mailconfigsvc.Probe(ctx))
+		report := s.mailconfigsvc.Probe(ctx)
+		if report.Result.Err != nil && report.Source == mailconfig.SourceDatabase {
+			// The far side's own words go to the SERVER LOG and no further. For
+			// the environment path the relay was a deploy-time constant, so the
+			// dial error told an admin about a host the admin already chose at
+			// boot; the host is now API-settable, and a dial error rendered into
+			// the page turns this probe into an admin-triggered port scanner
+			// with banner grab (refused vs timed out, and at the greeting stage
+			// whatever the remote service answers with). The classification and
+			// the operator's own port still cross — see mailProbeClassification.
+			s.logger.Warn("mail probe failed",
+				"error", report.Result.Err,
+				"transport", report.Kind,
+			)
+		}
+		return mailProbeStatus(report)
 	}
 	if !s.cfg.MailEnabled || s.cfg.SMTPHost == "" {
 		return componentStatus{Status: "not_configured"}
@@ -315,6 +330,16 @@ func mailProbeStatus(r mailconfig.ProbeReport) componentStatus {
 func mailProbeFailure(r mailconfig.ProbeReport) string {
 	var he *preflight.SMTPHandshakeError
 	if errors.As(r.Result.Err, &he) {
+		if r.Source == mailconfig.SourceDatabase {
+			// An ADMIN-SETTABLE host changes what this sentence is. The stage
+			// prose is ours; underlying(he) is the far side's, and against an
+			// arbitrary internal address it answers "is anything listening, and
+			// what is it" — admin-gated, 3s-bounded, 60s-cached, but an oracle
+			// the accepted contract (reason + port) does not include. The raw
+			// text is logged instead; the operator owns that log already.
+			sentence, _ := smtpProbeStage(he)
+			return sentence + mailProbeClassification(r.Result.Err)
+		}
 		return smtpProbeReason(r.Result.Err)
 	}
 	reason := mail.ReasonOf(r.Result.Err)
@@ -360,22 +385,49 @@ func smtpProbeReason(err error) string {
 	if !errors.As(err, &he) {
 		return err.Error()
 	}
+	sentence, detailed := smtpProbeStage(he)
+	if !detailed {
+		return sentence
+	}
+	return sentence + ": " + underlying(he)
+}
+
+// smtpProbeStage is the half of that sentence this codebase writes itself: the
+// stage that broke and what it costs the instance, with nothing quoted from the
+// far side. detailed reports whether the stage has a cause worth appending when
+// the caller is allowed to show one — an AUTH extension the relay simply does
+// not advertise has no interesting detail, so that branch never had a tail.
+func smtpProbeStage(he *preflight.SMTPHandshakeError) (sentence string, detailed bool) {
 	switch he.Stage {
 	case preflight.SMTPStageDial:
-		return "the mail relay could not be reached, so every password reset and verification message fails: " + underlying(he)
+		return "the mail relay could not be reached, so every password reset and verification message fails", true
 	case preflight.SMTPStageGreeting:
 		// Something answered, but not a mail relay — a proxy or a captive portal
 		// in front of one. Password resets fail exactly as if nothing were there.
-		return "something answered on that port but it did not greet as an SMTP relay (a proxy or captive portal in front of the port answers exactly like this): " + underlying(he)
+		return "something answered on that port but it did not greet as an SMTP relay (a proxy or captive portal in front of the port answers exactly like this)", true
 	case preflight.SMTPStageSTARTTLS:
-		return "the relay advertises STARTTLS but the encrypted session could not be established, so every message fails before it is sent. Vidra verifies the certificate strictly against SMTP_HOST and has no skip-verify knob: use a certificate the host trust store accepts, or add the relay's CA to that store: " + underlying(he)
+		return "the relay advertises STARTTLS but the encrypted session could not be established, so every message fails before it is sent. Vidra verifies the certificate strictly against SMTP_HOST and has no skip-verify knob: use a certificate the host trust store accepts, or add the relay's CA to that store", true
 	case preflight.SMTPStageAuthUnsupported:
-		return "SMTP_USERNAME is set but this relay offers no AUTH, so every send fails closed rather than going out unauthenticated. Either clear the credentials or point at the relay's submission port (587), which is usually the one that advertises AUTH"
+		return "SMTP_USERNAME is set but this relay offers no AUTH, so every send fails closed rather than going out unauthenticated. Either clear the credentials or point at the relay's submission port (587), which is usually the one that advertises AUTH", false
 	case preflight.SMTPStageAuth:
-		return "the relay rejected the configured SMTP credentials, so every message fails before it is sent. Check SMTP_USERNAME and SMTP_PASSWORD: " + underlying(he)
+		return "the relay rejected the configured SMTP credentials, so every message fails before it is sent. Check SMTP_USERNAME and SMTP_PASSWORD", true
 	default:
-		return "the mail relay handshake failed at the " + he.Stage + " step: " + underlying(he)
+		return "the mail relay handshake failed at the " + he.Stage + " step", true
 	}
+}
+
+// mailProbeClassification is the part of a failure that is safe to render for
+// ANY configuration source: mail.Reason is a closed vocabulary this codebase
+// defines, and the port is the one the operator typed themselves. It is what
+// keeps a redacted sentence actionable — "refused" and "timed out" send an
+// operator to different places, and connect_failed on 25/465/587 is the
+// host-blocks-submission-ports signature.
+func mailProbeClassification(err error) string {
+	reason := string(mail.ReasonOf(err))
+	if port := mailFailurePort(err); port > 0 {
+		reason += " on port " + strconv.Itoa(port)
+	}
+	return " (" + reason + "). The server log for this instance carries the relay's own answer."
 }
 
 // underlying renders the wrapped cause, or the whole error when there is none.

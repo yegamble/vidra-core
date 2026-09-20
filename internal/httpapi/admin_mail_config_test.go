@@ -20,6 +20,7 @@ import (
 	"github.com/vidra/vidra-core/internal/mail"
 	"github.com/vidra/vidra-core/internal/mailconfig"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/preflight"
 	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -540,6 +541,82 @@ func TestSystemStatusSMTPComponentProbesTheActiveTransport(t *testing.T) {
 	}
 	if c := read(); c.Status != "down" || !strings.Contains(c.Error, "rejected these credentials") {
 		t.Errorf("smtp with a rejected key = %+v, want down with a provider-shaped sentence", c)
+	}
+}
+
+// The relay HOST is now something an admin types into a form, which changes
+// what the failure sentence is. For the environment path the host was a
+// deploy-time constant and the dial error told an admin about a machine they
+// had already chosen; rendered for a DATABASE-sourced configuration the same
+// text answers "is anything listening on this internal address, and what does
+// it say" — a port scanner with a banner grab, admin-gated and cached, but an
+// oracle beyond the accepted `reason` + port contract. The raw text belongs in
+// the operator's own log; the classification still crosses.
+func TestDatabaseMailProbeKeepsTheRawHandshakeTextOutOfThePage(t *testing.T) {
+	const sentinel = "SENTINEL-HANDSHAKE-220 Internal-Service-Banner 10.0.0.7:9200"
+	var buf bytes.Buffer
+	svc := &fakeMailConfig{
+		available: true,
+		source:    mailconfig.SourceDatabase,
+		report: mailconfig.ProbeReport{
+			Source: mailconfig.SourceDatabase, Kind: mail.KindSMTP,
+			Result: mail.ProbeResult{Err: &mail.SendError{
+				Reason: mail.ReasonConnectFailed,
+				Port:   9200,
+				Err:    &preflight.SMTPHandshakeError{Stage: preflight.SMTPStageGreeting, Err: errors.New(sentinel)},
+			}},
+		},
+	}
+	srv, _ := mailConfigServer(t, &buf, svc)
+	srv.lookPath = ffmpegFound
+	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	rec := getWithAuth(srv, "/api/v1/admin/system", tok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("system status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var body systemStatusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	c := body.Components["smtp"]
+	if c.Status != "down" {
+		t.Errorf("smtp = %+v, want down", c)
+	}
+	if strings.Contains(c.Error, sentinel) || strings.Contains(rec.Body.String(), sentinel) {
+		t.Errorf("the far side's own answer reached the admin page:\n%s", rec.Body.String())
+	}
+	// Redacted is not useless: the stage sentence, the classification and the
+	// operator's own port all survive, which is what makes the row actionable.
+	if !strings.Contains(c.Error, "did not greet as an SMTP relay") {
+		t.Errorf("the stage sentence was lost with the detail: %q", c.Error)
+	}
+	if !strings.Contains(c.Error, string(mail.ReasonConnectFailed)) || !strings.Contains(c.Error, "9200") {
+		t.Errorf("error = %q, want the reason and the configured port", c.Error)
+	}
+	if !strings.Contains(buf.String(), sentinel) {
+		t.Errorf("the relay's own answer never reached the server log:\n%s", buf.String())
+	}
+}
+
+// The ENVIRONMENT path is unmoved: its host is a deploy-time constant, so the
+// detail is about a machine the operator chose in their own env file and the
+// prose they have been reading since before the admin panel existed stays.
+func TestEnvironmentMailProbeKeepsTheHandshakeDetail(t *testing.T) {
+	const sentinel = "SENTINEL-HANDSHAKE-dial tcp 10.0.0.7:587: connect: connection refused"
+	got := mailProbeStatus(mailconfig.ProbeReport{
+		Source: mailconfig.SourceEnvironment, Kind: mail.KindSMTP,
+		Result: mail.ProbeResult{Err: &mail.SendError{
+			Reason: mail.ReasonConnectFailed,
+			Port:   587,
+			Err:    &preflight.SMTPHandshakeError{Stage: preflight.SMTPStageDial, Err: errors.New(sentinel)},
+		}},
+	})
+	if got.Status != "down" {
+		t.Errorf("status = %q, want down", got.Status)
+	}
+	if !strings.Contains(got.Error, sentinel) {
+		t.Errorf("the environment path lost its handshake detail: %q", got.Error)
 	}
 }
 
