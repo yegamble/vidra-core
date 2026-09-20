@@ -257,6 +257,15 @@ func setupMailIntegration(t *testing.T) *mailIntegrationEnv {
 	}
 	// The role is read off the account ROW on every request, so a direct update
 	// is exactly what a promotion through the admin route leaves behind.
+	//
+	// BOTH accounts are promoted explicitly. registerTokens hands back an admin
+	// only on an EMPTY instance (the first-run owner claim); in the integration
+	// lane other tests have already registered users on the shared database, so
+	// "mc-adm" arrives as a plain user and every PUT/DELETE answered 403 — the
+	// suite passed only when it happened to be the first registrant.
+	if _, err := st.Pool.Exec(ctx, `UPDATE users SET role = 'admin' WHERE id = $1`, uuid.MustParse(admin.User.ID)); err != nil {
+		t.Fatalf("promote admin: %v", err)
+	}
 	if _, err := st.Pool.Exec(ctx, `UPDATE users SET role = 'moderator' WHERE id = $1`, uuid.MustParse(mod.User.ID)); err != nil {
 		t.Fatalf("promote moderator: %v", err)
 	}
