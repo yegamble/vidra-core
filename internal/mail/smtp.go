@@ -88,11 +88,8 @@ func (t *SMTPTransport) handshake() preflight.SMTPHandshake {
 // STARTTLS per the encryption mode, AUTH PLAIN when credentials are configured,
 // then a single-recipient plain-text message.
 func (t *SMTPTransport) Send(ctx context.Context, m Message) error {
-	if hasCRLF(m.To) || strings.TrimSpace(m.To) == "" {
-		return t.fail(ReasonRejected, errors.New("invalid recipient address"))
-	}
-	if hasCRLF(m.From.Address) || hasCRLF(m.From.Name) || hasCRLF(m.ReplyTo) {
-		return t.fail(ReasonRejected, errors.New("invalid sender or reply-to address"))
+	if err := validateMessage(m); err != nil {
+		return err
 	}
 	if ctx == nil {
 		ctx = context.Background()

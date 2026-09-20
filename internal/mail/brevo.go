@@ -51,6 +51,9 @@ type brevoError struct {
 }
 
 func (t *brevoTransport) Send(ctx context.Context, m Message) error {
+	if err := validateMessage(m); err != nil {
+		return err
+	}
 	payload := brevoPayload{
 		Sender:      brevoAddress{Email: m.From.Address, Name: sanitizeHeader(m.From.Name)},
 		To:          []brevoAddress{{Email: m.To}},

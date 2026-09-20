@@ -46,6 +46,9 @@ type resendError struct {
 }
 
 func (t *resendTransport) Send(ctx context.Context, m Message) error {
+	if err := validateMessage(m); err != nil {
+		return err
+	}
 	body, err := json.Marshal(resendPayload{
 		From:    formatAddress(m.From),
 		To:      []string{m.To},

@@ -51,6 +51,9 @@ func (t *mailgunTransport) Kind() string { return KindMailgun }
 func (t *mailgunTransport) Region() Region { return t.region }
 
 func (t *mailgunTransport) Send(ctx context.Context, m Message) error {
+	if err := validateMessage(m); err != nil {
+		return err
+	}
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	fields := [][2]string{

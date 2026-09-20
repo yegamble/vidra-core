@@ -272,6 +272,24 @@ func sanitizeHeader(v string) string {
 // checked with this; free prose is sanitized instead.
 func hasCRLF(v string) bool { return strings.ContainsAny(v, "\r\n") }
 
+// validateMessage refuses a message whose address fields could break out of a
+// header. Every transport calls it, so "a CRLF never reaches the wire" is an
+// invariant of the Transport interface rather than a property of whichever
+// implementation happened to remember — the vendors that accept JSON would
+// carry the break harmlessly, right up until it becomes a MIME header at the
+// far end.
+func validateMessage(m Message) error {
+	switch {
+	case strings.TrimSpace(m.To) == "" || hasCRLF(m.To):
+		return &SendError{Reason: ReasonRejected, Err: errors.New("invalid recipient address")}
+	case strings.TrimSpace(m.From.Address) == "" || hasCRLF(m.From.Address) || hasCRLF(m.From.Name):
+		return &SendError{Reason: ReasonSenderRejected, Err: errors.New("invalid sender address")}
+	case hasCRLF(m.ReplyTo):
+		return &SendError{Reason: ReasonRejected, Err: errors.New("invalid reply-to address")}
+	}
+	return nil
+}
+
 // formatAddress renders an address for a From header. With no display name it
 // emits the bare address — exactly what this package has always written, so the
 // environment path's messages are unchanged to the byte. With a display name it

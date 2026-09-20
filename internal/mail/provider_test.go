@@ -604,6 +604,55 @@ func TestResponseBodyIsCapped(t *testing.T) {
 	}
 }
 
+// Refusing a CRLF-carrying address is an invariant of the Transport interface,
+// not a property of whichever implementation remembered. A JSON provider would
+// carry the break harmlessly all the way to the far side, where it becomes a
+// MIME header — so the check belongs to every transport and nothing may reach
+// the wire.
+func TestEveryTransportRejectsHeaderInjection(t *testing.T) {
+	mutations := map[string]func(*Message){
+		"recipient":         func(m *Message) { m.To = "a@b.test\r\nBcc: evil@x.test" },
+		"from address":      func(m *Message) { m.From.Address = "a@b.test\r\nBcc: evil@x.test" },
+		"from display name": func(m *Message) { m.From.Name = "Ada\r\nBcc: evil@x.test" },
+		"reply-to":          func(m *Message) { m.ReplyTo = "a@b.test\r\nBcc: evil@x.test" },
+		"empty recipient":   func(m *Message) { m.To = "  " },
+	}
+	for _, kind := range Kinds() {
+		for name, mutate := range mutations {
+			t.Run(kind+"/"+name, func(t *testing.T) {
+				srv := newProviderServer(t, http.StatusOK, `{}`)
+				opts := srv.opts()
+				var tr Transport
+				switch kind {
+				case KindSMTP:
+					// The SMTP transport has no httptest server; point it at a
+					// port nothing listens on, so a request that got past the
+					// guard would fail loudly rather than quietly succeed.
+					tr = newSMTPTransport(smtpTransportConfig{Host: "127.0.0.1", Port: 1, Encryption: EncryptionNone})
+				case KindResend:
+					tr = newResendTransport("k", collectTransportOptions(opts))
+				case KindBrevo:
+					tr = newBrevoTransport("k", collectTransportOptions(opts))
+				case KindMailgun:
+					tr = newMailgunTransport("mail.vidra.test", RegionUS, "k", collectTransportOptions(opts))
+				case KindPostmark:
+					tr = newPostmarkTransport("", "k", collectTransportOptions(opts))
+				default:
+					t.Fatalf("no constructor for kind %q", kind)
+				}
+				m := providerMessage()
+				mutate(&m)
+				if err := tr.Send(context.Background(), m); err == nil {
+					t.Fatal("transport accepted an address carrying CRLF")
+				}
+				if len(srv.got) != 0 {
+					t.Errorf("transport sent %d requests before refusing", len(srv.got))
+				}
+			})
+		}
+	}
+}
+
 // textToHTML is the single derivation used by the one provider that demands
 // HTML. It must escape, preserve the layout and linkify — and never emit an
 // attribute a body could break out of.

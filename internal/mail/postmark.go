@@ -73,6 +73,9 @@ const (
 )
 
 func (t *postmarkTransport) Send(ctx context.Context, m Message) error {
+	if err := validateMessage(m); err != nil {
+		return err
+	}
 	body, err := json.Marshal(postmarkPayload{
 		From:          formatAddress(m.From),
 		To:            m.To,
