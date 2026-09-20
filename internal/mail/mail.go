@@ -48,9 +48,11 @@ const (
 	KindPostmark = "postmark"
 )
 
-// Kinds lists every supported transport, in the order the admin panel should
-// offer them: the HTTPS providers that work on hosts which block the submission
-// ports first, then the generic relay for operators who have one.
+// Kinds lists every supported transport. SMTP leads because it is the shape
+// every operator already understands and the one the environment path uses;
+// the HTTPS providers follow in the order the provider research ranked them for
+// a self-hoster on a submission-port-blocking host (Resend, Brevo, Mailgun,
+// Postmark).
 func Kinds() []string {
 	return []string{KindSMTP, KindResend, KindBrevo, KindMailgun, KindPostmark}
 }
