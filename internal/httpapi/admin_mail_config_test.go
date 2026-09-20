@@ -360,16 +360,20 @@ func newMailConfigMemoryRepo() mailconfig.Repository { return &mailConfigMemoryR
 // --- /admin/system + the test-send classification -----------------------------
 
 // A reachable provider whose send-only key cannot be proven must not read as
-// `down` (it would condemn the recommended setup) and must not read as a bare
-// `ok` (nobody has proved anything). It is degraded with a sentence that says
-// which of the two it is.
-func TestMailProbeStatusUnverifiableIsDegradedNotDown(t *testing.T) {
+// `down` (it would condemn the recommended setup), must not read as `degraded`
+// (that demotes the whole page's top line, forever, for the RECOMMENDED kind of
+// key) and must not read as a bare `ok` (nobody has proved anything). It is
+// `ok` with a sentence that says what is and is not established.
+func TestMailProbeStatusUnverifiableIsOkWithANote(t *testing.T) {
 	got := mailProbeStatus(mailconfig.ProbeReport{
 		Source: mailconfig.SourceDatabase, Kind: mail.KindResend,
 		Result: mail.ProbeResult{Verified: false, Encrypted: true},
 	})
-	if got.Status != "degraded" {
-		t.Errorf("status = %q, want degraded", got.Status)
+	if got.Status != "ok" {
+		t.Errorf("status = %q, want ok (degraded would demote the page for a send-only key)", got.Status)
+	}
+	if got.Error == "" {
+		t.Error("an unverifiable probe reads as a BARE ok: the note is what keeps it honest")
 	}
 	if !strings.Contains(got.Error, "test message") {
 		t.Errorf("the note does not point at the only check that settles it: %q", got.Error)
@@ -417,12 +421,15 @@ func TestMailProbeStatusNamesTheBlockedPort(t *testing.T) {
 	}
 }
 
-// Dev capture is reported as degraded, not ok: an instance that delivers
-// nothing must not read as healthy on the page an operator checks.
-func TestMailProbeStatusDevCaptureIsDegraded(t *testing.T) {
+// Dev capture is `not_configured` WITH the capture sentence — what a
+// capture-only stack always reported here. `degraded` demotes the page's top
+// line, and vidra-user's backed e2e harness (which must run with capture on)
+// asserts a healthy stack: reporting it degraded turned that repo's required
+// lanes red the moment this reached main.
+func TestMailProbeStatusDevCaptureDoesNotDegradeThePage(t *testing.T) {
 	got := mailProbeStatus(mailconfig.ProbeReport{Source: mailconfig.SourceDevCapture, Kind: mail.KindSMTP})
-	if got.Status != "degraded" || !strings.Contains(got.Error, "CAPTURED") {
-		t.Errorf("dev capture status = %+v, want a degraded capture note", got)
+	if got.Status != "not_configured" || !strings.Contains(got.Error, "CAPTURED") {
+		t.Errorf("dev capture status = %+v, want not_configured carrying the capture note", got)
 	}
 }
 
