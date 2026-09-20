@@ -291,6 +291,30 @@ func TestIdentityValidation(t *testing.T) {
 			in.ReplyTo = "ops"
 			return in
 		}(), "reply_to"},
+		// A NAME-ADDR parses, so it used to save — and then went to MAIL FROM
+		// verbatim as `MAIL FROM:<Vidra <a@b.test>>`, which every relay answers
+		// 501 to, on every message, with the probe still reading ok. The display
+		// name belongs in from_name.
+		{"sender carrying a display name", func() Input {
+			in := smtpInput(ptr("p"))
+			in.FromAddress = "Vidra <a@b.test>"
+			return in
+		}(), "from_address"},
+		{"sender in angle brackets", func() Input {
+			in := smtpInput(ptr("p"))
+			in.FromAddress = "<a@b.test>"
+			return in
+		}(), "from_address"},
+		{"reply-to carrying a display name", func() Input {
+			in := smtpInput(ptr("p"))
+			in.ReplyTo = "Ops <ops@vidra.test>"
+			return in
+		}(), "reply_to"},
+		{"reply-to in angle brackets", func() Input {
+			in := smtpInput(ptr("p"))
+			in.ReplyTo = "<ops@vidra.test>"
+			return in
+		}(), "reply_to"},
 		{"unknown transport", Input{Transport: "sendgrid", FromAddress: "a@b.test"}, "transport"},
 	}
 	for _, tc := range cases {

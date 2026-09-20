@@ -1,7 +1,6 @@
 package mailconfig
 
 import (
-	netmail "net/mail"
 	"strings"
 
 	"github.com/vidra/vidra-core/internal/mail"
@@ -126,34 +125,30 @@ func (in Input) secret(kind string) (value string, present bool) {
 // a silently mangled From address is a deliverability failure an operator
 // cannot see, and there is no legitimate reason for a line break or a list
 // separator in any of them.
+//
+// The address rule is mail.IsAddrSpec — the SAME predicate the transports apply
+// at the wire, not a local copy of it. A second implementation is exactly how
+// "a configuration that saves is a configuration that resolves" stops being
+// true: this package accepted `Vidra <no-reply@example.org>` (net/mail parses
+// it) while the transport hands that string straight to MAIL FROM, so the save
+// returned 200 and every message afterwards failed. A display name belongs in
+// from_name, which is the field that renders one.
 func validateIdentity(in Input) []mail.FieldError {
 	var bad []mail.FieldError
 	from := strings.TrimSpace(in.FromAddress)
 	switch {
 	case from == "":
 		bad = append(bad, mail.FieldError{Field: "from_address", Msg: "required"})
-	case !isSingleAddress(from):
-		bad = append(bad, mail.FieldError{Field: "from_address", Msg: "must be one email address"})
+	case !mail.IsAddrSpec(from):
+		bad = append(bad, mail.FieldError{Field: "from_address", Msg: "must be one email address, with no display name"})
 	}
 	if strings.ContainsAny(in.FromName, "\r\n") {
 		bad = append(bad, mail.FieldError{Field: "from_name", Msg: "must not contain line breaks"})
 	}
-	if reply := strings.TrimSpace(in.ReplyTo); reply != "" && !isSingleAddress(reply) {
-		bad = append(bad, mail.FieldError{Field: "reply_to", Msg: "must be one email address"})
+	if reply := strings.TrimSpace(in.ReplyTo); reply != "" && !mail.IsAddrSpec(reply) {
+		bad = append(bad, mail.FieldError{Field: "reply_to", Msg: "must be one email address, with no display name"})
 	}
 	return bad
-}
-
-// isSingleAddress mirrors the invariant internal/mail enforces at the wire: one
-// parseable address, no line breaks, no list separators. It is applied here as
-// well so an admin is told which FIELD is wrong at save time, instead of
-// discovering it when the first password reset fails.
-func isSingleAddress(v string) bool {
-	if strings.ContainsAny(v, "\r\n,;") {
-		return false
-	}
-	_, err := netmail.ParseAddress(v)
-	return err == nil
 }
 
 // smtpUsername is the relay username the caller supplied, or "" when the SMTP
