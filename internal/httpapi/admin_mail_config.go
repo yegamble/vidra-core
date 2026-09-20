@@ -124,6 +124,16 @@ func (s *Server) mailConfigSaveError(c echo.Context, callerID uuid.UUID, err err
 				"invalid:"+strings.Join(mailFieldNames(ve), ","))
 			return &ValidationError{Fields: mailFieldErrors(ve)}
 		}
+		var na *mailconfig.NotAnnouncedError
+		if errors.As(err, &na) {
+			// The row IS written. `save_failed` here would be a ledger that
+			// contradicts the table and would send whoever reads it looking for
+			// a write that already happened. The response stays an error so the
+			// admin retries — the retry re-runs the same upsert and the bump,
+			// and is idempotent.
+			s.audit(c, observability.ActionAdminMailConfigUpdate, observability.ResultFailure, callerID.String(), "saved_not_announced")
+			return err
+		}
 	}
 	s.audit(c, observability.ActionAdminMailConfigUpdate, observability.ResultFailure, callerID.String(), "save_failed")
 	return err
@@ -144,7 +154,15 @@ func (s *Server) handleDeleteMailConfig(c echo.Context) error {
 	}
 	existed, err := s.mailconfigsvc.Reset(c.Request().Context(), callerID)
 	if err != nil {
-		s.audit(c, observability.ActionAdminMailConfigReset, observability.ResultFailure, callerID.String(), "reset_failed")
+		// Same distinction the save path draws: a DELETE that committed and did
+		// not propagate is not a reset that failed, and the trail must not say
+		// it was.
+		reason := "reset_failed"
+		var na *mailconfig.NotAnnouncedError
+		if errors.As(err, &na) {
+			reason = "reset_not_announced"
+		}
+		s.audit(c, observability.ActionAdminMailConfigReset, observability.ResultFailure, callerID.String(), reason)
 		return err
 	}
 	reason := "reverted_to_environment"

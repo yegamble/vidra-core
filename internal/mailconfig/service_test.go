@@ -323,6 +323,54 @@ func TestAVendorSettingChangeKeepsTheStoredKey(t *testing.T) {
 	}
 }
 
+// A failed version bump is a HALF failure: the row is committed, the fleet was
+// not told. The half that did happen must not be thrown away — before this, the
+// writer returned without reloading, so the process that made the change kept
+// the OLD transport, the counter never moved so no replica picked the new one
+// up either, and the configuration would have activated silently on the next
+// restart of any process, with the audit trail saying the save failed.
+func TestAFailedAnnounceStillReloadsTheWriter(t *testing.T) {
+	repo := &fakeRepo{}
+	boom := errors.New("bump: connection pool exhausted")
+	svc := NewService(repo, testCipher(t), envRelay(),
+		WithVersionBump(func(context.Context) error { return boom }))
+	if err := svc.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	_, err := svc.Save(context.Background(), smtpInput(ptr("relay-pass")), uuid.New())
+	// The caller is still told, because the admin must retry — and a retry is
+	// idempotent, so telling them costs nothing.
+	var na *NotAnnouncedError
+	if !errors.As(err, &na) {
+		t.Fatalf("err = %T (%v), want *NotAnnouncedError", err, err)
+	}
+	if !errors.Is(err, boom) {
+		t.Error("the announce failure was lost on the way out")
+	}
+	// The row LANDED …
+	if repo.upserts != 1 || repo.row == nil {
+		t.Fatalf("upserts = %d, row = %v, want the write to have committed", repo.upserts, repo.row)
+	}
+	// … and this replica now agrees with the table it just wrote.
+	st := svc.Status()
+	if st.Source != SourceDatabase {
+		t.Errorf("source = %q, want %q — the writer kept serving the old transport", st.Source, SourceDatabase)
+	}
+	if st.Config == nil || st.Config.SMTP == nil || st.Config.SMTP.Host != "relay.example.test" {
+		t.Errorf("status config = %+v, want the row that was just written", st.Config)
+	}
+
+	// A Reset that commits and fails to announce reverts this replica to the
+	// environment for the same reason.
+	if _, err := svc.Reset(context.Background(), uuid.New()); !errors.As(err, &na) {
+		t.Fatalf("Reset err = %T (%v), want *NotAnnouncedError", err, err)
+	}
+	if got := svc.Source(); got != SourceEnvironment {
+		t.Errorf("source after an unannounced reset = %q, want %q", got, SourceEnvironment)
+	}
+}
+
 // The sender identity ends up in a message header, so it is REJECTED rather
 // than sanitized, with the dotted field name the form binds to.
 func TestIdentityValidation(t *testing.T) {

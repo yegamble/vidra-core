@@ -243,6 +243,31 @@ func TestMailConfigSaveIsAudited(t *testing.T) {
 	}
 }
 
+// A save whose row committed and whose announce failed is NOT `save_failed`.
+// The table holds the new document; an audit row claiming the save failed is a
+// ledger that contradicts the data, and it sends whoever reads it looking for a
+// write that already happened. The response is still an error — the admin
+// should retry, and the retry is idempotent.
+func TestMailConfigSaveThatCouldNotAnnounceIsAuditedDistinctly(t *testing.T) {
+	var buf bytes.Buffer
+	svc := &fakeMailConfig{saveErr: &mailconfig.NotAnnouncedError{Err: errors.New("bump: pool exhausted")}}
+	srv, _ := mailConfigServer(t, &buf, svc)
+	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+
+	rec := doJSON(srv, http.MethodPut, mailConfigPath, tok,
+		`{"transport":"resend","from_address":"a@b.test","resend":{"api_key":"k"}}`)
+	if rec.Code < 500 {
+		t.Fatalf("status = %d, want a 5xx so the admin retries; body=%s", rec.Code, rec.Body.String())
+	}
+	ev := findAudit(auditEvents(t, &buf), observability.ActionAdminMailConfigUpdate, observability.ResultFailure)
+	if ev == nil {
+		t.Fatal("the half-failure was not audited")
+	}
+	if ev["reason"] != "saved_not_announced" {
+		t.Errorf("reason = %v, want saved_not_announced (never save_failed: the row is written)", ev["reason"])
+	}
+}
+
 // DELETE is audited too — the review's point: prove the refusals and the
 // destructive verb, not just the happy path of the write.
 func TestMailConfigResetIsAudited(t *testing.T) {

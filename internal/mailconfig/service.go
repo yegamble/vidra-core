@@ -53,6 +53,29 @@ import (
 // variable to set instead of showing a generic failure.
 var ErrSecretsKeyMissing = errors.New("mailconfig: no key-encryption key is configured, so a credential cannot be stored")
 
+// NotAnnouncedError means the row WAS written and the fleet was not told: the
+// upsert (or delete) committed, and the settings-version bump that makes every
+// other replica reload did not.
+//
+// It is its own type because "the save failed" and "the save landed and did not
+// propagate" need different words and different actions. An audit row saying
+// `save_failed` over a table that holds the new document is a ledger that
+// contradicts the data, and an operator reading it would go looking for a write
+// that already happened. The caller still gets an error — the admin should
+// retry, and a retry is idempotent (the same upsert, then the bump again) — but
+// the replica that did the write has reloaded, so the instance it is serving is
+// already correct.
+type NotAnnouncedError struct{ Err error }
+
+func (e *NotAnnouncedError) Error() string {
+	if e == nil || e.Err == nil {
+		return "mailconfig: the change was stored but not announced to the other replicas"
+	}
+	return "mailconfig: the change was stored but not announced to the other replicas: " + e.Err.Error()
+}
+
+func (e *NotAnnouncedError) Unwrap() error { return e.Err }
+
 // probeTTL bounds how often /admin/system actually touches the transport.
 //
 // The page is a poll target and the probe is now an OUTBOUND NETWORK CALL — a
@@ -541,9 +564,27 @@ func (s *Service) Save(ctx context.Context, in Input, actor uuid.UUID) (SaveResu
 		return SaveResult{}, fmt.Errorf("mailconfig: save: %w", err)
 	}
 	if err := s.announce(ctx); err != nil {
-		return result, err
+		// The upsert has COMMITTED. Returning here without reloading left this
+		// replica serving the old transport, with an unchanged counter so no
+		// replica — including this one — would ever pick the new one up, and the
+		// new configuration would silently activate on the next restart of any
+		// process. Reload locally first: the write is real, so the process that
+		// made it should at least be right about it.
+		return result, s.reloadAfterFailedAnnounce(ctx, err)
 	}
 	return result, s.Load(ctx)
+}
+
+// reloadAfterFailedAnnounce reloads this replica from the row that was just
+// written and returns the typed half-failure. A reload failure is JOINED rather
+// than swallowed: it means this process is wrong about its own write too, which
+// is strictly worse news and must not disappear behind the propagation one.
+func (s *Service) reloadAfterFailedAnnounce(ctx context.Context, announceErr error) error {
+	notAnnounced := &NotAnnouncedError{Err: announceErr}
+	if loadErr := s.Load(ctx); loadErr != nil {
+		return errors.Join(notAnnounced, loadErr)
+	}
+	return notAnnounced
 }
 
 // Reset removes the document so the instance reverts to its environment
@@ -558,7 +599,10 @@ func (s *Service) Reset(ctx context.Context, _ uuid.UUID) (bool, error) {
 		return false, fmt.Errorf("mailconfig: reset: %w", err)
 	}
 	if err := s.announce(ctx); err != nil {
-		return n > 0, err
+		// Same half-failure as Save, and the same remedy: the DELETE committed,
+		// so this replica reverts to the environment now rather than keeping a
+		// document the table no longer holds.
+		return n > 0, s.reloadAfterFailedAnnounce(ctx, err)
 	}
 	return n > 0, s.Load(ctx)
 }
