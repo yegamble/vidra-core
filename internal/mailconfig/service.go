@@ -419,11 +419,33 @@ func (s *Service) Save(ctx context.Context, in Input, actor uuid.UUID) (SaveResu
 				bad = append(bad, mail.FieldError{Field: secretField, Msg: "required"})
 			}
 		case hasPrior && prior.Transport == kind && prior.Secret != "":
-			// Omitted, same transport: keep what is stored. It is unsealed here
-			// and re-sealed below rather than copied as ciphertext, so a save
-			// that succeeds has PROVEN the stored credential is readable —
-			// otherwise an admin could keep saving a configuration that can
-			// never send.
+			// Omitted, same transport: keep what is stored — but ONLY if the
+			// credential would still go to the same place.
+			//
+			// The sealed column and the write-only API exist so that an admin
+			// SESSION cannot read the credential back. Keeping the secret across
+			// a changed smtp.host hands it back anyway, one AUTH PLAIN at a time:
+			// point the host at a relay you control, omit the password, and the
+			// next send (or the admin test button) delivers the stored password —
+			// frequently a third-party account, an SES/SendGrid/Mailgun SMTP
+			// credential or a Workspace app password, whose blast radius is not
+			// this instance. A changed server address therefore costs the
+			// password again, exactly like a changed transport does.
+			//
+			// Only the ADDRESS counts. Username, port and encryption travel to
+			// the same relay, and the vendor transports pin their own hosts, so
+			// Mailgun's domain/region change nothing about where the key goes.
+			if kind == mail.KindSMTP && !sameHost(decodeSettings(prior.Settings).Host, in.settings(kind).Host) {
+				bad = append(bad, mail.FieldError{
+					Field: secretField,
+					Msg:   "required: changing the server address requires the password again",
+				})
+				break
+			}
+			// It is unsealed here and re-sealed below rather than copied as
+			// ciphertext, so a save that succeeds has PROVEN the stored
+			// credential is readable — otherwise an admin could keep saving a
+			// configuration that can never send.
 			plain, err := s.open(prior.Secret)
 			if err != nil {
 				bad = append(bad, mail.FieldError{
@@ -446,13 +468,17 @@ func (s *Service) Save(ctx context.Context, in Input, actor uuid.UUID) (SaveResu
 		}
 	}
 
-	if kind == mail.KindSMTP && secret == "" && strings.TrimSpace(smtpUsername(in)) != "" {
+	if kind == mail.KindSMTP && secret == "" && strings.TrimSpace(smtpUsername(in)) != "" && !reported(bad, "smtp.password") {
 		// AUTH PLAIN with an empty password is not "anonymous", it is an
 		// authenticated session with a blank credential — which relays reject
 		// and which reads to the operator as a wrong password. mail.NewTransport
 		// catches the mirror image (a password with no username); this is the
 		// half only this layer can see, because it is the one the three-way
 		// secret semantics can produce by OMISSION.
+		//
+		// Skipped when the branch above already refused the password: a form
+		// that binds errors by field name would render two messages on one
+		// input, and the second would be the less specific of the two.
 		bad = append(bad, mail.FieldError{Field: "smtp.password", Msg: "required when a username is set"})
 	}
 

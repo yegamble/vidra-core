@@ -217,18 +217,55 @@ func TestSecretSemantics(t *testing.T) {
 	svc := NewService(repo, testCipher(t), EnvConfig{})
 	mustSave(t, svc, smtpInput(ptr("relay-pass")))
 
-	// Omitted, same transport: kept, and not reported as a change.
+	// Omitted, same transport, same relay: kept, and not reported as a change.
+	// Port, username and encryption all travel to the SAME server, so none of
+	// them costs the admin the password again.
 	changed := smtpInput(nil)
-	changed.SMTP.Host = "relay2.example.test"
+	changed.SMTP.Port = 2525
 	res := mustSave(t, svc, changed)
 	if res.SecretChanged {
 		t.Error("secret_changed = true for a save that did not touch the credential")
 	}
-	if strings.Join(res.ChangedFields, ",") != "smtp.host" {
-		t.Errorf("changed fields = %v, want [smtp.host]", res.ChangedFields)
+	if strings.Join(res.ChangedFields, ",") != "smtp.port" {
+		t.Errorf("changed fields = %v, want [smtp.port]", res.ChangedFields)
 	}
 	if st := svc.Status(); !st.Config.SMTP.PasswordSet {
 		t.Error("the stored password was dropped by a save that omitted it")
+	}
+
+	// The same relay spelled differently is the same relay: hostnames are
+	// case-insensitive and a stray space is a typo, not a new server.
+	respelled := smtpInput(nil)
+	respelled.SMTP.Port = 2525
+	respelled.SMTP.Host = "  RELAY.Example.Test "
+	if _, err := svc.Save(context.Background(), respelled, uuid.New()); err != nil {
+		t.Fatalf("a re-spelling of the same host must keep the credential: %v", err)
+	}
+
+	// A CHANGED relay address with the password omitted must NOT re-point the
+	// stored credential: the sealed column exists so an admin session cannot
+	// read the credential back, and unsealing it into a relay the caller chose
+	// would hand it over one AUTH PLAIN at a time. Re-entering it is the cost.
+	storedSecret, storedHost := repo.row.Secret, decodeSettings(repo.row.Settings).Host
+	repointed := smtpInput(nil)
+	repointed.SMTP.Port = 2525
+	repointed.SMTP.Host = "relay.attacker.test"
+	_, err := svc.Save(context.Background(), repointed, uuid.New())
+	if got := fieldsOf(t, err); strings.Join(got, ",") != "smtp.password" {
+		t.Errorf("fields for a re-pointed relay = %v, want [smtp.password]", got)
+	}
+	if repo.row.Secret != storedSecret {
+		t.Error("the stored credential was rewritten by a save that was refused")
+	}
+	if got := decodeSettings(repo.row.Settings).Host; got != storedHost {
+		t.Errorf("stored host = %q, want the save to have been refused at %q", got, storedHost)
+	}
+	// The refusal is about KEEPING a secret, not about changing a host: supply
+	// the password and the same move is an ordinary save.
+	moved := smtpInput(ptr("new-relay-pass"))
+	moved.SMTP.Host = "relay.attacker.test"
+	if res := mustSave(t, svc, moved); !res.SecretChanged {
+		t.Error("secret_changed = false after the password was re-entered")
 	}
 
 	// Empty string on smtp.password clears it.
@@ -244,7 +281,7 @@ func TestSecretSemantics(t *testing.T) {
 	}
 
 	// Switching transport with no new secret names the field that is missing.
-	_, err := svc.Save(context.Background(), Input{
+	_, err = svc.Save(context.Background(), Input{
 		Transport: mail.KindResend, FromAddress: "no-reply@vidra.test",
 		Resend: &APIKeyInput{},
 	}, uuid.New())
@@ -258,6 +295,31 @@ func TestSecretSemantics(t *testing.T) {
 	}, uuid.New())
 	if got := fieldsOf(t, err); strings.Join(got, ",") != "resend.api_key" {
 		t.Errorf("fields for an explicit clear = %v, want [resend.api_key]", got)
+	}
+}
+
+// A VENDOR transport pins its own hosts, so the settings an admin can change on
+// one never decide where the key is sent: Mailgun's domain and region select
+// between api.mailgun.net and api.eu.mailgun.net and nothing else. Keeping the
+// stored key across such a change is therefore safe, and making the admin
+// re-type it would be friction bought with no security.
+func TestAVendorSettingChangeKeepsTheStoredKey(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo, testCipher(t), EnvConfig{})
+	base := Input{
+		Transport: mail.KindMailgun, FromAddress: "no-reply@vidra.test",
+		Mailgun: &MailgunInput{Domain: "mail.vidra.test", Region: "us", APIKey: ptr("key-1")},
+	}
+	mustSave(t, svc, base)
+
+	moved := base
+	moved.Mailgun = &MailgunInput{Domain: "mail2.vidra.test", Region: "eu"} // key omitted
+	res := mustSave(t, svc, moved)
+	if res.SecretChanged {
+		t.Error("secret_changed = true for a save that did not touch the key")
+	}
+	if st := svc.Status(); st.Config == nil || !st.Config.Mailgun.APIKeySet {
+		t.Errorf("stored key was dropped by a domain/region change: %+v", st.Config)
 	}
 }
 

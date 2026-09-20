@@ -151,6 +151,27 @@ func validateIdentity(in Input) []mail.FieldError {
 	return bad
 }
 
+// reported says whether field already carries a validation error, so one input
+// never collects two messages.
+func reported(bad []mail.FieldError, field string) bool {
+	for _, f := range bad {
+		if f.Field == field {
+			return true
+		}
+	}
+	return false
+}
+
+// sameHost reports whether two relay addresses name the same server for the
+// purpose of "may the stored credential still be sent there". Hostnames are
+// case-insensitive and an operator's leading space is not a different relay, so
+// both are normalised — but nothing is resolved: a DNS lookup would make the
+// answer depend on what the resolver says at save time, and the question here
+// is what the ADMIN typed.
+func sameHost(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
 // smtpUsername is the relay username the caller supplied, or "" when the SMTP
 // block is absent.
 func smtpUsername(in Input) string {
