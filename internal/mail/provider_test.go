@@ -630,26 +630,7 @@ func TestEveryTransportRejectsHeaderInjection(t *testing.T) {
 	for _, kind := range Kinds() {
 		for name, mutate := range mutations {
 			t.Run(kind+"/"+name, func(t *testing.T) {
-				srv := newProviderServer(t, http.StatusOK, `{}`)
-				opts := srv.opts()
-				var tr Transport
-				switch kind {
-				case KindSMTP:
-					// The SMTP transport has no httptest server; point it at a
-					// port nothing listens on, so a request that got past the
-					// guard would fail loudly rather than quietly succeed.
-					tr = newSMTPTransport(smtpTransportConfig{Host: "127.0.0.1", Port: 1, Encryption: EncryptionNone})
-				case KindResend:
-					tr = newResendTransport("k", collectTransportOptions(opts))
-				case KindBrevo:
-					tr = newBrevoTransport("k", collectTransportOptions(opts))
-				case KindMailgun:
-					tr = newMailgunTransport("mail.vidra.test", RegionUS, "k", collectTransportOptions(opts))
-				case KindPostmark:
-					tr = newPostmarkTransport("", "k", collectTransportOptions(opts))
-				default:
-					t.Fatalf("no constructor for kind %q", kind)
-				}
+				tr, srv := transportOfKind(t, kind)
 				m := providerMessage()
 				mutate(&m)
 				if err := tr.Send(context.Background(), m); err == nil {
@@ -659,6 +640,101 @@ func TestEveryTransportRejectsHeaderInjection(t *testing.T) {
 					t.Errorf("transport sent %d requests before refusing", len(srv.got))
 				}
 			})
+		}
+	}
+}
+
+// transportOfKind builds one transport of every kind over a recording httptest
+// server, so a cross-transport invariant can be asserted once instead of five
+// times. A request that got past a local guard lands in srv.got; the SMTP
+// transport has no httptest server, so it dials a port nothing listens on and a
+// send that got past the guard fails loudly rather than quietly succeeding.
+func transportOfKind(t *testing.T, kind string) (Transport, *providerServer) {
+	t.Helper()
+	srv := newProviderServer(t, http.StatusOK, `{}`)
+	opts := srv.opts()
+	switch kind {
+	case KindSMTP:
+		return newSMTPTransport(smtpTransportConfig{Host: "127.0.0.1", Port: 1, Encryption: EncryptionNone}), srv
+	case KindResend:
+		return newResendTransport("k", collectTransportOptions(opts)), srv
+	case KindBrevo:
+		return newBrevoTransport("k", collectTransportOptions(opts)), srv
+	case KindMailgun:
+		return newMailgunTransport("mail.vidra.test", RegionUS, "k", collectTransportOptions(opts)), srv
+	case KindPostmark:
+		return newPostmarkTransport("", "k", collectTransportOptions(opts)), srv
+	}
+	t.Fatalf("no constructor for kind %q", kind)
+	return nil, nil
+}
+
+// A NAME-ADDR is the address form that parses and cannot be sent. These fields
+// go to the wire verbatim — `MAIL FROM:<Vidra <a@b.test>>`, Brevo's
+// `sender.email` — so every transport must refuse one BEFORE any network I/O,
+// and it must be the transport that refuses rather than the configuration layer
+// alone: a permissive transport on main is a transport that accepts a sender it
+// cannot send.
+func TestEveryTransportRefusesANameAddr(t *testing.T) {
+	mutations := map[string]func(*Message){
+		"name-addr sender":     func(m *Message) { m.From.Address = "Vidra <a@b.test>" },
+		"angle-addr sender":    func(m *Message) { m.From.Address = "<a@b.test>" },
+		"name-addr recipient":  func(m *Message) { m.To = "Ada <a@b.test>" },
+		"angle-addr recipient": func(m *Message) { m.To = "<a@b.test>" },
+		"name-addr reply-to":   func(m *Message) { m.ReplyTo = "Ops <ops@vidra.test>" },
+		"angle-addr reply-to":  func(m *Message) { m.ReplyTo = "<ops@vidra.test>" },
+	}
+	for _, kind := range Kinds() {
+		for name, mutate := range mutations {
+			t.Run(kind+"/"+name, func(t *testing.T) {
+				tr, srv := transportOfKind(t, kind)
+				m := providerMessage()
+				mutate(&m)
+				if err := tr.Send(context.Background(), m); err == nil {
+					t.Fatal("transport accepted a name-addr it cannot put on the wire")
+				}
+				if len(srv.got) != 0 {
+					t.Errorf("transport sent %d requests before refusing", len(srv.got))
+				}
+			})
+		}
+	}
+}
+
+// IsAddrSpec is exported because internal/mailconfig validates the admin's
+// stored identity fields with it — one rule, so "saves" and "sends" cannot
+// disagree. Pin the boundary directly: the stdlib parser accepts far more than
+// an addr-spec, and every accepted form here reaches MAIL FROM unchanged.
+func TestIsAddrSpec(t *testing.T) {
+	ok := []string{
+		"a@b.test",
+		"no-reply@vidra.test",
+		"user+tag@b.test",
+		"josé@b.test",
+		"user@[127.0.0.1]",
+		"UPPER@B.TEST",
+	}
+	for _, v := range ok {
+		if !IsAddrSpec(v) {
+			t.Errorf("IsAddrSpec(%q) = false, want true", v)
+		}
+	}
+	bad := []string{
+		"",
+		"   ",
+		"Vidra <a@b.test>",
+		"<a@b.test>",
+		" a@b.test",
+		"a@b.test ",
+		"not an address",
+		"a@b.test,c@d.test",
+		"a@b.test;c@d.test",
+		"a@b.test\r\nBcc: evil@x.test",
+		`"quoted local"@b.test`, // only an addr-spec after the stdlib rewrites it
+	}
+	for _, v := range bad {
+		if IsAddrSpec(v) {
+			t.Errorf("IsAddrSpec(%q) = true, want false", v)
 		}
 	}
 }
