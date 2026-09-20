@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/mail"
 	"github.com/vidra/vidra-core/internal/observability"
 )
 
@@ -36,7 +37,7 @@ type mailTestResponse struct {
 
 // handleMailTest sends one probe message so an admin can find out whether
 // outbound mail works BEFORE a user needs a password reset. Behind
-// requireRole(admin) and its own budget (3 per admin per hour).
+// requireRole(admin) and its own budget (10 per admin per hour).
 //
 // The recipient is the instance's own effective contact address and the caller
 // cannot choose it. That is the whole security design of the endpoint: an
@@ -44,12 +45,13 @@ type mailTestResponse struct {
 // password in front of it, useful for spam, phishing from the instance's own
 // domain, and burning its sending reputation. With a fixed recipient there is
 // nothing to abuse — the worst an attacker with an admin session can do is mail
-// the operator three times an hour.
+// the operator ten times an hour.
 //
 //	503 — this deployment has no outbound mail path at all (mail_not_configured).
 //	409 — no contact address is set, so there is nowhere to send.
-//	502 — the relay refused it (generic text; the relay's own words go to the
-//	      server log, never to the response).
+//	502 — the relay refused it. The body carries the machine-readable `reason`
+//	      (and `port` for SMTP) so the panel can name the failure; the relay's
+//	      own words go to the server log, never to the response.
 //	202 — handed to the relay.
 func (s *Server) handleMailTest(c echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
@@ -85,8 +87,15 @@ func (s *Server) handleMailTest(c echo.Context) error {
 			"error", err,
 			"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
 		)
+		// The CLASSIFICATION does cross the boundary, because it is not the
+		// relay's words: mail.Reason is a closed vocabulary this codebase
+		// defines, and the port is the one the operator configured themselves.
+		// Without them the panel can only say "it did not work", and the single
+		// most common self-hosting failure — a host blocking outbound 25/465/587
+		// — is indistinguishable from a wrong password.
+		reason := mail.ReasonOf(err)
 		s.audit(c, observability.ActionAdminMailTest, observability.ResultFailure, callerID.String(), "send_failed")
-		return &MailTestFailedError{}
+		return &MailTestFailedError{Reason: string(reason), Port: mailFailurePort(err)}
 	}
 
 	s.audit(c, observability.ActionAdminMailTest, observability.ResultSuccess, callerID.String(), "sent")

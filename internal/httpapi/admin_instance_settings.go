@@ -101,7 +101,7 @@ func (s *Server) hideSoftwareName() bool {
 // can never hold accounts behind a message nobody can send). Exposed on
 // GET /instance so the signup UI can explain the pending state.
 func (s *Server) registrationRequiresEmailVerification() bool {
-	return s.contactMailer != nil &&
+	return s.mailPathConfigured() &&
 		s.settingBool(instancesettings.KeyRegistrationRequireEmailVerification, false)
 }
 

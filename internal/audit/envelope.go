@@ -55,12 +55,20 @@ var (
 	// keys — a CID is a public capability handle and an object key is a media path,
 	// and neither belongs in the security ledger, on exactly the reasoning that
 	// keeps purge URLs out of it.
+	//
+	// secret_changed is the outbound-mail configuration's "was the credential
+	// replaced" flag (internal/mailconfig). It is the ONLY thing an audit row
+	// may say about a relay password or a provider API key: true or false, never
+	// a value, a length or a prefix. The changed non-secret field names ride in
+	// changed_keys beside it and the transport in provider, so the row describes
+	// the whole edit without holding any part of the credential.
 	allowedMetadataKeys = stringSet(
 		"attempt", "attempts", "auth_method", "breaker_tripped", "changed_key",
 		"changed_keys", "count", "dry_run", "failed", "ipfs_rearmed",
 		"ipfs_unpinned", "mode", "network",
 		"outcome", "policy", "provider", "purged", "reason_code",
-		"reason_provided", "resolver", "source_version", "stage", "url_count",
+		"reason_provided", "resolver", "secret_changed", "source_version",
+		"stage", "url_count",
 	)
 
 	// Safe before/after values are limited to low-sensitivity state/config fields.

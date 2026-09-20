@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/vidra/vidra-core/internal/mail"
+	"github.com/vidra/vidra-core/internal/mailconfig"
 	"github.com/vidra/vidra-core/internal/media"
 	"github.com/vidra/vidra-core/internal/preflight"
 	"github.com/vidra/vidra-core/internal/processheartbeat"
@@ -241,7 +244,14 @@ func (s *Server) probeObjectStore(ctx context.Context) componentStatus {
 // the steps that break; anything short of that is `down`, with a sentence that
 // names the stage, because "connection refused" and "certificate signed by
 // unknown authority" send an operator to two completely different places.
+// The component id stays `smtp` even when the active transport is an HTTPS API
+// provider: it is the stable name every operator dashboard and every runbook
+// already keys on, and renaming it to `mail` would silently blank that row.
+// What it probes is the ACTIVE route, whatever that is.
 func (s *Server) probeSMTP(ctx context.Context) componentStatus {
+	if s.mailconfigsvc != nil {
+		return mailProbeStatus(s.mailconfigsvc.Probe(ctx))
+	}
 	if !s.cfg.MailEnabled || s.cfg.SMTPHost == "" {
 		return componentStatus{Status: "not_configured"}
 	}
@@ -255,6 +265,90 @@ func (s *Server) probeSMTP(ctx context.Context) componentStatus {
 		return componentStatus{Status: "ok"}
 	}
 	return componentStatus{Status: "down", Error: smtpProbeReason(err)}
+}
+
+// mailProbeStatus turns the mail service's probe into the page's verdict.
+//
+// Three of the outcomes are ordinary. The fourth is the one this function
+// exists for: a probe that REACHED the provider and could not prove the
+// credentials, which is the normal answer for a send-only API key (Resend's
+// restricted keys, a Mailgun domain sending key). Calling that `down` would
+// condemn the recommended setup and train operators to ignore this page; a bare
+// `ok` would claim proof nobody has. It is `degraded` with a sentence that says
+// precisely what is and is not established — the page's existing vocabulary,
+// and no new status value for one case.
+func mailProbeStatus(r mailconfig.ProbeReport) componentStatus {
+	switch {
+	case r.Source == mailconfig.SourceDevCapture:
+		return componentStatus{
+			Status: "degraded",
+			Error:  "outbound mail is CAPTURED, not delivered: this deployment runs the development mail seam, so nothing reaches a real inbox. Correct on a developer machine, wrong everywhere else.",
+		}
+	case r.Kind == "":
+		return componentStatus{Status: "not_configured"}
+	case r.Result.Err != nil:
+		return componentStatus{Status: "down", Error: mailProbeFailure(r)}
+	case r.Cleartext:
+		// Verified AND unencrypted, against a relay that is not on this machine.
+		// The handshake worked, so `down` would be wrong; every password-reset
+		// token this instance sends crosses the network in the clear, so `ok`
+		// would be worse.
+		return componentStatus{
+			Status: "degraded",
+			Error: "the relay accepted the handshake but the session is NOT ENCRYPTED: it advertises no STARTTLS, so every password reset and verification token crosses the network in the clear. " +
+				"Set the encryption mode to starttls (or tls on port 465) on the admin email page — a relay that then refuses is a relay that was never protecting this traffic.",
+		}
+	case !r.Result.Verified:
+		return componentStatus{
+			Status: "degraded",
+			Error: "the " + r.Kind + " provider is reachable but these credentials cannot be PROVEN without sending: a send-only API key is not allowed to read the account, which is the recommended kind of key and not a fault. " +
+				"Use the test message button to settle it — that is the only check that proves a real send.",
+		}
+	}
+	return componentStatus{Status: "ok"}
+}
+
+// mailProbeFailure renders a failed probe for an operator. For SMTP it keeps
+// the existing stage-by-stage prose, which names the step that broke; for the
+// HTTPS providers there are no stages, so it names the classified reason and,
+// where the classification implies a specific cause, what to do about it.
+func mailProbeFailure(r mailconfig.ProbeReport) string {
+	var he *preflight.SMTPHandshakeError
+	if errors.As(r.Result.Err, &he) {
+		return smtpProbeReason(r.Result.Err)
+	}
+	reason := mail.ReasonOf(r.Result.Err)
+	if port := mailFailurePort(r.Result.Err); port > 0 && (reason == mail.ReasonConnectFailed || reason == mail.ReasonTimeout) {
+		// The single most common self-hosting failure there is. Every
+		// DigitalOcean droplet blocks 25, 465 and 587 outbound, and the symptom
+		// is indistinguishable from a wrong hostname unless somebody says so.
+		return "the mail relay could not be reached on port " + strconv.Itoa(port) + " (" + string(reason) + "), so every password reset and verification message fails. " +
+			"Many hosts block outbound SMTP on 25, 465 and 587 — DigitalOcean blocks all three — in which case no relay setting will help: use port 2525 if the relay offers it, or switch to an HTTPS API provider on the admin email page."
+	}
+	switch reason {
+	case mail.ReasonSecretUndecryptable:
+		return "the stored mail credential cannot be decrypted, so every message fails before it is sent. The key-encryption key changed (MFA_KEY_KEK / FEDERATION_KEY_KEK): restore it, or re-enter the credential on the admin email page."
+	case mail.ReasonAuthFailed:
+		return "the " + r.Kind + " provider rejected these credentials, so every message fails before it is sent. Re-enter the key on the admin email page."
+	case mail.ReasonSenderRejected:
+		return "the " + r.Kind + " provider will not send for this sender: the domain is unverified, the sender signature is unconfirmed, or (for Mailgun) the domain was created in the other region. Fix it in the provider's own dashboard."
+	case mail.ReasonProviderUnavailable:
+		return "the " + r.Kind + " provider is failing on its own account (5xx), so messages are not going out right now. Nothing here needs changing; check the provider's status page."
+	case mail.ReasonRateLimited:
+		return "the " + r.Kind + " sending allowance is exhausted, so messages are being refused. Top up the plan or wait for the window to reset."
+	}
+	return "the " + r.Kind + " mail transport failed its check (" + string(reason) + "), so outbound mail is not working. The server log for this instance carries the provider's own answer."
+}
+
+// mailFailurePort digs the SMTP port out of a classified failure. It is the
+// operator's own configured port, so it is safe to show — and it is what turns
+// "connect failed" into a diagnosis.
+func mailFailurePort(err error) int {
+	var se *mail.SendError
+	if errors.As(err, &se) {
+		return se.Port
+	}
+	return 0
 }
 
 // smtpProbeReason turns a handshake failure into the sentence an operator can

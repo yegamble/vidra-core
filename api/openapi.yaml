@@ -13523,6 +13523,198 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/mail-config:
+    get:
+      operationId: getMailConfig
+      summary: Read the outbound-mail configuration (admin)
+      description: >-
+        Returns the instance's outbound-mail configuration and the state it is
+        in: which source is in force (the admin-panel document, the deployment's
+        environment, the development capture seam, or nothing), whether this
+        deployment can store a credential at all, whether the stored one can
+        still be decrypted, what the environment configuration would fall back
+        to, and the stored document itself.
+
+
+        IT NEVER RETURNS A CREDENTIAL. Each transport block reports only whether
+        one is stored, as a `*_set` boolean; `secret_status` says whether the
+        stored one can still be opened. The `environment` block reports host,
+        port and the From address so an admin can see what a DELETE would revert
+        to — never the SMTP username or password, which are on this API's
+        absolute never-list alongside the DSNs, the S3 keys and the KEKs.
+
+
+        Restricted to admins (moderators get 403).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The outbound-mail configuration and its state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailConfigState"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: >-
+            This deployment does not carry the outbound-mail configuration
+            service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updateMailConfig
+      summary: Save the outbound-mail configuration (admin)
+      description: >-
+        Saves the WHOLE document: the transport, the sender identity and the one
+        block that matches the transport. Only that block is read; a switched-away
+        provider's settings are not kept, so the panel can never show a Mailgun
+        domain for an instance that sends over Resend.
+
+
+        SECRET SEMANTICS. Each block's secret field is write-only and has three
+        meanings. Absent or null keeps the stored credential — valid ONLY when
+        the transport is unchanged, because a stored secret belongs to the
+        provider it was entered for; switching transport without a new secret is
+        422. An empty string clears it, which is valid only for `smtp.password`
+        (an anonymous relay is a real shape; a provider with no API key is not a
+        configuration). Any other value replaces it.
+
+
+        Validation is the transport builder's own, so a configuration that saves
+        is a configuration that resolves, and `fields` on a 422 carries DOTTED
+        PATHS (`smtp.host`, `mailgun.api_key`) that bind one-to-one to the form's
+        inputs.
+
+
+        The change takes effect immediately in this process and within one
+        settings-poll interval (10s) across every other replica and worker — no
+        restart. Audited as `admin.mail_config.update` with the transport, the
+        changed field NAMES and whether the credential was replaced; never a
+        value.
+
+
+        Restricted to admins (moderators get 403).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MailConfigInput"
+      responses:
+        "200":
+          description: The saved configuration, read back in the GET's shape.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailConfigState"
+        "400":
+          description: Malformed body, or a field the document does not define.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            Code `mail_secrets_key_missing`: the save carried a credential and
+            this deployment has no key-encryption key to seal it with. Secrets
+            are stored sealed or not at all — writing a relay password into a
+            queryable table (and into every database dump) is the outcome this
+            refusal exists to prevent. `secrets_available` on the GET reports
+            this in advance, so a panel can disable the secret inputs rather
+            than discover it on save. An SMTP relay that needs no password is
+            unaffected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            The document is invalid. `fields` carries one entry per problem,
+            keyed by the DOTTED path of the offending input (`from_address`,
+            `smtp.host`, `smtp.port`, `smtp.encryption`, `mailgun.domain`,
+            `mailgun.region`, `resend.api_key`, `postmark.server_token`, …).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: >-
+            This deployment does not carry the outbound-mail configuration
+            service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteMailConfig
+      summary: Clear the outbound-mail configuration (admin)
+      description: >-
+        Removes the stored document, so the instance reverts to its ENVIRONMENT
+        mail configuration (MAIL_ENABLED + SMTP_*) — or to no outbound mail at
+        all, which `environment.configured` on the GET says in advance. The
+        stored credential is deleted with it.
+
+
+        Takes effect immediately here and within one settings-poll interval
+        across the rest of the fleet. Audited as `admin.mail_config.reset`.
+
+
+        Restricted to admins (moderators get 403).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: The document was removed (or there was none to remove).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: >-
+            This deployment does not carry the outbound-mail configuration
+            service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/mail/test:
     post:
       operationId: sendTestMail
@@ -13539,7 +13731,7 @@ paths:
         202 means the message was handed to the relay, not that it was delivered:
         SMTP acceptance is a promise to try, and an admin who reads "sent" and
         finds nothing in the inbox has learned something real.
-        Restricted to admins, throttled on its own budget (3 per admin per hour
+        Restricted to admins, throttled on its own budget (10 per admin per hour
         in production wiring), and audited as admin.mail.test with the OUTCOME
         only — never an address.
       tags: [admin]
@@ -13581,9 +13773,13 @@ paths:
         "502":
           description: >-
             The relay refused the message (code mail_test_failed). The response
-            text is deliberately generic — the relay's own answer goes to the
+            TEXT is deliberately generic — the relay's own answer goes to the
             server log, because a rejection routinely quotes the recipient
-            address back.
+            address back — but the envelope carries `reason` (and `port` for
+            SMTP), which is the machine-readable classification a panel needs to
+            say something useful: a blocked submission port, an unverified
+            sending domain and a wrong password are three different remedies and
+            one generic sentence.
           content:
             application/json:
               schema:
@@ -16661,6 +16857,35 @@ components:
               description: >-
                 The same video's short code, alongside video_id and under the
                 same reasoning. Present ONLY on password_required.
+            reason:
+              type: string
+              enum: [auth_failed, sender_rejected, rate_limited, provider_unavailable,
+                     timeout, connect_failed, tls_failed, rejected, secret_undecryptable]
+              description: >-
+                How an outbound mail send failed. Present ONLY on
+                `mail_test_failed` (502).
+
+
+                It is the SAFE half of a delivery failure: a closed vocabulary
+                this API defines, never the relay's or the vendor's own words —
+                those routinely quote the recipient address back and go to the
+                server log alone. Without it a panel can only say "it did not
+                work", and the single most common self-hosting failure there is
+                — a host that blocks outbound 25/465/587, which every
+                DigitalOcean droplet does — is indistinguishable from a wrong
+                password.
+
+
+                `connect_failed` or `timeout` alongside a `port` of 25, 465 or
+                587 is that signature: the remedy is port 2525 if the relay
+                offers it, or an HTTPS API provider.
+            port:
+              type: integer
+              description: >-
+                The SMTP port that failed, alongside `reason` on a
+                `mail_test_failed` 502 for the SMTP transport. Absent for the
+                HTTPS providers. It is the port the operator configured
+                themselves, so it discloses nothing.
             step_up_providers:
               type: array
               items:
@@ -22951,6 +23176,291 @@ components:
                 description: >-
                   True for the process that served this request, so an operator
                   reading a three-row list knows which one is answering.
+    MailConfigState:
+      type: object
+      description: >-
+        The outbound-mail configuration and the state it is in. Returned by GET
+        and PUT /api/v1/admin/mail-config.
+      required: [source, secrets_available, secret_status, environment, config]
+      properties:
+        source:
+          type: string
+          enum: [database, environment, dev_capture, none]
+          description: >-
+            Where the mail path in force right now comes from.
+
+
+            `database` — the admin-panel document below. It OVERRIDES the
+            environment configuration rather than supplementing it.
+
+            `environment` — MAIL_ENABLED + SMTP_* from the deployment's env,
+            because no document is stored. Its behaviour is unchanged from
+            before this endpoint existed, including opportunistic STARTTLS.
+
+            `dev_capture` — DEV_MAIL_CAPTURE_ENABLED. Nothing is delivered:
+            messages are held in memory for the local test harness. It wins over
+            both of the above, so `config` may be non-null while this says
+            dev_capture.
+
+            `none` — this instance cannot send email at all.
+        secrets_available:
+          type: boolean
+          description: >-
+            Whether this deployment has a key-encryption key, i.e. whether a
+            credential can be stored AT ALL. False means every secret input
+            should be disabled with an explanation: a PUT carrying one is
+            refused with 409 `mail_secrets_key_missing`, because vidra stores a
+            relay password sealed or not at all. An SMTP relay that needs no
+            password can still be saved.
+        secret_status:
+          type: string
+          enum: [ok, undecryptable, none]
+          description: >-
+            The stored credential's condition. `none` — nothing is stored (no
+            document, or an anonymous relay). `ok` — it decrypts. `undecryptable`
+            — a credential is stored and this instance cannot open it, which
+            means the key-encryption key changed. That is NOT treated as "mail is
+            unconfigured": the instance stays configured-but-broken, every send
+            fails with reason `secret_undecryptable`, and the fix is to re-enter
+            the credential here. Silently falling back to the environment relay
+            would send this instance's password resets somewhere its operator did
+            not choose.
+        environment:
+          $ref: "#/components/schemas/MailConfigEnvironment"
+        config:
+          description: >-
+            The stored document, or null when this instance has none and the
+            environment configuration (or nothing) applies.
+          oneOf:
+            - $ref: "#/components/schemas/MailConfigDocument"
+            - type: "null"
+        updated_at:
+          type: string
+          format: date-time
+          description: When the document was last written. Absent when there is none.
+    MailConfigEnvironment:
+      type: object
+      description: >-
+        What the deployment's ENVIRONMENT mail configuration looks like — what a
+        DELETE would revert to.
+
+
+        Deliberately incomplete: host, port and the From address are deploy-time
+        facts an admin may need to recognise. SMTP_USERNAME and SMTP_PASSWORD are
+        on this API's absolute never-list and appear in no response anywhere.
+      required: [configured]
+      properties:
+        configured:
+          type: boolean
+          description: >-
+            Whether MAIL_ENABLED is set with a host and a From address, i.e.
+            whether clearing the document leaves a working mail path or none.
+        host:
+          type: string
+          description: SMTP_HOST. Omitted when the environment path is not configured.
+        port:
+          type: integer
+          description: SMTP_PORT. Omitted when the environment path is not configured.
+        from:
+          type: string
+          description: SMTP_FROM. Omitted when the environment path is not configured.
+    MailConfigDocument:
+      type: object
+      description: >-
+        The stored outbound-mail configuration as an admin READS it. Only the
+        block matching `transport` is present, and no block ever carries a
+        credential — each reports whether one is stored as a `*_set` boolean.
+      required: [transport, from_address, from_name, reply_to]
+      properties:
+        transport:
+          type: string
+          enum: [smtp, mailgun, resend, brevo, postmark]
+          description: >-
+            The delivery route. `smtp` is a generic relay; the rest are HTTPS
+            API providers, which work on hosts that block outbound SMTP ports
+            (DigitalOcean blocks 25, 465 and 587).
+        from_address:
+          type: string
+          format: email
+          description: The envelope sender and the From header.
+        from_name:
+          type: string
+          description: Optional display name on the From header. Empty sends the bare address.
+        reply_to:
+          type: string
+          description: >-
+            Optional default Reply-To. The contact form overrides it per message
+            with the visitor's address.
+        smtp:
+          $ref: "#/components/schemas/MailConfigSMTP"
+        mailgun:
+          $ref: "#/components/schemas/MailConfigMailgun"
+        resend:
+          $ref: "#/components/schemas/MailConfigAPIKey"
+        brevo:
+          $ref: "#/components/schemas/MailConfigAPIKey"
+        postmark:
+          $ref: "#/components/schemas/MailConfigPostmark"
+    MailConfigSMTP:
+      type: object
+      required: [host, port, username, encryption, password_set]
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+        username:
+          type: string
+          description: AUTH PLAIN username. Empty means an anonymous relay.
+        encryption:
+          type: string
+          enum: [starttls, tls, none]
+          description: >-
+            How the session is protected. `starttls` REQUIRES the upgrade and
+            fails if the relay does not offer it; `tls` is implicit TLS from the
+            first byte (conventionally port 465); `none` never encrypts and is
+            legitimate only for a relay on localhost or a trusted private
+            network — credentials with `none` against a non-loopback host are
+            refused with 422, because they would be a cleartext credential.
+
+
+            There is no "auto": opportunistic STARTTLS silently downgrades to
+            cleartext against a relay that stops advertising it, which is
+            indistinguishable from an on-path attacker stripping it. The
+            environment path keeps that behaviour for compatibility; an admin
+            choosing a mode here gets a failure instead of a silent plaintext
+            send.
+        password_set:
+          type: boolean
+          readOnly: true
+          description: Whether a password is stored. The password itself is never returned.
+    MailConfigMailgun:
+      type: object
+      required: [domain, region, api_key_set]
+      properties:
+        domain:
+          type: string
+          description: >-
+            The sending domain, e.g. mail.example.org. A bare hostname: it is
+            interpolated into the request path, so anything outside a hostname's
+            alphabet is refused.
+        region:
+          type: string
+          enum: [us, eu]
+          description: >-
+            Which of Mailgun's two stacks the account lives on. It is an enum and
+            never a URL, so this document cannot steer an outbound request at an
+            operator-chosen host. Picking the wrong one is the single most common
+            Mailgun misconfiguration — the domain is simply invisible in the
+            other region — and the status probe names it specifically.
+        api_key_set:
+          type: boolean
+          readOnly: true
+    MailConfigAPIKey:
+      type: object
+      description: A provider whose only stored setting is its API key (Resend, Brevo).
+      required: [api_key_set]
+      properties:
+        api_key_set:
+          type: boolean
+          readOnly: true
+    MailConfigPostmark:
+      type: object
+      required: [message_stream, server_token_set]
+      properties:
+        message_stream:
+          type: string
+          description: >-
+            The stream messages are sent on. Defaults to Postmark's own
+            transactional stream, "outbound", and is stored explicitly so the
+            panel can show what a message will actually be sent on.
+        server_token_set:
+          type: boolean
+          readOnly: true
+    MailConfigInput:
+      type: object
+      description: >-
+        The PUT body: the same shape as MailConfigDocument, with a WRITE-ONLY
+        secret in place of each block's `*_set` flag.
+
+
+        Each secret has three meanings. OMITTED (or null) keeps the stored
+        credential — valid only when `transport` is unchanged, since a stored
+        secret belongs to the provider it was entered for. An EMPTY STRING clears
+        it, which is valid only for `smtp.password`. Any other value replaces it.
+        A masked field the admin did not touch must therefore be OMITTED from the
+        body, never sent back as its mask.
+      required: [transport, from_address]
+      properties:
+        transport:
+          type: string
+          enum: [smtp, mailgun, resend, brevo, postmark]
+        from_address:
+          type: string
+          format: email
+        from_name:
+          type: string
+        reply_to:
+          type: string
+        smtp:
+          $ref: "#/components/schemas/MailConfigSMTPInput"
+        mailgun:
+          $ref: "#/components/schemas/MailConfigMailgunInput"
+        resend:
+          $ref: "#/components/schemas/MailConfigAPIKeyInput"
+        brevo:
+          $ref: "#/components/schemas/MailConfigAPIKeyInput"
+        postmark:
+          $ref: "#/components/schemas/MailConfigPostmarkInput"
+    MailConfigSMTPInput:
+      type: object
+      required: [host, port, encryption]
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+        username:
+          type: string
+        encryption:
+          type: string
+          enum: [starttls, tls, none]
+        password:
+          type: string
+          writeOnly: true
+          description: >-
+            Write-only. Omit to keep the stored password, "" to clear it (an
+            anonymous relay), or a value to replace it. Never returned.
+    MailConfigMailgunInput:
+      type: object
+      required: [domain, region]
+      properties:
+        domain:
+          type: string
+        region:
+          type: string
+          enum: [us, eu]
+        api_key:
+          type: string
+          writeOnly: true
+          description: Write-only. Omit to keep the stored key. Never returned.
+    MailConfigAPIKeyInput:
+      type: object
+      properties:
+        api_key:
+          type: string
+          writeOnly: true
+          description: Write-only. Omit to keep the stored key. Never returned.
+    MailConfigPostmarkInput:
+      type: object
+      properties:
+        message_stream:
+          type: string
+          description: Defaults to "outbound" when empty.
+        server_token:
+          type: string
+          writeOnly: true
+          description: Write-only. Omit to keep the stored token. Never returned.
     MailTestResult:
       type: object
       description: >-

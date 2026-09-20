@@ -36,7 +36,7 @@ func (r createReportRequest) Validate() []FieldError {
 // setting AND an outbound mail path AND a configured operator contact address
 // (an alert nobody can receive is not "on"). Mirrors contactFormAvailable.
 func (s *Server) reportEmailAlertsAvailable() bool {
-	return s.contactMailer != nil &&
+	return s.mailPathConfigured() &&
 		strings.TrimSpace(s.effectiveContactEmail()) != "" &&
 		s.settingBool(instancesettings.KeyReportEmailAlertsEnabled, true)
 }
