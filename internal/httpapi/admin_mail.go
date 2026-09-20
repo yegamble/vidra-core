@@ -106,8 +106,17 @@ func (s *Server) handleMailTest(c echo.Context) error {
 // deployment has one at all. The dev capture seam counts: it is how the local
 // and e2e stacks send, so the button proves the same code path there instead of
 // answering 503 on every developer machine.
+//
+// It asks mailPathConfigured() and not just "is a mailer wired", and the
+// difference is load-bearing since the composer became unconditional. cmd/api
+// now installs ONE composer whether or not anything is configured — that is what
+// makes the transport switchable at runtime — and an unconfigured composer's
+// send returns nil, the historical no-op contract. Asserting only the interface
+// would therefore answer 202 "sent" on an instance with no mail path at all:
+// the silent success the no-op mailer was always capable of, surfaced on the
+// one button whose entire purpose is to tell an operator whether mail works.
 func (s *Server) testMailSender() (testMailer, bool) {
-	if s.contactMailer == nil {
+	if s.contactMailer == nil || !s.mailPathConfigured() {
 		return nil, false
 	}
 	sender, ok := s.contactMailer.(testMailer)

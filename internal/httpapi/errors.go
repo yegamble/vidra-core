@@ -212,7 +212,8 @@ func (s *Server) httpErrorHandler(err error, c echo.Context) {
 	case errors.As(err, &mnc):
 		status = http.StatusServiceUnavailable
 		message = "this instance has no outbound mail path, so " + mnc.consequence() +
-			". Set MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and SMTP_FROM, then restart the api"
+			". Configure a transport on the admin email page — an SMTP relay or an API provider, which is the option that works on a host that blocks outbound 25/465/587 — and it takes effect without a restart. " +
+			"The deploy-time alternative is still MAIL_ENABLED=true with SMTP_HOST, SMTP_PORT and SMTP_FROM, which does need one"
 		code = "mail_not_configured"
 	case errors.As(err, &ale):
 		status = ale.Status

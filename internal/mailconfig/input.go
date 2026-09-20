@@ -155,3 +155,12 @@ func isSingleAddress(v string) bool {
 	_, err := netmail.ParseAddress(v)
 	return err == nil
 }
+
+// smtpUsername is the relay username the caller supplied, or "" when the SMTP
+// block is absent.
+func smtpUsername(in Input) string {
+	if in.SMTP == nil {
+		return ""
+	}
+	return in.SMTP.Username
+}

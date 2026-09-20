@@ -433,15 +433,27 @@ func (s *Service) Save(ctx context.Context, in Input, actor uuid.UUID) (SaveResu
 				break
 			}
 			secret, keep = plain, true
-		case hasPrior && prior.Transport == kind:
-			// Same transport, nothing stored: an anonymous SMTP relay stays
-			// anonymous; anything else needs a credential, and NewTransport
-			// below says so with the right field name.
+		case kind == mail.KindSMTP:
+			// Omitted with nothing stored for this transport: an anonymous
+			// relay, which is a real shape (a local postfix, a LAN smarthost).
+			// The username check below is what stops it being a silent
+			// downgrade when credentials WERE intended.
 		default:
-			// A new transport, or a first configuration. The stored credential
-			// (if any) belongs to the old provider, so there is nothing to keep.
+			// A new provider, or a first configuration. The stored credential
+			// (if any) belongs to the transport it was typed for, so there is
+			// nothing to keep.
 			bad = append(bad, mail.FieldError{Field: secretField, Msg: "required"})
 		}
+	}
+
+	if kind == mail.KindSMTP && secret == "" && strings.TrimSpace(smtpUsername(in)) != "" {
+		// AUTH PLAIN with an empty password is not "anonymous", it is an
+		// authenticated session with a blank credential — which relays reject
+		// and which reads to the operator as a wrong password. mail.NewTransport
+		// catches the mirror image (a password with no username); this is the
+		// half only this layer can see, because it is the one the three-way
+		// secret semantics can produce by OMISSION.
+		bad = append(bad, mail.FieldError{Field: "smtp.password", Msg: "required when a username is set"})
 	}
 
 	if len(bad) > 0 {
@@ -475,10 +487,20 @@ func (s *Service) Save(ctx context.Context, in Input, actor uuid.UUID) (SaveResu
 	if hasPrior {
 		before = auditableFields(prior.Transport, prior.FromAddress, prior.FromName, prior.ReplyTo, decodeSettings(prior.Settings))
 	}
+	priorSealed := ""
+	if hasPrior {
+		priorSealed = prior.Secret
+	}
 	result := SaveResult{
 		Transport:     kind,
 		ChangedFields: changedFields(before, auditableFields(kind, from, in.FromName, replyTo, settings)),
-		SecretChanged: !keep && (!hasPrior || prior.Secret != sealed),
+		// `keep` means the stored credential was re-sealed unchanged, which is
+		// not a change an audit row should claim. Everything else compares the
+		// stored envelope: a fresh seal of the SAME password reads as changed
+		// (each Seal uses a new nonce), which is the honest reading — the
+		// credential was re-entered and rewritten — while no-secret to
+		// no-secret correctly reads as unchanged.
+		SecretChanged: !keep && priorSealed != sealed,
 	}
 
 	if _, err := s.repo.UpsertMailConfig(ctx, sqlcgen.UpsertMailConfigParams{
