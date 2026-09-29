@@ -695,6 +695,22 @@ func TestConfigValues(t *testing.T) {
 		"env/production.env does not exist", "vidra setup --template")
 }
 
+func TestPrivateCopyCredentialsStayOutOfDoctor(t *testing.T) {
+	h := newFakeHost()
+	setEnv(h, "PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY=SENTINEL-COPY-ACCESS", "PEERTUBE_IMPORT_S3_COPY_SECRET_KEY=SENTINEL-COPY-SECRET")
+	wantFinding(t, one(t, only(t, "configuration values", h, nil)), StatusOK, "pass the api's own boot validation", "")
+	findings := only(t, "env file vs template", h, nil)
+	if !hasAny(findings, "PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY") || hasAny(findings, "SENTINEL-COPY") {
+		t.Fatal("doctor must name unknown copy keys without exposing their values")
+	}
+	h = newFakeHost()
+	setEnv(h, "PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY=SENTINEL-COPY-ACCESS")
+	findings = only(t, "configuration values", h, nil)
+	if !hasStatus(findings, StatusFail) || !hasAny(findings, "PEERTUBE_IMPORT_S3_COPY_SECRET_KEY") || hasAny(findings, "SENTINEL-COPY") {
+		t.Fatal("doctor must report an incomplete copy pair without exposing its value")
+	}
+}
+
 func TestSchemaLedger(t *testing.T) {
 	// The bundled Postgres publishes no host port, so the ledger is read from
 	// inside the api container.

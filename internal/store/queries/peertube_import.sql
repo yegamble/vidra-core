@@ -75,9 +75,11 @@ DO UPDATE SET vidra_id          = EXCLUDED.vidra_id,
               created_by_import = FALSE,
               updated_at        = now();
 
--- name: GetImportLedgerLastWriteForTarget :one
--- The import's most recent COMPLETED write onto one Vidra row, within one entity
--- kind — "did I put the avatar that is in this slot there, and what was it?".
+-- name: GetImportLedgerImageHistoryForTarget :one
+-- The import's most recent retained image ownership history for one target.
+-- A skipped outcome with a fingerprint remembers a prior import write: leaving
+-- a creator's edit or deletion alone must not erase that history on the next run,
+-- including when the source now selects a different artwork row ID.
 --
 -- The ledger is keyed by SOURCE id, which is the wrong key for that question:
 -- PeerTube keeps several actorImage rows per avatar and writes a new one every
@@ -85,13 +87,14 @@ DO UPDATE SET vidra_id          = EXCLUDED.vidra_id,
 -- occupant is a DIFFERENT source id from the one a later run is looking at.
 -- Keying the lookup on vidra_id instead follows the slot rather than the file.
 --
--- applied_value (0113) is the fingerprint of what was written; it is empty for
--- rows written before that memory existed, and updated_at is then the evidence
--- available — the ledger row lands AFTER the image write, so a slot whose image
--- is newer than this row was filled by somebody else.
+-- A done row with no fingerprint retains the pre-0113 timestamp evidence: the
+-- ledger landed after the image write, so a newer slot belongs to somebody else.
+-- A skipped row without a fingerprint establishes no ownership and is excluded.
+-- For fingerprinted rows updated_at orders remembered outcomes, not blob writes.
 SELECT applied_value, updated_at
 FROM peertube_import_ledger
-WHERE entity_kind = $1 AND vidra_id = $2 AND status = 'done'
+WHERE entity_kind = $1 AND vidra_id = $2
+  AND (status = 'done' OR (status = 'skipped' AND applied_value <> ''))
 ORDER BY updated_at DESC, source_id DESC
 LIMIT 1;
 
@@ -506,6 +509,18 @@ WHERE l.entity_kind = 'video' AND l.status = 'done'
 INSERT INTO streaming_playlists (video_id, master_key, state)
 VALUES ($1, $2, 'ready')
 ON CONFLICT (video_id) DO NOTHING;
+
+-- name: ImportPublishCopiedHLSPlaylist :execrows
+-- A native transcode may finish after the import resolves its work list. Its
+-- ready tree wins; pending/failed rows can still be repaired by a complete copy.
+INSERT INTO streaming_playlists (video_id, master_key, state, format)
+VALUES ($1, $2, 'ready', 'hls-ts')
+ON CONFLICT (video_id) DO UPDATE
+SET master_key = EXCLUDED.master_key,
+    state = EXCLUDED.state,
+    format = EXCLUDED.format,
+    updated_at = now()
+WHERE streaming_playlists.state <> 'ready';
 
 -- name: ImportCaptionExists :one
 -- Whether a video already has a caption in this language. Asked BEFORE a

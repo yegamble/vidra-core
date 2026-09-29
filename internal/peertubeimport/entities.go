@@ -536,25 +536,16 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 	// which fetches it and can also backfill onto videos this run does not touch;
 	// see entities_videoimages.go.
 
-	captions, err := im.src.Captions(ctx, v.ID)
-	if err != nil {
-		return err
-	}
 	type capCopy struct{ sid, lang, key string }
 	var copiedCaps []capCopy
-	if im.mediaMode == MediaModeCopy && im.srcMedia != nil && im.destMedia != nil {
-		for _, capt := range captions {
-			if !allowedCaptionExt[extOf(capt.Filename)] {
-				continue
-			}
-			key := "captions/" + mediaID.String() + "/" + capt.Language + ".vtt"
-			if _, _, cerr := im.copyMedia(ctx, sourceCaptionKey(capt.Filename), key); cerr != nil {
-				return cerr
-			}
-			copiedCaps = append(copiedCaps, capCopy{sid: strconv.FormatInt(capt.ID, 10), lang: capt.Language, key: key})
-		}
-	}
+	// Copy-mode captions run independently after videos and HLS. A missing
+	// optional track must not discard a video's metadata or block its media;
+	// the caption pass records a retryable failure against that track instead.
 	if im.mediaMode == MediaModeReference {
+		captions, err := im.src.Captions(ctx, v.ID)
+		if err != nil {
+			return err
+		}
 		for _, capt := range captions {
 			if !allowedCaptionExt[extOf(capt.Filename)] {
 				continue

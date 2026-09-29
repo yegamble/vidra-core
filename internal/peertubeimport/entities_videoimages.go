@@ -740,8 +740,7 @@ func (im *Importer) videoImageSlotState(ctx context.Context, t videoImageTarget)
 		return s, err
 	}
 	s.carriedThisFile = err == nil && row.Status == "done"
-
-	last, lerr := im.q.GetImportLedgerLastWriteForTarget(ctx, sqlcgen.GetImportLedgerLastWriteForTargetParams{
+	last, lerr := im.q.GetImportLedgerImageHistoryForTarget(ctx, sqlcgen.GetImportLedgerImageHistoryForTargetParams{
 		EntityKind: t.kind, VidraID: optUUID(t.videoID),
 	})
 	if lerr != nil && !errors.Is(lerr, pgx.ErrNoRows) {

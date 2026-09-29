@@ -1562,6 +1562,65 @@ func TestPeerTubeImportConfig(t *testing.T) {
 	})
 }
 
+func TestPeerTubeImportCopyCredentialPair(t *testing.T) {
+	const accessVar = "PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY"
+	const secretVar = "PEERTUBE_IMPORT_S3_COPY_SECRET_KEY"
+	for _, tc := range []struct {
+		name, access, secret, missing string
+	}{
+		{"disabled", "", "", ""},
+		{"configured", "migration-access-sentinel", "migration-secret-sentinel", ""},
+		{"surrounding whitespace retained", " migration-access-sentinel ", " migration-secret-sentinel ", ""},
+		{"missing secret", "migration-access-sentinel", "", secretVar},
+		{"missing access", "", "migration-secret-sentinel", accessVar},
+		{"blank secret", "migration-access-sentinel", " \t", secretVar},
+		{"blank access", " \t", "migration-secret-sentinel", accessVar},
+		{"both blank", " \t", " \t", accessVar},
+		{"blank access only", " \t", "", accessVar},
+		{"blank secret only", "", " \t", secretVar},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The standalone importer uses config.Load with the admin API OFF.
+			// Validate this pair independently of that unrelated feature gate.
+			vars := map[string]string{
+				accessVar: tc.access, secretVar: tc.secret,
+				"PEERTUBE_SOURCE_S3_ACCESS_KEY": "source-read-access",
+				"PEERTUBE_SOURCE_S3_SECRET_KEY": "source-read-secret",
+				"STORAGE_S3_ACCESS_KEY":         "media-access",
+				"STORAGE_S3_SECRET_KEY":         "media-secret",
+			}
+			cfg, err := LoadFrom(func(key string) (string, bool) {
+				v, ok := vars[key]
+				return v, ok
+			})
+			if tc.missing == "" {
+				if err != nil {
+					t.Fatalf("complete or absent copy credentials rejected: %v", err)
+				}
+				if cfg.PeerTubeImportS3CopyAccessKey != tc.access || cfg.PeerTubeImportS3CopySecretKey != tc.secret {
+					t.Error("copy credential pair was not preserved")
+				}
+				if cfg.PeerTubeSourceS3AccessKey != "source-read-access" || cfg.PeerTubeSourceS3SecretKey != "source-read-secret" ||
+					cfg.StorageS3AccessKey != "media-access" || cfg.StorageS3SecretKey != "media-secret" {
+					t.Error("copy credentials replaced a normal source or destination credential")
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("partial copy credentials accepted")
+			}
+			if collectVarErrors(err)[tc.missing] == nil {
+				t.Errorf("expected issue on %s, got %v", tc.missing, err)
+			}
+			for _, secret := range []string{"migration-access-sentinel", "migration-secret-sentinel"} {
+				if strings.Contains(err.Error(), secret) {
+					t.Error("copy credential value leaked in validation error")
+				}
+			}
+		})
+	}
+}
+
 func TestYtdlpImportConfig(t *testing.T) {
 	clean := func(t *testing.T) {
 		for _, k := range []string{

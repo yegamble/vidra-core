@@ -356,6 +356,11 @@ var sensitiveKeys = map[string]bool{
 	"peertube_source_dsn": true,
 	"source_secret_key":   true,
 	"source_access_key":   true,
+	// Temporary migration-copy credentials are separate from both storage keys.
+	"copy_access_key":                    true,
+	"copy_secret_key":                    true,
+	"peertube_import_s3_copy_access_key": true,
+	"peertube_import_s3_copy_secret_key": true,
 	// IPFS media mirroring (P19): the IPFS Cluster Bearer token is a secret —
 	// never log, span-tag, or return it. P19.P adds the private-swarm cluster token.
 	"ipfs_cluster_token":         true,

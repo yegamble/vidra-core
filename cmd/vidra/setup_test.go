@@ -292,6 +292,36 @@ func TestSetupWritesAPrivateFileAndPrintsTheRenderCheck(t *testing.T) {
 	}
 }
 
+// Even an older deployment template must preserve privately added credentials,
+// with env-shape warnings naming the key without disclosing its value.
+func TestSetupPreservesPrivateCopyCredentials(t *testing.T) {
+	h := newHarness(t) // Deliberately an older template without either copy key.
+	if err := h.run(h.setupArgs()...); err != nil {
+		t.Fatal(err)
+	}
+	const access = "$SENTINEL-COPY-ACCESS"
+	const secret = "SENTINEL-COPY-SECRET"
+	keys := "PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY=" + access + "\nPEERTUBE_IMPORT_S3_COPY_SECRET_KEY=" + secret + "\n"
+	if err := os.WriteFile(h.output, []byte(h.readOutput(t)+keys), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{h.setupArgs("--yes"), {"setup", "--check", h.output}} {
+		if err := h.run(args...); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(h.readOutput(t), keys) {
+			t.Fatal("setup changed the private copy credential pair")
+		}
+		out := h.out.String() + h.err.String()
+		if strings.Contains(out, access) || strings.Contains(out, secret) {
+			t.Fatal("setup disclosed a private copy credential")
+		}
+		if !strings.Contains(out, "PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY starts with '$'") {
+			t.Fatal("copy credential bypassed the env-shape warning")
+		}
+	}
+}
+
 // The env file cannot contain the admin account: the api mints a one-time
 // owner-claim token at boot and prints it to its own log, and until it is
 // redeemed every signup path answers 403. An operator who has just generated the

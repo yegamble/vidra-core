@@ -149,7 +149,7 @@ func TestIsSensitiveLogKeyCoversDirectIdentifiersNotOnlyCredentials(t *testing.T
 }
 
 func TestIsSensitiveKey(t *testing.T) {
-	for _, k := range []string{"password", "Token", "REFRESH_TOKEN", "authorization", "secret", "private_key", "smtp_password", "ipfs_cluster_token", "ipfs_private_cluster_token", "subject_id"} {
+	for _, k := range []string{"password", "Token", "REFRESH_TOKEN", "authorization", "secret", "private_key", "smtp_password", "ipfs_cluster_token", "ipfs_private_cluster_token", "subject_id", "copy_access_key", "copy_secret_key", "PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY", "PEERTUBE_IMPORT_S3_COPY_SECRET_KEY"} {
 		if !IsSensitiveKey(k) {
 			t.Errorf("%q should be flagged sensitive", k)
 		}

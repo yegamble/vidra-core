@@ -720,9 +720,9 @@ x-api-env: &api-env
   # the stable code too_many_active_uploads, which batch-upload clients queue on.
   UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER: ${UPLOAD_MAX_ACTIVE_SESSIONS_PER_USER:-5}
   # PeerTube import (fix_plan P18). Everything OFF by default; the standalone
-  # cmd/peertube-import CLI takes its own flags and needs none of this — these
-  # configure the ADMIN API path + its worker only. PEERTUBE_IMPORT_ENABLED=true
-  # makes PEERTUBE_SOURCE_DATABASE_URL required.
+  # cmd/peertube-import CLI takes its own source flags; the optional S3 copy
+  # credential pair below is shared by both paths. PEERTUBE_IMPORT_ENABLED=true
+  # enables the ADMIN API + worker and requires PEERTUBE_SOURCE_DATABASE_URL.
   # PEERTUBE_SOURCE_DATABASE_URL and the two S3 keys are SECRETS. Point the DSN
   # at a restored dump or a read-only replica with a least-privilege role.
   # PEERTUBE_SOURCE_S3_ENDPOINT is host[:port] with NO scheme and is rejected
@@ -740,6 +740,9 @@ x-api-env: &api-env
   PEERTUBE_SOURCE_S3_REGION: ${PEERTUBE_SOURCE_S3_REGION:-}
   PEERTUBE_SOURCE_S3_USE_SSL: ${PEERTUBE_SOURCE_S3_USE_SSL:-true}
   PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE: ${PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE:-false}
+  # Private, temporary migration key; never substitute the normal storage keys.
+  PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY: ${PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY:-}
+  PEERTUBE_IMPORT_S3_COPY_SECRET_KEY: ${PEERTUBE_IMPORT_S3_COPY_SECRET_KEY:-}
   PEERTUBE_IMPORT_CONFLICT_POLICY: ${PEERTUBE_IMPORT_CONFLICT_POLICY:-skip}
   PEERTUBE_IMPORT_MEDIA_MODE: ${PEERTUBE_IMPORT_MEDIA_MODE:-copy}
 
