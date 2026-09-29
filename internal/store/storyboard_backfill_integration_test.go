@@ -176,6 +176,54 @@ func TestListVideosNeedingStoryboardEligibility(t *testing.T) {
 	if !found {
 		t.Error("a video whose backoff has elapsed was not re-selected")
 	}
+
+	// Import commits videos/originals and HLS before carrying source sprite
+	// sheets. Backfill must wait for that pass instead of decoding those videos
+	// and making the importer preserve our generated sheet as somebody's edit.
+	runID := uuid.New()
+	if _, err := st.Pool.Exec(ctx,
+		`INSERT INTO peertube_import_runs (id, mode, state) VALUES ($1, 'run', 'done')`, runID,
+	); err != nil {
+		t.Fatalf("seed import run: %v", err)
+	}
+	defer func() {
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM peertube_import_runs WHERE id = $1`, runID)
+	}()
+	for _, tc := range []struct {
+		mode, state string
+		want        bool
+	}{
+		{"run", "pending", false},
+		{"run", "running", false},
+		{"run", "done", true},
+		{"run", "failed", true},
+		{"dry_run", "pending", true},
+		{"dry_run", "running", true},
+	} {
+		t.Run(tc.mode+"/"+tc.state, func(t *testing.T) {
+			if _, err := st.Pool.Exec(ctx,
+				`UPDATE peertube_import_runs SET mode = $2, state = $3 WHERE id = $1`, runID, tc.mode, tc.state,
+			); err != nil {
+				t.Fatalf("set import state: %v", err)
+			}
+			rows, err := q.ListVideosNeedingStoryboard(ctx, 500)
+			if err != nil {
+				t.Fatalf("list while import is %s/%s: %v", tc.mode, tc.state, err)
+			}
+			selected := map[uuid.UUID]bool{}
+			for _, row := range rows {
+				selected[row.ID] = true
+			}
+			for _, id := range []uuid.UUID{wanted, hlsOnly} {
+				if selected[id] != tc.want {
+					t.Errorf("backfill selected = %v, want %v while import is %s/%s", selected[id], tc.want, tc.mode, tc.state)
+				}
+			}
+			if selected[hasSheet] {
+				t.Error("an existing sprite sheet must never be regenerated")
+			}
+		})
+	}
 }
 
 // TestStoryboardAttemptLedgerGivesUpAtTheThreshold proves the give-up decision is

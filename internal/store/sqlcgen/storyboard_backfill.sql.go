@@ -83,6 +83,10 @@ LEFT JOIN streaming_playlists hls ON hls.video_id = v.id AND hls.state = 'ready'
 LEFT JOIN video_metadata vm ON vm.video_id = v.id
 LEFT JOIN video_storyboard_attempts a ON a.video_id = v.id
 WHERE v.state = 'published'
+  AND NOT EXISTS (
+      SELECT 1 FROM peertube_import_runs pir
+      WHERE pir.mode = 'run' AND pir.state IN ('pending', 'running')
+  )
   AND COALESCE(orig.storage_key, hls.master_key) IS NOT NULL
   AND NOT EXISTS (
       SELECT 1 FROM video_files sb
@@ -127,6 +131,11 @@ type ListVideosNeedingStoryboardRow struct {
 //     Prefer the newest original when both sources are available.
 //   - no ledger row, or a live one that is due. A given-up row is terminal and
 //     drops the video out of this scan for good.
+//   - no pending/running real PeerTube import. It commits videos and HLS before
+//     carrying source sprite sheets; generating in that gap wastes a decode and
+//     makes the importer preserve our sheet as somebody else's edit. Pause the
+//     whole cosmetic backfill during import. Dry runs do not carry assets, and
+//     done/failed runs must not prevent later recovery of genuinely absent sheets.
 //
 // duration_seconds is the probe's answer where video_metadata has one and 0
 // otherwise, which is exactly the "unknown, go and probe it" hint the generator
