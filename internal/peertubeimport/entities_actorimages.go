@@ -514,8 +514,7 @@ func (im *Importer) actorImageSlotState(ctx context.Context, svc *profileimage.S
 		return s, err
 	}
 	s.carriedThisFile = err == nil && row.Status == "done"
-
-	last, err := im.q.GetImportLedgerLastWriteForTarget(ctx, sqlcgen.GetImportLedgerLastWriteForTargetParams{
+	last, err := im.q.GetImportLedgerImageHistoryForTarget(ctx, sqlcgen.GetImportLedgerImageHistoryForTargetParams{
 		EntityKind: t.ledgerKnd, VidraID: optUUID(t.owner()),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
