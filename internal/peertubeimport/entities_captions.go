@@ -3,16 +3,15 @@ package peertubeimport
 import (
 	"context"
 	"strconv"
+	"sync"
 
+	"github.com/google/uuid"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
-// importCaptions carries the captions importOneVideo could not: the ones added
-// on the source AFTER a video's first import. importOneVideo writes a video's
-// captions in the video's own transaction and never runs again once the ledger
-// row is terminal, so against a still-live source every later subtitle track was
-// lost. This is a pass of its own, with its own ledger kind, for the same reason
-// the per-video families are (entities_pervideo.go).
+// importCaptions carries copy-mode captions independently of video creation,
+// and fills tracks added after an earlier import in either media mode. Missing
+// tracks remain failed in their own ledger without blocking a video's HLS.
 //
 // It only ever FILLS, and the write is what enforces that (ImportFillCaption is
 // ON CONFLICT DO NOTHING). A language the video already has a track for is
@@ -22,8 +21,8 @@ import (
 // The ledger row is also what makes a DELETION here stick: once a source caption
 // is recorded, a creator who removes it is never handed it back.
 //
-// importOneVideo records the same row for the tracks it carries, in the video's
-// own transaction, so that guarantee does not depend on this pass having run.
+// Reference-mode importOneVideo records tracks in the video's transaction, so
+// that guarantee does not depend on this pass having run in reference mode.
 //
 // Accepted residual: a track an OLDER release carried has no ledger row until
 // this pass first records it. One deleted here before that — or whose first
@@ -38,6 +37,12 @@ func (im *Importer) importCaptions(ctx context.Context, r *Report) error {
 		return err
 	}
 	c := r.count(KindCaption)
+	type target struct {
+		caption SourceCaption
+		sid     string
+		videoID uuid.UUID
+	}
+	var targets []target
 	for _, capt := range captions {
 		sid := strconv.FormatInt(capt.ID, 10)
 		if _, _, done, err := im.alreadyProcessed(ctx, KindCaption, sid); err != nil {
@@ -48,22 +53,58 @@ func (im *Importer) importCaptions(ctx context.Context, r *Report) error {
 			}
 			continue
 		}
-		if err := im.importOneCaption(ctx, capt, sid, c); err != nil {
-			im.markFailed(ctx, KindCaption, sid, safeErr(err))
-			c.Failed++
-			im.logger.WarnContext(ctx, "peertube import: caption failed", "source_id", sid, "error", err)
+		// Resolve parents before fan-out: the per-run parent/video caches are
+		// deliberately sequential. A failed/deleted parent stays retryable.
+		videoID, ok, err := im.resolveVideoByNumericID(ctx, capt.VideoID)
+		if err != nil {
+			return err
+		}
+		if ok {
+			targets = append(targets, target{capt, sid, videoID})
 		}
 	}
-	return nil
+	workers := 1 // Preserve reference-mode ordering; it makes no blob transfers.
+	if im.mediaMode == MediaModeCopy {
+		workers = 4
+	}
+	work := make(chan target)
+	outcomes := make([]Counts, workers)
+	var wg sync.WaitGroup
+	for i := range outcomes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			counts := &outcomes[i]
+			for t := range work {
+				if err := im.importOneCaption(ctx, t.caption, t.sid, t.videoID, counts); err != nil {
+					im.markFailed(ctx, KindCaption, t.sid, safeErr(err))
+					counts.Failed++
+					im.logger.WarnContext(ctx, "peertube import: caption failed", "source_id", t.sid, "error", err)
+				}
+			}
+		}()
+	}
+enqueue:
+	for _, t := range targets {
+		select {
+		case work <- t:
+		case <-ctx.Done():
+			break enqueue
+		}
+	}
+	close(work)
+	wg.Wait()
+	// Workers own their counters; the report is mutated only after they finish.
+	for _, counts := range outcomes {
+		c.Imported += counts.Imported
+		c.Skipped += counts.Skipped
+		c.Failed += counts.Failed
+		c.Unsupported += counts.Unsupported
+	}
+	return ctx.Err()
 }
 
-func (im *Importer) importOneCaption(ctx context.Context, capt SourceCaption, sid string, c *Counts) error {
-	// Not in the ledger (a remote video's caption, or a video still waiting on its
-	// channel): no row, so it is asked again next run.
-	videoID, ok, err := im.resolveVideoByNumericID(ctx, capt.VideoID)
-	if err != nil || !ok {
-		return err
-	}
+func (im *Importer) importOneCaption(ctx context.Context, capt SourceCaption, sid string, videoID uuid.UUID, c *Counts) error {
 	if !allowedCaptionExt[extOf(capt.Filename)] {
 		c.Unsupported++
 		return im.recordStandalone(ctx, KindCaption, sid, videoID, "unsupported", "caption file type is not carried")
