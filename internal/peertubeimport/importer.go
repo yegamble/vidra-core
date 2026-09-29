@@ -27,14 +27,15 @@ var ErrConflictFail = errors.New("peertubeimport: aborting on conflict (policy=f
 // mapped row in the durable ledger for idempotency + resume. It is safe to
 // re-run: already-imported entities are skipped.
 type Importer struct {
-	dest      *pgxpool.Pool
-	q         *sqlcgen.Queries
-	src       *Source
-	srcMedia  storage.Backend // may be nil (metadata-only import)
-	destMedia storage.Backend // may be nil (metadata-only import)
-	mediaMode MediaMode
-	policy    ConflictPolicy
-	force     bool
+	dest            *pgxpool.Pool
+	q               *sqlcgen.Queries
+	src             *Source
+	srcMedia        storage.Backend      // may be nil (metadata-only import)
+	destMedia       storage.Backend      // may be nil (metadata-only import)
+	copyMediaServer storage.ServerCopier // optional; HLS only, originals retain SHA-256 reads
+	mediaMode       MediaMode
+	policy          ConflictPolicy
+	force           bool
 	// ackVersion is the per-run operator acknowledgement of an unverified source
 	// schema: the version the launching administrator was shown and accepted. 0
 	// (the zero value, and the only value the server can produce on its own) means
@@ -116,6 +117,7 @@ type Options struct {
 	MediaMode                 MediaMode
 	SrcMedia                  storage.Backend
 	DestMedia                 storage.Backend
+	CopyMedia                 storage.ServerCopier
 	SealKey                   func(pem string) (string, error)
 	// SourceAuthoritative says the SOURCE is the truth where the two sides
 	// diverge, instead of the import only filling gaps on this instance.
@@ -166,6 +168,7 @@ func NewImporter(dest *pgxpool.Pool, src *Source, opts Options) *Importer {
 		src:                 src,
 		srcMedia:            opts.SrcMedia,
 		destMedia:           opts.DestMedia,
+		copyMediaServer:     opts.CopyMedia,
 		mediaMode:           mediaMode,
 		policy:              policy,
 		force:               opts.Force,
@@ -838,25 +841,23 @@ func (im *Importer) copyMedia(ctx context.Context, srcKey, destKey string) (int6
 		return 0, "", err
 	}
 	defer func() { _ = rc.Close() }()
-	// The LimitReader below is a CAP, not a length: maxSourceFileBytes+1 exists
-	// so an absurd source object trips the guard after it, and passing it as the
-	// upload size would tell the destination to expect 16 GiB of a 4 KB
-	// thumbnail. So the length is taken from the SOURCE READER before it is
-	// wrapped — the wrapper hides its concrete type, and without this every
-	// import copied with an unknown length and paid for a multipart upload per
-	// object. Only a size that is provably the whole object is passed: an object
-	// bigger than the cap still goes up unsized, so the check below still sees
-	// cap+1 bytes and rejects it.
-	size := storage.SizeUnknown
-	if n := storage.SizeOf(rc); n >= 0 && n <= maxSourceFileBytes {
-		size = n
+	return im.copyMediaReader(ctx, rc, destKey, maxSourceFileBytes)
+}
+
+// Keep the exact source length through the bounded reader: the limit is a cap,
+// never an advertised upload length. HLS can pass its already-open source or
+// validated manifest bytes here without a second GET of a possibly changed file.
+func (im *Importer) copyMediaReader(ctx context.Context, rc io.Reader, destKey string, limit int64) (int64, string, error) {
+	size := storage.SizeOf(rc)
+	if size > limit {
+		return 0, "", fmt.Errorf("peertubeimport: source object exceeds the size cap")
 	}
-	limited := io.LimitReader(rc, maxSourceFileBytes+1)
+	limited := io.LimitReader(rc, limit+1)
 	n, sum, err := storage.PutSizedHashed(ctx, im.destMedia, destKey, limited, size)
 	if err != nil {
 		return 0, "", err
 	}
-	if n > maxSourceFileBytes {
+	if n > limit {
 		_ = im.destMedia.Delete(ctx, destKey)
 		return 0, "", fmt.Errorf("peertubeimport: source object %s exceeds the size cap", destKey)
 	}

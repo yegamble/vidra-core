@@ -66,7 +66,10 @@ func TestCopyMediaPassesTheSourceLength(t *testing.T) {
 	}
 
 	dest := newSizeRecordingBackend(t)
-	im := &Importer{srcMedia: src, destMedia: dest}
+	im := &Importer{srcMedia: src, destMedia: dest, copyMediaServer: copyFunc(func(context.Context, storage.Backend, string, string, int64) (int64, error) {
+		t.Fatal("non-HLS copy must read bytes and compute its SHA-256")
+		return 0, nil
+	})}
 
 	n, sum, err := im.copyMedia(ctx, "thumbnails/x.jpg", "thumbnails/y.jpg")
 	if err != nil {
