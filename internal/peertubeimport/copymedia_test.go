@@ -66,10 +66,7 @@ func TestCopyMediaPassesTheSourceLength(t *testing.T) {
 	}
 
 	dest := newSizeRecordingBackend(t)
-	im := &Importer{srcMedia: src, destMedia: dest, copyMediaServer: copyFunc(func(context.Context, storage.Backend, string, string, int64) (int64, error) {
-		t.Fatal("non-HLS copy must read bytes and compute its SHA-256")
-		return 0, nil
-	})}
+	im := &Importer{srcMedia: src, destMedia: dest}
 
 	n, sum, err := im.copyMedia(ctx, "thumbnails/x.jpg", "thumbnails/y.jpg")
 	if err != nil {
@@ -99,9 +96,17 @@ func TestCopyMediaReadsPeerTubePrivateWebVideo(t *testing.T) {
 		t.Fatal(err)
 	}
 	dest := newSizeRecordingBackend(t)
-	im := &Importer{srcMedia: src, destMedia: dest}
-	if _, _, err := im.copyMedia(context.Background(), "web-videos/fixture.mp4", "web-videos/copied.mp4"); err != nil {
+	im := &Importer{srcMedia: src, destMedia: dest, copyMediaServer: copyFunc(func(context.Context, storage.Backend, string, string, int64) (int64, error) {
+		t.Fatal("originals must stream and compute their true SHA-256")
+		return 0, nil
+	})}
+	_, sum, err := im.copyMedia(context.Background(), "web-videos/fixture.mp4", "web-videos/copied.mp4")
+	if err != nil {
 		t.Fatal(err)
+	}
+	wantHash := sha256.Sum256([]byte("private fixture"))
+	if sum != hex.EncodeToString(wantHash[:]) {
+		t.Fatal("original copy did not retain its whole-file SHA-256")
 	}
 	if string(dest.written["web-videos/copied.mp4"]) != "private fixture" {
 		t.Fatal("private source bytes were not copied")
