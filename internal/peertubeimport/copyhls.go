@@ -14,7 +14,6 @@ import (
 )
 
 var hlsLocalName = regexp.MustCompile(`^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$`)
-var hlsURI = regexp.MustCompile(`URI="([^"]*)"`)
 
 // copyHLSTree follows only same-directory object names, never a URL or traversal.
 // PeerTube's flat HLS layout includes byte-range MP4s, audio and init segments.
@@ -95,6 +94,10 @@ func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string) erro
 			if !strings.HasPrefix(string(body), "#EXTM3U") {
 				return fmt.Errorf("invalid HLS manifest")
 			}
+			body, e = withoutHLSSubtitleGroups(body)
+			if e != nil {
+				return e
+			}
 			for _, line := range strings.Split(string(body), "\n") {
 				line = strings.TrimSpace(line)
 				if line == "" {
@@ -102,13 +105,19 @@ func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string) erro
 				}
 				if !strings.HasPrefix(line, "#") {
 					queue = append(queue, line)
-				} else {
-					refs := hlsURI.FindAllStringSubmatch(line, -1)
-					if strings.Count(line, "URI=") != len(refs) {
-						return fmt.Errorf("invalid HLS URI attribute")
+				} else if strings.Contains(line, "URI=") {
+					_, list, _ := strings.Cut(line, ":")
+					attributes, err := parseHLSAttributes(list)
+					if err != nil {
+						return err
 					}
-					for _, m := range refs {
-						queue = append(queue, m[1])
+					for _, attribute := range attributes {
+						if strings.HasSuffix(attribute.name, "URI") {
+							if !attribute.quoted {
+								return fmt.Errorf("invalid HLS URI attribute")
+							}
+							queue = append(queue, attribute.value)
+						}
 					}
 				}
 			}
@@ -131,4 +140,121 @@ func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string) erro
 		im.logger.InfoContext(ctx, "peertube import: HLS tree copied", "server_side_objects", serverObjects, "server_side_bytes", serverBytes, "streamed_bytes", total-serverBytes)
 	}
 	return nil
+}
+
+type hlsAttribute struct {
+	name, value, raw string
+	quoted           bool
+}
+
+// Attribute commas inside quotes (notably CODECS and language names) are not
+// separators. Reject ambiguity before removing anything from a source manifest.
+func parseHLSAttributes(list string) ([]hlsAttribute, error) {
+	var attributes []hlsAttribute
+	seen := map[string]bool{}
+	invalid := fmt.Errorf("invalid HLS attribute list")
+	for list != "" {
+		name, rest, found := strings.Cut(list, "=")
+		if !found || name == "" || rest == "" || seen[name] {
+			return nil, invalid
+		}
+		for _, c := range name {
+			if !(c >= 'A' && c <= 'Z') && !(c >= '0' && c <= '9') && c != '-' {
+				return nil, invalid
+			}
+		}
+		seen[name] = true
+		attribute := hlsAttribute{name: name, quoted: rest[0] == '"'}
+		end := strings.IndexByte(rest, ',')
+		if attribute.quoted {
+			end = strings.IndexByte(rest[1:], '"')
+			if end < 0 {
+				return nil, invalid
+			}
+			end += 2
+			attribute.value = rest[1 : end-1]
+		} else {
+			if end < 0 {
+				end = len(rest)
+			}
+			attribute.value = rest[:end]
+			if attribute.value == "" || strings.ContainsAny(attribute.value, "\"= \t") {
+				return nil, invalid
+			}
+		}
+		if strings.ContainsAny(attribute.value, "\r\n\x00") || (end < len(rest) && rest[end] != ',') {
+			return nil, invalid
+		}
+		attribute.raw = name + "=" + rest[:end]
+		attributes = append(attributes, attribute)
+		list = rest[end:]
+		if list != "" {
+			list = list[1:]
+			if list == "" {
+				return nil, invalid
+			}
+		}
+	}
+	if len(attributes) == 0 {
+		return nil, invalid
+	}
+	return attributes, nil
+}
+
+// PeerTube subtitle playlists contain absolute VTT URLs. Vidra carries those
+// captions through its caption API and HTML tracks, independently of playback.
+// Remove only HLS subtitle groups; audio/video dependencies stay flat and strict.
+func withoutHLSSubtitleGroups(body []byte) ([]byte, error) {
+	var out strings.Builder
+	for _, raw := range strings.SplitAfter(string(body), "\n") {
+		line := strings.TrimSpace(raw)
+		tag, list, _ := strings.Cut(line, ":")
+		if tag != "#EXT-X-MEDIA" && tag != "#EXT-X-STREAM-INF" {
+			out.WriteString(raw)
+			continue
+		}
+		attributes, err := parseHLSAttributes(list)
+		if err != nil {
+			return nil, err
+		}
+		var mediaType, uri string
+		var kept []string
+		removed := false
+		for _, attribute := range attributes {
+			if attribute.name == "TYPE" {
+				if attribute.quoted {
+					return nil, fmt.Errorf("invalid HLS media type")
+				}
+				mediaType = attribute.value
+			}
+			if attribute.name == "URI" {
+				if !attribute.quoted || attribute.value == "" {
+					return nil, fmt.Errorf("invalid HLS URI attribute")
+				}
+				uri = attribute.value
+			}
+			if tag == "#EXT-X-STREAM-INF" && attribute.name == "SUBTITLES" {
+				if !attribute.quoted || attribute.value == "" {
+					return nil, fmt.Errorf("invalid HLS subtitle group")
+				}
+				removed = true
+				continue
+			}
+			kept = append(kept, attribute.raw)
+		}
+		if tag == "#EXT-X-MEDIA" && (mediaType == "" || (mediaType == "SUBTITLES" && uri == "")) {
+			return nil, fmt.Errorf("invalid HLS media attributes")
+		}
+		if tag == "#EXT-X-MEDIA" && mediaType == "SUBTITLES" {
+			continue
+		}
+		if len(kept) == 0 {
+			return nil, fmt.Errorf("empty HLS stream attributes")
+		}
+		if removed {
+			raw = strings.Replace(raw, line, tag+":"+strings.Join(kept, ","), 1)
+		}
+		out.WriteString(raw)
+	}
+	return []byte(out.String()), nil
 }
