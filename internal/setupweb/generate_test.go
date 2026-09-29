@@ -280,11 +280,13 @@ func TestApplyNeverReMintsASecretItAlreadyHas(t *testing.T) {
 	// The KEK is the one that matters: re-minting it orphans every TOTP secret
 	// already sealed in the database, and no re-wrap job exists anywhere.
 	for key, want := range map[string]string{
-		"MFA_KEY_KEK":            "U0VOVElORUwtS0VLLTAwMDAwMDAwMDAwMDAwMDAwMDA=",
-		"JWT_SECRET":             "SENTINEL-JWT-000000000000000000000000000000",
-		"POSTGRES_PASSWORD":      "SENTINEL-PG-deadbeef",
-		"REDIS_PASSWORD":         "SENTINEL-REDIS-deadbeef",
-		"SEARCH_INTERNAL_SECRET": "SENTINEL-SEARCH-0000000000000000000000",
+		"MFA_KEY_KEK":                        "U0VOVElORUwtS0VLLTAwMDAwMDAwMDAwMDAwMDAwMDA=",
+		"JWT_SECRET":                         "SENTINEL-JWT-000000000000000000000000000000",
+		"POSTGRES_PASSWORD":                  "SENTINEL-PG-deadbeef",
+		"REDIS_PASSWORD":                     "SENTINEL-REDIS-deadbeef",
+		"SEARCH_INTERNAL_SECRET":             "SENTINEL-SEARCH-0000000000000000000000",
+		"PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY": "SENTINEL-COPY-ACCESS",
+		"PEERTUBE_IMPORT_S3_COPY_SECRET_KEY": "SENTINEL-COPY-SECRET",
 	} {
 		got, _ := f.Value(key)
 		if got != want {

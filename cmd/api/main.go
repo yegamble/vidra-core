@@ -2813,8 +2813,16 @@ func run() error {
 					mediaMode = defaultImportMediaMode
 				}
 				var srcMedia storage.Backend
+				var copier storage.ServerCopier
 				if mediaMode == peertubeimport.MediaModeCopy {
 					srcMedia, err = peertubeimport.OpenSourceStorage(srcStorageCfg)
+					if err != nil {
+						src.Close()
+						return nil, nil, err
+					}
+					// A separate migration credential must never replace the keys
+					// used by normal media writes or read-only source access.
+					copier, err = storage.NewS3Copier(blobs, cfg.PeerTubeImportS3CopyAccessKey, cfg.PeerTubeImportS3CopySecretKey)
 					if err != nil {
 						src.Close()
 						return nil, nil, err
@@ -2838,6 +2846,7 @@ func run() error {
 					MediaMode:           mediaMode,
 					SrcMedia:            srcMedia,
 					DestMedia:           blobs,
+					CopyMedia:           copier,
 					SealKey:             ptSeal,
 					// The import can write an instance setting (the source's category
 					// taxonomy). This server holds that overlay in memory and only

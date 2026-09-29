@@ -310,6 +310,15 @@ subscriptions. Drive it from the `cmd/peertube-import` CLI, or the admin API
 and what is imported vs. regenerated afterwards live in the operator guide
 [docs/peertube-migration.md](docs/peertube-migration.md).
 
+For faster HLS copies within one S3 endpoint, both import paths accept the private
+environment pair `PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY` and
+`PEERTUBE_IMPORT_S3_COPY_SECRET_KEY`. Use a separate, temporary credential scoped
+to the two migration buckets; keep the regular source, media and backup keys
+unchanged. B2 multi-bucket capabilities apply to both buckets, so restrict its
+lifetime and revoke it after verification. Both values are optional but must be
+set together. Originals still stream with SHA-256; ineligible server-side copies
+fall back to streaming. No media is re-encoded by this optimization.
+
 ## Project layout
 
 ```

@@ -1078,6 +1078,13 @@ type Config struct {
 	PeerTubeSourceS3UseSSL         bool
 	PeerTubeSourceS3ForcePathStyle bool
 
+	// PeerTubeImportS3Copy* optionally authorize server-side media copies. Keep
+	// this temporary credential separate from the normal source-read and
+	// destination-write keys; it needs access to both migration buckets. Both
+	// values are SECRETS, supplied together or left empty to stream as before.
+	PeerTubeImportS3CopyAccessKey string
+	PeerTubeImportS3CopySecretKey string
+
 	// PeerTubeImportConflictPolicy is the default resolution for username/handle/
 	// email/slug collisions between the source and this instance: "skip" (default,
 	// safest — leave the existing Vidra row, map the source entity to it),
@@ -1354,6 +1361,8 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		PeerTubeSourceS3Region:                 getEnv("PEERTUBE_SOURCE_S3_REGION", ""),
 		PeerTubeSourceS3UseSSL:                 p.Bool("PEERTUBE_SOURCE_S3_USE_SSL", true),
 		PeerTubeSourceS3ForcePathStyle:         p.Bool("PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE", false),
+		PeerTubeImportS3CopyAccessKey:          getEnv("PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY", ""),
+		PeerTubeImportS3CopySecretKey:          getEnv("PEERTUBE_IMPORT_S3_COPY_SECRET_KEY", ""),
 		PeerTubeImportConflictPolicy:           strings.ToLower(getEnv("PEERTUBE_IMPORT_CONFLICT_POLICY", "skip")),
 		PeerTubeImportMediaMode:                strings.ToLower(getEnv("PEERTUBE_IMPORT_MEDIA_MODE", "copy")),
 	}
@@ -2432,6 +2441,25 @@ func CheckPeerTubeSourceDatabaseURL(v string) error {
 // import API is enabled — the CLI supplies its own source flags.
 func (c *Config) validatePeerTubeImport() error {
 	var errs []error
+	// The CLI also reads these credentials with the admin API disabled. Refuse
+	// a partial pair there too, without exposing either value to setup or logs.
+	for _, credential := range []struct{ key, value string }{
+		{"PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY", c.PeerTubeImportS3CopyAccessKey},
+		{"PEERTUBE_IMPORT_S3_COPY_SECRET_KEY", c.PeerTubeImportS3CopySecretKey},
+	} {
+		if credential.value != "" && strings.TrimSpace(credential.value) == "" {
+			errs = append(errs, varErrorf(credential.key, "config: %s must not contain only whitespace", credential.key))
+		}
+	}
+	copyAccess := c.PeerTubeImportS3CopyAccessKey != ""
+	copySecret := c.PeerTubeImportS3CopySecretKey != ""
+	if copyAccess != copySecret {
+		missing := "PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY"
+		if copyAccess {
+			missing = "PEERTUBE_IMPORT_S3_COPY_SECRET_KEY"
+		}
+		errs = append(errs, varErrorf(missing, "config: PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY and PEERTUBE_IMPORT_S3_COPY_SECRET_KEY must be provided together or both left empty"))
+	}
 	for _, err := range []error{
 		CheckPeerTubeConflictPolicy(c.PeerTubeImportConflictPolicy),
 		CheckPeerTubeMediaMode(c.PeerTubeImportMediaMode),

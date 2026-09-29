@@ -121,6 +121,7 @@ func main() {
 	}
 
 	var srcMedia storage.Backend
+	var copier storage.ServerCopier
 	if mode == peertubeimport.MediaModeCopy {
 		srcMedia, err = peertubeimport.OpenSourceStorage(peertubeimport.SourceStorageConfig{
 			Backend:          *sourceStorage,
@@ -135,6 +136,12 @@ func main() {
 		})
 		if err != nil {
 			fatal("open source media storage: " + err.Error())
+		}
+		// Optional copy credentials come only from the environment, not flags
+		// that would expose them in the process argument list.
+		copier, err = storage.NewS3Copier(destMedia, cfg.PeerTubeImportS3CopyAccessKey, cfg.PeerTubeImportS3CopySecretKey)
+		if err != nil {
+			fatal("configure server-side media copy: " + err.Error())
 		}
 	}
 
@@ -161,6 +168,7 @@ func main() {
 		MediaMode:           mode,
 		SrcMedia:            srcMedia,
 		DestMedia:           destMedia,
+		CopyMedia:           copier,
 		SealKey:             sealKey,
 		SourceAuthoritative: *sourceAuth,
 	})
