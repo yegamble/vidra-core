@@ -5,9 +5,75 @@ import (
 	"fmt"
 	"path"
 	"sort"
+	"sync"
 
+	"github.com/google/uuid"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
+
+type hlsCopyTarget struct {
+	sourceID, prefix, master string
+	videoID                  uuid.UUID
+}
+
+type hlsCopyOutcome int
+
+const (
+	hlsCopied hlsCopyOutcome = iota
+	hlsCopyFailed
+	hlsCopySkipped
+)
+
+// Four complete trees at a time bounds streaming fallback to four upload
+// buffers too. No worker touches parent caches or the caller's report.
+func runHLSCopyWorkers(ctx context.Context, targets []hlsCopyTarget, copyOne func(context.Context, hlsCopyTarget) (hlsCopyOutcome, error)) (Counts, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var counts Counts
+	var firstErr error
+	next := 0
+	for range min(4, len(targets)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				mu.Lock()
+				if ctx.Err() != nil || next == len(targets) {
+					mu.Unlock()
+					return
+				}
+				target := targets[next]
+				next++
+				mu.Unlock()
+				outcome, err := copyOne(ctx, target)
+				mu.Lock()
+				if err != nil {
+					if firstErr == nil {
+						firstErr = err
+						cancel()
+					}
+				} else {
+					switch outcome {
+					case hlsCopied:
+						counts.Imported++
+					case hlsCopyFailed:
+						counts.Failed++
+					case hlsCopySkipped:
+						counts.Skipped++
+					}
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return counts, firstErr
+	}
+	return counts, ctx.Err()
+}
 
 // A separate pass repairs old imports too. A ready playlist is the durable
 // checkpoint and is never replaced (including a ladder generated on Vidra).
@@ -22,7 +88,9 @@ func (im *Importer) importHLSCopies(ctx context.Context, r *Report) error {
 	if err != nil {
 		return err
 	}
-	c := r.count(KindHLSPlaylist)
+	// Parent resolution mutates per-run maps. Resolve the entire work list
+	// before workers start; only immutable targets cross the worker boundary.
+	var targets []hlsCopyTarget
 	for _, v := range videos {
 		id, ok, err := im.resolveParent(ctx, KindVideo, v.UUID)
 		if err != nil {
@@ -45,23 +113,36 @@ func (im *Importer) importHLSCopies(ctx context.Context, r *Report) error {
 		if !ok {
 			continue
 		}
-		prefix := sourceHLSDir(v.UUID)
-		if err = im.copyHLSTree(ctx, prefix, path.Base(hls.PlaylistFilename)); err != nil {
-			c.Failed++
-			im.markFailed(ctx, KindHLSPlaylist, v.UUID, "HLS copy incomplete; rerun required")
-			continue
+		targets = append(targets, hlsCopyTarget{sourceID: v.UUID, videoID: id, prefix: sourceHLSDir(v.UUID), master: path.Base(hls.PlaylistFilename)})
+	}
+	im.copyMediaDisabled.Store(false)
+	counts, err := runHLSCopyWorkers(ctx, targets, im.copyHLSTarget)
+	c := r.count(KindHLSPlaylist)
+	c.Imported += counts.Imported
+	c.Failed += counts.Failed
+	c.Skipped += counts.Skipped
+	return err
+}
+
+func (im *Importer) copyHLSTarget(ctx context.Context, target hlsCopyTarget) (hlsCopyOutcome, error) {
+	if err := im.copyHLSTree(ctx, target.prefix, target.master); err != nil {
+		if ctx.Err() != nil {
+			return hlsCopyFailed, ctx.Err()
 		}
-		if err = im.withTx(ctx, func(q *sqlcgen.Queries) error {
-			if _, err := q.UpsertStreamingPlaylist(ctx, sqlcgen.UpsertStreamingPlaylistParams{VideoID: id, MasterKey: prefix + "/" + path.Base(hls.PlaylistFilename), State: "ready"}); err != nil {
-				return err
-			}
-			return recordLedger(ctx, q, KindHLSPlaylist, v.UUID, id, "done", "")
-		}); err != nil {
+		return hlsCopyFailed, recordLedger(ctx, im.q, KindHLSPlaylist, target.sourceID, uuid.Nil, "failed", "HLS copy incomplete; rerun required")
+	}
+	var published int64
+	err := im.withTx(ctx, func(q *sqlcgen.Queries) (err error) {
+		published, err = q.ImportPublishCopiedHLSPlaylist(ctx, sqlcgen.ImportPublishCopiedHLSPlaylistParams{VideoID: target.videoID, MasterKey: target.prefix + "/" + target.master})
+		if err != nil || published == 0 {
 			return err
 		}
-		c.Imported++
+		return recordLedger(ctx, q, KindHLSPlaylist, target.sourceID, target.videoID, "done", "")
+	})
+	if err == nil && published == 0 {
+		return hlsCopySkipped, nil
 	}
-	return nil
+	return hlsCopied, err
 }
 
 // importLateHLSReferences is the reference-mode half of the same repair. A video

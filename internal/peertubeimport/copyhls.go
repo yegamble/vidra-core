@@ -46,7 +46,7 @@ func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string) erro
 		key := prefix + "/" + name
 		limit := min(maxSourceFileBytes, (64<<30)-total)
 		manifest := strings.HasSuffix(name, ".m3u8")
-		if !manifest && im.copyMediaServer != nil {
+		if !manifest && im.copyMediaServer != nil && !im.copyMediaDisabled.Load() {
 			n, err := im.copyMediaServer.Copy(ctx, im.srcMedia, key, key, limit)
 			if errors.Is(err, storage.ErrNotFound) {
 				n, err = im.copyMediaServer.Copy(ctx, im.srcMedia, strings.Replace(key, ptHLSDir+"/", ptHLSDir+"/private/", 1), key, limit)
@@ -68,8 +68,7 @@ func (im *Importer) copyHLSTree(ctx context.Context, prefix, master string) erro
 			}
 			// A bucket/credential mismatch will fail for every next dependency.
 			// Keep the read-only source and normal destination keys as the fallback.
-			im.copyMediaServer = nil
-			if im.logger != nil {
+			if im.copyMediaDisabled.CompareAndSwap(false, true) && im.logger != nil {
 				im.logger.WarnContext(ctx, "peertube import: HLS server copy unavailable; using streamed copies for this run")
 			}
 		}

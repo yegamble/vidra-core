@@ -1,11 +1,14 @@
 package peertubeimport
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/vidra/vidra-core/internal/storage"
@@ -236,5 +239,61 @@ func TestCopyHLSUnavailableDisablesRepeatedAttempts(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("unavailable copier called %d times", calls)
+	}
+}
+
+func TestCopyHLSParallelFallbackDisablesCopierOnce(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	src, _ := storage.NewLocal(t.TempDir())
+	dst, _ := storage.NewLocal(t.TempDir())
+	targets := hlsWorkerTargets(8)
+	for i := range targets {
+		targets[i].prefix = "streaming-playlists/hls/" + targets[i].sourceID
+		targets[i].master = "master.m3u8"
+		for name, body := range map[string]string{"master.m3u8": "#EXTM3U\na.mp4\nb.mp4\n", "a.mp4": "a", "b.mp4": "b"} {
+			if _, err := src.Put(ctx, targets[i].prefix+"/"+name, strings.NewReader(body)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	entered, release := make(chan struct{}, 8), make(chan struct{})
+	done := make(chan hlsWorkerResult, 1)
+	var calls atomic.Int32
+	var log bytes.Buffer
+	im := &Importer{srcMedia: src, destMedia: dst, logger: slog.New(slog.NewTextHandler(&log, nil)), copyMediaServer: copyFunc(func(ctx context.Context, _ storage.Backend, _, _ string, _ int64) (int64, error) {
+		calls.Add(1)
+		entered <- struct{}{}
+		select {
+		case <-release:
+			return 0, storage.ErrCopyUnavailable
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+	})}
+	go func() {
+		counts, err := runHLSCopyWorkers(ctx, targets, func(ctx context.Context, target hlsCopyTarget) (hlsCopyOutcome, error) {
+			return hlsCopied, im.copyHLSTree(ctx, target.prefix, target.master)
+		})
+		done <- hlsWorkerResult{counts, err}
+	}()
+	waitHLSWorkers(t, entered, cancel, done)
+	close(release)
+	result := <-done
+	if result.err != nil || result.counts.Imported != len(targets) || calls.Load() != 4 || strings.Count(log.String(), "server copy unavailable") != 1 {
+		t.Fatalf("parallel fallback result=%+v copy calls=%d log=%s", result, calls.Load(), log.String())
+	}
+	for _, target := range targets {
+		for _, name := range []string{"a.mp4", "b.mp4"} {
+			rc, err := dst.Open(ctx, target.prefix+"/"+name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := io.ReadAll(rc)
+			_ = rc.Close()
+			if err != nil || string(body) != strings.TrimSuffix(name, ".mp4") {
+				t.Fatal("streaming fallback lost a dependency")
+			}
+		}
 	}
 }

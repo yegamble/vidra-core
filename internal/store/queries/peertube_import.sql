@@ -507,6 +507,18 @@ INSERT INTO streaming_playlists (video_id, master_key, state)
 VALUES ($1, $2, 'ready')
 ON CONFLICT (video_id) DO NOTHING;
 
+-- name: ImportPublishCopiedHLSPlaylist :execrows
+-- A native transcode may finish after the import resolves its work list. Its
+-- ready tree wins; pending/failed rows can still be repaired by a complete copy.
+INSERT INTO streaming_playlists (video_id, master_key, state, format)
+VALUES ($1, $2, 'ready', 'hls-ts')
+ON CONFLICT (video_id) DO UPDATE
+SET master_key = EXCLUDED.master_key,
+    state = EXCLUDED.state,
+    format = EXCLUDED.format,
+    updated_at = now()
+WHERE streaming_playlists.state <> 'ready';
+
 -- name: ImportCaptionExists :one
 -- Whether a video already has a caption in this language. Asked BEFORE a
 -- copy-mode object is written, so a track that is already here costs no copy.

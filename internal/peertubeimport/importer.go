@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -99,6 +100,8 @@ type Importer struct {
 	// out across workers. Their per-row outcomes are the only counters written
 	// from more than one goroutine.
 	videoImageMu sync.Mutex
+
+	copyMediaDisabled atomic.Bool // shared HLS fallback; the copier itself stays immutable
 }
 
 // Options customise an Importer.

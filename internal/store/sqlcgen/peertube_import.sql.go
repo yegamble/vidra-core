@@ -1022,6 +1022,32 @@ func (q *Queries) ImportParentStillExists(ctx context.Context, arg ImportParentS
 	return still_exists, err
 }
 
+const importPublishCopiedHLSPlaylist = `-- name: ImportPublishCopiedHLSPlaylist :execrows
+INSERT INTO streaming_playlists (video_id, master_key, state, format)
+VALUES ($1, $2, 'ready', 'hls-ts')
+ON CONFLICT (video_id) DO UPDATE
+SET master_key = EXCLUDED.master_key,
+    state = EXCLUDED.state,
+    format = EXCLUDED.format,
+    updated_at = now()
+WHERE streaming_playlists.state <> 'ready'
+`
+
+type ImportPublishCopiedHLSPlaylistParams struct {
+	VideoID   uuid.UUID `json:"video_id"`
+	MasterKey string    `json:"master_key"`
+}
+
+// A native transcode may finish after the import resolves its work list. Its
+// ready tree wins; pending/failed rows can still be repaired by a complete copy.
+func (q *Queries) ImportPublishCopiedHLSPlaylist(ctx context.Context, arg ImportPublishCopiedHLSPlaylistParams) (int64, error) {
+	result, err := q.db.Exec(ctx, importPublishCopiedHLSPlaylist, arg.VideoID, arg.MasterKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const importResyncChannels = `-- name: ImportResyncChannels :many
 SELECT l.source_id, c.id, c.owner_id, c.handle, c.display_name, c.description
 FROM peertube_import_ledger l
