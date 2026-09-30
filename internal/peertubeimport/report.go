@@ -132,9 +132,10 @@ type Counts struct {
 // It carries NO secrets — only counts, the detected version, and safe conflict
 // notes.
 type Report struct {
-	SourceVersion  int    `json:"source_version"`
-	DryRun         bool   `json:"dry_run"`
-	ConflictPolicy string `json:"conflict_policy"`
+	onProgress     func(*Report) // Run-only observer; invoked under the current media pass's counter lock.
+	SourceVersion  int           `json:"source_version"`
+	DryRun         bool          `json:"dry_run"`
+	ConflictPolicy string        `json:"conflict_policy"`
 	// SourceAuthoritative records which side won on this run. It is on the report
 	// rather than only on the run row because the report is what gets read months
 	// later when somebody asks why a title changed.
@@ -229,4 +230,23 @@ func noteVideoPolicy(r *Report, v SourceVideo) {
 	if v.CommentsPolicy != nil && *v.CommentsPolicy != 1 && *v.CommentsPolicy != 2 {
 		notePolicyFallback(r, KindVideoCommentPolicy, "approval-only or unknown source comment policies map to disabled; no native comment-approval queue is imported")
 	}
+}
+
+// publishProgress gives observers an immutable snapshot. Parallel media passes
+// must hold their counter lock through this call; no goroutine reads the live
+// report concurrently, and a retained snapshot cannot change under its reader.
+func (r *Report) publishProgress() {
+	if r.onProgress == nil {
+		return
+	}
+	snapshot := *r
+	snapshot.onProgress = nil
+	snapshot.Entities = make(map[string]*Counts, len(r.Entities))
+	for kind, counts := range r.Entities {
+		copy := *counts
+		snapshot.Entities[kind] = &copy
+	}
+	snapshot.Deferred = append([]string(nil), r.Deferred...)
+	snapshot.Conflicts = append([]string(nil), r.Conflicts...)
+	r.onProgress(&snapshot)
 }

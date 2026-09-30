@@ -513,9 +513,9 @@ func deferredFamilies() []string {
 }
 
 // Run performs the import. It processes entity families parent-first, each row
-// idempotent via the ledger, calling progress (when non-nil) after each family
-// so a caller can persist a snapshot. On the 'fail' policy a collision aborts
-// with ErrConflictFail. The returned Report is the final tally.
+// idempotent via the ledger, calling progress after each family and completed
+// media item so a caller can persist live snapshots. On the 'fail' policy a
+// collision aborts with ErrConflictFail. The returned Report is the final tally.
 func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)) (*Report, error) {
 	// Drop the cached source video list: an importer reused across runs (and the
 	// scheduled-import workflow is exactly that) would otherwise resolve children
@@ -523,6 +523,8 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 	// the source since would silently lose its comments, chapters and ratings.
 	im.resetRunCaches()
 	r := NewReport(false, im.policy, im.sourceAuthoritative)
+	r.onProgress = progress
+	defer func() { r.publishProgress(); r.onProgress = nil }()
 	r.SourceVersion = version
 	r.Deferred = deferredFamilies()
 	// Deferred, not a last line: a run that ABORTS half-way returns its report
@@ -586,9 +588,7 @@ func (im *Importer) Run(ctx context.Context, version int, progress func(*Report)
 		if err := step.fn(ctx, r); err != nil {
 			return r, err
 		}
-		if progress != nil {
-			progress(r)
-		}
+		r.publishProgress()
 	}
 	return r, nil
 }

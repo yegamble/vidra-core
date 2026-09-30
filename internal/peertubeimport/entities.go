@@ -436,6 +436,8 @@ func (im *Importer) importVideos(ctx context.Context, r *Report) error {
 	}
 	c := r.count(KindVideo)
 	for _, v := range videos {
+		// Flush the preceding row before a potentially slow original-file copy.
+		r.publishProgress()
 		noteVideoPolicy(r, v)
 		sid := v.UUID
 		if im.resync != nil {

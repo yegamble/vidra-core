@@ -323,6 +323,7 @@ func (im *Importer) importActorImages(ctx context.Context, r *Report) error {
 				im.markActorImageFailed(ctx, t, safeErr(err))
 				mu.Lock()
 				r.count(t.ledgerKnd).Failed++
+				r.publishProgress()
 				mu.Unlock()
 				im.logger.WarnContext(ctx, "peertube import: actor image failed",
 					"source_id", t.sourceID, "kind", t.imageKind, "error", err)
@@ -583,6 +584,7 @@ func (im *Importer) importOneActorImage(
 		}
 		mu.Lock()
 		r.count(t.ledgerKnd).Unsupported++
+		r.publishProgress()
 		mu.Unlock()
 		return nil
 	}
@@ -612,6 +614,7 @@ func (im *Importer) importOneActorImage(
 	}
 	mu.Lock()
 	r.count(t.ledgerKnd).Imported++
+	r.publishProgress()
 	mu.Unlock()
 	return nil
 }
