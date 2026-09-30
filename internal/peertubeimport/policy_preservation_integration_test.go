@@ -102,3 +102,43 @@ func TestPeerTubeImportRepairsLegacyPoliciesWithoutTakingNativeAccounts(t *testi
 		t.Errorf("absent columns erased restrictions: %v", got)
 	}
 }
+
+func TestPeerTubeImportLegacyCommentPolicy(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, "fixture-password-hash", secretPrivKeyAlice)
+	mustExec(t, ctx, src, `ALTER TABLE video ADD COLUMN "commentsEnabled" boolean;UPDATE video SET "commentsEnabled"=(id<>1);`)
+	run := func() {
+		t.Helper()
+		_, err := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicyFail, MediaMode: MediaModeNone, SourceAuthoritative: true}).Run(ctx, 800, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(want string) {
+		t.Helper()
+		got := scanStrings(t, ctx, dest, `SELECT comments_policy FROM videos ORDER BY title`)
+		if strings.Join(got, ",") != want {
+			t.Errorf("comments=%v, want %s", got, want)
+		}
+	}
+	run()
+	check("disabled,enabled")
+	mustExec(t, ctx, src, `UPDATE video SET "commentsEnabled"=false`)
+	run()
+	check("disabled,disabled")
+	mustExec(t, ctx, src, `ALTER TABLE video ADD COLUMN "commentsPolicy" integer DEFAULT 1`)
+	run()
+	check("enabled,enabled") // The enum is authoritative when both columns exist.
+	mustExec(t, ctx, dest, `UPDATE videos SET comments_policy='disabled'`)
+	mustExec(t, ctx, src, `ALTER TABLE video DROP COLUMN "commentsEnabled",DROP COLUMN "commentsPolicy"`)
+	run()
+	check("disabled,disabled")
+}

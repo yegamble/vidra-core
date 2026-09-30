@@ -512,7 +512,13 @@ func (s *Source) Videos(ctx context.Context) ([]SourceVideo, error) {
 	if err != nil {
 		return nil, err
 	}
-	commentsExpr, err := s.optionalExpression(ctx, "video", "commentsPolicy", `v."commentsPolicy"`, `NULL::integer`)
+	// Before the enum, PeerTube stored a boolean. Use it only when the newer
+	// column is absent; absent/null in both forms is no source instruction.
+	legacyComments, err := s.optionalExpression(ctx, "video", "commentsEnabled", `CASE WHEN v."commentsEnabled" THEN 1 WHEN NOT v."commentsEnabled" THEN 2 END`, `NULL::integer`)
+	if err != nil {
+		return nil, err
+	}
+	commentsExpr, err := s.optionalExpression(ctx, "video", "commentsPolicy", `v."commentsPolicy"`, legacyComments)
 	if err != nil {
 		return nil, err
 	}
