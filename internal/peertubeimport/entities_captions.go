@@ -68,19 +68,26 @@ func (im *Importer) importCaptions(ctx context.Context, r *Report) error {
 		workers = 4
 	}
 	work := make(chan target)
-	outcomes := make([]Counts, workers)
+	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for i := range outcomes {
+	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			counts := &outcomes[i]
 			for t := range work {
+				counts := &Counts{}
 				if err := im.importOneCaption(ctx, t.caption, t.sid, t.videoID, counts); err != nil {
 					im.markFailed(ctx, KindCaption, t.sid, safeErr(err))
 					counts.Failed++
 					im.logger.WarnContext(ctx, "peertube import: caption failed", "source_id", t.sid, "error", err)
 				}
+				mu.Lock()
+				c.Imported += counts.Imported
+				c.Skipped += counts.Skipped
+				c.Failed += counts.Failed
+				c.Unsupported += counts.Unsupported
+				r.publishProgress()
+				mu.Unlock()
 			}
 		}()
 	}
@@ -94,13 +101,6 @@ enqueue:
 	}
 	close(work)
 	wg.Wait()
-	// Workers own their counters; the report is mutated only after they finish.
-	for _, counts := range outcomes {
-		c.Imported += counts.Imported
-		c.Skipped += counts.Skipped
-		c.Failed += counts.Failed
-		c.Unsupported += counts.Unsupported
-	}
 	return ctx.Err()
 }
 

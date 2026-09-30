@@ -481,6 +481,7 @@ func (im *Importer) runVideoImageTargets(
 func (im *Importer) videoImageCount(r *Report, kind string, fn func(*Counts)) {
 	im.videoImageMu.Lock()
 	fn(r.count(kind))
+	r.publishProgress()
 	im.videoImageMu.Unlock()
 }
 

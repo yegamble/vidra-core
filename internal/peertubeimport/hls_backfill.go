@@ -25,8 +25,13 @@ const (
 )
 
 // Four complete trees at a time bounds streaming fallback to four upload
-// buffers too. No worker touches parent caches or the caller's report.
+// buffers too. Workers never touch the parent caches.
 func runHLSCopyWorkers(ctx context.Context, targets []hlsCopyTarget, copyOne func(context.Context, hlsCopyTarget) (hlsCopyOutcome, error)) (Counts, error) {
+	return runHLSCopyWorkersWithProgress(ctx, targets, copyOne, nil)
+}
+
+// Progress is serialized with aggregation, after the target ledger commits.
+func runHLSCopyWorkersWithProgress(ctx context.Context, targets []hlsCopyTarget, copyOne func(context.Context, hlsCopyTarget) (hlsCopyOutcome, error), progress func(Counts)) (Counts, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var mu sync.Mutex
@@ -62,6 +67,9 @@ func runHLSCopyWorkers(ctx context.Context, targets []hlsCopyTarget, copyOne fun
 						counts.Failed++
 					case hlsCopySkipped:
 						counts.Skipped++
+					}
+					if progress != nil {
+						progress(counts)
 					}
 				}
 				mu.Unlock()
@@ -116,11 +124,14 @@ func (im *Importer) importHLSCopies(ctx context.Context, r *Report) error {
 		targets = append(targets, hlsCopyTarget{sourceID: v.UUID, videoID: id, prefix: sourceHLSDir(v.UUID), master: path.Base(hls.PlaylistFilename)})
 	}
 	im.copyMediaDisabled.Store(false)
-	counts, err := runHLSCopyWorkers(ctx, targets, im.copyHLSTarget)
 	c := r.count(KindHLSPlaylist)
-	c.Imported += counts.Imported
-	c.Failed += counts.Failed
-	c.Skipped += counts.Skipped
+	initial := *c
+	_, err = runHLSCopyWorkersWithProgress(ctx, targets, im.copyHLSTarget, func(counts Counts) {
+		c.Imported = initial.Imported + counts.Imported
+		c.Failed = initial.Failed + counts.Failed
+		c.Skipped = initial.Skipped + counts.Skipped
+		r.publishProgress()
+	})
 	return err
 }
 
