@@ -49,6 +49,8 @@ const (
 	// KindUserMFAHold counts accounts requiring confirmed native MFA protection.
 	KindUserMFAHold         = "user_mfa_hold"
 	KindUserSensitivePolicy = "user_sensitive_policy"
+	KindAccountMute         = "account_mute"
+	KindInstanceMute        = "instance_mute"
 	KindVideoCommentPolicy  = "video_comment_policy"
 	KindUserSuspension      = "user_suspension"
 	KindVideoSensitive      = "video_sensitive"
@@ -97,7 +99,7 @@ const (
 // (parents before children).
 var orderedKinds = []string{
 	KindCategoryTaxonomy,
-	KindUser, KindUserMFAHold, KindUserSensitivePolicy, KindUserSuspension, KindUserQuotaUnlimited, KindChannel, KindActorAvatar, KindActorBanner,
+	KindUser, KindUserMFAHold, KindUserSensitivePolicy, KindUserSuspension, KindUserQuotaUnlimited, KindAccountMute, KindInstanceMute, KindChannel, KindActorAvatar, KindActorBanner,
 	KindVideo, KindVideoCommentPolicy, KindVideoSensitive, KindVideoBlock, KindVideoFile,
 	KindHLSPlaylist, KindVideoNoMedia, KindThumbnail, KindStoryboard, KindCaption, KindTag, KindViewCount,
 	KindVideoOriginalDate, KindChapter, KindRating, KindRendition, KindComment,
