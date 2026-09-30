@@ -223,10 +223,11 @@ func playlistItemsDigest(slots []playlistSlot) string {
 // ── the destination snapshot ──
 
 type resyncUser struct {
-	id       uuid.UUID
-	username string
-	email    string
-	dgst     string
+	id              uuid.UUID
+	username        string
+	email           string
+	sensitivePolicy *string
+	dgst            string
 }
 
 type resyncChannel struct {
@@ -247,10 +248,12 @@ type resyncVideo struct {
 	// originallyPublishedAt reports nil for every video, and letting that win
 	// would erase the whole catalogue's dates on the first source-authoritative
 	// run.
-	channel  uuid.UUID
-	duration int32
-	origPub  *time.Time
-	dgst     string
+	channel         uuid.UUID
+	duration        int32
+	origPub         *time.Time
+	commentsPolicy  string
+	downloadEnabled bool
+	dgst            string
 }
 
 type resyncPlaylist struct {
@@ -306,7 +309,8 @@ func (im *Importer) loadResyncState(ctx context.Context) (*resyncState, error) {
 	for _, u := range users {
 		st.users[u.SourceID] = resyncUser{
 			id: u.ID, username: u.Username, email: u.Email,
-			dgst: userDigest(u.PasswordHash, u.Role, u.DisplayName, u.EmailVerified),
+			sensitivePolicy: u.SensitiveContentPolicy,
+			dgst:            userPolicyDigest(userDigest(u.PasswordHash, u.Role, u.DisplayName, u.EmailVerified), u.SensitiveContentPolicy),
 		}
 	}
 
@@ -329,8 +333,9 @@ func (im *Importer) loadResyncState(ctx context.Context) (*resyncState, error) {
 		origPub := video.TimePtr(v.OriginallyPublishedAt)
 		st.videos[v.SourceID] = resyncVideo{
 			id: v.ID, channel: v.ChannelID, duration: v.DurationSeconds, origPub: origPub,
-			dgst: videoDigest(v.ChannelID, v.Title, v.Description, v.Privacy, v.State,
-				v.Category, v.Language, v.License, v.DurationSeconds, origPub),
+			commentsPolicy: v.CommentsPolicy, downloadEnabled: v.DownloadEnabled,
+			dgst: videoPolicyDigest(videoDigest(v.ChannelID, v.Title, v.Description, v.Privacy, v.State,
+				v.Category, v.Language, v.License, v.DurationSeconds, origPub), v.CommentsPolicy, v.DownloadEnabled),
 		}
 	}
 
@@ -450,7 +455,11 @@ func (im *Importer) resyncOneUser(ctx context.Context, u SourceUser, sid string,
 	if !strings.EqualFold(cur.email, u.Email) {
 		r.addConflict(fmt.Sprintf("user %q changed email address on the source; the address here is left unchanged (it is a login identifier and a uniquely indexed natural key)", cur.username))
 	}
-	desired := userDigest(u.PasswordHash, mapRole(u.Role), u.DisplayName, u.EmailVerified)
+	sensitivePolicy, _ := mapSensitivePolicy(u)
+	if sensitivePolicy == nil {
+		sensitivePolicy = cur.sensitivePolicy
+	}
+	desired := userPolicyDigest(userDigest(u.PasswordHash, mapRole(u.Role), u.DisplayName, u.EmailVerified), sensitivePolicy)
 	if desired == cur.dgst {
 		c.Skipped++
 		return true, nil
@@ -460,11 +469,12 @@ func (im *Importer) resyncOneUser(ctx context.Context, u SourceUser, sid string,
 	// source's key is not a newer key — it is the same one.
 	if err := im.withTx(ctx, func(q *sqlcgen.Queries) error {
 		if err := q.ImportUpdateUser(ctx, sqlcgen.ImportUpdateUserParams{
-			ID:            cur.id,
-			PasswordHash:  u.PasswordHash,
-			Role:          mapRole(u.Role),
-			EmailVerified: u.EmailVerified,
-			DisplayName:   u.DisplayName,
+			ID:                     cur.id,
+			PasswordHash:           u.PasswordHash,
+			Role:                   mapRole(u.Role),
+			EmailVerified:          u.EmailVerified,
+			DisplayName:            u.DisplayName,
+			SensitiveContentPolicy: sensitivePolicy,
 		}); err != nil {
 			return err
 		}
@@ -546,8 +556,15 @@ func (im *Importer) resyncOneVideo(ctx context.Context, v SourceVideo, r *Report
 	if origPub == nil {
 		origPub = cur.origPub
 	}
-	desired := videoDigest(channel, v.Title, v.Description, mapPrivacy(v.Privacy), mapVideoState(v.State),
-		pgconv.Deref(intPtrToText(v.Category)), pgconv.Deref(v.Language), pgconv.Deref(intPtrToText(v.Licence)), duration, origPub)
+	commentsPolicy, downloadEnabled := cur.commentsPolicy, cur.downloadEnabled
+	if mapped := mapCommentPolicy(v.CommentsPolicy); mapped != nil {
+		commentsPolicy = *mapped
+	}
+	if v.DownloadEnabled != nil {
+		downloadEnabled = *v.DownloadEnabled
+	}
+	desired := videoPolicyDigest(videoDigest(channel, v.Title, v.Description, mapPrivacy(v.Privacy), mapVideoState(v.State),
+		pgconv.Deref(intPtrToText(v.Category)), pgconv.Deref(v.Language), pgconv.Deref(intPtrToText(v.Licence)), duration, origPub), commentsPolicy, downloadEnabled)
 
 	tags, err := im.desiredTags(ctx, v.ID)
 	if err != nil {
@@ -562,15 +579,17 @@ func (im *Importer) resyncOneVideo(ctx context.Context, v SourceVideo, r *Report
 	if err := im.withTx(ctx, func(q *sqlcgen.Queries) error {
 		if desired != cur.dgst {
 			if err := q.ImportUpdateVideo(ctx, sqlcgen.ImportUpdateVideoParams{
-				ID:          cur.id,
-				ChannelID:   channel,
-				Title:       v.Title,
-				Description: v.Description,
-				Privacy:     mapPrivacy(v.Privacy),
-				State:       mapVideoState(v.State),
-				Category:    intPtrToText(v.Category),
-				Language:    v.Language,
-				License:     intPtrToText(v.Licence),
+				ID:              cur.id,
+				ChannelID:       channel,
+				Title:           v.Title,
+				Description:     v.Description,
+				Privacy:         mapPrivacy(v.Privacy),
+				CommentsPolicy:  commentsPolicy,
+				DownloadEnabled: downloadEnabled,
+				State:           mapVideoState(v.State),
+				Category:        intPtrToText(v.Category),
+				Language:        v.Language,
+				License:         intPtrToText(v.Licence),
 
 				OriginallyPublishedAt: optTimestamptz(origPub),
 			}); err != nil {
@@ -1065,4 +1084,11 @@ func (im *Importer) resyncRemovedFollows(ctx context.Context, follows []SourceFo
 		c.Updated++
 	}
 	return nil
+}
+
+func userPolicyDigest(base string, policy *string) string {
+	return newDigest("user_policy").text(base).text(pgconv.Deref(policy)).sum()
+}
+func videoPolicyDigest(base, comments string, downloads bool) string {
+	return newDigest("video_policy").text(base).text(comments).flag(downloads).sum()
 }

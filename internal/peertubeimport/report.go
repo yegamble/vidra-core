@@ -46,8 +46,10 @@ const (
 	// flagged nsfw. Both count only what was CARRIED, never the whole family:
 	// "412 users imported" does not answer "how many arrived locked out?", which
 	// is the question asked before anybody is told their account is ready.
-	KindUserSuspension = "user_suspension"
-	KindVideoSensitive = "video_sensitive"
+	KindUserSensitivePolicy = "user_sensitive_policy"
+	KindVideoCommentPolicy  = "video_comment_policy"
+	KindUserSuspension      = "user_suspension"
+	KindVideoSensitive      = "video_sensitive"
 	// KindUserQuotaUnlimited counts USERS the import CREATED and therefore gave
 	// an unlimited storage quota (users.storage_quota_bytes = 0). It is a kind of
 	// its own because it is the one place the tool decides a policy on the
@@ -93,8 +95,8 @@ const (
 // (parents before children).
 var orderedKinds = []string{
 	KindCategoryTaxonomy,
-	KindUser, KindUserSuspension, KindUserQuotaUnlimited, KindChannel, KindActorAvatar, KindActorBanner,
-	KindVideo, KindVideoSensitive, KindVideoBlock, KindVideoFile,
+	KindUser, KindUserSensitivePolicy, KindUserSuspension, KindUserQuotaUnlimited, KindChannel, KindActorAvatar, KindActorBanner,
+	KindVideo, KindVideoCommentPolicy, KindVideoSensitive, KindVideoBlock, KindVideoFile,
 	KindHLSPlaylist, KindVideoNoMedia, KindThumbnail, KindStoryboard, KindCaption, KindTag, KindViewCount,
 	KindVideoOriginalDate, KindChapter, KindRating, KindRendition, KindComment,
 	KindPlaylist, KindPlaylistItem, KindFollow, KindWatchHistory,
@@ -206,5 +208,25 @@ func (r *Report) addConflict(note string) {
 	const maxConflicts = 500
 	if len(r.Conflicts) < maxConflicts {
 		r.Conflicts = append(r.Conflicts, note)
+	}
+}
+
+func notePolicyFallback(r *Report, kind, note string) {
+	r.count(kind).Unsupported++
+	for _, existing := range r.Deferred {
+		if existing == note {
+			return
+		}
+	}
+	r.Deferred = append(r.Deferred, note)
+}
+func noteUserPolicy(r *Report, u SourceUser) {
+	if _, lossy := mapSensitivePolicy(u); lossy {
+		notePolicyFallback(r, KindUserSensitivePolicy, "granular or unknown sensitive-content preferences map conservatively to hide; category-specific preference parity requires reconciliation")
+	}
+}
+func noteVideoPolicy(r *Report, v SourceVideo) {
+	if v.CommentsPolicy != nil && *v.CommentsPolicy != 1 && *v.CommentsPolicy != 2 {
+		notePolicyFallback(r, KindVideoCommentPolicy, "approval-only or unknown source comment policies map to disabled; no native comment-approval queue is imported")
 	}
 }

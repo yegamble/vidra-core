@@ -229,7 +229,9 @@ type SourceUser struct {
 	// column that says this person must not be able to sign in. It is carried
 	// INVERTED into users.is_active; false when the source schema predates it.
 	Blocked        bool
-	HistoryEnabled bool // Initial preference only; reruns preserve destination choices.
+	HistoryEnabled bool    // Initial preference only; reruns preserve destination choices.
+	NSFWPolicy     *string // nil means the source has no opinion.
+	GranularNSFW   bool    // Category restrictions have no exact native equivalent.
 }
 
 // SourceChannel is a LOCAL PeerTube video channel. OwnerUserID is the source
@@ -284,7 +286,9 @@ type SourceVideo struct {
 	// indistinguishable from a live one in every other column read here — which
 	// is exactly why it used to import public and published. Carried into
 	// video_blocks. false when the source has no such table.
-	Blacklisted bool
+	Blacklisted     bool
+	DownloadEnabled *bool
+	CommentsPolicy  *int
 }
 
 // SourceVideoFile is one stored media file for a video (web/webseed download).
@@ -377,12 +381,24 @@ func (s *Source) Users(ctx context.Context) ([]SourceUser, error) {
 	} else if has {
 		historyExpr = `COALESCE(u."videosHistoryEnabled", true)`
 	}
+	policyExpr, err := s.optionalExpression(ctx, "user", "nsfwPolicy", `u."nsfwPolicy"`, `NULL::text`)
+	if err != nil {
+		return nil, err
+	}
+	granularExpr := "false"
+	for _, column := range []string{"nsfwFlagsHidden", "nsfwFlagsWarned", "nsfwFlagsBlurred"} {
+		expr, err := s.optionalExpression(ctx, "user", column, `COALESCE(u."`+column+`", 0) <> 0`, "false")
+		if err != nil {
+			return nil, err
+		}
+		granularExpr += " OR " + expr
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT u.id, u.username, u.email, COALESCE(u.password, ''),
 		       u.role, COALESCE(u."emailVerified", false),
 		       COALESCE(acc.name, u.username), u."createdAt",
 		       COALESCE(act."publicKey", ''), COALESCE(act."privateKey", ''),
-		       `+blockedExpr+`, `+historyExpr+`
+		       `+blockedExpr+`, `+historyExpr+`, `+policyExpr+`, (`+granularExpr+`)
 		FROM "user" u
 		JOIN account acc ON acc."userId" = u.id
 		JOIN actor act ON `+actorJoin+`
@@ -397,7 +413,7 @@ func (s *Source) Users(ctx context.Context) ([]SourceUser, error) {
 		var u SourceUser
 		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Role,
 			&u.EmailVerified, &u.DisplayName, &u.CreatedAt, &u.PublicKeyPEM, &u.PrivateKeyPEM,
-			&u.Blocked, &u.HistoryEnabled); err != nil {
+			&u.Blocked, &u.HistoryEnabled, &u.NSFWPolicy, &u.GranularNSFW); err != nil {
 			return nil, fmt.Errorf("peertubeimport: scan user: %w", err)
 		}
 		out = append(out, u)
@@ -492,10 +508,18 @@ func (s *Source) Videos(ctx context.Context) ([]SourceVideo, error) {
 	} else if has {
 		blacklistExpr = `EXISTS (SELECT 1 FROM "videoBlacklist" bl WHERE bl."videoId" = v.id)`
 	}
+	downloadExpr, err := s.optionalExpression(ctx, "video", "downloadEnabled", `v."downloadEnabled"`, `NULL::boolean`)
+	if err != nil {
+		return nil, err
+	}
+	commentsExpr, err := s.optionalExpression(ctx, "video", "commentsPolicy", `v."commentsPolicy"`, `NULL::integer`)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT v.id, v.uuid::text, v."channelId", v.name, COALESCE(v.description, ''),
 		       v.privacy, v.state, v.category, v.licence, v.language, v.duration, v."createdAt",
-		       `+viewsExpr+`, `+aspectExpr+`, `+origPubExpr+`, `+nsfwExpr+`, `+blacklistExpr+`
+		       `+viewsExpr+`, `+aspectExpr+`, `+origPubExpr+`, `+nsfwExpr+`, `+blacklistExpr+`, `+downloadExpr+`, `+commentsExpr+`
 		FROM video v
 		JOIN "videoChannel" vc ON vc.id = v."channelId"
 		JOIN actor act ON `+actorJoin+`
@@ -511,7 +535,7 @@ func (s *Source) Videos(ctx context.Context) ([]SourceVideo, error) {
 		var uuidStr string
 		if err := rows.Scan(&v.ID, &uuidStr, &v.ChannelID, &v.Title, &v.Description,
 			&v.Privacy, &v.State, &v.Category, &v.Licence, &v.Language, &v.Duration, &v.CreatedAt,
-			&v.Views, &v.AspectRatio, &v.OriginallyPublishedAt, &v.NSFW, &v.Blacklisted); err != nil {
+			&v.Views, &v.AspectRatio, &v.OriginallyPublishedAt, &v.NSFW, &v.Blacklisted, &v.DownloadEnabled, &v.CommentsPolicy); err != nil {
 			return nil, fmt.Errorf("peertubeimport: scan video: %w", err)
 		}
 		v.UUID = uuidStr
@@ -1514,4 +1538,16 @@ func (s *Source) CategoryTaxonomy(ctx context.Context) (SourceCategoryTaxonomy, 
 	}
 	tax, ok := parsePluginCategories(raw)
 	return tax, ok, nil
+}
+
+// optionalExpression keeps absent old-schema fields distinct from explicit values.
+func (s *Source) optionalExpression(ctx context.Context, table, column, expression, absent string) (string, error) {
+	has, err := s.columnExists(ctx, table, column)
+	if err != nil {
+		return "", err
+	}
+	if has {
+		return expression, nil
+	}
+	return absent, nil
 }

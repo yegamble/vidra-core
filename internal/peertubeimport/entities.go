@@ -172,6 +172,7 @@ func (im *Importer) importUsers(ctx context.Context, r *Report) error {
 	}
 	c := r.count(KindUser)
 	for _, u := range users {
+		noteUserPolicy(r, u)
 		sid := strconv.FormatInt(u.ID, 10)
 		// A source-authoritative run answers from the destination snapshot FIRST:
 		// it owns an account for this source user, so the question is not "have I
@@ -222,6 +223,7 @@ func (im *Importer) importOneUser(ctx context.Context, u SourceUser, r *Report, 
 		c.Skipped++
 		return nil
 	}
+	sensitivePolicy, _ := mapSensitivePolicy(u)
 	sealedPriv, err := im.sealPrivateKey(u.PrivateKeyPEM)
 	if err != nil {
 		return err
@@ -240,7 +242,8 @@ func (im *Importer) importOneUser(ctx context.Context, u SourceUser, r *Report, 
 			DisplayName: u.DisplayName,
 			CreatedAt:   u.CreatedAt,
 			// Copy this preference only on creation; later changes belong to the user.
-			HistoryEnabled: u.HistoryEnabled,
+			HistoryEnabled:         u.HistoryEnabled,
+			SensitiveContentPolicy: sensitivePolicy,
 		})
 		if err != nil {
 			return err
@@ -433,6 +436,7 @@ func (im *Importer) importVideos(ctx context.Context, r *Report) error {
 	}
 	c := r.count(KindVideo)
 	for _, v := range videos {
+		noteVideoPolicy(r, v)
 		sid := v.UUID
 		if im.resync != nil {
 			handled, err := im.resyncOneVideo(ctx, v, r, c)
@@ -578,15 +582,17 @@ func (im *Importer) importOneVideo(ctx context.Context, v SourceVideo, r *Report
 
 	err = im.withTx(ctx, func(q *sqlcgen.Queries) error {
 		id, err := q.ImportInsertVideo(ctx, sqlcgen.ImportInsertVideoParams{
-			ChannelID:   channel,
-			Title:       v.Title,
-			Description: v.Description,
-			Privacy:     mapPrivacy(v.Privacy),
-			State:       mapVideoState(v.State),
-			Category:    intPtrToText(v.Category),
-			Language:    v.Language,
-			License:     intPtrToText(v.Licence),
-			CreatedAt:   v.CreatedAt,
+			ChannelID:       channel,
+			Title:           v.Title,
+			Description:     v.Description,
+			Privacy:         mapPrivacy(v.Privacy),
+			CommentsPolicy:  mapCommentPolicy(v.CommentsPolicy),
+			DownloadEnabled: v.DownloadEnabled,
+			State:           mapVideoState(v.State),
+			Category:        intPtrToText(v.Category),
+			Language:        v.Language,
+			License:         intPtrToText(v.Licence),
+			CreatedAt:       v.CreatedAt,
 			// The date the video was first published ELSEWHERE, when the source
 			// records one. It is carried on the insert as well as by the backfill
 			// pass so a freshly imported video has it immediately.
