@@ -400,3 +400,35 @@ func sameCategories(a, b []video.ConfigOption) bool {
 	}
 	return true
 }
+
+// Unknown/approval-only policies fail closed; there is no native approval queue.
+func mapCommentPolicy(policy *int) *string {
+	if policy == nil {
+		return nil
+	}
+	value := "disabled"
+	if *policy == 1 {
+		value = "enabled"
+	}
+	return &value
+}
+
+// Granular category restrictions cannot be represented by a single native policy.
+// Hide sensitive content rather than silently broadening those preferences.
+func mapSensitivePolicy(u SourceUser) (*string, bool) {
+	value := "hide"
+	if u.GranularNSFW {
+		return &value, true
+	}
+	if u.NSFWPolicy == nil {
+		return nil, false
+	}
+	switch *u.NSFWPolicy {
+	case "do_not_list":
+	case "warn", "blur", "display":
+		value = *u.NSFWPolicy
+	default:
+		return &value, true
+	}
+	return &value, false
+}

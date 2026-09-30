@@ -680,21 +680,22 @@ func (q *Queries) ImportInsertPlaylistItem(ctx context.Context, arg ImportInsert
 
 const importInsertUser = `-- name: ImportInsertUser :one
 
-INSERT INTO users (username, email, password_hash, role, email_verified, is_active, display_name, created_at, storage_quota_bytes, history_enabled)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9)
+INSERT INTO users (username, email, password_hash, role, email_verified, is_active, display_name, created_at, storage_quota_bytes, history_enabled, sensitive_content_policy)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10::text)
 RETURNING id
 `
 
 type ImportInsertUserParams struct {
-	Username       string    `json:"username"`
-	Email          string    `json:"email"`
-	PasswordHash   string    `json:"password_hash"`
-	Role           string    `json:"role"`
-	EmailVerified  bool      `json:"email_verified"`
-	IsActive       bool      `json:"is_active"`
-	DisplayName    string    `json:"display_name"`
-	CreatedAt      time.Time `json:"created_at"`
-	HistoryEnabled bool      `json:"history_enabled"`
+	Username               string    `json:"username"`
+	Email                  string    `json:"email"`
+	PasswordHash           string    `json:"password_hash"`
+	Role                   string    `json:"role"`
+	EmailVerified          bool      `json:"email_verified"`
+	IsActive               bool      `json:"is_active"`
+	DisplayName            string    `json:"display_name"`
+	CreatedAt              time.Time `json:"created_at"`
+	HistoryEnabled         bool      `json:"history_enabled"`
+	SensitiveContentPolicy *string   `json:"sensitive_content_policy"`
 }
 
 // ─────────────────── idempotent entity inserts ───────────────────
@@ -730,6 +731,7 @@ func (q *Queries) ImportInsertUser(ctx context.Context, arg ImportInsertUserPara
 		arg.DisplayName,
 		arg.CreatedAt,
 		arg.HistoryEnabled,
+		arg.SensitiveContentPolicy,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -737,8 +739,10 @@ func (q *Queries) ImportInsertUser(ctx context.Context, arg ImportInsertUserPara
 }
 
 const importInsertVideo = `-- name: ImportInsertVideo :one
-INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at, originally_published_at, is_sensitive, peertube_uuid)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at, originally_published_at, is_sensitive, peertube_uuid, comments_policy, download_enabled)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+        COALESCE($13::text, 'enabled'),
+        COALESCE($14::boolean, true))
 RETURNING id
 `
 
@@ -755,6 +759,8 @@ type ImportInsertVideoParams struct {
 	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
 	IsSensitive           bool               `json:"is_sensitive"`
 	PeertubeUuid          pgtype.UUID        `json:"peertube_uuid"`
+	CommentsPolicy        *string            `json:"comments_policy"`
+	DownloadEnabled       *bool              `json:"download_enabled"`
 }
 
 // originally_published_at is the source's own originallyPublishedAt and is NULL
@@ -783,6 +789,8 @@ func (q *Queries) ImportInsertVideo(ctx context.Context, arg ImportInsertVideoPa
 		arg.OriginallyPublishedAt,
 		arg.IsSensitive,
 		arg.PeertubeUuid,
+		arg.CommentsPolicy,
+		arg.DownloadEnabled,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -1256,21 +1264,22 @@ func (q *Queries) ImportResyncRatings(ctx context.Context) ([]ImportResyncRating
 
 const importResyncUsers = `-- name: ImportResyncUsers :many
 SELECT l.source_id, u.id, u.username, u.email, u.password_hash, u.role,
-       u.email_verified, u.display_name
+       u.email_verified, u.display_name, u.sensitive_content_policy
 FROM peertube_import_ledger l
 JOIN users u ON u.id = l.vidra_id
 WHERE l.entity_kind = 'user' AND l.status = 'done' AND l.created_by_import
 `
 
 type ImportResyncUsersRow struct {
-	SourceID      string    `json:"source_id"`
-	ID            uuid.UUID `json:"id"`
-	Username      string    `json:"username"`
-	Email         string    `json:"email"`
-	PasswordHash  string    `json:"password_hash"`
-	Role          string    `json:"role"`
-	EmailVerified bool      `json:"email_verified"`
-	DisplayName   string    `json:"display_name"`
+	SourceID               string    `json:"source_id"`
+	ID                     uuid.UUID `json:"id"`
+	Username               string    `json:"username"`
+	Email                  string    `json:"email"`
+	PasswordHash           string    `json:"password_hash"`
+	Role                   string    `json:"role"`
+	EmailVerified          bool      `json:"email_verified"`
+	DisplayName            string    `json:"display_name"`
+	SensitiveContentPolicy *string   `json:"sensitive_content_policy"`
 }
 
 // Every user the import CREATED, with the fields the import maps. username and
@@ -1296,6 +1305,7 @@ func (q *Queries) ImportResyncUsers(ctx context.Context) ([]ImportResyncUsersRow
 			&i.Role,
 			&i.EmailVerified,
 			&i.DisplayName,
+			&i.SensitiveContentPolicy,
 		); err != nil {
 			return nil, err
 		}
@@ -1354,7 +1364,7 @@ SELECT l.source_id, v.id, v.channel_id, v.title, v.description, v.privacy, v.sta
        -- video was first published here), and folding it into a zero time would
        -- make "never published elsewhere" and "published at the epoch"
        -- indistinguishable to the digest.
-       v.originally_published_at
+       v.originally_published_at, v.comments_policy, v.download_enabled
 FROM peertube_import_ledger l
 JOIN videos v ON v.id = l.vidra_id
 LEFT JOIN video_metadata m ON m.video_id = v.id
@@ -1374,6 +1384,8 @@ type ImportResyncVideosRow struct {
 	License               string             `json:"license"`
 	DurationSeconds       int32              `json:"duration_seconds"`
 	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
+	CommentsPolicy        string             `json:"comments_policy"`
+	DownloadEnabled       bool               `json:"download_enabled"`
 }
 
 // Every video the import created, with the mapped metadata AND the duration,
@@ -1402,6 +1414,8 @@ func (q *Queries) ImportResyncVideos(ctx context.Context) ([]ImportResyncVideosR
 			&i.License,
 			&i.DurationSeconds,
 			&i.OriginallyPublishedAt,
+			&i.CommentsPolicy,
+			&i.DownloadEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -1520,16 +1534,18 @@ SET password_hash  = $2,
     role           = $3,
     email_verified = $4,
     display_name   = $5,
+    sensitive_content_policy = COALESCE($6::text, sensitive_content_policy),
     updated_at     = now()
 WHERE id = $1
 `
 
 type ImportUpdateUserParams struct {
-	ID            uuid.UUID `json:"id"`
-	PasswordHash  string    `json:"password_hash"`
-	Role          string    `json:"role"`
-	EmailVerified bool      `json:"email_verified"`
-	DisplayName   string    `json:"display_name"`
+	ID                     uuid.UUID `json:"id"`
+	PasswordHash           string    `json:"password_hash"`
+	Role                   string    `json:"role"`
+	EmailVerified          bool      `json:"email_verified"`
+	DisplayName            string    `json:"display_name"`
+	SensitiveContentPolicy *string   `json:"sensitive_content_policy"`
 }
 
 // ── the resync writes ──
@@ -1557,6 +1573,7 @@ func (q *Queries) ImportUpdateUser(ctx context.Context, arg ImportUpdateUserPara
 		arg.Role,
 		arg.EmailVerified,
 		arg.DisplayName,
+		arg.SensitiveContentPolicy,
 	)
 	return err
 }
@@ -1572,6 +1589,8 @@ SET channel_id  = $2,
     language    = $8,
     license     = $9,
     originally_published_at = $10,
+    comments_policy = $11,
+    download_enabled = $12,
     updated_at  = now()
 WHERE id = $1
 `
@@ -1587,6 +1606,8 @@ type ImportUpdateVideoParams struct {
 	Language              *string            `json:"language"`
 	License               *string            `json:"license"`
 	OriginallyPublishedAt pgtype.Timestamptz `json:"originally_published_at"`
+	CommentsPolicy        string             `json:"comments_policy"`
+	DownloadEnabled       bool               `json:"download_enabled"`
 }
 
 func (q *Queries) ImportUpdateVideo(ctx context.Context, arg ImportUpdateVideoParams) error {
@@ -1601,6 +1622,8 @@ func (q *Queries) ImportUpdateVideo(ctx context.Context, arg ImportUpdateVideoPa
 		arg.Language,
 		arg.License,
 		arg.OriginallyPublishedAt,
+		arg.CommentsPolicy,
+		arg.DownloadEnabled,
 	)
 	return err
 }

@@ -224,8 +224,8 @@ WHERE id = $1;
 -- --media-mode=reference it charges bytes that were never copied here. A
 -- migration is not the moment to impose a cap the operator never chose, so this
 -- is stated ONCE, at creation, and ImportUpdateUser never re-asserts it.
-INSERT INTO users (username, email, password_hash, role, email_verified, is_active, display_name, created_at, storage_quota_bytes, history_enabled)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9)
+INSERT INTO users (username, email, password_hash, role, email_verified, is_active, display_name, created_at, storage_quota_bytes, history_enabled, sensitive_content_policy)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, sqlc.narg('sensitive_content_policy')::text)
 RETURNING id;
 
 -- name: ImportFindUserByEmail :one
@@ -256,8 +256,10 @@ SELECT id FROM channels WHERE lower(handle) = lower($1) LIMIT 1;
 -- source video became this one" for a public URL — see 0127 for why the import
 -- ledger cannot. It is what keeps the source instance's /w/{shortUUID} and
 -- /videos/watch/{uuid} links alive after an operator cuts their domain over.
-INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at, originally_published_at, is_sensitive, peertube_uuid)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+INSERT INTO videos (channel_id, title, description, privacy, state, category, language, license, created_at, originally_published_at, is_sensitive, peertube_uuid, comments_policy, download_enabled)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+        COALESCE(sqlc.narg('comments_policy')::text, 'enabled'),
+        COALESCE(sqlc.narg('download_enabled')::boolean, true))
 RETURNING id;
 
 -- name: ImportUpsertVideoMetadata :exec
@@ -609,7 +611,7 @@ WHERE entity_kind = $1 AND status = 'done';
 -- collide with an unrelated account. They come back so the caller can REPORT the
 -- divergence instead of silently ignoring it.
 SELECT l.source_id, u.id, u.username, u.email, u.password_hash, u.role,
-       u.email_verified, u.display_name
+       u.email_verified, u.display_name, u.sensitive_content_policy
 FROM peertube_import_ledger l
 JOIN users u ON u.id = l.vidra_id
 WHERE l.entity_kind = 'user' AND l.status = 'done' AND l.created_by_import;
@@ -639,7 +641,7 @@ SELECT l.source_id, v.id, v.channel_id, v.title, v.description, v.privacy, v.sta
        -- video was first published here), and folding it into a zero time would
        -- make "never published elsewhere" and "published at the epoch"
        -- indistinguishable to the digest.
-       v.originally_published_at
+       v.originally_published_at, v.comments_policy, v.download_enabled
 FROM peertube_import_ledger l
 JOIN videos v ON v.id = l.vidra_id
 LEFT JOIN video_metadata m ON m.video_id = v.id
@@ -718,6 +720,7 @@ SET password_hash  = $2,
     role           = $3,
     email_verified = $4,
     display_name   = $5,
+    sensitive_content_policy = COALESCE(sqlc.narg('sensitive_content_policy')::text, sensitive_content_policy),
     updated_at     = now()
 WHERE id = $1;
 
@@ -740,6 +743,8 @@ SET channel_id  = $2,
     language    = $8,
     license     = $9,
     originally_published_at = $10,
+    comments_policy = $11,
+    download_enabled = $12,
     updated_at  = now()
 WHERE id = $1;
 
