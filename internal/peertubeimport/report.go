@@ -46,6 +46,8 @@ const (
 	// flagged nsfw. Both count only what was CARRIED, never the whole family:
 	// "412 users imported" does not answer "how many arrived locked out?", which
 	// is the question asked before anybody is told their account is ready.
+	// KindUserMFAHold counts accounts requiring confirmed native MFA protection.
+	KindUserMFAHold         = "user_mfa_hold"
 	KindUserSensitivePolicy = "user_sensitive_policy"
 	KindVideoCommentPolicy  = "video_comment_policy"
 	KindUserSuspension      = "user_suspension"
@@ -95,7 +97,7 @@ const (
 // (parents before children).
 var orderedKinds = []string{
 	KindCategoryTaxonomy,
-	KindUser, KindUserSensitivePolicy, KindUserSuspension, KindUserQuotaUnlimited, KindChannel, KindActorAvatar, KindActorBanner,
+	KindUser, KindUserMFAHold, KindUserSensitivePolicy, KindUserSuspension, KindUserQuotaUnlimited, KindChannel, KindActorAvatar, KindActorBanner,
 	KindVideo, KindVideoCommentPolicy, KindVideoSensitive, KindVideoBlock, KindVideoFile,
 	KindHLSPlaylist, KindVideoNoMedia, KindThumbnail, KindStoryboard, KindCaption, KindTag, KindViewCount,
 	KindVideoOriginalDate, KindChapter, KindRating, KindRendition, KindComment,

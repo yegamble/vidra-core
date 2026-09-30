@@ -364,6 +364,10 @@ func (im *Importer) Plan(ctx context.Context, version int) (*Report, error) {
 		if u.Blocked {
 			r.count(KindUserSuspension).Planned++
 		}
+		if u.MFAEnabled {
+			r.count(KindUserMFAHold).Planned++
+			noteMFAHold(r)
+		}
 		if note, collides, err := im.userConflict(ctx, u); err != nil {
 			return nil, err
 		} else if collides {

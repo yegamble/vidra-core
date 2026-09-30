@@ -173,6 +173,9 @@ func (im *Importer) importUsers(ctx context.Context, r *Report) error {
 	c := r.count(KindUser)
 	for _, u := range users {
 		noteUserPolicy(r, u)
+		if u.MFAEnabled {
+			noteMFAHold(r)
+		}
 		sid := strconv.FormatInt(u.ID, 10)
 		// A source-authoritative run answers from the destination snapshot FIRST:
 		// it owns an account for this source user, so the question is not "have I
@@ -237,8 +240,9 @@ func (im *Importer) importOneUser(ctx context.Context, u SourceUser, r *Report, 
 			EmailVerified: u.EmailVerified,
 			// The source's SUSPENSION, carried (see ImportInsertUser). This was a
 			// hardcoded true, so a blocked account arrived active with the source's
-			// working bcrypt hash beside it.
-			IsActive:    !u.Blocked,
+			// working bcrypt hash beside it. Source MFA also requires a hold:
+			// its second-factor secret is deliberately not transferred.
+			IsActive:    !u.Blocked && !u.MFAEnabled,
 			DisplayName: u.DisplayName,
 			CreatedAt:   u.CreatedAt,
 			// Copy this preference only on creation; later changes belong to the user.
@@ -273,6 +277,9 @@ func (im *Importer) importOneUser(ctx context.Context, u SourceUser, r *Report, 
 	r.count(KindUserQuotaUnlimited).Imported++
 	if u.Blocked {
 		r.count(KindUserSuspension).Imported++
+	}
+	if u.MFAEnabled {
+		r.count(KindUserMFAHold).Imported++
 	}
 	return nil
 }

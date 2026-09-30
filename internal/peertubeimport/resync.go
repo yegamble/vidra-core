@@ -443,6 +443,13 @@ func (im *Importer) resyncOneUser(ctx context.Context, u SourceUser, sid string,
 	if !owned {
 		return false, nil
 	}
+	// Older imports may have matching metadata but lack the source's second
+	// factor. Repair the hold before the metadata digest can skip this account.
+	if u.MFAEnabled {
+		if err := im.holdImportedMFAUser(ctx, cur.id, r); err != nil {
+			return true, err
+		}
+	}
 	// The natural keys are compared BEFORE the digest short-circuit, so a standing
 	// divergence is reported on every run rather than being invisible because
 	// nothing else about the account moved. They are never written: username and
