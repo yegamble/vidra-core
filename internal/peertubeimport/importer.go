@@ -101,6 +101,7 @@ type Importer struct {
 	// from more than one goroutine.
 	videoImageMu sync.Mutex
 
+	copyConcurrency   int
 	copyMediaDisabled atomic.Bool // shared HLS fallback; the copier itself stays immutable
 }
 
@@ -121,6 +122,7 @@ type Options struct {
 	SrcMedia                  storage.Backend
 	DestMedia                 storage.Backend
 	CopyMedia                 storage.ServerCopier
+	CopyConcurrency           int // HLS trees; zero retains the default of four.
 	SealKey                   func(pem string) (string, error)
 	// SourceAuthoritative says the SOURCE is the truth where the two sides
 	// diverge, instead of the import only filling gaps on this instance.
@@ -172,6 +174,7 @@ func NewImporter(dest *pgxpool.Pool, src *Source, opts Options) *Importer {
 		srcMedia:            opts.SrcMedia,
 		destMedia:           opts.DestMedia,
 		copyMediaServer:     opts.CopyMedia,
+		copyConcurrency:     opts.CopyConcurrency,
 		mediaMode:           mediaMode,
 		policy:              policy,
 		force:               opts.Force,

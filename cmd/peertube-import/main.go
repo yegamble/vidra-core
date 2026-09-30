@@ -169,6 +169,7 @@ func main() {
 		SrcMedia:            srcMedia,
 		DestMedia:           destMedia,
 		CopyMedia:           copier,
+		CopyConcurrency:     cfg.PeerTubeImportCopyConcurrency,
 		SealKey:             sealKey,
 		SourceAuthoritative: *sourceAuth,
 	})

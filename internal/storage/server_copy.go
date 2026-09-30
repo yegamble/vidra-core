@@ -12,6 +12,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"golang.org/x/sync/errgroup"
 )
 
 // ErrCopyUnavailable permits a streaming fallback only when no copy was started.
@@ -147,20 +148,33 @@ func (c *s3Copier) copyMultipart(ctx context.Context, src minio.CopySrcOptions, 
 	for name := range headers {
 		metadata[name] = headers.Get(name)
 	}
-	var parts []minio.CompletePart
-	for offset := int64(0); offset < size; offset += 128 << 20 {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
-		part, err := core.CopyObjectPart(ctx, src.Bucket, src.Object, c.destination.bucket, key, uploadID,
-			len(parts)+1, offset, min(128<<20, size-offset), metadata)
-		if err != nil {
-			return result, classifyS3("copy-part", err)
-		}
-		if part.ETag == "" {
-			return result, fmt.Errorf("storage: multipart copy returned no part ETag")
-		}
-		parts = append(parts, part)
+	// Keep control requests bounded; CopyObjectPart transfers bytes inside S3,
+	// so parallel parts do not allocate payload-sized buffers on the importer.
+	const partSize = 128 << 20
+	parts := make([]minio.CompletePart, (size+partSize-1)/partSize)
+	group, partCtx := errgroup.WithContext(ctx)
+	group.SetLimit(4)
+	for i := range parts {
+		group.Go(func() error {
+			if err := partCtx.Err(); err != nil {
+				return err
+			}
+			offset := int64(i) * partSize
+			part, err := core.CopyObjectPart(partCtx, src.Bucket, src.Object, c.destination.bucket, key, uploadID,
+				i+1, offset, min(partSize, size-offset), metadata)
+			if err != nil {
+				return classifyS3("copy-part", err)
+			}
+			if part.ETag == "" {
+				return fmt.Errorf("storage: multipart copy returned no part ETag")
+			}
+			parts[i] = part // Completion requires part-number order, not finish order.
+			return nil
+		})
+	}
+	// Join every in-flight request before completion or abort, including on cancel.
+	if err := group.Wait(); err != nil {
+		return result, err
 	}
 	result, err = core.CompleteMultipartUpload(ctx, c.destination.bucket, key, uploadID, parts, options)
 	if err != nil {
