@@ -250,6 +250,24 @@ func TestStorageS3SecureDefaults(t *testing.T) {
 	}
 }
 
+func TestStorageS3ReadEndpoint(t *testing.T) {
+	setS3Env(t)
+	t.Setenv("STORAGE_S3_READ_ENDPOINT", "proxy.example.test")
+	cfg, err := Load()
+	if err != nil || cfg.StorageS3ReadEndpoint != "proxy.example.test" {
+		t.Fatalf("read endpoint did not load: %v", err)
+	}
+	identity := cfg.storageIdentity()
+	cfg.StorageS3ReadEndpoint = "other.example.test"
+	if cfg.storageIdentity() != identity {
+		t.Fatal("read proxy changed store identity")
+	}
+	t.Setenv("STORAGE_S3_READ_ENDPOINT", "https://proxy.example.test")
+	if _, err := Load(); err == nil {
+		t.Fatal("scheme-bearing read endpoint accepted")
+	}
+}
+
 func TestStorageS3RequiresSettings(t *testing.T) {
 	for _, missing := range []string{"STORAGE_S3_ENDPOINT", "STORAGE_S3_BUCKET", "STORAGE_S3_ACCESS_KEY", "STORAGE_S3_SECRET_KEY"} {
 		t.Run(missing, func(t *testing.T) {

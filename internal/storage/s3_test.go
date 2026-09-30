@@ -35,6 +35,8 @@ func TestNewS3ValidatesConfig(t *testing.T) {
 		mutate func(*S3Config)
 	}{
 		{"missing endpoint", func(c *S3Config) { c.Endpoint = "" }},
+		{"scheme in read endpoint", func(c *S3Config) { c.ReadEndpoint = "https://proxy.example.test" }},
+		{"path in read endpoint", func(c *S3Config) { c.ReadEndpoint = "proxy.example.test/bucket" }},
 		{"scheme in endpoint", func(c *S3Config) { c.Endpoint = "http://minio:9000" }},
 		{"https scheme in endpoint", func(c *S3Config) { c.Endpoint = "https://s3.example.test" }},
 		{"missing bucket", func(c *S3Config) { c.Bucket = " " }},

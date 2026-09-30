@@ -4096,6 +4096,7 @@ func primaryStorageSpec(cfg *config.Config) storageSpec {
 		localRoot: cfg.StorageLocalRoot,
 		s3: storage.S3Config{
 			Endpoint:       cfg.StorageS3Endpoint,
+			ReadEndpoint:   cfg.StorageS3ReadEndpoint,
 			Bucket:         cfg.StorageS3Bucket,
 			AccessKey:      cfg.StorageS3AccessKey,
 			SecretKey:      cfg.StorageS3SecretKey,
