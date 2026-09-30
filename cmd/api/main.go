@@ -2847,6 +2847,7 @@ func run() error {
 					SrcMedia:            srcMedia,
 					DestMedia:           blobs,
 					CopyMedia:           copier,
+					CopyConcurrency:     cfg.PeerTubeImportCopyConcurrency,
 					SealKey:             ptSeal,
 					// The import can write an instance setting (the source's category
 					// taxonomy). This server holds that overlay in memory and only

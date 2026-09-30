@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +19,8 @@ import (
 )
 
 type copyProtocol struct {
+	mu                                      sync.Mutex
+	beforePart                              func(*http.Request)
 	t                                       *testing.T
 	source, destination                     *S3
 	copier                                  ServerCopier
@@ -57,6 +61,11 @@ func newCopyProtocol(t *testing.T, size int64) *copyProtocol {
 }
 
 func (f *copyProtocol) serve(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut && r.URL.Query().Get("uploadId") != "" && f.beforePart != nil {
+		f.beforePart(r)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	errReply := func(code string) bool {
 		if code == "" {
 			return false
@@ -125,6 +134,17 @@ func (f *copyProtocol) serve(w http.ResponseWriter, r *http.Request) {
 			_, _ = fmt.Fprint(w, "<InitiateMultipartUploadResult><UploadId>upload-id</UploadId></InitiateMultipartUploadResult>")
 		} else {
 			f.completes++
+			var body struct {
+				Parts []minio.CompletePart `xml:"Part"`
+			}
+			if err := xml.NewDecoder(r.Body).Decode(&body); err != nil {
+				f.t.Error(err)
+			}
+			for i, part := range body.Parts {
+				if part.PartNumber != i+1 {
+					f.t.Error("completion parts out of order")
+				}
+			}
 			if errReply(f.completeCode) {
 				return
 			}
@@ -144,7 +164,8 @@ func (f *copyProtocol) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Query().Get("uploadId") != "" {
 		f.parts++
-		start := int64(f.parts-1) * (128 << 20)
+		number, _ := strconv.Atoi(r.URL.Query().Get("partNumber"))
+		start := int64(number-1) * (128 << 20)
 		end := min(start+(128<<20), f.size) - 1
 		if r.Header.Get("x-amz-copy-source-range") != fmt.Sprintf("bytes=%d-%d", start, end) {
 			f.t.Errorf("incorrect part range: %s", r.Header.Get("x-amz-copy-source-range"))
@@ -370,5 +391,43 @@ func TestServerCopyEligibilityAndConfiguration(t *testing.T) {
 	}
 	if f.headRequests+f.copies+f.starts != 0 {
 		t.Fatal("ineligible copy performed network I/O")
+	}
+}
+
+func TestServerCopyMultipartRunsFourPartsConcurrently(t *testing.T) {
+	f := newCopyProtocol(t, 5<<30)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	entered, release := make(chan struct{}, 40), make(chan struct{})
+	f.beforePart = func(r *http.Request) {
+		entered <- struct{}{}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}
+	done := make(chan error, 1)
+	go func() { _, err := f.copier.Copy(ctx, f.source, "media.mp4", "media.mp4", 16<<30); done <- err }()
+	for range 4 {
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			cancel()
+			close(release)
+			<-done
+			t.Fatal("multipart copy did not run four parts concurrently")
+		}
+	}
+	select {
+	case <-entered:
+		t.Error("multipart concurrency exceeded four")
+	default:
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if f.parts != 40 || f.completes != 1 || f.aborts != 0 {
+		t.Fatalf("parts=%d completes=%d aborts=%d", f.parts, f.completes, f.aborts)
 	}
 }

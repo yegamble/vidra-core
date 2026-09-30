@@ -1084,6 +1084,8 @@ type Config struct {
 	// values are SECRETS, supplied together or left empty to stream as before.
 	PeerTubeImportS3CopyAccessKey string
 	PeerTubeImportS3CopySecretKey string
+	// HLS trees in flight, including streaming fallback (1–32, default 4).
+	PeerTubeImportCopyConcurrency int
 
 	// PeerTubeImportConflictPolicy is the default resolution for username/handle/
 	// email/slug collisions between the source and this instance: "skip" (default,
@@ -1363,6 +1365,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		PeerTubeSourceS3ForcePathStyle:         p.Bool("PEERTUBE_SOURCE_S3_FORCE_PATH_STYLE", false),
 		PeerTubeImportS3CopyAccessKey:          getEnv("PEERTUBE_IMPORT_S3_COPY_ACCESS_KEY", ""),
 		PeerTubeImportS3CopySecretKey:          getEnv("PEERTUBE_IMPORT_S3_COPY_SECRET_KEY", ""),
+		PeerTubeImportCopyConcurrency:          p.Int("PEERTUBE_IMPORT_COPY_CONCURRENCY", 4),
 		PeerTubeImportConflictPolicy:           strings.ToLower(getEnv("PEERTUBE_IMPORT_CONFLICT_POLICY", "skip")),
 		PeerTubeImportMediaMode:                strings.ToLower(getEnv("PEERTUBE_IMPORT_MEDIA_MODE", "copy")),
 	}
@@ -2441,6 +2444,9 @@ func CheckPeerTubeSourceDatabaseURL(v string) error {
 // import API is enabled — the CLI supplies its own source flags.
 func (c *Config) validatePeerTubeImport() error {
 	var errs []error
+	if c.PeerTubeImportCopyConcurrency < 1 || c.PeerTubeImportCopyConcurrency > 32 {
+		errs = append(errs, varErrorf("PEERTUBE_IMPORT_COPY_CONCURRENCY", "config: PEERTUBE_IMPORT_COPY_CONCURRENCY must be between 1 and 32"))
+	}
 	// The CLI also reads these credentials with the admin API disabled. Refuse
 	// a partial pair there too, without exposing either value to setup or logs.
 	for _, credential := range []struct{ key, value string }{

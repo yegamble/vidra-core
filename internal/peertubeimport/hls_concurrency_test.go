@@ -122,3 +122,40 @@ func TestHLSWorkersCancelAndJoinOnDatabaseFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestHLSWorkersConfiguredBound(t *testing.T) {
+	for _, limit := range []int{1, 8, 16, 32, 64} {
+		t.Run(strconv.Itoa(limit), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			entered := make(chan struct{}, 64)
+			done := make(chan error, 1)
+			go func() {
+				_, err := runHLSCopyWorkersWithProgress(ctx, hlsWorkerTargets(64), func(ctx context.Context, _ hlsCopyTarget) (hlsCopyOutcome, error) {
+					entered <- struct{}{}
+					<-ctx.Done()
+					return hlsCopyFailed, ctx.Err()
+				}, nil, limit)
+				done <- err
+			}()
+			for range min(limit, 32) {
+				select {
+				case <-entered:
+				case <-time.After(2 * time.Second):
+					cancel()
+					<-done
+					t.Fatal("configured workers did not start")
+				}
+			}
+			select {
+			case <-entered:
+				t.Error("worker bound exceeded")
+			default:
+			}
+			cancel()
+			if err := <-done; !errors.Is(err, context.Canceled) {
+				t.Fatal(err)
+			}
+		})
+	}
+}

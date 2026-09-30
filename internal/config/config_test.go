@@ -1143,8 +1143,9 @@ func prodFedConfig(kek string) *Config {
 		// Same reason as Role: the pool sizing has a validated floor (DB_MAX_CONNS
 		// >= 2, for the leader elector's pinned connection) and the zero value is
 		// below it, so a literal Config has to state what LoadFrom would default.
-		DBMaxConns: DefaultDBMaxConns,
-		DBMinConns: DefaultDBMinConns,
+		PeerTubeImportCopyConcurrency: 4,
+		DBMaxConns:                    DefaultDBMaxConns,
+		DBMinConns:                    DefaultDBMinConns,
 		// Same reason again: the CDN purge retry ladder is validated for sanity
 		// on every config, CDN or not, and the zero value is a ladder with no
 		// delay and no attempts.
@@ -2254,5 +2255,32 @@ func TestIPFSManagerRequiresOperatorSocketAndMediaURLs(t *testing.T) {
 	}
 	if c.IPFSManagerSocket != "/run/vidra-ipfs-control/manager.sock" || c.IPFSEnabled {
 		t.Fatal("manager opt-in changed publication state")
+	}
+}
+
+func TestPeerTubeImportCopyConcurrency(t *testing.T) {
+	for _, value := range []string{"", "1", "8", "16", "32", "0", "-1", "33", "many"} {
+		t.Run(value, func(t *testing.T) {
+			cfg, err := LoadFrom(func(key string) (string, bool) {
+				return value, key == "PEERTUBE_IMPORT_COPY_CONCURRENCY" && value != ""
+			})
+			invalid := value == "0" || value == "-1" || value == "33" || value == "many"
+			if invalid {
+				if err == nil {
+					t.Fatal("invalid concurrency accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 4
+			if value != "" {
+				want, _ = strconv.Atoi(value)
+			}
+			if cfg.PeerTubeImportCopyConcurrency != want {
+				t.Fatalf("concurrency=%d want=%d", cfg.PeerTubeImportCopyConcurrency, want)
+			}
+		})
 	}
 }

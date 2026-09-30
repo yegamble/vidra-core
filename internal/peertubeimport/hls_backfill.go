@@ -24,14 +24,18 @@ const (
 	hlsCopySkipped
 )
 
-// Four complete trees at a time bounds streaming fallback to four upload
-// buffers too. Workers never touch the parent caches.
+// Workers never touch the parent caches. Zero retains four trees for callers
+// without an override; the upper bound also caps streaming fallback buffers.
 func runHLSCopyWorkers(ctx context.Context, targets []hlsCopyTarget, copyOne func(context.Context, hlsCopyTarget) (hlsCopyOutcome, error)) (Counts, error) {
-	return runHLSCopyWorkersWithProgress(ctx, targets, copyOne, nil)
+	return runHLSCopyWorkersWithProgress(ctx, targets, copyOne, nil, 0)
 }
 
 // Progress is serialized with aggregation, after the target ledger commits.
-func runHLSCopyWorkersWithProgress(ctx context.Context, targets []hlsCopyTarget, copyOne func(context.Context, hlsCopyTarget) (hlsCopyOutcome, error), progress func(Counts)) (Counts, error) {
+func runHLSCopyWorkersWithProgress(ctx context.Context, targets []hlsCopyTarget, copyOne func(context.Context, hlsCopyTarget) (hlsCopyOutcome, error), progress func(Counts), concurrency int) (Counts, error) {
+	if concurrency <= 0 {
+		concurrency = 4
+	}
+	concurrency = min(concurrency, 32)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var mu sync.Mutex
@@ -39,7 +43,7 @@ func runHLSCopyWorkersWithProgress(ctx context.Context, targets []hlsCopyTarget,
 	var counts Counts
 	var firstErr error
 	next := 0
-	for range min(4, len(targets)) {
+	for range min(concurrency, len(targets)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -131,7 +135,7 @@ func (im *Importer) importHLSCopies(ctx context.Context, r *Report) error {
 		c.Failed = initial.Failed + counts.Failed
 		c.Skipped = initial.Skipped + counts.Skipped
 		r.publishProgress()
-	})
+	}, im.copyConcurrency)
 	return err
 }
 

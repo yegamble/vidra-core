@@ -674,3 +674,42 @@ to be ticked again before every launch.
 - **File type/size.** Copied files are extension-allowlisted and size-capped.
 - **No browser-supplied credentials.** The admin API triggers imports using the
   server-configured source only.
+
+
+## Tuning S3 and Backblaze bucket copies
+
+Use the dedicated temporary copy credential for source and destination buckets on
+one endpoint/region. HLS binary objects stay inside the provider; playlists are
+rewritten and original files still stream for SHA-256 verification. A copy does
+not re-encode media. Different providers/endpoints require streaming.
+
+1. Keep the existing import ledger and destination bucket when retrying. Ready
+   HLS trees are skipped; incomplete trees retry. Deleting either repeats work.
+2. Set `PEERTUBE_IMPORT_COPY_CONCURRENCY=4` initially (API and CLI; range 1–32).
+   Compare 4, 8 and 16 using the same representative sample before choosing a
+   value. This limits complete HLS trees, not bytes, HTTP requests or CPU threads.
+3. Objects above 4 GiB use four concurrent 128 MiB server-side copy parts per
+   tree. At 16 trees this permits up to 64 part requests. Smaller objects use
+   CopyObject. Completed parts are ordered before finalization; failures cancel
+   and join outstanding work before aborting the multipart upload.
+4. Measure elapsed time, verified bytes/objects, errors and peak memory. Watch
+   streaming-fallback warnings: raising tree concurrency also raises the number
+   of streaming buffers. Stop increasing concurrency when throughput flattens
+   or failures increase. Do not confuse high concurrency with a requests/second
+   limit.
+5. Retain SDK retries with exponential backoff/jitter for 429/503/SlowDown.
+   Persistent authorization or missing-source errors need repair, not more
+   workers. Stop all import executors before changing their configuration, then
+   resume through the existing run/ledger workflow; never run two manual copies
+   against the same destination keys.
+6. Verify source version/ETag preconditions and destination version, size and
+   content type. An ETag is not a universal whole-object checksum. Sample actual
+   playback and private-media authorization before cutover.
+
+Backblaze recommends [parallel file/part operations](https://www.backblaze.com/docs/cloud-storage-large-files)
+and [concurrency to overlap request overhead](https://www.backblaze.com/docs/cloud-storage-performance).
+Its current [rate-limit guidance](https://www.backblaze.com/docs/cloud-storage-rate-limits)
+uses 503 SlowDown for S3 and recommends backoff; the documented 500 requests/sec
+new-account default is not a measured limit for your account. AWS likewise
+recommends [parallel requests and retries](https://docs.aws.amazon.com/AmazonS3/latest/userguide/optimizing-performance-guidelines.html).
+These recommendations motivate benchmarking, not a promised speed multiplier.
