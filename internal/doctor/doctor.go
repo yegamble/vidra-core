@@ -181,6 +181,7 @@ var checks = []check{
 	{"db pool sizing", SectionState, checkDBPoolSizing},
 	{"backups", SectionState, checkBackupAge},
 	{"backup timer", SectionState, checkBackupTimer},
+	{"off-site backup", SectionState, checkOffsiteBackup},
 	{"disk space", SectionState, checkDiskSpace},
 	{"media GC posture", SectionState, checkMediaGCPosture},
 	{"storage migration", SectionState, checkStorageMigration},
