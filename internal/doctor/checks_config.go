@@ -257,6 +257,18 @@ func checkEnvTemplateDrift(_ context.Context, s *state) []Finding {
 		managed[k] = true
 	}
 
+	// A key the template documents only as a commented-out example (#IPFS_ENABLED=,
+	// # API_ROLE=all, ...) is DEFINED by it, for the "extra" direction only.
+	// Uncommenting one is exactly what the docs tell an operator to do to enable
+	// that feature, so counting only assignments gave every deployment using an
+	// optional feature a permanent ⚠ — the same ⚠-column-blindness the managed
+	// keys above caused. The "missing" direction stays assignments-only: an
+	// example is optional by definition. Prose and typos are still unknown.
+	documented := map[string]bool{}
+	for _, k := range setup.CommentedExampleKeys(b) {
+		documented[k] = true
+	}
+
 	var missing, extra []string
 	for _, k := range tmpl.Keys() {
 		if _, ok := s.vars[k]; !ok {
@@ -264,7 +276,7 @@ func checkEnvTemplateDrift(_ context.Context, s *state) []Finding {
 		}
 	}
 	for k := range s.vars {
-		if !tmpl.Has(k) && !managed[k] {
+		if !tmpl.Has(k) && !documented[k] && !managed[k] {
 			extra = append(extra, k)
 		}
 	}

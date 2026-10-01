@@ -672,6 +672,52 @@ func TestEnvTemplateDriftIgnoresTheEnginesOwnKeys(t *testing.T) {
 	}
 }
 
+// The template documents optional features as COMMENTED-OUT examples
+// (#IPFS_ENABLED=, # API_ROLE=all, ...), and uncommenting one is exactly what the
+// docs tell an operator to do to turn the feature on. That must not read as drift
+// — a permanent ⚠ on every deployment using an optional feature teaches the
+// operator to skip the ⚠ column — but a key that appears only in PROSE, or is
+// misspelled, is still unknown.
+func TestEnvTemplateDriftCountsCommentedExamplesAsDefined(t *testing.T) {
+	tmplPath := filepath.Join(testRoot, "env/production.env.example")
+	envPath := filepath.Join(testRoot, "env/production.env")
+	tmpl := healthyEnv +
+		"#IPFS_ENABLED=\n# API_ROLE=all\n#   TRUSTED_PROXY_CIDRS=203.0.113.7/32\n" +
+		"# Set TYPO_KEY=1 to do something clever.\n"
+
+	h := newFakeHost()
+	h.files[tmplPath] = tmpl
+	h.files[envPath] = healthyEnv + "IPFS_ENABLED=true\nAPI_ROLE=api\nTRUSTED_PROXY_CIDRS=10.0.0.0/8\n"
+	findings := only(t, "env file vs template", h, nil)
+	for _, key := range []string{"IPFS_ENABLED", "API_ROLE", "TRUSTED_PROXY_CIDRS"} {
+		if hasAny(findings, key) {
+			t.Errorf("%s is documented as a commented example but was reported as drift: %+v", key, findings)
+		}
+	}
+	wantFinding(t, one(t, findings), StatusOK, "exactly the", "")
+
+	// A word that only ever appears inside a sentence defines nothing.
+	h.files[envPath] = healthyEnv + "TYPO_KEY=1\n"
+	if findings := only(t, "env file vs template", h, nil); !hasAny(findings, "TYPO_KEY") {
+		t.Errorf("a key mentioned only in prose stopped being reported: %+v", findings)
+	}
+
+	// A misspelling of a documented example is still unknown.
+	h.files[envPath] = healthyEnv + "IPFS_ENABELD=true\n"
+	if findings := only(t, "env file vs template", h, nil); !hasAny(findings, "IPFS_ENABELD") {
+		t.Errorf("a misspelled key stopped being reported: %+v", findings)
+	}
+
+	// The other direction is unchanged: an optional example is optional, so the
+	// env file not assigning it is not "missing".
+	h.files[envPath] = healthyEnv
+	for _, f := range only(t, "env file vs template", h, nil) {
+		if strings.Contains(f.Detail, "does not assign") {
+			t.Errorf("a commented example was reported as missing: %+v", f)
+		}
+	}
+}
+
 // The configuration check is the api's own boot validation, reported per
 // variable and before the deploy rather than after it.
 func TestConfigValues(t *testing.T) {
