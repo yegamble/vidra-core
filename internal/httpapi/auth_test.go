@@ -504,6 +504,16 @@ func (f *authFakeRepo) TransferInstanceOwner(_ context.Context, newOwnerID uuid.
 	}, nil
 }
 
+// GetInstanceOwner mirrors owner_claim.sql (marked, non-tombstoned row).
+func (f *authFakeRepo) GetInstanceOwner(context.Context) (sqlcgen.User, error) {
+	for _, u := range f.users {
+		if u.IsOwner && !u.DeletedAt.Valid {
+			return u, nil
+		}
+	}
+	return sqlcgen.User{}, pgx.ErrNoRows
+}
+
 func (f *authFakeRepo) GetPublicUserProfileByUsername(_ context.Context, username string) (sqlcgen.GetPublicUserProfileByUsernameRow, error) {
 	for _, u := range f.users {
 		if strings.EqualFold(u.Username, username) && u.IsActive && u.ProfilePublic {

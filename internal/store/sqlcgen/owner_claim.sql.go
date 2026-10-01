@@ -109,6 +109,48 @@ func (q *Queries) ClaimOwnerAndCreateAdmin(ctx context.Context, arg ClaimOwnerAn
 	return i, err
 }
 
+const getInstanceOwner = `-- name: GetInstanceOwner :one
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
+FROM users
+WHERE is_owner AND deleted_at IS NULL
+`
+
+// The `is_owner` holder (at most one: users_single_owner_idx), for the host-side
+// `owner-recovery` subcommand. is_active is deliberately NOT filtered: a
+// deactivated owner must read as that, not as "no owner" (which would send the
+// operator to `vidra claim` on a claimed instance). Tombstones are excluded.
+func (q *Queries) GetInstanceOwner(ctx context.Context) (User, error) {
+	row := q.db.QueryRow(ctx, getInstanceOwner)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Role,
+		&i.EmailVerified,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DisplayName,
+		&i.Bio,
+		&i.StorageQuotaBytes,
+		&i.Unlisted,
+		&i.BypassQuarantine,
+		&i.DeletedAt,
+		&i.PendingEmailVerification,
+		&i.HistoryEnabled,
+		&i.ProfilePublic,
+		&i.SearchHistoryEnabled,
+		&i.PersonalizedSearchEnabled,
+		&i.PersonalizedRecommendationsEnabled,
+		&i.SensitiveContentPolicy,
+		&i.ShowBluesky,
+		&i.IsOwner,
+	)
+	return i, err
+}
+
 const getUnclaimedOwnerClaimToken = `-- name: GetUnclaimedOwnerClaimToken :one
 SELECT id, token_hash, created_at, claimed_at
 FROM owner_claim_tokens
