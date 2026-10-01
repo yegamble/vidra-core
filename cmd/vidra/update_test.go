@@ -423,7 +423,7 @@ func TestUpdateRefusesABundleTreeBeforeWritingAnything(t *testing.T) {
 		if err == nil {
 			t.Fatalf("update %v on a bundle tree was accepted", args)
 		}
-		contains(t, err.Error(), "bundle", "deploy/README.md", "no `git pull`")
+		contains(t, err.Error(), "bundle", "Nothing was changed", "SHA256SUMS", "docs/install/upgrading#upgrade-a-bundle-tree")
 	}
 	if got := st.envFile(); got != before {
 		t.Errorf("the env file was written on a refused run:\n%s", got)

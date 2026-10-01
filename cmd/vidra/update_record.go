@@ -103,6 +103,6 @@ func isBundleTree(root string) bool {
 // deploy scripts only by unpacking its bundle, so pinning tags alone would run
 // new images on an old tree. It names the manual procedure, not a command.
 func bundleRefusal(root string) error {
-	return fmt.Errorf("update: %s is an unpacked release BUNDLE (vidra-bundle.manifest is present and %s/ has no git history), and `vidra update` does not support a bundle tree yet. Nothing was changed. Upgrade it by hand: unpack the release's vidra-bundle_<tag>.tar.gz over the tree, set the three VIDRA_*_TAG keys to the tags that release's releases/<tag>.json pairs (they differ for a core-only release), then run deploy/deploy.sh — deploy/README.md has the steps, under \"On a bundle tree there is no `git pull`\"",
+	return fmt.Errorf("update: %s is an unpacked release BUNDLE (vidra-bundle.manifest is present and %s/ has no git history), and `vidra update` does not support a bundle tree yet. Nothing was changed. Upgrade it by hand: download the release's vidra-bundle_<tag>.tar.gz, verify it against the release's SHA256SUMS and unpack it over the tree, set the three VIDRA_*_TAG keys to the tags that release's releases/<tag>.json pairs (they differ for a core-only release), then run deploy/deploy.sh — the steps are at https://vidra.yosef.app/docs/install/upgrading#upgrade-a-bundle-tree",
 		root, coreRepo)
 }
