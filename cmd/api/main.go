@@ -128,9 +128,12 @@ func main() {
 			// check. A three-outcome command cannot report through main's
 			// error path, which only knows "worked" and "did not".
 			os.Exit(runVerifyBlobs(os.Args[2:], os.Stdout, os.Stderr))
+		case "owner-recovery":
+			// stdout carries ONLY the link; see owner_recovery.go.
+			os.Exit(runOwnerRecovery(os.Args[2:], os.Stdout, os.Stderr, openOwnerRecovery))
 		default:
 			slog.Error("unknown subcommand", "argv", os.Args[1],
-				"usage", "api ["+migrateUsage+"|"+verifyBlobsUsage+"] (no arguments runs the server)")
+				"usage", "api ["+migrateUsage+"|"+verifyBlobsUsage+"|"+ownerRecoveryUsage+"] (no arguments runs the server)")
 			os.Exit(1)
 		}
 	}
