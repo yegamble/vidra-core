@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -64,9 +65,10 @@ func testDefaults() Defaults {
 		UploadMaxActiveSessionsPerUser: 5,
 		ImportMaxHeight:                1080,
 
-		ChannelSyncEnabled:    true,
-		ChannelSyncMaxPerUser: 5,
-		TranscriptionEnabled:  false,
+		ChannelSyncEnabled:         true,
+		ChannelSyncMaxPerUser:      5,
+		ChannelSyncIntervalMinutes: 60,
+		TranscriptionEnabled:       false,
 
 		TranscodingEnabled: true,
 	}
@@ -97,6 +99,7 @@ func TestW8ToggleBatchRegistry(t *testing.T) {
 		{KeyImportHTTPEnabled, KindBool, true, PageVOD, "imports"},
 		{KeyChannelSyncEnabled, KindBool, true, PageVOD, "imports"}, // testDefaults: ChannelSyncEnabled=true
 		{KeyChannelSyncMaxPerUser, KindInt, int64(5), PageVOD, "imports"},
+		{KeyChannelSyncIntervalMinutes, KindInt, int64(60), PageVOD, "imports"}, // testDefaults: 60 (CHANNEL_SYNC_INTERVAL=1h)
 		{KeyStoryboardsEnabled, KindBool, true, PageVOD, "storyboards"},
 		{KeyVideoCardPreviewsEnabled, KindBool, false, PageVOD, "playback"},
 		{KeyVideoCardPreviewsDefaultEnabled, KindBool, false, PageVOD, "playback"},
@@ -1221,5 +1224,51 @@ func TestCustomCategoriesReplaceBuiltins(t *testing.T) {
 	}
 	if err := validateCustomCategories(`["51:Giantess","52:Shrunken"]`); err != nil {
 		t.Errorf("valid list rejected: %v", err)
+	}
+}
+
+// TestChannelSyncIntervalMinutesBounds pins the floor and ceiling of the
+// channel-sync cadence. The floor is 5 minutes because every tick re-lists an
+// EXTERNAL platform on behalf of every sync: a minute-scale cadence from one
+// fat-fingered PATCH would hammer somebody else's server (and earn this
+// instance's IP a ban). The ceiling is 7 days so a typo cannot park every sync
+// effectively forever.
+func TestChannelSyncIntervalMinutesBounds(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo(), testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	by := uuid.New()
+	for _, v := range []string{"-1", "0", "1", "4", "10081", "abc", "1.5", ""} {
+		var verr *ValidationError
+		err := svc.Apply(ctx, map[string]Update{KeyChannelSyncIntervalMinutes: {Value: v}}, by)
+		if !errors.As(err, &verr) {
+			t.Errorf("value %q: Apply err = %v, want ValidationError", v, err)
+		}
+	}
+	if got := svc.Int(KeyChannelSyncIntervalMinutes); got != 60 {
+		t.Fatalf("rejected writes changed the value: got %d, want the default 60", got)
+	}
+	for _, v := range []int64{5, 6, 1440, 10080} {
+		if err := svc.Apply(ctx, map[string]Update{KeyChannelSyncIntervalMinutes: {Value: strconv.FormatInt(v, 10)}}, by); err != nil {
+			t.Errorf("value %d: Apply: %v", v, err)
+			continue
+		}
+		if got := svc.Int(KeyChannelSyncIntervalMinutes); got != v {
+			t.Errorf("after setting %d, Int = %d", v, got)
+		}
+	}
+}
+
+// TestMinutesCeil: the env default (a Go duration) is shown to the admin as
+// whole minutes, rounded UP so a sub-minute env value never displays as 0.
+func TestMinutesCeil(t *testing.T) {
+	for in, want := range map[time.Duration]int64{
+		time.Hour: 60, 90 * time.Second: 2, time.Minute: 1, time.Second: 1, 0: 1, -time.Hour: 1, 7 * 24 * time.Hour: 10080,
+	} {
+		if got := MinutesCeil(in); got != want {
+			t.Errorf("MinutesCeil(%s) = %d, want %d", in, got, want)
+		}
 	}
 }

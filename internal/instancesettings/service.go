@@ -31,6 +31,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -187,12 +188,12 @@ const (
 	// Shipped-feature toggle batch (config-parity W8): runtime knobs over
 	// features that already exist, applied through provider-func seams (or
 	// handler gates) so an admin can flip them without a restart. Boot
-	// capabilities stay env-only (yt-dlp binary/proxy, WHISPER_ENDPOINT,
-	// channel-sync cadence): a runtime toggle can never conjure a dependency
+	// capabilities stay env-only (yt-dlp binary/proxy, WHISPER_ENDPOINT): a runtime toggle can never conjure a dependency
 	// the deployment lacks — the effective value is settingAND(boot).
 	KeyImportHTTPEnabled               = "import_http_enabled"                 // yt-dlp platform-URL import path; imports_enabled stays the master
 	KeyChannelSyncEnabled              = "channel_sync_enabled"                // channel auto-sync create + ticker pickup
 	KeyChannelSyncMaxPerUser           = "channel_sync_max_per_user"           // 0 = unlimited
+	KeyChannelSyncIntervalMinutes      = "channel_sync_interval_minutes"       // re-list cadence, 5..10080
 	KeyStoryboardsEnabled              = "storyboards_enabled"                 // seek-preview sprite generation at publish
 	KeyVideoCardPreviewsEnabled        = "video_card_previews_enabled"         // master gate for signed-in users' hover-preview preference
 	KeyVideoCardPreviewsDefaultEnabled = "video_card_previews_default_enabled" // inherited preference until a user explicitly chooses
@@ -452,6 +453,15 @@ const (
 	KindInt Kind = "int"
 )
 
+// MinutesCeil converts a Go duration to whole minutes, rounding UP and never
+// below 1, for env-backed defaults of minute-denominated int settings.
+func MinutesCeil(d time.Duration) int64 {
+	if d <= 0 {
+		return 1
+	}
+	return int64((d + time.Minute - 1) / time.Minute)
+}
+
 // maxSafeInt is JavaScript's Number.MAX_SAFE_INTEGER (2^53 - 1): the largest
 // integer a client can hold without silent precision loss. Every int-kind value
 // is bounded to it so GET/PATCH round-trips are exact.
@@ -603,7 +613,10 @@ type Defaults struct {
 	// WHISPER_ENDPOINT is configured — the boot capability stays env-only).
 	ChannelSyncEnabled    bool
 	ChannelSyncMaxPerUser int64
-	TranscriptionEnabled  bool
+	// ChannelSyncIntervalMinutes mirrors CHANNEL_SYNC_INTERVAL in whole minutes
+	// (MinutesCeil of the env duration).
+	ChannelSyncIntervalMinutes int64
+	TranscriptionEnabled       bool
 
 	// TranscodingEnabled mirrors TRANSCODING_ENABLED (config-parity W10): the
 	// runtime master toggle's default. The boot capability (ffmpeg/ffprobe on
@@ -855,6 +868,15 @@ var specs = []spec{
 		page: PageVOD, section: "imports"},
 	{key: KeyChannelSyncMaxPerUser, kind: KindInt,
 		defInt: func(d Defaults) int64 { return d.ChannelSyncMaxPerUser }, validate: intRange(0, 10000),
+		page: PageVOD, section: "imports"},
+	// Whole minutes (there is no duration kind). The floor stops a typo from
+	// re-listing every synced external channel more than every 5 minutes —
+	// that load lands on someone else's platform — and the ceiling (7 days)
+	// stops one from parking every sync. The default is the env value
+	// (CHANNEL_SYNC_INTERVAL) and is not itself bound-checked, so an operator
+	// who deliberately booted a faster cadence keeps it until they override.
+	{key: KeyChannelSyncIntervalMinutes, kind: KindInt,
+		defInt: func(d Defaults) int64 { return d.ChannelSyncIntervalMinutes }, validate: intRange(5, 10080),
 		page: PageVOD, section: "imports"},
 	// Storyboards default ON and have no env backing: the runtime setting is
 	// the single operator control (generation additionally needs ffmpeg).

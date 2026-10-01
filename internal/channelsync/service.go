@@ -118,6 +118,7 @@ type Service struct {
 	maxPerUserFn func() int // when set, supersedes maxPerUser (runtime overlay), resolved per Create
 	batch        int
 	interval     time.Duration
+	intervalFn   func() time.Duration // when set (and > 0), supersedes interval (runtime overlay), resolved per reschedule
 	backoffMax   time.Duration
 	cooldown     time.Duration
 	logger       *slog.Logger
@@ -191,6 +192,19 @@ func WithInterval(d time.Duration) Option {
 		}
 	}
 }
+
+// WithIntervalFunc makes the cadence dynamic (channel_sync_interval_minutes,
+// default CHANNEL_SYNC_INTERVAL). It is consulted every time a row is
+// rescheduled — nextRun after a success, retryDelay (the backoff base) after a
+// failure — so an admin's change applies to the next run with no restart. The
+// worker ticker (runChannelSyncWorker) is a fixed one-minute poll that merely
+// claims whatever next_run_at has made due, so nothing is created once at boot
+// that could freeze the old value. Rows already scheduled keep their stored
+// next_run_at: a shorter interval takes effect from each row's next run, not
+// retroactively. A func answering <= 0 falls back to the static WithInterval
+// value, because a zero interval would reschedule every row for "now" and turn
+// the one-minute poll into a hot re-listing loop against somebody else's server.
+func WithIntervalFunc(f func() time.Duration) Option { return func(s *Service) { s.intervalFn = f } }
 
 // WithBackoffMax caps the exponential backoff applied to a sync whose runs keep
 // failing (CHANNEL_SYNC_BACKOFF_MAX). <= 0 keeps the default.
@@ -279,8 +293,16 @@ func (s *Service) effectiveMaxPerUser() int {
 	return s.maxPerUser
 }
 
-// Interval is the configured sync cadence (used by the worker ticker).
-func (s *Service) Interval() time.Duration { return s.interval }
+// Interval is the current sync cadence: the live overlay value when a provider
+// is wired and answers a positive duration, else the static boot value.
+func (s *Service) Interval() time.Duration {
+	if s.intervalFn != nil {
+		if d := s.intervalFn(); d > 0 {
+			return d
+		}
+	}
+	return s.interval
+}
 
 // Cooldown is the minimum spacing enforced between manual sync-now triggers (the
 // handler uses it to set Retry-After on a 429). 0 means the throttle is off.
@@ -518,10 +540,10 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueChannel
 // doubling every other queue in this repo uses, with the sync cadence as its
 // base so an operator's CHANNEL_SYNC_INTERVAL stays the unit of the schedule.
 func (s *Service) retryDelay(failures int) time.Duration {
-	return retry.Backoff(failures, s.interval, s.backoffMax)
+	return retry.Backoff(failures, s.Interval(), s.backoffMax)
 }
 
 // nextRun is the wall-clock time of the next scheduled sync pass after a
 // SUCCESS: always the plain interval (FinishChannelSync clears the counter, so
 // the next failure starts the backoff over at 1x).
-func (s *Service) nextRun() time.Time { return time.Now().UTC().Add(s.interval) }
+func (s *Service) nextRun() time.Time { return time.Now().UTC().Add(s.Interval()) }
