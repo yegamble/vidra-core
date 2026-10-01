@@ -26,10 +26,9 @@ import (
 //
 //   - DISCOVERY. "Which version am I on and what is current" is currently a
 //     browser tab. Worse, it is three browser tabs, because a release spans
-//     vidra-core, vidra-user and vidra-search and deploy/release.sh cuts all
-//     three with one tag — a tag that exists in only two of them is a broken
-//     release, and pinning it produces a `docker compose pull` failure halfway
-//     through a deploy instead of a refusal before it.
+//     vidra-core, vidra-user and vidra-search, each at the tag the meta
+//     repository's releases/<tag>.json pairs (update_record.go); a paired tag
+//     that is not published is a refusal, not a failed `pull` mid-deploy.
 //
 //   - THE SCHEMA FLOOR. `vidra deploy` will happily ship an image whose embedded
 //     migrations are OLDER than the database's ledger. Nothing downstream
@@ -73,6 +72,10 @@ func runUpdate(s streams, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Before the env file is read, GitHub asked or git run. See bundleRefusal.
+	if isBundleTree(dep.root) {
+		return bundleRefusal(dep.root)
+	}
 	values, err := dep.values()
 	if err != nil {
 		return fmt.Errorf("update: %s — it holds the tags this command reads and rewrites", err)
@@ -86,7 +89,9 @@ func runUpdate(s streams, args []string) error {
 	owner := imageOwner(processEnv, values)
 
 	ctx := context.Background()
-	plan, err := discover(ctx, processEnv, owner, current, uf.tag)
+	plan, err := discover(ctx, processEnv, owner, current, uf.tag, func(target string) (map[string]string, []string) {
+		return resolvePairing(dep.root, target)
+	})
 	if err != nil {
 		return err
 	}
@@ -111,8 +116,8 @@ func runUpdate(s streams, args []string) error {
 			plan.target, plan.backwardsList(), plural(len(plan.backwards), "that component", "those components"), plan.target)
 	}
 	if len(plan.missing) > 0 {
-		return fmt.Errorf("update: %s is released in %s/%s but NOT in %s. deploy/release.sh cuts all three components with one tag, so this release is only half cut — its missing image would fail the deploy's `pull` step after the pre-deploy dump had already been taken. Publish the missing release (or pass --tag with an older one) and re-run",
-			plan.target, owner, coreRepo, ownedList(owner, plan.missing))
+		return fmt.Errorf("update: %s is released in %s/%s but its pairing needs %s, which has NO published release. That image does not exist, so pinning it would fail the deploy's `pull` step after the pre-deploy dump had already been taken. Publish the missing release (or pass --tag with an older one) and re-run",
+			plan.target, owner, coreRepo, plan.missingNeeds())
 	}
 
 	// The schema floor, and the one refusal in this command that is about the
@@ -129,6 +134,7 @@ func runUpdate(s streams, args []string) error {
 	floor := readRollbackFloor(dep.root)
 	armed, why := armRollback(dep, plan, floor, uf.noRollback)
 	keep, keepNote := envHistoryKeepValue(processEnv, values)
+	gate.notes = append(gate.notes, plan.pairNotes...)
 	renderUpdatePlan(s.out, dep, plan, gate, armed, why, keep)
 	if keepNote != "" {
 		fmt.Fprintf(s.err, "note: %s\n", keepNote)
@@ -160,7 +166,7 @@ func runUpdate(s streams, args []string) error {
 	if err := bumpTagsInEnvFile(dep.envPath, plan.bump()); err != nil {
 		return fmt.Errorf("update: %v", err)
 	}
-	fmt.Fprintf(s.out, "pinned: core=%s user=%s search=%s in %s\n\n", plan.target, plan.target, plan.target, dep.envFile)
+	fmt.Fprintf(s.out, "pinned: core=%s user=%s search=%s in %s\n\n", plan.pins["VIDRA_CORE_TAG"], plan.pins["VIDRA_USER_TAG"], plan.pins["VIDRA_SEARCH_TAG"], dep.envFile)
 
 	// deploy.sh takes NO arguments: what it deploys is what the env file pins,
 	// which is what the two lines above just wrote. Passthrough rather than
@@ -336,6 +342,10 @@ type updatePlan struct {
 	target string
 	// missing names the sibling repositories that have no release for target.
 	missing []string
+	// pins is key -> the tag each component is pinned at for target (the release
+	// record's pairing, else target for all three); pairNotes says why a guess.
+	pins      map[string]string
+	pairNotes []string
 	// steps is how many releases target is ahead of oldest: 1 for the next one,
 	// 2 when one release is being skipped. Zero when it could not be computed —
 	// see distanceKnown.
@@ -365,7 +375,7 @@ func (p updatePlan) backwardsList() string { return strings.Join(p.backwards, ",
 func (p updatePlan) bump() map[string]string {
 	out := make(map[string]string, len(updateComponents))
 	for _, c := range updateComponents {
-		out[c.key] = p.target
+		out[c.key] = p.pins[c.key]
 	}
 	return out
 }
@@ -377,7 +387,9 @@ func (p updatePlan) bump() map[string]string {
 // exists. It is not arbitrary: release.sh cuts core first, the schema floor
 // below is computed from core's migrations, and a release that exists anywhere
 // exists there.
-func discover(ctx context.Context, processEnv map[string]string, owner string, current map[string]string, wantTag string) (updatePlan, error) {
+//
+// pair resolves the per-component tags for the chosen target (resolvePairing).
+func discover(ctx context.Context, processEnv map[string]string, owner string, current map[string]string, wantTag string, pair func(target string) (map[string]string, []string)) (updatePlan, error) {
 	p := updatePlan{owner: owner, current: current}
 	releases, err := listReleases(ctx, processEnv, owner, coreRepo)
 	if err != nil {
@@ -397,13 +409,22 @@ func discover(ctx context.Context, processEnv map[string]string, owner string, c
 		p.target = wantTag
 	}
 
-	p.oldest = oldestTag(current)
+	// Not always the release tag (update_record.go): everything below compares
+	// against what each component is pinned at.
+	p.pins, p.pairNotes = pair(p.target)
+
+	// oldest is taken over the components that MOVE: a core-only release over a
+	// vidra-user two releases back is a one-release jump for the only component
+	// that changes.
+	moving := make(map[string]string, len(updateComponents))
 	p.uptodate = true
 	for _, c := range updateComponents {
-		if current[c.key] != p.target {
+		if current[c.key] != p.pins[c.key] {
 			p.uptodate = false
+			moving[c.key] = current[c.key]
 		}
 	}
+	p.oldest = oldestTag(moving)
 	if p.uptodate {
 		// Nothing else is worth two more requests to GitHub: the release being
 		// asked about is the one already running.
@@ -414,9 +435,9 @@ func discover(ctx context.Context, processEnv map[string]string, owner string, c
 	// out rather than assumed newer: it is already the reason oldestTag returns it
 	// and the reason the automatic rollback disarms, and inventing an ordering for
 	// it here would refuse updates on the hosts that most need one.
-	targetVersion, _ := parseReleaseTag(p.target)
 	for _, c := range updateComponents {
-		if v, ok := parseReleaseTag(current[c.key]); ok && targetVersion.less(v) {
+		pinned, _ := parseReleaseTag(p.pins[c.key])
+		if v, ok := parseReleaseTag(current[c.key]); ok && pinned.less(v) {
 			p.backwards = append(p.backwards, fmt.Sprintf("%s (%s)", c.name, current[c.key]))
 		}
 	}
@@ -430,7 +451,7 @@ func discover(ctx context.Context, processEnv map[string]string, owner string, c
 		if c.repo == coreRepo {
 			continue
 		}
-		ok, err := hasRelease(ctx, processEnv, owner, c.repo, p.target)
+		ok, err := hasRelease(ctx, processEnv, owner, c.repo, p.pins[c.key])
 		if err != nil {
 			return p, fmt.Errorf("update: %v", err)
 		}
@@ -449,7 +470,10 @@ func oldestTag(current map[string]string) string {
 	oldest, oldestV := "", semver{}
 	unparsed := ""
 	for _, c := range updateComponents {
-		tag := current[c.key]
+		tag, present := current[c.key]
+		if !present {
+			continue
+		}
 		v, ok := parseReleaseTag(tag)
 		if !ok {
 			if unparsed == "" {
@@ -502,16 +526,6 @@ func lastFew(tags []string, n int) []string {
 		return tags
 	}
 	return append([]string{"…"}, tags[len(tags)-n:]...)
-}
-
-// ownedList renders repository names as owner/name, for a message that has to be
-// unambiguous about WHICH account is missing the release.
-func ownedList(owner string, repos []string) string {
-	out := make([]string, 0, len(repos))
-	for _, r := range repos {
-		out = append(out, owner+"/"+r)
-	}
-	return strings.Join(out, " and ")
 }
 
 // ---------------------------------------------------------------------------
@@ -1017,10 +1031,13 @@ func renderUpdateCheck(w io.Writer, dep deployment, p updatePlan) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprint(tw, "  component\tcurrent\tlatest\n")
 	for _, c := range updateComponents {
-		fmt.Fprintf(tw, "  %s\t%s\t%s\n", c.name, p.current[c.key], p.latest)
+		fmt.Fprintf(tw, "  %s\t%s\t%s\n", c.name, p.current[c.key], p.pins[c.key])
 	}
 	_ = tw.Flush()
 	fmt.Fprintln(w)
+	for _, note := range p.pairNotes {
+		fmt.Fprintf(w, "note: %s\n\n", note)
+	}
 	switch {
 	case p.uptodate:
 		fmt.Fprintf(w, "Up to date: %s is the newest release of %s/%s.\n", p.target, p.owner, coreRepo)
@@ -1035,8 +1052,7 @@ func renderUpdateCheck(w io.Writer, dep deployment, p updatePlan) {
 			fmt.Fprintf(w, "That is %d releases ahead, so `vidra update` would run with its automatic tag-flip rollback DISARMED.\n", p.steps)
 		}
 		if len(p.missing) > 0 {
-			fmt.Fprintf(w, "But %s is released in %s/%s only — %s %s no release for it, so `vidra update` will refuse this tag until they do.\n",
-				p.target, p.owner, coreRepo, ownedList(p.owner, p.missing), plural(len(p.missing), "has", "have"))
+			fmt.Fprintf(w, "But its pairing needs %s, which has no published release, so `vidra update` will refuse this tag until it does.\n", p.missingNeeds())
 		} else {
 			fmt.Fprintln(w, "Run `vidra update` to take it. Nothing has been changed by this check.")
 		}
@@ -1057,7 +1073,7 @@ func renderUpdatePlan(w io.Writer, dep deployment, p updatePlan, gate schemaChec
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprint(tw, "  component\tcurrent\t\ttarget\n")
 	for _, c := range updateComponents {
-		fmt.Fprintf(tw, "  %s\t%s\t→\t%s\n", c.name, p.current[c.key], p.target)
+		fmt.Fprintf(tw, "  %s\t%s\t→\t%s\n", c.name, p.current[c.key], p.pins[c.key])
 	}
 	_ = tw.Flush()
 	fmt.Fprintln(w)
