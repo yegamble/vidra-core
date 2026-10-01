@@ -161,3 +161,53 @@ func TestRemoveRecordingRefusesAForeignName(t *testing.T) {
 		t.Errorf("removing an absent recording returned %v, want nil", err)
 	}
 }
+
+// TestRetentionFollowsALiveChange: the window is read at every sweep, not frozen
+// at boot (live_recording_retention_hours). A change made while the worker is
+// running moves which recordings are eligible on the very next pass: raising
+// the window spares a file the old window would have taken, and 0 <-> N works
+// in both directions without restarting anything. Going to 0 sweeps NOTHING
+// (the delete-on-publish mode, no invented window) and coming back to N > 0
+// resumes the sweep, so the worker needs no start-time gate on the value.
+func TestRetentionFollowsALiveChange(t *testing.T) {
+	root := t.TempDir()
+	id := uuid.New()
+	tenDays := writeRecording(t, root, id.String()+"-1000.flv", 10*24*time.Hour)
+	twoDays := writeRecording(t, root, id.String()+"-2000.flv", 2*24*time.Hour)
+
+	window := 30 * 24 * time.Hour
+	svc := NewService(newFakeRepo(uuid.New()),
+		WithRecordingStore(NewDirRecordingStore(root)),
+		WithRecordingRetention(func() time.Duration { return window }))
+	prune := func() int {
+		t.Helper()
+		n, err := svc.PruneRecordings(context.Background(), time.Now())
+		if err != nil {
+			t.Fatalf("prune: %v", err)
+		}
+		return n
+	}
+	exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+
+	if n := prune(); n != 0 || !exists(tenDays) || !exists(twoDays) {
+		t.Fatalf("30d window pruned %d; both recordings are inside it and must survive", n)
+	}
+	// Lowering the window deletes what is now outside it, and only that.
+	window = 7 * 24 * time.Hour
+	if n := prune(); n != 1 || exists(tenDays) || !exists(twoDays) {
+		t.Fatalf("after lowering to 7d: pruned %d, want only the 10-day-old file gone", n)
+	}
+	if got := svc.RecordingRetention(); got != 7*24*time.Hour {
+		t.Errorf("RecordingRetention() = %s, want the live 7d", got)
+	}
+	// N > 0 -> 0: the sweep goes quiet.
+	window = 0
+	if n := prune(); n != 0 || !exists(twoDays) {
+		t.Fatalf("at 0 the sweep must delete nothing, pruned %d", n)
+	}
+	// 0 -> N > 0: it resumes, with no worker restart.
+	window = 24 * time.Hour
+	if n := prune(); n != 1 || exists(twoDays) {
+		t.Fatalf("after 0 -> 24h: pruned %d, want the 2-day-old file gone", n)
+	}
+}

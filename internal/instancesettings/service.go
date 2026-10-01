@@ -194,6 +194,7 @@ const (
 	KeyChannelSyncEnabled              = "channel_sync_enabled"                // channel auto-sync create + ticker pickup
 	KeyChannelSyncMaxPerUser           = "channel_sync_max_per_user"           // 0 = unlimited
 	KeyChannelSyncIntervalMinutes      = "channel_sync_interval_minutes"       // re-list cadence, 5..10080
+	KeyLiveRecordingRetentionHours     = "live_recording_retention_hours"      // session-recording retention; 0 = delete on replay publish, else sweep past N hours
 	KeyStoryboardsEnabled              = "storyboards_enabled"                 // seek-preview sprite generation at publish
 	KeyVideoCardPreviewsEnabled        = "video_card_previews_enabled"         // master gate for signed-in users' hover-preview preference
 	KeyVideoCardPreviewsDefaultEnabled = "video_card_previews_default_enabled" // inherited preference until a user explicitly chooses
@@ -462,6 +463,17 @@ func MinutesCeil(d time.Duration) int64 {
 	return int64((d + time.Minute - 1) / time.Minute)
 }
 
+// HoursCeil converts a Go duration to whole hours, rounding UP, for env-backed
+// defaults of hour-denominated int settings. Unlike MinutesCeil, 0 stays 0:
+// for a retention window that is a distinct mode (delete on publish), not "one
+// hour", and a default must never delete sooner than the env said.
+func HoursCeil(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	return int64((d + time.Hour - 1) / time.Hour)
+}
+
 // maxSafeInt is JavaScript's Number.MAX_SAFE_INTEGER (2^53 - 1): the largest
 // integer a client can hold without silent precision loss. Every int-kind value
 // is bounded to it so GET/PATCH round-trips are exact.
@@ -617,6 +629,10 @@ type Defaults struct {
 	// (MinutesCeil of the env duration).
 	ChannelSyncIntervalMinutes int64
 	TranscriptionEnabled       bool
+
+	// LiveRecordingRetentionHours mirrors LIVE_RECORDING_RETENTION in whole
+	// hours (HoursCeil of the env duration: 0 stays 0, anything else rounds UP).
+	LiveRecordingRetentionHours int64
 
 	// TranscodingEnabled mirrors TRANSCODING_ENABLED (config-parity W10): the
 	// runtime master toggle's default. The boot capability (ffmpeg/ffprobe on
@@ -958,6 +974,17 @@ var specs = []spec{
 	{key: KeyLiveMaxDurationSecs, kind: KindInt,
 		defInt: func(Defaults) int64 { return 0 }, validate: intZeroOrRange(60, 2592000),
 		page: PageLive, section: "limits"},
+	// Session-recording retention (LIVE_RECORDING_RETENTION), whole hours — the
+	// worker sweeps hourly, so finer units would promise precision it cannot
+	// deliver. 0 stays legal: it is the documented delete-on-publish mode, and
+	// the sweep does nothing there. Ceiling one year. THIS IS A DELETE KNOB:
+	// lowering it (or raising it from 0) makes the next sweep delete every
+	// recording older than the new window, including originals kept as the only
+	// copy of a failed or replay-disabled broadcast. The default is the env
+	// value, rounded up, and is not itself bound-checked.
+	{key: KeyLiveRecordingRetentionHours, kind: KindInt,
+		defInt: func(d Defaults) int64 { return d.LiveRecordingRetentionHours }, validate: intRange(0, 8760),
+		page: PageLive, section: "replay"},
 
 	// Federation policy gates (config-parity W12). None have env backing: the
 	// runtime settings are the operator controls, defaults keep the shipped

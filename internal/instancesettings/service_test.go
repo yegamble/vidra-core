@@ -71,6 +71,8 @@ func testDefaults() Defaults {
 		TranscriptionEnabled:       false,
 
 		TranscodingEnabled: true,
+
+		LiveRecordingRetentionHours: 168,
 	}
 }
 
@@ -99,7 +101,8 @@ func TestW8ToggleBatchRegistry(t *testing.T) {
 		{KeyImportHTTPEnabled, KindBool, true, PageVOD, "imports"},
 		{KeyChannelSyncEnabled, KindBool, true, PageVOD, "imports"}, // testDefaults: ChannelSyncEnabled=true
 		{KeyChannelSyncMaxPerUser, KindInt, int64(5), PageVOD, "imports"},
-		{KeyChannelSyncIntervalMinutes, KindInt, int64(60), PageVOD, "imports"}, // testDefaults: 60 (CHANNEL_SYNC_INTERVAL=1h)
+		{KeyChannelSyncIntervalMinutes, KindInt, int64(60), PageVOD, "imports"},   // testDefaults: 60 (CHANNEL_SYNC_INTERVAL=1h)
+		{KeyLiveRecordingRetentionHours, KindInt, int64(168), PageLive, "replay"}, // testDefaults: 168 (LIVE_RECORDING_RETENTION=168h)
 		{KeyStoryboardsEnabled, KindBool, true, PageVOD, "storyboards"},
 		{KeyVideoCardPreviewsEnabled, KindBool, false, PageVOD, "playback"},
 		{KeyVideoCardPreviewsDefaultEnabled, KindBool, false, PageVOD, "playback"},
@@ -1269,6 +1272,49 @@ func TestMinutesCeil(t *testing.T) {
 	} {
 		if got := MinutesCeil(in); got != want {
 			t.Errorf("MinutesCeil(%s) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// TestLiveRecordingRetentionHoursBounds: 0 stays legal (it is the documented
+// delete-on-publish mode), negatives and anything past one year are refused.
+func TestLiveRecordingRetentionHoursBounds(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo(), testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	by := uuid.New()
+	for _, v := range []string{"-1", "8761", "abc", "1.5", ""} {
+		var verr *ValidationError
+		err := svc.Apply(ctx, map[string]Update{KeyLiveRecordingRetentionHours: {Value: v}}, by)
+		if !errors.As(err, &verr) {
+			t.Errorf("value %q: Apply err = %v, want ValidationError", v, err)
+		}
+	}
+	if got := svc.Int(KeyLiveRecordingRetentionHours); got != 168 {
+		t.Fatalf("rejected writes changed the value: got %d, want the default 168", got)
+	}
+	for _, v := range []int64{0, 1, 168, 8760} {
+		if err := svc.Apply(ctx, map[string]Update{KeyLiveRecordingRetentionHours: {Value: strconv.FormatInt(v, 10)}}, by); err != nil {
+			t.Errorf("value %d: Apply: %v", v, err)
+			continue
+		}
+		if got := svc.Int(KeyLiveRecordingRetentionHours); got != v {
+			t.Errorf("after setting %d, Int = %d", v, got)
+		}
+	}
+}
+
+// TestHoursCeil: the env default is rounded UP so the setting never starts out
+// deleting sooner than LIVE_RECORDING_RETENTION said, but 0 stays 0 (it is the
+// delete-on-publish mode, not "one hour").
+func TestHoursCeil(t *testing.T) {
+	for in, want := range map[time.Duration]int64{
+		0: 0, -time.Hour: 0, time.Second: 1, time.Hour: 1, 90 * time.Minute: 2, 168 * time.Hour: 168, 8760 * time.Hour: 8760,
+	} {
+		if got := HoursCeil(in); got != want {
+			t.Errorf("HoursCeil(%s) = %d, want %d", in, got, want)
 		}
 	}
 }
