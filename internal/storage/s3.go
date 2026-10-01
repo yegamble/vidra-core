@@ -35,6 +35,10 @@ type S3Config struct {
 	// Endpoint is the S3 API host[:port] WITHOUT a scheme (UseSSL selects
 	// http/https), e.g. "minio:9000" or "s3.us-west-004.backblazeb2.com".
 	Endpoint string
+	// ReadEndpoint optionally routes Open (including HEAD and ranged GETs) through
+	// a trusted SigV4-compatible proxy. Writes, presigning and server copies keep
+	// using Endpoint. The proxy receives the same bucket credentials/signatures.
+	ReadEndpoint string
 	// Bucket is the bucket all objects live in. Keys map 1:1 to object names.
 	Bucket string
 	// AccessKey / SecretKey are the S3 credentials. Never logged.
@@ -56,9 +60,10 @@ type S3Config struct {
 // (internal/media.objectPath), and HTTP serving gets Range support through the
 // seekable reader Open returns (a *minio.Object seeks via ranged GETs).
 type S3 struct {
-	client *minio.Client
-	bucket string
-	region string
+	client     *minio.Client
+	readClient *minio.Client
+	bucket     string
+	region     string
 }
 
 // compile-time interface checks: S3 is a Backend and must never silently
@@ -91,16 +96,27 @@ func NewS3(cfg S3Config) (*S3, error) {
 	if cfg.ForcePathStyle {
 		lookup = minio.BucketLookupPath
 	}
-	client, err := minio.New(cfg.Endpoint, &minio.Options{
+	opts := &minio.Options{
 		Creds:        credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
 		Secure:       cfg.UseSSL,
 		Region:       cfg.Region,
 		BucketLookup: lookup,
-	})
+	}
+	client, err := minio.New(cfg.Endpoint, opts)
 	if err != nil {
 		return nil, fmt.Errorf("storage: s3: build client: %w", err)
 	}
-	return &S3{client: client, bucket: cfg.Bucket, region: cfg.Region}, nil
+	reader := client
+	if cfg.ReadEndpoint != "" {
+		if strings.Contains(cfg.ReadEndpoint, "://") {
+			return nil, fmt.Errorf("storage: s3: read endpoint must be host[:port] without a scheme")
+		}
+		reader, err = minio.New(cfg.ReadEndpoint, opts)
+		if err != nil {
+			return nil, fmt.Errorf("storage: s3: build read client: %w", err)
+		}
+	}
+	return &S3{client: client, readClient: reader, bucket: cfg.Bucket, region: cfg.Region}, nil
 }
 
 // EnsureBucket verifies the configured bucket exists, creating it when absent
@@ -479,7 +495,11 @@ func (s *S3) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 	if err := validateKey(key); err != nil {
 		return nil, err
 	}
-	obj, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
+	client := s.readClient
+	if client == nil {
+		client = s.client
+	}
+	obj, err := client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
 		return nil, classifyS3("open", fmt.Errorf("storage: s3: open %q: %w", key, err))
 	}

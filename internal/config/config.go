@@ -746,6 +746,7 @@ type Config struct {
 	// by MinIO). StorageS3AccessKey/StorageS3SecretKey are credentials and must
 	// NEVER be logged (see internal/observability.IsSensitiveKey).
 	StorageS3Endpoint       string
+	StorageS3ReadEndpoint   string
 	StorageS3Bucket         string
 	StorageS3AccessKey      string
 	StorageS3SecretKey      string
@@ -1300,6 +1301,7 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 		StorageBackend:                         getEnv("STORAGE_BACKEND", "local"),
 		StorageLocalRoot:                       getEnv("STORAGE_LOCAL_ROOT", "./data/media"),
 		StorageS3Endpoint:                      getEnv("STORAGE_S3_ENDPOINT", ""),
+		StorageS3ReadEndpoint:                  getEnv("STORAGE_S3_READ_ENDPOINT", ""),
 		StorageS3Bucket:                        getEnv("STORAGE_S3_BUCKET", ""),
 		StorageS3AccessKey:                     getEnv("STORAGE_S3_ACCESS_KEY", ""),
 		StorageS3SecretKey:                     getEnv("STORAGE_S3_SECRET_KEY", ""),
@@ -1671,6 +1673,9 @@ func (c *Config) validate() error {
 		}
 		if strings.TrimSpace(c.StorageS3Bucket) == "" {
 			add(varErrorf("STORAGE_S3_BUCKET", "config: STORAGE_S3_BUCKET is required for the s3 storage backend"))
+		}
+		if strings.Contains(c.StorageS3ReadEndpoint, "://") {
+			add(varErrorf("STORAGE_S3_READ_ENDPOINT", "config: STORAGE_S3_READ_ENDPOINT must be host[:port] without a scheme; use STORAGE_S3_USE_SSL to pick http/https"))
 		}
 		if strings.TrimSpace(c.StorageS3AccessKey) == "" {
 			add(varErrorf("STORAGE_S3_ACCESS_KEY", "config: STORAGE_S3_ACCESS_KEY is required for the s3 storage backend"))
