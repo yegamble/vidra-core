@@ -1300,6 +1300,9 @@ func TestTOTPIssuerDefaultsToInstanceName(t *testing.T) {
 	if cfg.TOTPIssuer != "My Tube" {
 		t.Errorf("TOTPIssuer = %q, want the instance name default", cfg.TOTPIssuer)
 	}
+	if cfg.TOTPIssuerPinned {
+		t.Error("TOTPIssuerPinned = true with TOTP_ISSUER unset; the label must be free to follow the admin overlay")
+	}
 	t.Setenv("TOTP_ISSUER", "Custom Label")
 	cfg, err = Load()
 	if err != nil {
@@ -1307,6 +1310,9 @@ func TestTOTPIssuerDefaultsToInstanceName(t *testing.T) {
 	}
 	if cfg.TOTPIssuer != "Custom Label" {
 		t.Errorf("TOTPIssuer = %q, want the explicit override", cfg.TOTPIssuer)
+	}
+	if !cfg.TOTPIssuerPinned {
+		t.Error("TOTPIssuerPinned = false with TOTP_ISSUER set; an explicit value must win over the overlay")
 	}
 }
 

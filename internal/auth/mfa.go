@@ -195,8 +195,9 @@ var totpValidateOpts = totp.ValidateOpts{
 
 // WithMFA wires the TOTP collaborators: the repository, the at-rest secret
 // cipher (nil in dev stores secrets raw), and the issuer label shown by
-// authenticator apps (TOTP_ISSUER, default instance name). Without this
-// option the MFA endpoints answer ErrMFAUnavailable and login is unchanged.
+// authenticator apps (TOTP_ISSUER, default instance name; BeginTOTPEnrollmentAs
+// overrides it per enrollment). Without this option the MFA endpoints answer
+// ErrMFAUnavailable and login is unchanged.
 func WithMFA(repo MFARepository, cipher *secretbox.Cipher, issuerName string) Option {
 	return func(s *Service) {
 		if repo == nil {
@@ -235,6 +236,20 @@ type TOTPEnrollment struct {
 // replaces the secret; an already-enabled account gets ErrMFAAlreadyEnabled
 // (disable first). Login is unaffected until the enrollment is verified.
 func (s *Service) BeginTOTPEnrollment(ctx context.Context, userID uuid.UUID) (TOTPEnrollment, error) {
+	return s.BeginTOTPEnrollmentAs(ctx, userID, "")
+}
+
+// BeginTOTPEnrollmentAs is BeginTOTPEnrollment with the issuer label chosen by
+// the caller at enrollment time; "" falls back to the label WithMFA was given.
+// WHY: the label is baked into the user's authenticator app when they scan the
+// URI, so the caller (which can see the admin-overlay instance name, which this
+// package cannot) supplies it per enrollment. Already-enrolled authenticators
+// keep whatever label they were enrolled under — a rename only affects NEW
+// enrollments, and nothing here tries to rewrite existing ones.
+func (s *Service) BeginTOTPEnrollmentAs(ctx context.Context, userID uuid.UUID, issuer string) (TOTPEnrollment, error) {
+	if issuer == "" {
+		issuer = s.mfaIssuerName
+	}
 	if s.mfaRepo == nil {
 		return TOTPEnrollment{}, ErrMFAUnavailable
 	}
@@ -246,7 +261,7 @@ func (s *Service) BeginTOTPEnrollment(ctx context.Context, userID uuid.UUID) (TO
 		return TOTPEnrollment{}, ErrMFAAlreadyEnabled
 	}
 	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      s.mfaIssuerName,
+		Issuer:      issuer,
 		AccountName: user.Email,
 	})
 	if err != nil {
