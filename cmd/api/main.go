@@ -331,9 +331,10 @@ func run() error {
 		// Shipped-feature toggle batch (config-parity W8): defaults come from
 		// the existing env knobs; the boot capabilities themselves (yt-dlp
 		// wiring, WHISPER_ENDPOINT) stay env-only and are ANDed in at each seam.
-		ChannelSyncEnabled:    cfg.ChannelSyncEnabled,
-		ChannelSyncMaxPerUser: int64(cfg.ChannelSyncMaxPerUser),
-		TranscriptionEnabled:  cfg.WhisperEnabled,
+		ChannelSyncEnabled:         cfg.ChannelSyncEnabled,
+		ChannelSyncMaxPerUser:      int64(cfg.ChannelSyncMaxPerUser),
+		ChannelSyncIntervalMinutes: instancesettings.MinutesCeil(cfg.ChannelSyncInterval),
+		TranscriptionEnabled:       cfg.WhisperEnabled,
 
 		// VOD transcoding master toggle (config-parity W10): the runtime
 		// setting defaults to the boot env; the ffmpeg/ffprobe boot capability
@@ -2080,6 +2081,19 @@ func run() error {
 		}),
 		channelsync.WithBatch(cfg.ChannelSyncBatch),
 		channelsync.WithInterval(cfg.ChannelSyncInterval),
+		// The cadence follows the channel_sync_interval_minutes overlay, read
+		// at each reschedule (success cadence AND backoff base). The setting
+		// is whole minutes and its default is CHANNEL_SYNC_INTERVAL rounded up,
+		// so while it still equals that default hand back the env duration
+		// EXACTLY: an operator's 90s or 1h30m must not silently become 2m/90m
+		// just because the overlay exists.
+		channelsync.WithIntervalFunc(func() time.Duration {
+			m := settingssvc.Int(instancesettings.KeyChannelSyncIntervalMinutes)
+			if m == instancesettings.MinutesCeil(cfg.ChannelSyncInterval) {
+				return cfg.ChannelSyncInterval
+			}
+			return time.Duration(m) * time.Minute
+		}),
 		// Consecutive failures back off exponentially from the interval, capped
 		// here, so a permanently dead source is not re-listed at the plain
 		// cadence forever. Reset on the first success; sync-now bypasses it.
@@ -2482,7 +2496,7 @@ func run() error {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
 		go runChannelSyncWorker(workerCtx, logger, channelsyncsvc)
-		logger.Info("channel auto-sync worker started", "interval", cfg.ChannelSyncInterval.String())
+		logger.Info("channel auto-sync worker started", "interval", channelsyncsvc.Interval().String())
 	}
 
 	// Drain the auto-caption (Whisper) queue in the background: extract audio →

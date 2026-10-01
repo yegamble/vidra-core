@@ -231,7 +231,8 @@ ClamAV scan, and the instance never auto-publishes mirrored content). It is **OF
 by default and effective only when `YTDLP_IMPORT_ENABLED` is also on** — the sync
 *is* a yt-dlp import path, so the same egress-proxy / no-internal-route deploy
 stance above applies. Config: `CHANNEL_SYNC_ENABLED=true` to opt in,
-`CHANNEL_SYNC_INTERVAL` (default `1h`), `CHANNEL_SYNC_MAX_PER_USER` (default `5`),
+`CHANNEL_SYNC_INTERVAL` (default `1h`; also editable at runtime as the
+`channel_sync_interval_minutes` setting, 5 minutes to 7 days), `CHANNEL_SYNC_MAX_PER_USER` (default `5`),
 `CHANNEL_SYNC_BATCH` (default `15`, newest uploads per pass). When disabled the
 endpoints answer `503`.
 

@@ -821,6 +821,69 @@ func TestDrainDueFailuresBackOffExponentially(t *testing.T) {
 	}
 }
 
+// TestDrainDueReadsTheIntervalLive: the cadence follows WithIntervalFunc (the
+// channel_sync_interval_minutes overlay) per run, not a value frozen at boot.
+// A change made while the worker is running must move the NEXT success
+// reschedule AND the backoff base, and a func that answers <= 0 must fall back
+// to the static WithInterval value rather than rescheduling a row "now" in a
+// hot loop.
+func TestDrainDueReadsTheIntervalLive(t *testing.T) {
+	repo := newFakeRepo()
+	sync := sqlcgen.ChannelSync{ID: uuid.New(), UserID: uuid.New(), ChannelID: uuid.New(), ExternalChannelUrl: "https://youtube.com/@chan"}
+	repo.syncs[sync.ID] = sync
+	repo.claimed = []sqlcgen.ClaimDueChannelSyncsRow{claimRow(sync)}
+	lister := &fakeLister{}
+	live := 2 * time.Hour
+	svc := enabledService(repo, &fakeDrafter{}, &fakeEnqueuer{}, lister,
+		WithInterval(time.Hour), WithIntervalFunc(func() time.Duration { return live }),
+		WithBackoffMax(240*time.Hour))
+
+	run := func() time.Time {
+		t.Helper()
+		start := time.Now().UTC()
+		if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+			t.Fatalf("DrainDue: %v", err)
+		}
+		return start
+	}
+
+	// Success path: the func wins over the static value.
+	start := run()
+	if got := nextDelay(t, repo.finished[0].NextRunAt, start); got != 2*time.Hour {
+		t.Errorf("success rescheduled in %s, want the live 2h (not the static 1h)", got)
+	}
+	// An admin changes the setting; the very next success follows it.
+	live = 30 * time.Minute
+	start = run()
+	if got := nextDelay(t, repo.finished[1].NextRunAt, start); got != 30*time.Minute {
+		t.Errorf("success after a change rescheduled in %s, want 30m", got)
+	}
+	if got := svc.Interval(); got != 30*time.Minute {
+		t.Errorf("Interval() = %s, want the live 30m", got)
+	}
+
+	// Backoff: the base is the live interval, doubling per consecutive failure.
+	lister.err = errors.New("origin down")
+	live = 3 * time.Hour
+	start = run()
+	if got := nextDelay(t, repo.failed[0].NextRunAt, start); got != 3*time.Hour {
+		t.Errorf("first failure rescheduled in %s, want 3h (1x the live interval)", got)
+	}
+	live = 4 * time.Hour
+	start = run()
+	if got := nextDelay(t, repo.failed[1].NextRunAt, start); got != 8*time.Hour {
+		t.Errorf("second failure rescheduled in %s, want 8h (2x the live 4h)", got)
+	}
+
+	// A func answering <= 0 degrades to the static interval, never to "now".
+	lister.err = nil
+	live = 0
+	start = run()
+	if got := nextDelay(t, repo.finished[2].NextRunAt, start); got != time.Hour {
+		t.Errorf("zero live interval rescheduled in %s, want the static 1h fallback", got)
+	}
+}
+
 // TestDrainDueBackoffIsCapped: the doubling stops at CHANNEL_SYNC_BACKOFF_MAX,
 // so a long-dead source settles at a fixed slow cadence instead of drifting to
 // never.
