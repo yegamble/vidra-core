@@ -522,6 +522,41 @@ func checkBackupTimer(ctx context.Context, s *state) []Finding {
 		"install and start it: `cp deploy/vidra-backup.{service,timer} /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now "+unit+"`. Check it took with `systemctl list-timers "+unit+"`")}
 }
 
+// checkOffsiteBackup warns when backups never leave this host. It is the one
+// backup failure the other two checks cannot see: backup.sh can succeed every
+// night, so "backups" is green and the timer is active, while every copy (the
+// dump and the config archive holding JWT_SECRET and every KEK) sits on the disk
+// whose loss it is meant to survive. backup.sh itself only logs "LOCAL COPY
+// ONLY" into a journal nobody reads.
+//
+// "Configured" is exactly backup.sh's own test: BACKUP_RCLONE_REMOTE or
+// BACKUP_S3_URI non-empty (`[ -n "${BACKUP_RCLONE_REMOTE:-}${BACKUP_S3_URI:-}" ]`).
+// BACKUP_OFFSITE_ACK is doctor-only (backup.sh never reads it): an operator who
+// chose local-only on purpose says so once and the warning goes away. It is
+// read with setup.IsTrue like the other env booleans, and it is a WARN either
+// way, never a ✗: a lab or a host with provider snapshots is a legitimate
+// deployment, and a non-zero exit for it would be ignored by every wrapper.
+func checkOffsiteBackup(_ context.Context, s *state) []Finding {
+	if skip, why := s.externalPostgresSkip(); skip {
+		return []Finding{skipf(why)}
+	}
+	if s.envErr != nil {
+		// Without the env file "no target set" would be a guess presented as a finding.
+		return []Finding{skipf(fmt.Sprintf("the env file could not be read (%s), so the off-site target is unknown", s.envErr))}
+	}
+	for _, key := range []string{"BACKUP_RCLONE_REMOTE", "BACKUP_S3_URI"} {
+		if s.value(key) != "" {
+			return []Finding{okf(fmt.Sprintf("%s is set, so deploy/backup.sh uploads every backup off this host", key))}
+		}
+	}
+	if setup.IsTrue(s.value("BACKUP_OFFSITE_ACK")) {
+		return []Finding{okf("no off-site backup target is set, but BACKUP_OFFSITE_ACK says local-only backups are acknowledged")}
+	}
+	return []Finding{warnf(
+		"no off-site backup target is configured, so every backup stays on this host and is lost with it (local-only)",
+		"set BACKUP_RCLONE_REMOTE or BACKUP_S3_URI in "+s.envRel+" (and BACKUP_AGE_RECIPIENTS=<age1... public key> so the off-site copies are encrypted), or set BACKUP_OFFSITE_ACK=true if local-only is deliberate")}
+}
+
 // externalPostgresSkip is why the backup checks stand down on a managed
 // database: deploy/backup.sh and restore.sh exec pg_dump/pg_restore INSIDE the
 // bundled container and refuse to run without one, so there is no marker to be

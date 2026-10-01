@@ -929,6 +929,85 @@ func TestBackupTimer(t *testing.T) {
 	wantFinding(t, one(t, only(t, "backup timer", h, nil)), StatusWarn, "no systemctl", "")
 }
 
+// The off-site check reads the SAME variables deploy/backup.sh uploads on
+// (BACKUP_RCLONE_REMOTE, BACKUP_S3_URI), because a doctor that disagreed with
+// the script about "configured" would tell an operator their copies are
+// off-site when the script is logging LOCAL COPY ONLY.
+func TestOffsiteBackup(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		env       []string
+		external  bool
+		want      Status
+		detailHas string
+		fixHas    []string
+	}{
+		{name: "rclone remote", env: []string{"BACKUP_RCLONE_REMOTE=offsite:vidra"}, want: StatusOK, detailHas: "BACKUP_RCLONE_REMOTE"},
+		{name: "s3 uri", env: []string{"BACKUP_S3_URI=s3://bucket/vidra"}, want: StatusOK, detailHas: "BACKUP_S3_URI"},
+		{name: "neither is local only", want: StatusWarn, detailHas: "local-only",
+			fixHas: []string{"BACKUP_RCLONE_REMOTE", "BACKUP_S3_URI", "BACKUP_AGE_RECIPIENTS", "BACKUP_OFFSITE_ACK"}},
+		// backup.sh tests -n, so a blank or whitespace-only assignment is no target.
+		{name: "blank target", env: []string{"BACKUP_S3_URI=", "BACKUP_RCLONE_REMOTE=  "}, want: StatusWarn, detailHas: "local-only"},
+		{name: "acknowledged", env: []string{"BACKUP_OFFSITE_ACK=true"}, want: StatusOK, detailHas: "acknowledged"},
+		{name: "acknowledged with yes", env: []string{"BACKUP_OFFSITE_ACK=yes"}, want: StatusOK, detailHas: "acknowledged"},
+		// Same reader as VIDRA_EXTERNAL_POSTGRES: a spelling the shell would not
+		// call true does not silence the warning.
+		{name: "ack false", env: []string{"BACKUP_OFFSITE_ACK=false"}, want: StatusWarn, detailHas: "local-only"},
+		{name: "ack garbage", env: []string{"BACKUP_OFFSITE_ACK=maybe"}, want: StatusWarn, detailHas: "local-only"},
+		{name: "target wins over ack", env: []string{"BACKUP_S3_URI=s3://b/v", "BACKUP_OFFSITE_ACK=true"}, want: StatusOK, detailHas: "BACKUP_S3_URI"},
+		{name: "managed database stands down", external: true, want: StatusWarn, detailHas: "provider's automated ones"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newFakeHost()
+			if tc.external {
+				path := filepath.Join(testRoot, "env/production.env")
+				h.files[path] = strings.Replace(h.files[path], "VIDRA_EXTERNAL_POSTGRES=false", "VIDRA_EXTERNAL_POSTGRES=true", 1)
+			}
+			if len(tc.env) > 0 {
+				setEnv(h, tc.env...)
+			}
+			f := one(t, only(t, "off-site backup", h, nil))
+			wantFinding(t, f, tc.want, tc.detailHas, "")
+			for _, fix := range tc.fixHas {
+				if !strings.Contains(f.Fix, fix) {
+					t.Errorf("fix = %q, want it to name %s", f.Fix, fix)
+				}
+			}
+			if tc.want == StatusOK && f.Fix != "" {
+				t.Errorf("a passing finding carries a fix: %q", f.Fix)
+			}
+		})
+	}
+
+	// No env file at all: the check cannot tell, which is a skip and not a claim
+	// that nothing is configured.
+	h := newFakeHost()
+	delete(h.files, filepath.Join(testRoot, "env/production.env"))
+	wantFinding(t, one(t, only(t, "off-site backup", h, nil)), StatusWarn, "skipped:", "")
+}
+
+// A WARN is not a failure: with no off-site target and no acknowledgement the
+// whole run must still exit 0, or every local-only lab would learn to ignore
+// doctor's exit code.
+func TestOffsiteBackupWarningNeverFailsTheRun(t *testing.T) {
+	rep := run(t, newFakeHost(), nil)
+	var found bool
+	for _, r := range rep.Results {
+		if r.Check == "off-site backup" {
+			found = true
+			if r.Status != StatusWarn {
+				t.Errorf("status = %s, want warn for a healthy deployment with no off-site target", r.Status)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the run produced no off-site backup result")
+	}
+	if rep.Failed() {
+		t.Error("an unacknowledged local-only backup failed the run; it must only warn")
+	}
+}
+
 func TestDiskSpace(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
