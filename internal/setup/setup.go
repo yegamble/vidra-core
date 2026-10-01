@@ -174,6 +174,12 @@ type Answers struct {
 	// Registration nil keeps the template's registration policy.
 	Registration *RegistrationAnswers
 
+	// Federation turns ActivityPub on FOR A FIRST INSTALL: FEDERATION_ENABLED=true
+	// plus a freshly minted FEDERATION_KEY_KEK. Only true acts. False means "no" and
+	// "unanswered" alike and touches nothing, so a re-run can never switch off an
+	// instance that federates. ActivityPub only; see applyFederationRule.
+	Federation bool
+
 	// PeerTube nil keeps the file's PeerTube-source configuration exactly as it
 	// is — a re-run about the domain must not reconfigure a migration in flight.
 	// A non-nil value is an ANSWER, including PeerTube.Enabled=false, which is
@@ -590,6 +596,11 @@ func Generate(req Request) (*Result, error) {
 	applyMailRule(res)
 	added := applyComponentRule(req, answers, res)
 	added = append(added, applyPeerTubeRule(req, answers, res)...)
+	fedAdded, err := applyFederationRule(req, res)
+	if err != nil {
+		return nil, err
+	}
+	added = append(added, fedAdded...)
 	res.Warnings = append(res.Warnings, droppedProfileWarnings(req, res.Values)...)
 
 	// Line-shape before rendering: a value carrying a newline would not be a bad
@@ -731,6 +742,61 @@ func rotationSet(req Request) (map[string]bool, error) {
 	}
 	return out, nil
 }
+
+const (
+	federationEnabledKey = "FEDERATION_ENABLED"
+	federationKEKKey     = "FEDERATION_KEY_KEK"
+)
+
+// applyFederationRule is the first-install "federate?" answer. The template ships
+// FEDERATION_ENABLED=false and FEDERATION_KEY_KEK commented out, so the main
+// loop never mints the KEK (an inactive key is not in Template.Keys) and the api
+// would refuse a hand-flipped switch in production with no KEK. Yes therefore
+// sets both, in one run, through the same mint() every other KEK uses.
+//
+// It returns the keys the template did not define, for the managed block.
+//
+// FIRST INSTALL ONLY, enforced here and not just by the prompt: on an existing
+// configuration a missing KEK is a truncated file or a half-restored one far more
+// often than a new feature, and minting over it orphans whatever the old key
+// sealed (blankKEKError's reasoning). A KEK already on file is kept — answering
+// yes then only flips the switch.
+//
+// ATProto is not part of this answer: ATPROTO_LOGIN_ENABLED needs no key, and
+// ATPROTO_ENABLED (outbound cross-posting) is its own opt-in that already falls
+// back to the KEK minted here. Enabling either as a side effect would start
+// posting to a third party nobody asked about.
+func applyFederationRule(req Request, res *Result) ([]string, error) {
+	if !req.Answers.Federation {
+		return nil, nil
+	}
+	var added []string
+	if _, defined := res.Values[federationEnabledKey]; !defined {
+		added = append(added, federationEnabledKey)
+	}
+	res.Values[federationEnabledKey] = "true"
+	if kek, ok := res.Values[federationKEKKey]; ok && !needsValue(kek) {
+		// Carried from the existing file: kept, never re-minted.
+		return added, nil
+	}
+	if req.Existing != nil {
+		return nil, fmt.Errorf("setup: %s is not set in the configuration being merged, and `vidra setup` only mints it on a first install: "+
+			"minting over an existing deployment is DESTRUCTIVE (%s). To turn federation on for a running instance follow "+
+			"%s, and generate the key with `openssl rand -base64 32`", federationKEKKey, secretManifest[federationKEKKey].why, FederationDocsURL)
+	}
+	v, err := mint(federationKEKKey, req.Rand)
+	if err != nil {
+		return nil, err
+	}
+	res.Values[federationKEKKey] = v
+	res.Generated = append(res.Generated, federationKEKKey)
+	return append(added, federationKEKKey), nil
+}
+
+// FederationDocsURL is the day-2 recipe: the one place that says how to turn
+// federation on after install, including the KEK warning. Printed whenever the
+// first-install question is answered no.
+const FederationDocsURL = "https://vidra.yosef.app/docs/concepts/federation#turn-federation-on-after-install"
 
 // blankKEKError refuses to mint a key-encryption key over a blank/placeholder
 // slot when a previous configuration exists. The destructive gate on a KEK has

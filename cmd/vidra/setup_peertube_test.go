@@ -293,3 +293,119 @@ peertube-media-mode = copy
 		}
 	}
 }
+
+// The first-install federation question.
+//
+// ActivityPub is asked ONLY when there is no env file yet: turning it on mints
+// FEDERATION_KEY_KEK, and `vidra setup` refuses to mint a KEK over an existing
+// configuration, so a re-run could not honour a "yes" anyway. Day-2 enabling is
+// the docs recipe, which the "no" answer points at.
+
+const federationQuestion = "Federate with other servers (ActivityPub)"
+
+// cliFederationTemplate defines the switch the way env/production.env.example
+// does: FEDERATION_ENABLED=false active, FEDERATION_KEY_KEK commented out.
+const cliFederationTemplate = cliTemplate + "\nFEDERATION_ENABLED=false\n"
+
+func federationHarness(t *testing.T) *harness {
+	t.Helper()
+	h := newHarness(t)
+	if err := os.WriteFile(h.template, []byte(cliFederationTemplate), 0o644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+	return h
+}
+
+func (h *harness) askedAbout(q string) bool {
+	for _, a := range h.asked {
+		if strings.Contains(a, q) {
+			return true
+		}
+	}
+	return false
+}
+
+// kekLine returns the FEDERATION_KEY_KEK assignment in a generated file, or "".
+func kekLine(env string) string {
+	for _, ln := range strings.Split(env, "\n") {
+		if strings.HasPrefix(ln, "FEDERATION_KEY_KEK=") {
+			return ln
+		}
+	}
+	return ""
+}
+
+// Yes switches it on and mints the KEK; no AND bare enter (the default) leave it
+// off, mint nothing and print the day-2 recipe URL.
+func TestSetupFederationFirstInstallAnswers(t *testing.T) {
+	const url = "https://vidra.yosef.app/docs/concepts/federation#turn-federation-on-after-install"
+	for _, tc := range []struct {
+		name, answer string
+		on           bool
+	}{{"yes", "y", true}, {"no", "n", false}, {"enter is no", "", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := federationHarness(t)
+			h.script = []promptAnswer{{match: federationQuestion, answer: tc.answer}, {answer: ""}}
+			if err := h.run(h.interviewArgs()...); err != nil {
+				t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+			}
+			got, kek := h.readOutput(t), kekLine(h.readOutput(t))
+			if !h.askedAbout(federationQuestion) {
+				t.Fatal("a first install was never asked")
+			}
+			if on := strings.Contains(got, "\nFEDERATION_ENABLED=true\n"); on != tc.on || (kek != "") != tc.on {
+				t.Fatalf("enabled=%v kek=%q, want on=%v:\n%s", on, kek, tc.on, got)
+			}
+			if tc.on && (strings.Contains(h.out.String(), strings.TrimPrefix(kek, "FEDERATION_KEY_KEK=")) || !strings.Contains(h.out.String(), "generated secrets: ")) {
+				t.Errorf("the report leaked the KEK or did not list it as generated:\n%s", h.out.String())
+			}
+			if hint := strings.Contains(h.out.String(), url); hint == tc.on {
+				t.Errorf("day-2 hint printed=%v, want %v", hint, !tc.on)
+			}
+		})
+	}
+}
+
+// Questions are never asked unattended or on plain-http (the api refuses
+// federation there), so those installs never federate by surprise.
+func TestSetupFederationIsNotAskedUnattendedOrWithoutTLS(t *testing.T) {
+	h := federationHarness(t)
+	if err := h.run(h.setupArgs("--yes")...); err != nil {
+		t.Fatalf("non-interactive: %v (stderr: %s)", err, h.err.String())
+	}
+	if got := h.readOutput(t); !strings.Contains(got, "\nFEDERATION_ENABLED=false\n") || kekLine(got) != "" {
+		t.Errorf("a non-interactive install turned federation on:\n%s", got)
+	}
+	h = federationHarness(t)
+	h.script = []promptAnswer{{answer: ""}}
+	if err := h.run(h.interviewArgs("--tls-mode", "plain-http", "--domain", "video.lan")...); err != nil {
+		t.Fatalf("plain-http: %v (stderr: %s)", err, h.err.String())
+	}
+	if h.askedAbout(federationQuestion) {
+		t.Error("asked to federate on a plain-http install")
+	}
+}
+
+// A re-run is never asked and never changes the answer given the first time, in
+// either direction, nor replaces the KEK.
+func TestSetupFederationIsNotAskedOnAReRunAndIsPreserved(t *testing.T) {
+	for _, first := range []string{"y", "n"} {
+		h := federationHarness(t)
+		h.script = []promptAnswer{{match: federationQuestion, answer: first}, {answer: ""}}
+		if err := h.run(h.interviewArgs()...); err != nil {
+			t.Fatalf("first install: %v (stderr: %s)", err, h.err.String())
+		}
+		before := h.readOutput(t)
+		h.script = []promptAnswer{{answer: ""}}
+		if err := h.run(h.interviewArgs("--yes")...); err != nil {
+			t.Fatalf("re-run: %v (stderr: %s)", err, h.err.String())
+		}
+		after := h.readOutput(t)
+		if h.askedAbout(federationQuestion) || strings.Contains(h.out.String(), "docs/concepts/federation") {
+			t.Errorf("answer %q: a re-run asked or hinted", first)
+		}
+		if kekLine(after) != kekLine(before) || strings.Contains(after, "\nFEDERATION_ENABLED=true\n") != (first == "y") {
+			t.Errorf("answer %q: the re-run changed federation:\n%s", first, after)
+		}
+	}
+}

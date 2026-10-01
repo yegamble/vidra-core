@@ -2203,3 +2203,80 @@ func TestARerunNormalisesAgainstTheExistingMode(t *testing.T) {
 		t.Errorf("%s = %q, want the existing mode preserved", tlsModeKey, got)
 	}
 }
+
+// The first-install federation answer. "Yes" must leave a file the api will
+// boot: the switch on AND the KEK it requires in production, minted by the same
+// path as every other KEK. A switch with no KEK would be refused by Check, which
+// is the failure this answer exists to prevent an operator meeting at deploy.
+func TestFederationAnswerOnAFirstInstallEnablesAndMintsTheKEK(t *testing.T) {
+	a := baseAnswers()
+	a.Federation = true
+	res := generate(t, Request{Answers: a})
+	if res.Values["FEDERATION_ENABLED"] != "true" {
+		t.Errorf("FEDERATION_ENABLED = %q, want true", res.Values["FEDERATION_ENABLED"])
+	}
+	raw, err := base64.StdEncoding.DecodeString(res.Values["FEDERATION_KEY_KEK"])
+	if err != nil || len(raw) != 32 {
+		t.Errorf("FEDERATION_KEY_KEK = %q, want base64 of exactly 32 bytes (err %v)", res.Values["FEDERATION_KEY_KEK"], err)
+	}
+	if !contains(res.Generated, "FEDERATION_KEY_KEK") {
+		t.Errorf("Generated = %v, want FEDERATION_KEY_KEK reported as minted", res.Generated)
+	}
+	// ATProto is deliberately not touched: it has its own switches.
+	for _, k := range []string{"ATPROTO_ENABLED", "ATPROTO_LOGIN_ENABLED", "ATPROTO_KEY_KEK"} {
+		if v, ok := res.Values[k]; ok && v != "" && v != "false" {
+			t.Errorf("%s = %q, the federation answer must not turn ATProto on", k, v)
+		}
+	}
+	// The next run carries the KEK rather than minting another.
+	again := generate(t, Request{Existing: mustParse(t, res.Content), Answers: baseAnswers()})
+	if again.Values["FEDERATION_KEY_KEK"] != res.Values["FEDERATION_KEY_KEK"] || again.Values["FEDERATION_ENABLED"] != "true" {
+		t.Errorf("a re-run changed federation: kek %q -> %q, enabled %q", res.Values["FEDERATION_KEY_KEK"], again.Values["FEDERATION_KEY_KEK"], again.Values["FEDERATION_ENABLED"])
+	}
+}
+
+// An older template never defined the switch: the answer must still land.
+func TestFederationAnswerAppendsKeysAnOlderTemplateLacks(t *testing.T) {
+	tmpl := mustParse(t, []byte("VIDRA_ENV=production\nPUBLIC_BASE_URL=https://example.com\nMFA_KEY_KEK=\nJWT_SECRET=\n"))
+	a := baseAnswers()
+	a.Federation = true
+	res := generate(t, Request{Template: tmpl, Answers: a})
+	if res.Values["FEDERATION_ENABLED"] != "true" || res.Values["FEDERATION_KEY_KEK"] == "" {
+		t.Errorf("answer dropped by a template without the keys: %v", res.Values)
+	}
+}
+
+// "No" and "unanswered" are the same zero value, and neither may touch a file:
+// a re-run must never switch off an instance that federates.
+func TestFederationFalseLeavesTheFileAlone(t *testing.T) {
+	res := generate(t, Request{Answers: baseAnswers()})
+	if res.Values["FEDERATION_ENABLED"] != "false" {
+		t.Errorf("FEDERATION_ENABLED = %q, want the template's false", res.Values["FEDERATION_ENABLED"])
+	}
+	if _, ok := res.Values["FEDERATION_KEY_KEK"]; ok {
+		t.Error("a KEK was minted for a deployment that did not ask for federation")
+	}
+}
+
+// Minting a KEK on anything but a first install is the destructive act
+// blankKEKError exists for. The answer is only ever asked on a first install,
+// but the engine is the second line: a front end that got this wrong must be
+// refused, not obeyed.
+func TestFederationAnswerIsRefusedWithoutAKEKOnAnExistingInstall(t *testing.T) {
+	existing := mustParse(t, []byte("PUBLIC_BASE_URL=https://video.example.org\nMFA_KEY_KEK="+base64.StdEncoding.EncodeToString(make([]byte, 32))+"\n"))
+	a := baseAnswers()
+	a.Federation = true
+	_, err := Generate(Request{Template: fixtureTemplate(t), Existing: existing, Answers: a, Rand: &seqReader{}})
+	if err == nil {
+		t.Fatal("federation was enabled with a freshly minted KEK on an existing install")
+	}
+	if !strings.Contains(err.Error(), "FEDERATION_KEY_KEK") || !strings.Contains(err.Error(), "first install") {
+		t.Errorf("error %q should name the key and say it is a first-install answer", err)
+	}
+	// With the KEK already on file, saying yes is harmless and keeps it.
+	existing = mustParse(t, []byte("PUBLIC_BASE_URL=https://video.example.org\nMFA_KEY_KEK="+base64.StdEncoding.EncodeToString(make([]byte, 32))+"\nFEDERATION_KEY_KEK="+base64.StdEncoding.EncodeToString(make([]byte, 32))+"\n"))
+	res := generate(t, Request{Existing: existing, Answers: a})
+	if res.Values["FEDERATION_ENABLED"] != "true" || contains(res.Generated, "FEDERATION_KEY_KEK") {
+		t.Errorf("an existing KEK was not kept: enabled=%q generated=%v", res.Values["FEDERATION_ENABLED"], res.Generated)
+	}
+}

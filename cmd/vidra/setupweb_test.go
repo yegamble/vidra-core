@@ -154,6 +154,9 @@ func TestWebAnswersMatchTheTerminalInterview(t *testing.T) {
 		{match: "From address", answer: smtpFrom},
 		{match: "Open registration to the public now", answer: "y"},
 		{match: "Require an admin to approve each signup", answer: "y"},
+		// Asked on a first install only, and answered no here: the wizard has no
+		// such question yet, so a yes would be a field the two cannot compare.
+		{match: "Federate with other servers", answer: "n"},
 		{match: "Migrate from an existing PeerTube instance", answer: "y"},
 		{match: "Source PeerTube database DSN", answer: ptSourceURL},
 		{match: "Where the source instance's media lives", answer: "s3"},
