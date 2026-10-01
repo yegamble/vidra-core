@@ -354,6 +354,6 @@ func (s *Server) handleNodeInfo(c echo.Context) error {
 	resp.Version = "2.0"
 	resp.Software.Name = "vidra"
 	resp.Software.Version = version.Version
-	resp.Instance.Name = s.cfg.InstanceName
+	resp.Instance.Name = s.instanceName() // overlay-aware, like GET /instance
 	return c.JSON(http.StatusOK, resp)
 }

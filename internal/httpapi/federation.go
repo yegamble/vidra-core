@@ -89,17 +89,19 @@ func (s *Server) handleNodeInfo21(c echo.Context) error {
 		return err
 	}
 	doc := nodeInfo21Document{
-		Version:           "2.1",
-		Software:          nodeInfoSoftware{Name: "vidra", Version: version.Version},
-		Protocols:         []string{"activitypub"},
-		Services:          nodeInfoServices{Inbound: []string{}, Outbound: []string{}},
-		OpenRegistrations: s.cfg.RegistrationEnabled,
+		Version:   "2.1",
+		Software:  nodeInfoSoftware{Name: "vidra", Version: version.Version},
+		Protocols: []string{"activitypub"},
+		Services:  nodeInfoServices{Inbound: []string{}, Outbound: []string{}},
+		// Effective values (admin overlay, else config): remote instances and
+		// directories read this document to decide whether to list us.
+		OpenRegistrations: s.registrationEnabled(),
 		Usage: nodeInfoUsage{
 			Users:         nodeInfoUsers{Total: usage.Users},
 			LocalPosts:    usage.LocalPosts,
 			LocalComments: usage.LocalComments,
 		},
-		Metadata: map[string]any{"nodeName": s.cfg.InstanceName},
+		Metadata: map[string]any{"nodeName": s.instanceName()},
 	}
 	// Set the profile content type before c.JSON (Echo only sets a default when
 	// none is present), so consumers see the NodeInfo 2.1 profile.
