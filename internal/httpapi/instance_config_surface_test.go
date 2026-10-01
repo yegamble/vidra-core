@@ -101,9 +101,18 @@ func (f *instanceImageFakeRepo) DeleteInstanceImage(_ context.Context, kind stri
 // real local blob backend. The FIRST registered account is the admin.
 func instanceConfigServer(t *testing.T) *Server {
 	t.Helper()
+	srv, _ := instanceConfigServerWithRepo(t)
+	return srv
+}
+
+// instanceConfigServerWithRepo also returns the account store, for tests that
+// need to promote a second account to admin (the owner is the first account).
+func instanceConfigServerWithRepo(t *testing.T) (*Server, *authFakeRepo) {
+	t.Helper()
 	cfg := testConfig()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
-	authsvc := auth.NewService(newAuthFakeRepo(), issuer, 720*time.Hour)
+	repo := newAuthFakeRepo()
+	authsvc := auth.NewService(repo, issuer, 720*time.Hour)
 	blobs, err := storage.NewLocal(t.TempDir())
 	if err != nil {
 		t.Fatalf("storage.NewLocal: %v", err)
@@ -127,7 +136,7 @@ func instanceConfigServer(t *testing.T) *Server {
 		WithInstanceDocumentsService(docsvc),
 		WithProfileImageService(imagesvc),
 		WithMediaStorage(blobs),
-	)
+	), repo
 }
 
 func getInstanceRec(srv *Server) *httptest.ResponseRecorder {
