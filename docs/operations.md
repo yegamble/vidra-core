@@ -2246,6 +2246,15 @@ deleted the files.
 | `0` (default) | The recording is deleted as soon as its replay VOD is published. The replay is then the copy — which is what the recording was an intermediate for. |
 | a duration, e.g. `168h` | Nothing is deleted on publish. The retention worker (hourly, leader-elected, beside the QoE and audit prunes) deletes recordings older than the window, 200 per pass, oldest first. |
 
+The window is also editable at runtime as the `live_recording_retention_hours`
+setting (0 to 8760 hours; default is `LIVE_RECORDING_RETENTION` rounded up to
+whole hours), read on every sweep with no restart. **It deletes files.**
+Lowering it, or raising it from `0`, makes the next hourly sweep delete every
+recording older than the new window, including the only copy of a failed or
+replay-disabled broadcast. Setting it to `0` stops the sweep and deletes
+nothing already on disk; only recordings whose replay publishes from then on are
+removed.
+
 Two things about the default you should know before leaving it there:
 
 - **A failed replay keeps its recording, always.** It is the only copy of that

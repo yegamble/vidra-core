@@ -331,10 +331,11 @@ func run() error {
 		// Shipped-feature toggle batch (config-parity W8): defaults come from
 		// the existing env knobs; the boot capabilities themselves (yt-dlp
 		// wiring, WHISPER_ENDPOINT) stay env-only and are ANDed in at each seam.
-		ChannelSyncEnabled:         cfg.ChannelSyncEnabled,
-		ChannelSyncMaxPerUser:      int64(cfg.ChannelSyncMaxPerUser),
-		ChannelSyncIntervalMinutes: instancesettings.MinutesCeil(cfg.ChannelSyncInterval),
-		TranscriptionEnabled:       cfg.WhisperEnabled,
+		ChannelSyncEnabled:          cfg.ChannelSyncEnabled,
+		ChannelSyncMaxPerUser:       int64(cfg.ChannelSyncMaxPerUser),
+		ChannelSyncIntervalMinutes:  instancesettings.MinutesCeil(cfg.ChannelSyncInterval),
+		LiveRecordingRetentionHours: instancesettings.HoursCeil(cfg.LiveRecordingRetention),
+		TranscriptionEnabled:        cfg.WhisperEnabled,
 
 		// VOD transcoding master toggle (config-parity W10): the runtime
 		// setting defaults to the boot env; the ffmpeg/ffprobe boot capability
@@ -1751,12 +1752,22 @@ func run() error {
 		// recording store, but the duration watchdog audits force-closes on
 		// every deployment.
 		live.WithAuditor(auditsvc),
-		// Session-recording retention. A plain config read rather than a
-		// settings-overlay knob: it governs bytes on the operator's disk, not
-		// instance policy, and an admin changing it from a web form is how a
-		// "the only copy" recording disappears between a failed replay and a
-		// re-transcode.
-		live.WithRecordingRetention(func() time.Duration { return cfg.LiveRecordingRetention }),
+		// Session-recording retention follows the live_recording_retention_hours
+		// overlay, read at every use (publish-time delete decision AND each
+		// hourly sweep). The setting is whole hours and its default is
+		// LIVE_RECORDING_RETENTION rounded up, so while it still equals that
+		// default hand back the env duration EXACTLY: an operator's 90m must not
+		// silently become 2h just because the overlay exists. 0 is the
+		// delete-on-publish mode and the sweep then deletes nothing. This knob
+		// deletes files: lowering it is an admin's explicit act and the next
+		// sweep enforces it.
+		live.WithRecordingRetention(func() time.Duration {
+			h := settingssvc.Int(instancesettings.KeyLiveRecordingRetentionHours)
+			if h == instancesettings.HoursCeil(cfg.LiveRecordingRetention) {
+				return cfg.LiveRecordingRetention
+			}
+			return time.Duration(h) * time.Hour
+		}),
 		// The concurrent-viewer count. Redis-only and TTL'd — no count on an
 		// instance without Redis, which the projections report as ABSENT rather
 		// than as zero.
@@ -2525,10 +2536,13 @@ func run() error {
 		// Session-recording retention rides the same leader-elected cadence the
 		// QoE and audit prunes do (runTelemetryRetentionWorker's hourly tick), in
 		// its own pass so a failure here cannot stop those. A no-op tick when
-		// LIVE_RECORDING_RETENTION is 0 — see internal/live/retention.go for why
-		// 0 sweeps nothing rather than inventing a window.
-		go runLiveRecordingRetentionWorker(workerCtx, logger, livesvc, cfg.LiveRecordingRetention, cronLeader)
-		logger.Info("live recording retention worker started", "retention", cfg.LiveRecordingRetention.String())
+		// the live retention is 0 — see internal/live/retention.go for why 0
+		// sweeps nothing rather than inventing a window. The worker starts
+		// UNCONDITIONALLY (never gated on retention > 0) and PruneRecordings
+		// reads live_recording_retention_hours each tick, so an admin moving the
+		// value 0 <-> N takes effect on the next pass with no restart.
+		go runLiveRecordingRetentionWorker(workerCtx, logger, livesvc, cronLeader)
+		logger.Info("live recording retention worker started", "retention", livesvc.RecordingRetention().String())
 	}
 
 	// Drain the upload-finalize queue in the background: assemble an accepted
@@ -3277,7 +3291,9 @@ func runLiveDurationWatchdog(ctx context.Context, logger *slog.Logger, svc *live
 }
 
 // runLiveRecordingRetentionWorker deletes session recordings that have outlived
-// LIVE_RECORDING_RETENTION.
+// the live_recording_retention_hours window (default LIVE_RECORDING_RETENTION).
+// The window is NOT a parameter: it is read live from the service on every tick
+// so an admin's change applies without a restart.
 //
 // Hourly and leader-gated, modelled on runTelemetryRetentionWorker: these are
 // files on a shared volume, so N replicas each unlinking the same batch would be
@@ -3288,7 +3304,9 @@ func runLiveDurationWatchdog(ctx context.Context, logger *slog.Logger, svc *live
 //
 // Every tick is a free no-op while the retention is 0, which is the default: see
 // internal/live/retention.go for why 0 deletes on publish and sweeps nothing.
-func runLiveRecordingRetentionWorker(ctx context.Context, logger *slog.Logger, svc *live.Service, retention time.Duration, leader *leaderlock.Elector) {
+// The tick is a fixed hour regardless of the value, so 0 can never become a
+// hot delete loop.
+func runLiveRecordingRetentionWorker(ctx context.Context, logger *slog.Logger, svc *live.Service, leader *leaderlock.Elector) {
 	const interval = time.Hour
 	jobloop.Loop{
 		Interval: interval,
@@ -3299,7 +3317,7 @@ func runLiveRecordingRetentionWorker(ctx context.Context, logger *slog.Logger, s
 				removed, err := svc.PruneRecordings(ctx, tick.UTC())
 				if removed > 0 {
 					logger.Info("live recording retention deleted session recordings",
-						"count", removed, "retention", retention.String())
+						"count", removed, "retention", svc.RecordingRetention().String())
 				}
 				return 0, err
 			},

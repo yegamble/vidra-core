@@ -14336,7 +14336,14 @@ paths:
         without a restart), and the W11 live limits live_max_instance_lives /
         live_max_user_lives (0..10000, 0 = unlimited, enforced at the RTMP
         publish callback) and live_max_duration_secs (0 = no limit, else
-        60..2592000, enforced by the duration watchdog), and the W7 sign-up
+        60..2592000, enforced by the duration watchdog), live_recording_retention_hours
+        (0..8760, default LIVE_RECORDING_RETENTION in whole hours rounded up;
+        0 = delete a session recording as soon as its replay is published and
+        sweep nothing, else the hourly sweep deletes recordings older than that
+        many hours. This setting DELETES FILES: lowering it, or raising it from
+        0, makes the next sweep delete every recording older than the new
+        window, including recordings kept as the only copy of a failed or
+        replay-disabled broadcast; read at every use, no restart), and the W7 sign-up
         limits registration_user_limit (0 = unlimited; signup refuses and
         GET /api/v1/instance reports registration_enabled=false with reason
         user_limit_reached once the account count reaches it — the count is

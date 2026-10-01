@@ -213,6 +213,11 @@ func WithViewerCounter(v *ViewerCounter) Option {
 // playlist path and read it on the stream projections. Nil when unwired.
 func (s *Service) Viewers() *ViewerCounter { return s.viewers }
 
+// RecordingRetention is the effective retention window right now, read live
+// (live_recording_retention_hours) so the worker can report what it is actually
+// enforcing rather than a value captured at boot.
+func (s *Service) RecordingRetention() time.Duration { return s.recordingRetention() }
+
 // recordingRetention reads the effective retention window.
 func (s *Service) recordingRetention() time.Duration {
 	if s.recordingRetentionFunc == nil {
