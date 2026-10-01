@@ -167,6 +167,37 @@ func (s *Service) ConsumeStepUp(ctx context.Context, userID uuid.UUID, currentSe
 	return row.Provider, nil
 }
 
+// ConfirmFreshCredential proves the caller is present NOW, for an action whose
+// damage a stolen access token could otherwise do alone (rewriting where the
+// instance's mail goes). Exactly one proof is read: the caller's current
+// password, or — for a passwordless account — a step-up assertion. The split
+// mirrors RequestEmailChange/RequestEmailChangeWithStepUp, including its one
+// firm rule: an account that HAS a password cannot substitute an assertion
+// (ErrPasswordAlreadySet), so a step-up is never a way around a password.
+//
+// The assertion is spent only after those checks, so a refusal on the account's
+// shape does not burn a token the caller could have used elsewhere.
+func (s *Service) ConfirmFreshCredential(ctx context.Context, userID uuid.UUID, currentPassword, sessionID, stepUpToken string) error {
+	user, err := s.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(stepUpToken) != "" {
+		if user.PasswordHash != "" {
+			return ErrPasswordAlreadySet
+		}
+		_, err := s.ConsumeStepUp(ctx, user.ID, sessionID, stepUpToken)
+		return err
+	}
+	if user.PasswordHash == "" {
+		return ErrPasswordNotSet
+	}
+	if err := CheckPassword(user.PasswordHash, currentPassword); err != nil {
+		return ErrInvalidPassword
+	}
+	return nil
+}
+
 // StepUpProvidersFor lists the providers that can satisfy a step-up for an
 // account: exactly the identities it has linked. It is what the 403 names, so
 // the client can offer the right button instead of a generic refusal — and it

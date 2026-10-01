@@ -148,7 +148,7 @@ func TestMailConfigSaveWithoutAKEKIs409(t *testing.T) {
 	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 
 	rec := doJSON(srv, http.MethodPut, mailConfigPath, tok,
-		`{"transport":"resend","from_address":"a@b.test","resend":{"api_key":"re_key"}}`)
+		withCurrentPassword(`{"transport":"resend","from_address":"a@b.test","resend":{"api_key":"re_key"}}`))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
 	}
@@ -177,7 +177,7 @@ func TestMailConfigValidationFieldsAreDotted(t *testing.T) {
 	srv, _ := mailConfigServer(t, &buf, svc)
 	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 
-	rec := doJSON(srv, http.MethodPut, mailConfigPath, tok, `{"transport":"smtp","from_address":"a@b.test"}`)
+	rec := doJSON(srv, http.MethodPut, mailConfigPath, tok, withCurrentPassword(`{"transport":"smtp","from_address":"a@b.test"}`))
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422; body=%s", rec.Code, rec.Body.String())
 	}
@@ -204,7 +204,7 @@ func TestMailConfigRejectsUnknownFields(t *testing.T) {
 	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 
 	rec := doJSON(srv, http.MethodPut, mailConfigPath, tok,
-		`{"transport":"smtp","from_address":"a@b.test","smtp":{"host":"h","port":25,"encryption":"none","passwrod":"typo"}}`)
+		withCurrentPassword(`{"transport":"smtp","from_address":"a@b.test","smtp":{"host":"h","port":25,"encryption":"none","passwrod":"typo"}}`))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400 for an unknown field; body=%s", rec.Code, rec.Body.String())
 	}
@@ -223,7 +223,7 @@ func TestMailConfigSaveIsAudited(t *testing.T) {
 
 	const sentinel = "SENTINEL-RESEND-KEY-4b1c"
 	rec := doJSON(srv, http.MethodPut, mailConfigPath, tok,
-		`{"transport":"resend","from_address":"a@b.test","resend":{"api_key":"`+sentinel+`"}}`)
+		withCurrentPassword(`{"transport":"resend","from_address":"a@b.test","resend":{"api_key":"`+sentinel+`"}}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -255,7 +255,7 @@ func TestMailConfigSaveThatCouldNotAnnounceIsAuditedDistinctly(t *testing.T) {
 	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
 
 	rec := doJSON(srv, http.MethodPut, mailConfigPath, tok,
-		`{"transport":"resend","from_address":"a@b.test","resend":{"api_key":"k"}}`)
+		withCurrentPassword(`{"transport":"resend","from_address":"a@b.test","resend":{"api_key":"k"}}`))
 	if rec.Code < 500 {
 		t.Fatalf("status = %d, want a 5xx so the admin retries; body=%s", rec.Code, rec.Body.String())
 	}

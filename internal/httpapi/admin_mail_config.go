@@ -13,6 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/audit"
+	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/mail"
 	"github.com/vidra/vidra-core/internal/mailconfig"
 	"github.com/vidra/vidra-core/internal/observability"
@@ -81,12 +82,15 @@ func (s *Server) handleUpdateMailConfig(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	var in mailconfig.Input
+	var in mailConfigPutRequest
 	if err := decodeMailConfigBody(c, &in); err != nil {
 		return err
 	}
+	if err := s.confirmMailConfigWriter(c, callerID, in); err != nil {
+		return err
+	}
 
-	res, err := s.mailconfigsvc.Save(c.Request().Context(), in, callerID)
+	res, err := s.mailconfigsvc.Save(c.Request().Context(), in.Input, callerID)
 	if err != nil {
 		return s.mailConfigSaveError(c, callerID, err)
 	}
@@ -107,6 +111,55 @@ func (s *Server) handleUpdateMailConfig(c echo.Context) error {
 		},
 	})
 	return c.JSON(http.StatusOK, s.mailconfigsvc.Status())
+}
+
+// mailConfigPutRequest is the PUT body: the document plus the caller's fresh
+// credential. The two proof fields are kept out of mailconfig.Input so they can
+// never be stored, and DisallowUnknownFields still guards the whole envelope.
+type mailConfigPutRequest struct {
+	mailconfig.Input
+	// CurrentPassword is the caller's own password. StepUpToken is the
+	// alternative for a passwordless account (auth_step_up.go). It is a body
+	// field because the vidra_step_up cookie is path-scoped to /auth/me.
+	CurrentPassword string `json:"current_password"`
+	StepUpToken     string `json:"step_up_token"`
+}
+
+// confirmMailConfigWriter demands proof of presence from ANY admin before the
+// document changes: it decides where password-reset and verification mail goes
+// and which relay holds the credential, so a stolen admin access token alone
+// must not be enough. Same two proofs as the email change, same refusal shape
+// (403 step_up_required; wrong password 403). Refusals are audited by reason
+// code, never by value.
+func (s *Server) confirmMailConfigWriter(c echo.Context, callerID uuid.UUID, in mailConfigPutRequest) error {
+	stepUp := stepUpTokenFor(c, in.StepUpToken)
+	refuse := func(reason string, err error) error {
+		s.audit(c, observability.ActionAdminMailConfigUpdate, observability.ResultFailure, callerID.String(), reason)
+		return err
+	}
+	switch {
+	case in.CurrentPassword == "" && stepUp == "":
+		return refuse("step_up_required", &StepUpRequiredError{Providers: s.authsvc.StepUpProvidersFor(c.Request().Context(), callerID)})
+	case in.CurrentPassword != "" && stepUp != "":
+		return refuse("ambiguous_proof", exactlyOneProof(in.CurrentPassword, stepUp))
+	}
+	err := s.authsvc.ConfirmFreshCredential(c.Request().Context(), callerID, in.CurrentPassword, sessionIDFromContext(c), stepUp)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, auth.ErrInvalidPassword):
+		return refuse("invalid_password", echo.NewHTTPError(http.StatusForbidden, "incorrect password"))
+	case errors.Is(err, auth.ErrStepUpRequired):
+		return refuse("step_up_required", &StepUpRequiredError{Providers: s.authsvc.StepUpProvidersFor(c.Request().Context(), callerID)})
+	case errors.Is(err, auth.ErrPasswordAlreadySet):
+		return refuse("password_already_set", &PasswordAlreadySetError{})
+	case errors.Is(err, auth.ErrPasswordNotSet):
+		return refuse("password_not_set", echo.NewHTTPError(http.StatusConflict,
+			"your account has no password to confirm this with: complete a step-up with your sign-in provider and send step_up_token"))
+	case errors.Is(err, auth.ErrAccountNotFound):
+		return echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
+	}
+	return err
 }
 
 // mailConfigSaveError renders a failed save and audits the refusal. The failure
