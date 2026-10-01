@@ -80,6 +80,17 @@ func newUpdateStage(t *testing.T) *updateStage {
 	return st
 }
 
+func releaseRecord(release, core, user, search string) string {
+	return fmt.Sprintf(`{"schema_version":1,"release":%q,"components":{"core":{"tag":%q},"user":{"tag":%q},"search":{"tag":%q}}}`,
+		release, core, user, search)
+}
+
+func (st *updateStage) treeRecord(tag, body string) {
+	st.t.Helper()
+	_ = os.MkdirAll(filepath.Join(st.dir, "releases"), 0o755)
+	write(st.t, filepath.Join(st.dir, "releases", tag+".json"), body)
+}
+
 func (st *updateStage) serveSchemaz(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/schemaz" {
 		w.WriteHeader(http.StatusNotFound)
@@ -391,14 +402,12 @@ func TestUpdateWarnsWhenThereIsNoCoreCheckout(t *testing.T) {
 	contains(t, st.out(), "note:", "no vidra-core checkout")
 }
 
-// A BUNDLE deployment — the release tarball, which ships vidra-core/ at the same
-// relative paths a checkout uses but with no git history anywhere — must DEGRADE,
-// not refuse. Every other part of the command works there (the env file, the
-// release listing, deploy.sh and rollback.sh are all present), so the one gate
-// that needs git says so and the update proceeds.
-func TestUpdateDegradesOnABundleTree(t *testing.T) {
+// An unpacked bundle (install.sh's default) is REFUSED before the first request,
+// git command or env write. It used to degrade to a warning and write the env
+// file as if the tree were a checkout.
+func TestUpdateRefusesABundleTreeBeforeWritingAnything(t *testing.T) {
 	st := newUpdateStage(t)
-	// The bundle's shape: the directory and its files, no .git.
+	// The bundle's shape: the directory and its files, a manifest, no .git.
 	if err := os.RemoveAll(filepath.Join(st.dir, coreRepo, ".git")); err != nil {
 		t.Fatalf("rm .git: %v", err)
 	}
@@ -408,17 +417,26 @@ func TestUpdateDegradesOnABundleTree(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(st.dir, "vidra-bundle.manifest"), []byte("tag=v0.3.0\n"), 0o644); err != nil {
 		t.Fatalf("write bundle manifest: %v", err)
 	}
-	if err := st.run("--yes"); err != nil {
-		t.Fatalf("a bundle deployment was refused: %v", err)
+	before := st.envFile()
+	for _, args := range [][]string{{"--yes"}, {"--check"}} {
+		err := st.run(args...)
+		if err == nil {
+			t.Fatalf("update %v on a bundle tree was accepted", args)
+		}
+		contains(t, err.Error(), "bundle", "Nothing was changed", "SHA256SUMS", "docs/install/upgrading#upgrade-a-bundle-tree")
 	}
-	// Named as what it is, so nobody goes looking for a directory that is there.
-	contains(t, st.out(), "note:", "is not a git checkout", "release-bundle")
-	if strings.Contains(st.out(), "there is no "+coreRepo+" checkout") {
-		t.Errorf("a bundle tree was told its vidra-core directory does not exist:\n%s", st.out())
+	if got := st.envFile(); got != before {
+		t.Errorf("the env file was written on a refused run:\n%s", got)
 	}
-	// And the deploy still ran: the gate is advisory, and no git command was
-	// attempted against a tree that has no history to read.
-	st.wantCalls("deploy/deploy.sh")
+	if _, err := os.Stat(filepath.Join(st.dir, "backups")); err == nil {
+		t.Error("an env snapshot was taken on a refused run")
+	}
+	if len(st.runner.calls) != 0 {
+		t.Errorf("the refused run executed something: %v", st.runner.calls)
+	}
+	if len(st.github.requests) != 0 {
+		t.Errorf("the refused run reached GitHub first: %v", st.github.requests)
+	}
 }
 
 // The pre-flight reads the tag's tree; it must not move the working directory,
@@ -700,6 +718,79 @@ func TestUpdateAcceptsAYes(t *testing.T) {
 		t.Fatalf("update = %v", err)
 	}
 	st.wantCalls("deploy/deploy.sh")
+}
+
+// Per-component pairing (releases/<tag>.json).
+
+// v0.7.4 and v0.7.5 re-released vidra-core ALONE and pair user and search at the
+// previous tag: this was refused as a "half cut release".
+func TestUpdateResolvesPerComponentTagsFromTheReleaseRecord(t *testing.T) {
+	st := newUpdateStage(t)
+	st.github.releases[userRepo] = published("v0.1.0", "v0.2.0")
+	st.github.releases[searchRepo] = published("v0.1.0", "v0.2.0")
+	st.treeRecord("v0.3.0", releaseRecord("v0.3.0", "v0.3.0", "v0.2.0", "v0.2.0"))
+	if err := st.run("--yes"); err != nil {
+		t.Fatalf("a core-only release was refused: %v", err)
+	}
+	contains(t, st.envFile(), "VIDRA_CORE_TAG=v0.3.0", "VIDRA_USER_TAG=v0.2.0", "VIDRA_SEARCH_TAG=v0.2.0")
+	contains(t, st.out(), "pinned: core=v0.3.0 user=v0.2.0 search=v0.2.0")
+	st.wantCalls("deploy/deploy.sh")
+}
+
+// No record is not a refusal: it pins uniformly and says what it assumed.
+func TestUpdateFallsBackToOneTagWhenNoRecordExists(t *testing.T) {
+	st := newUpdateStage(t)
+	if err := st.run("--yes"); err != nil {
+		t.Fatalf("update = %v", err)
+	}
+	contains(t, st.envFile(), "VIDRA_CORE_TAG=v0.3.0", "VIDRA_USER_TAG=v0.3.0", "VIDRA_SEARCH_TAG=v0.3.0")
+	contains(t, st.out(), "note:", "no releases/v0.3.0.json", "ALL THREE")
+}
+
+// A record that cannot be the release it names must not decide the pins.
+func TestUpdateIgnoresARecordThatCouldNotBeThatRelease(t *testing.T) {
+	for name, body := range map[string]string{
+		"a component newer than the release": releaseRecord("v0.3.0", "v0.3.0", "v0.9.0", "v0.3.0"),
+		"no component at the release":        releaseRecord("v0.3.0", "v0.2.0", "v0.2.0", "v0.2.0"),
+		"another release's record":           releaseRecord("v0.2.0", "v0.2.0", "v0.2.0", "v0.2.0"),
+		"not json":                           "<html>captive portal</html>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := newUpdateStage(t)
+			st.treeRecord("v0.3.0", body)
+			if err := st.run("--yes"); err != nil {
+				t.Fatalf("update = %v", err)
+			}
+			contains(t, st.envFile(), "VIDRA_USER_TAG=v0.3.0", "VIDRA_SEARCH_TAG=v0.3.0")
+			contains(t, st.out(), "note:", "unusable")
+		})
+	}
+}
+
+// A paired tag that is not published is still a refusal, naming the PAIRED tag.
+func TestUpdateRefusesARecordedTagThatIsNotPublished(t *testing.T) {
+	st := newUpdateStage(t)
+	st.github.releases[userRepo] = published("v0.1.0")
+	st.treeRecord("v0.3.0", releaseRecord("v0.3.0", "v0.3.0", "v0.2.0", "v0.3.0"))
+	err := st.run("--yes")
+	if err == nil {
+		t.Fatal("a pairing naming an unpublished tag was accepted")
+	}
+	contains(t, err.Error(), "someone/vidra-user", "v0.2.0")
+}
+
+// The rollback-arming distance is the distance the components that MOVE travel.
+func TestUpdateArmsRollbackForACoreOnlyReleaseOverAnOldSibling(t *testing.T) {
+	st := newUpdateStage(t)
+	write(t, filepath.Join(st.dir, "env", "production.env"),
+		strings.Replace(st.envFile(), "VIDRA_USER_TAG=v0.2.0", "VIDRA_USER_TAG=v0.1.0", 1))
+	st.treeRecord("v0.3.0", releaseRecord("v0.3.0", "v0.3.0", "v0.1.0", "v0.2.0"))
+	if err := st.run("--yes"); err != nil {
+		t.Fatalf("update = %v", err)
+	}
+	if line := st.rollbackLine(); !strings.Contains(line, "ARMED") || strings.Contains(line, "NOT ARMED") {
+		t.Errorf("rollback line = %q", line)
+	}
 }
 
 // ---------------------------------------------------------------------------
