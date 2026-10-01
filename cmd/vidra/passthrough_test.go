@@ -17,7 +17,7 @@ func TestWrapperCommandsAreInTheDispatchTable(t *testing.T) {
 		t.Fatalf("`vidra help` = %v, want success", err)
 	}
 	out := h.out.String()
-	for _, name := range []string{"deploy", "rollback", "backup", "restore", "release", "logs", "restart", "status"} {
+	for _, name := range []string{"deploy", "rollback", "backup", "restore", "release", "logs", "restart", "status", "claim"} {
 		if !strings.Contains(out, "\n  "+name+" ") {
 			t.Errorf("`vidra help` does not list %q:\n%s", name, out)
 		}

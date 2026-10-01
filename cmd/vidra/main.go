@@ -2,8 +2,8 @@
 //
 // It is the whole day-to-day surface: `setup` generates the production env file
 // (phase-1 item 8), `doctor` checks a deployment (item 14), `deploy`,
-// `rollback`, `backup`, `restore`, `release`, `logs`, `restart` and `status`
-// (item 13) are the running-it half, and `update` (item 15) is the one that
+// `rollback`, `backup`, `restore`, `release`, `logs`, `restart`, `status` and
+// `claim` (item 13) are the running-it half, and `update` (item 15) is the one that
 // moves a deployment to a new release. Each is one file next to this, sharing
 // the same argument/stream plumbing: adding a command is a table entry and a
 // file, never a rewrite of how the CLI is invoked.
@@ -73,6 +73,11 @@ var commands = []command{
 		name:    "logs",
 		summary: "follow the deployment's logs (all services, or the ones you name)",
 		run:     runLogs,
+	},
+	{
+		name:    "claim",
+		summary: "print the link that claims the owner account on a fresh instance (terminal only)",
+		run:     runClaim,
 	},
 	{
 		name:    "update",
