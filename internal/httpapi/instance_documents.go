@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/instancedocs"
@@ -41,7 +42,11 @@ func (s *Server) handleGetInstanceDocumentAdmin(c echo.Context) error {
 
 // handlePutInstanceDocument stores an instance document (homepage 100KB cap,
 // custom CSS/JS 200KB) or clears it with an empty body. Behind
-// requireRole(admin); every write is audit-enveloped with the document name +
+// requireRole(admin); WRITING custom JS or CSS additionally needs the instance
+// OWNER (403 owner_only): that code runs in every visitor's browser, so
+// planting it must not be something any one promoted or compromised admin can
+// do. CLEARING stays with every admin, so a non-owner admin can still take
+// down a script they did not approve. Every write is audit-enveloped with the document name +
 // new content hash (never the body — custom JS/CSS is operator code that runs
 // in every visitor's browser, so changes must be traceable).
 func (s *Server) handlePutInstanceDocument(c echo.Context) error {
@@ -58,6 +63,16 @@ func (s *Server) handlePutInstanceDocument(c echo.Context) error {
 	}
 	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil || req.Body == nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "malformed or invalid request body")
+	}
+	if *req.Body != "" && (name == instancedocs.NameCustomJS || name == instancedocs.NameCustomCSS) {
+		owner, oerr := s.callerIsInstanceOwner(c, callerID)
+		if oerr != nil {
+			return oerr
+		}
+		if !owner {
+			s.audit(c, observability.ActionAdminInstanceDocumentUpdate, observability.ResultFailure, callerID.String(), "not_owner:"+name)
+			return &OwnerOnlyError{}
+		}
 	}
 	doc, err := s.instancedocssvc.Set(c.Request().Context(), name, *req.Body, callerID)
 	if err != nil {
@@ -76,6 +91,18 @@ func (s *Server) handlePutInstanceDocument(c echo.Context) error {
 	}
 	s.audit(c, observability.ActionAdminInstanceDocumentUpdate, observability.ResultSuccess, callerID.String(), reason)
 	return c.JSON(http.StatusOK, instanceDocumentView{Name: name, Body: doc.Body, Hash: doc.SHA256})
+}
+
+// callerIsInstanceOwner reports whether the caller holds the instance-owner
+// marker (users.is_owner). Vidra has no owner ROLE, so requireRole cannot say
+// it; the flag is read off the account row per request, so a transfer takes
+// effect at once.
+func (s *Server) callerIsInstanceOwner(c echo.Context, callerID uuid.UUID) (bool, error) {
+	user, err := s.authsvc.UserByID(c.Request().Context(), callerID)
+	if err != nil {
+		return false, echo.NewHTTPError(http.StatusUnauthorized, "account no longer available")
+	}
+	return user.IsOwner, nil
 }
 
 // handleGetInstanceHomepage serves the admin-authored homepage document as raw

@@ -14499,6 +14499,13 @@ paths:
         (admin.instance_document.update with the document name + content hash,
         never the body). Custom JS runs in every visitor's browser — clients
         must gate the editor behind an explicit warning flow.
+
+
+        WRITING `custom_js` or `custom_css` (a non-empty body) is further
+        restricted to THE instance owner: an ordinary admin is 403 `owner_only`,
+        because that code executes in every visitor's browser. CLEARING either
+        (an empty body) stays open to every admin, so a non-owner admin can
+        always take a script down. `homepage` is unaffected.
       tags: [admin]
       security:
         - bearerAuth: []
@@ -14535,7 +14542,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: The caller is not an admin.
+          description: >-
+            The caller is not an admin, or — for a non-empty `custom_js` /
+            `custom_css` body — is an admin but not the instance owner
+            (`owner_only`).
           content:
             application/json:
               schema:
