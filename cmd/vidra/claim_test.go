@@ -56,6 +56,32 @@ func TestClaimPrintsTheNewestTokenAsAFragmentURL(t *testing.T) {
 
 // A restart on an instance that has users but never claimed its owner mints
 // through the other log line, and it is newer than the first-run one.
+// cmd/api/main.go logs a `vidra claim` hint on a line AFTER the token line. It
+// must not become a token itself (it has no marker) and
+// must not disturb the token before it; the hint line is the literal one main.go
+// emits.
+func TestClaimIgnoresTheHintLineThatFollowsTheToken(t *testing.T) {
+	asTerminal(t, true)
+	dir := fakeDeployment(t, claimEnv)
+	logs := `api-1  | {"time":"t","level":"WARN","msg":"FIRST-RUN SETUP REQUIRED: no accounts exist yet — until claimed): HINTtoken_-cccccccccccccccccccccccccccccccccccccccc"}
+api-1  | {"time":"t","level":"WARN","msg":"claim the owner account with: curl -X POST <public-base-url>/api/v1/setup/claim-owner ... — restarting mints a fresh token and invalidates this one"}
+api-1  | {"time":"t","level":"WARN","msg":"on the host you can run ` + "`vidra claim`" + ` instead for a ready-to-open claim link"}
+`
+	if tok, ok := lastClaimToken(logs); !ok || tok != "HINTtoken_-cccccccccccccccccccccccccccccccccccccccc" {
+		t.Fatalf("lastClaimToken = %q, %v; want the token on the marker line", tok, ok)
+	}
+	swapRunner(t, &fakeRunner{onCapture: func(execSpec) (execResult, error) {
+		return execResult{Stdout: logs}, nil
+	}})
+	h := newHarness(t)
+	if err := h.run("claim", "-C", dir); err != nil {
+		t.Fatalf("claim = %v, want success", err)
+	}
+	if want := "/setup/claim#token=HINTtoken_-cccccccccccccccccccccccccccccccccccccccc\n"; !strings.Contains(h.out.String(), want) {
+		t.Errorf("output lacks %q:\n%s", want, h.out.String())
+	}
+}
+
 func TestClaimTakesTheStillUnclaimedLineToo(t *testing.T) {
 	asTerminal(t, true)
 	dir := fakeDeployment(t, claimEnv)

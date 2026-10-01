@@ -680,6 +680,11 @@ func run() error {
 			logger.Warn("FIRST-RUN SETUP REQUIRED: no accounts exist yet — claim the owner (admin) account with the one-time setup token (sign-ups stay closed with 403 owner_claim_required until claimed): " + setupToken)
 		}
 		logger.Warn("claim the owner account with: curl -X POST <public-base-url>/api/v1/setup/claim-owner -H 'Content-Type: application/json' -d '{\"token\":\"<setup token above>\",\"username\":\"...\",\"email\":\"...\",\"password\":\"...\"}' — restarting mints a fresh token and invalidates this one")
+		// A SEPARATE line, not a suffix on the marker lines above: `vidra claim`
+		// takes everything after the LAST ": " of a marker line as the token
+		// (cmd/vidra/claim.go), so text after the token would corrupt it. This
+		// line carries no marker, so the parser skips it.
+		logger.Warn("on the host you can run `vidra claim` instead for a ready-to-open claim link")
 	}
 	if captureMailer != nil {
 		opts = append(opts, httpapi.WithDevMailCapture(captureMailer))
