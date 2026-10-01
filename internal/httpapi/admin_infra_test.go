@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -264,7 +265,7 @@ func TestInfrastructureFeatureDiscovery(t *testing.T) {
 	wantKeys := []string{
 		"object_storage", "mail", "search", "federation", "atproto", "atproto_login",
 		"malware_scan", "captions", "live", "ipfs", "cdn", "drm", "tracing", "metrics",
-		"vp9_alternates",
+		"vp9_alternates", "url_imports",
 	}
 	if len(body.Features) != len(wantKeys) {
 		t.Fatalf("features = %d entries, want %d", len(body.Features), len(wantKeys))
@@ -561,6 +562,52 @@ func TestInfrastructureDRMFeature(t *testing.T) {
 		if !strings.Contains(f.Note, want) {
 			t.Errorf("active clearkey-test drm note = %q, want it to contain %q — the green pill needs the caveat next to it", f.Note, want)
 		}
+	}
+}
+
+// import_http_enabled and channel_sync_enabled are runtime settings that can
+// only PAUSE a path the boot wired: with YTDLP_IMPORT_ENABLED off the resolver
+// does not exist, so an admin flipping either on gets a toggle that saves and
+// does nothing. The url_imports row is where the page can contradict that.
+func TestInfrastructureURLImportsFeature(t *testing.T) {
+	off, _ := infrastructure(t, authServerWithConfig(t, testConfig()))
+	f := featureNamed(t, off, "url_imports")
+	if f.Enabled || f.Configured {
+		t.Fatalf("url_imports with YTDLP_IMPORT_ENABLED unset = %+v, want off", f)
+	}
+	for _, want := range []string{"YTDLP_IMPORT_ENABLED", "import_http_enabled", "channel_sync_enabled"} {
+		if !strings.Contains(f.Note, want) {
+			t.Errorf("url_imports off note = %q, want it to name %s", f.Note, want)
+		}
+	}
+
+	// On with a usable extractor: any executable path stands in for yt-dlp.
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	cfg := testConfig()
+	cfg.YtdlpImportEnabled = true
+	cfg.YtdlpPath = exe
+	on, _ := infrastructure(t, authServerWithConfig(t, cfg))
+	if f := featureNamed(t, on, "url_imports"); !f.Enabled || !f.Configured || f.Note != "" {
+		t.Errorf("url_imports with a resolvable yt-dlp = %+v, want enabled+configured with no note", f)
+	}
+
+	// On with the binary missing: the resolver is wired and every job fails.
+	cfg = testConfig()
+	cfg.YtdlpImportEnabled = true
+	cfg.YtdlpPath = "/nonexistent/SENTINEL-yt-dlp"
+	broken, _ := infrastructure(t, authServerWithConfig(t, cfg))
+	f = featureNamed(t, broken, "url_imports")
+	if !f.Enabled || f.Configured {
+		t.Fatalf("url_imports with a missing yt-dlp = %+v, want enabled but not configured", f)
+	}
+	if !strings.Contains(f.Note, "YTDLP_PATH") {
+		t.Errorf("url_imports misconfigured note = %q, want it to name YTDLP_PATH", f.Note)
+	}
+	if strings.Contains(f.Note, "SENTINEL") {
+		t.Errorf("url_imports note echoes the configured path: %q", f.Note)
 	}
 }
 

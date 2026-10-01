@@ -23562,7 +23562,11 @@ components:
         The key vocabulary is fixed and the list is returned in a stable order:
         object_storage, mail, search, federation, atproto, atproto_login,
         malware_scan, captions, live, ipfs, cdn, drm, tracing, metrics,
-        vp9_alternates. A client that does not recognise a key must render it
+        vp9_alternates, url_imports. url_imports is the boot capability behind
+        the import_http_enabled and channel_sync_enabled settings: enabled is
+        YTDLP_IMPORT_ENABLED, configured is the yt-dlp executable resolving;
+        with it off those two settings save but do nothing.
+        A client that does not recognise a key must render it
         rather than drop it — this list is how an operator discovers a feature
         the server shipped before the client learned its name.
         Every row is computed from boot config with TWO exceptions, both a

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"os/exec"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -392,6 +393,11 @@ func (s *Server) infraFeatures() []infraFeature {
 	// note read the same two facts, and they must be one read.
 	drmEnabled := cfg.DRMProvider != "" && cfg.DRMProvider != drm.ProviderNone
 	drmConfigured := strings.TrimSpace(cfg.DRMKeyKEK) != ""
+	// Same discipline for url_imports: the column and the note read one fact.
+	// "Configured" is the question cmd/api/main.go only WARNS about at boot —
+	// is the extractor actually there — so the page can say what the log said.
+	urlImportsEnabled := cfg.YtdlpImportEnabled
+	urlImportsConfigured := urlImportsEnabled && ytdlpResolvable(cfg.YtdlpPath)
 
 	features := []infraFeature{
 		{
@@ -525,6 +531,20 @@ func (s *Server) infraFeatures() []infraFeature {
 			// same ffmpeg the ladder does.
 			Configured: transcodeCapable,
 		},
+		{
+			Key: "url_imports",
+			// BOOT config on purpose, not the overlay. import_http_enabled and
+			// channel_sync_enabled (runtime settings) can only PAUSE a path
+			// the boot wired: the yt-dlp resolver and the channel-sync worker
+			// both hang off YTDLP_IMPORT_ENABLED, so with it off an admin can
+			// save either toggle "on" and nothing happens. This row is the
+			// one place the page can contradict those switches.
+			Enabled: urlImportsEnabled,
+			// A wired resolver whose binary is missing still enqueues jobs and
+			// fails each one (main.go only logs a warning), so "usable" is the
+			// binary resolving, not merely the flag.
+			Configured: urlImportsConfigured,
+		},
 	}
 
 	// The notes are attached separately so the table above stays a table: what
@@ -537,6 +557,18 @@ func (s *Server) infraFeatures() []infraFeature {
 		features[i].Note = infraFeatureNote(features[i])
 	}
 	return features
+}
+
+// ytdlpResolvable reports whether the configured yt-dlp executable can be
+// found, the same lookup cmd/api/main.go does at wiring time. It reports only a
+// boolean: the path is operator config and stays out of the response.
+func ytdlpResolvable(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	_, err := exec.LookPath(path)
+	return err == nil
 }
 
 // mailSourceNote covers the two quadrants the generic notes get wrong, both of
@@ -700,6 +732,7 @@ var infraFeatureOffNotes = map[string]string{
 	"metrics":        "No Prometheus metrics are exposed. METRICS_ENABLED=true mounts GET /metrics — note that endpoint has NO authentication of its own, so the reverse proxy must block it before you expose this instance publicly.",
 	"vp9_alternates": "Only H.264 is produced. TRANSCODING_VP9_ENABLED=true additionally emits a VP9/WebM download alternate, which is smaller at the same quality but costs a second encode of every upload.",
 	"cdn":            "Every media byte is served by this instance, so viewer bandwidth is your bandwidth and a distant viewer's segments cross the whole network on each request. Point DELIVERY_CDN_BASE_URL at a CDN whose origin is the media bucket — the edge URL is that base plus the object key, so the origin must be KEY-addressed (the bucket, or a server rooted at the media directory) and NOT this API, which addresses media by route and would 404 every request. Then turn on the delivery_cdn_enabled setting to start using it.",
+	"url_imports":    "Importing a video from a URL (YouTube and other platforms) and channel auto-sync are not available: both need the yt-dlp resolver, which exists only when YTDLP_IMPORT_ENABLED=true is set at boot (and yt-dlp is installed). Until then the import_http_enabled and channel_sync_enabled settings save but have no effect.",
 	"drm":            "Media is served unencrypted, which is the right default: encryption costs a packaging pass and locks playback to browsers with a working CDM. The only provider this build ships is DRM_PROVIDER=clearkey-test, a TEST key system that hands the content key to any authorised viewer in the clear over TLS — it exists to prove the license path end to end, not to protect anything, and it encrypts nothing yet (the packaging step that would mint content keys has not landed). Do not read it as content protection.",
 }
 
@@ -726,6 +759,7 @@ var infraFeatureMisconfiguredNotes = map[string]string{
 	"live":           "Live streaming is on but the ingest plane is incomplete: LIVE_RTMP_URL tells streamers where to publish and LIVE_HLS_ROOT is where the media server writes segments. Without both, streams can be created and never started.",
 	"tracing":        "OTEL_ENABLED is set with no OTEL_EXPORTER_OTLP_ENDPOINT, so spans are produced and discarded.",
 	"cdn":            "The delivery_cdn_enabled setting is on and DELIVERY_CDN_BASE_URL is empty, so no CDN source exists and every byte is still served by this instance. The toggle is the runtime half of the pair; the base URL is the deploy-time half and needs a restart to take effect.",
+	"url_imports":    "YTDLP_IMPORT_ENABLED is set but the yt-dlp executable named by YTDLP_PATH cannot be found, so URL imports and channel auto-sync enqueue and then fail every job. Install yt-dlp in the api image or point YTDLP_PATH at it.",
 	"vp9_alternates": "VP9 alternates are enabled but the transcoding pipeline is not available (ffmpeg/ffprobe missing, or TRANSCODING_ENABLED is off), so no alternate is ever produced.",
 }
 
