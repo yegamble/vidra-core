@@ -60,6 +60,9 @@ const (
 	// is an ADMIN-domain action against a target account, distinct from
 	// auth.mfa.disable, which the account holder performs on themselves.
 	ActionAdminMFAReset = "admin.user.mfa_reset"
+	// ActionOwnerRecovery: a host operator issued the owner a reset link from the
+	// api `owner-recovery` subcommand. Actor is "system"; the token is never recorded.
+	ActionOwnerRecovery = "auth.owner_recovery"
 	ActionRateLimited   = "auth.rate_limited"
 	ActionReportResolve = "moderation.report.resolve"
 	// ActionWatchedWordMatchResolve records a moderator triaging one

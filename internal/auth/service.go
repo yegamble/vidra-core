@@ -202,6 +202,9 @@ type Repository interface {
 	// statement (ownertransfer.go). The claim above and this are the only two
 	// writers of the marker.
 	TransferInstanceOwner(ctx context.Context, newOwnerID uuid.UUID) (sqlcgen.TransferInstanceOwnerRow, error)
+	// GetInstanceOwner reads the marker's holder for the host-side recovery
+	// subcommand (ownerrecovery.go); pgx.ErrNoRows when nobody holds it.
+	GetInstanceOwner(ctx context.Context) (sqlcgen.User, error)
 }
 
 // sessionRevokedRotated is the sessions.revoked_reason written when a refresh

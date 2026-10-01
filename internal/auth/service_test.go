@@ -283,6 +283,17 @@ func (f *fakeRepo) TransferInstanceOwner(_ context.Context, newOwnerID uuid.UUID
 	}, nil
 }
 
+// GetInstanceOwner mirrors owner_claim.sql: the marked, non-tombstoned row,
+// active or not (the service reports a disabled owner as that).
+func (f *fakeRepo) GetInstanceOwner(context.Context) (sqlcgen.User, error) {
+	for _, u := range f.byEmail {
+		if u.IsOwner && !u.DeletedAt.Valid {
+			return u, nil
+		}
+	}
+	return sqlcgen.User{}, pgx.ErrNoRows
+}
+
 func (f *fakeRepo) CreateEmailVerificationToken(_ context.Context, a sqlcgen.CreateEmailVerificationTokenParams) (sqlcgen.EmailVerificationToken, error) {
 	t := sqlcgen.EmailVerificationToken{
 		ID: uuid.New(), UserID: a.UserID, TokenHash: a.TokenHash,

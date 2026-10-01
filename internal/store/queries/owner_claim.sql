@@ -108,3 +108,12 @@ FROM demoted d
 WHERE u.id = sqlc.arg('new_owner_id')
   AND u.role = 'admin' AND u.is_active AND u.deleted_at IS NULL
 RETURNING u.id, u.username, u.email, d.n AS previous_owners_cleared;
+
+-- name: GetInstanceOwner :one
+-- The `is_owner` holder (at most one: users_single_owner_idx), for the host-side
+-- `owner-recovery` subcommand. is_active is deliberately NOT filtered: a
+-- deactivated owner must read as that, not as "no owner" (which would send the
+-- operator to `vidra claim` on a claimed instance). Tombstones are excluded.
+SELECT id, username, email, password_hash, role, email_verified, is_active, created_at, updated_at, display_name, bio, storage_quota_bytes, unlisted, bypass_quarantine, deleted_at, pending_email_verification, history_enabled, profile_public, search_history_enabled, personalized_search_enabled, personalized_recommendations_enabled, sensitive_content_policy, show_bluesky, is_owner
+FROM users
+WHERE is_owner AND deleted_at IS NULL;
