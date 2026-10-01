@@ -286,7 +286,7 @@ func (e *mailIntegrationEnv) smtpConfigBody(password string) string {
 		secret = `,"password":"` + password + `"`
 	}
 	return fmt.Sprintf(
-		`{"transport":"smtp","from_address":"no-reply@vidra.test","from_name":"Vidra","smtp":{"host":%q,"port":%d,"username":"","encryption":"none"%s}}`,
+		`{"current_password":"supersecret","transport":"smtp","from_address":"no-reply@vidra.test","from_name":"Vidra","smtp":{"host":%q,"port":%d,"username":"","encryption":"none"%s}}`,
 		e.envHost, e.envPort, secret)
 }
 
@@ -427,7 +427,7 @@ func TestMailConfigIntegrationWrongKEKIsUndecryptableNotAnError(t *testing.T) {
 
 	const sentinel = "SENTINEL-INTEGRATION-RELAY-PASSWORD-5a9e"
 	body := fmt.Sprintf(
-		`{"transport":"smtp","from_address":"no-reply@vidra.test","from_name":"Vidra","smtp":{"host":%q,"port":%d,"username":"mailer","encryption":"starttls","password":%q}}`,
+		`{"current_password":"supersecret","transport":"smtp","from_address":"no-reply@vidra.test","from_name":"Vidra","smtp":{"host":%q,"port":%d,"username":"mailer","encryption":"starttls","password":%q}}`,
 		"relay.example.test", 587, sentinel)
 	if rec := doJSON(env.srv, http.MethodPut, mailConfigPath, env.adminTok, body); rec.Code != http.StatusOK {
 		t.Fatalf("PUT = %d; body=%s", rec.Code, rec.Body.String())

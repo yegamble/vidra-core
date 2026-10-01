@@ -13617,7 +13617,14 @@ paths:
         value.
 
 
-        Restricted to admins (moderators get 403).
+        Restricted to admins (moderators get 403), and every admin must also
+        present a FRESH credential — exactly one of `current_password` or, for a
+        passwordless account, `step_up_token` (see `POST
+        /api/v1/auth/step-up/start`) — because this document decides where
+        password-reset and verification mail is sent. With neither, or a spent,
+        expired or foreign assertion, the answer is 403 `step_up_required`.
+        `DELETE` (revert to the environment) needs no such proof, so a locked-out
+        admin can always recover.
       tags: [admin]
       security:
         - bearerAuth: []
@@ -13626,7 +13633,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/MailConfigInput"
+              $ref: "#/components/schemas/MailConfigPutRequest"
       responses:
         "200":
           description: The saved configuration, read back in the GET's shape.
@@ -13647,7 +13654,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: The caller is not an admin.
+          description: >-
+            The caller is not an admin; the supplied `current_password` is
+            incorrect; or `step_up_required` — no fresh credential was supplied,
+            or the step-up assertion is spent, expired, or issued to another
+            session or account. `error.step_up_providers` names the sign-ins
+            that can satisfy it (empty for a password account, which sends
+            `current_password`).
           content:
             application/json:
               schema:
@@ -13668,7 +13681,10 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: >-
-            The document is invalid. `fields` carries one entry per problem,
+            Both `current_password` and `step_up_token` were sent (exactly one
+            proof is read); `password_already_set` — a step-up assertion was
+            sent for an account that has a password, which must use it instead;
+            or the document is invalid. `fields` carries one entry per problem,
             keyed by the DOTTED path of the offending input (`from_address`,
             `smtp.host`, `smtp.port`, `smtp.encryption`, `mailgun.domain`,
             `mailgun.region`, `resend.api_key`, `postmark.server_token`, …).
@@ -23408,6 +23424,21 @@ components:
         server_token_set:
           type: boolean
           readOnly: true
+    MailConfigPutRequest:
+      description: >-
+        A MailConfigInput plus the caller's fresh credential: exactly one of
+        `current_password` (the admin's own password) or `step_up_token` (a
+        passwordless admin's single-use assertion). Neither is stored, echoed or
+        logged.
+      allOf:
+        - $ref: "#/components/schemas/MailConfigInput"
+        - type: object
+          properties:
+            current_password:
+              type: string
+              format: password
+            step_up_token:
+              type: string
     MailConfigInput:
       type: object
       description: >-
