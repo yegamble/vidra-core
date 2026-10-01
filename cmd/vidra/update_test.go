@@ -402,40 +402,160 @@ func TestUpdateWarnsWhenThereIsNoCoreCheckout(t *testing.T) {
 	contains(t, st.out(), "note:", "no vidra-core checkout")
 }
 
-// An unpacked bundle (install.sh's default) is REFUSED before the first request,
-// git command or env write. It used to degrade to a warning and write the env
-// file as if the tree were a checkout.
-func TestUpdateRefusesABundleTreeBeforeWritingAnything(t *testing.T) {
-	st := newUpdateStage(t)
-	// The bundle's shape: the directory and its files, a manifest, no .git.
+// makeBundle turns the staged deployment into an unpacked bundle's shape: a
+// manifest and no vidra-core/.git.
+func (st *updateStage) makeBundle() {
+	st.t.Helper()
 	if err := os.RemoveAll(filepath.Join(st.dir, coreRepo, ".git")); err != nil {
-		t.Fatalf("rm .git: %v", err)
+		st.t.Fatalf("rm .git: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(st.dir, coreRepo, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
-		t.Fatalf("write bundle compose file: %v", err)
+	write(st.t, filepath.Join(st.dir, coreRepo, "docker-compose.yml"), "services: {}\n")
+	write(st.t, filepath.Join(st.dir, "vidra-bundle.manifest"), "tag=v0.3.0\n")
+}
+
+// installPinRelease puts deploy/pin-release.sh where a real bundle has it
+// (make-bundle.sh copies all of deploy/), executable.
+func (st *updateStage) installPinRelease() string {
+	st.t.Helper()
+	p := filepath.Join(st.dir, "deploy", "pin-release.sh")
+	write(st.t, p, "#!/usr/bin/env bash\nexit 0\n")
+	if err := os.Chmod(p, 0o755); err != nil {
+		st.t.Fatalf("chmod pin-release.sh: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(st.dir, "vidra-bundle.manifest"), []byte("tag=v0.3.0\n"), 0o644); err != nil {
-		t.Fatalf("write bundle manifest: %v", err)
+	return p
+}
+
+// assertNothingTouched is the old invariant — refuse before any env write,
+// request or exec — which the delegation must keep for everything it refuses.
+func (st *updateStage) assertNothingTouched(before string) {
+	st.t.Helper()
+	if got := st.envFile(); got != before {
+		st.t.Errorf("the env file was written on a refused run:\n%s", got)
 	}
+	if _, err := os.Stat(filepath.Join(st.dir, "backups")); err == nil {
+		st.t.Error("an env snapshot was taken on a refused run")
+	}
+	if len(st.runner.calls) != 0 {
+		st.t.Errorf("the refused run executed something: %v", st.runner.calls)
+	}
+	if len(st.github.requests) != 0 {
+		st.t.Errorf("the refused run reached GitHub first: %v", st.github.requests)
+	}
+}
+
+// An unpacked bundle (install.sh's default) with no deploy/pin-release.sh (a
+// bundle cut before it shipped) is REFUSED before the first request, git command
+// or env write. It used to degrade to a warning and write the env file as if
+// the tree were a checkout.
+func TestUpdateRefusesABundleTreeWithoutPinReleaseBeforeWritingAnything(t *testing.T) {
+	st := newUpdateStage(t)
+	st.makeBundle()
 	before := st.envFile()
-	for _, args := range [][]string{{"--yes"}, {"--check"}} {
+	for _, args := range [][]string{{"--yes"}, {"--check"}, {"--tag", "v0.3.0"}} {
 		err := st.run(args...)
 		if err == nil {
-			t.Fatalf("update %v on a bundle tree was accepted", args)
+			t.Fatalf("update %v on a bundle tree without pin-release.sh was accepted", args)
 		}
 		contains(t, err.Error(), "bundle", "Nothing was changed", "SHA256SUMS", "docs/install/upgrading#upgrade-a-bundle-tree")
 	}
-	if got := st.envFile(); got != before {
-		t.Errorf("the env file was written on a refused run:\n%s", got)
+	st.assertNothingTouched(before)
+}
+
+// A script that exists but cannot be executed is no better than a missing one.
+func TestUpdateRunsABundleTreesPinReleaseEvenWithoutTheExecBit(t *testing.T) {
+	st := newUpdateStage(t)
+	st.makeBundle()
+	if err := os.Chmod(st.installPinRelease(), 0o644); err != nil {
+		t.Fatalf("chmod: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(st.dir, "backups")); err == nil {
-		t.Error("an env snapshot was taken on a refused run")
+	ran := false
+	st.runner.onPassthrough = func(execSpec, streams) error { ran = true; return nil }
+	if err := st.run("--tag", "v0.3.0"); err != nil {
+		t.Fatalf("update on a bundle tree with a 0644 pin-release.sh: %v", err)
 	}
-	if len(st.runner.calls) != 0 {
-		t.Errorf("the refused run executed something: %v", st.runner.calls)
+	if !ran {
+		t.Fatal("pin-release.sh was not run: it goes through bash, so a lost exec bit must not block it")
 	}
-	if len(st.github.requests) != 0 {
-		t.Errorf("the refused run reached GitHub first: %v", st.github.requests)
+}
+
+// On a bundle tree WITH deploy/pin-release.sh, update hands over: the script
+// gets the tag as its argument, ENV_FILE as its environment, its exit code comes
+// back unchanged, and vidra itself reads no env file and asks GitHub nothing —
+// the script owns download, checksum, unpack and pin.
+func TestUpdateDelegatesABundleTreeToPinRelease(t *testing.T) {
+	for _, exit := range []int{0, 7} {
+		st := newUpdateStage(t)
+		st.makeBundle()
+		script := st.installPinRelease()
+		// A bundle host's env file is none of vidra's business before the script
+		// runs: removing it proves it is never read (values() would fail on it).
+		if err := os.Remove(filepath.Join(st.dir, "env", "production.env")); err != nil {
+			t.Fatalf("rm env: %v", err)
+		}
+		st.runner.onPassthrough = func(execSpec, streams) error {
+			if exit != 0 {
+				return newExitError(exit)
+			}
+			return nil
+		}
+		err := st.run("--tag", "v0.3.0", "--env", "env/other.env")
+		if exit == 0 && err != nil {
+			t.Fatalf("update = %v", err)
+		}
+		if exit != 0 {
+			var ee *exitError
+			if !errors.As(err, &ee) || ee.code != exit {
+				t.Fatalf("exit %d was not passed through, got %v", exit, err)
+			}
+		}
+		call := st.runner.only(t)
+		if call.Path != "bash" || call.script() != script {
+			t.Errorf("ran %s %v, want bash %s", call.Path, call.Args, script)
+		}
+		if got := call.tail(); len(got) != 1 || got[0] != "v0.3.0" {
+			t.Errorf("pin-release.sh args = %v, want [v0.3.0]", got)
+		}
+		if got, _ := call.envValue("ENV_FILE"); got != "env/other.env" {
+			t.Errorf("ENV_FILE = %q, want env/other.env", got)
+		}
+		if call.Dir != st.dir {
+			t.Errorf("dir = %q, want %q", call.Dir, st.dir)
+		}
+		if len(st.github.requests) != 0 {
+			t.Errorf("vidra reached GitHub before delegating: %v", st.github.requests)
+		}
+		if _, err := os.Stat(filepath.Join(st.dir, "backups")); err == nil {
+			t.Error("vidra took an env snapshot itself")
+		}
+	}
+}
+
+// pin-release.sh pins a NAMED release and neither prompts nor deploys, so the
+// flags that mean otherwise are refused rather than dropped: a dropped --check
+// would pin, and a dropped --yes or --no-rollback would let the operator think a
+// deploy had been armed. No --tag is refused too — finding the newest release is
+// a GitHub call this path does not make.
+func TestUpdateRefusesFlagsPinReleaseCannotHonourOnABundleTree(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--check", "--tag", "v0.3.0"}, "--check"},
+		{[]string{"--yes", "--tag", "v0.3.0"}, "--yes"},
+		{[]string{"--no-rollback", "--tag", "v0.3.0"}, "--no-rollback"},
+		{nil, "--tag"},
+	}
+	for _, c := range cases {
+		st := newUpdateStage(t)
+		st.makeBundle()
+		st.installPinRelease()
+		before := st.envFile()
+		err := st.run(c.args...)
+		if err == nil {
+			t.Fatalf("update %v on a bundle tree was accepted", c.args)
+		}
+		contains(t, err.Error(), c.want, "Nothing was changed")
+		st.assertNothingTouched(before)
 	}
 }
 

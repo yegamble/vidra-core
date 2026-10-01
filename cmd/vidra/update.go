@@ -72,9 +72,10 @@ func runUpdate(s streams, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Before the env file is read, GitHub asked or git run. See bundleRefusal.
+	// Before the env file is read, GitHub asked or git run: a bundle tree is
+	// pin-release.sh's to upgrade, or nobody's. See updateBundle.
 	if isBundleTree(dep.root) {
-		return bundleRefusal(dep.root)
+		return updateBundle(s, dep, uf)
 	}
 	values, err := dep.values()
 	if err != nil {
@@ -1146,5 +1147,12 @@ flags:
 It exits non-zero if the update did not happen — including when the rollback
 afterwards worked perfectly, because the release you asked for is not the one
 running.
+
+On a release BUNDLE tree (vidra-bundle.manifest, no git) it does none of the
+above: it runs deploy/pin-release.sh <tag>, which downloads that release's
+bundle, verifies its checksum, installs it and pins the three tags, and stops.
+Run ./deploy/deploy.sh (or `+"`vidra deploy`"+`) afterwards. --tag is required there,
+and --check, --yes and --no-rollback are refused because the script has no
+equivalent. A bundle without an executable deploy/pin-release.sh is refused.
 `, envHistoryDirName, defaultEnvFile)
 }

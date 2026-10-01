@@ -98,11 +98,51 @@ func isBundleTree(root string) bool {
 	return err != nil
 }
 
-// bundleRefusal precedes every read, request and write: a bundle tree has no
-// history to check migrations against and takes a release's compose files and
-// deploy scripts only by unpacking its bundle, so pinning tags alone would run
-// new images on an old tree. It names the manual procedure, not a command.
+// updateBundle is `vidra update` on a bundle tree. Everything this command does
+// on a git checkout (find the newest release, rewrite the tags, deploy) is wrong
+// here: a bundle takes a release's compose files and scripts only by unpacking
+// its archive, so pinning tags alone would run new images on an old tree. The
+// operation that is right is deploy/pin-release.sh's — it resolves the pairing,
+// downloads the archive, verifies its checksum BEFORE unpacking, installs it and
+// writes the three tags — so this hands over and gets out of the way, like the
+// five wrapped scripts.
+//
+// ORDER IS THE INVARIANT, as it was when this only refused: nothing here reads
+// the env file, asks GitHub, snapshots or runs git. That is why the flag checks
+// below look at the parsed flags only, and why the missing-script fallback is
+// the old refusal, with its Nothing-was-changed promise still true.
+//
+// Flags pin-release.sh has no equivalent for are refused, never dropped. It
+// pins a NAMED release and then stops: it has no dry run (--check would pin), no
+// confirmation to skip and no deploy to arm a rollback for (--yes and
+// --no-rollback would read as a deploy that never ran), and it does not look up
+// the newest release (that discovery is the GitHub call it owns; --tag it is).
+func updateBundle(s streams, dep deployment, uf updateFlags) error {
+	script := filepath.Join(dep.root, "deploy", "pin-release.sh")
+	// Run through bash like every other wrapped script (exec.go), so an unpack
+	// that dropped the exec bit is not a reason to refuse.
+	if info, err := os.Stat(script); err != nil || !info.Mode().IsRegular() {
+		return bundleRefusal(dep.root)
+	}
+	for _, f := range []struct {
+		set  bool
+		name string
+	}{{uf.check, "--check"}, {uf.yes, "--yes"}, {uf.noRollback, "--no-rollback"}} {
+		if f.set {
+			return fmt.Errorf("update: %s is not supported on a bundle tree: deploy/pin-release.sh pins a named release and stops, with no dry run, no confirmation and no deploy of its own (./deploy/deploy.sh is the next, separate command). Nothing was changed", f.name)
+		}
+	}
+	if uf.tag == "" {
+		return fmt.Errorf("update: a bundle tree needs --tag vX.Y.Z: deploy/pin-release.sh pins the release you name and does not look up the newest. Nothing was changed")
+	}
+	fmt.Fprintf(s.out, "vidra update — %s is a release bundle: running deploy/pin-release.sh %s (downloads, verifies and installs it, then pins the tags; it does not deploy)\n", dep.root, uf.tag)
+	return theRunner.Passthrough(dep.bash(script, uf.tag), s)
+}
+
+// bundleRefusal is the fallback when a bundle tree has no
+// deploy/pin-release.sh (a bundle cut before it shipped, or a damaged tree). It
+// names the manual procedure, not a command.
 func bundleRefusal(root string) error {
-	return fmt.Errorf("update: %s is an unpacked release BUNDLE (vidra-bundle.manifest is present and %s/ has no git history), and `vidra update` does not support a bundle tree yet. Nothing was changed. Upgrade it by hand: download the release's vidra-bundle_<tag>.tar.gz, verify it against the release's SHA256SUMS and unpack it over the tree, set the three VIDRA_*_TAG keys to the tags that release's releases/<tag>.json pairs (they differ for a core-only release), then run deploy/deploy.sh — the steps are at https://vidra.yosef.app/docs/install/upgrading#upgrade-a-bundle-tree",
+	return fmt.Errorf("update: %s is an unpacked release BUNDLE (vidra-bundle.manifest is present and %s/ has no git history) and has no deploy/pin-release.sh, which is what upgrades a bundle tree, so `vidra update` cannot do it. Nothing was changed. Upgrade it by hand: download the release's vidra-bundle_<tag>.tar.gz, verify it against the release's SHA256SUMS and unpack it over the tree, set the three VIDRA_*_TAG keys to the tags that release's releases/<tag>.json pairs (they differ for a core-only release), then run deploy/deploy.sh — the steps are at https://vidra.yosef.app/docs/install/upgrading#upgrade-a-bundle-tree",
 		root, coreRepo)
 }
