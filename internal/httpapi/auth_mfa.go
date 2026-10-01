@@ -24,6 +24,19 @@ type totpEnrollmentResponse struct {
 	OtpauthURI string `json:"otpauth_uri"`
 }
 
+// totpIssuer is the issuer label for a NEW enrollment: an operator-pinned
+// TOTP_ISSUER wins, otherwise the live instance name (overlay, else config) —
+// same seam as NodeInfo, so an admin rename shows up in the next authenticator
+// app enrolled. Authenticators already enrolled keep their old label (it is
+// baked into the user's app at enrollment); only new enrollments pick up a
+// rename, and existing ones are deliberately not touched.
+func (s *Server) totpIssuer() string {
+	if s.cfg.TOTPIssuerPinned {
+		return s.cfg.TOTPIssuer
+	}
+	return s.instanceName()
+}
+
 // handleBeginTOTPEnrollment generates a TOTP secret for the authenticated
 // account (pending — login is unaffected until verified). 409 when MFA is
 // already enabled.
@@ -32,7 +45,7 @@ func (s *Server) handleBeginTOTPEnrollment(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	enr, err := s.authsvc.BeginTOTPEnrollment(c.Request().Context(), userID)
+	enr, err := s.authsvc.BeginTOTPEnrollmentAs(c.Request().Context(), userID, s.totpIssuer())
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrMFAAlreadyEnabled):

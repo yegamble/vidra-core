@@ -524,8 +524,15 @@ type Config struct {
 
 	// TOTPIssuer is the issuer label embedded in TOTP enrollment otpauth:// URIs
 	// — what authenticator apps display next to the account. Defaults to the
-	// instance name.
+	// BOOT instance name; that default is only a fallback (see
+	// TOTPIssuerPinned).
 	TOTPIssuer string
+
+	// TOTPIssuerPinned is true when the operator set TOTP_ISSUER explicitly.
+	// Only then is TOTPIssuer authoritative at enrollment time; left unset, the
+	// label follows the live (admin-overlay) instance name, which TOTPIssuer's
+	// boot-time default cannot — it is frozen at the env value until restart.
+	TOTPIssuerPinned bool
 
 	// LiveRTMPURL is the base RTMP ingest URL returned to a streamer on live-stream
 	// create (the streamer appends their stream key in OBS). Empty until an RTMP
@@ -1413,6 +1420,10 @@ func LoadFrom(lookup func(key string) (string, bool)) (*Config, error) {
 
 	// The TOTP issuer label defaults to the instance name (what authenticator
 	// apps display); it cannot reference InstanceName inside the literal above.
+	// Remember whether the operator pinned it: the enrollment handler lets an
+	// unpinned label follow the admin overlay's instance name instead of this
+	// boot-time default.
+	cfg.TOTPIssuerPinned = cfg.TOTPIssuer != ""
 	if cfg.TOTPIssuer == "" {
 		cfg.TOTPIssuer = cfg.InstanceName
 	}
