@@ -3,6 +3,7 @@ package setup
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -92,6 +93,61 @@ func splitAssignment(raw string) (key, value string, ok bool) {
 		}
 	}
 	return key, raw[eq+1:], true
+}
+
+// CommentedExampleKeys returns the sorted, de-duplicated keys the file documents
+// as commented-out examples: a line whose '#' is in column zero and whose
+// comment body BEGINS with KEY= (KEY being [A-Z][A-Z0-9_]*), e.g.
+// `#IPFS_ENABLED=` or `# API_ROLE=all`.
+//
+// It exists because the template documents every optional feature that way and
+// ParseEnvFile deliberately treats those lines as comments, so "keys the
+// template defines" has two honest meanings: ASSIGNED (required to be present)
+// and DOCUMENTED (legal to uncomment). Doctor's drift check needs the second for
+// the "env file assigns something the template does not" direction.
+//
+// Spaces and tabs between '#' and KEY are allowed because the shipped template
+// uses all three spellings for real examples (`#KEY=`, `# KEY=`, and the
+// indented `#   KEY=` under a prose block). Measured on production.env.example,
+// 43 of the 81 unassigned examples are tight and the other 38 are spaced, so
+// refusing the spaced form would leave nearly half the false warnings in place. A sentence that merely
+// contains KEY=value mid-line (`# Set FOO=bar to ...`) does not match, because
+// the body must start with the key; the cost is that a sentence which STARTS
+// with KEY= is read as an example, and that is a tolerable error since the key
+// is then named in the template either way. A second '#' (a banner or rule line)
+// and a leading space before the '#' are not examples, matching ParseEnvFile's
+// column-zero rule.
+func CommentedExampleKeys(b []byte) []string {
+	seen := map[string]bool{}
+	var keys []string
+	for _, raw := range strings.Split(string(b), "\n") {
+		raw = strings.TrimSuffix(raw, "\r")
+		if !strings.HasPrefix(raw, "#") {
+			continue
+		}
+		body := strings.TrimLeft(raw[1:], " \t")
+		eq := strings.IndexByte(body, '=')
+		if eq <= 0 || !isUpperEnvKey(body[:eq]) || seen[body[:eq]] {
+			continue
+		}
+		seen[body[:eq]] = true
+		keys = append(keys, body[:eq])
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// isUpperEnvKey reports whether s matches [A-Z][A-Z0-9_]*.
+func isUpperEnvKey(s string) bool {
+	for i, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z':
+		case i > 0 && (r == '_' || r >= '0' && r <= '9'):
+		default:
+			return false
+		}
+	}
+	return s != ""
 }
 
 // MergeSources combines several preservation sources into the single "existing"

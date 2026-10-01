@@ -143,3 +143,34 @@ func TestParseNormalisesLineEndingsAndEmptyInput(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// A template documents an optional feature as a commented-out example, and the
+// doctor must be able to tell that apart from prose: only a comment whose body
+// BEGINS with KEY= is an example. `# Set FOO=bar to ...` is a sentence, and an
+// operator's typo that happens to echo a word from one must still be flagged.
+func TestCommentedExampleKeys(t *testing.T) {
+	raw := strings.Join([]string{
+		"#BACKUP_RCLONE_REMOTE=offsite:",
+		"# VIDRA_ROLE=worker",
+		"#   TRUSTED_PROXY_CIDRS=203.0.113.7/32",
+		"#\tTAB_KEY=1",
+		"#DELIVERY_CDN_BASE_URL=",
+		"#BACKUP_RCLONE_REMOTE=again",      // duplicate collapses
+		"# Set PROSE_KEY=bar to enable it", // prose: body does not begin with KEY=
+		"# see also lower_case=1",          // not the KEY grammar
+		"#9LEADING_DIGIT=1",                // not the KEY grammar
+		"#=novalue",
+		"##DOUBLE_HASH=1",        // a banner/rule line, not an example
+		"ACTIVE_KEY=1",           // an assignment, not a comment: ParseEnvFile's job
+		"  # INDENTED_COMMENT=1", // the # must be in column 0, like ParseEnvFile
+		"",
+	}, "\r\n")
+	got := CommentedExampleKeys([]byte(raw))
+	want := []string{"BACKUP_RCLONE_REMOTE", "DELIVERY_CDN_BASE_URL", "TAB_KEY", "TRUSTED_PROXY_CIDRS", "VIDRA_ROLE"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("CommentedExampleKeys = %v, want %v", got, want)
+	}
+	if got := CommentedExampleKeys(nil); len(got) != 0 {
+		t.Errorf("CommentedExampleKeys(nil) = %v, want none", got)
+	}
+}
