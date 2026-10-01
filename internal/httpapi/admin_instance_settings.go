@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/gommon/bytes"
 
+	"github.com/vidra/vidra-core/internal/audit"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/observability"
 )
@@ -381,8 +384,10 @@ func (s *Server) handleGetInstanceSettings(c echo.Context) error {
 // (bool for toggle keys, string for text keys); a null value clears the override
 // (reset to the config default). Unknown keys or type/content-invalid values are
 // 422 with field errors; nothing is written on any validation failure. Emits an
-// audit event carrying the changed KEY NAMES only (never values — the contact
-// email is operator PII).
+// audit event carrying the changed key names plus, for the kinds where that is
+// safe, the effective old -> new values (see instanceSettingChanges); free-text
+// keys are recorded as "changed" with no values — the contact email is operator
+// PII and broadcast text is a message body.
 func (s *Server) handleUpdateInstanceSettings(c echo.Context) error {
 	callerID, _, err := mustPrincipal(c)
 	if err != nil {
@@ -405,6 +410,9 @@ func (s *Server) handleUpdateInstanceSettings(c echo.Context) error {
 	// whether this PATCH is what closed the gate, and a restated
 	// downloads_enabled:false must not re-run a walk over the whole catalogue.
 	downloadsWereOpen := s.downloadsEnabled()
+	// The EFFECTIVE values before the write (overlay if set, else default), so a
+	// first override reads default -> new and a clear reads old -> default.
+	effectiveBefore := s.settingssvc.Snapshot()
 
 	if err := s.settingssvc.Apply(c.Request().Context(), updates, callerID); err != nil {
 		if bad := settingsFieldErrors(err); len(bad) > 0 {
@@ -416,12 +424,90 @@ func (s *Server) handleUpdateInstanceSettings(c echo.Context) error {
 		return err
 	}
 
-	s.audit(c, observability.ActionAdminInstanceUpdate, observability.ResultSuccess, callerID.String(), "keys="+strings.Join(changed, ","))
+	s.auditEvent(c, audit.Event{
+		Action: observability.ActionAdminInstanceUpdate, Result: observability.ResultSuccess,
+		ActorID: callerID.String(), Reason: "keys=" + strings.Join(changed, ","),
+		Changes: instanceSettingChanges(effectiveBefore, s.settingssvc.Snapshot(), changed),
+	})
 	// Search: push the effective config to vidra-search when a search key changed
 	// (search-service W4). Best-effort.
 	s.emitSearchConfigChangedIfNeeded(c.Request().Context(), changed)
 	s.purgeEdgeDownloadsIfRevoked(c.Request().Context(), changed, downloadsWereOpen)
 	return c.JSON(http.StatusOK, s.instanceSettingsResponse())
+}
+
+// settingValueStrings is the allowlist of KindString keys whose VALUE may be
+// audited. The default is value-less: a string setting is free text (name,
+// descriptions, banner and broadcast text, contact email, URLs) until proven
+// otherwise, and audit rows are read by more people, for longer, than the
+// setting ever was (hard rule 6). These three are the ones whose validator
+// admits only a closed grammar — a known language id, a #hex colour, a UUID —
+// so no operator-typed prose can reach the row. Add a key only if its validator
+// does the same. bool, int and enum kinds are always recordable: a toggle, a
+// number, or one member of a fixed option set.
+var settingValueStrings = map[string]bool{
+	instancesettings.KeyDefaultLanguage:   true,
+	instancesettings.KeyThemePrimaryColor: true,
+	instancesettings.KeyFeaturedVideoID:   true,
+}
+
+func settingValueRecordable(e instancesettings.Effective) bool {
+	switch e.Kind {
+	case instancesettings.KindBool, instancesettings.KindInt, instancesettings.KindEnum:
+		return true
+	case instancesettings.KindString:
+		return settingValueStrings[e.Key]
+	}
+	return false // lists, and anything a later kind adds, until reviewed
+}
+
+// settingValueString renders an effective value for the ledger. Only values that
+// settingValueRecordable approved reach it.
+func settingValueString(v any) string {
+	switch t := v.(type) {
+	case bool:
+		return strconv.FormatBool(t)
+	case int64:
+		return strconv.FormatInt(t, 10)
+	case string:
+		return t
+	}
+	return ""
+}
+
+// instanceSettingChanges turns a before/after pair of effective snapshots into
+// the envelope's structured changes, for the requested keys whose effective
+// value actually moved — a restated value or a clear of an override that already
+// equalled the default writes no entry. Keys whose values may not be recorded
+// get a value-less entry ("this changed"). The envelope refuses more than 32
+// changes, and a refused event is dropped whole, so a larger batch keeps its
+// first 32 in key order; the keys= reason still names every key.
+func instanceSettingChanges(before, after []instancesettings.Effective, keys []string) []audit.Change {
+	prior := make(map[string]instancesettings.Effective, len(before))
+	for _, e := range before {
+		prior[e.Key] = e
+	}
+	now := make(map[string]instancesettings.Effective, len(after))
+	for _, e := range after {
+		now[e.Key] = e
+	}
+	var out []audit.Change
+	for _, key := range keys {
+		was, okWas := prior[key]
+		is, okIs := now[key]
+		if !okWas || !okIs || reflect.DeepEqual(was.Value, is.Value) {
+			continue
+		}
+		ch := audit.Change{Field: audit.SettingChangeFieldPrefix + key}
+		if settingValueRecordable(is) {
+			ch.Before, ch.After = settingValueString(was.Value), settingValueString(is.Value)
+		}
+		out = append(out, ch)
+		if len(out) == 32 {
+			break
+		}
+	}
+	return out
 }
 
 // instanceSettingsValidationResponse is the answer to a DRY RUN: the field

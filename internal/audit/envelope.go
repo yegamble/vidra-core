@@ -40,6 +40,15 @@ var (
 	idPattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,511}$`)
 	traceIDPattern  = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
 
+	// settingChangeField admits one change per instance-setting key, spelled
+	// SettingChangeFieldPrefix+key. The registry is ~120 keys and grows with
+	// every config-parity batch, so enumerating them in allowedChangeFields would
+	// make each new knob an extra edit that is easy to forget, and the audit row
+	// then vanishes (a refused event is dropped, best-effort). The pattern bounds
+	// the NAME only; which VALUES may ride along is the caller's decision (see
+	// httpapi settingValueRecordable) and validateSafeScalar still polices them.
+	settingChangeField = regexp.MustCompile(`^setting\.[a-z][a-z0-9_]{0,63}$`)
+
 	// Metadata is a deliberately small vocabulary of non-content operational
 	// classifications. Identifiers belong in resource_id/job_id/pipeline_run_id;
 	// user prose, URLs, payloads, headers and process output never belong here.
@@ -99,6 +108,10 @@ type MetadataField struct {
 	Key   string
 	Value string
 }
+
+// SettingChangeFieldPrefix namespaces instance-setting changes in Change.Field
+// so they can never collide with the fixed user/content fields above.
+const SettingChangeFieldPrefix = "setting."
 
 // Change is one allowlisted safe before/after difference. Values are bounded
 // scalars, not arbitrary JSON. Empty Before/After represents an absent value.
@@ -301,7 +314,7 @@ func encodeChanges(changes []Change) ([]byte, error) {
 	seen := make(map[string]bool, len(changes))
 	for i := range changes {
 		c := &changes[i]
-		if !allowedChangeFields[c.Field] {
+		if !allowedChangeFields[c.Field] && !settingChangeField.MatchString(c.Field) {
 			return nil, invalid(fmt.Sprintf("change field %q is not allowlisted", c.Field))
 		}
 		if seen[c.Field] {
