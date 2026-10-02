@@ -129,7 +129,10 @@ func TestClaimWithNoTokenPointsAtStatusAndLogs(t *testing.T) {
 		t.Fatal("claim with no token line = success, want a non-zero exit")
 	}
 	out := h.out.String()
-	for _, want := range []string{"already claimed", "vidra status", "vidra logs api"} {
+	// Docker logs are size-capped, so an UNCLAIMED instance can have rotated its
+	// boot line out; every boot of an unclaimed instance mints a fresh token
+	// (auth.EnsureOwnerClaimToken), so a restart is the way back.
+	for _, want := range []string{"already claimed", "vidra status", "vidra logs api", "vidra restart api", "vidra claim"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output does not mention %q:\n%s", want, out)
 		}

@@ -73,8 +73,13 @@ func runClaim(s streams, args []string) error {
 	}
 	token, ok := lastClaimToken(res.Stdout)
 	if !ok {
+		// Docker logs are size-capped, so an unclaimed instance can have rotated
+		// its boot line out. A boot mints a fresh token for as long as the owner
+		// is unclaimed (auth.EnsureOwnerClaimToken) and mints nothing once it is
+		// claimed, so a restart is safe to suggest either way.
 		fmt.Fprintf(s.out, "No setup token in the api logs. The owner is probably already claimed, or the api has not started yet.\n"+
-			"Check with `vidra status`, and look at the api's boot with `vidra logs api`.\n")
+			"Check with `vidra status`, and look at the api's boot with `vidra logs api`.\n"+
+			"If the instance is still unclaimed, the boot line may simply have rotated out of the size-capped logs: `vidra restart api` mints a fresh token, then run `vidra claim` again.\n")
 		return errReported
 	}
 	fmt.Fprintf(s.out, "Claim the owner account at:\n\n  %s/setup/claim#token=%s\n\n", origin, url.QueryEscape(token))

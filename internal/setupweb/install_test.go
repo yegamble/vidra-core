@@ -396,6 +396,11 @@ func TestStatusCarriesTheOwnerClaimHandoff(t *testing.T) {
 	// compose.sh and never a bare `docker compose`: on a deployment host the bare
 	// form picks up docker-compose.override.yml's dev defaults and addresses a
 	// different project than the deploy scripts do.
+	// `vidra claim` is the primary instruction; the log grep stays as the
+	// fallback for a vidra v0.7.5 or earlier that has no such command.
+	if out.ClaimCommand != "vidra claim" {
+		t.Errorf("claim_command = %q", out.ClaimCommand)
+	}
 	if out.LogsCommand != "./deploy/compose.sh logs api" {
 		t.Errorf("logs_command = %q", out.LogsCommand)
 	}

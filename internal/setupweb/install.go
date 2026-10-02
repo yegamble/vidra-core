@@ -223,8 +223,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		// api`: on a deployment host the bare form silently picks up
 		// docker-compose.override.yml's dev defaults and addresses a different
 		// project than the deploy scripts do.
-		LogsCommand: "./deploy/compose.sh logs api",
-		ClaimURL:    "https://<your domain>/setup/claim",
+		//
+		// `vidra claim` is primary: it reads that log and prints a ready link.
+		// LogsCommand is the fallback for a vidra v0.7.5 or earlier.
+		ClaimCommand: "vidra claim",
+		LogsCommand:  "./deploy/compose.sh logs api",
+		ClaimURL:     "https://<your domain>/setup/claim",
 	}
 	// The origin comes from the file that was just written, not from the form:
 	// the Success step is about the deployment that EXISTS, and after Apply that

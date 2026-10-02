@@ -968,6 +968,22 @@ func TestBackupTimer(t *testing.T) {
 		return h.healthyRespond(name, args)
 	}
 	wantFinding(t, one(t, only(t, "backup timer", h, nil)), StatusFail, "no backup is scheduled", "systemctl enable --now vidra-backup.timer")
+	// The fix leads with provision.sh (installs AND verifies the timer, and as
+	// root), and the manual recipe it keeps must carry sudo: a bare `cp` into
+	// /etc/systemd/system fails for the non-root operator reading this.
+	fix := one(t, only(t, "backup timer", func() *fakeHost {
+		h := newFakeHost()
+		h.respond = func(name string, args []string) (Output, error) {
+			if name == "systemctl" {
+				return Output{Stdout: "disabled\n", ExitCode: 1}, nil
+			}
+			return h.healthyRespond(name, args)
+		}
+		return h
+	}(), nil)).Fix
+	if !strings.HasPrefix(fix, "run `sudo ./deploy/provision.sh`") || !strings.Contains(fix, "sudo cp deploy/vidra-backup") {
+		t.Errorf("fix = %q, want it to lead with sudo ./deploy/provision.sh and keep a sudo manual recipe", fix)
+	}
 
 	// No systemd (a macOS or container dev box) is a skip, not a failure.
 	h = newFakeHost()

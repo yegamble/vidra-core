@@ -334,6 +334,8 @@ func TestSetupReportsTheOwnerClaimHandoff(t *testing.T) {
 	}
 	out := h.out.String()
 	for _, want := range []string{
+		"vidra claim",
+		"v0.7.5 or earlier",
 		"./deploy/compose.sh logs api",
 		"https://video.example.org/setup/claim",
 		"invalidates the previous one",
@@ -341,6 +343,11 @@ func TestSetupReportsTheOwnerClaimHandoff(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("the owner-claim handoff is missing %q:\n%s", want, out)
 		}
+	}
+	// `vidra claim` is the instruction; the log grep is only the fallback for a
+	// binary that predates it, so it must be the second thing said, not the first.
+	if strings.Index(out, "vidra claim") > strings.Index(out, "./deploy/compose.sh logs api") {
+		t.Errorf("the log grep is presented before `vidra claim`:\n%s", out)
 	}
 	// NEVER the bare form: on a deployment host it silently picks up
 	// docker-compose.override.yml's dev defaults and addresses a different

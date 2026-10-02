@@ -385,11 +385,14 @@ type StatusLine struct {
 
 type StatusResponse struct {
 	Lines []StatusLine `json:"lines"`
-	// ClaimURL and LogsCommand are the two halves of the owner-claim handoff,
-	// verbatim from the terminal's report(): every api restart mints a fresh
-	// token, so the newest line in the log is the one that works.
-	ClaimURL    string `json:"claim_url"`
-	LogsCommand string `json:"logs_command"`
+	// ClaimCommand is the primary owner-claim instruction (`vidra claim`, run
+	// from the deployment directory); ClaimURL and LogsCommand are the fallback
+	// for a vidra v0.7.5 or earlier, verbatim from the terminal's report():
+	// every api restart mints a fresh token, so the newest line in the log is
+	// the one that works.
+	ClaimCommand string `json:"claim_command"`
+	ClaimURL     string `json:"claim_url"`
+	LogsCommand  string `json:"logs_command"`
 
 	// ImportURL is the migration handoff, and it is EMPTY unless the file that
 	// was just written says this deployment has a PeerTube source. `vidra setup`

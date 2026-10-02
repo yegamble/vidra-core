@@ -519,7 +519,11 @@ func checkBackupTimer(ctx context.Context, s *state) []Finding {
 	}
 	return []Finding{failf(
 		fmt.Sprintf("%s is %s and %s, so no backup is scheduled on this host", unit, enabled, active),
-		"install and start it: `cp deploy/vidra-backup.{service,timer} /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now "+unit+"`. Check it took with `systemctl list-timers "+unit+"`")}
+		// provision.sh first: it installs the units, enables the timer and then
+		// VERIFIES it is enabled and active, which the hand recipe does not. The
+		// recipe stays, with sudo, for a host that cannot run the whole script
+		// (/etc/systemd/system is root's, so a bare cp fails for the operator).
+		"run `sudo ./deploy/provision.sh` from the deployment directory: it installs the units, enables "+unit+" and verifies it took. By hand: `sudo cp deploy/vidra-backup.{service,timer} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now "+unit+"`, then check `systemctl list-timers "+unit+"`")}
 }
 
 // checkOffsiteBackup warns when backups never leave this host. It is the one
