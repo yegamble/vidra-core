@@ -6,6 +6,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/admin"
 	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 )
@@ -207,4 +208,16 @@ func (s *Server) authRateLimit(limiter *ratelimit.Limiter) echo.MiddlewareFunc {
 		denied:      "rate limit exceeded",
 		auditReason: "auth_rate_limited",
 	})
+}
+
+// adminPasswordStepUpMW is the chain for an admin-only route that re-verifies
+// the CALLER's password: the strict auth limiter first (supplying a password
+// makes the route a guessing surface exactly like login), then auth and the
+// admin role. One slice, so every such route is throttled the same way.
+func (s *Server) adminPasswordStepUpMW() []echo.MiddlewareFunc {
+	mw := []echo.MiddlewareFunc{}
+	if s.authLimit != nil {
+		mw = append(mw, s.authRateLimit(s.authLimit))
+	}
+	return append(mw, s.requireAuth, s.requireRole(admin.RoleAdmin))
 }

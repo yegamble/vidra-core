@@ -12,6 +12,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/observability"
+	"github.com/vidra/vidra-core/internal/ratelimit"
 )
 
 // withCurrentPassword adds the admin's fresh credential to a mail-config body,
@@ -21,6 +22,30 @@ func withCurrentPassword(body string) string {
 }
 
 const mailPutBody = `{"transport":"resend","from_address":"a@b.test","resend":{"api_key":"k"}}`
+
+// The PUT checks the caller's password, so it is a guessing surface exactly
+// like login and sits behind the same strict auth limiter as the other
+// password-taking admin routes (MFA removal, reset link) — not only the general
+// 120/min one, which would make a stolen admin token a fast password oracle.
+func TestMailConfigPutIsAuthRateLimited(t *testing.T) {
+	var buf bytes.Buffer
+	fc := &fakeCounter{}
+	svc := &fakeMailConfig{}
+	srv, _ := mailConfigServer(t, &buf, svc, WithAuthRateLimiter(ratelimit.NewLimiter(fc, 1, time.Minute)))
+	tok := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	fc.counts = nil // registration spent the shared auth:<ip> budget; start the window here
+
+	wrong := `{"current_password":"wrong-password",` + strings.TrimPrefix(mailPutBody, "{")
+	if rec := doJSON(srv, http.MethodPut, mailConfigPath, tok, wrong); rec.Code != http.StatusForbidden {
+		t.Fatalf("first wrong-password PUT = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(srv, http.MethodPut, mailConfigPath, tok, wrong); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("second wrong-password PUT in the window = %d, want 429; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(svc.saved) != 0 {
+		t.Errorf("a refused PUT reached the service: %d saves", len(svc.saved))
+	}
+}
 
 // Redirecting a live instance's outbound mail (password resets, verification
 // links) is the highest-value change a hijacked admin session could make, so
