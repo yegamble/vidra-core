@@ -86,6 +86,7 @@ func settingsDefaultsFromConfig(cfg *config.Config) instancesettings.Defaults {
 		TranscriptionEnabled:       cfg.WhisperEnabled,
 
 		LiveRecordingRetentionHours: instancesettings.HoursCeil(cfg.LiveRecordingRetention),
+		AuditLogRetentionDays:       instancesettings.DaysCeil(cfg.AuditLogRetention),
 
 		TranscodingEnabled: cfg.TranscodingEnabled,
 		IPFSEnabled:        cfg.IPFSEnabled,
@@ -199,8 +200,8 @@ func TestInstanceSettingsAdminFlow(t *testing.T) {
 	// OFF, and it never touches the machine-readable identifiers — NodeInfo
 	// software.name, /version, the vidra_* cookies and X-Vidra-* headers).
 	got := instanceSettings(t, srv, adminTok)
-	if len(got.Settings) != 120 {
-		t.Fatalf("settings count = %d, want 120", len(got.Settings))
+	if len(got.Settings) != 121 {
+		t.Fatalf("settings count = %d, want 121", len(got.Settings))
 	}
 	nameView := settingView(t, got, instancesettings.KeyInstanceName)
 	if nameView.Value != "Vidra Test" || nameView.Overridden {

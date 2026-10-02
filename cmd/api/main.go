@@ -335,6 +335,7 @@ func run() error {
 		ChannelSyncMaxPerUser:       int64(cfg.ChannelSyncMaxPerUser),
 		ChannelSyncIntervalMinutes:  instancesettings.MinutesCeil(cfg.ChannelSyncInterval),
 		LiveRecordingRetentionHours: instancesettings.HoursCeil(cfg.LiveRecordingRetention),
+		AuditLogRetentionDays:       instancesettings.DaysCeil(cfg.AuditLogRetention),
 		TranscriptionEnabled:        cfg.WhisperEnabled,
 
 		// VOD transcoding master toggle (config-parity W10): the runtime
@@ -2779,9 +2780,19 @@ func run() error {
 		go runQoERollupWorker(workerCtx, logger, qoeSvc, cronLeader)
 		// One retention loop covers both self-observation tables; see
 		// runTelemetryRetentionWorker.
-		go runTelemetryRetentionWorker(workerCtx, logger, qoeSvc, auditsvc, cfg.AuditLogRetention, cronLeader)
+		//
+		// The audit window is a func read at every tick: audit_log_retention_days
+		// can only LENGTHEN AUDIT_LOG_RETENTION (the env value is its floor), and
+		// EffectiveAuditRetention hands the env duration back exactly while the
+		// setting equals its env-derived default. 0 (keep forever) still prunes
+		// nothing, so the worker starts unconditionally.
+		auditRetention := func() time.Duration {
+			return instancesettings.EffectiveAuditRetention(cfg.AuditLogRetention,
+				settingssvc.Int(instancesettings.KeyAuditLogRetentionDays))
+		}
+		go runTelemetryRetentionWorker(workerCtx, logger, qoeSvc, auditsvc, auditRetention, cronLeader)
 		logger.Info("qoe rollup + telemetry retention workers started",
-			"audit_log_retention", cfg.AuditLogRetention.String())
+			"audit_log_retention", auditRetention().String())
 	}
 
 	// PeerTube import / migration (fix_plan P18). The admin API is ALWAYS wired
@@ -4050,7 +4061,8 @@ func runQoERollupWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Servi
 // runTelemetryRetentionWorker enforces the retention windows on the two tables
 // core keeps about its own operation: QoE playback measurements (7 days raw, 90
 // days of rollups) and the security-audit trail (AUDIT_LOG_RETENTION, default
-// 400 days; 0 keeps it forever).
+// 400 days, lengthenable at runtime via audit_log_retention_days; 0 keeps it
+// forever). The audit window is a func so each hourly tick reads the live value.
 //
 // Hourly rather than daily, unlike the operational-job retention worker it is
 // otherwise modelled on: qoe_events grows with traffic rather than with operator
@@ -4064,7 +4076,7 @@ func runQoERollupWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Servi
 // independently, so a QoE prune that fails still leaves the audit prune to run
 // (and logs its own failure), which is what keeps one table's problem from
 // silently stopping the other table's retention.
-func runTelemetryRetentionWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Service, auditsvc *audit.Service, auditRetention time.Duration, leader *leaderlock.Elector) {
+func runTelemetryRetentionWorker(ctx context.Context, logger *slog.Logger, svc *qoe.Service, auditsvc *audit.Service, auditRetention func() time.Duration, leader *leaderlock.Elector) {
 	const interval = time.Hour
 	jobloop.Loop{
 		Interval: interval,
@@ -4084,13 +4096,14 @@ func runTelemetryRetentionWorker(ctx context.Context, logger *slog.Logger, svc *
 		}, {
 			FailMsg: "audit log retention failed",
 			Run: func(ctx context.Context, tick time.Time) (int, error) {
-				deleted, err := auditsvc.Prune(ctx, tick.UTC(), auditRetention)
+				window := auditRetention()
+				deleted, err := auditsvc.Prune(ctx, tick.UTC(), window)
 				if deleted > 0 {
 					// The same count the sweep's own audit row carries, so an
 					// operator reading logs and an operator reading /admin/audit
 					// see the same number.
 					logger.Info("audit log retention pruned rows",
-						"count", deleted, "retention", auditRetention.String())
+						"count", deleted, "retention", window.String())
 				}
 				return 0, err
 			},
