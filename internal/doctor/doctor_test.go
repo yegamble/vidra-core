@@ -1003,9 +1003,27 @@ func TestOffsiteBackup(t *testing.T) {
 		want      Status
 		detailHas string
 		fixHas    []string
+		// rclone is what `rclone config show` prints; "" means rclone is not
+		// installed, "!" that it exits non-zero.
+		rclone string
 	}{
-		{name: "rclone remote", env: []string{"BACKUP_RCLONE_REMOTE=offsite:vidra"}, want: StatusOK, detailHas: "BACKUP_RCLONE_REMOTE"},
-		{name: "s3 uri", env: []string{"BACKUP_S3_URI=s3://bucket/vidra"}, want: StatusOK, detailHas: "BACKUP_S3_URI"},
+		// A target alone is not OK: the config archive holds JWT_SECRET and every
+		// KEK, and a remote set before age existed would get it in plaintext.
+		{name: "plaintext rclone remote", env: []string{"BACKUP_RCLONE_REMOTE=offsite:vidra"}, rclone: plainRemote, want: StatusWarn,
+			detailHas: "type = s3, not crypt", fixHas: offsiteWaysOut},
+		{name: "plaintext s3 uri", env: []string{"BACKUP_S3_URI=s3://bucket/vidra"}, want: StatusWarn,
+			detailHas: "JWT_SECRET and every KEK", fixHas: offsiteWaysOut},
+		// rclone missing for this user, or its config unreadable: doctor cannot
+		// tell, and says what would settle it rather than guessing either way.
+		{name: "rclone not inspectable", env: []string{"BACKUP_RCLONE_REMOTE=offsite:vidra"}, want: StatusWarn,
+			detailHas: "could not be checked", fixHas: offsiteWaysOut},
+		{name: "rclone config show fails", env: []string{"BACKUP_RCLONE_REMOTE=offsite:vidra"}, rclone: "!", want: StatusWarn,
+			detailHas: "could not be checked", fixHas: offsiteWaysOut},
+		{name: "age", env: []string{"BACKUP_RCLONE_REMOTE=offsite:vidra", "BACKUP_AGE_RECIPIENTS=age1qqqqsecretrecipient"}, want: StatusOK, detailHas: "BACKUP_AGE_RECIPIENTS"},
+		{name: "age on s3", env: []string{"BACKUP_S3_URI=s3://bucket/vidra", "BACKUP_AGE_RECIPIENTS=age1qqqqsecretrecipient"}, want: StatusOK, detailHas: "BACKUP_S3_URI"},
+		{name: "crypt remote", env: []string{"BACKUP_RCLONE_REMOTE=vault:vidra"}, rclone: "[vault]\ntype = crypt\nremote = offsite:vidra\npassword = s3cr3tpassw0rd\n", want: StatusOK, detailHas: "crypt"},
+		{name: "acknowledged plaintext", env: []string{"BACKUP_S3_URI=s3://bucket/vidra", "BACKUP_OFFSITE_PLAINTEXT=true"}, want: StatusOK, detailHas: "BACKUP_OFFSITE_PLAINTEXT"},
+		{name: "plaintext ack false", env: []string{"BACKUP_S3_URI=s3://bucket/vidra", "BACKUP_OFFSITE_PLAINTEXT=false"}, want: StatusWarn, detailHas: "JWT_SECRET"},
 		{name: "neither is local only", want: StatusWarn, detailHas: "local-only",
 			fixHas: []string{"BACKUP_RCLONE_REMOTE", "BACKUP_S3_URI", "BACKUP_AGE_RECIPIENTS", "BACKUP_OFFSITE_ACK"}},
 		// backup.sh tests -n, so a blank or whitespace-only assignment is no target.
@@ -1016,7 +1034,8 @@ func TestOffsiteBackup(t *testing.T) {
 		// call true does not silence the warning.
 		{name: "ack false", env: []string{"BACKUP_OFFSITE_ACK=false"}, want: StatusWarn, detailHas: "local-only"},
 		{name: "ack garbage", env: []string{"BACKUP_OFFSITE_ACK=maybe"}, want: StatusWarn, detailHas: "local-only"},
-		{name: "target wins over ack", env: []string{"BACKUP_S3_URI=s3://b/v", "BACKUP_OFFSITE_ACK=true"}, want: StatusOK, detailHas: "BACKUP_S3_URI"},
+		// BACKUP_OFFSITE_ACK accepts local-only; it says nothing about plaintext.
+		{name: "local-only ack is not a plaintext ack", env: []string{"BACKUP_S3_URI=s3://b/v", "BACKUP_OFFSITE_ACK=true"}, want: StatusWarn, detailHas: "BACKUP_S3_URI"},
 		{name: "managed database stands down", external: true, want: StatusWarn, detailHas: "provider's automated ones"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1028,8 +1047,30 @@ func TestOffsiteBackup(t *testing.T) {
 			if len(tc.env) > 0 {
 				setEnv(h, tc.env...)
 			}
+			if tc.rclone != "" {
+				h.paths["rclone"] = "/usr/bin/rclone"
+				healthy := h.respond
+				h.respond = func(name string, args []string) (Output, error) {
+					if name != "rclone" {
+						return healthy(name, args)
+					}
+					if strings.Join(args, " ") != "config show "+strings.SplitN(strings.TrimPrefix(tc.env[0], "BACKUP_RCLONE_REMOTE="), ":", 2)[0] {
+						t.Errorf("rclone asked %v", args)
+					}
+					if tc.rclone == "!" {
+						return Output{Stderr: "Error: couldn't find type of fs", ExitCode: 1}, errors.New("exit status 1")
+					}
+					return Output{Stdout: tc.rclone}, nil
+				}
+			}
 			f := one(t, only(t, "off-site backup", h, nil))
 			wantFinding(t, f, tc.want, tc.detailHas, "")
+			// Never a key: not the age recipient, not anything rclone printed.
+			for _, secret := range []string{"age1qqqq", "s3cr3t"} {
+				if strings.Contains(f.Detail+f.Fix, secret) {
+					t.Errorf("the finding printed a key value %q: %s / %s", secret, f.Detail, f.Fix)
+				}
+			}
 			for _, fix := range tc.fixHas {
 				if !strings.Contains(f.Fix, fix) {
 					t.Errorf("fix = %q, want it to name %s", f.Fix, fix)
@@ -1047,6 +1088,11 @@ func TestOffsiteBackup(t *testing.T) {
 	delete(h.files, filepath.Join(testRoot, "env/production.env"))
 	wantFinding(t, one(t, only(t, "off-site backup", h, nil)), StatusWarn, "skipped:", "")
 }
+
+const plainRemote = "[offsite]\ntype = s3\nprovider = DigitalOcean\nsecret_access_key = s3cr3tkey\n"
+
+// The three ways out backup.sh accepts for the config archive.
+var offsiteWaysOut = []string{"BACKUP_AGE_RECIPIENTS", "type = crypt", "BACKUP_OFFSITE_PLAINTEXT=true"}
 
 // A WARN is not a failure: with no off-site target and no acknowledgement the
 // whole run must still exit 0, or every local-only lab would learn to ignore
