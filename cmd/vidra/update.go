@@ -1168,7 +1168,7 @@ bundle, verifies its checksum, installs it and pins the three tags, and stops.
 Run ./deploy/deploy.sh (or `+"`vidra deploy`"+`) afterwards. Without --tag it asks
 GitHub for the newest release first (the owner from VIDRA_IMAGE_OWNER or
 GITHUB_OWNER in the PROCESS environment — the env file is not read) and prints
-which one it chose. --check there prints the bundle's release and the newest one
+which one it chose; a bundle already on it, or ahead of it, is left alone. --check there prints the bundle's release and the newest one
 and changes nothing. --yes and --no-rollback are refused because the script has
 no equivalent. A bundle without a deploy/pin-release.sh is refused.
 `, envHistoryDirName, defaultEnvFile)

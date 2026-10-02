@@ -154,6 +154,24 @@ func updateBundle(s streams, dep deployment, uf updateFlags) error {
 			fmt.Fprintf(s.out, "this bundle is %s (vidra-bundle.manifest tag). Nothing was changed; `vidra update` pins the newest.\n", bundleManifestTag(dep.root))
 			return nil
 		}
+		// "Newest" means newest STABLE release, so it is only an upgrade from
+		// something behind it. Same tag: pin-release.sh would re-download and
+		// reinstall what is already here. A newer base (a prerelease, or a release
+		// tagged after the list was read) would move the bundle backwards, which the
+		// git path refuses as well. An unreadable manifest proceeds: the chosen tag
+		// is printed above.
+		current := bundleManifestTag(dep.root)
+		base, rc, _ := strings.Cut(current, "-")
+		if have, ok := parseReleaseTag(base); ok {
+			newest, _ := parseReleaseTag(tag)
+			switch {
+			case newest.less(have):
+				return fmt.Errorf("update: this bundle is %s, which is NEWER than the newest published release %s, so a bare update would move it backwards. Nothing was changed. To go to %s anyway, name it: vidra update --tag %s", current, tag, tag, tag)
+			case !have.less(newest) && rc == "":
+				fmt.Fprintf(s.out, "Already on %s. Nothing to do.\n", tag)
+				return nil
+			}
+		}
 	}
 	fmt.Fprintf(s.out, "vidra update — %s is a release bundle: running deploy/pin-release.sh %s (downloads, verifies and installs it, then pins the tags; it does not deploy)\n", dep.root, tag)
 	return theRunner.Passthrough(dep.bash(script, tag), s)

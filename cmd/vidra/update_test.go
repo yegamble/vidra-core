@@ -564,6 +564,7 @@ func TestUpdateRefusesFlagsPinReleaseCannotHonourOnABundleTree(t *testing.T) {
 func TestUpdateOnABundleTreeResolvesTheNewestReleaseThenDelegates(t *testing.T) {
 	st := newUpdateStage(t)
 	st.makeBundle()
+	write(t, filepath.Join(st.dir, "vidra-bundle.manifest"), "tag=v0.2.0\n")
 	script := st.installPinRelease()
 	if err := os.Remove(filepath.Join(st.dir, "env", "production.env")); err != nil {
 		t.Fatalf("rm env: %v", err)
@@ -605,6 +606,56 @@ func TestUpdateOnABundleTreeRefusesWhenTheNewestReleaseCannotBeFound(t *testing.
 	}
 	if len(st.runner.calls) != 0 {
 		t.Errorf("the refused run executed something: %v", st.runner.calls)
+	}
+}
+
+// A bare update never moves a bundle sideways or backwards. Already on the
+// newest is nothing to do (pin-release.sh would re-download and reinstall it),
+// and a bundle NEWER than the newest stable release — a prerelease someone chose
+// on purpose — is refused, as the git path refuses a downgrade: the newest is
+// "newest stable", and that is not an upgrade from there.
+func TestUpdateOnABundleTreeNeverMovesSidewaysOrBackwards(t *testing.T) {
+	for _, tc := range []struct {
+		manifest string
+		refused  bool
+		want     string
+	}{
+		{"v0.3.0", false, "Already on v0.3.0"},
+		{"v0.4.0", true, "vidra update --tag v0.3.0"},
+		{"v0.4.0-rc1", true, "vidra update --tag v0.3.0"},
+	} {
+		t.Run(tc.manifest, func(t *testing.T) {
+			st := newUpdateStage(t)
+			st.makeBundle()
+			write(t, filepath.Join(st.dir, "vidra-bundle.manifest"), "tag="+tc.manifest+"\n")
+			st.installPinRelease()
+			err := st.run()
+			if tc.refused {
+				if err == nil {
+					t.Fatalf("a bundle at %s was moved to v0.3.0", tc.manifest)
+				}
+				contains(t, err.Error(), "Nothing was changed", tc.want)
+			} else {
+				if err != nil {
+					t.Fatalf("update = %v", err)
+				}
+				contains(t, st.out(), tc.want)
+			}
+			if len(st.runner.calls) != 0 {
+				t.Errorf("ran %v, want nothing", st.runner.calls)
+			}
+		})
+	}
+	// A release candidate of the newest is behind it, so that one does move.
+	st := newUpdateStage(t)
+	st.makeBundle()
+	write(t, filepath.Join(st.dir, "vidra-bundle.manifest"), "tag=v0.3.0-rc2\n")
+	st.installPinRelease()
+	if err := st.run(); err != nil {
+		t.Fatalf("update from v0.3.0-rc2 = %v", err)
+	}
+	if got := st.runner.only(t).tail(); len(got) != 1 || got[0] != "v0.3.0" {
+		t.Errorf("pin-release.sh args = %v, want [v0.3.0]", got)
 	}
 }
 
