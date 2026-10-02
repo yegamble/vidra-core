@@ -2280,3 +2280,21 @@ func TestFederationAnswerIsRefusedWithoutAKEKOnAnExistingInstall(t *testing.T) {
 		t.Errorf("an existing KEK was not kept: enabled=%q generated=%v", res.Values["FEDERATION_ENABLED"], res.Generated)
 	}
 }
+
+// The api refuses to boot with federation on over plain http, and plain-http is
+// never asked the question. The engine is the second line for a front end (the
+// --federation flag, a hand-crafted wizard POST) that gets there anyway: a
+// refusal now, not a file that fails at deploy.
+func TestFederationAnswerIsRefusedOnPlainHTTP(t *testing.T) {
+	a := baseAnswers()
+	a.Federation = true
+	a.TLSMode = TLSModePlainHTTP
+	a.Domain = "video.lan"
+	_, err := Generate(Request{Template: fixtureTemplate(t), Answers: a, Rand: &seqReader{}})
+	if err == nil {
+		t.Fatal("federation was enabled on a plain-http install")
+	}
+	if !strings.Contains(err.Error(), "plain-http") || strings.Contains(err.Error(), "\n") {
+		t.Errorf("error %q should be one line naming plain-http", err)
+	}
+}

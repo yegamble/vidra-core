@@ -180,3 +180,26 @@ func TestTheShellKeepsItsHandSyncCommentsToTheInterview(t *testing.T) {
 		t.Error("no hand-sync comment names a line in the terminal interview")
 	}
 }
+
+// The federation checkbox is first-install, non-plain-http only, exactly like
+// the terminal's federationInterview: the page must hide it (and send false)
+// when the output exists or the mode is plain-http, and must take the help
+// link from the server's setup.FederationDocsURL, never retype it.
+func TestTheShellGatesTheFederationQuestion(t *testing.T) {
+	t.Parallel()
+	page := string(shell)
+	for _, want := range []string{
+		`id="f-fed"`,
+		`Federate with other servers (ActivityPub)`,
+		`app.state.output_exists`,
+		`federation_docs_url`,
+		`federation: federationAsked() && $("f-fed").checked`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page lacks %q", want)
+		}
+	}
+	if strings.Contains(page, "vidra.yosef.app/docs") {
+		t.Error("the page retypes a docs URL instead of taking it from the server")
+	}
+}

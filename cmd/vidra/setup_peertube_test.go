@@ -409,3 +409,62 @@ func TestSetupFederationIsNotAskedOnAReRunAndIsPreserved(t *testing.T) {
 		}
 	}
 }
+
+// --federation is the unattended spelling of the first-install "yes": the same
+// engine rule, so the flag cannot do anything the question could not. It never
+// downgrades (there is no --federation=false effect: false is "unanswered").
+func TestSetupFederationFlagOnAFirstInstall(t *testing.T) {
+	h := federationHarness(t)
+	if err := h.run(h.setupArgs("--federation")...); err != nil {
+		t.Fatalf("setup --federation: %v (stderr: %s)", err, h.err.String())
+	}
+	got := h.readOutput(t)
+	if !strings.Contains(got, "\nFEDERATION_ENABLED=true\n") || kekLine(got) == "" {
+		t.Errorf("--federation did not set the switch and mint the KEK:\n%s", got)
+	}
+}
+
+// On an existing install with no KEK the engine's refusal must reach the
+// operator, and the file must be left exactly as it was.
+func TestSetupFederationFlagOnAnExistingInstallSurfacesTheEngineError(t *testing.T) {
+	h := federationHarness(t)
+	if err := h.run(h.setupArgs()...); err != nil {
+		t.Fatalf("first install: %v (stderr: %s)", err, h.err.String())
+	}
+	before := h.readOutput(t)
+	err := h.run(h.setupArgs("--yes", "--federation")...)
+	if err == nil || !strings.Contains(err.Error(), "FEDERATION_KEY_KEK") || !strings.Contains(err.Error(), "first install") {
+		t.Fatalf("err = %v, want the engine's first-install refusal naming FEDERATION_KEY_KEK", err)
+	}
+	if after := h.readOutput(t); after != before {
+		t.Errorf("a refused --federation rewrote the file:\n%s", after)
+	}
+}
+
+// The api refuses federation over plain http, so the flag is refused with the
+// reason instead of writing a file that fails at deploy.
+func TestSetupFederationFlagIsRefusedOnPlainHTTP(t *testing.T) {
+	h := federationHarness(t)
+	err := h.run(h.setupArgs("--tls-mode", "plain-http", "--domain", "video.lan", "--federation")...)
+	if err == nil || !strings.Contains(err.Error(), "plain-http") {
+		t.Fatalf("err = %v, want a refusal naming plain-http", err)
+	}
+	if _, serr := os.Stat(h.output); serr == nil {
+		t.Error("a refused --federation wrote an env file")
+	}
+}
+
+// With the flag given, the interview does not ask again.
+func TestSetupFederationFlagSkipsTheQuestion(t *testing.T) {
+	h := federationHarness(t)
+	h.script = []promptAnswer{{answer: ""}}
+	if err := h.run(h.interviewArgs("--federation")...); err != nil {
+		t.Fatalf("setup: %v (stderr: %s)", err, h.err.String())
+	}
+	if h.askedAbout(federationQuestion) {
+		t.Error("asked a question the flag had already answered")
+	}
+	if !strings.Contains(h.readOutput(t), "\nFEDERATION_ENABLED=true\n") {
+		t.Error("the flag did not enable federation")
+	}
+}

@@ -296,6 +296,7 @@ flags:
 		}
 		answers.Registration = reg
 	}
+	answers.Federation = opt.federation
 	if opt.peertube.answered(peerTubeConn, peerTubeS3Secret) {
 		answers.PeerTube = opt.peertube.answers(peerTubeConn, peerTubeS3Secret)
 	}
@@ -401,6 +402,7 @@ type setupOptions struct {
 	smtpPassword   string
 	smtpFrom       string
 	registration   string
+	federation     bool
 	rotate         stringList
 	features       featureFlags
 	peertube       peerTubeFlags
@@ -462,6 +464,7 @@ func registerSetupFlags(fs *flag.FlagSet) *setupOptions {
 	fs.StringVar(&o.smtpFrom, "smtp-from", "", "From `address` for outbound mail")
 
 	fs.StringVar(&o.registration, "registration", "", "signup policy: `closed|open|approval`")
+	fs.BoolVar(&o.federation, "federation", false, "FIRST INSTALL only: enable ActivityPub federation and mint its key (FEDERATION_KEY_KEK). Refused on plain-http, and on an existing install that has no key — see the federation docs for a running instance")
 	fs.Var(&o.rotate, "rotate", "re-generate the secret in this `VAR` even though it already has a value (repeatable)")
 	o.features.register(fs)
 	o.peertube.register(fs)
@@ -1154,7 +1157,9 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 //
 // ActivityPub only: ATProto has its own switches and is covered by the recipe.
 func federationInterview(s streams, r *bufio.Reader, existing *setup.EnvFile, a *setup.Answers) error {
-	if existing != nil || a.TLSMode == setup.TLSModePlainHTTP {
+	// a.Federation already true: --federation answered it, so asking would be
+	// asking an operator to confirm their own flag.
+	if existing != nil || a.TLSMode == setup.TLSModePlainHTTP || a.Federation {
 		return nil
 	}
 	on, err := askYesNo(s, r, "Federate with other servers (ActivityPub)", false)

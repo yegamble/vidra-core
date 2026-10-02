@@ -46,6 +46,12 @@ type Form struct {
 	Mail         *MailForm         `json:"mail"`
 	Registration *RegistrationForm `json:"registration"`
 	PeerTube     *PeerTubeForm     `json:"peertube"`
+
+	// Federation is the first-install "federate with other servers (ActivityPub)"
+	// answer. A plain bool, unlike the pointers above: false is "no" and
+	// "unanswered" alike and the engine treats both as touch-nothing, so a page
+	// that omits it can never switch off an instance that federates.
+	Federation bool `json:"federation"`
 }
 
 // PeerTubeForm is the migration-source block, and it is the FOURTH pointer for
@@ -136,6 +142,11 @@ type StateResponse struct {
 
 	// DeployCommand is what to type for the "I'll run it myself" path.
 	DeployCommand string `json:"deploy_command"`
+
+	// FederationDocsURL is setup.FederationDocsURL, the day-2 recipe the
+	// federation question links to. The page takes it from here so the terminal
+	// and the wizard can never point at two different places.
+	FederationDocsURL string `json:"federation_docs_url"`
 }
 
 // Seed is the state's answer block. It is Form with every secret replaced by a

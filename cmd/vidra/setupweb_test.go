@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"path/filepath"
@@ -87,7 +88,18 @@ func runInterview(t *testing.T, tmpl, existing *setup.EnvFile, script []promptAn
 // TestWebAnswersMatchTheTerminalInterview is the strict half: every question
 // answered explicitly, in both front ends, and the assembled setup.Answers
 // compared field by field.
+//
+// The federation question is exercised in BOTH directions: a yes that only one
+// front end carried, or a no that one of them read as yes, would be a first
+// install that federates (or silently does not) depending on which door the
+// operator used.
 func TestWebAnswersMatchTheTerminalInterview(t *testing.T) {
+	for _, federate := range []bool{true, false} {
+		t.Run(fmt.Sprintf("federation=%v", federate), func(t *testing.T) { webAnswersMatchTheTerminal(t, federate) })
+	}
+}
+
+func webAnswersMatchTheTerminal(t *testing.T, federate bool) {
 	stubDNS(t)
 	tmpl := parseEnv(t, cliTemplate)
 
@@ -154,9 +166,7 @@ func TestWebAnswersMatchTheTerminalInterview(t *testing.T) {
 		{match: "From address", answer: smtpFrom},
 		{match: "Open registration to the public now", answer: "y"},
 		{match: "Require an admin to approve each signup", answer: "y"},
-		// Asked on a first install only, and answered no here: the wizard has no
-		// such question yet, so a yes would be a field the two cannot compare.
-		{match: "Federate with other servers", answer: "n"},
+		{match: "Federate with other servers", answer: map[bool]string{true: "y", false: "n"}[federate]},
 		{match: "Migrate from an existing PeerTube instance", answer: "y"},
 		{match: "Source PeerTube database DSN", answer: ptSourceURL},
 		{match: "Where the source instance's media lives", answer: "s3"},
@@ -188,6 +198,7 @@ func TestWebAnswersMatchTheTerminalInterview(t *testing.T) {
 		Features:     &setupweb.FeatureForm{Scan: true, Media: true, IPFS: true},
 		Mail:         &setupweb.MailForm{Host: smtpHost, Port: smtpPort, Username: smtpUser, Password: smtpPassword, From: smtpFrom},
 		Registration: &setupweb.RegistrationForm{Enabled: true, RequireApproval: true},
+		Federation:   federate,
 		PeerTube: &setupweb.PeerTubeForm{
 			Enabled:   true,
 			SourceURL: ptSourceURL,

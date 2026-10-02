@@ -96,6 +96,8 @@ func (s *Server) handleState(w http.ResponseWriter, _ *http.Request) {
 		Seed:          SeedFor(src.tmpl, src.existing),
 		Secrets:       secretNames(src.existing),
 		DeployCommand: s.opt.DeployCommand,
+
+		FederationDocsURL: setup.FederationDocsURL,
 	})
 }
 

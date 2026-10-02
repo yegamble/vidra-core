@@ -419,3 +419,52 @@ func TestTheWireCannotNameAFile(t *testing.T) {
 		t.Errorf("wrote %q, want %q", out.Written[0].Path, w.opts.OutputPath)
 	}
 }
+
+// The wizard's federation checkbox is the terminal question's twin: ticking it
+// on a first install writes the switch and a minted KEK, and leaving it alone
+// writes neither. The page hides it on a re-run and on plain-http; the engine
+// refuses it there too, for a client that posts it anyway.
+func TestApplyFederationCheckbox(t *testing.T) {
+	t.Parallel()
+	for _, on := range []bool{true, false} {
+		w := newWizard(t, "", withProxy)
+		f := validForm()
+		f.Federation = on
+		if code, out := w.apply(t, ApplyRequest{Form: f}); code != http.StatusOK || !out.OK {
+			t.Fatalf("federation=%v: apply = %d %+v", on, code, out)
+		}
+		b, err := os.ReadFile(w.opts.OutputPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(b)
+		if has := strings.Contains(got, "\nFEDERATION_ENABLED=true\n"); has != on {
+			t.Errorf("federation=%v: FEDERATION_ENABLED=true present=%v:\n%s", on, has, got)
+		}
+		if has := strings.Contains(got, "\nFEDERATION_KEY_KEK="); has != on {
+			t.Errorf("federation=%v: FEDERATION_KEY_KEK present=%v", on, has)
+		}
+	}
+}
+
+func TestReviewRefusesFederationOnPlainHTTP(t *testing.T) {
+	t.Parallel()
+	w := newWizard(t, "", withProxy)
+	f := validForm()
+	f.TLSMode, f.Domain, f.AcmeEmail, f.Federation = "plain-http", "video.lan", "", true
+	if out := w.review(t, f); out.OK {
+		t.Errorf("review accepted federation on plain-http: %+v", out)
+	}
+}
+
+func TestStateCarriesTheFederationDocsURL(t *testing.T) {
+	t.Parallel()
+	w := newWizard(t, "", nil)
+	var st StateResponse
+	if code := w.callJSON(t, "GET", "/api/state", nil, &st); code != http.StatusOK {
+		t.Fatalf("state = %d", code)
+	}
+	if st.FederationDocsURL != setup.FederationDocsURL {
+		t.Errorf("federation_docs_url = %q, want setup.FederationDocsURL", st.FederationDocsURL)
+	}
+}
