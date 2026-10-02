@@ -51,13 +51,21 @@ jobs:
       # A host-side kubo binary drives the fail-closed boot proof
       # (TestKeylessDaemonRefusesToStart) — it inits a throwaway repo and asserts the
       # daemon refuses to start under LIBP2P_FORCE_PNET=1 with no swarm.key.
-      - name: Install kubo binary (matches the compose image)
+      #
+      # Copied OUT OF the compose image rather than downloaded: dist.ipfs.tech went
+      # unreachable (curl timed out after 300 s and failed the lane before any test
+      # ran), and the image is the version this step must match anyway. The tag is
+      # read from docker-compose.yml so the host binary and the services cannot
+      # drift apart.
+      - name: Install kubo binary (copied from the compose image)
         run: |
           set -eux
-          ver=v0.43.0
-          curl -fsSL "https://dist.ipfs.tech/kubo/${ver}/kubo_${ver}_linux-amd64.tar.gz" -o /tmp/kubo.tgz
-          tar -C /tmp -xzf /tmp/kubo.tgz
-          sudo install /tmp/kubo/ipfs /usr/local/bin/ipfs
+          image=$(grep -m1 -oE 'ipfs/kubo:v[0-9]+\.[0-9]+\.[0-9]+' docker-compose.yml)
+          test -n "$image"
+          cid=$(docker create "$image")
+          docker cp "$cid":/usr/local/bin/ipfs /tmp/ipfs
+          docker rm "$cid"
+          sudo install /tmp/ipfs /usr/local/bin/ipfs
           ipfs --version
 
       # Bring up the private swarm.key'd pair + a cluster peer, plus the public `ipfs`
