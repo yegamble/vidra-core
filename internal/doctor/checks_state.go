@@ -540,7 +540,7 @@ func checkBackupTimer(ctx context.Context, s *state) []Finding {
 // read with setup.IsTrue like the other env booleans, and it is a WARN either
 // way, never a ✗: a lab or a host with provider snapshots is a legitimate
 // deployment, and a non-zero exit for it would be ignored by every wrapper.
-func checkOffsiteBackup(_ context.Context, s *state) []Finding {
+func checkOffsiteBackup(ctx context.Context, s *state) []Finding {
 	if skip, why := s.externalPostgresSkip(); skip {
 		return []Finding{skipf(why)}
 	}
@@ -550,7 +550,7 @@ func checkOffsiteBackup(_ context.Context, s *state) []Finding {
 	}
 	for _, key := range []string{"BACKUP_RCLONE_REMOTE", "BACKUP_S3_URI"} {
 		if s.value(key) != "" {
-			return []Finding{okf(fmt.Sprintf("%s is set, so deploy/backup.sh uploads every backup off this host", key))}
+			return []Finding{offsiteEncryption(ctx, s, key)}
 		}
 	}
 	if setup.IsTrue(s.value("BACKUP_OFFSITE_ACK")) {
@@ -559,6 +559,63 @@ func checkOffsiteBackup(_ context.Context, s *state) []Finding {
 	return []Finding{warnf(
 		"no off-site backup target is configured, so every backup stays on this host and is lost with it (local-only)",
 		"set BACKUP_RCLONE_REMOTE or BACKUP_S3_URI in "+s.envRel+" (and BACKUP_AGE_RECIPIENTS=<age1... public key> so the off-site copies are encrypted), or set BACKUP_OFFSITE_ACK=true if local-only is deliberate")}
+}
+
+// offsiteEncryption judges an off-site target the way deploy/backup.sh decides
+// whether the config archive may leave the host: BACKUP_AGE_RECIPIENTS, an
+// rclone remote of `type = crypt`, or BACKUP_OFFSITE_PLAINTEXT=true. Anything
+// else WARNs, because that archive holds JWT_SECRET and every KEK, and a target
+// set before age existed would receive it in plaintext. key is the target
+// backup.sh uses: rclone wins when both are set, as it does there.
+//
+// Only rclone's `type` line is read and printed. `rclone config show` also
+// prints the remote's credentials, and none of it may reach the report.
+func offsiteEncryption(ctx context.Context, s *state, key string) Finding {
+	if s.value("BACKUP_AGE_RECIPIENTS") != "" {
+		return okf(fmt.Sprintf("%s is set, and BACKUP_AGE_RECIPIENTS encrypts every off-site copy before upload", key))
+	}
+	why := "an S3 target has no client-side encryption of its own"
+	if key == "BACKUP_RCLONE_REMOTE" {
+		typ, unknown := s.rcloneRemoteType(ctx, s.value(key))
+		switch {
+		case typ == "crypt":
+			return okf(fmt.Sprintf("%s is an rclone remote of type = crypt (as this user sees it), so rclone encrypts every backup before upload", key))
+		case unknown != "":
+			why = "whether its rclone remote is a crypt remote could not be checked (" + unknown + ")"
+		default:
+			why = "its rclone remote is type = " + typ + ", not crypt"
+		}
+	}
+	if setup.IsTrue(s.value("BACKUP_OFFSITE_PLAINTEXT")) {
+		return okf(fmt.Sprintf("%s is set and uploads unencrypted, which BACKUP_OFFSITE_PLAINTEXT=true accepts", key))
+	}
+	return warnf(
+		fmt.Sprintf("%s is set but nothing encrypts the off-site copies: no BACKUP_AGE_RECIPIENTS, and %s. The config archive holds JWT_SECRET and every KEK, so a plaintext copy hands over every key this instance has", key, why),
+		"set BACKUP_AGE_RECIPIENTS=<age1... public key> in "+s.envRel+" to encrypt before upload; or confirm the remote is type = crypt with `rclone config show <name>`, run as the user the backup runs as; or set BACKUP_OFFSITE_PLAINTEXT=true to accept plaintext on purpose")
+}
+
+// rcloneRemoteType is the `type` of the remote BACKUP_RCLONE_REMOTE names, or
+// why it could not be read. The name is parsed as backup.sh parses it: no colon
+// is a local path to rclone, and `:backend:` names no configured remote.
+func (s *state) rcloneRemoteType(ctx context.Context, target string) (string, string) {
+	name, _, ok := strings.Cut(target, ":")
+	name, _, _ = strings.Cut(name, ",")
+	if !ok || name == "" {
+		return "", "it names no configured remote: rclone reads it as a local path or an on-the-fly backend"
+	}
+	if _, err := s.opt.Host.LookPath("rclone"); err != nil {
+		return "", "rclone is not installed for this user"
+	}
+	out, err := s.opt.Host.Run(ctx, s.root, "rclone", "config", "show", name)
+	if err != nil || out.ExitCode != 0 {
+		return "", "`rclone config show " + name + "` failed for this user"
+	}
+	for _, line := range strings.Split(out.Stdout, "\n") {
+		if k, v, found := strings.Cut(line, "="); found && strings.TrimSpace(k) == "type" {
+			return strings.TrimSpace(v), ""
+		}
+	}
+	return "", "`rclone config show " + name + "` printed no type"
 }
 
 // externalPostgresSkip is why the backup checks stand down on a managed
