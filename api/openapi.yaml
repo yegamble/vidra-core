@@ -16654,6 +16654,66 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/users/{id}/password-reset-link:
+    post:
+      operationId: adminCreateUserPasswordResetLink
+      summary: Mint a one-time password-reset link for a locked-out user (admin)
+      description: >-
+        Recovery for an ordinary user on an instance with no working mail.
+        Admin-only; the CALLER re-confirms their OWN password (same step-up and
+        strict limiter as DELETE /api/v1/admin/users/{id}/mfa). Only an active
+        account with role `user` can be targeted: the owner and staff recover
+        through the host (`vidra owner reset`). The link is the ordinary
+        single-use reset token (1 hour); a new mint invalidates older unused
+        links, and redeeming one signs the user out everywhere. Fail-closed: the
+        action is audited (`admin.user.password_reset_link`) BEFORE the link is
+        returned, and a failed audit write withholds it and withdraws the token
+        (503). The token is never logged or audited; the response is no-store.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminRemoveUserMFARequest"
+      responses:
+        "200":
+          description: The one-time link.
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPasswordResetLink"
+        "401":
+          description: "Missing, invalid, or expired token."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "403":
+          description: "Not an admin; wrong password; or the target is the owner or staff."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "404":
+          description: "No such user."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "409":
+          description: "Target deactivated, caller has no password, or PUBLIC_BASE_URL unset."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "422":
+          description: "Validation failed (no password supplied)."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "429":
+          description: "Too many attempts (strict auth limiter)."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "503":
+          description: "The audit write failed, so no link was issued."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
 components:
   securitySchemes:
     bearerAuth:
@@ -21159,6 +21219,15 @@ components:
             The CALLING administrator's own current password. Not the target's:
             the target is, by construction, the party who cannot prove anything
             right now.
+    AdminPasswordResetLink:
+      type: object
+      required: [reset_url, expires_at]
+      properties:
+        reset_url:
+          type: string
+          format: uri
+          description: PUBLIC_BASE_URL + /reset-password/confirm?token=..., shown once.
+        expires_at: {type: string, format: date-time}
     AdminUser:
       type: object
       description: Admin projection of an account (never includes the password hash).

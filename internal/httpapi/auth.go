@@ -31,6 +31,16 @@ func (s *Server) audit(c echo.Context, action, result, actorID, reason string) {
 // individual handlers cannot accidentally omit them. Resource ids and metadata
 // still come from explicit, allowlisted event construction at the call site.
 func (s *Server) auditEvent(c echo.Context, ev audit.Event) {
+	if err := s.auditEventErr(c, ev); err != nil {
+		s.logger.WarnContext(c.Request().Context(), "audit log persist failed", "error", err, "action", ev.Action)
+	}
+}
+
+// auditEventErr is auditEvent for the few actions that must FAIL CLOSED: it
+// returns the durable write's error so the caller can withhold what the audit
+// row was meant to account for. nil when no durable log is wired (callers that
+// need one check s.auditLog themselves).
+func (s *Server) auditEventErr(c echo.Context, ev audit.Event) error {
 	ctx := c.Request().Context()
 	if ev.RequestID == "" {
 		ev.RequestID = c.Response().Header().Get(echo.HeaderXRequestID)
@@ -71,13 +81,12 @@ func (s *Server) auditEvent(c echo.Context, ev audit.Event) {
 		PipelineRunID: pipelineRunID, JobID: jobID,
 		ResourceType: ev.ResourceType, ResourceID: ev.ResourceID, Reason: ev.Reason,
 	})
-	// Persist the durable audit trail best-effort when wired; a failure never
-	// blocks the request (the slog line above is still emitted).
+	// Persist the durable audit trail when wired. auditEvent treats a failure as
+	// best-effort (the slog line above is still emitted).
 	if s.auditLog != nil {
-		if err := s.auditLog.Record(ctx, ev); err != nil {
-			s.logger.WarnContext(ctx, "audit log persist failed", "error", err, "action", ev.Action)
-		}
+		return s.auditLog.Record(ctx, ev)
 	}
+	return nil
 }
 
 // registerRequest is the POST /api/v1/auth/register body.

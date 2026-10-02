@@ -2184,6 +2184,9 @@ func (s *Server) routes() {
 		}
 		adminMFAMW = append(adminMFAMW, s.requireAuth, s.requireRole(admin.RoleAdmin))
 		api.DELETE("/admin/users/:id/mfa", s.handleAdminRemoveUserMFA, adminMFAMW...)
+		// One-time reset link for a locked-out ordinary user on an instance with
+		// no working mail. Same step-up (caller's own password) and strict limiter.
+		api.POST("/admin/users/:id/password-reset-link", s.handleAdminPasswordResetLink, adminMFAMW...)
 		// Instance-wide overview counts for the admin dashboard cards. Read-only
 		// aggregate; admin-only (this is the vidra-user admin-overview binding).
 		api.GET("/admin/stats", s.handleAdminStats, s.requireAuth, s.requireRole(admin.RoleAdmin))
