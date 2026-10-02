@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -108,15 +109,22 @@ func isBundleTree(root string) bool {
 // five wrapped scripts.
 //
 // ORDER IS THE INVARIANT, as it was when this only refused: nothing here reads
-// the env file, asks GitHub, snapshots or runs git. That is why the flag checks
-// below look at the parsed flags only, and why the missing-script fallback is
-// the old refusal, with its Nothing-was-changed promise still true.
+// the env file, snapshots or runs git. That is why the flag checks below look at
+// the parsed flags only, and why the missing-script fallback is the old refusal,
+// with its Nothing-was-changed promise still true. ONE thing is now allowed
+// before delegating: a GitHub request for the newest release (the git path makes
+// the same one) when no --tag was named. It is read-only, so a failure refuses
+// with nothing changed. Because the env file is off limits, the owner comes from
+// the process environment alone (imageOwner with no env-file values): a fork
+// that keeps VIDRA_IMAGE_OWNER only in its env file is offered upstream's newest
+// release, which is why the resolved owner is printed with the tag.
 //
 // Flags pin-release.sh has no equivalent for are refused, never dropped. It
-// pins a NAMED release and then stops: it has no dry run (--check would pin), no
-// confirmation to skip and no deploy to arm a rollback for (--yes and
-// --no-rollback would read as a deploy that never ran), and it does not look up
-// the newest release (that discovery is the GitHub call it owns; --tag it is).
+// pins a NAMED release and then stops: no confirmation to skip and no deploy to
+// arm a rollback for (--yes and --no-rollback would read as a deploy that never
+// ran), and it has no dry run, so --check here is answered by vidra itself
+// (current vs newest, nothing pinned) and is refused combined with --tag, which
+// would read as a preview of a pin.
 func updateBundle(s streams, dep deployment, uf updateFlags) error {
 	script := filepath.Join(dep.root, "deploy", "pin-release.sh")
 	// Run through bash like every other wrapped script (exec.go), so an unpack
@@ -127,17 +135,54 @@ func updateBundle(s streams, dep deployment, uf updateFlags) error {
 	for _, f := range []struct {
 		set  bool
 		name string
-	}{{uf.check, "--check"}, {uf.yes, "--yes"}, {uf.noRollback, "--no-rollback"}} {
+	}{{uf.yes, "--yes"}, {uf.noRollback, "--no-rollback"}, {uf.check && uf.tag != "", "--check with --tag"}} {
 		if f.set {
 			return fmt.Errorf("update: %s is not supported on a bundle tree: deploy/pin-release.sh pins a named release and stops, with no dry run, no confirmation and no deploy of its own (./deploy/deploy.sh is the next, separate command). Nothing was changed", f.name)
 		}
 	}
-	if uf.tag == "" {
-		return fmt.Errorf("update: a bundle tree needs --tag vX.Y.Z: deploy/pin-release.sh pins the release you name and does not look up the newest. Nothing was changed")
+	tag := uf.tag
+	if tag == "" {
+		processEnv := environMap(theRunner.Environ())
+		owner := imageOwner(processEnv, nil)
+		tags, err := publishedCoreTags(context.Background(), processEnv, owner)
+		if err != nil {
+			return fmt.Errorf("update: could not find the newest release (%v). Nothing was changed. Retry, or name it: vidra update --tag vX.Y.Z", oneLine(err))
+		}
+		tag = tags[len(tags)-1]
+		fmt.Fprintf(s.out, "vidra update — the newest release is %s (%s/%s)\n", tag, owner, coreRepo)
+		if uf.check {
+			fmt.Fprintf(s.out, "this bundle is %s (vidra-bundle.manifest tag). Nothing was changed; `vidra update` pins the newest.\n", bundleManifestTag(dep.root))
+			return nil
+		}
 	}
-	fmt.Fprintf(s.out, "vidra update — %s is a release bundle: running deploy/pin-release.sh %s (downloads, verifies and installs it, then pins the tags; it does not deploy)\n", dep.root, uf.tag)
-	return theRunner.Passthrough(dep.bash(script, uf.tag), s)
+	fmt.Fprintf(s.out, "vidra update — %s is a release bundle: running deploy/pin-release.sh %s (downloads, verifies and installs it, then pins the tags; it does not deploy)\n", dep.root, tag)
+	return theRunner.Passthrough(dep.bash(script, tag), s)
 }
+
+// bundleManifestTag is the tag= line of vidra-bundle.manifest, read as lib.sh's
+// bundle_manifest_get reads it (last match wins, spaces around = tolerated), or
+// "unknown" — a damaged manifest is worth saying, not worth failing a read-only
+// report over.
+func bundleManifestTag(root string) string {
+	body, err := os.ReadFile(filepath.Join(root, "vidra-bundle.manifest"))
+	if err != nil {
+		return "unknown"
+	}
+	tag := ""
+	for _, line := range strings.Split(string(body), "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok && strings.TrimSpace(k) == "tag" {
+			tag = strings.TrimSpace(v)
+		}
+	}
+	if tag == "" {
+		return "unknown"
+	}
+	return tag
+}
+
+// oneLine keeps a multi-line transport error on the single line the refusal
+// promises.
+func oneLine(err error) string { return strings.Join(strings.Fields(err.Error()), " ") }
 
 // bundleRefusal is the fallback when a bundle tree has no
 // deploy/pin-release.sh (a bundle cut before it shipped, or a damaged tree). It

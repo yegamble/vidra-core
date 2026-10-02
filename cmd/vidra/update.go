@@ -381,6 +381,23 @@ func (p updatePlan) bump() map[string]string {
 	return out
 }
 
+// publishedCoreTags is vidra-core's eligible release tags, oldest first, never
+// empty on success: the one lookup behind "the newest release", shared by the git
+// path (discover) and the bundle path (updateBundle) so the two cannot disagree
+// about which release is newest. Errors carry no "update: " prefix; callers add
+// their own.
+func publishedCoreTags(ctx context.Context, processEnv map[string]string, owner string) ([]string, error) {
+	releases, err := listReleases(ctx, processEnv, owner, coreRepo)
+	if err != nil {
+		return nil, err
+	}
+	tags := releaseTags(releases)
+	if len(tags) == 0 {
+		return nil, fmt.Errorf("%s/%s has no published vMAJOR.MINOR.PATCH release, so there is nothing to update to. Drafts and prereleases are skipped deliberately — a draft has no image behind it, and a prerelease is a tag somebody chose on purpose", owner, coreRepo)
+	}
+	return tags, nil
+}
+
 // discover reads vidra-core's releases, picks the target, and checks the other
 // two repositories carry it.
 //
@@ -392,14 +409,11 @@ func (p updatePlan) bump() map[string]string {
 // pair resolves the per-component tags for the chosen target (resolvePairing).
 func discover(ctx context.Context, processEnv map[string]string, owner string, current map[string]string, wantTag string, pair func(target string) (map[string]string, []string)) (updatePlan, error) {
 	p := updatePlan{owner: owner, current: current}
-	releases, err := listReleases(ctx, processEnv, owner, coreRepo)
+	tags, err := publishedCoreTags(ctx, processEnv, owner)
 	if err != nil {
 		return p, fmt.Errorf("update: %v", err)
 	}
-	p.tags = releaseTags(releases)
-	if len(p.tags) == 0 {
-		return p, fmt.Errorf("update: %s/%s has no published vMAJOR.MINOR.PATCH release, so there is nothing to update to. Drafts and prereleases are skipped deliberately — a draft has no image behind it, and a prerelease is a tag somebody chose on purpose", owner, coreRepo)
-	}
+	p.tags = tags
 	p.latest = p.tags[len(p.tags)-1]
 	p.target = p.latest
 	if wantTag != "" {
@@ -1151,8 +1165,11 @@ running.
 On a release BUNDLE tree (vidra-bundle.manifest, no git) it does none of the
 above: it runs deploy/pin-release.sh <tag>, which downloads that release's
 bundle, verifies its checksum, installs it and pins the three tags, and stops.
-Run ./deploy/deploy.sh (or `+"`vidra deploy`"+`) afterwards. --tag is required there,
-and --check, --yes and --no-rollback are refused because the script has no
-equivalent. A bundle without an executable deploy/pin-release.sh is refused.
+Run ./deploy/deploy.sh (or `+"`vidra deploy`"+`) afterwards. Without --tag it asks
+GitHub for the newest release first (the owner from VIDRA_IMAGE_OWNER or
+GITHUB_OWNER in the PROCESS environment — the env file is not read) and prints
+which one it chose. --check there prints the bundle's release and the newest one
+and changes nothing. --yes and --no-rollback are refused because the script has
+no equivalent. A bundle without a deploy/pin-release.sh is refused.
 `, envHistoryDirName, defaultEnvFile)
 }

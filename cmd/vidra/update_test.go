@@ -531,10 +531,9 @@ func TestUpdateDelegatesABundleTreeToPinRelease(t *testing.T) {
 }
 
 // pin-release.sh pins a NAMED release and neither prompts nor deploys, so the
-// flags that mean otherwise are refused rather than dropped: a dropped --check
-// would pin, and a dropped --yes or --no-rollback would let the operator think a
-// deploy had been armed. No --tag is refused too — finding the newest release is
-// a GitHub call this path does not make.
+// flags that mean otherwise are refused rather than dropped: a dropped --yes or
+// --no-rollback would let the operator think a deploy had been armed, and
+// --check with a --tag would read as a dry run of a pin it cannot preview.
 func TestUpdateRefusesFlagsPinReleaseCannotHonourOnABundleTree(t *testing.T) {
 	cases := []struct {
 		args []string
@@ -543,7 +542,7 @@ func TestUpdateRefusesFlagsPinReleaseCannotHonourOnABundleTree(t *testing.T) {
 		{[]string{"--check", "--tag", "v0.3.0"}, "--check"},
 		{[]string{"--yes", "--tag", "v0.3.0"}, "--yes"},
 		{[]string{"--no-rollback", "--tag", "v0.3.0"}, "--no-rollback"},
-		{nil, "--tag"},
+		{[]string{"--yes"}, "--yes"},
 	}
 	for _, c := range cases {
 		st := newUpdateStage(t)
@@ -556,6 +555,80 @@ func TestUpdateRefusesFlagsPinReleaseCannotHonourOnABundleTree(t *testing.T) {
 		}
 		contains(t, err.Error(), c.want, "Nothing was changed")
 		st.assertNothingTouched(before)
+	}
+}
+
+// A bare `vidra update` on a bundle finds the newest release with the git path's
+// own discovery (one request: vidra-core's release list), says which it chose,
+// then delegates exactly as --tag would. The env file is still never read.
+func TestUpdateOnABundleTreeResolvesTheNewestReleaseThenDelegates(t *testing.T) {
+	st := newUpdateStage(t)
+	st.makeBundle()
+	script := st.installPinRelease()
+	if err := os.Remove(filepath.Join(st.dir, "env", "production.env")); err != nil {
+		t.Fatalf("rm env: %v", err)
+	}
+	if err := st.run(); err != nil {
+		t.Fatalf("update = %v", err)
+	}
+	if len(st.github.requests) != 1 || st.github.asked(0) != "/repos/yegamble/vidra-core/releases" {
+		t.Errorf("GitHub requests = %v, want exactly vidra-core's release list", st.github.requests)
+	}
+	call := st.runner.only(t)
+	if call.Path != "bash" || call.script() != script {
+		t.Errorf("ran %s %v, want bash %s", call.Path, call.Args, script)
+	}
+	if got := call.tail(); len(got) != 1 || got[0] != "v0.3.0" {
+		t.Errorf("pin-release.sh args = %v, want [v0.3.0]", got)
+	}
+	contains(t, st.out(), "newest release is v0.3.0")
+}
+
+// A lookup that fails (rate limit, outage) refuses with the way out and runs
+// nothing: guessing a tag is how a bundle gets pinned to something unreleased.
+func TestUpdateOnABundleTreeRefusesWhenTheNewestReleaseCannotBeFound(t *testing.T) {
+	st := newUpdateStage(t)
+	st.makeBundle()
+	st.installPinRelease()
+	st.github.status = http.StatusForbidden
+	before := st.envFile()
+	err := st.run()
+	if err == nil {
+		t.Fatal("update on a bundle tree with a failing release lookup was accepted")
+	}
+	contains(t, err.Error(), "Nothing was changed", "or name it: vidra update --tag vX.Y.Z")
+	if strings.Contains(err.Error(), "\n") {
+		t.Errorf("the refusal is not one line: %q", err)
+	}
+	if got := st.envFile(); got != before {
+		t.Errorf("the env file was written on a refused run:\n%s", got)
+	}
+	if len(st.runner.calls) != 0 {
+		t.Errorf("the refused run executed something: %v", st.runner.calls)
+	}
+}
+
+// --check on a bundle reports where it is (the manifest) and where it could go
+// (the newest release) and changes nothing — it is the one thing pin-release.sh
+// has no dry run for, and the newest tag is now free of side effects.
+func TestUpdateCheckOnABundleTreeReportsCurrentAndNewestAndRunsNothing(t *testing.T) {
+	st := newUpdateStage(t)
+	st.makeBundle()
+	st.installPinRelease()
+	write(t, filepath.Join(st.dir, "vidra-bundle.manifest"), "# generated\ntag=v0.2.0\ncore_schema_version=000104\n")
+	before := st.envFile()
+	if err := st.run("--check"); err != nil {
+		t.Fatalf("update --check = %v", err)
+	}
+	contains(t, st.out(), "v0.2.0", "v0.3.0")
+	if len(st.runner.calls) != 0 {
+		t.Errorf("--check executed something: %v", st.runner.calls)
+	}
+	if got := st.envFile(); got != before {
+		t.Errorf("--check wrote the env file:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(st.dir, "backups")); err == nil {
+		t.Error("--check took an env snapshot")
 	}
 }
 
