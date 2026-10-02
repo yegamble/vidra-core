@@ -139,10 +139,11 @@ func (s *Service) List(ctx context.Context, limit, offset int32) ([]WatchedWord,
 }
 
 // Delete removes a term from the list (idempotent: removing an absent term is a
-// no-op).
-func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
-	_, err := s.repo.DeleteWatchedWord(ctx, id)
-	return err
+// no-op). It reports whether a row was actually removed, so the caller can audit
+// a real policy change without recording one for a stale or repeated request.
+func (s *Service) Delete(ctx context.Context, id uuid.UUID) (bool, error) {
+	n, err := s.repo.DeleteWatchedWord(ctx, id)
+	return n > 0, err
 }
 
 // FlagComment checks a comment's body against the watched-words list and records

@@ -70,13 +70,21 @@ const (
 	// outcome and whether a note was supplied; the note itself lives on the
 	// match row, because audit_log's metadata allowlist rejects prose.
 	ActionWatchedWordMatchResolve = "moderation.watched_word_match.resolve"
-	ActionReportDelete            = "moderation.report.delete"
-	ActionVideoBlock              = "moderation.video.block"
-	ActionVideoUnblock            = "moderation.video.unblock"
-	ActionVideoApprove            = "moderation.video.quarantine_approve"
-	ActionVideoReject             = "moderation.video.quarantine_reject"
-	ActionInstanceBlock           = "moderation.instance.block"
-	ActionInstanceUnblock         = "moderation.instance.unblock"
+	// ActionAdminWatchedWordCreate / Delete record a moderator changing the
+	// watched-words POLICY LIST itself (as opposed to triaging a match). The
+	// resource is the word's id; the term is never recorded — it is moderation
+	// content, audit_log's metadata allowlist has no free-text key, and the id
+	// resolves to it. Delete is idempotent, so it is emitted only when a row was
+	// actually removed.
+	ActionAdminWatchedWordCreate = "admin.watched_word.create"
+	ActionAdminWatchedWordDelete = "admin.watched_word.delete"
+	ActionReportDelete           = "moderation.report.delete"
+	ActionVideoBlock             = "moderation.video.block"
+	ActionVideoUnblock           = "moderation.video.unblock"
+	ActionVideoApprove           = "moderation.video.quarantine_approve"
+	ActionVideoReject            = "moderation.video.quarantine_reject"
+	ActionInstanceBlock          = "moderation.instance.block"
+	ActionInstanceUnblock        = "moderation.instance.unblock"
 	// ActionRemoteActorBlock/Unblock record an admin blocking ONE remote
 	// account for every reader on this instance (A29 parity), rather than
 	// defederating that account's whole server. The blocked actor URL is the

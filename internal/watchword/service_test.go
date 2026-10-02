@@ -300,12 +300,12 @@ func TestAddListDelete(t *testing.T) {
 		t.Fatalf("list = %+v, want [abuse, spam] newest-first", items)
 	}
 
-	if err := svc.Delete(ctx, w1.ID); err != nil {
-		t.Fatalf("Delete: %v", err)
+	if removed, err := svc.Delete(ctx, w1.ID); err != nil || !removed {
+		t.Fatalf("Delete = %v, %v; want true, nil", removed, err)
 	}
-	// Idempotent delete of an absent id.
-	if err := svc.Delete(ctx, uuid.New()); err != nil {
-		t.Errorf("idempotent Delete: %v", err)
+	// Idempotent delete of an absent id: no error, and it says nothing changed.
+	if removed, err := svc.Delete(ctx, uuid.New()); err != nil || removed {
+		t.Errorf("idempotent Delete = %v, %v; want false, nil", removed, err)
 	}
 	if items, _, _ := svc.List(ctx, 20, 0); len(items) != 1 || items[0].Word != "abuse" {
 		t.Errorf("list after delete = %+v, want [abuse]", items)
