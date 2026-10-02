@@ -194,6 +194,7 @@ const (
 	KeyChannelSyncEnabled              = "channel_sync_enabled"                // channel auto-sync create + ticker pickup
 	KeyChannelSyncMaxPerUser           = "channel_sync_max_per_user"           // 0 = unlimited
 	KeyChannelSyncIntervalMinutes      = "channel_sync_interval_minutes"       // re-list cadence, 5..10080
+	KeyChannelSyncBatch                = "channel_sync_batch"                  // newest uploads imported per sync pass, 1..100
 	KeyLiveRecordingRetentionHours     = "live_recording_retention_hours"      // session-recording retention; 0 = delete on replay publish, else sweep past N hours
 	KeyAuditLogRetentionDays           = "audit_log_retention_days"            // audit-trail retention FLOOR-bounded: >= AUDIT_LOG_RETENTION, 0 = forever
 	KeyStoryboardsEnabled              = "storyboards_enabled"                 // seek-preview sprite generation at publish
@@ -664,7 +665,9 @@ type Defaults struct {
 	// ChannelSyncIntervalMinutes mirrors CHANNEL_SYNC_INTERVAL in whole minutes
 	// (MinutesCeil of the env duration).
 	ChannelSyncIntervalMinutes int64
-	TranscriptionEnabled       bool
+	// ChannelSyncBatch mirrors CHANNEL_SYNC_BATCH (newest uploads per pass).
+	ChannelSyncBatch     int64
+	TranscriptionEnabled bool
 
 	// AuditLogRetentionDays mirrors AUDIT_LOG_RETENTION in whole days (DaysCeil:
 	// 0 = keep forever stays 0, anything else rounds UP). It is also the FLOOR the
@@ -938,6 +941,13 @@ var specs = []spec{
 	// who deliberately booted a faster cadence keeps it until they override.
 	{key: KeyChannelSyncIntervalMinutes, kind: KindInt,
 		defInt: func(d Defaults) int64 { return d.ChannelSyncIntervalMinutes }, validate: intRange(5, 10080),
+		page: PageVOD, section: "imports"},
+	// Same 1..100 as the CHANNEL_SYNC_BATCH boot validation, so a runtime write
+	// can never reach a value the process would have refused to start with. The
+	// ceiling bounds how many third-party uploads one pass can draft, enqueue
+	// and charge against quota; 0 is rejected because it would list nothing.
+	{key: KeyChannelSyncBatch, kind: KindInt,
+		defInt: func(d Defaults) int64 { return d.ChannelSyncBatch }, validate: intRange(1, 100),
 		page: PageVOD, section: "imports"},
 	// Storyboards default ON and have no env backing: the runtime setting is
 	// the single operator control (generation additionally needs ffmpeg).

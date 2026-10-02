@@ -117,6 +117,7 @@ type Service struct {
 	maxPerUser   int
 	maxPerUserFn func() int // when set, supersedes maxPerUser (runtime overlay), resolved per Create
 	batch        int
+	batchFn      func() int // when set (and > 0), supersedes batch (runtime overlay), resolved per sync pass
 	interval     time.Duration
 	intervalFn   func() time.Duration // when set (and > 0), supersedes interval (runtime overlay), resolved per reschedule
 	backoffMax   time.Duration
@@ -181,6 +182,25 @@ func WithBatch(n int) Option {
 			s.batch = n
 		}
 	}
+}
+
+// WithBatchFunc makes the per-pass batch dynamic (channel_sync_batch, default
+// CHANNEL_SYNC_BATCH). It is read once at the start of each sync pass, so an
+// admin's change applies to the next pass with no restart and one pass never
+// mixes two limits (the lister's --playlist-end and the defensive clamp use the
+// same value). A func answering <= 0 falls back to the static WithBatch value
+// rather than asking yt-dlp for zero entries.
+func WithBatchFunc(f func() int) Option { return func(s *Service) { s.batchFn = f } }
+
+// effectiveBatch is the batch for the pass starting now: the live overlay when
+// it answers a positive number, else the static boot value.
+func (s *Service) effectiveBatch() int {
+	if s.batchFn != nil {
+		if n := s.batchFn(); n > 0 {
+			return n
+		}
+	}
+	return s.batch
 }
 
 // WithInterval sets the cadence used to reschedule a sync after a run
@@ -454,16 +474,17 @@ func (s *Service) runSync(ctx context.Context, row sqlcgen.ClaimDueChannelSyncsR
 	if err != nil {
 		return safeerr.New("the channel URL is not a public http(s) URL")
 	}
-	entries, err := s.lister.Playlist(ctx, target.String(), s.batch)
+	batch := s.effectiveBatch()
+	entries, err := s.lister.Playlist(ctx, target.String(), batch)
 	if err != nil {
 		return safeerr.New("could not list the external channel")
 	}
 	// Defense in depth: --playlist-end already bounds the listing, but do NOT
-	// trust the extractor to have honored it. Clamp to s.batch so a misbehaving or
+	// trust the extractor to have honored it. Clamp to the batch so a misbehaving or
 	// malicious channel listing can never make one pass draft/enqueue more than the
 	// configured batch (bounding both work and quota consumption per run).
-	if s.batch > 0 && len(entries) > s.batch {
-		entries = entries[:s.batch]
+	if batch > 0 && len(entries) > batch {
+		entries = entries[:batch]
 	}
 	for _, entry := range entries {
 		s.importEntry(ctx, row, entry)
