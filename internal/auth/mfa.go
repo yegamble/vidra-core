@@ -405,15 +405,8 @@ func (s *Service) AdminRemoveTOTP(ctx context.Context, adminID uuid.UUID, adminP
 	if s.mfaRepo == nil {
 		return ErrMFAUnavailable
 	}
-	admin, err := s.UserByID(ctx, adminID)
-	if err != nil {
+	if err := s.confirmAdminPassword(ctx, adminID, adminPassword); err != nil {
 		return err
-	}
-	if admin.PasswordHash == "" {
-		return ErrPasswordNotSet
-	}
-	if err := CheckPassword(admin.PasswordHash, adminPassword); err != nil {
-		return ErrInvalidPassword
 	}
 	target, err := s.UserByID(ctx, targetID)
 	if err != nil {
