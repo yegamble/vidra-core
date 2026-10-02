@@ -69,6 +69,7 @@ func testDefaults() Defaults {
 		ChannelSyncMaxPerUser:      5,
 		ChannelSyncIntervalMinutes: 60,
 		ChannelSyncBatch:           15,
+		ChannelSyncCooldownMinutes: 1,
 		TranscriptionEnabled:       false,
 
 		TranscodingEnabled: true,
@@ -105,6 +106,7 @@ func TestW8ToggleBatchRegistry(t *testing.T) {
 		{KeyChannelSyncMaxPerUser, KindInt, int64(5), PageVOD, "imports"},
 		{KeyChannelSyncIntervalMinutes, KindInt, int64(60), PageVOD, "imports"},   // testDefaults: 60 (CHANNEL_SYNC_INTERVAL=1h)
 		{KeyChannelSyncBatch, KindInt, int64(15), PageVOD, "imports"},             // testDefaults: 15 (CHANNEL_SYNC_BATCH=15)
+		{KeyChannelSyncCooldownMinutes, KindInt, int64(1), PageVOD, "imports"},    // testDefaults: 1 (CHANNEL_SYNC_COOLDOWN=1m)
 		{KeyLiveRecordingRetentionHours, KindInt, int64(168), PageLive, "replay"}, // testDefaults: 168 (LIVE_RECORDING_RETENTION=168h)
 		{KeyAuditLogRetentionDays, KindInt, int64(400), PageAdvanced, "audit"},    // testDefaults: 400 (AUDIT_LOG_RETENTION=400d)
 		{KeyStoryboardsEnabled, KindBool, true, PageVOD, "storyboards"},
@@ -1464,6 +1466,38 @@ func TestChannelSyncBatchBounds(t *testing.T) {
 			continue
 		}
 		if got := svc.Int(KeyChannelSyncBatch); got != v {
+			t.Errorf("after setting %d, Int = %d", v, got)
+		}
+	}
+}
+
+// TestChannelSyncCooldownMinutesBounds pins 1..1440. The floor is 1 minute (a
+// whole-minute setting cannot express "off" — only CHANNEL_SYNC_COOLDOWN=0 at
+// boot disables the throttle) and the ceiling is one day so a typo cannot lock
+// every owner out of sync-now for weeks.
+func TestChannelSyncCooldownMinutesBounds(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo(), testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	by := uuid.New()
+	for _, v := range []string{"-1", "0", "1441", "100000", "abc", "1.5", ""} {
+		var verr *ValidationError
+		err := svc.Apply(ctx, map[string]Update{KeyChannelSyncCooldownMinutes: {Value: v}}, by)
+		if !errors.As(err, &verr) {
+			t.Errorf("value %q: Apply err = %v, want ValidationError", v, err)
+		}
+	}
+	if got := svc.Int(KeyChannelSyncCooldownMinutes); got != 1 {
+		t.Fatalf("rejected writes changed the value: got %d, want the default 1", got)
+	}
+	for _, v := range []int64{1, 2, 60, 1440} {
+		if err := svc.Apply(ctx, map[string]Update{KeyChannelSyncCooldownMinutes: {Value: strconv.FormatInt(v, 10)}}, by); err != nil {
+			t.Errorf("value %d: Apply: %v", v, err)
+			continue
+		}
+		if got := svc.Int(KeyChannelSyncCooldownMinutes); got != v {
 			t.Errorf("after setting %d, Int = %d", v, got)
 		}
 	}

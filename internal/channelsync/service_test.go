@@ -424,6 +424,52 @@ func TestSyncNowCooldown(t *testing.T) {
 	}
 }
 
+// TestSyncNowReadsTheCooldownLive: the sync-now throttle (and the Retry-After
+// the handler derives from Cooldown()) follows WithCooldownFunc per request, so
+// an admin's change applies without a restart. A func answering 0 turns the
+// throttle off (that is what CHANNEL_SYNC_COOLDOWN=0 means) and a negative
+// answer falls back to the static value.
+func TestSyncNowReadsTheCooldownLive(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo()
+	live := time.Hour
+	svc := enabledService(repo, &fakeDrafter{}, &fakeEnqueuer{}, &fakeLister{},
+		WithCooldown(time.Minute), WithCooldownFunc(func() time.Duration { return live }))
+	// Last run finished 10 minutes ago.
+	s := sqlcgen.ChannelSync{
+		ID: uuid.New(), UserID: owner, ChannelID: uuid.New(), State: "idle",
+		LastSyncAt: pgtype.Timestamptz{Time: time.Now().Add(-10 * time.Minute), Valid: true},
+	}
+	repo.syncs[s.ID] = s
+
+	// The live 1h beats the static 1m: 10 minutes ago is still cooling down.
+	if err := svc.SyncNow(context.Background(), owner, s.ID); !errors.Is(err, ErrCooldown) {
+		t.Fatalf("err = %v, want ErrCooldown under the live 1h", err)
+	}
+	if got := svc.Cooldown(); got != time.Hour {
+		t.Errorf("Cooldown() = %s, want the live 1h", got)
+	}
+	// An admin shortens it; the very next request is allowed.
+	live = 5 * time.Minute
+	if err := svc.SyncNow(context.Background(), owner, s.ID); err != nil {
+		t.Fatalf("SyncNow after shortening the cooldown: %v", err)
+	}
+	// 0 from the func means the throttle is off, not "fall back".
+	live = time.Hour
+	if err := svc.SyncNow(context.Background(), owner, s.ID); !errors.Is(err, ErrCooldown) {
+		t.Fatalf("err = %v, want ErrCooldown again at 1h", err)
+	}
+	live = 0
+	if err := svc.SyncNow(context.Background(), owner, s.ID); err != nil {
+		t.Fatalf("SyncNow with the live cooldown at 0: %v", err)
+	}
+	// A negative answer degrades to the static 1m (10 minutes ago: allowed).
+	live = -time.Second
+	if got := svc.Cooldown(); got != time.Minute {
+		t.Errorf("negative live cooldown gave Cooldown() = %s, want the static 1m", got)
+	}
+}
+
 // ---- DrainDue -------------------------------------------------------------
 
 func claimRow(s sqlcgen.ChannelSync) sqlcgen.ClaimDueChannelSyncsRow {

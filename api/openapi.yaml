@@ -14330,6 +14330,9 @@ paths:
         reschedule so a change applies without a restart),
         channel_sync_batch (1..100, default CHANNEL_SYNC_BATCH; the newest
         uploads one sync pass imports, read at the start of each pass),
+        channel_sync_cooldown_minutes (1..1440, default CHANNEL_SYNC_COOLDOWN
+        in whole minutes; the minimum spacing between manual sync-now
+        triggers, read per request so a change applies without a restart),
         user_export_expiration_hours, user_export_max_quota_bytes,
         max_channels_per_user — 0 always means unlimited/never — the W10 keys
         transcoding_max_fps (0 = no cap, else 24..240), transcoding_threads
