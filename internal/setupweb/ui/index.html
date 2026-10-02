@@ -326,6 +326,19 @@ button.ghost{background:transparent}
       </div>
     </fieldset>
 
+    <!-- Hand-sync: federationInterview(), cmd/vidra/setup.go. FIRST INSTALL ONLY
+         and never on plain-http (the api refuses federation there), so the whole
+         fieldset is hidden by federationAsked() and the page sends false. Default
+         unchecked. -->
+    <fieldset id="w-fed" hidden>
+      <legend>Federation</legend>
+      <div class="check">
+        <input type="checkbox" id="f-fed">
+        <div><label for="f-fed">Federate with other servers (ActivityPub)</label>
+        <p class="hint">Publishes this instance's channels to the fediverse and fixes its domain as every actor's identity. Left off, you can still turn it on later (it needs a key that must never be rotated): <a id="fed-docs" target="_blank" rel="noopener noreferrer">how to turn federation on</a>.</p></div>
+      </div>
+    </fieldset>
+
     <!-- Hand-sync: interview()'s peerTubeInterview(), cmd/vidra/setup.go. ONE
          gate, and nine questions behind it, in the interview's own order. It is
          last here as it is last there: it is the only block about a DIFFERENT
@@ -784,6 +797,7 @@ button.ghost{background:transparent}
     // The scheme a bare host normalises to depends on the mode, so a DNS verdict
     // read under the old mode is stale the moment the mode changes.
     $("dns-out").replaceChildren();
+    onFederationVisibility();
   }
 
   // setFieldError / clearFieldError keep an input and its role=alert message in
@@ -916,6 +930,8 @@ button.ghost{background:transparent}
     onStorageChange();
     onMailToggle();
     onRegToggle();
+    $("f-fed").checked = false;
+    onFederationVisibility();
     onDatastoreToggle();
     onPeerTubeToggle();
     setMode(false);
@@ -933,6 +949,19 @@ button.ghost{background:transparent}
   }
 
   function onMailToggle() { $("w-mail").hidden = !$("f-mail-on").checked; }
+  // Asked on a first install only (no env file yet) and never on plain-http — the
+  // terminal's federationInterview, rule for rule. Minting the key is refused by
+  // the engine over an existing configuration, so offering the box there would be
+  // offering a refusal.
+  function federationAsked() {
+    return !!app.state && !app.state.output_exists && tlsMode() !== "plain-http";
+  }
+  function onFederationVisibility() {
+    const asked = federationAsked();
+    $("w-fed").hidden = !asked;
+    if (!asked) $("f-fed").checked = false;
+    if (app.state) $("fed-docs").href = app.state.federation_docs_url || "";
+  }
   function onRegToggle() { $("w-reg-approval").hidden = !$("f-reg-open").checked; }
   function onDatastoreToggle() {
     $("w-db-url").hidden = !$("f-db-external").checked;
@@ -981,6 +1010,7 @@ button.ghost{background:transparent}
       features: null,
       mail: null,
       registration: { enabled: $("f-reg-open").checked, require_approval: $("f-reg-approval").checked },
+      federation: federationAsked() && $("f-fed").checked,
     };
     if (app.advanced) {
       if ($("f-db-external").checked) form.database = { mode: "external", url: $("f-db-url").value };

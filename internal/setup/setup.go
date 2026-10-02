@@ -770,6 +770,13 @@ func applyFederationRule(req Request, res *Result) ([]string, error) {
 	if !req.Answers.Federation {
 		return nil, nil
 	}
+	// The api refuses to boot with federation on over plain http (actor ids pin
+	// PUBLIC_BASE_URL as an https identity). The terminal never asks there, so this
+	// is for the front ends that carry the answer without asking: refuse now, in
+	// one line, rather than write a file that fails at deploy.
+	if strings.TrimSpace(res.Values[tlsModeKey]) == TLSModePlainHTTP {
+		return nil, fmt.Errorf("setup: federation cannot be enabled with %s=%s: the api refuses to boot with federation on over plain http. Use an https TLS mode, or leave federation off", tlsModeKey, TLSModePlainHTTP)
+	}
 	var added []string
 	if _, defined := res.Values[federationEnabledKey]; !defined {
 		added = append(added, federationEnabledKey)

@@ -87,6 +87,10 @@ func BuildAnswers(form Form, tmpl, existing *setup.EnvFile) setup.Answers {
 	if r := form.Registration; r != nil {
 		a.Registration = &setup.RegistrationAnswers{Enabled: r.Enabled, RequireApproval: r.RequireApproval}
 	}
+	// Straight through: the page asks only on a first install off plain-http and
+	// sends false otherwise, and the engine refuses the answer where it cannot be
+	// honoured (applyFederationRule). No second opinion here.
+	a.Federation = form.Federation
 	if p := form.PeerTube; p != nil {
 		a.PeerTube = &setup.PeerTubeAnswers{
 			Enabled: p.Enabled,
