@@ -88,20 +88,40 @@ func (s *Server) handleAddWatchedWord(c echo.Context) error {
 		}
 		return err
 	}
+	// Id only: the term is moderation policy content and the audit metadata
+	// allowlist has no free-text key (see ActionAdminWatchedWordCreate).
+	s.auditEvent(c, audit.Event{
+		Action: observability.ActionAdminWatchedWordCreate, Result: observability.ResultSuccess,
+		ActorID: userID.String(), ResourceType: "watched_word", ResourceID: word.ID.String(),
+	})
 	return c.JSON(http.StatusCreated, watchedWordView{
 		ID: word.ID.String(), Word: word.Word, CreatedAt: word.CreatedAt,
 	})
 }
 
 // handleDeleteWatchedWord removes a term from the watched-words list. Behind
-// requireRole(admin, moderator). Idempotent (an unknown id still succeeds).
+// requireRole(admin, moderator). Idempotent (an unknown id still succeeds). The
+// audit event is emitted only when a row was actually removed: a repeat or stale
+// id changed nothing, and a success event for it would claim a policy change
+// that never happened.
 func (s *Server) handleDeleteWatchedWord(c echo.Context) error {
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
+	}
 	id, err := pathUUID(c, "id", "watched word not found")
 	if err != nil {
 		return err
 	}
-	if err := s.watchwordsvc.Delete(c.Request().Context(), id); err != nil {
+	removed, err := s.watchwordsvc.Delete(c.Request().Context(), id)
+	if err != nil {
 		return err
+	}
+	if removed {
+		s.auditEvent(c, audit.Event{
+			Action: observability.ActionAdminWatchedWordDelete, Result: observability.ResultSuccess,
+			ActorID: userID.String(), ResourceType: "watched_word", ResourceID: id.String(),
+		})
 	}
 	return c.NoContent(http.StatusNoContent)
 }

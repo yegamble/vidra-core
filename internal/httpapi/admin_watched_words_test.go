@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/watchword"
 )
@@ -339,4 +342,78 @@ func (f *watchwordFakeRepo) CountWatchedWords(ctx context.Context) (int64, error
 func (f *watchwordFakeRepo) CountWatchedWordMatches(ctx context.Context, status *string) (int64, error) {
 	rows, err := f.ListWatchedWordMatches(ctx, sqlcgen.ListWatchedWordMatchesParams{Status: status, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
+}
+
+// The watched-words list is moderation policy: what it contains decides what
+// gets flagged for every moderator. Before these events a term could be added or
+// removed (silencing a flag for good) with nothing in the trail saying who did
+// it or when. The term itself is deliberately NOT recorded — audit_log's
+// metadata allowlist has no free-text key, and the id resolves to it.
+func TestWatchedWordAddAndDeleteAreAudited(t *testing.T) {
+	var logs bytes.Buffer
+	srv, _, _, _, _ := videoServerFullWith(t, testConfig(),
+		[]Option{WithLogger(slog.New(slog.NewJSONHandler(&logs, nil)))})
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/watched-words", `{"word":"sneaky-term"}`, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("add = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var created watchedWordView
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+
+	ev := findAudit(auditEvents(t, &logs), observability.ActionAdminWatchedWordCreate, observability.ResultSuccess)
+	if ev == nil {
+		t.Fatal("adding a watched word emitted no admin.watched_word.create audit event")
+	}
+	if ev["resource_type"] != "watched_word" || ev["resource_id"] != created.ID {
+		t.Errorf("create audit resource = %v/%v, want watched_word/%s", ev["resource_type"], ev["resource_id"], created.ID)
+	}
+	if ev["actor_id"] == nil || ev["actor_id"] == "" {
+		t.Error("create audit should carry the acting moderator")
+	}
+
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/watched-words/"+created.ID, "", admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete = %d", rec.Code)
+	}
+	ev = findAudit(auditEvents(t, &logs), observability.ActionAdminWatchedWordDelete, observability.ResultSuccess)
+	if ev == nil {
+		t.Fatal("deleting a watched word emitted no admin.watched_word.delete audit event")
+	}
+	if ev["resource_type"] != "watched_word" || ev["resource_id"] != created.ID {
+		t.Errorf("delete audit resource = %v/%v, want watched_word/%s", ev["resource_type"], ev["resource_id"], created.ID)
+	}
+	// The policy term is moderation content: it must not ride into the trail.
+	if bytes.Contains(logs.Bytes(), []byte("sneaky-term")) {
+		t.Error("the watched term leaked into the audit/log output")
+	}
+}
+
+// Delete is idempotent (an unknown id answers 204), so there is no 404 to
+// audit. A repeat or a stale id changed nothing, and a success event for it
+// would claim a policy change that did not happen. A rejected add (duplicate)
+// likewise changed nothing.
+func TestWatchedWordNoOpsEmitNoSuccessEvent(t *testing.T) {
+	var logs bytes.Buffer
+	srv, _, _, _, _ := videoServerFullWith(t, testConfig(),
+		[]Option{WithLogger(slog.New(slog.NewJSONHandler(&logs, nil)))})
+	admin := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/admin/watched-words/"+uuid.New().String(), "", admin); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete of an unknown id = %d, want 204", rec.Code)
+	}
+	if ev := findAudit(auditEvents(t, &logs), observability.ActionAdminWatchedWordDelete, observability.ResultSuccess); ev != nil {
+		t.Error("deleting an absent watched word emitted a success audit event for a change that never happened")
+	}
+
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/watched-words", `{"word":"dup"}`, admin); rec.Code != http.StatusCreated {
+		t.Fatalf("add = %d", rec.Code)
+	}
+	logs.Reset()
+	if rec := sendJSONAuth(srv, http.MethodPost, "/api/v1/admin/watched-words", `{"word":"DUP"}`, admin); rec.Code != http.StatusConflict {
+		t.Fatalf("duplicate add = %d, want 409", rec.Code)
+	}
+	if ev := findAudit(auditEvents(t, &logs), observability.ActionAdminWatchedWordCreate, observability.ResultSuccess); ev != nil {
+		t.Error("a rejected duplicate add emitted a success audit event")
+	}
 }
