@@ -1126,10 +1126,45 @@ func interview(s streams, tmpl, existing *setup.EnvFile, a *setup.Answers) error
 		}
 		a.Registration = reg
 	}
+	if err := federationInterview(s, r, existing, a); err != nil {
+		return err
+	}
 	if err := peerTubeInterview(s, r, tmpl, existing, a); err != nil {
 		return err
 	}
 	fmt.Fprintln(s.out)
+	return nil
+}
+
+// federationInterview asks the one first-install federation question.
+//
+// FIRST INSTALL ONLY (existing == nil, the engine's own definition). Yes mints
+// FEDERATION_KEY_KEK, which setup refuses to do over an existing configuration
+// because a blank KEK there usually means a lost file, not a new feature — so on
+// a re-run the question could not be honoured, and asking it would be asking an
+// operator to approve a refusal. Enabling federation on a running instance is the
+// docs recipe, and a "no" prints its URL so the first-install operator finds it.
+//
+// The default is no: federating publishes the instance's channels to the
+// fediverse and pins PUBLIC_BASE_URL as every actor's identity, which nobody
+// should reach by pressing enter. It is also not asked on plain-http, where the
+// api refuses to boot with federation on, so a "yes" there could only produce a
+// refused file after the fact. Unattended (--non-interactive) installs never
+// reach the interview and so never federate.
+//
+// ActivityPub only: ATProto has its own switches and is covered by the recipe.
+func federationInterview(s streams, r *bufio.Reader, existing *setup.EnvFile, a *setup.Answers) error {
+	if existing != nil || a.TLSMode == setup.TLSModePlainHTTP {
+		return nil
+	}
+	on, err := askYesNo(s, r, "Federate with other servers (ActivityPub)", false)
+	if err != nil {
+		return err
+	}
+	a.Federation = on
+	if !on {
+		fmt.Fprintf(s.out, "  Federation stays off. To turn it on later (it needs a key that must never be rotated): %s\n", setup.FederationDocsURL)
+	}
 	return nil
 }
 
