@@ -34,3 +34,28 @@ func TestChannelSyncCooldownFromSetting(t *testing.T) {
 		}
 	}
 }
+
+// TestChannelSyncBackoffMaxFromSetting: same rule as the cooldown, in whole
+// hours. A 90m env cap rounds UP to 2 in the setting but must come back as 90m
+// while the setting is untouched; only an admin change replaces it.
+func TestChannelSyncBackoffMaxFromSetting(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		env     time.Duration
+		setting int64
+		want    time.Duration
+	}{
+		{"default 24h", 24 * time.Hour, 24, 24 * time.Hour},
+		{"90m env kept exactly at its default", 90 * time.Minute, 2, 90 * time.Minute},
+		{"sub-hour env kept exactly at its default", 30 * time.Minute, 1, 30 * time.Minute},
+		{"admin change over the 24h default", 24 * time.Hour, 72, 72 * time.Hour},
+		{"admin change over a 90m env", 90 * time.Minute, 6, 6 * time.Hour},
+	} {
+		if got := channelSyncBackoffMaxFromSetting(tc.env, tc.setting); got != tc.want {
+			t.Errorf("%s: channelSyncBackoffMaxFromSetting(%s, %d) = %s, want %s", tc.name, tc.env, tc.setting, got, tc.want)
+		}
+		if tc.setting == instancesettings.HoursCeil(tc.env) && channelSyncBackoffMaxFromSetting(tc.env, tc.setting) != tc.env {
+			t.Errorf("%s: at the env-derived default the env duration must come back exactly", tc.name)
+		}
+	}
+}

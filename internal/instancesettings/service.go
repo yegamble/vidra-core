@@ -196,6 +196,7 @@ const (
 	KeyChannelSyncIntervalMinutes      = "channel_sync_interval_minutes"       // re-list cadence, 5..10080
 	KeyChannelSyncBatch                = "channel_sync_batch"                  // newest uploads imported per sync pass, 1..100
 	KeyChannelSyncCooldownMinutes      = "channel_sync_cooldown_minutes"       // minimum spacing between manual sync-now triggers, 1..1440
+	KeyChannelSyncBackoffMaxHours      = "channel_sync_backoff_max_hours"      // cap on the failure backoff of a failing sync, 1..720
 	KeyLiveRecordingRetentionHours     = "live_recording_retention_hours"      // session-recording retention; 0 = delete on replay publish, else sweep past N hours
 	KeyAuditLogRetentionDays           = "audit_log_retention_days"            // audit-trail retention FLOOR-bounded: >= AUDIT_LOG_RETENTION, 0 = forever
 	KeyStoryboardsEnabled              = "storyboards_enabled"                 // seek-preview sprite generation at publish
@@ -671,6 +672,9 @@ type Defaults struct {
 	// ChannelSyncCooldownMinutes mirrors CHANNEL_SYNC_COOLDOWN in whole minutes
 	// (MinutesCeil of the env duration).
 	ChannelSyncCooldownMinutes int64
+	// ChannelSyncBackoffMaxHours mirrors CHANNEL_SYNC_BACKOFF_MAX in whole hours
+	// (HoursCeil of the env duration).
+	ChannelSyncBackoffMaxHours int64
 	TranscriptionEnabled       bool
 
 	// AuditLogRetentionDays mirrors AUDIT_LOG_RETENTION in whole days (DaysCeil:
@@ -960,6 +964,15 @@ var specs = []spec{
 	// the env value and is not itself bound-checked.
 	{key: KeyChannelSyncCooldownMinutes, kind: KindInt,
 		defInt: func(d Defaults) int64 { return d.ChannelSyncCooldownMinutes }, validate: intRange(1, 1440),
+		page: PageVOD, section: "imports"},
+	// Whole hours. The cap bounds the exponential backoff of a source that keeps
+	// failing. The floor of 1 keeps a zero cap (which would reschedule a failing
+	// source "now", every worker tick, against somebody else's server) out of
+	// reach; the ceiling (30 days) stops a typo from parking a failing sync
+	// effectively forever. The default is the env value and is not itself
+	// bound-checked.
+	{key: KeyChannelSyncBackoffMaxHours, kind: KindInt,
+		defInt: func(d Defaults) int64 { return d.ChannelSyncBackoffMaxHours }, validate: intRange(1, 720),
 		page: PageVOD, section: "imports"},
 	// Storyboards default ON and have no env backing: the runtime setting is
 	// the single operator control (generation additionally needs ffmpeg).

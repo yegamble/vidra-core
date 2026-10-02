@@ -336,6 +336,7 @@ func run() error {
 		ChannelSyncIntervalMinutes:  instancesettings.MinutesCeil(cfg.ChannelSyncInterval),
 		ChannelSyncBatch:            int64(cfg.ChannelSyncBatch),
 		ChannelSyncCooldownMinutes:  instancesettings.MinutesCeil(cfg.ChannelSyncCooldown),
+		ChannelSyncBackoffMaxHours:  instancesettings.HoursCeil(cfg.ChannelSyncBackoffMax),
 		LiveRecordingRetentionHours: instancesettings.HoursCeil(cfg.LiveRecordingRetention),
 		AuditLogRetentionDays:       instancesettings.DaysCeil(cfg.AuditLogRetention),
 		TranscriptionEnabled:        cfg.WhisperEnabled,
@@ -2117,6 +2118,13 @@ func run() error {
 		// here, so a permanently dead source is not re-listed at the plain
 		// cadence forever. Reset on the first success; sync-now bypasses it.
 		channelsync.WithBackoffMax(cfg.ChannelSyncBackoffMax),
+		// The cap follows the channel_sync_backoff_max_hours overlay (1..720),
+		// read at each failure reschedule; the env duration is kept exactly
+		// while the setting equals its default.
+		channelsync.WithBackoffMaxFunc(func() time.Duration {
+			return channelSyncBackoffMaxFromSetting(cfg.ChannelSyncBackoffMax,
+				settingssvc.Int(instancesettings.KeyChannelSyncBackoffMaxHours))
+		}),
 		channelsync.WithCooldown(cfg.ChannelSyncCooldown),
 		// The sync-now throttle follows the channel_sync_cooldown_minutes
 		// overlay (1..1440), read per request; the env duration is kept
