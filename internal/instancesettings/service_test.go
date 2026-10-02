@@ -73,6 +73,7 @@ func testDefaults() Defaults {
 		TranscodingEnabled: true,
 
 		LiveRecordingRetentionHours: 168,
+		AuditLogRetentionDays:       400,
 	}
 }
 
@@ -103,6 +104,7 @@ func TestW8ToggleBatchRegistry(t *testing.T) {
 		{KeyChannelSyncMaxPerUser, KindInt, int64(5), PageVOD, "imports"},
 		{KeyChannelSyncIntervalMinutes, KindInt, int64(60), PageVOD, "imports"},   // testDefaults: 60 (CHANNEL_SYNC_INTERVAL=1h)
 		{KeyLiveRecordingRetentionHours, KindInt, int64(168), PageLive, "replay"}, // testDefaults: 168 (LIVE_RECORDING_RETENTION=168h)
+		{KeyAuditLogRetentionDays, KindInt, int64(400), PageAdvanced, "audit"},    // testDefaults: 400 (AUDIT_LOG_RETENTION=400d)
 		{KeyStoryboardsEnabled, KindBool, true, PageVOD, "storyboards"},
 		{KeyVideoCardPreviewsEnabled, KindBool, false, PageVOD, "playback"},
 		{KeyVideoCardPreviewsDefaultEnabled, KindBool, false, PageVOD, "playback"},
@@ -1316,5 +1318,118 @@ func TestHoursCeil(t *testing.T) {
 		if got := HoursCeil(in); got != want {
 			t.Errorf("HoursCeil(%s) = %d, want %d", in, got, want)
 		}
+	}
+}
+
+// TestAuditLogRetentionDaysFloor: the env value is a FLOOR. An admin can keep
+// the trail longer (or forever, 0) but a value that would delete sooner than
+// AUDIT_LOG_RETENTION says is refused, on the write path AND the dry-run path
+// (Service.Validate), so an admin is told rather than silently clamped.
+func TestAuditLogRetentionDaysFloor(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo(), testDefaults()) // floor 400 days
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	by := uuid.New()
+	for _, v := range []string{"1", "399", "-1", "36501", "abc", ""} {
+		var verr *ValidationError
+		if err := svc.Apply(ctx, map[string]Update{KeyAuditLogRetentionDays: {Value: v}}, by); !errors.As(err, &verr) {
+			t.Errorf("value %q: Apply err = %v, want ValidationError", v, err)
+		}
+		if err := svc.Validate(KeyAuditLogRetentionDays, v); err == nil {
+			t.Errorf("value %q: Validate accepted it", v)
+		}
+	}
+	if got := svc.Int(KeyAuditLogRetentionDays); got != 400 {
+		t.Fatalf("rejected writes changed the value: got %d, want the default 400", got)
+	}
+	for _, v := range []int64{0, 400, 401, 36500} {
+		if err := svc.Apply(ctx, map[string]Update{KeyAuditLogRetentionDays: {Value: strconv.FormatInt(v, 10)}}, by); err != nil {
+			t.Errorf("value %d: Apply: %v", v, err)
+		}
+	}
+}
+
+// TestAuditLogRetentionDaysInertWhenEnvKeepsForever: AUDIT_LOG_RETENTION=0 keeps
+// the trail forever, which nothing can lengthen. Every positive value would
+// shorten it, so every positive value is refused and the message says why.
+func TestAuditLogRetentionDaysInertWhenEnvKeepsForever(t *testing.T) {
+	d := testDefaults()
+	d.AuditLogRetentionDays = 0
+	svc := NewService(newFakeRepo(), d)
+	for _, v := range []string{"1", "400", "36500"} {
+		err := svc.Validate(KeyAuditLogRetentionDays, v)
+		if err == nil || !strings.Contains(err.Error(), "forever") {
+			t.Errorf("value %s: err = %v, want a refusal naming keep-forever", v, err)
+		}
+	}
+	if err := svc.Validate(KeyAuditLogRetentionDays, "0"); err != nil {
+		t.Errorf("0 (a no-op) refused: %v", err)
+	}
+}
+
+// TestEffectiveAuditRetention: max(setting, env). Equal-to-default hands back
+// the env duration EXACTLY (36h must not become 48h); a stale override below a
+// since-raised env is clamped UP at read time; 0 on either side is forever.
+func TestEffectiveAuditRetention(t *testing.T) {
+	day := 24 * time.Hour
+	env := 400 * day
+	for name, c := range map[string]struct {
+		env  time.Duration
+		days int64
+		want time.Duration
+	}{
+		"setting equals default":   {env, 400, env},
+		"sub-day env, default":     {36 * time.Hour, 2, 36 * time.Hour},
+		"setting longer":           {env, 800, 800 * day},
+		"stale override below env": {env, 30, env},
+		"setting zero is forever":  {env, 0, 0},
+		"env zero is forever":      {0, 800, 0},
+		"env zero setting zero":    {0, 0, 0},
+	} {
+		if got := EffectiveAuditRetention(c.env, c.days); got != c.want {
+			t.Errorf("%s: EffectiveAuditRetention(%s, %d) = %s, want %s", name, c.env, c.days, got, c.want)
+		}
+	}
+}
+
+func TestDaysCeil(t *testing.T) {
+	day := 24 * time.Hour
+	for in, want := range map[time.Duration]int64{0: 0, -day: 0, time.Second: 1, 36 * time.Hour: 2, 400 * day: 400} {
+		if got := DaysCeil(in); got != want {
+			t.Errorf("DaysCeil(%s) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// TestAuditRetentionFollowsTheSettingLive is the worker's contract: main.go's
+// func is EffectiveAuditRetention(env, svc.Int(key)) evaluated per tick, so a
+// PATCH changes what the very next tick enforces, and clearing it falls back to
+// the env value, with no restart in between.
+func TestAuditRetentionFollowsTheSettingLive(t *testing.T) {
+	ctx := context.Background()
+	const day = 24 * time.Hour
+	env := 400 * day
+	svc := NewService(newFakeRepo(), testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	window := func() time.Duration { return EffectiveAuditRetention(env, svc.Int(KeyAuditLogRetentionDays)) }
+	if got := window(); got != env {
+		t.Fatalf("untouched = %s, want the env value %s", got, env)
+	}
+	by := uuid.New()
+	if err := svc.Apply(ctx, map[string]Update{KeyAuditLogRetentionDays: {Value: "800"}}, by); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if got := window(); got != 800*day {
+		t.Fatalf("after 800 = %s, want %s", got, 800*day)
+	}
+	if err := svc.Apply(ctx, map[string]Update{KeyAuditLogRetentionDays: {Delete: true}}, by); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if got := window(); got != env {
+		t.Fatalf("after clear = %s, want the env value %s", got, env)
 	}
 }

@@ -14343,7 +14343,14 @@ paths:
         many hours. This setting DELETES FILES: lowering it, or raising it from
         0, makes the next sweep delete every recording older than the new
         window, including recordings kept as the only copy of a failed or
-        replay-disabled broadcast; read at every use, no restart), and the W7 sign-up
+        replay-disabled broadcast; read at every use, no restart),
+        audit_log_retention_days (0..36500, default AUDIT_LOG_RETENTION in whole
+        days rounded up; 0 = keep the audit trail forever. The env value is a
+        FLOOR: the effective window is max(setting, env), so this setting can only
+        keep the trail LONGER, and a value below the floor is a 422 naming it. When
+        AUDIT_LOG_RETENTION=0 the trail is already kept forever and only 0 is
+        accepted, so the setting has no effect. Read by every hourly sweep, no
+        restart; changes are audited old -> new), and the W7 sign-up
         limits registration_user_limit (0 = unlimited; signup refuses and
         GET /api/v1/instance reports registration_enabled=false with reason
         user_limit_reached once the account count reaches it — the count is

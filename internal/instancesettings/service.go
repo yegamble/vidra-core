@@ -195,6 +195,7 @@ const (
 	KeyChannelSyncMaxPerUser           = "channel_sync_max_per_user"           // 0 = unlimited
 	KeyChannelSyncIntervalMinutes      = "channel_sync_interval_minutes"       // re-list cadence, 5..10080
 	KeyLiveRecordingRetentionHours     = "live_recording_retention_hours"      // session-recording retention; 0 = delete on replay publish, else sweep past N hours
+	KeyAuditLogRetentionDays           = "audit_log_retention_days"            // audit-trail retention FLOOR-bounded: >= AUDIT_LOG_RETENTION, 0 = forever
 	KeyStoryboardsEnabled              = "storyboards_enabled"                 // seek-preview sprite generation at publish
 	KeyVideoCardPreviewsEnabled        = "video_card_previews_enabled"         // master gate for signed-in users' hover-preview preference
 	KeyVideoCardPreviewsDefaultEnabled = "video_card_previews_default_enabled" // inherited preference until a user explicitly chooses
@@ -474,6 +475,41 @@ func HoursCeil(d time.Duration) int64 {
 	return int64((d + time.Hour - 1) / time.Hour)
 }
 
+// DaysCeil converts a Go duration to whole days, rounding UP, for the env-backed
+// default of a day-denominated retention setting. 0 stays 0 (keep forever, a
+// distinct mode — not "one day"), and rounding up means the default never
+// deletes sooner than the env said.
+func DaysCeil(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	const day = 24 * time.Hour
+	return int64((d + day - 1) / day)
+}
+
+// EffectiveAuditRetention is the audit-trail retention to enforce: the larger of
+// the AUDIT_LOG_RETENTION env value and the audit_log_retention_days setting,
+// where 0 on either side means "keep forever" (the longest window there is).
+// The env value is the operator's floor and the setting can only lengthen it.
+//
+// While the setting still equals the env-derived default this returns the env
+// duration EXACTLY, so an operator's 36h does not silently become 48h merely
+// because the overlay exists. The clamp is also enforced here, not only at write
+// time: an override stored before the operator raised the env value must not
+// resume deleting sooner than the env now says.
+func EffectiveAuditRetention(env time.Duration, days int64) time.Duration {
+	if env <= 0 || days <= 0 {
+		return 0
+	}
+	if days == DaysCeil(env) {
+		return env
+	}
+	if d := time.Duration(days) * 24 * time.Hour; d > env {
+		return d
+	}
+	return env
+}
+
 // maxSafeInt is JavaScript's Number.MAX_SAFE_INTEGER (2^53 - 1): the largest
 // integer a client can hold without silent precision loss. Every int-kind value
 // is bounded to it so GET/PATCH round-trips are exact.
@@ -630,6 +666,11 @@ type Defaults struct {
 	ChannelSyncIntervalMinutes int64
 	TranscriptionEnabled       bool
 
+	// AuditLogRetentionDays mirrors AUDIT_LOG_RETENTION in whole days (DaysCeil:
+	// 0 = keep forever stays 0, anything else rounds UP). It is also the FLOOR the
+	// audit_log_retention_days validator enforces.
+	AuditLogRetentionDays int64
+
 	// LiveRecordingRetentionHours mirrors LIVE_RECORDING_RETENTION in whole
 	// hours (HoursCeil of the env duration: 0 stays 0, anything else rounds UP).
 	LiveRecordingRetentionHours int64
@@ -659,8 +700,12 @@ type spec struct {
 	defInt    func(Defaults) int64 // int kinds only
 	options   []string             // enum kinds only: the allowed values, in display order
 	validate  func(string) error
-	page      string // one of the Page* identifiers
-	section   string // in-page section label (stable, snake_case)
+	// validateIn, when set, adds a check that needs the boot-time Defaults (a
+	// bound derived from env). Only Service.Validate runs it; the package-level
+	// Validate has no Defaults and checks the static rule alone.
+	validateIn func(Defaults, string) error
+	page       string // one of the Page* identifiers
+	section    string // in-page section label (stable, snake_case)
 }
 
 // hardcoded wraps a config-independent default (the platform-information keys
@@ -986,6 +1031,16 @@ var specs = []spec{
 		defInt: func(d Defaults) int64 { return d.LiveRecordingRetentionHours }, validate: intRange(0, 8760),
 		page: PageLive, section: "replay"},
 
+	// Audit-trail retention (AUDIT_LOG_RETENTION), whole days. The env value is a
+	// FLOOR: validateIn refuses anything that would delete sooner (see
+	// validateAuditRetentionFloor), so an admin can lengthen the trail and never
+	// shorten what the operator set. 0 = keep forever, legal on its own because it
+	// is the longest window. When the env is 0 the setting is inert (only 0 passes).
+	{key: KeyAuditLogRetentionDays, kind: KindInt,
+		defInt: func(d Defaults) int64 { return d.AuditLogRetentionDays }, validate: intRange(0, 36500),
+		validateIn: validateAuditRetentionFloor,
+		page:       PageAdvanced, section: "audit"},
+
 	// Federation policy gates (config-parity W12). None have env backing: the
 	// runtime settings are the operator controls, defaults keep the shipped
 	// behaviour. All gate the ActivityPub inbox only (ATProto is outbound-only;
@@ -1122,6 +1177,46 @@ func Validate(key, value string) error {
 	}
 	if err := sp.validate(value); err != nil {
 		return &ValidationError{Key: key, Message: err.Error()}
+	}
+	return nil
+}
+
+// Validate is the package-level Validate plus the rules that depend on this
+// instance's boot config (an env-derived floor, today audit_log_retention_days).
+// Apply and the dry-run endpoint go through it so the answer to "would this be
+// accepted?" is the answer the write gives.
+func (s *Service) Validate(key, value string) error {
+	if err := Validate(key, value); err != nil {
+		return err
+	}
+	if sp := specByKey[key]; sp.validateIn != nil {
+		if err := sp.validateIn(s.defaults, value); err != nil {
+			return &ValidationError{Key: key, Message: err.Error()}
+		}
+	}
+	return nil
+}
+
+// validateAuditRetentionFloor REJECTS (422) rather than clamps a value below the
+// AUDIT_LOG_RETENTION floor. Clamping would answer 200 and report a window the
+// system is not enforcing: an admin who types 30 believing the trail is now kept
+// 30 days would be told it worked while the operator's longer window silently
+// stayed in force. Refusing tells them the truth and names the floor. The
+// effective value is clamped again at read time (EffectiveAuditRetention) for
+// overrides stored before the operator raised the env value.
+func validateAuditRetentionFloor(d Defaults, v string) error {
+	n, err := parseIntValue(v)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil // keep forever: never shorter than any floor
+	}
+	if d.AuditLogRetentionDays == 0 {
+		return errors.New("AUDIT_LOG_RETENTION=0 keeps the audit trail forever, which no number of days can lengthen; this setting has no effect (0 is the only accepted value)")
+	}
+	if n < d.AuditLogRetentionDays {
+		return fmt.Errorf("must be 0 (keep forever) or at least %d days: AUDIT_LOG_RETENTION is the floor and can only be lengthened here", d.AuditLogRetentionDays)
 	}
 	return nil
 }
@@ -1418,7 +1513,7 @@ func (s *Service) Apply(ctx context.Context, updates map[string]Update, updatedB
 			}
 			continue
 		}
-		if err := Validate(key, updates[key].Value); err != nil {
+		if err := s.Validate(key, updates[key].Value); err != nil {
 			invalid = append(invalid, err)
 		}
 	}

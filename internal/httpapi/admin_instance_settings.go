@@ -563,7 +563,7 @@ func (s *Server) handleValidateInstanceSettings(c echo.Context) error {
 			// at boot. There is nothing to check.
 			continue
 		}
-		if err := instancesettings.Validate(key, u.Value); err != nil {
+		if err := s.settingssvc.Validate(key, u.Value); err != nil {
 			fields = append(fields, settingsFieldErrors(err)...)
 		}
 	}

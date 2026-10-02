@@ -6,9 +6,12 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/vidra/vidra-core/internal/audit"
+	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/observability"
 )
@@ -27,8 +30,13 @@ type settingsAuditEnv struct {
 
 func newSettingsAuditEnv(t *testing.T) *settingsAuditEnv {
 	t.Helper()
+	return newSettingsAuditEnvWith(t, testConfig())
+}
+
+func newSettingsAuditEnvWith(t *testing.T, cfg *config.Config) *settingsAuditEnv {
+	t.Helper()
 	ledger := &httpAuditFakeRepo{}
-	srv, _, _, _, _ := videoServerFullWith(t, testConfig(), []Option{WithAuditLog(audit.NewService(ledger))})
+	srv, _, _, _, _ := videoServerFullWith(t, cfg, []Option{WithAuditLog(audit.NewService(ledger))})
 	var buf bytes.Buffer
 	srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
 	return &settingsAuditEnv{srv: srv, ledger: ledger, logs: &buf,
@@ -84,6 +92,33 @@ func TestInstanceSettingsAuditRecordsIntOldToNew(t *testing.T) {
 	ch, _ = e.patch(t, `{"default_user_quota_bytes":null}`)
 	if got := ch["setting.default_user_quota_bytes"]; got.Before != "7000000" || got.After != strconv.FormatInt(def, 10) {
 		t.Errorf("clear = %+v, want 7000000 -> %d", got, def)
+	}
+}
+
+// TestInstanceSettingsAuditRetentionFloor: audit_log_retention_days is audited
+// old -> new like any int key, and a value below the AUDIT_LOG_RETENTION floor is
+// a 422 that names the floor and changes nothing.
+func TestInstanceSettingsAuditRetentionFloor(t *testing.T) {
+	cfg := testConfig()
+	cfg.AuditLogRetention = 400 * 24 * time.Hour
+	e := newSettingsAuditEnvWith(t, cfg)
+
+	rec := sendJSONAuth(e.srv, http.MethodPatch, "/api/v1/admin/instance-settings", `{"audit_log_retention_days":30}`, e.admin)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "at least 400 days") {
+		t.Fatalf("below-floor PATCH = %d %s, want 422 naming the 400-day floor", rec.Code, rec.Body.String())
+	}
+	if v := e.view(t, instancesettings.KeyAuditLogRetentionDays); v.Overridden {
+		t.Fatalf("a refused write left an override: %+v", v)
+	}
+	// The dry-run endpoint gives the same answer as the write.
+	dry := sendJSONAuth(e.srv, http.MethodPost, "/api/v1/admin/instance-settings/validate", `{"audit_log_retention_days":30}`, e.admin)
+	if dry.Code != http.StatusOK || !strings.Contains(dry.Body.String(), "at least 400 days") {
+		t.Fatalf("dry-run = %d %s, want the floor message", dry.Code, dry.Body.String())
+	}
+
+	ch, _ := e.patch(t, `{"audit_log_retention_days":800}`)
+	if got := ch["setting.audit_log_retention_days"]; got.Before != "400" || got.After != "800" {
+		t.Errorf("audit row = %+v, want 400 -> 800", got)
 	}
 }
 
