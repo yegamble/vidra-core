@@ -1282,7 +1282,9 @@ button.ghost{background:transparent}
     const claim = $("claim-out");
     claim.replaceChildren();
     claim.appendChild(el("h2", null, "Claim the admin account"));
-    claim.appendChild(el("p", "lede", "The admin account is not in the env file and cannot be. The api mints a one-time owner-claim token at boot and prints it in its own log; until it is redeemed, every signup path answers 403."));
+    claim.appendChild(el("p", "lede", "The admin account is not in the env file and cannot be. The api mints a one-time owner-claim token at boot and prints it in its own log; until it is redeemed, every signup path answers 403. From the deployment directory, run:"));
+    claim.appendChild(el("pre", "log", r.claim_command || "vidra claim"));
+    claim.appendChild(el("p", "hint", "It prints a ready-to-open link with the token filled in. On vidra v0.7.5 or earlier there is no vidra claim; read the token from the api's log and open the address below yourself:"));
     claim.appendChild(el("pre", "log", r.logs_command || "./deploy/compose.sh logs api"));
     const link = document.createElement("a");
     link.href = r.claim_url || "#";

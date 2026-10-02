@@ -233,7 +233,7 @@ func (d deployment) values() (map[string]string, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("%s does not exist (cp env/production.env.example env/production.env, or run `vidra setup`)", d.envFile)
 		}
-		return nil, fmt.Errorf("%s could not be read", d.envFile)
+		return nil, d.envReadError(err)
 	}
 	f, err := setup.ParseEnvFile(b)
 	if err != nil {
@@ -243,6 +243,41 @@ func (d deployment) values() (map[string]string, error) {
 		return nil, errors.New(strings.TrimPrefix(err.Error(), "setup: "))
 	}
 	return f.Values(), nil
+}
+
+// envOwner is who owns the env file, as far as this process could learn it.
+type envOwner struct {
+	name  string
+	known bool
+	// self: the caller already owns it, so the mode (not the owner) denies it.
+	self bool
+}
+
+// lookupEnvOwner is a variable so a test can stand in for a file this process
+// is not allowed to chown.
+var lookupEnvOwner = statEnvOwner
+
+// envReadError explains an env file that exists and could not be read.
+//
+// The one case worth a paragraph is EACCES: `sudo ./deploy/provision.sh` leaves
+// the tree owned by the vidra user and env/production.env at 0600, so the sudo
+// user who just installed gets "could not be read" from `vidra claim` or
+// `vidra doctor` with the cause dropped, and goes looking for a bug (or chmods a
+// secrets file open). Name the owner and the command that works instead. Every
+// other failure keeps its cause: an EISDIR or EIO must not read as a permission
+// problem.
+func (d deployment) envReadError(err error) error {
+	if !errors.Is(err, os.ErrPermission) {
+		return fmt.Errorf("%s could not be read: %w", d.envFile, err)
+	}
+	o := lookupEnvOwner(d.envPath)
+	switch {
+	case o.known && o.self:
+		return fmt.Errorf("%s could not be read: permission denied, although you own it — its mode forbids reading; run: chmod u+r %s: %w", d.envFile, d.envFile, err)
+	case o.known:
+		return fmt.Errorf("%s belongs to %s and is not readable by you; run the command as that user: sudo -u %s vidra <the same command>: %w", d.envFile, o.name, o.name, err)
+	}
+	return fmt.Errorf("%s could not be read: permission denied. After `sudo ./deploy/provision.sh` the deployment belongs to the vidra user; run the command as that user: sudo -u vidra vidra <the same command>: %w", d.envFile, err)
 }
 
 // bash builds the spec for running one of the deployment's scripts.

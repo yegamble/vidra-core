@@ -1572,8 +1572,10 @@ func report(s streams, path, caddyPath, nginxPath string, sources []string, res 
 	// it is redeemed every signup path answers 403 owner_claim_required. So the
 	// operator who has just generated an env file is two commands away from an
 	// instance they cannot log into, and this is the only place that tells them
-	// which two. `./deploy/compose.sh logs api` and never a bare `docker compose
-	// logs api`: on a deployment host the bare form silently picks up
+	// which two. `vidra claim` is the instruction: it reads the log and prints a
+	// ready-to-open link. The log grep stays for a binary that predates it.
+	// `./deploy/compose.sh logs api` and never a bare `docker compose logs api`:
+	// on a deployment host the bare form silently picks up
 	// docker-compose.override.yml's dev defaults and addresses a different
 	// project than the deploy scripts do.
 	origin := strings.TrimSpace(res.Values["PUBLIC_BASE_URL"])
@@ -1582,9 +1584,13 @@ func report(s streams, path, caddyPath, nginxPath string, sources []string, res 
 	}
 	fmt.Fprintf(s.out, `
 Then, once the stack is up, claim the admin account. The api mints a one-time
-owner-claim token at boot and prints it in its own log:
+owner-claim token at boot. From the deployment directory, run:
+  vidra claim
+It prints a ready-to-open link to %[1]s/setup/claim with the token filled in.
+On vidra v0.7.5 or earlier there is no `+"`vidra claim`"+`; read the token from the
+api's log and open the link yourself:
   ./deploy/compose.sh logs api
-  %s/setup/claim
+  %[1]s/setup/claim
 Every api restart mints a fresh token and invalidates the previous one, so take
 the newest line in the log.
 `, origin)
