@@ -20,3 +20,15 @@ func channelSyncCooldownFromSetting(env time.Duration, minutes int64) time.Durat
 	}
 	return time.Duration(minutes) * time.Minute
 }
+
+// channelSyncBackoffMaxFromSetting resolves the failure-backoff cap from the
+// channel_sync_backoff_max_hours overlay, by the same rule as the cooldown: the
+// setting is whole hours with the env value rounded UP as its default, so while
+// it still equals that default the env duration comes back EXACTLY (a 90m cap
+// must not silently become 2h). Once the admin changes it, the setting wins.
+func channelSyncBackoffMaxFromSetting(env time.Duration, hours int64) time.Duration {
+	if hours == instancesettings.HoursCeil(env) {
+		return env
+	}
+	return time.Duration(hours) * time.Hour
+}

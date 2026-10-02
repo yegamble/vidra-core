@@ -1003,6 +1003,52 @@ func TestDrainDueBackoffIsCapped(t *testing.T) {
 	}
 }
 
+// TestDrainDueReadsTheBackoffCapLive: the backoff cap follows WithBackoffMaxFunc
+// (the channel_sync_backoff_max_hours overlay) at each failure, so a change
+// applies to the next reschedule with no restart. A func answering <= 0 must
+// fall back to the static cap: a zero cap would reschedule a failing source
+// "now", every worker tick.
+func TestDrainDueReadsTheBackoffCapLive(t *testing.T) {
+	repo := newFakeRepo()
+	sync := sqlcgen.ChannelSync{
+		ID: uuid.New(), UserID: uuid.New(), ChannelID: uuid.New(),
+		ExternalChannelUrl: "https://youtube.com/@chan",
+		FailureCount:       9, // 2^9 = 512x the interval without a cap
+	}
+	repo.syncs[sync.ID] = sync
+	live := 3 * time.Hour
+	svc := enabledService(repo, &fakeDrafter{}, &fakeEnqueuer{}, &fakeLister{err: errors.New("origin down")},
+		WithInterval(time.Hour), WithBackoffMax(6*time.Hour), WithBackoffMaxFunc(func() time.Duration { return live }))
+
+	run := func() time.Time {
+		t.Helper()
+		repo.claimed = []sqlcgen.ClaimDueChannelSyncsRow{claimRow(sync)}
+		start := time.Now().UTC()
+		if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+			t.Fatalf("DrainDue: %v", err)
+		}
+		return start
+	}
+
+	// The live 3h cap wins over the static 6h.
+	start := run()
+	if got := nextDelay(t, repo.failed[0].NextRunAt, start); got != 3*time.Hour {
+		t.Errorf("rescheduled in %s, want the live cap 3h (not the static 6h)", got)
+	}
+	// An admin raises the cap; the very next failure follows it.
+	live = 12 * time.Hour
+	start = run()
+	if got := nextDelay(t, repo.failed[1].NextRunAt, start); got != 12*time.Hour {
+		t.Errorf("after a change rescheduled in %s, want 12h", got)
+	}
+	// A func answering <= 0 degrades to the static cap, never to "now".
+	live = 0
+	start = run()
+	if got := nextDelay(t, repo.failed[2].NextRunAt, start); got != 6*time.Hour {
+		t.Errorf("zero live cap rescheduled in %s, want the static 6h fallback", got)
+	}
+}
+
 // TestDrainDueBackoffSurvivesARestart: the position in the backoff is a column,
 // not worker memory, so a brand-new Service claiming the same row schedules from
 // the failures already recorded rather than starting the doubling over.

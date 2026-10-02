@@ -70,6 +70,7 @@ func testDefaults() Defaults {
 		ChannelSyncIntervalMinutes: 60,
 		ChannelSyncBatch:           15,
 		ChannelSyncCooldownMinutes: 1,
+		ChannelSyncBackoffMaxHours: 24,
 		TranscriptionEnabled:       false,
 
 		TranscodingEnabled: true,
@@ -107,6 +108,7 @@ func TestW8ToggleBatchRegistry(t *testing.T) {
 		{KeyChannelSyncIntervalMinutes, KindInt, int64(60), PageVOD, "imports"},   // testDefaults: 60 (CHANNEL_SYNC_INTERVAL=1h)
 		{KeyChannelSyncBatch, KindInt, int64(15), PageVOD, "imports"},             // testDefaults: 15 (CHANNEL_SYNC_BATCH=15)
 		{KeyChannelSyncCooldownMinutes, KindInt, int64(1), PageVOD, "imports"},    // testDefaults: 1 (CHANNEL_SYNC_COOLDOWN=1m)
+		{KeyChannelSyncBackoffMaxHours, KindInt, int64(24), PageVOD, "imports"},   // testDefaults: 24 (CHANNEL_SYNC_BACKOFF_MAX=24h)
 		{KeyLiveRecordingRetentionHours, KindInt, int64(168), PageLive, "replay"}, // testDefaults: 168 (LIVE_RECORDING_RETENTION=168h)
 		{KeyAuditLogRetentionDays, KindInt, int64(400), PageAdvanced, "audit"},    // testDefaults: 400 (AUDIT_LOG_RETENTION=400d)
 		{KeyStoryboardsEnabled, KindBool, true, PageVOD, "storyboards"},
@@ -1498,6 +1500,38 @@ func TestChannelSyncCooldownMinutesBounds(t *testing.T) {
 			continue
 		}
 		if got := svc.Int(KeyChannelSyncCooldownMinutes); got != v {
+			t.Errorf("after setting %d, Int = %d", v, got)
+		}
+	}
+}
+
+// TestChannelSyncBackoffMaxHoursBounds pins 1..720. 0 is rejected because a zero
+// cap would reschedule every failing sync "now" and turn the one-minute worker
+// poll into a hot re-listing loop against somebody else's server; the ceiling
+// (30 days) stops a typo from parking a failing sync effectively forever.
+func TestChannelSyncBackoffMaxHoursBounds(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo(), testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	by := uuid.New()
+	for _, v := range []string{"-1", "0", "721", "100000", "abc", "1.5", ""} {
+		var verr *ValidationError
+		err := svc.Apply(ctx, map[string]Update{KeyChannelSyncBackoffMaxHours: {Value: v}}, by)
+		if !errors.As(err, &verr) {
+			t.Errorf("value %q: Apply err = %v, want ValidationError", v, err)
+		}
+	}
+	if got := svc.Int(KeyChannelSyncBackoffMaxHours); got != 24 {
+		t.Fatalf("rejected writes changed the value: got %d, want the default 24", got)
+	}
+	for _, v := range []int64{1, 2, 168, 720} {
+		if err := svc.Apply(ctx, map[string]Update{KeyChannelSyncBackoffMaxHours: {Value: strconv.FormatInt(v, 10)}}, by); err != nil {
+			t.Errorf("value %d: Apply: %v", v, err)
+			continue
+		}
+		if got := svc.Int(KeyChannelSyncBackoffMaxHours); got != v {
 			t.Errorf("after setting %d, Int = %d", v, got)
 		}
 	}

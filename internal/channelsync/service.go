@@ -121,6 +121,7 @@ type Service struct {
 	interval     time.Duration
 	intervalFn   func() time.Duration // when set (and > 0), supersedes interval (runtime overlay), resolved per reschedule
 	backoffMax   time.Duration
+	backoffMaxFn func() time.Duration // when set (and > 0), supersedes backoffMax (runtime overlay), resolved per failure
 	cooldown     time.Duration
 	cooldownFn   func() time.Duration // when set (and >= 0), supersedes cooldown (runtime overlay), resolved per request
 	logger       *slog.Logger
@@ -235,6 +236,28 @@ func WithBackoffMax(d time.Duration) Option {
 			s.backoffMax = d
 		}
 	}
+}
+
+// WithBackoffMaxFunc makes the backoff cap dynamic
+// (channel_sync_backoff_max_hours, default CHANNEL_SYNC_BACKOFF_MAX). It is read
+// each time a failed sync is rescheduled, so an admin's change applies to the
+// next failure with no restart; rows already scheduled keep their stored
+// next_run_at. A func answering <= 0 falls back to the static WithBackoffMax
+// value, because a zero cap would reschedule a failing source for "now" and turn
+// the one-minute poll into a hot re-listing loop against somebody else's server.
+func WithBackoffMaxFunc(f func() time.Duration) Option {
+	return func(s *Service) { s.backoffMaxFn = f }
+}
+
+// effectiveBackoffMax is the cap for a failure happening now: the live overlay
+// when it answers a positive duration, else the static boot value.
+func (s *Service) effectiveBackoffMax() time.Duration {
+	if s.backoffMaxFn != nil {
+		if d := s.backoffMaxFn(); d > 0 {
+			return d
+		}
+	}
+	return s.backoffMax
 }
 
 // WithCooldown sets the minimum spacing between manual sync-now triggers,
@@ -578,7 +601,7 @@ func (s *Service) recordFailure(ctx context.Context, row sqlcgen.ClaimDueChannel
 // doubling every other queue in this repo uses, with the sync cadence as its
 // base so an operator's CHANNEL_SYNC_INTERVAL stays the unit of the schedule.
 func (s *Service) retryDelay(failures int) time.Duration {
-	return retry.Backoff(failures, s.Interval(), s.backoffMax)
+	return retry.Backoff(failures, s.Interval(), s.effectiveBackoffMax())
 }
 
 // nextRun is the wall-clock time of the next scheduled sync pass after a

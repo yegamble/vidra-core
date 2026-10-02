@@ -237,7 +237,10 @@ stance above applies. Config: `CHANNEL_SYNC_ENABLED=true` to opt in,
 runtime as the `channel_sync_batch` setting, 1 to 100),
 `CHANNEL_SYNC_COOLDOWN` (default `1m`, the minimum spacing between manual
 sync-now triggers; also editable at runtime as the
-`channel_sync_cooldown_minutes` setting, 1 minute to 1 day). When disabled the
+`channel_sync_cooldown_minutes` setting, 1 minute to 1 day),
+`CHANNEL_SYNC_BACKOFF_MAX` (default `24h`, the cap on the failure backoff; also
+editable at runtime as the `channel_sync_backoff_max_hours` setting, 1 hour to
+30 days). When disabled the
 endpoints answer `503`.
 
 ## Video pipeline
