@@ -68,6 +68,7 @@ func testDefaults() Defaults {
 		ChannelSyncEnabled:         true,
 		ChannelSyncMaxPerUser:      5,
 		ChannelSyncIntervalMinutes: 60,
+		ChannelSyncBatch:           15,
 		TranscriptionEnabled:       false,
 
 		TranscodingEnabled: true,
@@ -103,6 +104,7 @@ func TestW8ToggleBatchRegistry(t *testing.T) {
 		{KeyChannelSyncEnabled, KindBool, true, PageVOD, "imports"}, // testDefaults: ChannelSyncEnabled=true
 		{KeyChannelSyncMaxPerUser, KindInt, int64(5), PageVOD, "imports"},
 		{KeyChannelSyncIntervalMinutes, KindInt, int64(60), PageVOD, "imports"},   // testDefaults: 60 (CHANNEL_SYNC_INTERVAL=1h)
+		{KeyChannelSyncBatch, KindInt, int64(15), PageVOD, "imports"},             // testDefaults: 15 (CHANNEL_SYNC_BATCH=15)
 		{KeyLiveRecordingRetentionHours, KindInt, int64(168), PageLive, "replay"}, // testDefaults: 168 (LIVE_RECORDING_RETENTION=168h)
 		{KeyAuditLogRetentionDays, KindInt, int64(400), PageAdvanced, "audit"},    // testDefaults: 400 (AUDIT_LOG_RETENTION=400d)
 		{KeyStoryboardsEnabled, KindBool, true, PageVOD, "storyboards"},
@@ -1431,5 +1433,38 @@ func TestAuditRetentionFollowsTheSettingLive(t *testing.T) {
 	}
 	if got := window(); got != env {
 		t.Fatalf("after clear = %s, want the env value %s", got, env)
+	}
+}
+
+// TestChannelSyncBatchBounds pins the 1..100 range, which is the same range the
+// CHANNEL_SYNC_BATCH env validation enforces at boot: a runtime write must not
+// be able to reach a value the process would have refused to start with. 0 is
+// rejected (it would list nothing), and the ceiling bounds how many third-party
+// uploads one pass can draft, enqueue and charge against quota.
+func TestChannelSyncBatchBounds(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(newFakeRepo(), testDefaults())
+	if err := svc.Load(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	by := uuid.New()
+	for _, v := range []string{"-1", "0", "101", "100000", "abc", "1.5", ""} {
+		var verr *ValidationError
+		err := svc.Apply(ctx, map[string]Update{KeyChannelSyncBatch: {Value: v}}, by)
+		if !errors.As(err, &verr) {
+			t.Errorf("value %q: Apply err = %v, want ValidationError", v, err)
+		}
+	}
+	if got := svc.Int(KeyChannelSyncBatch); got != 15 {
+		t.Fatalf("rejected writes changed the value: got %d, want the default 15", got)
+	}
+	for _, v := range []int64{1, 2, 50, 100} {
+		if err := svc.Apply(ctx, map[string]Update{KeyChannelSyncBatch: {Value: strconv.FormatInt(v, 10)}}, by); err != nil {
+			t.Errorf("value %d: Apply: %v", v, err)
+			continue
+		}
+		if got := svc.Int(KeyChannelSyncBatch); got != v {
+			t.Errorf("after setting %d, Int = %d", v, got)
+		}
 	}
 }

@@ -884,6 +884,55 @@ func TestDrainDueReadsTheIntervalLive(t *testing.T) {
 	}
 }
 
+// TestDrainDueReadsTheBatchLive: the per-pass batch follows WithBatchFunc (the
+// channel_sync_batch overlay) at each run, not a value frozen at boot. The
+// limit handed to the lister AND the defensive clamp must both use the live
+// value, and a func answering <= 0 must fall back to the static WithBatch value
+// rather than asking yt-dlp for zero (or "all") entries.
+func TestDrainDueReadsTheBatchLive(t *testing.T) {
+	repo := newFakeRepo()
+	sync := sqlcgen.ChannelSync{ID: uuid.New(), UserID: uuid.New(), ChannelID: uuid.New(), ExternalChannelUrl: "https://youtube.com/@chan"}
+	lister := &fakeLister{}
+	drafter := &fakeDrafter{}
+	live := 3
+	svc := enabledService(repo, drafter, &fakeEnqueuer{}, lister,
+		WithBatch(2), WithBatchFunc(func() int { return live }))
+
+	pass := 0
+	run := func() int {
+		t.Helper()
+		// Fresh external IDs each pass: already-seen ones are deduped away and
+		// would hide the clamp.
+		pass++
+		lister.entries = nil
+		for i := 0; i < 6; i++ {
+			id := "p" + strconv.Itoa(pass) + "v" + strconv.Itoa(i)
+			lister.entries = append(lister.entries, ytdlp.PlaylistEntry{ExternalID: id, URL: "https://youtube.com/watch?v=" + id, Title: id})
+		}
+		repo.claimed = []sqlcgen.ClaimDueChannelSyncsRow{claimRow(sync)}
+		before := len(drafter.calls)
+		if _, err := svc.DrainDue(context.Background(), 10); err != nil {
+			t.Fatalf("DrainDue: %v", err)
+		}
+		return len(drafter.calls) - before
+	}
+
+	// The func wins over the static value, for the lister limit and the clamp.
+	if got := run(); got != 3 || lister.gotN != 3 {
+		t.Errorf("drafted %d with limit %d, want the live 3 for both", got, lister.gotN)
+	}
+	// An admin changes the setting; the very next pass follows it.
+	live = 5
+	if got := run(); got != 5 || lister.gotN != 5 {
+		t.Errorf("after a change drafted %d with limit %d, want 5 for both", got, lister.gotN)
+	}
+	// A func answering <= 0 degrades to the static batch, never to "none".
+	live = 0
+	if got := run(); got != 2 || lister.gotN != 2 {
+		t.Errorf("zero live batch drafted %d with limit %d, want the static 2 for both", got, lister.gotN)
+	}
+}
+
 // TestDrainDueBackoffIsCapped: the doubling stops at CHANNEL_SYNC_BACKOFF_MAX,
 // so a long-dead source settles at a fixed slow cadence instead of drifting to
 // never.

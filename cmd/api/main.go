@@ -334,6 +334,7 @@ func run() error {
 		ChannelSyncEnabled:          cfg.ChannelSyncEnabled,
 		ChannelSyncMaxPerUser:       int64(cfg.ChannelSyncMaxPerUser),
 		ChannelSyncIntervalMinutes:  instancesettings.MinutesCeil(cfg.ChannelSyncInterval),
+		ChannelSyncBatch:            int64(cfg.ChannelSyncBatch),
 		LiveRecordingRetentionHours: instancesettings.HoursCeil(cfg.LiveRecordingRetention),
 		AuditLogRetentionDays:       instancesettings.DaysCeil(cfg.AuditLogRetention),
 		TranscriptionEnabled:        cfg.WhisperEnabled,
@@ -2092,6 +2093,11 @@ func run() error {
 			return int(settingssvc.Int(instancesettings.KeyChannelSyncMaxPerUser))
 		}),
 		channelsync.WithBatch(cfg.ChannelSyncBatch),
+		// The per-pass batch follows the channel_sync_batch overlay (1..100,
+		// default CHANNEL_SYNC_BATCH), read at the start of each sync pass.
+		channelsync.WithBatchFunc(func() int {
+			return int(settingssvc.Int(instancesettings.KeyChannelSyncBatch))
+		}),
 		channelsync.WithInterval(cfg.ChannelSyncInterval),
 		// The cadence follows the channel_sync_interval_minutes overlay, read
 		// at each reschedule (success cadence AND backoff base). The setting
