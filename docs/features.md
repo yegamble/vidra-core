@@ -234,7 +234,10 @@ stance above applies. Config: `CHANNEL_SYNC_ENABLED=true` to opt in,
 `CHANNEL_SYNC_INTERVAL` (default `1h`; also editable at runtime as the
 `channel_sync_interval_minutes` setting, 5 minutes to 7 days), `CHANNEL_SYNC_MAX_PER_USER` (default `5`),
 `CHANNEL_SYNC_BATCH` (default `15`, newest uploads per pass; also editable at
-runtime as the `channel_sync_batch` setting, 1 to 100). When disabled the
+runtime as the `channel_sync_batch` setting, 1 to 100),
+`CHANNEL_SYNC_COOLDOWN` (default `1m`, the minimum spacing between manual
+sync-now triggers; also editable at runtime as the
+`channel_sync_cooldown_minutes` setting, 1 minute to 1 day). When disabled the
 endpoints answer `503`.
 
 ## Video pipeline

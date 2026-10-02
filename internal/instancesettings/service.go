@@ -195,6 +195,7 @@ const (
 	KeyChannelSyncMaxPerUser           = "channel_sync_max_per_user"           // 0 = unlimited
 	KeyChannelSyncIntervalMinutes      = "channel_sync_interval_minutes"       // re-list cadence, 5..10080
 	KeyChannelSyncBatch                = "channel_sync_batch"                  // newest uploads imported per sync pass, 1..100
+	KeyChannelSyncCooldownMinutes      = "channel_sync_cooldown_minutes"       // minimum spacing between manual sync-now triggers, 1..1440
 	KeyLiveRecordingRetentionHours     = "live_recording_retention_hours"      // session-recording retention; 0 = delete on replay publish, else sweep past N hours
 	KeyAuditLogRetentionDays           = "audit_log_retention_days"            // audit-trail retention FLOOR-bounded: >= AUDIT_LOG_RETENTION, 0 = forever
 	KeyStoryboardsEnabled              = "storyboards_enabled"                 // seek-preview sprite generation at publish
@@ -666,8 +667,11 @@ type Defaults struct {
 	// (MinutesCeil of the env duration).
 	ChannelSyncIntervalMinutes int64
 	// ChannelSyncBatch mirrors CHANNEL_SYNC_BATCH (newest uploads per pass).
-	ChannelSyncBatch     int64
-	TranscriptionEnabled bool
+	ChannelSyncBatch int64
+	// ChannelSyncCooldownMinutes mirrors CHANNEL_SYNC_COOLDOWN in whole minutes
+	// (MinutesCeil of the env duration).
+	ChannelSyncCooldownMinutes int64
+	TranscriptionEnabled       bool
 
 	// AuditLogRetentionDays mirrors AUDIT_LOG_RETENTION in whole days (DaysCeil:
 	// 0 = keep forever stays 0, anything else rounds UP). It is also the FLOOR the
@@ -948,6 +952,14 @@ var specs = []spec{
 	// and charge against quota; 0 is rejected because it would list nothing.
 	{key: KeyChannelSyncBatch, kind: KindInt,
 		defInt: func(d Defaults) int64 { return d.ChannelSyncBatch }, validate: intRange(1, 100),
+		page: PageVOD, section: "imports"},
+	// Whole minutes. Every manual sync-now makes this instance re-list an
+	// EXTERNAL channel, so the floor keeps the throttle on (1 minute; "off" is
+	// CHANNEL_SYNC_COOLDOWN=0 at boot only) and the ceiling (one day) stops a
+	// typo from locking every owner out of sync-now for weeks. The default is
+	// the env value and is not itself bound-checked.
+	{key: KeyChannelSyncCooldownMinutes, kind: KindInt,
+		defInt: func(d Defaults) int64 { return d.ChannelSyncCooldownMinutes }, validate: intRange(1, 1440),
 		page: PageVOD, section: "imports"},
 	// Storyboards default ON and have no env backing: the runtime setting is
 	// the single operator control (generation additionally needs ffmpeg).

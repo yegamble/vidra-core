@@ -122,6 +122,7 @@ type Service struct {
 	intervalFn   func() time.Duration // when set (and > 0), supersedes interval (runtime overlay), resolved per reschedule
 	backoffMax   time.Duration
 	cooldown     time.Duration
+	cooldownFn   func() time.Duration // when set (and >= 0), supersedes cooldown (runtime overlay), resolved per request
 	logger       *slog.Logger
 }
 
@@ -247,6 +248,15 @@ func WithCooldown(d time.Duration) Option {
 	}
 }
 
+// WithCooldownFunc makes the sync-now throttle dynamic
+// (channel_sync_cooldown_minutes, default CHANNEL_SYNC_COOLDOWN). It is read on
+// every SyncNow and every Cooldown() call (the handler's Retry-After), so an
+// admin's change applies to the next request with no restart. Unlike the other
+// overlays 0 is a real answer here — it turns the throttle off, exactly as
+// WithCooldown(0) does — so only a negative answer falls back to the static
+// value.
+func WithCooldownFunc(f func() time.Duration) Option { return func(s *Service) { s.cooldownFn = f } }
+
 // WithLister wires the yt-dlp channel lister. Required for the worker to do any
 // real work; without it a due sync fails safely ("channel sync is not available").
 func WithLister(l Lister) Option { return func(s *Service) { s.lister = l } }
@@ -326,7 +336,14 @@ func (s *Service) Interval() time.Duration {
 
 // Cooldown is the minimum spacing enforced between manual sync-now triggers (the
 // handler uses it to set Retry-After on a 429). 0 means the throttle is off.
-func (s *Service) Cooldown() time.Duration { return s.cooldown }
+func (s *Service) Cooldown() time.Duration {
+	if s.cooldownFn != nil {
+		if d := s.cooldownFn(); d >= 0 {
+			return d
+		}
+	}
+	return s.cooldown
+}
 
 func (s *Service) guard() urlsafety.Guard { return urlsafety.Guard{AllowPrivate: s.allowPrivate} }
 
@@ -404,7 +421,7 @@ func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
 
 // SyncNow schedules an owned sync to run on the next worker tick. Unknown id →
 // ErrNotFound; not owner → ErrForbidden. A server-side cooldown throttles repeat
-// manual triggers: if the last run completed less than s.cooldown ago the request
+// manual triggers: if the last run completed less than the cooldown ago the request
 // is rejected with ErrCooldown (429) rather than forcing another external listing.
 func (s *Service) SyncNow(ctx context.Context, userID, id uuid.UUID) error {
 	if !s.Enabled() {
@@ -414,8 +431,8 @@ func (s *Service) SyncNow(ctx context.Context, userID, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	if s.cooldown > 0 && sync.LastSyncAt.Valid {
-		if since := time.Since(sync.LastSyncAt.Time); since < s.cooldown {
+	if cooldown := s.Cooldown(); cooldown > 0 && sync.LastSyncAt.Valid {
+		if since := time.Since(sync.LastSyncAt.Time); since < cooldown {
 			return ErrCooldown
 		}
 	}
