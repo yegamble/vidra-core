@@ -73,17 +73,17 @@ func (f *fakeMailConfig) Probe(context.Context) mailconfig.ProbeReport { return 
 // mailConfigServer is an auth-enabled server with the mail-configuration
 // service wired and its logs captured, so one test can assert the response, the
 // log output and the audit row together.
-func mailConfigServer(t *testing.T, buf *bytes.Buffer, svc mailConfigProvider) (*Server, *authFakeRepo) {
+func mailConfigServer(t *testing.T, buf *bytes.Buffer, svc mailConfigProvider, extra ...Option) (*Server, *authFakeRepo) {
 	t.Helper()
 	logger := slog.New(slog.NewJSONHandler(buf, nil))
 	repo := newAuthFakeRepo()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
 	authsvc := auth.NewService(repo, issuer, 720*time.Hour)
-	return New(testConfig(), nil, nil,
+	return New(testConfig(), nil, nil, append([]Option{
 		WithAuthService(authsvc, 15*time.Minute),
 		WithMailConfigService(svc),
 		WithLogger(logger),
-	), repo
+	}, extra...)...), repo
 }
 
 // setRole rewrites an account's role directly in the fake store. The auth

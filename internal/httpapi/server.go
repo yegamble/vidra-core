@@ -2178,11 +2178,7 @@ func (s *Server) routes() {
 		// re-verifies the CALLER's password, so it also sits behind the strict
 		// auth limiter — supplying a password makes it a guessing surface
 		// exactly like login.
-		adminMFAMW := []echo.MiddlewareFunc{}
-		if s.authLimit != nil {
-			adminMFAMW = append(adminMFAMW, s.authRateLimit(s.authLimit))
-		}
-		adminMFAMW = append(adminMFAMW, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		adminMFAMW := s.adminPasswordStepUpMW()
 		api.DELETE("/admin/users/:id/mfa", s.handleAdminRemoveUserMFA, adminMFAMW...)
 		// One-time reset link for a locked-out ordinary user on an instance with
 		// no working mail. Same step-up (caller's own password) and strict limiter.
@@ -2253,7 +2249,10 @@ func (s *Server) routes() {
 	// internal/mailconfig. Admin-only; the GET never returns a stored secret.
 	if s.mailconfigsvc != nil {
 		api.GET("/admin/mail-config", s.handleGetMailConfig, s.requireAuth, s.requireRole(admin.RoleAdmin))
-		api.PUT("/admin/mail-config", s.handleUpdateMailConfig, s.requireAuth, s.requireRole(admin.RoleAdmin))
+		// The PUT re-verifies the caller's password, so it takes the strict auth
+		// limiter too — otherwise a stolen admin token is a password oracle at the
+		// general limiter's rate.
+		api.PUT("/admin/mail-config", s.handleUpdateMailConfig, s.adminPasswordStepUpMW()...)
 		api.DELETE("/admin/mail-config", s.handleDeleteMailConfig, s.requireAuth, s.requireRole(admin.RoleAdmin))
 	}
 

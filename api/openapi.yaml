@@ -13703,6 +13703,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: "Too many attempts (strict auth limiter): the PUT checks the caller's password."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
         "501":
           description: >-
             This deployment does not carry the outbound-mail configuration
