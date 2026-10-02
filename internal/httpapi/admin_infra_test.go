@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/auth"
 	"github.com/vidra/vidra-core/internal/config"
+	"github.com/vidra/vidra-core/internal/diskspace"
 	"github.com/vidra/vidra-core/internal/instancesettings"
 	"github.com/vidra/vidra-core/internal/mail"
 	"github.com/vidra/vidra-core/internal/mailconfig"
@@ -754,5 +756,53 @@ func TestInfrastructureMailCapability(t *testing.T) {
 	wired, _ := infrastructure(t, relaySrv)
 	if rm := featureNamed(t, wired, "mail"); !rm.Enabled || !rm.Configured || rm.Note != "" {
 		t.Errorf("mail with a configured relay = %+v, want enabled+configured with no note", rm)
+	}
+}
+
+// The capacity block is the "is the disk about to fill" answer the storage row
+// could not give, and it is only meaningful on the local backend. The measurer
+// is faked: statfs on the developer's own filesystem would make the numbers —
+// and whether the block exists at all — depend on the machine running the suite.
+func TestInfrastructureStorageDisk(t *testing.T) {
+	const root = "/srv/vidra/media"
+	fake := func(path string) (diskspace.Usage, error) {
+		if path != root {
+			t.Errorf("measured %q, want the configured local root %q", path, root)
+		}
+		return diskspace.Usage{TotalBytes: 100 << 30, FreeBytes: 7 << 30}, nil
+	}
+	failing := func(string) (diskspace.Usage, error) { return diskspace.Usage{}, errors.New("statfs: no such file") }
+	never := func(string) (diskspace.Usage, error) {
+		t.Error("an S3 deployment has no local disk to measure")
+		return diskspace.Usage{}, nil
+	}
+
+	for _, tc := range []struct {
+		name    string
+		backend string
+		measure func(string) (diskspace.Usage, error)
+		want    *infraDisk
+	}{
+		{"local reports the faked numbers", "local", fake, &infraDisk{TotalBytes: 100 << 30, FreeBytes: 7 << 30}},
+		{"s3 omits it and never measures", "s3", never, nil},
+		{"a failed measurement omits it and stays 200", "local", failing, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := testConfig()
+			cfg.StorageBackend = tc.backend
+			cfg.StorageLocalRoot = root
+			srv := authServerWithConfig(t, cfg)
+			srv.measureDisk = tc.measure
+			body, raw := infrastructure(t, srv) // infrastructure() fails the test on non-200
+
+			switch {
+			case tc.want == nil && body.Storage.Disk != nil:
+				t.Errorf("disk = %+v, want absent", *body.Storage.Disk)
+			case tc.want == nil && strings.Contains(raw, `"disk"`):
+				t.Errorf("disk key must be omitted, not null: %s", raw)
+			case tc.want != nil && (body.Storage.Disk == nil || *body.Storage.Disk != *tc.want):
+				t.Errorf("disk = %+v, want %+v", body.Storage.Disk, *tc.want)
+			}
+		})
 	}
 }
