@@ -23750,6 +23750,26 @@ components:
               type: boolean
             s3_force_path_style:
               type: boolean
+            disk:
+              type: object
+              description: >-
+                Capacity of the filesystem holding local_root, measured per
+                request. ABSENT — not zeroed — on s3 and when the measurement
+                fails. Inside a container this is the filesystem backing the
+                mounted volume, which is the disk that actually fills. No
+                threshold or verdict is reported; `vidra doctor` owns the tiers.
+              required: [total_bytes, free_bytes]
+              properties:
+                total_bytes:
+                  type: integer
+                  format: int64
+                free_bytes:
+                  type: integer
+                  format: int64
+                  description: >-
+                    Bytes an unprivileged process can still write (excludes
+                    root-reserved blocks), the same definition `vidra doctor`
+                    uses.
         delivery:
           type: object
           description: >-

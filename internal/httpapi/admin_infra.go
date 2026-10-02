@@ -152,6 +152,27 @@ type infraStorage struct {
 	// often explain "the bucket is right there and it still will not connect".
 	S3UseSSL         bool `json:"s3_use_ssl"`
 	S3ForcePathStyle bool `json:"s3_force_path_style"`
+	// Disk is the capacity of the filesystem holding LocalRoot. ABSENT — not
+	// zeroed — on s3 (the bucket's capacity is the provider's to report) and
+	// when the measurement fails: a zero here would render as "0 bytes free",
+	// which is the loudest false alarm this page could raise.
+	Disk *infraDisk `json:"disk,omitempty"`
+}
+
+// infraDisk is the statfs reading for the local media root, taken per request
+// (one syscall) so the number is never staler than the page load.
+//
+// Inside a container statfs reports the filesystem BACKING the mounted volume,
+// not the container's writable layer — which is the number that matters, since
+// it is that disk which fills and takes Postgres down with it on a single-disk
+// host. FreeBytes is what an unprivileged process can still write (Bavail, not
+// Bfree), the same definition `vidra doctor` and the transcode scratch guard
+// use. Deliberately no verdict or threshold here: the warn/fail tiers live in
+// `vidra doctor` and are unexported, and a second copy in the api would be the
+// two diagnostics drifting apart that internal/diskspace exists to prevent.
+type infraDisk struct {
+	TotalBytes int64 `json:"total_bytes"`
+	FreeBytes  int64 `json:"free_bytes"`
 }
 
 // infraNetworking is how the outside world reaches this instance. Every field
@@ -282,8 +303,8 @@ const (
 )
 
 // handleInfrastructure returns the deploy-time shape of this instance. Behind
-// requireRole(admin). Read-only and always 200 — there is nothing to probe and
-// nothing that can fail; every value is already in memory.
+// requireRole(admin). Read-only and always 200: every value is already in memory except the
+// local disk reading, whose failure drops that one field rather than the page.
 func (s *Server) handleInfrastructure(c echo.Context) error {
 	cfg := s.cfg
 	uploadMax, _ := bytes.Parse(cfg.UploadMaxSize) // boot-validated, so err is unreachable
@@ -311,6 +332,18 @@ func (s *Server) handleInfrastructure(c echo.Context) error {
 		liveBlock = &infraLive{RTMPURL: cfg.LiveRTMPURL, HLSRoot: cfg.LiveHLSRoot}
 	}
 
+	var disk *infraDisk
+	if cfg.StorageBackend == "local" {
+		if u, err := s.measureDisk(cfg.StorageLocalRoot); err != nil {
+			// Degrade the one field, never the page: a missing mount must not
+			// hide the other forty settings an operator opened it to read.
+			s.logger.Warn("infrastructure: could not measure local storage", "path", cfg.StorageLocalRoot, "error", err)
+		} else {
+			// A filesystem over 8 EiB does not exist, so the narrowing is safe.
+			disk = &infraDisk{TotalBytes: int64(u.TotalBytes), FreeBytes: int64(u.FreeBytes)} //nolint:gosec // see above.
+		}
+	}
+
 	return c.JSON(http.StatusOK, infrastructureResponse{
 		Server: infraServer{
 			Environment:                 cfg.Environment,
@@ -336,6 +369,7 @@ func (s *Server) handleInfrastructure(c echo.Context) error {
 			S3Region:         cfg.StorageS3Region,
 			S3UseSSL:         cfg.StorageS3UseSSL,
 			S3ForcePathStyle: cfg.StorageS3ForcePathStyle,
+			Disk:             disk,
 		},
 		Delivery: deliveryBlock,
 		Live:     liveBlock,

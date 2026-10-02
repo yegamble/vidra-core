@@ -31,6 +31,7 @@ import (
 	"github.com/vidra/vidra-core/internal/comment"
 	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/delivery"
+	"github.com/vidra/vidra-core/internal/diskspace"
 	"github.com/vidra/vidra-core/internal/donation"
 	"github.com/vidra/vidra-core/internal/drm"
 	"github.com/vidra/vidra-core/internal/e2ee"
@@ -257,6 +258,10 @@ type Server struct {
 	// installed. A probe whose answer depends on the developer's laptop is not a
 	// probe the suite can assert on. Set in New().
 	lookPath func(file string) (string, error)
+	// measureDisk is diskspace.Measure, indirected for the same reason as
+	// lookPath: the infrastructure page's capacity block must be assertable
+	// without statfs-ing the developer's real filesystem. Set in New().
+	measureDisk func(path string) (diskspace.Usage, error)
 	// schemaLedger reads the golang-migrate ledger for GET /schemaz. It is the
 	// server's OWN pool (cmd/api passes store.Pool). Nil — unit tests, and any
 	// embedder that does not wire it — reports the ledger as unread; it never
@@ -1162,7 +1167,7 @@ func New(cfg *config.Config, db, rdb Pinger, opts ...Option) *Server {
 	e.Server.WriteTimeout = cfg.HTTPWriteTimeout
 	e.Server.IdleTimeout = idleTimeout
 
-	s := &Server{echo: e, cfg: cfg, db: db, rdb: rdb, startedAt: time.Now(), logger: slog.Default(), lookPath: exec.LookPath}
+	s := &Server{echo: e, cfg: cfg, db: db, rdb: rdb, startedAt: time.Now(), logger: slog.Default(), lookPath: exec.LookPath, measureDisk: diskspace.Measure}
 	// Playback-token signer for password-protected videos (CORE-17). Its key is
 	// derived from the JWT secret via domain separation, so a playback token is
 	// cryptographically independent of an account access token.
