@@ -14,6 +14,8 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/vidra/vidra-core/internal/setup"
 )
 
 // runUpdate is `vidra update`: find the newest release, pin it, deploy it, and
@@ -173,12 +175,16 @@ func runUpdate(s streams, args []string) error {
 	// which is what the two lines above just wrote. Passthrough rather than
 	// Capture because it runs for minutes, prints its six steps as it goes, and
 	// its output IS the operator's view of the deploy.
+	// A dump stamped before `started` is not one this deploy took.
+	started := time.Now()
 	deployErr := theRunner.Passthrough(dep.bash(deployPath), s)
 	if deployErr == nil {
 		fmt.Fprintf(s.out, "\nvidra update: %s is deployed. The previous env file is %s.\n", plan.target, snapshot)
 		return nil
 	}
-	return recoverFromFailedDeploy(s, dep, plan, floor, armed, why, snapshot, deployErr)
+	external, _ := externalDatastore("postgres", values)
+	dump := judgePreDeployDump(dep.root, processEnv, started, external, gate.dbRead)
+	return recoverFromFailedDeploy(s, dep, plan, floor, armed, why, snapshot, dump, deployErr)
 }
 
 // ---------------------------------------------------------------------------
@@ -559,6 +565,9 @@ type schemaCheck struct {
 	dbVersion     int64
 	targetVersion int64
 	known         bool
+	// dbRead: the api read the live ledger, so postgres was up when the update
+	// started — and deploy.sh skips its dump only when there is no postgres.
+	dbRead bool
 }
 
 // updateGitTimeout covers a `git fetch --tags` over the network from a droplet.
@@ -587,6 +596,7 @@ func schemaGate(ctx context.Context, dep deployment, processEnv, values map[stri
 	var out schemaCheck
 	port := envGet(processEnv, values, "HTTP_PORT", "8080")
 	dbVersion, dbKnown, dbNote := runningSchemaVersion(ctx, port)
+	out.dbRead = dbKnown
 	if dbNote != "" {
 		out.notes = append(out.notes, dbNote)
 	}
@@ -905,7 +915,24 @@ func (d deployment) hasRollbackScript() bool {
 // installer that read 0 from a run that ended on the previous release would draw
 // exactly the wrong conclusion. The code passed up is deploy.sh's own, for the
 // same exit-code fidelity the wrapper commands promise.
-func recoverFromFailedDeploy(s streams, dep deployment, p updatePlan, floor rollbackFloor, armed bool, why, snapshot string, deployErr error) error {
+func recoverFromFailedDeploy(s streams, dep deployment, p updatePlan, floor rollbackFloor, armed bool, why, snapshot string, dump preDeployDump, deployErr error) error {
+	if dump.nothingChanged {
+		// Instead of rollback.sh, which would re-run the step that just refused
+		// and report that as "THE ROLLBACK ALSO FAILED".
+		fmt.Fprintf(s.err, `
+[update] THE DEPLOY OF %s FAILED, and deploy.sh stopped before its pre-deploy dump:
+[update] nothing was pulled, migrated or restarted. The running stack and the
+[update] database are as they were.
+[update] Do NOT restore a dump: %s
+`, p.target, dump.staleWarning())
+		if err := restoreEnvSnapshot(snapshot, dep.envPath); err != nil {
+			fmt.Fprintf(s.err, "[update] The env file could NOT be put back (%v). Do it by hand:\n[update]     cp %s %s\n", err, snapshot, dep.envFile)
+			return deployErr
+		}
+		fmt.Fprintf(s.err, "[update] %s is back to what is running (core=%s user=%s search=%s), from %s\n",
+			dep.envFile, p.current["VIDRA_CORE_TAG"], p.current["VIDRA_USER_TAG"], p.current["VIDRA_SEARCH_TAG"], snapshot)
+		return deployErr
+	}
 	if !armed {
 		// The previous tags are printed rather than left in a file: this is the
 		// state an operator reconstructs the incident from, and the reason they are
@@ -918,8 +945,7 @@ func recoverFromFailedDeploy(s streams, dep deployment, p updatePlan, floor roll
 		fmt.Fprintf(s.err, "[update] What was running before this run: core=%s user=%s search=%s\n",
 			p.current["VIDRA_CORE_TAG"], p.current["VIDRA_USER_TAG"], p.current["VIDRA_SEARCH_TAG"])
 		fmt.Fprintf(s.err, "[update] The env file as it was before this run: %s\n", snapshot)
-		fmt.Fprintf(s.err, "[update] deploy.sh took a dump before it started, and that is the way back:\n[update]     ./deploy/restore.sh %s\n",
-			newestPreDeployDump(dep.root))
+		fmt.Fprint(s.err, dump.wayBack("deploy.sh took a dump before it started, and that is the way back:"))
 		return deployErr
 	}
 	fmt.Fprintf(s.err, `
@@ -941,7 +967,6 @@ func recoverFromFailedDeploy(s streams, dep deployment, p updatePlan, floor roll
 		"--core", p.current["VIDRA_CORE_TAG"],
 		"--user", p.current["VIDRA_USER_TAG"],
 		"--search", p.current["VIDRA_SEARCH_TAG"]), s)
-	dump := newestPreDeployDump(dep.root)
 	if rollbackErr == nil {
 		fmt.Fprintf(s.err, `
 [update] THE UPDATE TO %s FAILED AND WAS ROLLED BACK.
@@ -949,10 +974,9 @@ func recoverFromFailedDeploy(s streams, dep deployment, p updatePlan, floor roll
 [update] /readyz and frontend probes. The database was NOT rolled back: if %s
 [update] migrated it, this instance is old code on a newer schema, which the
 [update] one-release compatibility policy covers and nothing beyond it does.
-[update] The deeper way back is the dump deploy.sh took before it started:
-[update]     ./deploy/restore.sh %s
-[update] The env file as it was before this run: %s
-`, p.target, p.current["VIDRA_CORE_TAG"], p.current["VIDRA_USER_TAG"], p.current["VIDRA_SEARCH_TAG"], p.target, dump, snapshot)
+%s[update] The env file as it was before this run: %s
+`, p.target, p.current["VIDRA_CORE_TAG"], p.current["VIDRA_USER_TAG"], p.current["VIDRA_SEARCH_TAG"], p.target,
+			dump.wayBack("The deeper way back is the dump deploy.sh took before it started:"), snapshot)
 		return deployErr
 	}
 	fmt.Fprintf(s.err, `
@@ -969,47 +993,118 @@ func recoverFromFailedDeploy(s streams, dep deployment, p updatePlan, floor roll
 	// wasted attempt at the worst moment of the day.)
 	if floor.refuses(p.oldest) {
 		fmt.Fprintf(s.err, `[update] Do NOT flip back by hand: deploy/rollback.sh refuses a core or search
-[update] tag below %s, and this deployment came from %s. The way back is the dump
-[update] deploy.sh took before it started:
-[update]     ./deploy/restore.sh %s
-`, floor.tag, p.oldest, dump)
+[update] tag below %s, and this deployment came from %s.
+%s`, floor.tag, p.oldest, dump.wayBack("The way back is the dump deploy.sh took before it started:"))
 	} else {
 		fmt.Fprintf(s.err, `[update] Roll the application back by hand:
 [update]     ./deploy/rollback.sh %s
-[update] If the failure is a schema change, restore the pre-deploy dump first:
-[update]     ./deploy/restore.sh %s
-`, p.oldest, dump)
+%s`, p.oldest, dump.wayBack("If the failure is a schema change, restore the pre-deploy dump first:"))
 	}
 	fmt.Fprintf(s.err, "[update] The env file as it was before this run: %s\n", snapshot)
 	return deployErr
 }
 
-// newestPreDeployDump names the dump deploy.sh took at the start of the run that
-// just failed, so the restore line is a command to paste rather than a shape to
-// fill in. The generic placeholder is the fallback when backups/ cannot be read
-// — it is still the right instruction.
-func newestPreDeployDump(root string) string {
-	dir := filepath.Join(root, "backups")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "backups/pre-deploy-<timestamp>.dump.gz"
+// preDeployDump is what the failure path may say about deploy.sh's dump. The
+// newest dump in backups/ is not the one this run took: a deploy.sh that refused
+// before step 1/6 writes nothing, and naming an EARLIER run's dump as "the way
+// back" told the operator to throw away every write since.
+type preDeployDump struct {
+	fresh string // the dump this run wrote, deployment-relative; "" if none
+	stale string // the newest dump that predates this run; "" if none
+	// nothingChanged: no fresh dump, and deploy.sh could not have gone on
+	// without one — so it stopped at or before step 1/6.
+	nothingChanged bool
+	// why says why no fresh dump proves nothing, when nothingChanged is false.
+	why string
+}
+
+// judgePreDeployDump sorts deploy.sh's dumps (in BACKUP_DIR, read as deploy.sh
+// reads it) into this run's and older. A dump's time is the UTC stamp in its
+// name, and its mtime only when there is none: a `cp` gives an old dump a fresh
+// mtime. The start is truncated to the second because the stamp is.
+//
+// No fresh dump means "nothing changed" only where deploy.sh never goes on
+// without one: a bundled postgres that was up when the update started. An
+// external database is never dumped, and with the api down deploy.sh may have
+// found no postgres container and carried on without a dump.
+func judgePreDeployDump(root string, processEnv map[string]string, started time.Time, external, dbRead bool) preDeployDump {
+	dir := strings.TrimSpace(processEnv["BACKUP_DIR"])
+	if dir == "" {
+		dir = filepath.Join(root, "backups")
+	} else if !filepath.IsAbs(dir) {
+		dir = filepath.Join(root, dir)
 	}
-	var names []string
+	since := started.Truncate(time.Second)
+	var d preDeployDump
+	entries, err := os.ReadDir(dir)
+	if err != nil && !os.IsNotExist(err) {
+		d.why = fmt.Sprintf("%s could not be read (%v), so whether it wrote one cannot be checked — its own output above names the file if it did", dir, err)
+		return d
+	}
+	var fresh, stale []string
 	for _, e := range entries {
-		if e.IsDir() {
+		name := e.Name()
+		if e.IsDir() || !strings.HasPrefix(name, "pre-deploy-") || !strings.HasSuffix(name, ".dump.gz") {
 			continue
 		}
-		if strings.HasPrefix(e.Name(), "pre-deploy-") && strings.HasSuffix(e.Name(), ".dump.gz") {
-			names = append(names, e.Name())
+		at, perr := time.Parse("2006-01-02T150405", strings.TrimSuffix(strings.TrimPrefix(name, "pre-deploy-"), ".dump.gz"))
+		if info, ierr := e.Info(); perr != nil && ierr == nil {
+			at = info.ModTime()
+		}
+		rel := filepath.Join(dir, name)
+		if r, rerr := filepath.Rel(root, rel); rerr == nil && !strings.HasPrefix(r, "..") {
+			rel = r
+		}
+		if at.Before(since) {
+			stale = append(stale, rel)
+		} else {
+			fresh = append(fresh, rel)
 		}
 	}
-	if len(names) == 0 {
-		return "backups/pre-deploy-<timestamp>.dump.gz"
+	// UTC-stamped names: lexical order is chronological, as deploy.sh's prune assumes.
+	sort.Strings(fresh)
+	sort.Strings(stale)
+	if len(fresh) > 0 {
+		d.fresh = fresh[len(fresh)-1]
 	}
-	// The names carry a UTC stamp, so reverse lexical order is
-	// reverse-chronological — the same property deploy.sh's prune relies on.
-	sort.Sort(sort.Reverse(sort.StringSlice(names)))
-	return filepath.Join("backups", names[0])
+	if len(stale) > 0 {
+		d.stale = stale[len(stale)-1]
+	}
+	switch {
+	case d.fresh != "":
+	case external:
+		d.why = "VIDRA_EXTERNAL_POSTGRES is true, so it takes none on this host. The database's way back is the snapshot or point-in-time-recovery marker you took with your provider"
+	case !dbRead:
+		d.why = `the api was not answering before it started, so it may have found no postgres container, printed "skipping pre-deploy dump" and carried on without one. Its own output above says which step it stopped at`
+	default:
+		d.nothingChanged = true
+	}
+	return d
+}
+
+// wayBack is the restore advice: the fresh dump under intro, or why there is
+// none and a warning off the stale one.
+func (d preDeployDump) wayBack(intro string) string {
+	if d.fresh != "" {
+		return fmt.Sprintf("[update] %s\n[update]     ./deploy/restore.sh %s\n", intro, d.fresh)
+	}
+	return fmt.Sprintf("[update] deploy.sh wrote no pre-deploy dump during this run: %s.\n[update] Do NOT restore an older dump: %s\n", d.why, d.staleWarning())
+}
+
+func (d preDeployDump) staleWarning() string {
+	if d.stale == "" {
+		return "there is none from this run."
+	}
+	return fmt.Sprintf("the newest, %s, predates this run, and restoring it would throw away everything written since.", d.stale)
+}
+
+// restoreEnvSnapshot puts the env file back with the same atomic 0600 write.
+func restoreEnvSnapshot(snapshot, envPath string) error {
+	content, err := os.ReadFile(snapshot)
+	if err != nil {
+		return err
+	}
+	return setup.WriteFile(envPath, content)
 }
 
 // ---------------------------------------------------------------------------

@@ -8,8 +8,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // `vidra update` is tested end to end without a network, a docker daemon or a
@@ -1178,12 +1180,128 @@ func TestUpdateRefusesWhenATagIsExported(t *testing.T) {
 
 // failingDeploy makes deploy.sh exit non-zero, as it does when its health probes
 // never come up, and lets rollback.sh answer however the test wants.
+// failingDeploy is a deploy.sh that got past step 1/6 — it wrote its
+// pre-deploy dump, stamped the way deploy.sh stamps it — and then failed.
 func failingDeploy(code int, rollback error) func(execSpec, streams) error {
+	return func(spec execSpec, _ streams) error {
+		if strings.HasSuffix(spec.script(), "deploy.sh") {
+			writeDump(filepath.Dir(filepath.Dir(spec.script())), time.Now())
+			return newExitError(code)
+		}
+		return rollback
+	}
+}
+
+// refusingDeploy is a deploy.sh that stopped BEFORE its dump (a compose render,
+// a release-mapping finding, a stopped postgres): nothing was changed.
+func refusingDeploy(code int) func(execSpec, streams) error {
 	return func(spec execSpec, _ streams) error {
 		if strings.HasSuffix(spec.script(), "deploy.sh") {
 			return newExitError(code)
 		}
-		return rollback
+		return errors.New("rollback.sh ran after a deploy that changed nothing")
+	}
+}
+
+// writeDump writes a stamped dump and returns its relative path. Its mtime is
+// always NOW, so a past stamp is the case where the two disagree.
+func writeDump(root string, at time.Time) string {
+	_ = os.MkdirAll(filepath.Join(root, "backups"), 0o700)
+	rel := filepath.Join("backups", "pre-deploy-"+at.UTC().Format("2006-01-02T150405")+".dump.gz")
+	_ = os.WriteFile(filepath.Join(root, rel), []byte("x"), 0o600)
+	return rel
+}
+
+func (st *updateStage) newestDump() string {
+	st.t.Helper()
+	m, _ := filepath.Glob(filepath.Join(st.dir, "backups", "pre-deploy-*.dump.gz"))
+	sort.Strings(m)
+	if len(m) == 0 {
+		st.t.Fatal("deploy.sh wrote no dump")
+	}
+	return filepath.Join("backups", filepath.Base(m[len(m)-1]))
+}
+
+// THE STALE WAY BACK. A deploy.sh that refused before its dump left only older
+// dumps in backups/, and the newest was named "the way back": restoring it
+// throws away everything since, after a run that changed nothing. Armed or not:
+// restore nothing, and put the env file back to the tags still running.
+func TestUpdateNeverNamesADumpFromBeforeThisRun(t *testing.T) {
+	for _, args := range [][]string{{"--yes"}, {"--yes", "--no-rollback"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			st := newUpdateStage(t)
+			before := st.envFile()
+			old := writeDump(st.dir, time.Date(2026, 8, 20, 10, 15, 0, 0, time.UTC))
+			st.runner.onPassthrough = refusingDeploy(1)
+
+			err := st.run(args...)
+			var exit *exitError
+			if !errors.As(err, &exit) || exit.code != 1 {
+				t.Fatalf("exit = %v, want deploy.sh's own code 1", err)
+			}
+			stderr := st.h.err.String()
+			if strings.Contains(stderr, "restore.sh") {
+				t.Errorf("a run that took no dump told the operator to restore one:\n%s", stderr)
+			}
+			contains(t, stderr, "stopped before its pre-deploy dump", "Do NOT restore", old)
+			// Nothing ran, so nothing is flipped back.
+			st.wantCalls("deploy/deploy.sh")
+			if got := st.envFile(); got != before {
+				t.Errorf("the env file was not put back to what is running:\n%s", got)
+			}
+		})
+	}
+}
+
+// The negative control: a deploy that DID write a dump before failing names
+// that one, not an older one, and leaves the tags where the deploy put them.
+func TestUpdateNamesTheDumpThisRunTook(t *testing.T) {
+	st := newUpdateStage(t)
+	old := writeDump(st.dir, time.Date(2026, 8, 20, 10, 15, 0, 0, time.UTC))
+	st.runner.onPassthrough = failingDeploy(1, nil)
+
+	if err := st.run("--yes", "--no-rollback"); err == nil {
+		t.Fatal("a failed deploy reported success")
+	}
+	fresh := st.newestDump()
+	stderr := st.h.err.String()
+	contains(t, stderr, "./deploy/restore.sh "+fresh)
+	if strings.Contains(stderr, old) || strings.Contains(stderr, "stopped before its pre-deploy dump") {
+		t.Errorf("the failure text named the stale dump or denied the fresh one:\n%s", stderr)
+	}
+	contains(t, st.envFile(), "VIDRA_CORE_TAG=v0.3.0")
+}
+
+// No fresh dump proves nothing when deploy.sh may have carried on without one
+// (an external database; no postgres container): name no stale dump, and do
+// not claim "nothing changed".
+func TestUpdateDoesNotClaimNothingChangedWhenItCannotKnow(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stage func(*updateStage)
+		want  string
+	}{
+		{"external postgres", func(st *updateStage) {
+			write(t, filepath.Join(st.dir, "env", "production.env"), st.envFile()+"VIDRA_EXTERNAL_POSTGRES=true\n")
+		}, "VIDRA_EXTERNAL_POSTGRES"},
+		{"api not answering", func(st *updateStage) { st.schemaStatus = http.StatusServiceUnavailable }, "skipping pre-deploy dump"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newUpdateStage(t)
+			tc.stage(st)
+			old := writeDump(st.dir, time.Date(2026, 8, 20, 10, 15, 0, 0, time.UTC))
+			st.runner.onPassthrough = refusingDeploy(1)
+
+			if err := st.run("--yes", "--no-rollback"); err == nil {
+				t.Fatal("a failed deploy reported success")
+			}
+			stderr := st.h.err.String()
+			contains(t, stderr, tc.want, "predates this run", old)
+			if strings.Contains(stderr, "restore.sh "+old) || strings.Contains(stderr, "nothing was pulled") {
+				t.Errorf("claimed more than it knows:\n%s", stderr)
+			}
+			contains(t, st.envFile(), "VIDRA_CORE_TAG=v0.3.0")
+		})
 	}
 }
 
@@ -1215,13 +1333,10 @@ func TestUpdateFlipsTheTagsBackWhenTheDeployFails(t *testing.T) {
 func TestUpdateIsLoudWhenTheRollbackAlsoFails(t *testing.T) {
 	st := newUpdateStage(t)
 	st.runner.onPassthrough = failingDeploy(3, newExitError(1))
-	// A dump deploy.sh took before it started, so the restore line is a command
-	// to paste rather than a shape to fill in.
-	if err := os.MkdirAll(filepath.Join(st.dir, "backups"), 0o700); err != nil {
-		t.Fatalf("mkdir backups: %v", err)
-	}
-	write(t, filepath.Join(st.dir, "backups", "pre-deploy-2026-08-20T101500.dump.gz"), "x")
-	write(t, filepath.Join(st.dir, "backups", "pre-deploy-2026-08-19T101500.dump.gz"), "x")
+	// The dump deploy.sh took at the start of THIS run (failingDeploy writes
+	// it), so the restore line is a command to paste rather than a shape to fill
+	// in — and not one of the older dumps beside it.
+	writeDump(st.dir, time.Date(2026, 8, 20, 10, 15, 0, 0, time.UTC))
 
 	err := st.run("--yes")
 	if err == nil {
@@ -1230,7 +1345,7 @@ func TestUpdateIsLoudWhenTheRollbackAlsoFails(t *testing.T) {
 	contains(t, st.h.err.String(),
 		"THE ROLLBACK ALSO FAILED",
 		"./deploy/rollback.sh v0.2.0",
-		"./deploy/restore.sh backups/pre-deploy-2026-08-20T101500.dump.gz")
+		"./deploy/restore.sh "+st.newestDump())
 	var exit *exitError
 	if !errors.As(err, &exit) || exit.code != 3 {
 		t.Errorf("exit = %v, want deploy.sh's own code 3", err)
