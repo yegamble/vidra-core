@@ -56,17 +56,18 @@ func TestWebFingerAnswersBothActorsForOneName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WebFinger: %v", err)
 	}
-	if len(jrd.Links) != 2 {
+	links := actorLinks(jrd)
+	if len(links) != 2 {
 		t.Fatalf("a name held by an account AND aliased to a channel must answer with both links, got %+v", jrd.Links)
 	}
-	self, alternate := jrd.Links[0], jrd.Links[1]
+	self, alternate := links[0], links[1]
 	if self.Rel != "self" || self.Href != "https://videos.example/accounts/ownera" {
 		t.Errorf("the Person must be the self link: %+v", self)
 	}
 	if alternate.Rel != "alternate" || alternate.Href != "https://videos.example/video-channels/ownera" {
 		t.Errorf("the Group must be an alternate link at its FROZEN id: %+v", alternate)
 	}
-	for _, l := range jrd.Links {
+	for _, l := range links {
 		if l.Type != "application/activity+json" {
 			t.Errorf("every actor link carries the AP media type, got %q on %+v", l.Type, l)
 		}
@@ -84,8 +85,8 @@ func TestWebFingerKeepsTheSingleLinkShapeWhenOnlyOneActorHoldsTheName(t *testing
 	if err != nil {
 		t.Fatalf("WebFinger account: %v", err)
 	}
-	if len(acct.Links) != 1 || acct.Links[0].Rel != "self" ||
-		acct.Links[0].Href != "https://videos.example/accounts/ada" {
+	if al := actorLinks(acct); len(al) != 1 || al[0].Rel != "self" ||
+		al[0].Href != "https://videos.example/accounts/ada" {
 		t.Fatalf("account-only name: %+v", acct.Links)
 	}
 
@@ -93,8 +94,8 @@ func TestWebFingerKeepsTheSingleLinkShapeWhenOnlyOneActorHoldsTheName(t *testing
 	if err != nil {
 		t.Fatalf("WebFinger channel: %v", err)
 	}
-	if len(ch.Links) != 1 || ch.Links[0].Rel != "self" ||
-		ch.Links[0].Href != "https://videos.example/video-channels/films" {
+	if cl := actorLinks(ch); len(cl) != 1 || cl[0].Rel != "self" ||
+		cl[0].Href != "https://videos.example/video-channels/films" {
 		t.Fatalf("channel-only name: %+v", ch.Links)
 	}
 }
@@ -224,4 +225,16 @@ func TestInboundActivityResolvesTheFrozenActorID(t *testing.T) {
 			t.Errorf("outbox page partOf = %q, want %q", page.PartOf, frozen+"/outbox")
 		}
 	})
+}
+
+// actorLinks is the JRD's ActivityPub actor links, without the (always
+// present) remote-interaction subscribe template.
+func actorLinks(j *JRD) []JRDLink {
+	var out []JRDLink
+	for _, l := range j.Links {
+		if l.Rel != SubscribeRel {
+			out = append(out, l)
+		}
+	}
+	return out
 }

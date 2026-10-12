@@ -11677,6 +11677,77 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/remote-interaction/resolve:
+    get:
+      operationId: resolveRemoteInteraction
+      summary: Find the subscribe URL on a visitor's home fediverse server
+      description: >-
+        The outbound half of remote interaction. A visitor who is not signed in
+        here gives their own fediverse handle (user@host) and an address on THIS
+        instance (a channel or video); the server WebFingers the handle's host
+        through the SSRF-guarded federation fetch and returns that host's
+        subscribe template (rel http://ostatus.org/schema/1.0/subscribe) with
+        {uri} replaced by the escaped target. The client navigates to the
+        returned https URL. Anonymous; rate-limited per client IP on the same
+        budget as remote-URI search resolution. Mounted with the federation
+        service; 503 while federation is disabled.
+      tags: [federation]
+      security: []
+      parameters:
+        - name: handle
+          in: query
+          required: true
+          description: The visitor's fediverse handle, user@host (a leading @ is accepted).
+          schema:
+            type: string
+        - name: target
+          in: query
+          required: true
+          description: >-
+            The ActivityPub id of the channel or video on this instance the
+            visitor wants to follow or interact with.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The home-server URL to send the visitor to.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteInteractionResolution"
+        "404":
+          description: The handle's server advertises no usable subscribe template.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            Malformed handle, a target that is not on this instance, or a handle
+            whose server this instance refuses to contact (private or blocked
+            address).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many lookups from this client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The handle's server could not be reached.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Federation is disabled on this instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/blocks/remote:
     get:
       operationId: listRemoteBlocks
@@ -20171,6 +20242,14 @@ components:
         blocked_at:
           type: string
           format: date-time
+    RemoteInteractionResolution:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: https URL on the visitor's home server to navigate to.
     RemoteBlockListResponse:
       type: object
       required: [actors, total, limit, offset]
