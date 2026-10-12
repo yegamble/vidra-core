@@ -14420,7 +14420,11 @@ paths:
         instance_is_sensitive, the config-parity W8 feature toggles
         import_http_enabled, channel_sync_enabled, storyboards_enabled,
         video_card_previews_enabled, video_card_previews_default_enabled,
-        transcription_enabled,
+        transcription_enabled, auto_transcribe_new_uploads (default false;
+        on queues the same auto-caption job as POST /videos/{id}/captions/auto
+        for each video as it publishes, only while transcription is
+        effectively available, never duplicating a job or an existing
+        caption),
         user_import_enabled, user_export_enabled, and
         the config-parity W10 VOD knobs transcoding_enabled,
         transcoding_original_resolution, upload_additional_extensions_enabled,
