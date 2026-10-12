@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vidra/vidra-core/internal/config"
 	"github.com/vidra/vidra-core/internal/federation"
 	"github.com/vidra/vidra-core/internal/ratelimit"
 )
@@ -127,13 +130,28 @@ func (rt jrdTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(rt.jrd)), Header: http.Header{}, Request: req}, nil
 }
 
+// interactionServerWith builds a full server with federation wired over the
+// remote-search fake repo and the given fetch client (nil = the REAL guarded
+// client), returning the server plus an admin and an ordinary user token. The
+// anonymous-lookup operator setting is switched to anon.
+func interactionServerWith(t *testing.T, cfg *config.Config, client *http.Client, anon bool, httpOpts ...Option) (*Server, string, string) {
+	t.Helper()
+	opts := []federation.Option{federation.WithBaseURL(cfg.PublicBaseURL)}
+	if client != nil {
+		opts = append(opts, federation.WithFetchClient(client))
+	}
+	svc := federation.NewService(newRemoteSearchFedRepo(), opts...)
+	srv, _, _, _, _ := videoServerFullWith(t, cfg, append([]Option{WithFederationService(svc)}, httpOpts...))
+	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)
+	user := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+	patchSearchGates(t, srv, admin, true, anon)
+	return srv, admin, user
+}
+
 func interactionServer(t *testing.T, jrd string, calls *[]string) *Server {
 	t.Helper()
-	cfg := fedTestConfig()
-	svc := federation.NewService(newFedRepoFor(cfg),
-		federation.WithBaseURL(cfg.PublicBaseURL),
-		federation.WithFetchClient(&http.Client{Transport: jrdTransport{calls: calls, jrd: jrd}}))
-	return New(cfg, nil, nil, WithFederationService(svc))
+	srv, _, _ := interactionServerWith(t, fedTestConfig(), &http.Client{Transport: jrdTransport{calls: calls, jrd: jrd}}, true)
+	return srv
 }
 
 const interactionPath = "/api/v1/remote-interaction/resolve"
@@ -201,6 +219,7 @@ func TestResolveRemoteInteractionTemplateProblems(t *testing.T) {
 		"no subscribe link": `{"links":[{"rel":"self","type":"application/activity+json","href":"https://home.example/u/bob"}]}`,
 		"plain http":        `{"links":[{"rel":"http://ostatus.org/schema/1.0/subscribe","template":"http://home.example/i?uri={uri}"}]}`,
 		"javascript scheme": `{"links":[{"rel":"http://ostatus.org/schema/1.0/subscribe","template":"javascript:alert({uri})"}]}`,
+		"userinfo":          `{"links":[{"rel":"http://ostatus.org/schema/1.0/subscribe","template":"https://u:p@home.example/i?uri={uri}"}]}`,
 		"no placeholder":    `{"links":[{"rel":"http://ostatus.org/schema/1.0/subscribe","template":"https://home.example/i"}]}`,
 	} {
 		var calls []string
@@ -218,11 +237,9 @@ func TestResolveRemoteInteractionTemplateProblems(t *testing.T) {
 }
 
 func TestResolveRemoteInteractionIsRateLimited(t *testing.T) {
-	cfg := fedTestConfig()
 	var calls []string
-	svc := federation.NewService(newFedRepoFor(cfg), federation.WithBaseURL(cfg.PublicBaseURL),
-		federation.WithFetchClient(&http.Client{Transport: jrdTransport{calls: &calls, jrd: `{}`}}))
-	srv := New(cfg, nil, nil, WithFederationService(svc),
+	srv, _, _ := interactionServerWith(t, fedTestConfig(),
+		&http.Client{Transport: jrdTransport{calls: &calls, jrd: `{}`}}, true,
 		WithSearchResolveRateLimiter(ratelimit.NewLimiter(ratelimit.NewMemoryCounter(), 2, time.Minute)))
 	url := interactionPath + "?handle=bob@home.example&target=https://videos.example/video-channels/films"
 	for i := 0; i < 2; i++ {
@@ -236,15 +253,97 @@ func TestResolveRemoteInteractionIsRateLimited(t *testing.T) {
 	}
 }
 
+type brokenCounter struct{}
+
+func (brokenCounter) Incr(context.Context, string, time.Duration) (int64, time.Duration, error) {
+	return 0, 0, errors.New("redis down")
+}
+
+func TestResolveRemoteInteractionFailsClosedWhenBudgetUnavailable(t *testing.T) {
+	var calls []string
+	srv, _, _ := interactionServerWith(t, fedTestConfig(),
+		&http.Client{Transport: jrdTransport{calls: &calls, jrd: `{}`}}, true,
+		WithSearchResolveRateLimiter(ratelimit.NewLimiter(brokenCounter{}, 5, time.Minute)))
+	rec := get(t, srv, interactionPath+"?handle=bob@home.example&target=https://videos.example/video-channels/films")
+	if rec.Code != http.StatusServiceUnavailable || len(calls) != 0 {
+		t.Fatalf("status = %d calls = %v, want 503 and no outbound fetch", rec.Code, calls)
+	}
+}
+
+func TestResolveRemoteInteractionGatesAnonymousLookups(t *testing.T) {
+	var calls []string
+	jrd := `{"links":[{"rel":"http://ostatus.org/schema/1.0/subscribe","template":"https://home.example/i?uri={uri}"}]}`
+	srv, _, user := interactionServerWith(t, fedTestConfig(), &http.Client{Transport: jrdTransport{calls: &calls, jrd: jrd}}, false)
+	url := interactionPath + "?handle=bob@home.example&target=https://videos.example/video-channels/films"
+	if rec := get(t, srv, url); rec.Code != http.StatusForbidden || len(calls) != 0 {
+		t.Fatalf("anonymous with the setting off = %d (fetches %v), want 403 and no fetch", rec.Code, calls)
+	}
+	if rec := sendJSONAuth(srv, http.MethodGet, url, "", user); rec.Code != http.StatusOK {
+		t.Fatalf("signed-in = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// With NO injected client the real guarded client is used: a name that
+// resolves to loopback is refused at connect time and answers exactly like an
+// unreachable host (502), so the response does not map internal DNS.
+func TestResolveRemoteInteractionConnectTimeBlockLooksLikeUnreachable(t *testing.T) {
+	hits := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits++ }))
+	defer ts.Close()
+	_, port, _ := strings.Cut(strings.TrimPrefix(ts.URL, "http://"), ":")
+	srv, _, _ := interactionServerWith(t, fedTestConfig(), nil, true)
+	target := "&target=https://videos.example/video-channels/films"
+	blocked := get(t, srv, interactionPath+"?handle=bob@localhost:"+port+target)
+	unreachable := get(t, srv, interactionPath+"?handle=bob@nonexistent.invalid"+target)
+	if blocked.Code != http.StatusBadGateway || unreachable.Code != http.StatusBadGateway {
+		t.Fatalf("blocked = %d, unreachable = %d, want both 502", blocked.Code, unreachable.Code)
+	}
+	msg := func(rec *httptest.ResponseRecorder) string {
+		var e struct {
+			Error struct{ Code, Message string }
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &e)
+		return e.Error.Code + "|" + e.Error.Message
+	}
+	if msg(blocked) != msg(unreachable) || msg(blocked) == "|" {
+		t.Errorf("answers differ: %q vs %q", msg(blocked), msg(unreachable))
+	}
+	if hits != 0 {
+		t.Errorf("loopback server was contacted %d times", hits)
+	}
+	// A literal private address is still refused up front as malformed (422).
+	if rec := get(t, srv, interactionPath+"?handle=bob@127.0.0.1:"+port+target); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("literal loopback = %d, want 422", rec.Code)
+	}
+}
+
 func TestResolveRemoteInteractionNeedsFederation(t *testing.T) {
 	cfg := fedTestConfig()
 	cfg.FederationEnabled = false
 	var calls []string
-	svc := federation.NewService(newFedRepoFor(cfg), federation.WithBaseURL(cfg.PublicBaseURL),
-		federation.WithFetchClient(&http.Client{Transport: jrdTransport{calls: &calls, jrd: `{}`}}))
-	srv := New(cfg, nil, nil, WithFederationService(svc))
+	srv, _, _ := interactionServerWith(t, cfg, &http.Client{Transport: jrdTransport{calls: &calls, jrd: `{}`}}, true)
 	rec := get(t, srv, interactionPath+"?handle=bob@home.example&target=https://videos.example/video-channels/films")
 	if rec.Code != http.StatusServiceUnavailable || len(calls) != 0 {
 		t.Errorf("status = %d calls = %v, want 503 and no fetch", rec.Code, calls)
+	}
+}
+
+func TestSecurityTxtAndChangePasswordNeedOnlyPublicBaseURL(t *testing.T) {
+	cfg := fedTestConfig()
+	cfg.FederationEnabled = false
+	cfg.InstanceContactEmail = "ops@videos.example"
+	srv := New(cfg, nil, nil)
+	if rec := get(t, srv, "/.well-known/security.txt"); rec.Code != http.StatusOK {
+		t.Errorf("security.txt = %d without federation", rec.Code)
+	}
+	if rec := get(t, srv, "/.well-known/change-password"); rec.Code != http.StatusFound {
+		t.Errorf("change-password = %d without federation", rec.Code)
+	}
+	if rec := get(t, srv, "/.well-known/host-meta"); rec.Code != http.StatusNotFound {
+		t.Errorf("host-meta = %d without federation, want 404", rec.Code)
+	}
+	cfg.PublicBaseURL = ""
+	if rec := get(t, New(cfg, nil, nil), "/.well-known/security.txt"); rec.Code != http.StatusNotFound {
+		t.Errorf("security.txt = %d with no PUBLIC_BASE_URL, want 404", rec.Code)
 	}
 }

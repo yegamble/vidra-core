@@ -4,13 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/vidra/vidra-core/internal/federation"
-	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/urlsafety"
 )
 
@@ -66,16 +66,33 @@ func (s *Server) handleWellKnownChangePassword(c echo.Context) error {
 	return c.Redirect(http.StatusFound, s.cfg.PublicBaseURL+"/settings/security")
 }
 
-// remoteInteractionLimit budgets the resolve endpoint per client IP on
-// the same limiter as remote-URI search resolution.
+// remoteInteractionLimit budgets the resolve endpoint per caller (user id,
+// else client IP) on the same limiter as remote-URI search resolution. It FAILS
+// CLOSED when the budget cannot be read: an outbound fetch never runs
+// unbudgeted, exactly as remote search behaves.
 func (s *Server) remoteInteractionLimit() echo.MiddlewareFunc {
-	return s.limitBy(limitRule{
-		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
-			return s.searchResolveLimit, "remote-interaction:ip:" + c.RealIP(), true
-		},
-		unavailable: "remote-interaction rate limiter unavailable, failing open",
-		denied:      "too many remote-interaction lookups",
-	})
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			key := "remote-interaction:ip:" + c.RealIP()
+			if id, _, ok := principalFromContext(c); ok {
+				key = "remote-interaction:user:" + id.String()
+			}
+			res, err := s.searchResolveLimit.Allow(c.Request().Context(), key)
+			if err != nil {
+				s.logger.Warn("remote-interaction rate limiter unavailable, failing closed", "error", err)
+				return echo.NewHTTPError(http.StatusServiceUnavailable, "temporarily unavailable")
+			}
+			if !res.Allowed {
+				retry := int(res.RetryAfter.Seconds())
+				if retry < 1 {
+					retry = 1
+				}
+				c.Response().Header().Set("Retry-After", strconv.Itoa(retry))
+				return echo.NewHTTPError(http.StatusTooManyRequests, "too many remote-interaction lookups")
+			}
+			return next(c)
+		}
+	}
 }
 
 type remoteInteractionResponse struct {
@@ -90,13 +107,21 @@ func (s *Server) handleResolveRemoteInteraction(c echo.Context) error {
 	if !s.cfg.FederationEnabled {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "federation is disabled on this instance")
 	}
+	// Anonymous callers make the server fetch from a host they choose, so they
+	// are gated on the same operator setting as anonymous remote search.
+	if _, _, authed := principalFromContext(c); !authed && !s.searchRemoteURIAnonymous() {
+		return echo.NewHTTPError(http.StatusForbidden, "remote lookups are not available to signed-out visitors on this instance")
+	}
 	u, err := s.fedsvc.ResolveSubscribeURL(c.Request().Context(), c.QueryParam("handle"), c.QueryParam("target"))
 	switch {
 	case err == nil:
 		return c.JSON(http.StatusOK, remoteInteractionResponse{URL: u})
 	case errors.Is(err, federation.ErrBadInteraction):
 		return &ValidationError{Fields: []FieldError{{Field: "handle", Message: "must be user@host, and target an address on this instance"}}}
-	case errors.Is(err, urlsafety.ErrInvalidURL), errors.Is(err, urlsafety.ErrBlockedAddress):
+	case errors.Is(err, urlsafety.ErrInvalidURL):
+		// Pre-flight refusal of a literal address. A name that merely RESOLVES
+		// to a blocked address is indistinguishable from an unreachable host
+		// (the 502 below) so the answer reveals nothing about internal DNS.
 		// Never echo the attacker-supplied host back.
 		return &ValidationError{Fields: []FieldError{{Field: "handle", Message: "names a server this instance will not contact"}}}
 	case errors.Is(err, federation.ErrNoSubscribeTemplate):

@@ -1461,6 +1461,12 @@ func (s *Server) routes() {
 		s.echo.GET("/metrics", echo.WrapHandler(s.metrics.Handler()))
 	}
 
+	// Not federation features: both only need the public base URL.
+	if s.cfg.PublicBaseURL != "" {
+		s.echo.GET("/.well-known/security.txt", s.handleSecurityTxt)
+		s.echo.GET("/.well-known/change-password", s.handleWellKnownChangePassword)
+	}
+
 	// Fediverse discovery (NodeInfo) lives at the root, outside /api/v1, and is a
 	// federation contract — not part of the REST OpenAPI. Mounted only when
 	// federation is enabled and wired, so the REST drift guard never sees it and
@@ -1471,8 +1477,6 @@ func (s *Server) routes() {
 		s.echo.GET("/.well-known/webfinger", s.handleWebFinger)
 		s.echo.GET("/.well-known/host-meta", s.handleHostMeta)
 		s.echo.GET("/.well-known/host-meta.json", s.handleHostMetaJSON)
-		s.echo.GET("/.well-known/security.txt", s.handleSecurityTxt)
-		s.echo.GET("/.well-known/change-password", s.handleWellKnownChangePassword)
 		s.echo.GET("/accounts/:handle", s.handleAccountActor)
 		s.echo.GET("/video-channels/:handle", s.handleChannelActor)
 		// Inbound activities. The shared inbox plus per-actor inboxes advertised in
@@ -2085,7 +2089,7 @@ func (s *Server) routes() {
 	if s.fedsvc != nil {
 		// Outbound remote interaction: an anonymous visitor's home-server
 		// subscribe URL, found via the SSRF-guarded WebFinger.
-		api.GET("/remote-interaction/resolve", s.handleResolveRemoteInteraction, s.remoteInteractionLimit())
+		api.GET("/remote-interaction/resolve", s.handleResolveRemoteInteraction, s.optionalAuth, s.remoteInteractionLimit())
 		api.GET("/me/blocks/remote", s.handleListRemoteBlocks, s.requireAuth)
 		api.POST("/me/blocks/remote", s.handleBlockRemoteActor, s.requireAuth)
 		api.DELETE("/me/blocks/remote", s.handleUnblockRemoteActor, s.requireAuth)
