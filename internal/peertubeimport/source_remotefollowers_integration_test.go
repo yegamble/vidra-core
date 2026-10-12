@@ -12,6 +12,8 @@ import (
 // The remote-follower read returns accepted follows of local channels AND
 // accounts by remote actors, and nothing else: not a local subscription, not a
 // pending follow, not another instance following the source's server actor.
+// It carries IDs only — never the source's copy of the follower's endpoints or
+// key (the fixture's actor 5 has a publicKey; nothing returns it).
 // Both actor-link layouts (account/channel → actor, and the 1040 actor → owner
 // columns) read the same rows.
 func TestPeerTubeSourceRemoteFollowers(t *testing.T) {
@@ -24,10 +26,8 @@ func TestPeerTubeSourceRemoteFollowers(t *testing.T) {
 	src, _ := newScratchDB(t, ctx, base)
 	seedPeerTube(t, ctx, src, "x", secretPrivKeyAlice)
 	for _, s := range []string{
-		`INSERT INTO server (id,host) VALUES (1,'remote.example')`,
 		`UPDATE actor SET url='https://pt.example/video-channels/alice_channel' WHERE id=2`,
-		`UPDATE actor SET url='https://remote.example/accounts/remote', "inboxUrl"='https://remote.example/accounts/remote/inbox',
-			"sharedInboxUrl"='https://remote.example/inbox', "followersUrl"='https://remote.example/accounts/remote/followers' WHERE id=5`,
+		`UPDATE actor SET url='https://remote.example/accounts/remote' WHERE id=5`,
 		// The source's own server actor: an Application whose account has no user.
 		`INSERT INTO actor (id,type,"preferredUsername",url,"serverId") VALUES (30,'Application','peertube','https://pt.example/accounts/peertube',NULL)`,
 		`INSERT INTO account (id,name,"userId","actorId") VALUES (30,'peertube',NULL,30)`,
@@ -49,10 +49,7 @@ func TestPeerTubeSourceRemoteFollowers(t *testing.T) {
 			t.Fatalf("%s: read %d follows, want 2 (channel + account): %+v", layout, len(got), got)
 		}
 		want := SourceRemoteFollower{ChannelID: 1, TargetURL: "https://pt.example/video-channels/alice_channel",
-			FollowURL: "https://remote.example/follows/20", ActorURL: "https://remote.example/accounts/remote",
-			ActorType: "Person", PreferredUsername: "remote", Host: "remote.example",
-			InboxURL: "https://remote.example/accounts/remote/inbox", SharedInboxURL: "https://remote.example/inbox",
-			FollowersURL: "https://remote.example/accounts/remote/followers", PublicKeyPEM: "PUBKEY-R"}
+			FollowURL: "https://remote.example/follows/20", ActorURL: "https://remote.example/accounts/remote"}
 		if got[0] != want {
 			t.Errorf("%s: channel follow = %+v, want %+v", layout, got[0], want)
 		}

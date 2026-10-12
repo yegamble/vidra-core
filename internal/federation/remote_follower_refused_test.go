@@ -55,3 +55,43 @@ func TestRemoteFollowerRefused(t *testing.T) {
 		}
 	}
 }
+
+// The importer's resolver is federation's own: it fetches an uncached actor
+// through the SSRF guard (refusing a loopback origin unless allowed), caches the
+// document's inbox and key, and answers a second call from the cache.
+func TestResolveRemoteActorFetchesThroughTheGuard(t *testing.T) {
+	srv, hits := actorServer(t, mustPEM(t))
+	actor := srv.URL + "/accounts/bob"
+	if _, err := NewService(newRemoteRepo()).ResolveRemoteActor(context.Background(), actor); err == nil || *hits != 0 {
+		t.Fatalf("guarded resolve of a loopback actor: err %v, %d fetches; want refused unfetched", err, *hits)
+	}
+	repo := newRemoteRepo()
+	svc := NewService(repo, WithAllowPrivateFetch(true))
+	for i := 0; i < 2; i++ {
+		ra, err := svc.ResolveRemoteActor(context.Background(), actor)
+		if err != nil || ra.InboxUrl != actor+"/inbox" || ra.PublicKeyPem == "" {
+			t.Fatalf("resolve %d = %+v, %v", i, ra, err)
+		}
+	}
+	if *hits != 1 {
+		t.Errorf("origin fetched %d times, want 1 (then cached)", *hits)
+	}
+}
+
+func TestInboxesOnActorHost(t *testing.T) {
+	str := func(s string) *string { return &s }
+	for name, tc := range map[string]struct {
+		ra   sqlcgen.RemoteActor
+		want bool
+	}{
+		"both on the actor's host": {sqlcgen.RemoteActor{ActorUrl: "https://a.example/u/x", InboxUrl: "https://a.example/u/x/inbox", SharedInboxUrl: str("https://A.example/inbox")}, true},
+		"no shared inbox":          {sqlcgen.RemoteActor{ActorUrl: "https://a.example/u/x", InboxUrl: "https://a.example/u/x/inbox"}, true},
+		"inbox elsewhere":          {sqlcgen.RemoteActor{ActorUrl: "https://a.example/u/x", InboxUrl: "https://victim.example/inbox"}, false},
+		"shared inbox elsewhere":   {sqlcgen.RemoteActor{ActorUrl: "https://a.example/u/x", InboxUrl: "https://a.example/i", SharedInboxUrl: str("https://victim.example/inbox")}, false},
+		"no inbox":                 {sqlcgen.RemoteActor{ActorUrl: "https://a.example/u/x"}, false},
+	} {
+		if got := InboxesOnActorHost(tc.ra); got != tc.want {
+			t.Errorf("%s: InboxesOnActorHost = %v, want %v", name, got, tc.want)
+		}
+	}
+}
