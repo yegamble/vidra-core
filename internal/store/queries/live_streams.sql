@@ -82,14 +82,19 @@ WHERE ls.state = 'live' AND ls.privacy = 'public'
 -- rather than vanishing; after that the announcement is stale and drops out
 -- (the row is not touched — the owner can still edit or clear it).
 --
--- Same visibility as the "Live now" rail above: privacy = 'public' only, and the
--- per-viewer mute/block clause verbatim. channel_handle is an optional filter
+-- Same visibility as every other public discovery surface: privacy = 'public'
+-- only, an ACTIVE owner who has not opted out of discovery (is_active, NOT
+-- unlisted — the clauses ListPublicVideosSorted and SearchChannels carry), a
+-- stream no moderator terminated, and the per-viewer mute/block clause verbatim. channel_handle is an optional filter
 -- for the channel page (NULL = every channel).
 SELECT ls.id, ls.title, ls.description, ls.scheduled_start_at,
        ch.handle AS channel_handle, ch.display_name AS channel_display_name
 FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
+JOIN users u ON u.id = ch.owner_id
 WHERE ls.state = 'offline' AND ls.privacy = 'public'
+  AND u.is_active = TRUE AND NOT u.unlisted
+  AND ls.termination_reason_code IS NULL
   AND ls.scheduled_start_at IS NOT NULL
   AND ls.scheduled_start_at > now() - interval '1 hour'
   AND (sqlc.narg('channel_handle')::text IS NULL OR ch.handle = sqlc.narg('channel_handle')::text)
@@ -111,7 +116,10 @@ LIMIT sqlc.arg('result_limit') OFFSET sqlc.arg('result_offset');
 SELECT count(*)::bigint
 FROM live_streams ls
 JOIN channels ch ON ch.id = ls.channel_id
+JOIN users u ON u.id = ch.owner_id
 WHERE ls.state = 'offline' AND ls.privacy = 'public'
+  AND u.is_active = TRUE AND NOT u.unlisted
+  AND ls.termination_reason_code IS NULL
   AND ls.scheduled_start_at IS NOT NULL
   AND ls.scheduled_start_at > now() - interval '1 hour'
   AND (sqlc.narg('channel_handle')::text IS NULL OR ch.handle = sqlc.narg('channel_handle')::text)
@@ -134,7 +142,9 @@ UPDATE live_streams SET stream_key_hash = $2, updated_at = now() WHERE id = $1;
 -- stream key or live state.
 UPDATE live_streams
 SET title = $2, description = $3, privacy = $4, permanent = $5, replay_enabled = $6,
-    scheduled_start_at = sqlc.narg('scheduled_start_at'), updated_at = now()
+    -- A stream that went live after the caller's check cannot be announced.
+    scheduled_start_at = CASE WHEN state = 'live' THEN NULL ELSE sqlc.narg('scheduled_start_at')::timestamptz END,
+    updated_at = now()
 WHERE id = $1
 RETURNING id, channel_id, title, description, privacy, state, permanent, replay_enabled, started_at, created_at, updated_at, scheduled_start_at;
 
@@ -224,6 +234,7 @@ DELETE FROM live_streams WHERE id = $1;
 UPDATE live_streams
 SET state = $2,
     started_at = NULL,
+    scheduled_start_at = NULL,
     terminated_at = now(),
     terminated_by = sqlc.narg('terminated_by'),
     termination_reason_code = sqlc.narg('termination_reason_code'),

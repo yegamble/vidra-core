@@ -148,3 +148,17 @@ func readLive(t *testing.T, srv *Server, id, tok string) liveStreamView {
 	_ = json.Unmarshal(getWithAuth(srv, "/api/v1/live/"+id, tok).Body.Bytes(), &v)
 	return v
 }
+
+// TestLiveUpcomingFollowsTheLiveToggle: with live switched off the public list
+// is empty (200), never a rail of announcements nobody can keep.
+func TestLiveUpcomingFollowsTheLiveToggle(t *testing.T) {
+	cfg := testConfig()
+	cfg.LiveEnabled = false
+	srv := videoServerCfg(t, cfg)
+	rec := getWithAuth(srv, "/api/v1/live/upcoming", "")
+	var body liveUpcomingListResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if rec.Code != http.StatusOK || len(body.LiveStreams) != 0 || body.Total != 0 {
+		t.Fatalf("upcoming with live off = %d %s, want an empty 200", rec.Code, rec.Body.String())
+	}
+}

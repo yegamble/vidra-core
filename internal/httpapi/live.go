@@ -302,6 +302,11 @@ type liveUpcomingListResponse struct {
 // out for the muter. Like its sibling it is not gated on the live toggle.
 func (s *Server) handleListUpcomingLiveStreams(c echo.Context) error {
 	page := parsePage(c, defaultLivePublicLimit, maxLivePublicLimit)
+	// With live switched off an announcement is a promise nobody can keep, so the
+	// list is empty rather than 403 (it is a public read, like "Live now").
+	if !s.liveEnabled() {
+		return c.JSON(http.StatusOK, liveUpcomingListResponse{LiveStreams: []liveUpcomingCardView{}, pageMeta: page.meta(0)})
+	}
 	viewerID, _, viewerAuthed := principalFromContext(c)
 	cards, total, err := s.livesvc.ListUpcoming(c.Request().Context(), viewerID, viewerAuthed,
 		strings.TrimSpace(c.QueryParam("channel")), page.Limit, page.Offset)

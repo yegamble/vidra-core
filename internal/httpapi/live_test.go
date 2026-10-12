@@ -169,6 +169,9 @@ func (f *liveFakeRepo) UpdateLiveStream(_ context.Context, a sqlcgen.UpdateLiveS
 	}
 	r.Title, r.Description, r.Privacy, r.Permanent, r.ReplayEnabled = a.Title, a.Description, a.Privacy, a.Permanent, a.ReplayEnabled
 	r.ScheduledStartAt = a.ScheduledStartAt
+	if r.State == "live" { // mirrors the SQL guard: a live stream cannot be announced
+		r.ScheduledStartAt = pgtype.Timestamptz{}
+	}
 	r.UpdatedAt = time.Now()
 	f.rows[a.ID] = r
 	return sqlcgen.UpdateLiveStreamRow{
@@ -253,6 +256,7 @@ func (f *liveFakeRepo) TerminateLiveStream(_ context.Context, a sqlcgen.Terminat
 	}
 	r.State = a.State
 	r.StartedAt = pgtype.Timestamptz{}
+	r.ScheduledStartAt = pgtype.Timestamptz{} // termination clears the announcement
 	f.rows[a.ID] = r
 	f.terminatedAt[a.ID] = time.Now()
 	f.termination[a.ID] = a

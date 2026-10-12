@@ -67,6 +67,36 @@ func TestLiveScheduleQueries(t *testing.T) {
 	_ = mk("private", "private", at(time.Hour))
 	_ = mk("unscheduled", "public", pgtype.Timestamptz{})
 	golive := mk("golive", "public", at(time.Hour))
+	modTerm := mk("mod-terminated", "public", at(time.Hour))
+	ownerEnded := mk("owner-ended", "public", at(time.Hour))
+	// A moderator termination clears the schedule AND leaves a reason code, so the
+	// row can never be re-announced by a stale client; an owner's own end stays
+	// eligible (only a person-ended-by-staff stream is withheld).
+	code := "policy_violation"
+	if err := q.TerminateLiveStream(ctx, sqlcgen.TerminateLiveStreamParams{ID: modTerm.ID, State: "offline", TerminationReasonCode: &code}); err != nil {
+		t.Fatalf("terminate: %v", err)
+	}
+	if got, _ := q.GetLiveStreamByID(ctx, modTerm.ID); got.ScheduledStartAt.Valid {
+		t.Fatal("moderator termination left the schedule in place")
+	}
+	if err := q.TerminateLiveStream(ctx, sqlcgen.TerminateLiveStreamParams{ID: ownerEnded.ID, State: "offline"}); err != nil {
+		t.Fatalf("owner end: %v", err)
+	}
+	if _, err := q.UpdateLiveStream(ctx, sqlcgen.UpdateLiveStreamParams{ID: ownerEnded.ID, Title: "owner-ended", Privacy: "public", ScheduledStartAt: at(5 * time.Hour)}); err != nil {
+		t.Fatalf("reschedule after owner end: %v", err)
+	}
+	// A moderator-terminated stream that is somehow re-scheduled stays off the rail.
+	if _, err := q.UpdateLiveStream(ctx, sqlcgen.UpdateLiveStreamParams{ID: modTerm.ID, Title: "mod-terminated", Privacy: "public", ScheduledStartAt: at(5 * time.Hour)}); err != nil {
+		t.Fatalf("reschedule mod-terminated: %v", err)
+	}
+	// A stream already live cannot be announced: the UPDATE itself refuses.
+	liveNow := mk("live-now", "public", pgtype.Timestamptz{})
+	if err := q.SetLiveStreamState(ctx, sqlcgen.SetLiveStreamStateParams{ID: liveNow.ID, State: "live"}); err != nil {
+		t.Fatalf("live: %v", err)
+	}
+	if r, err := q.UpdateLiveStream(ctx, sqlcgen.UpdateLiveStreamParams{ID: liveNow.ID, Title: "live-now", Privacy: "public", ScheduledStartAt: at(time.Hour)}); err != nil || r.ScheduledStartAt.Valid {
+		t.Fatalf("scheduling a live stream = (%+v, %v), want the schedule dropped", r.ScheduledStartAt, err)
+	}
 
 	list := func(viewerID pgtype.UUID) []string {
 		h := handle
@@ -98,7 +128,7 @@ func TestLiveScheduleQueries(t *testing.T) {
 		}
 	}
 	anon := pgtype.UUID{}
-	eq(list(anon), "late-by-10m", "golive", "soon", "later")
+	eq(list(anon), "late-by-10m", "golive", "soon", "owner-ended", "later")
 
 	// Another channel's handle filter excludes everything.
 	other := "nobody-" + suffix
@@ -106,17 +136,31 @@ func TestLiveScheduleQueries(t *testing.T) {
 		t.Fatalf("filter by another channel = (%d, %v), want 0", len(rows), err)
 	}
 
+	// The owner's account state gates the rail exactly as it gates every other
+	// public surface: unlisted (discovery opt-out) and deactivated both hide it,
+	// and restoring the account restores it.
+	for _, col := range []string{"unlisted = TRUE", "is_active = FALSE"} {
+		if _, err := st.Pool.Exec(ctx, `UPDATE users SET `+col+` WHERE id = $1`, owner); err != nil {
+			t.Fatalf("set %s: %v", col, err)
+		}
+		eq(list(anon))
+		if _, err := st.Pool.Exec(ctx, `UPDATE users SET unlisted = FALSE, is_active = TRUE WHERE id = $1`, owner); err != nil {
+			t.Fatalf("restore: %v", err)
+		}
+	}
+	eq(list(anon), "late-by-10m", "golive", "soon", "owner-ended", "later")
+
 	// Mute drops the owner's streams for the muter only; lifting restores them.
 	v := pgtype.UUID{Bytes: viewer, Valid: true}
 	if _, err := st.Pool.Exec(ctx, `INSERT INTO muted_accounts (muter_id, muted_id) VALUES ($1, $2)`, viewer, owner); err != nil {
 		t.Fatalf("mute: %v", err)
 	}
 	eq(list(v))
-	eq(list(anon), "late-by-10m", "golive", "soon", "later")
+	eq(list(anon), "late-by-10m", "golive", "soon", "owner-ended", "later")
 	if _, err := st.Pool.Exec(ctx, `DELETE FROM muted_accounts WHERE muter_id = $1`, viewer); err != nil {
 		t.Fatalf("unmute: %v", err)
 	}
-	eq(list(v), "late-by-10m", "golive", "soon", "later")
+	eq(list(v), "late-by-10m", "golive", "soon", "owner-ended", "later")
 
 	// Going live consumes the schedule (and the stream leaves the Upcoming list).
 	if err := q.SetLiveStreamState(ctx, sqlcgen.SetLiveStreamStateParams{ID: golive.ID, State: "live"}); err != nil {
@@ -125,18 +169,18 @@ func TestLiveScheduleQueries(t *testing.T) {
 	if got, err := q.GetLiveStreamByID(ctx, golive.ID); err != nil || got.ScheduledStartAt.Valid {
 		t.Fatalf("after go-live = (%+v, %v), want schedule cleared", got.ScheduledStartAt, err)
 	}
-	eq(list(anon), "late-by-10m", "soon", "later")
+	eq(list(anon), "late-by-10m", "soon", "owner-ended", "later")
 
 	// An edit REPLACES the planned start: new value sticks, NULL clears.
 	upd := sqlcgen.UpdateLiveStreamParams{ID: soon.ID, Title: "soon", Privacy: "public", ScheduledStartAt: at(72 * time.Hour)}
 	if r, err := q.UpdateLiveStream(ctx, upd); err != nil || !r.ScheduledStartAt.Valid {
 		t.Fatalf("update with start = (%+v, %v)", r, err)
 	}
-	eq(list(anon), "late-by-10m", "later", "soon")
+	eq(list(anon), "late-by-10m", "owner-ended", "later", "soon")
 	upd.ScheduledStartAt = pgtype.Timestamptz{}
 	if r, err := q.UpdateLiveStream(ctx, upd); err != nil || r.ScheduledStartAt.Valid {
 		t.Fatalf("update clearing start = (%+v, %v)", r, err)
 	}
-	eq(list(anon), "late-by-10m", "later")
+	eq(list(anon), "late-by-10m", "owner-ended", "later")
 	_, _ = later, late
 }
