@@ -751,6 +751,42 @@ func (f *videoFakeRepo) ListPublicVideosByChannel(_ context.Context, a sqlcgen.L
 	return pageRows(out, a.ResultLimit, a.ResultOffset), nil
 }
 
+// ListPublicVideosByOwner mirrors the account-scoped twin of the channel query:
+// the same predicates as ListPublicVideosByChannel, scoped by channel owner.
+func (f *videoFakeRepo) ListPublicVideosByOwner(ctx context.Context, a sqlcgen.ListPublicVideosByOwnerParams) ([]sqlcgen.ListPublicVideosByOwnerRow, error) {
+	var out []sqlcgen.ListPublicVideosByOwnerRow
+	for _, r := range f.videos {
+		if r.OwnerID != a.OwnerID {
+			continue
+		}
+		rows, err := f.ListPublicVideosByChannel(ctx, sqlcgen.ListPublicVideosByChannelParams{
+			ChannelID: r.ChannelID, ViewerID: a.ViewerID, HideSensitive: a.HideSensitive, ResultLimit: 1 << 30,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if row.ID == r.ID {
+				out = append(out, sqlcgen.ListPublicVideosByOwnerRow(row))
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if a.Sort == "published_at" {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return pageRows(out, a.ResultLimit, a.ResultOffset), nil
+}
+
+func (f *videoFakeRepo) CountPublicVideosByOwnerVisible(ctx context.Context, a sqlcgen.CountPublicVideosByOwnerVisibleParams) (int64, error) {
+	rows, err := f.ListPublicVideosByOwner(ctx, sqlcgen.ListPublicVideosByOwnerParams{
+		OwnerID: a.OwnerID, ViewerID: a.ViewerID, HideSensitive: a.HideSensitive, ResultLimit: 1 << 30,
+	})
+	return int64(len(rows)), err
+}
+
 func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoParams) (sqlcgen.Video, error) {
 	r, ok := f.videos[a.ID]
 	if !ok {

@@ -154,6 +154,8 @@ type Repository interface {
 	ListPublicVideosByChannel(ctx context.Context, arg sqlcgen.ListPublicVideosByChannelParams) ([]sqlcgen.ListPublicVideosByChannelRow, error)
 	ListDownloadEnabledVideoIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
 	CountPublicVideosByChannelVisible(ctx context.Context, arg sqlcgen.CountPublicVideosByChannelVisibleParams) (int64, error)
+	ListPublicVideosByOwner(ctx context.Context, arg sqlcgen.ListPublicVideosByOwnerParams) ([]sqlcgen.ListPublicVideosByOwnerRow, error)
+	CountPublicVideosByOwnerVisible(ctx context.Context, arg sqlcgen.CountPublicVideosByOwnerVisibleParams) (int64, error)
 	ListPublicVideosSorted(ctx context.Context, arg sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error)
 	CountPublicVideosSorted(ctx context.Context, arg sqlcgen.CountPublicVideosSortedParams) (int64, error)
 	ListSubscriptionVideos(ctx context.Context, arg sqlcgen.ListSubscriptionVideosParams) ([]sqlcgen.ListSubscriptionVideosRow, error)
@@ -2462,6 +2464,38 @@ func (s *Service) ListPublicByChannel(ctx context.Context, channelID uuid.UUID, 
 	}
 	total, err := s.repo.CountPublicVideosByChannelVisible(ctx, sqlcgen.CountPublicVideosByChannelVisibleParams{
 		ChannelID: channelID, ViewerID: viewer, HideSensitive: hideSensitive,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	items := make([]FeedItem, 0, len(rows))
+	for _, r := range rows {
+		it := newFeedItem(r.ID, r.ChannelID, r.Title, r.Description, r.Privacy, r.State, r.CreatedAt, r.UpdatedAt, r.Views, r.HasThumbnail, r.ChannelHandle, r.ChannelDisplayName, r.DurationSeconds, r.IsSensitive, r.SensitiveReason, r.ShortCode)
+		it.AuthorDisplayName = r.AuthorDisplayName
+		items = append(items, it)
+	}
+	return items, total, nil
+}
+
+// ListPublicByOwner lists an account's public, published videos across all of
+// its channels (the profile Videos tab) with the same visibility filters as
+// ListPublicByChannel: no private/unlisted/blocked/quarantined/unpublished
+// video, the per-viewer mute/block clause, and sensitive-content hiding.
+func (s *Service) ListPublicByOwner(ctx context.Context, ownerID uuid.UUID, viewerID uuid.UUID, viewerAuthed bool, hideSensitive bool, sort string, limit, offset int32) ([]FeedItem, int64, error) {
+	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
+	rows, err := s.repo.ListPublicVideosByOwner(ctx, sqlcgen.ListPublicVideosByOwnerParams{
+		OwnerID:       ownerID,
+		ViewerID:      viewer,
+		HideSensitive: hideSensitive,
+		Sort:          NormalizeChannelSort(sort),
+		ResultLimit:   limit,
+		ResultOffset:  offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.CountPublicVideosByOwnerVisible(ctx, sqlcgen.CountPublicVideosByOwnerVisibleParams{
+		OwnerID: ownerID, ViewerID: viewer, HideSensitive: hideSensitive,
 	})
 	if err != nil {
 		return nil, 0, err

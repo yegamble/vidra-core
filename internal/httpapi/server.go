@@ -1733,6 +1733,9 @@ func (s *Server) routes() {
 		api.GET("/search/channels", s.handleSearchChannels, s.optionalAuth)
 		if s.authsvc != nil {
 			api.GET("/users/:username/profile", s.handleGetUserProfile, s.optionalAuth)
+			if s.videosvc != nil {
+				api.GET("/users/:username/videos", s.handleListUserVideos, s.optionalAuth)
+			}
 			// Account search. Mounted with the profile endpoint on purpose: they
 			// share one visibility rule, and the list must never outlive the
 			// single lookup's gate.
