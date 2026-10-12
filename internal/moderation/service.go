@@ -73,6 +73,11 @@ type Repository interface {
 	UnblockRemoteVideo(ctx context.Context, remoteVideoID uuid.UUID) (int64, error)
 	ListBlockedRemoteVideos(ctx context.Context, arg sqlcgen.ListBlockedRemoteVideosParams) ([]sqlcgen.ListBlockedRemoteVideosRow, error)
 	CountBlockedRemoteVideos(ctx context.Context) (int64, error)
+	// Report message threads (0163).
+	GetReportReporterID(ctx context.Context, id uuid.UUID) (pgtype.UUID, error)
+	CreateReportMessage(ctx context.Context, arg sqlcgen.CreateReportMessageParams) (sqlcgen.CreateReportMessageRow, error)
+	ListReportMessages(ctx context.Context, arg sqlcgen.ListReportMessagesParams) ([]sqlcgen.ListReportMessagesRow, error)
+	CountReportMessages(ctx context.Context, reportID uuid.UUID) (int64, error)
 }
 
 // Service holds the moderation application logic.

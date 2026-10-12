@@ -46,7 +46,8 @@ type fakeRepo struct {
 	remoteVideoErr   error // returned by the remote-video writes when set (e.g. a FK violation)
 	remoteBlocked    map[uuid.UUID]string
 	remoteBlockOrder []uuid.UUID
-	flagMissing      bool // CreateRemoteFlagReport answers a FK violation
+	flagMissing      bool          // CreateRemoteFlagReport answers a FK violation
+	messages         []fakeMessage // report_messages (0163), insertion order
 }
 
 func (f *fakeRepo) CreateVideoReport(_ context.Context, a sqlcgen.CreateVideoReportParams) (uuid.UUID, error) {

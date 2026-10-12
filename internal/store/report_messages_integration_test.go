@@ -1,0 +1,214 @@
+//go:build integration
+
+// Integration test for report message threads and their notification fan-out
+// (migration 0163). Every who-is-told rule lives in SQL, so it is proved here
+// on real PostgreSQL. The DB is shared with sibling tests that leave staff
+// behind, so membership is asserted only over this test's own seeded users.
+package store
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+)
+
+func TestReportMessageFanOutOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suffix := uuid.NewString()[:8]
+	var seeded []uuid.UUID
+	mkUser := func(name, role string) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO users (username, email, password_hash, role) VALUES ($1, $2, 'x', $3) RETURNING id`,
+			name+"-"+suffix, name+"-"+suffix+"@example.test", role,
+		).Scan(&id); err != nil {
+			t.Fatalf("seed user %s: %v", name, err)
+		}
+		t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id) })
+		seeded = append(seeded, id)
+		return id
+	}
+	reporter := mkUser("rm-reporter", "user")
+	admin := mkUser("rm-admin", "admin")
+	mod := mkUser("rm-mod", "moderator")
+	plain := mkUser("rm-user", "user")
+	inactive := mkUser("rm-inactive", "admin")
+	deleted := mkUser("rm-deleted", "moderator")
+	prefOff := mkUser("rm-prefoff", "moderator")
+	if _, err := st.Pool.Exec(ctx, `UPDATE users SET is_active = FALSE WHERE id = $1`, inactive); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Pool.Exec(ctx, `UPDATE users SET deleted_at = now() WHERE id = $1`, deleted); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.UpsertNotificationPref(ctx, sqlcgen.UpsertNotificationPrefParams{UserID: prefOff, Type: "report_message", Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+
+	reportID, err := q.CreateAccountReport(ctx, sqlcgen.CreateAccountReportParams{
+		ReporterID: reporter, ReportedUserID: pgtype.UUID{Bytes: plain, Valid: true},
+		Reason: "seeded by TestReportMessageFanOutOnRealPG",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccountReport: %v", err)
+	}
+	if got, err := q.GetReportReporterID(ctx, reportID); err != nil || uuid.UUID(got.Bytes) != reporter {
+		t.Fatalf("GetReportReporterID = %v, %v; want the reporter", got, err)
+	}
+
+	post := func(author uuid.UUID, byModerator bool, body string) uuid.UUID {
+		t.Helper()
+		row, err := q.CreateReportMessage(ctx, sqlcgen.CreateReportMessageParams{
+			ReportID: reportID, AuthorID: author, IsModerator: byModerator, Body: body})
+		if err != nil {
+			t.Fatalf("CreateReportMessage: %v", err)
+		}
+		return row.ID
+	}
+	// told returns which seeded users hold a report_message notification for
+	// msg, with the actor each one carries.
+	told := func(msg uuid.UUID) map[uuid.UUID]pgtype.UUID {
+		t.Helper()
+		rows, err := st.Pool.Query(ctx,
+			`SELECT user_id, actor_id FROM notifications
+			  WHERE type = 'report_message' AND report_message_id = $1 AND report_id = $2 AND user_id = ANY($3)`,
+			msg, reportID, seeded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		got := map[uuid.UUID]pgtype.UUID{}
+		for rows.Next() {
+			var id uuid.UUID
+			var actor pgtype.UUID
+			if err := rows.Scan(&id, &actor); err != nil {
+				t.Fatal(err)
+			}
+			got[id] = actor
+		}
+		return got
+	}
+
+	// The reporter writes: the active, opted-in staff are told, with the
+	// reporter as the actor; nobody else, and never the author.
+	fromReporter := post(reporter, false, "here is more context")
+	if _, err := q.NotifyReportMessage(ctx, fromReporter); err != nil {
+		t.Fatalf("NotifyReportMessage: %v", err)
+	}
+	got := told(fromReporter)
+	if len(got) != 2 || uuid.UUID(got[admin].Bytes) != reporter || uuid.UUID(got[mod].Bytes) != reporter {
+		t.Errorf("reporter message told %v, want exactly admin + moderator with the reporter as actor", got)
+	}
+	if n, err := q.NotifyReportMessage(ctx, fromReporter); err != nil || n != 0 {
+		t.Errorf("repeat fan-out inserted %d, %v; want 0 (idempotent per message)", n, err)
+	}
+
+	// A moderator writes: only the reporter is told, and no actor names the
+	// moderator; the other staff are not told about a staff message.
+	fromMod := post(mod, true, "which video?")
+	if _, err := q.NotifyReportMessage(ctx, fromMod); err != nil {
+		t.Fatalf("NotifyReportMessage: %v", err)
+	}
+	got = told(fromMod)
+	if actor, ok := got[reporter]; len(got) != 1 || !ok || actor.Valid {
+		t.Errorf("moderator message told %v, want only the reporter, with no actor", got)
+	}
+
+	// A reporter who turned report_message off hears nothing.
+	if err := q.UpsertNotificationPref(ctx, sqlcgen.UpsertNotificationPrefParams{UserID: reporter, Type: "report_message", Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	quiet := post(admin, true, "anything else?")
+	if n, err := q.NotifyReportMessage(ctx, quiet); err != nil || len(told(quiet)) != 0 {
+		t.Errorf("opted-out reporter fan-out = %d, %v, told %v; want nobody", n, err, told(quiet))
+	}
+
+	// The thread reads back oldest first with each author's username; the
+	// count agrees with the list.
+	msgs, err := q.ListReportMessages(ctx, sqlcgen.ListReportMessagesParams{ReportID: reportID, ResultLimit: 10})
+	if err != nil || len(msgs) != 3 {
+		t.Fatalf("ListReportMessages = %d, %v; want 3", len(msgs), err)
+	}
+	if msgs[0].ID != fromReporter || msgs[0].IsModerator || msgs[1].ID != fromMod || !msgs[1].IsModerator ||
+		!strings.HasPrefix(msgs[1].AuthorUsername, "rm-mod-") {
+		t.Errorf("thread = %+v, want reporter then moderator, oldest first, with usernames", msgs)
+	}
+	if n, err := q.CountReportMessages(ctx, reportID); err != nil || n != 3 {
+		t.Errorf("CountReportMessages = %d, %v; want 3", n, err)
+	}
+
+	// The body is bounded in the database, not just the handler.
+	_, err = q.CreateReportMessage(ctx, sqlcgen.CreateReportMessageParams{
+		ReportID: reportID, AuthorID: reporter, Body: strings.Repeat("x", 3001)})
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Errorf("3001-char body err = %v, want a CHECK violation", err)
+	}
+
+	// A departed moderator's message stays in the thread, authorless.
+	if _, err := st.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, mod); err != nil {
+		t.Fatal(err)
+	}
+	if msgs, err := q.ListReportMessages(ctx, sqlcgen.ListReportMessagesParams{ReportID: reportID, ResultLimit: 10}); err != nil ||
+		len(msgs) != 3 || msgs[1].AuthorID.Valid || msgs[1].AuthorUsername != "" {
+		t.Errorf("after the author's deletion thread = %+v, %v; want the message kept with no author", msgs, err)
+	}
+}
+
+// A remote Flag report has no local reporter: a moderator's message on it (the
+// handler refuses to write one; this proves the fan-out would not misdeliver
+// even if a row existed) tells nobody.
+func TestReportMessageFanOutRemoteReportOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	_, channelID := seedOwnerChannel(ctx, t, st, "rmflag")
+	videoID := seedPublishedVideo(ctx, t, st, channelID, "flagged")
+	staff, _ := seedOwnerChannel(ctx, t, st, "rmflagstaff")
+	if _, err := st.Pool.Exec(ctx, `UPDATE users SET role = 'admin' WHERE id = $1`, staff); err != nil {
+		t.Fatal(err)
+	}
+	reportID, err := q.CreateRemoteFlagReport(ctx, sqlcgen.CreateRemoteFlagReportParams{
+		TargetType: "video", VideoID: pgtype.UUID{Bytes: videoID, Valid: true}, Reason: "spam",
+		ActorUrl: "https://pt.example/accounts/peertube", Domain: "pt.example",
+		FlagActivityID: "https://pt.example/admin/abuses/" + uuid.NewString(),
+	})
+	if err != nil {
+		t.Fatalf("CreateRemoteFlagReport: %v", err)
+	}
+	if got, err := q.GetReportReporterID(ctx, reportID); err != nil || got.Valid {
+		t.Fatalf("GetReportReporterID(remote) = %v, %v; want NULL", got, err)
+	}
+	row, err := q.CreateReportMessage(ctx, sqlcgen.CreateReportMessageParams{
+		ReportID: reportID, AuthorID: staff, IsModerator: true, Body: "hello?"})
+	if err != nil {
+		t.Fatalf("CreateReportMessage: %v", err)
+	}
+	if n, err := q.NotifyReportMessage(ctx, row.ID); err != nil || n != 0 {
+		t.Errorf("remote-report fan-out = %d, %v; want 0 (no local reporter)", n, err)
+	}
+}
