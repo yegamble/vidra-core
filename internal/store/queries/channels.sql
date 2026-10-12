@@ -1,20 +1,20 @@
 -- name: CreateChannel :one
 INSERT INTO channels (owner_id, handle, display_name, description)
 VALUES ($1, $2, $3, $4)
-RETURNING id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled;
+RETURNING id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled, support;
 
 -- name: GetChannelByID :one
-SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled
+SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled, support
 FROM channels
 WHERE id = $1;
 
 -- name: GetChannelByHandle :one
-SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled
+SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled, support
 FROM channels
 WHERE lower(handle) = lower($1);
 
 -- name: ListChannelsByOwner :many
-SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled
+SELECT id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled, support
 FROM channels
 WHERE owner_id = $1
 ORDER BY created_at;
@@ -80,9 +80,11 @@ SET display_name        = COALESCE(sqlc.narg('display_name'), display_name),
     description         = COALESCE(sqlc.narg('description'), description),
     activitypub_enabled = COALESCE(sqlc.narg('activitypub_enabled'), activitypub_enabled),
     atproto_enabled     = COALESCE(sqlc.narg('atproto_enabled'), atproto_enabled),
+    -- support (0159): NULL leaves it; '' clears it to NULL (the column's "unset").
+    support             = CASE WHEN sqlc.narg('support')::text IS NULL THEN support ELSE NULLIF(sqlc.narg('support')::text, '') END,
     updated_at          = now()
 WHERE id = sqlc.arg('id')
-RETURNING id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled;
+RETURNING id, owner_id, handle, display_name, description, created_at, updated_at, activitypub_enabled, atproto_enabled, support;
 
 -- name: DeleteChannel :exec
 DELETE FROM channels WHERE id = $1;
