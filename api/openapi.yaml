@@ -7746,14 +7746,15 @@ paths:
         Posting requires the instance-wide comments_enabled setting AND the
         video's comments_policy to not be "disabled" (403 feature_disabled
         otherwise, config-parity W9); reading comments stays open either way.
-        On a "requires_approval" video a comment from anyone but the video's
-        reviewers (owner, editor members, staff) is held (held_for_review):
-        visible only to its author and the reviewers, not federated, and not
-        announced until approved; a held parent is a 422 like an unknown one.
-        Best-effort notifications follow a PUBLISHED comment: the video's
-        owner gets "comment", and when parent_id names another user's comment
-        its author gets "comment_reply" (an owner who is both gets
-        comment_reply only).
+        Best-effort notifications follow: the video's owner gets a "comment"
+        notification, and when parent_id names another user's comment its
+        author gets a "comment_reply" one. A user who is both (the owner
+        replying under their own video) receives comment_reply only — one
+        reply, one notification.
+        On a "requires_approval" video a non-reviewer's comment is held
+        (held_for_review): seen only by its author and the reviewers, not
+        federated, and announcing nothing (comment, comment_reply, mentions)
+        until approved; a held parent is a 422 like an unknown one.
       tags: [comments]
       security:
         - bearerAuth: []

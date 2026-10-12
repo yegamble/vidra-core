@@ -233,8 +233,7 @@ func (s *Server) handleCreateComment(c echo.Context) error {
 	return c.JSON(http.StatusCreated, newCommentView(created, author.Username, author.DisplayName))
 }
 
-// notifyCommentPublished raises a comment's notifications once it is public (on
-// create, or on approval — 0161; ownerKnows: the owner approved it). Best-effort.
+// notifyCommentPublished: a comment's notifications once public (create/approve, 0161).
 func (s *Server) notifyCommentPublished(ctx context.Context, authorID, commentID uuid.UUID, body string, ownerID uuid.UUID, ownerKnows bool) {
 	// Tell the PARENT COMMENT'S AUTHOR that they were replied to (best-effort).
 	// This is a different recipient from the video owner below: the person being
@@ -268,7 +267,6 @@ func (s *Server) notifyCommentPublished(ctx context.Context, authorID, commentID
 	// Tell the local accounts @-mentioned in the body (best-effort). Runs after
 	// the two notifications above on purpose: the fan-out skips anyone already
 	// told about this comment, so a reply to the owner stays one notification.
-	// Like them it waits until the comment is public (0161).
 	s.notifyCommentMentions(ctx, commentID, body)
 }
 
@@ -325,8 +323,7 @@ func (s *Server) handleListComments(c echo.Context) error {
 }
 
 // handleDeleteComment removes a comment. Behind requireAuth. The comment's author
-// may always delete it; a moderator/admin may delete anyone's; the video's
-// reviewers may delete (reject) a held one.
+// may always delete it; a moderator/admin may delete anyone's.
 func (s *Server) handleDeleteComment(c echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {
@@ -337,8 +334,7 @@ func (s *Server) handleDeleteComment(c echo.Context) error {
 		return err
 	}
 	ctx := c.Request().Context()
-	// Rejecting someone else's HELD comment (0161) is deleting it: reviewers
-	// may, audited like an approval. Published ones stay author/staff-only.
+	// Reviewers reject (delete) someone else's HELD comment (0161), audited.
 	cmt, _, reviewer, ok := s.commentVideo(ctx, userID, role, id)
 	isAuthor := cmt.UserID.Valid && uuid.UUID(cmt.UserID.Bytes) == userID
 	rejecting := ok && cmt.HeldForReview && reviewer && !isAuthor
@@ -434,7 +430,9 @@ func (s *Server) handleUpdateComment(c echo.Context) error {
 	// An edit can add mentions. Re-running the fan-out on the whole body is
 	// safe: notifications_comment_mention_unique_idx makes an already-notified
 	// (comment, user) a no-op, so only NEWLY added mentions notify.
-	s.notifyCommentMentions(ctx, updated.ID, updated.Body)
+	if !updated.HeldForReview { // a held comment's mentions wait for approval (0161)
+		s.notifyCommentMentions(ctx, updated.ID, updated.Body)
+	}
 	// Re-flag the edited body against the moderation watched-words list
 	// (best-effort; an edit can newly introduce a flagged term).
 	if s.watchwordsvc != nil {
@@ -534,9 +532,8 @@ func (s *Server) handleUnheartComment(c echo.Context) error {
 	return s.commentCreatorAction(c, s.commentsvc.Unheart)
 }
 
-// handleApproveComment releases a held comment (0161): reviewers only (403), on
-// THIS video (404). Only the held -> published transition notifies, federates
-// (the create hook) and is audited; a repeat is a silent 200.
+// handleApproveComment releases a held comment (0161): reviewers only, on THIS
+// video. Only the transition notifies, federates and audits; repeats are 200.
 func (s *Server) handleApproveComment(c echo.Context) error {
 	userID, role, err := mustPrincipal(c)
 	if err != nil {

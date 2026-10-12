@@ -640,9 +640,8 @@ type CreateInput struct {
 	PublishAfterTranscode bool
 }
 
-// Per-video comment-policy values (config-parity W9). requires_approval
-// (migration 0161, PeerTube's third tier) accepts comments but holds every one
-// not written by the video's managers or staff until a manager approves it.
+// Per-video comment-policy values (config-parity W9); requires_approval (0161)
+// holds comments from anyone but the video's reviewers until one approves it.
 const (
 	CommentsPolicyEnabled          = "enabled"
 	CommentsPolicyDisabled         = "disabled"
@@ -661,7 +660,7 @@ func IsCommentsPolicy(v string) bool {
 type PublishDefaults struct {
 	Privacy         string // one of public|unlisted|private
 	License         string // taxonomy licence id; "" = no default licence
-	CommentsPolicy  string // one of the CommentsPolicy* values
+	CommentsPolicy  string // CommentsPolicyEnabled | CommentsPolicyDisabled
 	DownloadEnabled bool
 }
 
