@@ -2511,6 +2511,23 @@ func run() error {
 		logger.Info("account export worker started")
 	}
 
+	// Drain the notification email outbox (migration 0157): the emails users
+	// opted into, sent in bounded batches in the background and never from the
+	// request that raised the notification. Always on — the due scan is an index
+	// lookup — and with no mail path the drain drops what is owed unsent. The
+	// dev capture seam wins over the composer, as it does for every message.
+	if runWorkers {
+		var notifMailer notification.EmailSender = smtpMailer
+		if captureMailer != nil {
+			notifMailer = captureMailer
+		}
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		go runNotificationEmailWorker(workerCtx, logger,
+			notification.NewEmailDrain(db.Queries(), notifMailer, mailAvailable, logger))
+		logger.Info("notification email worker started")
+	}
+
 	// Drain the CDN purge queue (migration 0137): retries the invalidations an
 	// edge refused, runs the account-deletion snapshots, and advances the
 	// downloads-revocation walk one page at a time.
@@ -3135,6 +3152,25 @@ func runFederationDeliveryWorker(ctx context.Context, logger *slog.Logger, fedsv
 			Run: func(ctx context.Context, _ time.Time) (int, error) {
 				return fedsvc.DrainDeliveries(ctx, batch)
 			},
+		}},
+	}.Run(ctx, logger)
+}
+
+// runNotificationEmailWorker drains the notification email outbox every 5 s on
+// every instance, whose SKIP LOCKED claims are disjoint. A tick keeps taking
+// bounded batches while they come back full, within a ~4 s budget, so a large
+// fan-out is paced by the relay rather than burst at it or starved by the tick.
+// Per-email failures are retried from the queue; only a claim's own failure
+// reaches the loop.
+func runNotificationEmailWorker(ctx context.Context, logger *slog.Logger, drain *notification.EmailDrain) {
+	jobloop.Loop{
+		Interval: 5 * time.Second,
+		Jitter:   true,
+		Passes: []jobloop.Pass{{
+			FailMsg:   "notification email drain failed",
+			DoneMsg:   "notification emails processed",
+			DoneLevel: slog.LevelDebug,
+			Run:       func(ctx context.Context, _ time.Time) (int, error) { return drain.Drain(ctx) },
 		}},
 	}.Run(ctx, logger)
 }
