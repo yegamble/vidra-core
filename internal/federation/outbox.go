@@ -81,6 +81,61 @@ func (s *Service) UpdateVideo(ctx context.Context, videoID uuid.UUID, wasFederat
 	return s.fanOutToFollowers(ctx, ch.ID, ch.Handle, payload)
 }
 
+// RetractMovedVideo tells the OLD channel's remote followers that a video moved
+// away, with a Delete from the old channel actor. UpdateVideo (the move's
+// metadata Update) reaches only the NEW channel's followers, so a peer following
+// just the old channel would otherwise keep a stale copy that later deletes and
+// privacy changes never reach. Inboxes the new channel's Update already reaches
+// are skipped — a Delete after an Update to the same inbox would remove the
+// video the Update just delivered. No tombstone is recorded: the object id
+// stays live. Nothing was federated unless the video WAS public+published, and
+// an old channel that opted out of ActivityPub never sent it, so both no-op.
+func (s *Service) RetractMovedVideo(ctx context.Context, videoID, oldChannelID uuid.UUID) error {
+	v, newCh, ok, err := s.loadVideoAndChannel(ctx, videoID)
+	if err != nil || !ok {
+		return err
+	}
+	oldCh, err := s.repo.GetChannelByID(ctx, oldChannelID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if !oldCh.ActivitypubEnabled {
+		return nil
+	}
+	// The new channel's followers are covered only when UpdateVideo really sends
+	// an Update to them: AP enabled, public+published, not blocked.
+	covered := map[string]bool{}
+	if newCh.ActivitypubEnabled && !v.Blocked && v.Privacy == "public" && v.State == "published" {
+		newInboxes, lerr := s.repo.ListRemoteFollowerInboxes(ctx, newCh.ID)
+		if lerr != nil {
+			return lerr
+		}
+		for _, in := range newInboxes {
+			covered[in] = true
+		}
+	}
+	oldInboxes, err := s.repo.ListRemoteFollowerInboxes(ctx, oldCh.ID)
+	if err != nil {
+		return err
+	}
+	payload, err := s.buildDeleteVideo(oldCh.Handle, videoID)
+	if err != nil {
+		return err
+	}
+	for _, inbox := range oldInboxes {
+		if inbox == "" || covered[inbox] {
+			continue
+		}
+		if err := s.enqueueChannelDelivery(ctx, oldCh.ID, oldCh.Handle, inbox, payload); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // DeleteVideo propagates a deletion to remote followers as a Delete. The video row
 // is already gone, so the caller passes its channel id and whether it had been
 // public (only public videos were ever federated). No-op otherwise.

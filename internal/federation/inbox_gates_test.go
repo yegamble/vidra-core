@@ -11,10 +11,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/notification"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -348,5 +351,39 @@ func TestAutoFollowBackLoopGuards(t *testing.T) {
 				t.Errorf("a new follow-back edge appeared despite the guard: %+v", repo.followBacks)
 			}
 		})
+	}
+}
+
+// TestFollowerRequestHookFiresOnlyForNewPendingRows: the admin push seam gets
+// the new queue row's id once, and a repeated Follow (row exists) announces
+// nothing — a re-Follow must not re-notify an admin who already knows.
+func TestFollowerRequestHookFiresOnlyForNewPendingRows(t *testing.T) {
+	repo := newContractRepo()
+	cacheContractActor(repo, ctMastoUser, "Person", "kaisa", "mastodon.example")
+	var got []uuid.UUID
+	svc := NewService(repo, WithBaseURL(contractBase), WithFollowerApprovalFunc(gateOn),
+		WithFollowerRequestHook(func(_ context.Context, id uuid.UUID) { got = append(got, id) }))
+
+	for i := 0; i < 2; i++ {
+		if err := svc.HandleInbox(context.Background(), ctMastoUser, readFixture(t, "inbound/mastodon_follow.json")); err != nil {
+			t.Fatalf("HandleInbox #%d: %v", i, err)
+		}
+	}
+	row := repo.remoteFollows[ctChannelID.String()+"|"+ctMastoUser]
+	if len(got) != 1 || row == nil || got[0] != row.ID {
+		t.Errorf("hook calls = %v, want exactly the pending row's id", got)
+	}
+}
+
+// TestFollowSurvivesPanickingHook: a panicking (wrapped) follower-request hook
+// must not fail inbox handling.
+func TestFollowSurvivesPanickingHook(t *testing.T) {
+	repo := newContractRepo()
+	cacheContractActor(repo, ctMastoUser, "Person", "kaisa", "mastodon.example")
+	hook := notification.StaffQueueHook(slog.New(slog.NewTextHandler(io.Discard, nil)), "federation_follower_request",
+		func(context.Context, uuid.UUID) (int64, error) { panic("boom") })
+	svc := NewService(repo, WithBaseURL(contractBase), WithFollowerApprovalFunc(gateOn), WithFollowerRequestHook(hook))
+	if err := svc.HandleInbox(context.Background(), ctMastoUser, readFixture(t, "inbound/mastodon_follow.json")); err != nil {
+		t.Fatalf("HandleInbox with panicking hook: %v", err)
 	}
 }
