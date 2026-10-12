@@ -555,7 +555,7 @@ func ptWorld(t *testing.T) (*Service, fakeRepo) {
 		// vidra stores captions under any BCP-47-ish tag (video/captions.go:21),
 		// sorted by language as the SQL returns them.
 		ptCaptionedID: {
-			Views: 7, CaptionLanguages: []string{"en", "en-US", "fr-CA", "pt-br", "qaa"},
+			Views: 7, CaptionLanguages: []string{"en", "en-US", "fr-CA", "pt-br", "qaa", "zh-Hans"},
 			ThumbnailFileID: "c0ffee00-0000-4000-8000-000000000001", ThumbnailStorageKey: "imports/peertube/thumbnails/source-name.jpg",
 		},
 	}
@@ -609,10 +609,12 @@ func TestVideoObjectPassesPeerTubeValidator(t *testing.T) {
 			// getCaptionAttributesFromObject dereferences
 			// (object-to-model-attributes.ts:227-245), its identifier mapped to a
 			// PeerTube language KEY: en-US → en is a duplicate of en and dropped,
-			// fr-CA → fr, pt-br → pt-BR, qaa has no key and is omitted. The href
+			// fr-CA → fr, pt-br → pt-BR, qaa has no key and is omitted, and the
+			// mixed-case zh-Hans keeps its own regional key (matching is
+			// case-insensitive, never a fallback to zh). The href
 			// still names vidra's stored tag.
 			subs, _ := v.Object["subtitleLanguage"].([]any)
-			want := [][2]string{{"en", "en"}, {"fr", "fr-CA"}, {"pt-BR", "pt-br"}}
+			want := [][2]string{{"en", "en"}, {"fr", "fr-CA"}, {"pt-BR", "pt-br"}, {"zh-Hans", "zh-Hans"}}
 			if len(subs) != len(want) {
 				t.Fatalf("surviving captions = %v, want %v", subs, want)
 			}
