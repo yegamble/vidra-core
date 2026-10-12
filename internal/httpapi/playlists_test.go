@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
 	"time"
 
@@ -44,7 +45,7 @@ func (f *playlistFakeRepo) publicCount(playlistID uuid.UUID) int64 {
 func (f *playlistFakeRepo) CreatePlaylist(_ context.Context, a sqlcgen.CreatePlaylistParams) (sqlcgen.Playlist, error) {
 	p := sqlcgen.Playlist{
 		ID: uuid.New(), OwnerID: a.OwnerID, Title: a.Title, Description: a.Description,
-		Visibility: a.Visibility, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		Visibility: a.Visibility, ChannelID: a.ChannelID, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.playlists[p.ID] = p
 	return p, nil
@@ -57,9 +58,46 @@ func (f *playlistFakeRepo) GetPlaylistByID(_ context.Context, id uuid.UUID) (sql
 	}
 	return sqlcgen.GetPlaylistByIDRow{
 		ID: p.ID, OwnerID: p.OwnerID, Title: p.Title, Description: p.Description,
-		Visibility: p.Visibility, ThumbnailExt: p.ThumbnailExt, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+		Visibility: p.Visibility, ThumbnailExt: p.ThumbnailExt, ChannelID: p.ChannelID, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 		VideoCount: f.publicCount(id),
 	}, nil
+}
+
+func (f *playlistFakeRepo) GetChannelByID(ctx context.Context, id uuid.UUID) (sqlcgen.Channel, error) {
+	return f.videos.GetChannelByID(ctx, id)
+}
+
+// channelVisible mirrors the ListPlaylistsByChannel predicate.
+func (f *playlistFakeRepo) channelVisible(a sqlcgen.CountPlaylistsByChannelParams) []sqlcgen.Playlist {
+	var out []sqlcgen.Playlist
+	for _, p := range f.playlists {
+		if !p.ChannelID.Valid || uuid.UUID(p.ChannelID.Bytes) != a.ChannelID {
+			continue
+		}
+		if p.Visibility == "public" || (a.ViewerID.Valid && uuid.UUID(a.ViewerID.Bytes) == p.OwnerID) {
+			out = append(out, p)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out
+}
+
+func (f *playlistFakeRepo) CountPlaylistsByChannel(_ context.Context, a sqlcgen.CountPlaylistsByChannelParams) (int64, error) {
+	return int64(len(f.channelVisible(a))), nil
+}
+
+func (f *playlistFakeRepo) ListPlaylistsByChannel(_ context.Context, a sqlcgen.ListPlaylistsByChannelParams) ([]sqlcgen.ListPlaylistsByChannelRow, error) {
+	var rows []sqlcgen.ListPlaylistsByChannelRow
+	for _, p := range f.channelVisible(sqlcgen.CountPlaylistsByChannelParams{ChannelID: a.ChannelID, ViewerID: a.ViewerID}) {
+		rows = append(rows, sqlcgen.ListPlaylistsByChannelRow{
+			ID: p.ID, OwnerID: p.OwnerID, Title: p.Title, Description: p.Description,
+			Visibility: p.Visibility, ChannelID: p.ChannelID, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+			VideoCount: f.publicCount(p.ID),
+		})
+	}
+	lo := min(int(a.ResultOffset), len(rows))
+	hi := min(lo+int(a.ResultLimit), len(rows))
+	return rows[lo:hi], nil
 }
 
 func (f *playlistFakeRepo) ListPlaylistsByOwner(_ context.Context, a sqlcgen.ListPlaylistsByOwnerParams) ([]sqlcgen.ListPlaylistsByOwnerRow, error) {
@@ -87,6 +125,9 @@ func (f *playlistFakeRepo) UpdatePlaylist(_ context.Context, a sqlcgen.UpdatePla
 	}
 	if a.Visibility != nil {
 		p.Visibility = *a.Visibility
+	}
+	if a.SetChannel {
+		p.ChannelID = a.ChannelID
 	}
 	p.UpdatedAt = time.Now()
 	f.playlists[a.ID] = p
@@ -510,4 +551,87 @@ func (f *playlistFakeRepo) CountPlaylistsByOwner(ctx context.Context, ownerID uu
 func (f *playlistFakeRepo) CountPlaylistItems(ctx context.Context, playlistID uuid.UUID) (int64, error) {
 	rows, err := f.ListPlaylistItems(ctx, sqlcgen.ListPlaylistItemsParams{PlaylistID: playlistID, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
+}
+
+func listChannelPlaylists(t *testing.T, srv *Server, handle, query, token string) (playlistListResponse, int) {
+	t.Helper()
+	rec := sendJSONAuth(srv, http.MethodGet, "/api/v1/channels/"+handle+"/playlists"+query, "", token)
+	var out playlistListResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return out, rec.Code
+}
+
+func TestChannelPlaylists(t *testing.T) {
+	srv := videoServer(t)
+	ada := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	bob := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+	adaCh, bobCh := channelIDOf(t, srv, "ada"), channelIDOf(t, srv, "bob")
+
+	pub := createPlaylist(t, srv, ada, `{"title":"Pub","visibility":"public","channel_id":"`+adaCh+`"}`)
+	unl := createPlaylist(t, srv, ada, `{"title":"Unl","visibility":"unlisted","channel_id":"`+adaCh+`"}`)
+	priv := createPlaylist(t, srv, ada, `{"title":"Priv","visibility":"private","channel_id":"`+adaCh+`"}`)
+	createPlaylist(t, srv, ada, `{"title":"NoChannel","visibility":"public"}`)
+	if pub.ChannelID == nil || *pub.ChannelID != adaCh {
+		t.Fatalf("create did not echo channel_id: %+v", pub)
+	}
+
+	// Anonymous and other users: public only. Never unlisted or private.
+	for name, tok := range map[string]string{"anonymous": "", "other user": bob} {
+		got, code := listChannelPlaylists(t, srv, "ada", "", tok)
+		if code != http.StatusOK || len(got.Playlists) != 1 || got.Playlists[0].ID != pub.ID || got.Total != 1 {
+			t.Errorf("%s sees %+v (code %d, total %d), want only the public playlist", name, got.Playlists, code, got.Total)
+		}
+	}
+	// Owner: all three, newest first; pagination follows the shared convention.
+	got, _ := listChannelPlaylists(t, srv, "ada", "", ada)
+	if got.Total != 3 || len(got.Playlists) != 3 || got.Playlists[0].ID != priv.ID || got.Playlists[2].ID != pub.ID {
+		t.Errorf("owner sees %+v total %d, want 3 newest-first", got.Playlists, got.Total)
+	}
+	_ = unl
+	page, _ := listChannelPlaylists(t, srv, "ada", "?limit=1&offset=1", ada)
+	if len(page.Playlists) != 1 || page.Total != 3 || page.Playlists[0].ID != unl.ID {
+		t.Errorf("page = %+v total %d, want the middle playlist of 3", page.Playlists, page.Total)
+	}
+	if _, code := listChannelPlaylists(t, srv, "nobody", "", ""); code != http.StatusNotFound {
+		t.Errorf("unknown channel = %d, want 404", code)
+	}
+
+	// Another user cannot attach a playlist to my channel (create or update);
+	// the answer is the same 404 as a channel that does not exist.
+	if rec := postJSONAuth(srv, "/api/v1/playlists", `{"title":"Hijack","visibility":"public","channel_id":"`+adaCh+`"}`, bob); rec.Code != http.StatusNotFound {
+		t.Errorf("create on another user's channel = %d, want 404", rec.Code)
+	}
+	bobPl := createPlaylist(t, srv, bob, `{"title":"Bob","visibility":"public"}`)
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/playlists/"+bobPl.ID, `{"channel_id":"`+adaCh+`"}`, bob); rec.Code != http.StatusNotFound {
+		t.Errorf("update to another user's channel = %d, want 404", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/playlists/"+bobPl.ID, `{"channel_id":"`+uuid.NewString()+`"}`, bob); rec.Code != http.StatusNotFound {
+		t.Errorf("update to a missing channel = %d, want 404", rec.Code)
+	}
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/playlists/"+bobPl.ID, `{"channel_id":"nope"}`, bob); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("malformed channel_id = %d, want 422", rec.Code)
+	}
+	if got, _ := listChannelPlaylists(t, srv, "ada", "", ""); len(got.Playlists) != 1 {
+		t.Errorf("a refused attach leaked into the channel list: %+v", got.Playlists)
+	}
+
+	// Own channel works; null clears; omitting the key leaves it alone.
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/playlists/"+bobPl.ID, `{"channel_id":"`+bobCh+`"}`, bob); rec.Code != http.StatusOK {
+		t.Fatalf("attach own channel = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/playlists/"+bobPl.ID, `{"title":"Renamed"}`, bob); rec.Code != http.StatusOK {
+		t.Fatalf("title-only update = %d", rec.Code)
+	}
+	if got, _ := listChannelPlaylists(t, srv, "bob", "", ""); len(got.Playlists) != 1 {
+		t.Fatalf("title-only update dropped the link: %+v", got.Playlists)
+	}
+	rec := sendJSONAuth(srv, http.MethodPatch, "/api/v1/playlists/"+bobPl.ID, `{"channel_id":null}`, bob)
+	var cleared playlistView
+	_ = json.Unmarshal(rec.Body.Bytes(), &cleared)
+	if rec.Code != http.StatusOK || cleared.ChannelID != nil {
+		t.Fatalf("clear = %d %+v, want 200 with no channel_id", rec.Code, cleared)
+	}
+	if got, _ := listChannelPlaylists(t, srv, "bob", "", ""); len(got.Playlists) != 0 {
+		t.Errorf("cleared playlist still listed: %+v", got.Playlists)
+	}
 }
