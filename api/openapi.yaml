@@ -16463,6 +16463,63 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: adminCreateUser
+      summary: Create an account on behalf of the user (admin)
+      description: >-
+        PeerTube `POST /users` parity, for instances with registration closed.
+        Admin-only; the CALLER re-confirms their OWN password (same step-up and
+        strict limiter as `POST /api/v1/admin/users/{id}/password-reset-link`).
+        There is no admin-chosen password: the account starts password-less and
+        the holder sets the first one with a one-time link (the ordinary reset
+        token, 1 hour). The address is marked verified (the admin vouches for
+        it). Signup creates no default channel, so neither does this. When a
+        mail path is configured the link is emailed and `link_emailed` is true
+        with no `reset_url`; otherwise `reset_url` is returned once (no-store),
+        only after the audit row `admin.user.create` is written (a failed write
+        withdraws the token and answers 503; the account then exists and the
+        link can be re-issued by the reset-link route if its role is `user`). The
+        audit payload never carries the address, a password or the token.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminCreateUserRequest"
+      responses:
+        "201":
+          description: The created account and how the set-password link was delivered.
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCreateUserResponse"
+        "401":
+          description: "Missing, invalid, or expired token."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "403":
+          description: "Not an admin, or the caller's password is wrong."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "409":
+          description: "Username or email already taken (or reserved by a channel); the caller has no password; or PUBLIC_BASE_URL is unset and no mail path exists."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "422":
+          description: "Validation failed (username, email, role, storage_quota_bytes or password)."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "429":
+          description: "Too many attempts (strict auth limiter)."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "502":
+          description: "Account created but the set-password email failed and there is no origin to return a link on."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
+        "503":
+          description: "Account created but the audit write failed, so no link was issued."
+          content: {application/json: {schema: {$ref: "#/components/schemas/ErrorResponse"}}}
   /api/v1/admin/users/{id}:
     patch:
       operationId: updateUser
@@ -21230,6 +21287,31 @@ components:
           type: string
           format: uri
           description: PUBLIC_BASE_URL + /reset-password/confirm?token=..., shown once.
+        expires_at: {type: string, format: date-time}
+    AdminCreateUserRequest:
+      type: object
+      required: [username, email, role, password]
+      properties:
+        username: {type: string, minLength: 3, maxLength: 30, description: "Same rules as signup: no '@' or whitespace."}
+        email: {type: string, format: email}
+        role: {type: string, enum: [user, moderator, admin]}
+        storage_quota_bytes:
+          type: [integer, "null"]
+          minimum: 0
+          description: Per-user override (0 = unlimited); absent or null = the instance default.
+        password:
+          type: string
+          description: The CALLING administrator's own current password (step-up), never the new account's.
+    AdminCreateUserResponse:
+      type: object
+      required: [user, link_emailed, expires_at]
+      properties:
+        user: {$ref: "#/components/schemas/AdminUser"}
+        link_emailed: {type: boolean, description: "True when the set-password link was emailed; reset_url is then absent."}
+        reset_url:
+          type: string
+          format: uri
+          description: PUBLIC_BASE_URL + /reset-password/confirm?token=..., shown once; absent when emailed.
         expires_at: {type: string, format: date-time}
     AdminUser:
       type: object

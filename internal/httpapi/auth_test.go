@@ -424,6 +424,12 @@ func (f *authFakeRepo) CreateUser(_ context.Context, a sqlcgen.CreateUserParams)
 	if _, ok := f.users[key]; ok {
 		return sqlcgen.User{}, &pgconn.PgError{Code: "23505"}
 	}
+	// users.username is unique case-insensitively in SQL, like the email.
+	for _, other := range f.users {
+		if strings.EqualFold(other.Username, a.Username) {
+			return sqlcgen.User{}, &pgconn.PgError{Code: "23505"}
+		}
+	}
 	u := sqlcgen.User{
 		ID: uuid.New(), Username: a.Username, Email: a.Email,
 		PasswordHash: a.PasswordHash, Role: a.Role, IsActive: true, CreatedAt: time.Now(),
