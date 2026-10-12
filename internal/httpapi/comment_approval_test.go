@@ -255,3 +255,35 @@ func TestCommentsPolicyAcceptsRequiresApproval(t *testing.T) {
 		t.Errorf("unknown policy = %d, want 422", rec.Code)
 	}
 }
+
+// TestReviewersRejectAHeldCommentByDeletingIt: DELETE /comments/{id} is the
+// reject half of approval — a video's reviewers may delete a HELD comment on
+// it, while a stranger still may not, and a published comment stays
+// author/staff-only exactly as before.
+func TestReviewersRejectAHeldCommentByDeletingIt(t *testing.T) {
+	c := newApprovalCast(t)
+	del := func(tok, id string) int {
+		return sendJSONAuth(c.srv, http.MethodDelete, "/api/v1/comments/"+id, "", tok).Code
+	}
+	first := c.post(t, c.eve, `{"body":"reject me"}`)
+	second := c.post(t, c.eve, `{"body":"reject me too"}`)
+	if code := del(c.carl, first.ID); code != http.StatusForbidden {
+		t.Errorf("stranger delete of a held comment = %d, want 403", code)
+	}
+	if code := del(c.bob, first.ID); code != http.StatusNoContent {
+		t.Errorf("owner reject = %d, want 204", code)
+	}
+	if code := del(c.ed, second.ID); code != http.StatusNoContent {
+		t.Errorf("editor reject = %d, want 204", code)
+	}
+	if got := c.list(t, c.bob); got.Total != 0 {
+		t.Errorf("comments after rejecting both = %d, want 0", got.Total)
+	}
+	published := c.post(t, c.eve, `{"body":"approved, then kept"}`)
+	if r := c.approve(c.bob, published.ID); r.code != http.StatusOK {
+		t.Fatalf("approve = %d", r.code)
+	}
+	if code := del(c.bob, published.ID); code != http.StatusForbidden {
+		t.Errorf("owner delete of a PUBLISHED comment = %d, want 403 (unchanged)", code)
+	}
+}

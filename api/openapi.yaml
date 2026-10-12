@@ -7655,7 +7655,7 @@ paths:
         federated, and raises the comment/comment_reply notifications it
         would have raised when posted (the owner's own approval does not
         notify the owner) — and is audited as content.comment.approve.
-        Rejecting is DELETE /comments/{id}.
+        Reject with DELETE /comments/{id}.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -7757,8 +7757,9 @@ paths:
       summary: Delete a comment
       description: >-
         Deletes a comment. The comment's author may always delete it; a
-        moderator/admin may delete anyone's. An unknown id is 404; a non-author
-        non-moderator is 403.
+        moderator/admin may delete anyone's; the video's owner or an editor
+        member may delete a comment held for review (rejecting it). An unknown
+        id is 404; anyone else is 403.
       tags: [comments]
       security:
         - bearerAuth: []
