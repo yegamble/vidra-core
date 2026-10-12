@@ -210,6 +210,16 @@ func TestListIncomingOwnershipChanges(t *testing.T) {
 	if got := listOwnershipChanges(t, srv, carolTok, ""); got.Changes[0].Status != "expired" {
 		t.Errorf("stale request status = %q, want expired", got.Changes[0].Status)
 	}
+	// A withdrawn request reads exactly like that one: the recipient learns
+	// "no longer available", never whether it was withdrawn or went stale.
+	if rec := sendJSONAuth(srv, http.MethodDelete, "/api/v1/videos/"+first+"/give-ownership", "", adaTok); rec.Code != http.StatusNoContent {
+		t.Fatalf("withdraw = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	for _, c := range listOwnershipChanges(t, srv, bobTok, "").Changes {
+		if c.Video.ID == first && c.Status != "expired" {
+			t.Errorf("withdrawn request status = %q, want expired", c.Status)
+		}
+	}
 	if n := ownershipNotices(t, srv, carolTok, "ada"); n != 0 {
 		t.Errorf("muter was notified %d times, want 0", n)
 	}

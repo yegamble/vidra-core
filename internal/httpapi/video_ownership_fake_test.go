@@ -73,7 +73,8 @@ func (f *ownershipFakeRepo) ListIncomingVideoOwnershipChanges(_ context.Context,
 		// The SQL: the title is the give-time snapshot, and a pending request
 		// the giver can no longer honour reads 'expired'.
 		status := r.Status
-		if status == "pending" && (v.OwnerID != r.InitiatorID || !r.CreatedAt.After(a.ExpiredBefore)) {
+		if status == "cancelled" ||
+			(status == "pending" && (v.OwnerID != r.InitiatorID || !r.CreatedAt.After(a.ExpiredBefore))) {
 			status = "expired"
 		}
 		row := sqlcgen.ListIncomingVideoOwnershipChangesRow{ID: r.ID, Status: status, CreatedAt: r.CreatedAt,
