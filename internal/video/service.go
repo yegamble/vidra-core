@@ -2270,19 +2270,27 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 			updated.State = "published"
 		}
 	}
-	// v is the PRE-edit row: whether this video was public+published before the
-	// edit is the fact federation needs to tell a retraction from a video no
-	// peer ever held (see WithUpdateHook).
+	s.fireUpdateHooks(ctx, v, moved)
+	return updated, nil
+}
+
+// fireUpdateHooks runs the side effects of an edit — the update hooks (search
+// reindex, federation Update, IPFS sync) and, for a channel move, the move hooks
+// (federation retract to the old channel's followers). v is the PRE-edit row:
+// whether this video was public+published before the edit is the fact
+// federation needs to tell a retraction from a video no peer ever held (see
+// WithUpdateHook), and v.ChannelID is the channel a move left. Shared by the
+// same-owner move above and the cross-owner one (AcceptOwnershipChange).
+func (s *Service) fireUpdateHooks(ctx context.Context, v sqlcgen.GetVideoByIDRow, moved bool) {
 	wasFederated := v.Privacy == "public" && v.State == "published"
 	for _, hook := range s.onUpdate {
-		hook(ctx, id, wasFederated)
+		hook(ctx, v.ID, wasFederated)
 	}
 	if moved {
 		for _, hook := range s.onMove {
-			hook(ctx, id, v.ChannelID, wasFederated)
+			hook(ctx, v.ID, v.ChannelID, wasFederated)
 		}
 	}
-	return updated, nil
 }
 
 // PrefillMetadata fills a video's title/description from an importer's metadata

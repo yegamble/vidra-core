@@ -98,3 +98,57 @@ func (f *ownershipFakeRepo) CountIncomingVideoOwnershipChanges(_ context.Context
 	}
 	return n, nil
 }
+
+func (f *ownershipFakeRepo) GetVideoOwnershipChange(_ context.Context, id uuid.UUID) (sqlcgen.VideoOwnershipChange, error) {
+	for _, r := range f.rows {
+		if r.ID == id {
+			return r, nil
+		}
+	}
+	return sqlcgen.VideoOwnershipChange{}, pgx.ErrNoRows
+}
+
+// AcceptVideoOwnershipChange mirrors the single-statement accept: flip AND move
+// only while pending + addressed to the caller, the initiator still owns the
+// video, and the target channel is the recipient's.
+func (f *ownershipFakeRepo) AcceptVideoOwnershipChange(_ context.Context, a sqlcgen.AcceptVideoOwnershipChangeParams) (sqlcgen.AcceptVideoOwnershipChangeRow, error) {
+	for i, r := range f.rows {
+		if r.ID != a.ID || r.NextOwnerID != a.NextOwnerID || r.Status != "pending" {
+			continue
+		}
+		v, ok := f.v.videos[r.VideoID]
+		target, tok := f.v.channelByID(a.ChannelID)
+		if !ok || !tok || v.OwnerID != r.InitiatorID || target.OwnerID != r.NextOwnerID {
+			break
+		}
+		from := v.ChannelID
+		v.ChannelID, v.OwnerID = target.ID, target.OwnerID
+		f.v.videos[r.VideoID] = v
+		f.rows[i].Status = "accepted"
+		return sqlcgen.AcceptVideoOwnershipChangeRow{ID: r.VideoID, FromChannelID: from}, nil
+	}
+	return sqlcgen.AcceptVideoOwnershipChangeRow{}, pgx.ErrNoRows
+}
+
+func (f *ownershipFakeRepo) RefuseVideoOwnershipChange(_ context.Context, a sqlcgen.RefuseVideoOwnershipChangeParams) (int64, error) {
+	for i, r := range f.rows {
+		if r.ID == a.ID && r.NextOwnerID == a.NextOwnerID && r.Status == "pending" {
+			f.rows[i].Status = "refused"
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
+
+func (f *ownershipFakeRepo) SumVideoStorageUsage(_ context.Context, videoID uuid.UUID) (int64, error) {
+	var n int64
+	for _, vf := range f.v.files[videoID] {
+		n += vf.SizeBytes
+	}
+	return n, nil
+}
+
+func (f *videoFakeRepo) channelByID(id uuid.UUID) (sqlcgen.Channel, bool) {
+	ch, err := f.GetChannelByID(context.Background(), id)
+	return ch, err == nil
+}

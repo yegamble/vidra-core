@@ -1,13 +1,16 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/vidra/vidra-core/internal/observability"
 	"github.com/vidra/vidra-core/internal/video"
 )
 
@@ -102,6 +105,61 @@ func (s *Server) handleListVideoOwnershipChanges(c echo.Context) error {
 	return c.JSON(http.StatusOK, videoOwnershipChangeListResponse{Changes: views, pageMeta: page.meta(total)})
 }
 
+type acceptOwnershipRequest struct {
+	ChannelID string `json:"channel_id"`
+}
+
+func (r acceptOwnershipRequest) Validate() []FieldError {
+	if _, err := uuid.Parse(r.ChannelID); err != nil {
+		return []FieldError{{Field: "channel_id", Message: "must be a channel id"}}
+	}
+	return nil
+}
+
+// handleAcceptVideoOwnership: POST /me/video-ownership-changes/{id}/accept
+// {channel_id}. The recipient takes the video into one of their channels,
+// within their storage quota (the gate uploads use). 204 on success; the move
+// is audited exactly like a same-owner one (content.video.move, ids only).
+func (s *Server) handleAcceptVideoOwnership(c echo.Context) error {
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
+	}
+	id, err := pathUUID(c, "id", "ownership change not found")
+	if err != nil {
+		return err
+	}
+	var in acceptOwnershipRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	target := uuid.MustParse(in.ChannelID) // Validate() proved it parses
+	fits := func(ctx context.Context, bytes int64) error { return s.checkUploadQuotas(ctx, userID, bytes) }
+	moved, err := s.videosvc.AcceptOwnershipChange(c.Request().Context(), userID, id, target, fits)
+	if err != nil {
+		return ownershipError(err)
+	}
+	s.audit(c, observability.ActionVideoMove, observability.ResultSuccess, userID.String(),
+		"video="+moved.ID.String()+" from="+moved.FromChannelID.String()+" to="+target.String())
+	return c.NoContent(http.StatusNoContent)
+}
+
+// handleRefuseVideoOwnership: POST /me/video-ownership-changes/{id}/refuse.
+func (s *Server) handleRefuseVideoOwnership(c echo.Context) error {
+	userID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
+	}
+	id, err := pathUUID(c, "id", "ownership change not found")
+	if err != nil {
+		return err
+	}
+	if err := s.videosvc.RefuseOwnershipChange(c.Request().Context(), userID, id); err != nil {
+		return ownershipError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 // ownershipError maps the ownership-change sentinels; anything else falls
 // through to the video mapping (a foreign or missing video is 404).
 func ownershipError(err error) error {
@@ -116,6 +174,12 @@ func ownershipError(err error) error {
 		return echo.NewHTTPError(http.StatusConflict, "an ownership change for this video is already pending")
 	case errors.Is(err, video.ErrNotSettled):
 		return echo.NewHTTPError(http.StatusConflict, "the video is still uploading or processing")
+	case errors.Is(err, video.ErrOwnershipNotFound):
+		return echo.NewHTTPError(http.StatusNotFound, "ownership change not found")
+	case errors.Is(err, video.ErrOwnershipAnswered):
+		return echo.NewHTTPError(http.StatusConflict, "this ownership change was already answered")
+	case errors.Is(err, video.ErrOwnershipStale):
+		return echo.NewHTTPError(http.StatusConflict, "the video is no longer owned by the user who offered it")
 	}
 	return videoError(err)
 }

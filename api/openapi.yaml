@@ -8664,6 +8664,126 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/video-ownership-changes/{id}/accept:
+    post:
+      operationId: acceptVideoOwnershipChange
+      summary: Accept a video offered to you
+      description: >-
+        Accepts a pending ownership change addressed to the caller by moving the
+        video into one of the caller's channels. The video's stored bytes must
+        fit the caller's storage quota (and daily upload quota), exactly as an
+        upload would. The move happens in the same statement that marks the
+        request accepted, and only while the giver still owns the video. It has
+        the side effects of any channel move: search reindex, a federation
+        Update to the new channel's followers and a Delete to followers of only
+        the old one, and a content.video.move audit event.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel_id]
+              properties:
+                channel_id:
+                  type: string
+                  format: uuid
+                  description: One of the caller's own channels.
+      responses:
+        "204":
+          description: Accepted; the video now belongs to the caller.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: >-
+            No such request addressed to the caller ("ownership change not
+            found"), or the channel does not exist or is not the caller's
+            ("channel not found").
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            The request was already accepted or refused, the giver no longer
+            owns the video, or the video is still uploading or processing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            Validation failed (channel_id must be a channel id), or the video
+            does not fit the caller's quota (code quota_exceeded or
+            daily_quota_exceeded).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Ownership changes are not configured on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/video-ownership-changes/{id}/refuse:
+    post:
+      operationId: refuseVideoOwnershipChange
+      summary: Refuse a video offered to you
+      description: >-
+        Refuses a pending ownership change addressed to the caller. The video
+        stays where it is, and its owner may offer it again.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Refused.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such request addressed to the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The request was already accepted or refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Ownership changes are not configured on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/videos/{id}/watch-progress:
     get:
       operationId: getWatchProgress
