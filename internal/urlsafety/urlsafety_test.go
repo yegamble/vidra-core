@@ -116,6 +116,61 @@ func TestIsBlockedIPv6TransitionRanges(t *testing.T) {
 	}
 }
 
+// TestIsBlockedIPSpecialPurposeRanges pins the IANA special-purpose ranges that
+// are not forwardable / not globally reachable, one representative address each
+// (plus the range edges worth catching), with public neighbours as negatives.
+func TestIsBlockedIPSpecialPurposeRanges(t *testing.T) {
+	cases := []struct {
+		name    string
+		ip      string
+		blocked bool
+	}{
+		{"this-network 0.0.0.0/8", "0.1.2.3", true},
+		{"cgnat 100.64.0.0/10", "100.100.100.100", true},
+		{"link-local 169.254.0.0/16", "169.254.169.254", true},
+		{"ietf protocol 192.0.0.0/24", "192.0.0.8", true},
+		{"ietf protocol 192.0.0.0/24 (last)", "192.0.0.255", true},
+		{"test-net-1 192.0.2.0/24", "192.0.2.10", true},
+		{"benchmarking 198.18.0.0/15", "198.18.0.1", true},
+		{"benchmarking 198.18.0.0/15 (last)", "198.19.255.254", true},
+		{"test-net-2 198.51.100.0/24", "198.51.100.7", true},
+		{"test-net-3 203.0.113.0/24", "203.0.113.9", true},
+		{"reserved 240.0.0.0/4", "240.0.0.1", true},
+		{"reserved 240.0.0.0/4 (mid)", "250.1.2.3", true},
+		{"broadcast 255.255.255.255/32", "255.255.255.255", true},
+		{"v4-mapped benchmarking", "::ffff:198.18.0.1", true},
+		{"site-local fec0::/10", "fec0::1", true},
+		{"site-local fec0::/10 (last)", "feff:ffff::1", true},
+		{"ipv4-translated ::ffff:0:0:0/96", "::ffff:0:808:808", true},
+		{"discard 100::/64", "100::1", true},
+		{"documentation 2001:db8::/32", "2001:db8::1", true},
+		{"benchmarking 2001:2::/48", "2001:2::1", true},
+		{"orchid 2001:10::/28", "2001:10::1", true},
+		{"orchid 2001:10::/28 (last)", "2001:1f:ffff::1", true},
+		{"documentation 3fff::/20", "3fff::1", true},
+		{"srv6 sids 5f00::/16", "5f00::1", true},
+
+		{"public 1.1.1.1", "1.1.1.1", false},
+		{"public 8.8.8.8", "8.8.8.8", false},
+		{"below benchmarking 198.17.255.255", "198.17.255.255", false},
+		{"above benchmarking 198.20.0.0", "198.20.0.0", false},
+		{"above ietf 192.0.1.1", "192.0.1.1", false},
+		{"below reserved 239 is multicast-blocked, 223.255.255.255 public", "223.255.255.255", false},
+		{"public 2606:4700::1111", "2606:4700::1111", false},
+		{"public 2001:4860:4860::8888", "2001:4860:4860::8888", false},
+		{"above orchid 2001:20::1 (ORCHIDv2, reachable)", "2001:20::1", false},
+	}
+	for _, tc := range cases {
+		ip := net.ParseIP(tc.ip)
+		if ip == nil {
+			t.Fatalf("%s: bad test address %q", tc.name, tc.ip)
+		}
+		if got := IsBlockedIP(ip); got != tc.blocked {
+			t.Errorf("%s: IsBlockedIP(%s) = %v, want %v", tc.name, tc.ip, got, tc.blocked)
+		}
+	}
+}
+
 // TestClientBlocksLoopback proves the dial-time guard actually refuses a
 // connection to a loopback address even for a syntactically-valid http URL — the
 // real SSRF defense (this is what stops a rebinding DNS name too).
