@@ -134,6 +134,47 @@ func IsBlockedIP(ip net.IP) bool {
 	if v4 := ip.To4(); v4 != nil && v4[0] == 100 && v4[1]&0xc0 == 0x40 {
 		return true
 	}
+	return embeddedIPv4Blocked(ip)
+}
+
+// embeddedIPv4Blocked covers the IPv6 ranges that carry an IPv4 address inside
+// an IPv6 one. Judged by the outer address alone they look like ordinary global
+// unicast, so a private IPv4 would pass. Each range is either refused outright
+// (obsolete or local-use, no legitimate public peer lives there) or has its
+// embedded IPv4 checked against the same policy.
+func embeddedIPv4Blocked(ip net.IP) bool {
+	if ip.To4() != nil {
+		return false // plain (or IPv4-mapped) IPv4, already judged above
+	}
+	b := ip.To16()
+	if b == nil {
+		return true
+	}
+	zeros := func(from, to int) bool {
+		for _, x := range b[from:to] {
+			if x != 0 {
+				return false
+			}
+		}
+		return true
+	}
+	switch {
+	case zeros(0, 12):
+		// ::/96, IPv4-compatible (deprecated). "::" and "::1" are caught earlier.
+		return true
+	case b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xff && b[3] == 0x9b && zeros(4, 12):
+		// 64:ff9b::/96 NAT64: the low 32 bits are the IPv4 destination.
+		return IsBlockedIP(net.IPv4(b[12], b[13], b[14], b[15]))
+	case b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xff && b[3] == 0x9b && b[4] == 0x00 && b[5] == 0x01:
+		// 64:ff9b:1::/48 local-use NAT64 (RFC 8215): not public.
+		return true
+	case b[0] == 0x20 && b[1] == 0x02:
+		// 2002::/16 6to4: IPv4 in bytes 2-5.
+		return IsBlockedIP(net.IPv4(b[2], b[3], b[4], b[5]))
+	case b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x00 && b[3] == 0x00:
+		// 2001::/32 Teredo (obsolete tunnelling).
+		return true
+	}
 	return false
 }
 
