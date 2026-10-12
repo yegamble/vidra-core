@@ -114,6 +114,11 @@ func (s *Server) handleFollowInstance(c echo.Context) error {
 		return err
 	}
 	f, err := s.fedsvc.FollowInstance(c.Request().Context(), in.Host)
+	if err != nil {
+		// A refused follow is audited too — with no resource: the host is
+		// admin-typed input and audit_log carries no free text.
+		s.audit(c, observability.ActionFederationInstanceFollow, observability.ResultFailure, adminID.String(), "")
+	}
 	switch {
 	case errors.Is(err, federation.ErrBadFollowTarget):
 		return &ValidationError{Fields: []FieldError{{Field: "host", Message: "must be a host name, e.g. videos.example"}}}

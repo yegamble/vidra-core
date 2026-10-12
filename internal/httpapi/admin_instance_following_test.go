@@ -134,6 +134,11 @@ func TestAdminFollowsAndUnfollowsAnInstance(t *testing.T) {
 
 func TestFollowInstanceRefusals(t *testing.T) {
 	var buf bytes.Buffer
+	defer func() {
+		if findAudit(auditEvents(t, &buf), observability.ActionFederationInstanceFollow, observability.ResultFailure) == nil {
+			t.Error("a refused follow left no failure audit row")
+		}
+	}()
 	srv, repo, _, admin := instanceFollowsServer(t, &buf)
 	repo.blockedDomains = map[string]bool{"blocked.example": true}
 	user := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
