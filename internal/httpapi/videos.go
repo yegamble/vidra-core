@@ -1085,14 +1085,23 @@ type updateVideoRequest struct {
 	// it. Setting it true on an already-published, not-yet-public video whose
 	// transcode is still running holds the video until that transcode completes.
 	PublishAfterTranscode *bool `json:"publish_after_transcode"`
+	// ChannelID moves the video to another channel the caller manages (T20).
+	// nil leaves it where it is; the caller's own current channel is a no-op.
+	ChannelID *string `json:"channel_id"`
 }
 
 func (r updateVideoRequest) Validate() []FieldError {
+	if r.ChannelID != nil {
+		if _, err := uuid.Parse(*r.ChannelID); err != nil {
+			return []FieldError{{Field: "channel_id", Message: "must be a channel id"}}
+		}
+	}
 	if r.Title == nil && r.Description == nil && r.Privacy == nil &&
 		r.Category == nil && r.Language == nil && r.License == nil && r.Tags == nil &&
 		r.PublishAt == nil && r.OriginallyPublishedAt == nil &&
 		r.IsSensitive == nil && r.SensitiveReason == nil &&
-		r.CommentsPolicy == nil && r.DownloadEnabled == nil && r.PublishAfterTranscode == nil {
+		r.CommentsPolicy == nil && r.DownloadEnabled == nil && r.PublishAfterTranscode == nil &&
+		r.ChannelID == nil {
 		return []FieldError{{Field: "title", Message: "at least one updatable field is required"}}
 	}
 	var fes []FieldError
@@ -1157,11 +1166,29 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	staff := isStaff(role)
 	canManage := staff
 	managedOther := false
+	var moveTo *uuid.UUID
+	var moveFrom uuid.UUID
 	if existing, lookupErr := s.videosvc.GetByID(c.Request().Context(), id); lookupErr == nil {
 		if staff {
 			managedOther = existing.OwnerID != userID
 		} else if existing.OwnerID != userID {
 			canManage = s.canManageChannelContent(c.Request().Context(), userID, existing.ChannelID)
+		}
+		// Move (T20). The caller must already manage the SOURCE (canManage above;
+		// otherwise the service answers 404 as for any foreign video) and must
+		// manage the TARGET too: owner or editor, the same primitive. Staff get no
+		// extra reach here — the moderation escape covers editing a video, not
+		// dropping it into a channel they have no right to publish to. A missing
+		// target and a foreign one answer the same 404, so channel ids cannot be
+		// probed. The same channel is a no-op.
+		if in.ChannelID != nil {
+			target := uuid.MustParse(*in.ChannelID) // Validate() proved it parses
+			if target != existing.ChannelID && (canManage || existing.OwnerID == userID) {
+				if !s.canManageChannelContent(c.Request().Context(), userID, target) {
+					return echo.NewHTTPError(http.StatusNotFound, "channel not found")
+				}
+				moveTo, moveFrom = &target, existing.ChannelID
+			}
 		}
 	}
 	// Snapshot before the write: a video that has already left the Eligible
@@ -1202,6 +1229,7 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 		SensitiveReason: in.SensitiveReason,
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
+		ChannelID:       moveTo,
 
 		OriginallyPublishedAt: in.OriginallyPublishedAt,
 		PublishAfterTranscode: in.PublishAfterTranscode,
@@ -1215,6 +1243,10 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	// Re-flag the edited metadata against the watched-words list (best-effort;
 	// an edit can newly introduce a flagged term — §12).
 	s.flagVideoWatchedWords(c.Request().Context(), v.ID, v.Title, v.Description)
+	if moveTo != nil {
+		s.audit(c, observability.ActionVideoMove, observability.ResultSuccess, userID.String(),
+			"video="+id.String()+" from="+moveFrom.String()+" to="+moveTo.String())
+	}
 	if managedOther {
 		s.audit(c, observability.ActionVideoUpdate, observability.ResultSuccess, userID.String(),
 			"video="+id.String()+" fields="+strings.Join(updateVideoFieldNames(in), ","))
@@ -1282,6 +1314,9 @@ func updateVideoFieldNames(in updateVideoRequest) []string {
 	}
 	if in.PublishAfterTranscode != nil {
 		fields = append(fields, "publish_after_transcode")
+	}
+	if in.ChannelID != nil {
+		fields = append(fields, "channel_id")
 	}
 	return fields
 }

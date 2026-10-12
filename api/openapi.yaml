@@ -4594,7 +4594,9 @@ paths:
         the other fields in UpdateVideoRequest). The owner may update their own
         video; moderators and admins may manage any local video. An ordinary
         non-owner or unknown id is reported as 404 so a private video's existence
-        is not leaked. The handle is immutable.
+        is not leaked. The handle is immutable. Setting channel_id moves the
+        video to another channel the caller manages; a missing or unmanaged
+        target channel is reported as 404 (the two are indistinguishable).
       tags: [videos]
       security:
         - bearerAuth: []
@@ -4627,7 +4629,8 @@ paths:
         "404":
           description: >-
             No such video, or the caller is neither its owner nor a
-            moderator/admin.
+            moderator/admin; or channel_id names a channel that does not exist
+            or that the caller does not manage.
           content:
             application/json:
               schema:
@@ -19564,6 +19567,17 @@ components:
             publicly visible and still has a live transcode job holds the video
             (state "transcoding") until that transcode completes; a
             publicly-visible video is never pulled back to hidden.
+        channel_id:
+          type: string
+          format: uuid
+          description: >-
+            Move the video to this channel (omit to leave it where it is). The
+            caller must manage BOTH the video's current channel and this one
+            (owner or editor member); moderators/admins get no extra reach over
+            the target. The channel the video is already on is a no-op. Allowed
+            in any video state, including mid-transcode. Search is reindexed and
+            federation sends an Update for the video, which now names the target
+            channel as its attributedTo actor.
     Caption:
       type: object
       description: A WebVTT caption track's metadata (the file is fetched separately).

@@ -2035,6 +2035,10 @@ func (s *Service) OriginalFileKey(ctx context.Context, videoID uuid.UUID) (strin
 // UpdateInput is a partial video update: nil fields are left unchanged. Privacy,
 // when set, is already validated by the HTTP layer.
 type UpdateInput struct {
+	// ChannelID: nil leaves the video where it is; a non-nil id MOVES it to that
+	// channel (T20). The service does not authorize the target — the HTTP layer
+	// has already proven the actor manages both channels.
+	ChannelID   *uuid.UUID
 	Title       *string
 	Description *string
 	Privacy     *string
@@ -2127,6 +2131,7 @@ func (s *Service) UpdateForActor(ctx context.Context, actorID, id uuid.UUID, in 
 		SensitiveReason: pgconv.TrimPtr(in.SensitiveReason),
 		CommentsPolicy:  in.CommentsPolicy,
 		DownloadEnabled: in.DownloadEnabled,
+		ChannelID:       pgconv.UUIDPtr(in.ChannelID),
 
 		OriginallyPublishedAt: timestamptz(in.OriginallyPublishedAt),
 		PublishAfterTranscode: in.PublishAfterTranscode,

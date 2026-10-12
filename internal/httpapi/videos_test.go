@@ -733,6 +733,16 @@ func (f *videoFakeRepo) UpdateVideo(_ context.Context, a sqlcgen.UpdateVideoPara
 	if a.PublishAfterTranscode != nil {
 		r.PublishAfterTranscode = *a.PublishAfterTranscode
 	}
+	if a.ChannelID.Valid {
+		// COALESCE(narg('channel_id'), channel_id); the owner follows the channel
+		// because the real GetVideoByID derives it through the channels JOIN.
+		r.ChannelID = uuid.UUID(a.ChannelID.Bytes)
+		for _, ch := range f.channels.byHandle {
+			if ch.ID == r.ChannelID {
+				r.OwnerID = ch.OwnerID
+			}
+		}
+	}
 	f.videos[a.ID] = r
 	return vidRowToVideo(r), nil
 }
