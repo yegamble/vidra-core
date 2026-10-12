@@ -80,7 +80,7 @@ const ptActor = "https://pt.example/accounts/peertube"
 
 // instanceFollowsServer is an auth-enabled server (first account = admin) whose
 // instance has one PENDING instance follower; audit events land in buf.
-func instanceFollowsServer(t *testing.T, buf *bytes.Buffer) (*Server, *instanceFedRepo, uuid.UUID, string) {
+func instanceFollowsServer(t *testing.T, buf *bytes.Buffer, opts ...federation.Option) (*Server, *instanceFedRepo, uuid.UUID, string) {
 	t.Helper()
 	cfg := fedTestConfig()
 	issuer := auth.NewTokenIssuer("test-secret-test-secret-test-secret-0", "vidra", "vidra", 15*time.Minute)
@@ -90,7 +90,7 @@ func instanceFollowsServer(t *testing.T, buf *bytes.Buffer) (*Server, *instanceF
 		id: {ID: id, RemoteActorUrl: ptActor, State: "pending", PreferredUsername: "peertube", Domain: "pt.example", CreatedAt: time.Now()},
 	}}
 	repo.remoteActors[ptActor] = sqlcgen.RemoteActor{ActorUrl: ptActor, InboxUrl: ptActor + "/inbox"}
-	fedsvc := federation.NewService(repo, federation.WithBaseURL(cfg.PublicBaseURL))
+	fedsvc := federation.NewService(repo, append([]federation.Option{federation.WithBaseURL(cfg.PublicBaseURL)}, opts...)...)
 	srv := New(cfg, nil, nil, WithAuthService(authsvc, 15*time.Minute), WithFederationService(fedsvc),
 		WithLogger(slog.New(slog.NewJSONHandler(buf, nil))))
 	admin := registerAndToken(t, srv, `{"username":"ada","email":"ada@example.test","password":"supersecret"}`)

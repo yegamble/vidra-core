@@ -16968,6 +16968,147 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/federation/instance-following:
+    get:
+      operationId: listInstanceFollowing
+      summary: List the instances this one follows
+      description: >-
+        Remote instance actors this instance's actor follows, newest first —
+        PeerTube's /server/following. `pending` until the remote Accepts;
+        `rejected` when it refused. Admin only. Paginated via limit (1–100,
+        default 20) and offset.
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/InstanceFollowState"
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of followed instances (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceFollowListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: state is not pending, accepted or rejected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: followInstance
+      summary: Follow a remote instance
+      description: >-
+        Follows the instance at `host` as this instance's actor
+        (/accounts/peertube), as PeerTube's POST /server/following does. The
+        remote instance actor is found through its NodeInfo `Application` link,
+        else WebFinger acct:peertube@host (every fetch SSRF-guarded), and must
+        live on that host. A signed Follow is queued to it; once it Accepts,
+        the public videos it announces are ingested like those of a followed
+        remote channel. Idempotent: an existing follow is returned unchanged,
+        and one the remote rejected is re-armed. Admin only; audited
+        (admin.federation.instance_follow, safe row id only).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host]
+              properties:
+                host:
+                  type: string
+                  description: The remote instance's host (and port, if any).
+                  example: videos.example
+      responses:
+        "201":
+          description: The follow (pending until the remote Accepts).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceFollow"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The instance (or its actor) is blocked here, or this instance does not serve its instance actor.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: host is malformed, is this instance, or has no reachable instance actor.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Federation is disabled on this instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/admin/federation/instance-following/{id}:
+    delete:
+      operationId: unfollowInstance
+      summary: Unfollow a remote instance
+      description: >-
+        Stops following: the follow is removed at once and an Undo{Follow} is
+        queued to the remote instance actor (also through an instance block,
+        since it only ends contact). Admin only; audited
+        (admin.federation.instance_unfollow, safe row id only).
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/InstanceFollowID"
+      responses:
+        "204":
+          description: Unfollowed.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such followed instance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/admin/users:
     get:
       operationId: listUsers

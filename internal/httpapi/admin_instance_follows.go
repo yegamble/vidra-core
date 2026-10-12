@@ -84,3 +84,49 @@ func (s *Server) instanceFollowDecision(do func(context.Context, uuid.UUID) erro
 		return c.NoContent(http.StatusNoContent)
 	}
 }
+
+// handleListInstanceFollowing lists the instances ours follows.
+func (s *Server) handleListInstanceFollowing(c echo.Context) error {
+	return s.listInstanceFollows(c, s.fedsvc.ListInstanceFollowing)
+}
+
+// followInstanceRequest is the POST /admin/federation/instance-following body.
+type followInstanceRequest struct {
+	Host string `json:"host"`
+}
+
+// handleFollowInstance follows a remote instance by host, as our instance
+// actor — PeerTube's POST /server/following. 201 with the follow (pending
+// until the remote Accepts; an existing follow is returned as it is). The
+// host is never echoed back in an error.
+func (s *Server) handleFollowInstance(c echo.Context) error {
+	adminID, _, err := mustPrincipal(c)
+	if err != nil {
+		return err
+	}
+	if !s.cfg.FederationEnabled {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "federation is disabled on this instance")
+	}
+	var in followInstanceRequest
+	if err := bindAndValidate(c, &in); err != nil {
+		return err
+	}
+	f, err := s.fedsvc.FollowInstance(c.Request().Context(), in.Host)
+	switch {
+	case errors.Is(err, federation.ErrBadFollowTarget):
+		return &ValidationError{Fields: []FieldError{{Field: "host", Message: "must be a host name, e.g. videos.example"}}}
+	case errors.Is(err, federation.ErrLocalFollowTarget):
+		return &ValidationError{Fields: []FieldError{{Field: "host", Message: "is this instance"}}}
+	case errors.Is(err, federation.ErrRemoteUnresolvable):
+		return &ValidationError{Fields: []FieldError{{Field: "host", Message: "has no instance actor this instance could reach"}}}
+	case errors.Is(err, federation.ErrInstanceBlocked):
+		return echo.NewHTTPError(http.StatusConflict, "that instance is blocked; unblock it first")
+	case errors.Is(err, federation.ErrInstanceActorUnavailable):
+		return echo.NewHTTPError(http.StatusConflict, "this instance does not serve its instance actor")
+	case err != nil:
+		return err
+	}
+	s.audit(c, observability.ActionFederationInstanceFollow, observability.ResultSuccess, adminID.String(), f.ID.String())
+	return c.JSON(http.StatusCreated, instanceFollowView{ID: f.ID.String(), ActorURL: f.ActorURL, Host: f.Host,
+		Handle: f.Handle, State: f.State, CreatedAt: f.CreatedAt})
+}
