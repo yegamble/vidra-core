@@ -147,6 +147,7 @@ func (f *fakeRepo) UpdateComment(_ context.Context, a sqlcgen.UpdateCommentParam
 	if !ok {
 		return sqlcgen.Comment{}, errors.New("not found")
 	}
+	c.HeldForReview = c.HeldForReview || (a.Hold && c.Body != a.Body) // mirrors the SQL
 	c.Body = a.Body
 	c.UpdatedAt = time.Now()
 	f.comments[a.ID] = c

@@ -186,3 +186,119 @@ func TestHeldCommentVisibilityOnRealPG(t *testing.T) {
 		t.Error("a re-delivered Note re-held an approved remote comment")
 	}
 }
+
+// TestHeldCommentReholdOnRealPG proves the re-hold rules (0161) in SQL: a
+// body CHANGE that must be reviewed (UpdateComment hold, or a re-delivered
+// remote Note on an approval video) sends an approved comment back to held; an
+// unchanged body, or hold=false, never does; and NodeInfo's local comment count
+// never includes a held comment.
+func TestHeldCommentReholdOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+	suffix := uuid.NewString()[:8]
+	var owner, channelID, videoID uuid.UUID
+	if err := st.Pool.QueryRow(ctx, `INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+		"rh-"+suffix, "rh-"+suffix+"@example.test").Scan(&owner); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, owner) })
+	if err := st.Pool.QueryRow(ctx, `INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'R') RETURNING id`,
+		owner, "rhc-"+suffix).Scan(&channelID); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	if err := st.Pool.QueryRow(ctx, `INSERT INTO videos (channel_id, title, privacy, state, comments_policy)
+		VALUES ($1, 'R', 'public', 'published', 'requires_approval') RETURNING id`, channelID).Scan(&videoID); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+
+	// NodeInfo's count is instance-global, so it is read inside one
+	// REPEATABLE READ snapshot (rolled back): other packages' concurrent
+	// inserts cannot move it between the reads.
+	tx, err := st.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	tq := q.WithTx(tx)
+	before, _ := tq.CountComments(ctx)
+	counted, err := tq.CreateComment(ctx, sqlcgen.CreateCommentParams{
+		VideoID: videoID, UserID: pgtype.UUID{Bytes: owner, Valid: true}, Body: "counted", HeldForReview: true,
+	})
+	if err != nil {
+		t.Fatalf("create in tx: %v", err)
+	}
+	if n, _ := tq.CountComments(ctx); n != before {
+		t.Errorf("NodeInfo count with a held comment = %d, want %d (held excluded)", n, before)
+	}
+	if _, err := tq.ApproveComment(ctx, counted.ID); err != nil {
+		t.Fatalf("approve in tx: %v", err)
+	}
+	if n, _ := tq.CountComments(ctx); n != before+1 {
+		t.Errorf("NodeInfo count after approval = %d, want %d", n, before+1)
+	}
+	_ = tx.Rollback(ctx)
+
+	c, err := q.CreateComment(ctx, sqlcgen.CreateCommentParams{
+		VideoID: videoID, UserID: pgtype.UUID{Bytes: owner, Valid: true}, Body: "v1", HeldForReview: true,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := q.ApproveComment(ctx, c.ID); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	edit := func(body string, hold bool) bool {
+		t.Helper()
+		u, err := q.UpdateComment(ctx, sqlcgen.UpdateCommentParams{ID: c.ID, Body: body, Hold: hold})
+		if err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		return u.HeldForReview
+	}
+	if edit("v1", true) {
+		t.Error("an unchanged body re-held the comment")
+	}
+	if edit("v2", false) {
+		t.Error("a reviewer's edit (hold=false) re-held the comment")
+	}
+	if !edit("v3", true) {
+		t.Error("a changed body under hold stayed published")
+	}
+	if !edit("v4", false) {
+		t.Error("an edit released a held comment")
+	}
+
+	actor, name, object := "https://remote.example/accounts/rh-"+suffix, "r", "https://remote.example/notes/rh-"+suffix
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO remote_actors (actor_url, actor_type, public_key_pem) VALUES ($1, 'Person', 'k')`, actor); err != nil {
+		t.Fatalf("seed remote actor: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = st.Pool.Exec(context.Background(), `DELETE FROM remote_actors WHERE actor_url = $1`, actor)
+	})
+	upsert := func(body string) sqlcgen.Comment {
+		t.Helper()
+		r, err := q.CreateRemoteComment(ctx, sqlcgen.CreateRemoteCommentParams{
+			VideoID: videoID, Body: body, RemoteActorUrl: &actor, RemoteAuthorName: &name,
+			RemoteObjectUrl: &object, HeldForReview: true,
+		})
+		if err != nil {
+			t.Fatalf("remote upsert: %v", err)
+		}
+		return r
+	}
+	r := upsert("a")
+	if _, err := q.ApproveComment(ctx, r.ID); err != nil {
+		t.Fatalf("approve remote: %v", err)
+	}
+	if upsert("a").HeldForReview {
+		t.Error("a same-body re-delivery re-held the approved remote comment")
+	}
+	if !upsert("b").HeldForReview {
+		t.Error("a changed-body re-delivery published unreviewed")
+	}
+}

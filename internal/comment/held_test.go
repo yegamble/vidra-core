@@ -112,3 +112,46 @@ func TestPinRefusesAHeldComment(t *testing.T) {
 }
 
 func author2(username string) author { return author{username, username} }
+
+// TestEditForReviewReholdsAndRetracts: an approved comment edited where the
+// edit must be reviewed (a non-reviewer on a requires_approval video) goes
+// back to held, its new text is NOT federated, and the Note already announced
+// is retracted; an unchanged body re-holds nothing. A plain Edit (a reviewer's
+// own) stays published and federates the update as before.
+func TestEditForReviewReholdsAndRetracts(t *testing.T) {
+	repo := newFakeRepo()
+	var updated, deleted []uuid.UUID
+	svc := NewService(repo,
+		WithUpdateHook(func(_ context.Context, id uuid.UUID) { updated = append(updated, id) }),
+		WithDeleteHook(func(_ context.Context, id, _, _ uuid.UUID) { deleted = append(deleted, id) }),
+	)
+	ctx := context.Background()
+	author := uuid.New()
+	c, _ := svc.Create(ctx, uuid.New(), author, "approved text", nil)
+
+	if got, err := svc.EditForReview(ctx, c.ID, author, "approved text"); err != nil || got.HeldForReview {
+		t.Fatalf("unchanged body: held=%v err=%v, want still published", got.HeldForReview, err)
+	}
+	got, err := svc.EditForReview(ctx, c.ID, author, "something else")
+	if err != nil || !got.HeldForReview {
+		t.Fatalf("changed body: held=%v err=%v, want re-held", got.HeldForReview, err)
+	}
+	if len(updated) != 1 || len(deleted) != 1 || deleted[0] != c.ID {
+		t.Errorf("hooks: update=%v delete=%v, want the retract (delete) only — plus the unchanged edit's update", updated, deleted)
+	}
+	// Editing again while held federates nothing at all.
+	if _, err := svc.EditForReview(ctx, c.ID, author, "third"); err != nil {
+		t.Fatalf("held edit: %v", err)
+	}
+	if len(updated) != 1 || len(deleted) != 1 {
+		t.Errorf("a held edit fired hooks: update=%v delete=%v", updated, deleted)
+	}
+	if _, err := svc.EditForReview(ctx, c.ID, uuid.New(), "hijack"); !errors.Is(err, ErrForbidden) {
+		t.Errorf("non-author EditForReview err = %v, want ErrForbidden", err)
+	}
+
+	other, _ := svc.Create(ctx, uuid.New(), author, "reviewer's", nil)
+	if got, err := svc.Edit(ctx, other.ID, author, "reviewer's, edited"); err != nil || got.HeldForReview {
+		t.Errorf("plain Edit: held=%v err=%v, want published", got.HeldForReview, err)
+	}
+}

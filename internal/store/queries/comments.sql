@@ -13,15 +13,17 @@ RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
 -- Store an inbound federated Note as a comment (remote-content §6): attributed
 -- to a remote actor (with a display-name snapshot) instead of a local user.
 -- Idempotent by the Note's ActivityPub object id — a re-delivered or updated
--- Note refreshes the body. held_for_review (0161) is set only on the first
--- insert: a re-delivery must neither re-hold an approved comment nor release a
--- held one, so the conflict arm deliberately leaves it alone.
+-- Note refreshes the body. held_for_review (0161) is never released here; on a
+-- requires_approval video (held_for_review passed true) a re-delivery that
+-- CHANGES the body re-holds it — an approved comment must not change unreviewed.
 INSERT INTO comments (video_id, body, parent_id, remote_actor_url, remote_author_name, remote_object_url, held_for_review)
 VALUES (sqlc.arg('video_id'), sqlc.arg('body'), sqlc.narg('parent_id'),
         sqlc.arg('remote_actor_url'), sqlc.arg('remote_author_name'), sqlc.arg('remote_object_url'),
         sqlc.arg('held_for_review'))
 ON CONFLICT (remote_object_url) DO UPDATE
-    SET body = EXCLUDED.body, updated_at = now()
+    SET body = EXCLUDED.body, updated_at = now(),
+        held_for_review = comments.held_for_review
+            OR (EXCLUDED.held_for_review AND comments.body IS DISTINCT FROM EXCLUDED.body)
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
           remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review;
 
@@ -78,10 +80,8 @@ WHERE c.video_id = $1
       WHERE (rab.blocker_id = sqlc.narg('viewer_id') OR rab.blocker_id IS NULL)
         AND rab.actor_url = c.remote_actor_url
   )
-  -- Held comments (0161) are visible only to their author and to callers the
-  -- HTTP layer has established may review them (the video's owner, an editor
-  -- member, staff): include_held. Everyone else — anonymous readers included —
-  -- never sees one, in the rows or in the count.
+  -- Held comments (0161): only their author, and callers the HTTP layer marked
+  -- as reviewers (include_held), see them — in the rows and in the count.
   AND (NOT c.held_for_review
        OR sqlc.arg('include_held')::boolean
        OR c.user_id = sqlc.narg('viewer_id'))
@@ -127,10 +127,8 @@ WHERE c.video_id = $1
       WHERE (rab.blocker_id = sqlc.narg('viewer_id') OR rab.blocker_id IS NULL)
         AND rab.actor_url = c.remote_actor_url
   )
-  -- Held comments (0161) are visible only to their author and to callers the
-  -- HTTP layer has established may review them (the video's owner, an editor
-  -- member, staff): include_held. Everyone else — anonymous readers included —
-  -- never sees one, in the rows or in the count.
+  -- Held comments (0161): only their author, and callers the HTTP layer marked
+  -- as reviewers (include_held), see them — in the rows and in the count.
   AND (NOT c.held_for_review
        OR sqlc.arg('include_held')::boolean
        OR c.user_id = sqlc.narg('viewer_id'));
@@ -197,9 +195,12 @@ WHERE remote_object_url = sqlc.arg('remote_object_url')::text;
 
 -- name: UpdateComment :one
 -- Edit a comment's body (author-only; enforced in the service). Bumps updated_at
--- so clients can show an "edited" marker (updated_at > created_at).
+-- so clients can show an "edited" marker (updated_at > created_at). hold
+-- (0161): a body CHANGE that must be reviewed (a non-reviewer's edit on a
+-- requires_approval video) sends the comment back to held; never releases one.
 UPDATE comments
-SET body = sqlc.arg('body'), updated_at = now()
+SET held_for_review = held_for_review OR (sqlc.arg('hold')::boolean AND body IS DISTINCT FROM sqlc.arg('body')),
+    body = sqlc.arg('body'), updated_at = now()
 WHERE id = sqlc.arg('id')
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
           remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review;
@@ -228,9 +229,9 @@ WHERE (sqlc.narg('user_id')::uuid IS NOT NULL AND user_id = sqlc.narg('user_id')
 RETURNING id, video_id, user_id;
 
 -- name: CountComments :one
--- LOCAL comments only — the "local comments" count NodeInfo advertises.
--- Federated (remote-authored) comments are excluded.
-SELECT count(*) FROM comments WHERE user_id IS NOT NULL;
+-- LOCAL published comments only — the "local comments" count NodeInfo
+-- advertises. Federated (remote-authored) and held (0161) comments are excluded.
+SELECT count(*) FROM comments WHERE user_id IS NOT NULL AND NOT held_for_review;
 
 -- name: ListAdminComments :many
 -- The admin/moderator comments overview: ALL comments newest first, with the
