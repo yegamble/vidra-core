@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/mail"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
 
@@ -109,6 +110,10 @@ func (m *changeMailer) SendEmailChangeVerification(_ context.Context, newEmail, 
 
 func (m *changeMailer) SendEmailChanged(_ context.Context, oldEmail, newEmail string) error {
 	m.notices = append(m.notices, struct{ Old, New string }{oldEmail, newEmail})
+	return nil
+}
+
+func (m *changeMailer) SendNotificationEmail(context.Context, string, mail.NotificationEmail) error {
 	return nil
 }
 

@@ -1,6 +1,10 @@
 package auth
 
-import "context"
+import (
+	"context"
+
+	"github.com/vidra/vidra-core/internal/mail"
+)
 
 // Mailer delivers account-security tokens to a user out-of-band (typically
 // email). It is an adapter boundary: the platform generates and stores tokens
@@ -80,6 +84,12 @@ type Mailer interface {
 	SendAccountSuspended(ctx context.Context, email, reason string) error
 	// SendAccountReinstated tells a user a ban was lifted. No credential.
 	SendAccountReinstated(ctx context.Context, email string) error
+	// SendNotificationEmail mails one in-app notification to a user who turned
+	// email on for its type (migration 0157). It carries names and ids, never
+	// comment text, and links only to PUBLIC_BASE_URL. It is the one message
+	// here sent from a background drain rather than a request, so a failure is
+	// retried by the outbox, never surfaced to anyone.
+	SendNotificationEmail(ctx context.Context, email string, n mail.NotificationEmail) error
 }
 
 // noopMailer is the default mailer. With no email provider configured it drops
@@ -115,3 +125,6 @@ func (noopMailer) SendRegistrationRejected(context.Context, string, string, stri
 func (noopMailer) SendTwoFactorRemoved(context.Context, string, bool) error   { return nil }
 func (noopMailer) SendAccountSuspended(context.Context, string, string) error { return nil }
 func (noopMailer) SendAccountReinstated(context.Context, string) error        { return nil }
+func (noopMailer) SendNotificationEmail(context.Context, string, mail.NotificationEmail) error {
+	return nil
+}
