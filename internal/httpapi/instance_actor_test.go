@@ -72,6 +72,12 @@ func (r *instanceFedRepo) ListInstanceOutboxVideoIDs(_ context.Context, a sqlcge
 func (r *instanceFedRepo) ClaimInstanceFollowerBackfill(context.Context, sqlcgen.ClaimInstanceFollowerBackfillParams) (int64, error) {
 	return 1, nil
 }
+func (r *instanceFedRepo) IsVideoInInstanceOutbox(context.Context, uuid.UUID) (bool, error) {
+	return true, nil
+}
+func (r *instanceFedRepo) IsChannelOwnerUnlisted(context.Context, uuid.UUID) (bool, error) {
+	return false, nil
+}
 func (r *instanceFedRepo) CountInstanceOutboxVideos(context.Context) (int64, error) {
 	return int64(len(r.outbox)), nil
 }

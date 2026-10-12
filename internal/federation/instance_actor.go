@@ -52,6 +52,8 @@ type InstanceRepository interface {
 	ListInstanceOutboxVideoIDs(ctx context.Context, arg sqlcgen.ListInstanceOutboxVideoIDsParams) ([]uuid.UUID, error)
 	CountInstanceOutboxVideos(ctx context.Context) (int64, error)
 	ClaimInstanceFollowerBackfill(ctx context.Context, arg sqlcgen.ClaimInstanceFollowerBackfillParams) (int64, error)
+	IsVideoInInstanceOutbox(ctx context.Context, id uuid.UUID) (bool, error)
+	IsChannelOwnerUnlisted(ctx context.Context, id uuid.UUID) (bool, error)
 	// The admin's instance-follower decisions (instance_followers.go).
 	ListInstanceFollowers(ctx context.Context, arg sqlcgen.ListInstanceFollowersParams) ([]sqlcgen.ListInstanceFollowersRow, error)
 	CountInstanceFollowers(ctx context.Context, state *string) (int64, error)

@@ -36,6 +36,19 @@ func WithInstanceFollowerRequestHook(fn func(context.Context, uuid.UUID)) Option
 	return func(s *Service) { s.onInstanceFollowerRequest = fn }
 }
 
+// actorTypeService is the other ActivityStreams type an instance actor may
+// carry (PeerTube's validator accepts both as instance actors).
+const actorTypeService = "Service"
+
+// inboxesOnOwnHost reports whether a remote actor's inbox, and its shared
+// inbox when it names one, live on the actor's own host.
+func inboxesOnOwnHost(ra sqlcgen.RemoteActor) bool {
+	if !sameHost(ra.InboxUrl, ra.ActorUrl) {
+		return false
+	}
+	return ra.SharedInboxUrl == nil || *ra.SharedInboxUrl == "" || sameHost(*ra.SharedInboxUrl, ra.ActorUrl)
+}
+
 // isInstanceActorID reports whether id is our served instance actor's id.
 func (s *Service) isInstanceActorID(ctx context.Context, id string) bool {
 	own, ok := s.InstanceActorAvailable(ctx)
@@ -49,6 +62,22 @@ func (s *Service) handleInstanceFollow(ctx context.Context, act inboxActivity, f
 	// channel owner's block is — a Reject would tell the blocked actor why.
 	if blocked, err := s.repo.IsRemoteActorBlockedInstanceWide(ctx, follower); err != nil || blocked {
 		return err
+	}
+	// Signature verification cached the follower. An instance is followed by
+	// an instance actor, whose inboxes live on its own server: anything else
+	// would have this instance deliver Announces somewhere the follower named.
+	ra, err := s.repo.GetRemoteActor(ctx, follower)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if !inboxesOnOwnHost(ra) {
+		return nil // dropped unanswered: an answer would go to another server
+	}
+	if ra.ActorType != actorTypeApplication && ra.ActorType != actorTypeService {
+		return s.answerInstanceFollow(ctx, "Reject", follower, act.ID)
 	}
 	state := instanceFollowAccepted
 	if s.followerApprovalRequired() {
@@ -114,7 +143,7 @@ func (s *Service) answerInstanceFollow(ctx context.Context, typ, follower, follo
 		}
 		return err
 	}
-	if ra.InboxUrl == "" {
+	if ra.InboxUrl == "" || !sameHost(ra.InboxUrl, follower) {
 		return nil
 	}
 	payload, err := followAnswer(typ, s.InstanceActorURL(), follower, followID)
