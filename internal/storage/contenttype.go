@@ -43,6 +43,14 @@ var storedContentTypes = map[string]string{
 	// Audio-only download.
 	".m4a": "audio/mp4",
 	".mp3": "audio/mpeg",
+	// Audio-only originals (kept for source download). .ogg is deliberately
+	// absent: it is also a video container (Theora), so guessing audio/ogg
+	// would mislabel a video original.
+	".m4b":  "audio/mp4",
+	".aac":  "audio/aac",
+	".flac": "audio/flac",
+	".wav":  "audio/wav",
+	".opus": "audio/ogg",
 	// Manifests. Neither is ever redirected (delivery.Redirectable is false for
 	// an HLS playlist), but they are read directly by mediagc and by an
 	// operator with a bucket browser, and an m3u8 served as octet-stream is a
