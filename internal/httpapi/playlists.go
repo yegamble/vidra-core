@@ -20,11 +20,11 @@ import (
 // validPlaylistVisibility is the allowed visibility set; empty defaults to "private".
 var validPlaylistVisibility = map[string]bool{"public": true, "unlisted": true, "private": true}
 
-// playlistView is the public projection of a playlist.
+// playlistView is the public projection of a playlist. OwnerID lets a client
+// decide owner controls from the playlist itself; searching GET /me/playlists
+// for it only ever sees one page.
 type playlistView struct {
-	ID string `json:"id"`
-	// OwnerID lets a client decide owner controls from the playlist itself. The
-	// alternative — finding it among GET /me/playlists — only ever sees one page.
+	ID           string    `json:"id"`
 	OwnerID      string    `json:"owner_id"`
 	Title        string    `json:"title"`
 	Description  string    `json:"description"`
