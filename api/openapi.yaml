@@ -2983,6 +2983,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/users/{username}/videos:
+    get:
+      operationId: listUserVideos
+      summary: List an account's public videos
+      description: >-
+        The profile Videos tab: an account's public, published videos across ALL
+        of its channels, newest first, paginated with a `total`. Gated like
+        GET /users/{username}/profile (a private, inactive or unknown profile is
+        404; a signed-in owner may preview their own). Carries the same
+        visibility filters as GET /channels/{handle}/videos for a non-manager:
+        no private, unlisted, draft, quarantined or moderator-blocked video, the
+        signed-in viewer's mute/block clause, and the viewer's sensitive-content
+        setting.
+      tags: [users]
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: sort
+          in: query
+          required: false
+          description: >-
+            `-published_at` (newest first, the default) or `published_at`
+            (oldest first).
+          schema:
+            type: string
+            enum: [-published_at, published_at]
+            default: -published_at
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: The account's public videos (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoListResponse"
+        "404":
+          description: The profile is private, inactive, or unknown.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/users/{id}/donation-addresses:
     get:
       operationId: listUserDonationAddresses
@@ -3769,6 +3817,71 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FollowedChannelsResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/feed-token:
+    get:
+      operationId: getFeedToken
+      summary: Whether the caller has a private subscriptions-feed token
+      description: >-
+        Reports whether a private feed token exists and when it was issued. The
+        token itself is stored only as a hash and is never returned here; it is
+        shown once, by POST.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Token status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedTokenStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: rotateFeedToken
+      summary: Create or rotate the private subscriptions-feed token
+      description: >-
+        Mints a fresh random token, replacing any previous one (the old feed
+        URL stops working immediately), and returns it together with the
+        ready-made feed URL (GET /feeds/subscriptions.xml?token=…). This is the
+        only time the raw token is visible. The token grants read access to
+        that one feed and nothing else.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: The new token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedTokenIssued"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: revokeFeedToken
+      summary: Revoke the private subscriptions-feed token
+      description: Deletes the token (idempotent); the feed URL then answers 404.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Revoked (or none existed).
         "401":
           description: Missing, invalid, or expired token.
           content:
@@ -7662,6 +7775,8 @@ paths:
         accounts are hidden from the list (mutes are per-viewer), while an
         anonymous viewer sees all comments. A non-public/unpublished or unknown
         video is 404. Paginated via limit (1–100, default 20) and offset.
+        Held comments appear only for their author and the video's reviewers
+        (owner, editor members, staff), in both the page and total.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -7694,13 +7809,17 @@ paths:
       description: >-
         Adds a comment by the authenticated user to a public, published video.
         Posting requires the instance-wide comments_enabled setting AND the
-        video's comments_policy to be "enabled" (403 feature_disabled
+        video's comments_policy to not be "disabled" (403 feature_disabled
         otherwise, config-parity W9); reading comments stays open either way.
         Best-effort notifications follow: the video's owner gets a "comment"
         notification, and when parent_id names another user's comment its
         author gets a "comment_reply" one. A user who is both (the owner
         replying under their own video) receives comment_reply only — one
         reply, one notification.
+        On a "requires_approval" video a non-reviewer's comment is held
+        (held_for_review): seen only by its author and the reviewers, not
+        federated, and announcing nothing (comment, comment_reply, mentions)
+        until approved; a held parent is a 422 like an unknown one.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -7763,6 +7882,83 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/videos/{id}/comments/{commentId}/approve:
+    post:
+      operationId: approveComment
+      summary: Approve a comment held for review
+      description: >-
+        Publishes a held comment: reviewers only (owner, editor members,
+        staff; else 403), and the comment must be on this video (else 404).
+        Idempotent — only the first approval federates it, raises the
+        comment/comment_reply notifications (only while the video is public;
+        never to an approving owner) and is audited (content.comment.approve).
+        Reject with DELETE /comments/{id}. updated_at names the version the
+        reviewer saw: a held comment edited since answers 409, unpublished.
+      tags: [comments]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [updated_at]
+              properties:
+                updated_at:
+                  type: string
+                  format: date-time
+                  description: The comment's updated_at as the reviewer saw it.
+      responses:
+        "200":
+          description: The comment, no longer held.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Comment"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The caller cannot review this video's comments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such comment on this video.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The held comment changed since that version; review it again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: updated_at is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/comments/{id}:
     patch:
       operationId: updateComment
@@ -7771,6 +7967,8 @@ paths:
         Edits the caller's own comment body. Only the author may edit (moderators
         delete, not edit): another user's comment is 403, an unknown id is 404, and
         a blank or too-long body is 422. Bumps updated_at so `edited` becomes true.
+        On a requires_approval video, a changed body from anyone but the video's
+        reviewers sends the comment back to held_for_review until re-approved.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -7823,8 +8021,9 @@ paths:
       summary: Delete a comment
       description: >-
         Deletes a comment. The comment's author may always delete it; a
-        moderator/admin may delete anyone's. An unknown id is 404; a non-author
-        non-moderator is 403.
+        moderator/admin may delete anyone's; the video's owner or an editor
+        member may delete a comment held for review (rejecting it, audited as
+        content.comment.reject). An unknown id is 404; anyone else is 403.
       tags: [comments]
       security:
         - bearerAuth: []
@@ -7865,7 +8064,8 @@ paths:
         YouTube-style creator pin). The caller must be able to manage the
         comment's video (its channel owner or an editor) or be a
         moderator/admin. Pinning replaces any existing pin. Only a top-level,
-        non-tombstoned comment can be pinned (422 otherwise). This is local
+        non-tombstoned comment that is not held for review can be pinned (422
+        otherwise). This is local
         metadata — it never edits the comment body and never federates.
       tags: [comments]
       security:
@@ -17494,6 +17694,28 @@ components:
           description: >-
             Present only when the ledger could not be read for some reason other
             than "not migrated yet". The response is still 200.
+    FeedTokenStatus:
+      type: object
+      required: [configured]
+      properties:
+        configured:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    FeedTokenIssued:
+      type: object
+      required: [token, created_at]
+      properties:
+        token:
+          type: string
+          description: The raw token; shown only once.
+        url:
+          type: string
+          description: Ready-to-paste feed URL; absent when the instance has no public origin configured.
+        created_at:
+          type: string
+          format: date-time
     ErrorResponse:
       type: object
       description: >-
@@ -18036,7 +18258,7 @@ components:
                   description: PT-compatible licence id; 0 = no default licence.
                 comment_policy:
                   type: string
-                  enum: [enabled, disabled]
+                  enum: [enabled, disabled, requires_approval]
                 download_enabled:
                   type: boolean
         broadcast:
@@ -19144,9 +19366,10 @@ components:
             unset.
         comments_policy:
           type: string
-          enum: [enabled, disabled]
+          enum: [enabled, disabled, requires_approval]
           description: >-
-            The per-video comment policy (config-parity W9). Present on the
+            The per-video comment policy (config-parity W9; requires_approval
+            holds comments for the video's reviewers to approve). Present on the
             create/update/detail views; omitted on list/feed views and remote
             cards.
         comments_enabled:
@@ -19154,7 +19377,8 @@ components:
           description: >-
             EFFECTIVE comment availability on the DETAIL view only: the
             instance-wide comments_enabled setting AND this video's
-            comments_policy. Reading existing comments stays open either way;
+            comments_policy (true for requires_approval, which still accepts
+            comments). Reading existing comments stays open either way;
             this reports whether posting is possible.
         download_enabled:
           type: boolean
@@ -19903,11 +20127,10 @@ components:
             is_sensitive; the frontend pairs them.
         comments_policy:
           type: string
-          enum: [enabled, disabled]
+          enum: [enabled, disabled, requires_approval]
           description: >-
             Per-video comment policy (config-parity W9). Omitted/empty seeds
-            the instance's default_comment_policy setting. PeerTube's
-            requires_approval tier is deliberately not supported -> 422.
+            the instance's default_comment_policy setting.
         download_enabled:
           type: boolean
           description: >-
@@ -19989,11 +20212,11 @@ components:
             422 over the cap.
         comments_policy:
           type: string
-          enum: [enabled, disabled]
+          enum: [enabled, disabled, requires_approval]
           description: >-
             Set the per-video comment policy (omit to leave unchanged).
             "disabled" makes new comments answer 403 feature_disabled while
-            reading existing comments stays open.
+            reading existing comments stays open; "requires_approval" holds them.
         download_enabled:
           type: boolean
           description: >-
@@ -20040,7 +20263,7 @@ components:
             $ref: "#/components/schemas/Caption"
     Comment:
       type: object
-      required: [id, video_id, body, parent_id, author_id, author_username, author_display_name, remote, created_at, updated_at, edited, deleted, pinned, hearted]
+      required: [id, video_id, body, parent_id, author_id, author_username, author_display_name, remote, created_at, updated_at, edited, deleted, pinned, hearted, held_for_review]
       properties:
         id:
           type: string
@@ -20101,6 +20324,11 @@ components:
           description: >-
             True when the video's creator has hearted this comment (a like
             from the uploader).
+        held_for_review:
+          type: boolean
+          description: >-
+            True while the comment awaits approval; only its author and the
+            video's reviewers ever receive it. It cannot be pinned or replied to.
     CommentListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"

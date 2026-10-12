@@ -278,6 +278,28 @@ func (s *Server) resolveFeedScope(c echo.Context) (*feedScope, error) {
 	}, nil
 }
 
+// rssItemFor renders one feed card as an MRSS item. Shared by the public video
+// feed and the token-gated subscriptions feed so the two can never disagree on
+// the guid (the subscriber-side dedup key) or the link form.
+func (s *Server) rssItemFor(it video.FeedItem) rssItem {
+	id := it.Video.ID
+	item := rssItem{
+		Title: it.Video.Title,
+		// The link a reader clicks moves to the short form...
+		Link: s.canonicalWatchURL(id, it.Video.ShortCode),
+		// ...but the guid does NOT. It is the subscriber-side dedup key, so
+		// changing it re-surfaces every item in the window as new for every
+		// existing subscriber. A permanently-valid URL is still a permalink.
+		GUID:        rssGUID{Value: s.watchURL(id), IsPermaLink: true},
+		PubDate:     it.Video.CreatedAt.UTC().Format(time.RFC1123Z),
+		Description: truncateRunes(it.Video.Description, rssDescriptionMax),
+	}
+	if it.HasThumbnail {
+		item.Thumbnail = &mediaThumbnail{URL: s.thumbnailURL(id)}
+	}
+	return item
+}
+
 // feedRateLimit gives a root-mounted feed its own per-IP budget, riding the
 // general limiter (the root mount is otherwise unthrottled) and failing open
 // like every limiter here. Used by the routes that do per-request storage work
@@ -371,22 +393,7 @@ func (s *Server) handleVideosFeed(c echo.Context) error {
 		doc.Channel.LastBuildDate = items[0].Video.CreatedAt.UTC().Format(time.RFC1123Z)
 	}
 	for _, it := range items {
-		id := it.Video.ID
-		item := rssItem{
-			Title: it.Video.Title,
-			// The link a reader clicks moves to the short form...
-			Link: s.canonicalWatchURL(id, it.Video.ShortCode),
-			// ...but the guid does NOT. It is the subscriber-side dedup key, so
-			// changing it re-surfaces every item in the window as new for every
-			// existing subscriber. A permanently-valid URL is still a permalink.
-			GUID:        rssGUID{Value: s.watchURL(id), IsPermaLink: true},
-			PubDate:     it.Video.CreatedAt.UTC().Format(time.RFC1123Z),
-			Description: truncateRunes(it.Video.Description, rssDescriptionMax),
-		}
-		if it.HasThumbnail {
-			item.Thumbnail = &mediaThumbnail{URL: s.thumbnailURL(id)}
-		}
-		doc.Channel.Items = append(doc.Channel.Items, item)
+		doc.Channel.Items = append(doc.Channel.Items, s.rssItemFor(it))
 	}
 
 	return writeXML(c, contentTypeRSS, "public, s-maxage=300", doc)

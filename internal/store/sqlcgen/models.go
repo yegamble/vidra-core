@@ -1150,6 +1150,12 @@ type UserBlock struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type UserFeedToken struct {
+	UserID    uuid.UUID `json:"user_id"`
+	TokenHash string    `json:"token_hash"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type UserImage struct {
 	UserID      uuid.UUID `json:"user_id"`
 	Kind        string    `json:"kind"`
