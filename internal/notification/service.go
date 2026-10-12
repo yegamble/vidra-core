@@ -68,12 +68,17 @@ const (
 	TypeUploadQuarantined = "upload_quarantined"
 	// TypeFederationFollowerRequest: a remote actor's follow awaits approval.
 	TypeFederationFollowerRequest = "federation_follower_request"
+	// TypeVideoOwnershipRequest tells a user that another local user offered
+	// them one of their videos (T21, migration 0165). Actor = the giver,
+	// video = the video; the request itself is answered from the recipient's
+	// ownership requests list.
+	TypeVideoOwnershipRequest = "video_ownership_request"
 )
 
 // KnownTypes lists every notification type, in stable order. Preferences may
 // target exactly these; every type defaults to enabled.
 func KnownTypes() []string {
-	return []string{TypeCaptionReady, TypeComment, TypeCommentMention, TypeCommentReply, TypeFederationFollowerRequest, TypeFollow, TypeMessage, TypeNewRegistrationRequest, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeUploadQuarantined, TypeVideoBlocked, TypeVideoRejected, TypeVideoUnblocked}
+	return []string{TypeCaptionReady, TypeComment, TypeCommentMention, TypeCommentReply, TypeFederationFollowerRequest, TypeFollow, TypeMessage, TypeNewRegistrationRequest, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeUploadQuarantined, TypeVideoBlocked, TypeVideoOwnershipRequest, TypeVideoRejected, TypeVideoUnblocked}
 }
 
 // EmailTypes lists, in stable order, the types a user may ALSO receive by email
@@ -96,7 +101,7 @@ func emailType(t string) bool {
 func knownType(t string) bool {
 	switch t {
 	case TypeFollow, TypeComment, TypeCommentReply, TypeCommentMention, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeVideoBlocked, TypeVideoUnblocked, TypeCaptionReady, TypeNewVideo, TypeNewReport,
-		TypeNewRegistrationRequest, TypeUploadQuarantined, TypeFederationFollowerRequest:
+		TypeNewRegistrationRequest, TypeUploadQuarantined, TypeFederationFollowerRequest, TypeVideoOwnershipRequest:
 		return true
 	}
 	return false
@@ -505,6 +510,23 @@ func (s *Service) NotifyVideoUnblocked(ctx context.Context, recipientID, actorID
 	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
 		UserID:  recipientID,
 		Type:    TypeVideoUnblocked,
+		VideoID: pgconv.UUID(videoID),
+	})
+	return err
+}
+
+// NotifyVideoOwnershipRequest tells recipientID that actorID offered them
+// videoID. Notifying yourself is a no-op, as is a recipient who disabled the
+// type. Best-effort: the caller never fails the request over it. Whether the
+// recipient muted the giver is decided upstream (the request still stands).
+func (s *Service) NotifyVideoOwnershipRequest(ctx context.Context, recipientID, actorID, videoID uuid.UUID) error {
+	if recipientID == actorID || !s.typeEnabled(ctx, recipientID, TypeVideoOwnershipRequest) {
+		return nil
+	}
+	_, err := s.repo.CreateNotification(ctx, sqlcgen.CreateNotificationParams{
+		UserID:  recipientID,
+		Type:    TypeVideoOwnershipRequest,
+		ActorID: pgconv.UUID(actorID),
 		VideoID: pgconv.UUID(videoID),
 	})
 	return err

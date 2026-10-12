@@ -1045,6 +1045,8 @@ func run() error {
 		logger.Warn("storyboard generation disabled (ffmpeg/ffprobe not on PATH); videos publish without a storyboard")
 	}
 	vopts = append(vopts, video.WithViewDeduper(cache.NewDeduper(rdb.Client)))
+	// Video ownership changes (T21, migration 0165).
+	vopts = append(vopts, video.WithOwnershipRepository(db.Queries()))
 	// The durable audit trail (also mounted on the admin API below) lets the video
 	// service record a content.upload.malware_rejected event when a scan keeps an
 	// upload out of published (infection / unscannable under a non-publishing mode).
