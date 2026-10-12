@@ -120,17 +120,30 @@ func wantsActivityJSON(accept string) bool {
 }
 
 func (s *Server) handleAccountActor(c echo.Context) error {
-	return s.serveActor(c, s.fedsvc.AccountActor)
+	return s.serveActor(c, s.fedsvc.AccountActor, "/users/")
 }
 
 func (s *Server) handleChannelActor(c echo.Context) error {
-	return s.serveActor(c, s.fedsvc.ChannelActor)
+	return s.serveActor(c, s.fedsvc.ChannelActor, "/channels/")
 }
 
 // serveActor content-negotiates and serves an actor document. A non-AP Accept
-// gets 406; an unknown/inactive actor gets 404.
-func (s *Server) serveActor(c echo.Context, fetch func(context.Context, string) (*federation.Actor, error)) error {
-	if !wantsActivityJSON(c.Request().Header.Get("Accept")) {
+// gets 406 — except a browser (Accept: text/html), which is sent on to the human
+// profile page under profilePrefix, as Mastodon and PeerTube do; an
+// unknown/inactive actor gets 404.
+func (s *Server) serveActor(c echo.Context, fetch func(context.Context, string) (*federation.Actor, error), profilePrefix string) error {
+	accept := c.Request().Header.Get("Accept")
+	if !wantsActivityJSON(accept) {
+		if strings.Contains(strings.ToLower(accept), "text/html") {
+			actor, err := fetch(c.Request().Context(), c.Param("handle"))
+			if errors.Is(err, federation.ErrNotFound) {
+				return echo.NewHTTPError(http.StatusNotFound)
+			}
+			if err != nil {
+				return err
+			}
+			return c.Redirect(http.StatusFound, profilePrefix+url.PathEscape(actor.PreferredUsername))
+		}
 		return echo.NewHTTPError(http.StatusNotAcceptable, "actor documents are served as application/activity+json")
 	}
 	actor, err := fetch(c.Request().Context(), c.Param("handle"))

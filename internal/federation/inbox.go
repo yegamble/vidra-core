@@ -175,7 +175,7 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 	}
 	handle, ok := s.localChannelHandle(objectID(act.Object))
 	if !ok {
-		return nil // not a Follow of one of our channels (e.g. an account) → ignore for now
+		return s.rejectAccountFollow(ctx, objectID(act.Object), signerActorURL, act.ID)
 	}
 	// Same as handleUndo: a Follow addressed at the frozen actor id of a
 	// renamed channel is the ordinary case for every peer that followed before
@@ -233,6 +233,48 @@ func (s *Service) handleFollow(ctx context.Context, act inboxActivity, signerAct
 		return err
 	}
 	return s.maybeAutoFollowBack(ctx, ch.ID, handle, signerActorURL)
+}
+
+// rejectAccountFollow answers a Follow of a local ACCOUNT (Person) actor with a
+// signed Reject. Followers are recorded per channel (remote_follows.channel_id)
+// and deliveries fan out over channels, so an account follow has nowhere to be
+// recorded and nothing would ever be delivered to it; leaving it unanswered
+// strands a Mastodon user on "pending" forever. A clean Reject tells them to
+// follow the channel instead. Unknown account / not ours → ignored.
+func (s *Service) rejectAccountFollow(ctx context.Context, object, followerURL, followID string) error {
+	username, ok := strings.CutPrefix(object, s.baseURL+"/accounts/")
+	if !ok || username == "" || strings.ContainsAny(username, "/#?") {
+		return nil
+	}
+	u, err := s.repo.GetUserActorByUsername(ctx, username)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	follower, err := s.repo.GetRemoteActor(ctx, followerURL)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if follower.InboxUrl == "" {
+		return nil
+	}
+	actor := s.baseURL + "/accounts/" + u.Username
+	payload, err := json.Marshal(map[string]any{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       actor + "/activities/reject/" + uuid.NewString(),
+		"type":     "Reject",
+		"actor":    actor,
+		"object":   map[string]any{"id": followID, "type": "Follow", "actor": followerURL, "object": actor},
+	})
+	if err != nil {
+		return err
+	}
+	return s.enqueueAccountDelivery(ctx, u.ID, u.Username, follower.InboxUrl, payload)
 }
 
 // rejectFollowFromBlockedSender answers a Follow this instance refused because
