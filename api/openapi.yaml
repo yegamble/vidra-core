@@ -8563,7 +8563,9 @@ paths:
         video_rejected, video_unblocked) mapped to whether it is
         delivered. Types never configured default to enabled. The new_report
         type is only ever delivered to admins/moderators, but the switch is
-        visible to everyone.
+        visible to everyone. Alongside it, `email` maps each type that can ALSO
+        be delivered by email (comment, comment_reply, new_video) to whether
+        it is; email is opt-in, so a type never configured is false.
       tags: [notifications]
       security:
         - bearerAuth: []
@@ -8585,9 +8587,14 @@ paths:
       summary: Update the caller's notification preferences
       description: >-
         Applies a partial preference update: only the types present in the body
-        are changed. Disabling a type suppresses new notifications of that type
-        at creation time (existing notifications are unaffected). An unknown
-        type is 422 and nothing is written. Returns the full updated map.
+        are changed, in `prefs` (in-app) and/or `email`. Disabling a type
+        suppresses new notifications of that type at creation time (existing
+        notifications are unaffected). Email rides the in-app notification: it
+        is queued only when that notification is created, so an in-app type
+        that is off sends no email either, and it is delivered in the
+        background, only to a verified address, while the instance has mail
+        configured. An unknown type, or an email switch for a type without email
+        delivery, is 422 and nothing is written. Returns the full updated maps.
       tags: [notifications]
       security:
         - bearerAuth: []
@@ -8617,7 +8624,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: Empty update or unknown notification type.
+          description: >-
+            Empty update, unknown notification type, or an email switch for a
+            type without email delivery.
           content:
             application/json:
               schema:
@@ -20562,7 +20571,7 @@ components:
           example: 3
     NotificationPrefsResponse:
       type: object
-      required: [prefs]
+      required: [prefs, email]
       properties:
         prefs:
           type: object
@@ -20572,9 +20581,22 @@ components:
           additionalProperties:
             type: boolean
           example: { caption_ready: true, comment: true, comment_reply: true, follow: false, message: true, new_report: true, new_video: true, report_resolved: true, video_blocked: true, video_rejected: true, video_unblocked: true }
+        email:
+          type: object
+          description: >-
+            Every type that can also be delivered by email (comment,
+            comment_reply, new_video) mapped to whether it is. Email is opt-in,
+            mirroring PeerTube's web-only defaults for these types: a type with
+            no stored choice is false. Types absent from this map have no email
+            delivery.
+          additionalProperties:
+            type: boolean
+          example: { comment: false, comment_reply: true, new_video: true }
     UpdateNotificationPrefsRequest:
       type: object
-      required: [prefs]
+      description: >-
+        At least one type must be named in prefs or email (an update naming
+        none is 422).
       properties:
         prefs:
           type: object
@@ -20586,8 +20608,16 @@ components:
             type rejects the whole update (422).
           additionalProperties:
             type: boolean
-          minProperties: 1
           example: { follow: false }
+        email:
+          type: object
+          description: >-
+            Partial map of email-capable type -> emailed. Only the types present
+            are changed. Email types: comment, comment_reply, new_video. Any
+            other type rejects the whole update (422).
+          additionalProperties:
+            type: boolean
+          example: { new_video: true }
     PlayerSettings:
       type: object
       description: >-

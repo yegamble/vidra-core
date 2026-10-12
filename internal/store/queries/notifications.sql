@@ -1,11 +1,27 @@
 -- name: CreateNotification :one
 -- Record a notification for a recipient (user_id). Context columns are optional
 -- and depend on the type.
-INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id, conversation_id, report_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id;
+--
+-- The same statement records whether it is ALSO owed an email (migration 0156):
+-- a notification_emails row when, and only when, the recipient explicitly
+-- turned email on for this type. Email is opt-in, and the prefs API accepts an
+-- email choice only for the types that offer it, so for every other type the
+-- second insert is empty. One statement, so a notification can never exist
+-- without the email decision that belongs to it (or the reverse).
+WITH n AS (
+    INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id, comment_id, conversation_id, report_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id
+), owed AS (
+    INSERT INTO notification_emails (notification_id)
+    SELECT n.id FROM n
+    JOIN notification_prefs np ON np.user_id = n.user_id AND np.type = n.type
+    WHERE np.email_enabled
+)
+SELECT id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at, created_at, conversation_id, report_id
+FROM n;
 
--- name: NotifyFollowersOfNewVideo :execrows
+-- name: NotifyFollowersOfNewVideo :one
 -- The "new video from a channel you follow" fan-out (migration 0101), fired by
 -- the publish transition. ONE set-based statement rather than a row-per-follower
 -- loop: a channel's whole follower set is notified in a single round trip, and
@@ -26,6 +42,14 @@ RETURNING id, user_id, type, actor_id, channel_id, video_id, comment_id, read_at
 --
 -- ON CONFLICT rides notifications_new_video_unique_idx, so a publish hook that
 -- fires twice for the same video is a no-op the second time.
+--
+-- The same statement queues the EMAILS (migration 0156): one notification_emails
+-- row per notification it actually inserted whose recipient explicitly turned
+-- new_video email on. Keyed off what the INSERT returned, so the no-op re-run
+-- above queues nothing either; nothing is mailed here — the outbox drain sends
+-- in the background, so a large follower list never mails inline. Returns how
+-- many followers were notified (not how many emails were queued).
+WITH ins AS (
 INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id)
 SELECT cf.follower_id, 'new_video', ch.owner_id, v.channel_id, v.id
 FROM videos v
@@ -52,7 +76,15 @@ WHERE v.id = sqlc.arg('video_id')
       WHERE (ub.blocker_id = cf.follower_id AND ub.blocked_id = ch.owner_id)
          OR (ub.blocker_id = ch.owner_id AND ub.blocked_id = cf.follower_id)
   )
-ON CONFLICT (user_id, video_id) WHERE type = 'new_video' DO NOTHING;
+ON CONFLICT (user_id, video_id) WHERE type = 'new_video' DO NOTHING
+RETURNING id, user_id
+), owed AS (
+    INSERT INTO notification_emails (notification_id)
+    SELECT ins.id FROM ins
+    JOIN notification_prefs np ON np.user_id = ins.user_id AND np.type = 'new_video'
+    WHERE np.email_enabled
+)
+SELECT count(*)::bigint FROM ins;
 
 -- name: NotifyStaffOfNewReport :execrows
 -- The "new abuse report" staff fan-out (migration 0103), fired when a report is
