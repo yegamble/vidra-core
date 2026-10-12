@@ -1,4 +1,5 @@
 -- 0153 down: remote reports have no local reporter, so they go first.
+DROP INDEX IF EXISTS reports_remote_open_target_idx;
 DROP INDEX IF EXISTS reports_remote_flag_target_idx;
 ALTER TABLE reports DROP CONSTRAINT IF EXISTS reports_reporter_kind_check;
 DELETE FROM reports WHERE reporter_id IS NULL;

@@ -130,10 +130,8 @@ type CreateRemoteFlagReportParams struct {
 	FlagActivityID string      `json:"flag_activity_id"`
 }
 
-// A report filed by another instance via an inbound ActivityPub Flag (0153):
-// the remote actor + domain instead of a local reporter. Idempotent per (Flag,
-// target) — a redelivery yields no row, so staff are told once. An unknown
-// target raises a foreign-key violation ("invalid target").
+// A remote Flag report (0153). No row for a repeat (Flag, target) or while the
+// domain has an open report on the target; an unknown target violates the FK.
 func (q *Queries) CreateRemoteFlagReport(ctx context.Context, arg CreateRemoteFlagReportParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, createRemoteFlagReport,
 		arg.TargetType,

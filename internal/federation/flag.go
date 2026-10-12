@@ -16,10 +16,10 @@ import (
 const (
 	maxFlagObjects   = 20   // objects past this are ignored, not rejected
 	maxFlagReasonLen = 2000 // the local report form's limit; longer is truncated
+	maxFlagIDLen     = 2048 // bytes; a longer Flag id is refused before any insert
 )
 
-// peertubeAbuseReasons are PeerTube's predefined reasons (Flag tag names); vidra
-// has no column for them, so known ones are prefixed into the reason.
+// peertubeAbuseReasons (Flag tag names) are prefixed into the reason: no column.
 var peertubeAbuseReasons = []string{"violentOrRepulsive", "hatefulOrAbusive", "spamOrMisleading",
 	"privacy", "rights", "serverRules", "thumbnails", "captions"}
 
@@ -30,13 +30,15 @@ func WithFlagReporting(file func(context.Context, moderation.RemoteReport) (uuid
 	return func(s *Service) { s.fileFlagReport, s.notifyNewReport = file, notify }
 }
 
-// handleFlag (T07): a fediverse user reported OUR video, comment or account —
-// PeerTube sends one object, Mastodon [account, statuses...]. One report per
-// LOCAL object; an admin-blocked actor is refused like a blocked instance. A
-// store error fails the activity so the remote retries (idempotently).
+// handleFlag (T07): a fediverse report of OUR video, comment or account (PeerTube:
+// one object; Mastodon: [account, statuses...]) files one report per LOCAL
+// object. A store error fails the activity so the remote retries.
 func (s *Service) handleFlag(ctx context.Context, act inboxActivity, signerActorURL string) error {
 	if act.Actor != signerActorURL {
 		return ErrActorMismatch
+	}
+	if len(act.ID) > maxFlagIDLen || !sameHost(act.ID, signerActorURL) {
+		return ErrBadResource
 	}
 	if blocked, err := s.repo.IsRemoteActorBlockedInstanceWide(ctx, signerActorURL); err != nil {
 		return err

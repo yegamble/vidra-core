@@ -207,8 +207,7 @@ func (s *Service) ReportMessage(ctx context.Context, reporterID, messageID uuid.
 	return id, err
 }
 
-// RemoteReport is a report another instance filed through an inbound
-// ActivityPub Flag. The reporter is the remote actor, never a local user.
+// RemoteReport is a report another instance filed via an ActivityPub Flag.
 type RemoteReport struct {
 	FlagActivityID, ActorURL, Domain string // the Flag id + target is the idempotency key
 	TargetType                       string // TargetVideo, TargetComment or TargetAccount
@@ -216,8 +215,7 @@ type RemoteReport struct {
 	Reason                           string
 }
 
-// ReportFromRemote files r (idempotent per Flag + target; uuid.Nil on a
-// repeat). Another target type, or an unknown target → ErrInvalidTarget.
+// ReportFromRemote files r (uuid.Nil on a repeat); a bad target → ErrInvalidTarget.
 func (s *Service) ReportFromRemote(ctx context.Context, r RemoteReport) (uuid.UUID, error) {
 	arg := sqlcgen.CreateRemoteFlagReportParams{TargetType: r.TargetType, Reason: r.Reason,
 		ActorUrl: r.ActorURL, Domain: r.Domain, FlagActivityID: r.FlagActivityID}
