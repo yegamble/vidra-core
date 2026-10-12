@@ -583,7 +583,7 @@ func TestWebFingerResolvesActor(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &jrd); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if jrd.Subject != "acct:ada@videos.example" || len(jrd.Links) != 1 {
+	if jrd.Subject != "acct:ada@videos.example" || len(jrd.Links) != 2 {
 		t.Fatalf("jrd = %+v", jrd)
 	}
 	if jrd.Links[0].Href != "https://videos.example/accounts/ada" {

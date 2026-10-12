@@ -2327,12 +2327,12 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 			role integer NOT NULL, "emailVerified" boolean, blocked boolean NOT NULL DEFAULT false,
 			"createdAt" timestamptz NOT NULL DEFAULT now())`,
 		`CREATE TABLE "videoChannel" (
-			id serial PRIMARY KEY, name text NOT NULL, description text, "accountId" integer NOT NULL,
+			id serial PRIMARY KEY, name text NOT NULL, description text, support text, "accountId" integer NOT NULL,
 			"actorId" integer NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now())`,
 		`CREATE TABLE "video" (
 			id serial PRIMARY KEY, uuid uuid NOT NULL, "channelId" integer NOT NULL, name text NOT NULL,
 			description text, privacy integer NOT NULL, state integer NOT NULL, category integer, licence integer,
-			language text, duration integer NOT NULL DEFAULT 0, views integer NOT NULL DEFAULT 0,
+			language text, support text, duration integer NOT NULL DEFAULT 0, views integer NOT NULL DEFAULT 0,
 			nsfw boolean NOT NULL DEFAULT false,
 			"originallyPublishedAt" timestamptz,
 			"createdAt" timestamptz NOT NULL DEFAULT now())`,
@@ -4174,5 +4174,88 @@ func TestPeerTubeImportDoesNotResolveADeletedAccount(t *testing.T) {
 	}
 	if live != 1 {
 		t.Errorf("live users after a third run = %d, want 1 — the deleted account was resurrected", live)
+	}
+}
+
+func readSupport(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table, col, key string) *string {
+	t.Helper()
+	var got *string
+	if err := pool.QueryRow(ctx, `SELECT support FROM `+table+` WHERE `+col+`=$1`, key).Scan(&got); err != nil {
+		t.Fatalf("read %s.support for %q: %v", table, key, err)
+	}
+	return got
+}
+
+// PeerTube's channel and video "support" text (migration 0159) is carried on
+// import, blank means NULL, a source-authoritative re-run follows an edit at the
+// source, and a source schema without the columns still imports.
+func TestPeerTubeImportCarriesSupportText(t *testing.T) {
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL not set; skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
+
+	src, _ := newScratchDB(t, ctx, base)
+	dest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, dest)
+	seedPeerTube(t, ctx, src, string(hash), secretPrivKeyAlice)
+	mustExec(t, ctx, src, `UPDATE "videoChannel" SET support='  Support me on Liberapay: https://liberapay.com/alice  ' WHERE id=1`)
+	mustExec(t, ctx, src, `UPDATE "video" SET support='Patreon: https://patreon.com/alice' WHERE name='First Video'`)
+	// A blank value is "no support text", not an empty string in the column.
+	mustExec(t, ctx, src, `UPDATE "video" SET support='   ' WHERE name='Second Video'`)
+
+	imp := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip, MediaMode: MediaModeNone})
+	version, err := imp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if _, err := imp.Run(ctx, version, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got := readSupport(t, ctx, dest, "channels", "handle", "alice_channel"); got == nil || *got != "Support me on Liberapay: https://liberapay.com/alice" {
+		t.Errorf("channel support = %v, want the trimmed source text", got)
+	}
+	if got := readSupport(t, ctx, dest, "videos", "title", "First Video"); got == nil || *got != "Patreon: https://patreon.com/alice" {
+		t.Errorf("video support = %v, want the source text", got)
+	}
+	if got := readSupport(t, ctx, dest, "videos", "title", "Second Video"); got != nil {
+		t.Errorf("blank video support = %q, want NULL", *got)
+	}
+
+	// The source edits both texts; the default (gap-filling) run leaves them,
+	// the source-authoritative run follows.
+	mustExec(t, ctx, src, `UPDATE "videoChannel" SET support='Moved to Ko-fi' WHERE id=1`)
+	mustExec(t, ctx, src, `UPDATE "video" SET support='Ko-fi too' WHERE name='First Video'`)
+	resync := NewImporter(dest, NewSourceFromPool(src), Options{Policy: PolicySkip, MediaMode: MediaModeNone, SourceAuthoritative: true})
+	if _, err := resync.Run(ctx, version, nil); err != nil {
+		t.Fatalf("source-authoritative run: %v", err)
+	}
+	if got := readSupport(t, ctx, dest, "channels", "handle", "alice_channel"); got == nil || *got != "Moved to Ko-fi" {
+		t.Errorf("resynced channel support = %v, want %q", got, "Moved to Ko-fi")
+	}
+	if got := readSupport(t, ctx, dest, "videos", "title", "First Video"); got == nil || *got != "Ko-fi too" {
+		t.Errorf("resynced video support = %v, want %q", got, "Ko-fi too")
+	}
+
+	// A source schema that predates the columns loses the text and nothing else.
+	old, _ := newScratchDB(t, ctx, base)
+	oldDest, _ := newScratchDB(t, ctx, base)
+	applyMigrations(t, ctx, oldDest)
+	seedPeerTube(t, ctx, old, string(hash), secretPrivKeyAlice)
+	mustExec(t, ctx, old, `ALTER TABLE "videoChannel" DROP COLUMN support`)
+	mustExec(t, ctx, old, `ALTER TABLE "video" DROP COLUMN support`)
+	oldImp := NewImporter(oldDest, NewSourceFromPool(old), Options{Policy: PolicySkip, MediaMode: MediaModeNone})
+	oldVersion, err := oldImp.Preflight(ctx)
+	if err != nil {
+		t.Fatalf("preflight (no support columns): %v", err)
+	}
+	if _, err := oldImp.Run(ctx, oldVersion, nil); err != nil {
+		t.Fatalf("run (no support columns): %v", err)
+	}
+	if got := readSupport(t, ctx, oldDest, "videos", "title", "First Video"); got != nil {
+		t.Errorf("support from a source without the column = %q, want NULL", *got)
 	}
 }

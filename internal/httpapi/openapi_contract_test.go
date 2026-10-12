@@ -271,6 +271,10 @@ var knownNonContractRoutes = map[string]string{
 	// the frontend's generated client. See .ralph/specs/federation.md §4-5.
 	"GET /.well-known/nodeinfo":              "fediverse discovery",
 	"GET /.well-known/webfinger":             "fediverse discovery",
+	"GET /.well-known/host-meta":             "fediverse discovery",
+	"GET /.well-known/host-meta.json":        "fediverse discovery",
+	"GET /.well-known/security.txt":          "RFC 9116 well-known document",
+	"GET /.well-known/change-password":       "W3C well-known redirect",
 	"GET /nodeinfo/2.1":                      "fediverse discovery",
 	"GET /accounts/{handle}":                 "ActivityPub actor",
 	"GET /video-channels/{handle}":           "ActivityPub actor",

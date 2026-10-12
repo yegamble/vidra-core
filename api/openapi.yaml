@@ -4517,7 +4517,9 @@ paths:
         "401":
           description: >-
             The video is password protected and the caller presented no valid
-            credential. Error code "password_required".
+            credential (error code "password_required"), or it is
+            privacy=internal and the caller is not signed in (error code
+            "sign_in_required").
           content:
             application/json:
               schema:
@@ -4547,7 +4549,10 @@ paths:
         error code "password_required" to a caller who is neither the owner nor
         a moderator/admin and is not presenting a valid playback token (a plain
         unknown id is still 404); the caller then unlocks via POST
-        /videos/{id}/unlock and retries with the token (Bearer or ?pt=). The
+        /videos/{id}/unlock and retries with the token (Bearer or ?pt=). An
+        internal video (privacy=internal) is returned to any signed-in account
+        and answers 401 with error code "sign_in_required" to an anonymous
+        caller; the same rule gates its media, downloads and embed policy. The
         response includes probed
         technical metadata (duration_seconds, width, height) when a media probe
         has recorded it.
@@ -4572,8 +4577,9 @@ paths:
         "401":
           description: >-
             The video is password protected and the caller presented no valid
-            credential (owner/moderator/admin token or playback token). Error
-            code "password_required".
+            credential (owner/moderator/admin token or playback token), error
+            code "password_required"; or it is privacy=internal and the caller
+            is not signed in, error code "sign_in_required".
           content:
             application/json:
               schema:
@@ -10052,7 +10058,7 @@ paths:
             type: array
             items:
               type: string
-              enum: [public, unlisted, private, password]
+              enum: [public, unlisted, private, password, internal]
         - name: scope
           in: query
           required: false
@@ -11673,6 +11679,90 @@ paths:
                 $ref: "#/components/schemas/BlockedUserListResponse"
         "401":
           description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/remote-interaction/resolve:
+    get:
+      operationId: resolveRemoteInteraction
+      summary: Find the subscribe URL on a visitor's home fediverse server
+      description: >-
+        The outbound half of remote interaction. A visitor who is not signed in
+        here gives their own fediverse handle (user@host) and an address on THIS
+        instance (a channel or video); the server WebFingers the handle's host
+        through the SSRF-guarded federation fetch and returns that host's
+        subscribe template (rel http://ostatus.org/schema/1.0/subscribe) with
+        {uri} replaced by the escaped target. The client navigates to the
+        returned https URL. Optional auth; signed-out callers need the operator's
+        search_remote_uri_anonymous setting. Rate-limited (fail closed) on the
+        same budget as remote-URI search resolution. Mounted with the federation
+        service; 503 while federation is disabled.
+      tags: [federation]
+      security: []
+      parameters:
+        - name: handle
+          in: query
+          required: true
+          description: The visitor's fediverse handle, user@host (a leading @ is accepted).
+          schema:
+            type: string
+        - name: target
+          in: query
+          required: true
+          description: >-
+            The ActivityPub id of the channel or video on this instance the
+            visitor wants to follow or interact with.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The home-server URL to send the visitor to.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteInteractionResolution"
+        "403":
+          description: >-
+            The caller is signed out and the operator has not enabled remote
+            lookups for anonymous visitors (search_remote_uri_anonymous). The
+            client may fall back to looking the handle up from the browser.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The handle's server advertises no usable subscribe template.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            Malformed handle, a target that is not on this instance, or a handle
+            that is a literal non-public address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many lookups from this client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: >-
+            The handle's server could not be reached (or may not be contacted;
+            the two are deliberately indistinguishable).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >-
+            Federation is disabled on this instance, or the rate budget is
+            temporarily unavailable.
           content:
             application/json:
               schema:
@@ -18193,6 +18283,13 @@ components:
           example: Ada Makes
         description:
           type: string
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            PeerTube-style free-text (markdown) "support" message, e.g.
+            "Support me on Liberapay: <link>". Omitted when unset. New videos
+            inherit it unless they supply their own.
         created_at:
           type: string
           format: date-time
@@ -18275,6 +18372,12 @@ components:
         description:
           type: string
           maxLength: 1000
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            Markdown support message. An empty string clears it; absent leaves
+            it unchanged.
         activitypub_enabled:
           type: boolean
           description: >-
@@ -18588,8 +18691,12 @@ components:
           type: string
         privacy:
           type: string
-          enum: [public, unlisted, private, password]
-          description: Present on every local video; omitted on remote cards.
+          enum: [public, unlisted, private, password, internal]
+          description: >-
+            Present on every local video; omitted on remote cards. "internal"
+            (PeerTube's members-only tier) is visible to any signed-in account
+            of this instance and to no anonymous viewer; it is never federated,
+            indexed for public search, or listed on an anonymous surface.
         state:
           type: string
           enum: [draft, processing, scheduled, quarantined, transcoding, published, failed]
@@ -18670,6 +18777,12 @@ components:
             moderator prose about a named account and never appears on any public
             surface, on another viewer's read of the same channel, or on the
             video detail endpoint (which stays 404 while the block stands).
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            PeerTube-style free-text (markdown) "support" message for this
+            video. Present on the detail and create/update views when set.
         originally_published_at:
           type: string
           format: date-time
@@ -19444,7 +19557,7 @@ components:
           maxLength: 5000
         privacy:
           type: string
-          enum: [public, unlisted, private, password]
+          enum: [public, unlisted, private, password, internal]
           description: >-
             Omitted/empty seeds the instance's default_video_privacy setting
             (registry default "public"). "password" is never seeded (a
@@ -19461,6 +19574,12 @@ components:
             Optional content-license id (see GET /videos/config); unknown
             value -> 422. Omitted/empty seeds the instance's
             default_video_licence setting (0 = no default, left unset).
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            Markdown support message. Omitted/null inherits the channel's
+            support text at create time; an empty string means none.
         tags:
           type: array
           description: >-
@@ -19525,7 +19644,7 @@ components:
           maxLength: 5000
         privacy:
           type: string
-          enum: [public, unlisted, private, password]
+          enum: [public, unlisted, private, password, internal]
         category:
           type: string
           description: Set the subject-category id (see GET /videos/config). Unknown/empty value -> 422.
@@ -19535,6 +19654,12 @@ components:
         license:
           type: string
           description: Set the content-license id (see GET /videos/config). Unknown/empty value -> 422.
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            Set the markdown support message; an empty string clears it, absent
+            leaves it unchanged.
         tags:
           type: array
           description: >-
@@ -20171,6 +20296,14 @@ components:
         blocked_at:
           type: string
           format: date-time
+    RemoteInteractionResolution:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: https URL on the visitor's home server to navigate to.
     RemoteBlockListResponse:
       type: object
       required: [actors, total, limit, offset]
@@ -20931,7 +21064,7 @@ components:
           type: string
         privacy:
           type: string
-          enum: [public, unlisted, private, password]
+          enum: [public, unlisted, private, password, internal]
         state:
           type: string
           enum: [quarantined]
@@ -21065,7 +21198,7 @@ components:
           type: string
         privacy:
           type: string
-          enum: [public, unlisted, private, password]
+          enum: [public, unlisted, private, password, internal]
         state:
           type: string
           enum: [draft, processing, scheduled, quarantined, published, failed]
@@ -21145,7 +21278,7 @@ components:
           type: string
         privacy:
           type: string
-          enum: [public, unlisted, private, password]
+          enum: [public, unlisted, private, password, internal]
         state:
           type: string
           enum: [draft, processing, scheduled, quarantined, published, failed]
