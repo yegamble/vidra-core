@@ -180,6 +180,20 @@ their `new_video` preference is not off, they have not muted the channel owner, 
 side has blocked the other, and they are not the owner. Re-running the fan-out for the
 same video inserts nothing, so a hook that fires twice cannot double-notify.
 
+**Notification email.** `comment`, `comment_reply` and `new_video` can also be
+emailed, set per type in the `email` map of `/api/v1/me/notification-prefs`. Email is
+opt-in, mirroring PeerTube's web-only defaults for those types. It rides the in-app
+notification: the statement that creates the notification also queues the email (set-
+based for the fan-out, migration 0157), and a background drain sends it in batches
+of 25, continuing within a ~4 s budget per 5 s tick while batches come back full.
+A failed send is retried on a backoff capped at an hour until the email is a day old.
+At send time the recipient must still be active, have a **verified** address, email
+and the in-app type on, must not have muted or blocked the actor (or been blocked),
+a `new_video` recipient must still follow with the bell on `all`, and the video must
+still be public and unblocked. While the instance has no mail path the outbox waits,
+pruned at a day old. The plain-text message carries no comment text and links only to
+`PUBLIC_BASE_URL` (the video and `/settings/notifications`).
+
 ### Avatars & banners
 
 Avatars and banners: accounts and channels each take an avatar and a banner image.

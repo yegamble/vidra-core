@@ -354,6 +354,44 @@ func TestAutoFollowBackLoopGuards(t *testing.T) {
 	}
 }
 
+func TestAccountFollowGetsCleanReject(t *testing.T) {
+	// A Mastodon user following a vidra ACCOUNT (Person) must not hang on
+	// "pending": nothing is recorded (followers are per channel) and a Reject
+	// signed as the ACCOUNT is queued.
+	repo := newContractRepo()
+	cacheContractActor(repo, ctMastoUser, "Person", "kaisa", "mastodon.example")
+	svc := NewService(repo, WithBaseURL(contractBase))
+	follow := `{"id":"` + ctMastoFollow + `","type":"Follow","actor":"` + ctMastoUser + `","object":"` + contractBase + `/accounts/ada"}`
+	if err := svc.HandleInbox(context.Background(), ctMastoUser, []byte(follow)); err != nil {
+		t.Fatalf("HandleInbox: %v", err)
+	}
+	if len(repo.remoteFollows) != 0 {
+		t.Errorf("follow recorded: %+v", repo.remoteFollows)
+	}
+	if len(repo.deliveries) != 1 {
+		t.Fatalf("deliveries = %d, want exactly one Reject", len(repo.deliveries))
+	}
+	for _, d := range repo.deliveries {
+		if d.row.SigningUsername != "ada" || !d.row.SigningUserID.Valid {
+			t.Errorf("signing = %q/%v, want the ada account", d.row.SigningUsername, d.row.SigningUserID)
+		}
+	}
+	reject := deliveredPayloads(t, repo)["Reject"]
+	inner, _ := reject["object"].(map[string]any)
+	if reject["actor"] != contractBase+"/accounts/ada" || inner["id"] != ctMastoFollow || inner["actor"] != ctMastoUser {
+		t.Errorf("Reject = %v", reject)
+	}
+
+	// An unknown account is ignored, not rejected.
+	repo2 := newContractRepo()
+	cacheContractActor(repo2, ctMastoUser, "Person", "kaisa", "mastodon.example")
+	svc2 := NewService(repo2, WithBaseURL(contractBase))
+	nobody := `{"id":"` + ctMastoFollow + `","type":"Follow","actor":"` + ctMastoUser + `","object":"` + contractBase + `/accounts/nobody"}`
+	if err := svc2.HandleInbox(context.Background(), ctMastoUser, []byte(nobody)); err != nil || len(repo2.deliveries) != 0 {
+		t.Errorf("unknown account: err=%v deliveries=%d, want none", err, len(repo2.deliveries))
+	}
+}
+
 // TestFollowerRequestHookFiresOnlyForNewPendingRows: the admin push seam gets
 // the new queue row's id once, and a repeated Follow (row exists) announces
 // nothing — a re-Follow must not re-notify an admin who already knows.
