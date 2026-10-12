@@ -36,6 +36,7 @@ import (
 	"github.com/vidra/vidra-core/internal/drm"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
+	"github.com/vidra/vidra-core/internal/feedtoken"
 	"github.com/vidra/vidra-core/internal/instancedocs"
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/instancesettings"
@@ -214,6 +215,7 @@ type Server struct {
 	// emission entirely (it is a low-value signal).
 	searchWatchThrottle func(ctx context.Context, key string) bool
 	instancedocssvc     *instancedocs.Service
+	feedtokensvc        *feedtoken.Service
 	mediagcsvc          *mediagc.Service
 	storagemigrationsvc *storagemigration.Service
 	jobStatusSvc        jobStatusProvider
@@ -1520,6 +1522,9 @@ func (s *Server) routes() {
 		s.echo.GET("/feeds/videos.xml", s.handleVideosFeed)
 		s.echo.GET("/services/oembed", s.handleOEmbed)
 		s.echo.GET("/sitemap.xml", s.handleSitemap)
+		if s.feedtokensvc != nil {
+			s.echo.GET("/feeds/subscriptions.xml", s.handleSubscriptionsFeed, s.feedRateLimit())
+		}
 	}
 
 	api := s.echo.Group(apiBasePath)
@@ -1790,6 +1795,11 @@ func (s *Server) routes() {
 		api.GET("/channels/:handle/videos", s.handleListChannelVideos, s.optionalAuth)
 		api.GET("/videos", s.handleListPublicVideos, s.optionalAuth)
 		api.GET("/me/subscriptions/videos", s.handleListSubscriptionVideos, s.requireAuth)
+		if s.feedtokensvc != nil {
+			api.GET("/me/feed-token", s.handleGetFeedToken, s.requireAuth)
+			api.POST("/me/feed-token", s.handleRotateFeedToken, s.requireAuth)
+			api.DELETE("/me/feed-token", s.handleRevokeFeedToken, s.requireAuth)
+		}
 		api.GET("/me/saved", s.handleListSavedVideos, s.requireAuth)
 		api.POST("/videos/:id/save", s.handleSaveVideo, s.requireAuth)
 		api.DELETE("/videos/:id/save", s.handleUnsaveVideo, s.requireAuth)

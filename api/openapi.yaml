@@ -3775,6 +3775,71 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/feed-token:
+    get:
+      operationId: getFeedToken
+      summary: Whether the caller has a private subscriptions-feed token
+      description: >-
+        Reports whether a private feed token exists and when it was issued. The
+        token itself is stored only as a hash and is never returned here; it is
+        shown once, by POST.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Token status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedTokenStatus"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: rotateFeedToken
+      summary: Create or rotate the private subscriptions-feed token
+      description: >-
+        Mints a fresh random token, replacing any previous one (the old feed
+        URL stops working immediately), and returns it together with the
+        ready-made feed URL (GET /feeds/subscriptions.xml?token=…). This is the
+        only time the raw token is visible. The token grants read access to
+        that one feed and nothing else.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: The new token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedTokenIssued"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: revokeFeedToken
+      summary: Revoke the private subscriptions-feed token
+      description: Deletes the token (idempotent); the feed URL then answers 404.
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Revoked (or none existed).
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/me/subscriptions/videos:
     get:
       operationId: listSubscriptionVideos
@@ -17195,6 +17260,28 @@ components:
           description: >-
             Present only when the ledger could not be read for some reason other
             than "not migrated yet". The response is still 200.
+    FeedTokenStatus:
+      type: object
+      required: [configured]
+      properties:
+        configured:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    FeedTokenIssued:
+      type: object
+      required: [token, created_at]
+      properties:
+        token:
+          type: string
+          description: The raw token; shown only once.
+        url:
+          type: string
+          description: Ready-to-paste feed URL; absent when the instance has no public origin configured.
+        created_at:
+          type: string
+          format: date-time
     ErrorResponse:
       type: object
       description: >-
