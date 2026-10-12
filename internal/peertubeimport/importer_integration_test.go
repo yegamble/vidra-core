@@ -2311,10 +2311,7 @@ func seedPeerTube(t *testing.T, ctx context.Context, pool *pgxpool.Pool, passwor
 		`CREATE TABLE "application" (id serial PRIMARY KEY, "migrationVersion" integer NOT NULL)`,
 		`CREATE TABLE "actor" (
 			id serial PRIMARY KEY, type text NOT NULL, "preferredUsername" text NOT NULL,
-			url text, "publicKey" text, "privateKey" text, "serverId" integer,
-			"inboxUrl" text, "sharedInboxUrl" text, "followersUrl" text,
-			"createdAt" timestamptz NOT NULL DEFAULT now())`,
-		`CREATE TABLE "server" (id serial PRIMARY KEY, host text NOT NULL)`,
+			url text, "publicKey" text, "privateKey" text, "serverId" integer, "createdAt" timestamptz NOT NULL DEFAULT now())`,
 		`CREATE TABLE "account" (
 			id serial PRIMARY KEY, name text NOT NULL, "userId" integer, "actorId" integer NOT NULL,
 			description text, "createdAt" timestamptz NOT NULL DEFAULT now())`,

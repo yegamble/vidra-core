@@ -56,6 +56,10 @@ type Importer struct {
 	// publicBaseURL is THIS instance's origin: a remote follower is carried only
 	// onto a channel whose actor id here is the one it followed. "" → deferred.
 	publicBaseURL string
+	// resolveActor resolves a remote follower's actor through federation (see
+	// Options.ResolveRemoteActor); actorFetchBudget bounds its fetches per run.
+	resolveActor     func(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error)
+	actorFetchBudget int
 
 	// videosByID caches the source videos by numeric id, built once so
 	// comments/playlist-elements/renditions (which reference the numeric id) can
@@ -156,6 +160,10 @@ type Options struct {
 	Logger         *slog.Logger
 	// PublicBaseURL is PUBLIC_BASE_URL; without it remote followers are deferred.
 	PublicBaseURL string
+	// ResolveRemoteActor is federation's resolver (cache, else a fetch through
+	// the SSRF guard that caches the actor). A remote follower's inbox and key
+	// come only from it; nil → remote followers are deferred.
+	ResolveRemoteActor func(ctx context.Context, actorURL string) (sqlcgen.RemoteActor, error)
 }
 
 // NewImporter builds an importer over an open Vidra pool and source.
@@ -189,6 +197,8 @@ func NewImporter(dest *pgxpool.Pool, src *Source, opts Options) *Importer {
 		reloadSettings:      opts.ReloadSettings,
 		logger:              logger,
 		publicBaseURL:       strings.TrimRight(opts.PublicBaseURL, "/"),
+		resolveActor:        opts.ResolveRemoteActor,
+		actorFetchBudget:    maxActorFetchesPerRun,
 	}
 }
 
