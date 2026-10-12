@@ -208,6 +208,7 @@ type Service struct {
 	// defaults: comments ingested, channel follows auto-accepted, no approval
 	// queue, no follow-back.
 	acceptRemoteComments  func() bool
+	commentsEnabled       func() bool // the instance-wide comments_enabled toggle
 	allowChannelFollowers func() bool
 	followerApproval      func() bool
 	autoFollowBack        func() bool
@@ -295,6 +296,12 @@ func WithAutoFollowBackFunc(f func() bool) Option {
 // WithLogger wires the structured logger used for inbound-policy drop/refuse
 // events (never bodies or tokens). Nil = silent.
 func WithLogger(l *slog.Logger) Option { return func(s *Service) { s.logger = l } }
+
+// WithCommentsEnabledFunc wires the instance-wide comments_enabled toggle: while
+// it is off, inbound Notes on local videos are dropped like local posts are.
+func WithCommentsEnabledFunc(f func() bool) Option {
+	return func(s *Service) { s.commentsEnabled = f }
+}
 
 // acceptRemoteCommentsEnabled resolves the comment-ingestion gate (default true).
 func (s *Service) acceptRemoteCommentsEnabled() bool {

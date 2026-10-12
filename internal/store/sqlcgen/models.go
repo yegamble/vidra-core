@@ -250,6 +250,7 @@ type Comment struct {
 	RemoteObjectUrl  *string            `json:"remote_object_url"`
 	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
 	Hearted          bool               `json:"hearted"`
+	HeldForReview    bool               `json:"held_for_review"`
 }
 
 type Conversation struct {

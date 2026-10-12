@@ -294,6 +294,9 @@ WHERE user_id = $1 AND read_at IS NULL;
 --   * neither the reply nor the parent is a tombstone (0057): a deleted
 --     account's comment must not pull its anonymised row back into someone's
 --     inbox;
+--   * the reply is not HELD for review (0161): until a manager approves it,
+--     only they and its author may read it, so naming it in a third party's
+--     inbox would leak it — approval re-fires this resolution;
 --   * the parent's author is an active, non-deleted account;
 --   * the replier is not the parent's author (no self-notification, matching
 --     every other Notify* path);
@@ -310,6 +313,7 @@ JOIN users pu ON pu.id = p.user_id
 WHERE r.id = sqlc.arg('comment_id')
   AND r.deleted_at IS NULL
   AND p.deleted_at IS NULL
+  AND NOT r.held_for_review
   AND r.user_id IS NOT NULL
   AND p.user_id IS DISTINCT FROM r.user_id
   AND pu.is_active
@@ -335,6 +339,8 @@ WHERE r.id = sqlc.arg('comment_id')
 --   * the comment exists, is not a tombstone (0057), and was written by a LOCAL
 --     user — a federated comment has a NULL user_id (0053) and no local actor to
 --     name, and the inbound federation path does not raise this notification;
+--   * the comment is not HELD for review (0161) — a held comment tells the
+--     video's managers through comment_held instead;
 --   * the video's owner is not the commenter (no self-notification, matching
 --     every other Notify* path);
 --   * the owner is an active, non-deleted account;
@@ -353,6 +359,7 @@ JOIN channels ch ON ch.id = v.channel_id
 JOIN users ou ON ou.id = ch.owner_id
 WHERE c.id = sqlc.arg('comment_id')
   AND c.deleted_at IS NULL
+  AND NOT c.held_for_review
   AND c.user_id IS NOT NULL
   AND ch.owner_id IS DISTINCT FROM c.user_id
   AND ou.is_active

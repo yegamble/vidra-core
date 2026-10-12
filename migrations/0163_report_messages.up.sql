@@ -10,7 +10,7 @@
 --     a later role change never rewrites which side of the thread said what.
 --   * the body is bounded in the database, not just the handler.
 --
--- Numbered 0163 although main ends at 0160: 0161–0162 are claimed by open PRs.
+-- Numbered 0163: 0159–0162 were claimed by PRs developed in parallel.
 CREATE TABLE report_messages (
     id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     report_id    UUID NOT NULL REFERENCES reports (id) ON DELETE CASCADE,

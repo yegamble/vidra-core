@@ -85,9 +85,11 @@ type videoFakeRepo struct {
 	// Seeded REMOTE cards, mirroring the UNION branches of the subscription /
 	// feed / search queries (remote-content §3-4). Tests append rows with
 	// Remote:true + domain/watch_url/stream_url set.
-	remoteSubs   []sqlcgen.ListSubscriptionVideosRow
-	remoteFeed   []sqlcgen.ListPublicVideosSortedRow
-	remoteSearch []sqlcgen.SearchPublicVideosRow
+	remoteSubs []sqlcgen.ListSubscriptionVideosRow
+	// downloadLookups counts batched download-flag reads (podcast feed N+1 fence).
+	downloadLookups int
+	remoteFeed      []sqlcgen.ListPublicVideosSortedRow
+	remoteSearch    []sqlcgen.SearchPublicVideosRow
 	// rejections mirrors video_rejections (0130): video ID -> the moderator's
 	// rejection note. Empty means "never rejected", which is what the query's
 	// COALESCE(..., '') returns.
@@ -594,6 +596,61 @@ func (f *videoFakeRepo) ListVideosByChannel(_ context.Context, a sqlcgen.ListVid
 	}
 	// "published_at" is oldest-first, anything else newest-first — the query's
 	// two CASE branches.
+	sort.SliceStable(out, func(i, j int) bool {
+		if a.Sort == "published_at" {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return pageRows(out, a.ResultLimit, a.ResultOffset), nil
+}
+
+// ownerMatches mirrors ListOwnerVideos' WHERE clause: owner, then each NULL-able
+// filter. q arrives LIKE-escaped (\\, \%, \_), so it is unescaped and matched as a
+// case-insensitive substring, which is what ILIKE '%q%' means.
+func (f *videoFakeRepo) ownerMatches(r sqlcgen.GetVideoByIDRow, owner uuid.UUID, q, privacy, state *string, ch pgtype.UUID) bool {
+	if r.OwnerID != owner {
+		return false
+	}
+	if q != nil {
+		needle := strings.ToLower(strings.NewReplacer(`\\`, `\`, `\%`, `%`, `\_`, `_`).Replace(*q))
+		if !strings.Contains(strings.ToLower(r.Title), needle) {
+			return false
+		}
+	}
+	if privacy != nil && r.Privacy != *privacy {
+		return false
+	}
+	if state != nil && r.State != *state {
+		return false
+	}
+	return !ch.Valid || r.ChannelID == uuid.UUID(ch.Bytes)
+}
+
+func (f *videoFakeRepo) CountOwnerVideos(_ context.Context, a sqlcgen.CountOwnerVideosParams) (int64, error) {
+	var n int64
+	for _, r := range f.videos {
+		if f.ownerMatches(r, a.OwnerID, a.Q, a.Privacy, a.State, a.ChannelID) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *videoFakeRepo) ListOwnerVideos(_ context.Context, a sqlcgen.ListOwnerVideosParams) ([]sqlcgen.ListOwnerVideosRow, error) {
+	var out []sqlcgen.ListOwnerVideosRow
+	for _, r := range f.videos {
+		if !f.ownerMatches(r, a.OwnerID, a.Q, a.Privacy, a.State, a.ChannelID) {
+			continue
+		}
+		out = append(out, sqlcgen.ListOwnerVideosRow{
+			ID: r.ID, ShortCode: r.ShortCode, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
+			Privacy: r.Privacy, State: r.State, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			PublishAt: r.PublishAt, IsSensitive: r.IsSensitive, SensitiveReason: r.SensitiveReason,
+			Views: f.views[r.ID], HasThumbnail: f.hasThumb(r.ID),
+			Blocked: f.blockedFromFeed(r.ID), BlockReason: f.blockReasonFromFeed(r.ID),
+		})
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if a.Sort == "published_at" {
 			return out[i].CreatedAt.Before(out[j].CreatedAt)
@@ -2901,6 +2958,17 @@ func (f *videoFakeRepo) CountPublicVideosSorted(ctx context.Context, a sqlcgen.C
 		Sort: "recent", ResultLimit: 1 << 30,
 	})
 	return int64(len(rows)), err
+}
+
+func (f *videoFakeRepo) ListDownloadEnabledVideoIDs(_ context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	f.downloadLookups++
+	var out []uuid.UUID
+	for _, id := range ids {
+		if r, ok := f.videos[id]; ok && r.DownloadEnabled {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 func (f *videoFakeRepo) CountSubscriptionVideos(ctx context.Context, followerID uuid.UUID) (int64, error) {

@@ -3808,6 +3808,133 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/videos:
+    get:
+      operationId: listMyVideos
+      summary: List the caller's own videos (studio "My videos")
+      description: >-
+        Every video on every channel the caller OWNS, in any state or privacy
+        (drafts and private videos included), newest first by default, with
+        discovery-card data. Optional filters combine with AND: q (case-
+        insensitive title substring; LIKE wildcards are literal), privacy,
+        state, and channel_id (one of the caller's channels; another account's
+        channel id simply matches nothing, so the result is empty with total 0,
+        never that account's videos). Unknown privacy/state values and a
+        malformed channel_id are 422. Paginated via limit (1-100, default 20)
+        and offset, and reports the filtered total.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Title search (at most 200 characters).
+          schema:
+            type: string
+            maxLength: 200
+        - name: privacy
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [public, unlisted, private, password, internal]
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [draft, processing, scheduled, quarantined, transcoding, published, failed]
+        - name: channel_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: sort
+          in: query
+          required: false
+          description: >-
+            `-published_at` (newest first, default) or `published_at` (oldest
+            first); same convention as the per-channel list.
+          schema:
+            type: string
+            enum: [-published_at, published_at]
+            default: -published_at
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+      responses:
+        "200":
+          description: A page of the caller's videos (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoListResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unknown privacy/state, malformed channel_id, or an over-long q.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/me/videos/bulk:
+    post:
+      operationId: bulkMyVideos
+      summary: Bulk delete or change the privacy of the caller's own videos
+      description: >-
+        Applies one action to up to 100 of the caller's own videos. Every id
+        must be a video the caller owns: if any id is foreign OR does not exist
+        the whole request answers 404 "video not found" (identically, so it is
+        no existence oracle) and NOTHING is changed. Each item then runs the
+        same pipeline as the single-video route (DELETE /videos/{id} or PATCH
+        /videos/{id} with `privacy`), so federation, the search outbox, storage
+        cleanup, edge purge and audit all fire per item. Items are independent:
+        one that fails (for example `set_privacy` to `password` on a video with
+        no stored password -> 400, exactly as the single route) is reported in
+        `results` and does not stop the others. `privacy` is validated like the
+        single PATCH, including `internal`. Only the caller's own videos are
+        reachable: staff and channel collaborators get no extra reach here.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkVideosRequest"
+      responses:
+        "200":
+          description: Per-id results (the request itself was accepted).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkVideosResponse"
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: At least one id is not a video the caller owns; nothing was changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            Zero ids, more than 100, a malformed or duplicate id, an unknown
+            action, or an invalid privacy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/channels/{handle}/videos:
     post:
       operationId: createVideo
@@ -20565,6 +20692,52 @@ components:
           type: [string, "null"]
           enum: [like, dislike, null]
           description: The caller's own rating, or null when anonymous or unrated.
+    BulkVideosRequest:
+      type: object
+      required: [video_ids, action]
+      properties:
+        video_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        action:
+          type: string
+          enum: [delete, set_privacy]
+        privacy:
+          type: string
+          enum: [public, unlisted, private, password, internal]
+          description: Required when action is set_privacy; ignored otherwise.
+    BulkVideoResult:
+      type: object
+      required: [video_id, ok, status]
+      properties:
+        video_id:
+          type: string
+          format: uuid
+        ok:
+          type: boolean
+        status:
+          type: integer
+          description: The HTTP status the single-video route would have answered.
+        error:
+          type: string
+          description: Client-safe reason; present only when ok is false.
+    BulkVideosResponse:
+      type: object
+      required: [results, succeeded, failed]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/BulkVideoResult"
+        succeeded:
+          type: integer
+        failed:
+          type: integer
     VideoListResponse:
       allOf:
         - $ref: "#/components/schemas/PageMeta"

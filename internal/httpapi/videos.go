@@ -1185,6 +1185,23 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	if err := bindAndValidate(c, &in); err != nil {
 		return err
 	}
+	v, err := s.applyVideoUpdate(c, userID, role, id, in)
+	if err != nil {
+		return err
+	}
+	view := newVideoView(v)
+	s.attachVideoTags(c.Request().Context(), &view, v.ID)
+	return c.JSON(http.StatusOK, view)
+}
+
+// applyVideoUpdate is the single-video PATCH pipeline shared by
+// handleUpdateVideo and the studio bulk endpoint (handleBulkVideos): the
+// ownership/collaborator/staff decision, the move check, the edge-purge
+// snapshots, UpdateForActor, the watched-words re-flag, the audit rows and the
+// post-write purge. The bulk path calls THIS, never a parallel copy, so every
+// side effect of a single edit still fires per item. Errors come back already
+// mapped to their HTTP form (videoError / ValidationError).
+func (s *Server) applyVideoUpdate(c echo.Context, userID uuid.UUID, role string, id uuid.UUID, in updateVideoRequest) (sqlcgen.Video, error) {
 	// Staff (admin/moderator) manage any local video via the moderation escape;
 	// an editor collaborator (migration 0097) manages their channel's videos.
 	// managedOther gates the moderation audit — it stays staff-only, so an
@@ -1211,7 +1228,7 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 			target := uuid.MustParse(*in.ChannelID) // Validate() proved it parses
 			if target != existing.ChannelID && (canManage || existing.OwnerID == userID) {
 				if !s.canManageChannelContent(c.Request().Context(), userID, target) {
-					return echo.NewHTTPError(http.StatusNotFound, "channel not found")
+					return sqlcgen.Video{}, echo.NewHTTPError(http.StatusNotFound, "channel not found")
 				}
 				moveTo, moveFrom = &target, existing.ChannelID
 			}
@@ -1263,9 +1280,9 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 	}, canManage)
 	if err != nil {
 		if errors.Is(err, video.ErrPublished) {
-			return &ValidationError{Fields: []FieldError{{Field: "publish_at", Message: "cannot be set after the video is published"}}}
+			return sqlcgen.Video{}, &ValidationError{Fields: []FieldError{{Field: "publish_at", Message: "cannot be set after the video is published"}}}
 		}
-		return videoError(err)
+		return sqlcgen.Video{}, videoError(err)
 	}
 	// Re-flag the edited metadata against the watched-words list (best-effort;
 	// an edit can newly introduce a flagged term — §12).
@@ -1294,9 +1311,7 @@ func (s *Server) handleUpdateVideo(c echo.Context) error {
 		// visitor-facing answer is the AND of both.
 		s.purgeVideoEdgeCopies(c.Request().Context(), id, downloadPurge)
 	}
-	view := newVideoView(v)
-	s.attachVideoTags(c.Request().Context(), &view, v.ID)
-	return c.JSON(http.StatusOK, view)
+	return v, nil
 }
 
 // updateVideoFieldNames returns only the names present in a managed PATCH.
@@ -1363,6 +1378,18 @@ func (s *Server) handleDeleteVideo(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := s.applyVideoDelete(c, userID, role, id); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// applyVideoDelete is the single-video DELETE pipeline shared by
+// handleDeleteVideo and the studio bulk endpoint: the staff/editor decision,
+// the edge-purge snapshot, DeleteForActor (whose onDelete hooks drive the
+// federation Delete, search outbox and storage cleanup), the audit row and the
+// post-delete purge. Errors come back already mapped to their HTTP form.
+func (s *Server) applyVideoDelete(c echo.Context, userID uuid.UUID, role string, id uuid.UUID) error {
 	// Staff delete any local video (moderation escape); an editor collaborator
 	// (migration 0097) deletes their channel's videos.
 	ctx := c.Request().Context()
@@ -1382,7 +1409,7 @@ func (s *Server) handleDeleteVideo(c echo.Context) error {
 	}
 	s.audit(c, observability.ActionVideoDelete, observability.ResultSuccess, userID.String(), id.String())
 	s.purgeVideoEdgeCopies(ctx, id, purge)
-	return c.NoContent(http.StatusNoContent)
+	return nil
 }
 
 // videoFileView is the public projection of a stored video file. The storage

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -220,4 +221,29 @@ func (s *Server) adminPasswordStepUpMW() []echo.MiddlewareFunc {
 		mw = append(mw, s.authRateLimit(s.authLimit))
 	}
 	return append(mw, s.requireAuth, s.requireRole(admin.RoleAdmin))
+}
+
+// Bulk video actions: 10 requests per user per minute. Each request may run the
+// whole delete/update pipeline (federation, search, storage) for 100 videos, so
+// the general per-IP budget alone is far too loose. No existing per-user write
+// limiter fit, so this one is dedicated and always on (in-memory default).
+const (
+	defaultBulkVideosRateLimit  = 10
+	defaultBulkVideosRateWindow = time.Minute
+)
+
+// bulkVideosRateLimit throttles POST /me/videos/bulk PER USER, in the style of
+// mailTestRateLimit. It runs after requireAuth.
+func (s *Server) bulkVideosRateLimit() echo.MiddlewareFunc {
+	return s.limitBy(limitRule{
+		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+			userID, _, ok := principalFromContext(c)
+			if !ok || s.bulkVideosLimit == nil {
+				return nil, "", false
+			}
+			return s.bulkVideosLimit, "bulk-videos:" + userID.String(), true
+		},
+		unavailable: "bulk video rate limiter unavailable, failing open",
+		denied:      "too many bulk actions; wait a minute and try again",
+	})
 }
