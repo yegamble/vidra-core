@@ -19,6 +19,7 @@ import (
 
 	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/instancesettings"
+	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/shortid"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 	"github.com/vidra/vidra-core/internal/video"
@@ -297,6 +298,23 @@ func (s *Server) rssItemFor(it video.FeedItem) rssItem {
 		item.Thumbnail = &mediaThumbnail{URL: s.thumbnailURL(id)}
 	}
 	return item
+}
+
+// feedRateLimit gives a root-mounted feed its own per-IP budget, riding the
+// general limiter (the root mount is otherwise unthrottled) and failing open
+// like every limiter here. Used by the routes that do per-request storage work
+// (podcast enclosure probes) or guard a secret (the token-gated feed).
+func (s *Server) feedRateLimit() echo.MiddlewareFunc {
+	return s.limitBy(limitRule{
+		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
+			if s.limiter == nil {
+				return nil, "", false
+			}
+			return s.limiter, "feed:" + c.RealIP(), true
+		},
+		unavailable: "feed rate limiter unavailable, failing open",
+		denied:      "rate limit exceeded",
+	})
 }
 
 // handleVideosFeed renders the public RSS 2.0 feed of the newest published

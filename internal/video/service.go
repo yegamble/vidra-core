@@ -150,6 +150,7 @@ type Repository interface {
 	CountVideosByChannel(ctx context.Context, channelID uuid.UUID) (int64, error)
 	ListVideoIDsByChannel(ctx context.Context, channelID uuid.UUID) ([]uuid.UUID, error)
 	ListPublicVideosByChannel(ctx context.Context, arg sqlcgen.ListPublicVideosByChannelParams) ([]sqlcgen.ListPublicVideosByChannelRow, error)
+	ListDownloadEnabledVideoIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
 	CountPublicVideosByChannelVisible(ctx context.Context, arg sqlcgen.CountPublicVideosByChannelVisibleParams) (int64, error)
 	ListPublicVideosSorted(ctx context.Context, arg sqlcgen.ListPublicVideosSortedParams) ([]sqlcgen.ListPublicVideosSortedRow, error)
 	CountPublicVideosSorted(ctx context.Context, arg sqlcgen.CountPublicVideosSortedParams) (int64, error)
@@ -2586,6 +2587,23 @@ func (s *Service) listSubscriptions(ctx context.Context, userID uuid.UUID, limit
 		items = append(items, remoteCard(it, r.Remote, r.Domain, r.WatchUrl, r.StreamUrl))
 	}
 	return items, total, nil
+}
+
+// DownloadEnabledSet reports, in one query, which of ids have the per-video
+// download flag on.
+func (s *Service) DownloadEnabledSet(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]bool, error) {
+	out := make(map[uuid.UUID]bool, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	on, err := s.repo.ListDownloadEnabledVideoIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range on {
+		out[id] = true
+	}
+	return out, nil
 }
 
 // Save adds videoID to userID's library (idempotent). The caller confirms the

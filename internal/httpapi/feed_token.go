@@ -9,7 +9,6 @@ import (
 
 	"github.com/vidra/vidra-core/internal/feedtoken"
 	"github.com/vidra/vidra-core/internal/instancesettings"
-	"github.com/vidra/vidra-core/internal/ratelimit"
 )
 
 // Private subscriptions feed: GET /feeds/subscriptions.xml?token=… renders the
@@ -79,22 +78,6 @@ func (s *Server) handleRevokeFeedToken(c echo.Context) error {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)
-}
-
-// feedRateLimit gives the token-gated feed its own per-IP budget, riding the
-// general limiter (the root mount is otherwise unthrottled) and failing open
-// like every limiter here.
-func (s *Server) feedRateLimit() echo.MiddlewareFunc {
-	return s.limitBy(limitRule{
-		resolve: func(c echo.Context) (*ratelimit.Limiter, string, bool) {
-			if s.limiter == nil {
-				return nil, "", false
-			}
-			return s.limiter, "feedtoken:" + c.RealIP(), true
-		},
-		unavailable: "feed rate limiter unavailable, failing open",
-		denied:      "rate limit exceeded",
-	})
 }
 
 func (s *Server) handleSubscriptionsFeed(c echo.Context) error {

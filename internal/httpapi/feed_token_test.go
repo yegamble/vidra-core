@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -12,8 +13,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/vidra/vidra-core/internal/channel"
 	"github.com/vidra/vidra-core/internal/feedtoken"
+	"github.com/vidra/vidra-core/internal/ratelimit"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
+	"github.com/vidra/vidra-core/internal/video"
 )
 
 // fakeFeedTokenRepo mirrors the SQL: one row per user, rotate overwrites.
@@ -198,4 +202,22 @@ func TestSubscriptionsFeedLocalOnlyInQuery(t *testing.T) {
 		t.Fatalf("local-only query returned %d items, err=%v", len(items), err)
 	}
 	_ = adaTok
+}
+
+func TestSubscriptionsFeedIsRateLimited(t *testing.T) {
+	srv := New(distributionCfg(), nil, nil,
+		WithRateLimiter(ratelimit.NewLimiter(&fakeCounter{}, 1, time.Minute)),
+		WithVideoService(video.NewService(nil, nil)),
+		WithChannelService(channel.NewService(nil)),
+		WithFeedTokenService(feedtoken.NewService(&fakeFeedTokenRepo{hashByUser: map[uuid.UUID]string{}})),
+	)
+	var codes []int
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/feeds/subscriptions.xml?token=guess", nil))
+		codes = append(codes, rec.Code)
+	}
+	if codes[0] != http.StatusNotFound || codes[1] != http.StatusTooManyRequests {
+		t.Errorf("codes = %v, want [404 429]", codes)
+	}
 }
