@@ -91,6 +91,9 @@ func (s *Service) federateComment(ctx context.Context, activityType string, comm
 	if !c.UserID.Valid {
 		return nil // remote-authored comments never fan out (§6)
 	}
+	if c.HeldForReview {
+		return nil // held for review (0161): announced only once approved
+	}
 	v, ch, ok, err := s.loadVideoAndChannel(ctx, c.VideoID)
 	if err != nil || !ok {
 		return err
