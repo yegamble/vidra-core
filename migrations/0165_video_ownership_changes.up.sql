@@ -45,7 +45,8 @@ CREATE UNIQUE INDEX video_ownership_changes_one_pending_idx
 CREATE INDEX video_ownership_changes_next_owner_idx
     ON video_ownership_changes (next_owner_id, created_at DESC, id DESC);
 
--- The re-offer cooldown: has this recipient refused this giver recently?
-CREATE INDEX video_ownership_changes_refused_pair_idx
+-- The re-offer cooldown: did an offer from this giver to this recipient end
+-- recently, refused by the recipient or withdrawn by the giver?
+CREATE INDEX video_ownership_changes_ended_pair_idx
     ON video_ownership_changes (initiator_id, next_owner_id, updated_at DESC)
-    WHERE status = 'refused';
+    WHERE status IN ('refused', 'cancelled');
