@@ -36,6 +36,7 @@ import (
 	"github.com/vidra/vidra-core/internal/drm"
 	"github.com/vidra/vidra-core/internal/e2ee"
 	"github.com/vidra/vidra-core/internal/federation"
+	"github.com/vidra/vidra-core/internal/feedtoken"
 	"github.com/vidra/vidra-core/internal/instancedocs"
 	"github.com/vidra/vidra-core/internal/instancemod"
 	"github.com/vidra/vidra-core/internal/instancesettings"
@@ -216,6 +217,7 @@ type Server struct {
 	// emission entirely (it is a low-value signal).
 	searchWatchThrottle func(ctx context.Context, key string) bool
 	instancedocssvc     *instancedocs.Service
+	feedtokensvc        *feedtoken.Service
 	mediagcsvc          *mediagc.Service
 	storagemigrationsvc *storagemigration.Service
 	jobStatusSvc        jobStatusProvider
@@ -1526,6 +1528,9 @@ func (s *Server) routes() {
 		s.echo.GET("/feeds/podcast/videos.xml", s.handlePodcastFeed, s.feedRateLimit())
 		s.echo.GET("/services/oembed", s.handleOEmbed)
 		s.echo.GET("/sitemap.xml", s.handleSitemap)
+		if s.feedtokensvc != nil {
+			s.echo.GET("/feeds/subscriptions.xml", s.handleSubscriptionsFeed, s.feedRateLimit())
+		}
 	}
 
 	api := s.echo.Group(apiBasePath)
@@ -1733,6 +1738,9 @@ func (s *Server) routes() {
 		api.GET("/search/channels", s.handleSearchChannels, s.optionalAuth)
 		if s.authsvc != nil {
 			api.GET("/users/:username/profile", s.handleGetUserProfile, s.optionalAuth)
+			if s.videosvc != nil {
+				api.GET("/users/:username/videos", s.handleListUserVideos, s.optionalAuth)
+			}
 			// Account search. Mounted with the profile endpoint on purpose: they
 			// share one visibility rule, and the list must never outlive the
 			// single lookup's gate.
@@ -1796,6 +1804,11 @@ func (s *Server) routes() {
 		api.GET("/channels/:handle/videos", s.handleListChannelVideos, s.optionalAuth)
 		api.GET("/videos", s.handleListPublicVideos, s.optionalAuth)
 		api.GET("/me/subscriptions/videos", s.handleListSubscriptionVideos, s.requireAuth)
+		if s.feedtokensvc != nil {
+			api.GET("/me/feed-token", s.handleGetFeedToken, s.requireAuth)
+			api.POST("/me/feed-token", s.handleRotateFeedToken, s.requireAuth)
+			api.DELETE("/me/feed-token", s.handleRevokeFeedToken, s.requireAuth)
+		}
 		api.GET("/me/videos", s.handleListMyVideos, s.requireAuth)
 		api.POST("/me/videos/bulk", s.handleBulkMyVideos, s.requireAuth, s.bulkVideosRateLimit())
 		api.GET("/me/saved", s.handleListSavedVideos, s.requireAuth)
@@ -1938,6 +1951,8 @@ func (s *Server) routes() {
 		if s.commentsvc != nil {
 			api.GET("/videos/:id/comments", s.handleListComments, s.optionalAuth)
 			api.POST("/videos/:id/comments", s.handleCreateComment, s.requireAuth)
+			// Comment approval (0161): a video manager releases a held comment.
+			api.POST("/videos/:id/comments/:commentId/approve", s.handleApproveComment, s.requireAuth)
 			api.PATCH("/comments/:id", s.handleUpdateComment, s.requireAuth)
 			api.DELETE("/comments/:id", s.handleDeleteComment, s.requireAuth)
 			// Creator pin + heart (0099): the video owner/editor (or staff) pins at

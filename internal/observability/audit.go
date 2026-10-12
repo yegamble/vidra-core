@@ -163,6 +163,9 @@ const (
 	ActionVideoCaptionGenerate = "content.video.caption_generate"
 	ActionChannelDelete        = "content.channel.delete"
 	ActionMediaGC              = "admin.media.gc"
+	// Approve/reject someone else's HELD comment (0161); resource = comment id.
+	ActionCommentApprove = "content.comment.approve"
+	ActionCommentReject  = "content.comment.reject"
 	// ActionAuditRetentionPrune is the audit trail recording its own retention
 	// sweep. It is written once per run that actually deleted something, with
 	// the row count in the `count` metadata field — audit_log carries no prose,
