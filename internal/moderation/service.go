@@ -59,7 +59,8 @@ type Repository interface {
 	CreateMessageReport(ctx context.Context, arg sqlcgen.CreateMessageReportParams) (uuid.UUID, error)
 	ListReports(ctx context.Context, arg sqlcgen.ListReportsParams) ([]sqlcgen.ListReportsRow, error)
 	CountReports(ctx context.Context, status *string) (int64, error)
-	ResolveReport(ctx context.Context, arg sqlcgen.ResolveReportParams) (uuid.UUID, error)
+	ResolveReport(ctx context.Context, arg sqlcgen.ResolveReportParams) (pgtype.UUID, error)
+	CreateRemoteFlagReport(ctx context.Context, arg sqlcgen.CreateRemoteFlagReportParams) (uuid.UUID, error)
 	DeleteReport(ctx context.Context, id uuid.UUID) (int64, error)
 	BlockVideo(ctx context.Context, arg sqlcgen.BlockVideoParams) (int64, error)
 	UnblockVideo(ctx context.Context, videoID uuid.UUID) (int64, error)
@@ -113,6 +114,8 @@ type Item struct {
 	// snapshot captured at report time and survives a sender tombstone.
 	MessageID   string
 	MessageBody string
+	// Set only for a remote Flag report (no local reporter; ReporterUsername "").
+	RemoteReporterActorURL, RemoteReporterDomain string
 }
 
 // newReportID normalises the Create*Report result for the Report* methods: a
@@ -204,6 +207,37 @@ func (s *Service) ReportMessage(ctx context.Context, reporterID, messageID uuid.
 	return id, err
 }
 
+// RemoteReport is a report another instance filed through an inbound
+// ActivityPub Flag. The reporter is the remote actor, never a local user.
+type RemoteReport struct {
+	FlagActivityID, ActorURL, Domain string // the Flag id + target is the idempotency key
+	TargetType                       string // TargetVideo, TargetComment or TargetAccount
+	TargetID                         uuid.UUID
+	Reason                           string
+}
+
+// ReportFromRemote files r (idempotent per Flag + target; uuid.Nil on a
+// repeat). Another target type, or an unknown target → ErrInvalidTarget.
+func (s *Service) ReportFromRemote(ctx context.Context, r RemoteReport) (uuid.UUID, error) {
+	arg := sqlcgen.CreateRemoteFlagReportParams{TargetType: r.TargetType, Reason: r.Reason,
+		ActorUrl: r.ActorURL, Domain: r.Domain, FlagActivityID: r.FlagActivityID}
+	switch target := pgconv.UUID(r.TargetID); r.TargetType {
+	case TargetVideo:
+		arg.VideoID = target
+	case TargetComment:
+		arg.CommentID = target
+	case TargetAccount:
+		arg.ReportedUserID = target
+	default:
+		return uuid.Nil, ErrInvalidTarget
+	}
+	id, err := newReportID(s.repo.CreateRemoteFlagReport(ctx, arg))
+	if isForeignKeyViolation(err) {
+		return uuid.Nil, ErrInvalidTarget
+	}
+	return id, err
+}
+
 // List returns the moderation queue, newest first, together with how many
 // reports match the same status filter (so a caller can tell "last page" from
 // "there is more"). status is the exact lifecycle state to show, or "" for all
@@ -245,14 +279,17 @@ func (s *Service) List(ctx context.Context, status string, limit, offset int32) 
 			RemoteVideoDomain: pgconv.Deref(r.RemoteVideoDomain),
 			MessageID:         uuidString(r.MessageID),
 			MessageBody:       r.MessageBodySnapshot,
+
+			RemoteReporterActorURL: pgconv.Deref(r.RemoteReporterActorUrl),
+			RemoteReporterDomain:   pgconv.Deref(r.RemoteReporterDomain),
 		})
 	}
 	return items, total, nil
 }
 
 // Resolve marks a report accepted/rejected with a moderator note and returns
-// the reporter's user id so the caller can notify them (best-effort). status
-// must be StatusAccepted or StatusRejected (validated by the caller). An
+// the reporter's user id (uuid.Nil for a remote Flag report) so the caller can
+// notify them (best-effort). status must be StatusAccepted or StatusRejected (validated by the caller). An
 // unknown id → ErrNotFound.
 func (s *Service) Resolve(ctx context.Context, moderatorID, reportID uuid.UUID, status, note string) (uuid.UUID, error) {
 	reporterID, err := s.repo.ResolveReport(ctx, sqlcgen.ResolveReportParams{
@@ -267,7 +304,7 @@ func (s *Service) Resolve(ctx context.Context, moderatorID, reportID uuid.UUID, 
 		}
 		return uuid.Nil, err
 	}
-	return reporterID, nil
+	return uuid.UUID(reporterID.Bytes), nil // zero (uuid.Nil) when NULL
 }
 
 // Delete hard-deletes a report row (admin purge; moderators only resolve).

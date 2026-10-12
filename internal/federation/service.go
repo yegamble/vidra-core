@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/vidra/vidra-core/internal/moderation"
 	"github.com/vidra/vidra-core/internal/secretbox"
 	"github.com/vidra/vidra-core/internal/storage"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
@@ -181,6 +182,9 @@ type Service struct {
 	// flagger runs watched-words flagging over inbound federated comments
 	// (remote-content §6). Nil = no flagging.
 	flagger CommentFlagger
+	// Inbound Flag → moderation report + staff fan-out (WithFlagReporting).
+	fileFlagReport  func(context.Context, moderation.RemoteReport) (uuid.UUID, error)
+	notifyNewReport func(context.Context, uuid.UUID) (int64, error)
 
 	// allowPrivateFetch relaxes the SSRF guard for remote-actor fetches so backed
 	// e2e / dev can reach a loopback origin. Never true in production.

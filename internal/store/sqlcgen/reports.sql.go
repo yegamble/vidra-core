@@ -16,7 +16,6 @@ import (
 const countReports = `-- name: CountReports :one
 SELECT count(*)::bigint
 FROM reports r
-JOIN users u ON u.id = r.reporter_id
 WHERE ($1::text IS NULL
        -- 'resolved' is the queue's other half, not a stored value: reports.status
        -- is open/accepted/rejected, so "resolved" means "no longer open".
@@ -25,8 +24,7 @@ WHERE ($1::text IS NULL
 `
 
 // How many rows ListReports would return for the same status filter, ignoring
-// pagination. The WHERE must stay identical to it; the users JOIN is part of
-// the predicate (a report whose reporter account is gone is not listed).
+// pagination. The WHERE must stay identical to it (its joins are all LEFT).
 func (q *Queries) CountReports(ctx context.Context, status *string) (int64, error) {
 	row := q.db.QueryRow(ctx, countReports, status)
 	var column_1 int64
@@ -36,7 +34,7 @@ func (q *Queries) CountReports(ctx context.Context, status *string) (int64, erro
 
 const createAccountReport = `-- name: CreateAccountReport :one
 INSERT INTO reports (reporter_id, target_type, reported_user_id, reason)
-VALUES ($1, 'account', $2, $3)
+VALUES ($1::uuid, 'account', $2, $3)
 ON CONFLICT (reporter_id, reported_user_id) WHERE reported_user_id IS NOT NULL DO NOTHING
 RETURNING id
 `
@@ -60,7 +58,7 @@ func (q *Queries) CreateAccountReport(ctx context.Context, arg CreateAccountRepo
 
 const createCommentReport = `-- name: CreateCommentReport :one
 INSERT INTO reports (reporter_id, target_type, comment_id, reason)
-VALUES ($1, 'comment', $2, $3)
+VALUES ($1::uuid, 'comment', $2, $3)
 ON CONFLICT (reporter_id, comment_id) WHERE comment_id IS NOT NULL DO NOTHING
 RETURNING id
 `
@@ -83,7 +81,7 @@ func (q *Queries) CreateCommentReport(ctx context.Context, arg CreateCommentRepo
 
 const createMessageReport = `-- name: CreateMessageReport :one
 INSERT INTO reports (reporter_id, target_type, message_id, message_body_snapshot, reason)
-VALUES ($1, 'message', $2, $3, $4)
+VALUES ($1::uuid, 'message', $2, $3, $4)
 ON CONFLICT (reporter_id, message_id) WHERE message_id IS NOT NULL DO NOTHING
 RETURNING id
 `
@@ -112,9 +110,49 @@ func (q *Queries) CreateMessageReport(ctx context.Context, arg CreateMessageRepo
 	return id, err
 }
 
+const createRemoteFlagReport = `-- name: CreateRemoteFlagReport :one
+INSERT INTO reports (target_type, video_id, comment_id, reported_user_id, reason,
+                     remote_reporter_actor_url, remote_reporter_domain, remote_flag_activity_id)
+VALUES ($1, $2, $3, $4,
+        $5, $6::text, $7::text, $8::text)
+ON CONFLICT DO NOTHING
+RETURNING id
+`
+
+type CreateRemoteFlagReportParams struct {
+	TargetType     string      `json:"target_type"`
+	VideoID        pgtype.UUID `json:"video_id"`
+	CommentID      pgtype.UUID `json:"comment_id"`
+	ReportedUserID pgtype.UUID `json:"reported_user_id"`
+	Reason         string      `json:"reason"`
+	ActorUrl       string      `json:"actor_url"`
+	Domain         string      `json:"domain"`
+	FlagActivityID string      `json:"flag_activity_id"`
+}
+
+// A report filed by another instance via an inbound ActivityPub Flag (0153):
+// the remote actor + domain instead of a local reporter. Idempotent per (Flag,
+// target) — a redelivery yields no row, so staff are told once. An unknown
+// target raises a foreign-key violation ("invalid target").
+func (q *Queries) CreateRemoteFlagReport(ctx context.Context, arg CreateRemoteFlagReportParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createRemoteFlagReport,
+		arg.TargetType,
+		arg.VideoID,
+		arg.CommentID,
+		arg.ReportedUserID,
+		arg.Reason,
+		arg.ActorUrl,
+		arg.Domain,
+		arg.FlagActivityID,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const createRemoteVideoReport = `-- name: CreateRemoteVideoReport :one
 INSERT INTO reports (reporter_id, target_type, remote_video_id, reason)
-VALUES ($1, 'remote_video', $2, $3)
+VALUES ($1::uuid, 'remote_video', $2, $3)
 ON CONFLICT (reporter_id, remote_video_id) WHERE remote_video_id IS NOT NULL DO NOTHING
 RETURNING id
 `
@@ -138,7 +176,7 @@ func (q *Queries) CreateRemoteVideoReport(ctx context.Context, arg CreateRemoteV
 
 const createVideoReport = `-- name: CreateVideoReport :one
 INSERT INTO reports (reporter_id, target_type, video_id, reason)
-VALUES ($1, 'video', $2, $3)
+VALUES ($1::uuid, 'video', $2, $3)
 ON CONFLICT (reporter_id, video_id) WHERE video_id IS NOT NULL DO NOTHING
 RETURNING id
 `
@@ -152,7 +190,8 @@ type CreateVideoReportParams struct {
 // Report a video (idempotent per reporter+video). Returns the new report's id;
 // a repeat report by the same reporter inserts nothing and yields no row
 // (pgx.ErrNoRows), which the service maps to "already reported" so the staff
-// fan-out fires only for genuinely new reports.
+// fan-out fires only for genuinely new reports. The ::uuid casts keep a local
+// report's reporter_id required although the column is nullable since 0153.
 func (q *Queries) CreateVideoReport(ctx context.Context, arg CreateVideoReportParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, createVideoReport, arg.ReporterID, arg.VideoID, arg.Reason)
 	var id uuid.UUID
@@ -180,14 +219,15 @@ SELECT r.id, r.target_type, r.video_id, r.comment_id, r.reported_user_id, r.remo
        r.message_id, r.message_body_snapshot,
        r.reason, r.status,
        r.moderator_note, r.resolved_at, r.created_at,
-       u.username AS reporter_username,
+       COALESCE(u.username, '')::text AS reporter_username,
+       r.remote_reporter_actor_url, r.remote_reporter_domain,
        v.title AS video_title,
        cm.body AS comment_body,
        ru.username AS reported_username,
        rv.title AS remote_video_title,
        ra.domain AS remote_video_domain
 FROM reports r
-JOIN users u ON u.id = r.reporter_id
+LEFT JOIN users u ON u.id = r.reporter_id
 LEFT JOIN videos v ON v.id = r.video_id
 LEFT JOIN comments cm ON cm.id = r.comment_id
 LEFT JOIN users ru ON ru.id = r.reported_user_id
@@ -209,30 +249,33 @@ type ListReportsParams struct {
 }
 
 type ListReportsRow struct {
-	ID                  uuid.UUID          `json:"id"`
-	TargetType          string             `json:"target_type"`
-	VideoID             pgtype.UUID        `json:"video_id"`
-	CommentID           pgtype.UUID        `json:"comment_id"`
-	ReportedUserID      pgtype.UUID        `json:"reported_user_id"`
-	RemoteVideoID       pgtype.UUID        `json:"remote_video_id"`
-	MessageID           pgtype.UUID        `json:"message_id"`
-	MessageBodySnapshot string             `json:"message_body_snapshot"`
-	Reason              string             `json:"reason"`
-	Status              string             `json:"status"`
-	ModeratorNote       string             `json:"moderator_note"`
-	ResolvedAt          pgtype.Timestamptz `json:"resolved_at"`
-	CreatedAt           time.Time          `json:"created_at"`
-	ReporterUsername    string             `json:"reporter_username"`
-	VideoTitle          *string            `json:"video_title"`
-	CommentBody         *string            `json:"comment_body"`
-	ReportedUsername    *string            `json:"reported_username"`
-	RemoteVideoTitle    *string            `json:"remote_video_title"`
-	RemoteVideoDomain   *string            `json:"remote_video_domain"`
+	ID                     uuid.UUID          `json:"id"`
+	TargetType             string             `json:"target_type"`
+	VideoID                pgtype.UUID        `json:"video_id"`
+	CommentID              pgtype.UUID        `json:"comment_id"`
+	ReportedUserID         pgtype.UUID        `json:"reported_user_id"`
+	RemoteVideoID          pgtype.UUID        `json:"remote_video_id"`
+	MessageID              pgtype.UUID        `json:"message_id"`
+	MessageBodySnapshot    string             `json:"message_body_snapshot"`
+	Reason                 string             `json:"reason"`
+	Status                 string             `json:"status"`
+	ModeratorNote          string             `json:"moderator_note"`
+	ResolvedAt             pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt              time.Time          `json:"created_at"`
+	ReporterUsername       string             `json:"reporter_username"`
+	RemoteReporterActorUrl *string            `json:"remote_reporter_actor_url"`
+	RemoteReporterDomain   *string            `json:"remote_reporter_domain"`
+	VideoTitle             *string            `json:"video_title"`
+	CommentBody            *string            `json:"comment_body"`
+	ReportedUsername       *string            `json:"reported_username"`
+	RemoteVideoTitle       *string            `json:"remote_video_title"`
+	RemoteVideoDomain      *string            `json:"remote_video_domain"`
 }
 
 // The moderation queue, newest first, with the reporter's username and the
 // target context (video title / comment body / reported account username /
-// remote video title+domain / message body snapshot). status is the exact
+// remote video title+domain / message body snapshot); a remote Flag report
+// (0153) has reporter_username ” and the remote actor. status is the exact
 // lifecycle state to show, or NULL for all of them. It used to be an open_only
 // BOOLEAN fed by `?status == "open"` in the handler, so ?status=resolved
 // silently returned the whole queue.
@@ -260,6 +303,8 @@ func (q *Queries) ListReports(ctx context.Context, arg ListReportsParams) ([]Lis
 			&i.ResolvedAt,
 			&i.CreatedAt,
 			&i.ReporterUsername,
+			&i.RemoteReporterActorUrl,
+			&i.RemoteReporterDomain,
 			&i.VideoTitle,
 			&i.CommentBody,
 			&i.ReportedUsername,
@@ -295,16 +340,16 @@ type ResolveReportParams struct {
 }
 
 // Mark a report accepted/rejected with a moderator note. Returns the reporter
-// so the caller can notify them (best-effort); an unknown id yields no rows,
-// which the service maps to "not found".
-func (q *Queries) ResolveReport(ctx context.Context, arg ResolveReportParams) (uuid.UUID, error) {
+// so the caller can notify them (best-effort; NULL for a remote Flag report);
+// an unknown id yields no rows, which the service maps to "not found".
+func (q *Queries) ResolveReport(ctx context.Context, arg ResolveReportParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, resolveReport,
 		arg.Status,
 		arg.ModeratorNote,
 		arg.ResolvedBy,
 		arg.ID,
 	)
-	var reporter_id uuid.UUID
+	var reporter_id pgtype.UUID
 	err := row.Scan(&reporter_id)
 	return reporter_id, err
 }
