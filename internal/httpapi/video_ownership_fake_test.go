@@ -61,3 +61,40 @@ func (f *ownershipFakeRepo) CreateVideoOwnershipChange(_ context.Context, a sqlc
 	f.rows = append(f.rows, r)
 	return r, nil
 }
+
+func (f *ownershipFakeRepo) ListIncomingVideoOwnershipChanges(_ context.Context, a sqlcgen.ListIncomingVideoOwnershipChangesParams) ([]sqlcgen.ListIncomingVideoOwnershipChangesRow, error) {
+	var out []sqlcgen.ListIncomingVideoOwnershipChangesRow
+	for i := len(f.rows) - 1; i >= 0; i-- { // newest first
+		r := f.rows[i]
+		v, ok := f.v.videos[r.VideoID]
+		if r.NextOwnerID != a.NextOwnerID || !ok {
+			continue
+		}
+		row := sqlcgen.ListIncomingVideoOwnershipChangesRow{ID: r.ID, Status: r.Status, CreatedAt: r.CreatedAt,
+			UpdatedAt: r.UpdatedAt, VideoID: r.VideoID, VideoTitle: v.Title}
+		for _, u := range f.v.users.users {
+			if u.ID == r.InitiatorID {
+				row.InitiatorUsername, row.InitiatorDisplayName = u.Username, u.DisplayName
+			}
+		}
+		out = append(out, row)
+	}
+	if int(a.ResultOffset) >= len(out) {
+		return nil, nil
+	}
+	out = out[a.ResultOffset:]
+	if len(out) > int(a.ResultLimit) {
+		out = out[:a.ResultLimit]
+	}
+	return out, nil
+}
+
+func (f *ownershipFakeRepo) CountIncomingVideoOwnershipChanges(_ context.Context, nextOwnerID uuid.UUID) (int64, error) {
+	var n int64
+	for _, r := range f.rows {
+		if r.NextOwnerID == nextOwnerID {
+			n++
+		}
+	}
+	return n, nil
+}

@@ -1810,6 +1810,7 @@ func (s *Server) routes() {
 		api.GET("/videos/:id/watch-progress", s.handleGetWatchProgress, s.requireAuth)
 		// Ownership changes (T21): give a video to another local user.
 		api.POST("/videos/:id/give-ownership", s.handleGiveVideoOwnership, s.requireAuth)
+		api.GET("/me/video-ownership-changes", s.handleListVideoOwnershipChanges, s.requireAuth)
 		api.PUT("/videos/:id/watch-progress", s.handleRecordWatchProgress, s.requireAuth)
 		api.GET("/videos/config", s.handleVideoConfig)
 		api.GET("/videos/search", s.handleSearchVideos, s.optionalAuth)

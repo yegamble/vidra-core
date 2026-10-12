@@ -7,8 +7,38 @@ import (
 	"testing"
 )
 
+// ownershipChangeList is the GET /me/video-ownership-changes body.
+type ownershipChangeList struct {
+	Changes []struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+		Video  struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"video"`
+		Initiator struct {
+			Username string `json:"username"`
+		} `json:"initiator"`
+	} `json:"changes"`
+	Total int64 `json:"total"`
+	Limit int   `json:"limit"`
+}
+
 func giveOwnership(srv *Server, tok, videoID, username string) *httptest.ResponseRecorder {
 	return postJSONAuth(srv, "/api/v1/videos/"+videoID+"/give-ownership", `{"username":"`+username+`"}`, tok)
+}
+
+func listOwnershipChanges(t *testing.T, srv *Server, tok, query string) ownershipChangeList {
+	t.Helper()
+	rec := getWithAuth(srv, "/api/v1/me/video-ownership-changes"+query, tok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list ownership changes = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var out ownershipChangeList
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("list body: %v", err)
+	}
+	return out
 }
 
 // ownershipNotices counts the caller's video_ownership_request notifications
@@ -111,5 +141,50 @@ func TestGiveVideoOwnership(t *testing.T) {
 	}
 	if len(own.rows) != 1 || repo.videos[own.rows[0].VideoID].Title != "Gift Clip" {
 		t.Errorf("requests = %+v, want exactly one for the gift", own.rows)
+	}
+}
+
+// TestListIncomingOwnershipChanges: a user sees the requests addressed to them,
+// newest first, with the video and who offered it, under the standard page
+// envelope. A recipient who MUTED the giver still has the request (they can
+// refuse it) but is not pushed a notification about it.
+func TestListIncomingOwnershipChanges(t *testing.T) {
+	srv, repo, _ := ownershipServer(t)
+	adaTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	bobTok := createChannelFor(t, srv, "bob", "bob@example.test", "bob")
+	carolTok := registerAndToken(t, srv, `{"username":"carol","email":"carol@example.test","password":"supersecret"}`)
+	first := createPublishedVideo(t, srv, adaTok, "ada", `{"title":"First"}`)
+	second := createPublishedVideo(t, srv, adaTok, "ada", `{"title":"Second"}`)
+	third := createPublishedVideo(t, srv, adaTok, "ada", `{"title":"Third"}`)
+	for _, v := range []string{first, second} {
+		if rec := giveOwnership(srv, adaTok, v, "bob"); rec.Code != http.StatusNoContent {
+			t.Fatalf("give = %d; body=%s", rec.Code, rec.Body.String())
+		}
+	}
+
+	got := listOwnershipChanges(t, srv, bobTok, "?limit=1")
+	if got.Total != 2 || got.Limit != 1 || len(got.Changes) != 1 {
+		t.Fatalf("bob page = %+v, want 1 of 2", got)
+	}
+	c := got.Changes[0]
+	if c.Status != "pending" || c.Video.ID != second || c.Video.Title != "Second" || c.Initiator.Username != "ada" || c.ID == "" {
+		t.Errorf("newest change = %+v", c)
+	}
+	if mine := listOwnershipChanges(t, srv, adaTok, ""); mine.Total != 0 || len(mine.Changes) != 0 {
+		t.Errorf("the giver's incoming list = %+v, want empty", mine)
+	}
+
+	adaID := repo.users.users["ada@example.test"].ID.String()
+	if rec := postJSONAuth(srv, "/api/v1/me/mutes/accounts/"+adaID, "", carolTok); rec.Code >= 300 {
+		t.Fatalf("mute = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := giveOwnership(srv, adaTok, third, "carol"); rec.Code != http.StatusNoContent {
+		t.Fatalf("give to a muter = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := listOwnershipChanges(t, srv, carolTok, ""); got.Total != 1 || got.Changes[0].Video.Title != "Third" {
+		t.Errorf("muter's list = %+v, want the request", got)
+	}
+	if n := ownershipNotices(t, srv, carolTok, "ada", "Third"); n != 0 {
+		t.Errorf("muter was notified %d times, want 0", n)
 	}
 }

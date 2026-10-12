@@ -37,6 +37,8 @@ var (
 type OwnershipRepository interface {
 	ResolveOwnershipRecipient(ctx context.Context, arg sqlcgen.ResolveOwnershipRecipientParams) (sqlcgen.ResolveOwnershipRecipientRow, error)
 	CreateVideoOwnershipChange(ctx context.Context, arg sqlcgen.CreateVideoOwnershipChangeParams) (sqlcgen.VideoOwnershipChange, error)
+	ListIncomingVideoOwnershipChanges(ctx context.Context, arg sqlcgen.ListIncomingVideoOwnershipChangesParams) ([]sqlcgen.ListIncomingVideoOwnershipChangesRow, error)
+	CountIncomingVideoOwnershipChanges(ctx context.Context, nextOwnerID uuid.UUID) (int64, error)
 }
 
 // WithOwnershipRepository wires ownership change requests.
@@ -93,4 +95,20 @@ func (s *Service) GiveOwnership(ctx context.Context, actorID, videoID uuid.UUID,
 		return sqlcgen.VideoOwnershipChange{}, false, err
 	}
 	return oc, !to.MutedInitiator, nil
+}
+
+// ListIncomingOwnershipChanges pages the requests addressed to userID, newest
+// first, with the total for the page envelope.
+func (s *Service) ListIncomingOwnershipChanges(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]sqlcgen.ListIncomingVideoOwnershipChangesRow, int64, error) {
+	if s.own == nil {
+		return nil, 0, ErrOwnershipUnavailable
+	}
+	rows, err := s.own.ListIncomingVideoOwnershipChanges(ctx, sqlcgen.ListIncomingVideoOwnershipChangesParams{
+		NextOwnerID: userID, ResultLimit: limit, ResultOffset: offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.own.CountIncomingVideoOwnershipChanges(ctx, userID)
+	return rows, total, err
 }
