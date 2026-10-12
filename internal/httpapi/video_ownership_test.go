@@ -126,7 +126,8 @@ func TestGiveVideoOwnership(t *testing.T) {
 }
 
 // TestCancelVideoOwnership: the giver withdraws a pending offer; nobody else
-// can, and a withdrawn offer can be made again.
+// can, and the video can be offered again — to the same person only after the
+// re-offer cooldown.
 func TestCancelVideoOwnership(t *testing.T) {
 	srv, _, own := ownershipServer(t)
 	adaTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
@@ -156,8 +157,16 @@ func TestCancelVideoOwnership(t *testing.T) {
 	if code := cancelGive(adaTok, vid); code != http.StatusNotFound {
 		t.Errorf("second cancel = %d, want 404", code)
 	}
-	if rec := giveOwnership(srv, adaTok, vid, "bob"); rec.Code != http.StatusNoContent {
-		t.Errorf("give again after cancelling = %d, want 204", rec.Code)
+	// Withdrawing starts the same cooldown as a refusal: offer → withdraw →
+	// offer again to the same person is refused and pushes no new notice.
+	if rec := giveOwnership(srv, adaTok, vid, "bob"); rec.Code != http.StatusConflict {
+		t.Errorf("re-offer to the same person right after withdrawing = %d, want 409", rec.Code)
+	}
+	if n := ownershipNotices(t, srv, bobTok, "ada"); n != 1 {
+		t.Errorf("bob's ownership notifications = %d, want 1", n)
+	}
+	if rec := giveOwnership(srv, adaTok, vid, "carol"); rec.Code != http.StatusNoContent {
+		t.Errorf("offer to someone else after withdrawing = %d, want 204", rec.Code)
 	}
 }
 

@@ -86,7 +86,8 @@ func (f *ownershipFakeRepo) HasPendingVideoOwnershipChange(_ context.Context, vi
 
 func (f *ownershipFakeRepo) HasRecentOwnershipRefusal(_ context.Context, a sqlcgen.HasRecentOwnershipRefusalParams) (bool, error) {
 	for _, r := range f.rows {
-		if r.InitiatorID == a.InitiatorID && r.NextOwnerID == a.NextOwnerID && r.Status == "refused" && r.UpdatedAt.After(a.RefusedAfter) {
+		if r.InitiatorID == a.InitiatorID && r.NextOwnerID == a.NextOwnerID &&
+			(r.Status == "refused" || r.Status == "cancelled") && r.UpdatedAt.After(a.RefusedAfter) {
 			return true, nil
 		}
 	}
