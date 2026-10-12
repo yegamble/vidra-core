@@ -288,6 +288,16 @@ func (f *notifFakeRepo) NotifyFollowersOfNewVideo(_ context.Context, videoID uui
 	return notified, nil
 }
 
+func (f *notifFakeRepo) NotifyStaffOfNewRegistrationRequest(context.Context, uuid.UUID) (int64, error) {
+	return 0, nil
+}
+func (f *notifFakeRepo) NotifyStaffOfQuarantinedUpload(context.Context, uuid.UUID) (int64, error) {
+	return 0, nil
+}
+func (f *notifFakeRepo) NotifyStaffOfFederationFollowerRequest(context.Context, uuid.UUID) (int64, error) {
+	return 0, nil
+}
+
 // NotifyStaffOfNewReport mirrors the shape of the real set-based staff fan-out
 // (migration 0103) closely enough to prove the HTTP-level wiring: filing a
 // report reaches every active admin/moderator, honouring the no-self-notify

@@ -71,6 +71,9 @@ func (s *Service) RequestRegistration(ctx context.Context, in RegisterInput, not
 		}
 		return RegistrationRequest{}, err
 	}
+	if s.onRegistrationRequest != nil {
+		s.onRegistrationRequest(ctx, row.ID)
+	}
 	return RegistrationRequest{
 		ID: row.ID, Username: row.Username, Email: row.Email, Note: row.Note,
 		Status: row.Status, ModeratorNote: row.ModeratorNote,
@@ -240,7 +243,7 @@ func (s *Service) RequestProviderRegistration(ctx context.Context, in ProviderRe
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	if _, err := s.repo.CreateProviderRegistrationRequest(ctx, sqlcgen.CreateProviderRegistrationRequestParams{
+	if prow, err := s.repo.CreateProviderRegistrationRequest(ctx, sqlcgen.CreateProviderRegistrationRequestParams{
 		Username:           in.Username,
 		Email:              in.Email,
 		OauthProvider:      &in.Provider,
@@ -256,6 +259,8 @@ func (s *Service) RequestProviderRegistration(ctx context.Context, in ProviderRe
 			return ErrRegistrationPending
 		}
 		return err
+	} else if s.onRegistrationRequest != nil {
+		s.onRegistrationRequest(ctx, prow.ID)
 	}
 	return ErrRegistrationPending
 }
