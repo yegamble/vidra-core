@@ -9497,7 +9497,7 @@ paths:
         (filing, resolution, or the latest thread message), each with its
         status, target and thread activity. The moderator's internal note is
         never included. A video title is shown only while that video is still
-        public and published.
+        public, published and not blocked.
       tags: [moderation]
       security:
         - bearerAuth: []
@@ -21435,7 +21435,7 @@ components:
           format: uuid
         video_title:
           type: string
-          description: Omitted unless the video is still public and published.
+          description: Omitted unless the video is still public, published and not blocked.
         reported_username:
           type: string
           description: The reported account (account reports).

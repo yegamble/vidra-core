@@ -226,7 +226,10 @@ func (q *Queries) DeleteReport(ctx context.Context, id uuid.UUID) (int64, error)
 
 const listMyReports = `-- name: ListMyReports :many
 SELECT r.id, r.target_type, r.status, r.reason, r.created_at, r.resolved_at,
-       r.video_id, COALESCE(CASE WHEN v.privacy = 'public' AND v.state = 'published' THEN v.title END, '')::text AS video_title,
+       r.video_id,
+       COALESCE(CASE WHEN v.privacy = 'public' AND v.state = 'published'
+                      AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+                     THEN v.title END, '')::text AS video_title,
        ru.username AS reported_username, rv.title AS remote_video_title,
        COALESCE(t.message_count, 0)::bigint AS message_count,
        GREATEST(r.created_at, r.resolved_at, t.last_message_at)::timestamptz AS last_activity_at
@@ -268,7 +271,8 @@ type ListMyReportsRow struct {
 
 // A reporter's own reports, most recently active first (filing, resolution or
 // the newest thread message). Never the moderator's note; a video title only
-// while the video is still public. report_id narrows to one (NULL = all).
+// while the video passes the public check (videos.sql: public, published, not
+// blocked). report_id narrows to one (NULL = all).
 func (q *Queries) ListMyReports(ctx context.Context, arg ListMyReportsParams) ([]ListMyReportsRow, error) {
 	rows, err := q.db.Query(ctx, listMyReports,
 		arg.ReporterID,

@@ -232,6 +232,7 @@ func TestListMyReportsOnRealPG(t *testing.T) {
 	_, channelID := seedOwnerChannel(ctx, t, st, "minechan")
 	public := seedPublishedVideo(ctx, t, st, channelID, "still public")
 	hidden := seedPublishedVideo(ctx, t, st, channelID, "made private later")
+	blocked := seedPublishedVideo(ctx, t, st, channelID, "blocked by a moderator")
 	file := func(by, video uuid.UUID) uuid.UUID {
 		t.Helper()
 		id, err := q.CreateVideoReport(ctx, sqlcgen.CreateVideoReportParams{
@@ -243,11 +244,17 @@ func TestListMyReportsOnRealPG(t *testing.T) {
 	}
 	first := file(reporter, public)
 	second := file(reporter, hidden)
+	third := file(reporter, blocked)
 	_ = file(other, public)
 	if _, err := st.Pool.Exec(ctx, `UPDATE reports SET created_at = now() - interval '1 hour' WHERE id = $1`, first); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.Pool.Exec(ctx, `UPDATE videos SET privacy = 'private' WHERE id = $1`, hidden); err != nil {
+		t.Fatal(err)
+	}
+	// Still public and published, but blocked: the canonical public check
+	// (videos.sql) excludes it, so its title must stay hidden too.
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO video_blocks (video_id, reason) VALUES ($1, 'seeded')`, blocked); err != nil {
 		t.Fatal(err)
 	}
 	list := func() []sqlcgen.ListMyReportsRow {
@@ -260,14 +267,15 @@ func TestListMyReportsOnRealPG(t *testing.T) {
 	}
 
 	rows := list()
-	if len(rows) != 2 || rows[0].ID != second || rows[1].ID != first {
-		t.Fatalf("ListMyReports = %+v, want [second, first] and none of the other reporter's", rows)
+	if len(rows) != 3 || rows[0].ID != third || rows[1].ID != second || rows[2].ID != first {
+		t.Fatalf("ListMyReports = %+v, want [third, second, first] and none of the other reporter's", rows)
 	}
-	if rows[0].VideoTitle != "" || rows[1].VideoTitle != "still public" {
-		t.Errorf("titles = %q / %q, want the private video's hidden", rows[0].VideoTitle, rows[1].VideoTitle)
+	if rows[0].VideoTitle != "" || rows[1].VideoTitle != "" || rows[2].VideoTitle != "still public" {
+		t.Errorf("titles = %q / %q / %q, want the blocked and the private video's hidden",
+			rows[0].VideoTitle, rows[1].VideoTitle, rows[2].VideoTitle)
 	}
-	if n, err := q.CountMyReports(ctx, reporter); err != nil || n != 2 {
-		t.Errorf("CountMyReports = %d, %v; want 2", n, err)
+	if n, err := q.CountMyReports(ctx, reporter); err != nil || n != 3 {
+		t.Errorf("CountMyReports = %d, %v; want 3", n, err)
 	}
 
 	// A thread message on the older report makes it the most recently active.
