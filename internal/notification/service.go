@@ -533,11 +533,16 @@ func (s *Service) NotifyVideoUnblocked(ctx context.Context, recipientID, actorID
 	return err
 }
 
-// NotifyVideoOwnershipRequest tells recipientID that actorID offered them
-// videoID. Notifying yourself is a no-op, as is a recipient who disabled the
+// NotifyVideoOwnershipRequest tells recipientID that actorID offered them a
+// video. Notifying yourself is a no-op, as is a recipient who disabled the
 // type. Best-effort: the caller never fails the request over it. Whether the
 // recipient muted the giver is decided upstream (the request still stands).
-func (s *Service) NotifyVideoOwnershipRequest(ctx context.Context, recipientID, actorID, videoID uuid.UUID) error {
+//
+// It deliberately carries NO video: a notification joins the video's live
+// title at read time, and this one outlives the request — the video may pass
+// to someone else, private, and the recipient must not keep a window onto it.
+// The request list shows the title as it was when offered (0165).
+func (s *Service) NotifyVideoOwnershipRequest(ctx context.Context, recipientID, actorID uuid.UUID) error {
 	if recipientID == actorID || !s.typeEnabled(ctx, recipientID, TypeVideoOwnershipRequest) {
 		return nil
 	}
@@ -545,7 +550,6 @@ func (s *Service) NotifyVideoOwnershipRequest(ctx context.Context, recipientID, 
 		UserID:  recipientID,
 		Type:    TypeVideoOwnershipRequest,
 		ActorID: pgconv.UUID(actorID),
-		VideoID: pgconv.UUID(videoID),
 	})
 	return err
 }

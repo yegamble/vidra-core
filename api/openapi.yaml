@@ -8712,9 +8712,14 @@ paths:
         Starts an ownership change (PeerTube's "give ownership"): the named
         local account is asked to take over the video, and accepts it into one
         of their channels or refuses. Only the video's owner may give it —
-        not a channel editor, not staff. The recipient is notified
+        not a channel editor, not staff (a deliberate departure from PeerTube,
+        where staff may give on an owner's behalf). The recipient is notified
         (video_ownership_request) unless they muted the caller; the request
-        stands either way. Nothing moves until the recipient accepts. Rate
+        stands either way. Nothing moves until the recipient accepts, and the
+        giver can withdraw it meanwhile (DELETE). A pending request expires
+        after 30 days, or as soon as the giver no longer owns the video. The
+        checks that do not depend on the recipient (ownership, upload state, a
+        pending request) are answered before the username is looked at. Rate
         limited like every other API write.
       tags: [videos]
       security:
@@ -8740,12 +8745,6 @@ paths:
       responses:
         "204":
           description: The request is pending the recipient's answer.
-        "400":
-          description: The recipient already owns the video.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing, invalid, or expired token.
           content:
@@ -8756,22 +8755,62 @@ paths:
           description: >-
             The video does not exist or the caller does not own it ("video not
             found"), or no eligible recipient has that username ("user not
-            found" — one answer for an unknown, banned or deleted account and
-            for a block in either direction).
+            found" — one answer for an unknown, banned or deleted account, a
+            block in either direction, and the caller themselves).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: >-
-            A request for this video is already pending, or the video is still
-            uploading or processing (state draft or processing).
+            A request for this video is already pending, the video is still
+            uploading or processing (state draft or processing), or the
+            recipient refused an offer from the caller in the last 24 hours.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Validation failed (username is required).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Ownership changes are not configured on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: cancelVideoOwnershipChange
+      summary: Withdraw your pending offer of a video
+      description: >-
+        Cancels the caller's pending ownership change for this video; the
+        recipient's list shows it as cancelled. Only the giver may cancel, and
+        only while it is pending. Anything else — an unknown video, someone
+        else's offer, nothing pending — is the same 404.
+      tags: [videos]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Withdrawn.
+        "401":
+          description: Missing, invalid, or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No pending offer of this video by the caller.
           content:
             application/json:
               schema:
