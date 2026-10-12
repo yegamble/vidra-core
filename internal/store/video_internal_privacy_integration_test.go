@@ -219,3 +219,96 @@ func TestInternalVideosListToSignedInViewersOnRealPG(t *testing.T) {
 		t.Errorf("subscriptions = %d rows (total %d), want the internal video once", len(subs), subTotal)
 	}
 }
+
+// F2 (T18 security review): the viewer guard — `v.privacy = 'internal' AND
+// viewer_id IS NOT NULL` — is pinned per query, list AND count, both ways. Each
+// of the four browse statements is asked about the SAME internal row by an
+// anonymous caller (ViewerID unset → SQL NULL) and by a signed-in one, and must
+// answer exactly 0 and exactly 1. The global feed is scoped to this fixture by a
+// unique tag so other packages' rows (integration packages share the database
+// and run concurrently) cannot move an exact count.
+func TestInternalViewerGuardOnEveryBrowseQueryOnRealPG(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := New(ctx, dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer st.Close()
+	q := st.Queries()
+
+	suffix := uuid.NewString()[:8]
+	ids := make([]uuid.UUID, 2)
+	for i, name := range []string{"guardown-", "guardmem-"} {
+		if err := st.Pool.QueryRow(ctx,
+			`INSERT INTO users (username, email, password_hash) VALUES ($1, $2, 'x') RETURNING id`,
+			name+suffix, name+suffix+"@example.test").Scan(&ids[i]); err != nil {
+			t.Fatalf("seed user: %v", err)
+		}
+		id := ids[i]
+		t.Cleanup(func() { _, _ = st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, id) })
+	}
+	owner, member := ids[0], ids[1]
+	var channelID, videoID uuid.UUID
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO channels (owner_id, handle, display_name) VALUES ($1, $2, 'Guard') RETURNING id`,
+		owner, "guard-"+suffix).Scan(&channelID); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	if err := st.Pool.QueryRow(ctx,
+		`INSERT INTO videos (channel_id, title, privacy, state) VALUES ($1, 'guarded', 'internal', 'published') RETURNING id`,
+		channelID).Scan(&videoID); err != nil {
+		t.Fatalf("seed internal video: %v", err)
+	}
+	tag := "t18guard" + suffix
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO video_tags (video_id, tag) VALUES ($1, $2)`, videoID, tag); err != nil {
+		t.Fatalf("tag: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		viewer pgtype.UUID
+		want   int
+	}{
+		{"anonymous", pgtype.UUID{}, 0},
+		{"signed in", pgtype.UUID{Bytes: member, Valid: true}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			only := func(got []uuid.UUID) bool {
+				return len(got) == tc.want && (tc.want == 0 || got[0] == videoID)
+			}
+			feed, err := q.ListPublicVideosSorted(ctx, sqlcgen.ListPublicVideosSortedParams{
+				ViewerID: tc.viewer, Tag: &tag, Sort: "recent", ResultLimit: 50,
+			})
+			if err != nil {
+				t.Fatalf("ListPublicVideosSorted: %v", err)
+			}
+			feedIDs := make([]uuid.UUID, 0, len(feed))
+			for _, r := range feed {
+				feedIDs = append(feedIDs, r.ID)
+			}
+			if !only(feedIDs) {
+				t.Errorf("ListPublicVideosSorted = %v, want %d row(s) of the internal video", feedIDs, tc.want)
+			}
+			if n, err := q.CountPublicVideosSorted(ctx, sqlcgen.CountPublicVideosSortedParams{ViewerID: tc.viewer, Tag: &tag}); err != nil || n != int64(tc.want) {
+				t.Errorf("CountPublicVideosSorted = %d, %v; want %d", n, err, tc.want)
+			}
+			ch, err := q.ListPublicVideosByChannel(ctx, sqlcgen.ListPublicVideosByChannelParams{
+				ChannelID: channelID, ViewerID: tc.viewer, ResultLimit: 50,
+			})
+			if err != nil {
+				t.Fatalf("ListPublicVideosByChannel: %v", err)
+			}
+			chIDs := make([]uuid.UUID, 0, len(ch))
+			for _, r := range ch {
+				chIDs = append(chIDs, r.ID)
+			}
+			if !only(chIDs) {
+				t.Errorf("ListPublicVideosByChannel = %v, want %d row(s) of the internal video", chIDs, tc.want)
+			}
+			if n, err := q.CountPublicVideosByChannelVisible(ctx, sqlcgen.CountPublicVideosByChannelVisibleParams{ChannelID: channelID, ViewerID: tc.viewer}); err != nil || n != int64(tc.want) {
+				t.Errorf("CountPublicVideosByChannelVisible = %d, %v; want %d", n, err, tc.want)
+			}
+		})
+	}
+}
