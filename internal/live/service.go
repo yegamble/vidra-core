@@ -66,6 +66,9 @@ type Repository interface {
 	SetLiveStreamState(ctx context.Context, arg sqlcgen.SetLiveStreamStateParams) error
 	ListLivePublicStreams(ctx context.Context, arg sqlcgen.ListLivePublicStreamsParams) ([]sqlcgen.ListLivePublicStreamsRow, error)
 	CountLivePublicStreams(ctx context.Context, viewerID pgtype.UUID) (int64, error)
+	// Public "Upcoming" listing (migration 0168).
+	ListUpcomingLiveStreams(ctx context.Context, arg sqlcgen.ListUpcomingLiveStreamsParams) ([]sqlcgen.ListUpcomingLiveStreamsRow, error)
+	CountUpcomingLiveStreams(ctx context.Context, arg sqlcgen.CountUpcomingLiveStreamsParams) (int64, error)
 	// Simultaneous-live caps + duration watchdog (config-parity W11).
 	CountLiveStreamsLive(ctx context.Context) (int64, error)
 	CountLiveStreamsLiveByOwner(ctx context.Context, ownerID uuid.UUID) (int64, error)
@@ -291,7 +294,10 @@ type Stream struct {
 	// StartedAt is when the current live session began (stamped on the transition
 	// into "live", cleared when it ends). Nil when the stream is not currently
 	// live / has never gone live.
-	StartedAt          *time.Time
+	StartedAt *time.Time
+	// ScheduledStartAt is the PLANNED start (migration 0168): an announcement,
+	// never a trigger. Nil = unscheduled. Cleared by the go-live transition.
+	ScheduledStartAt   *time.Time
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	OwnerID            uuid.UUID
@@ -337,22 +343,39 @@ type LiveCard struct {
 	StartedAt          *time.Time
 }
 
+// UpcomingCard is one entry of the public "Upcoming" listing: a PUBLIC, offline
+// stream with a planned start. Minimal by design — no state/privacy (every entry
+// is public+offline) and never the stream key.
+type UpcomingCard struct {
+	ID                 uuid.UUID
+	Title              string
+	Description        string
+	ChannelHandle      string
+	ChannelDisplayName string
+	ScheduledStartAt   time.Time
+}
+
 // CreateInput is the metadata for a new live stream.
 type CreateInput struct {
-	Title         string
-	Description   string
-	Privacy       string
-	Permanent     bool
-	ReplayEnabled bool
+	// ScheduledStartAt is the optional planned start (already validated by the
+	// caller); nil = unscheduled.
+	ScheduledStartAt *time.Time
+	Title            string
+	Description      string
+	Privacy          string
+	Permanent        bool
+	ReplayEnabled    bool
 }
 
 // UpdateInput is the editable metadata of an existing live stream.
 type UpdateInput struct {
-	Title         string
-	Description   string
-	Privacy       string
-	Permanent     bool
-	ReplayEnabled bool
+	// ScheduledStartAt REPLACES the planned start; nil clears it.
+	ScheduledStartAt *time.Time
+	Title            string
+	Description      string
+	Privacy          string
+	Permanent        bool
+	ReplayEnabled    bool
 }
 
 // Create makes a live stream for a channel and returns it plus the raw stream key
@@ -368,13 +391,14 @@ func (s *Service) Create(ctx context.Context, channelID uuid.UUID, in CreateInpu
 		privacy = "public"
 	}
 	row, err := s.repo.CreateLiveStream(ctx, sqlcgen.CreateLiveStreamParams{
-		ChannelID:     channelID,
-		Title:         in.Title,
-		Description:   in.Description,
-		Privacy:       privacy,
-		Permanent:     in.Permanent,
-		ReplayEnabled: in.ReplayEnabled,
-		StreamKeyHash: hash,
+		ChannelID:        channelID,
+		Title:            in.Title,
+		Description:      in.Description,
+		Privacy:          privacy,
+		Permanent:        in.Permanent,
+		ReplayEnabled:    in.ReplayEnabled,
+		StreamKeyHash:    hash,
+		ScheduledStartAt: pgconv.TimePtr(in.ScheduledStartAt),
 	})
 	if err != nil {
 		return Stream{}, "", err
@@ -382,7 +406,7 @@ func (s *Service) Create(ctx context.Context, channelID uuid.UUID, in CreateInpu
 	return Stream{
 		ID: row.ID, ChannelID: row.ChannelID, Title: row.Title, Description: row.Description,
 		Privacy: row.Privacy, State: row.State, Permanent: row.Permanent, ReplayEnabled: row.ReplayEnabled,
-		StartedAt: pgconv.TimeOrNil(row.StartedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		StartedAt: pgconv.TimeOrNil(row.StartedAt), ScheduledStartAt: pgconv.TimeOrNil(row.ScheduledStartAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}, rawKey, nil
 }
 
@@ -396,12 +420,13 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (Str
 		privacy = "public"
 	}
 	row, err := s.repo.UpdateLiveStream(ctx, sqlcgen.UpdateLiveStreamParams{
-		ID:            id,
-		Title:         in.Title,
-		Description:   in.Description,
-		Privacy:       privacy,
-		Permanent:     in.Permanent,
-		ReplayEnabled: in.ReplayEnabled,
+		ID:               id,
+		Title:            in.Title,
+		Description:      in.Description,
+		Privacy:          privacy,
+		Permanent:        in.Permanent,
+		ReplayEnabled:    in.ReplayEnabled,
+		ScheduledStartAt: pgconv.TimePtr(in.ScheduledStartAt),
 	})
 	if err != nil {
 		return Stream{}, ErrNotFound
@@ -409,7 +434,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (Str
 	return Stream{
 		ID: row.ID, ChannelID: row.ChannelID, Title: row.Title, Description: row.Description,
 		Privacy: row.Privacy, State: row.State, Permanent: row.Permanent, ReplayEnabled: row.ReplayEnabled,
-		StartedAt: pgconv.TimeOrNil(row.StartedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		StartedAt: pgconv.TimeOrNil(row.StartedAt), ScheduledStartAt: pgconv.TimeOrNil(row.ScheduledStartAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}, nil
 }
 
@@ -423,7 +448,7 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Stream, error) {
 	st := Stream{
 		ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 		Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
-		StartedAt: pgconv.TimeOrNil(r.StartedAt), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		StartedAt: pgconv.TimeOrNil(r.StartedAt), ScheduledStartAt: pgconv.TimeOrNil(r.ScheduledStartAt), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		OwnerID: r.OwnerID, ChannelHandle: r.ChannelHandle, ChannelDisplayName: r.ChannelDisplayName,
 	}
 	applyTermination(&st, r.TerminatedAt, r.TerminatedBy, r.TerminationReasonCode, r.TerminationReason)
@@ -467,7 +492,7 @@ func (s *Service) ListByChannel(ctx context.Context, channelID uuid.UUID, limit,
 		st := Stream{
 			ID: r.ID, ChannelID: r.ChannelID, Title: r.Title, Description: r.Description,
 			Privacy: r.Privacy, State: r.State, Permanent: r.Permanent, ReplayEnabled: r.ReplayEnabled,
-			StartedAt: pgconv.TimeOrNil(r.StartedAt), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			StartedAt: pgconv.TimeOrNil(r.StartedAt), ScheduledStartAt: pgconv.TimeOrNil(r.ScheduledStartAt), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		}
 		applyTermination(&st, r.TerminatedAt, r.TerminatedBy, r.TerminationReasonCode, r.TerminationReason)
 		out = append(out, st)
@@ -507,6 +532,38 @@ func (s *Service) ListLivePublic(ctx context.Context, viewerID uuid.UUID, viewer
 			ID: r.ID, Title: r.Title, Description: r.Description,
 			ChannelHandle: r.ChannelHandle, ChannelDisplayName: r.ChannelDisplayName,
 			StartedAt: pgconv.TimeOrNil(r.StartedAt),
+		})
+	}
+	return out, total, nil
+}
+
+// ListUpcoming returns the public "Upcoming" listing (soonest first) with the
+// total under the same predicate. channelHandle, when non-empty, narrows it to
+// one channel (the channel page). Visibility is the "Live now" rail's: public
+// streams only, minus accounts the viewer muted or blocked. limit/offset are
+// assumed already clamped.
+func (s *Service) ListUpcoming(ctx context.Context, viewerID uuid.UUID, viewerAuthed bool, channelHandle string, limit, offset int) ([]UpcomingCard, int64, error) {
+	viewer := pgtype.UUID{Bytes: viewerID, Valid: viewerAuthed}
+	var handle *string
+	if channelHandle != "" {
+		handle = &channelHandle
+	}
+	rows, err := s.repo.ListUpcomingLiveStreams(ctx, sqlcgen.ListUpcomingLiveStreamsParams{
+		ChannelHandle: handle, ViewerID: viewer, ResultLimit: int32(limit), ResultOffset: int32(offset),
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.CountUpcomingLiveStreams(ctx, sqlcgen.CountUpcomingLiveStreamsParams{ChannelHandle: handle, ViewerID: viewer})
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]UpcomingCard, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, UpcomingCard{
+			ID: r.ID, Title: r.Title, Description: r.Description,
+			ChannelHandle: r.ChannelHandle, ChannelDisplayName: r.ChannelDisplayName,
+			ScheduledStartAt: r.ScheduledStartAt.Time,
 		})
 	}
 	return out, total, nil

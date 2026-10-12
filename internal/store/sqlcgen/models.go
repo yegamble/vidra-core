@@ -530,6 +530,7 @@ type LiveStream struct {
 	TerminatedBy          pgtype.UUID        `json:"terminated_by"`
 	TerminationReasonCode *string            `json:"termination_reason_code"`
 	TerminationReason     string             `json:"termination_reason"`
+	ScheduledStartAt      pgtype.Timestamptz `json:"scheduled_start_at"`
 }
 
 type MailConfig struct {

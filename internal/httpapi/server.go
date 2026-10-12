@@ -2419,6 +2419,9 @@ func (s *Server) routes() {
 		// Public "Live now" listing (home rail): currently-live PUBLIC streams
 		// across all channels. Public read; unlisted/private never listed.
 		api.GET("/live", s.handleListLivePublicStreams, s.optionalAuth)
+		// Public "Upcoming" listing (scheduled lives, migration 0168). Static
+		// segment, registered beside /live/:id — Echo prefers the static route.
+		api.GET("/live/upcoming", s.handleListUpcomingLiveStreams, s.optionalAuth)
 		api.GET("/live/:id", s.handleGetLiveStream, s.optionalAuth)
 		api.PATCH("/live/:id", s.handleUpdateLiveStream, s.requireAuth)
 		api.POST("/live/:id/key", s.handleRegenerateLiveStreamKey, s.requireAuth)
