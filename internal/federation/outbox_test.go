@@ -320,3 +320,22 @@ func TestVideoObjectInternalIsNotFound(t *testing.T) {
 		t.Fatalf("VideoObject(internal) err = %v, want ErrNotFound", err)
 	}
 }
+
+// F4 (T18 security review): the redeliver arm's own predicate. A Create queued
+// while the video was public must not go out once it is internal — the video is
+// still watchable on this instance, which is exactly the state a denylist
+// (`!= "private"`) would mistake for publishable.
+func TestVideoStillPublishableRefusesInternal(t *testing.T) {
+	channelID, videoID := uuid.New(), uuid.New()
+	repo := newOutboxRepo(channelID, videoID, "public", "published", []string{"https://a.example/inbox"})
+	svc := NewService(repo, WithBaseURL("https://videos.example"))
+	if ok, err := svc.videoStillPublishable(context.Background(), videoID); err != nil || !ok {
+		t.Fatalf("control: public video videoStillPublishable = %v, %v; want true", ok, err)
+	}
+	v := repo.videosByID[videoID]
+	v.Privacy = "internal"
+	repo.videosByID[videoID] = v
+	if ok, err := svc.videoStillPublishable(context.Background(), videoID); err != nil || ok {
+		t.Fatalf("internal video videoStillPublishable = %v, %v; want false", ok, err)
+	}
+}
