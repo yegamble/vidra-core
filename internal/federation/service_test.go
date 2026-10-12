@@ -44,6 +44,7 @@ type fakeRepo struct {
 	remoteVideos   map[string]*fakeRemoteVideo // keyed by object_url
 	blockedDomains map[string]bool
 	usersByID      map[uuid.UUID]sqlcgen.GetUserActorByIDRow
+	images         map[string]string                          // "<owner id>|<kind>" → content type
 	rcFollows      map[uuid.UUID]*sqlcgen.RemoteChannelFollow // keyed by row id
 	commentsByID   map[uuid.UUID]sqlcgen.Comment              // federated-comment rows (§6)
 	// authoredRemoteComments are locally-authored comments ON remote videos
@@ -216,6 +217,20 @@ type fakeDelivery struct {
 func (f fakeRepo) CountUsers(context.Context) (int64, error)        { return f.users, f.err }
 func (f fakeRepo) CountPublicVideos(context.Context) (int64, error) { return f.videos, f.err }
 func (f fakeRepo) CountComments(context.Context) (int64, error)     { return f.comments, f.err }
+
+func (f fakeRepo) GetUserImage(_ context.Context, a sqlcgen.GetUserImageParams) (sqlcgen.UserImage, error) {
+	if im, ok := f.images[a.UserID.String()+"|"+a.Kind]; ok {
+		return sqlcgen.UserImage{ContentType: im}, nil
+	}
+	return sqlcgen.UserImage{}, pgx.ErrNoRows
+}
+
+func (f fakeRepo) GetChannelImage(_ context.Context, a sqlcgen.GetChannelImageParams) (sqlcgen.ChannelImage, error) {
+	if im, ok := f.images[a.ChannelID.String()+"|"+a.Kind]; ok {
+		return sqlcgen.ChannelImage{ContentType: im}, nil
+	}
+	return sqlcgen.ChannelImage{}, pgx.ErrNoRows
+}
 
 func (f fakeRepo) GetUserActorByUsername(_ context.Context, name string) (sqlcgen.GetUserActorByUsernameRow, error) {
 	if u, ok := f.usersByName[strings.ToLower(name)]; ok {

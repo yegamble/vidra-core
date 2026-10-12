@@ -79,6 +79,9 @@ type Repository interface {
 	// Outbound remote-channel follows (remote-content §3): a local user follows
 	// a remote channel; the accepted edges also gate remote-video ingestion.
 	GetUserActorByID(ctx context.Context, id uuid.UUID) (sqlcgen.GetUserActorByIDRow, error)
+	// Actor avatar/banner (icon/image) — the same rows the REST image routes serve.
+	GetUserImage(ctx context.Context, arg sqlcgen.GetUserImageParams) (sqlcgen.UserImage, error)
+	GetChannelImage(ctx context.Context, arg sqlcgen.GetChannelImageParams) (sqlcgen.ChannelImage, error)
 	UpsertRemoteChannelFollow(ctx context.Context, arg sqlcgen.UpsertRemoteChannelFollowParams) (sqlcgen.RemoteChannelFollow, error)
 	GetRemoteChannelFollowByID(ctx context.Context, arg sqlcgen.GetRemoteChannelFollowByIDParams) (sqlcgen.GetRemoteChannelFollowByIDRow, error)
 	ListRemoteChannelFollows(ctx context.Context, arg sqlcgen.ListRemoteChannelFollowsParams) ([]sqlcgen.ListRemoteChannelFollowsRow, error)
