@@ -1954,6 +1954,10 @@ func (f *fakeRepo) CountPublicVideosSorted(ctx context.Context, a sqlcgen.CountP
 	return int64(len(rows)), err
 }
 
+func (f *fakeRepo) ListDownloadEnabledVideoIDs(context.Context, []uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
 func (f *fakeRepo) CountSubscriptionVideos(ctx context.Context, followerID uuid.UUID) (int64, error) {
 	rows, err := f.ListSubscriptionVideos(ctx, sqlcgen.ListSubscriptionVideosParams{FollowerID: followerID, ResultLimit: 1 << 30})
 	return int64(len(rows)), err
