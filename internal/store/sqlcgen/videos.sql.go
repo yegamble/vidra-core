@@ -55,7 +55,7 @@ FROM (
            false AS is_local,
            ra.domain AS origin_domain,
            rv.watch_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            false AS external_link,
            (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
            false AS has_original,
@@ -241,7 +241,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            ''::text AS sensitive_reason
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
@@ -251,6 +251,8 @@ FROM (
       AND $4::text IS NULL
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
+      -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
+      AND (NOT $5::bool OR NOT rv.is_sensitive)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $1 AND mi.domain = ra.domain
@@ -412,7 +414,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            ''::text AS sensitive_reason,
            similarity(rv.title, $1) AS search_rank
     FROM remote_videos rv
@@ -430,6 +432,8 @@ FROM (
       AND rv.title ILIKE '%' || $1 || '%'
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
+      -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
+      AND (NOT $9::bool OR NOT rv.is_sensitive)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $2 AND mi.domain = ra.domain
@@ -556,7 +560,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            ''::text AS sensitive_reason
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
@@ -912,7 +916,7 @@ FROM (
            false AS is_local,
            ra.domain AS origin_domain,
            rv.watch_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            false AS external_link,
            (rv.thumbnail_key IS NOT NULL) AS has_thumbnail,
            false AS has_original,
@@ -1523,7 +1527,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            ''::text AS sensitive_reason,
            ''::text AS short_code
     FROM remote_videos rv
@@ -1534,6 +1538,8 @@ FROM (
       AND $4::text IS NULL
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
+      -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
+      AND (NOT $5::bool OR NOT rv.is_sensitive)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $1 AND mi.domain = ra.domain
@@ -1948,7 +1954,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            ''::text AS sensitive_reason,
            ''::text AS short_code
     FROM remote_videos rv
@@ -2363,7 +2369,7 @@ FROM (
            ra.domain,
            rv.watch_url,
            rv.stream_url,
-           false AS is_sensitive,
+           rv.is_sensitive,
            ''::text AS sensitive_reason,
            ''::text AS short_code,
            similarity(rv.title, $1) AS search_rank
@@ -2382,6 +2388,8 @@ FROM (
       AND rv.title ILIKE '%' || $1 || '%'
       AND NOT EXISTS (SELECT 1 FROM blocked_instances bi WHERE bi.domain = ra.domain)
       AND NOT EXISTS (SELECT 1 FROM remote_video_blocks rb WHERE rb.remote_video_id = rv.id)
+      -- The origin's sensitive flag under the same policy as v.is_sensitive (T05).
+      AND (NOT $9::bool OR NOT rv.is_sensitive)
       AND NOT EXISTS (
           SELECT 1 FROM muted_instances mi
           WHERE mi.muter_id = $2 AND mi.domain = ra.domain
