@@ -1489,3 +1489,9 @@ SELECT id FROM videos
 WHERE id = $1 OR peertube_uuid = $1
 ORDER BY (id = $1) DESC
 LIMIT 1;
+
+-- name: ListDownloadEnabledVideoIDs :many
+-- Which of the given videos have their per-video download flag on. One batched
+-- lookup for the podcast feed, so a render does not point-read every video
+-- (ListPublicVideosByChannel rows do not carry download_enabled).
+SELECT id FROM videos WHERE id = ANY(sqlc.arg('ids')::uuid[]) AND download_enabled;

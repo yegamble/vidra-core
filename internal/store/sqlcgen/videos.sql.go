@@ -1286,6 +1286,33 @@ func (q *Queries) ListChannelOutboxVideos(ctx context.Context, arg ListChannelOu
 	return items, nil
 }
 
+const listDownloadEnabledVideoIDs = `-- name: ListDownloadEnabledVideoIDs :many
+SELECT id FROM videos WHERE id = ANY($1::uuid[]) AND download_enabled
+`
+
+// Which of the given videos have their per-video download flag on. One batched
+// lookup for the podcast feed, so a render does not point-read every video
+// (ListPublicVideosByChannel rows do not carry download_enabled).
+func (q *Queries) ListDownloadEnabledVideoIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listDownloadEnabledVideoIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDueScheduledVideos = `-- name: ListDueScheduledVideos :many
 SELECT v.id, f.storage_key
 FROM videos v

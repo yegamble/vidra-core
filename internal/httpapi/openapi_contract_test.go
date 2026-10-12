@@ -302,9 +302,10 @@ var knownNonContractRoutes = map[string]string{
 	// PUBLIC_BASE_URL (+ wired video/channel services). Syndication formats
 	// answering XML/oEmbed JSON to feed readers, crawlers and embed resolvers,
 	// built from absolute public URLs. See internal/httpapi/distribution.go.
-	"GET /feeds/videos.xml": "syndication feed",
-	"GET /services/oembed":  "oEmbed provider",
-	"GET /sitemap.xml":      "crawler sitemap",
+	"GET /feeds/videos.xml":         "syndication feed",
+	"GET /feeds/podcast/videos.xml": "podcast syndication feed",
+	"GET /services/oembed":          "oEmbed provider",
+	"GET /sitemap.xml":              "crawler sitemap",
 
 	// DEV_MAIL_CAPTURE_ENABLED, and refused outright when Environment is
 	// "production". A development seam for reading account-security tokens
