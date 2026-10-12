@@ -182,6 +182,9 @@ type Service struct {
 	// flagger runs watched-words flagging over inbound federated comments
 	// (remote-content §6). Nil = no flagging.
 	flagger CommentFlagger
+	// notifyMentions raises comment_mention notifications for local accounts an
+	// inbound Note's Mention tags target (WithCommentMentionNotifier). Nil = off.
+	notifyMentions func(context.Context, uuid.UUID, []string) (int64, error)
 	// Inbound Flag → moderation report + staff fan-out (WithFlagReporting).
 	fileFlagReport  func(context.Context, moderation.RemoteReport) (uuid.UUID, error)
 	notifyNewReport func(context.Context, uuid.UUID) (int64, error)
@@ -239,6 +242,14 @@ func WithMediaStorage(b storage.Backend) Option { return func(s *Service) { s.me
 // federated comments (remote-content §6). When unset, remote comments are
 // stored unflagged.
 func WithCommentFlagger(f CommentFlagger) Option { return func(s *Service) { s.flagger = f } }
+
+// WithCommentMentionNotifier wires the fan-out that tells a local user an
+// inbound federated comment @-mentioned them (a Mention tag naming one of our
+// actors). The notifier owns every gate and the once-per-(comment, user)
+// idempotency; unset, inbound mentions raise nothing.
+func WithCommentMentionNotifier(f func(ctx context.Context, commentID uuid.UUID, usernames []string) (int64, error)) Option {
+	return func(s *Service) { s.notifyMentions = f }
+}
 
 // WithAcceptRemoteCommentsFunc wires the federation_accept_remote_comments
 // gate (config-parity W12): when it reports false, inbound Create/Update{Note}

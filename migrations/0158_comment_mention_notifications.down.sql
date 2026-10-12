@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS notifications_comment_mention_unique_idx;

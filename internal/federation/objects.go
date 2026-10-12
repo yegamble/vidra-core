@@ -152,7 +152,7 @@ func (s *Service) NoteObject(ctx context.Context, commentID uuid.UUID) (map[stri
 		return nil, err
 	}
 	accountActor := s.baseURL + "/accounts/" + u.Username
-	return map[string]any{
+	note := map[string]any{
 		"@context":     "https://www.w3.org/ns/activitystreams",
 		"id":           s.localCommentURL(c.ID),
 		"type":         "Note",
@@ -161,7 +161,11 @@ func (s *Service) NoteObject(ctx context.Context, commentID uuid.UUID) (map[stri
 		"attributedTo": accountActor,
 		"published":    c.CreatedAt.UTC().Format(time.RFC3339),
 		"to":           []string{publicAudience},
-	}, nil
+	}
+	if tags := s.mentionTags(ctx, c.Body); len(tags) > 0 {
+		note["tag"] = tags
+	}
+	return note, nil
 }
 
 // RecordVideoTombstone remembers that a federated video's id existed, so its

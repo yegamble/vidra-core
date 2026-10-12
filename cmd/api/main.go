@@ -2214,6 +2214,9 @@ func run() error {
 		// comment or account) lands in the local moderation queue and fans
 		// out new_report to staff, exactly as a local report does.
 		federation.WithFlagReporting(moderationsvc.ReportFromRemote, notifsvc.NotifyNewReport),
+		// A federated comment whose Mention tag names one of our users raises
+		// the same comment_mention notification as a local @mention.
+		federation.WithCommentMentionNotifier(notifsvc.NotifyCommentMentions),
 		// Federation policy gates (config-parity W12): runtime provider funcs
 		// over the settings overlay, read per inbound activity so an admin
 		// change applies without a restart. All gate the ActivityPub inbox

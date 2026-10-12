@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/vidra/vidra-core/internal/mention"
 	"github.com/vidra/vidra-core/internal/pgconv"
 	"github.com/vidra/vidra-core/internal/store/sqlcgen"
 )
@@ -38,6 +39,8 @@ type apNoteObject struct {
 	// the ORIGIN's ordering: a follower that ordered by arrival would show a
 	// thread in delivery order, which is not the order anyone wrote it in.
 	Published string `json:"published"`
+	// Tag carries the Note's Mention tags (an object or an array of them).
+	Tag json.RawMessage `json:"tag"`
 }
 
 // handleCreateNote ingests an inbound Create{Note} as a federated comment (§6).
@@ -110,6 +113,7 @@ func (s *Service) handleCreateNote(ctx context.Context, act inboxActivity, signe
 		return err
 	}
 	s.flagRemoteComment(ctx, row.ID, row.Body)
+	s.notifyMentionedLocals(ctx, row.ID, note.Tag)
 	return nil
 }
 
@@ -147,7 +151,62 @@ func (s *Service) handleUpdateNote(ctx context.Context, act inboxActivity, signe
 		return err
 	}
 	s.flagRemoteComment(ctx, updated.ID, updated.Body)
+	s.notifyMentionedLocals(ctx, updated.ID, note.Tag)
 	return nil
+}
+
+// localMentionUsernames returns the usernames of OUR accounts that a Note's
+// Mention tags target, i.e. tags whose href is one of our /accounts/<name>
+// actor URLs. Tags for remote actors, other tag types and malformed entries are
+// ignored; the result is capped like a local comment's.
+func (s *Service) localMentionUsernames(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var tags []struct {
+		Type string `json:"type"`
+		Href string `json:"href"`
+	}
+	if err := json.Unmarshal(raw, &tags); err != nil {
+		var one struct {
+			Type string `json:"type"`
+			Href string `json:"href"`
+		}
+		if json.Unmarshal(raw, &one) != nil {
+			return nil
+		}
+		tags = append(tags, one)
+	}
+	prefix := s.baseURL + "/accounts/"
+	var out []string
+	for _, t := range tags {
+		name, ok := strings.CutPrefix(t.Href, prefix)
+		if t.Type != "Mention" || !ok || name == "" || strings.ContainsAny(name, "/?#") {
+			continue
+		}
+		out = append(out, strings.ToLower(name))
+		if len(out) == mention.MaxPerComment {
+			break
+		}
+	}
+	return out
+}
+
+// notifyMentionedLocals tells the local users an inbound Note's Mention tags
+// name. Best-effort like flagging: a failure never fails ingestion, and the
+// notifier's unique index makes a redelivered or edited Note a no-op for anyone
+// already told.
+func (s *Service) notifyMentionedLocals(ctx context.Context, commentID uuid.UUID, tag json.RawMessage) {
+	if s.notifyMentions == nil {
+		return
+	}
+	names := s.localMentionUsernames(tag)
+	if len(names) == 0 {
+		return
+	}
+	if _, err := s.notifyMentions(ctx, commentID, names); err != nil && s.logger != nil {
+		s.logger.WarnContext(ctx, "notify inbound comment mentions failed", "error", err, "comment_id", commentID)
+	}
 }
 
 // handleDelete applies an inbound Delete (§7). The object may be a known

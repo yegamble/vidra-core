@@ -400,6 +400,72 @@ func (q *Queries) MarkNotificationRead(ctx context.Context, arg MarkNotification
 	return result.RowsAffected(), nil
 }
 
+const notifyCommentMentions = `-- name: NotifyCommentMentions :execrows
+INSERT INTO notifications (user_id, type, actor_id, video_id, comment_id)
+SELECT u.id, 'comment_mention', c.user_id, c.video_id, c.id
+FROM comments c
+JOIN videos v ON v.id = c.video_id
+JOIN users u ON lower(u.username) = ANY($1::text[])
+WHERE c.id = $2
+  AND c.deleted_at IS NULL
+  AND v.privacy = 'public' AND v.state = 'published'
+  AND NOT EXISTS (SELECT 1 FROM video_blocks vb WHERE vb.video_id = v.id)
+  AND c.user_id IS DISTINCT FROM u.id
+  AND u.is_active
+  AND u.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM muted_accounts ma
+      WHERE ma.muter_id = u.id AND ma.muted_id = c.user_id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE (ub.blocker_id = u.id AND ub.blocked_id = c.user_id)
+         OR (ub.blocker_id = c.user_id AND ub.blocked_id = u.id)
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_prefs np
+      WHERE np.user_id = u.id AND np.type = 'comment_mention' AND np.enabled = FALSE
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM notifications n
+      WHERE n.user_id = u.id AND n.comment_id = c.id
+        AND n.type IN ('comment', 'comment_reply')
+  )
+ON CONFLICT (user_id, comment_id) WHERE type = 'comment_mention' DO NOTHING
+`
+
+type NotifyCommentMentionsParams struct {
+	Usernames []string  `json:"usernames"`
+	CommentID uuid.UUID `json:"comment_id"`
+}
+
+// Tell every LOCAL account @-mentioned in a comment, in one round trip (the
+// 0101/0103 idiom: selection rules live in the statement, not in an N+1 of Go
+// lookups). `usernames` is the already-parsed, lower-cased list; unknown names
+// simply match no row.
+//
+// A mention notifies only when ALL of these hold:
+//   - the comment is live (not a tombstone, 0057) and on a public, published,
+//     unblocked video — a mention must not leak a private video's existence;
+//   - the recipient is an active, non-deleted account and not the author;
+//   - the recipient has not muted the author and neither side blocked the other
+//     (for a federated comment user_id is NULL, so these are vacuously true);
+//   - the recipient has not turned 'comment_mention' off (absence of a prefs
+//     row = enabled);
+//   - the recipient is not ALREADY being told about this comment as a reply or
+//     as the video owner — one comment, one notification.
+//
+// The author is the actor; a federated comment has none (the UI falls back to
+// comments.remote_author_name). ON CONFLICT rides
+// notifications_comment_mention_unique_idx, so re-running is a no-op.
+func (q *Queries) NotifyCommentMentions(ctx context.Context, arg NotifyCommentMentionsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, notifyCommentMentions, arg.Usernames, arg.CommentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const notifyFollowersOfNewVideo = `-- name: NotifyFollowersOfNewVideo :execrows
 INSERT INTO notifications (user_id, type, actor_id, channel_id, video_id)
 SELECT cf.follower_id, 'new_video', ch.owner_id, v.channel_id, v.id

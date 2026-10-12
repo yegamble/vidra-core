@@ -32,6 +32,14 @@ type notifFakeRepo struct {
 	notifs    []sqlcgen.Notification
 	prefs     map[string]bool
 	createErr error
+	// mentionCalls records NotifyCommentMentions fan-outs (the SQL rules are
+	// proved in store.TestNotifyCommentMentionsOnRealPG).
+	mentionCalls []sqlcgen.NotifyCommentMentionsParams
+}
+
+func (f *notifFakeRepo) NotifyCommentMentions(_ context.Context, a sqlcgen.NotifyCommentMentionsParams) (int64, error) {
+	f.mentionCalls = append(f.mentionCalls, a)
+	return 0, nil
 }
 
 // CommentReplyRecipient mirrors the real :one query (who hears about a reply):
@@ -1030,5 +1038,44 @@ func TestFollowNotificationRespectsMutesAndBlocks(t *testing.T) {
 				t.Errorf("owner has %d notifications after a re-follow with %q, want %d; got %+v", len(got), tc.name, tc.want*2, got)
 			}
 		})
+	}
+}
+
+// TestCommentMentionsReachTheFanOut: posting and editing a comment hands the
+// parsed LOCAL usernames to the mention fan-out (the SQL gates are proved in
+// store.TestNotifyCommentMentionsOnRealPG), and a body with none never calls it.
+func TestCommentMentionsReachTheFanOut(t *testing.T) {
+	srv, _, _, notifRepo := videoServerEnv(t, testConfig())
+	adaTok := createChannelFor(t, srv, "ada", "ada@example.test", "ada")
+	vid := createPublishedVideo(t, srv, adaTok, "ada", `{"title":"My clip","privacy":"public"}`)
+	bobTok := registerAndToken(t, srv, `{"username":"bob","email":"bob@example.test","password":"supersecret"}`)
+
+	rec := postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"plain comment, mail bob@example.test"}`, bobTok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("comment = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(notifRepo.mentionCalls) != 0 {
+		t.Fatalf("no mentions in the body, but the fan-out ran: %+v", notifRepo.mentionCalls)
+	}
+
+	rec = postJSONAuth(srv, "/api/v1/videos/"+vid+"/comments", `{"body":"hey @Ada and @far@elsewhere.test"}`, bobTok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("comment = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var created commentView
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	if len(notifRepo.mentionCalls) != 1 || len(notifRepo.mentionCalls[0].Usernames) != 1 || notifRepo.mentionCalls[0].Usernames[0] != "ada" {
+		t.Fatalf("fan-out calls = %+v, want one call naming only local ada", notifRepo.mentionCalls)
+	}
+	if notifRepo.mentionCalls[0].CommentID.String() != created.ID {
+		t.Fatalf("fan-out comment = %s, want %s", notifRepo.mentionCalls[0].CommentID, created.ID)
+	}
+
+	rec = sendJSONAuth(srv, http.MethodPatch, "/api/v1/comments/"+created.ID, `{"body":"hey @ada and @cara"}`, bobTok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edit = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(notifRepo.mentionCalls) != 2 || len(notifRepo.mentionCalls[1].Usernames) != 2 {
+		t.Fatalf("edit must re-run the (idempotent) fan-out; calls = %+v", notifRepo.mentionCalls)
 	}
 }

@@ -52,6 +52,16 @@ type fakeRepo struct {
 	followRecipients map[uuid.UUID]uuid.UUID
 	followLookups    []uuid.UUID
 	followErr        error
+	// mentionCalls records the arguments NotifyCommentMentions was handed (the
+	// selection rules are SQL, proved in store.TestNotifyCommentMentionsOnRealPG).
+	mentionCalls []sqlcgen.NotifyCommentMentionsParams
+	mentionN     int64
+	mentionErr   error
+}
+
+func (f *fakeRepo) NotifyCommentMentions(_ context.Context, a sqlcgen.NotifyCommentMentionsParams) (int64, error) {
+	f.mentionCalls = append(f.mentionCalls, a)
+	return f.mentionN, f.mentionErr
 }
 
 // FollowNotificationRecipient mirrors the :one contract of the real query. Its
@@ -933,5 +943,44 @@ func TestNotifyVideoUnblockedSkipsSelfAndDisabled(t *testing.T) {
 	}
 	if !repo.notifs[0].VideoID.Valid {
 		t.Error("video_unblocked carries no video, so it cannot link back to the restored video")
+	}
+}
+
+// TestNotifyCommentMentionsPassesThrough: the service only forwards the parsed
+// names to the fan-out (every gate is SQL) and reports its count; no names is a
+// no-op that never reaches the repository, and a repository error surfaces.
+func TestNotifyCommentMentionsPassesThrough(t *testing.T) {
+	repo := &fakeRepo{mentionN: 2}
+	svc := NewService(repo)
+	cid := uuid.New()
+
+	if n, err := svc.NotifyCommentMentions(context.Background(), cid, nil); err != nil || n != 0 || len(repo.mentionCalls) != 0 {
+		t.Fatalf("no names: n=%d err=%v calls=%d, want a silent no-op", n, err, len(repo.mentionCalls))
+	}
+	n, err := svc.NotifyCommentMentions(context.Background(), cid, []string{"ada", "bob"})
+	if err != nil || n != 2 {
+		t.Fatalf("n=%d err=%v, want 2 nil", n, err)
+	}
+	if got := repo.mentionCalls[0]; got.CommentID != cid || len(got.Usernames) != 2 {
+		t.Fatalf("fan-out args = %+v", got)
+	}
+	repo.mentionErr = errors.New("db down")
+	if _, err := svc.NotifyCommentMentions(context.Background(), cid, []string{"ada"}); err == nil {
+		t.Fatal("repository error must surface to the caller")
+	}
+}
+
+// TestCommentMentionIsAPreferenceType: comment_mention must be registered with
+// the prefs model, or it could never be turned off nor reach the email work.
+func TestCommentMentionIsAPreferenceType(t *testing.T) {
+	if !knownType(TypeCommentMention) {
+		t.Fatal("comment_mention is not a known type")
+	}
+	found := false
+	for _, typ := range KnownTypes() {
+		found = found || typ == TypeCommentMention
+	}
+	if !found {
+		t.Fatalf("KnownTypes() = %v, missing comment_mention", KnownTypes())
 	}
 }
