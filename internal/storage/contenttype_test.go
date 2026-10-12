@@ -10,6 +10,13 @@ func TestContentTypeForKey(t *testing.T) {
 		"web-videos/2b1c/240p.mp4":           "video/mp4",
 		"web-videos/2b1c/video-vp9.webm":     "video/webm",
 		"streaming-playlists/2b1c/audio.m4a": "audio/mp4",
+		// Audio-only ORIGINALS kept for source download (T17 widened the upload
+		// allowlist to these containers).
+		"originals/2b1c.flac": "audio/flac",
+		"originals/2b1c.wav":  "audio/wav",
+		"originals/2b1c.aac":  "audio/aac",
+		"originals/2b1c.opus": "audio/ogg",
+		"originals/2b1c.m4b":  "audio/mp4",
 		// The CMAF tree.
 		"streaming-playlists/2b1c/cmaf/init-0.mp4":        "video/mp4",
 		"streaming-playlists/2b1c/cmaf/chunk-0-00001.m4s": "video/mp4",
