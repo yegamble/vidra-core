@@ -68,7 +68,10 @@ func (s *Service) FollowInstance(ctx context.Context, host string) (InstanceFoll
 	if err != nil {
 		return InstanceFollow{}, fmt.Errorf("%w: %w", ErrRemoteUnresolvable, err)
 	}
-	if ra.InboxUrl == "" {
+	// What NodeInfo or WebFinger named must be an INSTANCE actor: following a
+	// person or a channel here would ingest everything its host announces on
+	// the strength of a follow of one account.
+	if ra.InboxUrl == "" || (ra.ActorType != actorTypeApplication && ra.ActorType != actorTypeService) {
 		return InstanceFollow{}, ErrRemoteUnresolvable
 	}
 	if _, err := s.ensureInstanceKey(ctx); err != nil {

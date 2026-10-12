@@ -29,8 +29,8 @@ import (
 // the newest slice; the outbox serves the rest to a follower that crawls it.
 const instanceBackfillLimit = 50
 
-// instanceBackfillCooldown is how long one remote instance actor waits for its
-// next backfill. A follow is cheap to make and to Undo, and each new one would
+// instanceBackfillCooldown is how long one remote HOST waits for its next
+// backfill. A follow is cheap to make and to Undo, and each new one would
 // otherwise queue instanceBackfillLimit signed deliveries; a re-Follow inside
 // the window is accepted and answered, and backfilled with nothing. Persisted
 // (instance_follower_backfills), so a restart does not reset it.
@@ -59,6 +59,11 @@ func (s *Service) buildInstanceAnnounce(id string, videoID uuid.UUID) map[string
 func (s *Service) announceToInstanceFollowers(ctx context.Context, videoID uuid.UUID) error {
 	if _, ok := s.InstanceActorAvailable(ctx); !ok {
 		return nil
+	}
+	// The outbox's own definition decides (instance_outbox_videos), so the push
+	// and the outbox can never disagree about what this instance shares.
+	if listed, err := s.inst.IsVideoInInstanceOutbox(ctx, videoID); err != nil || !listed {
+		return err
 	}
 	inboxes, err := s.inst.ListAcceptedInstanceFollowerInboxes(ctx)
 	if err != nil || len(inboxes) == 0 {
@@ -99,7 +104,7 @@ func (s *Service) backfillInstanceFollower(ctx context.Context, follower string)
 		return err
 	}
 	claimed, err := s.inst.ClaimInstanceFollowerBackfill(ctx, sqlcgen.ClaimInstanceFollowerBackfillParams{
-		RemoteActorUrl:  follower,
+		Host:            hostOf(follower), // per host: one host can mint any number of actors
 		CooldownSeconds: int32(instanceBackfillCooldown / time.Second),
 	})
 	if err != nil || claimed == 0 {
@@ -126,6 +131,11 @@ func (s *Service) videoAudience(ctx context.Context, channelID uuid.UUID) ([]str
 	}
 	if _, ok := s.InstanceActorAvailable(ctx); !ok {
 		return inboxes, nil
+	}
+	// An owner who opted out of discovery was never announced to instances,
+	// so nothing about their videos goes there afterwards either.
+	if unlisted, err := s.inst.IsChannelOwnerUnlisted(ctx, channelID); err != nil || unlisted {
+		return inboxes, err
 	}
 	more, err := s.inst.ListAcceptedInstanceFollowerInboxes(ctx)
 	if err != nil {

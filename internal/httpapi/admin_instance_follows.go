@@ -63,7 +63,8 @@ func (s *Server) handleListInstanceFollowers(c echo.Context) error {
 
 // instanceFollowDecision is the handler for one admin decision on an instance
 // follow by id: 204 on success, 404 for an unknown id or a state the decision
-// does not apply to, and one audit row carrying the safe row id only.
+// does not apply to, and one audit row — success or failure — carrying the
+// safe row id only.
 func (s *Server) instanceFollowDecision(do func(context.Context, uuid.UUID) error, action string) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		adminID, _, err := mustPrincipal(c)
@@ -75,6 +76,7 @@ func (s *Server) instanceFollowDecision(do func(context.Context, uuid.UUID) erro
 			return err
 		}
 		if err := do(c.Request().Context(), id); err != nil {
+			s.audit(c, action, observability.ResultFailure, adminID.String(), id.String())
 			if errors.Is(err, federation.ErrInstanceFollowNotFound) {
 				return echo.NewHTTPError(http.StatusNotFound, "instance follow not found")
 			}

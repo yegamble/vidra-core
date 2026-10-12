@@ -84,13 +84,26 @@ CREATE UNIQUE INDEX notifications_federation_instance_follower_request_unread_id
     ON notifications (user_id)
     WHERE type = 'federation_follower_request' AND remote_follow_id IS NULL AND read_at IS NULL;
 
--- (7) The backfill cooldown: when each remote instance actor was last pushed
--- the new-follower backfill (up to 50 signed Announces). At most one per actor
--- per window, so a Follow/Undo loop cannot turn this instance into a delivery
--- amplifier. Kept apart from instance_followers on purpose — Undo deletes the
--- follower row, and the loop is exactly what this must outlive — and with no
--- foreign key, since the follower could Delete its own actor to clear it.
+-- (7) The backfill cooldown: when each remote HOST was last pushed the
+-- new-follower backfill (up to 50 signed Announces). At most one per host per
+-- window, so a Follow/Undo loop cannot turn this instance into a delivery
+-- amplifier — keyed by host because one host can mint any number of actors.
+-- Kept apart from instance_followers on purpose (Undo deletes the follower
+-- row, and the loop is exactly what this must outlive), with no foreign key.
 CREATE TABLE instance_follower_backfills (
-    remote_actor_url TEXT        PRIMARY KEY,
+    host             TEXT        PRIMARY KEY,
     last_backfill_at TIMESTAMPTZ NOT NULL
 );
+
+-- (8) The instance actor's outbox, defined ONCE: what the outbox pages, what a
+-- new follower is backfilled with, and what the live Announce checks. It is
+-- the public-discovery predicate — public, published, not moderator-blocked,
+-- the owner has not opted out of discovery (0047) — plus the channel not
+-- having opted out of ActivityPub (0096).
+CREATE VIEW instance_outbox_videos AS
+SELECT v.id, v.created_at
+FROM videos v
+JOIN channels c ON c.id = v.channel_id
+WHERE v.privacy = 'public' AND v.state = 'published' AND c.activitypub_enabled
+  AND NOT EXISTS (SELECT 1 FROM video_blocks b WHERE b.video_id = v.id)
+  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.owner_id AND u.unlisted);
