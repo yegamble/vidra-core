@@ -35,6 +35,8 @@ type fakeRepo struct {
 	// (same pass-through contract as fanOut above; rules proved in
 	// store.TestNewReportStaffFanOutOnRealPG).
 	reportFanOut []uuid.UUID
+	// reportMessageFanOut records the messages handed to NotifyReportMessage.
+	reportMessageFanOut []uuid.UUID
 	// staffQueue records the three approval-queue fan-outs as "type:subject".
 	staffQueue []string
 	// replyRecipients answers CommentReplyRecipient: comment id -> the row the
@@ -1182,5 +1184,40 @@ func TestCommentHeldRegisteredAndFansOut(t *testing.T) {
 	}
 	if len(repo.staffQueue) != 1 || repo.staffQueue[0] != "comment_held:"+id.String() {
 		t.Errorf("fan-out calls = %v", repo.staffQueue)
+	}
+}
+
+func (f *fakeRepo) NotifyReportMessage(_ context.Context, messageID uuid.UUID) (int64, error) {
+	f.reportMessageFanOut = append(f.reportMessageFanOut, messageID)
+	if f.fanOutErr != nil {
+		return 0, f.fanOutErr
+	}
+	return f.fanOutN, nil
+}
+
+// report_message is registered with the preference model (default on, may be
+// turned off) but offers no email — the email-prefs work can opt it in later —
+// and NotifyReportMessage is a straight delegation to the set-based fan-out,
+// whose who-is-told rules are proved in store.TestReportMessageFanOutOnRealPG.
+func TestReportMessageIsAKnownPreferenceType(t *testing.T) {
+	if !knownType(TypeReportMessage) || emailType(TypeReportMessage) {
+		t.Fatalf("report_message known=%v email=%v, want known and not emailable",
+			knownType(TypeReportMessage), emailType(TypeReportMessage))
+	}
+	repo := &fakeRepo{fanOutN: 2}
+	svc := NewService(repo)
+	prefs, err := svc.Prefs(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("Prefs: %v", err)
+	}
+	if enabled, ok := prefs[TypeReportMessage]; !ok || !enabled {
+		t.Fatalf("prefs[%s] = (%v, %v), want (true, true) by default", TypeReportMessage, enabled, ok)
+	}
+	msg := uuid.New()
+	if n, err := svc.NotifyReportMessage(context.Background(), msg); err != nil || n != 2 {
+		t.Errorf("NotifyReportMessage = %d, %v; want the fan-out's count", n, err)
+	}
+	if len(repo.reportMessageFanOut) != 1 || repo.reportMessageFanOut[0] != msg {
+		t.Errorf("fan-out calls = %v, want [%s]", repo.reportMessageFanOut, msg)
 	}
 }

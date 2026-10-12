@@ -641,6 +641,7 @@ type Notification struct {
 	ReportID              pgtype.UUID        `json:"report_id"`
 	RegistrationRequestID pgtype.UUID        `json:"registration_request_id"`
 	RemoteFollowID        pgtype.UUID        `json:"remote_follow_id"`
+	ReportMessageID       pgtype.UUID        `json:"report_message_id"`
 }
 
 type NotificationEmail struct {
@@ -936,6 +937,15 @@ type Report struct {
 	RemoteReporterActorUrl *string            `json:"remote_reporter_actor_url"`
 	RemoteReporterDomain   *string            `json:"remote_reporter_domain"`
 	RemoteFlagActivityID   *string            `json:"remote_flag_activity_id"`
+}
+
+type ReportMessage struct {
+	ID          uuid.UUID   `json:"id"`
+	ReportID    uuid.UUID   `json:"report_id"`
+	AuthorID    pgtype.UUID `json:"author_id"`
+	IsModerator bool        `json:"is_moderator"`
+	Body        string      `json:"body"`
+	CreatedAt   time.Time   `json:"created_at"`
 }
 
 type SavedVideo struct {
