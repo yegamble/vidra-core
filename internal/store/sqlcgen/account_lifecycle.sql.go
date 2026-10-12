@@ -136,6 +136,15 @@ func (q *Queries) DeleteUserBlocksByUser(ctx context.Context, blockerID uuid.UUI
 	return err
 }
 
+const deleteUserFeedTokenByUser = `-- name: DeleteUserFeedTokenByUser :exec
+DELETE FROM user_feed_tokens WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserFeedTokenByUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUserFeedTokenByUser, userID)
+	return err
+}
+
 const deleteVideoRatingsByUser = `-- name: DeleteVideoRatingsByUser :exec
 
 DELETE FROM video_ratings WHERE user_id = $1

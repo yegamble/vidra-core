@@ -2355,7 +2355,10 @@ FROM (
            ''::text AS short_code
     FROM remote_videos rv
     JOIN remote_actors ra ON ra.actor_url = rv.remote_actor_url
-    WHERE EXISTS (
+    -- local_only is the zero-value-safe polarity: a caller that sets nothing
+    -- (every direct query user) keeps the remote branch.
+    WHERE NOT $2::bool
+      AND EXISTS (
           SELECT 1 FROM remote_channel_follows rcf
           WHERE rcf.user_id = $1
             AND rcf.remote_actor_url = rv.remote_actor_url
@@ -2388,11 +2391,12 @@ FROM (
       )
 ) AS feed
 ORDER BY feed.created_at DESC, feed.id DESC
-LIMIT $3 OFFSET $2
+LIMIT $4 OFFSET $3
 `
 
 type ListSubscriptionVideosParams struct {
 	FollowerID   uuid.UUID `json:"follower_id"`
+	LocalOnly    bool      `json:"local_only"`
 	ResultOffset int32     `json:"result_offset"`
 	ResultLimit  int32     `json:"result_limit"`
 }
@@ -2429,7 +2433,12 @@ type ListSubscriptionVideosRow struct {
 // carry the origin domain + watch/stream URLs; instance mutes (the user's) and
 // the admin instance blocklist hide remote rows.
 func (q *Queries) ListSubscriptionVideos(ctx context.Context, arg ListSubscriptionVideosParams) ([]ListSubscriptionVideosRow, error) {
-	rows, err := q.db.Query(ctx, listSubscriptionVideos, arg.FollowerID, arg.ResultOffset, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listSubscriptionVideos,
+		arg.FollowerID,
+		arg.LocalOnly,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

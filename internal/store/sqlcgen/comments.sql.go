@@ -16,16 +16,23 @@ import (
 const approveComment = `-- name: ApproveComment :one
 UPDATE comments
 SET held_for_review = false
-WHERE id = $1 AND held_for_review
+WHERE id = $1 AND held_for_review AND updated_at = $2
 RETURNING id, video_id, user_id, body, created_at, updated_at, parent_id,
           remote_actor_url, remote_author_name, remote_object_url, deleted_at, hearted, held_for_review
 `
 
+type ApproveCommentParams struct {
+	ID                uuid.UUID `json:"id"`
+	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
+}
+
 // Release a held comment (0161). Conditional on the row STILL being held, so
 // repeated or concurrent approvals have exactly one winner (no row = nothing to
 // do) and the withheld side effects fire once. Never bumps updated_at.
-func (q *Queries) ApproveComment(ctx context.Context, id uuid.UUID) (Comment, error) {
-	row := q.db.QueryRow(ctx, approveComment, id)
+// expected_updated_at is the version the reviewer saw: an edit since then
+// (updated_at moved) is not approved.
+func (q *Queries) ApproveComment(ctx context.Context, arg ApproveCommentParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, approveComment, arg.ID, arg.ExpectedUpdatedAt)
 	var i Comment
 	err := row.Scan(
 		&i.ID,

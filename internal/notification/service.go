@@ -33,7 +33,12 @@ const (
 	TypeCommentMention = "comment_mention"
 	TypeMessage        = "message"
 	TypeReportResolved = "report_resolved"
-	TypeVideoRejected  = "video_rejected"
+	// TypeReportMessage tells the other side of an abuse report's thread
+	// (migration 0163) that a new message arrived: the reporter when staff
+	// wrote, the new_report staff set when the reporter wrote. A set-based
+	// fan-out (NotifyReportMessage); the body is never carried.
+	TypeReportMessage = "report_message"
+	TypeVideoRejected = "video_rejected"
 	// TypeVideoBlocked tells a creator that a moderator blocked one of their
 	// PUBLISHED videos. It is deliberately distinct from video_rejected, which
 	// is the quarantine outcome for an upload that never published: a block
@@ -78,7 +83,7 @@ const (
 // KnownTypes lists every notification type, in stable order. Preferences may
 // target exactly these; every type defaults to enabled.
 func KnownTypes() []string {
-	return []string{TypeCaptionReady, TypeComment, TypeCommentMention, TypeCommentReply, TypeFederationFollowerRequest, TypeFollow, TypeMessage, TypeNewRegistrationRequest, TypeNewReport, TypeNewVideo, TypeReportResolved, TypeUploadQuarantined, TypeVideoBlocked, TypeVideoOwnershipRequest, TypeVideoRejected, TypeVideoUnblocked}
+	return []string{TypeCaptionReady, TypeComment, TypeCommentMention, TypeCommentReply, TypeFederationFollowerRequest, TypeFollow, TypeMessage, TypeNewRegistrationRequest, TypeNewReport, TypeNewVideo, TypeReportMessage, TypeReportResolved, TypeUploadQuarantined, TypeVideoBlocked, TypeVideoOwnershipRequest, TypeVideoRejected, TypeVideoUnblocked}
 }
 
 // EmailTypes lists, in stable order, the types a user may ALSO receive by email
@@ -101,7 +106,7 @@ func emailType(t string) bool {
 func knownType(t string) bool {
 	switch t {
 	case TypeFollow, TypeComment, TypeCommentReply, TypeCommentMention, TypeMessage, TypeReportResolved, TypeVideoRejected, TypeVideoBlocked, TypeVideoUnblocked, TypeCaptionReady, TypeNewVideo, TypeNewReport,
-		TypeNewRegistrationRequest, TypeUploadQuarantined, TypeFederationFollowerRequest, TypeVideoOwnershipRequest:
+		TypeNewRegistrationRequest, TypeUploadQuarantined, TypeFederationFollowerRequest, TypeReportMessage, TypeVideoOwnershipRequest:
 		return true
 	}
 	return false
@@ -135,6 +140,7 @@ type Repository interface {
 	UpsertNotificationEmailPref(ctx context.Context, arg sqlcgen.UpsertNotificationEmailPrefParams) error
 	NotifyFollowersOfNewVideo(ctx context.Context, videoID uuid.UUID) (int64, error)
 	NotifyStaffOfNewReport(ctx context.Context, reportID uuid.UUID) (int64, error)
+	NotifyReportMessage(ctx context.Context, messageID uuid.UUID) (int64, error)
 	NotifyCommentMentions(ctx context.Context, arg sqlcgen.NotifyCommentMentionsParams) (int64, error)
 	NotifyStaffOfNewRegistrationRequest(ctx context.Context, requestID uuid.UUID) (int64, error)
 	NotifyStaffOfQuarantinedUpload(ctx context.Context, videoID uuid.UUID) (int64, error)
@@ -409,6 +415,18 @@ func (s *Service) NotifyNewVideo(ctx context.Context, videoID uuid.UUID) (int64,
 // non-fatal — a notification failure must never fail the report itself.
 func (s *Service) NotifyNewReport(ctx context.Context, reportID uuid.UUID) (int64, error) {
 	return s.repo.NotifyStaffOfNewReport(ctx, reportID)
+}
+
+// NotifyReportMessage tells the other side of an abuse report's thread that
+// messageID was just written, and returns how many were told. Every rule lives
+// in the SQL (see NotifyReportMessage): a moderator's message reaches the
+// report's local reporter with no actor (the moderator is never named to the
+// reporter), the reporter's reaches the new_report staff set, the author is
+// never told, and per-user opt-outs are honoured. Idempotent per (recipient,
+// message) via migration 0163's unique index. Best-effort: the caller treats an
+// error as non-fatal — it must never fail the message itself.
+func (s *Service) NotifyReportMessage(ctx context.Context, messageID uuid.UUID) (int64, error) {
+	return s.repo.NotifyReportMessage(ctx, messageID)
 }
 
 // NotifyNewRegistrationRequest tells staff who can work the registration queue

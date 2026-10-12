@@ -641,6 +641,7 @@ type Notification struct {
 	ReportID              pgtype.UUID        `json:"report_id"`
 	RegistrationRequestID pgtype.UUID        `json:"registration_request_id"`
 	RemoteFollowID        pgtype.UUID        `json:"remote_follow_id"`
+	ReportMessageID       pgtype.UUID        `json:"report_message_id"`
 }
 
 type NotificationEmail struct {
@@ -938,6 +939,15 @@ type Report struct {
 	RemoteFlagActivityID   *string            `json:"remote_flag_activity_id"`
 }
 
+type ReportMessage struct {
+	ID          uuid.UUID   `json:"id"`
+	ReportID    uuid.UUID   `json:"report_id"`
+	AuthorID    pgtype.UUID `json:"author_id"`
+	IsModerator bool        `json:"is_moderator"`
+	Body        string      `json:"body"`
+	CreatedAt   time.Time   `json:"created_at"`
+}
+
 type SavedVideo struct {
 	UserID    uuid.UUID `json:"user_id"`
 	VideoID   uuid.UUID `json:"video_id"`
@@ -1140,6 +1150,12 @@ type UserBlock struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type UserFeedToken struct {
+	UserID    uuid.UUID `json:"user_id"`
+	TokenHash string    `json:"token_hash"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type UserImage struct {
 	UserID      uuid.UUID `json:"user_id"`
 	Kind        string    `json:"kind"`
@@ -1246,6 +1262,7 @@ type VideoOwnershipChange struct {
 	VideoID     uuid.UUID `json:"video_id"`
 	InitiatorID uuid.UUID `json:"initiator_id"`
 	NextOwnerID uuid.UUID `json:"next_owner_id"`
+	VideoTitle  string    `json:"video_title"`
 	Status      string    `json:"status"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
