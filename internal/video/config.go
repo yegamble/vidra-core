@@ -90,6 +90,7 @@ var Languages = []ConfigOption{
 var Privacies = []ConfigOption{
 	{"public", "Public"},
 	{"unlisted", "Unlisted"},
+	{PrivacyInternal, "Internal"},
 	{"private", "Private"},
 }
 

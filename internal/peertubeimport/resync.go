@@ -170,6 +170,13 @@ func channelDigest(owner uuid.UUID, displayName, description string) string {
 	return newDigest("channel").id(owner).text(displayName).text(description).sum()
 }
 
+// supportDigest folds the support text into an entity's digest WITHOUT
+// changing the base digest's own definition (and so the existing
+// videoDigest/channelDigest tests): the same wrapper shape as videoPolicyDigest.
+func supportDigest(base string, support *string) string {
+	return newDigest("support").text(base).text(pgconv.Deref(support)).sum()
+}
+
 func videoDigest(channel uuid.UUID, title, description, privacy, state, category, language, license string, duration int32, originallyPublishedAt *time.Time) string {
 	return newDigest("video").id(channel).text(title).text(description).
 		text(privacy).text(state).text(category).text(language).text(license).num(int64(duration)).
@@ -321,7 +328,7 @@ func (im *Importer) loadResyncState(ctx context.Context) (*resyncState, error) {
 	for _, c := range channels {
 		st.channels[c.SourceID] = resyncChannel{
 			id: c.ID, owner: c.OwnerID, handle: c.Handle,
-			dgst: channelDigest(c.OwnerID, c.DisplayName, c.Description),
+			dgst: supportDigest(channelDigest(c.OwnerID, c.DisplayName, c.Description), supportToText(c.Support)),
 		}
 	}
 
@@ -334,8 +341,8 @@ func (im *Importer) loadResyncState(ctx context.Context) (*resyncState, error) {
 		st.videos[v.SourceID] = resyncVideo{
 			id: v.ID, channel: v.ChannelID, duration: v.DurationSeconds, origPub: origPub,
 			commentsPolicy: v.CommentsPolicy, downloadEnabled: v.DownloadEnabled,
-			dgst: videoPolicyDigest(videoDigest(v.ChannelID, v.Title, v.Description, v.Privacy, v.State,
-				v.Category, v.Language, v.License, v.DurationSeconds, origPub), v.CommentsPolicy, v.DownloadEnabled),
+			dgst: supportDigest(videoPolicyDigest(videoDigest(v.ChannelID, v.Title, v.Description, v.Privacy, v.State,
+				v.Category, v.Language, v.License, v.DurationSeconds, origPub), v.CommentsPolicy, v.DownloadEnabled), supportToText(v.Support)),
 		}
 	}
 
@@ -505,7 +512,7 @@ func (im *Importer) resyncOneChannel(ctx context.Context, ch SourceChannel, sid 
 	} else if ok {
 		owner = id
 	}
-	desired := channelDigest(owner, ch.DisplayName, ch.Description)
+	desired := supportDigest(channelDigest(owner, ch.DisplayName, ch.Description), supportToText(ch.Support))
 	if desired == cur.dgst {
 		c.Skipped++
 		return true, nil
@@ -516,6 +523,7 @@ func (im *Importer) resyncOneChannel(ctx context.Context, ch SourceChannel, sid 
 			OwnerID:     owner,
 			DisplayName: ch.DisplayName,
 			Description: ch.Description,
+			Support:     supportToText(ch.Support),
 		}); err != nil {
 			return err
 		}
@@ -563,8 +571,8 @@ func (im *Importer) resyncOneVideo(ctx context.Context, v SourceVideo, r *Report
 	if v.DownloadEnabled != nil {
 		downloadEnabled = *v.DownloadEnabled
 	}
-	desired := videoPolicyDigest(videoDigest(channel, v.Title, v.Description, mapPrivacy(v.Privacy), mapVideoState(v.State),
-		pgconv.Deref(intPtrToText(v.Category)), pgconv.Deref(v.Language), pgconv.Deref(intPtrToText(v.Licence)), duration, origPub), commentsPolicy, downloadEnabled)
+	desired := supportDigest(videoPolicyDigest(videoDigest(channel, v.Title, v.Description, mapPrivacy(v.Privacy), mapVideoState(v.State),
+		pgconv.Deref(intPtrToText(v.Category)), pgconv.Deref(v.Language), pgconv.Deref(intPtrToText(v.Licence)), duration, origPub), commentsPolicy, downloadEnabled), supportToText(v.Support))
 
 	tags, err := im.desiredTags(ctx, v.ID)
 	if err != nil {
@@ -592,6 +600,7 @@ func (im *Importer) resyncOneVideo(ctx context.Context, v SourceVideo, r *Report
 				License:         intPtrToText(v.Licence),
 
 				OriginallyPublishedAt: optTimestamptz(origPub),
+				Support:               supportToText(v.Support),
 			}); err != nil {
 				return err
 			}

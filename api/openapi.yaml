@@ -4582,7 +4582,9 @@ paths:
         "401":
           description: >-
             The video is password protected and the caller presented no valid
-            credential. Error code "password_required".
+            credential (error code "password_required"), or it is
+            privacy=internal and the caller is not signed in (error code
+            "sign_in_required").
           content:
             application/json:
               schema:
@@ -4612,7 +4614,10 @@ paths:
         error code "password_required" to a caller who is neither the owner nor
         a moderator/admin and is not presenting a valid playback token (a plain
         unknown id is still 404); the caller then unlocks via POST
-        /videos/{id}/unlock and retries with the token (Bearer or ?pt=). The
+        /videos/{id}/unlock and retries with the token (Bearer or ?pt=). An
+        internal video (privacy=internal) is returned to any signed-in account
+        and answers 401 with error code "sign_in_required" to an anonymous
+        caller; the same rule gates its media, downloads and embed policy. The
         response includes probed
         technical metadata (duration_seconds, width, height) when a media probe
         has recorded it.
@@ -4637,8 +4642,9 @@ paths:
         "401":
           description: >-
             The video is password protected and the caller presented no valid
-            credential (owner/moderator/admin token or playback token). Error
-            code "password_required".
+            credential (owner/moderator/admin token or playback token), error
+            code "password_required"; or it is privacy=internal and the caller
+            is not signed in, error code "sign_in_required".
           content:
             application/json:
               schema:
@@ -10117,7 +10123,7 @@ paths:
             type: array
             items:
               type: string
-              enum: [public, unlisted, private, password]
+              enum: [public, unlisted, private, password, internal]
         - name: scope
           in: query
           required: false
@@ -18364,6 +18370,13 @@ components:
           example: Ada Makes
         description:
           type: string
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            PeerTube-style free-text (markdown) "support" message, e.g.
+            "Support me on Liberapay: <link>". Omitted when unset. New videos
+            inherit it unless they supply their own.
         created_at:
           type: string
           format: date-time
@@ -18446,6 +18459,12 @@ components:
         description:
           type: string
           maxLength: 1000
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            Markdown support message. An empty string clears it; absent leaves
+            it unchanged.
         activitypub_enabled:
           type: boolean
           description: >-
@@ -18759,8 +18778,12 @@ components:
           type: string
         privacy:
           type: string
-          enum: [public, unlisted, private, password]
-          description: Present on every local video; omitted on remote cards.
+          enum: [public, unlisted, private, password, internal]
+          description: >-
+            Present on every local video; omitted on remote cards. "internal"
+            (PeerTube's members-only tier) is visible to any signed-in account
+            of this instance and to no anonymous viewer; it is never federated,
+            indexed for public search, or listed on an anonymous surface.
         state:
           type: string
           enum: [draft, processing, scheduled, quarantined, transcoding, published, failed]
@@ -18841,6 +18864,12 @@ components:
             moderator prose about a named account and never appears on any public
             surface, on another viewer's read of the same channel, or on the
             video detail endpoint (which stays 404 while the block stands).
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            PeerTube-style free-text (markdown) "support" message for this
+            video. Present on the detail and create/update views when set.
         originally_published_at:
           type: string
           format: date-time
@@ -19615,7 +19644,7 @@ components:
           maxLength: 5000
         privacy:
           type: string
-          enum: [public, unlisted, private, password]
+          enum: [public, unlisted, private, password, internal]
           description: >-
             Omitted/empty seeds the instance's default_video_privacy setting
             (registry default "public"). "password" is never seeded (a
@@ -19632,6 +19661,12 @@ components:
             Optional content-license id (see GET /videos/config); unknown
             value -> 422. Omitted/empty seeds the instance's
             default_video_licence setting (0 = no default, left unset).
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            Markdown support message. Omitted/null inherits the channel's
+            support text at create time; an empty string means none.
         tags:
           type: array
           description: >-
@@ -19696,7 +19731,7 @@ components:
           maxLength: 5000
         privacy:
           type: string
-          enum: [public, unlisted, private, password]
+          enum: [public, unlisted, private, password, internal]
         category:
           type: string
           description: Set the subject-category id (see GET /videos/config). Unknown/empty value -> 422.
@@ -19706,6 +19741,12 @@ components:
         license:
           type: string
           description: Set the content-license id (see GET /videos/config). Unknown/empty value -> 422.
+        support:
+          type: string
+          maxLength: 1000
+          description: >-
+            Set the markdown support message; an empty string clears it, absent
+            leaves it unchanged.
         tags:
           type: array
           description: >-
@@ -21110,7 +21151,7 @@ components:
           type: string
         privacy:
           type: string
-          enum: [public, unlisted, private, password]
+          enum: [public, unlisted, private, password, internal]
         state:
           type: string
           enum: [quarantined]
@@ -21244,7 +21285,7 @@ components:
           type: string
         privacy:
           type: string
-          enum: [public, unlisted, private, password]
+          enum: [public, unlisted, private, password, internal]
         state:
           type: string
           enum: [draft, processing, scheduled, quarantined, published, failed]
@@ -21324,7 +21365,7 @@ components:
           type: string
         privacy:
           type: string
-          enum: [public, unlisted, private, password]
+          enum: [public, unlisted, private, password, internal]
         state:
           type: string
           enum: [draft, processing, scheduled, quarantined, published, failed]
