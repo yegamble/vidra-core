@@ -25,6 +25,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"syscall"
@@ -122,6 +123,9 @@ func IsBlockedIP(ip net.IP) bool {
 	if ip == nil {
 		return true
 	}
+	if inBlockedPrefix(ip) {
+		return true
+	}
 	// Not global unicast → loopback, unspecified, link-local (uni/multi), multicast.
 	if !ip.IsGlobalUnicast() {
 		return true
@@ -135,6 +139,56 @@ func IsBlockedIP(ip net.IP) bool {
 		return true
 	}
 	return embeddedIPv4Blocked(ip)
+}
+
+// blockedPrefixes lists IANA special-purpose ranges that are not forwardable or
+// not globally reachable (IANA IPv4/IPv6 Special-Purpose Address Registries).
+// One data-driven list: adding a range is one line. Ranges the stdlib
+// predicates already refuse (loopback, link-local, multicast, RFC1918, ULA) are
+// not repeated; ranges Go still treats as global unicast are listed here.
+var blockedPrefixes = func() []netip.Prefix {
+	var out []netip.Prefix
+	for _, s := range []string{
+		// IPv4
+		"0.0.0.0/8",          // "this network" (Go only flags 0.0.0.0 itself)
+		"100.64.0.0/10",      // shared address space, RFC 6598
+		"169.254.0.0/16",     // link-local
+		"192.0.0.0/24",       // IETF protocol assignments
+		"192.0.2.0/24",       // TEST-NET-1
+		"198.18.0.0/15",      // benchmarking
+		"198.51.100.0/24",    // TEST-NET-2
+		"203.0.113.0/24",     // TEST-NET-3
+		"240.0.0.0/4",        // reserved (includes 255.255.255.255/32)
+		"255.255.255.255/32", // limited broadcast
+		// IPv6
+		"100::/64",        // discard-only
+		"2001:2::/48",     // benchmarking
+		"2001:10::/28",    // ORCHID (deprecated)
+		"2001:db8::/32",   // documentation
+		"3fff::/20",       // documentation, RFC 9637
+		"5f00::/16",       // SRv6 SIDs, not globally reachable
+		"::ffff:0:0:0/96", // IPv4-translated (SIIT), RFC 2765
+		"fec0::/10",       // site-local (deprecated)
+	} {
+		out = append(out, netip.MustParsePrefix(s))
+	}
+	return out
+}()
+
+// inBlockedPrefix reports whether ip falls in any blockedPrefixes range. An
+// IPv4-mapped IPv6 address is unmapped first so it is judged as the IPv4 it is.
+func inBlockedPrefix(ip net.IP) bool {
+	a, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return true // malformed length → fail closed
+	}
+	a = a.Unmap()
+	for _, p := range blockedPrefixes {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
 }
 
 // embeddedIPv4Blocked covers the IPv6 ranges that carry an IPv4 address inside
